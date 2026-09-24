@@ -13,7 +13,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from wiki.wikilib import metadata_errors, project_pages  # noqa: E402
+from wiki import metadata_errors, project_pages  # noqa: E402
 
 NEWER_ALLOWED = 3   # A listing this far behind is not worth saying anything about
 

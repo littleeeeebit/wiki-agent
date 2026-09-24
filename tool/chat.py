@@ -430,7 +430,7 @@ def hits_for(cid: str, text: str) -> list[str]:
     Not evidence that the host injected anything, and it does not re-run the
     hook.
     """
-    from wiki.match import label, match_pages, pages
+    from wiki import label, match_pages, pages
     repo = repo_of(cid)
     try:
         return [label(path) for _severity, _body, path in match_pages(text, pages(repo.name, repo))]

@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import translate  # noqa: E402
-from wiki.wikilib import front_matter  # noqa: E402
+from wiki import front_matter  # noqa: E402
 
 MAX_PLANS = 2       # How many plan documents to look at
 MAX_ROWS = 8        # How many unfinished rows from one plan

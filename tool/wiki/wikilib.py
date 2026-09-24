@@ -61,7 +61,7 @@ def metadata_errors(path: Path) -> list[str]:
     return errors
 
 
-def pages(wiki: Path = WIKI) -> dict[str, tuple[dict, str, Path]]:
+def hub_pages(wiki: Path = WIKI) -> dict[str, tuple[dict, str, Path]]:
     """The hub's rule pages, named `scope/name`."""
 
     found: dict[str, tuple[dict, str, Path]] = {}
@@ -110,23 +110,3 @@ def resolve(target: str, names: set[str]) -> str | None:
         if name.split("/", 1)[1] == target:
             return name
     return None
-
-
-def git_ok(repo: Path, ref: str) -> bool:
-    """Does that ref actually exist in this repository?
-
-    `subprocess` is imported inside the function. The injection hook reads
-    this module on every utterance without ever calling git, and would pay
-    that import's measured 14ms each time. A hook that gets expensive gets
-    turned off, and a hook that is off is a hook that does not exist.
-    """
-
-    import subprocess
-
-    try:
-        return subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", ref],
-            capture_output=True, timeout=10,
-        ).returncode == 0
-    except Exception:
-        return False
