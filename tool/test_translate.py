@@ -7,11 +7,13 @@ below asserts on the *unchanged* input rather than on a translation.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
 import sys
 import time
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -59,9 +61,23 @@ FROZEN = (
 
 @pytest.fixture(autouse=True)
 def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Never read or write the real cache, and never need a real key."""
+    """Never read or write the real cache, and never need a real key.
+
+    `ENV` goes too: a limit written in the real `.env` would decide whether
+    these tests ever reach their fake model.
+    """
     monkeypatch.setattr(T, "CACHE", tmp_path / "cache.sqlite3")
+    monkeypatch.setattr(T, "ENV", tmp_path / "absent.env")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    monkeypatch.delenv("TRANSLATE_MONTHLY_USD", raising=False)
+
+
+def soon() -> float:
+    return time.monotonic() + 5
+
+
+def ko(text: str, deadline: float | None = None) -> str:
+    return T.translate([text], T.KO_EN, soon() if deadline is None else deadline)[0]
 
 
 def _rewrites_all_prose(_system: str, batch: list[str], _seconds: float) -> list[str]:
@@ -73,7 +89,7 @@ def test_protected_spans_survive_a_model_that_rewrites_everything_else(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(T, "_ask", _rewrites_all_prose)
-    out = T.translate([PAGE], T.KO_EN)[0]
+    out = T.translate([PAGE], T.KO_EN, soon())[0]
 
     assert out != PAGE, "the fake model was supposed to change the prose"
     for frozen in FROZEN:
@@ -93,7 +109,7 @@ def test_a_dropped_placeholder_keeps_the_original(
         return [T.TOKEN.sub("", item, count=1) for item in batch]
 
     monkeypatch.setattr(T, "_ask", loses_one)
-    assert T.translate([PAGE], T.KO_EN) == [PAGE]
+    assert T.translate([PAGE], T.KO_EN, soon()) == [PAGE]
 
 
 def test_a_duplicated_or_renumbered_placeholder_keeps_the_original(
@@ -108,7 +124,7 @@ def test_a_duplicated_or_renumbered_placeholder_keeps_the_original(
 
     for faulty in (duplicates, renumbers):
         monkeypatch.setattr(T, "_ask", faulty)
-        assert T.translate([PAGE], T.KO_EN) == [PAGE], faulty.__name__
+        assert T.translate([PAGE], T.KO_EN, soon()) == [PAGE], faulty.__name__
 
 
 def test_a_missing_key_returns_the_input_unchanged(
@@ -123,7 +139,7 @@ def test_a_missing_key_returns_the_input_unchanged(
 
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setattr(T, "ENV", tmp_path / "absent")
-    assert T.ko_to_en("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
+    assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
 
 
 def test_the_env_file_outranks_the_variable(
@@ -187,11 +203,11 @@ def test_a_cached_entry_is_served_without_a_key(
     """
 
     monkeypatch.setattr(T, "_ask", _rewrites_all_prose)
-    assert T.ko_to_en("훅이 조용히 죽는다") == "ENGLISH ENGLISH ENGLISH"
+    assert ko("훅이 조용히 죽는다") == "ENGLISH ENGLISH ENGLISH"
 
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setattr(T, "_ask", lambda *_a: None)
-    assert T.ko_to_en("훅이 조용히 죽는다") == "ENGLISH ENGLISH ENGLISH"
+    assert ko("훅이 조용히 죽는다") == "ENGLISH ENGLISH ENGLISH"
 
 
 def test_a_response_that_lands_after_the_deadline_is_not_adopted(
@@ -215,7 +231,7 @@ def test_a_response_that_lands_after_the_deadline_is_not_adopted(
 
     # It was still cached: the work was done and the next turn should have it.
     monkeypatch.setattr(T, "_ask", lambda *_a: None)
-    assert T.ko_to_en("훅이 조용히 죽는다") == "EN"
+    assert ko("훅이 조용히 죽는다") == "EN"
 
 
 def test_the_deadline_is_checked_after_the_work_not_at_the_response(
@@ -238,7 +254,7 @@ def test_the_deadline_is_checked_after_the_work_not_at_the_response(
 
 def test_a_deadline_already_past_returns_the_input_unchanged() -> None:
     """The caller's budget wins. Its output still has to be assembled."""
-    assert T.ko_to_en("훅이 조용히 죽는다", deadline=0.0) == "훅이 조용히 죽는다"
+    assert ko("훅이 조용히 죽는다", 0.0) == "훅이 조용히 죽는다"
 
 
 def test_text_without_the_source_language_is_never_sent(
@@ -250,7 +266,7 @@ def test_text_without_the_source_language_is_never_sent(
     asked: list[list[str]] = []
     monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
 
-    assert T.translate(["pure ascii", "", "   "], T.KO_EN) == ["pure ascii", "", "   "]
+    assert T.translate(["pure ascii", "", "   "], T.KO_EN, soon()) == ["pure ascii", "", "   "]
     assert asked == [], "a request went out for text with no Korean in it"
 
 
@@ -264,27 +280,27 @@ def test_anything_that_raises_still_returns_the_input(
         raise RuntimeError("glossary is on fire")
 
     monkeypatch.setattr(T, "glossary", broken)
-    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN) == ["훅이 조용히 죽는다"]
+    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, soon()) == ["훅이 조용히 죽는다"]
 
 
 def test_a_failed_translation_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
     """Caching a failure would freeze the original in place permanently."""
     monkeypatch.setattr(T, "_ask", lambda *_a: None)
-    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN) == ["훅이 조용히 죽는다"]
+    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, soon()) == ["훅이 조용히 죽는다"]
 
     monkeypatch.setattr(T, "_ask", _rewrites_all_prose)
-    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN) == ["ENGLISH ENGLISH ENGLISH"]
+    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, soon()) == ["ENGLISH ENGLISH ENGLISH"]
 
 
 def test_the_cache_answers_without_a_second_request(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(T, "_ask", _rewrites_all_prose)
-    first = T.translate(["훅이 조용히 죽는다"], T.KO_EN)
+    first = T.translate(["훅이 조용히 죽는다"], T.KO_EN, soon())
 
     asked: list[list[str]] = []
     monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
-    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN) == first
+    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, soon()) == first
     assert asked == [], "a second request went out for text already cached"
 
 
@@ -298,7 +314,7 @@ def test_the_glossary_version_retires_the_cache(
     """
 
     monkeypatch.setattr(T, "_ask", _rewrites_all_prose)
-    T.translate(["훅이 조용히 죽는다"], T.KO_EN)
+    T.translate(["훅이 조용히 죽는다"], T.KO_EN, soon())
 
     monkeypatch.setattr(T, "glossary", lambda: ((), {}, "a-different-version"))
 
@@ -308,7 +324,7 @@ def test_the_glossary_version_retires_the_cache(
     asked: list[list[str]] = []
     monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
 
-    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN) == ["훅이 조용히 죽는다"]
+    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, soon()) == ["훅이 조용히 죽는다"]
     assert asked == [["훅이 조용히 죽는다"]], "the retired entry was served anyway"
 
 
@@ -348,3 +364,117 @@ def test_it_runs_as_a_process_and_korean_survives_the_pipe(tmp_path: Path) -> No
     assert done.returncode == 0, done.stderr
     # No key in that environment, so it fails open and echoes the input back.
     assert done.stdout.strip() == "훅이 조용히 죽는다"
+
+
+# --------------------------------------------------------------------------
+# The monthly limit. Counted by `translate` itself, so no caller can spend
+# another caller's month — the same shape as #18 and #19, in dollars.
+# --------------------------------------------------------------------------
+
+
+def test_a_spent_month_sends_nothing_but_the_cache_still_answers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(T, "_ask", _rewrites_all_prose)
+    assert ko("훅이 조용히 죽는다") == "ENGLISH ENGLISH ENGLISH"
+
+    T.charge(T.MONTHLY_USD)
+    asked: list[list[str]] = []
+    monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
+
+    assert ko("다른 문장이다") == "다른 문장이다"
+    assert asked == [], "a request went out past the monthly limit"
+    # Already paid for, so the limit does not take it back.
+    assert ko("훅이 조용히 죽는다") == "ENGLISH ENGLISH ENGLISH"
+
+
+def test_the_limit_is_read_like_the_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Absent means the default; unreadable means zero, never unlimited."""
+
+    envfile = tmp_path / ".env"
+    monkeypatch.setattr(T, "ENV", envfile)
+    assert T.limit() == T.MONTHLY_USD
+
+    monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "12.5")
+    assert T.limit() == 12.5
+
+    envfile.write_text("TRANSLATE_MONTHLY_USD=0\n", encoding="utf-8")
+    assert T.limit() == 0.0, "the file outranks the variable"
+
+    envfile.write_text("TRANSLATE_MONTHLY_USD=five dollars\n", encoding="utf-8")
+    assert T.limit() == 0.0
+
+
+def test_a_zero_limit_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("TRANSLATE_MONTHLY_USD", "0")
+    asked: list[list[str]] = []
+    monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
+
+    assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
+    assert asked == []
+
+
+def test_without_a_store_nothing_is_sent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A limit that cannot be counted is not being kept."""
+
+    asked: list[list[str]] = []
+    monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
+    monkeypatch.setattr(T, "_store", lambda: None)
+
+    assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
+    assert asked == []
+
+
+class _Answer:
+    def __init__(self, payload: dict) -> None:
+        self.payload = payload
+
+    def __enter__(self) -> "_Answer":
+        return self
+
+    def __exit__(self, *_a: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self.payload).encode("utf-8")
+
+
+def test_a_response_is_charged_from_its_usage(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Thinking tokens bill as output, so they count as output."""
+
+    payload = {
+        "candidates": [{"content": {"parts": [{"text": '["EN"]'}]}}],
+        "usageMetadata": {
+            "promptTokenCount": 1_000_000,
+            "candidatesTokenCount": 500_000,
+            "thoughtsTokenCount": 500_000,
+        },
+    }
+    monkeypatch.setattr(T.urllib.request, "urlopen", lambda *_a, **_k: _Answer(payload))
+
+    assert ko("훅이 조용히 죽는다") == "EN"
+    assert T.usage()["usd"] == pytest.approx(T.PRICE_IN + T.PRICE_OUT)
+
+
+def test_a_timeout_is_charged_and_a_refusal_is_not(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The server may have finished a request the client stopped waiting for."""
+
+    def refused(*_a: object, **_k: object) -> None:
+        raise urllib.error.URLError("connection refused")
+
+    monkeypatch.setattr(T.urllib.request, "urlopen", refused)
+    assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
+    assert T.usage()["usd"] == 0.0
+
+    def slow(*_a: object, **_k: object) -> None:
+        raise TimeoutError("read timed out")
+
+    monkeypatch.setattr(T.urllib.request, "urlopen", slow)
+    assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
+    assert T.usage()["usd"] > 0.0

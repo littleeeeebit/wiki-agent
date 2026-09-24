@@ -57,6 +57,7 @@ def check(
         findings += loud_emphasis(repo)
     findings += missing_hook_guards(wiki, loaded)
     findings += pipeline_imports(wiki)
+    findings += pipeline_surface(wiki)
 
     # --- 1. Broken links
     inbound: dict[str, set[str]] = {name: set() for name in names}
@@ -518,6 +519,81 @@ def pipeline_imports(wiki: Path = WIKI) -> list[tuple[str, str]]:
     return found
 
 
+def exported(init: Path) -> set[str] | None:
+    """The literal `__all__` of a pipeline's `__init__.py`, or `None` without one."""
+
+    try:
+        tree = ast.parse(init.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "__all__" for t in node.targets
+        ):
+            try:
+                return {str(name) for name in ast.literal_eval(node.value)}
+            except ValueError:
+                return None
+    return None
+
+
+def pipeline_surface(wiki: Path = WIKI) -> list[tuple[str, str]]:
+    """A `tool/` root module using a pipeline name its `__all__` does not export.
+
+    A pipeline that declares `__all__` has gathered its public entry point, and
+    everything else in it is free to change. A main that reached past the list
+    would break on that change, so the list is held here rather than in a
+    comment. Pipelines without one are not gathered yet and are not read.
+    Tests are exempt: proving a pipeline's insides is what they are for.
+    """
+
+    tool = wiki / "tool"
+    found = []
+    for name in PIPELINES:
+        public = exported(tool / name / "__init__.py")
+        if public is None:
+            continue
+        for path in sorted(tool.glob("*.py")):
+            if path.name.startswith("test_"):
+                continue
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, UnicodeDecodeError):
+                continue
+            bound: set[str] = set()   # names this file binds to the pipeline itself
+            used: list[tuple[int, str]] = []
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Import):
+                    for alias in node.names:
+                        target = alias.name.removeprefix("tool.")
+                        if target == name:
+                            bound.add(alias.asname or name)
+                        elif target.startswith(name + "."):
+                            used.append((node.lineno, target))
+                elif isinstance(node, ast.ImportFrom) and not node.level:
+                    module = node.module or ""
+                    if module == "tool":
+                        bound |= {a.asname or a.name for a in node.names if a.name == name}
+                        continue
+                    target = module.removeprefix("tool.")
+                    if target == name:
+                        used += [(node.lineno, f"{name}.{a.name}") for a in node.names
+                                 if a.name not in public]
+                    elif target.startswith(name + "."):
+                        used.append((node.lineno, target))
+            for node in ast.walk(tree):
+                if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                        and node.value.id in bound and node.attr not in public):
+                    used.append((node.lineno, f"{name}.{node.attr}"))
+            for line, target in sorted(set(used)):
+                found.append((
+                    "공개 진입점",
+                    f"`tool/{path.name}:{line}`: `{target}` 는 `{name}` 의 `__all__` 밖이다 — "
+                    f"`{name}` 은 `{', '.join(sorted(public))}` 로만 부른다",
+                ))
+    return found
+
+
 def tracked_markdown(root: Path) -> list[str]:
     """The `.md` this repository considers its own. No hand-written exclusions.
 
@@ -838,10 +914,13 @@ def main() -> int:
     kinds: dict[str, list[str]] = {}
     for kind, message in findings:
         kinds.setdefault(kind, []).append(message)
-    for kind in (
-        "훅 배선 드리프트", "훅 가드 누락", "파이프라인 경계", "페이지 형식 오류", "인코딩 미고정", "강조 과다", "끊어진 링크", "근거 없는 landmine", "낡은 서술",
+    order = (
+        "훅 배선 드리프트", "훅 가드 누락", "파이프라인 경계", "공개 진입점", "페이지 형식 오류", "인코딩 미고정", "강조 과다", "끊어진 링크", "근거 없는 landmine", "낡은 서술",
         "모순(슬롯)", "고아 페이지", "빠진 연결", "끊긴 줄바꿈",
-    ):
+    )
+    # A kind missing from `order` still turns the exit code red, so it has to
+    # be printed too — or the gate fails with nothing on screen to say why.
+    for kind in order + tuple(k for k in kinds if k not in order):
         if kind not in kinds:
             continue
         print(f"### {kind} — {len(kinds[kind])}건\n")

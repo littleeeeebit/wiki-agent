@@ -72,6 +72,12 @@ SEEN = "──"
 # the rest is already on disk.
 CAP = 4000
 
+# The translator has no deadline of its own; each caller brings one. A mirror
+# renders whole answers, and a 6.6k-character one measured 7.7s, so this is
+# long on purpose — it was 6s once, under the hooks' budget, and every long
+# answer came back English as if nothing were wrong (#19).
+SCREEN_SECONDS = 60.0
+
 
 def clock(record: dict) -> str:
     """`HH:MM` in the person's own zone, or `""`.
@@ -308,7 +314,9 @@ def translated(records: list[dict], host: str, translator=T.translate):
         i for i, (mark, _, _, _) in enumerate(parts) if mark not in (SELF, CODE)
     ]
     if wanted:
-        done = translator([parts[i][1] for i in wanted], T.EN_KO)
+        done = translator(
+            [parts[i][1] for i in wanted], T.EN_KO, time.monotonic() + SCREEN_SECONDS
+        )
         for i, text in zip(wanted, done):
             parts[i] = (parts[i][0], text, parts[i][2], parts[i][3])
     return parts

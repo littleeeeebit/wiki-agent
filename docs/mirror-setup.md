@@ -98,7 +98,7 @@ python tool/mirror.py --session ~/.claude/projects/C--Users-me-repo/<세션>.jso
 | 증상 | 볼 것 |
 | --- | --- |
 | 아무것도 안 뜬다 | 위쪽 드롭다운이 맞는 저장소를 가리키는가 |
-| 영어가 그대로 뜬다 | 번역이 실패한 것이다. `GEMINI_API_KEY` 가 있는가 |
+| 영어가 그대로 뜬다 | 번역이 실패한 것이다. `GEMINI_API_KEY` 가 있는가. `python tool/translate --usage` 로 이번 달 사용액이 한도(`TRANSLATE_MONTHLY_USD`, 기본 $5)에 닿았는지 본다 |
 | 남의 셀이 뜬다 | 터미널에서 `--session` 으로 파일을 지정한다 |
 | Codex 가 안 잡힌다 | 그 셀에서 한 번 말을 걸었는가. 롤아웃 파일은 첫 발화에 생긴다 |
 | 화면이 아예 안 뜬다 | `npm --prefix web run build` 를 안 돌렸을 수 있다 |

@@ -66,7 +66,7 @@ def localised(matched: list, deadline: float) -> list:
     return out
 
 
-def rendering(prompt: str, deadline: float | None = None) -> str:
+def rendering(prompt: str, deadline: float) -> str:
     """The English rendering of the utterance, or `""` if there is none.
 
     **This must run after `match_pages`, never before.** Triggers are Korean
@@ -83,7 +83,7 @@ def rendering(prompt: str, deadline: float | None = None) -> str:
         # double it in a context that already holds the original. Skipping
         # beats truncating: half a translation reads as a whole one.
         return ""
-    english = translate.ko_to_en(prompt, deadline)
+    english = translate.translate([prompt], translate.KO_EN, deadline)[0]
     if english == prompt:
         # Unchanged means the translation failed. Labelling the Korean as an
         # English rendering would be a lie the reader cannot check.

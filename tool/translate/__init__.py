@@ -17,6 +17,10 @@ before the request and put back after, and the response is rejected outright if
 a single placeholder came back missing, duplicated or renumbered. Asking a model
 to preserve something is a request; removing it from what the model can see is
 a guarantee.
+
+`__all__` is the whole contract. `lint.pipeline_surface` goes red when a module
+at the `tool/` root uses anything else, so a helper here can change without a
+caller elsewhere breaking over it.
 """
 
 from __future__ import annotations
@@ -33,6 +37,8 @@ import time
 import tomllib
 import urllib.request
 from pathlib import Path
+
+__all__ = ("translate", "usage", "glossary", "KO_EN", "EN_KO")
 
 HERE = Path(__file__).resolve().parents[1]  # `tool/`
 ROOT = HERE.parent
@@ -55,12 +61,14 @@ ENDPOINT = (
     f"/{MODEL}:generateContent"
 )
 
-# Ceiling for one request when the caller passes no deadline. Every hook caller
-# passes its own, so this only reaches the screens — the chat overlay and the
-# mirror — which render whole answers. It was 6s, under the hook budget, and a
-# 6.6k-character progress answer measured 7.7s: every long answer timed out
-# and the overlay showed the English as if nothing were wrong.
-TIMEOUT = 60.0
+# US dollars per million tokens for `MODEL`, from ai.google.dev's pricing page
+# on 2026-09-24. They move with `MODEL`: a new model under the old prices would
+# keep the monthly limit counting in the wrong currency.
+PRICE_IN = 0.25
+PRICE_OUT = 1.50
+
+# The monthly limit when neither `.env` nor the environment names one.
+MONTHLY_USD = 5.0
 
 # Part of the cache key. Bump it whenever SYSTEM or the request shape changes.
 # Without it the cache keeps serving text translated under a different contract,
@@ -229,8 +237,8 @@ def instruction(direction: str, fixed: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def api_key() -> str:
-    """The key to spend on one request, or `""` when there is none to spend.
+def setting(name: str) -> str | None:
+    """`name` from `ENV`, else from the environment, else `None`.
 
     The file beside the repository outranks the machine's environment, which
     is the reverse of what dotenv does by default. That default exists so a
@@ -247,12 +255,88 @@ def api_key() -> str:
 
     try:
         for line in ENV.read_text(encoding="utf-8").splitlines():
-            name, sep, value = line.partition("=")
-            if sep and name.strip() == "GEMINI_API_KEY":
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == name:
                 return value.strip().strip("\"'")
     except Exception:
         pass
-    return (os.environ.get("GEMINI_API_KEY") or "").strip()
+    value = os.environ.get(name)
+    return None if value is None else value.strip()
+
+
+def api_key() -> str:
+    """The key to spend on one request, or `""` when there is none to spend."""
+
+    return setting("GEMINI_API_KEY") or ""
+
+
+def limit() -> float:
+    """This month's ceiling in dollars. Unreadable means zero.
+
+    A limit that cannot be read is not a reason to spend without one. Zero
+    stops new requests and nothing else — the cache still answers, and the
+    screens show English, which is visible where an overrun is not.
+    """
+
+    raw = setting("TRANSLATE_MONTHLY_USD")
+    if not raw:
+        return MONTHLY_USD
+    try:
+        value = float(raw)
+    except ValueError:
+        return 0.0
+    return value if value >= 0 else 0.0
+
+
+def month() -> str:
+    return time.strftime("%Y-%m", time.gmtime())
+
+
+def spent(db: sqlite3.Connection) -> float:
+    row = db.execute("SELECT usd FROM spend WHERE month = ?", (month(),)).fetchone()
+    return float(row[0]) if row else 0.0
+
+
+def charge(usd: float) -> None:
+    """Add to this month's spend. Its own connection, because `_ask` has none."""
+
+    db = _store()
+    if db is None:
+        return
+    try:
+        db.execute(
+            "INSERT INTO spend VALUES (?, ?) "
+            "ON CONFLICT(month) DO UPDATE SET usd = usd + excluded.usd",
+            (month(), usd),
+        )
+        db.commit()
+    except Exception:
+        pass
+    finally:
+        db.close()
+
+
+def cost(metadata: dict) -> float:
+    tokens_in = int(metadata.get("promptTokenCount") or 0)
+    tokens_out = int(metadata.get("candidatesTokenCount") or 0) + int(
+        metadata.get("thoughtsTokenCount") or 0
+    )
+    return (tokens_in * PRICE_IN + tokens_out * PRICE_OUT) / 1_000_000
+
+
+def usage() -> dict:
+    """`{"month", "usd", "limit"}` for this month. `usd` is `None` when unreadable."""
+
+    db = _store()
+    usd = None
+    if db is not None:
+        try:
+            usd = spent(db)
+        except Exception:
+            pass
+        finally:
+            db.close()
+    return {"month": month(), "usd": usd, "limit": limit()}
 
 
 def _ask(system: str, batch: list[str], seconds: float) -> list[str] | None:
@@ -286,6 +370,16 @@ def _ask(system: str, batch: list[str], seconds: float) -> list[str] | None:
     try:
         with urllib.request.urlopen(request, timeout=seconds) as answer:
             parsed = json.loads(answer.read().decode("utf-8"))
+    except TimeoutError:
+        # The request reached the server and the server may well have finished
+        # and billed it. With no usage to read, every byte sent is counted as a
+        # token each way — more than it cost, never less.
+        charge(len(body) * (PRICE_IN + PRICE_OUT) / 1_000_000)
+        return None
+    except Exception:
+        return None  # refused or never connected: nothing was billed
+    try:
+        charge(cost(parsed.get("usageMetadata") or {}))
         parts = parsed["candidates"][0]["content"]["parts"]
         out = json.loads("".join(str(p.get("text") or "") for p in parts))
     except Exception:
@@ -302,6 +396,7 @@ def _store() -> sqlite3.Connection | None:
         # The UserPromptSubmit hook and the mirror translate at the same time.
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("CREATE TABLE IF NOT EXISTS shots (k TEXT PRIMARY KEY, v TEXT)")
+        db.execute("CREATE TABLE IF NOT EXISTS spend (month TEXT PRIMARY KEY, usd REAL)")
         return db
     except Exception:
         return None
@@ -327,14 +422,16 @@ def worth_translating(text: str, direction: str) -> bool:
     return bool(HANGUL.search(text)) if direction == KO_EN else bool(LATIN.search(text))
 
 
-def translate(
-    texts: list[str], direction: str = KO_EN, deadline: float | None = None
-) -> list[str]:
+def translate(texts: list[str], direction: str, deadline: float) -> list[str]:
     """Translate many strings in one request. Always returns len(texts) items.
 
     `deadline` is a `time.monotonic()` value — the moment the caller's own
     budget runs out. Everything not translated by then comes back as the
     original, which is the whole point: the caller's output still gets built.
+
+    There is no default. A default deadline is one budget shared by every
+    caller that did not pass its own, and the chat overlay starved under the
+    hooks' six seconds exactly that way (#19).
     """
 
     if not texts:
@@ -349,9 +446,7 @@ def translate(
         return list(texts)
 
 
-def _translate(
-    texts: list[str], direction: str, deadline: float | None
-) -> list[str]:
+def _translate(texts: list[str], direction: str, deadline: float) -> list[str]:
     keep, fixed, version = glossary()
     out = list(texts)
 
@@ -375,9 +470,16 @@ def _translate(
         except Exception:
             pass
 
+    # After the cache, never before it: what is cached was paid for already.
+    # No store means no count, and a limit nobody can read back is not being
+    # kept — so no request either.
+    # ponytail: read-then-send, so processes racing at the limit each send one.
+    if wanted and (db is None or spent(db) >= limit()):
+        wanted = []
+
     if wanted:
         masked: list[tuple[str, list[str]]] = [protect(texts[i], keep) for i in wanted]
-        seconds = TIMEOUT if deadline is None else max(0.0, deadline - time.monotonic())
+        seconds = max(0.0, deadline - time.monotonic())
         answer = _ask(instruction(direction, fixed), [m for m, _ in masked], seconds)
         if answer is not None:
             fresh: list[tuple[str, str]] = []
@@ -406,17 +508,9 @@ def _translate(
     # earlier point leaves a stretch where the budget can quietly run out and
     # the caller still gets handed a translation it no longer has room for.
     # The work is kept: it is cached, so the next turn has it for nothing.
-    if deadline is not None and time.monotonic() > deadline:
+    if time.monotonic() > deadline:
         return list(texts)
     return out
-
-
-def ko_to_en(text: str, deadline: float | None = None) -> str:
-    return translate([text], KO_EN, deadline)[0]
-
-
-def en_to_ko(text: str, deadline: float | None = None) -> str:
-    return translate([text], EN_KO, deadline)[0]
 
 
 # --------------------------------------------------------------------------
@@ -631,8 +725,14 @@ def main() -> int:
     parser.add_argument("--review", type=int, default=0, metavar="N",
                         help="표본 N건을 역번역해 사람이 읽을 파일에 적는다")
     parser.add_argument("--en-to-ko", action="store_true")
+    parser.add_argument("--usage", action="store_true", help="이번 달 번역 사용액과 한도")
     args = parser.parse_args()
 
+    if args.usage:
+        now = usage()
+        usd = "읽을 수 없다" if now["usd"] is None else f"${now['usd']:.4f}"
+        print(f"{now['month']} 사용 {usd} / 한도 ${now['limit']:.2f}")
+        return 0
     if args.check:
         return check(args.paths, args.manifest, args.source_root, args.review)
 
