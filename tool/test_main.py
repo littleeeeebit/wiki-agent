@@ -789,3 +789,20 @@ def test_a_screen_that_missed_a_switch_writes_nothing_into_the_new_project(tmp_p
         assert web.get("/api/worktrees", headers={"X-Project": "b"}).json()["rows"] == []
         # The switch itself names its project in the body.
         assert web.post("/api/config/wiki", json={"repo": "a"}, headers={"X-Project": "b"}).status_code == 200
+
+
+def test_a_stale_screen_cannot_switch_or_configure(tmp_path):
+    """The model change travels on the same route as the switch. Left out of
+    the check, a screen still showing A changed its focus's model and the
+    server went back to A without a word."""
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()   # the other window
+        stale = web.post("/api/config/wiki", json={"repo": "a", "model": "haiku", "effort": ""},
+                         headers={"X-Project": "a"})
+        assert stale.status_code == 409 and chat.project() == "b"
+        assert web.post("/api/config/wiki", json={"repo": "a"}, headers={"X-Project": "b"}).status_code == 200
+        assert chat.project() == "a"

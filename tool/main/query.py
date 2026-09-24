@@ -319,6 +319,9 @@ def configure(cid: str, body: Config) -> dict:
             temporary.write_text(json.dumps(body.repo, ensure_ascii=False) + "\n", encoding="utf-8")
             temporary.replace(path)
             _project = body.repo
+            # This request moved the project itself; the rest of it works in
+            # the new one. Its screen follows from the answer.
+            claimed.set(body.repo)
         else:
             cfg = config(cid)
         moved = not switched and body.model.startswith("codex:") != cfg["model"].startswith("codex:")

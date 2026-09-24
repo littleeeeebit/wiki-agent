@@ -79,11 +79,12 @@ async def only_this_screen(request: Request, call_next):
     if urlsplit(f"//{host}").hostname not in LOCAL or (origin is not None and origin != f"http://{host}"):
         return JSONResponse({"detail": "이 화면의 요청이 아니다"}, status_code=403)
     # Which project the screen shows. `query.project()` refuses a request from
-    # a screen that shows another. The switch itself names the new project in
-    # its body and is left out.
+    # a screen that shows another — a switch included: a screen that shows the
+    # current project switches as before, and a stale one must not act at all.
+    # Leaving `/api/config/*` out let a stale screen's model change switch the
+    # server back to the project it showed.
     screen = request.headers.get("x-project")
-    switching = request.url.path.startswith("/api/config/")
-    token = query.claimed.set(unquote(screen) if screen and not switching else None)
+    token = query.claimed.set(unquote(screen) if screen else None)
     try:
         return await call_next(request)
     finally:
