@@ -60,20 +60,33 @@ export default function App() {
   const shown = useRef('')
   const [making, setMaking] = useState(false)
 
+  /** The screen moves to the server's project `now`, however it learned of it
+   *  — its own switch, or a list showing that another window switched. The
+   *  old project's worktrees and selection go at that moment, not when the
+   *  new list arrives: until then, or if it never does, they stood under the
+   *  new name and could be picked. The channels are read again after. */
+  const follow = useCallback((now: string) => {
+    listing.current++
+    setRows([])
+    setSelected('')
+    setChannels((list) => list.map((c) => ({ ...c, repo: now })))
+    return api.getChannels().then(setChannels)
+  }, [])
+
   const refresh = useCallback(() => {
     const mine = ++listing.current
     api.getWorktrees()
       .then(({ project, rows }) => {
         if (mine !== listing.current) return
         if (project !== shown.current) {
-          api.getChannels().then(setChannels).catch(() => {})
+          follow(project).catch(() => {})
           return
         }
         setRows(rows)
         setSelected((path) => (rows.some((r) => r.path === path) ? path : ''))
       })
       .catch((err) => mine === listing.current && setFault(String(err)))
-  }, [])
+  }, [follow])
 
   useEffect(() => {
     Promise.all([api.getChannels(), api.getSwitch()])
@@ -107,21 +120,14 @@ export default function App() {
     setFault('')
     try {
       const { repo: now } = await api.setConfig(wiki.id, { repo: next, model: wiki.model, effort: wiki.effort })
-      // The old project's worktrees go the moment the switch is made, not when
-      // the new list arrives — until then, or if it never does, they stood
-      // under the new project's name and could be picked.
-      listing.current++
-      setRows([])
-      setSelected('')
-      // The server has switched; the screen follows now, not after the next
-      // request — if that one failed, the picker stayed on the old project
-      // while every API answered for the new one.
-      setChannels((list) => list.map((c) => ({ ...c, repo: now })))
-      setChannels(await api.getChannels())
+      // The server has switched; the screen follows from this answer, not
+      // from the next request — if that one failed, the picker stayed on the
+      // old project while every API answered for the new one.
+      await follow(now)
     } catch (err) {
       setFault(String(err))
     }
-  }, [channels])
+  }, [channels, follow])
 
   const flip = useCallback(async (on: boolean) => {
     try {
