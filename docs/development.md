@@ -51,7 +51,7 @@ agents = ["claude", "codex"]
 review_dir = "artifacts/review"
 gate_cmd = "python -m pytest tool"
 live_cmd = "open a new Claude Code session and a new Codex session, and confirm the hooks actually run"
-server_stop = "Ctrl+C in the terminal that ran tool/chat.cmd (tool/chat.command on macOS and Linux)"
+server_stop = "close the wiki-agent window (tool/app.cmd), or Ctrl+C in the terminal that ran python tool/main"
 scratch_dirs = "artifacts/"
 ```
 

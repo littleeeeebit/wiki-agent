@@ -1,11 +1,11 @@
-# 팀원 PC에서 위키 채팅 시작하기
+# 팀원 PC에서 wiki-agent 시작하기
 
 각자 자기 PC에 내려받고, 자기 Codex CLI 또는 Claude Code 계정으로 실행한다.
 작성자의 PC·CLI·계정에 접속하는 방식이 아니다. 서버는 실행한 PC에서만 접속할 수 있다.
 
 ## 1. 먼저 준비하기
 
-- Git, Python 3.11 이상, Node.js 22.12 이상을 설치한다.
+- Git, Python 3.11 이상, Node.js 22.12 이상, 창을 빌드할 Rust(<https://rustup.rs>)를 설치한다.
 - 이 저장소와 질문할 프로젝트를 `git clone`으로 내려받는다. GitHub 저장소가 비공개라면 접근 권한이 필요하다.
 - 사용할 CLI만 설치한다. 두 가지를 모두 설치할 필요는 없다.
 
@@ -56,8 +56,8 @@ python tool/setup_chat.py install --agent codex --workspace "D:/팀 작업/프�
 
 공백과 한글을 사용할 수 있다. 그 폴더 바로 아래에서 `.git`이 있는 프로젝트들을 찾는다.
 위키는 별도 위치에 있어도 목록에 표시된다. 최초 실행에서는 위키가 선택되고 이후에는
-마지막 선택을 복원한다. ‘공통 프로젝트’에서 고른 저장소는 다섯 채널에 함께 적용된다.
-대화와 기록은 프로젝트·채널별로 보존된다.
+마지막 선택을 복원한다. 왼쪽 레일의 ‘프로젝트’에서 고른 저장소가 위키 질의의 다섯 초점과
+작업트리 목록에 함께 적용된다. 대화와 기록은 프로젝트·초점별로 보존된다.
 
 ## 3. 실행하기
 
@@ -70,30 +70,33 @@ python tool/setup_chat.py install --agent codex --workspace "D:/팀 작업/프�
 
 macOS·Linux에서는 `.venv/bin/python tool/graph.py`를 쓴다.
 
+창은 Tauri 로 싼다. 처음 한 번 빌드하려면 Rust 가 있어야 한다(<https://rustup.rs>).
+
 Windows:
 
 ```powershell
-.\tool\chat.cmd
+.\tool\app.cmd
 ```
 
 macOS·Linux (Finder에서 더블클릭해도 된다):
 
 ```bash
-tool/chat.command
+tool/app.command
 ```
 
-브라우저에서 `http://127.0.0.1:8787`을 연다. 종료는 실행한 터미널에서 `Ctrl+C`다.
+처음에는 창을 빌드하느라 몇 분 걸린다. 창이 Python 서버를 빈 포트에 직접 띄우고, 창을
+닫으면 서버와 에이전트·터미널도 같이 내려간다. 서버가 뜨지 않으면 창에 이유와
+`raw/main.err.log` 의 끝이 나온다.
+
+창 없이 브라우저로 쓰려면 `python tool/main` 을 돌리고 `http://127.0.0.1:8787` 을 연다.
+터미널만 빠지고 나머지는 같다. 종료는 `Ctrl+C` 다.
 Codex만 설치한 경우 설치 시 조회한 실제 모델이 기본 선택된다. 둘 다 설치하면 Claude가 기본이다.
 다른 CLI를 화면에서 선택하려면 그 CLI도 설치·로그인되어 있어야 한다.
 
-한 번만 다른 프로젝트 폴더나 포트를 쓰려면 다음처럼 실행한다.
-
-```powershell
-.\tool\chat.cmd --workspace "D:/다른 프로젝트들" --port 9090
-```
+브라우저로 쓸 때 한 번만 다른 프로젝트 폴더나 포트를 쓰려면 다음처럼 실행한다.
 
 ```bash
-tool/chat.command --workspace "~/다른 프로젝트들" --port 9090
+python tool/main --workspace "D:/다른 프로젝트들" --port 9090
 ```
 
 ## 로그인 확인·계정 바꾸기

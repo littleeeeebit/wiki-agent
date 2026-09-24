@@ -4,8 +4,8 @@ import { renderAll } from '@/lib/api'
 /** The Korean overlay over an English answer.
  *
  *  The agent writes English and the person reads Korean. This is the second
- *  half of that, on the web side — the mirror is the same idea over a session
- *  log, and it settled the two rules this file has to keep.
+ *  half of that. The mirror that once did the same over a session log settled
+ *  the two rules this file has to keep.
  *
  *  What is never translated: anything the person typed. Not decided by
  *  language — the user writes Korean and English both — but by who wrote it.

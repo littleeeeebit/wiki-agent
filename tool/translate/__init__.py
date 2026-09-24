@@ -376,7 +376,7 @@ def _ask(system: str, batch: list[str], seconds: float) -> list[str] | None:
         headers={"Content-Type": "application/json", "x-goog-api-key": key},
     )
     # Written before the request, not after. A charge recorded after the
-    # answer could fail on a lock — the hook and the mirror share this file —
+    # answer could fail on a lock — the hook and the screen share this file —
     # and the money would be spent with nothing on the books; every later
     # request would then be judged against a month that looked cheaper than
     # it was. Every byte sent counts as a token each way, which is more than a
@@ -426,7 +426,7 @@ def _store() -> sqlite3.Connection | None:
     try:
         CACHE.parent.mkdir(parents=True, exist_ok=True)
         db = sqlite3.connect(CACHE, timeout=2.0)
-        # The UserPromptSubmit hook and the mirror translate at the same time.
+        # The UserPromptSubmit hook and the screen's overlay translate at the same time.
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("CREATE TABLE IF NOT EXISTS shots (k TEXT PRIMARY KEY, v TEXT)")
         db.execute("CREATE TABLE IF NOT EXISTS spend (month TEXT PRIMARY KEY, usd REAL)")

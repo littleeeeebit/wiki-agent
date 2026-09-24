@@ -56,8 +56,8 @@ Rust 는 세 가지만 한다.
 - 터미널. `portable-pty` 로 셸을 띄우고 `pty_open`·`pty_write`·`pty_resize`·`pty_close`
   명령과 `pty://<id>` 이벤트로 xterm.js 와 잇는다. Python 은 터미널을 모른다
 
-실행은 `tool/app.cmd`(macOS·Linux 는 `tool/app.command`)다. `cargo run --release` 라 처음
-한 번만 오래 걸린다. 브라우저로 `python tool/main` 에 붙으면 터미널만 빠지고 나머지는 같다.
+실행은 `tool/app.cmd`(macOS·Linux 는 `tool/app.command`)다. 바뀐 것이 있으면
+`cargo build --release` 하고 창을 띄운 뒤 콘솔은 놓는다. 처음 한 번만 몇 분 걸린다. 브라우저로 `python tool/main` 에 붙으면 터미널만 빠지고 나머지는 같다.
 
 ### 화면
 
@@ -133,6 +133,8 @@ Rust 는 세 가지만 한다.
 | Codex 읽기 세션을 `app-server` 로 | 5단계가 여기로 미뤘다. 읽기 세션의 `exec` 는 쉬운 설명의 격리 플래그(`--ephemeral`, `--ignore-user-config`, 도구 끄기)를 쓰고, `app-server` 에서 같은 격리를 찾는 일은 화면과 관계없다. 따로 한다 |
 | 설치 파일, Python 동봉, 코드 서명 | 사용자와 정한 범위 밖 |
 | 코디네이터·리뷰 셀 | 개요 그대로 |
+| `workspace.sessions` 의 `claude_session`·`codex_session`·`FINDERS` | 미러가 유일한 호출자였다. 그 테스트가 `checkouts` 도 따르는 소유 판정을 재고 있어, 지우는 일은 테스트를 옮기는 일과 같이 따로 한다 |
+| 작업 기록에 승인 남기기 | 기록은 턴의 도구 줄까지다. 다시 열면 무엇을 허용했는지는 도구 줄로만 보인다 |
 
 ## 순서
 
@@ -144,6 +146,27 @@ Rust 는 세 가지만 한다.
 4. 화면 — `design-pass` 1~5
 5. 지우기와 문서
 
+## 화면 순서
+
+`design-pass` 다섯 단계. 값은 [`DESIGN.md`](../../DESIGN.md) 에 있다.
+
+| # | 한 것 |
+| --- | --- |
+| 1 | 한 줄에서 네 영역. `DESIGN.md` 를 미러의 것에서 이 창의 것으로 다시 썼다 |
+| 2 | 두 머리글 아래 끝이 87/58px 로 어긋났다 → 둘 다 두 줄, 87px. 960px 에서 147/128px 로 접혔다 → 모델 고르기 이름표를 화면 읽기 전용으로, 폭을 줄였다. 가로 스크롤 없음. 버튼 높이 27/28 → 28 하나. 누르는 것은 전부 눌러 봤다 — 만들기, 초점, 모델, → 작업, 허용, 인용 열기, 지도, 번역, 테마 |
+| 3 | 글자 조합 19 → 7 단계. 쓰임이 겹치지 않는다 |
+| 4 | 후보 셋의 대비를 재고 사용자에게 물었다. 파랑 + 승인만 호박색(`wait`) |
+| 5 | 채울 자리가 없었다. 질의 면의 빈 곳은 대화가 자라는 자리이고, 면마다 빈 상태 문장이 있다 |
+
 ## 검증
 
-채운다.
+| 확인 | 결과 |
+| --- | --- |
+| `pytest tool/` | 282 통과. 미러 테스트 25개가 빠지고, `test_main.py` 에 새 테스트 여섯 |
+| 새 테스트가 무엇을 보나 | 출처 검사, 꺼진 번역 스위치, 작업트리 목록 밖 경로, 승인의 `session_id`, 초안의 인용 중복을 각각 지우면 빨강. 파이프 테스트는 고치기 전 코드에서 20초 제한으로 빨강 |
+| `python tool/lint.py --check` | 종료 0. `tool/main/` 의 `__all__` 밖 호출과 파이프라인의 `main` import 를 심은 테스트가 고치기 전에는 초록이었다 |
+| `test_lint`·`test_apply`·`test_inject`·`test_declared_continuation`·`test_repo_lint`·`test_trajectory`, `graph.py`, `ruff`, `npm run build` | 통과 |
+| `python tool/main --check` | 실제 Claude 로 effort 를 바꿔도 대화가 이어진다 |
+| 브라우저 전 과정 | 작업트리 만들기 → 위키 질의(haiku) → 답의 인용 열기 → "→ 작업" 초안 → 에이전트(haiku)가 쓰기를 물음 → 허용 → 파일이 작업트리에만 생김, 원본에는 없음 → 에이전트 답이 한국어로 |
+| Tauri 창 | 사이드카가 빈 포트에 뜨고 창이 연다. 터미널에 PowerShell 7 이 작업트리에서 열리고 입력·출력·한글이 오간다. 창을 닫으면 서버와 셸 둘이 모두 내려간다. 앱을 강제로 죽여도 서버가 내려간다 |
+| 창에서 찾은 것 둘 | 사이드카가 stdin 파이프를 스레드에서 읽는 동안 Windows 의 `CreateProcess` 가 막혀 `git` 을 부르는 모든 경로가 멈췄다. 원격 출처에서는 앱 매니페스트에 없는 명령을 ACL 이 막아 `pty_open` 이 거절됐다. 둘 다 고쳤다 |

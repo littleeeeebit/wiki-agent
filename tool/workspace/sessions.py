@@ -1,11 +1,12 @@
 """sessions — which session log belongs to which checkout.
 
-Both hosts write one log per cell, and three things here need to find one: the
-census counting what went wrong, the transcript feeding a retro, and the mirror
-tailing a cell that is running right now. That last one is a live screen, and
-it was importing `census` — the report generator — to learn where a log lives.
-This module is that knowledge standing on its own, so the screen and the report
-share only the thing they actually share.
+Both hosts write one log per cell, and two things here need to find one: the
+census counting what went wrong and the transcript feeding a retro. A third,
+the Korean mirror tailing a live cell, was importing `census` — the report
+generator — to learn where a log lives; this module is that knowledge standing
+on its own. The mirror is gone since phase 6; `claude_session` and
+`codex_session` stay because their tests pin the ownership rules `checkouts`
+also follows.
 
 **A checkout is not a repository.** `git worktree` gives one repository
 several, and on this machine most of them are Orca's, under
@@ -283,8 +284,8 @@ def claude_session(project: Path) -> Path | None:
     """The newest log that belongs to this checkout, not the newest in the folder.
 
     Newest first and stop at the first one that belongs, rather than sorting
-    the whole directory by ownership. The mirror asks this once a second for
-    as long as it is open, and the newest file is the answer almost every
+    the whole directory by ownership. The mirror asked this once a second for
+    as long as it was open, and the newest file is the answer almost every
     time; reading all 81 heads in the largest directory here cost 24ms of
     every second to learn what the first read already said.
     """
