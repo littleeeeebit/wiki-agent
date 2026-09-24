@@ -29,10 +29,10 @@ def client() -> TestClient:
 def no_machine_settings(tmp_path):
     with patch.object(chat_channels, "LOCAL", {}), patch.object(chat, "LOGS", tmp_path), \
          patch.object(chat, "_project", None), patch.object(chat, "_config", {}), \
-         patch.object(chat, "_sessions", {}), patch.object(chat, "_busy", set()), \
+         patch.object(chat, "_sessions", {}), patch.object(chat, "_busy", {}), \
          patch.object(main_app, "SWITCH", tmp_path / "main.json"), \
          patch.object(work, "LOGS", tmp_path / "work"), \
-         patch.object(work, "_sessions", {}), patch.object(work, "_busy", set()):
+         patch.object(work, "_sessions", {}), patch.object(work, "_busy", {}):
         yield
 
 
@@ -165,7 +165,7 @@ def test_provider_switch_and_config_validation(tmp_path):
         # A Claude name typed by hand goes through; a shell-shaped one does not.
         assert web.post("/api/config/wiki", json={"repo": "sample", "model": "claude-opus-5-5"}).status_code == 200
         assert web.post("/api/config/wiki", json={"repo": "sample", "model": "opus; rm -rf"}).status_code == 400
-        with patch.object(chat, "_busy", {"wiki"}):
+        with patch.object(chat, "_busy", {"wiki": object()}):
             assert web.post("/api/reset/wiki").status_code == 409
 
 
@@ -188,7 +188,7 @@ def test_project_shared_sessions_and_records_isolated(tmp_path):
         assert {c["repo"] for c in web.get("/api/channels").json()} == {"a"}
         assert chat.session("retro") is a and a.session_id == "a-context"
         assert [r["text"] for r in web.get("/api/log/retro").json()] == ["a 회고"]
-        with patch.object(chat, "_busy", {"diagnose"}):
+        with patch.object(chat, "_busy", {"diagnose": object()}):
             assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
         assert chat.project() == "a"
         chat._project = None
@@ -526,7 +526,78 @@ def test_the_project_stays_while_an_agent_runs(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=repos.get):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
-        with patch.object(work, "_busy", {str(repos["a"] / "x")}):
+        with patch.object(work, "_busy", {str(repos["a"] / "x"): object()}):
             assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
             assert web.post("/api/config/wiki", json={"repo": "a", "effort": "high"}).status_code == 200
         web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
+
+
+def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_path):
+    """Between accepting a request and the first byte of its body, the project
+    switched away and the worktree could be removed. Held from acceptance, and
+    released when the body is dropped unstarted."""
+
+    import gc
+
+    for name in ("a", "b"):
+        (tmp_path / name).mkdir()
+    repos = {name: _repo(tmp_path / name) for name in ("a", "b")}
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
+         patch.object(work, "ChatSession", Agent):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        waiting = work.say(work.Order(path=path, text="x"))
+        assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+        assert web.post("/api/worktrees/remove", json={"path": path}).status_code == 409
+        assert web.post("/api/work/reset", json={"path": path}).status_code == 409
+        asking = chat.say("progress", chat.Say(text="x"))
+        assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+        del waiting, asking
+        gc.collect()
+        assert not work._busy and not chat._busy
+        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
+
+
+def test_a_late_release_does_not_free_the_next_hold():
+    """The body's `finally` and its collection both release. The second one
+    can come after a new request took the key, and must leave it held."""
+
+    import threading
+
+    busy, lock = {}, threading.Lock()
+    first = chat.hold(busy, lock, "k", "busy")
+    first()
+    second = chat.hold(busy, lock, "k", "busy")
+    first()
+    assert "k" in busy
+    second()
+    assert not busy
+
+
+def test_a_collected_body_releases_even_inside_the_lock():
+    """The release rides on garbage collection, and collection runs wherever
+    an allocation triggers it — including inside `with _lock:` on the same
+    thread. With a plain lock that release waited on itself: a flaky hang in
+    `configure` that only showed up under a mutation run."""
+
+    import gc
+    import threading
+
+    def body():
+        yield ""
+
+    def collect_inside_the_lock():
+        for module in (chat, work):
+            release = chat.hold(module._busy, module._lock, "k", "busy")
+            events = body()
+            response = chat.held(events, release)
+            with module._lock:
+                del response, events
+                gc.collect()
+            assert "k" not in module._busy
+
+    worker = threading.Thread(target=collect_inside_the_lock, daemon=True)
+    worker.start()
+    worker.join(timeout=10)
+    assert not worker.is_alive(), "해제가 자기 잠금을 기다린다"

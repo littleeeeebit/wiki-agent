@@ -12,6 +12,7 @@ import json
 import re
 import threading
 import time
+import weakref
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -33,8 +34,10 @@ MAX_REPLAY = 200  # How many past turns the screen restores
 router = APIRouter()
 
 _sessions: dict[tuple[str, str], ChatSession] = {}
-_lock = threading.Lock()
-_busy: set[str] = set()
+# Reentrant: a stream's release can run from garbage collection while this
+# very thread is inside `with _lock:`, and a plain lock waited on itself.
+_lock = threading.RLock()
+_busy: dict[str, object] = {}   # focus -> the hold of the answer running in it
 
 
 def close_all() -> None:
@@ -172,6 +175,36 @@ def streaming(events) -> StreamingResponse:
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+def hold(busy: dict, lock: threading.Lock, key: str, refused: str):
+    """Take `key` for a stream from the moment the request is accepted, or 409.
+
+    Returns the release; call it from the stream's `finally` and pass it to
+    `held`. Two ways out, and both are covered. A body that runs releases in
+    its `finally`. A body that never starts — the client gone before the first
+    byte — runs no `finally`, so the release also rides on the body being
+    collected. Taken only inside the body, the key was free between accepting
+    and starting, and a project switch or a removal walked through that gap.
+    The token makes a second release, or a late one after a new hold, a no-op.
+    """
+
+    with lock:
+        if key in busy:
+            raise HTTPException(409, refused)
+        token = busy[key] = object()
+
+    def release() -> None:
+        with lock:
+            if busy.get(key) is token:
+                del busy[key]
+
+    return release
+
+
+def held(events, release) -> StreamingResponse:
+    weakref.finalize(events, release)
+    return streaming(events)
+
+
 # -- API ------------------------------------------------------------------
 
 class Say(BaseModel):
@@ -303,20 +336,10 @@ def say(cid: str, body: Say) -> StreamingResponse:
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "빈 발화")
-    with _lock:
-        if cid in _busy:
-            raise HTTPException(409, "이 초점의 답변을 생성하고 있습니다")
-        cfg = dict(config(cid))
+    release = hold(_busy, _lock, cid, "이 초점의 답변을 생성하고 있습니다")
+    cfg = dict(config(cid))
 
     def stream():
-        # Held from inside the body, as `work.say` does: a body that never
-        # starts runs no `finally`, and a hold taken before it stayed for good.
-        with _lock:
-            taken = cid not in _busy
-            _busy.add(cid)
-        if not taken:
-            yield sse({"kind": "error", "text": "이 초점의 답변을 생성하고 있습니다"})
-            return
         answer: list[str] = []
         failed = ""
         simple = ""
@@ -386,10 +409,9 @@ def say(cid: str, body: Say) -> StreamingResponse:
                              simple_text=simple, simple_error=simple_error, simple_meta=simple_meta,
                              provider="codex" if cfg["model"].startswith("codex:") else "claude", **metadata)
             finally:
-                with _lock:
-                    _busy.discard(cid)
+                release()
 
-    return streaming(stream())
+    return held(stream(), release)
 
 
 # -- Trigger hits -----------------------------------------------------------

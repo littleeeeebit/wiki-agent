@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from agent import ChatSession
 from workspace import create, remove, worktrees
 
-from .query import ROOT, current_repo, resumable, sse, streaming
+from .query import ROOT, current_repo, held, hold, resumable, sse
 
 LOGS = ROOT / "raw" / "work"
 MAX_REPLAY = 200
@@ -28,8 +28,10 @@ MAX_REPLAY = 200
 router = APIRouter()
 
 _sessions: dict[str, ChatSession] = {}    # worktree path -> its session
-_lock = threading.Lock()
-_busy: set[str] = set()
+# Reentrant: a stream's release can run from garbage collection while this
+# very thread is inside `with _lock:`, and a plain lock waited on itself.
+_lock = threading.RLock()
+_busy: dict[str, object] = {}   # worktree path -> the hold of its running turn
 
 
 def close_all() -> None:
@@ -223,22 +225,11 @@ def say(body: Order) -> StreamingResponse:
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "빈 지시")
-    with _lock:
-        if body.path in _busy:
-            raise HTTPException(409, "이 작업트리의 에이전트가 아직 돌고 있다")
+    # Held from acceptance: from here the project cannot switch away and the
+    # worktree cannot be removed or reset under this instruction.
+    release = hold(_busy, _lock, body.path, "이 작업트리의 에이전트가 아직 돌고 있다")
 
     def stream():
-        # The worktree is held from inside the body, never before it. A body
-        # that never starts — the client gone right after the headers — runs
-        # no `finally`, and a hold taken outside one stayed for good: every
-        # later instruction, reset and removal of that worktree got 409.
-        with _lock:
-            taken = body.path not in _busy
-            _busy.add(body.path)
-        if not taken:
-            yield sse({"kind": "error", "text": "이 작업트리의 에이전트가 아직 돌고 있다", "meta": {},
-                       "session_id": "", "parent_id": None})
-            return
         final, failed, tools, meta, chat = "", "", [], {}, None
         # ponytail: the turn lives as long as this response. A reloaded window
         # cuts it; a per-session event buffer the stream tails would let it
@@ -267,10 +258,9 @@ def say(body: Order) -> StreamingResponse:
                     remember(path, "assistant", final, error=failed, tools=tools,
                              provider="codex" if chat.is_codex else "claude", **meta)
             finally:
-                with _lock:
-                    _busy.discard(body.path)
+                release()
 
-    return streaming(stream())
+    return held(stream(), release)
 
 
 @router.post("/api/work/answer")

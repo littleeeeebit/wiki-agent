@@ -42,6 +42,10 @@ let seq = 0
 export function useWork() {
   const [turns, setTurns] = useState<Record<string, Turn[]>>({})
   const loading = useRef(new Set<string>())
+  // Which worktree a path names. Removing a worktree and making one with the
+  // same task name gives the same path, so a record fetched for the old one
+  // and landing after `forget` would otherwise fill the new one's pane.
+  const lives = useRef(new Map<string, number>())
 
   const patch = useCallback((path: string, key: number, fn: (t: Turn) => Turn) => {
     setTurns((all) => {
@@ -57,8 +61,10 @@ export function useWork() {
   const load = useCallback((path: string) => {
     if (!path || loading.current.has(path)) return
     loading.current.add(path)
+    const life = lives.current.get(path) ?? 0
     api.workLog(path)
       .then(({ rows }) => {
+        if ((lives.current.get(path) ?? 0) !== life) return
         const restored: Turn[] = rows.map((r) => ({
           key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
           steps: (r.tools ?? []).map((text) => ({ kind: 'tool' as const, text })),
@@ -66,7 +72,9 @@ export function useWork() {
         // A turn sent before the record came back stays after it.
         setTurns((all) => ({ ...all, [path]: [...restored, ...(all[path] ?? [])] }))
       })
-      .catch(() => loading.current.delete(path))
+      .catch(() => {
+        if ((lives.current.get(path) ?? 0) === life) loading.current.delete(path)
+      })
   }, [])
 
   const send = useCallback(
@@ -127,6 +135,7 @@ export function useWork() {
   )
 
   const forget = useCallback((path: string) => {
+    lives.current.set(path, (lives.current.get(path) ?? 0) + 1)
     loading.current.delete(path)
     setTurns(({ [path]: _gone, ...rest }) => rest)
   }, [])
