@@ -459,6 +459,30 @@ def missing_hook_guards(wiki: Path, loaded: dict) -> list[tuple[str, str]]:
 PIPELINES = ("wiki", "translate", "agent", "workspace")
 
 
+def reached(node: ast.AST, depth: int) -> list[str]:
+    """The modules an import reaches, named as if from inside `tool/`.
+
+    The same module has three spellings. `translate`, `tool.translate` —
+    importable whenever the repository root is on the path, which it is under
+    pytest — and `..translate` from a file one folder down. Reading only the
+    first let the other two through a green gate. `depth` is how many folders
+    below `tool/` the file sits; a relative import that climbs that many or
+    more lands on the root.
+    """
+
+    if isinstance(node, ast.Import):
+        names = [alias.name for alias in node.names]
+    elif isinstance(node, ast.ImportFrom):
+        if node.level and node.level <= depth:
+            return []  # still inside this pipeline
+        # `from tool import x` and `from .. import x` name modules in the list.
+        names = ([node.module] if node.module and node.module != "tool"
+                 else [alias.name for alias in node.names])
+    else:
+        return []
+    return [name.removeprefix("tool.") for name in names]
+
+
 def pipeline_imports(wiki: Path = WIKI) -> list[tuple[str, str]]:
     """A pipeline folder importing another pipeline, or a module at the `tool/` root.
 
@@ -480,14 +504,9 @@ def pipeline_imports(wiki: Path = WIKI) -> list[tuple[str, str]]:
                 tree = ast.parse(path.read_text(encoding="utf-8"))
             except (OSError, SyntaxError, UnicodeDecodeError):
                 continue
+            depth = len(path.relative_to(tool).parts) - 1
             for node in ast.walk(tree):
-                if isinstance(node, ast.Import):
-                    targets = [alias.name for alias in node.names]
-                elif isinstance(node, ast.ImportFrom) and not node.level:
-                    targets = [node.module or ""]
-                else:
-                    continue
-                for target in targets:
+                for target in reached(node, depth):
                     top = target.split(".")[0]
                     if top not in allowed and (top in PIPELINES or top == "common" or top in roots):
                         where = path.relative_to(tool).as_posix()

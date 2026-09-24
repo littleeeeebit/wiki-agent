@@ -237,6 +237,29 @@ def main() -> int:
             "파이프라인 경계",
         ),
         (
+            # With the repository root on the path, as under pytest, `tool.`
+            # spells the same module. Review round 1 got through with it.
+            "tool. 접두어로 다른 파이프라인",
+            lambda p, r: _clean_tool(r, "wiki/a.py", "from tool import translate\n"),
+            "파이프라인 경계",
+        ),
+        (
+            "tool. 접두어로 루트 모듈",
+            lambda p, r: (_clean_tool(r, "apply.py", ""), _clean_tool(r, "wiki/a.py", "import tool.apply\n")),
+            "파이프라인 경계",
+        ),
+        (
+            "from tool.<파이프라인> import",
+            lambda p, r: _clean_tool(r, "wiki/a.py", "from tool.translate import x\n"),
+            "파이프라인 경계",
+        ),
+        (
+            # Two dots from one folder down climb out to the root.
+            "상대 import 로 루트까지 올라간다",
+            lambda p, r: _clean_tool(r, "wiki/a.py", "from .. import translate\n"),
+            "파이프라인 경계",
+        ),
+        (
             "common 이 파이프라인을 부른다",
             lambda p, r: _clean_tool(r, "common/c.py", "import wiki\n"),
             "파이프라인 경계",
@@ -270,7 +293,9 @@ def main() -> int:
         root = Path(tmp)
         build(root, CLEAN)
         _clean_tool(root, "apply.py", "")
-        _clean_tool(root, "wiki/a.py", "import re\nfrom . import b\nfrom .b import c\nimport wiki.match\nfrom common import c\n")
+        _clean_tool(root, "wiki/a.py", "import re\nfrom . import b\nfrom .b import c\nimport wiki.match\nfrom common import c\n"
+                    "from tool import wiki\nimport tool.common\n")
+        _clean_tool(root, "wiki/sub/d.py", "from .. import match\nfrom ..match import x\nfrom .. import translate\n")
         _clean_tool(root, "common/c.py", "import json\nfrom . import d\n")
         crossed = [msg for kind, msg in kinds_and_messages(root) if kind == "파이프라인 경계"]
     print(f"  {'통과 ' if not crossed else '실패 '} 허용된 import 는 안 잡는다  → {crossed or '없음'}")
