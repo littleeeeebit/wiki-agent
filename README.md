@@ -1,5 +1,9 @@
 # ai-coding-agent-wiki
 
+This private copy is becoming a coding agent program with asking the wiki as
+its main feature. The plan is
+[`docs/plans/wiki-agent-0-overview.md`](docs/plans/wiki-agent-0-overview.md).
+
 A wiki that stops a coding agent making the same mistake again as it moves
 between projects, and the adapters that attach it to a project.
 
