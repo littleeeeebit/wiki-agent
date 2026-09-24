@@ -13,7 +13,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import corpus  # noqa: E402
-from wiki.wikilib import front_matter, project_pages  # noqa: E402
+from wiki import front_matter, project_pages  # noqa: E402
 
 NS = "repo"
 

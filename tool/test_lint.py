@@ -300,6 +300,17 @@ def main() -> int:
             lambda p, r: _surface(r, "from tool import translate as T\nT._key\n"),
             "공개 진입점",
         ),
+        (
+            # Deferred from PR #4: `import tool.translate` binds `tool`.
+            "import tool.x 로 __all__ 밖",
+            lambda p, r: _surface(r, "import tool.translate\ntool.translate._ask()\n"),
+            "공개 진입점",
+        ),
+        (
+            "import tool 로 __all__ 밖",
+            lambda p, r: _surface(r, "import tool as t\nt.translate._ask()\n"),
+            "공개 진입점",
+        ),
     ]
 
     print(f"\n결함을 하나씩 심는다 ({len(checks)}건)\n")
@@ -343,7 +354,8 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path(tmp)
         build(root, CLEAN)
-        _surface(root, "import translate\nfrom translate import KO_EN\ntranslate.translate([], KO_EN, 0)\n")
+        _surface(root, "import translate\nfrom translate import KO_EN\ntranslate.translate([], KO_EN, 0)\n"
+                       "import tool.translate\ntool.translate.translate([], KO_EN, 0)\n")
         _clean_tool(root, "test_x.py", "import translate\ntranslate._ask()\n")
         _clean_tool(root, "wiki/__init__.py", "")
         _clean_tool(root, "other.py", "from wiki import match\nimport wiki\nwiki.anything\n")

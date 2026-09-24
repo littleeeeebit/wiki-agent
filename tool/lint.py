@@ -20,8 +20,8 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import markdown_emphasis  # noqa: E402
-from wiki.wikilib import (  # noqa: E402
-    SCOPES, WIKI, git_ok, links_of, metadata_errors, pages, resolve,
+from wiki import (  # noqa: E402
+    SCOPES, WIKI, hub_pages, links_of, metadata_errors, resolve,
 )
 
 
@@ -40,7 +40,7 @@ def check(
     adapters = adapters if adapters is not None else wiki / "adapters"
     repos = repos or []
 
-    loaded = pages(wiki)
+    loaded = hub_pages(wiki)
     names = set(loaded)
     findings: list[tuple[str, str]] = []
     for name, (_meta, _body, path) in loaded.items():
@@ -455,6 +455,18 @@ def missing_hook_guards(wiki: Path, loaded: dict) -> list[tuple[str, str]]:
     return found
 
 
+def git_ok(repo: Path, ref: str) -> bool:
+    """Does that ref actually exist in this repository?"""
+
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet", ref],
+            capture_output=True, timeout=10,
+        ).returncode == 0
+    except Exception:
+        return False
+
+
 # One folder per pipeline under `tool/`. `common` is the one place all of them
 # may share, and it may import none of them.
 PIPELINES = ("wiki", "translate", "agent", "workspace")
@@ -561,13 +573,20 @@ def pipeline_surface(wiki: Path = WIKI) -> list[tuple[str, str]]:
             except (OSError, SyntaxError, UnicodeDecodeError):
                 continue
             bound: set[str] = set()   # names this file binds to the pipeline itself
+            # Names bound to `tool` itself. `import tool.translate` binds `tool`,
+            # not `translate`, and `tool.translate._ask()` walked past a check
+            # that only looked for the second.
+            package: set[str] = set()
             used: list[tuple[int, str]] = []
             for node in ast.walk(tree):
                 if isinstance(node, ast.Import):
                     for alias in node.names:
+                        if alias.name == "tool" or (alias.name.startswith("tool.") and not alias.asname):
+                            package.add(alias.asname or "tool")
                         target = alias.name.removeprefix("tool.")
                         if target == name:
-                            bound.add(alias.asname or name)
+                            if alias.asname or alias.name == name:
+                                bound.add(alias.asname or name)
                         elif target.startswith(name + "."):
                             used.append((node.lineno, target))
                 elif isinstance(node, ast.ImportFrom) and not node.level:
@@ -582,8 +601,12 @@ def pipeline_surface(wiki: Path = WIKI) -> list[tuple[str, str]]:
                     elif target.startswith(name + "."):
                         used.append((node.lineno, target))
             for node in ast.walk(tree):
-                if (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
-                        and node.value.id in bound and node.attr not in public):
+                if not isinstance(node, ast.Attribute) or node.attr in public:
+                    continue
+                owner = node.value
+                if (isinstance(owner, ast.Name) and owner.id in bound) or (
+                        isinstance(owner, ast.Attribute) and owner.attr == name
+                        and isinstance(owner.value, ast.Name) and owner.value.id in package):
                     used.append((node.lineno, f"{name}.{node.attr}"))
             for line, target in sorted(set(used)):
                 found.append((

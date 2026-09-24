@@ -19,7 +19,7 @@ from pathlib import Path
 
 import trajectory
 import translate
-from wiki.match import (
+from wiki import (
     REPO_BUDGET, RULE_BUDGET, budget, label, match_pages, pages, render_parts,
     rule_index, source_map,
 )

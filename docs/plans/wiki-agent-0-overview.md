@@ -8,6 +8,7 @@
 
 - [2단계 — 경계 검사](wiki-agent-2-boundary.md)
 - [3단계 — `translate` 독립](wiki-agent-3-translate.md)
+- [4단계 — `wiki` 독립](wiki-agent-4-wiki.md)
 
 ## 왜 하나
 
@@ -59,8 +60,8 @@
 ### 파이프라인 목록과 계약
 
 파이프라인마다 `tool/` 아래 폴더 하나다. 폴더는 패키지다. 공개 진입점은 `__init__.py` 의
-`__all__` 이다. 3단계 뒤 `translate` 가 `__all__` 을 갖고, 나머지 셋은 아직 모듈을 폴더에
-넣기만 했다. 4·5단계가 `__all__` 을 쓴다.
+`__all__` 이다. 4단계 뒤 `translate` 와 `wiki` 가 `__all__` 을 갖고, `agent`·`workspace` 는 아직
+모듈을 폴더에 넣기만 했다. 5단계가 `__all__` 을 쓴다.
 
 | 파이프라인 | 폴더 | 하는 일 | 입력 | 출력 | 옮겨 오는 코드 |
 | --- | --- | --- | --- | --- | --- |
@@ -119,7 +120,8 @@ import 를 세어 본 결과다. 2단계(#3)에서 0 이 됐다. `mirror.py` 와
 - 함수 안의 지연 import 도 센다
 
 - `tool/` 루트 모듈은 파이프라인의 `__all__` 안의 이름만 쓴다. `__all__` 이 있는 파이프라인만
-  본다(`lint.pipeline_surface`, 발견 `공개 진입점`). 테스트는 내부를 봐도 된다
+  본다(`lint.pipeline_surface`, 발견 `공개 진입점`). 테스트는 내부를 봐도 된다. `import tool.translate`
+  는 `tool` 을 묶으므로 `tool.translate.x` 도 같이 본다(PR #4 에서 미룬 구멍, 4단계에서 막았다)
 
 검사가 실제로 빨개지는지는 `test_lint.py` 가 확인한다. 구현은 `lint.pipeline_imports`,
 `lint.reached`, `lint.pipeline_surface` 다.
@@ -193,7 +195,7 @@ import 를 세어 본 결과다. 2단계(#3)에서 0 이 됐다. `mirror.py` 와
 | 1 | 방향 확정 | 위 결정들. Tauri + Python 사이드카, Orca 완전 대체, 에이전트는 이벤트 스트림 | 완료 |
 | 2 | 경계 검사 | 파이프라인 폴더 넷, 폴더 간 import 금지 검사와 그 검사가 빨개지는 테스트. 어긋난 곳 3개 해소, Slack 삭제 | 완료 |
 | 3 | `translate` 독립 | 공개 진입점 하나, 월 비용 한도와 캐시. 호출자별 마감은 호출자가 넘긴다 | 완료 |
-| 4 | `wiki` 독립 | 질의·그래프를 번역 없이 돌린다. 답변 이벤트 계약 | 미착수 |
+| 4 | `wiki` 독립 | 질의·그래프를 번역 없이 돌린다. 답변 이벤트 계약 | 완료 |
 | 5 | `agent`·`workspace` | 작업트리 생성·정리, 쓰기 가능한 CLI 세션, 승인 이벤트, 이벤트 계약. 안전 경계 적용 | 미착수 |
 | 6 | 메인과 새 화면 | Tauri 창, `tool/main/`, 세 영역 + 터미널, 오버레이, 번역 토글. 화면 순서 5단계. 끝나면 `mirror.py`·옛 `chat.py` 삭제 | 미착수 |
 | 7 | 검증 | `pytest tool/`, `lint --check`, 웹 빌드, 번역 끈 상태로 전 과정 한 번, 켠 상태로 한 번 | 미착수 |
