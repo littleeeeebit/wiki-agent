@@ -38,9 +38,6 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(() => stored('theme', 'dark'))
   const work = useWork()
   const repo = channels[0]?.repo ?? ''
-  useEffect(() => {
-    shown.current = repo
-  }, [repo])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
@@ -55,10 +52,21 @@ export default function App() {
   // Only the newest listing lands. One for the previous project could come
   // back after the new project's and fill its rail with the old worktrees.
   const listing = useRef(0)
-  // The project the screen shows. A list for any other — the server switched
-  // and the screen has not caught up — is not shown under this name.
-  const shown = useRef('')
+  // The project the screen shows, set only by `follow` (and the first load).
+  // Every list from the server is judged against it by what it says, not by
+  // when it was asked: a channel list for another project is dropped, and so
+  // is a worktree list, which instead makes the screen follow. Late answers
+  // come from several places — the first load, a switch, the query pane after
+  // each answer — and one of them once turned the screen back a project.
+  const expected = useRef('')
   const [making, setMaking] = useState(false)
+
+  const accept = useCallback((list: Channel[]) => {
+    const of = list[0]?.repo ?? ''
+    if (expected.current && of !== expected.current) return
+    expected.current = of
+    setChannels(list)
+  }, [])
 
   /** The screen moves to the server's project `now`, however it learned of it
    *  — its own switch, or a list showing that another window switched. The
@@ -66,19 +74,20 @@ export default function App() {
    *  new list arrives: until then, or if it never does, they stood under the
    *  new name and could be picked. The channels are read again after. */
   const follow = useCallback((now: string) => {
+    expected.current = now
     listing.current++
     setRows([])
     setSelected('')
     setChannels((list) => list.map((c) => ({ ...c, repo: now })))
-    return api.getChannels().then(setChannels)
-  }, [])
+    return api.getChannels().then(accept)
+  }, [accept])
 
   const refresh = useCallback(() => {
     const mine = ++listing.current
     api.getWorktrees()
       .then(({ project, rows }) => {
         if (mine !== listing.current) return
-        if (project !== shown.current) {
+        if (project !== expected.current) {
           follow(project).catch(() => {})
           return
         }
@@ -91,7 +100,7 @@ export default function App() {
   useEffect(() => {
     Promise.all([api.getChannels(), api.getSwitch()])
       .then(([list, now]) => {
-        setChannels(list)
+        accept(list)
         setSw(now)
       })
       .catch(() => setFault('서버가 안 뜬 것 같다 — tool\\app.cmd, 또는 python tool/main'))
@@ -213,7 +222,7 @@ export default function App() {
               channels={channels}
               options={options}
               on={on}
-              onChannels={setChannels}
+              onChannels={accept}
               onBusy={setQueryBusy}
               onDraft={(text) => setSeed({ text })}
             />
