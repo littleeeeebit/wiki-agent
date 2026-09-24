@@ -64,16 +64,20 @@ def merged(repo: Path, branch: str) -> bool:
 
     A squash merge — how this repository merges — passes, a merge or a branch
     with no commits of its own passes, and nothing touches the index or the
-    working tree. Unsure is `False` — a conflict leaves markers in the tree, a
-    HEAD not yet pulled, an older git: a kept branch costs a line in a
-    listing; a wrong `True` costs work.
+    working tree. Unsure is `False` — a conflict, a HEAD not yet pulled, an
+    older git: a kept branch costs a line in a listing; a wrong `True` costs
+    work.
+
+    The exit code is read, not only the tree. A branch deleting a file HEAD
+    modified conflicts, and the conflicted tree keeps HEAD's version — equal
+    to HEAD's tree, with the branch's deletion nowhere in it.
     """
 
     if not branch:
         return False
     head = _git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
     done = _git(repo, "merge-tree", "--write-tree", "HEAD", branch)
-    return bool(head) and done.stdout.split()[:1] == [head]
+    return bool(head) and done.returncode == 0 and done.stdout.split()[:1] == [head]
 
 
 def worktrees(repo: Path) -> list[dict]:

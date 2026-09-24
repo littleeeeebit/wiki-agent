@@ -120,3 +120,18 @@ def test_the_same_change_elsewhere_in_the_file_is_not_merged(repo):
     (repo / "f.txt").write_text(block + "---\n" + block.replace("old", "new"))
     git(repo, "commit", "-q", "-am", "second block")
     assert not worktrees(repo)[0]["merged"]
+
+
+def test_a_conflicted_merge_is_not_merged(repo):
+    """The branch deletes a file HEAD modified. The conflicted merge keeps
+    HEAD's version, so its tree equals HEAD's — only the exit code says no."""
+
+    (repo / "f.txt").write_text("base\n")
+    git(repo, "add", "f.txt")
+    git(repo, "commit", "-q", "-m", "base")
+    path = create(repo, "delete")
+    git(path, "rm", "-q", "f.txt")
+    git(path, "commit", "-q", "-m", "delete")
+    (repo / "f.txt").write_text("changed\n")
+    git(repo, "commit", "-q", "-am", "change")
+    assert not worktrees(repo)[0]["merged"]
