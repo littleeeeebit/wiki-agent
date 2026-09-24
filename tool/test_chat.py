@@ -352,8 +352,8 @@ def test_the_mirror_never_tails_a_checkout_that_is_gone(tmp_path):
 
     gone, live = tmp_path / "gone", tmp_path / "live"
     live.mkdir()
-    with patch.object(mirror.sessions, "FINDERS",
-                      {"claude": lambda project: project / "log.jsonl"}):
+    with patch.dict(mirror.FINDERS,
+                    {"claude": lambda project: project / "log.jsonl"}):
         pick = mirror.session_of("claude")
         assert pick(live) == live / "log.jsonl"
         assert pick(gone) is None

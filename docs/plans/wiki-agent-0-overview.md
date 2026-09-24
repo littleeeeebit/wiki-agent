@@ -9,6 +9,7 @@
 - [2단계 — 경계 검사](wiki-agent-2-boundary.md)
 - [3단계 — `translate` 독립](wiki-agent-3-translate.md)
 - [4단계 — `wiki` 독립](wiki-agent-4-wiki.md)
+- [5단계 — `agent`·`workspace`](wiki-agent-5-agent-workspace.md)
 
 ## 왜 하나
 
@@ -60,8 +61,7 @@
 ### 파이프라인 목록과 계약
 
 파이프라인마다 `tool/` 아래 폴더 하나다. 폴더는 패키지다. 공개 진입점은 `__init__.py` 의
-`__all__` 이다. 4단계 뒤 `translate` 와 `wiki` 가 `__all__` 을 갖고, `agent`·`workspace` 는 아직
-모듈을 폴더에 넣기만 했다. 5단계가 `__all__` 을 쓴다.
+`__all__` 이다. 5단계 뒤 네 파이프라인 모두 `__all__` 을 갖는다.
 
 | 파이프라인 | 폴더 | 하는 일 | 입력 | 출력 | 옮겨 오는 코드 |
 | --- | --- | --- | --- | --- | --- |
@@ -185,7 +185,8 @@ import 를 세어 본 결과다. 2단계(#3)에서 0 이 됐다. `mirror.py` 와
 - 쓰기는 `workspace` 가 만든 작업트리 안에서만. 원본 체크아웃에는 쓰지 않는다
 - 작업트리는 저장소 옆 `../<repo>-worktrees/<task>` 에 만든다
 - 쓰기는 모두 화면에서 승인한다 — 파일 편집, 쓰기가 있는 셸 명령, `gh pr create` 까지.
-  Claude Code 는 `--permission-prompt-tool` 로, Codex 는 승인 요청 이벤트로 받는다
+  Claude Code 는 `--permission-prompt-tool stdio` 로, Codex 는 `app-server` 의 승인 요청으로 받는다.
+  작업트리 밖으로의 쓰기는 묻지 않고 거절한다([5단계](wiki-agent-5-agent-workspace.md))
 - 대상 저장소의 `permissions.deny` 와 위키 훅은 그대로 붙는다 — CLI 를 띄우는 것이니까
 
 ## 단계
@@ -196,7 +197,7 @@ import 를 세어 본 결과다. 2단계(#3)에서 0 이 됐다. `mirror.py` 와
 | 2 | 경계 검사 | 파이프라인 폴더 넷, 폴더 간 import 금지 검사와 그 검사가 빨개지는 테스트. 어긋난 곳 3개 해소, Slack 삭제 | 완료 |
 | 3 | `translate` 독립 | 공개 진입점 하나, 월 비용 한도와 캐시. 호출자별 마감은 호출자가 넘긴다 | 완료 |
 | 4 | `wiki` 독립 | 질의·그래프를 번역 없이 돌린다. 답변 이벤트 계약 | 완료 |
-| 5 | `agent`·`workspace` | 작업트리 생성·정리, 쓰기 가능한 CLI 세션, 승인 이벤트, 이벤트 계약. 안전 경계 적용 | 미착수 |
+| 5 | `agent`·`workspace` | 작업트리 생성·정리, 쓰기 가능한 CLI 세션, 승인 이벤트, 이벤트 계약. 안전 경계 적용 | 완료 |
 | 6 | 메인과 새 화면 | Tauri 창, `tool/main/`, 세 영역 + 터미널, 오버레이, 번역 토글. 화면 순서 5단계. 끝나면 `mirror.py`·옛 `chat.py` 삭제 | 미착수 |
 | 7 | 검증 | `pytest tool/`, `lint --check`, 웹 빌드, 번역 끈 상태로 전 과정 한 번, 켠 상태로 한 번 | 미착수 |
 

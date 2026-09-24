@@ -190,7 +190,7 @@ def codex_hooks(home, trust):
     Codex's own config writer rather than by editing its file.
     """
     from apply import installed
-    from agent.chat_local import CodexServer
+    from agent import CodexServer
 
     # Exactly what this install wrote, event and command both. Anything that
     # merely names or resembles the dispatcher is somebody else's code, and
@@ -242,7 +242,7 @@ def install_global(choice, check, projects, trust):
     # Everything that can refuse, refuses before the first write. A mistyped
     # path would otherwise be created and handed twelve deny rules, and a
     # missing second CLI would leave the first host installed alone.
-    from workspace.sessions import checkout
+    from workspace import checkout
 
     for project in projects:
         top = checkout(project)[0]

@@ -49,9 +49,8 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from workspace import sessions  # noqa: E402
 import translate as T  # noqa: E402
-from workspace.sessions import INJECTED, checkouts, parse  # noqa: E402
+from workspace import FINDERS, INJECTED, checkouts, parse  # noqa: E402
 from transcript import human_text  # noqa: E402
 
 POLL = 1.0
@@ -269,7 +268,7 @@ def session_of(host: str):
     said. Returning `None` is what lets the screen move itself somewhere live.
     """
 
-    find = sessions.FINDERS[host]
+    find = FINDERS[host]
 
     def pick(project: Path) -> Path | None:
         return find(project) if project.is_dir() else None

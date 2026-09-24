@@ -41,7 +41,7 @@ sys.path.insert(0, str(HERE))
 import chat_channels  # noqa: E402
 import mirror  # noqa: E402
 import translate  # noqa: E402
-from agent.chat_session import ChatSession, explain  # noqa: E402
+from agent import ChatSession, explain  # noqa: E402
 from session_state import active_page, branch_line, decisions, run  # noqa: E402
 
 ROOT = HERE.parent

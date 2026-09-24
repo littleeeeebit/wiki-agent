@@ -19,7 +19,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from workspace.sessions import INJECTED, SESSIONS, folder, logs  # noqa: E402
+from workspace import INJECTED, SESSIONS, folder, logs  # noqa: E402
 
 DEFAULT_MARKERS = HERE / "markers" / "ko.toml"
 

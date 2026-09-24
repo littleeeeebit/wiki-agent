@@ -12,7 +12,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from workspace.sessions import INJECTED, MAX_HUMAN_CHARS, SESSIONS, logs  # noqa: E402
+from workspace import INJECTED, MAX_HUMAN_CHARS, SESSIONS, logs  # noqa: E402
 
 MAX_TURN_CHARS = 600   # How much of one utterance to show. A long paste may be cut
 
