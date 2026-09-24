@@ -270,6 +270,13 @@ def main() -> int:
             "파이프라인 경계",
         ),
         (
+            # `tool/main/` is a main too, and a pipeline reaching into it
+            # reaches every pipeline it weaves.
+            "파이프라인이 main 을 부른다",
+            lambda p, r: (_clean_tool(r, "main/app.py", ""), _clean_tool(r, "wiki/a.py", "from main import app\n")),
+            "파이프라인 경계",
+        ),
+        (
             "common 이 파이프라인을 부른다",
             lambda p, r: _clean_tool(r, "common/c.py", "import wiki\n"),
             "파이프라인 경계",
@@ -280,9 +287,16 @@ def main() -> int:
             "공개 진입점",
         ),
         (
-            # The alias is how `mirror.py` spells it.
             "별칭으로 __all__ 밖",
             lambda p, r: _surface(r, "def f():\n    import translate as T\n    return T.protect\n"),
+            "공개 진입점",
+        ),
+        (
+            # The program's main is a package. Reading only `tool/*.py` let it
+            # use anything.
+            "tool/main/ 이 __all__ 밖을 부른다",
+            lambda p, r: (_clean_tool(r, "translate/__init__.py", SURFACE),
+                          _clean_tool(r, "main/app.py", "import translate\ntranslate._ask()\n")),
             "공개 진입점",
         ),
         (
