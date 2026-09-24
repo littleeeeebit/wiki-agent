@@ -56,17 +56,3 @@ A project adapter is configured fresh in each checkout. The empty structure of
 `raw/` and `.wiki/` stays, but the utterances, decisions and measurement files
 accumulated before are not distributed. Records that accumulate after
 installing are excluded from git too.
-
-The Slack briefing tools and prompts stay as well, without the author's
-project paths or channel ids. After preparing the Slack connection and send
-permission in your own Claude Code, run the commands below only when actually
-sending.
-
-```powershell
-tool/slack_post.cmd standup "../example-project" "<my Slack channel id>"
-tool/slack_post.cmd retro "../example-project" "<my Slack channel id>"
-```
-
-The launcher finds the wiki itself and uses the project and channel it is
-given. With no channel it does not run. These commands post to Slack, so they
-are not run to verify an install.

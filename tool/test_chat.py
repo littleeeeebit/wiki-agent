@@ -12,11 +12,10 @@ import pytest
 
 import chat
 import chat_channels
-import chat_local
-import chat_session
+from agent import chat_local, chat_session
 import mirror
 import translate
-from chat_session import ChatSession, Event
+from agent.chat_session import ChatSession, Event
 
 
 @pytest.fixture(autouse=True)

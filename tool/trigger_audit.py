@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 import sys
 
-from inject import (
+from wiki.match import (
     REPO_BUDGET, RULE_BUDGET, budget, label, match_pages, pages, render_parts,
 )
 

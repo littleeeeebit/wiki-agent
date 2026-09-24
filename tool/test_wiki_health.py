@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 import apply
-import inject
+from wiki import match
 import lint
 import repo_lint
 import trigger_audit
@@ -115,13 +115,13 @@ def test_measurement():
                 f'---\nseverity: contract\ntriggers: [시험]\n---\n# 결정 {n}\n왜. 이유다. 자세한 이유.',
                 encoding="utf-8",
             )
-        original = inject.WIKI
+        original = match.WIKI
         try:
-            inject.WIKI = project
-            available = inject.pages("x", project)
+            match.WIKI = project
+            available = match.pages("x", project)
             measured = trigger_audit.measure("시험 🐋", available, 200, 250)
         finally:
-            inject.WIKI = original
+            match.WIKI = original
         assert measured["repo"] > 0 and len(measured["names"]) == 6
         response = run(
             "inject.py", "--adapter", "x", "--project", project,
@@ -185,7 +185,7 @@ def test_lint_sees_itself_and_malformed_pages():
 
 def test_synthetic_trigger_cases():
     # These examples are authored fixtures, not collected user conversations.
-    available = inject.pages()
+    available = match.pages()
     cases = [
         ("리뷰 루프를 실행해 주세요", "operator/codex-review-loop", True),
         ("오늘 날씨를 알려 주세요", "operator/codex-review-loop", False),

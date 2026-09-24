@@ -1,5 +1,5 @@
 {
-  "note": "tool/translate.py --check 가 읽는다. 검사 대상 문서마다 한 줄. output=산출물 경로, kind=translation|rewrite|new|kept, source=원문 경로, commit=번역 직전의 40자리 전체 SHA. rewrite 만 allow 로 보호 구간을 면제할 수 있고 그때는 why 가 필요하다. 면제는 그 종류 하나에만 걸리고 나머지는 계속 대조한다. kept 는 일부러 한국어로 남긴 문서이고 why 에 그 이유를 적는다 — 빠뜨린 것과 구별이 되는 것이 이 파일의 일이다.",
+  "note": "python tool/translate --check 가 읽는다. 검사 대상 문서마다 한 줄. output=산출물 경로, kind=translation|rewrite|new|kept, source=원문 경로, commit=번역 직전의 40자리 전체 SHA. rewrite 만 allow 로 보호 구간을 면제할 수 있고 그때는 why 가 필요하다. 면제는 그 종류 하나에만 걸리고 나머지는 계속 대조한다. kept 는 일부러 한국어로 남긴 문서이고 why 에 그 이유를 적는다 — 빠뜨린 것과 구별이 되는 것이 이 파일의 일이다.",
   "entries": [
     {
       "output": "DESIGN.md",

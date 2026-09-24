@@ -8,7 +8,7 @@ from pathlib import Path
 
 import yaml
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parents[1]  # `tool/`
 WIKI = Path(os.environ.get("WIKI_ROOT") or HERE.parent)
 SCOPES = ("operator", "craft")
 

@@ -20,7 +20,7 @@ from unittest.mock import patch
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-import sessions as S  # noqa: E402
+from workspace import sessions as S  # noqa: E402
 
 
 def claude_log(folder: Path, name: str, cwd: Path) -> Path:

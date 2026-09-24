@@ -9,7 +9,6 @@ python tool/test_apply.py
 python tool/test_inject.py
 python tool/test_declared_continuation.py
 python tool/test_repo_lint.py
-python tool/test_slack_brief.py
 python tool/test_trajectory.py
 python tool/lint.py --check
 npm --prefix web ci

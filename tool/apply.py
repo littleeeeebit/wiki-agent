@@ -18,9 +18,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from inject import WIKI, adapter_path, slots_for  # noqa: E402
+from wiki.match import adapter_path, slots_for  # noqa: E402
 from markdown_emphasis import recovery  # noqa: E402
-from wikilib import front_matter  # noqa: E402
+from wiki.wikilib import WIKI, front_matter  # noqa: E402
 
 # The distribution name and the import name from `requirements-hooks.txt`.
 # You cannot ask whether a pip name is installed, so the pair is needed. A

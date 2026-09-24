@@ -17,7 +17,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from chat_local import cli_command
+from .chat_local import cli_command
 
 # Something opened in a browser that edits files is not a chat, it is a remote
 # shell. So `Edit` and `Write` are not on the list.
@@ -334,7 +334,7 @@ def explain(answer: str, model: str = "", effort: str = ""):
     Not the search prompt, not the channel, not the conversation so far — the
     plain explanation is written from the answer alone.
     """
-    prompt = (Path(__file__).parent / "prompts/chat-explain.md").read_text(encoding="utf-8")
+    prompt = (Path(__file__).resolve().parents[1] / "prompts/chat-explain.md").read_text(encoding="utf-8")
     with tempfile.TemporaryDirectory(prefix="wiki-explain-") as folder:
         chat = ChatSession(Path(folder), tools="", system=prompt, model=model,
                            effort=effort, isolated=True)
@@ -351,7 +351,7 @@ def demo() -> None:
     import time
 
     sys.stdout.reconfigure(encoding="utf-8")
-    here = Path(__file__).resolve().parent.parent
+    here = Path(__file__).resolve().parents[2]
     chat = ChatSession(here)
 
     # Measuring the wording of an answer goes red on one turn of phrase. What
