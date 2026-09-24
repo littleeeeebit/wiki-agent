@@ -82,8 +82,32 @@ export type Peek = {
   lines: string[]
 }
 
+// The project the screen shows, sent with every request. The server's
+// selection is one for all windows; a screen that missed another window's
+// switch is refused (409) instead of writing into the other project, and the
+// refusal names where the server is, so the screen can follow.
+let claimed = ''
+
+export const claim = (name: string) => {
+  claimed = name
+}
+
+function scoped(): Record<string, string> {
+  return claimed ? { 'X-Project': encodeURIComponent(claimed) } : {}
+}
+
+/** The project the server is on, when it refused this screen's. Announced as
+ *  a window event so the one place that follows the server hears it. */
+function moved(res: Response) {
+  const to = res.headers.get('X-Project-Moved')
+  if (to) window.dispatchEvent(new CustomEvent('project-moved', { detail: decodeURIComponent(to) }))
+}
+
+const get = (url: string) => fetch(url, { headers: scoped() })
+
 async function json<T>(res: Response, what: string): Promise<T> {
   if (!res.ok) {
+    moved(res)
     let detail = ''
     try {
       detail = (await res.json()).detail ?? ''
@@ -98,21 +122,21 @@ async function json<T>(res: Response, what: string): Promise<T> {
 const post = (url: string, body?: unknown) =>
   fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: { 'Content-Type': 'application/json', ...scoped() },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
 
 export const getChannels = () =>
-  fetch('/api/channels').then((r) => json<Channel[]>(r, '채널 목록'))
+  get('/api/channels').then((r) => json<Channel[]>(r, '채널 목록'))
 
 export const getGraph = () =>
-  fetch('/api/graph').then((r) => json<GraphData>(r, '위키 지도'))
+  get('/api/graph').then((r) => json<GraphData>(r, '위키 지도'))
 
 export const getOptions = () =>
-  fetch('/api/options').then((r) => json<Options>(r, '고를 것'))
+  get('/api/options').then((r) => json<Options>(r, '고를 것'))
 
 export const getLog = (id: string, legacy = false) =>
-  fetch(`/api/log/${id}?legacy=${legacy}`).then((r) => json<Turn[]>(r, '기록'))
+  get(`/api/log/${id}?legacy=${legacy}`).then((r) => json<Turn[]>(r, '기록'))
 
 export const reset = (id: string) => post(`/api/reset/${id}`).then((r) => json(r, '문맥 지우기'))
 
@@ -129,7 +153,7 @@ export const mark = (
 
 /** The place a cited `path:line` points at. */
 export const peek = (repo: string, path: string, line: number) =>
-  fetch(
+  get(
     `/api/file?${new URLSearchParams({ repo, path, line: String(line), around: '25' })}`,
   ).then((r) => json<Peek>(r, '파일'))
 
@@ -168,6 +192,7 @@ export async function renderAll(
  *  one error event carrying the server's reason. */
 async function events<E>(res: Response, onEvent: (ev: E) => void, error: (text: string) => E): Promise<void> {
   if (!res.ok || !res.body) {
+    moved(res)
     let detail = ''
     try {
       detail = (await res.json()).detail ?? ''
@@ -215,7 +240,7 @@ export const draft = (body: { question: string; answer?: string; hits?: string[]
 export type Usage = { month: string; usd: number | null; limit: number }
 export type Switch = { translate: boolean; usage: Usage }
 
-export const getSwitch = () => fetch('/api/switch').then((r) => json<Switch>(r, '번역 스위치'))
+export const getSwitch = () => get('/api/switch').then((r) => json<Switch>(r, '번역 스위치'))
 export const setSwitch = (on: boolean) =>
   post('/api/switch', { translate: on }).then((r) => json<Switch>(r, '번역 스위치'))
 
@@ -232,7 +257,7 @@ export type Worktree = {
 }
 
 export const getWorktrees = () =>
-  fetch('/api/worktrees').then((r) => json<{ project: string; repo: string; rows: Worktree[] }>(r, '작업트리'))
+  get('/api/worktrees').then((r) => json<{ project: string; repo: string; rows: Worktree[] }>(r, '작업트리'))
 export const makeWorktree = (task: string) =>
   post('/api/worktrees', { task }).then((r) => json<{ path: string }>(r, '작업트리 만들기'))
 export const removeWorktree = (path: string) =>
@@ -269,7 +294,7 @@ export type WorkTurn = {
 }
 
 export const workLog = (path: string) =>
-  fetch(`/api/work/log?${new URLSearchParams({ path })}`).then((r) =>
+  get(`/api/work/log?${new URLSearchParams({ path })}`).then((r) =>
     json<{ rows: WorkTurn[]; session_id: string; busy: boolean }>(r, '작업 기록'),
   )
 export const workReset = (path: string) =>

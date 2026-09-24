@@ -18,7 +18,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -78,7 +78,16 @@ async def only_this_screen(request: Request, call_next):
     origin = request.headers.get("origin")
     if urlsplit(f"//{host}").hostname not in LOCAL or (origin is not None and origin != f"http://{host}"):
         return JSONResponse({"detail": "이 화면의 요청이 아니다"}, status_code=403)
-    return await call_next(request)
+    # Which project the screen shows. `query.project()` refuses a request from
+    # a screen that shows another. The switch itself names the new project in
+    # its body and is left out.
+    screen = request.headers.get("x-project")
+    switching = request.url.path.startswith("/api/config/")
+    token = query.claimed.set(unquote(screen) if screen and not switching else None)
+    try:
+        return await call_next(request)
+    finally:
+        query.claimed.reset(token)
 
 
 # -- The translation switch -------------------------------------------------

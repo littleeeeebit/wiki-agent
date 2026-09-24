@@ -760,3 +760,32 @@ def test_a_switch_answers_with_the_project_and_the_list_names_its_own(tmp_path):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         assert web.post("/api/config/wiki", json={"repo": "b"}).json()["repo"] == "b"
         assert web.get("/api/worktrees").json()["project"] == "b"
+
+
+def test_a_screen_that_missed_a_switch_writes_nothing_into_the_new_project(tmp_path):
+    """Another window moved the server from A to B. A screen still showing A
+    sent a question and it went into B's conversation. Each request now says
+    which project its screen shows, and a mismatch is refused before any
+    record, session or worktree is touched."""
+
+    from urllib.parse import unquote
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    showing_a = {"X-Project": "a"}
+    with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
+          patch.object(work, "ChatSession", Agent)):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        path = web.post("/api/worktrees", json={"task": "t1"}, headers=showing_a).json()["path"]
+        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()   # the other window
+
+        asked = web.post("/api/say/wiki", json={"text": "A 에 묻는다"}, headers=showing_a)
+        assert asked.status_code == 409 and unquote(asked.headers["X-Project-Moved"]) == "b"
+        assert web.get("/api/log/wiki").json() == []
+        assert web.get("/api/worktrees", headers=showing_a).status_code == 409
+        assert web.post("/api/worktrees", json={"task": "t2"}, headers=showing_a).status_code == 409
+        assert web.post("/api/work/say", json={"path": path, "text": "x"}, headers=showing_a).status_code == 409
+        assert not work._busy and not chat._busy
+        assert web.get("/api/worktrees", headers={"X-Project": "b"}).json()["rows"] == []
+        # The switch itself names its project in the body.
+        assert web.post("/api/config/wiki", json={"repo": "a"}, headers={"X-Project": "b"}).status_code == 200

@@ -65,6 +65,7 @@ export default function App() {
     const of = list[0]?.repo ?? ''
     if (expected.current && of !== expected.current) return
     expected.current = of
+    api.claim(of)
     setChannels(list)
   }, [])
 
@@ -75,12 +76,24 @@ export default function App() {
    *  new name and could be picked. The channels are read again after. */
   const follow = useCallback((now: string) => {
     expected.current = now
+    api.claim(now)
     listing.current++
     setRows([])
     setSelected('')
     setChannels((list) => list.map((c) => ({ ...c, repo: now })))
     return api.getChannels().then(accept)
   }, [accept])
+
+  // The server refused a request because this screen shows another project
+  // than it is on. Whatever asked, the screen follows here.
+  useEffect(() => {
+    const onMoved = (e: Event) => {
+      const to = (e as CustomEvent<string>).detail
+      if (to && to !== expected.current) follow(to).catch(() => {})
+    }
+    window.addEventListener('project-moved', onMoved)
+    return () => window.removeEventListener('project-moved', onMoved)
+  }, [follow])
 
   const refresh = useCallback(() => {
     const mine = ++listing.current

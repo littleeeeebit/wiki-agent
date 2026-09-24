@@ -8,6 +8,8 @@ stays Korean.
 from __future__ import annotations
 
 import datetime as dt
+from contextvars import ContextVar
+from urllib.parse import quote
 import json
 import re
 import threading
@@ -54,7 +56,20 @@ _config: dict[tuple[str, str], dict] = {}
 _project: str | None = None
 
 
+# The project the screen that sent this request is showing (`X-Project`), set
+# by `app.only_this_screen` for every route but the switch itself.
+claimed: ContextVar[str | None] = ContextVar("claimed", default=None)
+
+
 def project() -> str:
+    """The selected project — and the check that the asking screen shows it.
+
+    The selection is one for the whole server, and another window can move
+    it. A screen that had not noticed yet sent a question into the other
+    project's conversation. Every project-scoped path reads the project here,
+    and those that hold (`say`, `make`, `reset`, `remove`) read it under or
+    after their hold, so the check and the work cannot be split by a switch.
+    """
     global _project
     if _project is None:
         path = LOGS / "project.json"
@@ -62,6 +77,10 @@ def project() -> str:
         if not isinstance(name, str):
             raise HTTPException(409, "저장된 프로젝트 설정을 읽을 수 없습니다")
         _project = name
+    screen = claimed.get()
+    if screen is not None and screen != _project:
+        raise HTTPException(409, f"다른 창이 프로젝트를 {_project} 로 바꿨다. 화면을 맞춘다",
+                            headers={"X-Project-Moved": quote(_project)})
     return _project
 
 
