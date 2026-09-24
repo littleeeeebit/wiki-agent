@@ -81,8 +81,11 @@ def known(cid: str) -> None:
         raise HTTPException(404, "그런 초점이 없다")
 
 
-def config(cid: str) -> dict:
-    key = (project(), cid)
+def config(cid: str, name: str | None = None) -> dict:
+    """The model settings of a focus in project `name`, the selected one by default."""
+
+    name = name or project()
+    key = (name, cid)
     if key not in _config:
         channel = channels.get(cid)
         model = channels.LOCAL.get("model", channel.model)
@@ -94,7 +97,7 @@ def config(cid: str) -> dict:
                     effort = selected["default_effort"]
             except Exception as exc:
                 raise HTTPException(503, "기본 Codex 모델을 확인할 수 없습니다. 설치 명령을 다시 실행하세요.") from exc
-        _config[key] = {"repo": project(), "model": model, "effort": effort}
+        _config[key] = {"repo": name, "model": model, "effort": effort}
     return _config[key]
 
 
@@ -284,23 +287,19 @@ def configure(cid: str, body: Config) -> dict:
         if switched and work.busy():
             raise HTTPException(409, "에이전트가 도는 동안은 프로젝트를 바꾸지 않는다")
         if switched:
-            # Changed only while no turn is being recorded. The new project's
-            # settings are read before anything is committed: `config` fails
-            # when Codex cannot list its models, and the selection had already
-            # moved — the screen showed a failed switch to a server on the
-            # other project. A failed disk write keeps the old selection too.
-            previous = _project
+            # Changed only while no turn is being recorded, and only once
+            # everything that can fail has been done against the new project by
+            # name. `config` fails when Codex cannot list its models; the
+            # selection used to move first, and a listing that reads without
+            # the lock saw a project the switch was about to refuse. A failed
+            # disk write keeps the old selection too.
+            cfg = config(cid, body.repo)
+            LOGS.mkdir(parents=True, exist_ok=True)
+            path = LOGS / "project.json"
+            temporary = path.with_suffix(".tmp")
+            temporary.write_text(json.dumps(body.repo, ensure_ascii=False) + "\n", encoding="utf-8")
+            temporary.replace(path)
             _project = body.repo
-            try:
-                cfg = config(cid)
-                LOGS.mkdir(parents=True, exist_ok=True)
-                path = LOGS / "project.json"
-                temporary = path.with_suffix(".tmp")
-                temporary.write_text(json.dumps(body.repo, ensure_ascii=False) + "\n", encoding="utf-8")
-                temporary.replace(path)
-            except BaseException:
-                _project = previous
-                raise
         else:
             cfg = config(cid)
         moved = not switched and body.model.startswith("codex:") != cfg["model"].startswith("codex:")

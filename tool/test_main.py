@@ -730,10 +730,14 @@ def test_a_failed_switch_leaves_the_project_where_it_was(tmp_path):
     web = client()
     real = chat.config
 
-    def failing(cid):
-        if chat.project() == "b":
+    def failing(cid, name=None):
+        if (name or chat.project()) == "b":
+            # While the new project is being tried, every reader still sees
+            # the old one — a listing once got `b` here from a switch that
+            # then failed.
+            assert chat.project() == "a" and work.listing()["repo"] == str(repos["a"])
             raise HTTPException(503, "Codex 모델 목록 없음")
-        return real(cid)
+        return real(cid, name)
 
     with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
           patch.object(chat, "config", failing)):

@@ -97,8 +97,13 @@ export default function App() {
     setFault('')
     try {
       await api.setConfig(wiki.id, { repo: next, model: wiki.model, effort: wiki.effort })
-      setChannels(await api.getChannels())
+      // The old project's worktrees go the moment the switch is made, not when
+      // the new list arrives — until then, or if it never does, they stood
+      // under the new project's name and could be picked.
+      listing.current++
+      setRows([])
       setSelected('')
+      setChannels(await api.getChannels())
     } catch (err) {
       setFault(String(err))
     }
