@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import os
 import socket
 import sys
 import threading
@@ -288,9 +289,17 @@ def main() -> int:
 
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning"))
     if args.exit_with_stdin:
+        # The pipe is read through a private copy, and fd 0 becomes devnull.
+        # On Windows a synchronous read pending on the handle a child would
+        # inherit as its stdin blocks `CreateProcess`: every `git` and every
+        # agent hung, while the routes that start nothing answered.
+        pipe = os.dup(0)    # not inheritable
+        os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+
         def watch() -> None:
-            while sys.stdin.buffer.read(4096):
-                pass
+            with os.fdopen(pipe, "rb") as parent:
+                while parent.read(4096):
+                    pass
             server.should_exit = True
 
         threading.Thread(target=watch, daemon=True).start()

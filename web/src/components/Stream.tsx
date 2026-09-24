@@ -4,7 +4,7 @@ import type { AnswerProps } from '@/components/Answer'
 import { KINDS } from '@/lib/api'
 import type { Kind } from '@/lib/api'
 import { useOverlay } from '@/lib/overlay'
-import type { Msg } from '@/App'
+import type { Msg } from '@/components/Query'
 
 type Props = {
   messages: Msg[]
@@ -13,9 +13,10 @@ type Props = {
   onPeek: AnswerProps['onPeek']
   onDecide: AnswerProps['onDecide']
   onMark: (index: number, kind: Kind) => Promise<void>
+  onDraft: (index: number) => void
 }
 
-export function Stream({ messages, korean, remote, onPeek, onDecide, onMark }: Props) {
+export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onDraft }: Props) {
   const end = useRef<HTMLDivElement>(null)
 
   // The answer grows in pieces, so this follows every change in length
@@ -29,9 +30,9 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark }: P
     <div className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-6">
         {messages.length === 0 && (
-          <p className="text-[13px] text-faint">
-            프로젝트와 모델을 고르고 질문하세요. 답변의 근거를 확인하거나,
-            같은 내용을 쉬운 설명으로 바꿔 볼 수 있습니다.
+          <p className="text-[13.5px] text-faint">
+            위키에 물어라. 답의 근거 파일:줄 을 눌러 원문을 보고, 답 아래
+            “→ 작업” 으로 그 근거를 작업트리의 에이전트에게 넘긴다.
           </p>
         )}
 
@@ -63,9 +64,9 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark }: P
                 ) : (
                   m.pending && <Blink />
                 )}
-                {m.error && <p className="text-[12px] text-destructive">{m.error}</p>}
+                {m.error && <p className="text-[12.5px] text-destructive">{m.error}</p>}
                 {!m.pending && (m.ms != null || m.marked) && (
-                  <Foot m={m} onMark={(k) => onMark(i, k)} />
+                  <Foot m={m} onMark={(k) => onMark(i, k)} onDraft={() => onDraft(i)} />
                 )}
               </div>
             ),
@@ -87,7 +88,7 @@ function Tools({ tools, korean }: { tools: string[]; korean: boolean }) {
   return (
     <ul className="space-y-0.5">
       {shown.map((t, j) => (
-        <li key={j} className="font-mono text-[11px] leading-snug text-faint">
+        <li key={j} className="font-mono text-[12px] leading-snug text-faint">
           · {t}
         </li>
       ))}
@@ -126,21 +127,22 @@ function AnswerVersions(
       )}
       {simple ? (
         <div className="space-y-2">
-          <p className="text-[12px] text-muted-foreground">같은 내용을 쉽게 풀었습니다. 근거와 조건은 원문에서 함께 확인할 수 있습니다.</p>
+          <p className="text-[12.5px] text-muted-foreground">같은 내용을 쉽게 풀었습니다. 근거와 조건은 원문에서 함께 확인할 수 있습니다.</p>
           {m.simpleText && (
             <Answer text={m.simpleText} korean={korean} {...props} onDecide={undefined} />
           )}
-          {m.simplePending && <p role="status" className="text-[12px] text-muted-foreground">의미와 조건을 유지하며 쉽게 풀어 쓰는 중…</p>}
-          {m.simpleError && <p role="alert" className="text-[12px] text-destructive">쉬운 설명을 만들지 못했습니다. ‘정확한 답변’에서 원문을 볼 수 있습니다. {m.simpleError}</p>}
+          {m.simplePending && <p role="status" className="text-[12.5px] text-muted-foreground">의미와 조건을 유지하며 쉽게 풀어 쓰는 중…</p>}
+          {m.simpleError && <p role="alert" className="text-[12.5px] text-destructive">쉬운 설명을 만들지 못했습니다. ‘정확한 답변’에서 원문을 볼 수 있습니다. {m.simpleError}</p>}
         </div>
       ) : <Answer text={text} korean={korean} {...props} />}
-      {!simple && m.simplePending && <p role="status" className="text-[12px] text-muted-foreground">원문을 읽는 동안 쉬운 설명을 준비하고 있습니다.</p>}
+      {!simple && m.simplePending && <p role="status" className="text-[12.5px] text-muted-foreground">원문을 읽는 동안 쉬운 설명을 준비하고 있습니다.</p>}
     </div>
   )
 }
 
-/** The line under an answer: time, cost, model, and "that was wrong". */
-function Foot({ m, onMark }: { m: Msg; onMark: (k: Kind) => Promise<void> }) {
+/** The line under an answer: time, cost, model, "that was wrong", and the
+ *  way over to a worktree's agent. */
+function Foot({ m, onMark, onDraft }: { m: Msg; onMark: (k: Kind) => Promise<void>; onDraft: () => void }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -160,6 +162,16 @@ function Foot({ m, onMark }: { m: Msg; onMark: (k: Kind) => Promise<void> }) {
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10.5px] text-faint">
       <span>{bits.join(' · ')}</span>
+      {m.text && !m.error && (
+        <button
+          type="button"
+          onClick={onDraft}
+          className="rounded px-1.5 font-sans text-[12.5px] text-primary hover:bg-secondary"
+          title="이 답의 근거를 담은 지시 초안을 에이전트 입력칸에 넣는다"
+        >
+          → 작업
+        </button>
+      )}
       {m.marked ? (
         <span className="text-destructive">어긋남 · {m.marked}</span>
       ) : open ? (

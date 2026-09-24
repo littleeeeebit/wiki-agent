@@ -436,11 +436,46 @@ def test_a_draft_carries_the_grounds_and_leaves_the_task_to_a_person(tmp_path):
          patch.object(chat, "active_page", return_value=("", [])), \
          patch.object(chat, "decisions", return_value=[("결정", "이유")]):
         text = web.post("/api/draft", json={
-            "question": "왜 막히나?", "answer": "`tool/lint.py:12` 와 `docs/a.md` 를 보라. `tool/lint.py:12`",
+            "question": "왜 막히나?", "answer": "`tool/lint.py:12` 와 `docs/a.md:3–5` 를 보라. `tool/lint.py:12`",
             "hits": ["hooks-fail-open"]}).json()["text"]
-        assert text.count("- `tool/lint.py:12`") == 1 and "- `docs/a.md`" in text
+        assert text.count("- `tool/lint.py:12`") == 1 and "- `docs/a.md:3–5`" in text
         assert "- hooks-fail-open" in text and "- 결정 — 이유" in text
         assert text.rstrip().endswith("(사람이 한 줄 적는다)")
         retro = web.post("/api/draft", json={"question": "교정 3회 · 규칙 · 새 후보", "target": "wiki"}).json()["text"]
         assert chat.WRITERS["wiki"] in retro and "교정 3회 · 규칙 · 새 후보" in retro
         assert web.post("/api/draft", json={"target": "anything"}).status_code == 400
+
+
+def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it():
+    """Started as the Tauri shell starts it: stdin is a pipe the shell holds.
+
+    Reading that pipe in a thread once blocked every `CreateProcess` on
+    Windows — `/api/switch` answered and every route that runs `git` hung.
+    Closing the pipe must bring the server down.
+    """
+
+    import socket
+    import time
+    import urllib.request
+
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    main_dir = Path(__file__).resolve().parent / "main"
+    server = subprocess.Popen([sys.executable, str(main_dir), "--port", str(port), "--exit-with-stdin"],
+                              stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/switch", timeout=1):
+                    break
+            except OSError:
+                assert time.monotonic() < deadline, "서버가 안 떴다"
+                time.sleep(0.2)
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/channels", timeout=20) as reply:
+            assert json.loads(reply.read())
+        server.stdin.close()
+        assert server.wait(timeout=20) == 0
+    finally:
+        server.kill()

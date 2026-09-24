@@ -456,8 +456,10 @@ class Draft(BaseModel):
     target: str = ""     # "" · wiki · claude_md — a retro candidate's destination
 
 
-# A citation as an answer writes it and `Answer.tsx` makes clickable.
-CITE = re.compile(r"`([\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl)(?::\d+(?:-\d+)?)?)`")
+# A citation as an answer writes it and `Answer.tsx` makes clickable. A range
+# comes with an en dash as often as a hyphen; a draft once lost its only
+# citation, `craft/hooks-fail-open.md:11–14`, to that.
+CITE = re.compile(r"`([\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl)(?::\d+(?:[-–]\d+)?)?)`")
 
 # Instructions that go to the agent as written, so they are English. What the
 # agent says back about them reaches the screen, so that part is Korean. They

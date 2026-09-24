@@ -4,7 +4,7 @@ import { Candidates } from '@/components/Candidates'
 
 // Inline code that looks like a citation: `tool/chat.py:118`, `docs/x.md`, a
 // git commit identifier.
-const FILE = /^([\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl))(?::(\d+)(?:-\d+)?)?$/
+const FILE = /^([\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl))(?::(\d+)(?:[-–]\d+)?)?$/
 const SHA = /^[0-9a-f]{7,40}$/
 
 export type AnswerProps = {
