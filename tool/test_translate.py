@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import time
@@ -403,8 +404,36 @@ def test_the_limit_is_read_like_the_key(
     envfile.write_text("TRANSLATE_MONTHLY_USD=0\n", encoding="utf-8")
     assert T.limit() == 0.0, "the file outranks the variable"
 
-    envfile.write_text("TRANSLATE_MONTHLY_USD=five dollars\n", encoding="utf-8")
-    assert T.limit() == 0.0
+    # A blank line is a statement, as it is for the key. `nan` and `inf` pass
+    # `float()`, and neither is a ceiling.
+    for unreadable in ("five dollars", "", "nan", "inf", "-1"):
+        envfile.write_text(f"TRANSLATE_MONTHLY_USD={unreadable}\n", encoding="utf-8")
+        assert T.limit() == 0.0, unreadable
+
+
+def test_a_count_that_raises_keeps_the_cache_hits(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A lock held past the timeout while the hook and the mirror both write.
+
+    The raise used to escape to `translate`'s outer guard, which hands back
+    every original — the cached translations it had already found included.
+    """
+
+    monkeypatch.setattr(T, "_ask", _rewrites_all_prose)
+    assert ko("훅이 조용히 죽는다") == "ENGLISH ENGLISH ENGLISH"
+
+    def locked(_db: object) -> float:
+        raise sqlite3.OperationalError("database is locked")
+
+    asked: list[list[str]] = []
+    monkeypatch.setattr(T, "_ask", lambda _s, batch, _t: asked.append(batch))
+    monkeypatch.setattr(T, "spent", locked)
+
+    assert T.translate(["훅이 조용히 죽는다", "다른 문장이다"], T.KO_EN, soon()) == [
+        "ENGLISH ENGLISH ENGLISH", "다른 문장이다"
+    ]
+    assert asked == [], "a request went out with the count unreadable"
 
 
 def test_a_zero_limit_sends_nothing(
@@ -478,3 +507,20 @@ def test_a_timeout_is_charged_and_a_refusal_is_not(
     monkeypatch.setattr(T.urllib.request, "urlopen", slow)
     assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
     assert T.usage()["usd"] > 0.0
+
+
+def test_a_hold_that_cannot_be_written_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 1: charged after the answer, a lock lost the cost for good.
+
+    The hold goes on the books before the request, so a write that fails
+    stops the request instead of the record.
+    """
+
+    sent: list[object] = []
+    monkeypatch.setattr(T.urllib.request, "urlopen", lambda *a, **_k: sent.append(a))
+    monkeypatch.setattr(T, "charge", lambda _usd: False)
+
+    assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
+    assert sent == [], "a request went out with nothing on the books"

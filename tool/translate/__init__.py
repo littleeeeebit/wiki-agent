@@ -28,6 +28,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import sqlite3
@@ -279,13 +280,15 @@ def limit() -> float:
     """
 
     raw = setting("TRANSLATE_MONTHLY_USD")
-    if not raw:
+    if raw is None:
         return MONTHLY_USD
+    # A blank line is a statement, as it is for the key, and `inf` is not a
+    # ceiling. Both read as unreadable rather than as the default or no limit.
     try:
         value = float(raw)
     except ValueError:
         return 0.0
-    return value if value >= 0 else 0.0
+    return value if math.isfinite(value) and value >= 0 else 0.0
 
 
 def month() -> str:
@@ -297,12 +300,15 @@ def spent(db: sqlite3.Connection) -> float:
     return float(row[0]) if row else 0.0
 
 
-def charge(usd: float) -> None:
-    """Add to this month's spend. Its own connection, because `_ask` has none."""
+def charge(usd: float) -> bool:
+    """Add to this month's spend. `False` when it was not written.
+
+    Its own connection, because `_ask` has none.
+    """
 
     db = _store()
     if db is None:
-        return
+        return False
     try:
         db.execute(
             "INSERT INTO spend VALUES (?, ?) "
@@ -310,8 +316,9 @@ def charge(usd: float) -> None:
             (month(), usd),
         )
         db.commit()
+        return True
     except Exception:
-        pass
+        return False
     finally:
         db.close()
 
@@ -367,19 +374,28 @@ def _ask(system: str, batch: list[str], seconds: float) -> list[str] | None:
         data=body,
         headers={"Content-Type": "application/json", "x-goog-api-key": key},
     )
+    # Written before the request, not after. A charge recorded after the
+    # answer could fail on a lock — the hook and the mirror share this file —
+    # and the money would be spent with nothing on the books; every later
+    # request would then be judged against a month that looked cheaper than
+    # it was. Every byte sent counts as a token each way: more than it will
+    # cost, never less. Not written means not sent.
+    held = len(body) * (PRICE_IN + PRICE_OUT) / 1_000_000
+    if not charge(held):
+        return None
     try:
         with urllib.request.urlopen(request, timeout=seconds) as answer:
             parsed = json.loads(answer.read().decode("utf-8"))
     except TimeoutError:
-        # The request reached the server and the server may well have finished
-        # and billed it. With no usage to read, every byte sent is counted as a
-        # token each way — more than it cost, never less.
-        charge(len(body) * (PRICE_IN + PRICE_OUT) / 1_000_000)
+        # The server may well have finished and billed it. With no usage to
+        # read, the hold stands.
         return None
     except Exception:
-        return None  # refused or never connected: nothing was billed
+        charge(-held)  # refused or never connected: nothing was billed
+        return None
     try:
-        charge(cost(parsed.get("usageMetadata") or {}))
+        # A settlement that fails leaves the hold, which is the larger number.
+        charge(cost(parsed.get("usageMetadata") or {}) - held)
         parts = parsed["candidates"][0]["content"]["parts"]
         out = json.loads("".join(str(p.get("text") or "") for p in parts))
     except Exception:
@@ -473,9 +489,16 @@ def _translate(texts: list[str], direction: str, deadline: float) -> list[str]:
     # After the cache, never before it: what is cached was paid for already.
     # No store means no count, and a limit nobody can read back is not being
     # kept — so no request either.
+    # A count that raised — a lock held past the timeout — is the same as no
+    # count, and it must not take the cache hits above down with it.
     # ponytail: read-then-send, so processes racing at the limit each send one.
-    if wanted and (db is None or spent(db) >= limit()):
-        wanted = []
+    if wanted:
+        try:
+            over = db is None or spent(db) >= limit()
+        except Exception:
+            over = True
+        if over:
+            wanted = []
 
     if wanted:
         masked: list[tuple[str, list[str]]] = [protect(texts[i], keep) for i in wanted]
