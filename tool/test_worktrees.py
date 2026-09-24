@@ -29,7 +29,8 @@ def test_create_puts_the_worktree_beside_the_repo(repo):
     path = create(repo, "fix-login")
     assert path == (repo.parent / "demo-worktrees" / "fix-login").resolve()
     assert git(path, "branch", "--show-current").strip() == "fix-login"
-    assert worktrees(repo) == [{"path": path, "branch": "fix-login", "dirty": False, "gone": False}]
+    # nothing on it yet, so nothing would be lost
+    assert worktrees(repo) == [{"path": path, "branch": "fix-login", "dirty": False, "merged": True}]
     (path / "a.txt").write_text("x")
     assert worktrees(repo)[0]["dirty"]
 
@@ -60,15 +61,33 @@ def test_remove_keeps_unreviewed_work(repo):
         remove(repo, repo)    # only what is under the worktrees folder
 
 
-def test_remove_deletes_a_branch_whose_upstream_is_gone(repo, tmp_path):
+def test_a_deleted_remote_branch_is_not_a_merge(repo, tmp_path):
+    """The upstream going away proves nothing: this lost a commit once."""
+
     remote = tmp_path / "remote.git"
     git(tmp_path, "init", "-q", "--bare", str(remote))
     git(repo, "remote", "add", "origin", str(remote))
-    path = create(repo, "merged")
-    git(path, "commit", "-q", "--allow-empty", "-m", "work")
-    git(path, "push", "-q", "-u", "origin", "merged")
-    git(repo, "push", "-q", "origin", "--delete", "merged")   # what a squash merge leaves
+    path = create(repo, "unmerged")
+    (path / "work.txt").write_text("precious")
+    git(path, "add", "work.txt")
+    git(path, "commit", "-q", "-m", "work")
+    git(path, "push", "-q", "-u", "origin", "unmerged")
+    git(repo, "push", "-q", "origin", "--delete", "unmerged")
     git(repo, "fetch", "-q", "--prune")
-    assert worktrees(repo)[0]["gone"]
-    assert "브랜치 merged 를 지웠다" in remove(repo, path)
-    assert not git(repo, "branch", "--list", "merged").strip()
+    assert not worktrees(repo)[0]["merged"]
+    assert "남겼다" in remove(repo, path)
+    assert "unmerged" in git(repo, "branch", "--list", "unmerged")
+
+
+def test_remove_deletes_a_squash_merged_branch(repo):
+    path = create(repo, "squashed")
+    for name in ("a.txt", "b.txt"):
+        (path / name).write_text(name)
+        git(path, "add", name)
+        git(path, "commit", "-q", "-m", name)
+    assert not worktrees(repo)[0]["merged"]
+    git(repo, "merge", "-q", "--squash", "squashed")   # what a squash merge on GitHub leaves
+    git(repo, "commit", "-q", "-m", "squashed (#1)")
+    assert worktrees(repo)[0]["merged"]
+    assert "브랜치 squashed 를 지웠다" in remove(repo, path)
+    assert not git(repo, "branch", "--list", "squashed").strip()

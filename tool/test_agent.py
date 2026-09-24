@@ -131,7 +131,39 @@ def test_codex_write_runs_app_server_and_answers_by_id(tree):
     assert events[-1].meta["session_id"] == "th-1"
 
 
-def test_writes_open_only_in_a_worktree(tree):
-    with pytest.raises(ValueError):
-        ChatSession(tree.parent.parent / "demo", write=True)
-    ChatSession(tree.parent.parent / "demo")  # reading there is fine
+def test_writes_open_only_in_a_worktree_workspace_made(tree):
+    repo = tree.parent.parent / "demo"
+    elsewhere = tree.parent.parent / "orca" / "task"   # someone else's worktree
+    subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "other", str(elsewhere)], check=True)
+    for path in (repo, elsewhere):
+        with pytest.raises(ValueError):
+            ChatSession(path, write=True)
+        ChatSession(path)  # reading there is fine
+
+
+def test_a_late_answer_never_reaches_the_next_process(tree):
+    """`answer` racing a restart: the reply belongs to the process that asked."""
+
+    session = ChatSession(tree, write=True)
+    restarted = []
+
+    def restart_midway(event):
+        if restarted:
+            session.answer(event.meta["id"], False)  # only the first approval races
+            return
+        approval_id = event.meta["id"]
+        asker, reply = session._pending[approval_id]
+
+        def racing(allow):
+            # Between `answer` taking the reply and sending it, the turn is
+            # abandoned and the next one starts.
+            session.close()
+            session.ensure()
+            return reply(allow)
+
+        session._pending[approval_id] = (asker, racing)
+        restarted.append(session.answer(approval_id, True))
+
+    with patch.object(chat_session, "BOOT_TIMEOUT", 1), patch.object(chat_session, "TURN_TIMEOUT", 1):
+        run(session, CLAUDE, tree, restart_midway)
+    assert restarted[0] is False  # the new process was never told "allow"

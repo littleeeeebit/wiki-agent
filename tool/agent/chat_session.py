@@ -23,6 +23,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from common import worktree_home
+
 from .chat_local import cli_command
 
 # Something opened in a browser that edits files is not a chat, it is a remote
@@ -66,17 +68,24 @@ class Event:
     parent_id: str | None = None
 
 
-def linked_worktree(repo: Path) -> bool:
-    """Is `repo` the top of a `git worktree`, not the original checkout?"""
+def our_worktree(repo: Path) -> bool:
+    """Is `repo` the top of a worktree in `worktree_home` of its own repository?
+
+    Not just any `git worktree`: Orca and `claude -w` make those too, and they
+    are somebody's work. The original checkout never passes — it is not inside
+    its own `-worktrees` folder.
+    """
 
     done = subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "--path-format=absolute",
-         "--show-toplevel", "--git-dir", "--git-common-dir"],
+         "--show-toplevel", "--git-common-dir"],
         capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
     lines = done.stdout.splitlines()
-    return (done.returncode == 0 and len(lines) == 3
-            and Path(lines[0]).resolve() == Path(repo).resolve()
-            and Path(lines[1]).resolve() != Path(lines[2]).resolve())
+    if done.returncode or len(lines) != 2:
+        return False
+    top, common = (Path(line).resolve() for line in lines)
+    return (top == Path(repo).resolve() and common.name == ".git"
+            and top.parent == worktree_home(common.parent))
 
 
 def _blocks(message: dict) -> list[dict]:
@@ -94,8 +103,8 @@ class ChatSession:
                  parent_id: str | None = None) -> None:
         self.repo = Path(repo)
         # Writes go to a worktree, never to the checkout a person works in.
-        if write and not linked_worktree(self.repo):
-            raise ValueError(f"쓰기 세션은 작업트리에서만 연다: {self.repo}")
+        if write and not our_worktree(self.repo):
+            raise ValueError(f"쓰기 세션은 workspace 가 만든 작업트리에서만 연다: {self.repo}")
         self.write = write
         self.tools = WRITE_TOOLS if write else tools
         self.id = uuid.uuid4().hex
@@ -119,8 +128,9 @@ class ChatSession:
         self._turn = threading.Lock()
         self._start = threading.Lock()
         self._stderr: deque[str] = deque(maxlen=20)
-        # Approvals the CLI is waiting on: id -> the reply for (allow).
-        self._pending: dict[str, object] = {}
+        # Approvals the CLI is waiting on: id -> (the process that asked, the
+        # reply for `allow`). The reply goes to that process only.
+        self._pending: dict[str, tuple] = {}
         self._stdin = threading.Lock()
         self._rpc_id = 0
         # Codex fileChange items by id, so an approval can see their paths.
@@ -277,24 +287,30 @@ class ChatSession:
                     raise RuntimeError(f"Codex {method} 실패: {reply['error']}")
                 return reply.get("result") or {}
 
-    def _send(self, message: dict) -> bool:
-        """One line to the CLI. Approvals are answered from another thread, so
-        writes take turns."""
+    def _send(self, message: dict, proc=None) -> bool:
+        """One line to the CLI — to `proc` when given, else the current one.
+        Approvals are answered from another thread, so writes take turns."""
 
         with self._stdin:
             try:
-                self._proc.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
-                self._proc.stdin.flush()
+                proc = proc or self._proc
+                proc.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
+                proc.stdin.flush()
                 return True
             except (AttributeError, BrokenPipeError, OSError, ValueError):
                 return False
 
     def answer(self, approval_id: str, allow: bool) -> bool:
         """Answer an `approval` event. `False` when nothing waits under that id:
-        answered already, or the session closed since."""
+        answered already, or the process that asked is gone.
 
-        reply = self._pending.pop(approval_id, None)
-        return reply is not None and self._send(reply(allow))
+        Written to the process that asked, never to whatever runs now: after a
+        restart a late "allow" would land on the new process, and Codex
+        numbers its requests afresh in each one.
+        """
+
+        proc, reply = self._pending.pop(approval_id, (None, None))
+        return proc is not None and self._send(reply(allow), proc)
 
     def _outside(self, path) -> str:
         """The path, resolved, when it lies outside this worktree. Else ``""``."""
@@ -317,7 +333,7 @@ class ChatSession:
         if outside or not self.write:
             self._send(reply(False))
             return Event("tool", f"거절 · 작업트리 밖: {outside}" if outside else f"거절 · {text}")
-        self._pending[key] = reply
+        self._pending[key] = (self._proc, reply)
         return Event("approval", text, {"id": key, "tool": tool, "input": args})
 
     def _codex_asks(self, rid, method: str, params: dict) -> Event | None:

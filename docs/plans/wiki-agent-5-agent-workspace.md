@@ -59,8 +59,10 @@ Event(kind, text="", meta={}, session_id="", parent_id=None)
 
 `write=True` 일 때만 쓰기 도구가 붙고 승인 통로가 열린다. 기본은 지금과 같은 읽기 세션이다.
 
-- 작업트리가 아니면 만들지 않는다. `repo` 의 `--git-dir` 과 `--git-common-dir` 이 같으면 원본
-  체크아웃이므로 `ValueError`
+- `workspace` 가 만든 작업트리가 아니면 만들지 않는다(`ValueError`). 작업트리의 부모 폴더가
+  그 저장소의 `worktree_home` 이어야 한다. Orca 나 `claude -w` 가 만든 작업트리도 git 으로는
+  같은 작업트리라, 연결된 작업트리인지만 보면 남의 작업에 쓴다(리뷰 라운드 1). 원본 체크아웃은
+  자기 `-worktrees` 폴더 안에 있을 수 없으므로 같은 검사로 걸린다
 - Claude. 도구는 `Bash,Read,Glob,Grep,Edit,Write`, 묻지 않는 도구(`--allowedTools`)는
   `Read,Glob,Grep` 뿐이다. `--permission-mode default` 를 명시해 설정의 `acceptEdits` 등이
   승인을 건너뛰지 못하게 한다
@@ -70,6 +72,19 @@ Event(kind, text="", meta={}, session_id="", parent_id=None)
   그것은 사람이 승인 이벤트에서 본다
 - 승인을 기다리는 동안은 턴 마감(600초)이 흐르지 않는다. 사람이 자리를 비웠다고 턴이 죽으면
   안 된다
+- 답은 물었던 프로세스로만 간다. 답이 늦는 사이 턴이 버려지고 다음 턴이 새 프로세스를 띄우면,
+  지금 도는 프로세스로 보낸 "허용" 이 새 프로세스의 요청에 붙는다. Codex 는 프로세스마다 요청
+  번호를 새로 센다(리뷰 라운드 1)
+
+### 어느 계정으로 도는가
+
+`craft/screen-ownership-before-wiring` 의 세 가지 가운데 둘은 위에 있다 — 늦은 이벤트는
+`session_id` 가, 무엇을 써도 되나는 작업트리가 판정한다. 남은 하나가 계정이다.
+
+세션은 이 프로그램을 띄운 환경의 로그인으로 돈다. Claude 는 그 사용자의 Claude Code 로그인,
+Codex 는 `CODEX_HOME` 이 있으면 그것, 없으면 `~/.codex` 의 로그인이다. 세션을 만드는 순간
+프로세스를 띄우며 정해지고, 도중에 바뀌지 않는다. 계정을 고르는 화면은 이 계획에 없다.
+Orca 가 계정마다 `CODEX_HOME` 을 따로 두던 방식은 가져오지 않는다
 
 ### 안 막는 것
 
@@ -91,17 +106,24 @@ Event(kind, text="", meta={}, session_id="", parent_id=None)
 | 함수 | 하는 일 |
 | --- | --- |
 | `create(repo, task)` | `../<repo>-worktrees/<task>` 에 브랜치 `<task>` 로 `git worktree add`. 경로를 돌려준다 |
-| `worktrees(repo)` | 그 폴더 아래 작업트리. 행마다 `path`, `branch`, `dirty`, `gone` |
+| `worktrees(repo)` | 그 폴더 아래 작업트리. 행마다 `path`, `branch`, `dirty`, `merged` |
 | `remove(repo, path)` | `git worktree remove`, 그리고 브랜치 삭제 |
 
 - `repo` 는 원본 체크아웃이어야 한다. 작업트리 안에서 작업트리를 만들면 폴더가 엉뚱한 데 선다
 - `task` 는 소문자·숫자·`-` 만, 64자까지. 브랜치 이름과 폴더 이름을 겸하고, 한글 경로가 이
   기계에서 `cp949` 로 깨진 적이 있다
-- `gone` 은 추적하던 원격 브랜치가 지워졌다는 뜻이다. 이 저장소는 squash 머지라 `git branch
-  --merged` 가 머지를 모른다. 머지 뒤 원격 브랜치가 지워지는 것이 머지를 알리는 신호다.
-  화면은 이것을 보고 정리를 제안한다
-- `remove` 는 더러운 작업트리를 지우지 않는다. 브랜치는 `gone` 이면 `-D`, 아니면 `-d` 로
-  지우고, 머지되지 않아 `-d` 가 거절하면 남긴다. 그 폴더 밖의 경로는 받지 않는다
+- 폴더 자리(`worktree_home`)는 `tool/common/` 에 있다. `workspace` 가 거기 만들고 `agent` 가
+  거기서만 쓰기 세션을 연다. 개요가 말한 "두 파이프라인이 실제로 같이 쓰는 것" 의 첫 예다
+- `merged` 는 브랜치의 일이 원본 체크아웃의 HEAD 에 다 들어갔다는 뜻이다. 조상이면(머지,
+  fast-forward) 참. 아니면 브랜치 전체의 diff 를 머지 기반 위의 커밋 하나로 만들어 `git cherry`
+  로 HEAD 에 같은 패치가 있는지 본다 — 이 저장소의 squash 머지를 알아보는 길이다. 자기 커밋이
+  없는 브랜치도 참이다 — 지워도 잃는 것이 없다. 화면은 이것을 보고 정리를 제안한다
+- 원격 브랜치가 지워졌다(`gone`)는 머지의 증거가 아니다. 처음에는 그것으로 `-D` 를 했고,
+  머지 없이 원격만 지운 브랜치의 커밋이 사라지는 것을 리뷰 라운드 1 이 재현했다
+- 확실하지 않으면 거짓이다. HEAD 를 아직 pull 하지 않았거나 squash 가 들어가며 고쳐졌으면
+  브랜치를 남긴다. 남은 브랜치는 목록에 한 줄이지만, 잘못된 참은 일을 지운다
+- `remove` 는 더러운 작업트리를 지우지 않는다. 브랜치는 `merged` 일 때만 `-D` 로 지우고
+  나머지는 남긴다. 그 폴더 밖의 경로는 받지 않는다
 
 ## 검사
 
@@ -122,11 +144,13 @@ Event(kind, text="", meta={}, session_id="", parent_id=None)
 
 | 확인 | 결과 |
 | --- | --- |
-| `pytest tool/` | 293 통과. 전 285, 새 테스트 8개(`test_agent` 4, `test_worktrees` 4) |
-| `test_agent.py` 가 무엇을 보나 | 대기 중 턴 마감을 지우면, 작업트리 밖 거절을 지우면, 원본 체크아웃 거절을 지우면 각각 빨강. 승인은 화면처럼 다른 스레드에서 두 마감보다 늦게 보낸다 |
+| `pytest tool/` | 295 통과. 전 285, 새 테스트 10개(`test_agent` 5, `test_worktrees` 5) |
+| `test_agent.py` 가 무엇을 보나 | 대기 중 턴 마감을 지우면, 작업트리 밖 거절을 지우면, 남의 작업트리 거절을 지우면, 답을 물었던 프로세스 대신 지금 프로세스로 보내면 각각 빨강. 승인은 화면처럼 다른 스레드에서 두 마감보다 늦게 보낸다 |
+| `test_worktrees.py` 가 무엇을 보나 | `merged` 를 늘 참으로 두면 셋, squash 판정을 지우면 하나, `remove` 가 `merged` 를 무시하면 둘이 빨강 |
 | `python tool/lint.py --check` | 종료 0. `census.py` 에 `from workspace.sessions import codex_homes`, `workspace.home`, `agent.READ_TOOLS` 를 심으면 `공개 진입점` 셋 |
 | `python tool/test_lint.py`, `ruff check tool` | 통과 |
 | 직접 실행 스크립트 | `test_apply`·`test_inject`·`test_declared_continuation`·`test_repo_lint`·`test_trajectory` 종료 0. `chat.py --check` 통과 — 읽기 세션은 그대로 돈다 |
 | 실제 Claude (haiku) | `create` 로 만든 작업트리에서 두 파일을 쓰라고 했다. 승인 이벤트 둘, 하나 허용·하나 거절 → 허용한 파일만 생겼다. 두 번째 턴이 같은 프로세스에서 이어졌다. 작업트리 밖 경로에 쓰라고 하자 묻지 않고 거절했고 파일은 없다 |
 | 실제 Codex (`app-server`) | 같은 지시. `fileChange` 승인이 경로와 함께 왔고, 허용한 파일만 생겼다. 두 번째 턴이 이어졌다 |
 | 정리 | 더러운 작업트리 둘을 `remove` 가 거절했다. 치운 뒤 작업트리와 브랜치가 지워졌다 |
+| 리뷰 라운드 1 | P0 하나(`gone` 으로 `-D` — 미병합 커밋 유실), P1 둘(남의 작업트리에서 쓰기 세션, 늦은 답이 새 프로세스로). 셋 다 재현한 뒤 고쳤다. 실제 Claude 로 쓰기·승인·정리를 다시 돌렸다 |
