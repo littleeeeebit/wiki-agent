@@ -10,6 +10,7 @@
 - [3단계 — `translate` 독립](wiki-agent-3-translate.md)
 - [4단계 — `wiki` 독립](wiki-agent-4-wiki.md)
 - [5단계 — `agent`·`workspace`](wiki-agent-5-agent-workspace.md)
+- [6단계 — 메인과 새 화면](wiki-agent-6-main.md)
 
 ## 왜 하나
 
@@ -199,7 +200,7 @@ import 를 세어 본 결과다. 2단계(#3)에서 0 이 됐다. `mirror.py` 와
 | 3 | `translate` 독립 | 공개 진입점 하나, 월 비용 한도와 캐시. 호출자별 마감은 호출자가 넘긴다 | 완료 |
 | 4 | `wiki` 독립 | 질의·그래프를 번역 없이 돌린다. 답변 이벤트 계약 | 완료 |
 | 5 | `agent`·`workspace` | 작업트리 생성·정리, 쓰기 가능한 CLI 세션, 승인 이벤트, 이벤트 계약. 안전 경계 적용 | 완료 |
-| 6 | 메인과 새 화면 | Tauri 창, `tool/main/`, 세 영역 + 터미널, 오버레이, 번역 토글. 화면 순서 5단계. 끝나면 `mirror.py`·옛 `chat.py` 삭제 | 미착수 |
+| 6 | 메인과 새 화면 | Tauri 창, `tool/main/`, 세 영역 + 터미널, 오버레이, 번역 토글. 화면 순서 5단계. 끝나면 `mirror.py`·옛 `chat.py` 삭제 | 완료 |
 | 7 | 검증 | `pytest tool/`, `lint --check`, 웹 빌드, 번역 끈 상태로 전 과정 한 번, 켠 상태로 한 번 | 미착수 |
 
 단계마다 PR 하나다.

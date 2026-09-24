@@ -17,10 +17,13 @@ import { getGraph, renderAll, type GraphData } from '@/lib/api'
  *  other by that exact string. */
 type Wordy = { headline?: string; rule?: string }
 
-export function WikiMap() {
+/** `on` is the app's translation switch. Off, the map asks for nothing, whatever
+ *  its own button says — the switch promises no request leaves. */
+export function WikiMap({ on }: { on: boolean }) {
   const [data, setData] = useState<GraphData | null>(null)
   const [error, setError] = useState('')
-  const [korean, setKorean] = useState(false)
+  const [asked, setKorean] = useState(false)
+  const korean = on && asked
   const [said, setSaid] = useState<GraphData | null>(null)
   const [fault, setFault] = useState('')
   const host = useRef<HTMLDivElement>(null)
@@ -120,8 +123,9 @@ export function WikiMap() {
             type="button"
             onClick={() => setKorean((on) => !on)}
             aria-pressed={korean}
-            className="rounded border border-border px-2 py-0.5 text-[12px]"
-            title="제목과 규칙 한 줄만 옮긴다. 슬러그와 설정 값은 그대로다"
+            disabled={!on}
+            className="rounded border border-border px-2 py-0.5 text-[12.5px] disabled:opacity-40"
+            title={on ? '제목과 규칙 한 줄만 옮긴다. 슬러그와 설정 값은 그대로다' : '번역 스위치가 꺼져 있다'}
           >
             {korean ? (said ? '한국어' : '옮기는 중') : '원문'}
           </button>

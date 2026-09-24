@@ -1,372 +1,271 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ChannelRail } from '@/components/ChannelRail'
-import { Composer } from '@/components/Composer'
-import { Handoff } from '@/components/Handoff'
-import { Mirror } from '@/components/Mirror'
+import { Agent } from '@/components/Agent'
+import type { Choice } from '@/components/Toolbar'
 import { Peek } from '@/components/Peek'
-import { Stream } from '@/components/Stream'
-import { Toolbar } from '@/components/Toolbar'
+import { Query } from '@/components/Query'
+import { Rail } from '@/components/Rail'
+import { Terminal } from '@/components/Terminal'
 import { WikiMap } from '@/components/WikiMap'
 import * as api from '@/lib/api'
-import type { Channel, Kind, Options, Peek as PeekData, Tokens } from '@/lib/api'
+import type { Channel, Options, Peek as PeekData, Switch, Worktree } from '@/lib/api'
+import { useWork } from '@/lib/work'
 
-export type Msg = {
-  role: 'user' | 'assistant'
-  text: string
-  tools: string[]
-  hits?: string[]
-  source?: string
-  ms?: number
-  cost?: number
-  tokens?: Tokens
-  model?: string
-  sessionId?: string
-  marked?: Kind
-  error?: string
-  pending?: boolean
-  simpleText?: string
-  simpleError?: string
-  simplePending?: boolean
-  simpleMs?: number
-  simpleCost?: number
+type Theme = 'dark' | 'light'
+
+function stored<T extends string>(key: string, fallback: T): T {
+  try {
+    return (localStorage.getItem(key) as T | null) ?? fallback
+  } catch {
+    return fallback
+  }
 }
 
-export const MAP = '__map__' // 채널이 아니라 위키 지도 탭
-export const MIRROR = '__mirror__' // the Korean mirror tab, not a channel
-
+/** One window: the worktrees on the left, the wiki query in the middle, the
+ *  selected worktree's agent and shell on the right. */
 export default function App() {
   const [channels, setChannels] = useState<Channel[]>([])
   const [options, setOptions] = useState<Options | null>(null)
-  const [active, setActive] = useState('')
-  const [messages, setMessages] = useState<Msg[]>([])
-  const [legacy, setLegacy] = useState<api.Turn[]>([])
-  const [configuring, setConfiguring] = useState(false)
-  const selectedRepo = channels[0]?.repo ?? ''
-  // Which channels are answering. A single global boolean blocks every other
-  // channel while one of them answers, which breaks the promise that channels
-  // are independent — the `#위키` composer really did lock up that way.
-  const [busyOn, setBusyOn] = useState<string[]>([])
-  const activeRef = useRef('')
-  const inFlight = useRef(new Map<string, Msg>())
-  activeRef.current = active
   const [fault, setFault] = useState('')
-  const [note, setNote] = useState('')
-  const [handoff, setHandoff] = useState('')
+  const [sw, setSw] = useState<Switch | null>(null)
+  const [rows, setRows] = useState<Worktree[]>([])
+  const [selected, setSelected] = useState('')
+  const [view, setView] = useState<'query' | 'map'>('query')
+  const [seed, setSeed] = useState<{ text: string } | null>(null)
+  const [queryBusy, setQueryBusy] = useState(false)
+  const [choice, setChoice] = useState<Choice>({ model: '', effort: '' })
   const [peek, setPeek] = useState<{ data: PeekData | null; error?: string } | null>(null)
-  // The Korean overlay, on by default. The agent's surfaces are English now,
-  // and this is the half the person reads. Remembered per browser so the
-  // choice is not made again every time the page opens.
-  const [korean, setKorean] = useState(() => localStorage.getItem('korean') !== 'off')
-  useEffect(() => {
-    localStorage.setItem('korean', korean ? 'on' : 'off')
-  }, [korean])
+  // Dark unless the person chose light. Remembered per machine, not per server.
+  const [theme, setTheme] = useState<Theme>(() => stored('theme', 'dark'))
+  const work = useWork()
+  const repo = channels[0]?.repo ?? ''
 
   useEffect(() => {
-    Promise.all([api.getChannels(), api.getOptions()])
-      .then(([list, opts]) => {
-        setChannels(list)
-        setOptions(opts)
-        // `#mirror` and `#map` name a tab so a launcher can open one directly.
-        // Without it `tool/mirror.cmd` could only land on the chat and leave
-        // the person to find the tab, which is not a launcher.
-        const asked = { '#mirror': MIRROR, '#map': MAP }[location.hash] ?? ''
-        setActive((prev) => prev || asked || list[0]?.id || '')
-      })
-      .catch(() => setFault('서버가 안 뜬 것 같다 — tool\\chat.cmd'))
+    document.documentElement.classList.toggle('dark', theme === 'dark')
+    document.documentElement.classList.toggle('light', theme === 'light')
+    try {
+      localStorage.setItem('theme', theme)
+    } catch {
+      // A blocked store only means the choice is made again next time.
+    }
+  }, [theme])
+
+  // Only the newest listing lands. One for the previous project could come
+  // back after the new project's and fill its rail with the old worktrees.
+  const listing = useRef(0)
+  // The project the screen shows, set only by `follow` (and the first load).
+  // Every list from the server is judged against it by what it says, not by
+  // when it was asked: a channel list for another project is dropped, and so
+  // is a worktree list, which instead makes the screen follow. Late answers
+  // come from several places — the first load, a switch, the query pane after
+  // each answer — and one of them once turned the screen back a project.
+  const expected = useRef('')
+  const [making, setMaking] = useState(false)
+
+  const accept = useCallback((list: Channel[]) => {
+    const of = list[0]?.repo ?? ''
+    if (expected.current && of !== expected.current) return
+    expected.current = of
+    api.claim(of)
+    setChannels(list)
   }, [])
 
-  // Switching channels restores that channel's record. The server holds the
-  // process, so there is nothing for the screen to remember.
-  //
-  // Two guards. A further channel switch discards this one (`stale`), and a
-  // record arriving after the person has typed something does not overwrite
-  // it. Sending right after a switch used to erase what had just been typed
-  // under an empty record — it really did disappear once.
+  /** The screen moves to the server's project `now`, however it learned of it
+   *  — its own switch, or a list showing that another window switched. The
+   *  old project's worktrees and selection go at that moment, not when the
+   *  new list arrives: until then, or if it never does, they stood under the
+   *  new name and could be picked. The channels are read again after. */
+  const follow = useCallback((now: string) => {
+    expected.current = now
+    api.claim(now)
+    listing.current++
+    setRows([])
+    setSelected('')
+    setChannels((list) => list.map((c) => ({ ...c, repo: now })))
+    return api.getChannels().then(accept)
+  }, [accept])
+
+  // The server refused a request because this screen shows another project
+  // than it is on. Whatever asked, the screen follows here.
   useEffect(() => {
-    if (!active || active === MAP || active === MIRROR) return
-    let stale = false
-    setMessages([])
-    setLegacy([])
-    setNote('')
-    setHandoff('')
-    setPeek(null)
-    api
-      .getLog(active)
-      .then((rows) => {
-        if (stale) return
-        const restored: Msg[] = rows.map((r) => ({ role: r.role, text: r.text, tools: [], source: r.source, error: r.error,
-          ms: r.ms, cost: r.cost_usd, model: r.model, sessionId: r.session_id, tokens: r.tokens,
-          simpleText: r.simple_text, simpleError: r.simple_error,
-          simpleMs: r.simple_meta?.ms, simpleCost: r.simple_meta?.cost_usd }))
-        const live = inFlight.current.get(active)
-        if (live && restored.at(-1)?.role === 'user') restored.push(live)
-        setMessages((prev) =>
-          prev.length
-            ? prev
-            : restored,
-        )
-      })
-      .catch(() => !stale && setFault('기록을 못 읽었다'))
-    api.getLog(active, true).then((rows) => !stale && setLegacy(rows))
-      .catch(() => !stale && setFault('이전 기록을 못 읽었다'))
-    return () => {
-      stale = true
+    const onMoved = (e: Event) => {
+      const to = (e as CustomEvent<string>).detail
+      if (to && to !== expected.current) follow(to).catch(() => {})
     }
-  }, [active, selectedRepo])
+    window.addEventListener('project-moved', onMoved)
+    return () => window.removeEventListener('project-moved', onMoved)
+  }, [follow])
 
-  const send = useCallback(
-    async (text: string) => {
-      const cid = active
-      const placeholder: Msg = { role: 'assistant', text: '', tools: [], pending: true }
-      inFlight.current.set(cid, placeholder)
-      setBusyOn((prev) => [...prev, cid])
-      setFault('')
-      setMessages((prev) => [
-        ...prev,
-        { role: 'user', text, tools: [] },
-        placeholder,
-      ])
-
-      // Switching channels mid-stream leaves the list on screen belonging to
-      // another channel, and appending a chunk onto it corrupts that
-      // conversation. The server records it, so coming back restores it.
-      const patch = (fn: (m: Msg) => Msg) => {
-        const previous = inFlight.current.get(cid)!
-        const nextMessage = fn(previous)
-        inFlight.current.set(cid, nextMessage)
-        setMessages((prev) => {
-          if (activeRef.current !== cid || prev.at(-1) !== previous) return prev
-          const next = [...prev]
-          next[next.length - 1] = nextMessage
-          return next
-        })
-      }
-
-      try {
-        await api.say(cid, text, (ev) => {
-          if (ev.kind === 'hits') {
-            patch((m) => ({ ...m, hits: ev.pages ?? [] }))
-          } else if (ev.kind === 'delta') {
-            patch((m) => ({ ...m, text: m.text + ev.text }))
-          } else if (ev.kind === 'tool') {
-            patch((m) => ({ ...m, tools: [...m.tools, ev.text] }))
-          } else if (ev.kind === 'done') {
-            // The final body is the server's copy. A missed chunk is corrected
-            // right here.
-            patch((m) => ({
-              ...m,
-              text: ev.text || m.text,
-              ms: ev.ms,
-              cost: ev.cost_usd,
-              tokens: ev.tokens,
-              model: ev.model,
-              sessionId: ev.session_id,
-              pending: false,
-            }))
-          } else if (ev.kind === 'error') {
-            patch((m) => ({ ...m, error: ev.text, pending: false }))
-          } else if (ev.kind === 'simple_start') {
-            patch((m) => ({ ...m, simpleText: '', simplePending: true }))
-          } else if (ev.kind === 'simple_delta') {
-            patch((m) => ({ ...m, simpleText: (m.simpleText ?? '') + ev.text }))
-          } else if (ev.kind === 'simple_done') {
-            patch((m) => ({ ...m, simpleText: ev.text, simplePending: false, simpleMs: ev.ms, simpleCost: ev.cost_usd }))
-          } else if (ev.kind === 'simple_error') {
-            patch((m) => ({ ...m, simpleText: '', simpleError: ev.text, simplePending: false }))
-          }
-        })
-      } catch (err) {
-        patch((m) => m.simplePending
-          ? ({ ...m, simpleText: '', simpleError: String(err), simplePending: false })
-          : ({ ...m, error: String(err), pending: false }))
-      } finally {
-        inFlight.current.delete(cid)
-        setBusyOn((prev) => prev.filter((id) => id !== cid))
-        api.getChannels().then(setChannels).catch(() => {})
-      }
-    },
-    [active],
-  )
-
-  // Changing project re-selects that project's records and conversation.
-  const apply = useCallback(
-    async (cfg: { repo: string; model: string; effort: string }) => {
-      setFault('')
-      setConfiguring(true)
-      try {
-        const { kept, switched } = await api.setConfig(active, cfg)
-        setChannels(await api.getChannels())
-        if (switched) {
-          setMessages([])
-        } else if (!kept) {
-          setMessages([])
-          setNote('Claude/Codex를 바꿔 새 대화를 시작했다. 지난 기록은 그대로 남아 있다.')
-        } else {
-          setNote('다음 발화부터 적용된다. 지금까지 한 대화는 이어진다.')
+  const refresh = useCallback(() => {
+    const mine = ++listing.current
+    api.getWorktrees()
+      .then(({ project, rows }) => {
+        if (mine !== listing.current) return
+        if (project !== expected.current) {
+          follow(project).catch(() => {})
+          return
         }
-      } catch (err) {
-        setFault(String(err))
-      } finally {
-        setConfiguring(false)
-      }
-    },
-    [active],
-  )
-
-  const wipe = useCallback(async () => {
-    await api.reset(active)
-    setMessages([])
-    setNote('')
-    api.getChannels().then(setChannels).catch(() => {})
-  }, [active])
-
-  // "That was wrong" — recorded in the census's format, together with the
-  // utterance immediately before that answer.
-  const markTurn = useCallback(
-    async (index: number, kind: Kind) => {
-      const answer = messages[index]
-      const question = [...messages.slice(0, index)].reverse().find((m) => m.role === 'user')
-      await api.mark(active, {
-        kind,
-        user_text: question?.text ?? '',
-        assistant_text: answer?.text ?? '',
-        session_id: answer?.sessionId,
+        setRows(rows)
+        setSelected((path) => (rows.some((r) => r.path === path) ? path : ''))
       })
-      setMessages((prev) => prev.map((m, i) => (i === index ? { ...m, marked: kind } : m)))
-    },
-    [active, messages],
-  )
+      .catch((err) => mine === listing.current && setFault(String(err)))
+  }, [follow])
 
-  const askHandoff = useCallback(async () => {
+  useEffect(() => {
+    Promise.all([api.getChannels(), api.getSwitch()])
+      .then(([list, now]) => {
+        accept(list)
+        setSw(now)
+      })
+      .catch(() => setFault('서버가 안 뜬 것 같다 — tool\\app.cmd, 또는 python tool/main'))
+    // Apart, because listing Codex's models starts Codex. The screen does not
+    // wait on that; only the pickers do.
+    api.getOptions().then(setOptions).catch((err) => setFault(String(err)))
+  }, [])
+
+  // The project decides which worktrees exist. Whatever else changes them —
+  // an agent writing, a merge elsewhere — is picked up when the window comes
+  // back into focus.
+  useEffect(() => {
+    if (!repo) return
+    refresh()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [repo, refresh])
+
+  useEffect(() => {
+    if (selected) work.load(selected)
+  }, [selected, work])
+
+  const project = useCallback(async (next: string) => {
+    const wiki = channels.find((c) => c.id === 'wiki') ?? channels[0]
+    if (!wiki) return
     setFault('')
     try {
-      setHandoff((await api.handoff(active)).text)
+      const { repo: now } = await api.setConfig(wiki.id, { repo: next, model: wiki.model, effort: wiki.effort })
+      // The server has switched; the screen follows from this answer, not
+      // from the next request — if that one failed, the picker stayed on the
+      // old project while every API answered for the new one.
+      await follow(now)
     } catch (err) {
       setFault(String(err))
     }
-  }, [active])
+  }, [channels, follow])
 
-  const here = channels.find((c) => c.id === active)
-  const busy = busyOn.includes(active) || configuring
+  const flip = useCallback(async (on: boolean) => {
+    try {
+      setSw(await api.setSwitch(on))
+    } catch (err) {
+      setFault(String(err))
+    }
+  }, [])
 
-  const showPeek = useCallback(
-    async (path: string, line: number) => {
-      if (!here) return
-      setPeek({ data: null })
-      try {
-        setPeek({ data: await api.peek(here.repo, path, line) })
-      } catch (err) {
-        setPeek({ data: null, error: String(err) })
-      }
-    },
-    [here],
-  )
+  const order = useCallback(async (text: string) => {
+    const path = selected
+    await work.send(path, text, choice)
+    refresh()
+    api.getSwitch().then(setSw).catch(() => {})
+  }, [selected, choice, work, refresh])
 
-  const decideOne = useCallback(
-    async (candidate: string, target: 'wiki' | 'claude_md' | 'drop') => {
-      const r = await api.decide(active, candidate, target)
-      const changed = r.changed?.trim() ? `\n\n바뀐 것:\n${r.changed.trim()}` : ''
-      const cost = r.cost_usd != null ? `\n\n$${r.cost_usd.toFixed(3)}` : ''
-      return (r.error ? '실패 — ' : '') + r.text + changed + cost
-    },
-    [active],
-  )
+  const showPeek = useCallback(async (path: string, line: number) => {
+    if (!selected) return
+    setPeek({ data: null })
+    try {
+      setPeek({ data: await api.peek(selected, path, line) })
+    } catch (err) {
+      setPeek({ data: null, error: String(err) })
+    }
+  }, [selected])
+
+  const row = rows.find((r) => r.path === selected)
+  const waiting = new Set(Object.entries(work.turns).filter(([, turns]) => turns.some((t) => t.pending
+    && t.steps.some((s) => s.kind === 'approval' && s.answer === undefined))).map(([path]) => path))
+  const on = sw?.translate ?? false
 
   return (
-    <div className="flex h-screen">
-      <ChannelRail
-        channels={channels}
-        active={active}
-        busy={busy}
-        onPick={setActive}
-        onReset={wipe}
+    <div className="grid h-screen grid-cols-[15rem_minmax(0,1fr)_minmax(0,1fr)] overflow-hidden">
+      <Rail
+        repo={repo}
+        options={options}
+        // The server refuses the switch too; this keeps the picker from offering it.
+        projectBusy={queryBusy || making || rows.some((r) => r.busy)
+          || Object.values(work.turns).some((turns) => turns.at(-1)?.pending)}
+        // The server's `busy` is as old as the last listing; a turn this
+        // window is streaming is known here first.
+        rows={rows.map((r) => ({ ...r, busy: r.busy || Boolean(work.turns[r.path]?.at(-1)?.pending) }))}
+        waiting={waiting}
+        selected={selected}
+        view={view}
+        sw={sw}
+        theme={theme}
+        onProject={project}
+        onSelect={setSelected}
+        onMake={async (task) => {
+          setMaking(true)
+          try {
+            const { path } = await api.makeWorktree(task)
+            refresh()
+            setSelected(path)
+          } finally {
+            setMaking(false)
+          }
+        }}
+        onRemove={async (path) => {
+          await api.removeWorktree(path)
+          // The same task name makes the same path again; its turns must not
+          // come back with it.
+          work.forget(path)
+          refresh()
+        }}
+        onView={setView}
+        onSwitch={flip}
+        onTheme={setTheme}
       />
-      <main className="flex min-w-0 flex-1 flex-col">
-        {active === MAP ? (
-          /* For a long time this was `/wiki.html` in an iframe. The same graph
-             is drawn here directly now, which removes the layer where Python
-             built the HTML and this app wrapped it again. */
-          <div className="h-full overflow-auto"><WikiMap /></div>
-        ) : active === MIRROR ? (
-          /* The mirror lives here too. It once ran as a single HTML page on a
-             stdlib server on the next port, which meant two sets of tokens,
-             two sets of components and two translation paths to keep in step
-             by hand. */
-          <Mirror />
-        ) : (
-          <>
-            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-border bg-card px-6 py-3">
-              <div>
-                <h1 className="font-heading text-[16px] font-semibold leading-tight">
-                  #{here?.label ?? '…'}
-                </h1>
-                <p className="text-[12px] text-muted-foreground">
-                  {here?.blurb ?? ''}
-                  {here?.model_name && (
-                    <span className="ml-2 font-mono text-[10.5px] text-faint">
-                      {here.model_name.replace('claude-', '')}
-                    </span>
-                  )}
-                </p>
-              </div>
-              <div className="flex flex-wrap items-center gap-3">
-                {here && (
-                  <Toolbar channel={here} options={options} busy={busy}
-                    projectBusy={busyOn.length > 0 || configuring}
-                    korean={korean} onKorean={setKorean} onChange={apply} />
-                )}
-                <button
-                  type="button"
-                  onClick={askHandoff}
-                  disabled={!here}
-                  className="rounded-md border border-border bg-background px-2.5 py-1 text-[12px] hover:bg-secondary disabled:opacity-40"
-                  title="다음 세션에 붙일 프롬프트를 만든다"
-                >
-                  인계
-                </button>
-              </div>
-            </header>
 
-            {fault && (
-              <div className="border-b border-destructive/30 bg-destructive/10 px-6 py-2 text-[12.5px] text-destructive">
-                {fault}
-              </div>
-            )}
-            {note && (
-              <div className="border-b border-border bg-secondary px-6 py-2 text-[12.5px] text-muted-foreground">
-                {note}
-              </div>
-            )}
-            {handoff && (
-              <Handoff text={handoff} korean={korean} onClose={() => setHandoff('')} />
-            )}
-            {legacy.length > 0 && (
-              <details key={active} className="max-h-64 overflow-auto border-b border-border px-6 py-2 text-xs">
-                <summary className="cursor-pointer">프로젝트 미분류 이전 기록 ({legacy.length}개)</summary>
-                <p className="my-2 text-muted-foreground">예전 기록에는 프로젝트가 저장되지 않았습니다. 현재 프로젝트의 기록으로 간주하지 않습니다.</p>
-                {legacy.map((row, i) => <pre key={i} className="my-3 whitespace-pre-wrap">{row.role === 'user' ? '나' : '답'}: {row.text}</pre>)}
-              </details>
-            )}
-
-            <div className="flex min-h-0 flex-1">
-              <div className="flex min-w-0 flex-1 flex-col">
-                <Stream
-                  messages={messages}
-                  korean={korean}
-                  remote={here?.remote ?? ''}
-                  onPeek={showPeek}
-                  onDecide={active === 'retro' ? decideOne : undefined}
-                  onMark={markTurn}
-                />
-                <Composer busy={busy} onSend={send} />
-              </div>
-              {peek && (
-                <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />
-              )}
-            </div>
-          </>
+      <main className="flex min-h-0 min-w-0 flex-col border-r border-border">
+        {fault && (
+          <div role="alert" className="border-b border-destructive/30 bg-destructive/10 px-5 py-2 text-[12.5px] text-destructive">
+            {fault}
+          </div>
         )}
+        <div className="min-h-0 flex-1">
+          {view === 'map' ? (
+            <div className="h-full overflow-auto"><WikiMap on={on} /></div>
+          ) : (
+            <Query
+              channels={channels}
+              options={options}
+              on={on}
+              onChannels={accept}
+              onBusy={setQueryBusy}
+              onDraft={(text) => setSeed({ text })}
+            />
+          )}
+        </div>
       </main>
+
+      <div className="flex min-h-0 min-w-0 flex-col">
+        <div className="flex min-h-0 flex-[3]">
+          <div className="min-w-0 flex-1">
+            <Agent
+              row={row}
+              turns={(selected && work.turns[selected]) || []}
+              options={options}
+              choice={choice}
+              on={on}
+              seed={seed}
+              onChoice={setChoice}
+              onSend={order}
+              onAnswer={(turn, id, allow) => work.answer(selected, turn, id, allow)}
+              onReset={() => work.reset(selected).catch((err) => setFault(String(err)))}
+              onPeek={showPeek}
+            />
+          </div>
+          {peek && <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />}
+        </div>
+        <div className="min-h-0 flex-[2] border-t border-border">
+          <Terminal cwd={selected} theme={theme} />
+        </div>
+      </div>
     </div>
   )
 }

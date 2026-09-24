@@ -31,7 +31,8 @@ page.
 
 ```
 tool/        census · intersect · apply · inject · english_progress
-             trigger_audit · lint · repo_lint · graph · repo_graph · mirror
+             trigger_audit · lint · repo_lint · graph · repo_graph
+  main/      the program's main: the wiki query, the worktrees and their agents
   markers/   census markers, per language
 operator/    knowledge that follows the person — the review loop · edit as diffs · English progress
 craft/       knowledge that follows the technique — async pickup · finish the instruction · git blocks
@@ -39,7 +40,7 @@ skills/      repeated instructions set into procedures (enforcement layer 3) —
 adapters/    per-project slot values
 raw/         census output and measurements. Immutable
 graph.json   the policy graph `graph` produces. The views consume it
-web/         the chat screen and the wiki map. `chat.py` serves data through `/api/graph`
+web/         the screen and the wiki map; `web/src-tauri/` is the window around it
 ```
 
 `project` scope knowledge is not here. It lives in the target repository, and
@@ -209,8 +210,8 @@ judges.
 
 ```bash
 python tool/graph.py --project ~/PycharmProjects/<name> --project ...
-tool/chat.cmd                      # http://127.0.0.1:8787 · "위키 지도" at the lower left
-tool/chat.command                  # on macOS and Linux
+tool/app.cmd                       # the window · "위키 지도" at the lower left
+tool/app.command                   # on macOS and Linux
 ```
 
 The map lives in `web/`. The live force layout, dragging, zoom and pan,
@@ -229,7 +230,7 @@ Two axes Obsidian does not have.
   Unattached ones look hollow, and slots the adapter has not filled show up
   with them. An Obsidian graph is inside one vault, so it never asks this.
 
-## Chat: the exact answer and the plain explanation
+## The window: ask the wiki, then hand the work to an agent
 
 Team members follow the
 [chat install and sign-in guide](docs/chat-setup.md). Prepare with
@@ -238,8 +239,20 @@ It uses no personal path or login of the author's; each machine uses its own
 CLI and account. Projects default to the wiki's parent folder, changeable at
 install time with `--workspace`.
 
-Start it with `tool/chat.cmd` (`tool/chat.command` on macOS and Linux) and
-choose the project, the model and the reasoning effort. The chosen CLI has to
+Start it with `tool/app.cmd` (`tool/app.command` on macOS and Linux). The
+first start builds the Tauri window, which needs Rust. The window starts the
+Python server (`python tool/main`) itself and takes it down when it closes.
+The plan behind it is [phase 6](docs/plans/wiki-agent-6-main.md).
+
+One window, four areas: the project and its worktrees on the left, the wiki
+query in the middle, the selected worktree's agent and a shell in it on the
+right. "→ 작업" under an answer puts a draft instruction — the question, the
+answer, what it cited, the rules it matched — in the agent's box; the person
+writes the last line. The agent writes only inside a worktree, and every write
+waits on the screen for 허용 or 거절. The Korean translation switch is one for
+the whole app, and off means no request leaves.
+
+Choose the project, the model and the reasoning effort. The chosen CLI has to
 be signed in first. Codex models are not hard-coded; they come from the
 installed CLI's `model/list`. Only the efforts a model supports are shown, and
 the chosen model id is passed explicitly as `--model` on both calls. If the
@@ -260,7 +273,7 @@ back-filled with explanations.
   counted, are confirmed from the source and included in the reply.
 - [The explanation prompt](tool/prompts/chat-explain.md): receives only the
   finished original, as JSON, and restates it preserving the meaning. The
-  answer prompt, the question, the search history and the channel instructions
+  answer prompt, the question, the search history and the focus instructions
   are not passed. It runs in a separate temporary folder, in a new session,
   with no search tools. Numbers, conditions, negations, unconfirmed points and
   sources are preserved, and jargon is unpacked. The reader it writes for
@@ -278,26 +291,25 @@ and the
 The plain explanation is not a separate fact-check of the original. The
 `file:line` in each answer opens the evidence directly.
 
-The "common project" is shared by all five channels — progress, diagnosis,
-retrospect, review and wiki. Conversation context and records are kept per
-project and per channel, so leaving for another project and coming back
+The project is shared by all five focuses of the query — progress, diagnosis,
+retrospect, review and wiki — and by the worktree list. Conversation context
+and records are kept per project and per focus, so leaving for another project and coming back
 continues where it left off. A server restart restores the project selection
 and the CLI sessions left in the records. "Clear context" applies to the
-selected project's channel alone and does not delete records. Older records
-with no project information are under "records from before projects" and are
-not mixed into a handover. `chat_post.py`, which posts external briefings,
+selected project's focus alone and does not delete records. Older records
+with no project information are under "records from before projects". `chat_post.py`, which posts external briefings,
 also requires `--project <path>`. Within one CLI, changing the model continues
 the original conversation; switching between Claude and Codex starts a new
 context. "Related rules" on screen is a display-time comparison, not evidence
 that the host delivered a hook, and hooks are never re-run to produce it.
 
-Checks: `python -m pytest -q tool/test_chat.py`,
+Checks: `python -m pytest -q tool/test_main.py`,
 `npm --prefix web run build`, `npm --prefix web run lint`. They confirm the
 CLI events, the session separation, the original surviving a failure, and the
 model and effort validation. These automatic checks guarantee neither the
 accuracy of every model response nor the quality of an explanation. To test
-the quality of a real progress answer, press "clear this channel's context" on
-screen first, wait for it to finish, then ask again. A check that re-explains
+the quality of a real progress answer, press "문맥 비우기" in the query pane
+first, wait for it to finish, then ask again. A check that re-explains
 an old original is distinct from this whole-flow check. When reviewing,
 compare two things separately: whether the body alone makes the purpose, the
 current state and what remains understandable, and whether the original's
@@ -357,5 +369,4 @@ exempts the missing grounds only for existing rules carrying that mark, and it
 does not substitute for a new rule's grounds. Installing and signing in with
 your own CLI follows the [install guide](docs/chat-setup.md); managing the
 public copy follows the [update guide](docs/publishing.md); what was verified
-follows the [check record](docs/verification.md). The Korean mirror follows
-the [mirror guide](docs/mirror-setup.md).
+follows the [check record](docs/verification.md).

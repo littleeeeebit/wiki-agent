@@ -12,7 +12,7 @@ LOGS = Path(__file__).resolve().parent.parent / "raw" / "chat"
 
 
 def post(channel: str, text: str, source: str = "", *, project: Path) -> None:
-    from chat_channels import BY_ID
+    from main.channels import BY_ID
     if channel not in BY_ID:
         raise ValueError("그런 채널이 없다")
     project = project.expanduser().resolve()

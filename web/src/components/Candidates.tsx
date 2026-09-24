@@ -13,8 +13,9 @@ type State = { busy?: Target; result?: string; done?: Target }
 /** Three buttons per candidate the retro produced.
  *
  *  Step 5 of the `retrospect` skill says to ask with options, and a headless
- *  run cannot ask. This is where it asks. Nothing on disk changes until a
- *  button is pressed: the button is the permission. */
+ *  run cannot ask. This is where it asks. Nothing on disk changes here: the
+ *  first two put an instruction draft in the agent's box, and the writing
+ *  happens in a worktree where each write is approved. */
 export function Candidates({ raw, korean, onDecide }: Props) {
   const lines = raw
     .split('\n')
@@ -46,8 +47,8 @@ export function Candidates({ raw, korean, onDecide }: Props) {
     drop: '버린다',
   }
   const doing: Record<Target, string> = {
-    wiki: '페이지를 쓰는 중…',
-    claude_md: '한 줄 더하는 중…',
+    wiki: '초안을 만드는 중…',
+    claude_md: '초안을 만드는 중…',
     drop: '…',
   }
 
@@ -58,9 +59,9 @@ export function Candidates({ raw, korean, onDecide }: Props) {
         const s = state[i] ?? {}
         return (
           <div key={i} className="space-y-1.5">
-            <div className="text-[13px] leading-snug">{line}</div>
+            <div className="text-[13.5px] leading-snug">{line}</div>
             {s.done ? (
-              <div className="text-[11.5px] text-primary">→ {label[s.done]}</div>
+              <div className="text-[12.5px] text-primary">→ {label[s.done]}</div>
             ) : (
               <div className="flex flex-wrap gap-1.5">
                 {(['wiki', 'claude_md', 'drop'] as Target[]).map((t) => (
@@ -69,7 +70,7 @@ export function Candidates({ raw, korean, onDecide }: Props) {
                     type="button"
                     disabled={!!s.busy}
                     onClick={() => act(i, t)}
-                    className="rounded border border-border bg-background px-2 py-0.5 text-[11.5px] hover:bg-secondary disabled:opacity-40"
+                    className="rounded border border-border bg-background px-2 py-0.5 text-[12.5px] hover:bg-secondary disabled:opacity-40"
                   >
                     {s.busy === t ? doing[t] : label[t]}
                   </button>
@@ -77,7 +78,7 @@ export function Candidates({ raw, korean, onDecide }: Props) {
               </div>
             )}
             {s.result && (
-              <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded bg-secondary p-2 text-[11.5px] leading-snug">
+              <pre className="max-h-48 overflow-auto whitespace-pre-wrap rounded bg-secondary p-2 text-[12.5px] leading-snug">
                 {s.result}
               </pre>
             )}

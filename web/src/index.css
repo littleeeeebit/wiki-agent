@@ -41,6 +41,8 @@
     --color-background: var(--background);
     --color-faint: var(--faint);
     --color-added: var(--added);
+    --color-wait: var(--wait);
+    --color-wait-foreground: var(--wait-foreground);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -70,6 +72,10 @@
        removed line is a direction, not an error, so it needed a partner.
        This is the one place the three status colours did not cover. */
     --added: #2f6b4f;
+    /* A write waiting on a person. The one thing on the screen that must be
+       found at a glance, so it is the only warm colour. */
+    --wait: #8f5410;
+    --wait-foreground: #ffffff;
     --border: #d9d6d0;            /* edge */
     --input: #d9d6d0;
     --ring: #3f6b8f;
@@ -102,6 +108,8 @@
     --accent-foreground: #eceae5;
     --destructive: #d9705e;
     --added: #7fbf9a;
+    --wait: #e0a458;
+    --wait-foreground: #14161a;
     --border: #2e333b;
     --input: #2e333b;
     --ring: #7fa9c9;
@@ -136,6 +144,10 @@
         --accent-foreground: #eceae5;
         --destructive: #d9705e;
         --added: #7fbf9a;
+        --wait: #e0a458;
+        --wait-foreground: #14161a;
+    --wait: #e0a458;
+    --wait-foreground: #14161a;
         --border: #2e333b;
         --input: #2e333b;
         --ring: #7fa9c9;

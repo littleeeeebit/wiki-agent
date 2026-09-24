@@ -508,7 +508,8 @@ def pipeline_imports(wiki: Path = WIKI) -> list[tuple[str, str]]:
     """
 
     tool = wiki / "tool"
-    roots = {path.stem for path in tool.glob("*.py")}
+    # `main` is the program's main, a package rather than a file since phase 6.
+    roots = {path.stem for path in tool.glob("*.py")} | {"main"}
     found = []
     for name in (*PIPELINES, "common"):
         allowed = {name} if name == "common" else {name, "common"}
@@ -560,12 +561,15 @@ def pipeline_surface(wiki: Path = WIKI) -> list[tuple[str, str]]:
     """
 
     tool = wiki / "tool"
+    # The mains: the `tool/` root, where the hook entry points live, and the
+    # program's `tool/main/`.
+    mains = sorted([*tool.glob("*.py"), *(tool / "main").rglob("*.py")])
     found = []
     for name in PIPELINES:
         public = exported(tool / name / "__init__.py")
         if public is None:
             continue
-        for path in sorted(tool.glob("*.py")):
+        for path in mains:
             if path.name.startswith("test_"):
                 continue
             try:
@@ -611,7 +615,7 @@ def pipeline_surface(wiki: Path = WIKI) -> list[tuple[str, str]]:
             for line, target in sorted(set(used)):
                 found.append((
                     "공개 진입점",
-                    f"`tool/{path.name}:{line}`: `{target}` 는 `{name}` 의 `__all__` 밖이다 — "
+                    f"`tool/{path.relative_to(tool).as_posix()}:{line}`: `{target}` 는 `{name}` 의 `__all__` 밖이다 — "
                     f"`{name}` 은 `{', '.join(sorted(public))}` 로만 부른다",
                 ))
     return found

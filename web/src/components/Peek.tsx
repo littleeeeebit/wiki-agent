@@ -59,7 +59,7 @@ export function Peek({ data, error, onClose }: Props) {
               onClick={() => setKorean((on) => !on)}
               aria-pressed={korean}
               className={cn(
-                'rounded border border-border px-2 py-0.5 text-[12px] transition-colors',
+                'rounded border border-border px-2 py-0.5 text-[12.5px] transition-colors',
                 korean
                   ? 'bg-secondary text-foreground'
                   : 'text-muted-foreground hover:bg-secondary',
@@ -72,7 +72,7 @@ export function Peek({ data, error, onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="rounded px-2 py-0.5 text-[12px] text-muted-foreground hover:bg-secondary"
+            className="rounded px-2 py-0.5 text-[12.5px] text-muted-foreground hover:bg-secondary"
           >
             닫기
           </button>
@@ -80,7 +80,7 @@ export function Peek({ data, error, onClose }: Props) {
       </div>
       <div className="flex-1 overflow-auto">
         {error && <p className="p-3 text-[12.5px] text-destructive">{error}</p>}
-        {fault && <p className="px-3 pt-2 text-[12px] text-destructive">{fault}</p>}
+        {fault && <p className="px-3 pt-2 text-[12.5px] text-destructive">{fault}</p>}
         {data && (
           <pre className="p-3 font-mono text-[12px] leading-[1.55]">
             {data.lines.map((l, i) => {
