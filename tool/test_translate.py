@@ -520,7 +520,70 @@ def test_a_hold_that_cannot_be_written_sends_nothing(
 
     sent: list[object] = []
     monkeypatch.setattr(T.urllib.request, "urlopen", lambda *a, **_k: sent.append(a))
-    monkeypatch.setattr(T, "charge", lambda _usd: False)
+    monkeypatch.setattr(T, "charge", lambda _usd, _at=None: False)
 
     assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
     assert sent == [], "a request went out with nothing on the books"
+
+
+def test_the_hold_and_its_settlement_land_in_one_month(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 2: held on the 30th, settled on the 1st.
+
+    The old month kept the hold and the new one got a negative difference —
+    a month that started below zero and let that much through unpaid.
+    """
+
+    crossed: list[bool] = []
+    monkeypatch.setattr(T, "month", lambda: "2026-10" if crossed else "2026-09")
+    payload = {
+        "candidates": [{"content": {"parts": [{"text": '["EN"]'}]}}],
+        "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 1},
+    }
+
+    def midnight(*_a: object, **_k: object) -> _Answer:
+        crossed.append(True)
+        return _Answer(payload)
+
+    monkeypatch.setattr(T.urllib.request, "urlopen", midnight)
+    assert ko("훅이 조용히 죽는다") == "EN"
+
+    db = sqlite3.connect(T.CACHE)
+    rows = dict(db.execute("SELECT month, usd FROM spend").fetchall())
+    db.close()
+    assert "2026-10" not in rows, rows
+    assert rows["2026-09"] == pytest.approx(T.cost(payload["usageMetadata"]))
+
+
+def test_a_body_lost_after_the_answer_keeps_the_hold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 2: once the server answered, the request was billed.
+
+    Refunding every failure but a timeout wrote a cut connection mid-body down
+    as free.
+    """
+
+    class Cut(_Answer):
+        def read(self) -> bytes:
+            raise ConnectionResetError("reset mid-body")
+
+    monkeypatch.setattr(T.urllib.request, "urlopen", lambda *_a, **_k: Cut({}))
+    assert ko("훅이 조용히 죽는다") == "훅이 조용히 죽는다"
+    assert T.usage()["usd"] > 0.0
+
+
+def test_a_hold_that_waited_out_the_budget_sends_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Review round 2: the wait on a lock came out of the caller's seconds."""
+
+    sent: list[object] = []
+    monkeypatch.setattr(T.urllib.request, "urlopen", lambda *a, **_k: sent.append(a))
+    monkeypatch.setattr(T, "charge", lambda _usd, _at=None: time.sleep(0.2) or True)
+
+    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, time.monotonic() + 0.1) == [
+        "훅이 조용히 죽는다"
+    ]
+    assert sent == [], "the request went out after the budget was gone"

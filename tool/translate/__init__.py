@@ -300,8 +300,8 @@ def spent(db: sqlite3.Connection) -> float:
     return float(row[0]) if row else 0.0
 
 
-def charge(usd: float) -> bool:
-    """Add to this month's spend. `False` when it was not written.
+def charge(usd: float, at: str | None = None) -> bool:
+    """Add to month `at` (this one by default). `False` when it was not written.
 
     Its own connection, because `_ask` has none.
     """
@@ -313,7 +313,7 @@ def charge(usd: float) -> bool:
         db.execute(
             "INSERT INTO spend VALUES (?, ?) "
             "ON CONFLICT(month) DO UPDATE SET usd = usd + excluded.usd",
-            (month(), usd),
+            (at or month(), usd),
         )
         db.commit()
         return True
@@ -349,6 +349,7 @@ def usage() -> dict:
 def _ask(system: str, batch: list[str], seconds: float) -> list[str] | None:
     """One request. `None` for every failure, so callers keep their originals."""
 
+    started = time.monotonic()
     key = api_key()
     if not key or seconds <= 0 or not batch:
         return None
@@ -378,24 +379,40 @@ def _ask(system: str, batch: list[str], seconds: float) -> list[str] | None:
     # answer could fail on a lock — the hook and the mirror share this file —
     # and the money would be spent with nothing on the books; every later
     # request would then be judged against a month that looked cheaper than
-    # it was. Every byte sent counts as a token each way: more than it will
-    # cost, never less. Not written means not sent.
+    # it was. Every byte sent counts as a token each way, which is more than a
+    # translation costs; nothing caps the output, so it is not a bound. Not
+    # written means not sent.
+    #
+    # One month for the hold and whatever follows it. A request held on the
+    # 30th and settled on the 1st would otherwise leave the hold in the old
+    # month and a negative difference in the new one — headroom nobody paid for.
+    at = month()
     held = len(body) * (PRICE_IN + PRICE_OUT) / 1_000_000
-    if not charge(held):
+    if not charge(held, at):
+        return None
+    # The hold may have waited on a lock, and that wait came out of the
+    # caller's budget.
+    seconds -= time.monotonic() - started
+    if seconds <= 0:
+        charge(-held, at)
         return None
     try:
-        with urllib.request.urlopen(request, timeout=seconds) as answer:
-            parsed = json.loads(answer.read().decode("utf-8"))
+        answer = urllib.request.urlopen(request, timeout=seconds)
     except TimeoutError:
         # The server may well have finished and billed it. With no usage to
         # read, the hold stands.
         return None
     except Exception:
-        charge(-held)  # refused or never connected: nothing was billed
+        charge(-held, at)  # refused, or never connected: nothing was billed
         return None
     try:
-        # A settlement that fails leaves the hold, which is the larger number.
-        charge(cost(parsed.get("usageMetadata") or {}) - held)
+        with answer:
+            parsed = json.loads(answer.read().decode("utf-8"))
+    except Exception:
+        return None  # it answered, so it was billed; the hold stands
+    try:
+        # A settlement that fails leaves the hold in place.
+        charge(cost(parsed.get("usageMetadata") or {}) - held, at)
         parts = parsed["candidates"][0]["content"]["parts"]
         out = json.loads("".join(str(p.get("text") or "") for p in parts))
     except Exception:
