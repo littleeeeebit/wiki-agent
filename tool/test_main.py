@@ -1,28 +1,38 @@
-"""The two stages' data boundary, error preservation, and Codex events from a
-real child process."""
+"""The program's main: the wiki query's two stages, the work pane's worktrees
+and approvals, the translation switch, and the door only its own screen opens."""
 
 import json
 from pathlib import Path
 import subprocess
 import sys
+import uuid
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 import pytest
 
-import chat
-import chat_channels
 from agent import chat_local, chat_session
-import mirror
+from main import app as main_app
+from main import channels as chat_channels
+from main import query as chat
+from main import work
 import translate
 from agent.chat_session import ChatSession, Event
+
+
+def client() -> TestClient:
+    """The screen as the server sees it: same host, same origin."""
+    return TestClient(main_app.app, base_url="http://127.0.0.1:8787")
 
 
 @pytest.fixture(autouse=True)
 def no_machine_settings(tmp_path):
     with patch.object(chat_channels, "LOCAL", {}), patch.object(chat, "LOGS", tmp_path), \
          patch.object(chat, "_project", None), patch.object(chat, "_config", {}), \
-         patch.object(chat, "_sessions", {}), patch.object(chat, "_busy", set()):
+         patch.object(chat, "_sessions", {}), patch.object(chat, "_busy", set()), \
+         patch.object(main_app, "SWITCH", tmp_path / "main.json"), \
+         patch.object(work, "LOGS", tmp_path / "work"), \
+         patch.object(work, "_sessions", {}), patch.object(work, "_busy", set()):
         yield
 
 
@@ -67,18 +77,18 @@ def test_stream_persists_both_and_keeps_original_on_rewrite_failure(tmp_path):
 
     with patch.object(chat, "LOGS", tmp_path), patch.object(chat, "session", return_value=Original()), \
          patch.object(chat, "hits_for", return_value=[]), patch.object(chat, "explain", rewrite):
-        client = TestClient(chat.app)
-        response = client.post("/api/say/wiki", json={"text": "검사 결과?"})
+        web = client()
+        response = web.post("/api/say/wiki", json={"text": "검사 결과?"})
         events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
         assert [e["kind"] for e in events] == ["done", "simple_start", "simple_delta", "simple_done"]
-        saved = client.get("/api/log/wiki").json()[-1]
+        saved = web.get("/api/log/wiki").json()[-1]
         assert saved["text"] == "정확한 원문 13건" and saved["simple_text"] == "쉬운 설명 13건"
         assert saved["session_id"] == "answer-session"
         assert "wiki" not in chat._busy
         with patch.object(chat, "explain", return_value=iter([Event("error", "설명 호출 실패")])):
-            response = client.post("/api/say/wiki", json={"text": "다시?"})
+            response = web.post("/api/say/wiki", json={"text": "다시?"})
             assert '"kind": "simple_error"' in response.text
-            saved = client.get("/api/log/wiki").json()[-1]
+            saved = web.get("/api/log/wiki").json()[-1]
             assert saved["text"] == "정확한 원문 13건" and not saved["simple_text"]
             assert "설명 호출 실패" in saved["simple_error"]
             assert not saved.get("error")
@@ -93,7 +103,7 @@ def test_failed_original_never_rewritten(tmp_path):
 
     with patch.object(chat, "LOGS", tmp_path), patch.object(chat, "session", return_value=Failed()), \
          patch.object(chat, "hits_for", return_value=[]), patch.object(chat, "explain") as rewrite:
-        response = TestClient(chat.app).post("/api/say/wiki", json={"text": "질문"})
+        response = client().post("/api/say/wiki", json={"text": "질문"})
         assert '"kind": "error"' in response.text
         rewrite.assert_not_called()
         assert chat.recall("wiki")[-1]["error"] == "모델 오류"
@@ -135,7 +145,7 @@ for event in [
 
 
 def test_provider_switch_and_config_validation(tmp_path):
-    client = TestClient(chat.app)
+    web = client()
     models = [{"id": "codex:test-model", "default_effort": "low",
                "efforts": [{"id": e} for e in ("", "low", "high", "max")]},
               {"id": "codex:another-model", "default_effort": "high",
@@ -143,66 +153,65 @@ def test_provider_switch_and_config_validation(tmp_path):
     with patch.object(chat_channels, "repo_for", return_value=tmp_path), \
          patch.object(chat_channels, "codex_models", return_value=models), \
          patch.object(chat, "_config", {}), patch.object(chat, "_sessions", {}):
-        assert client.post("/api/config/wiki", json={"repo": "sample", "model": "codex"}).status_code == 400
-        assert client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:missing"}).status_code == 400
-        assert client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:another-model", "effort": "max"}).status_code == 400
-        response = client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:test-model", "effort": "max"})
+        assert web.post("/api/config/wiki", json={"repo": "sample", "model": "codex"}).status_code == 400
+        assert web.post("/api/config/wiki", json={"repo": "sample", "model": "codex:missing"}).status_code == 400
+        assert web.post("/api/config/wiki", json={"repo": "sample", "model": "codex:another-model", "effort": "max"}).status_code == 400
+        response = web.post("/api/config/wiki", json={"repo": "sample", "model": "codex:test-model", "effort": "max"})
         assert response.json()["switched"]
-        response = client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:test-model", "effort": "max"})
+        response = web.post("/api/config/wiki", json={"repo": "sample", "model": "codex:test-model", "effort": "max"})
         assert response.status_code == 200 and not response.json()["kept"]
-        response = client.post("/api/config/wiki", json={"repo": "sample", "model": "codex:another-model"})
+        response = web.post("/api/config/wiki", json={"repo": "sample", "model": "codex:another-model"})
         assert response.json()["kept"] and response.json()["effort"] == "high"
         # A Claude name typed by hand goes through; a shell-shaped one does not.
-        assert client.post("/api/config/wiki", json={"repo": "sample", "model": "claude-opus-5-5"}).status_code == 200
-        assert client.post("/api/config/wiki", json={"repo": "sample", "model": "opus; rm -rf"}).status_code == 400
+        assert web.post("/api/config/wiki", json={"repo": "sample", "model": "claude-opus-5-5"}).status_code == 200
+        assert web.post("/api/config/wiki", json={"repo": "sample", "model": "opus; rm -rf"}).status_code == 400
         with patch.object(chat, "_busy", {"wiki"}):
-            assert client.post("/api/reset/wiki").status_code == 409
+            assert web.post("/api/reset/wiki").status_code == 409
 
 
 def test_project_shared_sessions_and_records_isolated(tmp_path):
     repos = {name: tmp_path / name for name in ("a", "b")}
     for repo in repos.values():
         (repo / ".git").mkdir(parents=True)
-    client = TestClient(chat.app)
+    web = client()
     with patch.object(chat_channels, "repo_for", side_effect=repos.get):
-        client.post("/api/config/diagnose", json={"repo": "a"}).raise_for_status()
-        assert {c["repo"] for c in client.get("/api/channels").json()} == {"a"}
+        web.post("/api/config/diagnose", json={"repo": "a"}).raise_for_status()
+        assert {c["repo"] for c in web.get("/api/channels").json()} == {"a"}
         a = chat.session("retro")
         a.session_id = "a-context"
         chat.remember("retro", "assistant", "a 회고", session_id="a-context", provider="claude")
-        client.post("/api/config/progress", json={"repo": "b"}).raise_for_status()
-        assert client.get("/api/log/retro").json() == []
+        web.post("/api/config/progress", json={"repo": "b"}).raise_for_status()
+        assert web.get("/api/log/retro").json() == []
         assert chat.session("retro") is not a
         chat.remember("retro", "assistant", "b 회고")
-        client.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
-        assert {c["repo"] for c in client.get("/api/channels").json()} == {"a"}
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        assert {c["repo"] for c in web.get("/api/channels").json()} == {"a"}
         assert chat.session("retro") is a and a.session_id == "a-context"
-        assert [r["text"] for r in client.get("/api/log/retro").json()] == ["a 회고"]
+        assert [r["text"] for r in web.get("/api/log/retro").json()] == ["a 회고"]
         with patch.object(chat, "_busy", {"diagnose"}):
-            assert client.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+            assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
         assert chat.project() == "a"
         chat._project = None
         assert chat.project() == "a", "서버 재시작 때 프로젝트 선택을 복원해야 한다"
         chat._sessions.clear()
         assert chat.session("retro").session_id == "a-context"
-        client.post("/api/reset/retro").raise_for_status()
+        web.post("/api/reset/retro").raise_for_status()
         assert chat.session("retro") is not a
         assert chat.session("retro").session_id is None
-        assert client.get("/api/log/retro").json()[0]["text"] == "a 회고"
+        assert web.get("/api/log/retro").json()[0]["text"] == "a 회고"
 
 
-def test_legacy_records_remain_visible_but_not_in_handoff(tmp_path):
+def test_legacy_records_remain_visible(tmp_path):
     (tmp_path / "retro.jsonl").write_text(
         json.dumps({"role": "assistant", "text": "소속 모름"}) + "\n", encoding="utf-8")
-    client = TestClient(chat.app)
-    assert client.get("/api/log/retro").json() == []
-    assert client.get("/api/log/retro?legacy=true").json()[0]["text"] == "소속 모름"
-    assert "소속 모름" not in client.post("/api/handoff/retro").json()["text"]
+    web = client()
+    assert web.get("/api/log/retro").json() == []
+    assert web.get("/api/log/retro?legacy=true").json()[0]["text"] == "소속 모름"
     import chat_post
     (tmp_path / ".git").mkdir()
     with patch.object(chat_post, "LOGS", tmp_path), patch.object(chat_channels, "repo_for", return_value=tmp_path):
         chat_post.post("retro", "프로젝트 회고", project=tmp_path)
-        assert client.get("/api/log/retro").json()[0]["text"] == "프로젝트 회고"
+        assert web.get("/api/log/retro").json()[0]["text"] == "프로젝트 회고"
 
 
 def test_model_discovery_and_failure_reporting():
@@ -235,7 +244,7 @@ for line in sys.stdin:
     finally:
         chat_channels.codex_models.cache_clear()
     with patch.object(chat_channels, "codex_models", side_effect=RuntimeError("offline")):
-        response = TestClient(chat.app).get("/api/options").json()
+        response = client().get("/api/options").json()
         assert response["models"] == chat_channels.MODELS and "offline" in response["codex_error"]
 
 
@@ -249,15 +258,15 @@ def test_translate_api_guards_its_own_budget():
     spend, and nothing downstream of here would notice.
     """
 
-    client = TestClient(chat.app)
-    assert client.post(
+    web = client()
+    assert web.post(
         "/api/translate", json={"texts": ["x"], "direction": "ko->ko"}
     ).status_code == 400
-    assert client.post(
-        "/api/translate", json={"texts": ["x"] * (chat.TRANSLATE_MAX + 1)}
+    assert web.post(
+        "/api/translate", json={"texts": ["x"] * (main_app.TRANSLATE_MAX + 1)}
     ).status_code == 413
-    assert client.post(
-        "/api/translate", json={"texts": ["x" * (chat.TRANSLATE_CHARS + 1)]}
+    assert web.post(
+        "/api/translate", json={"texts": ["x" * (main_app.TRANSLATE_CHARS + 1)]}
     ).status_code == 413
 
 
@@ -278,8 +287,8 @@ def test_map_words_go_but_identifiers_stay():
         return [f"[ko]{t}" for t in texts]
 
     line = "Rule. `tool/lint.py` and [[hooks-fail-open]] decide `{review_dir}`."
-    with patch.object(chat.translate, "translate", fake):
-        answer = TestClient(chat.app).post(
+    with patch.object(main_app.translate, "translate", fake):
+        answer = client().post(
             "/api/translate", json={"texts": ["Emphasis is scarce", line]}
         ).json()
 
@@ -293,67 +302,145 @@ def test_map_words_go_but_identifiers_stay():
     assert "{review_dir}" in " ".join(kept)
 
 
-# -- the Korean mirror --------------------------------------------------------
+# -- the door ----------------------------------------------------------------
 
 
-def test_mirror_only_points_at_a_repo_it_listed():
-    """That the screen named a path is not a reason to open it.
+def test_only_this_screen_gets_in():
+    """This server approves writes. Another site's page reaches 127.0.0.1 too.
 
-    Running on the same machine does not make it one. Only what this server
-    itself offered gets accepted.
+    A cross-site `fetch` carries its own `Origin`, and a rebinding attack
+    carries its own domain in `Host`. Both are refused before any route runs.
     """
 
-    client = TestClient(chat.app)
-    listing = client.get("/api/mirror/repos").json()
-    assert set(listing["hosts"]) == {"claude", "codex"}
-
-    assert client.post(
-        "/api/mirror/point", json={"host": "claude", "project": "C:\\nowhere"}
-    ).status_code == 404
-    assert client.post(
-        "/api/mirror/point", json={"host": "없는호스트", "project": "C:\\tmp"}
-    ).status_code == 404
-
-    offered = listing["hosts"]["claude"]
-    if offered:
-        answer = client.post(
-            "/api/mirror/point",
-            json={"host": "claude", "project": offered[0]["path"]},
-        )
-        assert answer.status_code == 200
-        assert answer.json()["project"] == offered[0]["path"]
+    web = client()
+    assert web.get("/api/switch").status_code == 200
+    assert web.post("/api/switch", json={"translate": True},
+                    headers={"Origin": "http://127.0.0.1:8787"}).status_code == 200
+    assert web.post("/api/switch", json={"translate": False},
+                    headers={"Origin": "https://example.com"}).status_code == 403
+    rebound = TestClient(main_app.app, base_url="http://example.com:8787")
+    assert rebound.get("/api/switch").status_code == 403
+    assert web.get("/api/switch").json()["translate"] is True
 
 
-def test_a_deleted_worktree_moves_the_mirror_instead_of_stalling_it(tmp_path):
-    """The one thing the mirror does without being asked.
+def test_translation_off_sends_nothing():
+    """Off is no request at all, and it is checked where the request would leave."""
 
-    Deleting a worktree leaves its log behind, so "is there a log" goes on
-    saying yes forever. What the screen is pointed at has to be a directory
-    that is still there, or it sits showing the last thing a checkout that no
-    longer exists ever said.
-    """
-
-    gone, live = tmp_path / "gone", tmp_path / "live"
-    live.mkdir()
-    station = mirror.Station(host="claude", poll=mirror.POLL)
-    station.point("claude", gone)          # never created
-    stalled = station.now()[0]
-
-    with patch.object(chat, "_station", station), \
-         patch.object(mirror, "checkouts", lambda host: [{"path": str(live)}]):
-        _, _, _, project = chat._pointed()
-
-    assert project == str(live)
-    assert station.now()[0] != stalled     # a new feed, so the screen clears
+    web = client()
+    web.post("/api/switch", json={"translate": False}).raise_for_status()
+    with patch.object(main_app.translate, "translate", side_effect=AssertionError("요청이 나갔다")):
+        answer = web.post("/api/translate", json={"texts": ["Hello"]}).json()
+    assert answer == {"texts": ["Hello"], "off": True}
+    assert web.get("/api/switch").json()["translate"] is False
 
 
-def test_the_mirror_never_tails_a_checkout_that_is_gone(tmp_path):
-    """`session_of` is the guard, so the terminal tail gets it too."""
+# -- the work pane -----------------------------------------------------------
 
-    gone, live = tmp_path / "gone", tmp_path / "live"
-    live.mkdir()
-    with patch.dict(mirror.FINDERS,
-                    {"claude": lambda project: project / "log.jsonl"}):
-        pick = mirror.session_of("claude")
-        assert pick(live) == live / "log.jsonl"
-        assert pick(gone) is None
+
+def _repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "proj"
+    repo.mkdir()
+    for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", "-C", str(repo), *args], check=True)
+    (repo / "a.txt").write_text("a\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "a"], check=True)
+    return repo
+
+
+class Agent:
+    """A write session that asks once and finishes."""
+
+    made: list = []
+
+    def __init__(self, path, model="", effort="", write=False):
+        assert write
+        self.id, self.session_id, self.alive = uuid.uuid4().hex, None, True
+        self.is_codex = model.startswith("codex:")
+        self.pending = {"r1"}
+        Agent.made.append(self)
+
+    def say(self, text):
+        yield Event("approval", "Write · b.txt", {"id": "r1", "tool": "Write", "input": {}}, self.id)
+        yield Event("done", "했다", {"session_id": "cli-1", "error": False}, self.id)
+
+    def answer(self, rid, allow):
+        if rid not in self.pending:
+            return False
+        self.pending.discard(rid)
+        return True
+
+    def reconfigure(self, model, effort):
+        pass
+
+    def close(self):
+        self.alive = False
+
+
+def test_work_opens_only_its_own_worktrees(tmp_path):
+    """A path from the screen is opened only when `workspace` listed it."""
+
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"):
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        assert [r["name"] for r in web.get("/api/worktrees").json()["rows"]] == ["t1"]
+        assert web.post("/api/worktrees", json={"task": "../x"}).status_code == 400
+        for other in (str(repo), str(tmp_path / "elsewhere")):
+            assert web.post("/api/work/say", json={"path": other, "text": "x"}).status_code == 404
+            assert web.get("/api/work/log", params={"path": other}).status_code == 404
+            assert web.get("/api/file", params={"repo": other, "path": "a.txt"}).status_code == 404
+        assert web.get("/api/file", params={"repo": path, "path": "a.txt"}).json()["lines"] == ["a"]
+        assert web.get("/api/file", params={"repo": path, "path": "../proj/a.txt"}).status_code == 404
+        assert "지웠다" in web.post("/api/worktrees/remove", json={"path": path}).json()["text"]
+        assert web.get("/api/worktrees").json()["rows"] == []
+
+
+def test_an_approval_goes_only_to_the_session_that_asked(tmp_path):
+    """Answered with the asking session's id, once. A reset makes a new id."""
+
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent):
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        stream = web.post("/api/work/say", json={"path": path, "text": "b.txt 를 써라"}).text
+        events = [json.loads(line[6:]) for line in stream.splitlines() if line.startswith("data: ")]
+        assert [e["kind"] for e in events] == ["approval", "done"]
+        asked = events[0]
+        assert asked["session_id"] == Agent.made[-1].id and asked["meta"]["id"] == "r1"
+
+        wrong = {"path": path, "session_id": "someone-else", "id": "r1", "allow": True}
+        assert web.post("/api/work/answer", json=wrong).status_code == 409
+        right = {**wrong, "session_id": asked["session_id"]}
+        assert web.post("/api/work/answer", json=right).status_code == 200
+        assert web.post("/api/work/answer", json=right).status_code == 409
+
+        log = web.get("/api/work/log", params={"path": path}).json()
+        assert [r["role"] for r in log["rows"]] == ["user", "assistant"]
+        assert log["session_id"] == asked["session_id"]
+
+        # A new process resumes the CLI's conversation from the record.
+        work._sessions.clear()
+        web.post("/api/work/say", json={"path": path, "text": "다음"}).raise_for_status()
+        assert Agent.made[-1].session_id == "cli-1"
+
+        web.post("/api/work/reset", json={"path": path}).raise_for_status()
+        assert web.post("/api/work/answer", json=right).status_code == 409
+
+
+def test_a_draft_carries_the_grounds_and_leaves_the_task_to_a_person(tmp_path):
+    web = client()
+    with patch.object(chat_channels, "repo_for", return_value=tmp_path), \
+         patch.object(chat, "active_page", return_value=("", [])), \
+         patch.object(chat, "decisions", return_value=[("결정", "이유")]):
+        text = web.post("/api/draft", json={
+            "question": "왜 막히나?", "answer": "`tool/lint.py:12` 와 `docs/a.md` 를 보라. `tool/lint.py:12`",
+            "hits": ["hooks-fail-open"]}).json()["text"]
+        assert text.count("- `tool/lint.py:12`") == 1 and "- `docs/a.md`" in text
+        assert "- hooks-fail-open" in text and "- 결정 — 이유" in text
+        assert text.rstrip().endswith("(사람이 한 줄 적는다)")
+        retro = web.post("/api/draft", json={"question": "교정 3회 · 규칙 · 새 후보", "target": "wiki"}).json()["text"]
+        assert chat.WRITERS["wiki"] in retro and "교정 3회 · 규칙 · 새 후보" in retro
+        assert web.post("/api/draft", json={"target": "anything"}).status_code == 400

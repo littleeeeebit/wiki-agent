@@ -1,7 +1,8 @@
-"""The channel definitions and what can be chosen — project, model, effort.
+"""The focuses the wiki query can take, and what can be chosen — project, model, effort.
 
-The labels and preambles here are read by a person on screen, so they stay
-Korean.
+They were channels of the old chat screen, and their ids still name the
+records in `raw/chat/`. The labels and preambles here are read by a person on
+screen, so they stay Korean.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import time
 
 from agent import CodexServer, settings
 
-WIKI = Path(__file__).resolve().parent.parent
+WIKI = Path(__file__).resolve().parents[2]
 LOCAL = settings()
 WORKSPACE = (WIKI / Path(LOCAL.get("workspace", "..")).expanduser()).resolve()
 

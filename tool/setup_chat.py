@@ -80,7 +80,7 @@ def install(agents, workspace):
         login(agent)
     model = ""
     if agents == ["codex"]:
-        from chat_channels import codex_models
+        from main.channels import codex_models
         models = codex_models()
         model = next((m for m in models if m.get("is_default")), models[0])["id"]
     # The path and the default model are written only once the install has
@@ -92,7 +92,7 @@ def install(agents, workspace):
         local_workspace = str(workspace)
     data.update(workspace=local_workspace, model=model)
     SETTINGS.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
-    print("설치 완료. Windows: tool\\chat.cmd / macOS·Linux: tool/chat.command")
+    print("설치 완료. Windows: tool\\app.cmd / macOS·Linux: tool/app.command")
 
 
 def main():

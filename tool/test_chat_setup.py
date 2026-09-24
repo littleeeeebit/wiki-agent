@@ -9,8 +9,9 @@ from unittest.mock import patch
 
 import pytest
 
-import chat
-import chat_channels
+from main import app as main_app
+from main import channels as chat_channels
+from main import query
 from agent import chat_local
 import setup_chat
 
@@ -73,10 +74,10 @@ def test_workspace_cannot_be_the_wiki_itself(tmp_path, monkeypatch):
     with patch.object(setup_chat, "ROOT", root):
         with pytest.raises(ValueError, match="위키 자신"):
             setup_chat.install(["codex"], root)
-    monkeypatch.setattr(sys, "argv", ["chat.py"])
+    monkeypatch.setattr(sys, "argv", ["main"])
     with patch.object(chat_channels, "WORKSPACE", chat_channels.WIKI):
         with pytest.raises(SystemExit) as stop:
-            chat.main()
+            main_app.main()
     assert stop.value.code == 2
 
 
@@ -144,8 +145,8 @@ def test_install_preserves_settings_on_failure_and_saves_no_credentials(tmp_path
 def test_codex_only_install_defaults_to_actual_model():
     model = {"id": "codex:my-model", "default_effort": "medium", "efforts": [{"id": "medium"}]}
     with patch.object(chat_channels, "LOCAL", {"model": model["id"]}), \
-         patch.object(chat_channels, "codex_models", return_value=[model]), patch.object(chat, "_config", {}):
-        cfg = chat.config("progress")
+         patch.object(chat_channels, "codex_models", return_value=[model]), patch.object(query, "_config", {}):
+        cfg = query.config("progress")
         assert cfg["model"] == model["id"] and cfg["effort"] == "medium"
 
 
