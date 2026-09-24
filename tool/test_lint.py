@@ -77,6 +77,16 @@ def _clean_tool(root: Path, name: str, source: str) -> None:
     _tool(root, name, FIXED + source)
 
 
+SURFACE = '__all__ = ("translate", "KO_EN")\n'
+
+
+def _surface(root: Path, source: str) -> None:
+    """A pipeline that has gathered its entry point, and a main that uses it."""
+
+    _clean_tool(root, "translate/__init__.py", SURFACE)
+    _clean_tool(root, "main.py", source)
+
+
 def kinds_and_messages(root: Path) -> list[tuple[str, str]]:
     _loaded, _declared, findings = check(wiki=root, adapters=root / "none")
     return findings
@@ -264,6 +274,32 @@ def main() -> int:
             lambda p, r: _clean_tool(r, "common/c.py", "import wiki\n"),
             "파이프라인 경계",
         ),
+        (
+            "메인이 __all__ 밖을 부른다",
+            lambda p, r: _surface(r, "import translate\ntranslate._ask()\n"),
+            "공개 진입점",
+        ),
+        (
+            # The alias is how `mirror.py` spells it.
+            "별칭으로 __all__ 밖",
+            lambda p, r: _surface(r, "def f():\n    import translate as T\n    return T.protect\n"),
+            "공개 진입점",
+        ),
+        (
+            "from 으로 __all__ 밖",
+            lambda p, r: _surface(r, "from translate import protect\n"),
+            "공개 진입점",
+        ),
+        (
+            "하위 모듈을 부른다",
+            lambda p, r: _surface(r, "from translate.x import y\n"),
+            "공개 진입점",
+        ),
+        (
+            "tool. 접두어로 __all__ 밖",
+            lambda p, r: _surface(r, "from tool import translate as T\nT._key\n"),
+            "공개 진입점",
+        ),
     ]
 
     print(f"\n결함을 하나씩 심는다 ({len(checks)}건)\n")
@@ -301,6 +337,20 @@ def main() -> int:
     print(f"  {'통과 ' if not crossed else '실패 '} 허용된 import 는 안 잡는다  → {crossed or '없음'}")
     if crossed:
         failed.append("경계 오탐")
+
+    # The exported names stay green, tests may look inside, and a pipeline
+    # without `__all__` is not read yet.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        build(root, CLEAN)
+        _surface(root, "import translate\nfrom translate import KO_EN\ntranslate.translate([], KO_EN, 0)\n")
+        _clean_tool(root, "test_x.py", "import translate\ntranslate._ask()\n")
+        _clean_tool(root, "wiki/__init__.py", "")
+        _clean_tool(root, "other.py", "from wiki import match\nimport wiki\nwiki.anything\n")
+        leaked = [msg for kind, msg in kinds_and_messages(root) if kind == "공개 진입점"]
+    print(f"  {'통과 ' if not leaked else '실패 '} 공개 이름은 안 잡는다        → {leaked or '없음'}")
+    if leaked:
+        failed.append("진입점 오탐")
 
     # Citing Korean is not writing Korean, and the backtick is what says so.
     # A check that stops correct work is the one that gets switched off, so

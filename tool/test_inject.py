@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -240,12 +241,12 @@ def _rendering(prompt: str, answer: str | None) -> str:
     import inject
     import translate
 
-    was = translate.ko_to_en
-    translate.ko_to_en = lambda text, deadline=None: answer or text
+    was = translate.translate
+    translate.translate = lambda texts, direction, deadline: [answer or t for t in texts]
     try:
-        return inject.rendering(prompt)
+        return inject.rendering(prompt, time.monotonic() + 5)
     finally:
-        translate.ko_to_en = was
+        translate.translate = was
 
 
 def test_the_rendering_is_attached_only_when_the_utterance_is_korean():
@@ -260,7 +261,7 @@ def test_a_failed_translation_gets_no_rendering_label():
     """Labelling the original as a rendering is the worst failure here.
 
     The reading side has no way to check whether something was translated, so
-    mislabelled Korean gets read as English and trusted. When `ko_to_en`
+    mislabelled Korean gets read as English and trusted. When the translator
     returns the original unchanged — that is, when it failed — the block is
     not built at all.
     """

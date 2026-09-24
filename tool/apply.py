@@ -210,8 +210,9 @@ def hook_entry(python: str, adapter: str | None, project: str = "") -> dict:
                 ),
                 # Was 10. `inject.py` attaches an English rendering of the
                 # utterance, which brought a Gemini round trip in — measured
-                # at 1.2 seconds. `translate.py` caps itself at 6, so even at
-                # its worst the hook finishes inside the budget.
+                # at 1.2 seconds. `inject.py` hands the translator its own
+                # 8-second deadline (`BUDGET`), so even at its worst the hook
+                # finishes inside this one.
                 "timeout": 15,
                 "statusMessage": "위키 확인",
             }

@@ -667,6 +667,7 @@ def peek(repo: str, path: str, line: int = 1, around: int = 25) -> dict:
 
 TRANSLATE_MAX = 40          # sentences per request
 TRANSLATE_CHARS = 40_000    # characters per request
+TRANSLATE_SECONDS = 60.0    # an overlay renders whole answers; see `mirror.SCREEN_SECONDS`
 
 
 class Rendering(BaseModel):
@@ -678,9 +679,9 @@ class Rendering(BaseModel):
 def render(body: Rendering) -> dict:
     """Render what a screen is about to show.
 
-    The size limits are here because the budget is shared. A screen that
-    accidentally posts a whole document burns what the hooks were going to
-    spend — one cache, one bill.
+    The size limits are here because the monthly limit is shared. A screen
+    that accidentally posts a whole document burns what the hooks were going
+    to spend — one cache, one bill, one ceiling.
     """
 
     if body.direction not in (translate.KO_EN, translate.EN_KO):
@@ -689,7 +690,9 @@ def render(body: Rendering) -> dict:
         raise HTTPException(413, f"한 번에 {TRANSLATE_MAX} 문장까지다")
     if sum(len(t) for t in body.texts) > TRANSLATE_CHARS:
         raise HTTPException(413, f"한 번에 {TRANSLATE_CHARS} 자까지다")
-    return {"texts": translate.translate(list(body.texts), body.direction)}
+    return {"texts": translate.translate(
+        list(body.texts), body.direction, time.monotonic() + TRANSLATE_SECONDS
+    )}
 
 
 # -- the Korean mirror --------------------------------------------------------
