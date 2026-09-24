@@ -284,15 +284,25 @@ def configure(cid: str, body: Config) -> dict:
         if switched and work.busy():
             raise HTTPException(409, "에이전트가 도는 동안은 프로젝트를 바꾸지 않는다")
         if switched:
-            # Changed only while no turn is being recorded. If the disk write
-            # fails, the selection stays where it was too.
-            LOGS.mkdir(parents=True, exist_ok=True)
-            path = LOGS / "project.json"
-            temporary = path.with_suffix(".tmp")
-            temporary.write_text(json.dumps(body.repo, ensure_ascii=False) + "\n", encoding="utf-8")
-            temporary.replace(path)
+            # Changed only while no turn is being recorded. The new project's
+            # settings are read before anything is committed: `config` fails
+            # when Codex cannot list its models, and the selection had already
+            # moved — the screen showed a failed switch to a server on the
+            # other project. A failed disk write keeps the old selection too.
+            previous = _project
             _project = body.repo
-        cfg = config(cid)
+            try:
+                cfg = config(cid)
+                LOGS.mkdir(parents=True, exist_ok=True)
+                path = LOGS / "project.json"
+                temporary = path.with_suffix(".tmp")
+                temporary.write_text(json.dumps(body.repo, ensure_ascii=False) + "\n", encoding="utf-8")
+                temporary.replace(path)
+            except BaseException:
+                _project = previous
+                raise
+        else:
+            cfg = config(cid)
         moved = not switched and body.model.startswith("codex:") != cfg["model"].startswith("codex:")
         if not switched:
             cfg.update(model=body.model, effort=body.effort or selected.get("default_effort", ""))

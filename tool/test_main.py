@@ -686,3 +686,59 @@ def test_an_instruction_holds_its_worktree_before_checking_the_path(tmp_path):
         finally:
             gate.set()
             sending.join(10)
+
+
+def test_making_a_worktree_holds_the_project(tmp_path):
+    """Git takes a while to make a worktree. The project switched meanwhile,
+    and the new worktree came back as a success into the other screen."""
+
+    import threading
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    gate, real = threading.Event(), work.create
+
+    def slow(*args):
+        gate.wait(10)
+        return real(*args)
+
+    with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
+          patch.object(work, "create", slow)):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        making = threading.Thread(target=lambda: work.make(work.Task(task="t1")))
+        making.start()
+        try:
+            for _ in range(100):
+                if work._busy:
+                    break
+                threading.Event().wait(0.05)
+            assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+        finally:
+            gate.set()
+            making.join(10)
+        assert not work._busy
+        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
+
+
+def test_a_failed_switch_leaves_the_project_where_it_was(tmp_path):
+    """The new project's settings can fail (Codex cannot list its models).
+    The selection had already moved by then, on the server and on disk."""
+
+    from fastapi import HTTPException
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    real = chat.config
+
+    def failing(cid):
+        if chat.project() == "b":
+            raise HTTPException(503, "Codex 모델 목록 없음")
+        return real(cid)
+
+    with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
+          patch.object(chat, "config", failing)):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 503
+        assert chat.project() == "a"
+        chat._project = None
+        assert chat.project() == "a", "디스크의 선택도 그대로여야 한다"

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Agent } from '@/components/Agent'
 import type { Choice } from '@/components/Toolbar'
 import { Peek } from '@/components/Peek'
@@ -49,13 +49,20 @@ export default function App() {
     }
   }, [theme])
 
+  // Only the newest listing lands. One for the previous project could come
+  // back after the new project's and fill its rail with the old worktrees.
+  const listing = useRef(0)
+  const [making, setMaking] = useState(false)
+
   const refresh = useCallback(() => {
+    const mine = ++listing.current
     api.getWorktrees()
       .then(({ rows }) => {
+        if (mine !== listing.current) return
         setRows(rows)
         setSelected((path) => (rows.some((r) => r.path === path) ? path : ''))
       })
-      .catch((err) => setFault(String(err)))
+      .catch((err) => mine === listing.current && setFault(String(err)))
   }, [])
 
   useEffect(() => {
@@ -133,7 +140,7 @@ export default function App() {
         repo={repo}
         options={options}
         // The server refuses the switch too; this keeps the picker from offering it.
-        projectBusy={queryBusy || rows.some((r) => r.busy)
+        projectBusy={queryBusy || making || rows.some((r) => r.busy)
           || Object.values(work.turns).some((turns) => turns.at(-1)?.pending)}
         // The server's `busy` is as old as the last listing; a turn this
         // window is streaming is known here first.
@@ -146,9 +153,14 @@ export default function App() {
         onProject={project}
         onSelect={setSelected}
         onMake={async (task) => {
-          const { path } = await api.makeWorktree(task)
-          refresh()
-          setSelected(path)
+          setMaking(true)
+          try {
+            const { path } = await api.makeWorktree(task)
+            refresh()
+            setSelected(path)
+          } finally {
+            setMaking(false)
+          }
         }}
         onRemove={async (path) => {
           await api.removeWorktree(path)

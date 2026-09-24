@@ -17,6 +17,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agent import ChatSession
+from common import worktree_home
 from workspace import create, remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
@@ -110,12 +111,21 @@ def listing() -> dict:
 
 @router.post("/api/worktrees")
 def make(body: Task) -> dict:
+    # The project and the hold are taken together, so the project cannot
+    # switch while git makes the worktree — it did, and the new worktree came
+    # back as a success into the other project's screen. The key is the path
+    # it will have, so the same name cannot be removed and made at once.
+    with _lock:
+        repo = current_repo()
+        release = hold(_busy, _lock, str(worktree_home(repo) / body.task), "그 작업트리를 다른 요청이 쓰고 있다")
     try:
-        path = create(current_repo(), body.task)
+        path = create(repo, body.task)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
+    finally:
+        release()
     return {"path": str(path)}
 
 
