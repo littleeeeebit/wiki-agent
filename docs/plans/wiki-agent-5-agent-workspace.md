@@ -182,3 +182,4 @@ Orca 가 계정마다 `CODEX_HOME` 을 따로 두던 방식은 가져오지 않�
 | 리뷰 라운드 5 | P0 하나(`merge=ours` 드라이버가 브랜치 변경을 버린 병합이 HEAD 와 같음). 같은 함수의 다섯 번째라 병합 시뮬레이션을 버리고 경로별 객체 비교로 바꿨다 |
 | 리뷰 라운드 6 | P0 하나(`diff.ignoreSubmodules=all` 이 서브모듈 포인터를 숨김). porcelain `git diff` 를 plumbing `diff-tree` 로 바꿨다 |
 | 리뷰 라운드 7 | P0 하나(`.gitmodules` 의 `ignore = all` 을 `diff-tree` 도 따름). diff 를 버리고 세 트리를 `ls-tree` 로 읽어 비교한다. 모드만 바꾼 경우를 테스트로 더했다 |
+| 리뷰 라운드 8 | 새 P0·P1 없음, 머지 허용. 계획 대비 점검 표의 모든 줄이 됨 또는 다음 단계 몫. P2 하나(중간 커밋은 남기지 않는다)는 PR 코멘트로 남겼다 |
