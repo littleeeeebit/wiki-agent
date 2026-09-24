@@ -336,8 +336,12 @@ def say(cid: str, body: Say) -> StreamingResponse:
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "빈 발화")
-    release = hold(_busy, _lock, cid, "이 초점의 답변을 생성하고 있습니다")
-    cfg = dict(config(cid))
+    # The settings first: `config` can fail (503 when Codex cannot list its
+    # models), and after the hold nothing may fail before `held` arms the
+    # release — a focus stayed busy for good that way.
+    with _lock:
+        cfg = dict(config(cid))
+        release = hold(_busy, _lock, cid, "이 초점의 답변을 생성하고 있습니다")
 
     def stream():
         answer: list[str] = []

@@ -601,3 +601,88 @@ def test_a_collected_body_releases_even_inside_the_lock():
     worker.start()
     worker.join(timeout=10)
     assert not worker.is_alive(), "해제가 자기 잠금을 기다린다"
+
+
+def test_a_focus_whose_settings_fail_is_not_left_held():
+    """`config` answers 503 when Codex cannot list its models. Raised after
+    the hold, nothing was left to release it and the focus stayed busy."""
+
+    from fastapi import HTTPException
+
+    with patch.object(chat, "config", side_effect=HTTPException(503, "Codex 모델 목록 없음")):
+        with pytest.raises(HTTPException):
+            chat.say("wiki", chat.Say(text="질문"))
+    assert not chat._busy
+
+
+def _two_projects(tmp_path):
+    for name in ("a", "b"):
+        (tmp_path / name).mkdir()
+    return {name: _repo(tmp_path / name) for name in ("a", "b")}
+
+
+def test_a_removal_holds_its_worktree_until_it_is_done(tmp_path):
+    """Checked and let go, a new instruction was accepted while the worktree
+    was being deleted under it."""
+
+    import threading
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    gate, real = threading.Event(), work.remove
+
+    def slow(*args):
+        gate.wait(10)
+        return real(*args)
+
+    with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
+          patch.object(work, "ChatSession", Agent), patch.object(work, "remove", slow)):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        removing = threading.Thread(target=lambda: work.clear(work.Where(path=path)))
+        removing.start()
+        try:
+            for _ in range(100):
+                if path in work._busy:
+                    break
+                threading.Event().wait(0.05)
+            assert web.post("/api/work/say", json={"path": path, "text": "x"}).status_code == 409
+            assert web.post("/api/work/reset", json={"path": path}).status_code == 409
+            assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+        finally:
+            gate.set()
+            removing.join(10)
+        assert not work._busy
+
+
+def test_an_instruction_holds_its_worktree_before_checking_the_path(tmp_path):
+    """The path check walks git for every worktree. Held only after it, the
+    project could switch while it ran, and the turn then ran under the other
+    project's screen."""
+
+    import threading
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    gate, real = threading.Event(), work.ours
+
+    def slow(path):
+        found = real(path)
+        gate.wait(10)
+        return found
+
+    with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
+          patch.object(work, "ChatSession", Agent), patch.object(work, "ours", slow)):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        path = str(work.create(repos["a"], "t1"))
+        sending = threading.Thread(target=lambda: work.say(work.Order(path=path, text="x")))
+        sending.start()
+        try:
+            for _ in range(100):
+                if path in work._busy:
+                    break
+                threading.Event().wait(0.05)
+            assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+        finally:
+            gate.set()
+            sending.join(10)

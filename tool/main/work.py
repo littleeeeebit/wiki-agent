@@ -9,7 +9,6 @@ for a person.
 from __future__ import annotations
 
 import json
-import threading
 import time
 from pathlib import Path
 
@@ -20,7 +19,9 @@ from pydantic import BaseModel
 from agent import ChatSession
 from workspace import create, remove, worktrees
 
-from .query import ROOT, current_repo, held, hold, resumable, sse
+# One lock with the wiki query's. A project switch reads every hold and
+# changes the project under it, so a hold can never land in between.
+from .query import ROOT, _lock, current_repo, held, hold, resumable, sse
 
 LOGS = ROOT / "raw" / "work"
 MAX_REPLAY = 200
@@ -28,9 +29,6 @@ MAX_REPLAY = 200
 router = APIRouter()
 
 _sessions: dict[str, ChatSession] = {}    # worktree path -> its session
-# Reentrant: a stream's release can run from garbage collection while this
-# very thread is inside `with _lock:`, and a plain lock waited on itself.
-_lock = threading.RLock()
 _busy: dict[str, object] = {}   # worktree path -> the hold of its running turn
 
 
@@ -123,25 +121,29 @@ def make(body: Task) -> dict:
 
 @router.post("/api/worktrees/remove")
 def clear(body: Where) -> dict:
-    path = ours(body.path)
-    with _lock:
-        if body.path in _busy:
-            raise HTTPException(409, "에이전트가 도는 동안은 지우지 않는다")
-        chat = _sessions.pop(body.path, None)
-    if chat:
-        chat.close()
+    # Held for the whole removal, as a turn holds it. Checked and let go, a
+    # new instruction was accepted while the worktree was being deleted.
+    release = hold(_busy, _lock, body.path, "에이전트가 도는 동안은 지우지 않는다")
     try:
-        text = remove(current_repo(), path)
-    except (ValueError, RuntimeError) as exc:
-        raise HTTPException(409, str(exc)) from exc
-    # The same task name makes the same path again, and the record is keyed by
-    # it: a new `t1` came up with the old one's conversation, and `--resume`
-    # carried the old CLI session into the new work. The record is set aside,
-    # not deleted.
-    file = record(path)
-    if file.exists():
-        file.rename(file.with_name(f"{path.name}.{time.time_ns()}.jsonl"))
-    return {"text": text}
+        path = ours(body.path)
+        with _lock:
+            chat = _sessions.pop(body.path, None)
+        if chat:
+            chat.close()
+        try:
+            text = remove(current_repo(), path)
+        except (ValueError, RuntimeError) as exc:
+            raise HTTPException(409, str(exc)) from exc
+        # The same task name makes the same path again, and the record is
+        # keyed by it: a new `t1` came up with the old one's conversation, and
+        # `--resume` carried the old CLI session into the new work. The record
+        # is set aside, not deleted.
+        file = record(path)
+        if file.exists():
+            file.rename(file.with_name(f"{path.name}.{time.time_ns()}.jsonl"))
+        return {"text": text}
+    finally:
+        release()
 
 
 def busy() -> bool:
@@ -202,15 +204,19 @@ def log(path: str) -> dict:
 
 @router.post("/api/work/reset")
 def reset(body: Where) -> dict:
-    path = ours(body.path)
-    with _lock:
-        if body.path in _busy:
-            raise HTTPException(409, "에이전트가 도는 동안은 비우지 않는다")
-        chat = _sessions.pop(body.path, None)
-    remember(path, "context", "사용자가 문맥 지우기")
-    if chat:
-        chat.close()
-    return {"ok": True}
+    # Held until the reset is on record, or a turn in between resumed the CLI
+    # context the reset was meant to drop.
+    release = hold(_busy, _lock, body.path, "에이전트가 도는 동안은 비우지 않는다")
+    try:
+        path = ours(body.path)
+        with _lock:
+            chat = _sessions.pop(body.path, None)
+        remember(path, "context", "사용자가 문맥 지우기")
+        if chat:
+            chat.close()
+        return {"ok": True}
+    finally:
+        release()
 
 
 @router.post("/api/work/say")
@@ -221,13 +227,18 @@ def say(body: Order) -> StreamingResponse:
     the screen can drop a late one and an approval can name who asked.
     """
 
-    path = ours(body.path)
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "빈 지시")
-    # Held from acceptance: from here the project cannot switch away and the
-    # worktree cannot be removed or reset under this instruction.
+    # Held from acceptance, and before the path is checked: from here the
+    # project cannot switch away and the worktree cannot be removed or reset.
+    # Checked first, the project switched between the check and the hold.
     release = hold(_busy, _lock, body.path, "이 작업트리의 에이전트가 아직 돌고 있다")
+    try:
+        path = ours(body.path)
+    except BaseException:
+        release()
+        raise
 
     def stream():
         final, failed, tools, meta, chat = "", "", [], {}, None
