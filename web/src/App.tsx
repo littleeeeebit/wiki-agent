@@ -132,7 +132,9 @@ export default function App() {
       <Rail
         repo={repo}
         options={options}
-        projectBusy={queryBusy || rows.some((r) => r.busy)}
+        // The server refuses the switch too; this keeps the picker from offering it.
+        projectBusy={queryBusy || rows.some((r) => r.busy)
+          || Object.values(work.turns).some((turns) => turns.at(-1)?.pending)}
         // The server's `busy` is as old as the last listing; a turn this
         // window is streaming is known here first.
         rows={rows.map((r) => ({ ...r, busy: r.busy || Boolean(work.turns[r.path]?.at(-1)?.pending) }))}
@@ -150,6 +152,9 @@ export default function App() {
         }}
         onRemove={async (path) => {
           await api.removeWorktree(path)
+          // The same task name makes the same path again; its turns must not
+          // come back with it.
+          work.forget(path)
           refresh()
         }}
         onView={setView}
@@ -165,7 +170,7 @@ export default function App() {
         )}
         <div className="min-h-0 flex-1">
           {view === 'map' ? (
-            <div className="h-full overflow-auto"><WikiMap /></div>
+            <div className="h-full overflow-auto"><WikiMap on={on} /></div>
           ) : (
             <Query
               channels={channels}

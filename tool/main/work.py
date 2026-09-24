@@ -129,9 +129,25 @@ def clear(body: Where) -> dict:
     if chat:
         chat.close()
     try:
-        return {"text": remove(current_repo(), path)}
+        text = remove(current_repo(), path)
     except (ValueError, RuntimeError) as exc:
         raise HTTPException(409, str(exc)) from exc
+    # The same task name makes the same path again, and the record is keyed by
+    # it: a new `t1` came up with the old one's conversation, and `--resume`
+    # carried the old CLI session into the new work. The record is set aside,
+    # not deleted.
+    file = record(path)
+    if file.exists():
+        file.rename(file.with_name(f"{path.name}.{time.time_ns()}.jsonl"))
+    return {"text": text}
+
+
+def busy() -> bool:
+    """Is any agent turn running? The project stays put while one is: its
+    worktrees, and the approvals waiting in them, belong to that project."""
+
+    with _lock:
+        return bool(_busy)
 
 
 # -- The agent --------------------------------------------------------------
@@ -210,22 +226,25 @@ def say(body: Order) -> StreamingResponse:
     with _lock:
         if body.path in _busy:
             raise HTTPException(409, "이 작업트리의 에이전트가 아직 돌고 있다")
-        _busy.add(body.path)
-    try:
-        chat = session(path, body.model, body.effort)
-    except Exception as exc:
-        with _lock:
-            _busy.discard(body.path)
-        if isinstance(exc, ValueError):
-            raise HTTPException(409, str(exc)) from exc
-        raise
 
     def stream():
-        final, failed, tools, meta = "", "", [], {}
+        # The worktree is held from inside the body, never before it. A body
+        # that never starts — the client gone right after the headers — runs
+        # no `finally`, and a hold taken outside one stayed for good: every
+        # later instruction, reset and removal of that worktree got 409.
+        with _lock:
+            taken = body.path not in _busy
+            _busy.add(body.path)
+        if not taken:
+            yield sse({"kind": "error", "text": "이 작업트리의 에이전트가 아직 돌고 있다", "meta": {},
+                       "session_id": "", "parent_id": None})
+            return
+        final, failed, tools, meta, chat = "", "", [], {}, None
         # ponytail: the turn lives as long as this response. A reloaded window
         # cuts it; a per-session event buffer the stream tails would let it
         # reattach.
         try:
+            chat = session(path, body.model, body.effort)
             remember(path, "user", text)
             for ev in chat.say(text):
                 if ev.kind == "tool":
@@ -240,11 +259,13 @@ def say(body: Order) -> StreamingResponse:
                            "session_id": ev.session_id, "parent_id": ev.parent_id})
         except Exception as exc:  # a cut stream still owes the screen a reason
             failed = f"{type(exc).__name__}: {exc}"
-            yield sse({"kind": "error", "text": failed, "meta": {}, "session_id": chat.id, "parent_id": None})
+            yield sse({"kind": "error", "text": failed, "meta": {},
+                       "session_id": chat.id if chat else "", "parent_id": None})
         finally:
             try:
-                remember(path, "assistant", final, error=failed, tools=tools,
-                         provider="codex" if chat.is_codex else "claude", **meta)
+                if chat:
+                    remember(path, "assistant", final, error=failed, tools=tools,
+                             provider="codex" if chat.is_codex else "claude", **meta)
             finally:
                 with _lock:
                     _busy.discard(body.path)
@@ -258,9 +279,11 @@ def answer(body: Answer) -> dict:
 
     A session that was reset or replaced in between has a new `session_id`,
     and an answer meant for the old one is refused rather than handed to it.
+    The session is the whole check: one exists only for a path `ours` took,
+    and asking `workspace` again made the answer depend on which project is
+    selected now, and cost a `git status` per worktree per click.
     """
 
-    ours(body.path)
     chat = _sessions.get(body.path)
     if chat is None or chat.id != body.session_id:
         raise HTTPException(409, "그 승인을 물은 세션이 이제 없다")

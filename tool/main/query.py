@@ -239,10 +239,17 @@ def configure(cid: str, body: Config) -> dict:
     if body.effort not in efforts:
         raise HTTPException(400, "이 모델이 지원하지 않는 effort")
 
+    from . import work  # `work` imports this module; the project is shared
+
     with _lock:
         switched = body.repo != project()
         if cid in _busy or (switched and _busy):
             raise HTTPException(409, "답변 생성이 끝난 뒤 설정을 바꿔 주세요")
+        # A running agent's worktree, and an approval waiting in it, belong to
+        # this project. Switched away, the approval's worktree left the list
+        # and the answer to it came back 404.
+        if switched and work.busy():
+            raise HTTPException(409, "에이전트가 도는 동안은 프로젝트를 바꾸지 않는다")
         if switched:
             # Changed only while no turn is being recorded. If the disk write
             # fails, the selection stays where it was too.
@@ -299,10 +306,17 @@ def say(cid: str, body: Say) -> StreamingResponse:
     with _lock:
         if cid in _busy:
             raise HTTPException(409, "이 초점의 답변을 생성하고 있습니다")
-        _busy.add(cid)
         cfg = dict(config(cid))
 
     def stream():
+        # Held from inside the body, as `work.say` does: a body that never
+        # starts runs no `finally`, and a hold taken before it stayed for good.
+        with _lock:
+            taken = cid not in _busy
+            _busy.add(cid)
+        if not taken:
+            yield sse({"kind": "error", "text": "이 초점의 답변을 생성하고 있습니다"})
+            return
         answer: list[str] = []
         failed = ""
         simple = ""

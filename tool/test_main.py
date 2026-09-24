@@ -479,3 +479,54 @@ def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it():
         assert server.wait(timeout=20) == 0
     finally:
         server.kill()
+
+
+def test_a_body_that_never_starts_holds_nothing(tmp_path):
+    """The client can leave right after the headers, and the body never runs.
+
+    A hold taken before the body had no `finally` to release it: that
+    worktree, or that focus, answered 409 to everything until a restart.
+    """
+
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent):
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        work.say(work.Order(path=path, text="x"))
+        chat.say("wiki", chat.Say(text="x"))
+        assert not work._busy and not chat._busy
+        assert web.post("/api/work/say", json={"path": path, "text": "y"}).status_code == 200
+
+
+def test_a_new_task_under_an_old_name_starts_fresh(tmp_path):
+    """Removing `t1` and making `t1` again gives the same path. The old
+    conversation and the old CLI session must not come with it."""
+
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent):
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        web.post("/api/work/say", json={"path": path, "text": "old"}).raise_for_status()
+        web.post("/api/worktrees/remove", json={"path": path}).raise_for_status()
+        again = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        assert again == path
+        assert web.get("/api/work/log", params={"path": again}).json()["rows"] == []
+        web.post("/api/work/say", json={"path": again, "text": "new"}).raise_for_status()
+        assert Agent.made[-1].session_id is None
+
+
+def test_the_project_stays_while_an_agent_runs(tmp_path):
+    """An approval waiting in a worktree belongs to the project that has it."""
+
+    repos = {name: tmp_path / name for name in ("a", "b")}
+    for repo in repos.values():
+        (repo / ".git").mkdir(parents=True)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        with patch.object(work, "_busy", {str(repos["a"] / "x")}):
+            assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+            assert web.post("/api/config/wiki", json={"repo": "a", "effort": "high"}).status_code == 200
+        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()

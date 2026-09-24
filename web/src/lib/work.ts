@@ -126,10 +126,15 @@ export function useWork() {
     [patch],
   )
 
+  const forget = useCallback((path: string) => {
+    loading.current.delete(path)
+    setTurns(({ [path]: _gone, ...rest }) => rest)
+  }, [])
+
   const reset = useCallback(async (path: string) => {
     await api.workReset(path)
     setTurns((all) => ({ ...all, [path]: [] }))
   }, [])
 
-  return { turns, load, send, answer, reset }
+  return { turns, load, send, answer, reset, forget }
 }
