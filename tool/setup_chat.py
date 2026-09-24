@@ -13,7 +13,7 @@ import subprocess
 import sys
 import venv
 
-from agent.chat_local import ROOT, SETTINGS, cli_command, settings
+from agent import ROOT, SETTINGS, cli_command, settings
 
 AUTH = {
     "claude": (["auth", "status"], ["auth", "login"]),

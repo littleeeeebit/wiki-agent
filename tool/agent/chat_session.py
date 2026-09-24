@@ -3,19 +3,28 @@
 The two hosts keep a conversation in different ways and the screen must not
 have to know which. What reaches the screen is read by a person, so those
 strings stay Korean.
+
+A session reads by default. `write=True` opens one in a worktree, where every
+write the CLI wants to make arrives as an `approval` event and waits for
+`answer`. Codex asks only through `app-server`, so its write session runs that
+instead of `exec`.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import queue
 import tempfile
 import time
+import uuid
 from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from common import worktree_home
 
 from .chat_local import cli_command
 
@@ -29,17 +38,55 @@ from .chat_local import cli_command
 # endpoints instead of Bash.
 READ_TOOLS = "Bash,Read,Glob,Grep"
 
+# A write session. Everything outside `ASK_FREE` goes through an approval
+# event, so `Bash` here is a shell a person approves command by command.
+WRITE_TOOLS = "Bash,Read,Glob,Grep,Edit,Write"
+ASK_FREE = "Read,Glob,Grep"
+# Claude's tools that name the file they write.
+WRITES_PATH = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path",
+               "NotebookEdit": "notebook_path"}
+DECLINED = "The person declined this."
+
 BOOT_TIMEOUT = 120.0   # the first turn is slow: hooks, and loading
 TURN_TIMEOUT = 600.0
 
 
 @dataclass
 class Event:
-    """Only what the screen needs to know. Every other event kind is dropped here."""
+    """Only what the screen needs to know. Every other event kind is dropped here.
 
-    kind: str          # "delta" | "tool" | "done" | "error"
+    `session_id` is this program's id for the session, fixed at construction.
+    The CLI's own id is known only after its first reply and changes on a
+    reconnect, so it cannot tell whose a late event is; it rides in
+    `done.meta` for `--resume`. `parent_id` is the session that started this
+    one — room for a coordinator, `None` until there is one.
+    """
+
+    kind: str          # "delta" | "tool" | "approval" | "done" | "error"
     text: str = ""
     meta: dict = field(default_factory=dict)
+    session_id: str = ""
+    parent_id: str | None = None
+
+
+def our_worktree(repo: Path) -> bool:
+    """Is `repo` the top of a worktree in `worktree_home` of its own repository?
+
+    Not just any `git worktree`: Orca and `claude -w` make those too, and they
+    are somebody's work. The original checkout never passes — it is not inside
+    its own `-worktrees` folder.
+    """
+
+    done = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--path-format=absolute",
+         "--show-toplevel", "--git-common-dir"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+    lines = done.stdout.splitlines()
+    if done.returncode or len(lines) != 2:
+        return False
+    top, common = (Path(line).resolve() for line in lines)
+    return (top == Path(repo).resolve() and common.name == ".git"
+            and top.parent == worktree_home(common.parent))
 
 
 def _blocks(message: dict) -> list[dict]:
@@ -53,9 +100,20 @@ class ChatSession:
     def __init__(self, repo: Path, tools: str = READ_TOOLS,
                  system: str = "", model: str | None = None,
                  effort: str | None = None, resume: str | None = None,
-                 isolated: bool = False) -> None:
+                 isolated: bool = False, write: bool = False,
+                 parent_id: str | None = None) -> None:
         self.repo = Path(repo)
-        self.tools = tools
+        # Writes go to a worktree, never to the checkout a person works in.
+        if write and not our_worktree(self.repo):
+            raise ValueError(f"쓰기 세션은 workspace 가 만든 작업트리에서만 연다: {self.repo}")
+        self.write = write
+        self.tools = WRITE_TOOLS if write else tools
+        self.id = uuid.uuid4().hex
+        self.parent_id = parent_id
+        # The CLI's login is whatever its environment points at (`CODEX_HOME`,
+        # Claude's config). Held from here, so a restart or a `--resume` goes
+        # on as the same account even if the server's environment changed.
+        self._env = dict(os.environ)
         # A channel's character goes in as a system prompt. The first version
         # sent it as the opening turn and that one turn took two minutes — the
         # model reads the introduction and starts going through files. A
@@ -75,10 +133,22 @@ class ChatSession:
         self._turn = threading.Lock()
         self._start = threading.Lock()
         self._stderr: deque[str] = deque(maxlen=20)
+        # Approvals the CLI is waiting on: id -> (the process that asked, the
+        # reply for `allow`). The reply goes to that process only.
+        self._pending: dict[str, tuple] = {}
+        self._stdin = threading.Lock()
+        self._rpc_id = 0
+        # Codex fileChange items by id, so an approval can see their paths.
+        self._changes: dict[str, list[str]] = {}
 
     @property
     def is_codex(self) -> bool:
         return bool(self.model and self.model.startswith("codex:"))
+
+    @property
+    def app(self) -> bool:
+        """A Codex write session: `codex app-server`, since `exec` cannot ask."""
+        return self.is_codex and self.write
 
     # -- Lifetime -----------------------------------------------------------
 
@@ -90,8 +160,12 @@ class ChatSession:
             "--include-partial-messages",
             "--verbose",
             "--tools", self.tools,
-            "--allowedTools", self.tools,
+            "--allowedTools", ASK_FREE if self.write else self.tools,
         ]
+        if self.write:
+            # Named, so a `defaultMode` of `acceptEdits` in someone's settings
+            # cannot skip the question.
+            cmd += ["--permission-mode", "default", "--permission-prompt-tool", "stdio"]
         if self.isolated:
             # `--bare` would skip the subscription login too. The sign-in is
             # kept; only the settings, hooks and tools are isolated.
@@ -105,7 +179,10 @@ class ChatSession:
             cmd += ["--effort", self.effort]
         if self._resume:
             cmd += ["--resume", self._resume]
-        if self.is_codex:
+        if self.app:
+            cmd = ["codex", "app-server"]
+            self.model_name = self.model.removeprefix("codex:")
+        elif self.is_codex:
             cmd = ["codex", "exec", "--model", self.model.removeprefix("codex:"),
                    "--json", "--sandbox", "read-only",
                    "-c", 'approval_policy="never"', "--disable", "multi_agent",
@@ -124,7 +201,7 @@ class ChatSession:
         self._stderr = deque(maxlen=20)
         cmd = [*cli_command(cmd[0]), *cmd[1:]]
         self._proc = subprocess.Popen(
-            cmd, cwd=str(self.repo),
+            cmd, cwd=str(self.repo), env=self._env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
             errors="replace", bufsize=1,
@@ -166,6 +243,124 @@ class ChatSession:
                 self._resume = self.session_id
                 self._events = queue.Queue()
                 self._spawn()
+                if self.app:
+                    try:
+                        self._open_thread()
+                    except Exception:
+                        self.close()
+                        raise
+
+    def _open_thread(self) -> None:
+        """`app-server` holds no conversation until asked to start or resume one.
+
+        `read-only` with `untrusted` is what makes Codex ask: anything but a
+        known read-only command becomes an approval request.
+        """
+
+        self._call("initialize", {"clientInfo": {"name": "wiki-agent", "version": "0.1.0"}})
+        self._send({"method": "initialized"})
+        params = {"cwd": str(self.repo), "sandbox": "read-only", "approvalPolicy": "untrusted",
+                  "model": self.model_name}
+        if self.system:
+            params["developerInstructions"] = self.system
+        if self._resume:
+            result = self._call("thread/resume", {"threadId": self._resume, **params})
+        else:
+            result = self._call("thread/start", params)
+        self.session_id = result["thread"]["id"]
+
+    def _request(self, method: str, params: dict) -> dict:
+        self._rpc_id += 1
+        return {"id": self._rpc_id, "method": method, "params": params}
+
+    def _call(self, method: str, params: dict) -> dict:
+        """One request before any turn, waited for by id. What else arrives is
+        start-up chatter and is dropped."""
+
+        message = self._request(method, params)
+        if not self._send(message):
+            raise RuntimeError(f"Codex 에 보내지 못했다: {method}")
+        while True:
+            try:
+                reply = self._events.get(timeout=BOOT_TIMEOUT)
+            except queue.Empty as exc:
+                raise RuntimeError(f"Codex 응답 시간 초과: {method}") from exc
+            if reply.get("type") == "__closed__":
+                raise RuntimeError(f"Codex 가 닫혔다: {method}. {''.join(self._stderr)[-400:]}".strip())
+            if reply.get("id") == message["id"] and "method" not in reply:
+                if "error" in reply:
+                    raise RuntimeError(f"Codex {method} 실패: {reply['error']}")
+                return reply.get("result") or {}
+
+    def _send(self, message: dict, proc=None) -> bool:
+        """One line to the CLI — to `proc` when given, else the current one.
+        Approvals are answered from another thread, so writes take turns."""
+
+        with self._stdin:
+            try:
+                proc = proc or self._proc
+                proc.stdin.write(json.dumps(message, ensure_ascii=False) + "\n")
+                proc.stdin.flush()
+                return True
+            except (AttributeError, BrokenPipeError, OSError, ValueError):
+                return False
+
+    def answer(self, approval_id: str, allow: bool) -> bool:
+        """Answer an `approval` event. `False` when nothing waits under that id:
+        answered already, or the process that asked is gone.
+
+        Written to the process that asked, never to whatever runs now: after a
+        restart a late "allow" would land on the new process, and Codex
+        numbers its requests afresh in each one.
+        """
+
+        proc, reply = self._pending.pop(approval_id, (None, None))
+        return proc is not None and self._send(reply(allow), proc)
+
+    def _outside(self, path) -> str:
+        """The path, resolved, when it lies outside this worktree. Else ``""``."""
+
+        if not path:
+            return ""
+        target = Path(path)
+        target = (target if target.is_absolute() else self.repo / target).resolve()
+        root = self.repo.resolve()
+        return "" if target == root or root in target.parents else str(target)
+
+    def _approval(self, key: str, reply, tool: str, args: dict, text: str, outside: str) -> Event:
+        """An approval event for the person, or a refusal nobody is asked about.
+
+        Refused without asking: a write outside the worktree, and anything a
+        read session is asked — it has no one to answer and would sit out the
+        turn's deadline.
+        """
+
+        if outside or not self.write:
+            self._send(reply(False))
+            return Event("tool", f"거절 · 작업트리 밖: {outside}" if outside else f"거절 · {text}")
+        self._pending[key] = (self._proc, reply)
+        return Event("approval", text, {"id": key, "tool": tool, "input": args})
+
+    def _codex_asks(self, rid, method: str, params: dict) -> Event | None:
+        """A request from `app-server`. Two kinds are approvals; the rest are
+        refused so the turn does not wait on an answer that never comes."""
+
+        def reply(allow, rid=rid):
+            return {"id": rid, "result": {"decision": "accept" if allow else "decline"}}
+
+        reason = params.get("reason")
+        if method == "item/commandExecution/requestApproval":
+            command = str(params.get("command") or "")
+            return self._approval(str(rid), reply, "command",
+                                  {"command": command, "cwd": params.get("cwd"), "reason": reason},
+                                  command[:300], self._outside(params.get("cwd")))
+        if method == "item/fileChange/requestApproval":
+            paths = self._changes.get(str(params.get("itemId")), [])
+            outside = next((o for o in map(self._outside, paths) if o), "")
+            return self._approval(str(rid), reply, "fileChange", {"paths": paths, "reason": reason},
+                                  ("파일 변경 · " + ", ".join(paths))[:300], outside)
+        self._send({"id": rid, "error": {"code": -32601, "message": f"{method} is not handled here"}})
+        return None
 
     def reconfigure(self, model: str | None, effort: str | None) -> None:
         """Change the model or the effort without losing the conversation.
@@ -185,6 +380,8 @@ class ChatSession:
 
     def close(self) -> None:
         proc, self._proc = self._proc, None
+        self._pending.clear()
+        self._changes.clear()
         if proc is None:
             return
         try:
@@ -200,6 +397,15 @@ class ChatSession:
     def say(self, text: str):
         """Send one utterance and stream the events. One turn runs at a time."""
 
+        turn = self._say(text)
+        try:
+            for event in turn:
+                event.session_id, event.parent_id = self.id, self.parent_id
+                yield event
+        finally:
+            turn.close()
+
+    def _say(self, text: str):
         if not self._turn.acquire(blocking=False):
             yield Event("error", "앞 턴이 아직 안 끝났다.")
             return
@@ -211,12 +417,20 @@ class ChatSession:
             # holds a start event is not drained.
             payload = {"type": "user", "message": {
                 "role": "user", "content": [{"type": "text", "text": text}]}}
-            try:
-                self._proc.stdin.write(text if self.is_codex else json.dumps(payload, ensure_ascii=False) + "\n")
-                self._proc.stdin.flush()
-                if self.is_codex:
+            if self.app:
+                sent = self._send(self._request("turn/start", {
+                    "threadId": self.session_id, "input": [{"type": "text", "text": text}],
+                    **({"effort": self.effort} if self.effort else {})}))
+            elif self.is_codex:
+                try:
+                    self._proc.stdin.write(text)
                     self._proc.stdin.close()
-            except (BrokenPipeError, OSError, ValueError):
+                    sent = True
+                except (BrokenPipeError, OSError, ValueError):
+                    sent = False
+            else:
+                sent = self._send(payload)
+            if not sent:
                 self.close()
                 yield Event("error", "프로세스가 죽었다. 다시 보내면 새로 띄운다.")
                 return
@@ -224,7 +438,8 @@ class ChatSession:
                 completed = event.kind == "done"
                 yield event
         finally:
-            if self.is_codex or not completed:
+            # `codex exec` is one process per turn; the others live on.
+            if (self.is_codex and not self.app) or not completed:
                 self.close()
             self._turn.release()
 
@@ -236,6 +451,9 @@ class ChatSession:
             try:
                 ev = self._events.get(timeout=deadline)
             except queue.Empty:
+                # The CLI is silent because it waits on a person. Not a hang.
+                if self._pending:
+                    continue
                 self.close()
                 yield Event("error", f"{deadline:.0f}초 안에 답이 없다.")
                 return
@@ -247,6 +465,45 @@ class ChatSession:
                 self.close()
                 yield Event("error", f"프로세스가 닫혔다. {err}".strip())
                 return
+
+            if self.app:
+                method, params = ev.get("method"), ev.get("params") or {}
+                item = params.get("item") or {}
+                if method and "id" in ev:
+                    event = self._codex_asks(ev["id"], method, params)
+                    if event:
+                        yield event
+                elif "id" in ev and ev.get("error"):
+                    # `turn/start` refused, so no `turn/completed` is coming.
+                    error = ev["error"]
+                    yield Event("error", str(error.get("message") if isinstance(error, dict) else error))
+                    return
+                elif method == "item/agentMessage/delta" and params.get("delta"):
+                    yield Event("delta", str(params["delta"]))
+                elif method == "item/started" and item.get("type") in (
+                    "commandExecution", "fileChange", "mcpToolCall", "webSearch",
+                ):
+                    if item["type"] == "fileChange":
+                        paths = [str(c.get("path")) for c in item.get("changes") or [] if c.get("path")]
+                        self._changes[str(item.get("id"))] = paths
+                        yield Event("tool", ("파일 변경 · " + ", ".join(paths))[:120])
+                    else:
+                        yield Event("tool", str(item.get("command") or item.get("tool")
+                                                or item.get("query") or item["type"])[:120])
+                elif method == "item/completed" and item.get("type") == "agentMessage":
+                    final = str(item.get("text") or "")
+                elif method == "turn/completed":
+                    turn = params.get("turn") or {}
+                    if turn.get("status") == "failed":
+                        yield Event("error", str((turn.get("error") or {}).get("message") or "Codex 요청 실패"))
+                        return
+                    yield Event("done", final, {
+                        "ms": round((time.monotonic() - started) * 1000),
+                        "session_id": self.session_id, "model": self.model_name,
+                        "error": not final.strip(),
+                    })
+                    return
+                continue
 
             if self.is_codex:
                 if kind == "thread.started":
@@ -287,6 +544,23 @@ class ChatSession:
                     delta = inner.get("delta") or {}
                     if delta.get("type") == "text_delta" and delta.get("text"):
                         yield Event("delta", delta["text"])
+
+            elif kind == "control_request":
+                rid, request = str(ev.get("request_id")), ev.get("request") or {}
+                if request.get("subtype") != "can_use_tool":
+                    self._send({"type": "control_response", "response": {
+                        "subtype": "error", "request_id": rid, "error": "unsupported"}})
+                    continue
+                name, args = str(request.get("tool_name") or "?"), request.get("input") or {}
+
+                def reply(allow, rid=rid, args=args):
+                    said = ({"behavior": "allow", "updatedInput": args} if allow
+                            else {"behavior": "deny", "message": DECLINED})
+                    return {"type": "control_response",
+                            "response": {"subtype": "success", "request_id": rid, "response": said}}
+
+                outside = self._outside(args.get(WRITES_PATH[name])) if name in WRITES_PATH else ""
+                yield self._approval(rid, reply, name, args, _tool_brief({"name": name, "input": args}), outside)
 
             elif kind == "assistant":
                 for block in _blocks(ev.get("message") or {}):

@@ -11,7 +11,7 @@ from pathlib import Path
 import re
 import time
 
-from agent.chat_local import CodexServer, settings
+from agent import CodexServer, settings
 
 WIKI = Path(__file__).resolve().parent.parent
 LOCAL = settings()

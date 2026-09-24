@@ -28,7 +28,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from workspace.sessions import checkout  # noqa: E402
+from workspace import checkout  # noqa: E402
 
 # The scripts that read a target repository and need to be told which one.
 PROJECT = {"inject.py", "session_state.py", "sync.py"}
