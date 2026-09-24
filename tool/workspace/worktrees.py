@@ -48,32 +48,40 @@ def create(repo: Path, task: str) -> Path:
     return path
 
 
-def _changed(repo: Path, a: str, b: str) -> set[str] | None:
-    """Paths whose blob or mode differs between two commits. `None` if git fails.
+def _tree(repo: Path, rev: str) -> dict[bytes, bytes] | None:
+    """Every entry of a commit's tree: path -> mode and object id. `None` if git fails.
 
-    Object ids only, so nothing in the repository's configuration can make two
-    versions look alike. Plumbing `diff-tree`, not `git diff`: the porcelain
-    reads the `diff.*` settings, and `diff.ignoreSubmodules=all` hid a
-    submodule pointer the branch alone held, and `diff.renames` folds `a→b`
-    into `b`, dropping the removal of `a`. The plumbing does neither.
+    Read, not diffed. Every way git has of diffing reads some setting that
+    can hide a path — `diff.renames`, `diff.ignoreSubmodules`,
+    `submodule.<name>.ignore`, `ignore = all` in `.gitmodules` — and each of
+    those hid a change the branch alone held. `ls-tree` lists every entry,
+    gitlinks included, and no setting filters it.
     """
 
-    done = subprocess.run(["git", "-C", str(repo), "diff-tree", "-r", "--name-only", "-z", a, b],
+    done = subprocess.run(["git", "-C", str(repo), "ls-tree", "-r", "-z", rev],
                           capture_output=True, timeout=60)
-    return None if done.returncode else {p for p in done.stdout.split(b"\0") if p}
+    if done.returncode:
+        return None
+    entries = {}
+    for line in done.stdout.split(b"\0"):
+        if line:
+            meta, path = line.split(b"\t", 1)
+            mode, _, oid = meta.split(b" ")
+            entries[path] = mode + b" " + oid
+    return entries
 
 
 def merged(repo: Path, branch: str) -> bool:
     """Would deleting `branch` lose anything the original checkout's HEAD lacks?
 
     True when every path the branch changed since its merge base holds, in
-    HEAD right now, exactly the branch's version — the same blob and mode.
-    A squash merge — how this repository merges — passes, as does a merge or
-    a branch with no changes of its own.
+    HEAD right now, exactly the branch's version — the same mode and object,
+    or absent in both. A squash merge — how this repository merges — passes,
+    as does a merge or a branch with no changes of its own.
 
-    A comparison of objects, not a simulation. Four earlier readings each
-    deleted a commit that existed nowhere else, because each asked git to
-    imagine something and the imagining had its own rules:
+    Three trees read and compared here, nothing asked of git beyond listing
+    them. Every earlier reading deleted a commit that existed nowhere else,
+    because each let git decide what counts as a change:
 
     - the upstream being gone: a remote branch can be deleted unmerged
     - `git cherry`: finds the patch in HEAD's history after HEAD reverted it
@@ -82,6 +90,8 @@ def merged(repo: Path, branch: str) -> bool:
     - merging into HEAD (`merge-tree`): a merge driver such as `merge=ours`
       drops the branch's side cleanly, and a modify/delete conflict keeps
       HEAD's version
+    - diffing (`git diff`, then `diff-tree`): settings hide submodule
+      pointers, and rename detection folds away the removal of the old path
 
     Unsure is `False` — HEAD not yet pulled, or HEAD having changed one of
     those files again since: a kept branch costs a line in a listing; a wrong
@@ -93,8 +103,11 @@ def merged(repo: Path, branch: str) -> bool:
     base = _git(repo, "merge-base", "HEAD", branch).stdout.strip()
     if not base:
         return False
-    ours, differs = _changed(repo, base, branch), _changed(repo, branch, "HEAD")
-    return ours is not None and differs is not None and not ours & differs
+    old, ours, head = _tree(repo, base), _tree(repo, branch), _tree(repo, "HEAD")
+    if old is None or ours is None or head is None:
+        return False
+    return all(head.get(path) == ours.get(path)
+               for path in old.keys() | ours.keys() if old.get(path) != ours.get(path))
 
 
 def worktrees(repo: Path) -> list[dict]:

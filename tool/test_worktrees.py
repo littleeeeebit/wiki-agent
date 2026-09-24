@@ -179,3 +179,26 @@ def test_a_submodule_pointer_hidden_by_config_is_not_merged(repo):
     git(path, "commit", "-q", "-m", "submodule pointer")
     git(repo, "config", "diff.ignoreSubmodules", "all")
     assert not worktrees(repo)[0]["merged"]
+
+
+def test_a_submodule_pointer_hidden_by_gitmodules_is_not_merged(repo):
+    """`ignore = all` in `.gitmodules` hides a gitlink from `diff-tree` too."""
+
+    (repo / ".gitmodules").write_text('[submodule "sub"]\n\tpath = sub\n\turl = ./sub\n\tignore = all\n')
+    git(repo, "add", ".gitmodules")
+    git(repo, "commit", "-q", "-m", "gitmodules")
+    path = create(repo, "sub")
+    head = git(repo, "rev-parse", "HEAD").strip()
+    git(path, "update-index", "--add", "--cacheinfo", f"160000,{head},sub")
+    git(path, "commit", "-q", "-m", "submodule pointer")
+    assert not worktrees(repo)[0]["merged"]
+
+
+def test_a_mode_change_alone_is_work(repo):
+    (repo / "run.sh").write_text("echo hi\n")
+    git(repo, "add", "run.sh")
+    git(repo, "commit", "-q", "-m", "script")
+    path = create(repo, "exec")
+    git(path, "update-index", "--chmod=+x", "run.sh")
+    git(path, "commit", "-q", "-m", "executable")
+    assert not worktrees(repo)[0]["merged"]
