@@ -82,8 +82,10 @@ Event(kind, text="", meta={}, session_id="", parent_id=None)
 `session_id` 가, 무엇을 써도 되나는 작업트리가 판정한다. 남은 하나가 계정이다.
 
 세션은 이 프로그램을 띄운 환경의 로그인으로 돈다. Claude 는 그 사용자의 Claude Code 로그인,
-Codex 는 `CODEX_HOME` 이 있으면 그것, 없으면 `~/.codex` 의 로그인이다. 세션을 만드는 순간
-프로세스를 띄우며 정해지고, 도중에 바뀌지 않는다. 계정을 고르는 화면은 이 계획에 없다.
+Codex 는 `CODEX_HOME` 이 있으면 그것, 없으면 `~/.codex` 의 로그인이다. `ChatSession` 을 만들 때
+환경을 통째로 붙잡아 두고 프로세스를 띄울 때마다 그것을 넘긴다. 그래서 재시작이나 `--resume`
+도 같은 계정으로 이어진다. 처음에는 띄울 때의 환경을 그대로 물려받아서, 그 사이 서버의
+`CODEX_HOME` 이 바뀌면 같은 세션이 다른 계정으로 이어질 수 있었다(리뷰 라운드 2). 계정을 고르는 화면은 이 계획에 없다.
 Orca 가 계정마다 `CODEX_HOME` 을 따로 두던 방식은 가져오지 않는다
 
 ### 안 막는 것
@@ -114,12 +116,15 @@ Orca 가 계정마다 `CODEX_HOME` 을 따로 두던 방식은 가져오지 않�
   기계에서 `cp949` 로 깨진 적이 있다
 - 폴더 자리(`worktree_home`)는 `tool/common/` 에 있다. `workspace` 가 거기 만들고 `agent` 가
   거기서만 쓰기 세션을 연다. 개요가 말한 "두 파이프라인이 실제로 같이 쓰는 것" 의 첫 예다
-- `merged` 는 브랜치의 일이 원본 체크아웃의 HEAD 에 다 들어갔다는 뜻이다. 조상이면(머지,
-  fast-forward) 참. 아니면 브랜치 전체의 diff 를 머지 기반 위의 커밋 하나로 만들어 `git cherry`
-  로 HEAD 에 같은 패치가 있는지 본다 — 이 저장소의 squash 머지를 알아보는 길이다. 자기 커밋이
-  없는 브랜치도 참이다 — 지워도 잃는 것이 없다. 화면은 이것을 보고 정리를 제안한다
-- 원격 브랜치가 지워졌다(`gone`)는 머지의 증거가 아니다. 처음에는 그것으로 `-D` 를 했고,
-  머지 없이 원격만 지운 브랜치의 커밋이 사라지는 것을 리뷰 라운드 1 이 재현했다
+- `merged` 는 "지워도 원본 체크아웃의 HEAD 에 없는 것을 잃지 않는다" 는 뜻이다. HEAD 의
+  조상이면 참 — 커밋이 HEAD 의 이력에 있다. 머지, fast-forward, 자기 커밋이 없는 브랜치가
+  여기 든다. 아니면 머지 기반부터 브랜치까지의 diff 를 HEAD 의 트리 위에 거꾸로 적용해 본다
+  (버리는 index 에서 `git apply --check --cached -R`). HEAD 가 지금 그 일을 담고 있어야만 깨끗이
+  거꾸로 들어간다 — 이 저장소의 squash 머지를 알아보는 길이다. 화면은 이것을 보고 정리를 제안한다
+- 앞의 두 판정은 각각 유일한 커밋을 지웠다. 원격 브랜치가 지워졌다(`gone`)는 것 — 머지 없이
+  원격만 지울 수 있다(리뷰 라운드 1). `git cherry` 로 같은 패치를 찾는 것 — HEAD 가 그 패치를
+  나중에 revert 해도 이력에서 찾는다(리뷰 라운드 2). 둘 다 "HEAD 의 지금 내용" 이 아니라 다른
+  것을 봤다
 - 확실하지 않으면 거짓이다. HEAD 를 아직 pull 하지 않았거나 squash 가 들어가며 고쳐졌으면
   브랜치를 남긴다. 남은 브랜치는 목록에 한 줄이지만, 잘못된 참은 일을 지운다
 - `remove` 는 더러운 작업트리를 지우지 않는다. 브랜치는 `merged` 일 때만 `-D` 로 지우고
@@ -144,9 +149,9 @@ Orca 가 계정마다 `CODEX_HOME` 을 따로 두던 방식은 가져오지 않�
 
 | 확인 | 결과 |
 | --- | --- |
-| `pytest tool/` | 295 통과. 전 285, 새 테스트 10개(`test_agent` 5, `test_worktrees` 5) |
+| `pytest tool/` | 297 통과. 전 285, 새 테스트 12개(`test_agent` 6, `test_worktrees` 6) |
 | `test_agent.py` 가 무엇을 보나 | 대기 중 턴 마감을 지우면, 작업트리 밖 거절을 지우면, 남의 작업트리 거절을 지우면, 답을 물었던 프로세스 대신 지금 프로세스로 보내면 각각 빨강. 승인은 화면처럼 다른 스레드에서 두 마감보다 늦게 보낸다 |
-| `test_worktrees.py` 가 무엇을 보나 | `merged` 를 늘 참으로 두면 셋, squash 판정을 지우면 하나, `remove` 가 `merged` 를 무시하면 둘이 빨강 |
+| `test_worktrees.py` 가 무엇을 보나 | 거꾸로 적용 판정을 늘 참으로 두면 넷, 거꾸로 대신 바로 적용하면 넷, `remove` 가 `merged` 를 무시하면 둘이 빨강. squash 뒤 revert 한 경우를 따로 심는다 |
 | `python tool/lint.py --check` | 종료 0. `census.py` 에 `from workspace.sessions import codex_homes`, `workspace.home`, `agent.READ_TOOLS` 를 심으면 `공개 진입점` 셋 |
 | `python tool/test_lint.py`, `ruff check tool` | 통과 |
 | 직접 실행 스크립트 | `test_apply`·`test_inject`·`test_declared_continuation`·`test_repo_lint`·`test_trajectory` 종료 0. `chat.py --check` 통과 — 읽기 세션은 그대로 돈다 |
@@ -154,3 +159,4 @@ Orca 가 계정마다 `CODEX_HOME` 을 따로 두던 방식은 가져오지 않�
 | 실제 Codex (`app-server`) | 같은 지시. `fileChange` 승인이 경로와 함께 왔고, 허용한 파일만 생겼다. 두 번째 턴이 이어졌다 |
 | 정리 | 더러운 작업트리 둘을 `remove` 가 거절했다. 치운 뒤 작업트리와 브랜치가 지워졌다 |
 | 리뷰 라운드 1 | P0 하나(`gone` 으로 `-D` — 미병합 커밋 유실), P1 둘(남의 작업트리에서 쓰기 세션, 늦은 답이 새 프로세스로). 셋 다 재현한 뒤 고쳤다. 실제 Claude 로 쓰기·승인·정리를 다시 돌렸다 |
+| 리뷰 라운드 2 | 계획 대비 점검 표 — 모든 항목이 됨 또는 다음 단계 몫, 둘만 일부. P0 하나(`git cherry` 가 revert 된 패치도 머지로 봄), P1 하나(계정이 세션 생성 때 고정된다는 서술이 코드와 다름). 둘 다 재현한 뒤 고쳤다 |

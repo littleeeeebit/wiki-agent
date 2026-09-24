@@ -91,3 +91,17 @@ def test_remove_deletes_a_squash_merged_branch(repo):
     assert worktrees(repo)[0]["merged"]
     assert "브랜치 squashed 를 지웠다" in remove(repo, path)
     assert not git(repo, "branch", "--list", "squashed").strip()
+
+
+def test_a_squash_that_main_reverted_is_not_merged(repo):
+    """The patch is in HEAD's history but not in HEAD: deleting loses it."""
+
+    path = create(repo, "reverted")
+    (path / "work.txt").write_text("precious\n")
+    git(path, "add", "work.txt")
+    git(path, "commit", "-q", "-m", "work")
+    git(repo, "merge", "-q", "--squash", "reverted")
+    git(repo, "commit", "-q", "-m", "squash")
+    git(repo, "revert", "--no-edit", "HEAD")
+    assert not worktrees(repo)[0]["merged"]
+    assert "남겼다" in remove(repo, path)

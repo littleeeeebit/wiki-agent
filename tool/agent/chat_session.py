@@ -13,6 +13,7 @@ instead of `exec`.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import threading
 import queue
@@ -109,6 +110,10 @@ class ChatSession:
         self.tools = WRITE_TOOLS if write else tools
         self.id = uuid.uuid4().hex
         self.parent_id = parent_id
+        # The CLI's login is whatever its environment points at (`CODEX_HOME`,
+        # Claude's config). Held from here, so a restart or a `--resume` goes
+        # on as the same account even if the server's environment changed.
+        self._env = dict(os.environ)
         # A channel's character goes in as a system prompt. The first version
         # sent it as the opening turn and that one turn took two minutes — the
         # model reads the introduction and starts going through files. A
@@ -196,7 +201,7 @@ class ChatSession:
         self._stderr = deque(maxlen=20)
         cmd = [*cli_command(cmd[0]), *cmd[1:]]
         self._proc = subprocess.Popen(
-            cmd, cwd=str(self.repo),
+            cmd, cwd=str(self.repo), env=self._env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
             errors="replace", bufsize=1,

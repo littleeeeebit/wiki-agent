@@ -167,3 +167,22 @@ def test_a_late_answer_never_reaches_the_next_process(tree):
     with patch.object(chat_session, "BOOT_TIMEOUT", 1), patch.object(chat_session, "TURN_TIMEOUT", 1):
         run(session, CLAUDE, tree, restart_midway)
     assert restarted[0] is False  # the new process was never told "allow"
+
+
+def test_the_account_is_the_environment_at_creation(tmp_path, monkeypatch):
+    """A restart goes on as the same login, whatever the server's env became."""
+
+    monkeypatch.setenv("CODEX_HOME", "first")
+    session = ChatSession(tmp_path, model="codex:test-model")
+    monkeypatch.setenv("CODEX_HOME", "second")
+    seen = []
+
+    def spawn(command, **kwargs):
+        seen.append(kwargs["env"]["CODEX_HOME"])
+        raise OSError("stop here")
+
+    with patch.object(chat_session.subprocess, "Popen", spawn), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+        with pytest.raises(OSError):
+            session.ensure()
+    assert seen == ["first"]

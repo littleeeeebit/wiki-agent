@@ -7,8 +7,10 @@ so what is the program's and what is the person's is one directory apart.
 
 from __future__ import annotations
 
+import os
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 from common import worktree_home
@@ -49,18 +51,20 @@ def create(repo: Path, task: str) -> Path:
 
 
 def merged(repo: Path, branch: str) -> bool:
-    """Is everything on `branch` already in the original checkout's HEAD?
+    """Would deleting `branch` lose anything the original checkout's HEAD lacks?
 
-    Two ways in. A merge or fast-forward leaves the branch an ancestor. A
-    squash merge — how this repository merges — leaves nothing git calls
-    merged, so the branch's whole diff is made into one commit on its merge
-    base and `git cherry` asks whether HEAD holds an equivalent patch.
+    An ancestor of HEAD loses nothing: its commits are in HEAD's history. That
+    covers a merge, a fast-forward, and a branch with no commits of its own.
 
-    Not the upstream being gone. A remote branch can be deleted unmerged, and
-    trusting that deleted a commit that existed nowhere else.
+    A squash merge — how this repository merges — leaves nothing git calls
+    merged. So the branch's whole diff since the merge base is reversed onto
+    HEAD's tree, in a scratch index: it reverses cleanly only if HEAD holds
+    that work *now*. Two earlier readings each deleted a commit that existed
+    nowhere else — the upstream being gone (a remote branch can be deleted
+    unmerged), and `git cherry` (it finds the patch in HEAD's history even
+    after HEAD reverted it).
 
-    A branch with no commits of its own is `True` too: removing it loses
-    nothing. Unsure is `False`: a HEAD not yet pulled, or a squash that was edited on
+    Unsure is `False`: a HEAD not yet pulled, or a squash that was edited on
     the way in, keeps the branch. A kept branch costs a line in a listing; a
     wrong `True` costs work.
     """
@@ -68,13 +72,18 @@ def merged(repo: Path, branch: str) -> bool:
     if not branch or _git(repo, "merge-base", "--is-ancestor", branch, "HEAD").returncode == 0:
         return bool(branch)
     base = _git(repo, "merge-base", "HEAD", branch).stdout.strip()
-    tree = _git(repo, "rev-parse", f"{branch}^{{tree}}").stdout.strip()
-    if not base or not tree:
+    if not base:
         return False
-    squashed = _git(repo, "-c", "user.name=wiki-agent", "-c", "user.email=wiki-agent@localhost",
-                    "commit-tree", tree, "-p", base, "-m", "squash check").stdout.strip()
-    cherry = _git(repo, "cherry", "HEAD", squashed).stdout.split() if squashed else []
-    return cherry[:1] == ["-"]
+    # Bytes, not text: a patch decoded with `errors="replace"` no longer applies.
+    patch = subprocess.run(["git", "-C", str(repo), "diff", "--binary", base, branch],
+                           capture_output=True, timeout=60).stdout
+    with tempfile.TemporaryDirectory(prefix="wiki-merged-") as scratch:
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(scratch) / "index")}
+        if subprocess.run(["git", "-C", str(repo), "read-tree", "HEAD"], env=env,
+                          capture_output=True, timeout=60).returncode:
+            return False
+        return subprocess.run(["git", "-C", str(repo), "apply", "--check", "--cached", "-R", "-"],
+                              input=patch, env=env, capture_output=True, timeout=60).returncode == 0
 
 
 def worktrees(repo: Path) -> list[dict]:
