@@ -91,8 +91,12 @@
 
 ## 검증
 
-- `pytest tool/` — 바꾸기 전 281개 통과. 뒤에도 같은 수에서 Slack 테스트만큼만 준다
-- `python tool/lint.py --check` 종료 코드 0
-- 훅을 실제 경로로 한 번: `hook.py claude inject.py` 에 한국어 발화를 넣어 주입이 나오는지
-- `python tool/translate --check` 가 전과 같은 결과
-- `chat.cmd` 로 서버를 띄워 `#위키` 에 한 번 묻는다
+| 확인 | 결과 |
+| --- | --- |
+| `pytest tool/` | 274 통과. 바꾸기 전 281, 지운 Slack 테스트가 7개 |
+| `python tool/lint.py --check` | 종료 0. `wiki/match.py` 에 `import translate` 를 심으면 종료 1 |
+| `python tool/test_lint.py` | 경계 위반 여덟 가지와 하위 폴더 한국어 주석이 빨강, 허용된 import 는 초록 |
+| 훅 실제 경로 | 임시로 붙인 저장소에서 `hook.py claude` 로 `inject.py`·`session_state.py`·`sync.py` — 종료 0, 주입과 영어본이 나온다 |
+| `python tool/translate --check` | 바꾸기 전 `translate.py --check` 와 출력이 같다 |
+| 서버 | `python tool/chat.py --check` 통과. 브라우저로 `#위키` 에 묻는 것은 `web/dist` 가 없어 못 했다 |
+| 리뷰 | 라운드 1 P1 하나(`tool.` 접두어 우회)를 고쳤고, 라운드 2 새 발견 없음 |
