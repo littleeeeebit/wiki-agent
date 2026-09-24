@@ -105,3 +105,18 @@ def test_a_squash_that_main_reverted_is_not_merged(repo):
     git(repo, "revert", "--no-edit", "HEAD")
     assert not worktrees(repo)[0]["merged"]
     assert "남겼다" in remove(repo, path)
+
+
+def test_the_same_change_elsewhere_in_the_file_is_not_merged(repo):
+    """Two identical blocks: the branch changed one, HEAD the other."""
+
+    block = "".join(f"line {i}\n" for i in range(5)) + "old\n" + "".join(f"tail {i}\n" for i in range(5))
+    (repo / "f.txt").write_text(block + "---\n" + block)
+    git(repo, "add", "f.txt")
+    git(repo, "commit", "-q", "-m", "blocks")
+    path = create(repo, "first")
+    (path / "f.txt").write_text(block.replace("old", "new") + "---\n" + block)
+    git(path, "commit", "-q", "-am", "first block")
+    (repo / "f.txt").write_text(block + "---\n" + block.replace("old", "new"))
+    git(repo, "commit", "-q", "-am", "second block")
+    assert not worktrees(repo)[0]["merged"]

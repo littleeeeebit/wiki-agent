@@ -7,10 +7,8 @@ so what is the program's and what is the person's is one directory apart.
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
-import tempfile
 from pathlib import Path
 
 from common import worktree_home
@@ -53,37 +51,29 @@ def create(repo: Path, task: str) -> Path:
 def merged(repo: Path, branch: str) -> bool:
     """Would deleting `branch` lose anything the original checkout's HEAD lacks?
 
-    An ancestor of HEAD loses nothing: its commits are in HEAD's history. That
-    covers a merge, a fast-forward, and a branch with no commits of its own.
+    Merge the branch into HEAD, in git's object store only.
+    `git merge-tree --write-tree` (git 2.38+) does that.
+    If the result is exactly HEAD's tree, the branch adds nothing. A three-way merge ties each change to where it was made,
+    which is what the three earlier readings lacked — each deleted a commit
+    that existed nowhere else:
 
-    A squash merge — how this repository merges — leaves nothing git calls
-    merged. So the branch's whole diff since the merge base is reversed onto
-    HEAD's tree, in a scratch index: it reverses cleanly only if HEAD holds
-    that work *now*. Two earlier readings each deleted a commit that existed
-    nowhere else — the upstream being gone (a remote branch can be deleted
-    unmerged), and `git cherry` (it finds the patch in HEAD's history even
-    after HEAD reverted it).
+    - the upstream being gone: a remote branch can be deleted unmerged
+    - `git cherry`: finds the patch in HEAD's history after HEAD reverted it
+    - reversing the branch's diff onto HEAD: `git apply` matches the same
+      lines at another place in the file
 
-    Unsure is `False`: a HEAD not yet pulled, or a squash that was edited on
-    the way in, keeps the branch. A kept branch costs a line in a listing; a
-    wrong `True` costs work.
+    A squash merge — how this repository merges — passes, a merge or a branch
+    with no commits of its own passes, and nothing touches the index or the
+    working tree. Unsure is `False` — a conflict leaves markers in the tree, a
+    HEAD not yet pulled, an older git: a kept branch costs a line in a
+    listing; a wrong `True` costs work.
     """
 
-    if not branch or _git(repo, "merge-base", "--is-ancestor", branch, "HEAD").returncode == 0:
-        return bool(branch)
-    base = _git(repo, "merge-base", "HEAD", branch).stdout.strip()
-    if not base:
+    if not branch:
         return False
-    # Bytes, not text: a patch decoded with `errors="replace"` no longer applies.
-    patch = subprocess.run(["git", "-C", str(repo), "diff", "--binary", base, branch],
-                           capture_output=True, timeout=60).stdout
-    with tempfile.TemporaryDirectory(prefix="wiki-merged-") as scratch:
-        env = {**os.environ, "GIT_INDEX_FILE": str(Path(scratch) / "index")}
-        if subprocess.run(["git", "-C", str(repo), "read-tree", "HEAD"], env=env,
-                          capture_output=True, timeout=60).returncode:
-            return False
-        return subprocess.run(["git", "-C", str(repo), "apply", "--check", "--cached", "-R", "-"],
-                              input=patch, env=env, capture_output=True, timeout=60).returncode == 0
+    head = _git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
+    done = _git(repo, "merge-tree", "--write-tree", "HEAD", branch)
+    return bool(head) and done.stdout.split()[:1] == [head]
 
 
 def worktrees(repo: Path) -> list[dict]:
