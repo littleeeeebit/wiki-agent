@@ -135,3 +135,36 @@ def test_a_conflicted_merge_is_not_merged(repo):
     (repo / "f.txt").write_text("changed\n")
     git(repo, "commit", "-q", "-am", "change")
     assert not worktrees(repo)[0]["merged"]
+
+
+def test_a_merge_driver_that_drops_the_branch_is_not_merged(repo):
+    """`merge=ours` makes the merge clean and equal to HEAD while throwing the
+    branch's change away. Nothing a merge driver does is proof."""
+
+    (repo / ".gitattributes").write_text("f.txt merge=ours\n")
+    (repo / "f.txt").write_text("base\n")
+    git(repo, "config", "merge.ours.driver", "true")
+    git(repo, "add", ".")
+    git(repo, "commit", "-q", "-m", "base")
+    path = create(repo, "task")
+    (path / "f.txt").write_text("branch only\n")
+    git(path, "commit", "-q", "-am", "branch")
+    (repo / "f.txt").write_text("head only\n")
+    git(repo, "commit", "-q", "-am", "head")
+    assert not worktrees(repo)[0]["merged"]
+
+
+def test_a_rename_counts_the_old_path_too(repo):
+    """The branch renamed a→b. HEAD copied a→b but kept a: the removal of a is
+    the branch's alone, and rename detection would hide it."""
+
+    (repo / "a.txt").write_text("same\n")
+    git(repo, "add", "a.txt")
+    git(repo, "commit", "-q", "-m", "a")
+    path = create(repo, "rename")
+    git(path, "mv", "a.txt", "b.txt")
+    git(path, "commit", "-q", "-m", "rename")
+    (repo / "b.txt").write_text("same\n")
+    git(repo, "add", "b.txt")
+    git(repo, "commit", "-q", "-m", "copy")
+    assert not worktrees(repo)[0]["merged"]

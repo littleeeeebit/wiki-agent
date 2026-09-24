@@ -48,36 +48,51 @@ def create(repo: Path, task: str) -> Path:
     return path
 
 
+def _changed(repo: Path, a: str, b: str) -> set[str] | None:
+    """Paths whose blob or mode differs between two commits. `None` if git fails.
+
+    Object ids only: no rename detection, no textconv, no attributes, so
+    nothing in the repository's configuration can make two versions look alike.
+    """
+
+    done = subprocess.run(["git", "-C", str(repo), "diff", "--name-only", "-z", "--no-renames",
+                           "--no-ext-diff", "--no-textconv", a, b],
+                          capture_output=True, timeout=60)
+    return None if done.returncode else {p for p in done.stdout.split(b"\0") if p}
+
+
 def merged(repo: Path, branch: str) -> bool:
     """Would deleting `branch` lose anything the original checkout's HEAD lacks?
 
-    Merge the branch into HEAD, in git's object store only.
-    `git merge-tree --write-tree` (git 2.38+) does that.
-    If the result is exactly HEAD's tree, the branch adds nothing. A three-way merge ties each change to where it was made,
-    which is what the three earlier readings lacked — each deleted a commit
-    that existed nowhere else:
+    True when every path the branch changed since its merge base holds, in
+    HEAD right now, exactly the branch's version — the same blob and mode.
+    A squash merge — how this repository merges — passes, as does a merge or
+    a branch with no changes of its own.
+
+    A comparison of objects, not a simulation. Four earlier readings each
+    deleted a commit that existed nowhere else, because each asked git to
+    imagine something and the imagining had its own rules:
 
     - the upstream being gone: a remote branch can be deleted unmerged
     - `git cherry`: finds the patch in HEAD's history after HEAD reverted it
-    - reversing the branch's diff onto HEAD: `git apply` matches the same
-      lines at another place in the file
+    - reversing the diff onto HEAD: `git apply` matches the same lines at
+      another place in the file
+    - merging into HEAD (`merge-tree`): a merge driver such as `merge=ours`
+      drops the branch's side cleanly, and a modify/delete conflict keeps
+      HEAD's version
 
-    A squash merge — how this repository merges — passes, a merge or a branch
-    with no commits of its own passes, and nothing touches the index or the
-    working tree. Unsure is `False` — a conflict, a HEAD not yet pulled, an
-    older git: a kept branch costs a line in a listing; a wrong `True` costs
-    work.
-
-    The exit code is read, not only the tree. A branch deleting a file HEAD
-    modified conflicts, and the conflicted tree keeps HEAD's version — equal
-    to HEAD's tree, with the branch's deletion nowhere in it.
+    Unsure is `False` — HEAD not yet pulled, or HEAD having changed one of
+    those files again since: a kept branch costs a line in a listing; a wrong
+    `True` costs work.
     """
 
     if not branch:
         return False
-    head = _git(repo, "rev-parse", "HEAD^{tree}").stdout.strip()
-    done = _git(repo, "merge-tree", "--write-tree", "HEAD", branch)
-    return bool(head) and done.returncode == 0 and done.stdout.split()[:1] == [head]
+    base = _git(repo, "merge-base", "HEAD", branch).stdout.strip()
+    if not base:
+        return False
+    ours, differs = _changed(repo, base, branch), _changed(repo, branch, "HEAD")
+    return ours is not None and differs is not None and not ours & differs
 
 
 def worktrees(repo: Path) -> list[dict]:
