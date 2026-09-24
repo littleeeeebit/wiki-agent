@@ -168,3 +168,14 @@ def test_a_rename_counts_the_old_path_too(repo):
     git(repo, "add", "b.txt")
     git(repo, "commit", "-q", "-m", "copy")
     assert not worktrees(repo)[0]["merged"]
+
+
+def test_a_submodule_pointer_hidden_by_config_is_not_merged(repo):
+    """`diff.ignoreSubmodules=all` makes porcelain `git diff` skip gitlinks."""
+
+    path = create(repo, "sub")
+    head = git(repo, "rev-parse", "HEAD").strip()
+    git(path, "update-index", "--add", "--cacheinfo", f"160000,{head},sub")
+    git(path, "commit", "-q", "-m", "submodule pointer")
+    git(repo, "config", "diff.ignoreSubmodules", "all")
+    assert not worktrees(repo)[0]["merged"]

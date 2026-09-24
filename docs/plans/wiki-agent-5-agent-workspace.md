@@ -118,7 +118,7 @@ Orca 가 계정마다 `CODEX_HOME` 을 따로 두던 방식은 가져오지 않�
   거기서만 쓰기 세션을 연다. 개요가 말한 "두 파이프라인이 실제로 같이 쓰는 것" 의 첫 예다
 - `merged` 는 "지워도 원본 체크아웃의 HEAD 에 없는 것을 잃지 않는다" 는 뜻이다. 머지 기반부터
   브랜치까지 바뀐 모든 경로가, 지금 HEAD 에서 브랜치의 판과 똑같으면(같은 blob, 같은 모드) 참이다.
-  경로는 `git diff --name-only --no-renames` 두 번으로 얻는다 — 기반과 브랜치 사이, 브랜치와 HEAD
+  경로는 `git diff-tree -r --name-only` 두 번으로 얻는다 — 기반과 브랜치 사이, 브랜치와 HEAD
   사이. 둘이 겹치지 않으면 참. squash 머지, 보통 머지, 자기 변경이 없는 브랜치가 참이다. 화면은
   이것을 보고 정리를 제안한다
 - 시뮬레이션이 아니라 객체 비교다. 앞의 네 판정은 각각 유일한 커밋을 지웠는데, 넷 다 git 에게
@@ -131,11 +131,15 @@ Orca 가 계정마다 `CODEX_HOME` 을 따로 두던 방식은 가져오지 않�
   | diff 를 HEAD 에 거꾸로 적용(`git apply -R`) | 같은 줄이 파일의 다른 자리에 있으면 거기서 맞춘다 | 3 |
   | HEAD 에 합친 트리(`merge-tree`), 충돌 종료 코드는 버림 | 수정/삭제 충돌은 HEAD 의 판을 남겨 트리가 HEAD 와 같다 | 4 |
   | 같은 것, 종료 코드도 봄 | `.gitattributes` 의 `merge=ours` 같은 병합 드라이버가 브랜치 쪽을 깨끗이 버린다 | 5 |
+  | 경로별 비교를 porcelain `git diff` 로 | `diff.ignoreSubmodules=all` 이 브랜치만 가진 서브모듈 포인터를 숨긴다 | 6 |
 
 - 라운드 3 에서 충돌 종료 코드 검사를 지웠었다. 지워도 테스트가 초록이라 군더더기로 봤다.
   초록은 그 검사를 보는 테스트가 없다는 뜻이었지 필요 없다는 뜻이 아니었다(라운드 4)
-- 이름 바꾸기 감지는 끈다. 켜면 `a→b` 이름 바꾸기가 `b` 한 경로로만 보여, HEAD 가 `b` 를 따로
-  가지면서 `a` 를 남긴 경우 `a` 를 지운 일이 사라진다
+- 비교는 plumbing `diff-tree` 로 한다. porcelain `git diff` 는 `diff.*` 설정을 읽는다 —
+  `diff.ignoreSubmodules` 가 서브모듈 포인터를 숨기고, `diff.renames` 가 `a→b` 를 `b` 한 경로로
+  접어 `a` 를 지운 일을 없앤다. plumbing 은 둘 다 하지 않는다. 같은 뜻의 플래그를 덧붙이면 어느
+  한쪽을 지워도 초록이라 테스트가 못 본다. 그래서 plumbing 하나만 두고, porcelain 으로 바꾸면 두
+  테스트가 빨개진다
 - 확실하지 않으면 거짓이다. 아직 pull 하지 않은 HEAD, 머지 뒤 HEAD 가 브랜치가 고친 파일을 다시
   고친 것은 브랜치를 남긴다. 병합 시뮬레이션보다 남기는 경우가 많다. 남은 브랜치는 목록에 한
   줄이지만, 잘못된 참은 일을 지운다
@@ -161,9 +165,9 @@ Orca 가 계정마다 `CODEX_HOME` 을 따로 두던 방식은 가져오지 않�
 
 | 확인 | 결과 |
 | --- | --- |
-| `pytest tool/` | 301 통과. 전 285, 새 테스트 16개(`test_agent` 6, `test_worktrees` 10) |
+| `pytest tool/` | 302 통과. 전 285, 새 테스트 17개(`test_agent` 6, `test_worktrees` 11) |
 | `test_agent.py` 가 무엇을 보나 | 대기 중 턴 마감을 지우면, 작업트리 밖 거절을 지우면, 남의 작업트리 거절을 지우면, 답을 물었던 프로세스 대신 지금 프로세스로 보내면 각각 빨강. 승인은 화면처럼 다른 스레드에서 두 마감보다 늦게 보낸다 |
-| `test_worktrees.py` 가 무엇을 보나 | 앞의 다섯 판정이 틀린 경우와 이름 바꾸기를 하나씩 심는다. HEAD 비교를 지우거나 겹침 검사를 지우면 여덟, 이름 바꾸기 감지를 켜면 하나, `remove` 가 `merged` 를 무시하면 둘이 빨강 |
+| `test_worktrees.py` 가 무엇을 보나 | 앞의 여섯 판정이 틀린 경우와 이름 바꾸기를 하나씩 심는다. HEAD 비교나 겹침 검사를 지우면 여덟, `diff-tree` 를 porcelain `git diff` 로 바꾸면 둘, `remove` 가 `merged` 를 무시하면 둘이 빨강 |
 | `python tool/lint.py --check` | 종료 0. `census.py` 에 `from workspace.sessions import codex_homes`, `workspace.home`, `agent.READ_TOOLS` 를 심으면 `공개 진입점` 셋 |
 | `python tool/test_lint.py`, `ruff check tool` | 통과 |
 | 직접 실행 스크립트 | `test_apply`·`test_inject`·`test_declared_continuation`·`test_repo_lint`·`test_trajectory` 종료 0. `chat.py --check` 통과 — 읽기 세션은 그대로 돈다 |
@@ -175,3 +179,4 @@ Orca 가 계정마다 `CODEX_HOME` 을 따로 두던 방식은 가져오지 않�
 | 리뷰 라운드 3 | P0 하나(`git apply -R` 이 같은 블록의 다른 자리에서 맞춤). 같은 함수의 세 번째라 판정을 삼방향 병합의 트리 비교로 바꿨다 |
 | 리뷰 라운드 4 | P0 하나(수정/삭제 충돌에서 합친 트리가 HEAD 와 같음). 라운드 3 에서 지운 충돌 종료 코드 검사를 되살렸다 |
 | 리뷰 라운드 5 | P0 하나(`merge=ours` 드라이버가 브랜치 변경을 버린 병합이 HEAD 와 같음). 같은 함수의 다섯 번째라 병합 시뮬레이션을 버리고 경로별 객체 비교로 바꿨다 |
+| 리뷰 라운드 6 | P0 하나(`diff.ignoreSubmodules=all` 이 서브모듈 포인터를 숨김). porcelain `git diff` 를 plumbing `diff-tree` 로 바꿨다 |

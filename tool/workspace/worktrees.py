@@ -51,12 +51,14 @@ def create(repo: Path, task: str) -> Path:
 def _changed(repo: Path, a: str, b: str) -> set[str] | None:
     """Paths whose blob or mode differs between two commits. `None` if git fails.
 
-    Object ids only: no rename detection, no textconv, no attributes, so
-    nothing in the repository's configuration can make two versions look alike.
+    Object ids only, so nothing in the repository's configuration can make two
+    versions look alike. Plumbing `diff-tree`, not `git diff`: the porcelain
+    reads the `diff.*` settings, and `diff.ignoreSubmodules=all` hid a
+    submodule pointer the branch alone held, and `diff.renames` folds `a→b`
+    into `b`, dropping the removal of `a`. The plumbing does neither.
     """
 
-    done = subprocess.run(["git", "-C", str(repo), "diff", "--name-only", "-z", "--no-renames",
-                           "--no-ext-diff", "--no-textconv", a, b],
+    done = subprocess.run(["git", "-C", str(repo), "diff-tree", "-r", "--name-only", "-z", a, b],
                           capture_output=True, timeout=60)
     return None if done.returncode else {p for p in done.stdout.split(b"\0") if p}
 
