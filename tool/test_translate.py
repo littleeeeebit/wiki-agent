@@ -21,7 +21,7 @@ sys.path.insert(0, str(HERE))
 
 import translate as T  # noqa: E402
 
-TOOL = HERE / "translate.py"
+TOOL = HERE / "translate"  # the package runs as a directory: `__main__.py`
 
 PAGE = (
     "---\n"

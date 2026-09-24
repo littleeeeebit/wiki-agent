@@ -1,12 +1,7 @@
 """Public copies must keep runtime data outside version control."""
 
 from pathlib import Path
-import json
-import os
 import subprocess
-import sys
-
-import pytest
 
 from test_lint import build, kinds
 
@@ -36,26 +31,3 @@ def test_withheld_evidence_preserves_severity_without_hiding_other_errors(tmp_pa
         found = kinds(tmp_path)
         assert ("근거 없는 landmine" not in found) == exempt
         assert "끊어진 링크" in found
-
-
-@pytest.mark.skipif(os.name != "nt", reason="Windows launcher")
-def test_slack_launcher_uses_explicit_local_configuration(tmp_path):
-    project = tmp_path / "새 프로젝트"
-    project.mkdir()
-    fake = tmp_path / "fake_cli.py"
-    fake.write_text('import json, os, sys\nfrom pathlib import Path\n'
-                    'Path("captured.json").write_text(json.dumps({"wiki": os.environ["WIKI_ROOT"], '
-                    '"channel": os.environ["SLACK_CHANNEL"], "prompt": sys.stdin.read()}), encoding="utf-8")\n',
-                    encoding="utf-8", newline="\n")
-    (tmp_path / "claude.cmd").write_text(f'@"{sys.executable}" "{fake}"\n', encoding="utf-8", newline="\n")
-    env = dict(os.environ, PATH=str(tmp_path) + os.pathsep + os.environ["PATH"])
-    launcher = str(ROOT / "tool/slack_post.cmd")
-    missing = subprocess.run([launcher, "standup", str(project)], env=env, capture_output=True)
-    assert missing.returncode != 0
-    assert not (project / "captured.json").exists()
-    for kind in ("standup", "retro"):
-        subprocess.run([launcher, kind, str(project), "test-channel"], env=env, check=True)
-        captured = json.loads((project / "captured.json").read_text(encoding="utf-8"))
-        assert Path(captured["wiki"]).resolve() == ROOT
-        assert captured["channel"] == "test-channel"
-        assert "<WIKI_ROOT>" in captured["prompt"] and "<SLACK_CHANNEL>" in captured["prompt"]

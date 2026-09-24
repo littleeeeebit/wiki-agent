@@ -2,7 +2,7 @@
 
 Three languages meet here and each has a reason. The Korean this file *reads*
 is the plan documents and decision records, which are written in Korean; the
-Korean it *prints* goes to Slack and the web handover, where a person reads
+Korean it *prints* goes to the web handover, where a person reads
 it; and the context handed to the agent is English. Only the last of those is
 translated, and only at the one point where it crosses over.
 """
@@ -24,7 +24,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import translate  # noqa: E402
-from wikilib import front_matter  # noqa: E402
+from wiki.wikilib import front_matter  # noqa: E402
 
 MAX_PLANS = 2       # How many plan documents to look at
 MAX_ROWS = 8        # How many unfinished rows from one plan
@@ -50,10 +50,9 @@ def run(repo: Path, *args: str) -> str:
 def branch_line(repo: Path, english: bool = False) -> str:
     """Korean by default. English is something the caller asks for.
 
-    `slack_brief.standup` and `chat.handoff` share this function and put what
-    it returns straight onto a screen a person reads. Flipping the language
-    here to fix one agent context would turn Slack and the web handover
-    English along with it.
+    `chat.handoff` puts what it returns straight onto a screen a person
+    reads. Flipping the language here to fix one agent context would turn
+    the web handover English along with it.
 
     No translator. These are fixed strings this file writes itself, so the
     English is simply written out, and a round trip is saved on every session

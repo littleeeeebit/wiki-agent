@@ -193,7 +193,7 @@ def test_under_one_budget_knowledge_would_have_pushed_the_rules_out():
     this design is preventing.
     """
 
-    from inject import fit, knowledge
+    from wiki.match import fit, knowledge
 
     body = RULE.split("---", 2)[-1].lstrip("\n")
     page = Path("craft") / "big.md"
@@ -276,7 +276,7 @@ def test_triggers_match_against_the_korean_original():
     nothing applying. The injection disappears without a word.
     """
 
-    from inject import match_pages
+    from wiki.match import match_pages
 
     meta = {"severity": "contract", "triggers": [WORD]}
     available = [(meta, "규칙. 본문", Path("craft") / "x.md")]
@@ -331,6 +331,7 @@ def test_the_budget_and_the_record_measure_the_translated_length():
 
     import inject
     import translate
+    from wiki import match
 
     was = translate.translate
     translate.translate = lambda texts, direction=None, deadline=None: [
@@ -339,7 +340,7 @@ def test_the_budget_and_the_record_measure_the_translated_length():
     try:
         matched = [("contract", "규칙. 짧다", Path(".wiki/y.md"))]
         grown = inject.localised(matched, time.monotonic() + 5)
-        _rules, _dec, parts, _repo, _trimmed = inject.render_parts(grown, None, None)
+        _rules, _dec, parts, _repo, _trimmed = match.render_parts(grown, None, None)
     finally:
         translate.translate = was
 
@@ -375,7 +376,7 @@ def test_every_rule_sentence_lands_inside_the_2kb_preview():
     of a repository's pages.
     """
 
-    import inject
+    from wiki import match
 
     context = build(decisions=20, rule_budget=None, repo_budget=None,
                     rendered="writes the budget test word")
@@ -391,10 +392,10 @@ def test_every_rule_sentence_lands_inside_the_2kb_preview():
     assert context.index("wiki:english-rendering") < context.index("Below is what the wiki")
 
     page = "# T\n\nRule. First sentence here. Second one\nwraps here.\n\nWhy. x\n"
-    assert inject.rule_index([("landmine", page, Path("operator/t.md"))]).endswith(
+    assert match.rule_index([("landmine", page, Path("operator/t.md"))]).endswith(
         "- `operator/t` — First sentence here."
     )
-    assert inject.rule_index([("contract", "# plan\n\nno rule\n", Path(".wiki/p.md"))]) == ""
+    assert match.rule_index([("contract", "# plan\n\nno rule\n", Path(".wiki/p.md"))]) == ""
 
 
 def test_the_rendering_goes_out_even_when_no_rule_matched():

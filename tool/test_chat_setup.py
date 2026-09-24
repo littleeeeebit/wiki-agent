@@ -11,7 +11,7 @@ import pytest
 
 import chat
 import chat_channels
-import chat_local
+from agent import chat_local
 import setup_chat
 
 

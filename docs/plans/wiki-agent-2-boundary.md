@@ -61,8 +61,11 @@
 `tool/common/` 아래의 모든 `.py` 를 `ast` 로 읽는다.
 
 - 함수 안의 지연 import 도 센다. 지금 코드에 지연 import 가 많다
-- 상대 import(`from .chat_local import ...`)는 같은 패키지 안이므로 통과
-- 절대 import 의 맨 앞 이름이 다른 파이프라인이거나 `tool/` 루트 모듈이면 발견 하나
+- 상대 import(`from .chat_local import ...`)는 같은 패키지 안이므로 통과. 파일이 든 폴더
+  깊이만큼 올라가면 `tool/` 루트에 닿으므로 절대 import 와 같이 본다(`from .. import translate`)
+- 같은 모듈의 `tool.` 철자(`from tool import translate`, `import tool.apply`)도 같이 본다.
+  저장소 루트가 경로에 있으면 — pytest 가 그렇다 — 이 철자로도 import 된다
+- 맨 앞 이름이 다른 파이프라인이거나 `tool/` 루트 모듈이면 발견 하나
 - `common/` 은 어느 파이프라인도, 루트 모듈도 부르지 못한다
 
 발견의 종류는 `파이프라인 경계` 다. `lint --check` 의 종료 코드를 빨갛게 만든다.
@@ -79,6 +82,8 @@
 | `tool/wiki/a.py` 가 `import translate` | 빨강 |
 | `tool/wiki/a.py` 가 함수 안에서 `from agent import chat_session` | 빨강 |
 | `tool/wiki/a.py` 가 루트 모듈 `import apply` | 빨강 |
+| `tool/wiki/a.py` 가 `from tool import translate`, `import tool.apply`, `from tool.translate import x` | 빨강 |
+| `tool/wiki/a.py` 가 `from .. import translate` | 빨강 |
 | `tool/common/c.py` 가 `import wiki` | 빨강 |
 | `tool/wiki/a.py` 가 `from . import b`, `import re`, `from common import c` | 초록 |
 
@@ -86,8 +91,12 @@
 
 ## 검증
 
-- `pytest tool/` — 바꾸기 전 281개 통과. 뒤에도 같은 수에서 Slack 테스트만큼만 준다
-- `python tool/lint.py --check` 종료 코드 0
-- 훅을 실제 경로로 한 번: `hook.py claude inject.py` 에 한국어 발화를 넣어 주입이 나오는지
-- `python tool/translate --check` 가 전과 같은 결과
-- `chat.cmd` 로 서버를 띄워 `#위키` 에 한 번 묻는다
+| 확인 | 결과 |
+| --- | --- |
+| `pytest tool/` | 274 통과. 바꾸기 전 281, 지운 Slack 테스트가 7개 |
+| `python tool/lint.py --check` | 종료 0. `wiki/match.py` 에 `import translate` 를 심으면 종료 1 |
+| `python tool/test_lint.py` | 경계 위반 여덟 가지와 하위 폴더 한국어 주석이 빨강, 허용된 import 는 초록 |
+| 훅 실제 경로 | 임시로 붙인 저장소에서 `hook.py claude` 로 `inject.py`·`session_state.py`·`sync.py` — 종료 0, 주입과 영어본이 나온다 |
+| `python tool/translate --check` | 바꾸기 전 `translate.py --check` 와 출력이 같다 |
+| 서버 | `python tool/chat.py --check` 통과. 브라우저로 `#위키` 에 묻는 것은 `web/dist` 가 없어 못 했다 |
+| 리뷰 | 라운드 1 P1 하나(`tool.` 접두어 우회)를 고쳤고, 라운드 2 새 발견 없음 |

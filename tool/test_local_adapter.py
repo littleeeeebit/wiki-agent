@@ -7,7 +7,7 @@ import sys
 import tempfile
 
 import apply
-import inject
+from wiki import match as inject
 
 
 def test_local_adapter():

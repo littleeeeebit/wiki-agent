@@ -34,7 +34,7 @@ import tomllib
 import urllib.request
 from pathlib import Path
 
-HERE = Path(__file__).resolve().parent
+HERE = Path(__file__).resolve().parents[1]  # `tool/`
 ROOT = HERE.parent
 
 # The lite tier, because this runs on every utterance. Measured round trips for

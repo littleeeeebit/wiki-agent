@@ -59,8 +59,9 @@ CLEAN = {
 
 def _tool(root: Path, name: str, source: str) -> None:
     """Plant one tool in the throwaway wiki. The encoding check looks in `tool/`."""
-    (root / "tool").mkdir(parents=True, exist_ok=True)
-    (root / "tool" / name).write_text(source, encoding="utf-8")
+    path = root / "tool" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source, encoding="utf-8")
 
 
 FIXED = 'import sys\nsys.stdout.reconfigure(encoding="utf-8")\n'
@@ -209,6 +210,60 @@ def main() -> int:
             ),
             "주석이 한국어다",
         ),
+        (
+            # The tool checks walk the pipeline folders too. Reading only
+            # `tool/*.py` let a moved file drop out of them without a word.
+            "하위 폴더의 한국어 주석",
+            lambda p, r: _clean_tool(r, "wiki/korean.py", "# 이 주석은 한국어 산문이다.\n"),
+            "주석이 한국어다",
+        ),
+        (
+            "파이프라인이 다른 파이프라인을 부른다",
+            lambda p, r: _clean_tool(r, "wiki/a.py", "import translate\n"),
+            "파이프라인 경계",
+        ),
+        (
+            # Most imports here are deferred into functions. A check that read
+            # only the top of the file would pass them.
+            "함수 안에서 부른다",
+            lambda p, r: _clean_tool(r, "wiki/a.py", "def f():\n    from agent import chat_session\n"),
+            "파이프라인 경계",
+        ),
+        (
+            # The root is where the mains live. Through it a pipeline reaches
+            # any other pipeline.
+            "파이프라인이 루트 모듈을 부른다",
+            lambda p, r: (_clean_tool(r, "apply.py", ""), _clean_tool(r, "wiki/a.py", "import apply\n")),
+            "파이프라인 경계",
+        ),
+        (
+            # With the repository root on the path, as under pytest, `tool.`
+            # spells the same module. Review round 1 got through with it.
+            "tool. 접두어로 다른 파이프라인",
+            lambda p, r: _clean_tool(r, "wiki/a.py", "from tool import translate\n"),
+            "파이프라인 경계",
+        ),
+        (
+            "tool. 접두어로 루트 모듈",
+            lambda p, r: (_clean_tool(r, "apply.py", ""), _clean_tool(r, "wiki/a.py", "import tool.apply\n")),
+            "파이프라인 경계",
+        ),
+        (
+            "from tool.<파이프라인> import",
+            lambda p, r: _clean_tool(r, "wiki/a.py", "from tool.translate import x\n"),
+            "파이프라인 경계",
+        ),
+        (
+            # Two dots from one folder down climb out to the root.
+            "상대 import 로 루트까지 올라간다",
+            lambda p, r: _clean_tool(r, "wiki/a.py", "from .. import translate\n"),
+            "파이프라인 경계",
+        ),
+        (
+            "common 이 파이프라인을 부른다",
+            lambda p, r: _clean_tool(r, "common/c.py", "import wiki\n"),
+            "파이프라인 경계",
+        ),
     ]
 
     print(f"\n결함을 하나씩 심는다 ({len(checks)}건)\n")
@@ -231,6 +286,21 @@ def main() -> int:
     print(f"\n  {'통과 ' if passed else '실패 '} 선언하면 지나가는가        → {sorted(after) or '없음'}")
     if not passed:
         failed.append("선언 무시")
+
+    # What a pipeline may import stays green: itself, relatively or by name,
+    # `common`, and the standard library.
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        build(root, CLEAN)
+        _clean_tool(root, "apply.py", "")
+        _clean_tool(root, "wiki/a.py", "import re\nfrom . import b\nfrom .b import c\nimport wiki.match\nfrom common import c\n"
+                    "from tool import wiki\nimport tool.common\n")
+        _clean_tool(root, "wiki/sub/d.py", "from .. import match\nfrom ..match import x\nfrom .. import translate\n")
+        _clean_tool(root, "common/c.py", "import json\nfrom . import d\n")
+        crossed = [msg for kind, msg in kinds_and_messages(root) if kind == "파이프라인 경계"]
+    print(f"  {'통과 ' if not crossed else '실패 '} 허용된 import 는 안 잡는다  → {crossed or '없음'}")
+    if crossed:
+        failed.append("경계 오탐")
 
     # Citing Korean is not writing Korean, and the backtick is what says so.
     # A check that stops correct work is the one that gets switched off, so

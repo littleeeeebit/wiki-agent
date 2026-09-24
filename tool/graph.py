@@ -11,11 +11,11 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from inject import (  # noqa: E402
-    INJECTABLE, RULE_BUDGET, SLOT, WIKI, adapter_path, budget, slots_for,
+from wiki.match import (  # noqa: E402
+    INJECTABLE, RULE_BUDGET, SLOT, adapter_path, budget, slots_for,
 )
 from apply import runs  # noqa: E402
-from wikilib import front_matter  # noqa: E402
+from wiki.wikilib import WIKI, front_matter  # noqa: E402
 
 SCOPES = ("operator", "craft")
 HOOK_MARK = "inject.py"

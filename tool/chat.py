@@ -11,6 +11,7 @@ import argparse
 import datetime as dt
 import json
 import mimetypes
+import re
 import socket
 import subprocess
 import sys
@@ -40,9 +41,8 @@ sys.path.insert(0, str(HERE))
 import chat_channels  # noqa: E402
 import mirror  # noqa: E402
 import translate  # noqa: E402
-from chat_session import ChatSession, explain  # noqa: E402
+from agent.chat_session import ChatSession, explain  # noqa: E402
 from session_state import active_page, branch_line, decisions, run  # noqa: E402
-from slack_brief import repo_url  # noqa: E402
 
 ROOT = HERE.parent
 LOGS = ROOT / "raw" / "chat"
@@ -407,6 +407,16 @@ def sse(payload: dict) -> str:
 
 # -- Trigger hits -----------------------------------------------------------
 
+def repo_url(repo: Path) -> str:
+    """`git@…` and `https://…` both to one web address. Empty with no remote."""
+
+    remote = run(repo, "remote", "get-url", "origin")
+    if not remote:
+        return ""
+    remote = re.sub(r"^git@([^:]+):", r"https://\1/", remote)
+    return re.sub(r"\.git$", "", remote)
+
+
 def repo_of(cid: str) -> Path:
     repo = chat_channels.repo_for(project())
     if repo is None:
@@ -420,7 +430,7 @@ def hits_for(cid: str, text: str) -> list[str]:
     Not evidence that the host injected anything, and it does not re-run the
     hook.
     """
-    from inject import label, match_pages, pages
+    from wiki.match import label, match_pages, pages
     repo = repo_of(cid)
     try:
         return [label(path) for _severity, _body, path in match_pages(text, pages(repo.name, repo))]
@@ -649,7 +659,7 @@ def peek(repo: str, path: str, line: int = 1, around: int = 25) -> dict:
 # -- translation -------------------------------------------------------------
 #
 # A door onto the phase-one translator so the screens can call it. Not a second
-# engine: the same `tool/translate.py`, and the same cache, so a sentence the
+# engine: the same `tool/translate/`, and the same cache, so a sentence the
 # hooks already rendered costs the screen nothing.
 #
 # Failure returns the original. An English screen beats an empty one, and that

@@ -20,7 +20,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import markdown_emphasis  # noqa: E402
-from wikilib import (  # noqa: E402
+from wiki.wikilib import (  # noqa: E402
     SCOPES, WIKI, git_ok, links_of, metadata_errors, pages, resolve,
 )
 
@@ -56,6 +56,7 @@ def check(
     for repo in repos:
         findings += loud_emphasis(repo)
     findings += missing_hook_guards(wiki, loaded)
+    findings += pipeline_imports(wiki)
 
     # --- 1. Broken links
     inbound: dict[str, set[str]] = {name: set() for name in names}
@@ -352,7 +353,7 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
         raise RuntimeError(NO_PARSER)
 
     found: list[tuple[str, str]] = []
-    for path in sorted(directory.glob("*.py")):
+    for path in sorted(directory.rglob("*.py")):
         try:
             source = path.read_text(encoding="utf-8")
             tree = ast.parse(source)
@@ -385,7 +386,7 @@ def korean_prose(wiki: Path = WIKI) -> list[tuple[str, str]]:
                 rest = Counter(HANGUL.findall(line))
                 rest -= Counter(HANGUL.findall(cited(line, md)))
                 if rest:
-                    found.append((f"tool/{path.name}:{at + n}", line.strip()[:60]))
+                    found.append((f"tool/{path.relative_to(directory).as_posix()}:{at + n}", line.strip()[:60]))
     return found
 
 
@@ -408,7 +409,7 @@ def fragile_tools(wiki: Path = WIKI) -> list[str]:
     if not directory.is_dir():
         return []
     found = []
-    for path in sorted(directory.glob("*.py")):
+    for path in sorted(directory.rglob("*.py")):
         calls = [n for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
                  if isinstance(n, ast.Call)]
         writes = any(ast.unparse(n.func) in ("print", "json.dump", "sys.stdout.write") for n in calls)
@@ -417,7 +418,7 @@ def fragile_tools(wiki: Path = WIKI) -> list[str]:
             for k in n.keywords
         ) for n in calls)
         if writes and not fixed:
-            found.append(path.name)
+            found.append(path.relative_to(directory).as_posix())
     return found
 
 
@@ -450,6 +451,70 @@ def missing_hook_guards(wiki: Path, loaded: dict) -> list[tuple[str, str]]:
         )
         if not guarded:
             found.append(("훅 가드 누락", f"`tool/{name}`: 진입점 예외를 통과시키는 가드가 없다"))
+    return found
+
+
+# One folder per pipeline under `tool/`. `common` is the one place all of them
+# may share, and it may import none of them.
+PIPELINES = ("wiki", "translate", "agent", "workspace")
+
+
+def reached(node: ast.AST, depth: int) -> list[str]:
+    """The modules an import reaches, named as if from inside `tool/`.
+
+    The same module has three spellings. `translate`, `tool.translate` —
+    importable whenever the repository root is on the path, which it is under
+    pytest — and `..translate` from a file one folder down. Reading only the
+    first let the other two through a green gate. `depth` is how many folders
+    below `tool/` the file sits; a relative import that climbs that many or
+    more lands on the root.
+    """
+
+    if isinstance(node, ast.Import):
+        names = [alias.name for alias in node.names]
+    elif isinstance(node, ast.ImportFrom):
+        if node.level and node.level <= depth:
+            return []  # still inside this pipeline
+        # `from tool import x` and `from .. import x` name modules in the list.
+        names = ([node.module] if node.module and node.module != "tool"
+                 else [alias.name for alias in node.names])
+    else:
+        return []
+    return [name.removeprefix("tool.") for name in names]
+
+
+def pipeline_imports(wiki: Path = WIKI) -> list[tuple[str, str]]:
+    """A pipeline folder importing another pipeline, or a module at the `tool/` root.
+
+    Pipelines do not know each other; only a main weaves them. The `tool/`
+    root is where the mains live — the hook entry points and the server — so
+    a pipeline reaching into it is a way around the boundary, not a way along
+    it. Imports inside functions count as much as those at the top: this code
+    base defers imports often, and a check that saw only the top would pass
+    most of them. See `docs/plans/wiki-agent-0-overview.md`.
+    """
+
+    tool = wiki / "tool"
+    roots = {path.stem for path in tool.glob("*.py")}
+    found = []
+    for name in (*PIPELINES, "common"):
+        allowed = {name} if name == "common" else {name, "common"}
+        for path in sorted((tool / name).rglob("*.py")):
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError, UnicodeDecodeError):
+                continue
+            depth = len(path.relative_to(tool).parts) - 1
+            for node in ast.walk(tree):
+                for target in reached(node, depth):
+                    top = target.split(".")[0]
+                    if top not in allowed and (top in PIPELINES or top == "common" or top in roots):
+                        where = path.relative_to(tool).as_posix()
+                        found.append((
+                            "파이프라인 경계",
+                            f"`tool/{where}:{node.lineno}`: `{name}` 가 `{target}` 를 부른다 — "
+                            "파이프라인끼리는 서로를 모른다. 엮는 일은 메인(`tool/` 루트)이 한다",
+                        ))
     return found
 
 
@@ -582,7 +647,8 @@ def fragile_io(wiki: Path = WIKI) -> list[tuple[str, str]]:
     result being looked for.
     """
     found = []
-    for path in sorted((wiki / "tool").glob("*.py")):
+    for path in sorted((wiki / "tool").rglob("*.py")):
+        where = path.relative_to(wiki / "tool").as_posix()
         calls = [n for n in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
                  if isinstance(n, ast.Call)]
         reads = any(ast.unparse(n.func).startswith("sys.stdin.read") or (
@@ -593,7 +659,7 @@ def fragile_io(wiki: Path = WIKI) -> list[tuple[str, str]]:
             for k in n.keywords
         ) for n in calls)
         if reads and not fixed:
-            found.append(("인코딩 미고정", f"`tool/{path.name}`: stdin UTF-8 고정이 없다"))
+            found.append(("인코딩 미고정", f"`tool/{where}`: stdin UTF-8 고정이 없다"))
         if path.name.startswith("test_"):
             continue
         for call in calls:
@@ -603,7 +669,7 @@ def fragile_io(wiki: Path = WIKI) -> list[tuple[str, str]]:
             if (kw.get("text") or kw.get("universal_newlines") or kw.get("encoding")) and (
                 kw.get("encoding") != "utf-8" or kw.get("errors") != "replace"
             ):
-                found.append(("인코딩 미고정", f"`tool/{path.name}:{call.lineno}`: 자식 출력의 UTF-8/replace 누락"))
+                found.append(("인코딩 미고정", f"`tool/{where}:{call.lineno}`: 자식 출력의 UTF-8/replace 누락"))
     return found
 
 
@@ -714,7 +780,7 @@ def broken_wraps(wiki: Path = WIKI) -> list[tuple[str, str, str]]:
     this wiki wraps. A place a check cannot see itself lives a long time.
     """
 
-    targets = sorted((wiki / "tool").glob("*.py"))
+    targets = sorted((wiki / "tool").rglob("*.py"))
     for scope in SCOPES:
         targets += sorted((wiki / scope).glob("*.md"))
 
@@ -773,7 +839,7 @@ def main() -> int:
     for kind, message in findings:
         kinds.setdefault(kind, []).append(message)
     for kind in (
-        "훅 배선 드리프트", "훅 가드 누락", "페이지 형식 오류", "인코딩 미고정", "강조 과다", "끊어진 링크", "근거 없는 landmine", "낡은 서술",
+        "훅 배선 드리프트", "훅 가드 누락", "파이프라인 경계", "페이지 형식 오류", "인코딩 미고정", "강조 과다", "끊어진 링크", "근거 없는 landmine", "낡은 서술",
         "모순(슬롯)", "고아 페이지", "빠진 연결", "끊긴 줄바꿈",
     ):
         if kind not in kinds:

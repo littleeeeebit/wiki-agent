@@ -1,4 +1,4 @@
-# Glossary for `tool/translate.py`. Two tables, two different guarantees.
+# Glossary for `tool/translate/`. Two tables, two different guarantees.
 #
 # A hash of this file is part of the translation cache key, so editing it
 # retires every translation made under the old wording instead of letting
