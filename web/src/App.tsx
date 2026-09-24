@@ -38,6 +38,9 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(() => stored('theme', 'dark'))
   const work = useWork()
   const repo = channels[0]?.repo ?? ''
+  useEffect(() => {
+    shown.current = repo
+  }, [repo])
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
@@ -52,13 +55,20 @@ export default function App() {
   // Only the newest listing lands. One for the previous project could come
   // back after the new project's and fill its rail with the old worktrees.
   const listing = useRef(0)
+  // The project the screen shows. A list for any other — the server switched
+  // and the screen has not caught up — is not shown under this name.
+  const shown = useRef('')
   const [making, setMaking] = useState(false)
 
   const refresh = useCallback(() => {
     const mine = ++listing.current
     api.getWorktrees()
-      .then(({ rows }) => {
+      .then(({ project, rows }) => {
         if (mine !== listing.current) return
+        if (project !== shown.current) {
+          api.getChannels().then(setChannels).catch(() => {})
+          return
+        }
         setRows(rows)
         setSelected((path) => (rows.some((r) => r.path === path) ? path : ''))
       })
@@ -96,13 +106,17 @@ export default function App() {
     if (!wiki) return
     setFault('')
     try {
-      await api.setConfig(wiki.id, { repo: next, model: wiki.model, effort: wiki.effort })
+      const { repo: now } = await api.setConfig(wiki.id, { repo: next, model: wiki.model, effort: wiki.effort })
       // The old project's worktrees go the moment the switch is made, not when
       // the new list arrives — until then, or if it never does, they stood
       // under the new project's name and could be picked.
       listing.current++
       setRows([])
       setSelected('')
+      // The server has switched; the screen follows now, not after the next
+      // request — if that one failed, the picker stayed on the old project
+      // while every API answered for the new one.
+      setChannels((list) => list.map((c) => ({ ...c, repo: now })))
       setChannels(await api.getChannels())
     } catch (err) {
       setFault(String(err))

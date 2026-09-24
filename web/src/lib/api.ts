@@ -119,7 +119,7 @@ export const reset = (id: string) => post(`/api/reset/${id}`).then((r) => json(r
 /** Every channel shares the project; conversations are kept per project and
  *  per channel. */
 export const setConfig = (id: string, cfg: { repo: string; model: string; effort: string }) =>
-  post(`/api/config/${id}`, cfg).then((r) => json<{ kept: boolean; switched: boolean }>(r, '설정'))
+  post(`/api/config/${id}`, cfg).then((r) => json<{ kept: boolean; switched: boolean; repo: string }>(r, '설정'))
 
 /** Name one category at the moment it went wrong, in the census's format. */
 export const mark = (
@@ -232,7 +232,7 @@ export type Worktree = {
 }
 
 export const getWorktrees = () =>
-  fetch('/api/worktrees').then((r) => json<{ repo: string; rows: Worktree[] }>(r, '작업트리'))
+  fetch('/api/worktrees').then((r) => json<{ project: string; repo: string; rows: Worktree[] }>(r, '작업트리'))
 export const makeWorktree = (task: string) =>
   post('/api/worktrees', { task }).then((r) => json<{ path: string }>(r, '작업트리 만들기'))
 export const removeWorktree = (path: string) =>

@@ -735,7 +735,8 @@ def test_a_failed_switch_leaves_the_project_where_it_was(tmp_path):
             # While the new project is being tried, every reader still sees
             # the old one — a listing once got `b` here from a switch that
             # then failed.
-            assert chat.project() == "a" and work.listing()["repo"] == str(repos["a"])
+            listed = work.listing()
+            assert chat.project() == "a" and listed["repo"] == str(repos["a"]) and listed["project"] == "a"
             raise HTTPException(503, "Codex 모델 목록 없음")
         return real(cid, name)
 
@@ -746,3 +747,16 @@ def test_a_failed_switch_leaves_the_project_where_it_was(tmp_path):
         assert chat.project() == "a"
         chat._project = None
         assert chat.project() == "a", "디스크의 선택도 그대로여야 한다"
+
+
+def test_a_switch_answers_with_the_project_and_the_list_names_its_own(tmp_path):
+    """The screen follows the switch from its answer, and drops a list that is
+    not of the project it shows. If the next request failed, the picker stayed
+    on the old project while the server answered for the new one."""
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        assert web.post("/api/config/wiki", json={"repo": "b"}).json()["repo"] == "b"
+        assert web.get("/api/worktrees").json()["project"] == "b"

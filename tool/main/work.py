@@ -22,7 +22,7 @@ from workspace import create, remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
 # changes the project under it, so a hold can never land in between.
-from .query import ROOT, _lock, current_repo, held, hold, resumable, sse
+from .query import ROOT, _lock, current_repo, held, hold, project, resumable, sse
 
 LOGS = ROOT / "raw" / "work"
 MAX_REPLAY = 200
@@ -96,7 +96,10 @@ class Where(BaseModel):
 
 @router.get("/api/worktrees")
 def listing() -> dict:
-    repo = current_repo()
+    # The project's name rides along, so the screen can tell a list of the
+    # project it shows from one of the project the server has switched to.
+    with _lock:
+        name, repo = project(), current_repo()
     try:
         rows = worktrees(repo)
     except ValueError as exc:
@@ -106,7 +109,7 @@ def listing() -> dict:
         chat = _sessions.get(str(row["path"]))
         out.append({**row, "path": str(row["path"]), "name": row["path"].name,
                     "live": bool(chat and chat.alive), "busy": str(row["path"]) in _busy})
-    return {"repo": str(repo), "rows": out}
+    return {"project": name, "repo": str(repo), "rows": out}
 
 
 @router.post("/api/worktrees")
