@@ -369,11 +369,12 @@ def compact_window(tokens, check=False):
         elif have is not None or check:
             left.append(f"{path}: model_auto_compact_token_limit = {have} (원하는 값 {tokens})")
         else:
-            # A top-level key has to come before the first table.
-            lines = text.splitlines(keepends=True)
-            at = next((i for i, line in enumerate(lines) if line.lstrip().startswith("[")), len(lines))
-            lines.insert(at, f"model_auto_compact_token_limit = {tokens}\n")
-            path.write_text("".join(lines), encoding="utf-8", newline="\n")
+            # A top-level key has to come before the first table. The first
+            # line is before it whatever the file holds — a `[` inside a
+            # multi-line array or string is not a table, and a file whose last
+            # line has no newline got the key glued onto it (review round 1).
+            path.write_text(f"model_auto_compact_token_limit = {tokens}\n" + text,
+                            encoding="utf-8", newline="\n")
             print(f"썼다: {path} model_auto_compact_token_limit = {tokens}")
     for line in left:
         print(f"{'맞지 않음' if check else '안 바꿈 — 다른 값이 있다. 사람이 고친다'}: {line}")
