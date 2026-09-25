@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["훅", "hook", "cp949", "UnicodeEncodeError", "UnicodeDecodeError", "인코딩", "settings\\.json", "주입", "안 (뜨|붙|실)"]
 slots: []
 sources: []

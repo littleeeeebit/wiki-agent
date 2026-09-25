@@ -1,6 +1,7 @@
 ---
 scope: operator
 severity: contract
+repeat: rule
 triggers: ["(?s).+"]
 slots: []
 sources: []

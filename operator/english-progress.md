@@ -1,6 +1,7 @@
 ---
 scope: operator
 severity: landmine
+repeat: rule
 triggers: ["[\\s\\S]"]
 slots: []
 enforce:

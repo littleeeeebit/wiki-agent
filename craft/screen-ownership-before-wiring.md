@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["화면(을|이|에|은|의)?\\s*(만들|고치|붙|추가|바꾸|띄)", "프런?트\\s*엔드|frontend", "\\.tsx|\\.jsx|리액트|React", "모달|다이얼로그|팝업", "저장(이|은|을|하면)?\\s*(안 ?되|버튼|실패|거절)", "로그인|로그아웃|계정\\s*(전환|바꾸|경계)", "입력\\s*(칸|창|폼)|드롭다운|셀렉트"]
 slots: []
 sources: []
@@ -11,10 +12,15 @@ links: [pick-up-async-results, diagnose-from-what-ran, verify-narrow-then-wide, 
 # Decide the account boundary and async ownership before wiring a screen
 
 Rule. If a screen writes to a server or reads back from it, decide and write
-down three things before a line of it is built. (What the screen should show
-in the first place, and the order it gets polished in, is held by
-[[screen-follows-the-purpose]]. This page is the step after: the premise of
-the wiring.)
+down three things before a line of it is built: whose account a request is,
+with the ticket taken once when the screen opens and never re-read; what
+decides that a late result is still this screen's — ask "is this my
+generation" of every arriving result and drop it without touching state,
+since `alive` is true during retirement too; and that "may this be written"
+and "may this be stored" are different questions. Ignore a late result rather
+than locking. (What the screen should show in the first place, and the order
+it gets polished in, is held by [[screen-follows-the-purpose]]. This page is
+the step after: the premise of the wiring.)
 
 | What | What has to be decided |
 | --- | --- |

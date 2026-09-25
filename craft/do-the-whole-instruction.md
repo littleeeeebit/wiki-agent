@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: contract
+repeat: rule
 triggers:
   - "머지했다"
   - "머지 완료"

@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["리뷰\\s*루프", "review\\s*loop", "기싸움", "안 ?받", "안 ?읽", "왜 안", "감시", "폴링", "자동으로 (감지|받|보내)", "라운드\\s*\\d+\\s*(결과|보냈|왔)"]
 slots: []
 sources: []

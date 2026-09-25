@@ -1,6 +1,7 @@
 ---
 scope: operator
 severity: landmine
+repeat: rule
 triggers: ["pwsh", "powershell", "파워\\s*셸", "파워쉘", "Start-Process", "서버를? (띄|올|켜|실행|재시작)", "server 를? (띄|올|켜)", "uvicorn", "npm run dev", "런처", "\\.cmd 를?", "이 셀(에서|에|안)", "백그라운드로 (띄|돌)"]
 slots: [server_stop]
 enforce:
@@ -12,9 +13,13 @@ links: [after-merge-cleanup, pick-up-async-results, hooks-fail-open, name-the-bu
 
 # The shell is `pwsh`, and servers start inside this cell
 
-Two rules. When PowerShell is needed, call `pwsh` — `powershell` is a
-different product. Start servers inside this cell — not with `Start-Process`,
-not in a detached window, not through a `.cmd` called from Git Bash.
+Rule. When PowerShell is needed, call `pwsh` — `powershell` is a different
+product. Start servers inside this cell — not with `Start-Process`, not in a
+detached window, not through a `.cmd` called from Git Bash; in the
+background, as this cell's own background task. What the user has to run,
+they type in this cell with the `!` prefix. Tell servers apart by port and
+command line, never by process name, and never run `wsl --shutdown` to free a
+port.
 
 What goes wrong. **A failure does not look like one.** All three cases below
 have that shape. The exit code, the log and the screen all look normal.

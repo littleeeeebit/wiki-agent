@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["예산|budget|상한|한도", "마감|deadline|timeout|제한\\s*시간", "측정|계측|재는|재고|길이를|크기를|cost", "끼워|삽입|중간에\\s*넣", "단계를?\\s*(추가|삽입|넣)", "번역(을|이)?\\s*(넣|끼|붙)", "파이프라인|pipeline", "수렴(을|이)?\\s*(못|안)", "라운드마다|매\\s*라운드"]
 slots: []
 sources: []

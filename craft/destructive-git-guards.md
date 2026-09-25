@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: contract
+repeat: rule
 triggers: ["reset\\s+--hard", "git\\s+clean", "checkout\\s+--", "git\\s+restore", "되돌려|되돌리", "작업.{0,4}(날아|잃|사라)"]
 slots: []
 enforce:

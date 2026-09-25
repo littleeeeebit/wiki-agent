@@ -11,7 +11,7 @@ import hashlib
 import re
 from pathlib import Path
 
-from .wikilib import WIKI, front_matter
+from .wikilib import WIKI, front_matter, rule_paragraph
 
 INJECTABLE = {"landmine", "contract"}
 SLOT = re.compile(r"\{([a-z][a-z0-9_]*)\}")
@@ -344,22 +344,88 @@ def match_pages(prompt: str, available: list) -> list:
     return matched
 
 
-def render_parts(matched: list, rule_limit: int | None, repo_limit: int | None) -> tuple:
+def render_parts(matched: list, rule_limit: int | None, repo_limit: int | None,
+                 seen: set = frozenset(), repeatable: set = frozenset(),
+                 squeeze: bool = False) -> tuple:
     """The two axes as actually sent. The audit counts the same thing — slots
-    filled, summaries, the name list — rather than a tidier version of it."""
+    filled, summaries, the name list — rather than a tidier version of it.
+
+    `seen` holds `(name, tag(body))` for pages this session already received
+    in full; `repeatable` the names that declare `repeat: rule`. A page in
+    both goes out as `repeated`. The key carries the body's tag, so a page
+    edited mid-session is not seen and its new text goes out once in full.
+    `squeeze` sends every declaring page as its rule paragraph — see `compose`.
+    """
     decisions = sorted(
         (m for m in matched if m[2].parent.name == "decisions"),
         key=lambda m: m[2].name, reverse=True,
     )
     rules = [m for m in matched if m[2].parent.name != "decisions"]
     rules.sort(key=lambda item: 0 if item[0] == "landmine" else 1)
-    parts = [whole(s, b, p) for s, b, p in rules]
+    parts = []
+    for s, b, p in rules:
+        known = (label(p), tag(b)) in seen
+        if label(p) in repeatable and (known or squeeze) and rule_paragraph(b):
+            parts.append(repeated(b, p, s, seen=known))
+        else:
+            parts.append(whole(s, b, p))
     parts, trimmed = fit(parts, rules, rule_limit)
     return rules, decisions, parts, knowledge(decisions, repo_limit), trimmed
 
 
 def whole(severity: str, body: str, path: Path) -> str:
     return f"<!-- wiki:{label(path)} ({severity}) -->\n{body}"
+
+
+def title_of(body: str, path: Path) -> str:
+    return next((x[2:].strip() for x in body.splitlines() if x.startswith("# ")), path.stem)
+
+
+def repeated(body: str, path: Path, severity: str, seen: bool = True) -> str:
+    """What a page declaring `repeat: rule` carries when not in full.
+
+    The title, the rule paragraph whole, and the path. The declaration says
+    every clause that must hold on every turn sits inside that paragraph; a
+    one-sentence form loses exactly those clauses.
+
+    Two occasions. The session has already seen the page in full, or this
+    turn is too large for the host to show whole (`compose`). The tail says
+    which, because "loaded earlier" would be false on the second.
+    """
+
+    tail = (f"Loaded in full earlier this session: `{label(path)}.md`" if seen else
+            f"Full page, left out because this turn is over the host's ceiling: `{label(path)}.md`")
+    return (
+        f"<!-- wiki:{label(path)} ({severity}, {'repeated' if seen else 'rule only'}) -->\n"
+        f"# {title_of(body, path)}\n\n{rule_paragraph(body)}\n\n{tail}"
+    )
+
+
+def repeatable(available: list) -> set[str]:
+    """The pages that declared `repeat: rule`. Any other page goes out in full
+    on every turn — the default is the safe side."""
+
+    return {label(p) for meta, _b, p in available if meta.get("repeat") == "rule"}
+
+
+def remembered(rows: list[dict], limit: int) -> set[tuple[str, str]]:
+    """What a session has seen in full, read off its own trajectory rows.
+
+    A page counts as seen when it went out in full, on a turn whose `sent`
+    was within the host's ceiling, after the last reset. Past the ceiling
+    the host put the injection in a file and showed a 2 KB preview, so the
+    full text on that turn was never read. A row with no `sent` — written
+    before this existed — counts for nothing.
+    """
+
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        if row.get("reset"):
+            seen = set()
+        sent = row.get("sent")
+        if isinstance(sent, int) and sent <= limit:
+            seen |= {tuple(x) for x in row.get("full") or [] if len(x) == 2}
+    return seen
 
 
 def tag(text: str) -> str:
@@ -376,20 +442,62 @@ def sent_whole(rules: list, parts: list[str]) -> list[list[str]]:
             if part == whole(s, b, p)]
 
 
-def compose(rules: list, parts: list[str], english: str, project: str | None) -> str:
-    """The whole `additionalContext`, or `""` when there is nothing to send.
+def compose(matched: list, limits: tuple, english: str, project: str | None,
+            seen: set = frozenset(), repeat: set = frozenset(),
+            limit: int | None = None) -> tuple:
+    """`render_parts` and `assemble` together, fitted to the host's ceiling.
 
     Here rather than in the hook so `trigger_audit replay` measures the same
-    bytes the hook sends. `english` is the rendering block, already labelled.
+    bytes the hook sends. `limits` is `(rule_limit, repo_limit)`, `limit` the
+    host's ceiling (`LIMIT`), `None` when the host is not known.
+
+    Past the ceiling the host puts the whole injection in a file and shows the
+    session a 2 KB preview, so a full page sent on that turn is not read — it
+    only pushes everything behind it out of view. On such a turn every page
+    that declared `repeat: rule` goes as its rule paragraph, seen or not: the
+    declaration says the binding clauses are all there, and the rest was not
+    going to be read. Pages that did not declare it still go in full. Without
+    this, a Claude turn is over the ceiling so often that no page is ever
+    seen and there is nothing to deduplicate.
+
+    The rule index rides only on a turn that is still over the ceiling. It
+    exists for the 2 KB preview, and a turn under the ceiling has none —
+    there it is a second copy of every paragraph's first sentence. With no
+    known ceiling the index stays, as before.
+
+    Returns `render_parts`'s five, the body, and whether it was squeezed.
+    """
+
+    def fits(body: str) -> bool:
+        return limit is not None and len(body.encode("utf-8")) <= limit
+
+    out = render_parts(matched, *limits, seen, repeat)
+    body = assemble(out[0], out[2] + out[3], english, project, index=False)
+    if fits(body):
+        return (*out, body, False)
+    squeezed = limit is not None
+    if squeezed:
+        out = render_parts(matched, *limits, seen, repeat, squeeze=True)
+        body = assemble(out[0], out[2] + out[3], english, project, index=False)
+        if fits(body):
+            return (*out, body, True)
+    return (*out, assemble(out[0], out[2] + out[3], english, project), squeezed)
+
+
+def assemble(rules: list, parts: list[str], english: str, project: str | None,
+             index: bool = True) -> str:
+    """The whole `additionalContext`, or `""` when there is nothing to send.
+
+    `english` is the rendering block, already labelled.
     """
 
     # The rule index goes first. It is a few hundred characters, and the
     # rendering in front of it could reach 4,000 (`inject.MAX_RENDERED`) and
     # push every rule sentence out of the 2 KB preview. See `rule_index`.
     blocks = []
-    index = rule_index(rules)
-    if index:
-        blocks.append(index)
+    listing = rule_index(rules) if index else ""
+    if listing:
+        blocks.append(listing)
     # Before the pages, not after them. The rendering is carried even when no
     # page matched: the utterance is agent input on every turn, and tying it
     # to a trigger would drop it on exactly the turns no rule covers.
@@ -402,6 +510,9 @@ def compose(rules: list, parts: list[str], english: str, project: str | None) ->
     # index it still starts inside the preview.
     if english:
         blocks.append(english)
+    # The header and the source map stay on a turn where every rule was
+    # already seen. They are a few hundred characters, and a branch that
+    # drops them is a branch that can drop the repeated forms with them.
     if parts:
         blocks.append(
             "Below is what the wiki loaded for this utterance. A rule marks a "

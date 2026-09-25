@@ -97,6 +97,10 @@ def main(argv: list[str]) -> int:
         extra += ["--project", str(project)]
     if script == "session_state.py":
         extra += ["--checkout", str(top)]
+    if script == "inject.py":
+        # The host decides the ceiling the injection is fitted to, and without
+        # one the injection deduplicates nothing — `inject.recall`.
+        extra += ["--host", host]
 
     # In this process rather than a second interpreter: the hooks run under
     # 10-second budgets and a Python start is a real share of that. `argv[0]`

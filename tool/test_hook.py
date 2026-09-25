@@ -43,6 +43,27 @@ def test_worktree_resolves_to_the_attached_clone():
         assert hook.project_for(Path(raw)) is None, "저장소가 아니면 붙지 않는다"
 
 
+def test_the_injector_is_told_which_host_it_runs_on():
+    """Without `--host` the injector knows no ceiling and deduplicates
+    nothing — every page goes out in full on every turn, silently."""
+
+    import io
+
+    with tempfile.TemporaryDirectory() as raw:
+        _main, tree = attached_repo(Path(raw))
+        ran = {}
+        was = hook.runpy.run_path, sys.stdin, sys.stdout, sys.argv
+        hook.runpy.run_path = lambda path, run_name=None: ran.setdefault(Path(path).name, sys.argv[1:])
+        sys.stdin = io.TextIOWrapper(io.BytesIO(json.dumps({"cwd": str(tree)}).encode("utf-8")))
+        sys.stdout = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        try:
+            hook.main(["codex", "inject.py"])
+        finally:
+            hook.runpy.run_path, sys.stdin, sys.stdout, sys.argv = was
+    args = ran["inject.py"]
+    assert args[args.index("--host") + 1] == "codex", args
+
+
 def test_unattached_directory_passes_silently():
     with tempfile.TemporaryDirectory() as raw:
         done = subprocess.run(

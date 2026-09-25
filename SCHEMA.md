@@ -105,6 +105,8 @@ expectation, and follows the adapter's `agents` when there is no record.
 scope: operator | craft
 severity: landmine | contract | preference
 triggers: ["regex", ...]      # inject on seeing this utterance. required for landmine/contract
+repeat: rule                  # once seen in a session, later turns carry only the Rule paragraph.
+                              #   every binding clause must be in it, 1,200 characters at most
 slots: []                     # an empty list when there are none
 enforce:                      # when it can move into a check. omit otherwise
   deny: ["Bash(sed -i*)"]     #   layer 1. apply merges it into settings.json

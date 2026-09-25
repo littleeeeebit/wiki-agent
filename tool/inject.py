@@ -20,11 +20,17 @@ from pathlib import Path
 import trajectory
 import translate
 from wiki import (
-    REPO_BUDGET, RULE_BUDGET, budget, compose, label, match_pages, pages,
-    render_parts, sent_whole,
+    LIMIT, REPO_BUDGET, RULE_BUDGET, budget, compose, label, match_pages, pages,
+    remembered, repeatable, sent_whole, tag,
 )
 
 HANGUL = re.compile(r"[가-힣]")
+
+# What a compact leaves in each host's transcript: Claude's `system` row with
+# this subtype, Codex's rollout line of this type. Matched as bytes, compact
+# JSON as both hosts write it, so a message that merely says "compact" does
+# not count.
+COMPACTED = (b'"subtype":"compact_boundary"', b'"type":"compacted"')
 
 # The budget for the whole translation, kept under the hook's own 15 seconds.
 # Going over does not cost the translation, it costs the entire injection.
@@ -95,6 +101,58 @@ def rendering(prompt: str, deadline: float) -> str:
     )
 
 
+def compacted(previous: dict | None, transcript: Path, txp: str, size: int) -> bool:
+    """Did the transcript compact since this session's previous turn?
+
+    Only what was appended since then is read, so a transcript of tens of MB
+    costs what one turn added. A different path, a transcript that shrank or
+    a previous row with no offset all count as a compact: `/clear` and
+    `--resume` land here, and so does anything this cannot explain.
+
+    The previous row is this session's, not the file's last line. Two
+    sessions write one trajectory in turns, and another session's larger
+    offset would skip this one's compact — `trajectory.last_row` does not
+    tell sessions apart, so it is not used here.
+    """
+
+    if previous is None:
+        return False
+    start = previous.get("tx")
+    if previous.get("txp") != txp or not isinstance(start, int) or size < start:
+        return True
+    with transcript.open("rb") as handle:
+        handle.seek(start)
+        # Read once. Reading inside the loop hands every marker after the
+        # first an exhausted stream, and Codex's compact is never seen.
+        tail = handle.read()
+    return any(marker in tail for marker in COMPACTED)
+
+
+def recall(wiki: Path | None, session: str, transcript, host: str | None) -> tuple[set, dict]:
+    """`(seen, fields)` — what this session already holds, and what to record.
+
+    Anything missing or failing means nothing is seen and every page goes
+    out in full, as it did before this existed. Wrong in that direction
+    costs tokens. The other direction — counting as seen what was never read
+    — is the failure this wiki exists to prevent, `craft/hooks-fail-open`.
+    """
+
+    limit = LIMIT.get(host or "")
+    if wiki is None or not session or not transcript or limit is None:
+        return set(), {}
+    try:
+        path = Path(str(transcript))
+        size = path.stat().st_size
+        # The path's tag, not the path: it holds a user name and a project.
+        txp = tag(str(path))
+        mine = trajectory.session_rows(trajectory.path_for(wiki), session)
+        if compacted(mine[-1] if mine else None, path, txp, size):
+            return set(), {"tx": size, "txp": txp, "reset": True}
+        return remembered(mine, limit), {"tx": size, "txp": txp}
+    except Exception:  # noqa: BLE001
+        return set(), {}
+
+
 def main() -> int:
     # The utterance coming in and the injection going out are both Korean. The
     # encoding is not left to the environment.
@@ -104,6 +162,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="발화에 맞는 위키 페이지를 넣는다")
     parser.add_argument("--adapter", default=None, help="adapters/<이름>.toml")
     parser.add_argument("--project", default=None, help="대상 저장소. `.wiki/` 를 읽는다")
+    parser.add_argument("--host", default=None,
+                        help="claude|codex. 없으면 세션 내 중복 제거를 안 한다")
     args = parser.parse_args()
 
     try:
@@ -125,12 +185,22 @@ def main() -> int:
     # and the rendering behind it got zero seconds and was dropped. The block
     # the person checks goes first; the pages take what is left.
     deadline = time.monotonic() + BUDGET
-    matched = match_pages(prompt, pages(args.adapter, args.project))
+    available = pages(args.adapter, args.project)
+    matched = match_pages(prompt, available)
     english = rendering(prompt, deadline)
     matched = localised(matched, deadline)
-    rules, decisions, rule_parts, repo_parts, trimmed = render_parts(
-        matched, budget(args.adapter, RULE_BUDGET, args.project),
-        budget(args.adapter, REPO_BUDGET, args.project),
+    # Unlike reading, writing has to work before `.wiki/` exists.
+    # `project_wiki` returns `None` when it does not, which would leave a
+    # freshly attached repository silently recording nothing at all.
+    wiki = Path(args.project).expanduser() / ".wiki" if args.project else None
+    session = str(payload.get("session_id") or "")
+    seen, where = recall(wiki, session, payload.get("transcript_path"), args.host)
+    # Without a host the ceiling is unknown, so nothing is squeezed either.
+    rules, decisions, rule_parts, repo_parts, trimmed, body, _squeezed = compose(
+        matched,
+        (budget(args.adapter, RULE_BUDGET, args.project),
+         budget(args.adapter, REPO_BUDGET, args.project)),
+        english, args.project, seen, repeatable(available), LIMIT.get(args.host or ""),
     )
     parts = rule_parts + repo_parts
 
@@ -139,12 +209,18 @@ def main() -> int:
     # it — `tool/session_state.py`.
 
     loaded = [label(p) for _s, _b, p in rules + decisions]
-    body = compose(rules, parts, english, args.project)
     if body:
         # This one line lands on the person's screen as written. The rule
         # inverted and this stayed Korean, because the reader here is the
         # person. `operator/english-progress` holds that boundary.
         note = f"위키 주입: {', '.join(loaded[:6])}" if loaded else "위키: 걸린 규칙 없음"
+        heads = [part.split("\n", 1)[0] for part in rule_parts]
+        again = sum(", repeated) -->" in head for head in heads)
+        squeezed = sum(", rule only) -->" in head for head in heads)
+        if again:
+            note += f" · 이미 실림 {again}장"
+        if squeezed:
+            note += f" · 한도로 규칙 문단만 {squeezed}장"
         if trimmed:
             note += f" · 줄임 {trimmed}장"
         if english:
@@ -169,23 +245,23 @@ def main() -> int:
     # A turn that matched nothing is recorded too. What was not carried is as
     # much evidence about routing as what was, and reading only the utterances
     # that matched nothing is the one way to find a miss.
-    #
-    # Unlike reading, writing has to work before `.wiki/` exists.
-    # `project_wiki` returns `None` when it does not, which would leave a
-    # freshly attached repository silently recording nothing at all.
     failed = trajectory.record(
-        Path(args.project).expanduser() / ".wiki" if args.project else None,
+        wiki,
         prompt,
         loaded,
         sum(len(part) for part in parts),
-        str(payload.get("session_id") or ""),
+        session,
         # The whole `additionalContext` in UTF-8 bytes — index, rendering,
         # source map and separators included. `cost` counts only the rule and
         # decision blocks; this is the number a host ceiling (`wiki.LIMIT`)
         # is compared with.
         sent=len(body.encode("utf-8")),
         # `[name, tag]` of each rule page that went out whole, not trimmed.
+        # The next turn of this session reads it back as seen (`recall`).
         full=sent_whole(rules, rule_parts),
+        # `tx` the transcript's size now, `txp` its path's tag, `reset` when
+        # it compacted since the last turn — `compacted` reads them next turn.
+        **where,
     )
     if failed:
         # The name and nothing else. Non-ASCII in the message kills this very

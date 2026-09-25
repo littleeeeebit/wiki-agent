@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: contract
+repeat: rule
 triggers: ["테스트를? (돌|실행)", "pytest", "전체를? 돌리", "다 돌리", "라이브를? (돌|실행)", "회차를? (돌|실행)", "게이트", "검증", "확인해 ?보"]
 slots: []
 sources: []

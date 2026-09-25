@@ -404,7 +404,7 @@ by the API's rates as a stand-in for the subscription limit: input 1, cache
 write 2, cache read 0.1, output 5.
 
 ```bash
-python tool/trigger_audit.py replay ~/PycharmProjects/<name>/.wiki/trajectory.jsonl --until <UTC>  # today's pages over past utterances
+python tool/trigger_audit.py replay ~/PycharmProjects/<name>/.wiki/trajectory.jsonl --until <UTC>  # today's pages over past utterances, without and with deduplication
 python tool/trigger_audit.py latency --project ~/PycharmProjects/<name>   # the hook's own time, translation off
 python tool/trigger_audit.py usage --since <UTC> --until <UTC>             # weighted tokens per human utterance, every transcript on this PC
 python tool/trigger_audit.py ab ~/PycharmProjects/<name> --a <main worktree> --b <branch worktree> --model <m>  # one task set, two hooks
@@ -412,7 +412,12 @@ python tool/trigger_audit.py ab ~/PycharmProjects/<name> --a <main worktree> --b
 
 `ab` spends the subscription: `--dry-run` shows the task set first. Each
 `.wiki/trajectory.jsonl` row carries `sent`, the bytes of the whole injection,
-and `full`, the pages that went out untrimmed.
+and `full`, the pages that went out untrimmed. The hook reads its own session's
+rows back: a page declaring `repeat: rule` that the session already received
+in full goes out as its rule paragraph, until the transcript compacts (`tx`,
+`txp`, `reset`). A turn over the host's ceiling sends every declaring page as
+its rule paragraph. `replay` exits 1 if a matched rule is ever missing from
+what it would send.
 
 `lint` catches where the structure rots and re-running a census catches where
 the content rots — a page written and the failure not falling means going up

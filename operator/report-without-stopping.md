@@ -1,6 +1,7 @@
 ---
 scope: operator
 severity: landmine
+repeat: rule
 triggers: ["멈추지\\s*마", "왜\\s*(자꾸\\s*)?멈추", "돌리고\\s*있", "계속\\s*(해|진행)", "다음은", "이어서", "쭉\\s*진행"]
 slots: []
 sources: []

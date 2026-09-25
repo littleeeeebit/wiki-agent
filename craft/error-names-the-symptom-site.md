@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["missing|not found|_missing", "state_missing", "왜 (안 되|안 나|없)", "어댑터|adapter", "선택자|selector", "DOM", "안 그려", "렌더", "리셋|reset", "건너뛰|스킵|skip"]
 slots: []
 sources: []

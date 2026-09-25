@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: contract
+repeat: rule
 triggers: ["주석", "docstring", "독스트링", "line ?length", "줄 ?길이", "리팩터|리팩토링"]
 slots: []
 sources: []

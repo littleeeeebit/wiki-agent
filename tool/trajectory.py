@@ -103,8 +103,8 @@ def record(
 ) -> str | None:
     """Record one turn, and score the previous line when it is the same session.
 
-    `extra` lands in the row as given — `sent` and `full` from `inject`. What
-    each one means is written where it is made.
+    `extra` lands in the row as given — `sent`, `full`, `tx`, `txp` and
+    `reset` from `inject`. What each one means is written where it is made.
 
     Every failure is swallowed: one record is not worth stopping a session
     over — `craft/hooks-fail-open`. It is not swallowed silently, though. The
@@ -136,6 +136,30 @@ def record(
     except Exception as error:  # noqa: BLE001
         return type(error).__name__
     return None
+
+
+def session_rows(path: Path, session: str) -> list[dict]:
+    """This session's rows, oldest first. The hook reads this on every turn.
+
+    A line that does not contain the id as a substring is skipped without
+    `json.loads` — a thousand rows cost a few milliseconds that way. If the
+    file ever reaches tens of thousands of rows, read the tail instead.
+
+    A broken line that names this session raises. Whatever it recorded is
+    lost, and the caller treats an exception as nothing seen.
+    """
+
+    if not session or not path.exists():
+        return []
+    found = []
+    with path.open(encoding="utf-8", errors="replace") as handle:
+        for line in handle:
+            if session not in line:
+                continue
+            row = json.loads(line)
+            if row.get("session") == session:
+                found.append(row)
+    return found
 
 
 def rows(wiki: Path) -> list[dict]:
