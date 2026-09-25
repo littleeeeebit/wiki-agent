@@ -3,7 +3,7 @@ import { Answer } from '@/components/Answer'
 import { Composer } from '@/components/Composer'
 import { Toolbar } from '@/components/Toolbar'
 import type { Choice } from '@/components/Toolbar'
-import type { Options, Worktree } from '@/lib/api'
+import type { Options, Rule, Worktree } from '@/lib/api'
 import { useOverlay } from '@/lib/overlay'
 import type { Step, Turn } from '@/lib/work'
 import { cn } from '@/lib/utils'
@@ -17,7 +17,10 @@ type Props = {
   seed: { text: string } | null
   onChoice: (c: Choice) => void
   onSend: (text: string) => void
-  onAnswer: (turn: Turn, id: string, allow: boolean) => void
+  onAnswer: (turn: Turn, id: string, allow: boolean, scope?: 'once' | 'session') => void
+  onStop: (turn: Turn) => void
+  rules: Rule[]
+  onClearRules: () => void
   onReset: () => void
   onPeek: (path: string, line: number) => void
 }
@@ -25,7 +28,9 @@ type Props = {
 /** The selected worktree's agent. Its answers get the Korean overlay; what it
  *  ran and what it asks to write stay as they are, because a person approves
  *  those and a reworded command is not the command. */
-export function Agent({ row, turns, options, choice, on, seed, onChoice, onSend, onAnswer, onReset, onPeek }: Props) {
+export function Agent({
+  row, turns, options, choice, on, seed, onChoice, onSend, onAnswer, onStop, rules, onClearRules, onReset, onPeek,
+}: Props) {
   const end = useRef<HTMLDivElement>(null)
   const busy = turns.at(-1)?.pending ?? false
   const last = turns.at(-1)
@@ -50,6 +55,16 @@ export function Agent({ row, turns, options, choice, on, seed, onChoice, onSend,
         <div className="mt-2 flex h-7 items-center justify-end gap-1.5">
           {row && (
             <>
+              {busy && last?.turn && (
+                <button
+                  type="button"
+                  onClick={() => onStop(last)}
+                  className="h-7 shrink-0 whitespace-nowrap rounded-md border border-destructive/40 px-2 text-[12.5px] text-destructive hover:bg-destructive/10"
+                  title="도는 턴을 멈춘다. 대화는 남아 다음 지시가 이어진다"
+                >
+                  멈춤
+                </button>
+              )}
               <Toolbar value={choice} options={options} busy={busy} onChange={onChoice} />
               <button
                 type="button"
@@ -62,6 +77,26 @@ export function Agent({ row, turns, options, choice, on, seed, onChoice, onSend,
             </>
           )}
         </div>
+        {row && rules.length > 0 && (
+          <div className="mt-2 flex items-center gap-2 text-[12px] text-muted-foreground">
+            <span className="min-w-0 truncate">
+              세션 허용:{' '}
+              {rules.map((r, i) => (
+                <span key={i}>
+                  {i > 0 && ' · '}
+                  {r.kind === 'command' ? <code className="font-mono text-[11.5px]">{r.command}</code> : r.tool}
+                </span>
+              ))}
+            </span>
+            <button
+              type="button"
+              onClick={onClearRules}
+              className="shrink-0 rounded px-1.5 text-[12px] text-primary hover:bg-secondary"
+            >
+              해제
+            </button>
+          </div>
+        )}
       </header>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -128,21 +163,37 @@ function Reply({ turn, on, onAnswer, onPeek }: {
       {turn.error && <p role="alert" className="text-[12.5px] text-destructive">{turn.error}</p>}
       {!turn.pending && turn.ms != null && (
         <p className="font-mono text-[10.5px] text-faint">
-          {[`${(turn.ms / 1000).toFixed(1)}s`, turn.cost != null && `$${turn.cost.toFixed(3)}`, turn.model]
-            .filter(Boolean).join(' · ')}
+          {[`${(turn.ms / 1000).toFixed(1)}s`, turn.cost != null && `$${turn.cost.toFixed(3)}`, tokens(turn),
+            turn.model].filter(Boolean).join(' · ')}
         </p>
       )}
     </div>
   )
 }
 
+/** The same shape as the query pane's: in→out, and what came from the cache. */
+function tokens(turn: Turn): string {
+  const t = turn.tokens
+  if (!t || (t.in == null && t.out == null)) return ''
+  const n = (v?: number) => (v == null ? '?' : v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v))
+  return `${n(t.in)}→${n(t.out)}${t.cache_read ? ` · 캐시 ${n(t.cache_read)}` : ''}`
+}
+
 function Tool({ text }: { text: string }) {
   return <p className="font-mono text-[12px] leading-snug text-faint">· {text}</p>
 }
 
+/** How an answered card reads, by who answered it. */
+const ANSWERED: Record<string, [string, string]> = {
+  person: ['허용함', '거절함'],
+  session: ['세션 동안 허용', '거절함'],
+  outside: ['허용함', '거절 · 작업트리 밖'],
+  read: ['허용함', '거절 · 읽기 세션'],
+}
+
 /** One write the agent wants to make. What it will do is shown as it will be
  *  done — the command, the path, the content — and nothing happens until a
- *  person presses one of the two. */
+ *  person presses one of the buttons. */
 function Ask({ step, turn, onAnswer }: {
   step: Extract<Step, { kind: 'approval' }>
   turn: Turn
@@ -154,7 +205,7 @@ function Ask({ step, turn, onAnswer }: {
     <div className={cn('rounded-md border p-2.5', open ? 'border-wait bg-wait/10' : 'border-border bg-secondary/40')}>
       <div className="flex items-center justify-between gap-2">
         <span className="font-heading text-[11px] font-semibold">
-          {open ? '쓰기 허용?' : step.answer ? '허용함' : '거절함'}
+          {open ? '쓰기 허용?' : ANSWERED[step.by ?? 'person'][step.answer ? 0 : 1]}
           <span className="ml-1.5 font-mono text-[11px] font-normal text-muted-foreground">{step.tool}</span>
         </span>
         {open && (
@@ -167,6 +218,18 @@ function Ask({ step, turn, onAnswer }: {
             >
               허용
             </button>
+            {step.session && (
+              <button
+                type="button"
+                disabled={step.sending || !turn.pending}
+                onClick={() => onAnswer(turn, step.id, true, 'session')}
+                className="rounded-md border border-wait px-2.5 py-1 text-[12.5px] hover:bg-wait/10 disabled:opacity-40"
+                title={command(step) ? '글자까지 같은 이 명령은 이 세션 동안 묻지 않는다'
+                  : `${step.tool} 는 이 세션 동안 묻지 않는다. 작업트리 밖은 그래도 거절한다`}
+              >
+                {command(step) ? '이 명령은 세션 동안' : '세션 동안'}
+              </button>
+            )}
             <button
               type="button"
               disabled={step.sending || !turn.pending}
@@ -186,6 +249,8 @@ function Ask({ step, turn, onAnswer }: {
     </div>
   )
 }
+
+const command = (step: Extract<Step, { kind: 'approval' }>) => step.tool === 'Bash' || step.tool === 'command'
 
 /** The exact thing to approve. Never the agent's summary of it. */
 function describe(step: Extract<Step, { kind: 'approval' }>): string {

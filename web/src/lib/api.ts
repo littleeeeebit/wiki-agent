@@ -57,6 +57,7 @@ export type Tokens = {
   out?: number
   cache_read?: number
   cache_write?: number
+  reasoning?: number
 }
 
 export type Ev = {
@@ -270,16 +271,25 @@ export const makeWorktree = (task: string) =>
 export const removeWorktree = (path: string) =>
   post('/api/worktrees/remove', { path }).then((r) => json<{ text: string }>(r, '작업트리 정리'))
 
+/** Who answered an approval: a person, a session rule, or the server itself
+ *  refusing a write outside the worktree or anything a read session asks. */
+export type AnsweredBy = 'person' | 'session' | 'outside' | 'read'
+
 /** One event of a worktree's agent. `session_id` is the program's own id for
  *  the session, fixed for its life — what tells a late event from a current
- *  one, and what an approval answer has to name. */
+ *  one, and what an approval answer has to name. `turn` and `seq` place it in
+ *  the server's buffer of that turn, which a reattaching screen reads from. */
 export type WorkEv = {
-  kind: 'delta' | 'tool' | 'approval' | 'done' | 'error'
+  kind: 'delta' | 'tool' | 'approval' | 'answered' | 'done' | 'error'
   text: string
   meta: {
     id?: string
     tool?: string
     input?: Record<string, unknown>
+    answer?: 'allow' | 'deny'
+    allow?: boolean
+    by?: AnsweredBy
+    session?: boolean
     ms?: number
     session_id?: string
     model?: string
@@ -288,31 +298,60 @@ export type WorkEv = {
   }
   session_id: string
   parent_id: string | null
+  turn?: string
+  seq?: number
 }
+
+export type WorkStep =
+  | { kind: 'tool'; text: string }
+  | { kind: 'approval'; tool: string; text: string; answer: 'allow' | 'deny' | 'none'; by: AnsweredBy }
 
 export type WorkTurn = {
   role: 'user' | 'assistant'
   text: string
   error?: string
-  tools?: string[]
+  steps?: WorkStep[]
   ms?: number
   cost_usd?: number
   model?: string
+  tokens?: Tokens
 }
+
+/** An "allow for this session": a file tool by name, or one exact command. */
+export type Rule = { kind: 'file' | 'command'; tool: string; command?: string; cwd?: string }
+
+export type Running = { turn: string; session_id: string; seq: number }
 
 export const workLog = (path: string) =>
   get(`/api/work/log?${new URLSearchParams({ path })}`).then((r) =>
-    json<{ rows: WorkTurn[]; session_id: string; busy: boolean }>(r, '작업 기록'),
+    json<{ rows: WorkTurn[]; session_id: string; busy: boolean; running: Running | null; rules: Rule[] }>(
+      r, '작업 기록'),
   )
 export const workReset = (path: string) =>
   post('/api/work/reset', { path }).then((r) => json(r, '작업 문맥 비우기'))
-export const workAnswer = (body: { path: string; session_id: string; id: string; allow: boolean }) =>
-  post('/api/work/answer', body).then((r) => json(r, '승인'))
+export const workAnswer = (body: {
+  path: string; session_id: string; id: string; allow: boolean; scope: 'once' | 'session'
+}) => post('/api/work/answer', body).then((r) => json(r, '승인'))
+export const workStop = (path: string, turn: string) =>
+  post('/api/work/stop', { path, turn }).then((r) => json(r, '멈춤'))
+export const clearRules = (path: string, session_id: string) =>
+  post('/api/work/rules/clear', { path, session_id }).then((r) => json(r, '세션 허용 해제'))
+
+const workError = (t: string): WorkEv => ({ kind: 'error', text: t, meta: {}, session_id: '', parent_id: null })
 
 export async function workSay(
   body: { path: string; text: string; model: string; effort: string },
   onEvent: (ev: WorkEv) => void,
 ): Promise<void> {
-  await events(await post('/api/work/say', body), onEvent,
-    (t): WorkEv => ({ kind: 'error', text: t, meta: {}, session_id: '', parent_id: null }))
+  await events(await post('/api/work/say', body), onEvent, workError)
+}
+
+/** Reattach to a turn after the last `seq` seen. `gone` when the server holds
+ *  another turn by now (410): the record is the thing to read then. */
+export async function workEvents(
+  path: string, turn: string, after: number, onEvent: (ev: WorkEv) => void,
+): Promise<'gone' | void> {
+  const res = await get(`/api/work/events?${new URLSearchParams({ path, turn, after: String(after) })}`)
+  if (res.status === 410) return 'gone'
+  await events(res, onEvent, workError)
 }

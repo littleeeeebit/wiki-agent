@@ -4,13 +4,21 @@ The screen names a worktree by path, and a path from the screen is never
 opened as it is: it has to be on `workspace`'s own list for the selected
 project. Every write the agent wants arrives as an `approval` event and waits
 for a person.
+
+A turn runs in its own thread, not in the response that started it. Its
+events pile up in a `Run`, and every response only tails that buffer, so a
+reloaded window reattaches and a closed tab stops nothing.
 """
 
 from __future__ import annotations
 
 import json
+import threading
 import time
+import uuid
+from contextlib import nullcontext
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -22,15 +30,17 @@ from workspace import create, remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
 # changes the project under it, so a hold can never land in between.
-from .query import ROOT, _lock, current_repo, held, hold, project, resumable, sse
+from .query import ROOT, _lock, current_repo, hold, project, resumable, sse, streaming
 
 LOGS = ROOT / "raw" / "work"
 MAX_REPLAY = 200
+KEEPALIVE = 15.0   # seconds a tail waits before it checks the screen is still there
 
 router = APIRouter()
 
 _sessions: dict[str, ChatSession] = {}    # worktree path -> its session
 _busy: dict[str, object] = {}   # worktree path -> the hold of its running turn
+_runs: dict[str, "Run"] = {}    # worktree path -> its last turn, kept until the next one starts
 
 
 def close_all() -> None:
@@ -141,6 +151,7 @@ def clear(body: Where) -> dict:
         path = ours(body.path)
         with _lock:
             chat = _sessions.pop(body.path, None)
+            _runs.pop(body.path, None)
         if chat:
             chat.close()
         try:
@@ -181,6 +192,7 @@ class Answer(BaseModel):
     session_id: str      # this program's id for the session that asked
     id: str
     allow: bool
+    scope: Literal["once", "session"] = "once"
 
 
 def session(path: Path, model: str, effort: str) -> ChatSession:
@@ -211,8 +223,12 @@ def session(path: Path, model: str, effort: str) -> ChatSession:
 def log(path: str) -> dict:
     where = ours(path)
     chat = _sessions.get(path)
-    return {"rows": [r for r in recall(where) if r.get("role") in ("user", "assistant")],
-            "session_id": chat.id if chat else "", "busy": path in _busy}
+    run = _runs.get(path)
+    return {"rows": [shown(r) for r in recall(where) if r.get("role") in ("user", "assistant")],
+            "session_id": chat.id if chat else "", "busy": path in _busy,
+            "rules": chat.rules if chat else [],
+            "running": None if run is None or run.done else
+            {"turn": run.turn, "session_id": run.session_id, "seq": len(run.events) - 1}}
 
 
 @router.post("/api/work/reset")
@@ -224,6 +240,7 @@ def reset(body: Where) -> dict:
         path = ours(body.path)
         with _lock:
             chat = _sessions.pop(body.path, None)
+            _runs.pop(body.path, None)
         remember(path, "context", "사용자가 문맥 지우기")
         if chat:
             chat.close()
@@ -232,9 +249,145 @@ def reset(body: Where) -> dict:
         release()
 
 
+class Run:
+    """One worktree's turn, as a buffer of its events in order.
+
+    Each event is the screen's payload plus `seq`, its place here from 0, and
+    `turn`, so a screen that reattaches after `seq` k gets k+1 onwards and
+    can tell this turn's events from the next one's.
+    """
+
+    def __init__(self, chat: ChatSession) -> None:
+        self.turn = uuid.uuid4().hex
+        self.chat = chat
+        self.session_id = chat.id
+        self.events: list[dict] = []
+        self.done = False
+        self.stopped = False
+        self.wake = threading.Condition()
+
+    def put(self, payload: dict) -> None:
+        with self.wake:
+            self.events.append({**payload, "seq": len(self.events), "turn": self.turn})
+            self.wake.notify_all()
+
+    def finish(self) -> None:
+        with self.wake:
+            self.done = True
+            self.wake.notify_all()
+
+
+def tail(run: Run, after: int):
+    """The run's events after `seq` `after`, as they come, until it is done.
+
+    A screen that leaves only stops its own tail. The comment line every
+    `KEEPALIVE` is what finds out it left: without a write, a tail of a turn
+    waiting on an approval held its thread for as long as the approval waited.
+    """
+
+    n = after + 1
+    while True:
+        with run.wake:
+            if n >= len(run.events) and not run.done:
+                run.wake.wait(KEEPALIVE)
+            new, finished = run.events[n:], run.done
+        n += len(new)
+        for payload in new:
+            yield sse(payload)
+        if finished:
+            return
+        if not new:
+            yield ": keep-alive\n\n"
+
+
+def steps(events: list[dict]) -> list[dict]:
+    """What ran and what was asked, in one line in order, for the record.
+
+    An approval's `input` is left out: a `Write` carries the whole file, and
+    what was written is in the worktree and its commits.
+    """
+
+    out: list[dict] = []
+    asked: dict[str, dict] = {}
+    for ev in events:
+        meta = ev["meta"]
+        if ev["kind"] == "tool":
+            out.append({"kind": "tool", "text": ev["text"]})
+        elif ev["kind"] == "approval":
+            # `none`: the turn ended before anyone answered.
+            step = asked[str(meta.get("id"))] = {
+                "kind": "approval", "tool": meta.get("tool", ""), "text": ev["text"],
+                "answer": meta.get("answer", "none"), "by": meta.get("by", "person")}
+            out.append(step)
+        elif ev["kind"] == "answered" and str(meta.get("id")) in asked:
+            asked[str(meta["id"])].update(answer="allow" if meta["allow"] else "deny", by=meta["by"])
+    return out
+
+
+def shown(row: dict) -> dict:
+    """A record row as the screen reads it. Rows from before `steps` had only
+    `tools`, the lines of what ran."""
+
+    if "tools" in row and "steps" not in row:
+        row = {**row, "steps": [{"kind": "tool", "text": t} for t in row["tools"]]}
+        del row["tools"]
+    return row
+
+
+def run_turn(path: Path, run: Run, text: str, release) -> None:
+    """One turn, to its end, whoever is watching. The hold and the record are
+    let go here, so a turn nobody watched is still on record."""
+
+    chat, final, failed, meta = run.chat, "", "", {}
+    try:
+        for ev in chat.say(text):
+            if ev.kind == "context":   # the CLI's conversation could not be resumed
+                remember(path, "context", ev.text)
+                ev.kind = "tool"
+            if ev.kind == "done":
+                final, meta = ev.text, dict(ev.meta)
+                if meta.pop("error", False):
+                    failed = final or "완료된 답이 없다"
+            elif ev.kind == "error":
+                failed = ev.text = "사람이 멈춤" if run.stopped else ev.text
+            run.put({"kind": ev.kind, "text": ev.text, "meta": ev.meta,
+                     "session_id": ev.session_id, "parent_id": ev.parent_id})
+    except Exception as exc:  # a turn that broke still owes the screen a reason
+        failed = f"{type(exc).__name__}: {exc}"
+        run.put({"kind": "error", "text": failed, "meta": {}, "session_id": chat.id, "parent_id": None})
+    finally:
+        try:
+            with run.wake:
+                made = steps(run.events)
+            remember(path, "assistant", final, error=failed, steps=made,
+                     provider="codex" if chat.is_codex else "claude", **meta)
+        finally:
+            # Released before the end is told, so a screen that sees the end
+            # can send the next instruction at once.
+            release()
+            run.finish()
+
+
+def attached(path: str) -> Run:
+    """The run of a path the server already made a session for.
+
+    Not `ours`: that reads the selected project, and a turn started before a
+    project switch must stay reachable. The path went through `ours` once, when
+    its session was made. 404 for a path with no session, 410 for one whose
+    turn is gone."""
+
+    run = _runs.get(path)
+    if run is None and path not in _sessions:
+        raise HTTPException(404, "세션이 없는 경로다")
+    if run is None:
+        raise HTTPException(410, "그 턴은 이제 없다")
+    return run
+
+
 @router.post("/api/work/say")
 def say(body: Order) -> StreamingResponse:
-    """One instruction to the worktree's agent, and its events.
+    """One instruction to the worktree's agent. The turn runs on its own; the
+    response is a tail of its events.
 
     Every payload carries the session's own `session_id` beside the event, so
     the screen can drop a late one and an approval can name who asked.
@@ -246,45 +399,52 @@ def say(body: Order) -> StreamingResponse:
     # Held from acceptance, and before the path is checked: from here the
     # project cannot switch away and the worktree cannot be removed or reset.
     # Checked first, the project switched between the check and the hold.
+    # From here the turn's thread owns the release.
     release = hold(_busy, _lock, body.path, "이 작업트리의 에이전트가 아직 돌고 있다")
     try:
         path = ours(body.path)
+        run = Run(session(path, body.model, body.effort))
+        remember(path, "user", text)
+        with _lock:
+            _runs[body.path] = run
+        threading.Thread(target=run_turn, args=(path, run, text, release), daemon=True).start()
     except BaseException:
         release()
         raise
+    return streaming(tail(run, -1))
 
-    def stream():
-        final, failed, tools, meta, chat = "", "", [], {}, None
-        # ponytail: the turn lives as long as this response. A reloaded window
-        # cuts it; a per-session event buffer the stream tails would let it
-        # reattach.
-        try:
-            chat = session(path, body.model, body.effort)
-            remember(path, "user", text)
-            for ev in chat.say(text):
-                if ev.kind == "tool":
-                    tools.append(ev.text)
-                elif ev.kind == "done":
-                    final, meta = ev.text, dict(ev.meta)
-                    if meta.pop("error", False):
-                        failed = final or "완료된 답이 없다"
-                elif ev.kind == "error":
-                    failed = ev.text
-                yield sse({"kind": ev.kind, "text": ev.text, "meta": ev.meta,
-                           "session_id": ev.session_id, "parent_id": ev.parent_id})
-        except Exception as exc:  # a cut stream still owes the screen a reason
-            failed = f"{type(exc).__name__}: {exc}"
-            yield sse({"kind": "error", "text": failed, "meta": {},
-                       "session_id": chat.id if chat else "", "parent_id": None})
-        finally:
-            try:
-                if chat:
-                    remember(path, "assistant", final, error=failed, tools=tools,
-                             provider="codex" if chat.is_codex else "claude", **meta)
-            finally:
-                release()
 
-    return held(stream(), release)
+@router.get("/api/work/events")
+def events(path: str, turn: str, after: int = -1) -> StreamingResponse:
+    """Reattach to a turn after `seq` `after`. 410 once another turn took its place."""
+
+    run = attached(path)
+    if run.turn != turn:
+        raise HTTPException(410, "그 턴은 이제 없다")
+    return streaming(tail(run, after))
+
+
+class Rules(BaseModel):
+    path: str
+    session_id: str
+
+
+class Stop(BaseModel):
+    path: str
+    turn: str
+
+
+@router.post("/api/work/stop")
+def stop(body: Stop) -> dict:
+    """End a running turn. The CLI's session stays, so the next turn resumes it."""
+
+    run = attached(body.path)
+    if run.turn != body.turn:
+        raise HTTPException(409, "지금 도는 턴이 아니다")
+    if not run.done:
+        run.stopped = True
+        run.chat.stop()
+    return {"ok": True}
 
 
 @router.post("/api/work/answer")
@@ -301,6 +461,30 @@ def answer(body: Answer) -> dict:
     chat = _sessions.get(body.path)
     if chat is None or chat.id != body.session_id:
         raise HTTPException(409, "그 승인을 물은 세션이 이제 없다")
-    if not chat.answer(body.id, body.allow):
-        raise HTTPException(409, "이미 답했거나, 물은 프로세스가 내려갔다")
+    run = _runs.get(body.path)
+    run = run if run is not None and run.chat is chat else None
+    # Under the run's lock, so the answer is in the buffer before anything the
+    # CLI does with it — the record is read from there.
+    with run.wake if run else nullcontext():
+        try:
+            sent = chat.answer(body.id, body.allow, body.scope)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        if not sent:
+            raise HTTPException(409, "이미 답했거나, 물은 프로세스가 내려갔다")
+        if run:
+            # Another window, and a reattached one, draw the card as answered.
+            run.put({"kind": "answered", "text": "", "meta": {"id": body.id, "allow": body.allow, "by": "person"},
+                     "session_id": chat.id, "parent_id": chat.parent_id})
+    return {"ok": True}
+
+
+@router.post("/api/work/rules/clear")
+def forget_rules(body: Rules) -> dict:
+    """Drop every "allow for this session" of the session the screen shows."""
+
+    chat = _sessions.get(body.path)
+    if chat is None or chat.id != body.session_id:
+        raise HTTPException(409, "그 세션이 이제 없다")
+    chat.clear_rules()
     return {"ok": True}

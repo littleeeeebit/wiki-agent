@@ -36,3 +36,16 @@ def test_a_status_is_judged_by_its_first_word(tmp_path):
     )
 
     assert session_state.open_steps(path) == ["3 w3 — 미완료 — 외부 조건으로 차단됨", "4 w4 — 미착수"]
+
+
+def test_inside_a_series_the_lowest_number_comes_first(tmp_path):
+    """The overview and the next step to do, not the last two steps."""
+
+    write(tmp_path, "a/0-overview.md", "미착수")
+    write(tmp_path, "a/1-x.md", "완료")
+    write(tmp_path, "a/2-y.md", "미착수")
+    write(tmp_path, "a/7-z.md", "미착수")
+
+    found = [p.relative_to(tmp_path / "docs" / "plans").as_posix() for p, _ in session_state.plans(tmp_path)]
+
+    assert found == ["a/0-overview.md", "a/2-y.md"]

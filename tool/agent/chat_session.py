@@ -6,8 +6,9 @@ strings stay Korean.
 
 A session reads by default. `write=True` opens one in a worktree, where every
 write the CLI wants to make arrives as an `approval` event and waits for
-`answer`. Codex asks only through `app-server`, so its write session runs that
-instead of `exec`.
+`answer`. Codex sessions run `app-server`, which keeps one process across
+turns and is the only way Codex asks; `exec` is left to the isolated plain
+explanation.
 """
 
 from __future__ import annotations
@@ -62,7 +63,7 @@ class Event:
     one — room for a coordinator, `None` until there is one.
     """
 
-    kind: str          # "delta" | "tool" | "approval" | "done" | "error"
+    kind: str          # "delta" | "tool" | "approval" | "done" | "error" | "context"
     text: str = ""
     meta: dict = field(default_factory=dict)
     session_id: str = ""
@@ -140,6 +141,13 @@ class ChatSession:
         self._rpc_id = 0
         # Codex fileChange items by id, so an approval can see their paths.
         self._changes: dict[str, list[str]] = {}
+        # The Codex thread a resume could not reach; told once, on the next turn.
+        self._lost: str | None = None
+        # "Allow for this session": kept here, never handed to the CLI. A rule
+        # the CLI held would answer before `_approval` ever saw the path, and
+        # Claude's `Edit` rule does not look at paths at all. Tied to this
+        # object: a model change keeps it, a reset makes a new object.
+        self._rules: set[tuple] = set()
 
     @property
     def is_codex(self) -> bool:
@@ -147,8 +155,10 @@ class ChatSession:
 
     @property
     def app(self) -> bool:
-        """A Codex write session: `codex app-server`, since `exec` cannot ask."""
-        return self.is_codex and self.write
+        """A Codex session on `codex app-server`: every one but the isolated
+        explanation, which `exec` runs with the user's config left out —
+        `app-server` has no `--ignore-user-config`."""
+        return self.is_codex and not self.isolated
 
     # -- Lifetime -----------------------------------------------------------
 
@@ -180,22 +190,19 @@ class ChatSession:
         if self._resume:
             cmd += ["--resume", self._resume]
         if self.app:
-            cmd = ["codex", "app-server"]
+            cmd = ["codex", "app-server"] + ([] if self.write else ["--disable", "multi_agent"])
             self.model_name = self.model.removeprefix("codex:")
         elif self.is_codex:
             cmd = ["codex", "exec", "--model", self.model.removeprefix("codex:"),
                    "--json", "--sandbox", "read-only",
                    "-c", 'approval_policy="never"', "--disable", "multi_agent",
-                   "-c", "developer_instructions=" + json.dumps(self.system, ensure_ascii=False)]
+                   "-c", "developer_instructions=" + json.dumps(self.system, ensure_ascii=False),
+                   "--ephemeral", "--skip-git-repo-check", "--ignore-user-config",
+                   "-c", "project_doc_max_bytes=0", "-c", 'web_search="disabled"',
+                   "--disable", "shell_tool", "--disable", "apps", "--disable", "plugins",
+                   "--disable", "memories"]
             if self.effort:
                 cmd += ["-c", "model_reasoning_effort=" + json.dumps(self.effort)]
-            if self.isolated:
-                cmd += ["--ephemeral", "--skip-git-repo-check", "--ignore-user-config",
-                        "-c", "project_doc_max_bytes=0", "-c", 'web_search="disabled"',
-                        "--disable", "shell_tool", "--disable", "apps", "--disable", "plugins",
-                        "--disable", "memories"]
-            elif self._resume:
-                cmd += ["resume", self._resume]
             cmd.append("-")
             self.model_name = self.model.removeprefix("codex:")
         self._stderr = deque(maxlen=20)
@@ -253,19 +260,29 @@ class ChatSession:
     def _open_thread(self) -> None:
         """`app-server` holds no conversation until asked to start or resume one.
 
-        `read-only` with `untrusted` is what makes Codex ask: anything but a
-        known read-only command becomes an approval request.
+        `read-only` with `untrusted` is what makes a write session ask:
+        anything but a known read-only command becomes an approval request. A
+        read session never asks — `_approval` would refuse it anyway.
+
+        A thread that cannot be resumed is not dropped in silence: a new one
+        starts, and the next turn says so.
         """
 
         self._call("initialize", {"clientInfo": {"name": "wiki-agent", "version": "0.1.0"}})
         self._send({"method": "initialized"})
-        params = {"cwd": str(self.repo), "sandbox": "read-only", "approvalPolicy": "untrusted",
-                  "model": self.model_name}
+        params = {"cwd": str(self.repo), "sandbox": "read-only",
+                  "approvalPolicy": "untrusted" if self.write else "never", "model": self.model_name}
         if self.system:
             params["developerInstructions"] = self.system
+        result = None
         if self._resume:
-            result = self._call("thread/resume", {"threadId": self._resume, **params})
-        else:
+            try:
+                result = self._call("thread/resume", {"threadId": self._resume, **params})
+            except RuntimeError:
+                if not self.alive:
+                    raise
+                self._lost = self._resume
+        if result is None:
             result = self._call("thread/start", params)
         self.session_id = result["thread"]["id"]
 
@@ -305,17 +322,45 @@ class ChatSession:
             except (AttributeError, BrokenPipeError, OSError, ValueError):
                 return False
 
-    def answer(self, approval_id: str, allow: bool) -> bool:
+    def answer(self, approval_id: str, allow: bool, scope: str = "once") -> bool:
         """Answer an `approval` event. `False` when nothing waits under that id:
-        answered already, or the process that asked is gone.
+        answered already, or the process that asked is gone. `scope="session"`
+        with `allow` also lets the same thing through unasked from now on.
 
         Written to the process that asked, never to whatever runs now: after a
         restart a late "allow" would land on the new process, and Codex
         numbers its requests afresh in each one.
         """
 
-        proc, reply = self._pending.pop(approval_id, (None, None))
-        return proc is not None and self._send(reply(allow), proc)
+        if scope == "session" and allow and approval_id in self._pending and self._pending[approval_id][2] is None:
+            raise ValueError("이 요청은 세션 동안 허용할 수 없다")
+        proc, reply, rule = self._pending.pop(approval_id, (None, None, None))
+        sent = proc is not None and self._send(reply(allow), proc)
+        if sent and scope == "session" and allow:
+            self._rules.add(rule)
+        return sent
+
+    @staticmethod
+    def _rule(tool: str, args: dict) -> tuple | None:
+        """What "allow for this session" covers. A file write, by the tool; a
+        command, only the same text — and for Codex, in the same `cwd`."""
+
+        if tool in WRITES_PATH or tool == "fileChange":
+            return ("file", tool)
+        if tool == "Bash" and args.get("command"):
+            return ("command", tool, str(args["command"]))
+        if tool == "command" and args.get("command"):
+            return ("command", tool, str(args["command"]), str(args.get("cwd") or ""))
+        return None
+
+    @property
+    def rules(self) -> list[dict]:
+        return sorted(({"kind": r[0], "tool": r[1], **({"command": r[2]} if r[0] == "command" else {}),
+                        **({"cwd": r[3]} if len(r) > 3 else {})} for r in self._rules),
+                      key=lambda r: (r["kind"], r["tool"], r.get("command", "")))
+
+    def clear_rules(self) -> None:
+        self._rules.clear()
 
     def _outside(self, path) -> str:
         """The path, resolved, when it lies outside this worktree. Else ``""``."""
@@ -332,14 +377,23 @@ class ChatSession:
 
         Refused without asking: a write outside the worktree, and anything a
         read session is asked — it has no one to answer and would sit out the
-        turn's deadline.
+        turn's deadline. Allowed without asking: what a session rule covers.
+        The outside check comes first, so no rule reaches past the worktree.
+        Either way it is an approval too, already answered, with `by` saying
+        who answered it, so the record keeps it with the rest.
         """
 
         if outside or not self.write:
             self._send(reply(False))
-            return Event("tool", f"거절 · 작업트리 밖: {outside}" if outside else f"거절 · {text}")
-        self._pending[key] = (self._proc, reply)
-        return Event("approval", text, {"id": key, "tool": tool, "input": args})
+            return Event("approval", text, {"id": key, "tool": tool, "input": args, "answer": "deny",
+                                            "by": "outside" if outside else "read"})
+        rule = self._rule(tool, args)
+        if rule is not None and rule in self._rules:
+            self._send(reply(True))
+            return Event("approval", text, {"id": key, "tool": tool, "input": args, "answer": "allow",
+                                            "by": "session"})
+        self._pending[key] = (self._proc, reply, rule)
+        return Event("approval", text, {"id": key, "tool": tool, "input": args, "session": rule is not None})
 
     def _codex_asks(self, rid, method: str, params: dict) -> Event | None:
         """A request from `app-server`. Two kinds are approvals; the rest are
@@ -377,6 +431,20 @@ class ChatSession:
         self.model = model or None
         self.effort = effort or None
         self.close()
+
+    def stop(self) -> None:
+        """End the running turn now, from another thread. Its `_drain` reads
+        the process closing and ends the turn with an error. The CLI's session
+        id stays, so the next turn resumes it.
+
+        ponytail: kills the process rather than Claude's `interrupt` or Codex's
+        `turn/interrupt` — the same on both hosts, and resuming loses nothing.
+        The next turn pays the start-up; switch if stops become frequent.
+        """
+
+        proc = self._proc
+        if proc is not None and proc.poll() is None:
+            proc.kill()
 
     def close(self) -> None:
         proc, self._proc = self._proc, None
@@ -434,6 +502,10 @@ class ChatSession:
                 self.close()
                 yield Event("error", "프로세스가 죽었다. 다시 보내면 새로 띄운다.")
                 return
+            if self._lost:
+                # The caller writes it on record; a resume must not try that thread again.
+                yield Event("context", f"Codex 이어가기 실패 — 새 대화로 시작했다 ({self._lost})")
+                self._lost = None
             for event in self._drain():
                 completed = event.kind == "done"
                 yield event
@@ -447,6 +519,10 @@ class ChatSession:
         deadline = BOOT_TIMEOUT if self.session_id is None else TURN_TIMEOUT
         started = time.monotonic()
         final = ""
+        # `app-server` reports each model call's usage (`last`) and a running
+        # total for the thread. A turn is the sum of its calls: a total taken
+        # from before the turn is not there after a resume.
+        used = {"in": 0, "out": 0, "cache_read": 0, "reasoning": 0}
         while True:
             try:
                 ev = self._events.get(timeout=deadline)
@@ -492,6 +568,11 @@ class ChatSession:
                                                 or item.get("query") or item["type"])[:120])
                 elif method == "item/completed" and item.get("type") == "agentMessage":
                     final = str(item.get("text") or "")
+                elif method == "thread/tokenUsage/updated":
+                    last = (params.get("tokenUsage") or {}).get("last") or {}
+                    for mine, theirs in (("in", "inputTokens"), ("out", "outputTokens"),
+                                         ("cache_read", "cachedInputTokens"), ("reasoning", "reasoningOutputTokens")):
+                        used[mine] += int(last.get(theirs) or 0)
                 elif method == "turn/completed":
                     turn = params.get("turn") or {}
                     if turn.get("status") == "failed":
@@ -501,11 +582,13 @@ class ChatSession:
                         "ms": round((time.monotonic() - started) * 1000),
                         "session_id": self.session_id, "model": self.model_name,
                         "error": not final.strip(),
+                        # No cost: Codex runs on a subscription's limit, with no price to multiply.
+                        **({"tokens": used} if any(used.values()) else {}),
                     })
                     return
                 continue
 
-            if self.is_codex:
+            if self.is_codex:   # `exec`: the isolated explanation only
                 if kind == "thread.started":
                     self.session_id = ev.get("thread_id") or self.session_id
                 elif kind == "item.completed" and ev.get("item", {}).get("type") == "agent_message":
