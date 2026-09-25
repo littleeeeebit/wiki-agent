@@ -90,6 +90,20 @@ def test_a_fence_closes_only_on_its_own_marker():
     assert [c["heading"] for c in searchd.chunks(tilde, Path("x.md"))] == ["T", "T > A", "T > Real"]
 
 
+def test_headings_are_read_as_commonmark_reads_them():
+    """Three shapes round 3 found: an indented heading, a heading ending in
+    `#`, and a `#` title inside a code sample at the top of the page."""
+
+    def headings(text):
+        return [c["heading"] for c in searchd.chunks(text, Path("x.md"))]
+
+    assert headings("# T\n\nintro\n\n   ## Deploy\n\nbody\n") == ["T", "T > Deploy"]
+    assert headings("# T\n\n    ## code\n\nbody\n") == ["T"], "four spaces is a code block"
+    assert headings("# T\n\n## C#\n\nbody\n\n## Done ##\n\nend\n") == ["T", "T > C#", "T > Done"]
+    assert headings("```md\n# Fake\n```\n# Real\n\n## Deploy\n\nbody\n") == ["Real", "Real > Deploy"]
+    assert headings("####### not\n\n#no-space\n\nbody\n") == ["x"], "neither is a heading"
+
+
 def test_the_index_ranks_the_hub_and_the_repository_by_bm25(hub):
     project = Path(tempfile.mkdtemp())
     (project / "docs").mkdir()

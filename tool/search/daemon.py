@@ -59,7 +59,9 @@ FILES = {"model.onnx": "onnx/model_qint8_avx512_vnni.onnx", "tokenizer.json": "o
 # In every vector's cache key, so another model or file never reads these.
 MODEL_ID = f"{MODEL}/{FILES['model.onnx']}"
 
-HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*#*\s*$")
+# An ATX heading of level 1 to 3, as CommonMark reads one: up to three spaces
+# of indent, and a closing run of `#` only after a space — `## C#` keeps its `#`.
+HEADING = re.compile(r"^ {0,3}(#{1,3})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
 # A code fence's marker and what follows it, as CommonMark reads one.
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 WORD = re.compile(r"[a-z0-9_]+|[가-힣]+")
@@ -92,6 +94,30 @@ def body_of(text: str) -> str:
     return text if end < 0 else text[end + 4:].lstrip("\n")
 
 
+def fenced(lines: list[str]) -> list[bool]:
+    """Per line, whether it belongs to a code fence, its markers included.
+
+    As CommonMark reads one: a backtick opener whose info string holds a
+    backtick is inline code, not a fence; a fence closes only on its opener's
+    own character, at least as long, with nothing after it — a `~~~` inside a
+    backtick fence is text. Found in review rounds 1 and 2.
+    """
+
+    out, fence = [], ""
+    for line in lines:
+        marker = FENCE.match(line)
+        if marker and not fence:
+            if not (marker.group(1)[0] == "`" and "`" in marker.group(2)):
+                fence = marker.group(1)
+            out.append(bool(fence))
+        elif marker and fence and marker.group(1).startswith(fence) and not marker.group(2).strip():
+            fence = ""
+            out.append(True)
+        else:
+            out.append(bool(fence))
+    return out
+
+
 def chunks(text: str, path: Path) -> list[dict]:
     """A page cut at `##` and `###`. Each chunk knows its first line.
 
@@ -103,8 +129,11 @@ def chunks(text: str, path: Path) -> list[dict]:
     body = body_of(text)
     offset = text[: len(text) - len(body)].count("\n")
     lines = body.splitlines()
-    title = next((x[2:].strip() for x in lines if x.startswith("# ")), path.stem)
-    found, trail, start, buf, fence = [], [], offset + 1, [], ""
+    inside = fenced(lines)
+    # The first `#` outside a fence; a `# Fake` in a code sample is not the title.
+    title = next((m.group(2) for line, hidden in zip(lines, inside)
+                  if not hidden and (m := HEADING.match(line)) and len(m.group(1)) == 1), path.stem)
+    found, trail, start, buf = [], [], offset + 1, []
 
     def flush() -> None:
         # A heading with nothing under it before the next one is not a chunk.
@@ -113,20 +142,8 @@ def chunks(text: str, path: Path) -> list[dict]:
             found.append({"path": str(path), "line": start, "heading": heading,
                           "text": "\n".join(buf), "indexed": heading + "\n" + "\n".join(buf)})
 
-    for number, line in enumerate(lines, offset + 1):
-        marker = FENCE.match(line)
-        if marker and not fence:
-            # A backtick opener whose info string holds a backtick is inline
-            # code, not a fence.
-            if not (marker.group(1)[0] == "`" and "`" in marker.group(2)):
-                fence = marker.group(1)
-        elif marker and fence and marker.group(1).startswith(fence) and not marker.group(2).strip():
-            # Closed only by the opener's own character, at least as long, and
-            # nothing after it. A `~~~` inside a backtick fence is text.
-            fence = ""
-            buf.append(line)
-            continue
-        match = None if fence else HEADING.match(line)
+    for number, (line, hidden) in enumerate(zip(lines, inside), offset + 1):
+        match = None if hidden else HEADING.match(line)
         if match and len(match.group(1)) >= 2:
             flush()
             trail = trail[: len(match.group(1)) - 2] + [match.group(2)]
