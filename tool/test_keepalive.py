@@ -451,6 +451,9 @@ def test_a_ping_turn_with_no_ping_out_is_a_person_but_resets_only_a_counted_sess
     k.tick()
     assert k.notice("ping-turn", {"session": "s1", "handle": HANDLE}) is True
     assert k.sessions["s1"]["count"] == 1
+    # The hook's retry of a notice whose answer came late (round 3).
+    assert k.notice("ping-turn", {"session": "s1", "handle": HANDLE}) is True
+    assert k.sessions["s1"]["count"] == 1
     stop(k)
     assert k.notice("ping-turn", {"session": "s1", "handle": HANDLE}) is False
     assert k.sessions["s1"]["state"] == "busy" and k.sessions["s1"]["count"] == 0

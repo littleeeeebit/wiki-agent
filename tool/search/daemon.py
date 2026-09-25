@@ -539,7 +539,10 @@ class Keeper:
             if kind not in ("own", "ping-turn", "busy", "idle"):
                 raise ValueError(kind)
             known = self.sessions.get(session) or {}
-            if kind == "ping-turn" and known.get("state") != "sent":
+            # `ping-turn` too: the hook retries a notice whose answer was
+            # late, and the retry finds the first one's state. No other turn
+            # can come between — a `Stop` lies between any two (round 3).
+            if kind == "ping-turn" and known.get("state") not in ("sent", "ping-turn"):
                 kind, data = "busy", data | {"reset": known.get("count") is not None}
             pinged = kind == "ping-turn"
             mine = self.claim(session, handle)
