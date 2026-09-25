@@ -72,7 +72,7 @@ def arm(hook: str, after: float) -> None:
 # a run nobody is waiting on.
 _thresholds = {
     "codex_pretool.py": 8, "inject.py": 8, "declared_continuation.py": 8,
-    "session_state.py": 13, "sync.py": 28,
+    "session_state.py": 13, "sync.py": 28, "keepalive.py": 8,
 }
 if Path(sys.argv[0]).name in _thresholds:
     arm(sys.argv[0], _thresholds[Path(sys.argv[0]).name])

@@ -58,6 +58,10 @@ INJECTED = (
     "Approach this as the design lead",
     "Use this skill whenever you are about to create",
     "PONYTAIL MODE ACTIVE",
+    # The search daemon's keep-alive ping (`search.PING`). Counted as a
+    # person, every ping would be a cheap "utterance" and pull the per-
+    # utterance cost down by the very turns keep-alive adds.
+    'keep-alive — reply "ok"',
 )
 
 # The list above is always behind — one more skill and one more body leaks
