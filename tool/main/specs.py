@@ -233,6 +233,16 @@ def plan_row(repo: Path, plan) -> dict | None:
     return {"path": file.relative_to(top).as_posix(), "row": row}
 
 
+def row_done(path: Path, plan: dict, n: int) -> bool:
+    """Does the plan row's status cell say `완료 — PR #n` in the worktree's
+    committed HEAD? Read from git, not the file: an edit left uncommitted is
+    not in the pull request."""
+
+    shown = sh(["git", "show", f"HEAD:{plan['path']}"], path)
+    return not shown.returncode and re.search(
+        rf"^\|\s*{re.escape(plan['row'])}\s*\|.*\|\s*완료 — PR #{n}\s*\|\s*$", shown.stdout, re.M) is not None
+
+
 def missing(repo: Path, spec: dict) -> list[str]:
     return [f for f in spec["grounds"]["files"] if not (repo / LINE.sub("", f)).is_file()]
 
@@ -570,7 +580,9 @@ def kill(proc: subprocess.Popen) -> None:
 
 def gate(cmd: str, cwd: Path, halt: threading.Event) -> tuple[int | None, str, str]:
     """Run the gate in `cwd`, a shell string as the adapter wrote it:
-    `(exit code, output, why it was cut)`. A stop of the turn stops it too."""
+    `(exit code, output, why it was cut)`. A stop of the turn stops it too,
+    and a stop that came while a fast gate ran still cuts it: the stop is
+    read after the gate ends, not only while it waits."""
 
     proc = subprocess.Popen(cmd, shell=True, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
@@ -579,6 +591,7 @@ def gate(cmd: str, cwd: Path, halt: threading.Event) -> tuple[int | None, str, s
     while True:
         try:
             out, _ = proc.communicate(timeout=1)
+            cut = cut or ("사람이 멈춤" if halt.is_set() else "")
             return (None if cut else proc.returncode), out, cut
         except subprocess.TimeoutExpired:
             if cut:
@@ -637,9 +650,15 @@ def body_of(spec: dict) -> str:
 
 def opened(repo: Path, path: Path, run, spec: dict):
     """Push, and open the pull request as the person's `gh`. The next turn to
-    start, when the spec came from a plan row that now says done."""
+    start, when the spec came from a plan row that now says done.
+
+    A stop of the turn is read right before each thing that leaves this
+    machine, the push and the pull request: the gate passing earlier is no
+    leave to publish after a person said stop."""
 
     sid = spec["id"]
+    if run.halt.is_set():
+        return failed(run, spec, "사람이 멈춤 — push 하지 않았다")
     note(run, f"push · origin {sid}")
     pushed = sh(["git", "push", "-u", "origin", sid], path, 120)
     if pushed.returncode:
@@ -647,6 +666,8 @@ def opened(repo: Path, path: Path, run, spec: dict):
     base = sh(["gh", "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], path, 30)
     if base.returncode or not base.stdout.strip():
         return failed(run, spec, f"기본 브랜치를 모른다 — {said(base)}")
+    if run.halt.is_set():
+        return failed(run, spec, "사람이 멈춤 — push 는 했고 PR 은 만들지 않았다")
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
         fh.write(body_of(spec))
     try:
@@ -716,11 +737,20 @@ def _check(path: Path, run, final: str):
     if spec is None or repo is None:
         return None
     if spec["state"].startswith("PR #") and spec.get("plan_commit") == "asked":
+        # Any turn that ends here is not the row's commit: a person's turn may
+        # have got there first, or the agent answered without the edit. Only
+        # a committed row that says so is pushed and closes the follow-up.
+        plan = spec["source"]["plan"]
+        if not row_done(path, plan, spec["pr"]["number"]):
+            return failed(run, spec, f"계획 행 `{plan['path']}` {plan['row']} 이 커밋된 HEAD 에서 아직 "
+                                     f"`완료 — PR #{spec['pr']['number']}` 가 아니다")
+        if run.halt.is_set():
+            return failed(run, spec, "사람이 멈춤 — 계획 행 커밋을 push 하지 않았다")
         pushed = sh(["git", "push", "origin", spec["id"]], path, 120)
         if pushed.returncode:
             return failed(run, spec, f"계획 행 커밋의 push 실패 — {said(pushed)}")
-        note(run, f"push · 계획 행 `{spec['source']['plan']['path']}` {spec['source']['plan']['row']}")
-        update(spec["repo"], spec["id"], plan_commit="pushed")
+        note(run, f"push · 계획 행 `{plan['path']}` {plan['row']}")
+        update(spec["repo"], spec["id"], plan_commit="pushed", fault=None)
         return None
     if spec["state"] != "작업 중":
         return None

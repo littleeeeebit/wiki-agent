@@ -58,11 +58,13 @@ class Remote:
 
     def __init__(self, merged=False):
         self.calls, self.body, self.merged, self.real = [], "", merged, specs.sh
+        self.on_push = lambda: None   # what else happens while a push runs
 
     def __call__(self, args, cwd, timeout=60):
         self.calls.append(args)
         ok = lambda out="": subprocess.CompletedProcess(args, 0, out, "")  # noqa: E731
         if args[:2] == ["git", "push"]:
+            self.on_push()
             return ok()
         if args[:3] == ["gh", "repo", "view"]:
             return ok("main\n")
@@ -89,7 +91,7 @@ def report(*passes: bool) -> str:
 
 class Worker:
     """A write session that answers each turn with the next of `replies`. A
-    callable reply is called with the worktree first."""
+    callable reply is called with the worktree and the turn's stop first."""
 
     replies: list = []
     made: list = []
@@ -104,7 +106,7 @@ class Worker:
         self.heard.append(text)
         reply = Worker.replies.pop(0) if Worker.replies else "알겠다"
         if callable(reply):
-            reply = reply(self.path)
+            reply = reply(self.path, halt)
         yield Event("done", reply, {"session_id": "cli-1", "error": False}, self.id)
 
     def reconfigure(self, model, effort):
@@ -320,7 +322,7 @@ def test_a_passing_report_is_not_believed_over_a_failing_gate_or_an_uncommitted_
     web = client()
     remote = Remote()
 
-    def dirty(path):
+    def dirty(path, halt):
         (path / "left.txt").write_text("x", encoding="utf-8")
         return report(True, True)
 
@@ -349,6 +351,46 @@ def test_a_passing_report_is_not_believed_over_a_failing_gate_or_an_uncommitted_
         assert any("통과하지 못했거나" in s["text"] for s in work.recall(Path(path))[-1]["steps"])
 
 
+def test_a_stop_publishes_nothing_even_after_a_fast_gate_passed(repo):
+    import threading
+
+    # The stop comes while a gate shorter than the one-second wait runs.
+    halt = threading.Event()
+    threading.Timer(0.2, halt.set).start()
+    code, _, cut = specs.gate('python -c "import time; time.sleep(0.6)"', repo, halt)
+    assert (code, cut) == (None, "사람이 멈춤")
+
+    # The stop comes after the gate passed: neither the push nor the PR.
+    def stopped(path, halt):
+        halt.set()
+        return report(True, True)
+
+    web, remote = client(), Remote()
+    passed = {"ok": True, "reason": "", "cmd": PASS, "tail": "ok", "head": "", "ts": 0}
+    Worker.replies = [stopped]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
+         patch.object(specs, "judge", return_value=passed):
+        sid = made(repo, spec_block(slug="stop"))[0]["id"]
+        path = started(web, sid)
+        spec = specs.load("proj", sid)
+        assert spec["state"] == "작업 중" and spec["fault"].startswith("사람이 멈춤")
+        assert remote.pushes() == 0 and not remote.created() and path
+
+        # The stop comes while the push runs: the pull request is not made.
+        halts = []
+
+        def passing(path, halt):
+            halts.append(halt)
+            return report(True, True)
+
+        remote.on_push = lambda: halts[-1].set()
+        Worker.replies = [passing]
+        sid = made(repo, spec_block(slug="stop-late"))[0]["id"]
+        started(web, sid)
+        assert remote.pushes() == 1 and not remote.created()
+        assert "PR 은 만들지 않았다" in specs.load("proj", sid)["fault"]
+
+
 def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
     plan = repo / "docs/plans/p.md"
     plan.parent.mkdir(parents=True)
@@ -357,7 +399,21 @@ def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
     subprocess.run(["git", "-C", str(repo), "commit", "-qm", "plan"], check=True)
     web = client()
     remote = Remote()
-    Worker.replies = [report(True, True), "행을 고쳤다"]
+
+    def commit_row(path, halt):
+        row = path / "docs/plans/p.md"
+        row.write_text(row.read_text(encoding="utf-8").replace("| 미착수 |", "| 완료 — PR #7 |"), encoding="utf-8")
+        subprocess.run(["git", "-C", str(path), "commit", "-qam", "row"], check=True)
+        return "행을 고쳤다"
+
+    def commit_row_then_stop(path, halt):
+        said = commit_row(path, halt)
+        halt.set()
+        return said
+
+    # The row's turn first answers without the edit; the next commits it but
+    # is stopped before the push; the one after pushes what is committed.
+    Worker.replies = [report(True, True), "행을 고쳤다", commit_row_then_stop, "다시"]
     with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
         sid = made(repo, spec_block(plan={"path": "docs/plans/p.md", "row": "2"}))[0]["id"]
         assert made(repo, spec_block(slug="x", plan={"path": "docs/plans/p.md", "row": "9"}))[0]["id"]
@@ -369,12 +425,24 @@ def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
 
         spec = specs.load("proj", sid)
         assert spec["state"] == "PR #7" and spec["pr"]["number"] == 7 and spec["pr"]["base"] == "main"
-        assert spec["gate"]["ok"] and spec["plan_commit"] == "pushed"
+        assert spec["gate"]["ok"] and spec["plan_commit"] == "asked" and "완료 — PR #7" in spec["fault"]
+        assert remote.pushes() == 1, "행을 고치지 않은 턴은 push 도, 닫기도 하지 않는다"
         create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
         assert create[create.index("--head") + 1] == sid and create[create.index("--title") + 1] == spec["goal"]
-        assert remote.pushes() == 2, "PR 을 올릴 때, 계획 행 커밋 뒤에"
         asked = Worker.made[-1].heard[-1]
         assert "`docs/plans/p.md`" in asked and "`2`" in asked and "`완료 — PR #7`" in asked
+
+        parse(web.post("/api/work/say", json={"path": path, "text": "행을 고쳐라"}).text)
+        settled(path)
+        spec = specs.load("proj", sid)
+        assert spec["plan_commit"] == "asked" and spec["fault"].startswith("사람이 멈춤")
+        assert remote.pushes() == 1
+
+        parse(web.post("/api/work/say", json={"path": path, "text": "다시"}).text)
+        settled(path)
+        spec = specs.load("proj", sid)
+        assert spec["plan_commit"] == "pushed" and spec["fault"] is None
+        assert remote.pushes() == 2, "PR 을 올릴 때, 계획 행 커밋 뒤에"
 
         result = [r for r in chat.recall("next") if r["role"] == "result"]
         assert [r["text"] for r in result] == [f"PR #7 — {spec['goal']}. 완료 조건 2개 통과"]
