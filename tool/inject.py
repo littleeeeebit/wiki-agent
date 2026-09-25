@@ -20,8 +20,8 @@ from pathlib import Path
 import trajectory
 import translate
 from wiki import (
-    REPO_BUDGET, RULE_BUDGET, budget, label, match_pages, pages, render_parts,
-    rule_index, source_map,
+    REPO_BUDGET, RULE_BUDGET, budget, compose, label, match_pages, pages,
+    render_parts, sent_whole,
 )
 
 HANGUL = re.compile(r"[가-힣]")
@@ -139,7 +139,33 @@ def main() -> int:
     # it — `tool/session_state.py`.
 
     loaded = [label(p) for _s, _b, p in rules + decisions]
+    body = compose(rules, parts, english, args.project)
+    if body:
+        # This one line lands on the person's screen as written. The rule
+        # inverted and this stayed Korean, because the reader here is the
+        # person. `operator/english-progress` holds that boundary.
+        note = f"위키 주입: {', '.join(loaded[:6])}" if loaded else "위키: 걸린 규칙 없음"
+        if trimmed:
+            note += f" · 줄임 {trimmed}장"
+        if english:
+            note += " · 영어본 첨부"
+        json.dump(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "UserPromptSubmit",
+                    "additionalContext": body,
+                },
+                "systemMessage": note,
+            },
+            sys.stdout,
+            ensure_ascii=False,
+        )
+        sys.stdout.flush()
 
+    # Recorded last, after the output is out. `sent` is only known once the
+    # body is, and a row written before the output would keep `full` for a
+    # turn that died writing stdout — pages the session never received.
+    #
     # A turn that matched nothing is recorded too. What was not carried is as
     # much evidence about routing as what was, and reading only the utterances
     # that matched nothing is the one way to find a miss.
@@ -153,65 +179,19 @@ def main() -> int:
         loaded,
         sum(len(part) for part in parts),
         str(payload.get("session_id") or ""),
+        # The whole `additionalContext` in UTF-8 bytes — index, rendering,
+        # source map and separators included. `cost` counts only the rule and
+        # decision blocks; this is the number a host ceiling (`wiki.LIMIT`)
+        # is compared with.
+        sent=len(body.encode("utf-8")),
+        # `[name, tag]` of each rule page that went out whole, not trimmed.
+        full=sent_whole(rules, rule_parts),
     )
     if failed:
         # The name and nothing else. Non-ASCII in the message kills this very
         # stderr write under a cp949 console, which is how the report of a
         # failure became a second failure.
         print(f"trajectory skipped: {failed}", file=sys.stderr)
-
-    if not parts and not english:
-        return 0
-
-    # The rule index goes first. It is a few hundred characters, and the
-    # rendering in front of it could reach 4,000 (`MAX_RENDERED`) and push
-    # every rule sentence out of the 2 KB preview. See `rule_index`.
-    blocks = []
-    index = rule_index(rules)
-    if index:
-        blocks.append(index)
-    # Before the pages, not after them. The rendering is carried even when no
-    # page matched: the utterance is agent input on every turn, and tying it
-    # to a trigger would drop it on exactly the turns no rule covers.
-    #
-    # Position is the other half of that. A host persists an injection past
-    # about 12 KB and hands the session a 2 KB preview instead; the rules
-    # alone reach 12,205 characters on an ordinary turn, so anything after
-    # them is cut. Measured on 2026-09-22 in a web chat session: the rules
-    # arrived, this block did not, and nothing said so. Behind the short
-    # index it still starts inside the preview.
-    if english:
-        blocks.append(english)
-    if parts:
-        blocks.append(
-            "Below is what the wiki loaded for this utterance. A rule marks a "
-            "place where something actually went wrong before; knowledge is "
-            "something already decided.\n\n"
-            + source_map(rules, args.project)
-            + "\n\n"
-            + "\n\n---\n\n".join(parts)
-        )
-    body = "\n\n---\n\n".join(blocks)
-    # This one line lands on the person's screen as written. The rule inverted
-    # and this stayed Korean, because the reader here is the person.
-    # `operator/english-progress` holds that boundary.
-    note = f"위키 주입: {', '.join(loaded[:6])}" if loaded else "위키: 걸린 규칙 없음"
-    if trimmed:
-        note += f" · 줄임 {trimmed}장"
-    if english:
-        note += " · 영어본 첨부"
-
-    json.dump(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": "UserPromptSubmit",
-                "additionalContext": body,
-            },
-            "systemMessage": note,
-        },
-        sys.stdout,
-        ensure_ascii=False,
-    )
     return 0
 
 
