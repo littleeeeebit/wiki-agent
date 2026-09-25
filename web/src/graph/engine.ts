@@ -16,8 +16,10 @@ export type Dot = {
   thick: boolean
 }
 
-/** `dashed` is a measured pairing (carried in one turn), drawn by `weight`. */
-export type Line = { a: string; b: string; dashed: boolean; weight: number }
+/** `dashed` is a measured pairing (carried in one turn), drawn by `weight`.
+ *  `directed` says `a` points at `b`; the hub's links are stored with their
+ *  ends sorted, so they carry no direction. The engine does not read it. */
+export type Line = { a: string; b: string; dashed: boolean; weight: number; directed: boolean }
 
 export type Handle = {
   stop: () => void

@@ -51,7 +51,7 @@ function entries(data: MapData, layer: Layer): { list: Entry[]; lines: Line[] } 
         ],
       })
     }
-    lines.push(...data.layers.repo.edges.map((e) => ({ ...e, dashed: false, weight: 0 })))
+    lines.push(...data.layers.repo.edges.map((e) => ({ a: e.a, b: e.b, dashed: false, weight: 0, directed: true })))
   }
   if (layer !== 'repo') {
     const rules = data.layers.hub.nodes
@@ -79,7 +79,7 @@ function entries(data: MapData, layer: Layer): { list: Entry[]; lines: Line[] } 
     }
     for (const e of data.layers.hub.edges as { a: string; b: string; kind: string; by?: Record<string, number> }[]) {
       const weight = e.kind === 'co' ? e.by?.[key] ?? 0 : 0
-      if (e.kind === 'link' || weight > 0) lines.push({ a: e.a, b: e.b, dashed: e.kind === 'co', weight })
+      if (e.kind === 'link' || weight > 0) lines.push({ a: e.a, b: e.b, dashed: e.kind === 'co', weight, directed: false })
     }
   }
   return { list, lines }
@@ -161,11 +161,17 @@ export function RepoMap({ repo, on, onAsk }: { repo: string; on: boolean; onAsk:
         {fault && <p role="alert" className="p-5 text-[12.5px] text-destructive">지도를 못 읽었다 — {fault}</p>}
         {!data && !fault && <p className="p-5 text-[13.5px] text-faint">지도를 그리는 중…</p>}
         <svg ref={board} className={cn('map-board size-full', !data && 'hidden')} role="img" aria-label={`${repo} 지도`} />
-        {entry && drawn && (
-          <Panel key={entry.dot.id} entry={entry} on={on} onAsk={onAsk} onPick={setPicked} title={title}
-            into={drawn.lines.filter((l) => l.b === entry.dot.id).map((l) => l.a)}
-            out={drawn.lines.filter((l) => l.a === entry.dot.id).map((l) => l.b)} />
-        )}
+        {entry && drawn && (() => {
+          // Links only: a dashed line is a measured pairing, not a reference.
+          const links = drawn.lines.filter((l) => !l.dashed)
+          const id = entry.dot.id
+          return (
+            <Panel key={id} entry={entry} on={on} onAsk={onAsk} onPick={setPicked} title={title}
+              into={links.filter((l) => l.directed && l.b === id).map((l) => l.a)}
+              out={links.filter((l) => l.directed && l.a === id).map((l) => l.b)}
+              both={links.filter((l) => !l.directed && (l.a === id || l.b === id)).map((l) => (l.a === id ? l.b : l.a))} />
+          )
+        })()}
       </div>
     </section>
   )
@@ -173,9 +179,9 @@ export function RepoMap({ repo, on, onAsk }: { repo: string; on: boolean; onAsk:
 
 /** The picked node: its facts, what points at it and what it points at, the
  *  top of its body, and the way to ask about it. */
-function Panel({ entry, on, onAsk, onPick, title, into, out }: {
+function Panel({ entry, on, onAsk, onPick, title, into, out, both }: {
   entry: Entry; on: boolean; onAsk: (path: string) => void; onPick: (id: string | null) => void
-  title: (id: string) => string; into: string[]; out: string[]
+  title: (id: string) => string; into: string[]; out: string[]; both: string[]
 }) {
   const [body, setBody] = useState<string | null>(null)
   const [fault, setFault] = useState('')
@@ -220,6 +226,7 @@ function Panel({ entry, on, onAsk, onPick, title, into, out }: {
         </dl>
         {links('들어오는 링크', into)}
         {links('나가는 링크', out)}
+        {links('이어진 규칙', both)}
         <div>
           <div className="mb-1 font-heading text-[11px] font-semibold text-faint">본문 앞부분</div>
           {fault ? <p className="text-destructive">{fault}</p>

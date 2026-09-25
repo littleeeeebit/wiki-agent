@@ -1236,6 +1236,27 @@ def test_the_map_of_a_repository_writes_nothing_into_it(tmp_path):
     assert data["metrics"]["pages"] == len(mine) and data["metrics"]["orphans"] == 0
 
 
+def test_the_map_lists_documents_added_after_the_corpus_was_written(tmp_path):
+    """`corpus.json` is refreshed by hooks, not by edits; a document written
+    since then is still on the map, and still counts toward the orphans."""
+
+    import corpus
+    import repo_graph
+
+    repo = tmp_path / "r"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "a.md").write_text("# A\n", encoding="utf-8")
+    (repo / ".wiki").mkdir()
+    (repo / ".wiki" / "corpus.json").write_text(
+        json.dumps({"docs": corpus.collect(repo, corpus.DEFAULT_ROOTS)}), encoding="utf-8")
+    (repo / "docs" / "new.md").write_text("# New\n\nSee [a](a.md).\n", encoding="utf-8")
+
+    data = repo_graph.picture(repo)
+    assert "docs/new.md" in {n["id"] for n in data["nodes"]}
+    assert {"a": "docs/new.md", "b": "docs/a.md", "kind": "link"} in data["edges"]
+    assert "docs/new.md" in data["orphans"]
+
+
 def test_the_hub_layer_carries_no_other_repository_s_pages(tmp_path):
     repos = _two_projects(tmp_path)
     for name in ("a", "b"):

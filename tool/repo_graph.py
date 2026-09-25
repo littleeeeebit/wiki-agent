@@ -130,11 +130,12 @@ def picture(repo: Path) -> dict:
     module page and decision record as a node, and what points at what.
 
     Nothing is written — the map runs in the server, and the server does not
-    write to an original checkout. Without `corpus.json` the listing is made
-    in memory, so a repository not yet connected still has a map.
+    write to an original checkout. The listing is collected on every call:
+    `corpus.json` is refreshed by hooks, and a document written since then
+    would be missing from the map and its counts.
     """
 
-    docs = (corpus.load(repo) or {}).get("docs") or corpus.collect(repo, corpus.DEFAULT_ROOTS)
+    docs = corpus.collect(repo, corpus.DEFAULT_ROOTS)
     nodes: dict[str, dict] = {
         doc["path"]: {"id": doc["path"], "kind": "doc", "title": doc.get("title") or doc["path"],
                       "chars": doc.get("chars", 0)}
