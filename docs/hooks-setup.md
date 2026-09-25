@@ -20,6 +20,20 @@ installer refuses a path containing a quote, a dollar, a backtick or a
 newline. On Windows, Claude hooks need Git for Windows' Git Bash and Codex
 hooks need PowerShell.
 
+### The search daemon — optional
+
+`python tool/search "<query>" --project <repo>` prints the sections that
+match, with the `path:line` each starts at. It asks a small local daemon on
+`127.0.0.1:8791`, starts it when it is not there, and the daemon stops after
+three idle hours; nothing needs to be run by hand. The hook does not use it:
+the triggers stay the only authority over what the hook injects.
+
+For the vector half, install `python -m pip install -r <wiki path>/requirements-search.txt`
+into the same Python. Without it the daemon ranks with BM25 alone. The model
+(about 120 MB) downloads on first start into `~/.cache/wiki-agent/`, next to
+the state file `searchd.json` and the vector cache. `WIKI_SEARCH=off` keeps
+every caller from reaching the daemon.
+
 ## 2. Configure the project
 
 Create `.wiki/adapter.toml` in the target project and replace the example

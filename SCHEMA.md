@@ -210,10 +210,15 @@ goes to, are held by [`MAINTENANCE.md`](MAINTENANCE.md).
 
 ## What is not done
 
-- No embeddings and no vector database. The reader is already a good model,
-  and standing another retrieval model in front of it is not elegant; it adds
-  four more failure sites — a key, a network, a quota, and vectors that go
-  stale. A listing is enough.
+- No retrieval model in front of the hook. A local one serves the wiki chat's
+  search (`tool/search/`) and never decides what the hook injects; the regex
+  triggers keep that authority. In the public copy a one-line hint for pages
+  the triggers missed was built and measured against recall labels, and no
+  threshold was precise enough to switch it on. The four failure sites an
+  embedding used to add are closed — no key (a local ONNX model), no network
+  (localhost only), no quota, and no stale vectors (each chunk is keyed by its
+  text's hash and recomputed when it changes). The one it brings, a daemon
+  process, fails to BM25 in the asking process.
 - A target repository's knowledge is not brought here. The `project` scope
   lives over there.
 - Nothing that needs judgement is mechanised. False positives stop the work.
