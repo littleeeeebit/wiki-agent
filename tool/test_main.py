@@ -16,7 +16,7 @@ from agent import chat_local, chat_session
 from main import app as main_app
 from main import channels as chat_channels
 from main import query as chat
-from main import work
+from main import specs, work
 import translate
 from agent.chat_session import ChatSession, Event
 
@@ -46,7 +46,7 @@ def no_machine_settings(tmp_path):
          patch.object(main_app, "SWITCH", tmp_path / "main.json"), \
          patch.object(work, "LOGS", tmp_path / "work"), \
          patch.object(work, "_sessions", {}), patch.object(work, "_busy", {}), \
-         patch.object(work, "_runs", {}):
+         patch.object(work, "_runs", {}), patch.object(specs, "SPECS", tmp_path / "specs"):
         yield
 
 
@@ -231,12 +231,12 @@ def test_project_shared_sessions_and_records_isolated(tmp_path):
         (repo / ".git").mkdir(parents=True)
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=repos.get):
-        web.post("/api/config/diagnose", json={"repo": "a"}).raise_for_status()
+        web.post("/api/config/next", json={"repo": "a"}).raise_for_status()
         assert {c["repo"] for c in web.get("/api/channels").json()} == {"a"}
         a = chat.session("retro")
         a.session_id = "a-context"
         chat.remember("retro", "assistant", "a 회고", session_id="a-context", provider="claude")
-        web.post("/api/config/progress", json={"repo": "b"}).raise_for_status()
+        web.post("/api/config/next", json={"repo": "b"}).raise_for_status()
         assert web.get("/api/log/retro").json() == []
         assert chat.session("retro") is not a
         chat.remember("retro", "assistant", "b 회고")
@@ -244,7 +244,7 @@ def test_project_shared_sessions_and_records_isolated(tmp_path):
         assert {c["repo"] for c in web.get("/api/channels").json()} == {"a"}
         assert chat.session("retro") is a and a.session_id == "a-context"
         assert [r["text"] for r in web.get("/api/log/retro").json()] == ["a 회고"]
-        with patch.object(chat, "_busy", {"diagnose": object()}):
+        with patch.object(chat, "_busy", {"next": object()}):
             assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
         assert chat.project() == "a"
         chat._project = None
@@ -409,7 +409,7 @@ class Agent:
 
     made: list = []
 
-    def __init__(self, path, model="", effort="", write=False):
+    def __init__(self, path, model="", effort="", write=False, system=""):
         assert write
         self.id, self.session_id, self.alive, self.parent_id = uuid.uuid4().hex, None, True, None
         self.is_codex = model.startswith("codex:")
@@ -652,7 +652,7 @@ def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_p
         assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
         assert web.post("/api/worktrees/remove", json={"path": path}).status_code == 409
         assert web.post("/api/work/reset", json={"path": path}).status_code == 409
-        asking = chat.say("progress", chat.Say(text="x"))
+        asking = chat.say("next", chat.Say(text="x"))
         assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
         del waiting, asking
         gc.collect()

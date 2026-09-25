@@ -68,7 +68,7 @@ def branch_line(repo: Path) -> str:
     return " · ".join(bits)
 
 
-def open_steps(path: Path) -> list[str]:
+def open_steps(path: Path, limit: int = MAX_ROWS) -> list[str]:
     """The rows of a plan's `## 단계` table that are not finished.
 
     A plan document here gives every step a status cell, and a row that is
@@ -95,10 +95,10 @@ def open_steps(path: Path) -> list[str]:
         if first in ("완료", "취소", "상태") or "~~" in cells[1]:
             continue
         rows.append(f"{cells[0]} {cells[2] if len(cells) > 2 else ''} — {state or '미착수'}")
-    return rows[:MAX_ROWS]
+    return rows[:limit]
 
 
-def plans(repo: Path) -> list[tuple[Path, list[str]]]:
+def plans(repo: Path, limit: int = MAX_PLANS, rows: int = MAX_ROWS) -> list[tuple[Path, list[str]]]:
     """Plans with steps left. A series may sit in its own folder, and a
     finished series is moved under `done/`, which is not read at all — its
     tables are history, not work.
@@ -115,10 +115,10 @@ def plans(repo: Path) -> list[tuple[Path, list[str]]]:
     live.sort(key=lambda p: (number(p), p.name))
     live.sort(key=lambda p: p.parent.relative_to(directory).as_posix(), reverse=True)
     for path in live:
-        steps = open_steps(path)
+        steps = open_steps(path, rows)
         if steps:
             found.append((path, steps))
-        if len(found) >= MAX_PLANS:
+        if len(found) >= limit:
             break
     return found
 

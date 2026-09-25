@@ -291,8 +291,12 @@ and the
 The plain explanation is not a separate fact-check of the original. The
 `file:line` in each answer opens the evidence directly.
 
-The project is shared by all five focuses of the query — progress, diagnosis,
-retrospect, review and wiki — and by the worktree list. Conversation context
+The project is shared by all four focuses of the query — next task, wiki,
+retrospect and review — and by the worktree list. The next-task focus gathers
+the open plan rows, open pull requests, recent decisions and lint warnings
+into candidates, asks back with options, and ends in a task spec card; its
+[시작] makes a worktree whose session gets the spec as its system prompt, and
+the server opens the pull request only after the gate passes again there. Conversation context
 and records are kept per project and per focus, so leaving for another project and coming back
 continues where it left off. A server restart restores the project selection
 and the CLI sessions left in the records. "Clear context" applies to the

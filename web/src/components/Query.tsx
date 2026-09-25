@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Blocks } from '@/components/Blocks'
 import { Composer } from '@/components/Composer'
 import { Peek } from '@/components/Peek'
 import { Stream } from '@/components/Stream'
 import { Toolbar } from '@/components/Toolbar'
 import * as api from '@/lib/api'
-import type { Channel, Kind, Options, Peek as PeekData, Tokens } from '@/lib/api'
+import type { Block, Channel, Kind, Options, Peek as PeekData, Spec, Tokens } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 export type Msg = {
-  role: 'user' | 'assistant'
+  role: 'user' | 'assistant' | 'result'
   text: string
+  blocks?: Block[]
   tools: string[]
   hits?: string[]
   source?: string
@@ -35,11 +37,14 @@ type Props = {
   onChannels: (list: Channel[]) => void
   onBusy: (busy: boolean) => void
   onDraft: (text: string) => void
+  specs: Spec[]
+  onSpecs: () => void
+  onStart: (id: string) => Promise<void>
 }
 
 /** The main pane: ask the wiki under one focus, read the grounds, and carry
  *  an answer over to a worktree's agent. */
-export function Query({ channels, options, on, onChannels, onBusy, onDraft }: Props) {
+export function Query({ channels, options, on, onChannels, onBusy, onDraft, specs, onSpecs, onStart }: Props) {
   const [active, setActive] = useState('wiki')
   const [messages, setMessages] = useState<Msg[]>([])
   const [legacy, setLegacy] = useState<api.Turn[]>([])
@@ -73,7 +78,8 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft }: Pr
       .getLog(active)
       .then((rows) => {
         if (stale) return
-        const restored: Msg[] = rows.map((r) => ({ role: r.role, text: r.text, tools: [], source: r.source, error: r.error,
+        const restored: Msg[] = rows.map((r) => ({ role: r.role, text: r.said ?? r.text, blocks: r.blocks,
+          tools: [], source: r.source, error: r.error,
           ms: r.ms, cost: r.cost_usd, model: r.model, sessionId: r.session_id, tokens: r.tokens,
           simpleText: r.simple_text, simpleError: r.simple_error,
           simpleMs: r.simple_meta?.ms, simpleCost: r.simple_meta?.cost_usd }))
@@ -90,13 +96,13 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft }: Pr
   }, [active, selectedRepo])
 
   const send = useCallback(
-    async (text: string) => {
+    async (text: string, propose = false) => {
       const cid = active
       const placeholder: Msg = { role: 'assistant', text: '', tools: [], pending: true }
       inFlight.current.set(cid, placeholder)
       setBusyOn((prev) => [...prev, cid])
       setFault('')
-      setMessages((prev) => [...prev, { role: 'user', text, tools: [] }, placeholder])
+      setMessages((prev) => [...prev, { role: 'user', text: propose ? '(후보 요청)' : text, tools: [] }, placeholder])
 
       // Switching focus mid-stream leaves the list on screen belonging to
       // another focus, and appending a chunk onto it corrupts that
@@ -128,6 +134,9 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft }: Pr
               model: ev.model, sessionId: ev.session_id, pending: false }))
           } else if (ev.kind === 'error') {
             patch((m) => ({ ...m, error: ev.text, pending: false }))
+          } else if (ev.kind === 'blocks') {
+            patch((m) => ({ ...m, blocks: ev.blocks }))
+            if (ev.blocks?.some((b) => b.name === 'spec')) onSpecs()
           } else if (ev.kind === 'simple_start') {
             patch((m) => ({ ...m, simpleText: '', simplePending: true }))
           } else if (ev.kind === 'simple_delta') {
@@ -137,7 +146,7 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft }: Pr
           } else if (ev.kind === 'simple_error') {
             patch((m) => ({ ...m, simpleText: '', simpleError: ev.text, simplePending: false }))
           }
-        })
+        }, propose)
       } catch (err) {
         patch((m) => m.simplePending
           ? ({ ...m, simpleText: '', simpleError: String(err), simplePending: false })
@@ -148,7 +157,7 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft }: Pr
         api.getChannels().then(onChannels).catch(() => {})
       }
     },
-    [active, onChannels],
+    [active, onChannels, onSpecs],
   )
 
   const here = channels.find((c) => c.id === active)
@@ -306,6 +315,19 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft }: Pr
             onDecide={active === 'retro' ? decideOne : undefined}
             onMark={markTurn}
             onDraft={draftFrom}
+            blocks={active === 'next' ? (m) => (
+              <Blocks blocks={m.blocks ?? []} specs={specs} korean={on} busy={busy}
+                onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={onStart} />
+            ) : undefined}
+            empty={active === 'next' ? (
+              <div className="space-y-2 text-[13.5px] text-faint">
+                <p>계획의 남은 행, 열린 PR, 최근 결정, 경고를 모아 다음 작업 후보를 낸다. 직접 물어도 된다.</p>
+                <button type="button" disabled={busy} onClick={() => void send('', true)}
+                  className="rounded-md border border-primary px-3 py-1 text-[13px] text-primary hover:bg-secondary disabled:opacity-40">
+                  후보 내기
+                </button>
+              </div>
+            ) : undefined}
           />
           <Composer busy={busy} onSend={send} />
         </div>

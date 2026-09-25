@@ -135,28 +135,26 @@ class Channel:
 
 CHANNELS: list[Channel] = [
     Channel(
-        id="progress",
-        label="진척도",
-        blurb="무엇이 닫혔고 다음이 무엇인가",
-        effort="low",   # reading and reporting; nothing to think hard about
-        preamble=(
-            "Focus: repository progress and plans. Read `.wiki/plan-active.md` first "
-            "and follow the progress skill's document order. Use commits to verify "
-            "claims, not to replace the plan. Cite each status claim. Read existing "
-            "metrics instead of recalculating them. Keep the answer concise."
-        ),
+        id="next",
+        label="다음 작업",
+        blurb="후보를 내고, 되물어, 명세로 정한다",
+        preamble=(WIKI / "tool/prompts/next-task.md").read_text(encoding="utf-8").strip(),
     ),
     Channel(
-        id="diagnose",
-        label="진단",
-        blurb="왜 안 되나 — 기록부터 본다",
-        effort="high",  # this is where a cause gets dug out
+        id="wiki",
+        label="위키",
+        blurb="위키와 도구를 본다 — 왜 안 되나는 기록부터",
         preamble=(
-            "Focus: diagnosis. Follow `.wiki/telemetry.md`. Before interpreting code, "
-            "inspect available `.omm/`, `data/latency_logs/`, Langfuse, and "
+            "Focus: the wiki and its tools. Read the contracts in `SCHEMA.md` and "
+            "the five enforcement levels in `ENFORCEMENT.md`. Before proposing a "
+            "new page, establish that the documented admission threshold is met; "
+            "additional pages have a context cost.\n\n"
+            "When the question is why something does not work, look at what ran "
+            "before reading code: follow `.wiki/telemetry.md` where it exists, and "
+            "inspect the available `.omm/`, `data/latency_logs/`, Langfuse and "
             "`artifacts/live/*.jsonl` evidence. Code shows what could happen; logs "
-            "show what ran. Label hypotheses and state the observation needed to "
-            "confirm them. Report unavailable sources explicitly."
+            "show what ran. Label hypotheses, state the observation that would "
+            "confirm them, and name the sources that were unavailable."
         ),
     ),
     Channel(
@@ -192,17 +190,6 @@ CHANNELS: list[Channel] = [
             "gives: they are a protocol the loop reads back, not a language "
             "choice, so copy them rather than translating or paraphrasing. Do "
             "not edit or merge."
-        ),
-    ),
-    Channel(
-        id="wiki",
-        label="위키",
-        blurb="위키와 도구 자체를 본다",
-        preamble=(
-            "Focus: the wiki and its tools. Read the contracts in `SCHEMA.md` and "
-            "the five enforcement levels in `ENFORCEMENT.md`. Before proposing a "
-            "new page, establish that the documented admission threshold is met; "
-            "additional pages have a context cost."
         ),
     ),
 ]

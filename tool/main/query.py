@@ -1,4 +1,4 @@
-"""query — ask the wiki, under one of five focuses, and read the grounds.
+"""query — ask the wiki, under one of four focuses, and read the grounds.
 
 Finding the answer and saying it simply are separate calls, so they are never
 the same turn. Everything that reaches the screen is read by a person and
@@ -163,9 +163,12 @@ def resumable(rows: list[dict], codex: bool) -> str | None:
 # No database. On a localhost one person uses, there is nothing a line of
 # jsonl cannot do.
 
-def remember(cid: str, role: str, text: str, error: str = "", **extra) -> None:
+def remember(cid: str, role: str, text: str, error: str = "", repo: Path | None = None, **extra) -> None:
+    """`repo` for a row written outside a request — a spec's result, from a
+    turn's thread — which names its repository rather than the selected one."""
+
     LOGS.mkdir(parents=True, exist_ok=True)
-    row = {"ts": time.time(), "role": role, "text": text, "repo": str(current_repo()), **extra}
+    row = {"ts": time.time(), "role": role, "text": text, "repo": str(repo or current_repo()), **extra}
     if error:
         row["error"] = error
     with (LOGS / f"{cid}.jsonl").open("a", encoding="utf-8", newline="\n") as fh:
@@ -181,11 +184,20 @@ def recall(cid: str, legacy: bool = False, include_context: bool = False) -> lis
         try:
             row = json.loads(line)
             belongs = not row.get("repo") if legacy else row.get("repo") == str(current_repo())
-            if belongs and (include_context or row.get("role") in ("user", "assistant")):
+            if belongs and (include_context or row.get("role") in ("user", "assistant", "result")):
                 rows.append(row)
         except json.JSONDecodeError:
             continue
     return rows[-MAX_REPLAY:]
+
+
+def unseen(cid: str) -> list[dict]:
+    """The result rows the CLI has not been told: those after the last thing
+    said to it. Told once, in front of the next thing said."""
+
+    rows = recall(cid, include_context=True)
+    last = max((i for i, r in enumerate(rows) if r.get("role") == "user"), default=-1)
+    return [r for r in rows[last + 1:] if r.get("role") == "result"]
 
 
 def sse(payload: dict) -> str:
@@ -230,7 +242,8 @@ def held(events, release) -> StreamingResponse:
 # -- API ------------------------------------------------------------------
 
 class Say(BaseModel):
-    text: str
+    text: str = ""
+    propose: bool = False    # `[후보 내기]`: the server gathers the materials
 
 
 class Config(BaseModel):
@@ -365,7 +378,9 @@ def reset(cid: str) -> dict:
 def say(cid: str, body: Say) -> StreamingResponse:
     known(cid)
     text = body.text.strip()
-    if not text:
+    if body.propose and cid != "next":
+        raise HTTPException(400, "후보는 다음 작업 초점에서만 낸다")
+    if not text and not body.propose:
         raise HTTPException(400, "빈 발화")
     # The settings first: `config` can fail (503 when Codex cannot list its
     # models), and after the hold nothing may fail before `held` arms the
@@ -382,14 +397,27 @@ def say(cid: str, body: Say) -> StreamingResponse:
         finished = False
         metadata = {}
         simple_meta = {}
+        shown: list[dict] = []
         try:
-            remember(cid, "user", text)
+            from . import specs  # `specs` imports this module
+
+            # The row keeps what the CLI was sent, whole, so a resumed CLI
+            # saw the same; `said` is what the screen shows instead.
+            sent, flags = text, {}
+            if body.propose:
+                sent = specs.materials(current_repo()) + (f"\n\n{text}" if text else "")
+                flags = {"said": "(후보 요청)" + (f" {text}" if text else ""), "propose": True}
+            results = unseen(cid)
+            if results:
+                sent = "Since your last turn:\n" + "\n".join(f"- {r['text']}" for r in results) + "\n\n" + sent
+                flags.setdefault("said", text)
+            remember(cid, "user", sent, **flags)
             # A display-time match against the relevant rules. Not a check
             # that the host actually injected anything.
-            hits = hits_for(text)
+            hits = hits_for(text) if text else []
             if hits:
                 yield sse({"kind": "hits", "text": "", "pages": hits})
-            for ev in session(cid).say(text):
+            for ev in session(cid).say(sent):
                 # A read session answers every approval itself, with a refusal.
                 # The query screen shows that as what it is: a line of what ran.
                 if ev.kind == "approval":
@@ -417,11 +445,20 @@ def say(cid: str, body: Say) -> StreamingResponse:
                     finished = bool(answer[0].strip())
                     metadata = ev.meta
                     metadata.pop("error", None)
+                    if cid == "next":
+                        # The blocks leave the answer, so the overlay never
+                        # translates JSON; they go to the screen apart.
+                        answer[0], found = specs.blocks(answer[0])
+                        source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
+                        shown = specs.answered(current_repo(), found, source)
+                        ev.text = answer[0]
                 yield sse({"kind": ev.kind, "text": ev.text, **ev.meta})
+                if ev.kind == "done" and shown:
+                    yield sse({"kind": "blocks", "text": "", "blocks": shown})
             if not finished and not failed:
                 failed = "답변 생성이 완료되지 않았습니다"
                 yield sse({"kind": "error", "text": failed})
-            if finished and not failed:
+            if finished and not failed and answer[0].strip():
                 yield sse({"kind": "simple_start", "text": ""})
                 try:
                     simple_finished = False
@@ -451,7 +488,8 @@ def say(cid: str, body: Say) -> StreamingResponse:
                 if answer or failed:
                     remember(cid, "assistant", "".join(answer), failed,
                              simple_text=simple, simple_error=simple_error, simple_meta=simple_meta,
-                             provider="codex" if cfg["model"].startswith("codex:") else "claude", **metadata)
+                             provider="codex" if cfg["model"].startswith("codex:") else "claude",
+                             **({"blocks": shown} if shown else {}), **metadata)
             finally:
                 release()
 
