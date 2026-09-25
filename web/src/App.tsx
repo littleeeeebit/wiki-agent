@@ -211,13 +211,12 @@ export default function App() {
           }
         }}
         onRemove={async (path) => {
-          // Its terminal's shell stands in that folder, and Windows will not
-          // delete a directory a process stands in. Rendered now so the
-          // terminal starts closing, then waited on until the shell is gone.
-          if (path === selected) {
-            flushSync(() => setSelected(''))
-            await closed()
-          }
+          // A terminal's shell may stand in that folder, and Windows will not
+          // delete a directory a process stands in. Rendered now so a selected
+          // one starts closing; then every close there is waited on — one
+          // started a moment ago by selecting elsewhere counts too.
+          if (path === selected) flushSync(() => setSelected(''))
+          await closed(path)
           await api.removeWorktree(path)
           // The same task name makes the same path again; its turns must not
           // come back with it.

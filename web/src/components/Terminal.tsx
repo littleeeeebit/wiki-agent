@@ -8,10 +8,12 @@ import '@xterm/xterm/css/xterm.css'
 /** The Tauri shell holds the terminals; a browser tab has none to offer. */
 const shell = '__TAURI_INTERNALS__' in window
 
-/** Settles once the last terminal closed has exited. Removing a worktree waits
- *  on it: Windows will not delete a folder a shell still stands in. */
-let closing: Promise<unknown> = Promise.resolve()
-export const closed = () => closing
+/** Every close started in a folder, until its shell has exited. Removing a
+ *  worktree waits on all of them — the one just deselected, and the ones a
+ *  theme change replaced — as Windows will not delete a folder a shell still
+ *  stands in. */
+const closing = new Map<string, Promise<unknown>>()
+export const closed = (cwd: string) => closing.get(cwd) ?? Promise.resolve()
 
 function colors() {
   const css = getComputedStyle(document.documentElement)
@@ -78,7 +80,8 @@ export function Terminal({ cwd, theme }: { cwd: string; theme: string }) {
       typed.dispose()
       stops.forEach((stop) => stop())
       // Through `opened`, not `id`: a shell still opening closes too.
-      closing = opened.then((got) => invoke('pty_close', { id: got })).catch(() => undefined)
+      const close = opened.then((got) => invoke('pty_close', { id: got })).catch(() => undefined)
+      closing.set(cwd, Promise.all([closing.get(cwd), close]))
       term.dispose()
     }
   }, [cwd, theme])
