@@ -23,9 +23,9 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   const [survey, setSurvey] = useState<SurveySettings | null>(null)
   const [savedSurvey, setSavedSurvey] = useState<SurveySettings | null>(null)
   const [hub, setHub] = useState<Hub | null>(null)
-  const [rounds, setRounds] = useState(loop?.rounds ?? 4)
-  const [seats, setSeats] = useState(loop?.concurrent ?? 2)
-  const [model, setModel] = useState(loop?.review_model ?? '')
+  const [rounds, setRounds] = useState(0)
+  const [seats, setSeats] = useState(0)
+  const [model, setModel] = useState('')
   const [working, setWorking] = useState('')
   const [fault, setFault] = useState('')
 
@@ -38,6 +38,15 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
       })
       .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
   }, [])
+
+  // The form follows the server's values: opened before they arrive, a form
+  // seeded with guesses would show them and [저장] would write them.
+  useEffect(() => {
+    if (!loop) return
+    setRounds(loop.rounds)
+    setSeats(loop.concurrent)
+    setModel(loop.review_model)
+  }, [loop])
 
   async function act(key: string, fn: () => Promise<void>) {
     setFault('')
@@ -104,6 +113,7 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
         </Part>
 
         <Part title="리뷰">
+          {!loop ? <p className="text-faint">읽는 중…</p> : (<>
           <Row label="라운드 상한" note="넘으면 멈추고 [계속] 을 기다린다">
             <input type="number" min={1} max={50} value={rounds} className={`${field} w-20`}
               onChange={(e) => setRounds(Number(e.target.value))} />
@@ -120,6 +130,7 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
           </Row>
           <Save edited={loopEdited} busy={working === 'loop'}
             onSave={() => act('loop', () => onLoop({ rounds, concurrent: seats, review_model: model }))} />
+          </>)}
         </Part>
 
         {fault && <p role="alert" className="whitespace-pre-wrap text-destructive">{fault}</p>}
