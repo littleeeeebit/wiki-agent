@@ -74,6 +74,17 @@ def test_chunks_cut_at_headings_and_know_their_lines():
     assert [c["heading"] for c in bare] == ["T", "T > Steps > 1. First"], bare
 
 
+def test_a_fence_closes_only_on_its_own_marker():
+    """A `~~~` inside a backtick fence toggled the state: the heading after it
+    in the fence became a section, and the real one after the fence did not
+    (review round 1)."""
+
+    text = "# T\n\n## A\n\n```md\n~~~\n## fake\n```\n\n## Real\n\nbody\n"
+    assert [c["heading"] for c in searchd.chunks(text, Path("x.md"))] == ["T", "T > A", "T > Real"]
+    longer = "# T\n\n## A\n\n~~~~\n~~~\n## fake\n~~~~~\n\n## Real\n\nbody\n"
+    assert [c["heading"] for c in searchd.chunks(longer, Path("x.md"))] == ["T", "T > A", "T > Real"]
+
+
 def test_the_index_ranks_the_hub_and_the_repository_by_bm25(hub):
     project = Path(tempfile.mkdtemp())
     (project / "docs").mkdir()

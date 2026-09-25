@@ -60,6 +60,8 @@ FILES = {"model.onnx": "onnx/model_qint8_avx512_vnni.onnx", "tokenizer.json": "o
 MODEL_ID = f"{MODEL}/{FILES['model.onnx']}"
 
 HEADING = re.compile(r"^(#{1,3})\s+(.+?)\s*#*\s*$")
+# A code fence's marker and what follows it, as CommonMark reads one.
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 WORD = re.compile(r"[a-z0-9_]+|[가-힣]+")
 
 
@@ -102,7 +104,7 @@ def chunks(text: str, path: Path) -> list[dict]:
     offset = text[: len(text) - len(body)].count("\n")
     lines = body.splitlines()
     title = next((x[2:].strip() for x in lines if x.startswith("# ")), path.stem)
-    found, trail, start, buf, fence = [], [], offset + 1, [], False
+    found, trail, start, buf, fence = [], [], offset + 1, [], ""
 
     def flush() -> None:
         # A heading with nothing under it before the next one is not a chunk.
@@ -112,8 +114,15 @@ def chunks(text: str, path: Path) -> list[dict]:
                           "text": "\n".join(buf), "indexed": heading + "\n" + "\n".join(buf)})
 
     for number, line in enumerate(lines, offset + 1):
-        if line.startswith(("```", "~~~")):
-            fence = not fence
+        marker = FENCE.match(line)
+        if marker and not fence:
+            fence = marker.group(1)
+        elif marker and fence and marker.group(1).startswith(fence) and not marker.group(2).strip():
+            # Closed only by the opener's own character, at least as long, and
+            # nothing after it. A `~~~` inside a backtick fence is text.
+            fence = ""
+            buf.append(line)
+            continue
         match = None if fence else HEADING.match(line)
         if match and len(match.group(1)) >= 2:
             flush()
