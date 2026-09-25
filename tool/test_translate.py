@@ -287,7 +287,7 @@ def test_korean_with_a_few_identifiers_is_not_sent_to_korean(
     paths = "없음. src/App.tsx, tool/main/app.py, README.md"
     assert T.translate([paths], T.EN_KO, soon()) == [paths]
     assert asked == [], "paths counted as English"
-    english = ["The hook passes. 훅.", "wiki-agent", "See " + "하" * 12 + " README.md for details."]
+    english = ["The hook passes. 훅.", "wiki-agent", "See " + "하" * 12 + " README.md for details.", "Pass/Fail"]
     T.translate(english, T.EN_KO, soon())
     assert asked == [english], "English stopped being sent"
 

@@ -105,9 +105,10 @@ EN_KO = "en->ko"
 HANGUL = re.compile(r"[가-힣]")
 HANGUL_WORD = re.compile(r"[가-힣]+")
 LATIN_WORD = re.compile(r"[A-Za-z]+")
-# Not prose: inline code, and a token with a dot, slash or underscore between
-# two word characters — a path, a file name, a module.
-NOT_PROSE = re.compile(r"`[^`\n]*`|\S*\w[./\\_]\w\S*")
+# Not prose: inline code, and a token with a dotted part, a backslash or an
+# underscore — a file, a module, a Windows path, an identifier. A slash alone
+# does not count: `Pass/Fail` is English.
+NOT_PROSE = re.compile(r"`[^`\n]*`|\S*(?:\w\.[A-Za-z]|[\\_])\S*")
 
 # Sentinels from the Unicode private use area. No source document and no
 # model vocabulary produces these, so a placeholder that comes back altered
