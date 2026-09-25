@@ -78,7 +78,8 @@
 
 ## 상태
 
-명세의 `state` 에 더한다 — `리뷰 대기`(동시 실행 자리를 기다린다), `리뷰 Rn`, `고치는 중 Rn`, `머지 가능`.
+명세의 `state` 에 더한다 — `리뷰 대기`(동시 실행 자리를 기다린다), `리뷰 Rn`, `고치는 중 Rn`, `머지 가능`,
+`머지 대기`(merge queue 나 자동 머지에 들어갔다).
 `멈춤` 의 이유는 `승인 대기` 가 아니다. 승인을 기다리는 루프는 멈춘 것이 아니라 서 있는 것이고, 명세의
 `waiting: true` 로 따로 보인다.
 
@@ -191,9 +192,16 @@ PR 머리만 비교한다. 허용 뒤 새 커밋이 push 되고 화면이 목록
    `gh pr view <n> --json baseRefName` 이 그 라운드의 `base` 와 다르면 같은 409 "리뷰 뒤 base 변경" 이다
 3. `gh pr merge <n> --squash --match-head-commit <approved>`. 그 사이 push 가 있었으면 GitHub 이 거절하고, 명세는
    같은 이유로 `리뷰 대기` 로 간다
-4. 머지 뒤 확인. `gh pr view <n> --json baseRefName,mergeCommit` 의 base 가 허용 라운드의 `base` 와 다르면
-   명세를 `멈춤 — 검토하지 않은 base 에 머지됨` 으로 두고, OS 알림과 PR 코멘트로 알린다. 아래 정리는 하지 않는다 —
-   작업트리와 브랜치를 남겨야 사람이 되돌릴 수 있다
+4. 머지 뒤 확인. 명령의 종료 코드 0 은 머지가 아니다. merge queue 를 쓰는 base 에서는 필수 검사가 남았으면
+   자동 머지가 켜지고, 통과했으면 대기열에 들어갈 뿐 PR 은 아직 열려 있다(`gh pr merge --help`, 리뷰 라운드 4).
+   `gh pr view <n> --json state,mergeCommit,baseRefName` 을 읽는다
+
+   | 읽은 것 | 하는 일 |
+   | --- | --- |
+   | `MERGED` 이고 `mergeCommit` 이 있다, base 가 허용 라운드와 같다 | 5 로 |
+   | `MERGED` 인데 base 가 다르다 | `멈춤 — 검토하지 않은 base 에 머지됨`. OS 알림과 PR 코멘트. 5 이하는 하지 않는다 — 작업트리와 브랜치를 남겨야 사람이 되돌릴 수 있다 |
+   | `OPEN` | `머지 대기`. 5 이하는 하지 않는다. 창이 포커스를 받을 때와 1분마다 다시 읽고, `MERGED` 가 되면 이 표의 첫 두 줄로 간다 |
+   | `CLOSED`, 또는 `OPEN` 인데 대기열과 자동 머지에서 빠졌다 | `멈춤 — 머지 대기에서 빠짐`. 5 이하는 하지 않는다. 빠졌는지는 `gh pr view --json autoMergeRequest` 가 비고, `gh api graphql` 의 `pullRequest.isInMergeQueue` 가 거짓인 것으로 본다. `gh pr view --json` 에는 `isInMergeQueue` 가 없다 |
 5. P2 코멘트 초안이 있으면 `gh pr comment <n> --body-file`
 6. 명세를 `머지됨` 으로, 결과 행 "PR #n 머지됨 — 라운드 k, 남은 P2 j" 를 쓴다
 7. 정리. 원본 체크아웃에 `git fetch`. 원본이 base 브랜치에 있고 `git status --porcelain` 이 비었으면
@@ -262,6 +270,7 @@ base 는 막지 못하고 알아채기만 한다. GitHub 의 머지는 머리 �
 | 결과 뒤 base 가 바뀌었으면 라운드를 버리고, [머지] 도 base 가 허용한 라운드와 다르면 409 | base 비교를 지우면 |
 | 도는 턴이 있어도 전환은 되고, 만들기·지우기가 잡은 동안은 전환이 409. 잡는 요청은 잡을 때의 저장소로 끝까지 간다 — `say` 를 잡은 직후 전환해도 그 턴은 옛 저장소의 경로로 돈다 | 종류 구분을 지우거나 잡은 뒤 저장소를 다시 읽게 하면 |
 | 머지 뒤 base 가 허용 라운드와 다르면 `멈춤` 이고 정리를 하지 않는다 | 머지 뒤 확인을 지우면 |
+| `gh pr merge` 가 성공해도 PR 이 `OPEN` 이면 `머지 대기` 이고 작업트리·로컬·원격 브랜치가 그대로다. `MERGED` 가 된 뒤에야 정리한다 | 종료 코드로 머지를 판정하게 하면 |
 | 명세의 `repo` 가 이름이고 루프가 `repo_for` 로 경로를 정한다 | |
 
 ## 하지 않는 것
