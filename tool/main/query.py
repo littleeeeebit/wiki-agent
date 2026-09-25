@@ -529,8 +529,12 @@ class Draft(BaseModel):
 
 # A citation as an answer writes it and `Answer.tsx` makes clickable. A range
 # comes with an en dash as often as a hyphen; a draft once lost its only
-# citation, `craft/hooks-fail-open.md:11–14`, to that.
-CITE = re.compile(r"`([\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl)(?::\d+(?:[-–]\d+)?)?)`")
+# citation, `craft/hooks-fail-open.md:11–14`, to that. The prompt asks for
+# inline code, but haiku also answers with a bare `path:line` — a draft lost
+# `craft/destructive-git-guards.md:16` that way — so a bare one counts when it
+# carries a line.
+_PATH = r"[\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl)"
+CITE = re.compile(rf"`({_PATH}(?::\d+(?:[-–]\d+)?)?)`|(?<![\w./`-])({_PATH}:\d+(?:[-–]\d+)?)")
 
 # Instructions that go to the agent as written, so they are English. What the
 # agent says back about them reaches the screen, so that part is Korean. They
@@ -581,7 +585,7 @@ def draft(body: Draft) -> dict:
         lines += ["## 물은 것", "", body.question.strip()]
     if body.answer.strip():
         lines += ["", "## 위키의 답", "", body.answer.strip()]
-    cites = list(dict.fromkeys(CITE.findall(body.answer)))
+    cites = list(dict.fromkeys(a or b for a, b in CITE.findall(body.answer)))
     if cites:
         lines += ["", "## 근거", ""] + [f"- `{c}`" for c in cites]
     if body.hits:

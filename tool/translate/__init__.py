@@ -103,7 +103,12 @@ KO_EN = "ko->en"
 EN_KO = "en->ko"
 
 HANGUL = re.compile(r"[가-힣]")
-LATIN = re.compile(r"[A-Za-z]")
+HANGUL_WORD = re.compile(r"[가-힣]+")
+LATIN_WORD = re.compile(r"[A-Za-z]+")
+# Not prose: inline code, and a token with a dotted part, a backslash or an
+# underscore — a file, a module, a Windows path, an identifier. A slash alone
+# does not count: `Pass/Fail` is English.
+NOT_PROSE = re.compile(r"`[^`\n]*`|\S*(?:\w\.[A-Za-z]|[\\_])\S*")
 
 # Sentinels from the Unicode private use area. No source document and no
 # model vocabulary produces these, so a placeholder that comes back altered
@@ -448,11 +453,19 @@ def worth_translating(text: str, direction: str) -> bool:
     Skipping saves a request, but the reason it is a rule rather than an
     optimization is that translating English to English comes back subtly
     reworded, and reworded rules are rules nobody can diff.
+
+    Toward Korean, one Latin letter is not enough: Korean prose carries paths
+    and names, and one such answer sent to Korean came back in English. So the
+    prose is weighed, words against words, with code and paths taken out first
+    — they are neither language.
     """
 
     if not text.strip():
         return False
-    return bool(HANGUL.search(text)) if direction == KO_EN else bool(LATIN.search(text))
+    if direction == KO_EN:
+        return bool(HANGUL.search(text))
+    prose = NOT_PROSE.sub(" ", text)
+    return len(LATIN_WORD.findall(prose)) > len(HANGUL_WORD.findall(prose))
 
 
 def translate(texts: list[str], direction: str, deadline: float) -> list[str]:

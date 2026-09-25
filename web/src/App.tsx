@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { Agent } from '@/components/Agent'
 import type { Choice } from '@/components/Toolbar'
 import { Peek } from '@/components/Peek'
 import { Query } from '@/components/Query'
 import { Rail } from '@/components/Rail'
-import { Terminal } from '@/components/Terminal'
+import { Terminal, closed } from '@/components/Terminal'
 import { WikiMap } from '@/components/WikiMap'
 import * as api from '@/lib/api'
 import type { Channel, Options, Peek as PeekData, Switch, Worktree } from '@/lib/api'
@@ -210,6 +211,12 @@ export default function App() {
           }
         }}
         onRemove={async (path) => {
+          // A terminal's shell may stand in that folder, and Windows will not
+          // delete a directory a process stands in. Rendered now so a selected
+          // one starts closing; then every close there is waited on — one
+          // started a moment ago by selecting elsewhere counts too.
+          if (path === selected) flushSync(() => setSelected(''))
+          await closed(path)
           await api.removeWorktree(path)
           // The same task name makes the same path again; its turns must not
           // come back with it.

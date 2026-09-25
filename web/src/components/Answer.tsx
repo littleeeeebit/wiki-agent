@@ -6,6 +6,30 @@ import { Candidates } from '@/components/Candidates'
 // git commit identifier.
 const FILE = /^([\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl))(?::(\d+)(?:[-–]\d+)?)?$/
 const SHA = /^[0-9a-f]{7,40}$/
+// The same citation written bare. The prompt asks for inline code, but haiku
+// also writes `craft/x.md:16` without the backticks — a line number is what
+// tells it from a file merely named. `query.CITE` counts it for the draft.
+const BARE = /((?<![\w./-])[\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl):\d+(?:[-–]\d+)?)/
+
+type Node = { type: string; value?: string; children?: Node[] }
+
+/** Bare citations in the parsed text become inline code. On the tree, not the
+ *  string: a link's destination and every kind of code block are not text
+ *  nodes, so they stay as written. A link's own text is left alone too. */
+function citations(node: Node) {
+  if (!node.children || node.type === 'link' || node.type === 'linkReference') return
+  node.children = node.children.flatMap((child) => {
+    if (child.type !== 'text') {
+      citations(child)
+      return [child]
+    }
+    // Split on the one capture group: odd parts are the citations.
+    return (child.value ?? '').split(BARE)
+      .map((value, i) => ({ type: i % 2 ? 'inlineCode' : 'text', value }))
+      .filter((part) => part.value)
+  })
+}
+const remarkCitations = () => citations
 
 export type AnswerProps = {
   text: string
@@ -28,7 +52,7 @@ export function Answer({ text, korean, remote, onPeek, onDecide }: AnswerProps) 
   return (
     <div className="prose-answer">
       <Markdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkCitations]}
         components={{
           a: ({ href, children }) => (
             <a href={href} target="_blank" rel="noreferrer">

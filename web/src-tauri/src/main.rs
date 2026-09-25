@@ -219,8 +219,12 @@ fn pty_resize(ptys: State<Ptys>, id: u32, cols: u16, rows: u16) -> Result<(), St
 
 #[tauri::command]
 fn pty_close(ptys: State<Ptys>, id: u32) {
-    if let Some(mut pty) = ptys.open.lock().unwrap().remove(&id) {
+    let pty = ptys.open.lock().unwrap().remove(&id);
+    if let Some(mut pty) = pty {
         let _ = pty.child.kill();
+        // Answer only once it has exited: the screen removes the worktree
+        // next, and Windows keeps a folder a process still stands in.
+        let _ = pty.child.wait();
     }
 }
 
