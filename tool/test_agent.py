@@ -102,7 +102,7 @@ def tree(tmp_path, monkeypatch):
     return create(repo, "task")
 
 
-def run(session, fixture, tree, answer=None):
+def run(session, fixture, tree, answer=None, halt=None):
     """Drive one turn against a stand-in CLI. `answer` sees each approval a
     person is asked."""
 
@@ -115,7 +115,7 @@ def run(session, fixture, tree, answer=None):
 
     with patch.object(chat_session.subprocess, "Popen", spawn), \
          patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
-        for event in session.say("write it"):
+        for event in session.say("write it", halt):
             events.append(event)
             if event.kind == "approval" and answer and "by" not in event.meta:
                 answer(event)
@@ -215,10 +215,12 @@ def test_a_stop_ends_the_turn_and_keeps_the_cli_session(tree):
     process is gone, and the CLI's id stays for the next turn's `--resume`."""
 
     session = ChatSession(tree, write=True)
+    halt = threading.Event()
     fixture = CLAUDE.replace("sys.stdin.readline()\ndef ask",
                              'sys.stdin.readline()\nprint(json.dumps({"type": "system", "subtype": "init", '
                              '"session_id": "cli-1"}), flush=True)\ndef ask', 1)
-    command, events = run(session, fixture, tree, lambda e: threading.Timer(0.2, session.stop).start())
+    command, events = run(session, fixture, tree, lambda e: threading.Timer(0.2, session.stop, args=(halt,)).start(),
+                          halt)
     assert "--resume" not in command
     assert [e.kind for e in events] == ["approval", "error"]
     assert not session.alive and session.session_id == "cli-1"
@@ -304,8 +306,8 @@ sys.stdin.read()
 '''
 
     def spawn(command, **kwargs):
-        halt.set()       # the person pressed stop while this was starting
-        session.stop()   # nothing to kill yet
+        halt.set()           # the person pressed stop while this was starting
+        session.stop(halt)   # nothing to kill yet
         return real_popen([sys.executable, "-X", "utf8", "-c", answers], **kwargs)
 
     with patch.object(chat_session.subprocess, "Popen", spawn), \
@@ -374,8 +376,8 @@ def test_a_stop_before_the_process_exists_cuts_a_slow_start(tmp_path):
     real_popen = subprocess.Popen
 
     def spawn(command, **kwargs):
-        halt.set()       # the stop lands while the process is being created
-        session.stop()   # nothing to kill yet
+        halt.set()           # the stop lands while the process is being created
+        session.stop(halt)   # nothing to kill yet
         return real_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
 
     with patch.object(chat_session.subprocess, "Popen", spawn),          patch.object(chat_session, "cli_command", side_effect=lambda name: [name]),          patch.object(chat_session, "BOOT_TIMEOUT", 10):
@@ -384,3 +386,20 @@ def test_a_stop_before_the_process_exists_cuts_a_slow_start(tmp_path):
             list(session.say("x", halt))
         assert time.monotonic() - started < 5
     assert not session.alive
+
+
+def test_a_late_stop_for_another_turn_leaves_this_one_running(tree):
+    """Round 3: a stop that read its turn as running, then ran after the next
+    turn had started on the same session, killed that next turn's process."""
+
+    session = ChatSession(tree, write=True)
+    ended = threading.Event()   # the earlier turn's stop
+    ended.set()
+
+    def answer(event):
+        session.stop(ended)
+        time.sleep(0.3)         # a kill would have landed by now
+        session.answer(event.meta["id"], True)
+
+    _, events = run(session, CLAUDE, tree, answer, threading.Event())
+    assert events[-1].kind == "done" and events[-1].text == "allow,deny"

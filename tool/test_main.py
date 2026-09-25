@@ -457,7 +457,7 @@ class Slow(Agent):
             return
         yield Event("done", "했다", {"session_id": "cli-1", "error": False}, self.id)
 
-    def stop(self):
+    def stop(self, halt):
         self.stopped, self.alive = True, False
         self.go.set()
 
@@ -1139,7 +1139,7 @@ class Starting(Agent):
         raise RuntimeError("Codex 가 닫혔다: thread/resume")
         yield
 
-    def stop(self):
+    def stop(self, halt):
         pass   # no process yet to kill
 
 

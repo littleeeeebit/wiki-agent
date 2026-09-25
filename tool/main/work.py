@@ -444,7 +444,7 @@ def stop(body: Stop) -> dict:
         raise HTTPException(409, "지금 도는 턴이 아니다")
     if not run.done:
         run.halt.set()   # first: a process not started yet is stopped by this
-        run.chat.stop()
+        run.chat.stop(run.halt)   # only this turn's process, not the next one's
     return {"ok": True}
 
 

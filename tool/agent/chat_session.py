@@ -162,6 +162,9 @@ class ChatSession:
         # The running turn's stop, for `_spawn`: a stop that came before the
         # process existed kills it the moment it does.
         self._halt: threading.Event | None = None
+        # Guards `_halt` against `stop`: a stop checks whose turn runs and
+        # kills in one step, so it never lands on the turn after its own.
+        self._halting = threading.Lock()
         # "Allow for this session": kept here, never handed to the CLI. A rule
         # the CLI held would answer before `_approval` ever saw the path, and
         # Claude's `Edit` rule does not look at paths at all. Tied to this
@@ -460,21 +463,25 @@ class ChatSession:
         self.effort = effort or None
         self.close()
 
-    def stop(self) -> None:
-        """End the running turn now, from another thread. Its `_drain` reads
-        the process closing and ends the turn with an error. The CLI's session
-        id stays, so the next turn resumes it. Before the process exists there
-        is nothing to kill: the turn's `halt`, set by the caller first, covers
-        that.
+    def stop(self, halt: threading.Event) -> None:
+        """End the turn whose stop is `halt`, from another thread. Its `_drain`
+        reads the process closing and ends the turn with an error. The CLI's
+        session id stays, so the next turn resumes it. Before the process
+        exists there is nothing to kill: `halt`, set by the caller first,
+        covers that.
+
+        Only that turn's process. A late stop for a turn that has ended found
+        the next turn's process in `_proc` and killed a valid instruction.
 
         ponytail: kills the process rather than Claude's `interrupt` or Codex's
         `turn/interrupt` — the same on both hosts, and resuming loses nothing.
         The next turn pays the start-up; switch if stops become frequent.
         """
 
-        proc = self._proc
-        if proc is not None and proc.poll() is None:
-            proc.kill()
+        with self._halting:
+            proc = self._proc if self._halt is halt else None
+            if proc is not None and proc.poll() is None:
+                proc.kill()
 
     def close(self) -> None:
         proc, self._proc = self._proc, None
@@ -513,7 +520,8 @@ class ChatSession:
             yield Event("error", "앞 턴이 아직 안 끝났다.")
             return
         completed = False
-        self._halt = halt
+        with self._halting:
+            self._halt = halt
         try:
             self.ensure()
             if halt is not None and halt.is_set():
@@ -554,7 +562,8 @@ class ChatSession:
             # `codex exec` is one process per turn; the others live on.
             if (self.is_codex and not self.app) or not completed:
                 self.close()
-            self._halt = None
+            with self._halting:
+                self._halt = None
             self._turn.release()
 
     def _drain(self):
