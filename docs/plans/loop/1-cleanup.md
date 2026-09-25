@@ -1,6 +1,6 @@
 # 1단계 — 어긋남 정리
 
-전체 설계와 단계의 관계는 [개요](loop-0-overview.md)에 있다.
+전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다.
 
 목표. 계획 문서, 주석, 코드가 서로 다른 말을 하는 곳을 없앤다. 뒤 단계가 새 계획 문서를 쓰면
 SessionStart 가 그 남은 행을 에이전트에게 보여 준다. 그 판정이 틀려 있으면 다음 작업 초점(3단계)이
@@ -15,7 +15,8 @@ SessionStart 가 그 남은 행을 에이전트에게 보여 준다. 그 판정�
 
 `session_state.open_steps` 는 상태 칸이 정확히 `완료`·`취소` 일 때만 끝난 행으로 친다
 (`tool/session_state.py:98`). `완료 — 양 호스트 실측` 처럼 뒤에 한 줄을 붙인 행은 남은 일로 센다.
-지금 english-first-2 의 3행, english-first-3 의 8행이 그렇게 SessionStart 에 뜬다.
+2026-09-25 에 english-first-2 의 3행, english-first-3 의 8행이 그렇게 SessionStart 에 떴다. 그 시리즈는
+이제 `done/` 아래라 읽히지 않지만, 같은 모양의 상태 칸은 앞으로의 계획에도 쓰인다.
 
 고침. 상태 칸의 첫 낱말로 판정한다. `완료`·`취소` 로 시작하면 끝난 행이다. `미완료` 는 끝나지
 않았다 — 앞글자 비교가 아니라 낱말 비교여야 하는 이유다.
@@ -27,9 +28,8 @@ SessionStart 가 그 남은 행을 에이전트에게 보여 준다. 그 판정�
 
 | 어디 | 어긋남 | 고침 |
 | --- | --- | --- |
-| `english-first-0-overview.md:48-49` | 2·3단계가 `미착수`. 하위 문서는 모든 행이 `완료` | `완료` 로 |
-| `docs/verification.md` | 공개 사본의 기록 그대로다. "다섯 채널", Slack 실행기가 나온다. wiki-agent 2–7단계의 검증은 없다 | 제목과 첫 절에 이 파일이 공개 사본 시절의 기록임을 적고, 지금의 검증은 `wiki-agent-7-verify.md` 를 가리킨다. 옛 기록은 지우지 않는다 |
-| `wiki-agent-0-overview.md` 의 "넣지 않은 것" | 리뷰 셀이 "나중" 으로 남아 있다 | `loop` 4단계를 가리킨다 |
+| `docs/verification.md` | 공개 사본의 기록 그대로다. "다섯 채널", Slack 실행기가 나온다. wiki-agent 2–7단계의 검증은 없다 | 제목과 첫 절에 이 파일이 공개 사본 시절의 기록임을 적고, 지금의 검증은 `docs/plans/done/wiki-agent/7-verify.md` 를 가리킨다. 옛 기록은 지우지 않는다 |
+| `docs/plans/done/wiki-agent/0-overview.md` 의 "넣지 않은 것" | 리뷰 셀이 "나중" 으로 남아 있다 | `loop` 4단계를 가리킨다 |
 
 ### 낡은 주석과 쓰지 않는 이름
 
@@ -67,7 +67,7 @@ Slack, 미러, `chat.handoff` 는 6단계에서 지웠는데 주석이 아직 �
 ## 확인
 
 - `pytest tool/`, `python tool/lint.py --check`, `ruff check tool/`, `npm run build`
-- `session_state.plans()` 가 english-first 문서의 행을 하나도 내지 않고, `loop-0-overview.md` 의
+- `session_state.plans()` 가 `done/` 의 문서를 읽지 않고, `loop/0-overview.md` 의
   2–7행을 낸다
 
 ## 단계
@@ -75,7 +75,7 @@ Slack, 미러, `chat.handoff` 는 6단계에서 지웠는데 주석이 아직 �
 | # | 단계 | 무엇 | 상태 |
 | --- | --- | --- | --- |
 | 1 | 판정 | `open_steps` 첫 낱말 판정과 테스트 | 미착수 |
-| 2 | 문서 | english-first 개요, `verification.md`, wiki-agent 개요의 "넣지 않은 것" | 미착수 |
+| 2 | 문서 | `verification.md`, wiki-agent 개요의 "넣지 않은 것" | 미착수 |
 | 3 | 주석과 이름 | 낡은 주석, `claude_session`·`codex_session`·`FINDERS` 정리 | 미착수 |
 | 4 | 작은 미룬 것 | 용어집, 프로젝트 표시 없는 요청, 번역 출력 상한, haiku 언어 원인 | 미착수 |
 | 5 | 게이트 | 위 확인 전부 초록 | 미착수 |

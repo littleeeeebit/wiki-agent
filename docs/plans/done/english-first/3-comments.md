@@ -1,6 +1,6 @@
 # 3단계 — 코드 주석과 웹 UI
 
-전체 설계와 세 단계의 관계는 [개요](english-first-0-overview.md)에 있다.
+전체 설계와 세 단계의 관계는 [개요](0-overview.md)에 있다.
 
 목표. `tool/*.py` 의 주석·docstring 이 영어가 되고, 웹 채팅에도 한국어 오버레이가 선다.
 

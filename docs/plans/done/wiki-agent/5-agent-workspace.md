@@ -1,6 +1,6 @@
 # 5단계 — `agent`·`workspace`
 
-전체 설계와 단계의 관계는 [개요](wiki-agent-0-overview.md)에 있다.
+전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다.
 
 목표. 에이전트가 쓰기를 할 수 있게 되고, 그 쓰기는 `workspace` 가 만든 작업트리 안에서
 사람이 하나씩 승인한 것만 일어난다. 두 파이프라인이 `__all__` 을 갖고, `translate`·`wiki`

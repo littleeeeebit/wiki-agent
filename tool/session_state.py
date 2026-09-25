@@ -101,11 +101,16 @@ def open_steps(path: Path) -> list[str]:
 
 
 def plans(repo: Path) -> list[tuple[Path, list[str]]]:
+    """Plans with steps left. A series may sit in its own folder, and a
+    finished series is moved under `done/`, which is not read at all — its
+    tables are history, not work."""
+
     directory = repo / "docs" / "plans"
     if not directory.is_dir():
         return []
     found = []
-    for path in sorted(directory.glob("*.md"), reverse=True):
+    live = [p for p in directory.rglob("*.md") if "done" not in p.relative_to(directory).parts[:-1]]
+    for path in sorted(live, key=lambda p: p.relative_to(directory).as_posix(), reverse=True):
         steps = open_steps(path)
         if steps:
             found.append((path, steps))

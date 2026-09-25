@@ -2,7 +2,7 @@
 
 This private copy is becoming a coding agent program with asking the wiki as
 its main feature. The plan is
-[`docs/plans/wiki-agent-0-overview.md`](docs/plans/wiki-agent-0-overview.md).
+[`docs/plans/done/wiki-agent/0-overview.md`](docs/plans/done/wiki-agent/0-overview.md).
 
 A wiki that stops a coding agent making the same mistake again as it moves
 between projects, and the adapters that attach it to a project.
@@ -242,7 +242,7 @@ install time with `--workspace`.
 Start it with `tool/app.cmd` (`tool/app.command` on macOS and Linux). The
 first start builds the Tauri window, which needs Rust. The window starts the
 Python server (`python tool/main`) itself and takes it down when it closes.
-The plan behind it is [phase 6](docs/plans/wiki-agent-6-main.md).
+The plan behind it is [phase 6](docs/plans/done/wiki-agent/6-main.md).
 
 One window, four areas: the project and its worktrees on the left, the wiki
 query in the middle, the selected worktree's agent and a shell in it on the
