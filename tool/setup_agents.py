@@ -11,6 +11,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 
@@ -312,7 +313,7 @@ def skill_links(home=None):
     folder = Path(home or _HOME or Path.home()) / ".claude/skills"
     found = []
     for link in sorted(folder.iterdir()) if folder.is_dir() else []:
-        if not (link.is_symlink() or link.is_junction()):
+        if not (link.is_symlink() or is_junction(link)):
             continue
         target = Path(os.readlink(link).removeprefix("\\\\?\\"))
         hub = target.parent.parent
@@ -325,10 +326,19 @@ def skill_links(home=None):
     return found
 
 
+def is_junction(path):
+    """`Path.is_junction` arrives only in 3.12; the reparse tag reads the same
+    from 3.8 on, and is absent off Windows."""
+    try:
+        return getattr(os.lstat(path), "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
+    except OSError:
+        return False
+
+
 def relink(link, target):
     """Point `link` at `target`, as the same kind of link it was: a junction
     stays a junction — it needs no developer mode — and a symlink a symlink."""
-    junction = link.is_junction()
+    junction = is_junction(link)
     # On Windows both kinds of directory link go with `rmdir`, which removes
     # the link and never what it points at.
     (os.rmdir if os.name == "nt" else os.unlink)(link)

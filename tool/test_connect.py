@@ -12,11 +12,13 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 import apply
 import setup_agents
@@ -207,10 +209,12 @@ def test_the_hook_writes_nothing_without_the_variable_and_passes_when_it_cannot_
 
 
 @pytest.fixture
-def home(tmp_path):
+def home(tmp_path, monkeypatch):
     """The user level, empty, and an old hub whose skill links point into it.
-    The CLIs' version checks and Codex's `app-server` are stood in for."""
+    The CLIs' version checks and Codex's `app-server` are stood in for, and
+    `Path.is_junction` is taken away: 3.11, which the README supports, has none."""
 
+    monkeypatch.delattr(Path, "is_junction", raising=False)
     home = Path(apply._HOME)
     for kept in (home / ".claude", home / ".codex"):
         if kept.exists():
@@ -271,6 +275,7 @@ def test_the_hub_move_lists_every_line_before_writing_and_writes_nothing_unconfi
     assert apply.user_wired("claude")
     assert Path(os.readlink(home / ".claude/skills/after-merge").removeprefix("\\\\?\\")) == \
         chat_channels.WIKI / "skills/after-merge"
+    assert os.name != "nt" or setup_agents.is_junction(home / ".claude/skills/after-merge"), "정션은 정션으로 남는다"
     assert Path(os.readlink(home / ".claude/skills/gone-here").removeprefix("\\\\?\\")) == old / "skills/gone-here"
     assert trusted == [True], "Codex 신뢰는 확인한 창에서만 쓴다"
     assert (repo / ".wiki/adapter.toml").is_file()
@@ -361,6 +366,44 @@ def test_every_turn_runs_under_the_limit_and_an_existing_page_is_skipped(surveye
     assert any("src/a/" in t and "src/b/" in t for t in labels)
     assert len(Spender.heard) == 5   # modules, rules, decisions, slots, the report
     assert survey.rates()["factor"] > 0 and survey.RATES.is_file(), "끝까지 간 조사가 계수를 맞춘다"
+
+
+def test_a_turn_waiting_on_a_person_stops_at_the_deadline(tmp_path):
+    refused = HTTPException(409, "a person's turn")
+    got = []
+    with patch.object(chat, "hold", side_effect=refused):
+        waiting = threading.Thread(target=lambda: got.append(survey.turn(tmp_path, {}, "x", time.time() + 0.3)),
+                                   daemon=True)
+        waiting.start()
+        waiting.join(5)
+    assert got == [("cut", 0, "시간 한도")], "사람의 턴을 기다리다 한도를 넘기지 않는다"
+
+
+class Cutter(Spender):
+    """The first turn commits a page, then works on until it is stopped."""
+
+    def say(self, text, halt=None):
+        Spender.heard.append(text)
+        if len(Spender.heard) == 1:
+            (self.path / ".wiki/late.md").write_text("# 늦음\n", encoding="utf-8")
+            git(self.path, "add", "-f", ".wiki/late.md")
+            git(self.path, "commit", "-qm", "late")
+            while not halt.is_set():
+                time.sleep(0.05)
+        yield Event("done", "알겠다", {"session_id": "cli", "error": False, "tokens": {"in": 1}}, self.id)
+
+
+def test_a_turn_cut_by_the_time_limit_leaves_nothing_it_committed(surveyed):
+    # Two seconds: the settings screen keeps whole minutes, so the saved file cannot say it.
+    limits = {**survey.DEFAULTS, "survey": True, "survey_tokens": 10_000_000, "survey_minutes": 2 / 60}
+    with patch.object(work, "ChatSession", Cutter), patch.object(survey, "settings", return_value=limits):
+        survey.start(surveyed)
+        now = ended("proj")
+    assert now["why"] == "시간 한도", now
+    path = Path(specs.load("proj", "wiki-bootstrap")["worktree"])
+    assert git(path, "log", "--format=%s", "-1") == "wiki: adapter", "끊긴 턴의 커밋은 HEAD 에 남지 않는다"
+    assert not (path / ".wiki/late.md").exists()
+    assert "late.md" in git(path, "stash", "show", "--include-untracked", "--name-only", "stash@{0}"), "stash 에 남는다"
 
 
 def test_a_turn_that_touches_an_existing_file_or_code_is_put_back(tmp_path):

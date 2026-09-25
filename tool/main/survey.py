@@ -264,7 +264,10 @@ def turn(path: Path, spec: dict, text: str, deadline: float | None) -> tuple[str
             release = query.hold(work._busy, query._lock, str(path), "", kind="turn")
             break
         except HTTPException:
-            time.sleep(1)    # a person's turn there ends first
+            # A person's turn there ends first — unless the limit ends before it.
+            if deadline is not None and time.time() >= deadline:
+                return "cut", 0, "시간 한도"
+            time.sleep(1)
     chosen = spec.get("cell") or {}
     try:
         run = work.begin(path, work.session(path, chosen.get("model", ""), chosen.get("effort", "")), text, release)
@@ -336,12 +339,15 @@ def drive(repo: Path, sid: str, first: str, raw: float, limits: dict) -> None:
                 break
             progress(name, turn=i, turns=len(plan) + 1, label=label, tokens=used)
             lead = LEAD.format(i=i, n=len(plan), schema=channels.WIKI / "SCHEMA.md")
+            settled = git(path, "rev-parse", "HEAD").stdout.strip()
             end, tokens, said = turn(path, spec, lead + text, deadline)
             used += tokens
             if end == "halted":
                 progress(name, state="멈춤", reason=said, tokens=used)
                 return
             if end == "cut":
+                # What the cut turn committed goes into the stash with the rest.
+                git(path, "reset", "--soft", settled)
                 git(path, "stash", "push", "-u", "-m", "wiki: 시간 한도에 끊긴 조사 턴")
                 why = said
                 break
