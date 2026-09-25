@@ -191,6 +191,17 @@ def test_synthetic_trigger_cases():
         ("오늘 날씨를 알려 주세요", "operator/codex-review-loop", False),
         ("결과 파일을 감시해 주세요", "craft/pick-up-async-results", True),
         ("화면 레이아웃을 검토해 주세요", "craft/screen-follows-the-purpose", True),
+        # Saying they are leaving for over an hour, in each way the rule
+        # names (review round 2 of the step-8 PR: the hours case was missed).
+        ("두 시간 후에 돌아올게", "operator/compact-before-idle", True),
+        ("3시간 뒤에 복귀한다", "operator/compact-before-idle", True),
+        ("점심 먹고 올게", "operator/compact-before-idle", True),
+        ("내일 이어서 하자", "operator/compact-before-idle", True),
+        ("잠깐 자리 비울게", "operator/compact-before-idle", True),
+        ("오늘은 퇴근한다", "operator/compact-before-idle", True),
+        ("이 테스트는 두 시간 걸린다", "operator/compact-before-idle", False),
+        ("diskpart 로 compact vdisk 를 돌려라", "operator/compact-before-idle", False),
+        ("<task-notification> 두 시간 후에 돌아올게", "operator/compact-before-idle", False),
     ]
     for text, page, expected in cases:
         names = trigger_audit.measure(text, available)["names"]
