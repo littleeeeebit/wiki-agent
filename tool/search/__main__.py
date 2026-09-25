@@ -1,11 +1,12 @@
 """`python tool/search "<query>" --project <repo> [--k 8]` — sections that
-match, with the `path:line` each starts at.
+match, with the `path:line` each starts at, and the pages linked to each.
 
 Relative paths inside the repository; a hub page outside it keeps its absolute
 path, so `Read` can open what is printed.
 """
 
 import argparse
+import json
 import os
 import sys
 import time
@@ -13,7 +14,53 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from search import ask  # noqa: E402
+from search import HUB, ask  # noqa: E402
+
+
+def node_of(path: Path, project: Path | None) -> str:
+    """A hit's id in the graphs: `scope/name` for a hub rule, the repository
+    path otherwise — what `graph.json` and `.wiki/graph.json` call it."""
+
+    hub = HUB.resolve()
+    if path.parent.parent.resolve() == hub and path.parent.name in ("operator", "craft"):
+        return f"{path.parent.name}/{path.stem}"
+    for root in (project, hub):
+        try:
+            return path.relative_to(root).as_posix() if root else path.as_posix()
+        except ValueError:
+            continue
+    return path.as_posix()
+
+
+def graph(project: Path | None) -> tuple[dict[str, set[str]], dict[str, str]]:
+    """`(neighbours, gist)` from the hub's `graph.json` and the repository's
+    `.wiki/graph.json` — generated files, so either may be missing.
+
+    The gist is a title and a first paragraph: the hub node's headline and
+    rule line, the repository document's title and lead from `corpus.json`.
+    """
+
+    near: dict[str, set[str]] = {}
+    gist: dict[str, str] = {}
+
+    def load(path: Path) -> dict:
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return {}
+
+    hub = load(HUB / "graph.json")
+    for node in hub.get("nodes") or []:
+        gist[node["id"]] = f"{node.get('headline', '')} — {node.get('rule', '')}".strip(" —")
+    edges = list(hub.get("links") or [])
+    if project:
+        edges += load(project / ".wiki/graph.json").get("edges") or []
+        for doc in load(project / ".wiki/corpus.json").get("docs") or []:
+            gist[doc["path"]] = f"{doc.get('title', '')} — {doc.get('lead', '')}".strip(" —")
+    for edge in edges:
+        near.setdefault(edge["a"], set()).add(edge["b"])
+        near.setdefault(edge["b"], set()).add(edge["a"])
+    return near, gist
 
 
 def local(query: str, project: str | None, k: int) -> list[dict]:
@@ -21,7 +68,6 @@ def local(query: str, project: str | None, k: int) -> list[dict]:
     that forbids the connection, say. No vectors: loading the model here
     would cost more than the question."""
 
-    from search import HUB
     from search.daemon import Embedder, Index
 
     index = Index(HUB, Path(project) if project else None, Embedder(None))
@@ -53,6 +99,8 @@ def main() -> int:
         results = local(args.query, project, args.k)
 
     root = Path(project) if project else None
+    near, gist = graph(root)
+    shown = {node_of(Path(hit["path"]), root) for hit in results}
     for hit in results:
         path = Path(hit["path"])
         try:
@@ -60,6 +108,14 @@ def main() -> int:
         except ValueError:
             where = path.as_posix()
         print(f"## {where}:{hit['line']} — {hit['heading']}\n\n{hit['text'].strip()}\n")
+        # Each neighbour once, under the first hit it touches.
+        linked = sorted(near.get(node_of(path, root), set()) - shown)
+        shown |= set(linked)
+        if linked:
+            print("Linked from or to this page:")
+            for other in linked:
+                print(f"- `{other}` — {gist.get(other, '')}".rstrip(" —"))
+            print()
     return 0
 
 

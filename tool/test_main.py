@@ -257,6 +257,22 @@ def test_project_shared_sessions_and_records_isolated(tmp_path):
         assert web.get("/api/log/retro").json()[0]["text"] == "a 회고"
 
 
+def test_a_focus_is_told_how_to_search_its_own_repository(tmp_path):
+    repos = {name: tmp_path / name for name in ("a", "b c")}
+    for repo in repos.values():
+        (repo / ".git").mkdir(parents=True)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get):
+        web.post("/api/config/next", json={"repo": "a"}).raise_for_status()
+        system = chat.session("retro").system
+        assert system.startswith(chat_channels.ANSWER_PROMPT.strip())
+        assert "the search command first" in system
+        search = (chat_channels.WIKI / "tool/search").as_posix()
+        assert f"{search} --project {repos['a'].resolve().as_posix()} \"<query>\"" in system, system
+        web.post("/api/config/next", json={"repo": "b c"}).raise_for_status()
+        assert f'--project "{repos["b c"].resolve().as_posix()}"' in chat.session("retro").system
+
+
 def test_legacy_records_remain_visible(tmp_path):
     (tmp_path / "retro.jsonl").write_text(
         json.dumps({"role": "assistant", "text": "소속 모름"}) + "\n", encoding="utf-8")

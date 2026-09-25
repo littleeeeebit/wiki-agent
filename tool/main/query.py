@@ -12,6 +12,7 @@ from contextvars import ContextVar
 from urllib.parse import quote
 import json
 import re
+import sys
 import threading
 import time
 import weakref
@@ -120,6 +121,37 @@ def config(cid: str, name: str | None = None) -> dict:
     return _config[key]
 
 
+# How a focus finds evidence before it reads, on both hosts.
+#
+# No first pass on a cheaper model. In the public copy a Haiku `scout`
+# subagent was built and measured on 2026-09-25 over ten real questions: where
+# it was called, input tokens rose 2.4x — it loads its own context, and the
+# main model re-reads what it cites anyway. Searching itself, the main model's
+# median input fell 20% and correct citations rose from 29.5 to 39.5.
+SEARCH_NOTE = """## Search command
+{command} "<query>" [--k 8]
+It returns matching sections with `path:line` and the pages linked to each.
+The hub's pages are English and many repository documents are Korean, so
+search with terms in both languages."""
+
+
+def search_note(repo: Path) -> str:
+    """The note with this server's Python and this repository in the command.
+
+    Forward slashes: Claude's `Bash` is Git Bash on Windows. Quoted only where
+    a path has a space — a quoted first word is a string, not a command, in
+    Codex's PowerShell.
+    """
+
+    def arg(path: Path) -> str:
+        text = path.as_posix()
+        return f'"{text}"' if " " in text else text
+
+    command = (f"{arg(Path(sys.executable))} {arg(channels.WIKI / 'tool/search')} "
+               f"--project {arg(repo.resolve())}")
+    return SEARCH_NOTE.format(command=command)
+
+
 def session(cid: str) -> ChatSession:
     """A focus's live conversation, started if there is none.
 
@@ -138,8 +170,9 @@ def session(cid: str) -> ChatSession:
         chat = _sessions.get(key)
         if chat is None:
             cfg = config(cid)
-            chat = ChatSession(current_repo(), system=channels.ANSWER_PROMPT + "\n\n" + channels.get(cid).preamble,
-                               model=cfg["model"], effort=cfg["effort"])
+            repo = current_repo()
+            system = "\n\n".join((channels.ANSWER_PROMPT, channels.get(cid).preamble, search_note(repo)))
+            chat = ChatSession(repo, system=system, model=cfg["model"], effort=cfg["effort"])
             # Restarting the server is not clearing the conversation either.
             # Only the same CLI, after an explicit reset, is resumed.
             chat.session_id = resumable(recall(cid, include_context=True), chat.is_codex)

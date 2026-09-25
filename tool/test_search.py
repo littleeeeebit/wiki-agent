@@ -382,3 +382,34 @@ def test_the_command_line_answers_with_path_and_line_when_switched_off(tmp_path)
     assert out.returncode == 0, out.stderr
     assert "## docs/deploy.md:3 — 배포 > 순서" in out.stdout, out.stdout
     assert f"## {(root / 'operator' / 'merge.md').as_posix()}:" in out.stdout, out.stdout
+
+
+def test_each_hit_carries_its_neighbours_once(tmp_path):
+    """One hop through the hub's `graph.json` and the repository's
+    `.wiki/graph.json`, with the gist from the node or `corpus.json`. A page
+    already shown, or listed under an earlier hit, is not listed again."""
+
+    root = wiki(tmp_path / "hub")
+    (root / "graph.json").write_text(json.dumps({
+        "nodes": [{"id": "craft/fonts", "headline": "Type scale", "rule": "Keep it small."},
+                  {"id": "craft/colour", "headline": "Colour", "rule": "Two accents."}],
+        "links": [{"a": "operator/merge", "b": "craft/colour"},
+                  {"a": "operator/merge", "b": "craft/fonts"},
+                  {"a": "craft/fonts", "b": "craft/colour"}]}), encoding="utf-8")
+    project = tmp_path / "repo"
+    (project / ".wiki").mkdir(parents=True)
+    (project / "docs").mkdir()
+    (project / "docs" / "deploy.md").write_text("# 배포\n\n## 순서\n\n태그를 먼저 민다.\n", encoding="utf-8")
+    (project / ".wiki" / "graph.json").write_text(json.dumps(
+        {"edges": [{"a": "docs/deploy.md", "b": "docs/release.md"}]}), encoding="utf-8")
+    (project / ".wiki" / "corpus.json").write_text(json.dumps(
+        {"docs": [{"path": "docs/release.md", "title": "릴리스", "lead": "태그가 먼저다."}]}), encoding="utf-8")
+    out = subprocess.run(
+        [sys.executable, str(HERE / "search"), "배포 순서 merged branch", "--project", str(project), "--k", "2"],
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
+        env=dict(os.environ, WIKI_ROOT=str(root), WIKI_SEARCH="off"))
+    assert out.returncode == 0, out.stderr
+    assert "- `docs/release.md` — 릴리스 — 태그가 먼저다." in out.stdout, out.stdout
+    assert "- `craft/colour` — Colour — Two accents." in out.stdout, out.stdout
+    assert "- `craft/fonts` — Type scale — Keep it small." in out.stdout, out.stdout
+    assert out.stdout.count("`craft/colour`") == 1, out.stdout
