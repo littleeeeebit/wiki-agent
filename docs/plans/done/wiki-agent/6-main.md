@@ -150,7 +150,7 @@ Rust 는 세 가지만 한다.
 
 ## 화면 순서
 
-`design-pass` 다섯 단계. 값은 [`DESIGN.md`](../../DESIGN.md) 에 있다.
+`design-pass` 다섯 단계. 값은 [`DESIGN.md`](../../../../DESIGN.md) 에 있다.
 
 | # | 한 것 |
 | --- | --- |
