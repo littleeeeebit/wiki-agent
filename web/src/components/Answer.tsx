@@ -6,6 +6,14 @@ import { Candidates } from '@/components/Candidates'
 // git commit identifier.
 const FILE = /^([\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl))(?::(\d+)(?:[-–]\d+)?)?$/
 const SHA = /^[0-9a-f]{7,40}$/
+// The same citation written bare. The prompt asks for inline code, but haiku
+// also writes `craft/x.md:16` without the backticks — a line number is what
+// tells it from a file merely named. `query.CITE` counts it for the draft.
+const BARE = /(?<![\w./`-])[\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl):\d+(?:[-–]\d+)?/g
+
+/** Backticks round bare citations, outside code — odd parts are code. */
+const cited = (text: string) =>
+  text.split(/(```[\s\S]*?```|`[^`\n]*`)/).map((part, i) => (i % 2 ? part : part.replace(BARE, '`$&`'))).join('')
 
 export type AnswerProps = {
   text: string
@@ -82,7 +90,7 @@ export function Answer({ text, korean, remote, onPeek, onDecide }: AnswerProps) 
           },
         }}
       >
-        {text}
+        {cited(text)}
       </Markdown>
     </div>
   )

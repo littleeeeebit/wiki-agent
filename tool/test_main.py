@@ -436,9 +436,11 @@ def test_a_draft_carries_the_grounds_and_leaves_the_task_to_a_person(tmp_path):
          patch.object(chat, "active_page", return_value=("", [])), \
          patch.object(chat, "decisions", return_value=[("결정", "이유")]):
         text = web.post("/api/draft", json={
-            "question": "왜 막히나?", "answer": "`tool/lint.py:12` 와 `docs/a.md:3–5` 를 보라. `tool/lint.py:12`",
+            "question": "왜 막히나?", "answer": "`tool/lint.py:12` 와 `docs/a.md:3–5` 를 보라. `tool/lint.py:12`\n"
+                      "craft/g.md:16 — 백틱 없이 온 인용. `tool/x.py` 는 줄이 없다",
             "hits": ["hooks-fail-open"]}).json()["text"]
         assert text.count("- `tool/lint.py:12`") == 1 and "- `docs/a.md:3–5`" in text
+        assert "- `craft/g.md:16`" in text
         assert "- hooks-fail-open" in text and "- 결정 — 이유" in text
         assert text.rstrip().endswith("(사람이 한 줄 적는다)")
         retro = web.post("/api/draft", json={"question": "교정 3회 · 규칙 · 새 후보", "target": "wiki"}).json()["text"]
