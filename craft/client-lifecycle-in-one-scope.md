@@ -18,7 +18,9 @@ round. Creation: who makes it, in which context — inside the running loop or
 outside it. Sharing: what key hands it out, and does that key carry the owner.
 Closing: who closes it, where, under what name, and how a failure to close is
 noticed. Ownership: whose resource it is, and who collects what is left when
-the owner dies. "It is not shared" is a fine answer.
+the owner dies. "It is not shared" is a fine answer. Hang the checks on an
+object that actually holds the resource, in the same context production
+creates it.
 
 | Question | What has to be decided |
 | --- | --- |

@@ -19,7 +19,9 @@ hooks; the entry-point guard is for hooks alone — a CLI lets the traceback
 out. The guard writes the exception's type name to stderr and nothing else,
 and returns 0. Reading a child's output takes
 `encoding="utf-8", errors="replace"`. After updating the hub, run
-`apply --check` for both agents in that repository.
+`apply --check` for both agents in that repository — and a green wiring check
+is not evidence the host ran the event, so a direct invocation and a real
+event are confirmed and recorded as different things.
 
 **Pinning the encoding is not a hook rule — it covers all of `tool/*.py`.**
 What kills the process is not being a hook; it is being Python with a pipe on

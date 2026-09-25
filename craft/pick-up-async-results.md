@@ -13,7 +13,10 @@ links: [codex-review-loop, declared-continuation, verify-narrow-then-wide, repor
 
 Rule. When sending something that will answer back, arm the watch before
 sending, and do not end the turn between the send and the watch. The watch
-looks at a directory, not at one path.
+looks at a directory, not at one path. Do not invent an end condition — a
+background task is finished when its completion notice says so, not after a
+number of turns or when the output stops. Match the interval to what is being
+waited on: a second for a local file, thirty for a remote API.
 
 What goes wrong. The other side answered and nobody read it. The user has to
 find that and say so — which is the whole value of the automation, gone.

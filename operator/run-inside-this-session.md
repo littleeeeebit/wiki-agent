@@ -19,7 +19,8 @@ detached window, not through a `.cmd` called from Git Bash; in the
 background, as this cell's own background task. What the user has to run,
 they type in this cell with the `!` prefix. Tell servers apart by port and
 command line, never by process name, and never run `wsl --shutdown` to free a
-port.
+port — start on a different port, and check not that `/health` returned 200
+but that the response came from this project.
 
 What goes wrong. **A failure does not look like one.** All three cases below
 have that shape. The exit code, the log and the screen all look normal.

@@ -18,7 +18,8 @@ decides that a late result is still this screen's — ask "is this my
 generation" of every arriving result and drop it without touching state,
 since `alive` is true during retirement too; and that "may this be written"
 and "may this be stored" are different questions. Ignore a late result rather
-than locking. (What the screen should show in the first place, and the order
+than locking. A failed re-query does not answer success, and rebuilding or
+opening a different target clears the input state. (What the screen should show in the first place, and the order
 it gets polished in, is held by [[screen-follows-the-purpose]]. This page is
 the step after: the premise of the wiring.)
 

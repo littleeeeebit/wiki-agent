@@ -20,7 +20,8 @@ that line, against `DESIGN.md`; padding, width, alignment and working buttons,
 answered with measurements in a browser; typographic hierarchy; colour, handed
 to the user as options; and last the whitespace left, filled only where there
 is a value to put. The order does not change, and the fourth step goes to the
-user.
+user. Motion is not among these steps: building or fixing movement skips this
+process and goes straight to emil's skills; a still screen goes to jakub's.
 
 | # | What is examined | With | Passes when |
 | --- | --- | --- | --- |
