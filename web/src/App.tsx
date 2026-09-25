@@ -5,7 +5,7 @@ import type { Choice } from '@/components/Toolbar'
 import { Peek } from '@/components/Peek'
 import { Query } from '@/components/Query'
 import { Rail } from '@/components/Rail'
-import { Terminal } from '@/components/Terminal'
+import { Terminal, closed } from '@/components/Terminal'
 import { WikiMap } from '@/components/WikiMap'
 import * as api from '@/lib/api'
 import type { Channel, Options, Peek as PeekData, Switch, Worktree } from '@/lib/api'
@@ -212,9 +212,12 @@ export default function App() {
         }}
         onRemove={async (path) => {
           // Its terminal's shell stands in that folder, and Windows will not
-          // delete a directory a process stands in. Rendered now, not later,
-          // so the terminal's close goes out before the removal does.
-          if (path === selected) flushSync(() => setSelected(''))
+          // delete a directory a process stands in. Rendered now so the
+          // terminal starts closing, then waited on until the shell is gone.
+          if (path === selected) {
+            flushSync(() => setSelected(''))
+            await closed()
+          }
           await api.removeWorktree(path)
           // The same task name makes the same path again; its turns must not
           // come back with it.

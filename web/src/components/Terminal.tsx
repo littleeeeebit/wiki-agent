@@ -8,6 +8,11 @@ import '@xterm/xterm/css/xterm.css'
 /** The Tauri shell holds the terminals; a browser tab has none to offer. */
 const shell = '__TAURI_INTERNALS__' in window
 
+/** Settles once the last terminal closed has exited. Removing a worktree waits
+ *  on it: Windows will not delete a folder a shell still stands in. */
+let closing: Promise<unknown> = Promise.resolve()
+export const closed = () => closing
+
 function colors() {
   const css = getComputedStyle(document.documentElement)
   const v = (name: string) => css.getPropertyValue(name).trim()
@@ -50,12 +55,12 @@ export function Terminal({ cwd, theme }: { cwd: string; theme: string }) {
       }),
     ]).then((unlisten) => stops.push(...unlisten))
 
-    ready
-      .then(() => invoke<number>('pty_open', { cwd, cols: term.cols, rows: term.rows }))
-      .then((opened) => {
-        if (!alive) return void invoke('pty_close', { id: opened })
-        id = opened
-        for (const chunk of early.get(opened) ?? []) term.write(chunk)
+    const opened = ready.then(() => invoke<number>('pty_open', { cwd, cols: term.cols, rows: term.rows }))
+    opened
+      .then((got) => {
+        if (!alive) return
+        id = got
+        for (const chunk of early.get(got) ?? []) term.write(chunk)
         early.clear()
       })
       .catch((err) => alive && setFault(String(err)))
@@ -72,7 +77,8 @@ export function Terminal({ cwd, theme }: { cwd: string; theme: string }) {
       resized.disconnect()
       typed.dispose()
       stops.forEach((stop) => stop())
-      if (id) void invoke('pty_close', { id })
+      // Through `opened`, not `id`: a shell still opening closes too.
+      closing = opened.then((got) => invoke('pty_close', { id: got })).catch(() => undefined)
       term.dispose()
     }
   }, [cwd, theme])
