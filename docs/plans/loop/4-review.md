@@ -23,6 +23,7 @@
 | 리뷰 모델 | Codex 기본 모델, effort `high` |
 | 승인 알림 | 레일 표시와 OS 알림. 루프가 승인에서 멈출 때 한 번, 창에 포커스가 없을 때만 |
 | 남은 P2 | 머지 허용이 나온 라운드에서 리뷰 셀이 할 만한 것만 고른다. [머지] 옆에 코멘트 초안이 보이고 머지할 때 서버가 단다 |
+| 루프와 프로젝트 전환 | 루프는 자기 저장소를 들고 돈다. 전환해도 멈추지 않는다(리뷰 라운드 1) |
 
 개요와 달라지는 곳 둘. 라운드 파일은 `review_dir` 가 아니라 허브에 둔다 — 작업 셀의 `git add -A` 가 라운드
 파일을 커밋할 수 있고, 작업트리를 지우면 기록도 사라진다. 원본 체크아웃의 ff-only 는 서버가 원본에 쓰는 두
@@ -34,8 +35,12 @@
 2단계 뒤 Codex 읽기 세션은 `app-server` 에 `sandbox: read-only`, `approvalPolicy: never` 로 돈다. 쓰려는
 모든 것은 묻지 않고 거절된다(`chat_session.py` 의 `_approval`).
 
-- 설정에서 Claude 모델을 고르면 읽기 도구(`READ_TOOLS`)로 돈다. 그 경우 `Bash` 가 있으므로 프롬프트의 허용
-  목록이 유일한 울타리다. 기본이 Codex 인 이유 하나다
+- Codex 의 읽기 전용은 샌드박스가 지킨다. 명령은 돌지만 파일을 쓰지 못한다. 테스트를 돌려 볼 수 있다
+- 설정에서 Claude 모델을 고르면 도구는 `Read,Glob,Grep` 뿐이다. `READ_TOOLS` 를 쓰지 않는다 — 거기의 `Bash`
+  는 `--allowedTools` 에 들어 승인 없이 돌고(`tool/agent/chat_session.py:39`, `:163`), `python -c` 하나로
+  작업트리 안팎에 쓴다. 프롬프트는 쓰기를 막지 못한다(리뷰 라운드 1). 그래서 Claude 리뷰 셀이 `gh pr diff` 를
+  돌릴 수 없으므로, 서버가 지시 파일에 `gh pr diff <n>` 의 출력을 싣는다. 테스트는 돌리지 못하고 서버의 게이트
+  결과를 읽는다
 - 리뷰 셀의 대화는 PR 이 살아 있는 동안 이어진다. 다음 라운드는 앞 라운드를 기억하는 같은 세션에 간다
 - `raw/review/<repo>/<pr>/session.json` 에 CLI 세션 id 를 적는다. 서버를 다시 띄워도 이어진다
 
@@ -88,6 +93,34 @@
 
 명세의 `rounds` 는 `[{n, head, findings: {P0, P1, P2}, verdict, gate, disposition}]` 다.
 
+## 머리가 움직일 때
+
+라운드는 한 머리 커밋을 본다. 리뷰 셀이 읽는 동안 브랜치가 움직이면 그 라운드의 판정은 낡는다.
+
+- 명세 작업의 첫 라운드는 3단계의 PR 뒤 걸음(계획 행 커밋과 다시 push)이 끝난 뒤에 `리뷰 대기` 로 간다. PR 이
+  서는 순간이 아니다. 그 턴이 첫 라운드와 겹치면 첫 라운드가 계획 행 커밋 전의 머리를 본다(리뷰 라운드 1)
+- 그래도 사람이 GitHub 에서 push 할 수 있다. 결과를 파싱한 뒤 `gh pr view <n> --json headRefOid` 가 그 라운드의
+  `head` 와 다르면 그 라운드를 버리고 새 머리로 다시 보낸다. 버린 라운드는 상한에 세지 않고 `rounds` 에
+  `stale: true` 로 남긴다
+
+## 프로젝트와 루프
+
+서버의 프로젝트 선택은 하나다. 루프는 그 선택에 기대지 않는다(리뷰 라운드 1, 사용자의 결정).
+
+- 명세는 `repo` 에 원본 체크아웃의 경로를 들고 있다. 루프의 모든 호출(`gh`, `git`, 게이트, 세션)은 이 경로와
+  명세의 `worktree` 로 한다. `current_repo()` 와 `work.ours()` 를 부르지 않는다. 지금 `ours` 는 선택한
+  프로젝트의 목록으로 보므로(`tool/main/work.py:44`) 전환 뒤 루프의 작업트리를 거절한다
+- 루프가 시작할 때와 라운드마다 명세의 `worktree` 가 `workspace.worktrees(repo)` 에 있는지 본다. 없으면
+  `멈춤 — 작업트리 없음`
+- 한 번 서버가 확인해 세션을 만든 경로는 그 세션의 것이다. 세션이 있는 경로의 읽기(`/api/work/log`,
+  `events`), 승인의 답, [멈춤] 은 프로젝트와 상관없이 받는다. 새 지시, 비우기, 지우기는 지금처럼 선택한
+  프로젝트의 것만 받는다
+- 그래서 프로젝트 전환이 도는 작업 턴을 기다릴 까닭이 없다. 그 까닭은 "전환하면 기다리는 승인의 작업트리가
+  목록에서 사라져 답이 404" 였고(`tool/main/query.py:303`), 위의 규칙이 그 답을 받는다. `configure` 의
+  `work.busy()` 거절을 지운다. 질의 초점의 `_busy` 는 그대로다
+- 레일은 선택한 프로젝트의 행 아래 "다른 프로젝트" 묶음을 둔다. 다른 프로젝트의 도는 턴과 루프가 저장소 이름과
+  상태로 보인다. 누르면 전환하지 않고 오른쪽 면에 그 작업트리를 연다. 승인 알림도 프로젝트와 상관없이 온다
+
 ## 동시 실행
 
 루프 하나가 스레드 하나다. `threading.BoundedSemaphore(설정)` 이 자리를 준다. 자리를 기다리는 명세는
@@ -110,22 +143,42 @@ gh pr list --state open --json number,title,headRefName,headRefOid,headRepositor
 
 1. `git fetch origin <branch>`
 2. 폴더 이름은 브랜치를 `TASK` 모양으로 바꾼 것. 브랜치 이름은 그대로 둔다
-3. `git worktree add --track -b <branch> <path> origin/<branch>`
-4. 작업트리의 `HEAD` 가 `oid` 와 다르면 작업트리와 브랜치를 치우고 거절한다
+3. 로컬에 그 이름의 브랜치가 있는지 본다(`git rev-parse --verify refs/heads/<branch>`). 손으로 올린 PR 은 로컬
+   브랜치가 남은 채 작업트리만 없는 일이 흔하고, `-b` 는 거기서 실패한다(리뷰 라운드 1)
+
+   | 로컬 브랜치 | 하는 일 |
+   | --- | --- |
+   | 없다 | `git worktree add --track -b <branch> <path> origin/<branch>` |
+   | 있고 `oid` 와 같다 | `git worktree add <path> <branch>` |
+   | 있고 `oid` 와 다르다 | 거절. "로컬 `<branch>` 가 PR 머리와 다르다" 와 두 커밋을 보인다. 로컬에만 있는 커밋을 지울 수 있으므로 서버가 맞추지 않는다 |
+   | 다른 작업트리나 원본 체크아웃에 체크아웃되어 있다 | 거절. git 의 이유를 그대로 보인다 |
+
+4. 새로 만든 브랜치인데 작업트리의 `HEAD` 가 `oid` 와 다르면 작업트리와 그 브랜치를 치우고 거절한다. 있던
+   브랜치는 치우지 않는다
 
 ## [머지]
 
 `POST /api/specs/{id}/merge {head}`. `head` 는 화면이 본 머리 커밋이다.
 
-1. `gh pr merge <n> --squash --match-head-commit <head>`. 그 사이 push 가 있었으면 GitHub 이 거절한다
-2. P2 코멘트 초안이 있으면 `gh pr comment <n> --body-file`
-3. 명세를 `머지됨` 으로, 결과 행 "PR #n 머지됨 — 라운드 k, 남은 P2 j" 를 쓴다
-4. 정리. 원본 체크아웃에 `git fetch`. 원본이 base 브랜치에 있고 `git status --porcelain` 이 비었으면
+머지가 묶이는 것은 리뷰가 허용한 커밋이다. 화면의 커밋이 아니다. `--match-head-commit` 은 넘긴 커밋과 지금
+PR 머리만 비교한다. 허용 뒤 새 커밋이 push 되고 화면이 목록을 다시 읽으면, 화면의 `head` 가 검토하지 않은
+커밋이 되어 그대로 머지된다(리뷰 라운드 1).
+
+1. `approved` 는 마지막 라운드가 `머지 허용` 일 때 그 라운드의 `head` 다. 없으면 409
+2. 화면의 `head` 가 `approved` 와 다르면 409 "리뷰 뒤 새 커밋". 명세를 `리뷰 대기` 로 돌려 새 라운드를 받는다
+3. `gh pr merge <n> --squash --match-head-commit <approved>`. 그 사이 push 가 있었으면 GitHub 이 거절하고, 명세는
+   같은 이유로 `리뷰 대기` 로 간다
+4. P2 코멘트 초안이 있으면 `gh pr comment <n> --body-file`
+5. 명세를 `머지됨` 으로, 결과 행 "PR #n 머지됨 — 라운드 k, 남은 P2 j" 를 쓴다
+6. 정리. 원본 체크아웃에 `git fetch`. 원본이 base 브랜치에 있고 `git status --porcelain` 이 비었으면
    `git merge --ff-only origin/<base>`. 아니면 "원본이 뒤처짐" 으로 두고 넘어간다
-5. `workspace.remove`. 원본이 앞으로 갔으면 `merged` 가 참이 되어 브랜치까지 지운다. 원본이 뒤처졌으면
+7. `workspace.remove`. 원본이 앞으로 갔으면 `merged` 가 참이 되어 브랜치까지 지운다. 원본이 뒤처졌으면
    작업트리만 지우고 브랜치는 남는다 — 지금 판정 그대로다
-6. `git push origin --delete <branch>`
-7. 리뷰 셀을 닫는다. `raw/review/<repo>/<pr>/` 는 남긴다
+8. 원격 브랜치는 머지한 커밋에 그대로 있을 때만 지운다.
+   `git push --force-with-lease=refs/heads/<branch>:<approved> origin --delete <branch>`. 머지 뒤 누가 같은
+   브랜치에 push 했으면 git 이 거절하고, 브랜치는 남는다. 거절은 실패가 아니라 "원격 브랜치에 새 커밋 — 남김"
+   이다. 무조건 지우면 머지되지 않은 커밋을 원격에서 잃는다(리뷰 라운드 1)
+9. 리뷰 셀을 닫는다. `raw/review/<repo>/<pr>/` 는 남긴다
 
 ## P2 고르기
 
@@ -167,6 +220,12 @@ gh pr list --state open --json number,title,headRefName,headRefOid,headRepositor
 | [머지] 가 화면의 머리 커밋을 `--match-head-commit` 으로 넘긴다 | 인자를 빼면 |
 | 정리가 더러운 원본에는 ff 를 하지 않는다 | 검사를 지우면 |
 | 서버 재시작 뒤 루프 상태가 `멈춤 — 서버 재시작` | |
+| Claude 리뷰 셀의 인자에 `Bash` 가 없다 | 도구 목록을 `READ_TOOLS` 로 되돌리면 |
+| [머지] 가 화면의 `head` 가 아니라 허용한 라운드의 `head` 로 묶이고, 둘이 다르면 409 | 비교를 지우면 |
+| 원격 브랜치 삭제가 `--force-with-lease` 에 허용한 커밋을 싣는다. 머지 뒤 push 된 원격 브랜치가 남는다(실제 git, 로컬 bare 원격) | 인자를 빼면 |
+| 첫 라운드가 계획 행 push 뒤에 간다. 결과 뒤 머리가 움직였으면 라운드를 버리고 다시 보낸다 | 순서나 머리 비교를 지우면 |
+| `adopt` 의 로컬 브랜치 네 경우. 다른 커밋의 로컬 브랜치는 치우지도 맞추지도 않는다 | 분기를 지우면 |
+| 프로젝트를 바꿔도 루프가 다음 라운드를 보내고, 다른 프로젝트 작업트리의 승인에 답할 수 있다. 새 지시는 거절된다 | 루프가 `current_repo` 를 부르게 하면 |
 
 ## 하지 않는 것
 
