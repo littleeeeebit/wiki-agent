@@ -47,6 +47,14 @@ def test_the_threshold_goes_into_both_hosts_and_an_existing_value_is_left_alone(
         "autoCompactWindow"] == 400000, "a value somebody set was overwritten"
     assert run(home, "--compact-window", "50000").returncode == 2, "under Claude's range"
 
+    # Review round 3: a `null` is a value somebody set, not a missing key.
+    (home / ".claude" / "settings.json").write_text(
+        json.dumps({"autoCompactWindow": None, "model": "opus"}), encoding="utf-8")
+    kept = run(home, "--compact-window", "400000")
+    assert kept.returncode == 1 and "autoCompactWindow = null" in kept.stdout, kept.stdout
+    assert json.loads((home / ".claude" / "settings.json").read_text(encoding="utf-8")) == {
+        "autoCompactWindow": None, "model": "opus"}
+
 
 def test_the_key_lands_at_the_top_level_of_any_valid_config():
     """Review round 1: a file whose last line had no newline got the key

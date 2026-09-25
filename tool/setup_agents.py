@@ -350,8 +350,10 @@ def compact_window(tokens, check=False):
         have = settings.get("autoCompactWindow")
         if have == tokens:
             print(f"그대로: {path}")
-        elif have is not None or check:
-            left.append(f"{path}: autoCompactWindow = {have} (원하는 값 {tokens})")
+        # Present, not non-null: a `null` somebody wrote is a value too (review round 3).
+        elif "autoCompactWindow" in settings or check:
+            shown = json.dumps(have) if "autoCompactWindow" in settings else "없음"
+            left.append(f"{path}: autoCompactWindow = {shown} (원하는 값 {tokens})")
         else:
             settings["autoCompactWindow"] = tokens
             path.parent.mkdir(parents=True, exist_ok=True)
