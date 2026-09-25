@@ -175,23 +175,6 @@ CHANNELS: list[Channel] = [
             "calls for stronger enforcement, not duplicated prose."
         ),
     ),
-    Channel(
-        id="review",
-        label="리뷰",
-        blurb="PR 번호를 주면 리뷰 라운드를 낸다",
-        effort="high",
-        preamble=(
-            "Focus: read-only code review. For a PR, read `gh pr view <n>` and "
-            "`gh pr diff <n>`; for a local branch inspect its actual diff. Follow "
-            "`operator/codex-review-loop`. Findings use `[P0|P1|P2] path:line`, "
-            "trigger, defect, impact, and reproducible evidence. Do not invent "
-            "findings. Check the disposition of prior findings first. With "
-            "nothing wrong, and to close, use the exact fixed tokens that page "
-            "gives: they are a protocol the loop reads back, not a language "
-            "choice, so copy them rather than translating or paraphrasing. Do "
-            "not edit or merge."
-        ),
-    ),
 ]
 
 BY_ID = {c.id: c for c in CHANNELS}

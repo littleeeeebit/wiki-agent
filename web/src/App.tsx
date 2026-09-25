@@ -5,13 +5,29 @@ import type { Choice } from '@/components/Toolbar'
 import { Peek } from '@/components/Peek'
 import { Query } from '@/components/Query'
 import { Rail } from '@/components/Rail'
+import type { Other } from '@/components/Rail'
+import { Review } from '@/components/Review'
 import { Terminal, closed } from '@/components/Terminal'
 import { WikiMap } from '@/components/WikiMap'
 import * as api from '@/lib/api'
-import type { Channel, Options, Peek as PeekData, Spec, Switch, Worktree } from '@/lib/api'
+import type { Channel, LoopRow, LoopSettings, Options, Peek as PeekData, Pr, Spec, Switch, Worktree } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import { useWork } from '@/lib/work'
 
 type Theme = 'dark' | 'light'
+
+const LOOPING = /^(리뷰 대기|리뷰 R\d+|고치는 중 R\d+)$/
+
+/** An OS notification, only while the window is not in front. Without the
+ *  person's leave the rail's mark is all there is. */
+function notify(title: string, body: string) {
+  if (document.hasFocus() || !('Notification' in window) || Notification.permission !== 'granted') return
+  try {
+    new Notification(title, { body })
+  } catch {
+    // A webview without notifications: the rail still shows it.
+  }
+}
 
 function stored<T extends string>(key: string, fallback: T): T {
   try {
@@ -38,7 +54,13 @@ export default function App() {
   const [peek, setPeek] = useState<{ data: PeekData | null; error?: string } | null>(null)
   // Dark unless the person chose light. Remembered per machine, not per server.
   const [theme, setTheme] = useState<Theme>(() => stored('theme', 'dark'))
+  const [prs, setPrs] = useState<Pr[]>([])
+  const [loopRows, setLoopRows] = useState<LoopRow[]>([])
+  const [turnsElsewhere, setTurnsElsewhere] = useState<{ path: string; repo: string }[]>([])
+  const [loopSettings, setLoopSettings] = useState<LoopSettings | null>(null)
+  const [tab, setTab] = useState<'agent' | 'review'>('agent')
   const work = useWork()
+  const { attach } = work
   const repo = channels[0]?.repo ?? ''
 
   useEffect(() => {
@@ -98,6 +120,10 @@ export default function App() {
     return () => window.removeEventListener('project-moved', onMoved)
   }, [follow])
 
+  // Worktrees of other projects the rail lists — a loop, a running turn. One
+  // of them stays selected when this project's list does not have it.
+  const elsewhere = useRef(new Set<string>())
+
   const refresh = useCallback(() => {
     const mine = ++listing.current
     api.getWorktrees()
@@ -108,7 +134,7 @@ export default function App() {
           return
         }
         setRows(rows)
-        setSelected((path) => (rows.some((r) => r.path === path) ? path : ''))
+        setSelected((path) => (rows.some((r) => r.path === path) || elsewhere.current.has(path) ? path : ''))
       })
       .catch((err) => mine === listing.current && setFault(String(err)))
   }, [follow])
@@ -118,6 +144,22 @@ export default function App() {
   const readSpecs = useCallback(() => {
     api.getSpecs()
       .then(({ project, specs }) => project === expected.current && setSpecs(specs))
+      .catch(() => {})
+  }, [])
+
+  // The pull requests the loop button counts, and every project's loops for
+  // the rail's other-projects group.
+  const readPrs = useCallback(() => {
+    api.getPrs()
+      .then(({ project, rows }) => project === expected.current && setPrs(rows))
+      .catch(() => {})
+  }, [])
+  const readLoops = useCallback(() => {
+    api.getLoops()
+      .then(({ loops, turns }) => {
+        setLoopRows(loops)
+        setTurnsElsewhere(turns)
+      })
       .catch(() => {})
   }, [])
 
@@ -144,11 +186,63 @@ export default function App() {
     const both = () => {
       refresh()
       readSpecs()
+      readPrs()
+      readLoops()
     }
     both()
+    api.getLoopSettings().then(setLoopSettings).catch(() => {})
     window.addEventListener('focus', both)
     return () => window.removeEventListener('focus', both)
-  }, [repo, refresh, readSpecs])
+  }, [repo, refresh, readSpecs, readPrs, readLoops])
+
+  // What the server changes by itself — a loop moving a spec, a turn it
+  // started — arrives on one stream. The lists are read again shortly after
+  // (a burst of changes is one read), a window showing the worktree of a
+  // server-started turn attaches to it, and a loop that comes to wait on an
+  // approval, or a merge into an unreviewed base, notifies once.
+  useEffect(() => {
+    if (!repo) return
+    const stop = new AbortController()
+    const seen = new Map<string, LoopRow>()
+    let timer: number | undefined
+    const soon = () => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        readSpecs()
+        readLoops()
+        readPrs()
+      }, 800)
+    }
+    const on = (ev: api.FeedEv) => {
+      if (ev.kind === 'turn') {
+        attach(ev.path)
+        return
+      }
+      const key = `${ev.repo}/${ev.id}`
+      const before = seen.get(key)
+      seen.set(key, ev)
+      const name = `${ev.repo} · ${ev.id}${ev.pr ? ` #${ev.pr}` : ''}`
+      if (ev.waiting && !before?.waiting && LOOPING.test(ev.state)) notify('리뷰 루프가 승인을 기다린다', name)
+      if (ev.stopped?.reason === '검토하지 않은 base 에 머지됨' && before?.state !== '멈춤') {
+        notify('검토하지 않은 base 에 머지됐다', name)
+      }
+      soon()
+    }
+    void (async () => {
+      while (!stop.signal.aborted) {
+        try {
+          await api.loopEvents(on, stop.signal)
+        } catch {
+          // Dropped or aborted; tried again below unless aborted.
+        }
+        if (!stop.signal.aborted) await new Promise((r) => window.setTimeout(r, 2000))
+      }
+    })()
+    return () => {
+      stop.abort()
+      window.clearTimeout(timer)
+    }
+  }, [repo, attach, readSpecs, readLoops, readPrs])
 
   useEffect(() => {
     if (selected) work.load(selected)
@@ -162,6 +256,11 @@ export default function App() {
     if (running < runningNow.current) readSpecs()
     runningNow.current = running
   }, [running, readSpecs])
+  // A loop dies with the server too; it is counted with the turns.
+  const loopsNow = useRef(0)
+  useEffect(() => {
+    loopsNow.current = loopRows.filter((l) => LOOPING.test(l.state)).length
+  }, [loopRows])
   useEffect(() => {
     if (!('__TAURI_INTERNALS__' in window)) return
     let off: (() => void) | undefined
@@ -169,7 +268,11 @@ export default function App() {
     import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
       getCurrentWindow().onCloseRequested((event) => {
         const n = runningNow.current
-        if (n && !window.confirm(`도는 작업 ${n}개가 멈춘다. 닫을까?`)) event.preventDefault()
+        const loops = loopsNow.current
+        const what = [n && `도는 작업 ${n}개`, loops && `리뷰 루프 ${loops}개`].filter(Boolean).join('와 ')
+        if (what && !window.confirm(`${what}가 멈춘다. 다시 띄우면 루프는 [계속] 으로 잇는다. 닫을까?`)) {
+          event.preventDefault()
+        }
       }),
     ).then((unlisten) => {
       if (gone) unlisten()
@@ -230,9 +333,28 @@ export default function App() {
     }
   }, [selected])
 
-  const row = rows.find((r) => r.path === selected)
-  const waiting = new Set(Object.entries(work.turns).filter(([, turns]) => turns.some((t) => t.pending
-    && t.steps.some((s) => s.kind === 'approval' && s.answer === undefined))).map(([path]) => path))
+  const others: Other[] = [
+    ...loopRows.filter((l) => l.repo !== repo && l.worktree).map((l) => ({
+      path: l.worktree!, repo: l.repo, label: `${l.pr ? `#${l.pr} ` : ''}${l.round ? `R${l.round} ` : ''}${l.state}` })),
+    ...turnsElsewhere.filter((t) => t.repo !== repo && !loopRows.some((l) => l.worktree === t.path))
+      .map((t) => ({ ...t, label: '도는 중' })),
+  ]
+  const otherPaths = new Set(others.map((o) => o.path))
+  useEffect(() => {
+    elsewhere.current = new Set(otherPaths)
+  })
+  // A worktree of another project has no row in this project's list; the
+  // pane still shows it, and a new instruction there is refused by the server.
+  const row = rows.find((r) => r.path === selected) ?? (otherPaths.has(selected)
+    ? { path: selected, name: selected.split(/[\\/]/).pop() ?? '', branch: '', dirty: false, merged: false,
+        live: true, busy: false }
+    : undefined)
+  const owning = specs.find((s) => s.worktree === selected)
+  const waiting = new Set([
+    ...Object.entries(work.turns).filter(([, turns]) => turns.some((t) => t.pending
+      && t.steps.some((s) => s.kind === 'approval' && s.answer === undefined))).map(([path]) => path),
+    ...loopRows.filter((l) => l.waiting && l.worktree).map((l) => l.worktree!),
+  ])
   const on = sw?.translate ?? false
 
   return (
@@ -247,7 +369,22 @@ export default function App() {
         // window is streaming is known here first.
         rows={rows.map((r) => ({ ...r, busy: r.busy || Boolean(work.turns[r.path]?.at(-1)?.pending) }))}
         waiting={waiting}
-        specs={Object.fromEntries(specs.filter((s) => s.worktree).map((s) => [s.worktree, s.state]))}
+        specs={Object.fromEntries(specs.filter((s) => s.worktree).map((s) => [s.worktree, {
+          state: s.state, pr: s.pr?.number ?? null, round: (s.rounds ?? []).filter((r) => !r.stale).length }]))}
+        prs={prs}
+        others={others}
+        loopSettings={loopSettings}
+        onLoop={async (numbers) => {
+          // Asked here, on a click: a browser grants it only to a gesture.
+          if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission()
+          const { results } = await api.startLoops(numbers)
+          readPrs()
+          readSpecs()
+          refresh()
+          const failed = results.filter((r) => r.error)
+          if (failed.length) throw new Error(failed.map((r) => `#${r.number} — ${r.error}`).join(' · '))
+        }}
+        onLoopSettings={async (s) => setLoopSettings(await api.setLoopSettings(s))}
         selected={selected}
         view={view}
         sw={sw}
@@ -309,7 +446,28 @@ export default function App() {
 
       <div className="flex min-h-0 min-w-0 flex-col">
         <div className="flex min-h-0 flex-[3]">
-          <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-1 flex-col">
+            {owning?.pr && (
+              <div role="tablist" className="flex gap-1 border-b border-border bg-card px-3 pt-1.5">
+                {(['agent', 'review'] as const).map((t) => (
+                  <button key={t} type="button" role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
+                    className={cn('flex items-center gap-1.5 rounded-t-md px-2.5 py-1 text-[12.5px]',
+                      tab === t ? 'bg-background font-semibold' : 'text-muted-foreground hover:bg-secondary')}>
+                    {t === 'agent' ? '에이전트' : `리뷰 #${owning.pr!.number}`}
+                    {t === 'agent' && waiting.has(selected) && <span className="size-1.5 rounded-full bg-wait" title="승인을 기다린다" />}
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="min-h-0 flex-1">
+            {owning?.pr && tab === 'review' ? (
+              <Review spec={owning} onChanged={() => {
+                readSpecs()
+                readPrs()
+                readLoops()
+                refresh()
+              }} />
+            ) : (
             <Agent
               row={row}
               turns={(selected && work.turns[selected]) || []}
@@ -326,6 +484,8 @@ export default function App() {
               onReset={() => work.reset(selected).catch((err) => setFault(String(err)))}
               onPeek={showPeek}
             />
+            )}
+            </div>
           </div>
           {peek && <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />}
         </div>

@@ -259,6 +259,19 @@ export type Block =
   | { name: 'spec'; id: string; error?: undefined }
   | { name: string; error: string }
 
+/** One review round as the loop recorded it. A `stale` one read a head or
+ *  base that moved before it ended, and is not counted. */
+export type Round = {
+  n: number
+  head: string
+  base: string
+  findings: { P0: number; P1: number; P2: number }
+  verdict: 'allow' | 'deny'
+  stale?: boolean
+  gate?: { ok: boolean | null; cmd: string | null; head: string | null }
+  disposition?: { finding: string; action: string; evidence?: string }[] | null
+}
+
 export type Spec = {
   id: string
   repo: string
@@ -270,12 +283,24 @@ export type Spec = {
   decisions: { what: string; why: string; rejected: string }[]
   source: { focus: string; turn: number; plan: { path: string; row: string } | null }
   state: string
+  /** Why a `멈춤` stopped: one of the stage 4 plan's table. */
+  stopped: { reason: string; detail: string } | null
   worktree: string | null
-  pr: { number: number; url: string } | null
+  pr: { number: number; url: string; base?: string; head?: string; branch?: string } | null
   report: { item: string; pass: boolean; evidence?: string }[] | null
   gate: { ok: boolean; reason: string; cmd: string; tail: string } | null
   fault: string | null
   missing: string[]
+  rounds?: Round[]
+  /** The head the last counted round allowed: what `[머지]` is bound to. */
+  approved?: string | null
+  /** The work cell waits on a person's approval. Not a state. */
+  waiting?: boolean
+  p2?: string[]
+  p2_comment?: string
+  extra?: number
+  merge?: { commit: string; base: string } | null
+  cleanup?: string[]
 }
 
 export const getSpecs = () =>
@@ -285,6 +310,68 @@ export const saveSpec = (id: string, body: { rev: number; goal: string; out: str
 export const startSpec = (id: string, choice: { model: string; effort: string }) =>
   post(`/api/specs/${id}/start`, choice).then((r) => json<{ path: string; turn: string }>(r, '시작'))
 export const dropSpec = (id: string) => post(`/api/specs/${id}/drop`).then((r) => json(r, '버리기'))
+
+// -- The review loop -----------------------------------------------------------
+
+export type Pr = {
+  number: number
+  title: string
+  branch: string
+  head: string
+  url: string
+  fork: boolean
+  spec: string | null
+  state: string | null
+  /** Why it cannot go into a loop from the list; empty when it can. */
+  why: string
+  pickable: boolean
+}
+
+/** A spec's place in the loop, whichever project it is in. */
+export type LoopRow = {
+  repo: string
+  id: string
+  state: string
+  stopped: { reason: string; detail: string } | null
+  pr: number | null
+  round: number
+  worktree: string | null
+  waiting: boolean
+}
+
+export type LoopSettings = { rounds: number; concurrent: number; review_model: string }
+
+export const getPrs = () =>
+  get('/api/prs').then((r) => json<{ project: string; rows: Pr[]; error?: string }>(r, 'PR 목록'))
+export const startLoops = (prs: number[]) =>
+  post('/api/loops', { prs }).then((r) =>
+    json<{ results: { number: number; id?: string; error?: string }[] }>(r, '리뷰 루프'))
+export const getLoops = () =>
+  get('/api/loops').then((r) => json<{ loops: LoopRow[]; turns: { path: string; repo: string }[] }>(r, '루프'))
+export const mergeSpec = (id: string, head: string) =>
+  post(`/api/specs/${id}/merge`, { head }).then((r) => json<Spec>(r, '머지'))
+export const settleSpec = (id: string, choice: 'accept' | 'reopen') =>
+  post(`/api/specs/${id}/settle`, { choice }).then((r) => json<Spec>(r, '끝내기'))
+export const resumeSpec = (id: string, note = '') =>
+  post(`/api/specs/${id}/resume`, { note }).then((r) => json<Spec>(r, '계속'))
+export const haltSpec = (id: string) => post(`/api/specs/${id}/halt`).then((r) => json<Spec>(r, '멈춤'))
+export const roundFile = (id: string, n: number, what: 'order' | 'result') =>
+  get(`/api/specs/${id}/rounds/${n}?what=${what}`).then((r) => json<{ path: string; text: string }>(r, '라운드 파일'))
+export const getLoopSettings = () => get('/api/loop/settings').then((r) => json<LoopSettings>(r, '루프 설정'))
+export const setLoopSettings = (body: LoopSettings) =>
+  post('/api/loop/settings', body).then((r) => json<LoopSettings>(r, '루프 설정'))
+
+/** What the server changed on its own: a spec moved, or it started a turn. */
+export type FeedEv =
+  | ({ kind: 'spec'; seq: number } & LoopRow)
+  | { kind: 'turn'; seq: number; path: string; turn: string; session_id: string }
+
+/** Tail the server's own changes until `signal` aborts or the stream drops. */
+export async function loopEvents(onEvent: (ev: FeedEv) => void, signal: AbortSignal): Promise<void> {
+  const url = '/api/loops/events'
+  const res = await fetch(url, { headers: await scoped(url), signal })
+  await events<FeedEv | null>(res, (ev) => ev && onEvent(ev), () => null)
+}
 
 /** The instruction draft that carries an answer — or a retro candidate — to a
  *  worktree's agent. The last section is left for a person. */

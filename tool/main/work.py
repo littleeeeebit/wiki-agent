@@ -51,13 +51,23 @@ def close_all() -> None:
         chat.close()
 
 
-def ours(path: str) -> Path:
-    """`path` as `workspace` lists it for the selected project, or 404."""
+def ours(path: str, repo: Path | None = None) -> Path:
+    """`path` as `workspace` lists it for `repo` — the selected project unless
+    a request already took its repository with its hold — or 404."""
 
-    for row in worktrees(current_repo()):
+    for row in worktrees(repo or current_repo()):
         if str(row["path"]) == path:
             return row["path"]
     raise HTTPException(404, "선택한 프로젝트의 작업트리가 아니다")
+
+
+def known(path: str) -> Path:
+    """A path to read from: one the server made a session for, whichever
+    project that was in, or else one of the selected project's. The session's
+    path went through `ours` once, when it was made; a loop in another project
+    keeps its worktree readable after a switch."""
+
+    return Path(path) if path in _sessions else ours(path)
 
 
 def record(path: Path) -> Path:
@@ -145,17 +155,21 @@ def make(body: Task) -> dict:
 @router.post("/api/worktrees/remove")
 def clear(body: Where) -> dict:
     # Held for the whole removal, as a turn holds it. Checked and let go, a
-    # new instruction was accepted while the worktree was being deleted.
-    release = hold(_busy, _lock, body.path, "에이전트가 도는 동안은 지우지 않는다")
+    # new instruction was accepted while the worktree was being deleted. The
+    # repository is taken with the hold and used to the end: read again
+    # before `remove`, a switch in between handed it another repository.
+    with _lock:
+        repo = current_repo()
+        release = hold(_busy, _lock, body.path, "에이전트가 도는 동안은 지우지 않는다")
     try:
-        path = ours(body.path)
+        path = ours(body.path, repo)
         with _lock:
             chat = _sessions.pop(body.path, None)
             _runs.pop(body.path, None)
         if chat:
             chat.close()
         try:
-            text = remove(current_repo(), path)
+            text = remove(repo, path)
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(409, str(exc)) from exc
         # The same task name makes the same path again, and the record is
@@ -171,11 +185,38 @@ def clear(body: Where) -> dict:
 
 
 def busy() -> bool:
-    """Is any agent turn running? The project stays put while one is: its
-    worktrees, and the approvals waiting in them, belong to that project."""
+    """Is a short request — making, removing, resetting — holding a worktree?
+    The project stays put while one is. A running turn does not count: it
+    took its repository with its hold, and its session keeps its path
+    reachable after a switch."""
 
     with _lock:
-        return bool(_busy)
+        return any(h.kind == "short" for h in _busy.values())
+
+
+def waiting(path: str) -> bool:
+    """Is the running turn of `path` waiting on a person's answer? An
+    approval that came already answered — by a session rule, or refused
+    outside the worktree — carries `by` and waits on nobody."""
+
+    run = _runs.get(path)
+    if run is None or run.done:
+        return False
+    with run.wake:
+        asked = {e["meta"].get("id") for e in run.events if e["kind"] == "approval" and "by" not in e["meta"]}
+        answered = {e["meta"].get("id") for e in run.events if e["kind"] == "answered"}
+    return bool(asked - answered)
+
+
+def forget(path: Path) -> None:
+    """Close the worktree's session and drop its last turn, before the
+    worktree goes. The record stays."""
+
+    with _lock:
+        chat = _sessions.pop(str(path), None)
+        _runs.pop(str(path), None)
+    if chat:
+        chat.close()
 
 
 # -- The agent --------------------------------------------------------------
@@ -224,7 +265,7 @@ def session(path: Path, model: str, effort: str) -> ChatSession:
 
 @router.get("/api/work/log")
 def log(path: str) -> dict:
-    where = ours(path)
+    where = known(path)
     chat = _sessions.get(path)
     run = _runs.get(path)
     return {"rows": [shown(r) for r in recall(where) if r.get("role") in ("user", "assistant")],
@@ -238,9 +279,11 @@ def log(path: str) -> dict:
 def reset(body: Where) -> dict:
     # Held until the reset is on record, or a turn in between resumed the CLI
     # context the reset was meant to drop.
-    release = hold(_busy, _lock, body.path, "에이전트가 도는 동안은 비우지 않는다")
+    with _lock:
+        repo = current_repo()
+        release = hold(_busy, _lock, body.path, "에이전트가 도는 동안은 비우지 않는다")
     try:
-        path = ours(body.path)
+        path = ours(body.path, repo)
         with _lock:
             chat = _sessions.pop(body.path, None)
             _runs.pop(body.path, None)
@@ -278,6 +321,30 @@ class Run:
         with self.wake:
             self.done = True
             self.wake.notify_all()
+
+
+class Feed:
+    """What the server changes on its own — a spec's state, a turn it
+    started — as one buffer every screen tails. Shaped like a `Run`, so
+    `tail` serves it; it never finishes.
+
+    ponytail: every event is kept for the server's life, a few hundred a day.
+    Drop the oldest and let a screen that asks from before them reread the
+    lists, if a server ever runs for months.
+    """
+
+    def __init__(self) -> None:
+        self.events: list[dict] = []
+        self.done = False
+        self.wake = threading.Condition()
+
+    def put(self, payload: dict) -> None:
+        with self.wake:
+            self.events.append({**payload, "seq": len(self.events)})
+            self.wake.notify_all()
+
+
+feed = Feed()
 
 
 def tail(run: Run, after: int):
@@ -409,12 +476,16 @@ def say(body: Order) -> StreamingResponse:
     if not text:
         raise HTTPException(400, "빈 지시")
     # Held from acceptance, and before the path is checked: from here the
-    # project cannot switch away and the worktree cannot be removed or reset.
-    # Checked first, the project switched between the check and the hold.
-    # From here the turn's thread owns the release.
-    release = hold(_busy, _lock, body.path, "이 작업트리의 에이전트가 아직 돌고 있다")
+    # worktree cannot be removed or reset. The repository is taken with the
+    # hold and the path checked against it: a switch does not wait for a
+    # turn, and one landing between the hold and a check against the selected
+    # project turned this turn into a 404. From here the turn's thread owns
+    # the release.
+    with _lock:
+        repo = current_repo()
+        release = hold(_busy, _lock, body.path, "이 작업트리의 에이전트가 아직 돌고 있다", kind="turn")
     try:
-        path = ours(body.path)
+        path = ours(body.path, repo)
         run = begin(path, session(path, body.model, body.effort), text, release)
     except BaseException:
         release()
@@ -431,6 +502,9 @@ def begin(path: Path, chat: ChatSession, text: str, release) -> Run:
     with _lock:
         _runs[str(path)] = run
     threading.Thread(target=run_turn, args=(path, run, text, release), daemon=True).start()
+    # A turn the server started — the plan row's, a loop's — reaches a screen
+    # that already shows this worktree only through here.
+    feed.put({"kind": "turn", "path": str(path), "turn": run.turn, "session_id": chat.id})
     return run
 
 

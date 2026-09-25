@@ -209,7 +209,19 @@ def streaming(events) -> StreamingResponse:
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
-def hold(busy: dict, lock: threading.Lock, key: str, refused: str):
+class Held:
+    """One hold. `kind` is what a project switch reads: a `turn` — an agent
+    turn or a loop — goes on in the repository it took, and a switch does not
+    wait for it; a `short` request reads the selected project partway through,
+    and a switch waits until it ends."""
+
+    __slots__ = ("kind",)
+
+    def __init__(self, kind: str) -> None:
+        self.kind = kind
+
+
+def hold(busy: dict, lock: threading.Lock, key: str, refused: str, kind: str = "short"):
     """Take `key` for a stream from the moment the request is accepted, or 409.
 
     Returns the release; call it from the stream's `finally` and pass it to
@@ -219,18 +231,20 @@ def hold(busy: dict, lock: threading.Lock, key: str, refused: str):
     collected. Taken only inside the body, the key was free between accepting
     and starting, and a project switch or a removal walked through that gap.
     The token makes a second release, or a late one after a new hold, a no-op.
+    It rides on the release as `release.held`, so a hold can change its kind.
     """
 
     with lock:
         if key in busy:
             raise HTTPException(409, refused)
-        token = busy[key] = object()
+        token = busy[key] = Held(kind)
 
     def release() -> None:
         with lock:
             if busy.get(key) is token:
                 del busy[key]
 
+    release.held = token
     return release
 
 
@@ -313,11 +327,12 @@ def configure(cid: str, body: Config) -> dict:
         switched = body.repo != project()
         if cid in _busy or (switched and _busy):
             raise HTTPException(409, "답변 생성이 끝난 뒤 설정을 바꿔 주세요")
-        # A running agent's worktree, and an approval waiting in it, belong to
-        # this project. Switched away, the approval's worktree left the list
-        # and the answer to it came back 404.
+        # A running turn or loop is not waited for: it took its repository
+        # when it was held, and its events, stop and approvals follow the
+        # session, not the selection. A short request — making, removing,
+        # resetting — reads the project partway through, and is waited for.
         if switched and work.busy():
-            raise HTTPException(409, "에이전트가 도는 동안은 프로젝트를 바꾸지 않는다")
+            raise HTTPException(409, "작업트리를 만들거나 지우는 중에는 프로젝트를 바꾸지 않는다")
         if switched:
             # Changed only while no turn is being recorded, and only once
             # everything that can fail has been done against the new project by

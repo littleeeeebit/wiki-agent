@@ -48,6 +48,52 @@ def create(repo: Path, task: str) -> Path:
     return path
 
 
+def folder_for(branch: str) -> str:
+    """A branch name as a task name: lowercase, anything else `-`. Empty when
+    nothing usable is left."""
+
+    name = re.sub(r"-{2,}", "-", re.sub(r"[^a-z0-9-]+", "-", branch.lower())).strip("-")[:64].rstrip("-")
+    return name if TASK.fullmatch(name) else ""
+
+
+def adopt(repo: Path, branch: str, oid: str) -> Path:
+    """A worktree on a pull request's existing branch, standing on `oid`.
+
+    `create` starts a new branch from HEAD, and a review cell there would read
+    code other than the pull request's. Here the branch is fetched and checked
+    out as it is; the folder takes the branch's name in task shape.
+
+    A local branch of that name is common — a pull request opened by hand
+    leaves one behind. At `oid` it is used; anywhere else it is refused, not
+    moved: it may hold commits that exist nowhere else. A branch made here
+    that does not land on `oid` is taken away again, worktree and all.
+    """
+
+    repo = _main(repo)
+    task = folder_for(branch)
+    if not task or not re.fullmatch(r"[0-9a-f]{40}", oid):
+        raise ValueError(f"받을 수 없는 브랜치다: {branch!r}")
+    fetched = _git(repo, "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}")
+    if fetched.returncode:
+        raise RuntimeError(fetched.stderr.strip() or f"git fetch 실패: {branch}")
+    path = worktree_home(repo) / task
+    local = _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").stdout.strip()
+    if local and local != oid:
+        raise RuntimeError(f"로컬 `{branch}` 가 PR 머리와 다르다 — 로컬 {local[:12]}, PR {oid[:12]}")
+    args = ["worktree", "add", str(path), branch] if local else \
+        ["worktree", "add", "--track", "-b", branch, str(path), f"origin/{branch}"]
+    done = _git(repo, *args)
+    if done.returncode:
+        raise RuntimeError(done.stderr.strip() or f"git worktree add 실패: {branch}")
+    head = _git(path, "rev-parse", "HEAD").stdout.strip()
+    if head != oid:
+        if not local:
+            _git(repo, "worktree", "remove", "--force", str(path))
+            _git(repo, "branch", "-D", branch)
+        raise RuntimeError(f"받은 작업트리가 PR 머리에 서지 않았다 — {head[:12]}, PR {oid[:12]}")
+    return path
+
+
 def _tree(repo: Path, rev: str) -> dict[bytes, bytes] | None:
     """Every entry of a commit's tree: path -> mode and object id. `None` if git fails.
 

@@ -232,6 +232,9 @@ fn main() {
     let root = repo();
     let log = root.join("raw").join("main.log");
     let app = tauri::Builder::default()
+        // Stands behind the page's `window.Notification`, which a webview
+        // alone does not have.
+        .plugin(tauri_plugin_notification::init())
         .manage(Ptys::default())
         .manage(Sidecar(Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close])

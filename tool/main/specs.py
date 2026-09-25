@@ -31,7 +31,7 @@ from pydantic import BaseModel
 from common import worktree_home
 from session_state import active_page, decisions, plans
 from wiki import slots_for
-from workspace import TASK, create
+from workspace import TASK, create, folder_for
 
 from . import channels, query, work
 from .query import ROOT, _lock, current_repo, hold, project
@@ -84,13 +84,35 @@ def load(repo: str, sid: str) -> dict | None:
 
 def save(spec: dict) -> None:
     """Written whole to a temporary file and swapped in, so a reader never
-    sees half a spec."""
+    sees half a spec. Every save is told to the screens: the loop moves specs
+    with nobody asking."""
 
     file = file_of(spec["repo"], spec["id"])
     file.parent.mkdir(parents=True, exist_ok=True)
     temporary = file.with_suffix(".tmp")
     temporary.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
     temporary.replace(file)
+    publish(spec)
+
+
+def summary(spec: dict) -> dict:
+    """One spec's place in the loop, as the rail and the notifications read it."""
+
+    counted = [r for r in spec.get("rounds") or [] if not r.get("stale")]
+    return {"repo": spec["repo"], "id": spec["id"], "state": spec["state"], "stopped": spec.get("stopped"),
+            "pr": (spec.get("pr") or {}).get("number"), "round": len(counted), "worktree": spec.get("worktree"),
+            "waiting": bool(spec.get("worktree")) and work.waiting(spec["worktree"])}
+
+
+def publish(spec: dict) -> None:
+    work.feed.put({"kind": "spec", **summary(spec)})
+
+
+def branch_of(spec: dict) -> str:
+    """The pull request's head branch: the spec's own name, unless the spec
+    was made from a pull request that came with its own branch."""
+
+    return (spec.get("pr") or {}).get("branch") or spec.get("branch") or spec["id"]
 
 
 def moved(spec: dict, state: str, **fields) -> dict:
@@ -145,9 +167,7 @@ def gate_of(repo: Path) -> str:
 def slugged(raw) -> str:
     """`raw` as a task name — lowercase, anything else `-` — or empty."""
 
-    name = re.sub(r"[^a-z0-9-]+", "-", str(raw or "").lower())
-    name = re.sub(r"-{2,}", "-", name).strip("-")[:64].rstrip("-")
-    return name if TASK.fullmatch(name) else ""
+    return folder_for(str(raw or ""))
 
 
 def taken(repo: Path, name: str) -> bool:
@@ -247,8 +267,17 @@ def missing(repo: Path, spec: dict) -> list[str]:
     return [f for f in spec["grounds"]["files"] if not (repo / LINE.sub("", f)).is_file()]
 
 
+def approved(spec: dict) -> dict | None:
+    """The round a merge is bound to: the last one counted, when it allowed."""
+
+    counted = [r for r in spec.get("rounds") or [] if not r.get("stale")]
+    return counted[-1] if counted and counted[-1]["verdict"] == "allow" else None
+
+
 def view(repo: Path, spec: dict) -> dict:
-    return {**spec, "missing": missing(repo, spec)}
+    allowed = approved(spec)
+    return {**spec, "missing": missing(repo, spec), "approved": allowed["head"] if allowed else None,
+            "waiting": bool(spec.get("worktree")) and work.waiting(spec["worktree"])}
 
 
 # -- Blocks -----------------------------------------------------------------
@@ -442,6 +471,12 @@ def noticed(repo: Path, spec: dict) -> dict:
     pr = spec.get("pr")
     if not pr or spec["state"] == "머지됨":
         return spec
+    if spec["state"] == "머지 대기":
+        # Merged through `[머지]`: the loop's table reads what became of it.
+        from . import loop
+
+        loop.landed(repo, spec)
+        return load(repo.name, spec["id"]) or spec
     try:
         done = sh(["gh", "pr", "view", str(pr["number"]), "--json", "state,mergedAt"], repo, 30)
         state = json.loads(done.stdout).get("state") if not done.returncode else ""
@@ -540,7 +575,10 @@ def start(sid: str, body: Start) -> dict:
                 raise HTTPException(400, str(exc)) from exc
             except RuntimeError as exc:
                 raise HTTPException(409, str(exc)) from exc
-            save(moved(spec, "작업 중", worktree=str(path)))
+            # The model is kept for the turns the loop sends this worktree.
+            save(moved(spec, "작업 중", worktree=str(path), cell={"model": body.model, "effort": body.effort}))
+        # Made: from here it is a turn, and a switch no longer waits for it.
+        release.held.kind = "turn"
         run = work.begin(path, work.session(path, body.model, body.effort), "Start.", release)
     except BaseException:
         release()
@@ -604,21 +642,23 @@ def gate(cmd: str, cwd: Path, halt: threading.Event) -> tuple[int | None, str, s
                 kill(proc)
 
 
-def judge(path: Path, run, cmd: str) -> dict:
+def judge(path: Path, cmd: str, halt: threading.Event, noted=lambda text: None) -> dict:
     """The server's own check of a done report: nothing uncommitted, and the
-    gate passes again in the worktree. What the agent said is not evidence."""
+    gate passes again in the worktree. What the agent said is not evidence.
+    The review loop checks every head it sends for review the same way."""
 
     status = sh(["git", "status", "--porcelain"], path)
+    head = sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     if status.returncode or status.stdout.strip():
         reason = "커밋 안 된 변경" if not status.returncode else f"git status 실패 — {said(status)}"
-        return {"ok": False, "reason": reason, "cmd": cmd, "tail": status.stdout.strip(), "ts": time.time()}
-    note(run, f"게이트 · {cmd}")
-    code, out, cut = gate(cmd, path, run.halt)
+        return {"ok": False, "reason": reason, "cmd": cmd, "tail": status.stdout.strip(), "head": head,
+                "ts": time.time()}
+    noted(f"게이트 · {cmd}")
+    code, out, cut = gate(cmd, path, halt)
     ok = code == 0
     reason = "" if ok else cut or f"게이트가 {code} 로 끝났다"
     return {"ok": ok, "reason": reason, "cmd": cmd, "code": code,
-            "tail": "\n".join(out.splitlines()[-TAIL:]),
-            "head": sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), "ts": time.time()}
+            "tail": "\n".join(out.splitlines()[-TAIL:]), "head": head, "ts": time.time()}
 
 
 def valid(items) -> bool:
@@ -656,14 +696,16 @@ def opened(repo: Path, path: Path, run, spec: dict):
     machine, the push and the pull request: the gate passing earlier is no
     leave to publish after a person said stop."""
 
-    sid = spec["id"]
+    sid, branch = spec["id"], branch_of(spec)
     if run.halt.is_set():
         return failed(run, spec, "사람이 멈춤 — push 하지 않았다")
-    note(run, f"push · origin {sid}")
-    pushed = sh(["git", "push", "-u", "origin", sid], path, 120)
+    note(run, f"push · origin {branch}")
+    pushed = sh(["git", "push", "-u", "origin", branch], path, 120)
     if pushed.returncode:
         return failed(run, spec, f"push 실패 — {said(pushed)}")
-    base = sh(["gh", "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], path, 30)
+    # A spec sent back by `[다시 PR]` goes to the base it was reviewed for.
+    base = subprocess.CompletedProcess([], 0, spec["base"], "") if spec.get("base") else \
+        sh(["gh", "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], path, 30)
     if base.returncode or not base.stdout.strip():
         return failed(run, spec, f"기본 브랜치를 모른다 — {said(base)}")
     if run.halt.is_set():
@@ -671,7 +713,7 @@ def opened(repo: Path, path: Path, run, spec: dict):
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
         fh.write(body_of(spec))
     try:
-        made = sh(["gh", "pr", "create", "--base", base.stdout.strip(), "--head", sid,
+        made = sh(["gh", "pr", "create", "--base", base.stdout.strip(), "--head", branch,
                    "--title", spec["goal"], "--body-file", fh.name], path, 120)
     finally:
         os.unlink(fh.name)
@@ -683,16 +725,27 @@ def opened(repo: Path, path: Path, run, spec: dict):
     with _files:
         spec = load(spec["repo"], sid)
         save(moved(spec, f"PR #{n}", fault=None, plan_commit="asked" if plan else None,
-                   pr={"number": n, "url": url, "base": base.stdout.strip(), "head": spec["gate"].get("head", "")}))
+                   pr={"number": n, "url": url, "base": base.stdout.strip(), "head": spec["gate"].get("head", ""),
+                       "branch": branch}))
     note(run, f"PR #{n} · {url}")
     told(repo, spec, f"PR #{n} — {spec['goal']}. 완료 조건 {len(spec['done'])}개 통과")
     if not plan:
-        return None
+        return lambda: reviewed(spec)
     # The row says the pull request's number, and that exists only now. This
     # commit is in the pull request too, so the review sees it.
     text = (f"PR #{n} is up. In `{plan['path']}`, change the status cell of the table row whose first cell "
             f"is `{plan['row']}` to `완료 — PR #{n}`, commit that one change, and stop. Change nothing else.")
     return lambda: again(path, run.chat, text, spec)
+
+
+def reviewed(spec: dict) -> None:
+    """The pull request is whole — the plan row's commit pushed, when there is
+    one — so the review loop takes it. Started before that, the first round
+    read the head from before the row's commit."""
+
+    from . import loop  # `loop` imports this module
+
+    loop.kick(spec["repo"], spec["id"])
 
 
 def failed(run, spec: dict, reason: str) -> None:
@@ -706,7 +759,7 @@ def again(path: Path, chat, text: str, spec: dict) -> None:
     go of the worktree. A person who got there first keeps it."""
 
     try:
-        release = hold(work._busy, _lock, str(path), "")
+        release = hold(work._busy, _lock, str(path), "", kind="turn")
     except HTTPException:
         update(spec["repo"], spec["id"], fault="계획 행을 고칠 턴을 보내지 못했다 — 작업트리가 쓰이고 있다")
         return
@@ -746,12 +799,12 @@ def _check(path: Path, run, final: str):
                                      f"`완료 — PR #{spec['pr']['number']}` 가 아니다")
         if run.halt.is_set():
             return failed(run, spec, "사람이 멈춤 — 계획 행 커밋을 push 하지 않았다")
-        pushed = sh(["git", "push", "origin", spec["id"]], path, 120)
+        pushed = sh(["git", "push", "origin", branch_of(spec)], path, 120)
         if pushed.returncode:
             return failed(run, spec, f"계획 행 커밋의 push 실패 — {said(pushed)}")
         note(run, f"push · 계획 행 `{plan['path']}` {plan['row']}")
         update(spec["repo"], spec["id"], plan_commit="pushed", fault=None)
-        return None
+        return lambda: reviewed(spec)
     if spec["state"] != "작업 중":
         return None
     report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
@@ -763,7 +816,7 @@ def _check(path: Path, run, final: str):
     spec = update(spec["repo"], spec["id"], report=items)
     if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
         return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
-    verdict = judge(path, run, spec["done"][0])
+    verdict = judge(path, spec["done"][0], run.halt, lambda text: note(run, text))
     spec = update(spec["repo"], spec["id"], gate=verdict)
     if not verdict["ok"]:
         return failed(run, spec, f"판정 실패 — {verdict['reason']}")

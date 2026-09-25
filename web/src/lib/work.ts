@@ -263,5 +263,14 @@ export function useWork() {
     setRules((all) => ({ ...all, [path]: { session: '', list: [] } }))
   }, [])
 
-  return { turns, rules, load, send, answer, stop, clearRules, reset, forget }
+  /** A turn the server started in `path` — the plan row's, a loop's. A
+   *  window that already shows that worktree reads it again, which attaches
+   *  to the running turn; this window's own sends are already on screen. */
+  const attach = useCallback((path: string) => {
+    if (sending.current.has(path) || !loading.current.has(path)) return
+    forget(path)
+    load(path)
+  }, [forget, load])
+
+  return { turns, rules, load, send, answer, stop, clearRules, reset, forget, attach }
 }

@@ -618,8 +618,10 @@ def test_a_new_task_under_an_old_name_starts_fresh(tmp_path):
         assert Agent.made[-1].session_id is None
 
 
-def test_the_project_stays_while_an_agent_runs(tmp_path):
-    """An approval waiting in a worktree belongs to the project that has it."""
+def test_a_switch_waits_for_a_short_request_and_not_for_a_turn(tmp_path):
+    """Making, removing and resetting read the project partway through, and a
+    switch waits for them. A turn took its repository with its hold, and its
+    session keeps its approvals reachable; a switch does not wait for it."""
 
     repos = {name: tmp_path / name for name in ("a", "b")}
     for repo in repos.values():
@@ -627,10 +629,11 @@ def test_the_project_stays_while_an_agent_runs(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=repos.get):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
-        with patch.object(work, "_busy", {str(repos["a"] / "x"): object()}):
+        with patch.object(work, "_busy", {str(repos["a"] / "x"): chat.Held("short")}):
             assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
             assert web.post("/api/config/wiki", json={"repo": "a", "effort": "high"}).status_code == 200
-        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
+        with patch.object(work, "_busy", {str(repos["a"] / "x"): chat.Held("turn")}):
+            web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
 
 
 def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_path):
@@ -649,7 +652,7 @@ def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_p
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
         waiting = work.say(work.Order(path=path, text="x"))
-        assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+        assert work._busy[path].kind == "turn", "도는 턴은 전환을 막지 않는다"
         assert web.post("/api/worktrees/remove", json={"path": path}).status_code == 409
         assert web.post("/api/work/reset", json={"path": path}).status_code == 409
         asking = chat.say("next", chat.Say(text="x"))
@@ -761,21 +764,22 @@ def test_a_removal_holds_its_worktree_until_it_is_done(tmp_path):
         assert not work._busy
 
 
-def test_an_instruction_holds_its_worktree_before_checking_the_path(tmp_path):
-    """The path check walks git for every worktree. Held only after it, the
-    project could switch while it ran, and the turn then ran under the other
-    project's screen."""
+def test_an_instruction_keeps_the_repository_it_was_held_in(tmp_path):
+    """A switch no longer waits for a turn. The repository is taken with the
+    hold, so a switch landing between the hold and the path check does not
+    send the check to the new project's list — that was a 404 for a turn
+    accepted a moment before."""
 
     import threading
 
     repos = _two_projects(tmp_path)
     web = client()
-    gate, real = threading.Event(), work.ours
+    gate, real, checked = threading.Event(), work.ours, []
 
-    def slow(path):
-        found = real(path)
+    def slow(path, repo=None):
         gate.wait(10)
-        return found
+        checked.append(repo)
+        return real(path, repo)
 
     with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
           patch.object(work, "ChatSession", Agent), patch.object(work, "ours", slow)):
@@ -788,10 +792,15 @@ def test_an_instruction_holds_its_worktree_before_checking_the_path(tmp_path):
                 if path in work._busy:
                     break
                 threading.Event().wait(0.05)
-            assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
+            web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
         finally:
             gate.set()
             sending.join(10)
+        settled(path)
+        assert checked == [repos["a"]]
+        assert [r["role"] for r in work.recall(Path(path))] == ["user", "assistant"]
+        # A new instruction to the old project's worktree is refused now.
+        assert web.post("/api/work/say", json={"path": path, "text": "y"}).status_code == 404
 
 
 def test_making_a_worktree_holds_the_project(tmp_path):
