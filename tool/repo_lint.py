@@ -111,8 +111,12 @@ def misplaced_scope(repo: Path) -> list[tuple[str, str]]:
     return found
 
 
-def check(repo: Path) -> list[tuple[str, str]]:
-    """This repository's findings. Printing them is the caller's job."""
+def check(repo: Path, wiring: bool = True) -> list[tuple[str, str]]:
+    """This repository's findings. Printing them is the caller's job.
+
+    `wiring=False` leaves out the hook wiring, which belongs to this machine's
+    original checkout: a fresh worktree has no `.claude/settings.json` and
+    would report every deny rule as drift."""
 
     from apply import wiring_drift
     malformed = [
@@ -129,7 +133,7 @@ def check(repo: Path) -> list[tuple[str, str]]:
     from lint import loud_emphasis
 
     return (stale_index(repo) + dangling_pointers(repo) + misplaced_scope(repo)
-            + malformed + wiring_drift(repo) + loud_emphasis(repo))
+            + malformed + (wiring_drift(repo) if wiring else []) + loud_emphasis(repo))
 
 
 def main() -> int:
@@ -139,10 +143,11 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="대상 저장소의 지식을 검진한다")
     parser.add_argument("--repo", type=Path, required=True)
+    parser.add_argument("--no-wiring", action="store_true", help="작업트리에서: 훅 배선은 원본 체크아웃에서 본다")
     args = parser.parse_args()
 
     repo = args.repo.expanduser().resolve()
-    findings = check(repo)
+    findings = check(repo, wiring=not args.no_wiring)
 
     print(f"# repo_lint — {repo.name}\n")
     if not findings:

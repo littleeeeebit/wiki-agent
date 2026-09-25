@@ -91,21 +91,20 @@ def projects() -> list[dict]:
     """The repositories that can be chosen: whatever in the workspace has a `.git`.
 
     The list is not held by hand — editing this every time a repository is
-    added means not editing it. The ones with an adapter are marked, because
-    those already have the wiki attached and are where the hooks and the
-    injection actually run.
+    added means not editing it. Each carries its connection state
+    (`connect.status`); `wired` is any adapter at all, which is where the
+    hooks and the injection run.
     """
 
-    known = {p.stem for p in (WIKI / "adapters").glob("*.toml")}
-    found = [{"id": WIKI.name, "path": str(WIKI), "wired": True}]
-    for path in sorted(WORKSPACE.iterdir()) if WORKSPACE.is_dir() else []:
-        if path.name == WIKI.name or not (path / ".git").exists() or repo_for(path.name) is None:
-            continue
-        found.append({
-            "id": path.name,
-            "path": str(path),
-            "wired": path.name in known or (path / ".wiki/adapter.toml").is_file(),
-        })
+    from . import connect  # `connect` imports this module
+
+    paths = [WIKI] + [path for path in (sorted(WORKSPACE.iterdir()) if WORKSPACE.is_dir() else [])
+                      if path.name != WIKI.name and (path / ".git").exists() and repo_for(path.name) is not None]
+    wired = connect.users()
+    found = []
+    for path in paths:
+        state = connect.status(path, wired)
+        found.append({"id": path.name, "path": str(path), "wired": state["state"] != "미연결", **state})
     return found
 
 

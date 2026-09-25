@@ -27,7 +27,28 @@ export type GraphData = {
   cap: number
 }
 
-export type Project = { id: string; path: string; wired: boolean }
+/** A repository and how far the wiki is attached to it (`tool/main/connect.py`). */
+export type Project = {
+  id: string
+  path: string
+  wired: boolean
+  state: '연결 완료' | '일부' | '미연결'
+  missing: string[]
+  notes: string[]
+  probing: boolean
+  survey?: SurveyProgress | null
+}
+export type SurveyProgress = {
+  sid?: string
+  state?: string
+  turn?: number
+  turns?: number
+  label?: string
+  tokens?: number
+  limit?: number
+  why?: string
+  reason?: string
+}
 export type Choice = { id: string; label: string; note: string }
 export type Options = {
   projects: Project[]
@@ -361,10 +382,49 @@ export const getLoopSettings = () => get('/api/loop/settings').then((r) => json<
 export const setLoopSettings = (body: LoopSettings) =>
   post('/api/loop/settings', body).then((r) => json<LoopSettings>(r, '루프 설정'))
 
-/** What the server changed on its own: a spec moved, or it started a turn. */
+// -- Connecting a repository --------------------------------------------------
+
+export type SurveySettings = { survey: boolean; survey_tokens: number; survey_minutes: number; survey_model: string }
+export type HubPlan = {
+  needed: boolean
+  refused: string
+  lines: { file: string; change: string }[]
+  links: { link: string; from: string; to: string | null }[]
+  trust: boolean
+  digest: string
+}
+export type Estimate = {
+  files: number
+  code: number
+  docs: number
+  commits: number
+  prs: number
+  modules: number
+  turns: number
+  tokens: number
+  seconds: number
+  limit: { tokens: number; seconds: number }
+  over: boolean
+}
+export type ConnectPlan = { hub: HubPlan; adapter: Record<string, string> | null; unwire: string[]; survey: Estimate | null }
+
+export const getConnect = () =>
+  get('/api/connect').then((r) => json<{ rows: Project[]; settings: SurveySettings }>(r, '프로젝트 목록'))
+export const connectPlan = (name: string) =>
+  get(`/api/connect/${encodeURIComponent(name)}/plan`).then((r) => json<ConnectPlan>(r, '연결 계획'))
+export const connect = (name: string, body: { hub: string; survey: boolean }) =>
+  post(`/api/connect/${encodeURIComponent(name)}`, body).then((r) => json<{ ok: boolean }>(r, '연결'))
+export const reprobe = (name: string) =>
+  post(`/api/connect/${encodeURIComponent(name)}/probe`).then((r) => json<{ ok: boolean }>(r, '다시 시험'))
+export const setSurveySettings = (body: SurveySettings) =>
+  post('/api/connect/settings', body).then((r) => json<SurveySettings>(r, '조사 설정'))
+
+/** What the server changed on its own: a spec moved, it started a turn, or a
+ *  repository's connection changed. */
 export type FeedEv =
   | ({ kind: 'spec'; seq: number } & LoopRow)
   | { kind: 'turn'; seq: number; path: string; turn: string; session_id: string }
+  | { kind: 'connect'; seq: number; repo: string }
 
 /** Tail the server's own changes until `signal` aborts or the stream drops. */
 export async function loopEvents(onEvent: (ev: FeedEv) => void, signal: AbortSignal): Promise<void> {

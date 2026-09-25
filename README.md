@@ -323,7 +323,7 @@ the original conversation; switching between Claude and Codex starts a new
 context. "Related rules" on screen is a display-time comparison, not evidence
 that the host delivered a hook, and hooks are never re-run to produce it.
 
-Checks: `python -m pytest -q tool/test_main.py tool/test_specs.py tool/test_loop.py`,
+Checks: `python -m pytest -q tool/test_main.py tool/test_specs.py tool/test_loop.py tool/test_connect.py`,
 `npm --prefix web run build`, `npm --prefix web run lint`. They confirm the
 CLI events, the session separation, the original surviving a failure, and the
 model and effort validation. `tool/test_specs.py` confirms the next-task
@@ -342,7 +342,16 @@ head or base that moved throws the round away; `adopt` and its four local
 branch cases; [머지] bound to the allowed head, a queued merge that cleans
 nothing until it lands, and every row of the after-merge table; the remote
 branch deleted only on its lease; [받아들임] and [다시 PR]; a Claude review cell
-with no shell; and a loop that keeps going across a project switch. These automatic checks guarantee neither the
+with no shell; and a loop that keeps going across a project switch.
+`tool/test_connect.py` confirms connecting: each missing item makes a row
+`일부` under its own name; the gate is guessed from the first file that says;
+a host passes its test only when its own SessionStart injected, and the hook
+writes nothing without `WIKI_PROBE` and passes when it cannot write; the hub
+move lists every line before writing and writes nothing unconfirmed; the
+survey stops sending turns at its token limit, skips a page that exists and
+puts back what it touched outside `.wiki/`; `sync`, `harvest` and
+`session_state` import nothing of it; and the six handover steps, each
+condition broken touching nothing. These automatic checks guarantee neither the
 accuracy of every model response nor the quality of an explanation. To test
 the quality of a real progress answer, press "문맥 비우기" in the query pane
 first, wait for it to finish, then ask again. A check that re-explains
