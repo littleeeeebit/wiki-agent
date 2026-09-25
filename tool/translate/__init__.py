@@ -104,6 +104,7 @@ EN_KO = "en->ko"
 
 HANGUL = re.compile(r"[가-힣]")
 LATIN = re.compile(r"[A-Za-z]")
+LATIN_WORD = re.compile(r"[A-Za-z]+")
 
 # Sentinels from the Unicode private use area. No source document and no
 # model vocabulary produces these, so a placeholder that comes back altered
@@ -448,11 +449,18 @@ def worth_translating(text: str, direction: str) -> bool:
     Skipping saves a request, but the reason it is a rule rather than an
     optimization is that translating English to English comes back subtly
     reworded, and reworded rules are rules nobody can diff.
+
+    Toward Korean, a few letters are not enough: Korean prose carries paths
+    and names, and one such answer sent to Korean came back in English. A
+    Korean word is two or three syllables, so more syllables than Latin words
+    is Korean with identifiers in it, not English.
     """
 
     if not text.strip():
         return False
-    return bool(HANGUL.search(text)) if direction == KO_EN else bool(LATIN.search(text))
+    if direction == KO_EN:
+        return bool(HANGUL.search(text))
+    return len(LATIN_WORD.findall(text)) > len(HANGUL.findall(text))
 
 
 def translate(texts: list[str], direction: str, deadline: float) -> list[str]:
