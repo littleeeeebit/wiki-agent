@@ -6,12 +6,12 @@
 
 단계별 계획은 착수 직전에 하위 문서로 쓴다.
 
-- [2단계 — 경계 검사](wiki-agent-2-boundary.md)
-- [3단계 — `translate` 독립](wiki-agent-3-translate.md)
-- [4단계 — `wiki` 독립](wiki-agent-4-wiki.md)
-- [5단계 — `agent`·`workspace`](wiki-agent-5-agent-workspace.md)
-- [6단계 — 메인과 새 화면](wiki-agent-6-main.md)
-- [7단계 — 검증](wiki-agent-7-verify.md)
+- [2단계 — 경계 검사](2-boundary.md)
+- [3단계 — `translate` 독립](3-translate.md)
+- [4단계 — `wiki` 독립](4-wiki.md)
+- [5단계 — `agent`·`workspace`](5-agent-workspace.md)
+- [6단계 — 메인과 새 화면](6-main.md)
+- [7단계 — 검증](7-verify.md)
 
 ## 왜 하나
 
@@ -187,11 +187,11 @@ import 를 세어 본 결과다. 2단계(#3)에서 0 이 됐다. `mirror.py` 와
 - 서버는 `127.0.0.1` 에만 뜬다
 - 쓰기는 `workspace` 가 만든 작업트리 안에서만. 원본 체크아웃에는 쓰지 않는다
   — 예외 하나. [연결] 을 누르면 서버가 그 저장소의 `.wiki/adapter.toml` 하나를 원본에 쓴다
-  ([loop 개요](loop-0-overview.md#연결과-전수조사))
+  ([loop 개요](../../loop/0-overview.md#연결과-전수조사))
 - 작업트리는 저장소 옆 `../<repo>-worktrees/<task>` 에 만든다
 - 쓰기는 모두 화면에서 승인한다 — 파일 편집, 쓰기가 있는 셸 명령, `gh pr create` 까지.
   Claude Code 는 `--permission-prompt-tool stdio` 로, Codex 는 `app-server` 의 승인 요청으로 받는다.
-  작업트리 밖으로의 쓰기는 묻지 않고 거절한다([5단계](wiki-agent-5-agent-workspace.md))
+  작업트리 밖으로의 쓰기는 묻지 않고 거절한다([5단계](5-agent-workspace.md))
 - 대상 저장소의 `permissions.deny` 와 위키 훅은 그대로 붙는다 — CLI 를 띄우는 것이니까
 
 ## 단계

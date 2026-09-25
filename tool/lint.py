@@ -504,7 +504,7 @@ def pipeline_imports(wiki: Path = WIKI) -> list[tuple[str, str]]:
     a pipeline reaching into it is a way around the boundary, not a way along
     it. Imports inside functions count as much as those at the top: this code
     base defers imports often, and a check that saw only the top would pass
-    most of them. See `docs/plans/wiki-agent-0-overview.md`.
+    most of them. See `docs/plans/done/wiki-agent/0-overview.md`.
     """
 
     tool = wiki / "tool"
