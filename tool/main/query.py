@@ -129,8 +129,8 @@ def config(cid: str, name: str | None = None) -> dict:
 # main model re-reads what it cites anyway. Searching itself, the main model's
 # median input fell 20% and correct citations rose from 29.5 to 39.5.
 SEARCH_NOTE = """## Search command
-{command} "<query>" [--k 8]
-In PowerShell, run it with the call operator: & {command} "<query>" [--k 8]
+In Bash: {bash} "<query>" [--k 8]
+In PowerShell: & {pwsh} "<query>" [--k 8]
 It returns matching sections with `path:line` and the pages linked to each.
 The hub's pages are English and many repository documents are Korean, so
 search with terms in both languages."""
@@ -139,21 +139,25 @@ search with terms in both languages."""
 def search_note(repo: Path) -> str:
     """The note with this server's Python and this repository in the command.
 
-    Forward slashes: Claude's `Bash` is Git Bash on Windows. Quoted only where
-    a path has a space. Both shells' forms are given, not the one for the
-    focus's host: a quoted first word is a string, not a command, in Codex's
-    PowerShell and needs `&`, which Bash reads as "run in the background" —
-    and `reconfigure` can move a focus between Claude and Codex while its
-    system prompt stays (review round 1).
+    Forward slashes: Claude's `Bash` is Git Bash on Windows. Both shells'
+    forms are given, not the one for the focus's host: a quoted first word is
+    a string, not a command, in Codex's PowerShell and needs `&`, which Bash
+    reads as "run in the background" — and `reconfigure` can move a focus
+    between Claude and Codex while its system prompt stays (review round 1).
+
+    Every path in single quotes, which neither shell expands: a repository
+    at `C:/Repos/R&D` or `C:/Team $Ops` reaches Python as it is (round 2).
+    A quote inside a path is escaped each shell's own way.
     """
 
-    def arg(path: Path) -> str:
-        text = path.as_posix()
-        return f'"{text}"' if " " in text else text
+    paths = [Path(sys.executable), channels.WIKI / "tool/search", repo.resolve()]
 
-    command = (f"{arg(Path(sys.executable))} {arg(channels.WIKI / 'tool/search')} "
-               f"--project {arg(repo.resolve())}")
-    return SEARCH_NOTE.format(command=command)
+    def command(escape) -> str:
+        python, script, project = (f"'{escape(p.as_posix())}'" for p in paths)
+        return f"{python} {script} --project {project}"
+
+    return SEARCH_NOTE.format(bash=command(lambda s: s.replace("'", "'\\''")),
+                              pwsh=command(lambda s: s.replace("'", "''")))
 
 
 def session(cid: str) -> ChatSession:

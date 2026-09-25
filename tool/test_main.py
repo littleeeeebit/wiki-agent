@@ -268,16 +268,44 @@ def test_a_focus_is_told_how_to_search_its_own_repository(tmp_path):
         assert system.startswith(chat_channels.ANSWER_PROMPT.strip())
         assert "the search command first" in system
         search = (chat_channels.WIKI / "tool/search").as_posix()
-        assert f"{search} --project {repos['a'].resolve().as_posix()} \"<query>\"" in system, system
+        assert f"'{search}' --project '{repos['a'].resolve().as_posix()}' \"<query>\"" in system, system
         web.post("/api/config/next", json={"repo": "b c"}).raise_for_status()
         spaced = chat.session("retro").system
-        assert f'--project "{repos["b c"].resolve().as_posix()}"' in spaced
-    # A Python under a path with a space: PowerShell runs a quoted first word
-    # only behind `&` (review round 1).
-    with patch.object(chat.sys, "executable", "C:/Program Files/Python311/python.exe"):
-        note = chat.search_note(repos["a"])
-    assert f'\n"C:/Program Files/Python311/python.exe" {search} --project' in note, note
-    assert f'& "C:/Program Files/Python311/python.exe" {search} --project' in note, note
+        assert f"--project '{repos['b c'].resolve().as_posix()}'" in spaced
+
+
+def test_the_search_command_runs_as_printed_in_both_shells(tmp_path):
+    """Each line of the note, pasted into its shell, reaches Python with the
+    path intact: a space, `&`, `$` and a quote in the repository's path. A
+    quoted Python needs `&` in PowerShell (review round 1); a bare or double-
+    quoted `&` or `$` was read by the shell (round 2)."""
+
+    import os
+    import shutil
+
+    repo = tmp_path / "R&D $Ops it's"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "deploy.md").write_text("# Deploy\n\n## Order\n\nquokka tags first.\n", encoding="utf-8")
+    note = chat.search_note(repo)
+    lines = {line.split(":", 1)[0]: line.split(": ", 1)[1].replace("[--k 8]", "--k 1")
+             for line in note.splitlines() if line.startswith("In ")}
+    # Claude's Bash on Windows is Git Bash; a bare `bash` there may be WSL's.
+    bash = shutil.which("bash")
+    if sys.platform == "win32" and shutil.which("git"):
+        found = Path(shutil.which("git")).resolve().parents[1] / "bin" / "bash.exe"
+        bash = str(found) if found.exists() else None
+    shells = {"In Bash": [bash, "-c"], "In PowerShell": [shutil.which("pwsh"), "-NoProfile", "-Command"]}
+    ran = 0
+    for label, shell in shells.items():
+        if not shell[0]:
+            continue
+        done = subprocess.run([*shell, lines[label].replace("<query>", "quokka")],
+                              capture_output=True, text=True, encoding="utf-8", errors="replace",
+                              env=dict(os.environ, WIKI_SEARCH="off"), timeout=120)
+        assert "## docs/deploy.md:3" in done.stdout, (label, lines[label], done.stdout, done.stderr)
+        ran += 1
+    if not ran:
+        pytest.skip("neither bash nor pwsh on this machine")
 
 
 def test_legacy_records_remain_visible(tmp_path):
