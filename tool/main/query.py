@@ -129,8 +129,10 @@ def config(cid: str, name: str | None = None) -> dict:
 # main model re-reads what it cites anyway. Searching itself, the main model's
 # median input fell 20% and correct citations rose from 29.5 to 39.5.
 SEARCH_NOTE = """## Search command
-In Bash: {bash} "<query>" [--k 8]
-In PowerShell: & {pwsh} "<query>" [--k 8]
+In Bash: {bash} '<query>' [--k 8]
+In PowerShell: & {pwsh} '<query>' [--k 8]
+Keep the query in single quotes, so `$`, backticks and `$(...)` stay text; a
+quote inside it is written '\\'' in Bash and '' in PowerShell.
 It returns matching sections with `path:line` and the pages linked to each.
 The hub's pages are English and many repository documents are Korean, so
 search with terms in both languages."""
@@ -147,7 +149,9 @@ def search_note(repo: Path) -> str:
 
     Every path in single quotes, which neither shell expands: a repository
     at `C:/Repos/R&D` or `C:/Team $Ops` reaches Python as it is (round 2).
-    A quote inside a path is escaped each shell's own way.
+    A quote inside a path is escaped each shell's own way. The query's
+    placeholder is single-quoted too, and the note says how: a model that
+    copies `"<query>"` hands `$HOME` or `$(...)` to the shell (round 3).
     """
 
     paths = [Path(sys.executable), channels.WIKI / "tool/search", repo.resolve()]

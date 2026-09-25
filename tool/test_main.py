@@ -268,7 +268,7 @@ def test_a_focus_is_told_how_to_search_its_own_repository(tmp_path):
         assert system.startswith(chat_channels.ANSWER_PROMPT.strip())
         assert "the search command first" in system
         search = (chat_channels.WIKI / "tool/search").as_posix()
-        assert f"'{search}' --project '{repos['a'].resolve().as_posix()}' \"<query>\"" in system, system
+        assert f"'{search}' --project '{repos['a'].resolve().as_posix()}' '<query>'" in system, system
         web.post("/api/config/next", json={"repo": "b c"}).raise_for_status()
         spaced = chat.session("retro").system
         assert f"--project '{repos['b c'].resolve().as_posix()}'" in spaced
@@ -278,14 +278,18 @@ def test_the_search_command_runs_as_printed_in_both_shells(tmp_path):
     """Each line of the note, pasted into its shell, reaches Python with the
     path intact: a space, `&`, `$` and a quote in the repository's path. A
     quoted Python needs `&` in PowerShell (review round 1); a bare or double-
-    quoted `&` or `$` was read by the shell (round 2)."""
+    quoted `&` or `$` was read by the shell (round 2). The query goes in as
+    the note says to write it: `$QUOKKAHOME` and a quote stay text (round 3);
+    expanded, the variable is empty and nothing is found."""
 
     import os
     import shutil
 
     repo = tmp_path / "R&D $Ops it's"
     (repo / "docs").mkdir(parents=True)
-    (repo / "docs" / "deploy.md").write_text("# Deploy\n\n## Order\n\nquokka tags first.\n", encoding="utf-8")
+    (repo / "docs" / "deploy.md").write_text("# Deploy\n\n## Order\n\nset $QUOKKAHOME first.\n",
+                                             encoding="utf-8")
+    query = {"In Bash": "it'\\''s $QUOKKAHOME", "In PowerShell": "it''s $QUOKKAHOME"}
     note = chat.search_note(repo)
     lines = {line.split(":", 1)[0]: line.split(": ", 1)[1].replace("[--k 8]", "--k 1")
              for line in note.splitlines() if line.startswith("In ")}
@@ -299,7 +303,7 @@ def test_the_search_command_runs_as_printed_in_both_shells(tmp_path):
     for label, shell in shells.items():
         if not shell[0]:
             continue
-        done = subprocess.run([*shell, lines[label].replace("<query>", "quokka")],
+        done = subprocess.run([*shell, lines[label].replace("<query>", query[label])],
                               capture_output=True, text=True, encoding="utf-8", errors="replace",
                               env=dict(os.environ, WIKI_SEARCH="off"), timeout=120)
         assert "## docs/deploy.md:3" in done.stdout, (label, lines[label], done.stdout, done.stderr)
