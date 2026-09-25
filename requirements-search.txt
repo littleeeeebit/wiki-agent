@@ -1,0 +1,9 @@
+# The search daemon's vectors (`tool/search/daemon.py`). Optional: without
+# these the daemon ranks with BM25 alone, and the hooks never need them.
+#
+# The model itself (multilingual-e5-small, int8 ONNX, about 120 MB) is not a
+# package. The daemon downloads it on first start into
+# ~/.cache/wiki-agent/models/.
+onnxruntime>=1.18
+tokenizers>=0.15
+numpy>=1.24

@@ -469,7 +469,7 @@ def git_ok(repo: Path, ref: str) -> bool:
 
 # One folder per pipeline under `tool/`. `common` is the one place all of them
 # may share, and it may import none of them.
-PIPELINES = ("wiki", "translate", "agent", "workspace")
+PIPELINES = ("wiki", "translate", "agent", "workspace", "search")
 
 
 def reached(node: ast.AST, depth: int) -> list[str]:

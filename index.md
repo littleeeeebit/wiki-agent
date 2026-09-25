@@ -1,7 +1,8 @@
 # Index
 
-The agent reads this file first and decides which page it needs. No
-embeddings, no vector database. `landmine` and `contract` do not even wait for
+The agent reads this file first and decides which page it needs. A local
+search model serves the wiki chat; it never decides what the hook injects.
+`landmine` and `contract` do not even wait for
 that — the `UserPromptSubmit` hook reads the utterance and injects them
 directly ([`ENFORCEMENT.md`](ENFORCEMENT.md)).
 
