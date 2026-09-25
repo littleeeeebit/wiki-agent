@@ -132,7 +132,7 @@ m = read(); say({"id": m["id"], "result": {}})
 read()
 m = read()
 if m["method"] == "thread/resume":
-    say({"id": m["id"], "error": {"code": -32600, "message": "no rollout"}})
+    say({"id": m["id"], "error": {"code": -32600, "message": "no rollout found for thread id " + m["params"]["threadId"]}})
     m = read()
 p = m["params"]
 assert m["method"] == "thread/start", m
@@ -416,7 +416,7 @@ class Agent:
         self.pending, self.rules = {"r1"}, []
         Agent.made.append(self)
 
-    def say(self, text):
+    def say(self, text, halt=None):
         yield Event("approval", "Write · b.txt", {"id": "r1", "tool": "Write", "input": {}}, self.id)
         yield Event("done", "했다", {"session_id": "cli-1", "error": False}, self.id)
 
@@ -445,7 +445,7 @@ class Slow(Agent):
         super().__init__(*args, **kwargs)
         self.go, self.stopped = threading.Event(), False
 
-    def say(self, text):
+    def say(self, text, halt=None):
         self.alive = True
         yield Event("tool", "Read · a.txt", {}, self.id)
         yield Event("approval", "Write · b.txt", {"id": "r1", "tool": "Write", "input": {}}, self.id)
@@ -1034,7 +1034,7 @@ class Asker(Slow):
         super().__init__(*args, **kwargs)
         self.pending, self.heard = {"r1", "r2", "r4"}, threading.Event()
 
-    def say(self, text):
+    def say(self, text, halt=None):
         self.alive = True
         yield Event("tool", "Read · a.txt", {}, self.id)
         for rid in ("r1", "r2"):
@@ -1126,3 +1126,32 @@ def test_a_session_rule_is_shown_and_cleared_by_its_own_session(tmp_path):
         assert web.post("/api/work/rules/clear", json=clear).status_code == 409
         web.post("/api/work/rules/clear", json={**clear, "session_id": agent.id}).raise_for_status()
         assert web.get("/api/work/log", params={"path": path}).json()["rules"] == []
+
+
+class Starting(Agent):
+    """Stopped while its process starts: the start breaks, not the turn."""
+
+    started = threading.Event()
+
+    def say(self, text, halt=None):
+        Starting.started.set()
+        halt.wait(10)
+        raise RuntimeError("Codex 가 닫혔다: thread/resume")
+        yield
+
+    def stop(self):
+        pass   # no process yet to kill
+
+
+def test_a_stop_during_start_up_is_recorded_as_a_stop(tmp_path):
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Starting):
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        work.say(work.Order(path=path, text="x"))
+        assert Starting.started.wait(10)
+        web.post("/api/work/stop", json={"path": path, "turn": work._runs[path].turn}).raise_for_status()
+        run = settled(path)
+        assert (run.events[-1]["kind"], run.events[-1]["text"]) == ("error", "사람이 멈춤")
+        assert web.get("/api/work/log", params={"path": path}).json()["rows"][-1]["error"] == "사람이 멈춤"

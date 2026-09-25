@@ -288,3 +288,77 @@ def test_only_what_a_rule_can_name_is_allowed_for_the_session(tree):
     with pytest.raises(ValueError):
         session.answer("x", True, "session")
     assert "x" in session._pending   # still waiting for a plain answer
+
+
+def test_a_stop_while_the_process_starts_sends_it_nothing(tree):
+    """Round 1: pressed before `_spawn` set `_proc`, `stop()` had nothing to
+    kill and the turn went on. The turn's `halt` catches it once it started."""
+
+    session = ChatSession(tree, write=True)
+    halt = threading.Event()
+    real_popen = subprocess.Popen
+    answers = '''import json, sys
+sys.stdin.readline()
+print(json.dumps({"type": "result", "result": "ran", "session_id": "cli-1"}), flush=True)
+sys.stdin.read()
+'''
+
+    def spawn(command, **kwargs):
+        halt.set()       # the person pressed stop while this was starting
+        session.stop()   # nothing to kill yet
+        return real_popen([sys.executable, "-X", "utf8", "-c", answers], **kwargs)
+
+    with patch.object(chat_session.subprocess, "Popen", spawn), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+        events = list(session.say("write it", halt))
+    assert [e.kind for e in events] == ["error"]
+    assert not session.alive
+
+
+# `app-server` that answers `initialize` and then whatever `thread/resume` gets.
+RESUMING = '''import json, sys, time
+read = lambda: json.loads(sys.stdin.readline())
+say = lambda m: print(json.dumps(m), flush=True)
+m = read(); say({"id": m["id"], "result": {}})
+read()
+m = read()
+assert m["method"] == "thread/resume", m
+if sys.argv[1] == "slow":
+    time.sleep(30)
+else:
+    say({"id": m["id"], "error": {"code": -32600, "message": sys.argv[1]}})
+m = read()
+say({"id": m["id"], "result": {"thread": {"id": "new-thread"}}})
+sys.stdin.read()
+'''
+
+
+@pytest.mark.parametrize("answer, starts_afresh", [
+    ("no rollout found for thread id old-thread", True),
+    ("slow", False),                         # no answer in time: not "gone"
+    ("model is not supported", False),       # refused for another reason
+])
+def test_only_a_missing_thread_starts_a_new_codex_conversation(tmp_path, answer, starts_afresh):
+    """Round 1: a resume that timed out started a new thread and dropped the
+    conversation. Only Codex saying the thread is not there does that."""
+
+    session = ChatSession(tmp_path, model="codex:test-model", resume="old-thread")
+    real_popen = subprocess.Popen
+
+    def spawn(command, **kwargs):
+        return real_popen([sys.executable, "-X", "utf8", "-c", RESUMING, answer], **kwargs)
+
+    with patch.object(chat_session.subprocess, "Popen", spawn), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]), \
+         patch.object(chat_session, "BOOT_TIMEOUT", 1):
+        try:
+            if starts_afresh:
+                session.ensure()
+                assert session.session_id == "new-thread" and session._lost == "old-thread"
+            else:
+                with pytest.raises(RuntimeError):
+                    session.ensure()
+                assert session.session_id == "old-thread" and session._lost is None
+                assert not session.alive
+        finally:
+            session.close()

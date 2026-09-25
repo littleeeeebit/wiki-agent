@@ -263,7 +263,7 @@ class Run:
         self.session_id = chat.id
         self.events: list[dict] = []
         self.done = False
-        self.stopped = False
+        self.halt = threading.Event()   # set by a stop; the session reads it too
         self.wake = threading.Condition()
 
     def put(self, payload: dict) -> None:
@@ -340,7 +340,7 @@ def run_turn(path: Path, run: Run, text: str, release) -> None:
 
     chat, final, failed, meta = run.chat, "", "", {}
     try:
-        for ev in chat.say(text):
+        for ev in chat.say(text, run.halt):
             if ev.kind == "context":   # the CLI's conversation could not be resumed
                 remember(path, "context", ev.text)
                 ev.kind = "tool"
@@ -349,11 +349,12 @@ def run_turn(path: Path, run: Run, text: str, release) -> None:
                 if meta.pop("error", False):
                     failed = final or "완료된 답이 없다"
             elif ev.kind == "error":
-                failed = ev.text = "사람이 멈춤" if run.stopped else ev.text
+                failed = ev.text = "사람이 멈춤" if run.halt.is_set() else ev.text
             run.put({"kind": ev.kind, "text": ev.text, "meta": ev.meta,
                      "session_id": ev.session_id, "parent_id": ev.parent_id})
     except Exception as exc:  # a turn that broke still owes the screen a reason
-        failed = f"{type(exc).__name__}: {exc}"
+        # A stop while the process started breaks the start, not the turn.
+        failed = "사람이 멈춤" if run.halt.is_set() else f"{type(exc).__name__}: {exc}"
         run.put({"kind": "error", "text": failed, "meta": {}, "session_id": chat.id, "parent_id": None})
     finally:
         try:
@@ -442,7 +443,7 @@ def stop(body: Stop) -> dict:
     if run.turn != body.turn:
         raise HTTPException(409, "지금 도는 턴이 아니다")
     if not run.done:
-        run.stopped = True
+        run.halt.set()   # first: a process not started yet is stopped by this
         run.chat.stop()
     return {"ok": True}
 

@@ -51,6 +51,22 @@ DECLINED = "The person declined this."
 BOOT_TIMEOUT = 120.0   # the first turn is slow: hooks, and loading
 TURN_TIMEOUT = 600.0
 
+# What `app-server` answers `thread/resume` for a thread it cannot find
+# (`-32600`, CLI 0.156.0). Only these start a new conversation.
+#
+# ponytail: matched on the message, since the code is the generic "invalid
+# request". Reworded in a later CLI, a lost thread raises instead of starting
+# afresh — loud, never a silent loss. Match on a code if Codex gives one.
+NO_THREAD = ("no rollout found", "invalid session id")
+
+
+class Refused(RuntimeError):
+    """The CLI answered a request with an error, as opposed to not answering."""
+
+    def __init__(self, method: str, error) -> None:
+        super().__init__(f"Codex {method} 실패: {error}")
+        self.error = error
+
 
 @dataclass
 class Event:
@@ -264,8 +280,10 @@ class ChatSession:
         anything but a known read-only command becomes an approval request. A
         read session never asks — `_approval` would refuse it anyway.
 
-        A thread that cannot be resumed is not dropped in silence: a new one
-        starts, and the next turn says so.
+        A thread Codex says is not there is not dropped in silence: a new one
+        starts, and the next turn says so. Anything else — a slow answer, a
+        closed process, another refusal — raises, and the thread id stays for
+        the next try: a slow resume must not cost the conversation.
         """
 
         self._call("initialize", {"clientInfo": {"name": "wiki-agent", "version": "0.1.0"}})
@@ -278,8 +296,9 @@ class ChatSession:
         if self._resume:
             try:
                 result = self._call("thread/resume", {"threadId": self._resume, **params})
-            except RuntimeError:
-                if not self.alive:
+            except Refused as exc:
+                message = str(exc.error.get("message") if isinstance(exc.error, dict) else exc.error)
+                if not any(mark in message for mark in NO_THREAD):
                     raise
                 self._lost = self._resume
         if result is None:
@@ -306,7 +325,7 @@ class ChatSession:
                 raise RuntimeError(f"Codex 가 닫혔다: {method}. {''.join(self._stderr)[-400:]}".strip())
             if reply.get("id") == message["id"] and "method" not in reply:
                 if "error" in reply:
-                    raise RuntimeError(f"Codex {method} 실패: {reply['error']}")
+                    raise Refused(method, reply["error"])
                 return reply.get("result") or {}
 
     def _send(self, message: dict, proc=None) -> bool:
@@ -435,7 +454,9 @@ class ChatSession:
     def stop(self) -> None:
         """End the running turn now, from another thread. Its `_drain` reads
         the process closing and ends the turn with an error. The CLI's session
-        id stays, so the next turn resumes it.
+        id stays, so the next turn resumes it. Before the process exists there
+        is nothing to kill: the turn's `halt`, set by the caller first, covers
+        that.
 
         ponytail: kills the process rather than Claude's `interrupt` or Codex's
         `turn/interrupt` — the same on both hosts, and resuming loses nothing.
@@ -462,10 +483,15 @@ class ChatSession:
 
     # -- One turn -----------------------------------------------------------
 
-    def say(self, text: str):
-        """Send one utterance and stream the events. One turn runs at a time."""
+    def say(self, text: str, halt: threading.Event | None = None):
+        """Send one utterance and stream the events. One turn runs at a time.
 
-        turn = self._say(text)
+        `halt` is this turn's stop. `stop()` can only kill a process that
+        exists; one asked for while the process is still starting is caught
+        here, once it has started and before anything is sent to it.
+        """
+
+        turn = self._say(text, halt)
         try:
             for event in turn:
                 event.session_id, event.parent_id = self.id, self.parent_id
@@ -473,13 +499,18 @@ class ChatSession:
         finally:
             turn.close()
 
-    def _say(self, text: str):
+    def _say(self, text: str, halt: threading.Event | None = None):
         if not self._turn.acquire(blocking=False):
             yield Event("error", "앞 턴이 아직 안 끝났다.")
             return
         completed = False
         try:
             self.ensure()
+            if halt is not None and halt.is_set():
+                # From here on `_proc` is set, so a later stop reaches it.
+                self.close()
+                yield Event("error", "멈췄다.")
+                return
             assert self._proc and self._proc.stdin
             # An abandoned turn is closed in `finally`. A queue that already
             # holds a start event is not drained.
