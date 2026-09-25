@@ -130,6 +130,7 @@ def config(cid: str, name: str | None = None) -> dict:
 # median input fell 20% and correct citations rose from 29.5 to 39.5.
 SEARCH_NOTE = """## Search command
 {command} "<query>" [--k 8]
+In PowerShell, run it with the call operator: & {command} "<query>" [--k 8]
 It returns matching sections with `path:line` and the pages linked to each.
 The hub's pages are English and many repository documents are Korean, so
 search with terms in both languages."""
@@ -139,8 +140,11 @@ def search_note(repo: Path) -> str:
     """The note with this server's Python and this repository in the command.
 
     Forward slashes: Claude's `Bash` is Git Bash on Windows. Quoted only where
-    a path has a space — a quoted first word is a string, not a command, in
-    Codex's PowerShell.
+    a path has a space. Both shells' forms are given, not the one for the
+    focus's host: a quoted first word is a string, not a command, in Codex's
+    PowerShell and needs `&`, which Bash reads as "run in the background" —
+    and `reconfigure` can move a focus between Claude and Codex while its
+    system prompt stays (review round 1).
     """
 
     def arg(path: Path) -> str:

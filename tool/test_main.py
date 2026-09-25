@@ -270,7 +270,14 @@ def test_a_focus_is_told_how_to_search_its_own_repository(tmp_path):
         search = (chat_channels.WIKI / "tool/search").as_posix()
         assert f"{search} --project {repos['a'].resolve().as_posix()} \"<query>\"" in system, system
         web.post("/api/config/next", json={"repo": "b c"}).raise_for_status()
-        assert f'--project "{repos["b c"].resolve().as_posix()}"' in chat.session("retro").system
+        spaced = chat.session("retro").system
+        assert f'--project "{repos["b c"].resolve().as_posix()}"' in spaced
+    # A Python under a path with a space: PowerShell runs a quoted first word
+    # only behind `&` (review round 1).
+    with patch.object(chat.sys, "executable", "C:/Program Files/Python311/python.exe"):
+        note = chat.search_note(repos["a"])
+    assert f'\n"C:/Program Files/Python311/python.exe" {search} --project' in note, note
+    assert f'& "C:/Program Files/Python311/python.exe" {search} --project' in note, note
 
 
 def test_legacy_records_remain_visible(tmp_path):
