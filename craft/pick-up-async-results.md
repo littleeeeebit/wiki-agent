@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["리뷰\\s*루프", "review\\s*loop", "기싸움", "안 ?받", "안 ?읽", "왜 안", "감시", "폴링", "자동으로 (감지|받|보내)", "라운드\\s*\\d+\\s*(결과|보냈|왔)"]
 slots: []
 sources: []
@@ -12,7 +13,10 @@ links: [codex-review-loop, declared-continuation, verify-narrow-then-wide, repor
 
 Rule. When sending something that will answer back, arm the watch before
 sending, and do not end the turn between the send and the watch. The watch
-looks at a directory, not at one path.
+looks at a directory, not at one path. Do not invent an end condition — a
+background task is finished when its completion notice says so, not after a
+number of turns or when the output stops. Match the interval to what is being
+waited on: a second for a local file, thirty for a remote API.
 
 What goes wrong. The other side answered and nobody read it. The user has to
 find that and say so — which is the whole value of the automation, gone.

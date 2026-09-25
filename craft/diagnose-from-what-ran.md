@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["원인", "왜 (깨|실패|안 되|안 돌)", "진단", "디버깅|디버그", "회귀|regression", "갑자기", "되던 게", "이상하다"]
 slots: []
 sources: []

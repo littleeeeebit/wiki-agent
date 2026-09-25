@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["예산|budget|상한|한도", "마감|deadline|timeout|제한\\s*시간", "측정|계측|재는|재고|길이를|크기를|cost", "끼워|삽입|중간에\\s*넣", "단계를?\\s*(추가|삽입|넣)", "번역(을|이)?\\s*(넣|끼|붙)", "파이프라인|pipeline", "수렴(을|이)?\\s*(못|안)", "라운드마다|매\\s*라운드"]
 slots: []
 sources: []
@@ -13,7 +14,10 @@ links: [gate-the-exit-not-the-callers, diagnose-from-what-ran, client-lifecycle-
 Rule. If a value is checked, recorded or fitted to a budget, that has to
 happen after everything that can change it. Insert one step into a pipeline
 and every place below it that measured the same value is now measuring a stale
-one.
+one. So adding a step means counting every place that reads the value it
+changes; if one sits above it, move the step up or the read down. When two
+review findings land on the same value, follow that value's life to where it
+changes last instead of moving the point again.
 
 What goes wrong. The check keeps passing while measuring the wrong thing.
 Worse than not measuring — there is a number, so it looks measured.

@@ -1,6 +1,7 @@
 ---
 scope: operator
 severity: contract
+repeat: rule
 triggers: ["edit\\s*(만|diff)", "diff\\s*(로|형태|방식)", "ran\\s*(형식|으로)\\s*(수정|하지|작성)", "스크립트로\\s*(수정|고쳐|바꾸)", "sed\\s+-i", "here-?string"]
 slots: []
 enforce:

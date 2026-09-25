@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: contract
+repeat: rule
 triggers:
   - "머지했다"
   - "머지 완료"
@@ -20,7 +21,14 @@ links: [after-merge-cleanup, declared-continuation, comments-carry-why]
 
 Rule. When an instruction has several items, do all of them. If one is
 blocked, finish the others and name what was blocked and why. Never narrow the
-scope quietly.
+scope quietly. A sentence that opens a second thing with `그리고`, `또한` or
+`그 다음` is several items too; a task and a question in one utterance are both
+finished in that turn, the answer in one line first when the task is long.
+Stopping is right only for a judgement the user owns, an action that is hard
+to reverse or goes outward (push, merge, deploy, delete), or a place where any
+assumption is unsafe; anything else continues, saying what was assumed. If
+there is something to ask, ask it in that turn, as options — never write that
+you will ask and then not ask.
 
 Stopping halfway makes the user find the remainder and ask again, which means
 the person who gave the instruction is now the one inspecting the result.

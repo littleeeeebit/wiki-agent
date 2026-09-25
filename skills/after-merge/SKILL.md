@@ -10,7 +10,10 @@ description: >-
 # Cleanup after a merge
 
 The rule behind this skill is `operator/after-merge-cleanup`. Why it works this
-way is on that page; only how to do it is written here.
+way is on that page; only how to do it is written here. That page also carries
+this repository's server stop command (`server_stop`) and scratch directories
+(`scratch_dirs`) — a skill is the same file in every repository, so those are
+read off the injected page.
 
 Do all of it. Do not wait to be told one step at a time.
 
@@ -60,14 +63,19 @@ The merge usually deleted it already. Check with `git branch -r` after
 
 ### 5. Stop the servers
 
-Stop everything this session started. Check by port — it is more certain than
-the process list.
+Stop everything this session started, with the page's `server_stop`. Check by
+port — it is more certain than the process list. Only what this session
+started: another project's server on the same machine looks identical by name
+and by timestamp, so tell them apart by command line
+(`operator/run-inside-this-session`).
 
 ### 6. Clear the scratch directories
 
-Check the absolute path of what is being deleted, and what the links point at,
-first. Preserve audio assets, runtime data, live and review evidence, and shared
-dependencies outside the worktree when they are needed. A junction loses the
+The directories are the page's `scratch_dirs`. Check the absolute path of what
+is being deleted, and what the links point at, first. In a merged worktree,
+check for uncommitted changes first, then preserve audio assets, runtime data,
+live and review evidence, and shared dependencies outside the worktree when
+they are needed. A junction loses the
 link only, never the target. Leave an independent review session the user
 opened.
 
@@ -84,8 +92,10 @@ A finding does not stop the cleanup. Go through step 8 and report them together.
 
 ### 8. Report the state
 
-Report values you checked: the branch list, server state, worktree cleanliness.
-Do not write "cleaned up" — write what is left. Include any lint findings.
+Query local branches, remote branches and worktrees again, and report values
+you checked: the branch list, server state, worktree cleanliness. Do not write
+"cleaned up" — write what was deleted, what is left and why it was kept.
+Include any lint findings.
 
 ## If something blocks
 

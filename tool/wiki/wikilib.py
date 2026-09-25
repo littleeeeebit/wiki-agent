@@ -43,16 +43,53 @@ def front_matter(text: str, *, strict: bool = False) -> tuple[dict[str, object],
     return (meta if isinstance(meta, dict) else {}), text[end + 4 :].lstrip("\n")
 
 
+def rule_paragraph(body: str) -> str:
+    """The `Rule.` paragraph whole, up to the blank line. `""` when there is none.
+
+    Both spellings. Hub pages are English; a target repository's pages are
+    Korean, and a failed translation hands the Korean original back — a
+    parser that knows one spelling leaves a title with no rule under it.
+
+    The whole paragraph, not its first line. The first line of a wrapped
+    paragraph ends mid-sentence, and the clause that must hold on every turn
+    is often the second sentence — `ask-with-arrow-key-options` forbids the
+    asynchronous call there.
+    """
+
+    found = re.search(r"^(?:Rule|규칙)\..*?(?=\n[ \t]*\n|\Z)", body, re.M | re.S)
+    return found.group(0).rstrip() if found else ""
+
+
+# A repeated page carries its rule paragraph on every later turn of the
+# session. Past this it stops being the short form it was declared to be.
+REPEAT_MAX = 1200
+
+
+def repeat_errors(meta: dict, body: str) -> list[str]:
+    """What a page declaring `repeat` owes. A page that does not declare it owes nothing."""
+
+    if "repeat" not in meta:
+        return []
+    if meta["repeat"] != "rule":
+        return [f"repeat 는 `rule` 하나만 받는다: {meta['repeat']!r}"]
+    paragraph = rule_paragraph(body)
+    if not paragraph:
+        return ["repeat: rule 인데 규칙 문단(`Rule.` 또는 `규칙.`)이 없다"]
+    if len(paragraph) > REPEAT_MAX:
+        return [f"repeat: rule 의 규칙 문단이 {len(paragraph):,}자다 — {REPEAT_MAX:,}자 이하로 줄여라"]
+    return []
+
+
 def metadata_errors(path: Path) -> list[str]:
     """A hook passes a failure; the health check surfaces the page it lost."""
     try:
-        meta, _body = front_matter(path.read_text(encoding="utf-8"), strict=True)
+        meta, body = front_matter(path.read_text(encoding="utf-8"), strict=True)
     except ValueError as error:
         return [str(error)]
     triggers = meta.get("triggers", [])
     if not isinstance(triggers, list):
         return ["triggers는 목록이어야 한다"]
-    errors = []
+    errors = repeat_errors(meta, body)
     for pattern in triggers:
         try:
             re.compile(str(pattern))

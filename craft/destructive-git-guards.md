@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: contract
+repeat: rule
 triggers: ["reset\\s+--hard", "git\\s+clean", "checkout\\s+--", "git\\s+restore", "되돌려|되돌리", "작업.{0,4}(날아|잃|사라)"]
 slots: []
 enforce:
@@ -15,7 +16,10 @@ links: [edit-files-as-diffs]
 
 Rule. `git reset --hard` and `git clean -fdx` are blocked. If something has to
 be rolled back, make a commit and roll back on top of it. Where that is not
-enough, the user types it themselves.
+enough, the user types it themselves. `git checkout -- <path>` and
+`git restore <path>` are the same family, held by a precondition instead of a
+block: a revert loop only runs on a committed tree, so check the target paths
+with `git status --porcelain` first and do not start if they are dirty.
 
 Why. Both delete uncommitted work without asking. What sets them apart from
 the other destructive git commands is that there is no way back at all —

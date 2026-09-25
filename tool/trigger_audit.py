@@ -37,7 +37,7 @@ import trajectory
 from transcript import human_text
 from wiki import (
     LIMIT, REPO_BUDGET, RULE_BUDGET, budget, compose, label, match_pages, pages,
-    render_parts,
+    remembered, render_parts, repeatable, rule_paragraph, sent_whole, tag,
 )
 from workspace import INJECTED, SESSIONS, checkout, codex_homes, logs, parse
 
@@ -351,6 +351,59 @@ def codex_tokens(used: dict | None) -> tuple[dict, int]:
 # ---- replay -----------------------------------------------------------------
 
 
+def render(matched: list, limits: tuple, project, seen=frozenset(), repeat=frozenset(),
+           limit: int | None = None) -> tuple:
+    """`(body, full, names, squeezed)` as `inject` would send it, less the rendering.
+
+    With no `limit` this is the hook before `--host`: no deduplication, the
+    index on every turn."""
+
+    rules, decisions, rule_parts, _repo, _t, body, squeezed = compose(
+        matched, limits, "", str(project), seen, repeat, limit)
+    return (body, sent_whole(rules, rule_parts),
+            [label(p) for _s, _b, p in rules + decisions], squeezed)
+
+
+def compacted_between(previous, at, compacts: list) -> bool:
+    """Did a compact fall between this session's previous row and this one?
+
+    A row's `at` is cut to the second and a transcript's compact time is not,
+    so a compact 0.3 s before the injection in the same second would sort
+    after it. Compared at the second, and inclusive at both ends: a compact
+    in the same second as either row resets. Wrong that way, the replay
+    sends a page in full once more than the hook did — the saving is
+    understated, never overstated.
+    """
+
+    if previous is None:
+        return False
+    return any(previous <= c.replace(microsecond=0) <= at for c in compacts)
+
+
+def recall_misses(matched: list, seen: set, repeat: set, injection: str,
+                  squeezed: bool = False) -> list[str]:
+    """The recall invariant — one judgement, shared by `replay` and the tests.
+
+    Every rule page the triggers chose is in the injection word for word:
+    the whole rule paragraph for a page that declared `repeat: rule` and was
+    already seen or sits on a squeezed turn (`wiki.compose`), the full body
+    for any other. Checking names alone goes green with the binding clauses
+    gone. Decision records are left out: they never go in whole, and the
+    summary `knowledge` makes of them is not what deduplication touches.
+    """
+
+    missing = []
+    for _s, body, path in matched:
+        name = label(path)
+        if path.parent.name == "decisions":
+            continue
+        known = (name, tag(body)) in seen or squeezed
+        need = rule_paragraph(body) if name in repeat and known and rule_paragraph(body) else body
+        if need not in injection:
+            missing.append(name)
+    return missing
+
+
 def replay(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="trajectory 를 지금 페이지로 다시 흘려 주입량을 잰다")
     parser.add_argument("trajectory", nargs="+")
@@ -370,6 +423,7 @@ def replay(argv: list[str]) -> int:
 
     available = pages(adapter, project)
     limits = budget(adapter, RULE_BUDGET, project), budget(adapter, REPO_BUDGET, project)
+    repeat = repeatable(available)
     sessions: dict[object, list[dict]] = defaultdict(list)
     for path in paths:
         for i, row in enumerate(trajectory.read(path)):
@@ -381,52 +435,78 @@ def replay(argv: list[str]) -> int:
 
     found = transcripts()
     missing = 0
-    loads = {"기록": [0, 0], "지금 방식": [0, 0]}
-    per_turn, per_session = [], []
+    loads = {"기록": [0, 0], "지금 방식": [0, 0], "새 방식": [0, 0]}
+    old_turn, new_turn, old_sum, new_sum = [], [], [], []
     turns_by_host, over, over_recorded = Counter(), Counter(), Counter()
     loaded_pages: Counter = Counter()
-    kept, filed = [], []
+    kept, filed, misses = [], [], []
     for key, rows in sessions.items():
         rows.sort(key=lambda r: r["_at"])
         host, tx = found.get(key, (None, None)) if isinstance(key, str) else (None, None)
         missing += tx is None
-        if host == "claude":
-            for turn in read_session(host, tx)["turns"]:
+        compacts = []
+        if tx is not None:
+            read = read_session(host, tx)
+            compacts = [at for at, _context in read["compacts"]]
+            for turn in read["turns"] if host == "claude" else []:
                 for size, sent_to_file in turn["pieces"]:
                     (filed if sent_to_file else kept).append(size)
         limit = LIMIT.get(host or "", min(LIMIT.values()))
         before: dict[str, set] = {kind: set() for kind in loads}
-        total = 0
+        sim: list[dict] = []
+        session_old = session_new = 0
+        previous = None
         for row in rows:
             matched = match_pages(str(row.get("utterance") or ""), available)
-            rules, decisions, rule_parts, repo_parts, _t = render_parts(matched, *limits)
-            size = len(compose(rules, rule_parts + repo_parts, "", str(project)).encode("utf-8"))
-            names = [label(p) for _s, _b, p in rules + decisions]
-            for kind, got in (("기록", row.get("injected") or []), ("지금 방식", names)):
+            old_body, _full, names, _s = render(matched, limits, project)
+            # What `inject.recall` would have read: this session's own
+            # simulated rows, cleared by a compact the transcript records.
+            reset = compacted_between(previous, row["_at"], compacts)
+            seen = set() if reset or not isinstance(key, str) else remembered(sim, limit)
+            new_body, full, _names, squeezed = render(matched, limits, project, seen, repeat, limit)
+            new_size = len(new_body.encode("utf-8"))
+            sim.append({"sent": new_size, "full": full, "reset": reset})
+            misses += [(row.get("at"), name)
+                       for name in recall_misses(matched, seen, repeat, new_body, squeezed)]
+            previous = row["_at"]
+
+            if reset:
+                before["새 방식"] = set()
+            for kind, got in (("기록", row.get("injected") or []), ("지금 방식", names),
+                              ("새 방식", [n for n, _t in full])):
                 loads[kind][0] += sum(n in before[kind] for n in got)
                 loads[kind][1] += len(got)
                 before[kind] |= set(got)
             loaded_pages.update(names)
-            per_turn.append(size)
-            total += size
+            old_size = len(old_body.encode("utf-8"))
+            old_turn.append(old_size)
+            new_turn.append(new_size)
+            session_old += old_size
+            session_new += new_size
             turns_by_host[host or "?"] += 1
-            over[host or "?"] += size > limit
+            over[host or "?"] += new_size > limit
             if isinstance(row.get("sent"), int):
                 over_recorded[host or "?"] += row["sent"] > limit
-        per_session.append(total)
+        old_sum.append(session_old)
+        new_sum.append(session_new)
 
     print(f"# 재생 — {sum(map(len, sessions.values()))}턴, 세션 {len(sessions)}개\n")
     print(f"대상: {project} · 어댑터: {adapter} · 기간: {args.since or '처음'} ~ {args.until or '끝'} (UTC)\n")
     print("페이지는 지금의 페이지다 — 과거 실행의 재현이 아니라 지금 규칙으로 그 발화를 받았다면이다.")
     print("크기는 UTF-8 바이트, 번역 전이고 영어본 블록은 뺐다 (`measure` 와 같은 차이). "
-          "그래서 실제 `sent` 보다 작고, 한도를 넘는 턴은 실제보다 적게 나온다.\n")
+          "그래서 실제 `sent` 보다 작고, 한도를 넘는 턴은 실제보다 적게 나온다.")
+    print("지금 방식은 호스트를 모르는 옛 훅(색인은 늘, 중복 제거 없음), "
+          "새 방식은 `--host` 를 받은 훅(세션 내 중복 제거, 한도 넘는 턴은 규칙 문단만)이다.")
+    print(f"`repeat: rule` 선언 페이지: {', '.join(sorted(repeat)) or '없음'}\n")
     if missing:
-        print(f"transcript 를 못 찾은 세션 {missing}개는 호스트를 모른다 — 한도는 작은 쪽으로 셌다.\n")
+        print(f"transcript 를 못 찾은 세션 {missing}개는 호스트를 모르고 compact 없이 재생했다 — "
+              "한도는 작은 쪽으로 셌고, 그 세션의 절감은 과대 추정이다.\n")
 
     print("## 반복률 — 같은 세션에 이미 실린 페이지를 또 실은 비율\n")
     print("| | 다시 실음 / 적재 | 비율 |\n| --- | ---: | ---: |")
     for kind, (again, all_) in loads.items():
-        print(f"| {kind} | {again:,} / {all_:,} | {again / all_:.0%} |" if all_ else f"| {kind} | 0 / 0 | — |")
+        note = " (전문만)" if kind == "새 방식" else ""
+        print(f"| {kind}{note} | {again:,} / {all_:,} | {again / all_:.0%} |" if all_ else f"| {kind} | 0 / 0 | — |")
 
     print("\n## 턴당 주입 크기\n")
     print("| | 중앙값 | p90 |\n| --- | ---: | ---: |")
@@ -436,13 +516,19 @@ def replay(argv: list[str]) -> int:
     sent = [r["sent"] for r in rows_ if isinstance(r.get("sent"), int)]
     if sent:
         print(f"| 기록 `sent` (바이트, {len(sent)}턴) | {pct(sent, .5):,} | {pct(sent, .9):,} |")
-    print(f"| 지금 방식 재생 (바이트) | {pct(per_turn, .5):,} | {pct(per_turn, .9):,} |")
+    print(f"| 지금 방식 재생 (바이트) | {pct(old_turn, .5):,} | {pct(old_turn, .9):,} |")
+    print(f"| 새 방식 재생 (바이트) | {pct(new_turn, .5):,} | {pct(new_turn, .9):,} |")
 
-    print("\n## 세션 누적 주입량 (바이트, 지금 방식 재생)\n")
-    print(f"세션 합 중앙값 {pct(per_session, .5):,} · 전체 합 {sum(per_session):,}")
+    print("\n## 세션 누적 주입량 (바이트)\n")
+    print("| | 세션 합 중앙값 | 전체 합 |\n| --- | ---: | ---: |")
+    print(f"| 지금 방식 | {pct(old_sum, .5):,} | {sum(old_sum):,} |")
+    print(f"| 새 방식 | {pct(new_sum, .5):,} | {sum(new_sum):,} |")
+    if sum(old_sum):
+        print(f"\n감소율: 전체 합 {1 - sum(new_sum) / sum(old_sum):.0%}, "
+              f"세션 합 중앙값 {1 - pct(new_sum, .5) / max(1, pct(old_sum, .5)):.0%}")
 
     print("\n## 호스트 한도를 넘은 턴\n")
-    print("| 호스트 | 한도 (바이트) | 턴 | 재생 초과 | 기록 `sent` 초과 |\n| --- | ---: | ---: | ---: | ---: |")
+    print("| 호스트 | 한도 (바이트) | 턴 | 새 방식 재생 초과 | 기록 `sent` 초과 |\n| --- | ---: | ---: | ---: | ---: |")
     for host, count in sorted(turns_by_host.items()):
         limit = LIMIT.get(host, min(LIMIT.values()))
         print(f"| {host} | {limit:,} | {count:,} | {over[host]:,} | {over_recorded[host]:,} |")
@@ -451,14 +537,26 @@ def replay(argv: list[str]) -> int:
               f"{max(kept, default=0):,}자, 파일로 빠진 가장 작은 주입 "
               f"{f'{min(filed):,}자' if filed else '없음'} — `wiki.LIMIT` 과 견줘라")
 
-    print("\n## 페이지별 전문 크기 (바이트)\n")
-    print("| 페이지 | 전문 | 실린 턴 |\n| --- | ---: | ---: |")
+    print("\n## 페이지별 주입 크기 (바이트)\n")
+    print("| 페이지 | 전문 | 규칙 문단만 | 실린 턴 |\n| --- | ---: | ---: | ---: |")
     for meta, body, path in available:
         severity = str(meta.get("severity"))
         if path.parent.name == "decisions" or severity not in ("landmine", "contract"):
             continue
-        part = render_parts([(severity, body, path)], None, None)[2][0]
-        print(f"| {label(path)} | {len(part.encode('utf-8')):,} | {loaded_pages[label(path)]:,} |")
+        name = label(path)
+        page = [(severity, body, path)]
+        part = render_parts(page, None, None)[2][0]
+        short = render_parts(page, None, None, repeatable={name}, squeeze=True)[2][0]
+        rule_only = f"{len(short.encode('utf-8')):,}" if short != part else "—"
+        print(f"| {name} | {len(part.encode('utf-8')):,} | {rule_only} | {loaded_pages[name]:,} |")
+
+    print("\n## 회상 불변식 — 걸린 규칙 페이지가 주입에 글자 그대로 있는가\n")
+    if misses:
+        for at, name in misses[:20]:
+            print(f"- 빠짐: {at} `{name}`")
+        print(f"\n빠진 곳 {len(misses)}개 — 중복 제거가 규칙을 떨어뜨렸다")
+        return 1
+    print("빠진 곳 없음 — 선언 페이지는 규칙 문단이, 나머지는 전문이 모든 턴에 있다")
     return 0
 
 

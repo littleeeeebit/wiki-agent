@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: contract
+repeat: rule
 triggers: ["프[런론]트 ?엔드|front-?end", "(?<![A-Za-z])design(?:[.]md|ing|s)?(?![A-Za-z])|디자인", "(?<![A-Za-z_-])UI(?![A-Za-z_-])|(?<![A-Za-z_-])UX(?![A-Za-z_-])", "레이아웃|layout|여백|패딩|ai ?slop", "타이포|typograph|폰트|글꼴", "색 ?(배합|조합|감)|팔레트|palette|컬러|color ?(scheme|palette|token)", "대시보드|dashboard|랜딩 ?페이지|landing ?page|상세 ?페이지", "애니메이션|animation|모션|(?<![A-Za-z])motion(?![A-Za-z])|트랜지션", "화면을? ?(짜|그리|만들|다듬|손보)", "Tailwind|shadcn|(?<![A-Za-z])CSS(?![A-Za-z])|스타일링"]
 slots: []
 sources: []
@@ -14,8 +15,13 @@ Rule. Asked to build a screen,
 **do not start with a detail page and a dashboard.**
 First write one line saying who comes here and what for, and let that line
 decide what goes on one screen and what waits. Once the sketch stands, walk
-the order below. The order does not change, and the fourth step goes to the
-user.
+the order below with the `design-pass` skill: a screen list that came out of
+that line, against `DESIGN.md`; padding, width, alignment and working buttons,
+answered with measurements in a browser; typographic hierarchy; colour, handed
+to the user as options; and last the whitespace left, filled only where there
+is a value to put. The order does not change, and the fourth step goes to the
+user. Motion is not among these steps: building or fixing movement skips this
+process and goes straight to emil's skills; a still screen goes to jakub's.
 
 | # | What is examined | With | Passes when |
 | --- | --- | --- | --- |

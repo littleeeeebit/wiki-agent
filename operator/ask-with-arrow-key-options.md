@@ -1,6 +1,7 @@
 ---
 scope: operator
 severity: contract
+repeat: rule
 triggers: ["[\\s\\S]"]
 slots: []
 enforce:
@@ -16,7 +17,15 @@ Rule. Where the user's judgement is needed, use the current host's tool for
 asking with options. On Claude Code that is `AskUserQuestion`; on Codex it is
 `request_user_input`, when the session offers it and permits it for this use.
 **Calling Codex's `request_user_input_async` is forbidden outright.** A call
-with no options is not an exception. The user set recurrence severity at P0.
+with no options is not an exception. Do not apply a Codex tool or setting to
+Claude. Ask only where a different reading changes the work; when the default
+is obvious, decide and carry on, and finish whatever does not depend on the
+answer first. Put the recommendation first with its consequence and its cost.
+Only an answer actually submitted counts; an acknowledgement or a preselected
+item is not one. If the tool is missing or forbidden for this use, say what
+the limit is and ask the way the higher instructions allow, never describing
+prose as the same UI. Having asked the wrong way, ask again with the right
+tool. The user set recurrence severity at P0.
 
 ## The tool depends on where this is running
 

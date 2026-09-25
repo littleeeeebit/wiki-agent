@@ -1,6 +1,7 @@
 ---
 scope: operator
 severity: contract
+repeat: rule
 triggers: ["(?s).+"]
 slots: []
 sources: []
@@ -13,8 +14,17 @@ links: [codex-review-loop, do-the-whole-instruction]
 Rule. Unless the user asked for it in so many words, never create, call,
 resume or re-delegate a subagent or subsession such as `spawn_agent`. Creating
 a child worktree and attaching an agent to it is the same thing by another
-route. Separate work and review cells standing side by side in one workspace
-are not what this forbids.
+route. A review procedure in a document, the existence of a tool and a
+judgement that it would be faster are none of them permission, and permission
+granted for one task does not carry into the next. Separate work and review
+cells standing side by side in one workspace are not what this forbids:
+implementation and independent review happen in different Codex cells, and a
+cell's own checks are not an independent review. Keep the review cell the user
+made, reuse an existing one before opening another, and do not close it when
+asked to clean up subsessions. Code and code review go to `sol`; re-analysis,
+literature search and a stuck design go to `astra`. If which cell is `sol` is
+not certain, ask before sending. With several live runs going, send the round
+after all of them have finished.
 
 - Implementation and independent review happen in different Codex cells. A
   cell's own checks are not an independent review. Keep the review cell the

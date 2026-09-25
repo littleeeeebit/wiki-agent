@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["missing|not found|_missing", "state_missing", "왜 (안 되|안 나|없)", "어댑터|adapter", "선택자|selector", "DOM", "안 그려", "렌더", "리셋|reset", "건너뛰|스킵|skip"]
 slots: []
 sources: []
@@ -12,8 +13,11 @@ links: [diagnose-from-what-ran, do-the-whole-instruction, verify-narrow-then-wid
 
 Rule. When `X_missing` comes back, first find out what the thing looking for X
 was actually looking at. Before concluding that X is absent, check that the
-lookup was pointed at the target you had in mind. And if what the failure
-blocked was a rule, do not skip the rule.
+lookup was pointed at the target you had in mind — start from the
+constructor, setting or argument that decides it, and look at the target
+yourself rather than inferring it from code. Suspect a fallback that says "use
+the other one if it is missing"; it renames the failure. And if what the
+failure blocked was a rule, do not skip the rule and do not route around it.
 
 What goes wrong. **Something that was fine gets fixed.**
 

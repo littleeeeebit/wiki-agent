@@ -1,0 +1,26 @@
+{"at": "2026-09-20T00:03:00+00:00", "session": "fixture-review", "utterance": "artifacts/review/english-first-plan-round-1.md 를 읽고 리뷰하라", "chars": 56, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:06:00+00:00", "session": "fixture-review", "utterance": "이어서 작업해라.", "chars": 9, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:09:00+00:00", "session": "fixture-review", "utterance": "리뷰 루프를 어떻게 돌리나? 한 문장으로만 답해라.", "chars": 28, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:12:00+00:00", "session": "fixture-review", "utterance": "보냈냐?", "chars": 4, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:15:00+00:00", "session": "fixture-review", "utterance": "새 발견 없음이 뜰 때 까지 계속 멈추지 말아라.", "chars": 27, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:18:00+00:00", "session": "fixture-review", "utterance": "좋다. 머지하고 정리해라.", "chars": 14, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:21:00+00:00", "session": "fixture-docs", "utterance": "이때, 애스터리스크 남발은 금지하라. 마크다운을 쓰는 방법에 대한 기본기를 제발 배워라.", "chars": 49, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:24:00+00:00", "session": "fixture-docs", "utterance": "또또 주석을 한국어로 했다. 기싸움좀 그만해라 제발.", "chars": 29, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:27:00+00:00", "session": "fixture-docs", "utterance": "훅이 조용히 죽으면 어떻게 아나? 한 문장으로만 답해라.", "chars": 31, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:30:00+00:00", "session": "fixture-docs", "utterance": "커밋하고 pr하고 머지까지해라.", "chars": 17, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:33:00+00:00", "session": "fixture-front", "utterance": "그, 미러에도 프런트 엔드를 붙이고 싶은데, 가능해?\n디자인 스킬을 써서 진행해줘.", "chars": 46, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:36:00+00:00", "session": "fixture-front", "utterance": "레이아웃이 너무 별로야. 중앙정렬로 했는데, 모바일ui를 억지로 pc로 보는 기분이야.", "chars": 48, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:39:00+00:00", "session": "fixture-front", "utterance": "왜 자꾸 창을 새로 여냐? 그냥 있는 창으로는 못 쓰냐?", "chars": 31, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:42:00+00:00", "session": "fixture-front", "utterance": "오늘 날씨가 좋다", "chars": 9, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:45:00+00:00", "session": "fixture-front", "utterance": "Answer in English only, one short sentence: what does a Stop hook do here?", "chars": 74, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:48:00+00:00", "session": "fixture-ops", "utterance": "이제, 서버를 내리고, 다른 작업트리들도 정리해줘라.", "chars": 29, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:51:00+00:00", "session": "fixture-ops", "utterance": "근데, 워크트리를 많이 만든 경우에는 어떡하나? 이 경우에도 대비했는가?", "chars": 40, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:54:00+00:00", "session": "fixture-ops", "utterance": "현재, 여전히 간헐적으로 한국어로 나오는 현상이 있는데, 그 이유를 추적해달라.", "chars": 44, "injected": [], "cost": 0}
+{"at": "2026-09-20T00:57:00+00:00", "session": "fixture-ops", "utterance": "gemini 모델은, 빠르고 저렴한걸로 해달라.", "chars": 26, "injected": [], "cost": 0}
+{"at": "2026-09-20T01:00:00+00:00", "session": "fixture-ops", "utterance": "이어서 해라.", "chars": 7, "injected": [], "cost": 0}
+{"at": "2026-09-20T01:00:00+00:00", "session": "fixture-loop", "utterance": "이제, 커밋하고 pr을 연 다음, 리뷰 루프를 돌리자.", "chars": 30, "injected": [], "cost": 0}
+{"at": "2026-09-20T01:03:00+00:00", "session": "fixture-loop", "utterance": "지금 계속 하고 있는건가?", "chars": 14, "injected": [], "cost": 0}
+{"at": "2026-09-20T01:06:00+00:00", "session": "fixture-loop", "utterance": "근데, 지금 대체 뭘 하고 있는건가? 고작 codex가 제대로 hooks가 잘 물렸는지 확인하기위해 이렇게 오래 쓸 일이냐?", "chars": 69, "injected": [], "cost": 0}
+{"at": "2026-09-20T01:09:00+00:00", "session": "fixture-loop", "utterance": "이제, 그 위키 검진 발견에서, 너가 고쳐줘라.", "chars": 26, "injected": [], "cost": 0}
+{"at": "2026-09-20T01:12:00+00:00", "session": "fixture-loop", "utterance": "좋다 머지하고 정리해라.", "chars": 13, "injected": [], "cost": 0}
+{"at": "2026-09-20T01:15:00+00:00", "session": "fixture-loop", "utterance": "그래 그러면 시작해라.", "chars": 12, "injected": [], "cost": 0}

@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["이어서 (하|진행)", "계속 (하|진행)", "이어서 하고 있는가", "진행중인가", "돌고 있는가", "하겠습니다", "Stop 훅", "stop hook"]
 slots: []
 sources: []

@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: landmine
+repeat: rule
 triggers: ["수출|export|유출|누출|새는|샌다", "레드액션|redaction|위생|sanitis|sanitiz|마스킹|masking", "허용\\s*목록|allowlist|allow\\s*list|화이트리스트|whitelist", "span|telemetry|텔레메트리|트레이스|trace", "로그(에|를|가)?\\s*(남기|싣|보내|올리)", "PII|개인\\s*정보|비밀|secret|토큰\\s*유출", "리뷰(가|에서)?\\s*(또|다시|계속)", "같은\\s*(자리|결함|지적)", "라운드\\s*\\d"]
 slots: []
 sources: []
@@ -12,7 +13,19 @@ links: [client-lifecycle-in-one-scope, diagnose-from-what-ran, verify-narrow-the
 
 Rule. When what leaves has to be restricted — telemetry, logs, webhooks,
 reports — gate it at the last point the value crosses the boundary, not at
-every place that produces the value.
+every place that produces the value. One function sees field names, bodies,
+labels and status strings just before serialising and sending, and a new
+field goes through it without another gate. When collapsing exits, count every
+direct write with `grep`. Two consecutive rounds of P0 on the same file and subject
+mean the place chosen to block was wrong — collapse the exits then. The check
+runs over artefacts a real producer left and watches three things: planted
+contamination gets out from nowhere, real values survive intact, a whole real
+log passes without a crash. An allow-list separates types first — numbers and
+booleans pass, strings are restricted — and descends into containers with
+per-parent allowed keys, never the top-level name rule again. A string
+pattern keeps path characters (`/`, `:`) out. What cannot be told apart does
+not go as plain text: a digest is the default. A lower layer never defers to
+an upper one what the upper one cannot see.
 
 | Do | Do not |
 | --- | --- |

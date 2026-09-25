@@ -1,6 +1,7 @@
 ---
 scope: operator
 severity: landmine
+repeat: rule
 triggers: ["멈추지\\s*마", "왜\\s*(자꾸\\s*)?멈추", "돌리고\\s*있", "계속\\s*(해|진행)", "다음은", "이어서", "쭉\\s*진행"]
 slots: []
 sources: []
@@ -12,6 +13,13 @@ links: [english-progress, pick-up-async-results, ask-with-arrow-key-options]
 
 Rule. **Having written down what comes next, start it in the same response.**
 A progress report is something done while continuing, not instead of it.
+Ending the turn is right in three places only: a decision only the user can
+make is left, pushing, opening a PR and merging among them; everything asked
+for is finished; or it is blocked, and what blocked it is written down by name
+and reason. Anything else, call one more tool — a response ending "next I will
+…" is itself the violation. Right after a merge or a sent round, look for the
+next item in the queue. Before stopping to wait for approval, finish
+everything that does not need it.
 
 There are only three places where ending the turn is right.
 

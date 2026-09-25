@@ -495,6 +495,343 @@ def test_the_record_carries_what_was_sent_and_a_quiet_turn_too():
     )
 
 
+# ---- Deduplication within a session ----------------------------------------
+#
+# Run in-process with translation replaced by the identity — a failed
+# translation hands the original back, so this is the translation-off path.
+
+REPEAT = f"""---
+scope: operator
+severity: contract
+repeat: rule
+triggers: ["{WORD}"]
+---
+
+# Repeated page
+
+Rule. The first binding sentence. The second binding sentence
+wraps onto this line and must survive whole.
+
+What goes wrong. {{why}}
+"""
+
+PLAIN = f"""---
+scope: craft
+severity: contract
+triggers: ["{WORD}"]
+---
+
+# Plain page
+
+Rule. Declares nothing, so it goes out in full every time.
+"""
+
+PARAGRAPH = "Rule. The first binding sentence. The second binding sentence\nwraps onto this line and must survive whole."
+
+
+def stage(why: str = "short") -> Path:
+    root = Path(tempfile.mkdtemp())
+    (root / "wiki" / "operator").mkdir(parents=True)
+    (root / "wiki" / "craft").mkdir()
+    (root / "wiki" / "operator" / "rep.md").write_text(REPEAT.format(why=why), encoding="utf-8")
+    (root / "wiki" / "craft" / "plain.md").write_text(PLAIN, encoding="utf-8")
+    (root / "project" / ".wiki").mkdir(parents=True)
+    (root / "t1.jsonl").write_text('{"type":"user"}\n', encoding="utf-8")
+    (root / "t2.jsonl").write_text('{"type":"user"}\n', encoding="utf-8")
+    return root
+
+
+def turn(root: Path, session: str = "s1", transcript: str | None = "t1.jsonl",
+         project: bool = True, stdout=None, prompt: str = f"{WORD} 를 쓴다") -> str:
+    """One hook call on Claude. Returns the injection, `""` when nothing went out."""
+
+    import io
+
+    import inject
+    import translate
+    from wiki import match
+
+    payload = {"prompt": prompt, "session_id": session}
+    if transcript:
+        payload["transcript_path"] = str(root / transcript)
+    was = match.WIKI, translate.translate, sys.stdin, sys.stdout, sys.argv
+    match.WIKI = root / "wiki"
+    translate.translate = lambda texts, direction=None, deadline=None: list(texts)
+    sys.stdin = io.TextIOWrapper(io.BytesIO(json.dumps(payload, ensure_ascii=False).encode("utf-8")))
+    sys.stdout = stdout or io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    sys.argv = ["inject.py", "--host", "claude"] + (
+        ["--project", str(root / "project")] if project else [])
+    try:
+        inject.main()
+        sys.stdout.seek(0)
+        text = sys.stdout.read()
+    finally:
+        match.WIKI, translate.translate, sys.stdin, sys.stdout, sys.argv = was
+    return json.loads(text)["hookSpecificOutput"]["additionalContext"] if text else ""
+
+
+def is_repeated(context: str) -> bool:
+    return "operator/rep (contract, repeated)" in context
+
+
+def test_the_second_turn_carries_the_rule_paragraph_whole_instead_of_the_page():
+    root = stage()
+    first, second = turn(root), turn(root)
+    assert not is_repeated(first) and "What goes wrong. short" in first
+    assert is_repeated(second), second
+    assert PARAGRAPH in second, "the repeated form lost part of the rule paragraph"
+    assert "What goes wrong. short" not in second
+    assert "Loaded in full earlier this session: `operator/rep.md`" in second
+
+
+def test_a_page_without_the_declaration_goes_out_in_full_every_turn():
+    root = stage()
+    for _ in range(3):
+        context = turn(root)
+    assert "Declares nothing, so it goes out in full every time." in context
+    assert "craft/plain (contract, repeated)" not in context
+
+
+def test_every_rule_already_seen_still_sends_each_rule_paragraph():
+    root = stage()
+    turn(root)
+    context = turn(root)
+    assert PARAGRAPH in context
+    assert "Below is what the wiki loaded" in context, "the header must not go with the pages"
+
+
+def test_a_turn_over_the_host_ceiling_sends_rule_paragraphs_and_sees_nothing():
+    """Past the ceiling the host shows a 2 KB preview, so a full page is not
+    read there. Declaring pages go as their paragraph; the rest stays whole;
+    and nothing counts as seen, so the tail must not claim it was."""
+
+    root = stage(why="x" * 12000)
+    first = turn(root)
+    assert "operator/rep (contract, rule only)" in first, first[:600]
+    assert PARAGRAPH in first and "x" * 100 not in first
+    assert "Declares nothing, so it goes out in full every time." in first
+    assert "Loaded in full earlier" not in first
+    assert not is_repeated(turn(root)), "a squeezed turn delivered no full text"
+
+    # A row the hook before `--host` wrote: over the ceiling with the page
+    # listed whole. The host filed that injection, so it was never read.
+    from wiki import remembered
+
+    assert remembered([{"sent": 20000, "full": [["operator/rep", "t"]]}], 9800) == set()
+    assert remembered([{"sent": 9000, "full": [["operator/rep", "t"]]}], 9800) == {("operator/rep", "t")}
+
+
+def test_a_turn_under_the_ceiling_is_not_squeezed():
+    root = stage()
+    assert "rule only" not in turn(root)
+
+
+def test_the_rule_index_rides_only_on_a_turn_still_over_the_ceiling():
+    """The index is for the 2 KB preview; under the ceiling there is none."""
+
+    root = stage()
+    assert "wiki:rule-index" not in turn(root)
+
+    # A page that did not declare `repeat` cannot be squeezed, so this turn
+    # stays over the ceiling and the preview needs the index first.
+    (root / "wiki" / "craft" / "huge.md").write_text(
+        PLAIN.replace("Plain page", "Huge page") + "y" * 12000 + "\n", encoding="utf-8")
+    context = turn(root, session="s2", transcript="t2.jsonl")
+    assert context.startswith("<!-- wiki:rule-index -->"), context[:200]
+    assert "operator/rep (contract, rule only)" in context
+
+
+def test_an_edited_page_goes_out_in_full_once_more():
+    root = stage()
+    turn(root)
+    page = root / "wiki" / "operator" / "rep.md"
+    page.write_text(REPEAT.format(why="edited mid-session"), encoding="utf-8")
+    edited = turn(root)
+    assert not is_repeated(edited) and "edited mid-session" in edited
+    assert is_repeated(turn(root))
+
+
+def test_turns_without_a_session_id_are_never_joined():
+    root = stage()
+    turn(root, session="")
+    assert not is_repeated(turn(root, session=""))
+
+
+def test_a_compact_in_one_session_resets_only_that_session():
+    root = stage()
+    for session, transcript in (("s1", "t1.jsonl"), ("s2", "t2.jsonl")) * 2:
+        turn(root, session, transcript)
+    with (root / "t1.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write('{"type":"system","subtype":"compact_boundary"}\n')
+    assert not is_repeated(turn(root, "s1", "t1.jsonl")), "s1 compacted and must reload"
+    assert is_repeated(turn(root, "s2", "t2.jsonl")), "s2 did not compact"
+    assert is_repeated(turn(root, "s1", "t1.jsonl")), "after the reload, s1 has seen it again"
+
+
+def test_what_was_seen_before_a_compact_stays_forgotten_after_it():
+    """The turn right after a compact may not match the page. The one after
+    that reads every row of the session, and the rows from before the
+    compact must not count — the reset row is where they stop."""
+
+    root = stage()
+    turn(root)
+    with (root / "t1.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write('{"type":"system","subtype":"compact_boundary"}\n')
+    turn(root, prompt="아무 규칙도 안 걸리는 말")
+    assert not is_repeated(turn(root)), "the compact wiped the page from context"
+
+
+def test_a_codex_compact_resets_too():
+    """The copy's review round 1: the transcript tail was read once per
+    marker, so the second marker — Codex's — only ever saw empty bytes. A
+    test that wrote Claude's marker alone could not see it."""
+
+    root = stage()
+    turn(root)
+    with (root / "t1.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write('{"timestamp":"2026-09-25T00:00:00Z","type":"compacted","payload":{}}\n')
+    assert not is_repeated(turn(root)), "Codex compacted and must reload"
+
+
+def test_a_compact_word_inside_a_message_is_not_a_compact():
+    root = stage()
+    turn(root)
+    with (root / "t1.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"type": "user", "text": '"subtype":"compact_boundary"'}) + "\n")
+    assert is_repeated(turn(root))
+
+
+def test_a_new_transcript_path_or_a_shrunk_transcript_resets():
+    root = stage()
+    turn(root)
+    assert not is_repeated(turn(root, transcript="t2.jsonl")), "the path changed"
+    assert is_repeated(turn(root, transcript="t2.jsonl"))
+    (root / "t2.jsonl").write_text("", encoding="utf-8")
+    assert not is_repeated(turn(root, transcript="t2.jsonl")), "the transcript shrank"
+
+
+def test_a_turn_that_died_writing_its_output_is_not_recorded_as_seen():
+    import io
+
+    class Dead(io.TextIOWrapper):
+        def write(self, _text):
+            raise OSError("pipe closed")
+
+    root = stage()
+    try:
+        turn(root, stdout=Dead(io.BytesIO(), encoding="utf-8"))
+    except OSError:
+        pass
+    assert not (root / "project" / ".wiki" / "trajectory.jsonl").exists()
+    assert not is_repeated(turn(root)), "the failed turn delivered nothing"
+
+
+def test_no_project_no_transcript_or_a_broken_row_sends_everything():
+    root = stage()
+    turn(root, project=False)
+    assert not is_repeated(turn(root, project=False))
+
+    root = stage()
+    turn(root, transcript=None)
+    assert not is_repeated(turn(root, transcript=None))
+
+    root = stage()
+    turn(root)
+    with (root / "project" / ".wiki" / "trajectory.jsonl").open("a", encoding="utf-8") as handle:
+        handle.write('{"session": "s1", "full": [["operator/rep"\n')
+    assert not is_repeated(turn(root))
+
+
+def test_a_korean_repo_page_repeats_its_korean_rule_paragraph():
+    root = stage()
+    (root / "project" / ".wiki" / "gate.md").write_text(
+        f'---\nseverity: contract\nrepeat: rule\ntriggers: ["{WORD}"]\n---\n\n'
+        "# 게이트\n\n규칙. 머지 전에 게이트를 돌린다. 둘째 문장도\n문단 안이다.\n\n왜. 길다.\n",
+        encoding="utf-8",
+    )
+    turn(root)
+    second = turn(root)
+    assert ".wiki/gate (contract, repeated)" in second
+    assert "규칙. 머지 전에 게이트를 돌린다. 둘째 문장도\n문단 안이다." in second
+    assert "왜. 길다." not in second
+
+
+def test_the_recall_invariant_holds_over_the_fixed_sample():
+    """The pytest half of the gate: the same judgement `replay` makes, over a
+    committed sample of utterances, against today's pages.
+
+    Transcripts are not looked up — the sample's sessions exist on no machine.
+    """
+
+    import contextlib
+    import io
+
+    import trigger_audit
+
+    sample = HERE / "fixtures" / "recall-trajectory.jsonl"
+    was = trigger_audit.transcripts
+    trigger_audit.transcripts = lambda home=None: {}
+    report = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(report):
+            code = trigger_audit.replay([str(sample), "--project", str(HERE.parent)])
+    finally:
+        trigger_audit.transcripts = was
+    assert code == 0, report.getvalue()[-2000:]
+    assert "빠진 곳 없음" in report.getvalue()
+    assert "operator/codex-review-loop" in report.getvalue(), "the declarations were not read"
+
+
+def test_the_invariant_goes_red_when_a_clause_is_missing():
+    from trigger_audit import recall_misses
+    from wiki import tag
+
+    body = PARAGRAPH + "\n\nWhy. more\n"
+    matched = [("contract", body, Path("operator") / "rep.md")]
+    seen = {("operator/rep", tag(body))}
+    assert recall_misses(matched, seen, {"operator/rep"}, PARAGRAPH) == []
+    assert recall_misses(matched, seen, {"operator/rep"}, PARAGRAPH.splitlines()[0]) == ["operator/rep"]
+    assert recall_misses(matched, set(), {"operator/rep"}, PARAGRAPH) == ["operator/rep"], (
+        "unseen, the whole body is owed"
+    )
+    assert recall_misses(matched, set(), {"operator/rep"}, PARAGRAPH, squeezed=True) == []
+    assert recall_misses(matched, set(), set(), PARAGRAPH, squeezed=True) == ["operator/rep"], (
+        "a page that did not declare it is owed in full even on a squeezed turn"
+    )
+
+
+def test_the_replay_sees_a_compact_in_the_same_second_as_the_injection():
+    """Review round 1: rows keep whole seconds, compacts keep fractions. A
+    compact at 01.5 and an injection at 01.8, recorded as 01, compared as
+    `compact <= row` and the reset was missed — the replay then counted a
+    page as seen that the hook had sent again."""
+
+    import datetime as dt
+
+    from trigger_audit import compacted_between
+
+    def at(second: float) -> dt.datetime:
+        return dt.datetime(2026, 9, 25, 12, 0, tzinfo=dt.timezone.utc) + dt.timedelta(seconds=second)
+
+    assert compacted_between(at(0), at(1), [at(1.5)])
+    assert compacted_between(at(1), at(5), [at(1.5)]), "just after the previous row, same second"
+    assert not compacted_between(at(0), at(1), [at(2.5)]), "after this row"
+    assert not compacted_between(None, at(1), [at(0.5)]), "a session's first row has nothing to reset"
+
+
+def test_a_repeat_declaration_owes_a_short_rule_paragraph():
+    """Lint's half: a declaring page with no paragraph, or one past
+    `REPEAT_MAX`, would repeat nothing or repeat too much."""
+
+    from wiki.wikilib import REPEAT_MAX, repeat_errors
+
+    assert repeat_errors({}, "no rule") == []
+    assert repeat_errors({"repeat": "rule"}, "# T\n\nRule. Short.\n") == []
+    assert repeat_errors({"repeat": "all"}, "Rule. x\n")
+    assert repeat_errors({"repeat": "rule"}, "# T\n\nWhy. no rule here\n")
+    assert repeat_errors({"repeat": "rule"}, "Rule. " + "x" * REPEAT_MAX + "\n")
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     for name, fn in sorted(globals().items()):

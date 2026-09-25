@@ -1,6 +1,7 @@
 ---
 scope: craft
 severity: contract
+repeat: rule
 triggers: ["주석", "docstring", "독스트링", "line ?length", "줄 ?길이", "리팩터|리팩토링"]
 slots: []
 sources: []
@@ -13,8 +14,13 @@ links: [diagnose-from-what-ran, do-the-whole-instruction]
 Rule. Comments and docstrings hold only what cannot be learned by reading the
 code — why this structure, what was deliberately not done, which external
 constraint forced this shape. What the code already says is fixed with a name
-and a structure, not with a comment. And lines break at meaning. A length
-limit exists to make reading easier; it is not a number to hit.
+and a structure, not with a comment. Dates, PR numbers, branch names and
+worklogs go to `.wiki/decisions/` and to commits. A test inverts this: its
+comment says what broke, how, and how the test holds that ground. Fixing the
+code and its comment is one change, and a cause goes into a comment only once
+it is confirmed. And lines break at meaning — at a sentence, clause or phrase
+boundary, never leaving `the`, `of`, `and`, `to` or `is` stranded at a line's
+end. A length limit exists to make reading easier; it is not a number to hit.
 
 What separates them is reason against history. Why this structure is visible
 whenever the code changes, so it lives next to the code. When, on which
