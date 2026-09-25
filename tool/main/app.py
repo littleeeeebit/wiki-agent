@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 import translate
 
-from . import channels, query, specs, work
+from . import channels, loop, query, specs, work
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
 # `text/plain`. The browser then refuses `<script type="module">` silently:
@@ -50,7 +50,12 @@ async def lifespan(_: FastAPI):
     started this closes its pipe. A forced kill never reaches this.
     """
 
+    # A loop that ran when the server last went down stopped with it; it
+    # says so, and waits for a person's `[계속]`.
+    loop.recover()
+    threading.Thread(target=loop.poll, daemon=True).start()
     yield
+    loop.close_all()
     query.close_all()
     work.close_all()
 
@@ -59,6 +64,7 @@ app = FastAPI(title="wiki-agent", lifespan=lifespan)
 app.include_router(query.router)
 app.include_router(work.router)
 app.include_router(specs.router)
+app.include_router(loop.router)
 
 # The names this server answers to. Anything else in `Host` is another site's
 # domain resolved to 127.0.0.1 — DNS rebinding — and gets nothing.
@@ -128,9 +134,15 @@ def switch() -> dict:
 
 @app.post("/api/switch")
 def flip(body: Switch) -> dict:
+    # The loop's settings share the file; they are kept.
+    try:
+        saved = json.loads(SWITCH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    saved = {**(saved if isinstance(saved, dict) else {}), "translate": body.translate}
     SWITCH.parent.mkdir(parents=True, exist_ok=True)
     temporary = SWITCH.with_suffix(".tmp")
-    temporary.write_text(json.dumps({"translate": body.translate}) + "\n", encoding="utf-8")
+    temporary.write_text(json.dumps(saved, ensure_ascii=False) + "\n", encoding="utf-8")
     temporary.replace(SWITCH)
     return switch()
 
@@ -168,11 +180,11 @@ def render(body: Rendering) -> dict:
 def peek(repo: str, path: str, line: int = 1, around: int = 25) -> dict:
     """Show the place a quoted `path:line` points at.
 
-    `repo` is a project name, or a worktree path on `work`'s own list. Never
-    outside that checkout.
+    `repo` is a project name, or a worktree path `work` knows. Never outside
+    that checkout.
     """
 
-    base = channels.repo_for(repo) or (work.ours(repo) if Path(repo).is_absolute() else None)
+    base = channels.repo_for(repo) or (work.known(repo) if Path(repo).is_absolute() else None)
     if base is None:
         raise HTTPException(400, "그런 저장소가 없다")
     target = (base / path).resolve()

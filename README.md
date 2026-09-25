@@ -291,12 +291,28 @@ and the
 The plain explanation is not a separate fact-check of the original. The
 `file:line` in each answer opens the evidence directly.
 
-The project is shared by all four focuses of the query — next task, wiki,
-retrospect and review — and by the worktree list. The next-task focus gathers
+The project is shared by all three focuses of the query — next task, wiki and
+retrospect — and by the worktree list. The next-task focus gathers
 the open plan rows, open pull requests, recent decisions and lint warnings
 into candidates, asks back with options, and ends in a task spec card; its
 [시작] makes a worktree whose session gets the spec as its system prompt, and
-the server opens the pull request only after the gate passes again there. Conversation context
+the server opens the pull request only after the gate passes again there.
+
+Review is not a focus any more; it is a loop. Once a spec's pull request is up
+(and its plan-row commit pushed, when it has one), a read-only review cell in
+that worktree — Codex's default model at effort `high` unless the rail's
+settings say otherwise — reviews it round by round, in the format of
+`operator/codex-review-loop`. A refusal goes to the work cell as one turn; the
+server runs the gate and pushes, and the next round follows. Writes still wait
+for 허용. The loop ends at `머지 가능`, where the review tab's [머지] squashes
+the pull request bound to the head the review allowed; after it lands, the
+server comments the P2 worth keeping, fast-forwards the original checkout only
+when it stands clean on the base, and removes the worktree, its branch and the
+remote branch. Otherwise a loop stops only for a reason in the stage 4 plan's
+table, and [계속] takes it on. "리뷰 루프 (N)" on the rail takes pull requests
+opened without a spec, and stopped loops. Round files live in the hub under
+`raw/review/<repo>/<pr>/`. A loop carries its repository, so switching projects
+does not stop it; its worktree shows under "다른 프로젝트". Conversation context
 and records are kept per project and per focus, so leaving for another project and coming back
 continues where it left off. A server restart restores the project selection
 and the CLI sessions left in the records. "Clear context" applies to the
@@ -307,7 +323,7 @@ the original conversation; switching between Claude and Codex starts a new
 context. "Related rules" on screen is a display-time comparison, not evidence
 that the host delivered a hook, and hooks are never re-run to produce it.
 
-Checks: `python -m pytest -q tool/test_main.py tool/test_specs.py`,
+Checks: `python -m pytest -q tool/test_main.py tool/test_specs.py tool/test_loop.py`,
 `npm --prefix web run build`, `npm --prefix web run lint`. They confirm the
 CLI events, the session separation, the original surviving a failure, and the
 model and effort validation. `tool/test_specs.py` confirms the next-task
@@ -317,7 +333,16 @@ save from a stale card is refused; blocks leave the answer and a broken one is
 an error; [시작 ▸] makes the worktree first; the work session gets the spec as
 its system prompt; a passing report is not believed over a failing gate; a
 passing gate opens the pull request and the plan row follows; the PR body has
-the sections harvest reads; and a result line is shown once. These automatic checks guarantee neither the
+the sections harvest reads; and a result line is shown once. `tool/test_loop.py`
+confirms the review loop, with both cells stood in and git run for real against
+a bare origin: the round parser; an allow ends at `머지 가능`; a refusal goes to
+the work cell, through the gate and up; two failed gates, the round cap and a
+finding disputed twice each stop; three seats leave a fourth loop waiting; a
+head or base that moved throws the round away; `adopt` and its four local
+branch cases; [머지] bound to the allowed head, a queued merge that cleans
+nothing until it lands, and every row of the after-merge table; the remote
+branch deleted only on its lease; [받아들임] and [다시 PR]; a Claude review cell
+with no shell; and a loop that keeps going across a project switch. These automatic checks guarantee neither the
 accuracy of every model response nor the quality of an explanation. To test
 the quality of a real progress answer, press "문맥 비우기" in the query pane
 first, wait for it to finish, then ask again. A check that re-explains

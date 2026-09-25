@@ -10,11 +10,11 @@ from .sessions import (
     INJECTED, MAX_HUMAN_CHARS, SESSIONS, checkout, checkouts, folder,
     logs, parse,
 )
-from .worktrees import TASK, create, remove, worktrees
+from .worktrees import TASK, adopt, create, folder_for, remove, worktrees
 
 __all__ = (
     # worktrees an agent writes in
-    "create", "worktrees", "remove", "TASK",
+    "create", "adopt", "folder_for", "worktrees", "remove", "TASK",
     # session logs
     "SESSIONS", "INJECTED", "MAX_HUMAN_CHARS", "parse", "checkout", "checkouts",
     "folder", "logs",

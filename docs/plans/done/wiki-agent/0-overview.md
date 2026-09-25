@@ -186,8 +186,9 @@ import 를 세어 본 결과다. 2단계(#3)에서 0 이 됐다. `mirror.py` 와
 
 - 서버는 `127.0.0.1` 에만 뜬다
 - 쓰기는 `workspace` 가 만든 작업트리 안에서만. 원본 체크아웃에는 쓰지 않는다
-  — 예외 하나. [연결] 을 누르면 서버가 그 저장소의 `.wiki/adapter.toml` 하나를 원본에 쓴다
-  ([loop 개요](../../loop/0-overview.md#연결과-전수조사))
+  — 예외 둘. [연결] 을 누르면 서버가 그 저장소의 `.wiki/adapter.toml` 하나를 원본에 쓴다
+  ([loop 개요](../../loop/0-overview.md#연결과-전수조사)). [머지] 뒤 정리에서, 원본이 base 브랜치에
+  있고 미커밋 변경이 없을 때만 `git merge --ff-only` 한다([loop 4단계](../../loop/4-review.md#머지))
 - 작업트리는 저장소 옆 `../<repo>-worktrees/<task>` 에 만든다
 - 쓰기는 모두 화면에서 승인한다 — 파일 편집, 쓰기가 있는 셸 명령, `gh pr create` 까지.
   Claude Code 는 `--permission-prompt-tool stdio` 로, Codex 는 `app-server` 의 승인 요청으로 받는다.

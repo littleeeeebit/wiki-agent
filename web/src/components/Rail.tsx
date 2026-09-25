@@ -1,8 +1,14 @@
 import { useState } from 'react'
 import { Picker } from '@/components/Toolbar'
 import type { Item } from '@/components/Toolbar'
-import type { Options, Switch, Worktree } from '@/lib/api'
+import type { LoopSettings, Options, Pr, Switch, Worktree } from '@/lib/api'
 import { cn } from '@/lib/utils'
+
+/** What the rail shows of the spec that owns a worktree. */
+export type Badge = { state: string; pr: number | null; round: number }
+
+/** A running turn or loop of a project other than the selected one. */
+export type Other = { path: string; repo: string; label: string }
 
 type Props = {
   repo: string
@@ -11,8 +17,11 @@ type Props = {
   rows: Worktree[]
   /** Worktrees whose agent is waiting on an approval. */
   waiting: Set<string>
-  /** The state of the spec that owns a worktree, by its path. */
-  specs: Record<string, string>
+  /** The spec that owns a worktree, by its path. */
+  specs: Record<string, Badge>
+  prs: Pr[]
+  others: Other[]
+  loopSettings: LoopSettings | null
   selected: string
   view: 'query' | 'map'
   sw: Switch | null
@@ -21,6 +30,8 @@ type Props = {
   onSelect: (path: string) => void
   onMake: (task: string) => Promise<void>
   onRemove: (path: string) => Promise<void>
+  onLoop: (prs: number[]) => Promise<void>
+  onLoopSettings: (s: LoopSettings) => Promise<void>
   onView: (view: 'query' | 'map') => void
   onSwitch: (on: boolean) => void
   onTheme: (theme: 'dark' | 'light') => void
@@ -35,6 +46,8 @@ export function Rail(props: Props) {
   const [task, setTask] = useState('')
   const [fault, setFault] = useState('')
   const [working, setWorking] = useState('')
+  const [picking, setPicking] = useState<number[] | null>(null)
+  const pickable = props.prs.filter((p) => p.pickable)
 
   const projects: Item[] = options?.projects.map((p) => ({ value: p.id, label: p.id,
     note: p.wired ? '위키 붙음' : undefined })) ?? []
@@ -62,7 +75,55 @@ export function Rail(props: Props) {
       <div className="px-3 pb-3">
         <Picker label="프로젝트" width="w-full" mono stacked items={projects} value={repo}
           disabled={projectBusy || !options} onPick={(v) => v && v !== repo && props.onProject(v)} />
+        <button
+          type="button"
+          disabled={pickable.length === 0 || !!working}
+          onClick={() => (pickable.length === 1
+            ? act('loop', () => props.onLoop([pickable[0].number]))
+            : setPicking(pickable.map((p) => p.number)))}
+          className="mt-2 w-full rounded-md border border-sidebar-border px-2.5 py-1.5 text-left text-[12.5px] hover:bg-sidebar-accent disabled:opacity-40"
+          title="명세 없는 PR 과 멈춘 루프를 리뷰 루프에 넣는다"
+        >
+          {working === 'loop' ? '루프를 여는 중…' : `리뷰 루프 (${pickable.length})`}
+        </button>
       </div>
+
+      {picking && (
+        <div role="dialog" aria-modal="true" aria-label="리뷰 루프에 넣을 PR"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40" onClick={() => setPicking(null)}>
+          <div className="w-[28rem] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card p-4"
+            onClick={(e) => e.stopPropagation()}>
+            <div className="mb-2 font-heading text-[13px] font-semibold">리뷰 루프에 넣을 PR</div>
+            <div className="max-h-80 space-y-1 overflow-y-auto">
+              {props.prs.map((p) => (
+                <label key={p.number} className={cn('flex items-start gap-2 text-[12.5px]', !p.pickable && 'opacity-50')}>
+                  <input type="checkbox" className="mt-0.5 accent-primary" disabled={!p.pickable}
+                    checked={picking.includes(p.number)}
+                    onChange={(e) => setPicking((now) => (e.target.checked
+                      ? [...(now ?? []), p.number] : (now ?? []).filter((n) => n !== p.number)))} />
+                  <span className="min-w-0">
+                    <span className="font-mono">#{p.number}</span> {p.title}
+                    {p.why && <span className="block text-[11.5px] text-faint">{p.why}</span>}
+                  </span>
+                </label>
+              ))}
+            </div>
+            <div className="mt-3 flex justify-end gap-1.5">
+              <button type="button" className="rounded-md border border-border px-2 py-1 text-[12.5px]"
+                onClick={() => setPicking(null)}>닫기</button>
+              <button type="button" disabled={picking.length === 0}
+                className="rounded-md border border-primary px-2 py-1 text-[12.5px] text-primary disabled:opacity-40"
+                onClick={() => {
+                  const chosen = picking
+                  setPicking(null)
+                  void act('loop', () => props.onLoop(chosen))
+                }}>
+                시작 ({picking.length})
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="border-t border-sidebar-border px-4 pt-3 pb-1 font-heading text-[11px] font-semibold text-faint">작업트리</div>
       <nav aria-label="작업트리" className="min-h-0 flex-1 overflow-y-auto px-2">
@@ -83,7 +144,11 @@ export function Rail(props: Props) {
                 />
                 <span className="truncate font-mono text-[12px]">{r.name}</span>
                 {props.specs[r.path] && (
-                  <span className="ml-auto shrink-0 text-[10.5px] text-muted-foreground">{props.specs[r.path]}</span>
+                  <span className="ml-auto flex shrink-0 gap-1 font-mono text-[10.5px] text-muted-foreground">
+                    {props.specs[r.path].pr && <span>#{props.specs[r.path].pr}</span>}
+                    {props.specs[r.path].round > 0 && <span>R{props.specs[r.path].round}</span>}
+                    <span className="font-sans">{props.specs[r.path].state}</span>
+                  </span>
                 )}
               </div>
               <div className="mt-0.5 flex gap-1.5 pl-3 font-mono text-[10.5px] text-muted-foreground">
@@ -105,6 +170,26 @@ export function Rail(props: Props) {
             )}
           </div>
         ))}
+        {props.others.length > 0 && (
+          <>
+            <div className="px-2 pt-3 pb-1 font-heading text-[11px] font-semibold text-faint">다른 프로젝트</div>
+            {props.others.map((o) => (
+              <button
+                key={o.path}
+                type="button"
+                onClick={() => props.onSelect(o.path)}
+                aria-current={o.path === selected}
+                title="프로젝트를 바꾸지 않고 그 작업트리를 연다"
+                className={cn('mb-0.5 flex w-full items-center gap-1.5 rounded-md px-2.5 py-1.5 text-left text-[12.5px] hover:bg-sidebar-accent',
+                  o.path === selected && 'bg-sidebar-accent')}
+              >
+                <span className={cn('size-1.5 shrink-0 rounded-full', waiting.has(o.path) ? 'bg-wait' : 'bg-primary')} />
+                <span className="truncate font-mono text-[12px]">{o.repo}/{o.path.split(/[\\/]/).pop()}</span>
+                <span className="ml-auto shrink-0 text-[10.5px] text-muted-foreground">{o.label}</span>
+              </button>
+            ))}
+          </>
+        )}
       </nav>
 
       <form
@@ -138,6 +223,10 @@ export function Rail(props: Props) {
       </form>
 
       <div className="space-y-2 border-t border-sidebar-border p-3">
+        {props.loopSettings && (
+          <LoopFields key={JSON.stringify(props.loopSettings)} value={props.loopSettings} options={options}
+            onSave={(s) => act('settings', () => props.onLoopSettings(s))} />
+        )}
         <button
           type="button"
           aria-pressed={view === 'map'}
@@ -177,5 +266,41 @@ export function Rail(props: Props) {
         </label>
       </div>
     </aside>
+  )
+}
+
+/** The loop's three settings. Temporary: stage 6's settings modal takes them. */
+function LoopFields({ value, options, onSave }:
+  { value: LoopSettings; options: Options | null; onSave: (s: LoopSettings) => void }) {
+  const [rounds, setRounds] = useState(String(value.rounds))
+  const [concurrent, setConcurrent] = useState(String(value.concurrent))
+  const [model, setModel] = useState(value.review_model)
+  const edited = rounds !== String(value.rounds) || concurrent !== String(value.concurrent) || model !== value.review_model
+  const field = 'w-12 rounded border border-sidebar-border bg-background px-1 py-0.5 font-mono text-[12px]'
+  return (
+    <div className="space-y-1 px-2.5 text-[12.5px]">
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor="loop-rounds">라운드 상한</label>
+        <input id="loop-rounds" inputMode="numeric" value={rounds} onChange={(e) => setRounds(e.target.value)} className={field} />
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor="loop-seats">동시 실행</label>
+        <input id="loop-seats" inputMode="numeric" value={concurrent} onChange={(e) => setConcurrent(e.target.value)} className={field} />
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        <label htmlFor="loop-model">리뷰 모델</label>
+        <select id="loop-model" value={model} onChange={(e) => setModel(e.target.value)}
+          className="min-w-0 max-w-32 rounded border border-sidebar-border bg-background px-1 py-0.5 text-[12px]">
+          <option value="">Codex 기본</option>
+          {options?.models.filter((m) => m.id).map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+        </select>
+      </div>
+      {edited && (
+        <button type="button" className="w-full rounded border border-sidebar-border py-0.5 hover:bg-sidebar-accent"
+          onClick={() => onSave({ rounds: Number(rounds), concurrent: Number(concurrent), review_model: model })}>
+          루프 설정 저장
+        </button>
+      )}
+    </div>
   )
 }

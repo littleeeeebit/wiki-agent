@@ -19,7 +19,7 @@ from agent import chat_session
 from agent.chat_session import Event
 from main import channels as chat_channels
 from main import query as chat
-from main import specs, work
+from main import loop, specs, work
 from test_main import _repo, client, no_machine_settings, parse, settled, until  # noqa: F401 — the fixture is autouse
 
 PASS = "git --version"
@@ -32,14 +32,20 @@ def _adapter(repo: Path, gate: str | None) -> None:
     (repo / ".wiki/adapter.toml").write_text(f"[slots]\n{slots}", encoding="utf-8")
 
 
+KICKED: list = []
+
+
 @pytest.fixture
 def repo(tmp_path):
-    """A project named `proj` with a gate that passes, selected."""
+    """A project named `proj` with a gate that passes, selected. The review
+    loop is not started here — `test_loop.py` drives it — only noted."""
 
     repo = _repo(tmp_path)
     _adapter(repo, PASS)
+    KICKED.clear()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
-         patch.object(chat, "_project", "proj"):
+         patch.object(chat, "_project", "proj"), \
+         patch.object(loop, "kick", side_effect=lambda name, sid: KICKED.append((sid, specs.load(name, sid)))):
         yield repo
 
 
@@ -426,6 +432,7 @@ def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
         spec = specs.load("proj", sid)
         assert spec["state"] == "PR #7" and spec["pr"]["number"] == 7 and spec["pr"]["base"] == "main"
         assert spec["gate"]["ok"] and spec["plan_commit"] == "asked" and "완료 — PR #7" in spec["fault"]
+        assert KICKED == [], "계획 행 커밋 전에는 리뷰 루프가 받지 않는다"
         assert remote.pushes() == 1, "행을 고치지 않은 턴은 push 도, 닫기도 하지 않는다"
         create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
         assert create[create.index("--head") + 1] == sid and create[create.index("--title") + 1] == spec["goal"]
@@ -443,6 +450,10 @@ def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
         spec = specs.load("proj", sid)
         assert spec["plan_commit"] == "pushed" and spec["fault"] is None
         assert remote.pushes() == 2, "PR 을 올릴 때, 계획 행 커밋 뒤에"
+        # The loop takes the pull request only once the row's commit is up —
+        # after the turn let go of the worktree, so it is waited for.
+        until(lambda: KICKED)
+        assert [k for k, _ in KICKED] == [sid] and KICKED[0][1]["plan_commit"] == "pushed"
 
         result = [r for r in chat.recall("next") if r["role"] == "result"]
         assert [r["text"] for r in result] == [f"PR #7 — {spec['goal']}. 완료 조건 2개 통과"]
