@@ -15,7 +15,9 @@ sys.path.insert(0, str(HERE))
 
 from census import DEFAULT_MARKERS, Markers  # noqa: E402
 
-KEEP = 500          # How much of an utterance to keep
+KEEP = 4000         # How much of an utterance to keep. `inject.MAX_RENDERED`:
+                    # `trigger_audit replay` and `ab` read the utterance back,
+                    # and rows before 2026-09-25 were cut at 500
 RESUME_MAX = 120    # The census's own value: `이어서` inside a long
                     # instruction is not a request to resume
 TAIL = 8192         # How much of the tail to read to find the last line
@@ -97,8 +99,12 @@ def record(
     injected: list[str],
     cost: int,
     session: str,
+    **extra: object,
 ) -> str | None:
     """Record one turn, and score the previous line when it is the same session.
+
+    `extra` lands in the row as given — `sent` and `full` from `inject`. What
+    each one means is written where it is made.
 
     Every failure is swallowed: one record is not worth stopping a session
     over — `craft/hooks-fail-open`. It is not swallowed silently, though. The
@@ -120,6 +126,7 @@ def record(
             "chars": len(prompt),
             "injected": injected,
             "cost": cost,
+            **extra,
         }
         previous = last_row(path)
         if session and previous and previous.get("session") == session:
@@ -134,7 +141,12 @@ def record(
 def rows(wiki: Path) -> list[dict]:
     """The reading side. Defined in two places, this format drifts in two places."""
 
-    path = path_for(wiki)
+    return read(path_for(wiki))
+
+
+def read(path: Path) -> list[dict]:
+    """`rows` for a file named directly — `trigger_audit` takes paths."""
+
     if not path.exists():
         return []
     found = []

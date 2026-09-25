@@ -456,6 +456,45 @@ def test_a_page_that_eats_the_deadline_does_not_starve_the_rendering():
     )
 
 
+def test_the_record_carries_what_was_sent_and_a_quiet_turn_too():
+    """`sent` is the bytes of the whole `additionalContext`, `full` the pages
+    that went out untrimmed. A turn that matched nothing and sent nothing is
+    still a row — that turn is where a miss hides."""
+
+    import trajectory
+    from wiki import match
+
+    root = Path(tempfile.mkdtemp())
+    wiki, project = root / "wiki", root / "project"
+    (wiki / "craft").mkdir(parents=True)
+    (wiki / "craft" / "big.md").write_text(RULE, encoding="utf-8")
+    (project / ".wiki").mkdir(parents=True)
+    env = dict(os.environ) | {
+        "WIKI_ROOT": str(wiki), "PYTHONIOENCODING": "utf-8", "GEMINI_API_KEY": "",
+        "TRANSLATE_ENV": str(root / "absent.env"), "TRANSLATE_CACHE": str(root / "cache.sqlite3"),
+    }
+    sent = []
+    for prompt in (f"{WORD} 를 쓴다", "아무 규칙도 안 걸리는 말"):
+        done = subprocess.run(
+            [sys.executable, str(HERE / "inject.py"), "--project", str(project)],
+            input=json.dumps({"prompt": prompt, "session_id": "t"}),
+            capture_output=True, text=True, encoding="utf-8", env=env,
+        )
+        context = json.loads(done.stdout or "{}").get("hookSpecificOutput", {}).get("additionalContext", "")
+        sent.append(len(context.encode("utf-8")))
+
+    rows = trajectory.rows(project / ".wiki")
+    assert [r["sent"] for r in rows] == sent and sent[0] > 0 and sent[1] == 0, (rows, sent)
+    assert [name for name, _tag in rows[0]["full"]] == ["craft/big"], rows[0]
+    assert rows[1]["full"] == [] and rows[1]["injected"] == [], rows[1]
+
+    page = ("contract", "# T\n\nRule. x\n", Path("craft/t.md"))
+    assert match.sent_whole([page], [match.whole(*page)]) == [["craft/t", match.tag(page[1])]]
+    assert match.sent_whole([page], [match.shrink(page[1], page[2], "contract", True)]) == [], (
+        "a page the budget trimmed did not go out whole"
+    )
+
+
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
     for name, fn in sorted(globals().items()):

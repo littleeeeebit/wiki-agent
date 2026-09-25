@@ -7,6 +7,7 @@ matches on the Korean the person typed, then weaves in `translate` itself.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from pathlib import Path
 
@@ -43,6 +44,22 @@ REPO_BUDGET = "repo_budget"
 # How many decision records go in as full text in one turn. What is over that
 # is not dropped; its name stays.
 MAX_DECISIONS = 3
+
+# Each host's ceiling on `additionalContext`, in UTF-8 bytes. Past it the host
+# stores the injection in a file and hands the session a 2 KB preview, so a
+# page carried on that turn was not read. Bytes, because a byte-level BPE
+# never makes more tokens than bytes: under the ceiling in bytes is under it in
+# tokens. Characters give no such bound — one Hangul syllable can be several
+# tokens.
+#
+# Codex: the install sets `additionalContextLimit = 12000`, in tokens
+# (`tool/apply.py`), so 12,000 bytes is on the safe side. Claude: no published
+# unit, so it was read off the transcripts on 2026-09-25 — 3,784 injections,
+# the largest kept whole 9,896 characters, the smallest sent to a file 10,015.
+# Claude counts characters, and characters never exceed bytes, so 9,800 bytes
+# is under it. `trigger_audit replay` prints the same two numbers for the
+# sessions it reads.
+LIMIT = {"codex": 12000, "claude": 9800}
 
 
 def budget(adapter: str | None, slot: str, project: str | Path | None = None) -> int | None:
@@ -336,6 +353,62 @@ def render_parts(matched: list, rule_limit: int | None, repo_limit: int | None) 
     )
     rules = [m for m in matched if m[2].parent.name != "decisions"]
     rules.sort(key=lambda item: 0 if item[0] == "landmine" else 1)
-    parts = [f"<!-- wiki:{label(p)} ({s}) -->\n{b}" for s, b, p in rules]
+    parts = [whole(s, b, p) for s, b, p in rules]
     parts, trimmed = fit(parts, rules, rule_limit)
     return rules, decisions, parts, knowledge(decisions, repo_limit), trimmed
+
+
+def whole(severity: str, body: str, path: Path) -> str:
+    return f"<!-- wiki:{label(path)} ({severity}) -->\n{body}"
+
+
+def tag(text: str) -> str:
+    """A short fingerprint. Recorded in place of the text it stands for."""
+
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def sent_whole(rules: list, parts: list[str]) -> list[list[str]]:
+    """`[name, tag]` of each page that went out in full — tagged after the
+    budget trimmed and the text was translated, so it is what actually left."""
+
+    return [[label(p), tag(b)] for (s, b, p), part in zip(rules, parts)
+            if part == whole(s, b, p)]
+
+
+def compose(rules: list, parts: list[str], english: str, project: str | None) -> str:
+    """The whole `additionalContext`, or `""` when there is nothing to send.
+
+    Here rather than in the hook so `trigger_audit replay` measures the same
+    bytes the hook sends. `english` is the rendering block, already labelled.
+    """
+
+    # The rule index goes first. It is a few hundred characters, and the
+    # rendering in front of it could reach 4,000 (`inject.MAX_RENDERED`) and
+    # push every rule sentence out of the 2 KB preview. See `rule_index`.
+    blocks = []
+    index = rule_index(rules)
+    if index:
+        blocks.append(index)
+    # Before the pages, not after them. The rendering is carried even when no
+    # page matched: the utterance is agent input on every turn, and tying it
+    # to a trigger would drop it on exactly the turns no rule covers.
+    #
+    # Position is the other half of that. A host persists an injection past
+    # about 12 KB and hands the session a 2 KB preview instead; the rules
+    # alone reach 12,205 characters on an ordinary turn, so anything after
+    # them is cut. Measured on 2026-09-22 in a web chat session: the rules
+    # arrived, this block did not, and nothing said so. Behind the short
+    # index it still starts inside the preview.
+    if english:
+        blocks.append(english)
+    if parts:
+        blocks.append(
+            "Below is what the wiki loaded for this utterance. A rule marks a "
+            "place where something actually went wrong before; knowledge is "
+            "something already decided.\n\n"
+            + source_map(rules, project)
+            + "\n\n"
+            + "\n\n---\n\n".join(parts)
+        )
+    return "\n\n---\n\n".join(blocks)

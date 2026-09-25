@@ -12,8 +12,9 @@ and the wiki's own tools, which read the page format (`front_matter`,
 """
 
 from .match import (
-    INJECTABLE, REPO_BUDGET, RULE_BUDGET, SLOT, adapter_path, budget, label,
-    match_pages, pages, render_parts, rule_index, slots_for, source_map,
+    INJECTABLE, LIMIT, REPO_BUDGET, RULE_BUDGET, SLOT, adapter_path, budget,
+    compose, label, match_pages, pages, render_parts, rule_index, sent_whole,
+    slots_for, source_map,
 )
 from .wikilib import (
     SCOPES, WIKI, front_matter, hub_pages, links_of, metadata_errors,
@@ -23,7 +24,7 @@ from .wikilib import (
 __all__ = (
     # asking what an utterance matches
     "pages", "match_pages", "render_parts", "rule_index", "source_map", "label",
-    "budget", "RULE_BUDGET", "REPO_BUDGET",
+    "budget", "RULE_BUDGET", "REPO_BUDGET", "compose", "sent_whole", "LIMIT",
     # reading the page format
     "WIKI", "SCOPES", "front_matter", "metadata_errors", "links_of", "resolve",
     "hub_pages", "project_pages", "INJECTABLE", "SLOT", "adapter_path", "slots_for",
