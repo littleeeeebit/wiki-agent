@@ -116,7 +116,10 @@ def chunks(text: str, path: Path) -> list[dict]:
     for number, line in enumerate(lines, offset + 1):
         marker = FENCE.match(line)
         if marker and not fence:
-            fence = marker.group(1)
+            # A backtick opener whose info string holds a backtick is inline
+            # code, not a fence.
+            if not (marker.group(1)[0] == "`" and "`" in marker.group(2)):
+                fence = marker.group(1)
         elif marker and fence and marker.group(1).startswith(fence) and not marker.group(2).strip():
             # Closed only by the opener's own character, at least as long, and
             # nothing after it. A `~~~` inside a backtick fence is text.

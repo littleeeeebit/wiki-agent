@@ -83,6 +83,11 @@ def test_a_fence_closes_only_on_its_own_marker():
     assert [c["heading"] for c in searchd.chunks(text, Path("x.md"))] == ["T", "T > A", "T > Real"]
     longer = "# T\n\n## A\n\n~~~~\n~~~\n## fake\n~~~~~\n\n## Real\n\nbody\n"
     assert [c["heading"] for c in searchd.chunks(longer, Path("x.md"))] == ["T", "T > A", "T > Real"]
+    # Not a fence at all: a backtick in a backtick opener's info string (round 2).
+    inline = "# T\n\n## A\n\n```js`x\n\n## Real\n\nbody\n"
+    assert [c["heading"] for c in searchd.chunks(inline, Path("x.md"))] == ["T", "T > A", "T > Real"]
+    tilde = "# T\n\n## A\n\n~~~ a`b\n## fake\n~~~\n\n## Real\n\nbody\n"
+    assert [c["heading"] for c in searchd.chunks(tilde, Path("x.md"))] == ["T", "T > A", "T > Real"]
 
 
 def test_the_index_ranks_the_hub_and_the_repository_by_bm25(hub):
