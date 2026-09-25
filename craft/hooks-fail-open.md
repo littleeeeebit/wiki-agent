@@ -14,8 +14,10 @@ links: [english-progress, diagnose-from-what-ran]
 Rule. A hook script turns every exception into a pass at its entry point, and
 pins the encoding of `stdin` and `stdout` to UTF-8 itself. Whatever the
 environment hands it, a hook failing must not make that session unusable.
-The guard writes the exception's type name to stderr and nothing else, and
-returns 0. Reading a child's output takes
+Pinning the encoding covers every `tool/*.py` with a pipe on stdout, not only
+hooks; the entry-point guard is for hooks alone — a CLI lets the traceback
+out. The guard writes the exception's type name to stderr and nothing else,
+and returns 0. Reading a child's output takes
 `encoding="utf-8", errors="replace"`. After updating the hub, run
 `apply --check` for both agents in that repository.
 

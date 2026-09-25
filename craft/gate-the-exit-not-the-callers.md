@@ -13,14 +13,19 @@ links: [client-lifecycle-in-one-scope, diagnose-from-what-ran, verify-narrow-the
 
 Rule. When what leaves has to be restricted — telemetry, logs, webhooks,
 reports — gate it at the last point the value crosses the boundary, not at
-every place that produces the value. When collapsing exits, count every direct
-write with `grep`. Two consecutive rounds of P0 on the same file and subject
+every place that produces the value. One function sees field names, bodies,
+labels and status strings just before serialising and sending, and a new
+field goes through it without another gate. When collapsing exits, count every
+direct write with `grep`. Two consecutive rounds of P0 on the same file and subject
 mean the place chosen to block was wrong — collapse the exits then. The check
 runs over artefacts a real producer left and watches three things: planted
 contamination gets out from nowhere, real values survive intact, a whole real
 log passes without a crash. An allow-list separates types first — numbers and
-booleans pass, strings are restricted. What cannot be told apart does not go
-as plain text: a digest is the default.
+booleans pass, strings are restricted — and descends into containers with
+per-parent allowed keys, never the top-level name rule again. A string
+pattern keeps path characters (`/`, `:`) out. What cannot be told apart does
+not go as plain text: a digest is the default. A lower layer never defers to
+an upper one what the upper one cannot see.
 
 | Do | Do not |
 | --- | --- |
