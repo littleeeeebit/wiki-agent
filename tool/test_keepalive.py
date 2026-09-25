@@ -126,6 +126,71 @@ def test_the_hook_dispatcher_tells_keepalive_its_host_project_and_checkout():
     assert Path(args[args.index("--checkout") + 1]).resolve() == tree.resolve(), args
 
 
+def test_a_per_project_install_names_the_host_and_keepalive_finds_the_worktree(sent):
+    """Review round 1: the per-project commands carried no `--host`, so
+    neither `/idle` nor `/busy` ever went out, and no `--checkout`, so a
+    worktree cell would have been judged by the main clone's path."""
+
+    import shlex
+
+    from test_hook import attached_repo
+
+    with tempfile.TemporaryDirectory() as raw:
+        main, tree = attached_repo(Path(raw))
+        (main / ".wiki/adapter.toml").write_text('keep_alive = 2\nagents=["claude"]\n', encoding="utf-8")
+        settings = {}
+        apply.configure(settings, main, None, "C:/py.exe", "claude")
+
+        def args(event, script):
+            command = next(h["command"] for group in settings["hooks"][event]
+                           for h in group["hooks"] if script in h["command"])
+            return shlex.split(command)[2:]
+
+        prompt = args("UserPromptSubmit", "inject.py")
+        assert prompt[prompt.index("--host") + 1] == "claude", prompt
+        payload = {"hook_event_name": "Stop", "session_id": "s1", "cwd": str(tree)}
+        was = sys.stdin, sys.stdout, sys.argv
+        sys.stdin = io.TextIOWrapper(io.BytesIO(json.dumps(payload).encode("utf-8")))
+        sys.stdout = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+        sys.argv = ["keepalive.py", *args("Stop", "keepalive.py")]
+        try:
+            keepalive.main()
+        finally:
+            sys.stdin, sys.stdout, sys.argv = was
+    assert sent == [("/idle", {"session": "s1", "handle": HANDLE,
+                               "checkout": str(tree.resolve()), "limit": 2})], sent
+
+
+def test_the_busy_notice_outlives_a_hook_that_fails_open(tmp_path):
+    """Review round 1: a malformed adapter raised after `/busy` had started,
+    `__main__` passed with 0 before the join, and a daemon thread died
+    unsent — the timer stayed armed through the person's turn."""
+
+    import subprocess
+
+    repo = tmp_path / "repo"
+    (repo / ".wiki").mkdir(parents=True)
+    (repo / ".wiki/adapter.toml").write_text('keep_alive = 2\nslots = "bad"\n', encoding="utf-8")
+    delivered = tmp_path / "delivered"
+    runner = tmp_path / "run.py"
+    runner.write_text(f"""import runpy, sys, time
+sys.path.insert(0, {str(HERE)!r})
+import search
+def slow(path, body, **_waits):
+    time.sleep(0.5)
+    open({str(delivered)!r}, "a", encoding="utf-8").write(path)
+search.notify = slow
+sys.argv = ["inject.py", "--host", "claude", "--project", {str(repo)!r}]
+runpy.run_path({str(HERE / "inject.py")!r}, run_name="__main__")
+""", encoding="utf-8")
+    done = subprocess.run(
+        [sys.executable, str(runner)], input=json.dumps({"prompt": "사람 발화", "session_id": "s1"}),
+        capture_output=True, text=True, encoding="utf-8", timeout=60,
+        env={**__import__("os").environ, "ORCA_TERMINAL_HANDLE": HANDLE})
+    assert done.returncode == 0 and "hook skipped" in done.stderr, (done.returncode, done.stderr)
+    assert delivered.read_text(encoding="utf-8") == "/busy"
+
+
 def test_claude_is_wired_on_three_events_and_codex_not_at_all():
     for project_path in (None, Path(tempfile.mkdtemp())):
         claude, codex = {}, {}

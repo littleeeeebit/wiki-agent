@@ -31,7 +31,7 @@ import tomllib
 from pathlib import Path
 
 import search
-from workspace import INJECTED
+from workspace import INJECTED, checkout
 
 PING = search.PING
 
@@ -74,7 +74,9 @@ def on_prompt(prompt: str, host: str | None, project: str | None,
     (`workspace.INJECTED`) are not somebody coming back.
 
     `/busy` goes on a thread, retried for `RETRY` seconds, while the hook
-    translates; `inject.py` joins it before it exits. On every utterance it
+    translates; `inject.py` joins it before it exits. Not a daemon thread:
+    when the rest of the hook fails open on an exception and never reaches
+    the join, the interpreter still waits for it (review round 1). On every utterance it
     must not start a wait for a daemon that was not running — no timer can
     be armed in one (`spawn_wait=0`).
     """
@@ -86,7 +88,7 @@ def on_prompt(prompt: str, host: str | None, project: str | None,
     if prompt.strip() == PING:
         search.notify("/ping-turn", body, spawn_wait=0, retry=RETRY)
         return True, None
-    busy = threading.Thread(target=search.notify, daemon=True, args=(
+    busy = threading.Thread(target=search.notify, daemon=False, args=(
         "/busy", body | {"reset": not any(mark in prompt for mark in INJECTED)}),
         kwargs={"spawn_wait": 0, "retry": RETRY})
     busy.start()
@@ -116,9 +118,12 @@ def main() -> int:
         search.notify("/own", body, retry=RETRY)
     elif event == "Stop":
         # The checkout, not the project: Orca names a worktree by its own
-        # path, and the project is the main clone.
-        checkout = str(Path(args.checkout or args.project).resolve())
-        search.notify("/idle", body | {"checkout": checkout, "limit": cell[1]}, retry=RETRY)
+        # path, and the project is the main clone. A per-project install
+        # passes no `--checkout`; the session's `cwd` answers the same way
+        # `hook.py` does.
+        top = args.checkout or checkout(Path(payload.get("cwd") or os.getcwd()))[0]
+        checkout_ = str(Path(top or args.project).resolve())
+        search.notify("/idle", body | {"checkout": checkout_, "limit": cell[1]}, retry=RETRY)
     elif event == "SessionEnd":
         search.notify("/gone", body, retry=RETRY)
     return 0

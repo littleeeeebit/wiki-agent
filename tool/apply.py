@@ -196,8 +196,8 @@ def unfilled(adapter: str | None, project: Path | None = None) -> dict[str, list
     return missing
 
 
-def hook_entry(python: str, adapter: str | None, project: str = "") -> dict:
-    where = f' --project "{project}"' if project else ""
+def hook_entry(python: str, adapter: str | None, project: str = "", host: str = "") -> dict:
+    where = (f' --project "{project}"' if project else "") + (f" --host {host}" if host else "")
     selection = f' --adapter "{adapter}"' if adapter and not (
         project and (Path(project) / ".wiki/adapter.toml").exists()
     ) else ""
@@ -283,7 +283,12 @@ def continuation_entry(python: str) -> dict:
 def keepalive_entry(python: str, project: str) -> dict:
     """Claude only, on `SessionStart`, `Stop` and `SessionEnd` — one command,
     the event read from the payload. It does nothing unless the repository
-    set `keep_alive`, so wiring it everywhere costs one Python start."""
+    set `keep_alive`, so wiring it everywhere costs one Python start.
+
+    A per-project install names the host itself; through `hook.py` the
+    dispatcher adds it. The checkout is left to `keepalive.py`, which reads
+    it off the payload's `cwd` — a fixed path here would be the main clone's
+    in every worktree (review round 1)."""
 
     return {
         "hooks": [
@@ -291,7 +296,7 @@ def keepalive_entry(python: str, project: str) -> dict:
                 "type": "command",
                 "command": (
                     f'"{python}" "{(HERE / KEEPALIVE_MARK).as_posix()}"'
-                    + (f' --project "{project}"' if project else "")
+                    + (f' --project "{project}" --host claude' if project else "")
                 ),
                 "timeout": 10,
                 "statusMessage": "위키: keep-alive",
@@ -426,6 +431,11 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
     hook going through `hook.py`.
     """
     where = project.as_posix() if project else ""
+    # `inject.py` judges keep-alive — and the host's ceiling — by `--host`.
+    # Through `hook.py` the dispatcher adds it; a per-project Claude command
+    # says it itself, or its `/busy` never goes out while `keepalive.py`'s
+    # `/idle` does. Codex's per-project command is left as it was.
+    host = agent if project else ""
     wrap = (lambda entry: dispatched(entry, agent)) if project is None else (lambda entry: entry)
     denies, scripts = declared()
     if agent == "codex":
@@ -462,7 +472,7 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
         changes = merge(
             settings,
             list(denies) if project else [],
-            wrap(hook_entry(python, adapter, where)),
+            wrap(hook_entry(python, adapter, where, host)),
             pre,
             wrap(session_entry(python, where)),
             wrap(sync_entry(python, where)),
