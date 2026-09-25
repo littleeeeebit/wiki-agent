@@ -425,7 +425,8 @@ def fragile_tools(wiki: Path = WIKI) -> list[str]:
 
 def missing_hook_guards(wiki: Path, loaded: dict) -> list[tuple[str, str]]:
     """Check the entry-point guard on shared event hooks and page-declared ones."""
-    names = {"inject.py", "session_state.py", "sync.py", "declared_continuation.py", "codex_pretool.py"}
+    names = {"inject.py", "session_state.py", "sync.py", "declared_continuation.py", "codex_pretool.py",
+             "keepalive.py"}
     for meta, _body, _path in loaded.values():
         enforce = meta.get("enforce") or {}
         if isinstance(enforce, dict) and enforce.get("pretooluse"):

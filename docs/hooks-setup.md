@@ -25,8 +25,10 @@ hooks need PowerShell.
 `python tool/search "<query>" --project <repo>` prints the sections that
 match, with the `path:line` each starts at. It asks a small local daemon on
 `127.0.0.1:8791`, starts it when it is not there, and the daemon stops after
-three idle hours; nothing needs to be run by hand. The hook does not use it:
-the triggers stay the only authority over what the hook injects.
+three idle hours, or later while a keep-alive is pending; nothing needs to be
+run by hand. No hook asks it what to inject: the triggers stay the only
+authority there. The keep-alive hooks (`keepalive.py`, and `inject.py` on each
+utterance) only tell it what their cell is doing.
 
 For the vector half, install `python -m pip install -r <wiki path>/requirements-search.txt`
 into the same Python. Without it the daemon ranks with BM25 alone. The model
@@ -50,6 +52,15 @@ live_cmd = "confirm the real events in a new session"
 server_stop = "Ctrl+C in the terminal that started it"
 scratch_dirs = "artifacts/"
 ```
+
+`keep_alive = 2`, above `agents`, turns on keep-alive for the repository. A
+Claude session in an Orca cell that sits idle for 55 minutes gets a one-line
+ping, at most that many times per utterance a person types, so its prompt
+cache is still there when the person comes back. It pays only where people
+return after an hour, which is why each repository opts in; without the line,
+or on Codex, nothing is sent. The search daemon above does the pinging, after
+checking with `orca terminal show` and `read` that the cell is still this
+repository's and its input box is empty.
 
 Run `git rev-parse HEAD` in the wiki folder and store the resulting
 40-character value as a single line in the **target project's**

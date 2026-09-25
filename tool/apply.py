@@ -39,8 +39,10 @@ HOOK_MARK = "inject.py"
 SESSION_MARK = "session_state.py"
 SYNC_MARK = "sync.py"
 CONTINUATION_MARK = "declared_continuation.py"
+KEEPALIVE_MARK = "keepalive.py"
 # Every script this wiki wires by name, besides the pages' `enforce.pretooluse`.
-OWNED = (HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK, "codex_pretool.py", "deny.py")
+OWNED = (HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK, KEEPALIVE_MARK,
+         "codex_pretool.py", "deny.py")
 
 # The quoted arguments of a hook command. Our own writer emits
 # `"<python>" "<wiki>/tool/<script>"`, optionally behind `& ` for PowerShell
@@ -278,6 +280,26 @@ def continuation_entry(python: str) -> dict:
     }
 
 
+def keepalive_entry(python: str, project: str) -> dict:
+    """Claude only, on `SessionStart`, `Stop` and `SessionEnd` — one command,
+    the event read from the payload. It does nothing unless the repository
+    set `keep_alive`, so wiring it everywhere costs one Python start."""
+
+    return {
+        "hooks": [
+            {
+                "type": "command",
+                "command": (
+                    f'"{python}" "{(HERE / KEEPALIVE_MARK).as_posix()}"'
+                    + (f' --project "{project}"' if project else "")
+                ),
+                "timeout": 10,
+                "statusMessage": "위키: keep-alive",
+            }
+        ]
+    }
+
+
 def script_entry(python: str, script: str, status: str) -> dict:
     return {
         "hooks": [
@@ -446,6 +468,8 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
             wrap(sync_entry(python, where)),
             wrap(continuation_entry(python)),
         )
+        for event in ("SessionStart", "Stop", "SessionEnd"):
+            changes += put_hook(settings, event, KEEPALIVE_MARK, wrap(keepalive_entry(python, where)))
 
     return changes
 
