@@ -245,6 +245,20 @@ def home(tmp_path, monkeypatch):
         yield home, old, trusted
 
 
+def test_the_move_writes_the_plan_it_checked_not_one_read_again(tmp_path, home):
+    shown = connect.hub()
+    real, calls = setup_agents.plan_global, []
+
+    def drifting(*args, **kw):
+        calls.append(1)
+        plan = real(*args, **kw)
+        return plan if len(calls) == 1 else [*plan, (tmp_path / "unshown.json", {}, ["보이지 않은 줄"])]
+
+    with patch.object(setup_agents, "plan_global", side_effect=drifting):
+        connect.move(shown["digest"])
+    assert not (tmp_path / "unshown.json").exists(), "확인한 뒤에 다시 읽은 계획은 쓰지 않는다"
+
+
 def test_off_windows_nothing_is_a_junction(tmp_path, monkeypatch):
     import stat
 
@@ -359,6 +373,18 @@ def test_the_survey_sends_no_further_turn_once_the_tokens_reach_the_limit(survey
     assert git(path, "log", "--format=%s", "-1") == "wiki: adapter", "원본의 adapter 가 첫 커밋이다"
     assert spec["survey"]["handover"] and spec["cell"]["model"] == "opus"
     assert "repo_lint.py" in spec["done"][0] and "--no-wiring" in spec["done"][0]
+
+
+def test_an_adapter_that_was_there_before_gets_the_hash_the_handover_compares(surveyed):
+    theirs = 'agents = ["claude"]\n\n[slots]\ngate_cmd = "make test"\n'
+    (surveyed / ".wiki/adapter.toml").write_text(theirs, encoding="utf-8", newline="\n")
+    connect.keep("proj", hash=None, adapter=None)   # as if `[연결]` found it and wrote nothing
+    loop.store(survey=True, survey_tokens=10_000, survey_minutes=60, survey_model="opus")
+    Spender.tokens = 50_000
+    survey.start(surveyed)
+    ended("proj")
+    rec = connect.record("proj")
+    assert rec["hash"] == connect.digest(theirs.encode()) and rec["adapter"] == theirs
 
 
 def test_every_turn_runs_under_the_limit_and_an_existing_page_is_skipped(surveyed):

@@ -31,7 +31,7 @@ from fastapi import HTTPException
 from workspace import create
 
 from . import channels, loop, query, specs, work
-from .connect import ADAPTER, RECORDS, git, keep, record, tracked
+from .connect import ADAPTER, RECORDS, digest, git, keep, record, tracked
 
 DEFAULTS = {"survey": False, "survey_tokens": 2_000_000, "survey_minutes": 90, "survey_model": "opus"}
 RATES = RECORDS / "survey" / "rates.json"
@@ -216,6 +216,10 @@ def start(repo: Path) -> str | None:
     if handover:
         (path / ".wiki").mkdir(exist_ok=True)
         shutil.copyfile(repo / ADAPTER, path / ADAPTER)
+        # The handover tells a person's change by this hash; an adapter that
+        # was there before `[연결]` has none until now.
+        text = (path / ADAPTER).read_bytes()
+        keep(name, hash=digest(text), adapter=text.decode("utf-8", "replace"))
         git(path, "add", "-f", "--", ADAPTER)
         made = git(path, "commit", "-qm", "wiki: adapter")
         if made.returncode:

@@ -286,23 +286,31 @@ def interpreter() -> str:
     return sys.executable
 
 
-def hub() -> dict:
-    """What moving the machine's wiring to this hub changes, every line of
-    it, and a digest of exactly that list. `needed` is false when nothing."""
+def _snapshot() -> tuple[dict, list, list, str]:
+    """`hub()`'s answer with the plan, links and interpreter it was read
+    from, so `move` writes the very thing whose digest it checked."""
 
     python = interpreter()
     try:
         plan = setup_agents.plan_global("both", [], python)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        return {"needed": True, "refused": str(exc), "lines": [], "links": [], "trust": False, "digest": ""}
+        return ({"needed": True, "refused": str(exc), "lines": [], "links": [], "trust": False, "digest": ""},
+                [], [], python)
+    found = setup_agents.skill_links()
     lines = [{"file": str(path), "change": change} for path, _s, changes in plan for change in changes]
-    links = [{"link": str(link), "from": str(old), "to": str(new) if new else None}
-             for link, old, new in setup_agents.skill_links()]
+    links = [{"link": str(link), "from": str(old), "to": str(new) if new else None} for link, old, new in found]
     codex = any(Path(line["file"]).name == "hooks.json" for line in lines)
     trust = codex or not trusted(python)
     shown = {"lines": lines, "links": links, "trust": trust}
-    return {"needed": bool(lines or any(link["to"] for link in links) or trust), "refused": "", **shown,
-            "digest": digest(json.dumps(shown, sort_keys=True, ensure_ascii=False).encode())}
+    return ({"needed": bool(lines or any(link["to"] for link in links) or trust), "refused": "", **shown,
+             "digest": digest(json.dumps(shown, sort_keys=True, ensure_ascii=False).encode())}, plan, found, python)
+
+
+def hub() -> dict:
+    """What moving the machine's wiring to this hub changes, every line of
+    it, and a digest of exactly that list. `needed` is false when nothing."""
+
+    return _snapshot()[0]
 
 
 def move(confirmed: str) -> dict:
@@ -310,14 +318,13 @@ def move(confirmed: str) -> dict:
     repository's test was of the old wiring, so the records drop them."""
 
     with _moving:
-        now = hub()
+        now, plan, found, python = _snapshot()
         if now["refused"]:
             raise HTTPException(409, f"허브를 옮길 수 없다 — {now['refused']}")
         if now["digest"] != confirmed:
             raise HTTPException(409, "확인한 뒤에 바뀔 줄이 달라졌다. 다시 확인한다")
-        python = interpreter()
-        setup_agents.write_plan(setup_agents.plan_global("both", [], python))
-        for link, _old, new in setup_agents.skill_links():
+        setup_agents.write_plan(plan)
+        for link, _old, new in found:
             if new:
                 setup_agents.relink(link, new)
         if now["trust"]:
