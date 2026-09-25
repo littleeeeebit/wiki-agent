@@ -8,7 +8,7 @@ import { Rail } from '@/components/Rail'
 import { Terminal, closed } from '@/components/Terminal'
 import { WikiMap } from '@/components/WikiMap'
 import * as api from '@/lib/api'
-import type { Channel, Options, Peek as PeekData, Switch, Worktree } from '@/lib/api'
+import type { Channel, Options, Peek as PeekData, Spec, Switch, Worktree } from '@/lib/api'
 import { useWork } from '@/lib/work'
 
 type Theme = 'dark' | 'light'
@@ -29,6 +29,7 @@ export default function App() {
   const [fault, setFault] = useState('')
   const [sw, setSw] = useState<Switch | null>(null)
   const [rows, setRows] = useState<Worktree[]>([])
+  const [specs, setSpecs] = useState<Spec[]>([])
   const [selected, setSelected] = useState('')
   const [view, setView] = useState<'query' | 'map'>('query')
   const [seed, setSeed] = useState<{ text: string } | null>(null)
@@ -80,6 +81,7 @@ export default function App() {
     api.claim(now)
     listing.current++
     setRows([])
+    setSpecs([])
     setSelected('')
     setChannels((list) => list.map((c) => ({ ...c, repo: now })))
     return api.getChannels().then(accept)
@@ -111,6 +113,14 @@ export default function App() {
       .catch((err) => mine === listing.current && setFault(String(err)))
   }, [follow])
 
+  // Read when the worktrees are, and after a turn ends: a turn is where a
+  // spec's pull request goes up. Merged on GitHub is noticed by this read.
+  const readSpecs = useCallback(() => {
+    api.getSpecs()
+      .then(({ project, specs }) => project === expected.current && setSpecs(specs))
+      .catch(() => {})
+  }, [])
+
   useEffect(() => {
     // The list first: it names the project, and every other request waits
     // for that (`api.claim`).
@@ -131,10 +141,14 @@ export default function App() {
   // back into focus.
   useEffect(() => {
     if (!repo) return
-    refresh()
-    window.addEventListener('focus', refresh)
-    return () => window.removeEventListener('focus', refresh)
-  }, [repo, refresh])
+    const both = () => {
+      refresh()
+      readSpecs()
+    }
+    both()
+    window.addEventListener('focus', both)
+    return () => window.removeEventListener('focus', both)
+  }, [repo, refresh, readSpecs])
 
   useEffect(() => {
     if (selected) work.load(selected)
@@ -145,8 +159,9 @@ export default function App() {
   const running = Object.values(work.turns).filter((turns) => turns.at(-1)?.pending).length
   const runningNow = useRef(running)
   useEffect(() => {
+    if (running < runningNow.current) readSpecs()
     runningNow.current = running
-  }, [running])
+  }, [running, readSpecs])
   useEffect(() => {
     if (!('__TAURI_INTERNALS__' in window)) return
     let off: (() => void) | undefined
@@ -196,6 +211,15 @@ export default function App() {
     api.getSwitch().then(setSw).catch(() => {})
   }, [selected, choice, work, refresh])
 
+  // `[시작]`: the server makes the worktree and starts its first turn; the
+  // screen selects it, and loading it attaches to that turn.
+  const start = useCallback(async (id: string) => {
+    const { path } = await api.startSpec(id, choice)
+    readSpecs()
+    refresh()
+    setSelected(path)
+  }, [choice, readSpecs, refresh])
+
   const showPeek = useCallback(async (path: string, line: number) => {
     if (!selected) return
     setPeek({ data: null })
@@ -223,6 +247,7 @@ export default function App() {
         // window is streaming is known here first.
         rows={rows.map((r) => ({ ...r, busy: r.busy || Boolean(work.turns[r.path]?.at(-1)?.pending) }))}
         waiting={waiting}
+        specs={Object.fromEntries(specs.filter((s) => s.worktree).map((s) => [s.worktree, s.state]))}
         selected={selected}
         view={view}
         sw={sw}
@@ -274,6 +299,9 @@ export default function App() {
               onChannels={accept}
               onBusy={setQueryBusy}
               onDraft={(text) => setSeed({ text })}
+              specs={specs}
+              onSpecs={readSpecs}
+              onStart={start}
             />
           )}
         </div>

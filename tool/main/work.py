@@ -199,8 +199,11 @@ def session(path: Path, model: str, effort: str) -> ChatSession:
     """The worktree's write session, started if there is none.
 
     Another model of the same CLI reconnects with `--resume`. Another CLI is
-    a new conversation — neither can resume the other's.
+    a new conversation — neither can resume the other's. A worktree a spec
+    owns gets the spec as its system prompt, every time a session is made.
     """
+
+    from . import specs  # `specs` imports this module
 
     key = str(path)
     with _lock:
@@ -211,7 +214,7 @@ def session(path: Path, model: str, effort: str) -> ChatSession:
             remember(path, "context", "CLI 변경")
             chat = None
         if chat is None:
-            chat = ChatSession(path, model=model, effort=effort, write=True)
+            chat = ChatSession(path, model=model, effort=effort, write=True, system=specs.system(path))
             chat.session_id = resumable(recall(path), chat.is_codex)
             _sessions[key] = chat
         else:
@@ -338,7 +341,7 @@ def run_turn(path: Path, run: Run, text: str, release) -> None:
     """One turn, to its end, whoever is watching. The hold and the record are
     let go here, so a turn nobody watched is still on record."""
 
-    chat, final, failed, meta = run.chat, "", "", {}
+    chat, final, failed, meta, then = run.chat, "", "", {}, None
     try:
         for ev in chat.say(text, run.halt):
             if ev.kind == "context":   # the CLI's conversation could not be resumed
@@ -352,6 +355,12 @@ def run_turn(path: Path, run: Run, text: str, release) -> None:
                 failed = ev.text = "사람이 멈춤" if run.halt.is_set() else ev.text
             run.put({"kind": ev.kind, "text": ev.text, "meta": ev.meta,
                      "session_id": ev.session_id, "parent_id": ev.parent_id})
+        if not failed:
+            # Still holding the worktree: the gate runs where nothing else
+            # writes, and its lines are in this turn's record.
+            from . import specs
+
+            then = specs.check(path, run, final)
     except Exception as exc:  # a turn that broke still owes the screen a reason
         # A stop while the process started breaks the start, not the turn.
         failed = "사람이 멈춤" if run.halt.is_set() else f"{type(exc).__name__}: {exc}"
@@ -367,6 +376,8 @@ def run_turn(path: Path, run: Run, text: str, release) -> None:
             # can send the next instruction at once.
             release()
             run.finish()
+    if then:
+        then()
 
 
 def attached(path: str) -> Run:
@@ -404,15 +415,23 @@ def say(body: Order) -> StreamingResponse:
     release = hold(_busy, _lock, body.path, "이 작업트리의 에이전트가 아직 돌고 있다")
     try:
         path = ours(body.path)
-        run = Run(session(path, body.model, body.effort))
-        remember(path, "user", text)
-        with _lock:
-            _runs[body.path] = run
-        threading.Thread(target=run_turn, args=(path, run, text, release), daemon=True).start()
+        run = begin(path, session(path, body.model, body.effort), text, release)
     except BaseException:
         release()
         raise
     return streaming(tail(run, -1))
+
+
+def begin(path: Path, chat: ChatSession, text: str, release) -> Run:
+    """Start one turn of `chat` on its own thread, which owns `release` from
+    here. The caller holds the worktree already."""
+
+    run = Run(chat)
+    remember(path, "user", text)
+    with _lock:
+        _runs[str(path)] = run
+    threading.Thread(target=run_turn, args=(path, run, text, release), daemon=True).start()
+    return run
 
 
 @router.get("/api/work/events")

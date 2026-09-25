@@ -146,7 +146,7 @@ def test_codex_only_install_defaults_to_actual_model():
     model = {"id": "codex:my-model", "default_effort": "medium", "efforts": [{"id": "medium"}]}
     with patch.object(chat_channels, "LOCAL", {"model": model["id"]}), \
          patch.object(chat_channels, "codex_models", return_value=[model]), patch.object(query, "_config", {}):
-        cfg = query.config("progress")
+        cfg = query.config("next")
         assert cfg["model"] == model["id"] and cfg["effort"] == "medium"
 
 

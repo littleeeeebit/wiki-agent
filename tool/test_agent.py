@@ -382,7 +382,7 @@ def test_a_stop_before_the_process_exists_cuts_a_slow_start(tmp_path):
 
     with patch.object(chat_session.subprocess, "Popen", spawn),          patch.object(chat_session, "cli_command", side_effect=lambda name: [name]),          patch.object(chat_session, "BOOT_TIMEOUT", 10):
         started = time.monotonic()
-        with pytest.raises(RuntimeError):   # "보내지 못했다" or "닫혔다": either way at once
+        with pytest.raises(RuntimeError):   # `보내지 못했다` or `닫혔다`: either way at once
             list(session.say("x", halt))
         assert time.monotonic() - started < 5
     assert not session.alive

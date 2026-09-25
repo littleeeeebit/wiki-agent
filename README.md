@@ -291,8 +291,12 @@ and the
 The plain explanation is not a separate fact-check of the original. The
 `file:line` in each answer opens the evidence directly.
 
-The project is shared by all five focuses of the query — progress, diagnosis,
-retrospect, review and wiki — and by the worktree list. Conversation context
+The project is shared by all four focuses of the query — next task, wiki,
+retrospect and review — and by the worktree list. The next-task focus gathers
+the open plan rows, open pull requests, recent decisions and lint warnings
+into candidates, asks back with options, and ends in a task spec card; its
+[시작] makes a worktree whose session gets the spec as its system prompt, and
+the server opens the pull request only after the gate passes again there. Conversation context
 and records are kept per project and per focus, so leaving for another project and coming back
 continues where it left off. A server restart restores the project selection
 and the CLI sessions left in the records. "Clear context" applies to the
@@ -303,10 +307,17 @@ the original conversation; switching between Claude and Codex starts a new
 context. "Related rules" on screen is a display-time comparison, not evidence
 that the host delivered a hook, and hooks are never re-run to produce it.
 
-Checks: `python -m pytest -q tool/test_main.py`,
+Checks: `python -m pytest -q tool/test_main.py tool/test_specs.py`,
 `npm --prefix web run build`, `npm --prefix web run lint`. They confirm the
 CLI events, the session separation, the original surviving a failure, and the
-model and effort validation. These automatic checks guarantee neither the
+model and effort validation. `tool/test_specs.py` confirms the next-task
+focus: a spec with an empty goal is refused, the gate stays the first done item
+and an adapter is required; slugs are tidied and a taken one gets a number; a
+save from a stale card is refused; blocks leave the answer and a broken one is
+an error; [시작 ▸] makes the worktree first; the work session gets the spec as
+its system prompt; a passing report is not believed over a failing gate; a
+passing gate opens the pull request and the plan row follows; the PR body has
+the sections harvest reads; and a result line is shown once. These automatic checks guarantee neither the
 accuracy of every model response nor the quality of an explanation. To test
 the quality of a real progress answer, press "문맥 비우기" in the query pane
 first, wait for it to finish, then ask again. A check that re-explains
@@ -316,6 +327,28 @@ current state and what remains understandable, and whether the original's
 numbers, conditions and unconfirmed points survived unchanged. A response that
 only adds a parenthetical gloss to a term, or turns "an instruction was
 missed" into "the answer was wrong", does not pass.
+
+To check the next-task focus in the window, run one task on this repository
+through to its decision record:
+
+1. In the next-task focus, press "후보 내기" and pick one candidate.
+2. Answer the follow-up choices until the answer ends in a spec card.
+3. Edit one line under "완료 조건 — 한 줄에 하나", press "저장", then press
+   "시작 ▸".
+4. The work session works to the spec and ends with a `done-report`; the
+   server runs the gate again in the worktree.
+5. The pull request goes up with its `## 변경 이유` section holding the spec's
+   decisions, and its result line appears in the conversation.
+6. If the spec came from a plan row, the commit that sets that row to
+   `완료 — PR #n` lands in the same pull request.
+7. Merge it on GitHub. The card's state becomes `머지됨` and its result line
+   appears in the conversation.
+8. Run `python tool/harvest.py --project <checkout>` to preview and the same
+   command with `--write` to write, then check that the `.wiki/decisions/`
+   record for that pull request has the spec's decisions as its why. The
+   server does not run harvest after a merge, because it would write into the
+   original checkout; otherwise the record appears only at that repository's
+   next sync.
 
 ## Maintenance
 

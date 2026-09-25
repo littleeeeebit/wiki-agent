@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import type { ReactNode } from 'react'
 import { Answer } from '@/components/Answer'
 import type { AnswerProps } from '@/components/Answer'
 import { KINDS } from '@/lib/api'
@@ -14,9 +15,13 @@ type Props = {
   onDecide: AnswerProps['onDecide']
   onMark: (index: number, kind: Kind) => Promise<void>
   onDraft: (index: number) => void
+  /** The `next` focus: what an answer's blocks draw as, and the way to ask
+   *  for candidates in an empty conversation. */
+  blocks?: (m: Msg) => ReactNode
+  empty?: ReactNode
 }
 
-export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onDraft }: Props) {
+export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onDraft, blocks, empty }: Props) {
   const end = useRef<HTMLDivElement>(null)
 
   // The answer grows in pieces, so this follows every change in length
@@ -29,7 +34,8 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onD
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-6">
-        {messages.length === 0 && (
+        {messages.length === 0 && empty}
+        {messages.length === 0 && !empty && (
           <p className="text-[13.5px] text-faint">
             위키에 물어라. 답의 근거 파일:줄 을 눌러 원문을 보고, 답 아래
             “→ 작업” 으로 그 근거를 작업트리의 에이전트에게 넘긴다.
@@ -38,7 +44,9 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onD
 
         <div className="space-y-6">
           {messages.map((m, i) =>
-            m.role === 'user' ? (
+            m.role === 'result' ? (
+              <div key={i} className="border-l-2 border-primary pl-2.5 text-[12.5px] text-primary">{m.text}</div>
+            ) : m.role === 'user' ? (
               <div key={i} className="flex justify-end">
                 <div className="max-w-[85%] rounded-lg rounded-br-sm bg-secondary px-3.5 py-2 text-[13.5px] leading-relaxed whitespace-pre-wrap">
                   {m.text}
@@ -65,6 +73,7 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onD
                   m.pending && <Blink />
                 )}
                 {m.error && <p className="text-[12.5px] text-destructive">{m.error}</p>}
+                {blocks && m.blocks && m.blocks.length > 0 && blocks(m)}
                 {!m.pending && (m.ms != null || m.marked) && (
                   <Foot m={m} onMark={(k) => onMark(i, k)} onDraft={() => onDraft(i)} />
                 )}

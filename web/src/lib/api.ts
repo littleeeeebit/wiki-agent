@@ -38,8 +38,15 @@ export type Options = {
 
 export type Turn = {
   ts: number
-  role: 'user' | 'assistant'
+  /** `result`: a spec's outcome told back into the `next` conversation. */
+  role: 'user' | 'assistant' | 'result'
   text: string
+  /** What the person said, when the CLI was sent more — the gathered
+   *  materials, or the results in front of it. */
+  said?: string
+  propose?: boolean
+  blocks?: Block[]
+  spec?: string
   source?: string
   error?: string
   simple_text?: string
@@ -61,9 +68,11 @@ export type Tokens = {
 }
 
 export type Ev = {
-  kind: 'hits' | 'delta' | 'tool' | 'done' | 'error' | 'simple_start' | 'simple_delta' | 'simple_done' | 'simple_error'
+  kind: 'hits' | 'delta' | 'tool' | 'done' | 'error' | 'blocks'
+    | 'simple_start' | 'simple_delta' | 'simple_done' | 'simple_error'
   text: string
   pages?: string[]
+  blocks?: Block[]
   ms?: number
   error?: boolean
   session_id?: string
@@ -127,9 +136,9 @@ async function json<T>(res: Response, what: string): Promise<T> {
   return res.json()
 }
 
-const post = async (url: string, body?: unknown) =>
+const post = async (url: string, body?: unknown, method = 'POST') =>
   fetch(url, {
-    method: 'POST',
+    method,
     headers: { 'Content-Type': 'application/json', ...(await scoped(url)) },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
@@ -233,10 +242,49 @@ async function events<E>(res: Response, onEvent: (ev: E) => void, error: (text: 
   }
 }
 
-/** Ask the wiki under one focus and hand back the events in order. */
-export async function say(id: string, text: string, onEvent: (ev: Ev) => void): Promise<void> {
-  await events(await post(`/api/say/${id}`, { text }), onEvent, (t): Ev => ({ kind: 'error', text: t }))
+/** Ask the wiki under one focus and hand back the events in order.
+ *  `propose`: the server gathers the materials for candidates (`next` only). */
+export async function say(id: string, text: string, onEvent: (ev: Ev) => void, propose = false): Promise<void> {
+  await events(await post(`/api/say/${id}`, { text, propose }), onEvent, (t): Ev => ({ kind: 'error', text: t }))
 }
+
+// -- Task specs ---------------------------------------------------------------
+
+/** A named block the `next` focus ends an answer with, as the server checked
+ *  it. A `spec` block arrives as the id of the card it made, one per spec. */
+export type Block =
+  | { name: 'candidates'; value: { title: string; why?: string; source?: string }[]; error?: undefined }
+  | { name: 'choices'; value: { question: string; options: { label: string; note?: string }[]; multi?: boolean };
+      error?: undefined }
+  | { name: 'spec'; id: string; error?: undefined }
+  | { name: string; error: string }
+
+export type Spec = {
+  id: string
+  repo: string
+  rev: number
+  goal: string
+  out: string[]
+  done: string[]
+  grounds: { pages: string[]; files: string[]; rules: string[] }
+  decisions: { what: string; why: string; rejected: string }[]
+  source: { focus: string; turn: number; plan: { path: string; row: string } | null }
+  state: string
+  worktree: string | null
+  pr: { number: number; url: string } | null
+  report: { item: string; pass: boolean; evidence?: string }[] | null
+  gate: { ok: boolean; reason: string; cmd: string; tail: string } | null
+  fault: string | null
+  missing: string[]
+}
+
+export const getSpecs = () =>
+  get('/api/specs').then((r) => json<{ project: string; gate: string; specs: Spec[] }>(r, '명세'))
+export const saveSpec = (id: string, body: { rev: number; goal: string; out: string[]; done: string[]; slug: string }) =>
+  post(`/api/specs/${id}`, body, 'PUT').then((r) => json<Spec>(r, '명세 저장'))
+export const startSpec = (id: string, choice: { model: string; effort: string }) =>
+  post(`/api/specs/${id}/start`, choice).then((r) => json<{ path: string; turn: string }>(r, '시작'))
+export const dropSpec = (id: string) => post(`/api/specs/${id}/drop`).then((r) => json(r, '버리기'))
 
 /** The instruction draft that carries an answer — or a retro candidate — to a
  *  worktree's agent. The last section is left for a person. */

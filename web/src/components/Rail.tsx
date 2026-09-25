@@ -11,6 +11,8 @@ type Props = {
   rows: Worktree[]
   /** Worktrees whose agent is waiting on an approval. */
   waiting: Set<string>
+  /** The state of the spec that owns a worktree, by its path. */
+  specs: Record<string, string>
   selected: string
   view: 'query' | 'map'
   sw: Switch | null
@@ -80,6 +82,9 @@ export function Rail(props: Props) {
                   title={waiting.has(r.path) ? '쓰기 허용을 기다린다' : r.busy ? '에이전트가 돌고 있다' : r.live ? '세션이 살아 있다' : '세션 없음'}
                 />
                 <span className="truncate font-mono text-[12px]">{r.name}</span>
+                {props.specs[r.path] && (
+                  <span className="ml-auto shrink-0 text-[10.5px] text-muted-foreground">{props.specs[r.path]}</span>
+                )}
               </div>
               <div className="mt-0.5 flex gap-1.5 pl-3 font-mono text-[10.5px] text-muted-foreground">
                 {r.branch !== r.name && <span className="truncate font-mono">{r.branch}</span>}
