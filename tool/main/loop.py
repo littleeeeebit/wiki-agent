@@ -470,8 +470,16 @@ def change(loop: Loop, state: str | None = None, **fields) -> dict | None:
         return spec
 
 
-def stop(loop: Loop | None, repo: str, sid: str, why: Why, detail: str = "") -> bool:
-    """`멈춤`, for a reason of the table. Always `False`, for `return stop(…)`."""
+WAITING = re.compile(r"머지 대기")
+
+
+def stop(loop: Loop | None, repo: str, sid: str, why: Why, detail: str = "", source: re.Pattern = LOOPING) -> bool:
+    """`멈춤`, for a reason of the table, from a state `source` matches —
+    running states unless said otherwise. Always `False`, for `return stop(…)`.
+
+    The state is read under the files' lock, where it is written: a caller
+    that saw a running state earlier may have lost the race to the loop, and a
+    stop written over `머지 가능` threw the allowed round away."""
 
     if not isinstance(why, Why):
         raise ValueError(f"표에 없는 멈춤 이유다: {why!r}")
@@ -479,7 +487,7 @@ def stop(loop: Loop | None, repo: str, sid: str, why: Why, detail: str = "") -> 
         if loop is not None and loop.halt.is_set():
             return False
         spec = specs.load(repo, sid)
-        if spec is not None:
+        if spec is not None and source.fullmatch(spec["state"]):
             specs.save(specs.moved(spec, "멈춤", stopped={"reason": why.value, "detail": detail}))
     return False
 
@@ -787,16 +795,17 @@ def landed(repo: Path, spec: dict) -> None:
             # Kept whole — worktree, branches, review cell — so a person can undo it.
             specs.update(repo.name, spec["id"], merge={"commit": commit, "base": view.get("baseRefName")})
             stop(None, repo.name, spec["id"], Why.WRONG_BASE,
-                 f"리뷰는 `{allowed['base']}` 를 봤는데 `{view.get('baseRefName')}` 에 머지됐다")
+                 f"리뷰는 `{allowed['base']}` 를 봤는데 `{view.get('baseRefName')}` 에 머지됐다", WAITING)
             comment(repo, n, f"이 PR 은 리뷰가 허용한 base `{allowed['base']}` 가 아니라 `{view.get('baseRefName')}` 에 "
                              "머지됐다. 작업트리와 브랜치는 그대로 두었다.")
         elif state == "MERGED":
             finish(repo, spec, view["baseRefName"], commit,
                    f"PR #{n} 머지됨 — 라운드 {len(counted(spec))}, 남은 P2 {len(spec.get('p2') or [])}")
         elif state == "OPEN" and not queued:
-            stop(None, repo.name, spec["id"], Why.LEFT_QUEUE, "PR 이 열려 있는데 대기열에도 없고 자동 머지도 꺼졌다")
+            stop(None, repo.name, spec["id"], Why.LEFT_QUEUE, "PR 이 열려 있는데 대기열에도 없고 자동 머지도 꺼졌다",
+                 WAITING)
         elif state == "CLOSED":
-            stop(None, repo.name, spec["id"], Why.LEFT_QUEUE, "PR 이 닫혔다")
+            stop(None, repo.name, spec["id"], Why.LEFT_QUEUE, "PR 이 닫혔다", WAITING)
 
 
 def forward(repo: Path, base: str) -> str:
@@ -1055,7 +1064,11 @@ def halt(sid: str) -> dict:
     if loop is not None:
         loop.stop()
     stop(None, repo.name, sid, Why.PERSON)
-    return specs.view(repo, specs.load(repo.name, sid))
+    spec = specs.load(repo.name, sid)
+    if spec["state"] != "멈춤":
+        # The loop got to its end first; that end stands.
+        raise HTTPException(409, f"루프가 먼저 끝났다 — {spec['state']}")
+    return specs.view(repo, spec)
 
 
 def refusal(row: dict, spec: dict | None) -> str:

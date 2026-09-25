@@ -440,6 +440,28 @@ def test_a_base_that_moved_throws_the_round_away_and_merge_refuses_it(world):
     waited(lambda: ("proj", "fix-h") not in loop._loops)
 
 
+def test_a_stop_that_loses_the_race_to_the_loop_writes_nothing(world):
+    """`[멈춤]` read a running state, and the loop reached `머지 가능` before
+    the stop was written. The stop must not write over it."""
+
+    pr_spec(world, "fix-t", 7)
+    specs.update("proj", "fix-t", state="리뷰 R1")
+
+    class Finishing:
+        def stop(self):
+            specs.update("proj", "fix-t", state="머지 가능")
+
+    loop._loops[("proj", "fix-t")] = Finishing()
+    answer = client().post("/api/specs/fix-t/halt")
+    del loop._loops[("proj", "fix-t")]
+    assert answer.status_code == 409
+    assert specs.load("proj", "fix-t")["state"] == "머지 가능" and specs.load("proj", "fix-t")["stopped"] is None
+    # The same guard for every writer outside a loop: a stop from a state it
+    # was not meant for writes nothing.
+    loop.stop(None, "proj", "fix-t", loop.Why.RESTART)
+    assert specs.load("proj", "fix-t")["state"] == "머지 가능"
+
+
 def test_a_restart_stops_every_running_loop(world):
     pr_spec(world, "fix-i", 7)
     specs.update("proj", "fix-i", state="리뷰 R2")
