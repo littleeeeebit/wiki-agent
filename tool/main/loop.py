@@ -803,7 +803,12 @@ def landed(repo: Path, spec: dict) -> None:
         elif state == "MERGED":
             finish(repo, spec, view["baseRefName"], commit,
                    f"PR #{n} 머지됨 — 라운드 {len(counted(spec))}, 남은 P2 {len(spec.get('p2') or [])}")
-        elif state == "OPEN" and not queued:
+        elif queued:
+            # What the rail's second line says of a `머지 대기`: who holds it.
+            how = "자동 머지 — 검사 대기" if view.get("autoMergeRequest") else "대기열"
+            if spec.get("queued") != how:
+                specs.update(repo.name, spec["id"], queued=how)
+        elif state == "OPEN":
             stop(None, repo.name, spec["id"], Why.LEFT_QUEUE, "PR 이 열려 있는데 대기열에도 없고 자동 머지도 꺼졌다",
                  WAITING)
         elif state == "CLOSED":

@@ -14,8 +14,8 @@ type State = { busy?: Target; result?: string; done?: Target }
  *
  *  Step 5 of the `retrospect` skill says to ask with options, and a headless
  *  run cannot ask. This is where it asks. Nothing on disk changes here: the
- *  first two put an instruction draft in the agent's box, and the writing
- *  happens in a worktree where each write is approved. */
+ *  first two carry the candidate into the `next` focus's box as material for
+ *  a spec, and the writing happens in its worktree, each write approved. */
 export function Candidates({ raw, korean, onDecide }: Props) {
   const lines = raw
     .split('\n')
@@ -46,11 +46,7 @@ export function Candidates({ raw, korean, onDecide }: Props) {
     claude_md: 'CLAUDE.md 로',
     drop: '버린다',
   }
-  const doing: Record<Target, string> = {
-    wiki: '초안을 만드는 중…',
-    claude_md: '초안을 만드는 중…',
-    drop: '…',
-  }
+  const doing: Record<Target, string> = { wiki: '…', claude_md: '…', drop: '…' }
 
   return (
     <div className="not-prose my-2 space-y-2 rounded-md border border-border bg-card p-3">

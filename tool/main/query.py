@@ -1,4 +1,4 @@
-"""query — ask the wiki, under one of four focuses, and read the grounds.
+"""query — ask the wiki, under one of three focuses, and read the grounds.
 
 Finding the answer and saying it simply are separate calls, so they are never
 the same turn. Everything that reaches the screen is read by a person and
@@ -23,7 +23,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agent import ChatSession, explain
-from session_state import active_page, decisions, run
+from session_state import run
 from wiki import label, match_pages, pages
 
 from . import channels
@@ -623,91 +623,3 @@ def mark(cid: str, body: Mark) -> dict:
     with CORRECTIONS.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     return {"ok": True, "total": order + 1}
-
-
-# -- From an answer to a task -----------------------------------------------
-
-class Draft(BaseModel):
-    question: str = ""
-    answer: str = ""
-    hits: list[str] = []
-    target: str = ""     # "" · wiki · claude_md — a retro candidate's destination
-
-
-# A citation as an answer writes it and `Answer.tsx` makes clickable. A range
-# comes with an en dash as often as a hyphen; a draft once lost its only
-# citation, `craft/hooks-fail-open.md:11–14`, to that. The prompt asks for
-# inline code, but haiku also answers with a bare `path:line` — a draft lost
-# `craft/destructive-git-guards.md:16` that way — so a bare one counts when it
-# carries a line.
-_PATH = r"[\w./-]+\.(?:py|md|ts|tsx|js|json|toml|ya?ml|cmd|txt|css|html|jsonl)"
-CITE = re.compile(rf"`({_PATH}(?::\d+(?:[-–]\d+)?)?)`|(?<![\w./`-])({_PATH}:\d+(?:[-–]\d+)?)")
-
-# Instructions that go to the agent as written, so they are English. What the
-# agent says back about them reaches the screen, so that part is Korean. They
-# used to drive a one-shot `claude -p` that wrote straight into the checkout
-# without asking; now they head a draft that runs in a worktree, where every
-# write is approved.
-WRITERS = {
-    "wiki": (
-        "You write one wiki page, in this worktree of the wiki. Handle only the "
-        "single candidate below. Follow `SCHEMA.md`'s 'page minimum structure' "
-        "exactly — front matter with scope, severity, triggers, slots, sources, "
-        "links; body with title, rule, why, and what happens when it is broken. "
-        "Set severity by the evidence: `landmine` cannot be used without sources. "
-        "If the candidate says a page already exists, **do not create a new one** — "
-        "open that page and climb the ladder instead (`enforce.deny`, or stronger "
-        "triggers). Create or change exactly one file. When done, run "
-        "`python tool/lint.py --check` and end with its result and what you wrote "
-        "where, **in Korean**."
-    ),
-    "claude_md": (
-        "You edit **only** this repository's `CLAUDE.md`, in this worktree. Handle "
-        "only the single candidate below. Find the right section and add one "
-        "sentence under it, in the imperative. If a sentence already says the "
-        "same thing, do not add another — point at that one. **Touch no other "
-        "file for any reason**; if there is no `CLAUDE.md` or no right place, say "
-        "so and stop. End with one line on what you wrote where, **in Korean**."
-    ),
-}
-
-
-@router.post("/api/draft")
-def draft(body: Draft) -> dict:
-    """The instruction draft that carries an answer over to a worktree's agent.
-
-    It holds only what a machine can gather — the question, the answer, the
-    places it cited, the rules it matched, the open plan and the recent
-    decisions. The "what to do" line is left to a person: a machine writing
-    it hands the agent something wrong, confidently.
-    """
-
-    if body.target and body.target not in WRITERS:
-        raise HTTPException(400, "target 은 wiki · claude_md 중 하나")
-    repo = current_repo()
-    lines = [f"# 작업 — `{repo.name}` · {dt.date.today():%Y-%m-%d}", ""]
-    if body.target:
-        lines += [WRITERS[body.target], "", "## 후보", "", body.question.strip()]
-    elif body.question.strip():
-        lines += ["## 물은 것", "", body.question.strip()]
-    if body.answer.strip():
-        lines += ["", "## 위키의 답", "", body.answer.strip()]
-    cites = list(dict.fromkeys(a or b for a, b in CITE.findall(body.answer)))
-    if cites:
-        lines += ["", "## 근거", ""] + [f"- `{c}`" for c in cites]
-    if body.hits:
-        lines += ["", "## 걸린 규칙", ""] + [f"- {h}" for h in body.hits]
-
-    plan, stale = active_page(repo)
-    if plan:
-        lines += ["", "## 열린 계획 (`.wiki/plan-active.md`)", ""]
-        if stale:
-            lines.append(f"**낡았을 수 있다** — `{'`, `'.join(stale)}` 가 더 나중에 고쳐졌다.\n")
-        lines.append(plan)
-    recent = decisions(repo)
-    if recent:
-        lines += ["", "## 최근 결정 — 뒤집기 전에 이유를 보라", ""]
-        lines += [f"- {t} — {w}" if w else f"- {t}" for t, w in recent]
-
-    lines += ["", "## 할 일", "", "(사람이 한 줄 적는다)"]
-    return {"text": "\n".join(lines)}

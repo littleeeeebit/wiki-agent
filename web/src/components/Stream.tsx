@@ -14,14 +14,13 @@ type Props = {
   onPeek: AnswerProps['onPeek']
   onDecide: AnswerProps['onDecide']
   onMark: (index: number, kind: Kind) => Promise<void>
-  onDraft: (index: number) => void
   /** The `next` focus: what an answer's blocks draw as, and the way to ask
    *  for candidates in an empty conversation. */
   blocks?: (m: Msg) => ReactNode
   empty?: ReactNode
 }
 
-export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onDraft, blocks, empty }: Props) {
+export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, blocks, empty }: Props) {
   const end = useRef<HTMLDivElement>(null)
 
   // The answer grows in pieces, so this follows every change in length
@@ -37,8 +36,8 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onD
         {messages.length === 0 && empty}
         {messages.length === 0 && !empty && (
           <p className="text-[13.5px] text-faint">
-            위키에 물어라. 답의 근거 파일:줄 을 눌러 원문을 보고, 답 아래
-            “→ 작업” 으로 그 근거를 작업트리의 에이전트에게 넘긴다.
+            위키에 물어라. 답의 근거 파일:줄 을 눌러 원문을 본다. 할 일이 정해지면
+            다음 작업 초점에서 명세로 만든다.
           </p>
         )}
 
@@ -75,7 +74,7 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onD
                 {m.error && <p className="text-[12.5px] text-destructive">{m.error}</p>}
                 {blocks && m.blocks && m.blocks.length > 0 && blocks(m)}
                 {!m.pending && (m.ms != null || m.marked) && (
-                  <Foot m={m} onMark={(k) => onMark(i, k)} onDraft={() => onDraft(i)} />
+                  <Foot m={m} onMark={(k) => onMark(i, k)} />
                 )}
               </div>
             ),
@@ -149,9 +148,8 @@ function AnswerVersions(
   )
 }
 
-/** The line under an answer: time, cost, model, "that was wrong", and the
- *  way over to a worktree's agent. */
-function Foot({ m, onMark, onDraft }: { m: Msg; onMark: (k: Kind) => Promise<void>; onDraft: () => void }) {
+/** The line under an answer: time, cost, model, and "that was wrong". */
+function Foot({ m, onMark }: { m: Msg; onMark: (k: Kind) => Promise<void> }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
 
@@ -171,16 +169,6 @@ function Foot({ m, onMark, onDraft }: { m: Msg; onMark: (k: Kind) => Promise<voi
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-mono text-[10.5px] text-faint">
       <span>{bits.join(' · ')}</span>
-      {m.text && !m.error && (
-        <button
-          type="button"
-          onClick={onDraft}
-          className="rounded px-1.5 font-sans text-[12.5px] text-primary hover:bg-secondary"
-          title="이 답의 근거를 담은 지시 초안을 에이전트 입력칸에 넣는다"
-        >
-          → 작업
-        </button>
-      )}
       {m.marked ? (
         <span className="text-destructive">어긋남 · {m.marked}</span>
       ) : open ? (

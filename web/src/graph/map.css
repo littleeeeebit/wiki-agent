@@ -1,0 +1,14 @@
+/* 지도의 스타일. 색은 앱 토큰에서만 온다 — 지도도 앱 테마를 따른다. */
+.map-board { cursor: grab; touch-action: none; }
+.map-board.grabbing { cursor: grabbing; }
+.map-board .edge { stroke: var(--faint); stroke-opacity: .5; }
+.map-board .node text {
+  fill: var(--muted-foreground); font-family: var(--font-mono); font-size: 10.5px;
+  pointer-events: none; paint-order: stroke; stroke: var(--background); stroke-width: 3px;
+}
+.map-board .node { cursor: pointer; outline: none; }
+.map-board .node:focus-visible circle { stroke: var(--ring) !important; stroke-width: 3px; }
+.map-board .node.sel circle { stroke: var(--foreground) !important; stroke-width: 2.5px; }
+.map-board .node.sel text { fill: var(--foreground); }
+.map-board .dim { opacity: .18; }
+.map-board .off { display: none; }

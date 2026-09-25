@@ -102,6 +102,7 @@ def summary(spec: dict) -> dict:
     counted = [r for r in spec.get("rounds") or [] if not r.get("stale")]
     return {"repo": spec["repo"], "id": spec["id"], "state": spec["state"], "stopped": spec.get("stopped"),
             "pr": (spec.get("pr") or {}).get("number"), "round": len(counted), "worktree": spec.get("worktree"),
+            "queued": spec.get("queued"),
             "waiting": bool(spec.get("worktree")) and work.waiting(spec["worktree"])}
 
 
