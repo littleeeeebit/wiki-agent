@@ -101,14 +101,20 @@ def open_steps(path: Path) -> list[str]:
 def plans(repo: Path) -> list[tuple[Path, list[str]]]:
     """Plans with steps left. A series may sit in its own folder, and a
     finished series is moved under `done/`, which is not read at all — its
-    tables are history, not work."""
+    tables are history, not work.
+
+    Folders go newest first; inside one, the lowest number first, so the
+    overview and the next step are read rather than the last two steps."""
 
     directory = repo / "docs" / "plans"
     if not directory.is_dir():
         return []
     found = []
     live = [p for p in directory.rglob("*.md") if "done" not in p.relative_to(directory).parts[:-1]]
-    for path in sorted(live, key=lambda p: p.relative_to(directory).as_posix(), reverse=True):
+    number = lambda p: int(re.match(r"\d*", p.name).group() or 0)  # noqa: E731
+    live.sort(key=lambda p: (number(p), p.name))
+    live.sort(key=lambda p: p.parent.relative_to(directory).as_posix(), reverse=True)
+    for path in live:
         steps = open_steps(path)
         if steps:
             found.append((path, steps))

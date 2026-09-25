@@ -140,6 +140,32 @@ export default function App() {
     if (selected) work.load(selected)
   }, [selected, work])
 
+  // Closing the app window takes the server down, and every running turn with
+  // it. A browser tab is not asked: closing it leaves the server and the turns.
+  const running = Object.values(work.turns).filter((turns) => turns.at(-1)?.pending).length
+  const runningNow = useRef(running)
+  useEffect(() => {
+    runningNow.current = running
+  }, [running])
+  useEffect(() => {
+    if (!('__TAURI_INTERNALS__' in window)) return
+    let off: (() => void) | undefined
+    let gone = false
+    import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
+      getCurrentWindow().onCloseRequested((event) => {
+        const n = runningNow.current
+        if (n && !window.confirm(`도는 작업 ${n}개가 멈춘다. 닫을까?`)) event.preventDefault()
+      }),
+    ).then((unlisten) => {
+      if (gone) unlisten()
+      else off = unlisten
+    })
+    return () => {
+      gone = true
+      off?.()
+    }
+  }, [])
+
   const project = useCallback(async (next: string) => {
     const wiki = channels.find((c) => c.id === 'wiki') ?? channels[0]
     if (!wiki) return
@@ -265,7 +291,10 @@ export default function App() {
               seed={seed}
               onChoice={setChoice}
               onSend={order}
-              onAnswer={(turn, id, allow) => work.answer(selected, turn, id, allow)}
+              onAnswer={(turn, id, allow, scope) => work.answer(selected, turn, id, allow, scope)}
+              onStop={(turn) => work.stop(selected, turn).catch((err) => setFault(String(err)))}
+              rules={(selected && work.rules[selected]?.list) || []}
+              onClearRules={() => work.clearRules(selected).catch((err) => setFault(String(err)))}
               onReset={() => work.reset(selected).catch((err) => setFault(String(err)))}
               onPeek={showPeek}
             />

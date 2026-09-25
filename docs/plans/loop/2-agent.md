@@ -96,7 +96,9 @@ ponytail: Claude 의 `interrupt` 제어 요청과 Codex 의 `turn/interrupt` 는
 - 오른쪽 면의 머리글에 [멈춤]. 도는 턴이 있을 때만 켜진다
 - Tauri 창을 닫을 때. `getCurrentWindow().onCloseRequested` 에서 도는 턴이 있으면 "도는 작업 N개가
   멈춘다" 를 묻는다. 권한은 `core:window:allow-close` 만 더한다. 브라우저는 묻지 않는다 — 탭을
-  닫아도 서버와 턴은 산다
+  닫아도 서버와 턴은 산다. 권한은 실제로는 `core:window:allow-destroy` 다. 닫기 리스너가 있으면 Tauri 가
+  창을 닫지 않고 화면이 `destroy()` 로 닫는다(`@tauri-apps/api` 2.11 의 `onCloseRequested`). `allow-close`
+  만으로는 확인해도 창이 닫히지 않는다
 
 ### 테스트
 
@@ -235,6 +237,14 @@ ponytail: Claude 의 `interrupt` 제어 요청과 Codex 의 `turn/interrupt` 는
   적는다
 - 두 번째 턴의 시간. 프로세스가 살아 있으므로 기동이 빠져야 한다. 전후를 한 번씩 잰다
 
+2026-09-25 에 실제 Codex(`gpt-6-astra`, CLI 0.156.0)로 본 것.
+
+| 무엇 | 결과 |
+| --- | --- |
+| hook 주입 | 한다. `app-server` 가 `hook/completed` 알림에 주입한 `context` 를 싣는다. 연결된 `ai-nara-shop` 에서 위키의 `sessionStart` 가 15,203자, `userPromptSubmit` 이 13,000자·6,760자를 넣었다. 이 저장소에서는 주입이 없는데, 옛 허브가 `.wiki/adapter.toml` 이 없는 저장소를 연결 안 된 것으로 보기 때문이다. 같은 입력으로 hook 을 손으로 돌려도 비어 있다. `exec` 도 같다 |
+| 두 번째 턴 | `app-server` 5.2s, `exec resume` 8.3s. 첫 턴은 41s·33s 로 같은 질문의 편차 안이다 |
+| `exec` 스레드의 이어가기 | `thread/resume` 이 `exec` 이 만든 스레드 id 를 받는다. 옛 기록의 대화는 이어진다. 실패하면 새 스레드와 `context` 행 "Codex 이어가기 실패" 를 남기는 길은 그대로 둔다 |
+
 ## 토큰 수
 
 ### 지금
@@ -249,6 +259,9 @@ Codex `app-server` 는 싣지 않는다(`chat_session.py:500`). 초점을 `app-s
 
 - `last` 가 턴 하나의 합인지 모델 호출 하나인지는 스키마가 말하지 않는다. 실제 알림으로 확인한다.
   턴 하나면 마지막 `last` 를, 호출 하나면 턴 동안의 `total` 차이를 쓴다
+- 확인한 것. `last` 는 모델 호출 하나다. 도구를 쓴 턴에 알림이 셋 왔다. 턴의 수는 그 턴에 온 `last` 의
+  합으로 낸다. `total` 차이는 쓰지 않는다 — 이어간 스레드의 첫 알림에서 `total` 이 130만을 넘었고, 턴 앞의
+  `total` 을 서버가 알 길이 없다
 - `done.meta.tokens` 는 지금의 모양 그대로다 — `in`(`inputTokens`), `out`(`outputTokens`),
   `cache_read`(`cachedInputTokens`). `reasoningOutputTokens` 는 `reasoning` 으로 더한다
 - 비용은 계산하지 않는다. Codex 는 구독 한도이고 요금을 곱할 표가 없다
@@ -281,10 +294,10 @@ Codex `app-server` 는 싣지 않는다(`chat_session.py:500`). 초점을 `app-s
 
 | # | 단계 | 무엇 | 상태 |
 | --- | --- | --- | --- |
-| 0 | 계획 순서 | `plans` 의 폴더 안 순서와 테스트 | 미착수 |
-| 1 | 재접속 | `Run`·버퍼·`tail`, `events`·`stop`, 스레드가 쥐는 잡음, 테스트 | 미착수 |
-| 2 | 승인 기록 | `steps`, `answered`, 옛 `tools` 변환, 테스트 | 미착수 |
-| 3 | 세션 허용 | `_rules`, `scope`, 규칙 해제, 테스트 | 미착수 |
-| 4 | Codex 이전과 토큰 | 초점의 `app-server`, `exec` 을 `explain` 전용으로, `tokenUsage`, 실제 Codex 확인 | 미착수 |
-| 5 | 화면 | 다시 붙기, [멈춤], 세 버튼, 규칙 줄, 토큰, 창 닫기 확인 | 미착수 |
-| 6 | 게이트 | 위 확인 전부 | 미착수 |
+| 0 | 계획 순서 | `plans` 의 폴더 안 순서와 테스트 | 완료 |
+| 1 | 재접속 | `Run`·버퍼·`tail`, `events`·`stop`, 스레드가 쥐는 잡음, 테스트 | 완료 |
+| 2 | 승인 기록 | `steps`, `answered`, 옛 `tools` 변환, 테스트 | 완료 |
+| 3 | 세션 허용 | `_rules`, `scope`, 규칙 해제, 테스트 | 완료 |
+| 4 | Codex 이전과 토큰 | 초점의 `app-server`, `exec` 을 `explain` 전용으로, `tokenUsage`, 실제 Codex 확인 | 완료 |
+| 5 | 화면 | 다시 붙기, [멈춤], 세 버튼, 규칙 줄, 토큰, 창 닫기 확인 | 완료 |
+| 6 | 게이트 | 위 확인 전부 | 완료 |

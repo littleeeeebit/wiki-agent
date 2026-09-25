@@ -390,6 +390,15 @@ def say(cid: str, body: Say) -> StreamingResponse:
             if hits:
                 yield sse({"kind": "hits", "text": "", "pages": hits})
             for ev in session(cid).say(text):
+                # A read session answers every approval itself, with a refusal.
+                # The query screen shows that as what it is: a line of what ran.
+                if ev.kind == "approval":
+                    yield sse({"kind": "tool", "text": f"거절 · {ev.text}"})
+                    continue
+                if ev.kind == "context":   # the CLI's conversation could not be resumed
+                    remember(cid, "context", ev.text)
+                    yield sse({"kind": "tool", "text": ev.text})
+                    continue
                 if ev.kind == "delta":
                     answer.append(ev.text)
                 # A quota or API error arrives on `done` with `error=True`. It

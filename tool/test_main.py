@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import uuid
 from unittest.mock import patch
 
@@ -44,7 +45,8 @@ def no_machine_settings(tmp_path):
          patch.object(chat, "_sessions", {}), patch.object(chat, "_busy", {}), \
          patch.object(main_app, "SWITCH", tmp_path / "main.json"), \
          patch.object(work, "LOGS", tmp_path / "work"), \
-         patch.object(work, "_sessions", {}), patch.object(work, "_busy", {}):
+         patch.object(work, "_sessions", {}), patch.object(work, "_busy", {}), \
+         patch.object(work, "_runs", {}):
         yield
 
 
@@ -121,39 +123,81 @@ def test_failed_original_never_rewritten(tmp_path):
         assert chat.recall("wiki")[-1]["error"] == "모델 오류"
 
 
-def test_codex_process_resume_and_isolated_command(tmp_path):
+# A Codex `app-server`: a resume it cannot do, a read session's thread, and
+# two turns in one process, each reporting two model calls' usage.
+APP_SERVER = '''import json, sys
+read = lambda: json.loads(sys.stdin.readline())
+say = lambda m: print(json.dumps(m), flush=True)
+m = read(); say({"id": m["id"], "result": {}})
+read()
+m = read()
+if m["method"] == "thread/resume":
+    say({"id": m["id"], "error": {"code": -32600, "message": "no rollout found for thread id " + m["params"]["threadId"]}})
+    m = read()
+p = m["params"]
+assert m["method"] == "thread/start", m
+assert (p["sandbox"], p["approvalPolicy"], p["developerInstructions"]) == ("read-only", "never", "Find evidence."), p
+say({"id": m["id"], "result": {"thread": {"id": "th-1"}}})
+while True:
+    m = read(); assert m["params"]["effort"] == "low"; say({"id": m["id"], "result": {"turn": {}}})
+    for last in ({"inputTokens": 100, "cachedInputTokens": 60, "outputTokens": 5, "reasoningOutputTokens": 2},
+                 {"inputTokens": 120, "cachedInputTokens": 100, "outputTokens": 7, "reasoningOutputTokens": 0}):
+        say({"method": "thread/tokenUsage/updated", "params": {"threadId": "th-1", "turnId": "t",
+             "tokenUsage": {"last": last, "total": {**last, "inputTokens": 99999}}}})
+    say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "최종 답변"}}})
+    say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+'''
+
+
+def test_a_codex_focus_keeps_one_app_server_and_the_explanation_stays_isolated(tmp_path):
     commands = []
     real_popen = subprocess.Popen
-    fixture = '''import json,sys
+    explaining = '''import json,sys
 text = sys.stdin.read()
 for event in [
     {"type":"thread.started","thread_id":"owned-session"},
-    {"type":"item.completed","item":{"type":"agent_message","text":"중간 설명"}},
-    {"type":"item.completed","item":{"type":"agent_message","text":"최종 답변"}},
+    {"type":"item.completed","item":{"type":"agent_message","text":"쉬운 설명"}},
     {"type":"turn.completed","usage":{"input_tokens":12,"output_tokens":7}}
 ]: print(json.dumps(event), flush=True)
 '''
 
     def spawn(command, **kwargs):
         commands.append(command)
+        fixture = APP_SERVER if "app-server" in command else explaining
         return real_popen([sys.executable, "-X", "utf8", "-c", fixture], **kwargs)
 
     with patch.object(chat_session.subprocess, "Popen", spawn), \
          patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
         session = ChatSession(tmp_path, model="codex:test-model", system="Find evidence.", effort="low")
-        for _ in range(2):
-            events = list(session.say("질문"))
-            assert events[-1].text == "최종 답변" and events[-1].meta["tokens"]["in"] == 12
-            assert not session.alive
-        assert "resume" not in commands[0]
-        assert commands[1][-3:] == ["resume", "owned-session", "-"]
-        assert commands[0][commands[0].index("--sandbox") + 1] == "read-only"
+        try:
+            for _ in range(2):
+                events = list(session.say("질문"))
+                assert events[-1].text == "최종 답변"
+                # The sum of each call's `last`, never the thread's running total.
+                assert events[-1].meta["tokens"] == {"in": 220, "out": 12, "cache_read": 160, "reasoning": 2}
+                assert session.alive
+            assert commands == [["codex", "app-server", "--disable", "multi_agent"]]   # one process, two turns
+        finally:
+            session.close()
+
+        # A thread it cannot resume starts afresh, and says so once.
+        lost = ChatSession(tmp_path, model="codex:test-model", system="Find evidence.", effort="low",
+                           resume="exec-thread")
+        try:
+            kinds = [(e.kind, e.text) for e in lost.say("질문")]
+            assert kinds[0][0] == "context" and "exec-thread" in kinds[0][1]
+            assert lost.session_id == "th-1"
+            assert [e.kind for e in lost.say("질문")][0] != "context"
+        finally:
+            lost.close()
+
         list(chat_session.explain("설치 성공, 자동 실행 미확인.", "codex:test-model", "low"))
         isolated = commands[-1]
+        assert isolated[:2] == ["codex", "exec"]
         assert "--ignore-user-config" in isolated and "--ephemeral" in isolated
         assert "resume" not in isolated and "shell_tool" in isolated
         assert "Task: answer from verifiable" not in " ".join(isolated)
-        assert all(c[c.index("--model") + 1] == "test-model" for c in commands)
+        assert isolated[isolated.index("--model") + 1] == "test-model"
 
 
 def test_provider_switch_and_config_validation(tmp_path):
@@ -367,26 +411,68 @@ class Agent:
 
     def __init__(self, path, model="", effort="", write=False):
         assert write
-        self.id, self.session_id, self.alive = uuid.uuid4().hex, None, True
+        self.id, self.session_id, self.alive, self.parent_id = uuid.uuid4().hex, None, True, None
         self.is_codex = model.startswith("codex:")
-        self.pending = {"r1"}
+        self.pending, self.rules = {"r1"}, []
         Agent.made.append(self)
 
-    def say(self, text):
+    def say(self, text, halt=None):
         yield Event("approval", "Write · b.txt", {"id": "r1", "tool": "Write", "input": {}}, self.id)
         yield Event("done", "했다", {"session_id": "cli-1", "error": False}, self.id)
 
-    def answer(self, rid, allow):
+    def answer(self, rid, allow, scope="once"):
         if rid not in self.pending:
             return False
         self.pending.discard(rid)
+        if scope == "session":
+            self.rules.append({"kind": "file", "tool": "Write"})
         return True
+
+    def clear_rules(self):
+        self.rules = []
 
     def reconfigure(self, model, effort):
         pass
 
     def close(self):
         self.alive = False
+
+
+class Slow(Agent):
+    """Asks, then waits until let go or stopped: a turn that outlives its response."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.go, self.stopped = threading.Event(), False
+
+    def say(self, text, halt=None):
+        self.alive = True
+        yield Event("tool", "Read · a.txt", {}, self.id)
+        yield Event("approval", "Write · b.txt", {"id": "r1", "tool": "Write", "input": {}}, self.id)
+        self.go.wait(10)
+        self.go.clear()
+        if self.stopped:
+            self.stopped = False
+            yield Event("error", "프로세스가 닫혔다.", {}, self.id)
+            return
+        yield Event("done", "했다", {"session_id": "cli-1", "error": False}, self.id)
+
+    def stop(self, halt):
+        self.stopped, self.alive = True, False
+        self.go.set()
+
+
+def settled(path: str):
+    """The path's run once its turn has ended."""
+
+    run = work._runs[path]
+    with run.wake:
+        assert run.wake.wait_for(lambda: run.done, 10)
+    return run
+
+
+def parse(stream: str) -> list[dict]:
+    return [json.loads(line[6:]) for line in stream.splitlines() if line.startswith("data: ")]
 
 
 def test_work_opens_only_its_own_worktrees(tmp_path):
@@ -509,6 +595,7 @@ def test_a_body_that_never_starts_holds_nothing(tmp_path):
         path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
         work.say(work.Order(path=path, text="x"))
         chat.say("wiki", chat.Say(text="x"))
+        settled(path)   # a work turn runs on without its body, and lets go when it ends
         assert not work._busy and not chat._busy
         assert web.post("/api/work/say", json={"path": path, "text": "y"}).status_code == 200
 
@@ -558,7 +645,7 @@ def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_p
     repos = {name: _repo(tmp_path / name) for name in ("a", "b")}
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
-         patch.object(work, "ChatSession", Agent):
+         patch.object(work, "ChatSession", Slow):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
         waiting = work.say(work.Order(path=path, text="x"))
@@ -569,7 +656,12 @@ def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_p
         assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
         del waiting, asking
         gc.collect()
-        assert not work._busy and not chat._busy
+        assert not chat._busy
+        # The work turn is not its body: it holds until it ends.
+        assert path in work._busy
+        Agent.made[-1].go.set()
+        settled(path)
+        assert not work._busy
         web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
 
 
@@ -833,3 +925,233 @@ def test_a_stale_screen_cannot_switch_or_configure(tmp_path):
         assert stale.status_code == 409 and chat.project() == "b"
         assert web.post("/api/config/wiki", json={"repo": "a"}, headers={"X-Project": "b"}).status_code == 200
         assert chat.project() == "a"
+
+
+def test_a_turn_outlives_its_response(tmp_path):
+    """Dropped unread, the response takes nothing with it. The turn ends when
+    the CLI does, and only then is it on record and the worktree let go."""
+
+    import gc
+
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Slow):
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        work.say(work.Order(path=path, text="x"))
+        gc.collect()
+        assert path in work._busy
+        Agent.made[-1].go.set()
+        settled(path)
+        assert not work._busy
+        rows = web.get("/api/work/log", params={"path": path}).json()["rows"]
+        assert [(r["role"], r["text"]) for r in rows] == [("user", "x"), ("assistant", "했다")]
+
+
+def test_a_screen_reattaches_after_the_last_event_it_saw(tmp_path):
+    """`after=k` gives k+1 to the end, whether the turn still runs or has
+    ended. Two screens on one turn see the same events in the same order."""
+
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Slow):
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        work.say(work.Order(path=path, text="x"))
+        running = web.get("/api/work/log", params={"path": path}).json()["running"]
+        assert running["session_id"] == Agent.made[-1].id and running["seq"] == 1
+
+        seen: dict[str, list] = {}
+
+        def watch(name, after):
+            params = {"path": path, "turn": running["turn"], "after": after}
+            seen[name] = parse(web.get("/api/work/events", params=params).text)
+
+        screens = [threading.Thread(target=watch, args=(name, after))
+                   for name, after in (("first", -1), ("second", -1), ("late", 0))]
+        for screen in screens:
+            screen.start()
+        Agent.made[-1].go.set()
+        for screen in screens:
+            screen.join(10)
+
+        assert [e["kind"] for e in seen["first"]] == ["tool", "approval", "done"]
+        assert [e["seq"] for e in seen["first"]] == [0, 1, 2]
+        assert {e["turn"] for e in seen["first"]} == {running["turn"]}
+        assert seen["second"] == seen["first"] and seen["late"] == seen["first"][1:]
+        ended = web.get("/api/work/events", params={"path": path, "turn": running["turn"], "after": 1})
+        assert parse(ended.text) == seen["first"][2:]
+        assert web.get("/api/work/log", params={"path": path}).json()["running"] is None
+        other = {"path": path, "turn": "another", "after": -1}
+        assert web.get("/api/work/events", params=other).status_code == 410
+
+
+def test_a_stopped_turn_ends_and_the_next_goes_on_in_the_same_session(tmp_path):
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Slow):
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        work.say(work.Order(path=path, text="x"))
+        agent = Agent.made[-1]
+        turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
+        assert web.post("/api/work/stop", json={"path": path, "turn": "another"}).status_code == 409
+        web.post("/api/work/stop", json={"path": path, "turn": turn}).raise_for_status()
+        run = settled(path)
+        assert (run.events[-1]["kind"], run.events[-1]["text"]) == ("error", "사람이 멈춤")
+        assert not work._busy and not agent.alive
+        assert web.get("/api/work/log", params={"path": path}).json()["rows"][-1]["error"] == "사람이 멈춤"
+
+        work.say(work.Order(path=path, text="이어서"))
+        assert Agent.made[-1] is agent and work._runs[path].session_id == agent.id
+        agent.go.set()
+        settled(path)
+
+
+def test_a_turn_is_reachable_after_the_project_moves(tmp_path):
+    """Its session was made for a path `ours` took. A path with no session is 404."""
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
+         patch.object(work, "ChatSession", Agent):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        said = parse(web.post("/api/work/say", json={"path": path, "text": "x"}).text)
+        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
+        again = web.get("/api/work/events", params={"path": path, "turn": said[0]["turn"]})
+        assert again.status_code == 200 and parse(again.text) == said
+        nowhere = {"path": str(tmp_path / "nowhere"), "turn": said[0]["turn"]}
+        assert web.get("/api/work/events", params=nowhere).status_code == 404
+        assert web.post("/api/work/stop", json=nowhere).status_code == 404
+
+
+class Asker(Slow):
+    """Two writes asked of a person, one outside the worktree refused unasked,
+    and one still waiting when the turn is stopped."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.pending, self.heard = {"r1", "r2", "r4"}, threading.Event()
+
+    def say(self, text, halt=None):
+        self.alive = True
+        yield Event("tool", "Read · a.txt", {}, self.id)
+        for rid in ("r1", "r2"):
+            yield Event("approval", f"Write · {rid}.txt", {"id": rid, "tool": "Write", "input": {"content": "x"}}, self.id)
+            self.heard.wait(10)
+            self.heard.clear()
+        yield Event("approval", "Edit · ../elsewhere.txt",
+                    {"id": "r3", "tool": "Edit", "input": {}, "answer": "deny", "by": "outside"}, self.id)
+        yield Event("approval", "Bash · pytest -q", {"id": "r4", "tool": "Bash", "input": {}}, self.id)
+        self.go.wait(10)
+        yield Event("error", "프로세스가 닫혔다.", {}, self.id)
+
+    def answer(self, rid, allow, scope="once"):
+        ok = super().answer(rid, allow, scope)
+        self.heard.set()
+        return ok
+
+
+def until(test) -> None:
+    import time
+
+    for _ in range(200):
+        if test():
+            return
+        time.sleep(0.05)
+    raise AssertionError("기다린 일이 오지 않았다")
+
+
+def asked(path: str, rid: str) -> bool:
+    return any(e["kind"] == "approval" and e["meta"]["id"] == rid for e in list(work._runs[path].events))
+
+
+def test_the_record_keeps_every_approval_and_who_answered_it(tmp_path):
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Asker):
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        work.say(work.Order(path=path, text="x"))
+        agent = Agent.made[-1]
+
+        def answer(rid, allow):
+            web.post("/api/work/answer", json={"path": path, "session_id": agent.id,
+                                               "id": rid, "allow": allow}).raise_for_status()
+
+        until(lambda: asked(path, "r1"))
+        answer("r1", True)
+        until(lambda: asked(path, "r2"))
+        answer("r2", False)
+        until(lambda: asked(path, "r4"))
+        web.post("/api/work/stop", json={"path": path, "turn": work._runs[path].turn}).raise_for_status()
+        run = settled(path)
+
+        assert [e["meta"] for e in run.events if e["kind"] == "answered"] == [
+            {"id": "r1", "allow": True, "by": "person"}, {"id": "r2", "allow": False, "by": "person"}]
+        row = web.get("/api/work/log", params={"path": path}).json()["rows"][-1]
+        assert row["steps"] == [
+            {"kind": "tool", "text": "Read · a.txt"},
+            {"kind": "approval", "tool": "Write", "text": "Write · r1.txt", "answer": "allow", "by": "person"},
+            {"kind": "approval", "tool": "Write", "text": "Write · r2.txt", "answer": "deny", "by": "person"},
+            {"kind": "approval", "tool": "Edit", "text": "Edit · ../elsewhere.txt", "answer": "deny", "by": "outside"},
+            {"kind": "approval", "tool": "Bash", "text": "Bash · pytest -q", "answer": "none", "by": "person"},
+        ]
+        assert "tools" not in row
+
+        # A row from before `steps` reads the same way.
+        work.remember(Path(path), "assistant", "옛 답", tools=["Read · a.txt"])
+        old = web.get("/api/work/log", params={"path": path}).json()["rows"][-1]
+        assert old["steps"] == [{"kind": "tool", "text": "Read · a.txt"}] and "tools" not in old
+
+
+def test_a_session_rule_is_shown_and_cleared_by_its_own_session(tmp_path):
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Slow):
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        work.say(work.Order(path=path, text="x"))
+        agent = Agent.made[-1]
+        until(lambda: asked(path, "r1"))
+        ask = {"path": path, "session_id": agent.id, "id": "r1", "allow": True}
+        assert web.post("/api/work/answer", json={**ask, "scope": "forever"}).status_code == 422
+        web.post("/api/work/answer", json={**ask, "scope": "session"}).raise_for_status()
+        agent.go.set()
+        settled(path)
+
+        assert web.get("/api/work/log", params={"path": path}).json()["rules"] == [{"kind": "file", "tool": "Write"}]
+        clear = {"path": path, "session_id": "another"}
+        assert web.post("/api/work/rules/clear", json=clear).status_code == 409
+        web.post("/api/work/rules/clear", json={**clear, "session_id": agent.id}).raise_for_status()
+        assert web.get("/api/work/log", params={"path": path}).json()["rules"] == []
+
+
+class Starting(Agent):
+    """Stopped while its process starts: the start breaks, not the turn."""
+
+    started = threading.Event()
+
+    def say(self, text, halt=None):
+        Starting.started.set()
+        halt.wait(10)
+        raise RuntimeError("Codex 가 닫혔다: thread/resume")
+        yield
+
+    def stop(self, halt):
+        pass   # no process yet to kill
+
+
+def test_a_stop_during_start_up_is_recorded_as_a_stop(tmp_path):
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Starting):
+        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        work.say(work.Order(path=path, text="x"))
+        assert Starting.started.wait(10)
+        web.post("/api/work/stop", json={"path": path, "turn": work._runs[path].turn}).raise_for_status()
+        run = settled(path)
+        assert (run.events[-1]["kind"], run.events[-1]["text"]) == ("error", "사람이 멈춤")
+        assert web.get("/api/work/log", params={"path": path}).json()["rows"][-1]["error"] == "사람이 멈춤"
