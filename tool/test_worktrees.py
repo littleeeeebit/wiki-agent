@@ -1,6 +1,7 @@
 """Worktrees an agent writes in: made beside the repo, listed, cleared safely."""
 
 import subprocess
+import sys
 
 import pytest
 
@@ -202,3 +203,21 @@ def test_a_mode_change_alone_is_work(repo):
     git(path, "update-index", "--chmod=+x", "run.sh")
     git(path, "commit", "-q", "-m", "executable")
     assert not worktrees(repo)[0]["merged"]
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="only Windows locks a process's current directory")
+def test_a_folder_held_by_a_shell_still_loses_its_branch(repo):
+    """The app's terminal sat in the worktree being cleared. Git forgot the
+    worktree, failed to delete the folder, and the branch was left with nothing
+    on the screen to clear it — the same task name could not be made again."""
+
+    path = create(repo, "held")
+    holder = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], cwd=path)
+    try:
+        said = remove(repo, path)
+    finally:
+        holder.kill()
+        holder.wait()
+    assert not worktrees(repo)
+    assert not git(repo, "branch", "--list", "held").strip()
+    assert "남았다" in said

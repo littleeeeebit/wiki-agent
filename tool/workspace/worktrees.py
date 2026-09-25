@@ -145,13 +145,19 @@ def remove(repo: Path, path: Path) -> str:
     if row["dirty"]:
         raise ValueError(f"커밋하지 않은 변경이 있다: {path}")
     done = _git(repo, "worktree", "remove", str(row["path"]))
+    left = ""
     if done.returncode:
-        raise RuntimeError(done.stderr.strip() or f"git worktree remove 실패: {path}")
+        # On Windows a process whose current directory is in there — a shell,
+        # an editor — keeps the folder. Git has already forgotten the worktree
+        # by then, so stopping here strands the branch where nothing lists it.
+        if any(r["path"] == row["path"] for r in worktrees(repo)):
+            raise RuntimeError(done.stderr.strip() or f"git worktree remove 실패: {path}")
+        left = f" 폴더는 다른 프로세스가 쥐고 있어 남았다: {row['path']}"
     if not row["branch"]:
-        return "작업트리를 지웠다"
+        return "작업트리를 지웠다" + left
     if not row["merged"]:
-        return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 머지되지 않아 남겼다"
+        return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 머지되지 않아 남겼다" + left
     done = _git(repo, "branch", "-D", row["branch"])
     if done.returncode:
-        return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 지우지 못했다: {done.stderr.strip()}"
-    return f"작업트리와 브랜치 {row['branch']} 를 지웠다"
+        return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 지우지 못했다: {done.stderr.strip()}" + left
+    return f"작업트리와 브랜치 {row['branch']} 를 지웠다" + left

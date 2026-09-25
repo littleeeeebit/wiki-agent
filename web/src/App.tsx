@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import { Agent } from '@/components/Agent'
 import type { Choice } from '@/components/Toolbar'
 import { Peek } from '@/components/Peek'
@@ -210,6 +211,10 @@ export default function App() {
           }
         }}
         onRemove={async (path) => {
+          // Its terminal's shell stands in that folder, and Windows will not
+          // delete a directory a process stands in. Rendered now, not later,
+          // so the terminal's close goes out before the removal does.
+          if (path === selected) flushSync(() => setSelected(''))
           await api.removeWorktree(path)
           // The same task name makes the same path again; its turns must not
           // come back with it.
