@@ -532,8 +532,8 @@ def repo_of(cwd: str | None, cache: dict) -> str | None:
     two clones called the same are two repositories. A deleted Orca worktree
     leaves `~/orca/workspaces/<repo>/`, which git does not answer for; any
     worktree still standing beside it does, and names the same clone. With
-    none standing, that folder is the answer, and `usage` folds it into the
-    one repository of its name once every session is read. A session outside
+    none standing, that folder is the answer and keeps a row of its own —
+    its name does not prove which clone it belonged to. A session outside
     any repository — a scratchpad, a tool's model call in a temporary folder —
     is not anyone's work on a repository.
 
@@ -553,15 +553,16 @@ def repo_of(cwd: str | None, cache: dict) -> str | None:
     return cache[cwd]
 
 
-def folding(repos: set[str]):
-    """`repo → repo`, sending an Orca folder to the one clone of its name."""
+def shown(repos: set[str]) -> dict[str, str]:
+    """`repo → what the table prints`: the name, unless two clones share it.
 
-    clones = defaultdict(list)
-    for repo in repos:
-        if not orca(repo):
-            clones[Path(repo).name].append(repo)
-    return lambda repo: (clones[Path(repo).name][0]
-                         if orca(repo) and len(clones[Path(repo).name]) == 1 else repo)
+    An Orca folder standing in for its deleted worktrees keeps a row of its
+    own, labelled. A name does not prove which clone it was a worktree of.
+    """
+
+    names = Counter(Path(r).name for r in repos if not orca(r))
+    return {r: f"{Path(r).name} (지워진 Orca 작업트리)" if orca(r)
+            else Path(r).name if names[Path(r).name] == 1 else r for r in repos}
 
 
 def usage(argv: list[str]) -> int:
@@ -596,21 +597,12 @@ def usage(argv: list[str]) -> int:
         turns += [(key, session, t) for t in mine]
         compacts[key] += [c for at, c in read["compacts"] if since <= at < until]
 
-    # An Orca folder whose worktrees are all gone joins the one repository of
-    # its name. With two of that name there is no telling, and it stays apart.
-    fold = folding({k[0] for k, _s, _t in turns})
-    turns = [((fold(k[0]), k[1]), s, t) for k, s, t in turns]
-    for key in [k for k in compacts if fold(k[0]) != k[0]]:
-        compacts[(fold(key[0]), key[1])] += compacts.pop(key)
-
     groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
     length: Counter = Counter()
     for key, session, turn in turns:
         groups[key].append(turn)
         length[session] += 1
-    # The name, unless two repositories share it.
-    names = Counter(Path(p).name for p in {k[0] for k in groups})
-    shown = {p: Path(p).name if names[Path(p).name] == 1 else p for p in {k[0] for k in groups}}
+    label_of = shown({k[0] for k in groups})
     print(f"# 사용량 — {since:%Y-%m-%d %H:%M} ~ {until:%Y-%m-%d %H:%M} (UTC), "
           f"사람 발화 {len(turns):,}, 세션 {len(length):,}\n")
     print("환산은 입력 1 · 캐시 쓰기 2 · 캐시 읽기 0.1 · 출력 5 (API 요율 대리값). "
@@ -628,7 +620,7 @@ def usage(argv: list[str]) -> int:
         mine = groups[key]
         costs = [t["cost"] for t in mine]
         raw = {k: sum(t["tokens"][k] for t in mine) for k in WEIGHT}
-        print(f"| {shown[key[0]]} | {key[1]} | {len(mine):,} | {pct(costs, .5):,.0f} | "
+        print(f"| {label_of[key[0]]} | {key[1]} | {len(mine):,} | {pct(costs, .5):,.0f} | "
               f"{sum(costs) / len(costs):,.0f} | {sum(costs):,.0f} | "
               + " | ".join(f"{raw[k]:,}" for k in WEIGHT) + " |")
 
@@ -653,7 +645,7 @@ def usage(argv: list[str]) -> int:
         mine = groups[key]
         hooks = [t["hook"] for t in mine if t["hook"] is not None]
         back = [t["cold"] for t in mine if t["idle"] is not None and t["idle"] >= IDLE]
-        print(f"| {shown[key[0]]} | {key[1]} | {len(hooks):,} | {pct(hooks, .5):,} | {sum(hooks):,} | "
+        print(f"| {label_of[key[0]]} | {key[1]} | {len(hooks):,} | {pct(hooks, .5):,} | {sum(hooks):,} | "
               f"{sum(t['filed'] for t in mine):,} | {len(back):,} | {sum(sum(c.values()) for c in back):,} | "
               f"{sum(map(weighted, back)):,.0f} | {len(compacts[key]):,} | "
               f"{pct(compacts[key], .5):,} |")
