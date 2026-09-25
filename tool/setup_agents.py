@@ -180,7 +180,7 @@ def install(project, choice, check, allow_dirty=False):
           "이 명령은 실제 자동 이벤트·선택형 질문 UI를 검증하지 않습니다. 새 세션에서 별도로 확인하세요.")
 
 
-def codex_hooks(home, trust):
+def codex_hooks(home, trust, python=None):
     """This wiki's hooks as one Codex home sees them, trusted first if asked.
 
     Codex runs a hook only while `hooks.state` holds the hash of exactly that
@@ -196,7 +196,7 @@ def codex_hooks(home, trust):
     # merely names or resembles the dispatcher is somebody else's code, and
     # trusting it would vouch for that code.
     mine = {(event[0].lower() + event[1:], command)
-            for event, command in installed("codex", sys.executable)}
+            for event, command in installed("codex", python or sys.executable)}
     with CodexServer(env={"CODEX_HOME": str(home)}, cwd=WIKI) as server:
         listed = lambda: [h for d in server.request("hooks/list", {"cwds": [str(WIKI)]})["data"]  # noqa: E731
                           for h in d["hooks"] if (h["eventName"], h["command"]) in mine]
@@ -219,25 +219,28 @@ def probe(project):
     return "additionalContext" in done.stdout
 
 
-def install_global(choice, check, projects, trust):
-    """Attach the wiki once, at each host's user level.
+def plan_global(choice, projects, python=None):
+    """Every file the user-level install would change, and how.
 
-    Every checkout on the machine — a worktree Orca opens after an update
-    included — reads these files, and `hook.py` works out the project per
-    call. The commands carry nothing that changes with the project, so the
-    entries, and with them Codex's trust hashes, stay put.
+    `[(path, settings after, changes)]`. Nothing is written — `write_plan`
+    does that, so a screen can show the whole list and write only once it is
+    confirmed.
+
+    Everything that can refuse refuses here, before the first write. `python`
+    is the hooks' interpreter, this process's unless said.
     """
+    python = python or sys.executable
     if sys.version_info < (3, 11):
         raise ValueError("Python 3.11 이상이 필요합니다. 새 Python으로 이 명령을 다시 실행하세요.")
-    for path in (WIKI, Path(sys.executable)):
+    for path in (WIKI, Path(python)):
         if any(char in str(path) for char in ('"', '$', '`', '\n', '\r')):
             raise ValueError(f"셸 인용이 지원하지 않는 문자가 경로에 있습니다: {path}")
     os.environ["WIKI_ROOT"] = str(WIKI)
-    from apply import configure, installed, keep_denies, read_json, restricted, unusable, unwire, user_files
+    from apply import configure, keep_denies, read_json, restricted, unusable, unwire, user_files
 
-    missing = unusable(sys.executable)
+    missing = unusable(python)
     if missing:
-        raise ValueError(f"{sys.executable} 이 {', '.join(missing)} 를 못 읽습니다. "
+        raise ValueError(f"{python} 이 {', '.join(missing)} 를 못 읽습니다. "
                          "requirements-hooks.txt 를 설치한 Python으로 다시 실행하세요.")
     # Everything that can refuse, refuses before the first write. A mistyped
     # path would otherwise be created and handed twelve deny rules, and a
@@ -262,7 +265,7 @@ def install_global(choice, check, projects, trust):
     for agent in agents:
         for path in user_files(agent):
             settings = read_json(path)
-            plan.append((path, settings, configure(settings, None, None, sys.executable, agent)))
+            plan.append((path, settings, configure(settings, None, None, python, agent)))
             refusals += [f"{path}: {r}" for r in restricted(settings)]
         for project in projects:
             path = project / SETTINGS[agent]
@@ -282,18 +285,78 @@ def install_global(choice, check, projects, trust):
                 refusals.append(f"{path}: disableAllHooks 가 켜져 있다")
     if refusals:
         raise ValueError("설치로 고칠 수 없는 설정이 있습니다. 직접 검토하세요:\n- " + "\n- ".join(refusals))
+    return plan
 
-    broken = []
+
+def write_plan(plan):
     for path, settings, changes in plan:
-        if check:
-            broken += [f"{path}: {change}" for change in changes]
-        elif changes:
+        if changes:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
                             encoding="utf-8", newline="\n")
             print(f"썼다: {path} ({len(changes)}건)")
         else:
             print(f"그대로: {path}")
+
+
+def skill_links(home=None):
+    """`~/.claude/skills` links into another hub's `skills/`, each with where
+    it moves to here: `[(link, old target, new target or None)]`. `None` is
+    a name this hub does not have — the link stays, and the person is told.
+
+    Another hub is a folder holding `tool/hook.py` beside its `skills/`: a
+    link into anybody else's skill collection is not ours to move.
+    """
+    from apply import _HOME
+
+    folder = Path(home or _HOME or Path.home()) / ".claude/skills"
+    found = []
+    for link in sorted(folder.iterdir()) if folder.is_dir() else []:
+        if not (link.is_symlink() or link.is_junction()):
+            continue
+        target = Path(os.readlink(link).removeprefix("\\\\?\\"))
+        hub = target.parent.parent
+        if target.parent.name != "skills" or not (hub / "tool/hook.py").is_file():
+            continue
+        if os.path.normcase(hub.resolve()) == os.path.normcase(WIKI.resolve()):
+            continue
+        mine = WIKI / "skills" / target.name
+        found.append((link, target, mine if mine.is_dir() else None))
+    return found
+
+
+def relink(link, target):
+    """Point `link` at `target`, as the same kind of link it was: a junction
+    stays a junction — it needs no developer mode — and a symlink a symlink."""
+    junction = link.is_junction()
+    # On Windows both kinds of directory link go with `rmdir`, which removes
+    # the link and never what it points at.
+    (os.rmdir if os.name == "nt" else os.unlink)(link)
+    if junction:
+        import _winapi
+
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        os.symlink(target, link, target_is_directory=True)
+
+
+def install_global(choice, check, projects, trust):
+    """Attach the wiki once, at each host's user level.
+
+    Every checkout on the machine — a worktree Orca opens after an update
+    included — reads these files, and `hook.py` works out the project per
+    call. The commands carry nothing that changes with the project, so the
+    entries, and with them Codex's trust hashes, stay put.
+    """
+    from apply import installed, read_json, user_files
+
+    plan = plan_global(choice, projects)
+    agents = tuple(SETTINGS) if choice == "both" else (choice,)
+    broken = []
+    if check:
+        broken += [f"{path}: {change}" for path, _settings, changes in plan for change in changes]
+    else:
+        write_plan(plan)
     for agent in agents:
         if agent == "codex":
             for path in user_files("codex"):

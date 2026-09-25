@@ -45,6 +45,7 @@ MAX_PLANS = 3      # materials for the candidates
 MAX_ROWS = 10
 MAX_PRS = 10
 MAX_WARNINGS = 10
+SLOTS = ("gate_cmd", "review_dir", "scratch_dirs", "live_cmd", "server_stop")   # what `[연결]` writes
 
 # Every state a spec can be in. The list is the stage 3 plan's table; this
 # stage moves through the first three, `머지됨` and `멈춤`, and the review loop
@@ -441,7 +442,18 @@ def materials(repo: Path) -> str:
         part("Lint warnings", lambda: _warnings(repo)),
         part("Review P2 left", lambda: "\n".join(f"- `{s['id']}`: {p}" for s in listing(repo.name)
                                                  for p in s.get("p2") or [])),
+        part("Empty adapter slots", lambda: _slots(repo)),
     ])
+
+
+def _slots(repo: Path) -> str:
+    """The slots `[연결]` could not guess. Filled in a worktree, they reach
+    the original through a pull request."""
+
+    if not (repo / ".wiki/adapter.toml").is_file():
+        return ""
+    values = slots_for(repo.name, repo)
+    return "\n".join(f"- `{k}` in `.wiki/adapter.toml`" for k in SLOTS if not values.get(k, "").strip())
 
 
 def told(repo: Path, spec: dict, text: str) -> None:

@@ -35,7 +35,7 @@ from agent import ChatSession
 from common import worktree_home
 from workspace import adopt, folder_for, remove, worktrees
 
-from . import channels, query, specs, work
+from . import channels, connect, query, specs, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 
 REVIEW = ROOT / "raw" / "review"
@@ -78,13 +78,15 @@ def _file() -> Path:
     return query.LOGS / "main.json"
 
 
-def settings() -> dict:
+def settings(defaults: dict = DEFAULTS) -> dict:
+    """The saved values of `defaults`' keys; a missing or mistyped one is its default."""
+
     try:
         saved = json.loads(_file().read_text(encoding="utf-8"))
     except (OSError, ValueError):
         saved = {}
     saved = saved if isinstance(saved, dict) else {}
-    return {k: saved[k] if type(saved.get(k)) is type(v) else v for k, v in DEFAULTS.items()}
+    return {k: saved[k] if type(saved.get(k)) is type(v) else v for k, v in defaults.items()}
 
 
 def store(**changes) -> None:
@@ -863,7 +865,14 @@ def finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
         specs.save(specs.moved(spec, "머지됨", stopped=None,
                                merge={"commit": commit, "base": base}))
     specs.told(repo, spec, text)
-    notes.append(forward(repo, base))
+    if (spec.get("survey") or {}).get("handover"):
+        # The original's adapter is uncommitted and would block the
+        # fast-forward. The handover moves it aside and fast-forwards
+        # itself; when it stops, the fast-forward is skipped too.
+        handed = connect.handover(repo, n)
+        notes.append(handed["reason"] if handed["ok"] else f"adapter 넘기기 대기 — {handed['reason']}")
+    else:
+        notes.append(forward(repo, base))
     if spec.get("worktree"):
         notes.append(cleared(repo, Path(spec["worktree"])))
     notes.append(pruned(repo, specs.branch_of(spec), allowed["head"] if allowed else spec["pr"].get("head", "")))

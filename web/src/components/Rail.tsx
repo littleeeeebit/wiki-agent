@@ -10,6 +10,9 @@ export type Badge = { state: string; pr: number | null; round: number }
 /** A running turn or loop of a project other than the selected one. */
 export type Other = { path: string; repo: string; label: string }
 
+/** What the middle pane shows. */
+export type View = 'query' | 'map' | 'projects'
+
 type Props = {
   repo: string
   options: Options | null
@@ -23,7 +26,7 @@ type Props = {
   others: Other[]
   loopSettings: LoopSettings | null
   selected: string
-  view: 'query' | 'map'
+  view: View
   sw: Switch | null
   theme: 'dark' | 'light'
   onProject: (repo: string) => void
@@ -32,7 +35,7 @@ type Props = {
   onRemove: (path: string) => Promise<void>
   onLoop: (prs: number[]) => Promise<void>
   onLoopSettings: (s: LoopSettings) => Promise<void>
-  onView: (view: 'query' | 'map') => void
+  onView: (view: View) => void
   onSwitch: (on: boolean) => void
   onTheme: (theme: 'dark' | 'light') => void
 }
@@ -50,7 +53,7 @@ export function Rail(props: Props) {
   const pickable = props.prs.filter((p) => p.pickable)
 
   const projects: Item[] = options?.projects.map((p) => ({ value: p.id, label: p.id,
-    note: p.wired ? '위키 붙음' : undefined })) ?? []
+    note: p.state === '미연결' ? undefined : p.state })) ?? []
 
   async function act(key: string, fn: () => Promise<void>) {
     setFault('')
@@ -73,8 +76,19 @@ export function Rail(props: Props) {
       </div>
 
       <div className="px-3 pb-3">
-        <Picker label="프로젝트" width="w-full" mono stacked items={projects} value={repo}
-          disabled={projectBusy || !options} onPick={(v) => v && v !== repo && props.onProject(v)} />
+        <div className="flex items-end gap-1.5">
+          <div className="min-w-0 flex-1">
+            <Picker label="프로젝트" width="w-full" mono stacked items={projects} value={repo}
+              disabled={projectBusy || !options} onPick={(v) => v && v !== repo && props.onProject(v)} />
+          </div>
+          <button type="button" aria-pressed={view === 'projects'}
+            onClick={() => props.onView(view === 'projects' ? 'query' : 'projects')}
+            className={cn('shrink-0 rounded-md border border-sidebar-border px-2 py-1.5 text-[12.5px] hover:bg-sidebar-accent',
+              view === 'projects' && 'bg-sidebar-accent')}
+            title="저장소마다 위키가 붙었는지, [연결]">
+            목록
+          </button>
+        </div>
         <button
           type="button"
           disabled={pickable.length === 0 || !!working}

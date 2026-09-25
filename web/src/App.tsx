@@ -5,7 +5,8 @@ import type { Choice } from '@/components/Toolbar'
 import { Peek } from '@/components/Peek'
 import { Query } from '@/components/Query'
 import { Rail } from '@/components/Rail'
-import type { Other } from '@/components/Rail'
+import type { Other, View } from '@/components/Rail'
+import { Projects } from '@/components/Projects'
 import { Review } from '@/components/Review'
 import { Terminal, closed } from '@/components/Terminal'
 import { WikiMap } from '@/components/WikiMap'
@@ -47,7 +48,7 @@ export default function App() {
   const [rows, setRows] = useState<Worktree[]>([])
   const [specs, setSpecs] = useState<Spec[]>([])
   const [selected, setSelected] = useState('')
-  const [view, setView] = useState<'query' | 'map'>('query')
+  const [view, setView] = useState<View>('query')
   const [seed, setSeed] = useState<{ text: string } | null>(null)
   const [queryBusy, setQueryBusy] = useState(false)
   const [choice, setChoice] = useState<Choice>({ model: '', effort: '' })
@@ -216,6 +217,10 @@ export default function App() {
     const on = (ev: api.FeedEv) => {
       if (ev.kind === 'turn') {
         attach(ev.path)
+        return
+      }
+      if (ev.kind === 'connect') {
+        window.dispatchEvent(new Event('connect-changed'))
         return
       }
       const key = `${ev.repo}/${ev.id}`
@@ -428,6 +433,8 @@ export default function App() {
         <div className="min-h-0 flex-1">
           {view === 'map' ? (
             <div className="h-full overflow-auto"><WikiMap on={on} /></div>
+          ) : view === 'projects' ? (
+            <Projects />
           ) : (
             <Query
               channels={channels}

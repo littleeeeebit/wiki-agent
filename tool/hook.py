@@ -21,6 +21,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import runpy
 import sys
 from pathlib import Path
@@ -109,8 +110,49 @@ def main(argv: list[str]) -> int:
     # is the script's own, which is what `hook_diagnostics` arms on.
     sys.argv = [str(HERE / script), *extra]
     sys.stdin = io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8")
-    runpy.run_path(str(HERE / script), run_name="__main__")
+    nonce = os.environ.get("WIKI_PROBE", "")
+    if not nonce:
+        runpy.run_path(str(HERE / script), run_name="__main__")
+        return 0
+    # A connection test (`main/connect.probe`) started the host that started
+    # this. What the script prints is held, passed on unchanged, and noted.
+    # A text stream over bytes, not `StringIO`: every script calls
+    # `sys.stdout.reconfigure`, which `StringIO` does not have.
+    held = io.BytesIO()
+    out, sys.stdout = sys.stdout, io.TextIOWrapper(held, encoding="utf-8", write_through=True)
+    try:
+        runpy.run_path(str(HERE / script), run_name="__main__")
+    finally:
+        sys.stdout.flush()
+        printed, sys.stdout = held.getvalue().decode("utf-8", "replace"), out
+        out.write(printed)
+        out.flush()
+        probed(nonce, host, script, raw, printed)
     return 0
+
+
+def probed(nonce: str, host: str, script: str, raw: bytes, printed: str) -> None:
+    """One line in this hub's `raw/connect/probe/<nonce>.jsonl`: which event
+    ran and whether it injected. A line per hook, appended — a session runs
+    several, and the one that does not inject must not overwrite the one that
+    did. A failure is swallowed: the hook still passes, and the test, with no
+    line to read, fails."""
+
+    if not re.fullmatch(r"[0-9a-f]{8,64}", nonce):
+        return
+    try:
+        event = json.loads(raw.decode("utf-8") or "{}").get("hook_event_name") or script
+        try:
+            context = json.loads(printed)["hookSpecificOutput"]["additionalContext"]
+        except (ValueError, KeyError, TypeError):
+            context = ""
+        folder = HERE.parent / "raw/connect/probe"
+        folder.mkdir(parents=True, exist_ok=True)
+        with open(folder / f"{nonce}.jsonl", "a", encoding="utf-8") as fh:
+            fh.write(json.dumps({"host": host, "event": event, "script": script,
+                                 "injected": bool(context), "chars": len(context)}) + "\n")
+    except Exception:  # noqa: BLE001 — `craft/hooks-fail-open`
+        pass
 
 
 if __name__ == "__main__":

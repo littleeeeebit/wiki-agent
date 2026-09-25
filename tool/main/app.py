@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 import translate
 
-from . import channels, loop, query, specs, work
+from . import channels, connect, loop, query, specs, work
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
 # `text/plain`. The browser then refuses `<script type="module">` silently:
@@ -65,6 +65,7 @@ app.include_router(query.router)
 app.include_router(work.router)
 app.include_router(specs.router)
 app.include_router(loop.router)
+app.include_router(connect.router)
 
 # The names this server answers to. Anything else in `Host` is another site's
 # domain resolved to 127.0.0.1 — DNS rebinding — and gets nothing.
