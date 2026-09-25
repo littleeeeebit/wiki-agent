@@ -74,8 +74,33 @@ Slack, 미러, `chat.handoff` 는 6단계에서 지웠는데 주석이 아직 �
 
 | # | 단계 | 무엇 | 상태 |
 | --- | --- | --- | --- |
-| 1 | 판정 | `open_steps` 첫 낱말 판정과 테스트 | 미착수 |
-| 2 | 문서 | `verification.md`, wiki-agent 개요의 "넣지 않은 것" | 미착수 |
-| 3 | 주석과 이름 | 낡은 주석, `claude_session`·`codex_session`·`FINDERS` 정리 | 미착수 |
-| 4 | 작은 미룬 것 | 용어집, 프로젝트 표시 없는 요청, 번역 출력 상한, haiku 언어 원인 | 미착수 |
-| 5 | 게이트 | 위 확인 전부 초록 | 미착수 |
+| 1 | 판정 | `open_steps` 첫 낱말 판정과 테스트 | 완료 — 고치기 전 빨강 확인 |
+| 2 | 문서 | `verification.md`, wiki-agent 개요의 "넣지 않은 것" | 완료 |
+| 3 | 주석과 이름 | 낡은 주석, `claude_session`·`codex_session`·`FINDERS` 정리 | 완료 — 셋 다 지움 |
+| 4 | 작은 미룬 것 | 용어집, 프로젝트 표시 없는 요청, 번역 출력 상한, haiku 언어 원인 | 완료 — haiku 는 저장소 안의 원인 |
+| 5 | 게이트 | 위 확인 전부 초록 | 완료 |
+
+## 한 일
+
+- 판정. 첫 낱말이 `완료`·`취소` 인 행을 끝난 행으로 친다. `test_a_status_is_judged_by_its_first_word`
+- `branch_line`. 계획은 `/api/draft` 를 이유로 적으라 했지만 `/api/draft` 는 이 함수를 부르지 않는다.
+  부르는 곳은 `session_state.report` 하나이고 늘 영어로 불렀다. 그래서 한국어 갈래와 `english`
+  인자를 지웠다. `/api/draft` 가 쓰는 것은 `active_page`·`decisions` 이고, 모듈 머리말이 그것을 적는다
+- `claude_session`·`codex_session`·`FINDERS`. 세 테스트가 불렀다. cwd 로 rollout 을 가르는 규칙과
+  평탄화 충돌 규칙은 `checkouts()`·`logs()` 의 테스트가 이미 지킨다. 남은 하나는 미러가 1초마다
+  부르던 비용을 재는 테스트라 함수와 같이 지웠다
+- 프로젝트 표시. 화면은 `/api/channels` 말고는 첫 `claim` 까지 기다린다. 첫 적재가 채널 목록과
+  번역 스위치를 `Promise.all` 로 같이 받고 있어 그대로 두면 서로 기다린다 — 목록 다음에 스위치를
+  받는다. 서버는 `GET` 이 아닌 요청에 `X-Project` 가 없으면 400 으로 거절한다.
+  `test_a_write_that_names_no_project_is_refused`. 창에서 다시 읽어 채널이 먼저 가고 POST 가
+  모두 200 인 것을 봤다
+- 번역 상한. `maxOutputTokens = 2 × 입력 글자 수 + 64`. 선불 차감은 보낸 바이트를 입력 토큰으로,
+  상한을 출력 토큰으로 친다. `MODEL` 은 생각 토큰이 없다. `test_the_hold_is_the_most_the_request_can_cost`
+- 용어집. `"wiki-agent" = "wiki-agent"`. 실제 요청으로 `wiki-agent는 …` 이 나오는 것을 봤다
+- haiku 언어. 원인은 이 저장소 안이다. 사용자 단위 `CLAUDE.md` 는 없고 `language` 설정도 없다.
+  같은 질문을 hook 을 켜고 두 번, 끄고(`--setting-sources ""`, `disableAllHooks`) 두 번 보냈더니
+  영어는 켠 쪽 한 번뿐이었다 — hook 과 사용자 설정은 원인이 아니다. `--system-prompt` 로 바꾸면
+  두 번 다 영어였지만 Claude Code 의 기본 프롬프트를 잃는다. `chat-answer.md` 끝에 "질문은 대개
+  한국어로 온다, 그래도 영어로 답한다" 한 줄을 더하자 hook 을 켠 실제 조합(답변 프롬프트 + 위키
+  초점 머리말)에서 세 번 다 영어였다. 머리의 "영어로 쓰라" 는 한국어 질문을 예상하지 않았고,
+  haiku 는 질문의 언어를 따랐다

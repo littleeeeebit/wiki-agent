@@ -608,3 +608,35 @@ def test_a_hold_that_waited_out_the_budget_sends_nothing(
         "훅이 조용히 죽는다"
     ]
     assert sent == [], "the request went out after the budget was gone"
+
+
+def test_the_hold_is_the_most_the_request_can_cost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Phase 3, PR #4: nothing capped the output, so the hold was not a ceiling.
+
+    The request carries `maxOutputTokens`, and the hold is every byte sent as
+    an input token plus that cap as output — the worst the bill can be.
+    """
+
+    sent: list[bytes] = []
+    holds: list[float] = []
+    real = T.charge
+
+    def recorded(usd: float, at: str | None = None) -> bool:
+        holds.append(usd)
+        return real(usd, at)
+
+    def answer(request: object, **_k: object) -> _Answer:
+        sent.append(request.data)  # type: ignore[attr-defined]
+        return _Answer({"candidates": [{"content": {"parts": [{"text": '["EN"]'}]}}]})
+
+    monkeypatch.setattr(T, "charge", recorded)
+    monkeypatch.setattr(T.urllib.request, "urlopen", answer)
+    assert ko("훅이 조용히 죽는다") == "EN"
+
+    most = json.loads(sent[0])["generationConfig"]["maxOutputTokens"]
+    assert 0 < most < 1_000
+    assert holds[0] == pytest.approx(
+        T.cost({"promptTokenCount": len(sent[0]), "candidatesTokenCount": most})
+    )

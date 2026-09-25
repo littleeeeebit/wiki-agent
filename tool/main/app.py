@@ -84,6 +84,12 @@ async def only_this_screen(request: Request, call_next):
     # Leaving `/api/config/*` out let a stale screen's model change switch the
     # server back to the project it showed.
     screen = request.headers.get("x-project")
+    # A write that does not say which project it is for is not judged by the
+    # check above — it would land in whichever project the server is on. The
+    # screen holds everything but `/api/channels` until it knows its project;
+    # this is the check behind that promise.
+    if not screen and request.method != "GET":
+        return JSONResponse({"detail": "어느 프로젝트의 화면인지 모르는 쓰기는 받지 않는다"}, status_code=400)
     token = query.claimed.set(unquote(screen) if screen else None)
     try:
         return await call_next(request)

@@ -1,12 +1,9 @@
 """sessions — which session log belongs to which checkout.
 
 Both hosts write one log per cell, and two things here need to find one: the
-census counting what went wrong and the transcript feeding a retro. A third,
-the Korean mirror tailing a live cell, was importing `census` — the report
-generator — to learn where a log lives; this module is that knowledge standing
-on its own. The mirror is gone since phase 6; `claude_session` and
-`codex_session` stay because their tests pin the ownership rules `checkouts`
-also follows.
+census counting what went wrong and the transcript feeding a retro. The
+checkout listing needs the same knowledge, so it stands on its own here rather
+than inside `census`, the report generator.
 
 **A checkout is not a repository.** `git worktree` gives one repository
 several, and on this machine most of them are Orca's, under
@@ -203,8 +200,8 @@ def folder(project: Path, root: Path | None = None) -> Path:
     worktree is not unique: two repositories each had a `pollock`. Worse, one
     matching name is no evidence either — the only `-demo` directory on the
     machine can belong to `C:\\old\\demo` while the caller is asking about
-    `D:\\new\\demo`, and handing it over silently gives the census, the retro
-    and the Slack brief another repository's conversation to read.
+    `D:\\new\\demo`, and handing it over silently gives the census and the
+    retro another repository's conversation to read.
 
     A candidate proves itself with any log in it that names this checkout, not
     with its newest. The newest file can be a session that has not written its
@@ -280,27 +277,6 @@ def claude_cwd(path: Path) -> Path | None:
     return None
 
 
-def claude_session(project: Path) -> Path | None:
-    """The newest log that belongs to this checkout, not the newest in the folder.
-
-    Newest first and stop at the first one that belongs, rather than sorting
-    the whole directory by ownership. The mirror asked this once a second for
-    as long as it was open, and the newest file is the answer almost every
-    time; reading all 81 heads in the largest directory here cost 24ms of
-    every second to learn what the first read already said.
-    """
-
-    directory = folder(project)
-    if not directory.is_dir():
-        return None
-    here = project.resolve()
-    for path in sorted(directory.glob("*.jsonl"),
-                       key=lambda p: p.stat().st_mtime, reverse=True):
-        if under(claude_cwd(path), here):
-            return path
-    return None
-
-
 # --------------------------------------------------------------------------
 # Codex
 # --------------------------------------------------------------------------
@@ -312,9 +288,9 @@ def codex_homes() -> list[Path]:
     The default is `~/.codex`, and `CODEX_HOME` moves it. Orca sets that per
     account, so every Codex cell launched from Orca writes under
     `%APPDATA%/orca/codex-accounts/<id>/home` and none of it appears in the
-    default. A mirror that reads only the default sees no session the person
+    default. A listing that reads only the default sees no session the person
     actually runs, and says "no session" while one is running in front of
-    them — which is exactly what it did.
+    them — which is exactly what the old mirror did.
     """
 
     roots = [Path(os.environ["CODEX_HOME"])] if os.environ.get("CODEX_HOME") else []
@@ -364,12 +340,12 @@ def under(cwd: Path | None, project: Path) -> bool:
 
     Not `==`. A cell is routinely opened in a subdirectory — `web/`, a package
     folder — and an exact match silently reports "no session" for a repo whose
-    mirror is sitting right there.
+    cell is sitting right there.
 
     Not containment either. A clone inside a checkout is a different checkout:
     a vendored dependency, a worktree parked in a subdirectory. `C:\\outer` and
     `C:\\outer\\vendor\\inner` are two repositories, and counting the inner
-    cell's session as the outer one's shows a mirror pointed at `outer` a
+    cell's session as the outer one's hands whoever reads `outer` a
     conversation about `inner`.
 
     So the walk stops at the first repository boundary. A worktree's `.git` is
@@ -396,16 +372,6 @@ def under(cwd: Path | None, project: Path) -> bool:
     return True
 
 
-def codex_session(project: Path) -> Path | None:
-    for path in codex_rollouts():
-        if under(codex_cwd(path), project):
-            return path
-    return None
-
-
-FINDERS = {"claude": claude_session, "codex": codex_session}
-
-
 # --------------------------------------------------------------------------
 # The listing
 # --------------------------------------------------------------------------
@@ -420,10 +386,9 @@ def checkouts(host: str) -> list[dict]:
     repository a row belongs to is git's answer, not a parsed path.
 
     One row per *checkout*, not per directory a cell happened to open in.
-    Cells get opened in `web/` all the time, and `codex_session` has always
-    counted that as the same checkout — a listing that showed it separately
-    offered the same cell twice under two names and disagreed with the finder
-    sitting next to it.
+    Cells get opened in `web/` all the time, and `under` counts that as the
+    same checkout — a listing that showed it separately offered the same cell
+    twice under two names.
     """
 
     seen: dict[str, float] = {}

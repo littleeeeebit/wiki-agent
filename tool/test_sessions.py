@@ -1,8 +1,8 @@
 """What has to stay true about `sessions.py`.
 
-Finding a log used to live in `census.py`, and the mirror — a live screen —
-imported the diagnostic to do it. These are the cases that made the split
-worth doing: several worktrees of one repository, and worktrees that are gone.
+Finding a log used to live in `census.py`. These are the cases that made it
+a module of its own: several worktrees of one repository, and worktrees that
+are gone.
 
 Nothing here touches a real session directory or a network.
 """
@@ -43,18 +43,6 @@ def rollout(day: Path, name: str, cwd: Path) -> Path:
 # --------------------------------------------------------------------------
 # Which log belongs to which checkout
 # --------------------------------------------------------------------------
-
-
-def test_codex_finds_its_rollout_by_cwd(tmp_path, monkeypatch):
-    day = tmp_path / "2026" / "09" / "22"
-    rollout(day, "rollout-a.jsonl", tmp_path / "elsewhere")
-    mine = rollout(day, "rollout-b.jsonl", tmp_path / "repo")
-    (tmp_path / "repo").mkdir()
-    (tmp_path / "elsewhere").mkdir()
-    monkeypatch.setattr(S, "codex_homes", lambda: [tmp_path])
-
-    assert S.codex_session((tmp_path / "repo").resolve()) == mine
-    assert S.codex_session((tmp_path / "nowhere").resolve()) is None
 
 
 def test_codex_sessions_are_not_only_under_the_default_home(tmp_path, monkeypatch):
@@ -164,9 +152,9 @@ def test_a_lone_candidate_that_belongs_to_another_checkout_is_not_taken(tmp_path
     """Being the only `-demo` directory on the machine is not evidence.
 
     `C:\\old\\demo` is gone from nobody's disk but the caller is asking about
-    `D:\\new\\demo`. Handing the one match over gave the census, the retro and
-    the Slack brief another repository's conversation to read, and every one
-    of them reported on it as though it were this one's.
+    `D:\\new\\demo`. Handing the one match over gave the census and the retro
+    another repository's conversation to read, and both reported on it as
+    though it were this one's.
     """
 
     root = tmp_path / "projects"
@@ -184,9 +172,9 @@ def test_two_checkouts_that_flatten_to_one_directory_are_kept_apart(tmp_path):
     """The flattening is lossy, and the host writes both of them here.
 
     `C:\\a-b` and `C:\\a\\b` both become `C--a-b`. Reading that directory whole
-    hands the census, the retro and the Slack brief two repositories'
-    conversations as one project's, and `claude_session` points the mirror at
-    whichever of the two spoke last.
+    hands the census and the retro two repositories' conversations as one
+    project's, and a listing that reads only the newest log offers whichever
+    of the two spoke last.
     """
 
     root = tmp_path / "projects"
@@ -206,38 +194,9 @@ def test_two_checkouts_that_flatten_to_one_directory_are_kept_apart(tmp_path):
     assert S.logs(nested, root) == [theirs]
 
     with patch.object(S, "SESSIONS", root):
-        assert S.claude_session(hyphen) == mine   # not `theirs`, which is newer
         assert {row["path"] for row in S.checkouts("claude")} == {
             str(hyphen.resolve()), str(nested.resolve()),
         }
-
-
-def test_the_newest_log_answers_without_reading_the_whole_directory(tmp_path):
-    """`claude_session` runs once a second for as long as the mirror is open.
-
-    Sorting the directory by ownership read all 81 heads in the largest one
-    here to learn what the first read already said — 24ms of every second.
-    """
-
-    root = tmp_path / "projects"
-    project = tmp_path / "repo"
-    project.mkdir()
-    shared = S.folder(project, root)
-    for n in range(6):
-        log = claude_log(shared, f"{n}.jsonl", project)
-        os.utime(log, (0, 1_000 + n))
-    wanted = shared / "5.jsonl"
-
-    opened = []
-    real = S.claude_cwd
-
-    def counted(path):
-        opened.append(path)
-        return real(path)
-
-    with patch.object(S, "SESSIONS", root), patch.object(S, "claude_cwd", counted):
-        assert S.claude_session(project) == wanted
-    assert opened == [wanted]   # the newest one, and nothing else
 
 
 def test_a_candidate_proves_itself_with_any_log_not_only_the_newest(tmp_path):
@@ -359,8 +318,8 @@ def test_every_checkout_with_a_session_is_offered(tmp_path, monkeypatch):
 
     rows = {row["path"]: row for row in S.checkouts("codex")}
 
-    # `work/web` is not a third checkout. `codex_session` has always counted a
-    # subfolder as the repo above it, and the list now says the same thing.
+    # `work/web` is not a third checkout. A cell in a subfolder belongs to the
+    # repo above it (`under`), and each rollout is placed by its own `cwd`.
     assert set(rows) == {str(work.resolve()), str(other.resolve())}
     assert all(row["name"] for row in rows.values())
     # Merged onto the newest of the two, not whichever the walk reached last.

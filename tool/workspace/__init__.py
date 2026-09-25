@@ -7,7 +7,7 @@ the hosts logged about a checkout.
 """
 
 from .sessions import (
-    FINDERS, INJECTED, MAX_HUMAN_CHARS, SESSIONS, checkout, checkouts, folder,
+    INJECTED, MAX_HUMAN_CHARS, SESSIONS, checkout, checkouts, folder,
     logs, parse,
 )
 from .worktrees import create, remove, worktrees
@@ -17,5 +17,5 @@ __all__ = (
     "create", "worktrees", "remove",
     # session logs
     "SESSIONS", "INJECTED", "MAX_HUMAN_CHARS", "parse", "checkout", "checkouts",
-    "folder", "logs", "FINDERS",
+    "folder", "logs",
 )

@@ -2,9 +2,9 @@
 
 Three languages meet here and each has a reason. The Korean this file *reads*
 is the plan documents and decision records, which are written in Korean; the
-Korean it *prints* goes to the web handover, where a person reads
-it; and the context handed to the agent is English. Only the last of those is
-translated, and only at the one point where it crosses over.
+Korean it *hands out* — `active_page` and `decisions` — goes into `/api/draft`,
+where a person reads it; and the context handed to the agent is English. Only
+the last of those is translated, and only at the one point where it crosses over.
 """
 
 from __future__ import annotations
@@ -47,12 +47,8 @@ def run(repo: Path, *args: str) -> str:
         return ""
 
 
-def branch_line(repo: Path, english: bool = False) -> str:
-    """Korean by default. English is something the caller asks for.
-
-    `chat.handoff` puts what it returns straight onto a screen a person
-    reads. Flipping the language here to fix one agent context would turn
-    the web handover English along with it.
+def branch_line(repo: Path) -> str:
+    """The branch, what is unpushed and what is changed, for the agent.
 
     No translator. These are fixed strings this file writes itself, so the
     English is simply written out, and a round trip is saved on every session
@@ -64,12 +60,11 @@ def branch_line(repo: Path, english: bool = False) -> str:
     ahead = run(repo, "rev-list", "--count", "@{u}..HEAD") if branch != "?" else ""
     bits = [f"`{branch}`"]
     if ahead and ahead != "0":
-        bits.append(f"{ahead} unpushed" if english else f"미푸시 {ahead}")
+        bits.append(f"{ahead} unpushed")
     if dirty:
-        count = len(dirty.splitlines())
-        bits.append(f"{count} changed" if english else f"변경 {count}개")
+        bits.append(f"{len(dirty.splitlines())} changed")
     else:
-        bits.append("worktree clean" if english else "워크트리 깨끗")
+        bits.append("worktree clean")
     return " · ".join(bits)
 
 
@@ -94,7 +89,10 @@ def open_steps(path: Path) -> list[str]:
         if len(cells) < 3 or cells[0] in ("#", ""):
             continue
         state = cells[-1].replace("*", "").strip()
-        if state in ("완료", "취소", "상태") or "~~" in cells[1]:
+        # The first word, not the whole cell: `완료 — 양 호스트 실측` is done.
+        # Not a prefix either: `미완료` is not.
+        first = state.split()[0] if state else ""
+        if first in ("완료", "취소", "상태") or "~~" in cells[1]:
             continue
         rows.append(f"{cells[0]} {cells[2] if len(cells) > 2 else ''} — {state or '미착수'}")
     return rows[:MAX_ROWS]
@@ -247,7 +245,7 @@ def report(repo: Path, checkout: Path | None = None) -> str:
         "Where this repository stands right now. The wiki puts this in once, "
         "at session start.",
         "",
-        f"## Branch\n\n{branch_line(checkout or repo, english=True)}",
+        f"## Branch\n\n{branch_line(checkout or repo)}",
     ]
     if body:
         lines.append("\n## In progress\n")

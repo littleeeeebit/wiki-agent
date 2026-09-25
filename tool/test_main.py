@@ -20,9 +20,21 @@ import translate
 from agent.chat_session import ChatSession, Event
 
 
+class Screen(TestClient):
+    """A screen that knows its project: it names the one the server is on
+    when it sends, unless a test names another."""
+
+    def request(self, method, url, **kwargs):
+        from urllib.parse import quote
+
+        headers = dict(kwargs.pop("headers", None) or {})
+        headers.setdefault("X-Project", quote(chat.project()))
+        return super().request(method, url, headers=headers, **kwargs)
+
+
 def client() -> TestClient:
     """The screen as the server sees it: same host, same origin."""
-    return TestClient(main_app.app, base_url="http://127.0.0.1:8787")
+    return Screen(main_app.app, base_url="http://127.0.0.1:8787")
 
 
 @pytest.fixture(autouse=True)
@@ -791,6 +803,19 @@ def test_a_screen_that_missed_a_switch_writes_nothing_into_the_new_project(tmp_p
         assert web.get("/api/worktrees", headers={"X-Project": "b"}).json()["rows"] == []
         # The switch itself names its project in the body.
         assert web.post("/api/config/wiki", json={"repo": "a"}, headers={"X-Project": "b"}).status_code == 200
+
+
+def test_a_write_that_names_no_project_is_refused(tmp_path):
+    """Phase 6, review 11: a question sent before the first channel list came back
+    carried no project, and the check that stops a stale screen let it
+    through into whichever project the server was on."""
+
+    bare = TestClient(main_app.app, base_url="http://127.0.0.1:8787")
+    with patch.object(chat, "session", side_effect=AssertionError("reached a session")):
+        assert bare.post("/api/say/wiki", json={"text": "묻는다"}).status_code == 400
+    assert bare.post("/api/switch", json={"translate": False}).status_code == 400
+    assert bare.get("/api/switch").json()["translate"] is True   # reading needs no project
+    assert bare.get("/api/log/wiki").json() == []
 
 
 def test_a_stale_screen_cannot_switch_or_configure(tmp_path):
