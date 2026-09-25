@@ -125,8 +125,9 @@ def ask(query: str, project: str | Path | None, timeout: float, k: int = 8,
 
 
 # The keep-alive ping the daemon types into an idle Claude cell. The hook
-# (`keepalive.on_prompt`) knows its own turn by this text, and
-# `workspace.INJECTED` carries its opening so no count takes it for a person.
+# (`keepalive.on_prompt`) takes a turn of exactly this text for the ping once
+# the daemon confirms it sent one, and `workspace.INJECTED` carries its
+# opening so no count takes it for a person.
 PING = 'keep-alive — reply "ok" and nothing else.'
 NOTIFY_TIMEOUT = 0.15
 # How long a hook that had to start the daemon waits for it before dropping
@@ -134,8 +135,10 @@ NOTIFY_TIMEOUT = 0.15
 SPAWN_WAIT = 3.0
 
 
-def notify(path: str, body: dict, spawn_wait: float | None = None, retry: float = 0.0) -> bool:
-    """Tell the daemon what a cell is doing. `True` once it took the notice.
+def notify(path: str, body: dict, spawn_wait: float | None = None,
+           retry: float = 0.0) -> dict | None:
+    """Tell the daemon what a cell is doing. Its answer once it took the
+    notice — `{"ping": ...}` — or `None`.
 
     Unlike a search, a notice left undelivered is not free: the timer it would
     have set or cleared stays as it was. Two ways to miss, two waits:
@@ -154,17 +157,18 @@ def notify(path: str, body: dict, spawn_wait: float | None = None, retry: float 
     """
 
     if os.environ.get("WIKI_SEARCH") == "off":
-        return False
+        return None
     answer, started = call(path, body, NOTIFY_TIMEOUT)
     if answer is not None:
-        return True
+        return answer
     wait = (SPAWN_WAIT if spawn_wait is None else spawn_wait) if started else retry
     until = time.monotonic() + wait
     while time.monotonic() < until:
         time.sleep(0.1)
-        if call(path, body, NOTIFY_TIMEOUT, start=False)[0] is not None:
-            return True
-    return False
+        answer = call(path, body, NOTIFY_TIMEOUT, start=False)[0]
+        if answer is not None:
+            return answer
+    return None
 
 
 def call(path: str, body: dict, timeout: float, wait: float = 0.0,

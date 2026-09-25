@@ -50,10 +50,12 @@ def project(keep_alive: str | None) -> Path:
 
 @pytest.fixture
 def sent(monkeypatch):
-    """`search.notify` replaced by a list of what would have gone out, in an Orca cell."""
+    """`search.notify` replaced by a list of what would have gone out, in an
+    Orca cell. The daemon answers as if every ping-turn followed its ping."""
 
     calls: list[tuple[str, dict]] = []
-    monkeypatch.setattr(search, "notify", lambda path, body, **_waits: calls.append((path, body)) or True)
+    monkeypatch.setattr(search, "notify", lambda path, body, **_waits: calls.append((path, body))
+                        or {"ping": path == "/ping-turn"})
     monkeypatch.setenv("ORCA_TERMINAL_HANDLE", HANDLE)
     return calls
 
@@ -253,13 +255,14 @@ def test_a_notice_is_retried_against_a_daemon_that_was_there_but_slow(home, monk
     """A `/busy` lost to one 150 ms timeout left the timer armed while the
     turn ran, and the ping landed in it (the public copy's review)."""
 
-    answers = [(None, False), (None, False), ({}, False)]
-    monkeypatch.setattr(search, "call", lambda *a, **k: answers.pop(0) if answers else ({}, False))
+    took = ({"ping": False}, False)
+    answers = [(None, False), (None, False), took]
+    monkeypatch.setattr(search, "call", lambda *a, **k: answers.pop(0) if answers else took)
     assert search.notify("/busy", {}, spawn_wait=0, retry=2.0)
     assert answers == [], "not retried"
     answers[:] = [(None, False)] * 100
     assert not search.notify("/busy", {}, spawn_wait=0, retry=0.3), "the retry is bounded"
-    answers[:] = [(None, True)] + [({}, False)] * 5
+    answers[:] = [(None, True)] + [took] * 5
     assert not search.notify("/busy", {}, spawn_wait=0, retry=2.0), (
         "a daemon this call had to start holds no timer — no wait on every utterance")
     monkeypatch.setenv("WIKI_SEARCH", "off")
@@ -319,6 +322,24 @@ def test_the_ping_turn_carries_nothing_records_nothing_and_says_so(sent):
     ], sent
     rows = (repo / ".wiki" / "trajectory.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(rows) == 2, "the two utterances that are not the ping are recorded as before"
+
+
+def test_the_pings_words_from_a_person_are_the_persons_turn(sent, monkeypatch):
+    """Review round 2: the hook knew the ping by its words alone. A person
+    who typed them lost the turn's injection and record; one who quoted them
+    never reset the count."""
+
+    repo = project("keep_alive = 2")
+    monkeypatch.setattr(search, "notify", lambda path, body, **_waits: sent.append((path, body))
+                        or {"ping": False})
+    utter(keepalive.PING, repo)
+    utter(f"Why did I see {keepalive.PING}", repo)
+    assert sent == [
+        ("/ping-turn", {"session": "s1", "handle": HANDLE}),
+        ("/busy", {"session": "s1", "handle": HANDLE, "reset": True}),
+    ], sent
+    rows = (repo / ".wiki" / "trajectory.jsonl").read_text(encoding="utf-8").splitlines()
+    assert len(rows) == 2, "both turns are recorded as the person's"
 
 
 def test_the_ping_is_not_a_person_speaking():
@@ -415,6 +436,26 @@ def test_one_ping_at_55_minutes_and_none_past_the_cap():
         clock.at(minute)
         k.tick()
     assert len(k.call.sent) == 2, "past the cap"
+
+
+def test_a_ping_turn_with_no_ping_out_is_a_person_but_resets_only_a_counted_session():
+    """The daemon, not the words, says whether a turn is its ping (round 2).
+    A session it holds no count for may be answering a ping sent before a
+    restart, so there it resets nothing — it pings less, never past the cap
+    (`test_restarts_after_each_ping_never_take_a_session_past_two`)."""
+
+    k, clock = keeper()
+    person(k)
+    stop(k)
+    clock.at(55)
+    k.tick()
+    assert k.notice("ping-turn", {"session": "s1", "handle": HANDLE}) is True
+    assert k.sessions["s1"]["count"] == 1
+    stop(k)
+    assert k.notice("ping-turn", {"session": "s1", "handle": HANDLE}) is False
+    assert k.sessions["s1"]["state"] == "busy" and k.sessions["s1"]["count"] == 0
+    assert k.notice("ping-turn", {"session": "s9", "handle": "term_other"}) is False
+    assert k.sessions["s9"]["count"] is None
 
 
 def test_a_harness_utterance_after_a_ping_does_not_reset_the_count():

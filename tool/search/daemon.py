@@ -519,16 +519,29 @@ class Keeper:
         self.owners[handle] = session
         return mine
 
-    def notice(self, kind: str, data: dict) -> None:
-        """`own`, `ping-turn`, `busy`, `idle` or `gone`, from the cell's hooks."""
+    def notice(self, kind: str, data: dict) -> bool:
+        """`own`, `ping-turn`, `busy`, `idle` or `gone`, from the cell's hooks.
+
+        `True` only for a `ping-turn` answering a ping this daemon sent. The
+        hook knows the ping by its words, and a person can type the same
+        words; one that arrives with no ping out is that person, and counts as
+        their `busy` (review round 2). Except in a session this daemon holds
+        no count for — first seen since a restart, perhaps by its `own`: that
+        may be a ping sent before the restart, and a reset there could ping
+        past the cap.
+        """
 
         session, handle = str(data["session"]), str(data["handle"])
         with self.lock:
             if kind == "gone":
                 self.drop(session)
-                return
+                return False
             if kind not in ("own", "ping-turn", "busy", "idle"):
                 raise ValueError(kind)
+            known = self.sessions.get(session) or {}
+            if kind == "ping-turn" and known.get("state") != "sent":
+                kind, data = "busy", data | {"reset": known.get("count") is not None}
+            pinged = kind == "ping-turn"
             mine = self.claim(session, handle)
             # Every notice but `idle` means a turn is starting or running.
             # Its timer goes, and so does its expiry: a turn may run for hours,
@@ -542,6 +555,7 @@ class Keeper:
                 mine["expires"] = now + PING_EVERY * mine["limit"] + PING_REPLY
                 if mine["count"] is not None and mine["count"] < mine["limit"]:
                     mine["due"] = now + PING_EVERY
+        return pinged
 
     def latest(self) -> float:
         """The last expiry among the sessions. The idle shutdown waits for it."""
@@ -680,10 +694,10 @@ def handler(daemon: Daemon, server_ref: list) -> type:
                 return None
             if self.path in ("/own", "/ping-turn", "/busy", "/idle", "/gone"):
                 try:
-                    daemon.keeper.notice(self.path[1:], json.loads(data))
+                    pinged = daemon.keeper.notice(self.path[1:], json.loads(data))
                 except Exception as error:  # noqa: BLE001
                     return self.reply(400, {"error": type(error).__name__})
-                return self.reply(200, {})
+                return self.reply(200, {"ping": pinged})
             if self.path != "/search":
                 return self.reply(404, {})
             try:

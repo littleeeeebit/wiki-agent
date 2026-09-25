@@ -86,11 +86,18 @@ def on_prompt(prompt: str, host: str | None, project: str | None,
         return False, None
     body = {"session": session, "handle": cell[0]}
     if prompt.strip() == PING:
-        search.notify("/ping-turn", body, spawn_wait=0, retry=RETRY)
-        return True, None
+        # The words alone do not make it the ping — a person can type them.
+        # The daemon knows whether it sent one; if not, it has taken this as
+        # the person's `busy`, and the turn goes on as theirs (review round 2).
+        answer = search.notify("/ping-turn", body, spawn_wait=0, retry=RETRY)
+        if answer and answer.get("ping"):
+            return True, None
+        return False, None
+    # The ping's own mark does not stop a reset: the real ping never gets
+    # here, so a prompt carrying those words is a person quoting them.
+    reset = not any(mark in prompt for mark in INJECTED if mark not in PING)
     busy = threading.Thread(target=search.notify, daemon=False, args=(
-        "/busy", body | {"reset": not any(mark in prompt for mark in INJECTED)}),
-        kwargs={"spawn_wait": 0, "retry": RETRY})
+        "/busy", body | {"reset": reset}), kwargs={"spawn_wait": 0, "retry": RETRY})
     busy.start()
     return False, busy
 
