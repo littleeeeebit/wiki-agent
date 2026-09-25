@@ -245,6 +245,14 @@ def home(tmp_path, monkeypatch):
         yield home, old, trusted
 
 
+def test_off_windows_nothing_is_a_junction(tmp_path, monkeypatch):
+    import stat
+
+    # CPython defines the reparse tags only on Windows.
+    monkeypatch.delattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", raising=False)
+    assert setup_agents.is_junction(tmp_path) is False
+
+
 def test_the_hub_move_lists_every_line_before_writing_and_writes_nothing_unconfirmed(tmp_path, home):
     home, old, trusted = home
     workspace = tmp_path / "ws"
@@ -377,6 +385,13 @@ def test_a_turn_waiting_on_a_person_stops_at_the_deadline(tmp_path):
         waiting.start()
         waiting.join(5)
     assert got == [("cut", 0, "시간 한도")], "사람의 턴을 기다리다 한도를 넘기지 않는다"
+
+
+def test_no_turn_starts_once_the_deadline_has_passed(tmp_path):
+    Spender.heard = []
+    with patch.object(work, "ChatSession", Spender):
+        assert survey.turn(tmp_path, {}, "x", time.time() - 1) == ("cut", 0, "시간 한도")
+    assert Spender.heard == [], "한도를 지난 턴은 시작하지 않는다"
 
 
 class Cutter(Spender):

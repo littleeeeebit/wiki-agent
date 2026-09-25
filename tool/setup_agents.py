@@ -328,9 +328,10 @@ def skill_links(home=None):
 
 def is_junction(path):
     """`Path.is_junction` arrives only in 3.12; the reparse tag reads the same
-    from 3.8 on, and is absent off Windows."""
+    from 3.8 on. Off Windows neither the tag nor its constant exists."""
+    mount = getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", None)
     try:
-        return getattr(os.lstat(path), "st_reparse_tag", 0) == stat.IO_REPARSE_TAG_MOUNT_POINT
+        return mount is not None and getattr(os.lstat(path), "st_reparse_tag", 0) == mount
     except OSError:
         return False
 

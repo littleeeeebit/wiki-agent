@@ -260,14 +260,15 @@ def turn(path: Path, spec: dict, text: str, deadline: float | None) -> tuple[str
     person."""
 
     while True:
+        # Checked before every try: a turn begun past the limit may end before
+        # the wait below looks at the clock, and would then count as done.
+        if deadline is not None and time.time() >= deadline:
+            return "cut", 0, "시간 한도"
         try:
             release = query.hold(work._busy, query._lock, str(path), "", kind="turn")
             break
         except HTTPException:
-            # A person's turn there ends first — unless the limit ends before it.
-            if deadline is not None and time.time() >= deadline:
-                return "cut", 0, "시간 한도"
-            time.sleep(1)
+            time.sleep(1)    # a person's turn there ends first
     chosen = spec.get("cell") or {}
     try:
         run = work.begin(path, work.session(path, chosen.get("model", ""), chosen.get("effort", "")), text, release)
