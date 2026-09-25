@@ -30,3 +30,4 @@ keep_korean = [
 "강제" = "enforcement"
 "근거" = "evidence"
 "사다리" = "ladder"
+"wiki-agent" = "wiki-agent"  # this repository's name; came back as `위키-에이전트`

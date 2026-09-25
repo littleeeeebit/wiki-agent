@@ -1,5 +1,10 @@
 # Verification record for the public copy
 
+This file is the record from the days of the public copy
+(`ai-coding-agent-wiki-public`), kept as it was. The five channels and the
+Slack runner below are gone from this repository. The current verification is
+[`docs/plans/done/wiki-agent/7-verify.md`](plans/done/wiki-agent/7-verify.md).
+
 ## 2026-09-17 — functional changes applied
 
 The project selection became shared across all five channels, and

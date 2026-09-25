@@ -87,12 +87,19 @@ export type Peek = {
 // switch is refused (409) instead of writing into the other project, and the
 // refusal names where the server is, so the screen can follow.
 let claimed = ''
+// Until the first channel list names the project, a request would go out
+// with no `X-Project` and land in whichever project the server is on. So
+// everything but that list waits for it; the server refuses a write without it.
+let known: () => void = () => {}
+const claimedOnce = new Promise<void>((resolve) => (known = resolve))
 
 export const claim = (name: string) => {
   claimed = name
+  if (name) known()
 }
 
-function scoped(): Record<string, string> {
+async function scoped(url: string): Promise<Record<string, string>> {
+  if (!url.startsWith('/api/channels')) await claimedOnce
   return claimed ? { 'X-Project': encodeURIComponent(claimed) } : {}
 }
 
@@ -103,7 +110,7 @@ function moved(res: Response) {
   if (to) window.dispatchEvent(new CustomEvent('project-moved', { detail: decodeURIComponent(to) }))
 }
 
-const get = (url: string) => fetch(url, { headers: scoped() })
+const get = async (url: string) => fetch(url, { headers: await scoped(url) })
 
 async function json<T>(res: Response, what: string): Promise<T> {
   if (!res.ok) {
@@ -119,10 +126,10 @@ async function json<T>(res: Response, what: string): Promise<T> {
   return res.json()
 }
 
-const post = (url: string, body?: unknown) =>
+const post = async (url: string, body?: unknown) =>
   fetch(url, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...scoped() },
+    headers: { 'Content-Type': 'application/json', ...(await scoped(url)) },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
 

@@ -358,18 +358,24 @@ def _ask(system: str, batch: list[str], seconds: float) -> list[str] | None:
     key = api_key()
     if not key or seconds <= 0 or not batch:
         return None
+    text = json.dumps(batch, ensure_ascii=False)
+    # A token is at least a character, so twice the input in characters is
+    # more than any translation of it needs. Cut short, the array does not
+    # parse and the originals are kept; the cap is what makes the hold below
+    # a ceiling rather than a guess.
+    most = 2 * len(text) + 64
     body = json.dumps(
         {
             "systemInstruction": {"parts": [{"text": system}]},
             "contents": [
-                {"role": "user",
-                 "parts": [{"text": json.dumps(batch, ensure_ascii=False)}]}
+                {"role": "user", "parts": [{"text": text}]}
             ],
             # A declared response schema is what makes batching safe: the answer
             # is an array or it is nothing, so a homegrown separator protocol
             # that the model could quietly break never has to exist.
             "generationConfig": {
                 "temperature": 0,
+                "maxOutputTokens": most,
                 "responseMimeType": "application/json",
                 "responseSchema": {"type": "ARRAY", "items": {"type": "STRING"}},
             },
@@ -384,15 +390,16 @@ def _ask(system: str, batch: list[str], seconds: float) -> list[str] | None:
     # answer could fail on a lock — the hook and the screen share this file —
     # and the money would be spent with nothing on the books; every later
     # request would then be judged against a month that looked cheaper than
-    # it was. Every byte sent counts as a token each way, which is more than a
-    # translation costs; nothing caps the output, so it is not a bound. Not
-    # written means not sent.
+    # it was. Every byte sent counts as an input token and `maxOutputTokens`
+    # as output — `MODEL` does not think, so nothing else is billed — which
+    # makes the hold the most this request can cost. Not written means not
+    # sent.
     #
     # One month for the hold and whatever follows it. A request held on the
     # 30th and settled on the 1st would otherwise leave the hold in the old
     # month and a negative difference in the new one — headroom nobody paid for.
     at = month()
-    held = len(body) * (PRICE_IN + PRICE_OUT) / 1_000_000
+    held = (len(body) * PRICE_IN + most * PRICE_OUT) / 1_000_000
     if not charge(held, at):
         return None
     # The hold may have waited on a lock, and that wait came out of the

@@ -112,11 +112,14 @@ export default function App() {
   }, [follow])
 
   useEffect(() => {
-    Promise.all([api.getChannels(), api.getSwitch()])
-      .then(([list, now]) => {
+    // The list first: it names the project, and every other request waits
+    // for that (`api.claim`).
+    api.getChannels()
+      .then((list) => {
         accept(list)
-        setSw(now)
+        return api.getSwitch()
       })
+      .then(setSw)
       .catch(() => setFault('서버가 안 뜬 것 같다 — tool\\app.cmd, 또는 python tool/main'))
     // Apart, because listing Codex's models starts Codex. The screen does not
     // wait on that; only the pickers do.
