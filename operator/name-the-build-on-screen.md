@@ -15,7 +15,10 @@ branch and commit of the build that is up. If the frontend is served
 separately, name that bundle too. The request only works if the user can read
 that line and decide for themselves that this is the thing they meant to look
 at. Attach the same line to the failure report that comes back, so the run is
-recorded against a build.
+recorded against a build. Read that line off the server after starting it —
+never from memory, and never from a `git` query, which is not guaranteed to be
+what the server serves. Write `launcher_worktree` too; `unknown` means the
+launcher did not say, not that the worktree is clean.
 
 What goes wrong. **A run the user paid for gets thrown away.** A person
 opening the app, having a conversation and writing up the result costs far

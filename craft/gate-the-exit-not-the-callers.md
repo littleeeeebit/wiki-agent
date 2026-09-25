@@ -13,7 +13,14 @@ links: [client-lifecycle-in-one-scope, diagnose-from-what-ran, verify-narrow-the
 
 Rule. When what leaves has to be restricted — telemetry, logs, webhooks,
 reports — gate it at the last point the value crosses the boundary, not at
-every place that produces the value.
+every place that produces the value. When collapsing exits, count every direct
+write with `grep`. Two consecutive rounds of P0 on the same file and subject
+mean the place chosen to block was wrong — collapse the exits then. The check
+runs over artefacts a real producer left and watches three things: planted
+contamination gets out from nowhere, real values survive intact, a whole real
+log passes without a crash. An allow-list separates types first — numbers and
+booleans pass, strings are restricted. What cannot be told apart does not go
+as plain text: a digest is the default.
 
 | Do | Do not |
 | --- | --- |

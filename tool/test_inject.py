@@ -800,6 +800,25 @@ def test_the_invariant_goes_red_when_a_clause_is_missing():
     )
 
 
+def test_the_replay_sees_a_compact_in_the_same_second_as_the_injection():
+    """Review round 1: rows keep whole seconds, compacts keep fractions. A
+    compact at 01.5 and an injection at 01.8, recorded as 01, compared as
+    `compact <= row` and the reset was missed — the replay then counted a
+    page as seen that the hook had sent again."""
+
+    import datetime as dt
+
+    from trigger_audit import compacted_between
+
+    def at(second: float) -> dt.datetime:
+        return dt.datetime(2026, 9, 25, 12, 0, tzinfo=dt.timezone.utc) + dt.timedelta(seconds=second)
+
+    assert compacted_between(at(0), at(1), [at(1.5)])
+    assert compacted_between(at(1), at(5), [at(1.5)]), "just after the previous row, same second"
+    assert not compacted_between(at(0), at(1), [at(2.5)]), "after this row"
+    assert not compacted_between(None, at(1), [at(0.5)]), "a session's first row has nothing to reset"
+
+
 def test_a_repeat_declaration_owes_a_short_rule_paragraph():
     """Lint's half: a declaring page with no paragraph, or one past
     `REPEAT_MAX`, would repeat nothing or repeat too much."""

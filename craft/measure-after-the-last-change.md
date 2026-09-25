@@ -14,7 +14,10 @@ links: [gate-the-exit-not-the-callers, diagnose-from-what-ran, client-lifecycle-
 Rule. If a value is checked, recorded or fitted to a budget, that has to
 happen after everything that can change it. Insert one step into a pipeline
 and every place below it that measured the same value is now measuring a stale
-one.
+one. So adding a step means counting every place that reads the value it
+changes; if one sits above it, move the step up or the read down. When two
+review findings land on the same value, follow that value's life to where it
+changes last instead of moving the point again.
 
 What goes wrong. The check keeps passing while measuring the wrong thing.
 Worse than not measuring — there is a number, so it looks measured.

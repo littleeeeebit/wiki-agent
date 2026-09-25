@@ -364,6 +364,22 @@ def render(matched: list, limits: tuple, project, seen=frozenset(), repeat=froze
             [label(p) for _s, _b, p in rules + decisions], squeezed)
 
 
+def compacted_between(previous, at, compacts: list) -> bool:
+    """Did a compact fall between this session's previous row and this one?
+
+    A row's `at` is cut to the second and a transcript's compact time is not,
+    so a compact 0.3 s before the injection in the same second would sort
+    after it. Compared at the second, and inclusive at both ends: a compact
+    in the same second as either row resets. Wrong that way, the replay
+    sends a page in full once more than the hook did — the saving is
+    understated, never overstated.
+    """
+
+    if previous is None:
+        return False
+    return any(previous <= c.replace(microsecond=0) <= at for c in compacts)
+
+
 def recall_misses(matched: list, seen: set, repeat: set, injection: str,
                   squeezed: bool = False) -> list[str]:
     """The recall invariant — one judgement, shared by `replay` and the tests.
@@ -445,7 +461,7 @@ def replay(argv: list[str]) -> int:
             old_body, _full, names, _s = render(matched, limits, project)
             # What `inject.recall` would have read: this session's own
             # simulated rows, cleared by a compact the transcript records.
-            reset = previous is not None and any(previous < c <= row["_at"] for c in compacts)
+            reset = compacted_between(previous, row["_at"], compacts)
             seen = set() if reset or not isinstance(key, str) else remembered(sim, limit)
             new_body, full, _names, squeezed = render(matched, limits, project, seen, repeat, limit)
             new_size = len(new_body.encode("utf-8"))

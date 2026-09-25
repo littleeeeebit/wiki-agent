@@ -14,7 +14,9 @@ links: [ask-with-arrow-key-options, hooks-fail-open]
 # What the agent writes is English. What the person reads is mirrored
 
 Rule. Tool descriptions, progress reports and chat replies are written in
-English. Korean survives only where it names a Korean thing — the glossary
+English, and so is everything else the agent writes for the agent: comments,
+docstrings, test names, commit messages. Korean survives only where it names a
+Korean thing — the glossary
 holds that list, and a word the translator refuses to render is exactly a word
 this rule may not deny.
 

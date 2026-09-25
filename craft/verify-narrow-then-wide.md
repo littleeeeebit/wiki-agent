@@ -13,6 +13,11 @@ links: [diagnose-from-what-ran, pick-up-async-results, do-the-whole-instruction]
 
 Rule. While fixing, run **only what the change touches**. The full suite and
 the full live run happen once, just before a commit, a review or a PR.
+Fixing one judgement runs that test file; closing out a domain, that
+directory; a change whose main evidence is live, one live run, not driven to
+the end once it has given its answer. Anything untouched since the last run is
+not run again. Two exceptions: a failure with an unknown cause runs
+everything, and a change to a shared file looks at every place that uses it.
 
 | When | What |
 | --- | --- |
