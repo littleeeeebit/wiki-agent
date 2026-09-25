@@ -362,3 +362,25 @@ def test_only_a_missing_thread_starts_a_new_codex_conversation(tmp_path, answer,
                 assert not session.alive
         finally:
             session.close()
+
+
+def test_a_stop_before_the_process_exists_cuts_a_slow_start(tmp_path):
+    """Round 2: stopped before `Popen` returned, a Codex that did not answer
+    `initialize` held the turn — and the worktree — for a boot timeout per
+    request. The process is killed as soon as it exists."""
+
+    session = ChatSession(tmp_path, model="codex:test-model")
+    halt = threading.Event()
+    real_popen = subprocess.Popen
+
+    def spawn(command, **kwargs):
+        halt.set()       # the stop lands while the process is being created
+        session.stop()   # nothing to kill yet
+        return real_popen([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+
+    with patch.object(chat_session.subprocess, "Popen", spawn),          patch.object(chat_session, "cli_command", side_effect=lambda name: [name]),          patch.object(chat_session, "BOOT_TIMEOUT", 10):
+        started = time.monotonic()
+        with pytest.raises(RuntimeError):   # "보내지 못했다" or "닫혔다": either way at once
+            list(session.say("x", halt))
+        assert time.monotonic() - started < 5
+    assert not session.alive

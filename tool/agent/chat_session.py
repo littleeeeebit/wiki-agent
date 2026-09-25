@@ -159,6 +159,9 @@ class ChatSession:
         self._changes: dict[str, list[str]] = {}
         # The Codex thread a resume could not reach; told once, on the next turn.
         self._lost: str | None = None
+        # The running turn's stop, for `_spawn`: a stop that came before the
+        # process existed kills it the moment it does.
+        self._halt: threading.Event | None = None
         # "Allow for this session": kept here, never handed to the CLI. A rule
         # the CLI held would answer before `_approval` ever saw the path, and
         # Claude's `Edit` rule does not look at paths at all. Tied to this
@@ -229,6 +232,12 @@ class ChatSession:
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
             errors="replace", bufsize=1,
         )
+        # `stop()` sets the turn's halt before it looks at `_proc`. So either it
+        # sees this process, or this sees its halt — never neither. Waiting for
+        # `ensure()` to return left `_open_thread` waiting on a process nobody
+        # would kill, for a boot timeout per request.
+        if self._halt is not None and self._halt.is_set():
+            self._proc.kill()
         threading.Thread(target=self._pump, args=(self._proc, self._events), daemon=True).start()
         threading.Thread(target=self._pump_stderr, args=(self._proc, self._stderr), daemon=True).start()
 
@@ -504,6 +513,7 @@ class ChatSession:
             yield Event("error", "앞 턴이 아직 안 끝났다.")
             return
         completed = False
+        self._halt = halt
         try:
             self.ensure()
             if halt is not None and halt.is_set():
@@ -544,6 +554,7 @@ class ChatSession:
             # `codex exec` is one process per turn; the others live on.
             if (self.is_codex and not self.app) or not completed:
                 self.close()
+            self._halt = None
             self._turn.release()
 
     def _drain(self):
