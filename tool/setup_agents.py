@@ -326,6 +326,63 @@ def install_global(choice, check, projects, trust):
     print("전역 배선 검사 완료. CLI를 업데이트한 뒤에는 `--global --check` 만 다시 돌리세요.")
 
 
+def compact_window(tokens, check=False):
+    """Set the automatic compact threshold in every user-level host config.
+
+    Only these two keys; the hook wiring is not touched. Both are token
+    counts, checked in each host's docs on 2026-09-25: Claude's
+    `autoCompactWindow` takes 100K to 1M ("Model configuration"), Codex's
+    top-level `model_auto_compact_token_limit` is "Token threshold that
+    triggers automatic history compaction" ("Config reference"). A key
+    already holding another value is somebody's choice — reported, never
+    overwritten. Returns what was not set. `operator/compact-before-idle`
+    holds why 400K.
+    """
+    if not 100_000 <= tokens <= 1_000_000:
+        raise ValueError(f"문턱은 100000~1000000 토큰이어야 합니다 (Claude 의 범위): {tokens}")
+    import tomllib
+
+    from apply import read_json, user_files
+
+    left = []
+    for path in user_files("claude"):
+        settings = read_json(path)
+        have = settings.get("autoCompactWindow")
+        if have == tokens:
+            print(f"그대로: {path}")
+        # Present, not non-null: a `null` somebody wrote is a value too (review round 3).
+        elif "autoCompactWindow" in settings or check:
+            shown = json.dumps(have) if "autoCompactWindow" in settings else "없음"
+            left.append(f"{path}: autoCompactWindow = {shown} (원하는 값 {tokens})")
+        else:
+            settings["autoCompactWindow"] = tokens
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(settings, indent=2, ensure_ascii=False) + "\n",
+                            encoding="utf-8", newline="\n")
+            print(f"썼다: {path} autoCompactWindow = {tokens}")
+    for hooks in user_files("codex"):
+        path = hooks.parent / "config.toml"
+        if not hooks.parent.is_dir():
+            continue
+        text = path.read_text(encoding="utf-8") if path.exists() else ""
+        have = tomllib.loads(text).get("model_auto_compact_token_limit")
+        if have == tokens:
+            print(f"그대로: {path}")
+        elif have is not None or check:
+            left.append(f"{path}: model_auto_compact_token_limit = {have} (원하는 값 {tokens})")
+        else:
+            # A top-level key has to come before the first table. The first
+            # line is before it whatever the file holds — a `[` inside a
+            # multi-line array or string is not a table, and a file whose last
+            # line has no newline got the key glued onto it (review round 1).
+            path.write_text(f"model_auto_compact_token_limit = {tokens}\n" + text,
+                            encoding="utf-8", newline="\n")
+            print(f"썼다: {path} model_auto_compact_token_limit = {tokens}")
+    for line in left:
+        print(f"{'맞지 않음' if check else '안 바꿈 — 다른 값이 있다. 사람이 고친다'}: {line}")
+    return left
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
@@ -339,9 +396,13 @@ def main():
     parser.add_argument("--trust-codex", action="store_true",
                         help="--global 과 함께. 이 위키의 hook.py 를 부르는 Codex 훅만 신뢰로 기록한다")
     parser.add_argument("--allow-dirty-wiki", action="store_true", help="미커밋 위키 개발 검증 전용. SHA 일치는 여전히 필수")
+    parser.add_argument("--compact-window", type=int, metavar="TOKENS",
+                        help="Claude·Codex 사용자 설정의 자동 compact 문턱만 쓴다. 훅 배선은 안 건드린다")
     args = parser.parse_args()
     projects = [p.expanduser().resolve() for p in args.project or []]
     try:
+        if args.compact_window is not None:
+            return 1 if compact_window(args.compact_window, args.check) else 0
         if args.everywhere:
             install_global(args.agent, args.check, projects, args.trust_codex)
             return 0

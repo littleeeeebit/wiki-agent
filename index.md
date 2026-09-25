@@ -24,6 +24,7 @@ python tool/intersect.py raw/census-*.jsonl
 | [Cleanup after a merge](operator/after-merge-cleanup.md) | `contract` |
 | [Ask as options](operator/ask-with-arrow-key-options.md) | `contract` |
 | [Do not multiply subagents](operator/agent-delegation.md) | `contract` |
+| [Compact before stepping away](operator/compact-before-idle.md) | `contract` |
 
 ## craft — follows the technique
 

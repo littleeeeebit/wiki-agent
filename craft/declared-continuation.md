@@ -33,6 +33,10 @@ A Stop hook reads the last assistant message and reverts with
 A true `stop_hook_active` passes unconditionally. The sentence is still there
 after one revert, so without that it could revert forever.
 
+A keep-alive ping turn is answered `ok` and nothing else, which holds no
+promise, so it passes — [[compact-before-idle]]. `tool/test_keepalive.py`
+pins that.
+
 ## Why the judgement has to stay narrow
 
 `hooks-fail-open` makes the same argument here: enforcement that stops the
