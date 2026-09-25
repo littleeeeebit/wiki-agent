@@ -284,8 +284,12 @@ def test_korean_with_a_few_identifiers_is_not_sent_to_korean(
     korean = "없음. 이 저장소에 `worktree-safety`라는 문서가 없다. SCHEMA.md와 ENFORCEMENT.md에도 없다."
     assert T.translate([korean], T.EN_KO, soon()) == [korean]
     assert asked == [], "a request went out for text that is already Korean"
-    T.translate(["The hook passes. 훅.", "wiki-agent"], T.EN_KO, soon())
-    assert asked == [["The hook passes. 훅.", "wiki-agent"]], "English stopped being sent"
+    paths = "없음. src/App.tsx, tool/main/app.py, README.md"
+    assert T.translate([paths], T.EN_KO, soon()) == [paths]
+    assert asked == [], "paths counted as English"
+    english = ["The hook passes. 훅.", "wiki-agent", "See " + "하" * 12 + " README.md for details."]
+    T.translate(english, T.EN_KO, soon())
+    assert asked == [english], "English stopped being sent"
 
 
 def test_anything_that_raises_still_returns_the_input(

@@ -103,8 +103,11 @@ KO_EN = "ko->en"
 EN_KO = "en->ko"
 
 HANGUL = re.compile(r"[가-힣]")
-LATIN = re.compile(r"[A-Za-z]")
+HANGUL_WORD = re.compile(r"[가-힣]+")
 LATIN_WORD = re.compile(r"[A-Za-z]+")
+# Not prose: inline code, and a token with a dot, slash or underscore between
+# two word characters — a path, a file name, a module.
+NOT_PROSE = re.compile(r"`[^`\n]*`|\S*\w[./\\_]\w\S*")
 
 # Sentinels from the Unicode private use area. No source document and no
 # model vocabulary produces these, so a placeholder that comes back altered
@@ -450,17 +453,18 @@ def worth_translating(text: str, direction: str) -> bool:
     optimization is that translating English to English comes back subtly
     reworded, and reworded rules are rules nobody can diff.
 
-    Toward Korean, a few letters are not enough: Korean prose carries paths
-    and names, and one such answer sent to Korean came back in English. A
-    Korean word is two or three syllables, so more syllables than Latin words
-    is Korean with identifiers in it, not English.
+    Toward Korean, one Latin letter is not enough: Korean prose carries paths
+    and names, and one such answer sent to Korean came back in English. So the
+    prose is weighed, words against words, with code and paths taken out first
+    — they are neither language.
     """
 
     if not text.strip():
         return False
     if direction == KO_EN:
         return bool(HANGUL.search(text))
-    return len(LATIN_WORD.findall(text)) > len(HANGUL.findall(text))
+    prose = NOT_PROSE.sub(" ", text)
+    return len(LATIN_WORD.findall(prose)) > len(HANGUL_WORD.findall(prose))
 
 
 def translate(texts: list[str], direction: str, deadline: float) -> list[str]:
