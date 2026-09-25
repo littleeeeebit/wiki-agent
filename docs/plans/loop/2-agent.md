@@ -60,9 +60,15 @@
 | 길 | 하는 일 |
 | --- | --- |
 | `POST /api/work/say` | 받는 순간 작업트리를 잡는다(지금과 같다). 턴 스레드를 띄우고 `tail(run, -1)` 을 돌려준다. 화면 코드는 지금처럼 한 요청으로 받는다 |
-| `GET /api/work/events?path=&turn=&after=` | 다시 붙기. `turn` 이 지금 버퍼의 턴이 아니면 410. 경로는 `ours` 로 본다 |
+| `GET /api/work/events?path=&turn=&after=` | 다시 붙기. `turn` 이 지금 버퍼의 턴이 아니면 410. 경로는 아래 "세션이 있는 경로" 로 본다 |
 | `GET /api/work/log` | 지금의 기록에 `running: {turn, session_id, seq}` 를 더한다. 도는 턴이 없으면 `null` |
 | `POST /api/work/stop` | `{path, turn}`. 그 턴이 아직 돌면 멈춘다. 다른 턴이면 409 |
+
+세션이 있는 경로. `events`, `stop`, 승인의 답(`/api/work/answer`)은 `ours` 가 아니라 서버가 이미 세션을 만든
+경로(`_sessions`·`_runs` 의 열쇠)인지로 본다. 그 경로는 세션을 만들 때 `ours` 를 한 번 거쳤다. `ours` 는 선택한
+프로젝트의 목록으로 보므로(`tool/main/work.py:44`), 프로젝트를 바꾼 뒤 옛 턴에 다시 붙으면 404 가 된다. 승인의
+답은 지금도 세션만 본다(`tool/main/work.py:290`). 새 지시, 비우기, 지우기는 지금처럼 `ours` 다. 4단계가 전환을
+도는 턴과 떼어 놓을 때 이 계약이 그대로 쓰인다(리뷰 라운드 2).
 
 잡음은 턴 스레드가 쥐고 스레드의 `finally` 에서 놓는다. `work.say` 는 더 이상 `query.held` 를
 쓰지 않는다. 스레드를 띄우지 못하면 그 자리에서 놓는다. 기록(`remember(path, "assistant", …)`)도
@@ -103,6 +109,7 @@ ponytail: Claude 의 `interrupt` 제어 요청과 Codex 의 `turn/interrupt` 는
 - 멈추기. `stop` 뒤 `error` 이벤트가 오고, 잡음이 풀리고, 프로세스가 없다. 다음 `say` 가 같은
   CLI 세션 id 로 이어진다
 - 두 화면이 한 턴을 꼬리 물면 둘 다 같은 순서로 받는다
+- 턴이 끝난 뒤 프로젝트를 바꿔도 그 턴의 `events` 에 붙을 수 있다. 세션이 없는 경로는 404
 
 ## 승인 기록
 
