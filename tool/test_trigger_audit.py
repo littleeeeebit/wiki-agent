@@ -79,8 +79,33 @@ def test_codex_prefers_the_usage_record_and_drops_repeated_counts():
 
     record = {"type": "token_usage_record", "timestamp": "2026-09-20T00:00:02Z",
               "payload": {"response_id": "r1", "usage": codex_usage(500, 100, 7)}}
-    new = trigger_audit.read_session("codex", write([meta, said, count(110), record]))
-    assert new["turns"][0]["tokens"] == {"input": 400, "cache_write": 0, "cache_read": 100, "output": 7}
+    # A rollout that changed format midway: the old count stays, and only the
+    # count that follows the record is its repeat.
+    new = trigger_audit.read_session("codex", write([meta, said, count(110), record, count(330)]))
+    assert new["turns"][0]["tokens"] == {"input": 440, "cache_write": 0, "cache_read": 160, "output": 17}
+
+
+def test_usage_keeps_two_repositories_of_one_name_apart():
+    """Keyed by the main clone's path: a name alone merges two clones."""
+
+    import subprocess
+
+    root = Path(tempfile.mkdtemp())
+    for side in ("a", "b"):
+        subprocess.run(["git", "init", "-q", str(root / side / "same")], check=True)
+    cache: dict = {}
+    first = trigger_audit.repo_of(str(root / "a" / "same"), cache)
+    second = trigger_audit.repo_of(str(root / "b" / "same"), cache)
+    assert first and second and first != second, (first, second)
+    assert trigger_audit.repo_of(str(root / "nowhere"), cache) is None
+
+    # A deleted Orca worktree's folder joins the one clone of its name, and
+    # stays apart when two clones share it.
+    gone = "C:/u/orca/workspaces/shop"
+    one = trigger_audit.folding({"C:/p/shop", gone, "C:/p/other"})
+    assert one(gone) == "C:/p/shop" and one("C:/p/other") == "C:/p/other"
+    two = trigger_audit.folding({"C:/p/shop", "D:/q/shop", gone})
+    assert two(gone) == gone
 
 
 def test_tasks_draw_only_whole_runs_of_people():

@@ -222,9 +222,10 @@ def read_session(host: str, path: Path) -> dict:
     on each, so responses are joined by `message.id`, the last row winning —
     in one transcript 2,799 rows were 2,139 responses. A subagent's rows
     (`isSidechain`) cost the turn but are not the session's context. Codex's
-    `token_usage_record` carries a `response_id`; rollouts from before it have
-    only `token_count`, which repeats, so a repeat of the running total is
-    dropped. Codex's `input_tokens` includes the cached part.
+    `token_usage_record` carries a `response_id` and is followed by a
+    `token_count` for the same response, which is dropped. Rollouts from
+    before it have only `token_count`, which repeats, so a repeat of the
+    running total is dropped. Codex's `input_tokens` includes the cached part.
 
     Per turn: `idle`, minutes since the last response or utterance before it;
     `cold`, the first response's input that was not read from the cache —
@@ -237,7 +238,7 @@ def read_session(host: str, path: Path) -> dict:
 
     out: dict = {"cwd": None, "turns": [], "compacts": []}
     usage: dict[str, dict] = {}
-    state = {"turn": None, "context": 0, "last": None, "total": None, "records": False}
+    state = {"turn": None, "context": 0, "last": None, "total": None, "paired": False}
 
     def utterance(at: dt.datetime, text: str) -> None:
         before = [t for t in (state["last"], state["turn"] and state["turn"]["at"]) if t]
@@ -296,14 +297,19 @@ def read_session(host: str, path: Path) -> dict:
             elif kind == "compacted":
                 out["compacts"].append((at, state["context"]))
             elif kind == "token_usage_record":
-                state["records"] = True
+                state["paired"] = True
                 respond(str(payload.get("response_id") or n), at, *codex_tokens(payload.get("usage")))
             elif kind == "event_msg" and payload.get("type") == "token_count":
                 info = payload.get("info") or {}
                 total = (info.get("total_token_usage") or {}).get("total_tokens")
-                if info.get("last_token_usage") and total != state["total"]:
-                    state["total"] = total
+                # A record is followed by its own count — on this PC 7,830 of
+                # 7,830 times — so only that count is the record's repeat. A
+                # rollout that changed format midway keeps its earlier counts.
+                if state["paired"]:
+                    state["paired"] = False
+                elif info.get("last_token_usage") and total != state["total"]:
                     respond(f"count:{n}", at, *codex_tokens(info["last_token_usage"]))
+                state["total"] = total
             elif kind == "event_msg":
                 text = None
                 if payload.get("type") == "user_message":
@@ -322,8 +328,7 @@ def read_session(host: str, path: Path) -> dict:
                     hooked([(len(text), False)])
 
     for turn in out["turns"]:
-        # A rollout with both kinds counts the precise one.
-        keys = [k for k in turn.pop("responses") if not (state["records"] and k.startswith("count:"))]
+        keys = turn.pop("responses")
         tokens = Counter()
         for key in keys:
             tokens.update(usage[key])
@@ -515,12 +520,20 @@ IDLE = 60  # Minutes. Past this the prompt cache (one hour) has gone cold
 LENGTHS = ((1, 4), (5, 19), (20, None))
 
 
-def repo_of(cwd: str | None, cache: dict) -> str | None:
-    """The repository a session ran in, by name, or `None` for no repository.
+def orca(path: str) -> bool:
+    """Is this Orca's `~/orca/workspaces/<repo>` folder, which holds worktrees?"""
+    return Path(path).parent.name == "workspaces" and Path(path).parent.parent.name == "orca"
 
-    Git's answer for the nearest directory still on disk. A deleted Orca
-    worktree leaves `~/orca/workspaces/<repo>/`, which git does not answer
-    for, and then that folder's name is the repository's. A session outside
+
+def repo_of(cwd: str | None, cache: dict) -> str | None:
+    """The repository a session ran in, as its main clone's path, or `None`.
+
+    Git's answer for the nearest directory still on disk. A path, not a name:
+    two clones called the same are two repositories. A deleted Orca worktree
+    leaves `~/orca/workspaces/<repo>/`, which git does not answer for; any
+    worktree still standing beside it does, and names the same clone. With
+    none standing, that folder is the answer, and `usage` folds it into the
+    one repository of its name once every session is read. A session outside
     any repository — a scratchpad, a tool's model call in a temporary folder —
     is not anyone's work on a repository.
 
@@ -533,9 +546,22 @@ def repo_of(cwd: str | None, cache: dict) -> str | None:
         here = Path(cwd)
         alive = next((p for p in (here, *here.parents) if p.is_dir()), None)
         _top, repo, _branch = checkout(alive) if alive else ("", "", "")
-        orca = alive is not None and alive.parent.name == "workspaces" and alive.parent.parent.name == "orca"
-        cache[cwd] = Path(repo).name if repo else (alive.name if orca and alive != here else None)
+        if not repo and alive is not None and alive != here and orca(str(alive)):
+            repo = next((found for sibling in sorted(alive.iterdir()) if sibling.is_dir()
+                         for _t, found, _b in [checkout(sibling)] if found), str(alive))
+        cache[cwd] = repo or None
     return cache[cwd]
+
+
+def folding(repos: set[str]):
+    """`repo → repo`, sending an Orca folder to the one clone of its name."""
+
+    clones = defaultdict(list)
+    for repo in repos:
+        if not orca(repo):
+            clones[Path(repo).name].append(repo)
+    return lambda repo: (clones[Path(repo).name][0]
+                         if orca(repo) and len(clones[Path(repo).name]) == 1 else repo)
 
 
 def usage(argv: list[str]) -> int:
@@ -570,11 +596,21 @@ def usage(argv: list[str]) -> int:
         turns += [(key, session, t) for t in mine]
         compacts[key] += [c for at, c in read["compacts"] if since <= at < until]
 
+    # An Orca folder whose worktrees are all gone joins the one repository of
+    # its name. With two of that name there is no telling, and it stays apart.
+    fold = folding({k[0] for k, _s, _t in turns})
+    turns = [((fold(k[0]), k[1]), s, t) for k, s, t in turns]
+    for key in [k for k in compacts if fold(k[0]) != k[0]]:
+        compacts[(fold(key[0]), key[1])] += compacts.pop(key)
+
     groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
     length: Counter = Counter()
     for key, session, turn in turns:
         groups[key].append(turn)
         length[session] += 1
+    # The name, unless two repositories share it.
+    names = Counter(Path(p).name for p in {k[0] for k in groups})
+    shown = {p: Path(p).name if names[Path(p).name] == 1 else p for p in {k[0] for k in groups}}
     print(f"# 사용량 — {since:%Y-%m-%d %H:%M} ~ {until:%Y-%m-%d %H:%M} (UTC), "
           f"사람 발화 {len(turns):,}, 세션 {len(length):,}\n")
     print("환산은 입력 1 · 캐시 쓰기 2 · 캐시 읽기 0.1 · 출력 5 (API 요율 대리값). "
@@ -592,7 +628,7 @@ def usage(argv: list[str]) -> int:
         mine = groups[key]
         costs = [t["cost"] for t in mine]
         raw = {k: sum(t["tokens"][k] for t in mine) for k in WEIGHT}
-        print(f"| {key[0]} | {key[1]} | {len(mine):,} | {pct(costs, .5):,.0f} | "
+        print(f"| {shown[key[0]]} | {key[1]} | {len(mine):,} | {pct(costs, .5):,.0f} | "
               f"{sum(costs) / len(costs):,.0f} | {sum(costs):,.0f} | "
               + " | ".join(f"{raw[k]:,}" for k in WEIGHT) + " |")
 
@@ -617,7 +653,7 @@ def usage(argv: list[str]) -> int:
         mine = groups[key]
         hooks = [t["hook"] for t in mine if t["hook"] is not None]
         back = [t["cold"] for t in mine if t["idle"] is not None and t["idle"] >= IDLE]
-        print(f"| {key[0]} | {key[1]} | {len(hooks):,} | {pct(hooks, .5):,} | {sum(hooks):,} | "
+        print(f"| {shown[key[0]]} | {key[1]} | {len(hooks):,} | {pct(hooks, .5):,} | {sum(hooks):,} | "
               f"{sum(t['filed'] for t in mine):,} | {len(back):,} | {sum(sum(c.values()) for c in back):,} | "
               f"{sum(map(weighted, back)):,.0f} | {len(compacts[key]):,} | "
               f"{pct(compacts[key], .5):,} |")
