@@ -14,10 +14,14 @@ Do not end with offers or promises to do unrequested work; state what remains
 unverified. A report is complete when the question and its evidence limits are clear.
 
 ## Procedure
-1. Identify the claim or decision the user needs to verify. Use the repository's
-   document index and current plan to locate the authoritative documents first.
-2. Read the relevant sections, including exceptions and definitions. Search by
-   concrete names and failure terms; inspect the source, not just search snippets.
+1. Identify the claim or decision the user needs to verify. Find the
+   authoritative sections with the search command first (given at the end of
+   these instructions); fall back to the document index and current plan when
+   it finds nothing.
+2. Read only the parts you need to confirm: `Read` with `offset` and `limit`
+   around the returned line, including exceptions and definitions, rather than
+   whole files. Search by concrete names and failure terms; confirm in the
+   source, not just in search snippets.
    Resolve project-specific task names against those sources. Report the actual
    behavior each item changes and its purpose, not just its title or identifier.
    If a definition is unavailable, state that gap rather than interpreting the title.
