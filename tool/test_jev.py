@@ -33,7 +33,7 @@ def test_routes_grades_and_preserves_citations(monkeypatch):
     monkeypatch.setattr(jev, "retrieve", retrieve)
     out = jev.prepare("What was decided?", "/repo")
     assert calls == [["documents"]]
-    assert out["status"] == "supported"
+    assert out["status"] == "supported" and out["sources"] == ["documents"]
     assert [(h["path"], h["line"]) for h in out["evidence"]] == [
         ("/repo/contradiction.md", 3), ("/repo/partial.md", 3)]
 
@@ -86,6 +86,76 @@ def test_truncated_passage_cannot_be_dropped_or_prove_sufficiency(monkeypatch):
     monkeypatch.setattr(jev, "evaluate", evaluate)
     out = jev.prepare("Question", None)
     assert out["status"] == "insufficient" and len(out["evidence"]) == 1
+
+
+def test_irrelevant_truncated_passage_does_not_block_whole_evidence(monkeypatch):
+    monkeypatch.setattr(jev, "retrieve", lambda *a: [hit("long", "x" * (jev.MAX_PASSAGE + 1)), hit("short")])
+    judged = []
+
+    def evaluate(state, questions, trace):
+        if "retrieve" in questions:
+            return {"retrieve": 1, "hub": 1}
+        if "sufficient" in questions:
+            judged.append([e["heading"] for e in state["evidence"]])
+            return {"sufficient": 1}
+        return {"0": 0, "1": 1}
+
+    monkeypatch.setattr(jev, "evaluate", evaluate)
+    out = jev.prepare("Question", None)
+    assert out["status"] == "supported" and judged == [["short"]]
+    assert {h["heading"] for h in out["evidence"]} == {"long", "short"}
+
+
+def test_dossier_names_the_sources_actually_searched_after_widening(monkeypatch):
+    def evaluate(state, questions, trace):
+        if "retrieve" in questions:
+            return {"retrieve": 1, "hub": 0, "documents": 0, "memory": 1}
+        return {q: 1 for q in questions}
+
+    monkeypatch.setattr(jev, "evaluate", evaluate)
+    monkeypatch.setattr(jev, "retrieve", lambda q, r, s, k: [] if s == ["memory"] else [hit("doc")])
+    out = jev.prepare("Question", "/repo")
+    assert out["status"] == "supported" and out["sources"] == list(jev.SOURCES)
+
+
+def test_retrieval_failure_never_escapes_the_turn(monkeypatch):
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+
+    def broken(*a):
+        raise RuntimeError("index")
+
+    monkeypatch.setattr(jev, "retrieve", broken)
+    out = jev.prepare("Question", "/repo")
+    assert out["status"] == "fallback" and out["evidence"] == []
+    assert out["trace"][-1] == {"fallback_retrieval": "RuntimeError"}
+
+
+# At 0.6 the third call would end past the budget, so it never starts. At 0.8
+# route, grade and assess fit, and the widened search is skipped because a call
+# after it would not. Either way only the fallback searches again.
+@pytest.mark.parametrize("budget, judged", [(0.6, 2), (0.8, 3)])
+def test_one_budget_bounds_every_call_in_a_run(monkeypatch, budget, judged):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "unused")
+    calls = []
+
+    def evaluate(state, questions, trace):
+        calls.append(time.monotonic())
+        time.sleep(0.2)
+        if "retrieve" in questions:
+            return {"retrieve": 1, "hub": 1}
+        return {q: 0.5 for q in questions}
+
+    searched = []
+    monkeypatch.setattr(jev, "evaluate", evaluate)
+    monkeypatch.setattr(jev, "retrieve", lambda *a: searched.append(a) or [hit("a")])
+    monkeypatch.setattr(jev, "TIMEOUT", 0.25)
+    monkeypatch.setattr(jev, "BUDGET", budget)
+    started = time.monotonic()
+    out = jev.prepare("Question", None)
+    assert time.monotonic() - started < jev.BUDGET
+    assert len(calls) == judged and len(searched) == 2
+    assert out["status"] == "fallback" and out["evidence"] == [hit("a")]
+    assert out["trace"][-1] == {"fallback": "TimeoutError", "reason": "budget"}
 
 
 def test_source_selection_precedes_top_k_and_never_reads_other_memory(tmp_path):
