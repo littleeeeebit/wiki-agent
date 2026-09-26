@@ -268,6 +268,31 @@ def test_a_deleted_memory_leaves_no_text_or_vector_behind(corpus):
     index.close()
 
 
+def test_a_private_title_edit_drops_the_old_vector_and_keeps_the_unchanged_one(corpus):
+    hub, repo = corpus
+    memory = repo / ".wiki/memory/titled.md"
+    memory.write_text("# OldPrivate\n\nIntro.\n\n## Stable\n\nSame words.\n", encoding="utf-8")
+    index = index_of(hub, repo)
+    old = {c["heading"]: c["key"] for c in by_path(index)[".wiki/memory/titled.md"]}
+    other = by_path(index)["docs/ports.md"][0]["key"]
+    for key in [*old.values(), other]:
+        index.embedder.vectors[key] = b"vector"
+    # The same text under a new title is a new vector key (review round 3).
+    bump(memory, "# NewPrivate\n\nIntro.\n\n## Stable\n\nSame words.\n")
+    index.refresh()
+    assert not set(old.values()) & set(index.embedder.vectors), "a vector of the old title was left"
+    assert other in index.embedder.vectors
+    # An edit that keeps a chunk's title and text keeps its vector.
+    kept = {c["heading"]: c["key"] for c in by_path(index)[".wiki/memory/titled.md"]}
+    for key in kept.values():
+        index.embedder.vectors[key] = b"vector"
+    bump(memory, "# NewPrivate\n\nIntro, edited.\n\n## Stable\n\nSame words.\n")
+    index.refresh()
+    assert kept["NewPrivate > Stable"] in index.embedder.vectors
+    assert kept["NewPrivate"] not in index.embedder.vectors
+    index.close()
+
+
 def test_a_vector_cache_that_cannot_be_written_leaves_the_journal_to_finish_it(corpus, monkeypatch):
     hub, repo = corpus
     index = index_of(hub, repo)
@@ -385,6 +410,15 @@ def test_ingest_keeps_a_private_memorys_english_out_of_the_shared_cache(private_
     again = knowledge.ingest(repo)
     assert again["statuses"] == first["statuses"]
     assert not {"푸시", "# 푸시\n\n묻지 않고 푸시한다."} & set(asked), "the kept English was asked for again"
+
+
+def test_ingest_caches_a_text_a_shared_document_has_even_if_a_memory_has_it_too(corpus, translator):
+    hub, repo = corpus
+    (repo / "docs/common.md").write_text("공통 문장\n", encoding="utf-8")
+    (repo / ".wiki/memory/common.md").write_text("공통 문장\n", encoding="utf-8")
+    translator["공통 문장"] = "A common sentence."
+    knowledge.ingest(repo)
+    assert shots("공통 문장") == 1, "the shared document's English was kept only beside the memory"
 
 
 def test_another_chunker_builds_its_own_generation_and_going_back_selects_the_old(corpus, monkeypatch):

@@ -620,7 +620,7 @@ class Store:
                     continue
                 changed = True
                 source, visibility = record[1], record[6]
-                keep = {c["text"] for _id, c in cut} | {c["heading"] for _id, c in cut}
+                keep = {key_of(c["indexed"]) for _id, c in cut}
                 private |= self.remove(db, {source, previous} - {None}, visibility == "private", keep)
                 db.execute("INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", record)
                 db.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
@@ -652,14 +652,17 @@ class Store:
     def remove(self, db: sqlite3.Connection, sources: set[str], private: bool, keep: set[str]) -> bool:
         """Delete these sources' rows: in this generation, or in every one for a
         private source — so a memory deleted here does not come back with an
-        older generation — with its English, journalling the vector of each
-        of its texts not in `keep`. `True` for a private source."""
+        older generation — with its English, journalling each of its vector
+        keys not in `keep` (those the new version still has): the key is the
+        heading path with the text, so a title edit alone drops it too.
+        `True` for a private source."""
 
         where = f"source_id IN ({','.join('?' * len(sources))})" + ("" if private else " AND gen = ?")
         args = [*sources] + ([] if private else [self.gen])
         if private:
-            journal = list({key_of(" > ".join(json.loads(heading)) + "\n" + text) for heading, text in db.execute(
-                f"SELECT DISTINCT heading_path, text FROM chunks WHERE {where}", args) if text not in keep})
+            keys = {key_of(" > ".join(json.loads(heading)) + "\n" + text) for heading, text in db.execute(
+                f"SELECT DISTINCT heading_path, text FROM chunks WHERE {where}", args)}
+            journal = list(keys - keep)
             db.executemany("INSERT INTO journal (vector_key) VALUES (?)", [(key,) for key in journal])
             db.execute(f"DELETE FROM english WHERE source_id IN ({','.join('?' * len(sources))})", [*sources])
         for table in ("chunks", "sources"):

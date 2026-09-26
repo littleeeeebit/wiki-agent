@@ -164,6 +164,6 @@ def ingest(project: str | Path | None, seconds: float = 600.0, estimate: bool = 
         for start in range(0, len(group), BATCH):
             batch = group[start:start + BATCH]
             seconds = max(0.0, min(end - time.monotonic(), BATCH_SECONDS))
-            statuses.update(o["status"] for o in english(batch, seconds, [tuple(owners[t] - {""}) for t in batch],
-                                                         project))
+            mine = [() if "" in owners[t] else tuple(owners[t]) for t in batch]
+            statuses.update(o["status"] for o in english(batch, seconds, mine, project))
     return {**counts, "statuses": dict(statuses)}
