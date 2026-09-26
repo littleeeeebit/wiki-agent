@@ -181,11 +181,16 @@ class ChatSession:
         # A message a person sends into the running turn. `_open` says a turn
         # is taking them; `_steering` guards it against the turn's end, so a
         # message is either in this turn or refused, never left for the next.
-        # Claude's are held until the CLI replays them: a result that comes
-        # before one was taken in is not the end of the turn.
+        # Claude's are counted until the CLI replays them: a result that comes
+        # before one was taken in is not the end of the turn. Counted, not
+        # matched by text: stdin is read in order, so a turn's first replay is
+        # its prompt, whatever a steer says.
         self._steering = threading.Lock()
         self._open = False
-        self._unread: deque[str] = deque()
+        self._unread = 0
+        self._prompt_seen = False
+        # Questions waiting on a person: id -> how many answers they need.
+        self._asks: dict[str, int] = {}
         self._turn_id = ""       # Codex's id for the running turn, for `turn/steer`
         self._start_rpc = None   # the `turn/start` request, whose error ends the turn
 
@@ -398,6 +403,11 @@ class ChatSession:
 
         if scope == "session" and allow and approval_id in self._pending and self._pending[approval_id][2] is None:
             raise ValueError("이 요청은 세션 동안 허용할 수 없다")
+        # A question answered is one answer per question; declining needs none.
+        needed = self._asks.get(approval_id)
+        if allow and needed is not None and (len(answers or []) != needed or not all(a.strip() for a in answers)):
+            raise ValueError(f"질문 {needed}개에 답이 하나씩 있어야 한다")
+        self._asks.pop(approval_id, None)
         proc, reply, rule = self._pending.pop(approval_id, (None, None, None))
         sent = proc is not None and self._send(reply(allow, answers or []), proc)
         if sent and scope == "session" and allow:
@@ -424,7 +434,7 @@ class ChatSession:
                 return False
             sent = self._send(_user(text))
             if sent:
-                self._unread.append(text)
+                self._unread += 1
             return sent
 
     def _closing(self) -> bool:
@@ -490,6 +500,8 @@ class ChatSession:
             return Event("approval", text, {"id": key, "tool": tool, "input": args, "answer": "allow",
                                             "by": "session"})
         self._pending[key] = (self._proc, reply, rule)
+        if tool in QUESTIONS:
+            self._asks[key] = len(args.get("questions") or [])
         return Event("approval", text, {"id": key, "tool": tool, "input": args, "session": rule is not None})
 
     def _codex_asks(self, rid, method: str, params: dict) -> Event | None:
@@ -562,6 +574,7 @@ class ChatSession:
     def close(self) -> None:
         proc, self._proc = self._proc, None
         self._pending.clear()
+        self._asks.clear()
         self._changes.clear()
         if proc is None:
             return
@@ -629,7 +642,7 @@ class ChatSession:
                 yield Event("error", "프로세스가 죽었다. 다시 보내면 새로 띄운다.")
                 return
             with self._steering:
-                self._open = True
+                self._open, self._unread, self._prompt_seen = True, 0, False
             if self._lost:
                 # The caller writes it on record; a resume must not try that thread again.
                 yield Event("context", f"Codex 이어가기 실패 — 새 대화로 시작했다 ({self._lost})")
@@ -639,8 +652,7 @@ class ChatSession:
                 yield event
         finally:
             with self._steering:
-                self._open = False
-                self._unread.clear()
+                self._open, self._unread = False, 0
             # `codex exec` is one process per turn; the others live on.
             if (self.is_codex and not self.app) or not completed:
                 self.close()
@@ -809,10 +821,11 @@ class ChatSession:
                     yield event
 
             elif kind == "user" and ev.get("isReplay"):
-                said = "".join(str(b.get("text") or "") for b in _blocks(ev.get("message") or {}))
                 with self._steering:
-                    if self._unread and self._unread[0] == said:
-                        self._unread.popleft()
+                    if not self._prompt_seen:
+                        self._prompt_seen = True
+                    elif self._unread:
+                        self._unread -= 1
 
             elif kind == "result" and not self._closing():
                 # A steered message came after the last step: the CLI answers it

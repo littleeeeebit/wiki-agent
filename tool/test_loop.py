@@ -745,3 +745,38 @@ def test_a_switch_leaves_the_loop_and_its_approvals_where_they_are(world, tmp_pa
         assert web.post("/api/work/say", json={"path": path, "text": "새 지시"}).status_code == 404
     spec = specs.load("proj", "fix-s")
     assert spec["state"] == "머지 가능" and [r["verdict"] for r in spec["rounds"]] == ["deny", "allow"]
+
+
+class Hangs:
+    """A work cell whose turn runs until it is stopped."""
+
+    id, parent_id, is_codex = "h", None, False
+
+    def __init__(self):
+        self.go = threading.Event()
+
+    def say(self, text, halt=None):
+        yield Event("tool", "x", {}, self.id)
+        self.go.wait(10)
+        yield Event("error", "프로세스가 닫혔다.", {}, self.id)
+
+    def stop(self, halt):
+        self.go.set()
+
+
+def test_a_stop_between_the_hold_and_the_turn_still_stops_the_turn(tmp_path):
+    """The loop holds the worktree and has no run yet when the stop lands:
+    `stop` finds nothing to kill, so the loop has to see its halt itself."""
+
+    spot, cell = loop.Loop("proj", "t1"), Hangs()
+
+    def session(*args):
+        spot.stop()
+        return cell
+
+    path = tmp_path / "proj-worktrees" / "t1"
+    started = time.monotonic()
+    with patch.object(work, "session", session):
+        assert loop.told(spot, {}, path, "x") is None
+    assert time.monotonic() - started < 5, "the turn ran until its own end"
+    assert str(path) not in work._busy

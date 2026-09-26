@@ -35,6 +35,7 @@ from .query import ROOT, _lock, current_repo, hold, keep, project, resumable, ss
 LOGS = ROOT / "raw" / "work"
 MAX_REPLAY = 200
 KEEPALIVE = 15.0   # seconds a tail waits before it checks the screen is still there
+HALT_WAIT = 30.0   # seconds a forced removal waits for what it stopped to let go
 
 router = APIRouter()
 
@@ -147,20 +148,35 @@ def halt_all(path: str) -> None:
         run.halt.set()
         run.chat.stop(run.halt)
         with run.wake:
-            run.wake.wait_for(lambda: run.done, 30)
+            run.wake.wait_for(lambda: run.done, HALT_WAIT)
 
 
 @router.post("/api/worktrees/remove")
 def clear(body: Removal) -> dict:
     if body.force:
+        # Only the selected project's worktree is stopped: a path from
+        # anywhere else is a 404 before anything halts.
+        with _lock:
+            repo = current_repo()
+        ours(body.path, repo)
         halt_all(body.path)
     # Held for the whole removal, as a turn holds it. Checked and let go, a
     # new instruction was accepted while the worktree was being deleted. The
     # repository is taken with the hold and used to the end: read again
     # before `remove`, a switch in between handed it another repository.
-    with _lock:
-        repo = current_repo()
-        release = hold(_busy, _lock, body.path, "에이전트가 도는 동안은 지우지 않는다")
+    # Forced, the hold is tried for a while: a stopped loop lets go of the
+    # worktree once its step sees the halt.
+    deadline = time.monotonic() + (HALT_WAIT if body.force else 0)
+    while True:
+        try:
+            with _lock:
+                repo = current_repo()
+                release = hold(_busy, _lock, body.path, "에이전트가 도는 동안은 지우지 않는다")
+            break
+        except HTTPException:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(0.2)
     try:
         path = ours(body.path, repo)
         with _lock:

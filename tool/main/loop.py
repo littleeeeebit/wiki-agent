@@ -560,6 +560,12 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         release()
         raise
     loop.run, asked = run, False
+    # `stop` sets the halt, then reads `run`. So either it saw this run, or
+    # this sees its halt — a stop between the hold and here no longer lets
+    # the turn go on.
+    if loop.halt.is_set():
+        run.halt.set()
+        run.chat.stop(run.halt)
     try:
         while not run.done:
             with run.wake:

@@ -823,6 +823,27 @@ def test_a_forced_delete_stops_the_running_turn_and_drops_its_changes(tmp_path):
         del waiting
 
 
+def test_a_forced_delete_of_another_projects_worktree_stops_nothing(tmp_path):
+    """Checked against the selected project before anything halts: a path
+    from elsewhere is a 404, and its turn runs on."""
+
+    for name in ("a", "b"):
+        (tmp_path / name).mkdir()
+    repos = {name: _repo(tmp_path / name) for name in ("a", "b")}
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
+         patch.object(work, "ChatSession", Slow):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        path = _made()
+        waiting = work.say(work.Order(path=path, text="x"))
+        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
+        assert web.post("/api/worktrees/remove", json={"path": path, "force": True}).status_code == 404
+        assert not work._runs[path].done and Path(path).exists()
+        Agent.made[-1].go.set()
+        settled(path)
+        del waiting
+
+
 def test_a_switch_waits_for_a_short_request_and_not_for_a_turn(tmp_path):
     """Making, removing and resetting read the project partway through, and a
     switch waits for them. A turn took its repository with its hold, and its

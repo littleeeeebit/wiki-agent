@@ -482,6 +482,27 @@ sys.stdin.read()
 '''
 
 
+# The steer repeats the prompt word for word, and comes before the prompt's
+# replay: a match by text would count the prompt's replay as the steer's.
+CLAUDE_ECHO = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+first = json.loads(sys.stdin.readline())
+say({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "x"}}]}})
+steer = json.loads(sys.stdin.readline())
+say({"type": "user", "isReplay": True, "message": first["message"]})
+say({"type": "result", "result": "one", "session_id": "cli-1"})
+say({"type": "user", "isReplay": True, "message": steer["message"]})
+say({"type": "result", "result": "two", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+
+
+def test_a_steer_that_repeats_the_prompt_is_still_waited_for(tree):
+    session = ChatSession(tree, write=True, bypass=True)
+    _, events = run(session, CLAUDE_ECHO, tree, each=lambda e: e.kind == "tool" and session.steer("write it"))
+    assert [e.kind for e in events].count("done") == 1 and events[-1].text == "two"
+
+
 def test_a_codex_steer_names_the_turn_and_its_refusal_does_not_end_it(tree):
     session = ChatSession(tree, model="codex:m", write=True, bypass=True)
     _, events = run(session, CODEX_STEER, tree,
@@ -510,7 +531,15 @@ sys.stdin.read()
 
 def test_claude_hooks_show_and_a_question_takes_its_answers(tree):
     session = ChatSession(tree, write=True, bypass=True)
-    command, events = run(session, CLAUDE_QUESTION, tree, lambda e: session.answer(e.meta["id"], True, answers=["B"]))
+
+    def answer(event):
+        # An "answer" with no answer is refused and leaves the question waiting.
+        for empty in ([], [" "], ["B", "A"]):
+            with pytest.raises(ValueError):
+                session.answer(event.meta["id"], True, answers=empty)
+        assert session.answer(event.meta["id"], True, answers=["B"])
+
+    command, events = run(session, CLAUDE_QUESTION, tree, answer)
     assert "AskUserQuestion" in command[command.index("--tools") + 1]
     assert command[command.index("--permission-prompt-tool") + 1] == "stdio"   # kept under bypass
     hooks = [(e.text, e.meta.get("context")) for e in events if e.kind == "hook"]
