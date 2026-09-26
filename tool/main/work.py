@@ -604,7 +604,15 @@ def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = N
     remember(path, "user", text)
     with _lock:
         _runs[str(path)] = run
-    threading.Thread(target=run_turn, args=(path, run, text, release), daemon=True).start()
+    try:
+        threading.Thread(target=run_turn, args=(path, run, text, release), daemon=True).start()
+    except BaseException as exc:
+        # No thread will end it: ended here, or it reads as running forever
+        # and a screen that attaches never sees its stream close.
+        run.put({"kind": "error", "text": f"턴을 시작하지 못했다 — {type(exc).__name__}: {exc}", "meta": {},
+                 "session_id": chat.id, "parent_id": None})
+        run.finish()
+        raise
     # A turn the server started — the plan row's, a loop's — reaches a screen
     # that already shows this worktree only through here.
     feed.put({"kind": "turn", "path": str(path), "turn": run.turn, "session_id": chat.id})

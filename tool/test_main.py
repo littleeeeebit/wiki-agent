@@ -1400,6 +1400,31 @@ def test_a_waiting_instruction_that_cannot_start_is_on_record(tmp_path):
         assert any(e["kind"] == "turn" and e["path"] == path for e in work.feed.events[told:])
 
 
+def test_a_turn_whose_thread_cannot_start_is_ended(tmp_path):
+    """Nothing else would end it: it would read as running, and a screen
+    that attaches would wait on a stream that never closes."""
+
+    class Unstartable:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("스레드가 없다")
+
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent):
+        path = _made()
+        chat_ = work.session(Path(path), "", "")
+        released = []
+        with patch.object(work.threading, "Thread", Unstartable), pytest.raises(RuntimeError):
+            work.begin(Path(path), chat_, "첫째", lambda: released.append(1))
+        run = work._runs[path]
+        assert run.done and run.events[-1]["kind"] == "error"
+        assert web.get("/api/work/log", params={"path": path}).json()["running"] is None
+
+
 class Answered(Agent):
     """Stopped during the gate: the agent has already answered."""
 
