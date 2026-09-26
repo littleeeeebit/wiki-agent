@@ -71,7 +71,9 @@ export default function App() {
   const [peek, setPeek] = useState<{ data: PeekData | null; error?: string } | null>(null)
   // Dark unless the person chose light. Remembered per machine, not per server.
   const [theme, setTheme] = useState<Theme>(() => stored('theme', 'dark'))
-  const [prs, setPrs] = useState<Pr[]>([])
+  // The list carries the project it was read for, and is shown only under
+  // that project: right after a switch the old one still stands here.
+  const [prs, setPrs] = useState<{ project: string; rows: Pr[] }>({ project: '', rows: [] })
   const [loopRows, setLoopRows] = useState<LoopRow[]>([])
   const [turnsElsewhere, setTurnsElsewhere] = useState<{ path: string; repo: string }[]>([])
   const [loopSettings, setLoopSettings] = useState<LoopSettings | null>(null)
@@ -168,7 +170,7 @@ export default function App() {
   // the rail's other-projects group.
   const readPrs = useCallback(() => {
     api.getPrs()
-      .then(({ project, rows }) => project === expected.current && setPrs(rows))
+      .then(({ project, rows }) => project === expected.current && setPrs({ project, rows }))
       .catch(() => {})
   }, [])
   const readLoops = useCallback(() => {
@@ -420,7 +422,7 @@ export default function App() {
         tasks={list}
         others={others}
         selected={selected}
-        prs={prs}
+        prs={prs.project === repo ? prs.rows : []}
         onProject={project}
         onView={(v) => {
           if (v === 'map') setMapped(true)
