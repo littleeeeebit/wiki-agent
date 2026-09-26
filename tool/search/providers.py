@@ -121,27 +121,43 @@ def lookup(host: str, port: int) -> list[str] | None:
         return None
 
 
+def opened(conn: http.client.HTTPConnection) -> socket.socket:
+    """TCP to the vetted address, handed to the watchdog (`conn.raw`) as soon
+    as it exists and left only the time the deadline still allows."""
+
+    sock = socket.create_connection((conn.address, conn.port), max(0.001, conn.deadline - time.monotonic()))
+    conn.raw = sock
+    left = conn.deadline - time.monotonic()
+    if left <= 0:
+        # The watchdog may have fired before there was a socket to shut.
+        sock.close()
+        raise TimeoutError
+    sock.settimeout(left)
+    return sock
+
+
 class Plain(http.client.HTTPConnection):
     """A connection to the vetted address, the host name kept for `Host`."""
 
-    def __init__(self, host: str, port: int, address: str, timeout: float):
-        super().__init__(host, port, timeout=timeout)
-        self.address = address
+    def __init__(self, host: str, port: int, address: str, deadline: float):
+        super().__init__(host, port, timeout=max(0.001, deadline - time.monotonic()))
+        self.address, self.deadline, self.raw = address, deadline, None
 
     def connect(self) -> None:
-        self.sock = self.raw = socket.create_connection((self.address, self.port), self.timeout)
+        self.sock = opened(self)
 
 
 class Pinned(http.client.HTTPSConnection):
     """TLS to the vetted address, with SNI and the certificate checked against the host name."""
 
-    def __init__(self, host: str, port: int, address: str, timeout: float):
-        super().__init__(host, port, timeout=timeout, context=ssl.create_default_context())
-        self.address = address
+    def __init__(self, host: str, port: int, address: str, deadline: float):
+        super().__init__(host, port, timeout=max(0.001, deadline - time.monotonic()),
+                         context=ssl.create_default_context())
+        self.address, self.deadline, self.raw = address, deadline, None
 
     def connect(self) -> None:
-        sock = socket.create_connection((self.address, self.port), self.timeout)
-        self.sock = self.raw = self._context.wrap_socket(sock, server_hostname=self.host)
+        # The handshake runs on the socket the watchdog can already shut.
+        self.sock = self.raw = self._context.wrap_socket(opened(self), server_hostname=self.host)
 
 
 def fetch(url: str, limit: int = MAX_BYTES, seconds: float = SECONDS,
@@ -156,7 +172,7 @@ def fetch(url: str, limit: int = MAX_BYTES, seconds: float = SECONDS,
         left = deadline - time.monotonic()
         if left <= 0:
             raise FetchError("timeout")
-        conn = (Pinned if scheme == "https" else Plain)(host, port, address, left)
+        conn = (Pinned if scheme == "https" else Plain)(host, port, address, deadline)
         # At the deadline the socket is shut, whatever read is waiting — a
         # socket timeout restarts on every byte, so a peer trickling its
         # headers would otherwise hold the fetch for as long as it likes.

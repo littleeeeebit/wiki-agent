@@ -643,6 +643,30 @@ def test_a_trickled_header_cannot_outlast_the_deadline(site):
     assert caught.value.reason == "timeout" and time.monotonic() - started < 1.0
 
 
+def test_a_stalled_tls_handshake_cannot_outlast_the_deadline(monkeypatch):
+    """Round 2: the connection takes part of the budget, then the peer says nothing."""
+
+    silent = socket.create_server(("127.0.0.1", 0))
+    port = silent.getsockname()[1]
+    held = []
+    threading.Thread(target=lambda: held.append(silent.accept()), daemon=True).start()
+    real = socket.create_connection
+
+    def slow(*args, **kwargs):
+        time.sleep(0.15)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo",
+                        lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))])
+    monkeypatch.setattr(socket, "create_connection", slow)
+    monkeypatch.setattr(providers, "public", lambda address: address == "127.0.0.1")
+    started = time.monotonic()
+    with pytest.raises(providers.FetchError) as caught:
+        providers.fetch(f"https://tls.test:{port}/", seconds=0.2)
+    assert caught.value.reason == "timeout" and time.monotonic() - started < 0.3
+    silent.close()
+
+
 def test_an_unknown_charset_falls_back_to_utf8(repo, monkeypatch):
     _hub, path = repo
     url = "https://example.com/odd"
