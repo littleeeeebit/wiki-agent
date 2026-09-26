@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from search import HUB, ask  # noqa: E402
+from search import HUB, ask, prepare  # noqa: E402
 
 
 def node_of(path: Path, project: Path | None) -> str:
@@ -81,8 +81,15 @@ def main() -> int:
     parser.add_argument("query")
     parser.add_argument("--project", default=None, help="대상 저장소. 없으면 허브 규칙만")
     parser.add_argument("--k", type=int, default=8)
+    parser.add_argument("--jev", action="store_true", help="Jev 판단을 거쳐 검색한다 (TypeSafe API 키 필요)")
+    parser.add_argument("--state", default="", help="Jev 판단에 필요한 현재 상태")
     args = parser.parse_args()
     project = str(Path(args.project).expanduser().resolve()) if args.project else None
+    if args.jev:
+        if not 1 <= args.k <= 12:
+            parser.error("--jev requires --k between 1 and 12")
+        print(json.dumps(prepare(args.query, project, args.state, args.k), ensure_ascii=False, indent=2))
+        return 0
 
     # The chat may be slow. Start the daemon if it is not there and wait for
     # it, rather than answering with nothing. Switched off, go straight to BM25.

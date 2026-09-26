@@ -29,7 +29,7 @@ import threading
 import time
 from pathlib import Path
 
-__all__ = ("ask", "notify", "PING", "spawn", "PORT", "HUB", "cache_dir", "state_path", "version")
+__all__ = ("ask", "prepare", "notify", "PING", "spawn", "PORT", "HUB", "cache_dir", "state_path", "version")
 
 HERE = Path(__file__).resolve().parent
 # The hub whose `operator/` and `craft/` every search covers. `WIKI_ROOT` as in `wiki`.
@@ -107,7 +107,7 @@ def spawn() -> None:
 
 
 def ask(query: str, project: str | Path | None, timeout: float, k: int = 8,
-        wait: float = 0.0, start: bool = True) -> list[dict] | None:
+        wait: float = 0.0, start: bool = True, sources: list[str] | None = None) -> list[dict] | None:
     """The daemon's answer, or `None`.
 
     `None` for anything short of a proper answer. When no daemon is there it
@@ -119,9 +119,16 @@ def ask(query: str, project: str | Path | None, timeout: float, k: int = 8,
 
     answer, _started = call("/search", {"query": query, "hub": str(HUB),
                                         "project": str(project) if project else None,
-                                        "k": k, "wait": wait}, timeout, wait, start)
+                                        "k": k, "wait": wait, "sources": sources}, timeout, wait, start)
     results = (answer or {}).get("results")
     return results if isinstance(results, list) else None
+
+
+def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8) -> dict:
+    """Jev's retrieval dossier; explicit callers opt into sending evidence to TypeSafe."""
+    from .controller import prepare as run
+
+    return run(query, project, state, k)
 
 
 # The keep-alive ping the daemon types into an idle Claude cell. The hook

@@ -363,7 +363,7 @@ class Index:
                 scores[i] += idf * n * (k1 + 1) / norm
         return scores
 
-    def search(self, query: str, k: int) -> list[dict]:
+    def search(self, query: str, k: int, sources: list[str] | None = None) -> list[dict]:
         """Pages, best first. A page scores as its best chunk.
 
         `rrf` merges the two rankings; `cos` is the best chunk's cosine, or
@@ -375,6 +375,9 @@ class Index:
         `cos` `None`.
         """
 
+        if sources is not None and (not isinstance(sources, list) or
+                                    any(s not in ("hub", "documents", "memory") for s in sources)):
+            raise ValueError("Unknown retrieval source")
         lexical = self.bm25(query)
         fused: dict[int, float] = defaultdict(float)
         for rank, i in enumerate(sorted(lexical, key=lexical.get, reverse=True)):
@@ -395,6 +398,8 @@ class Index:
         best: dict[str, tuple[float, int]] = {}
         for i, score in fused.items():
             path = self.chunks[i]["path"]
+            if sources is not None and self.source(Path(path)) not in sources:
+                continue
             if path not in best or score > best[path][0]:
                 best[path] = (score, i)
         pages = []
@@ -407,6 +412,13 @@ class Index:
                           "cos": None if top is None else round(top, 4),
                           "bm25": round(lexical.get(i, 0.0), 3)})
         return pages
+
+    def source(self, path: Path) -> str:
+        if path.parent in (self.hub / "operator", self.hub / "craft"):
+            return "hub"
+        if self.project and path.parent == self.project / ".wiki" / "memory":
+            return "memory"
+        return "documents"
 
 
 # ---- keep-alive -------------------------------------------------------------
@@ -647,7 +659,8 @@ class Daemon:
 
         return time.monotonic() - self.last >= IDLE and self.keeper.latest() <= self.keeper.clock()
 
-    def search(self, query: str, hub: str, project: str | None, k: int, wait: float) -> list[dict]:
+    def search(self, query: str, hub: str, project: str | None, k: int, wait: float,
+               sources: list[str] | None = None) -> list[dict]:
         """The hub is the asker's, not this process's: two checkouts at the
         same version share one daemon, and each must search its own rules."""
 
@@ -660,7 +673,7 @@ class Daemon:
         while not index.complete() and self.embedder.state != "off" and time.monotonic() < until:
             time.sleep(0.2)
         with self.lock:
-            return index.search(query, k)
+            return index.search(query, k, sources)
 
 
 def handler(daemon: Daemon, server_ref: list) -> type:
@@ -709,7 +722,7 @@ def handler(daemon: Daemon, server_ref: list) -> type:
             try:
                 ask = json.loads(data)
                 results = daemon.search(str(ask["query"]), str(ask["hub"]), ask.get("project"),
-                                        int(ask.get("k") or 8), float(ask.get("wait") or 0))
+                                        int(ask.get("k") or 8), float(ask.get("wait") or 0), ask.get("sources"))
             except Exception as error:  # noqa: BLE001
                 return self.reply(400, {"error": type(error).__name__})
             return self.reply(200, {"results": results})
