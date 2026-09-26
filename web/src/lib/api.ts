@@ -548,6 +548,8 @@ export type WorkTurn = {
   text: string
   error?: string
   steps?: WorkStep[]
+  /** How many steps came before the answer. */
+  answered?: number
   ms?: number
   cost_usd?: number
   model?: string
@@ -561,8 +563,8 @@ export type Running = { turn: string; session_id: string; seq: number }
 
 export const workLog = (path: string) =>
   get(`/api/work/log?${new URLSearchParams({ path })}`).then((r) =>
-    json<{ rows: WorkTurn[]; session_id: string; busy: boolean; running: Running | null; rules: Rule[] }>(
-      r, '작업 기록'),
+    json<{ rows: WorkTurn[]; session_id: string; busy: boolean; running: Running | null; rules: Rule[];
+      queued: string | null }>(r, '작업 기록'),
   )
 export const workReset = (path: string, keep: Keep) =>
   post('/api/work/reset', { path, keep }).then((r) => json<Kept>(r, '작업 문맥 비우기'))
@@ -573,6 +575,10 @@ export const workStop = (path: string, turn: string) =>
   post('/api/work/stop', { path, turn }).then((r) => json(r, '멈춤'))
 export const workSteer = (path: string, turn: string, text: string) =>
   post('/api/work/steer', { path, turn, text }).then((r) => json(r, '끼어들기'))
+/** The next instruction, sent by the server once this turn's run lets go. */
+export const workQueue = (body: { path: string; turn: string; text: string; model: string; effort: string }) =>
+  post('/api/work/queue', body).then((r) => json(r, '대기'))
+export const workUnqueue = (path: string) => post('/api/work/unqueue', { path }).then((r) => json(r, '대기 취소'))
 export type WorkSettings = { bypass: boolean }
 export const getWorkSettings = () => get('/api/work/settings').then((r) => json<WorkSettings>(r, '작업 설정'))
 export const setWorkSettings = (body: WorkSettings) =>

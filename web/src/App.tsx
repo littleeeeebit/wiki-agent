@@ -244,7 +244,7 @@ export default function App() {
     }
     const on = (ev: api.FeedEv) => {
       if (ev.kind === 'turn') {
-        attach(ev.path)
+        attach(ev.path, ev.turn)
         return
       }
       if (ev.kind === 'connect') {
@@ -556,8 +556,8 @@ export default function App() {
                 onStop={(turn) => work.stop(path, turn).catch((err) => setFault(String(err)))}
                 onSteer={(turn, text) => void work.steer(path, turn, text)}
                 queued={work.queued[path]}
-                onQueue={(text) => work.queue(path, text, choice)}
-                onUnqueue={() => work.unqueue(path)}
+                onQueue={(turn, text) => void work.queue(path, turn, text, choice)}
+                onUnqueue={() => work.unqueue(path).catch((err) => setFault(String(err)))}
                 rules={(path && work.rules[path]?.list) || []}
                 onClearRules={() => work.clearRules(path).catch((err) => setFault(String(err)))}
                 onReset={(keep) => work.reset(path, keep)}

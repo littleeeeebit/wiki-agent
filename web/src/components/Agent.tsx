@@ -23,7 +23,7 @@ type Props = {
   onSteer: (turn: Turn, text: string) => void
   /** The next instruction, waiting for this run to end. */
   queued?: string
-  onQueue: (text: string) => void
+  onQueue: (turn: Turn, text: string) => void
   onUnqueue: () => void
   rules: Rule[]
   onClearRules: () => void
@@ -47,13 +47,6 @@ export function Agent({
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' })
   }, [grown])
-  // Queued in the moment the run ended, after the stream's own check for it.
-  useEffect(() => {
-    if (queued && row && !busy) {
-      onUnqueue()
-      onSend(queued)
-    }
-  }, [queued, row, busy, onUnqueue, onSend])
 
   return (
     <section aria-label="에이전트 세션" className="flex h-full min-h-0 flex-col">
@@ -147,7 +140,7 @@ export function Agent({
           : last?.answered != null ? '답은 끝났고 마무리가 도는 중이다. 보내면 끝난 뒤 다음 지시로 보낸다.'
             : '도는 턴에 끼어든다. 에이전트가 다음 걸음 전에 읽는다.'}
         onSend={(text) => (!busy || !last ? onSend(text)
-          : last.answered != null ? onQueue(text) : onSteer(last, text))}
+          : last.answered != null ? onQueue(last, text) : onSteer(last, text))}
       />
       {asking && <ClearAsk onClear={onReset} onClose={(said) => {
         setAsking(false)

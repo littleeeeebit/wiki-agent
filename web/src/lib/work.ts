@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useRef, useState } from 'react'
 import * as api from '@/lib/api'
 import type { AnsweredBy, Rule, Tokens, WorkEv, WorkStep } from '@/lib/api'
 
@@ -113,14 +113,17 @@ export function useWork() {
   // and landing after `forget` would otherwise fill the new one's pane.
   const lives = useRef(new Map<string, number>())
   // An instruction written after the answer, while the gate still holds the
-  // worktree: there is no turn left to steer, so it waits for the run to end.
+  // worktree: there is no turn left to steer, so the server keeps it and
+  // sends it once the worktree is let go. This is only what the record says.
   const [queued, setQueued] = useState<Record<string, string>>({})
-  const later = useRef(new Map<string, { text: string; choice: { model: string; effort: string } }>())
-  const sendLater = useRef<(path: string, text: string, choice: { model: string; effort: string }) => void>(() => {})
-  const unqueue = useCallback((path: string) => {
-    later.current.delete(path)
-    setQueued(({ [path]: _gone, ...rest }) => rest)
+  const showQueued = useCallback((path: string, text: string | null) => {
+    setQueued(({ [path]: _gone, ...rest }) => (text ? { ...rest, [path]: text } : rest))
   }, [])
+  // Paths a server-started turn was announced for while this window's own
+  // send still followed its turn: read again once that send lets go.
+  const missed = useRef(new Set<string>())
+  // The server's turns this window already follows.
+  const own = useRef(new Set<string>())
 
   const patch = useCallback((path: string, key: number, fn: (t: Turn) => Turn) => {
     setTurns((all) => {
@@ -138,16 +141,19 @@ export function useWork() {
     loading.current.delete(path)
     setTurns(({ [path]: _gone, ...rest }) => rest)
     setRules(({ [path]: _gone, ...rest }) => rest)
-  }, [])
+    showQueued(path, null)
+  }, [showQueued])
 
   const readRules = useCallback((path: string) => {
     const life = lives.current.get(path) ?? 0
     api.workLog(path)
-      .then(({ session_id, rules: list }) => {
-        if ((lives.current.get(path) ?? 0) === life) setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
+      .then(({ session_id, rules: list, queued: waiting }) => {
+        if ((lives.current.get(path) ?? 0) !== life) return
+        setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
+        showQueued(path, waiting)
       })
       .catch(() => {})
-  }, [])
+  }, [showQueued])
 
   /** Follow one turn's events into `key` until it ends. `first` is the
    *  stream that starts it — the instruction's own, or a reattach. */
@@ -167,6 +173,7 @@ export function useWork() {
       if (ev.turn) {
         turn ||= ev.turn
         if (ev.turn !== turn) return
+        own.current.add(turn)
       }
       if (ev.seq !== undefined) {
         if (ev.seq <= last) return
@@ -198,15 +205,11 @@ export function useWork() {
       ? { ...t, pending: false, error: t.error
           || (gone ? '다른 턴이 시작됐다. 기록을 다시 읽는다' : cut || !ended ? '스트림이 끊겼다' : undefined) }
       : t))
-    // After the caller is done with this turn; a replaced turn keeps it
-    // waiting for the one that replaced it.
-    const next = later.current.get(path)
-    if (next && !gone) {
-      unqueue(path)
-      setTimeout(() => sendLater.current(path, next.text, next.choice))
-    }
+    // Another CLI is another session, and its rules start empty; and what
+    // waited was sent, kept for a turn the server started, or dropped by a stop.
+    if (!gone) readRules(path)
     return gone
-  }, [patch, unqueue])
+  }, [patch, readRules])
 
   // Named, so the reload after a replaced turn calls itself, not the outer binding.
   const load = useCallback(function load(path: string) {
@@ -214,12 +217,13 @@ export function useWork() {
     loading.current.add(path)
     const life = lives.current.get(path) ?? 0
     api.workLog(path)
-      .then(({ rows, running, rules: list, session_id }) => {
+      .then(({ rows, running, rules: list, session_id, queued: waiting }) => {
         if ((lives.current.get(path) ?? 0) !== life) return
         const past: Turn[] = rows.map((r) => ({
           key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
-          tokens: r.tokens, steps: (r.steps ?? []).map(restored),
+          tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered,
         }))
+        showQueued(path, waiting)
         // The turn still running: its reply is not on record yet. Its events
         // are, in the server's buffer, from the first.
         const live = running && !sending.current.has(path)
@@ -243,7 +247,7 @@ export function useWork() {
       .catch(() => {
         if ((lives.current.get(path) ?? 0) === life) loading.current.delete(path)
       })
-  }, [follow, forget])
+  }, [follow, forget, showQueued])
 
   const send = useCallback(
     async (path: string, text: string, choice: { model: string; effort: string }) => {
@@ -261,25 +265,31 @@ export function useWork() {
       } finally {
         sending.current.delete(path)
       }
-      if (gone) {
+      if (gone || missed.current.delete(path)) {
         forget(path)
         load(path)
-        return
       }
-      // Another CLI is another session, and its rules start empty.
-      readRules(path)
     },
-    [follow, forget, load, patch, readRules],
+    [follow, forget, load, patch],
   )
-  useEffect(() => {
-    sendLater.current = (path, text, choice) => void send(path, text, choice)
-  }, [send])
 
-  /** `text` as the next instruction, sent when the running turn's run ends. */
-  const queue = useCallback((path: string, text: string, choice: { model: string; effort: string }) => {
-    later.current.set(path, { text, choice })
-    setQueued((all) => ({ ...all, [path]: text }))
-  }, [])
+  /** `text` as the next instruction, which the server sends once `turn`'s
+   *  run lets go of the worktree. A run that has just ended takes it as a
+   *  plain instruction. */
+  const queue = useCallback(async (path: string, turn: Turn, text: string,
+    choice: { model: string; effort: string }) => {
+    try {
+      await api.workQueue({ path, turn: turn.turn ?? '', text, ...choice })
+      showQueued(path, text)
+    } catch {
+      await send(path, text, choice)
+    }
+  }, [send, showQueued])
+
+  const unqueue = useCallback(async (path: string) => {
+    await api.workUnqueue(path)
+    showQueued(path, null)
+  }, [showQueued])
 
   const answer = useCallback(
     async (path: string, turn: Turn, id: string, allow: boolean, scope: 'once' | 'session' = 'once',
@@ -337,18 +347,17 @@ export function useWork() {
   /** A turn the server started in `path` — the plan row's, a loop's. A
    *  window that already shows that worktree reads it again, which attaches
    *  to the running turn; this window's own sends are already on screen. */
-  const attach = useCallback((path: string) => {
-    if (sending.current.has(path) || !loading.current.has(path)) return
+  const attach = useCallback((path: string, turn?: string) => {
+    if (!loading.current.has(path) || (turn && own.current.has(turn))) return
+    // Announced while this window's send still follows its own turn — the
+    // instruction that waited, the plan row's: read once that send lets go.
+    if (sending.current.has(path)) {
+      missed.current.add(path)
+      return
+    }
     forget(path)
     load(path)
   }, [forget, load])
 
-  // A removed worktree takes what waited for it along.
-  const drop = useCallback((path: string) => {
-    unqueue(path)
-    forget(path)
-  }, [forget, unqueue])
-
-  return { turns, rules, queued, load, send, queue, unqueue, answer, stop, steer, clearRules, reset,
-    forget: drop, attach }
+  return { turns, rules, queued, load, send, queue, unqueue, answer, stop, steer, clearRules, reset, forget, attach }
 }

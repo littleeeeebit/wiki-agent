@@ -42,6 +42,7 @@ router = APIRouter()
 _sessions: dict[str, ChatSession] = {}    # worktree path -> its session
 _busy: dict[str, object] = {}   # worktree path -> the hold of its running turn
 _runs: dict[str, "Run"] = {}    # worktree path -> its last turn, kept until the next one starts
+_queued: dict[str, "Order"] = {}   # worktree path -> the instruction waiting for it to be let go
 
 
 def close_all() -> None:
@@ -139,6 +140,8 @@ def halt_all(path: str, repo: Path) -> None:
 
     from . import loop, specs  # both import this module
 
+    with _lock:
+        _queued.pop(path, None)
     spec = specs.owner(Path(path))
     if spec and loop.LOOPING.fullmatch(spec["state"]):
         loop.halt_loop(repo.name, spec["id"])
@@ -181,6 +184,7 @@ def clear(body: Removal) -> dict:
         with _lock:
             chat = _sessions.pop(body.path, None)
             _runs.pop(body.path, None)
+            _queued.pop(body.path, None)
         if chat:
             chat.close()
         try:
@@ -230,6 +234,7 @@ def forget(path: Path) -> None:
     with _lock:
         chat = _sessions.pop(str(path), None)
         _runs.pop(str(path), None)
+        _queued.pop(str(path), None)
     if chat:
         chat.close()
 
@@ -321,6 +326,7 @@ def log(path: str) -> dict:
     return {"rows": [shown(r) for r in recall(where) if r.get("role") in ("user", "assistant")],
             "session_id": chat.id if chat else "", "busy": path in _busy,
             "rules": chat.rules if chat else [],
+            "queued": _queued[path].text if path in _queued else None,
             "running": None if run is None or run.done else
             {"turn": run.turn, "session_id": run.session_id, "seq": len(run.events) - 1}}
 
@@ -498,15 +504,45 @@ def run_turn(path: Path, run: Run, text: str, release) -> None:
         try:
             with run.wake:
                 made = steps(run.events)
+                # Where the answer stood among the steps: what came after it —
+                # the gate — is shown after it, in the record too.
+                at = next((i for i, e in enumerate(run.events) if e["kind"] == "done"), None)
+                answered = {} if at is None else {"answered": len(steps(run.events[:at]))}
             remember(path, "assistant", final, error=failed, steps=made,
-                     provider="codex" if chat.is_codex else "claude", **meta)
+                     provider="codex" if chat.is_codex else "claude", **answered, **meta)
         finally:
             # Released before the end is told, so a screen that sees the end
             # can send the next instruction at once.
             release()
             run.finish()
-    if then:
-        then()
+    try:
+        if then:
+            then()
+    finally:
+        dispatch(path, run)
+
+
+def dispatch(path: Path, ended: Run) -> None:
+    """The instruction that waited for this worktree, once `ended` let it go
+    and after any turn the server started then — the plan row's. Taken
+    meanwhile — that turn, a person's — it waits for that turn's end. A
+    stopped run drops it: a stop is not "go on"."""
+
+    key = str(path)
+    with _lock:
+        if ended.halt.is_set():
+            _queued.pop(key, None)
+            return
+        order = _queued.get(key)
+        if order is None or key in _busy:
+            return
+        del _queued[key]
+        release = hold(_busy, _lock, key, "", kind="turn")
+    try:
+        begin(path, session(path, order.model, order.effort), order.text, release)
+    except BaseException:
+        release()
+        raise
 
 
 def attached(path: str) -> Run:
@@ -624,6 +660,39 @@ def steer(body: Steer) -> dict:
             raise HTTPException(409, "턴이 막 끝났다. 새 지시로 보내라")
         run.put({"kind": "said", "text": text, "meta": {}, "session_id": run.chat.id,
                  "parent_id": run.chat.parent_id})
+    return {"ok": True}
+
+
+class Queued(Steer):
+    model: str = ""
+    effort: str = ""
+
+
+@router.post("/api/work/queue")
+def queue(body: Queued) -> dict:
+    """The next instruction, written after the answer while the run still
+    holds the worktree — the gate. The agent reads nothing more in this turn,
+    so it is not steered: `dispatch` sends it once the worktree is let go. One
+    waits per worktree; a second replaces it."""
+
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "빈 지시")
+    run = attached(body.path)
+    # Under the run's lock: `finish` takes it too, so an instruction taken
+    # here is one `dispatch`, after the finish, finds.
+    with run.wake:
+        if run.turn != body.turn or run.done:
+            raise HTTPException(409, "턴이 막 끝났다. 새 지시로 보내라")
+        with _lock:
+            _queued[body.path] = Order(path=body.path, text=text, model=body.model, effort=body.effort)
+    return {"ok": True}
+
+
+@router.post("/api/work/unqueue")
+def unqueue(body: Where) -> dict:
+    with _lock:
+        _queued.pop(body.path, None)
     return {"ok": True}
 
 

@@ -1275,6 +1275,117 @@ def test_a_stopped_turn_ends_and_the_next_goes_on_in_the_same_session(tmp_path):
         settled(path)
 
 
+def _gated(then_first=None):
+    """A spec gate that notes itself and waits to be let go; on the first
+    turn it may hand back a turn to start next, as `specs.check` does."""
+
+    entered, go, calls = threading.Event(), threading.Event(), []
+
+    def check(path, run, final):
+        calls.append(run.turn)
+        specs.note(run, "게이트 · python -m pytest tool")
+        entered.set()
+        go.wait(10)
+        return then_first(path, run) if then_first and len(calls) == 1 else None
+
+    return check, entered, go
+
+
+def _said(web, path, count, wait=10.0):
+    """The record's instructions, once `count` turns have ended."""
+
+    deadline = time.monotonic() + wait
+    while True:
+        log = web.get("/api/work/log", params={"path": path}).json()
+        if sum(r["role"] == "assistant" for r in log["rows"]) >= count and log["running"] is None:
+            return [r["text"] for r in log["rows"] if r["role"] == "user"], log
+        assert time.monotonic() < deadline, log
+        time.sleep(0.05)
+
+
+def test_an_instruction_written_during_the_gate_goes_once_the_worktree_is_let_go(tmp_path):
+    """After the answer the agent reads nothing more, so it is not steered: the
+    server keeps it and starts it when the gate's run ends. The record keeps
+    where the answer stood, so a reload shows the gate after it."""
+
+    repo = _repo(tmp_path)
+    web = client()
+    check, entered, go = _gated()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent), \
+         patch.object(specs, "check", check):
+        path = _made()
+        work.say(work.Order(path=path, text="첫째"))
+        assert entered.wait(10)
+        turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
+        other = {"path": path, "turn": "another", "text": "x"}
+        assert web.post("/api/work/queue", json=other).status_code == 409
+        web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
+        assert web.get("/api/work/log", params={"path": path}).json()["queued"] == "둘째"
+        go.set()
+        said, log = _said(web, path, 2)
+        assert said == ["첫째", "둘째"] and log["queued"] is None
+        first = [r for r in log["rows"] if r["role"] == "assistant"][0]
+        assert [s["kind"] for s in first["steps"]] == ["approval", "tool"] and first["answered"] == 1
+        done = {"path": path, "turn": turn, "text": "셋째"}
+        assert web.post("/api/work/queue", json=done).status_code in (409, 410)
+
+
+def test_a_turn_the_server_starts_after_the_gate_goes_before_the_waiting_one(tmp_path):
+    """The plan row's turn, handed back by the gate, takes the worktree first;
+    the instruction that waited goes after it, not into a 409."""
+
+    repo = _repo(tmp_path)
+    web = client()
+
+    def plan_row(path, run):
+        def then():
+            release = chat.hold(work._busy, work._lock, str(path), "", kind="turn")
+            work.begin(path, run.chat, "계획 행", release)
+        return then
+
+    check, entered, go = _gated(plan_row)
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent), \
+         patch.object(specs, "check", check):
+        path = _made()
+        work.say(work.Order(path=path, text="첫째"))
+        assert entered.wait(10)
+        turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
+        web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
+        go.set()
+        assert _said(web, path, 3)[0] == ["첫째", "계획 행", "둘째"]
+
+
+class Answered(Agent):
+    """Stopped during the gate: the agent has already answered."""
+
+    def stop(self, halt=None):
+        pass
+
+
+def test_a_stop_drops_the_waiting_instruction(tmp_path):
+    repo = _repo(tmp_path)
+    web = client()
+    check, entered, go = _gated()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Answered), \
+         patch.object(specs, "check", check):
+        path = _made()
+        work.say(work.Order(path=path, text="첫째"))
+        assert entered.wait(10)
+        turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
+        web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
+        web.post("/api/work/stop", json={"path": path, "turn": turn}).raise_for_status()
+        go.set()
+        settled(path)
+        said, log = _said(web, path, 1)
+        assert said == ["첫째"] and log["queued"] is None and not work._busy
+        # Its run ended: nothing would send it.
+        late = {"path": path, "turn": turn, "text": "셋째"}
+        assert web.post("/api/work/queue", json=late).status_code == 409
+
+
 def test_a_turn_is_reachable_after_the_project_moves(tmp_path):
     """Its session was made for a path `ours` took. A path with no session is 404."""
 
