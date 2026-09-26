@@ -537,7 +537,10 @@ class SurveySettings(BaseModel):
 def listing() -> dict:
     from . import survey
 
-    return {"rows": rows(), "settings": survey.settings()}
+    now = hub()
+    # The settings modal's hub line: whether this machine's wiring points here yet.
+    return {"rows": rows(), "settings": survey.settings(),
+            "hub": {"name": channels.WIKI.name, "needed": now["needed"], "refused": now["refused"]}}
 
 
 @router.get("/api/connect/settings")

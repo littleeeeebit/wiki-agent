@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
+import { Eraser } from 'lucide-react'
 import { Answer } from '@/components/Answer'
 import { Composer } from '@/components/Composer'
+import { Btn } from '@/components/Modal'
 import { Toolbar } from '@/components/Toolbar'
 import type { Choice } from '@/components/Toolbar'
 import type { Options, Rule, Worktree } from '@/lib/api'
@@ -14,7 +16,6 @@ type Props = {
   options: Options | null
   choice: Choice
   on: boolean
-  seed: { text: string } | null
   onChoice: (c: Choice) => void
   onSend: (text: string) => void
   onAnswer: (turn: Turn, id: string, allow: boolean, scope?: 'once' | 'session') => void
@@ -29,7 +30,7 @@ type Props = {
  *  ran and what it asks to write stay as they are, because a person approves
  *  those and a reworded command is not the command. */
 export function Agent({
-  row, turns, options, choice, on, seed, onChoice, onSend, onAnswer, onStop, rules, onClearRules, onReset, onPeek,
+  row, turns, options, choice, on, onChoice, onSend, onAnswer, onStop, rules, onClearRules, onReset, onPeek,
 }: Props) {
   const end = useRef<HTMLDivElement>(null)
   const busy = turns.at(-1)?.pending ?? false
@@ -41,57 +42,38 @@ export function Agent({
 
   return (
     <section aria-label="에이전트 세션" className="flex h-full min-h-0 flex-col">
-      <header className="border-b border-border bg-card px-5 pt-3 pb-2.5">
-        <div className="flex h-7 items-center gap-2">
-          <h2 className="truncate font-heading text-[14px] font-semibold">
-            {row ? row.name : '에이전트'}
-          </h2>
-          <p className="truncate font-mono text-[10.5px] text-faint">
-            {row ? `${row.branch}${row.dirty ? ' · 변경 있음' : row.merged ? ' · HEAD 에 다 있음' : ''}` : '작업트리를 고르면 여기서 일을 시킨다'}
-          </p>
-        </div>
-        {/* Held open without a worktree too, so this header's edge stays level
-            with the query pane's. */}
-        <div className="mt-2 flex h-7 items-center justify-end gap-1.5">
+      <header className={cn('border-b border-border px-5', !row && 'hidden')}>
+        <div className="flex h-11 items-center justify-end gap-1.5">
           {row && (
             <>
               {busy && last?.turn && (
-                <button
-                  type="button"
-                  onClick={() => onStop(last)}
-                  className="h-7 shrink-0 whitespace-nowrap rounded-md border border-destructive/40 px-2 text-[12.5px] text-destructive hover:bg-destructive/10"
-                  title="도는 턴을 멈춘다. 대화는 남아 다음 지시가 이어진다"
-                >
+                <Btn tone="danger" onClick={() => onStop(last)} title="도는 턴을 멈춘다. 대화는 남아 다음 지시가 이어진다">
                   멈춤
-                </button>
+                </Btn>
               )}
               <Toolbar value={choice} options={options} busy={busy} onChange={onChoice} />
-              <button
-                type="button"
-                onClick={onReset}
-                disabled={busy}
-                className="h-7 rounded-md border border-border px-2 text-[12.5px] text-muted-foreground hover:bg-secondary disabled:opacity-40"
-              >
-                문맥 비우기
-              </button>
+              <Btn tone="ghost" className="px-1.5" onClick={onReset} disabled={busy} aria-label="문맥 비우기"
+                title="문맥 비우기 — 이 작업트리의 대화를 새로 시작한다">
+                <Eraser className="size-4" />
+              </Btn>
             </>
           )}
         </div>
         {row && rules.length > 0 && (
-          <div className="mt-2 flex items-center gap-2 text-[12px] text-muted-foreground">
+          <div className="-mt-1 flex items-center gap-2 pb-2 text-[12.5px] text-muted-foreground">
             <span className="min-w-0 truncate">
               세션 허용:{' '}
               {rules.map((r, i) => (
                 <span key={i}>
                   {i > 0 && ' · '}
-                  {r.kind === 'command' ? <code className="font-mono text-[11.5px]">{r.command}</code> : r.tool}
+                  {r.kind === 'command' ? <code className="font-mono text-[12px]">{r.command}</code> : r.tool}
                 </span>
               ))}
             </span>
             <button
               type="button"
               onClick={onClearRules}
-              className="shrink-0 rounded px-1.5 text-[12px] text-primary hover:bg-secondary"
+              className="shrink-0 rounded px-1.5 text-[12.5px] text-primary hover:bg-secondary"
             >
               해제
             </button>
@@ -103,8 +85,7 @@ export function Agent({
         <div className="space-y-5 px-4 py-4">
           {!row && (
             <p className="text-[13.5px] text-faint">
-              {seed ? '초안이 입력칸에서 기다린다. 왼쪽에서 작업트리를 고르거나 새로 만든다.'
-                : '왼쪽에서 작업트리를 고르거나 새로 만든다. 에이전트는 그 안에서만 쓰고, 쓰기마다 여기서 묻는다.'}
+              아직 작업트리가 없다. 명세의 [시작] 이 작업트리를 만들고 첫 턴을 보낸다. 에이전트는 그 안에서만 쓰고, 쓰기마다 여기서 묻는다.
             </p>
           )}
           {row && turns.length === 0 && (
@@ -128,7 +109,6 @@ export function Agent({
       <Composer
         busy={busy}
         disabled={!row}
-        seed={seed}
         max={320}
         placeholder="지시를 적어라. Enter 로 보내고 Shift+Enter 로 줄바꿈."
         onSend={onSend}
@@ -206,7 +186,7 @@ function Ask({ step, turn, onAnswer }: {
       <div className="flex items-center justify-between gap-2">
         <span className="font-heading text-[11px] font-semibold">
           {open ? '쓰기 허용?' : ANSWERED[step.by ?? 'person'][step.answer ? 0 : 1]}
-          <span className="ml-1.5 font-mono text-[11px] font-normal text-muted-foreground">{step.tool}</span>
+          <span className="ml-1.5 font-mono text-[10.5px] font-normal text-muted-foreground">{step.tool}</span>
         </span>
         {open && (
           <span className="flex gap-1.5">

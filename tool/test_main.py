@@ -459,6 +459,15 @@ def _repo(tmp_path: Path) -> Path:
     return repo
 
 
+def _made(task: str = "t1") -> str:
+    """A worktree of the selected project, as a spec's `[시작]` makes one —
+    the screen has no way of its own to make one any more."""
+
+    from workspace import create
+
+    return str(create(chat.current_repo(), task))
+
+
 class Agent:
     """A write session that asks once and finishes."""
 
@@ -537,9 +546,8 @@ def test_work_opens_only_its_own_worktrees(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"):
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         assert [r["name"] for r in web.get("/api/worktrees").json()["rows"]] == ["t1"]
-        assert web.post("/api/worktrees", json={"task": "../x"}).status_code == 400
         for other in (str(repo), str(tmp_path / "elsewhere")):
             assert web.post("/api/work/say", json={"path": other, "text": "x"}).status_code == 404
             assert web.get("/api/work/log", params={"path": other}).status_code == 404
@@ -557,7 +565,7 @@ def test_an_approval_goes_only_to_the_session_that_asked(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent):
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         stream = web.post("/api/work/say", json={"path": path, "text": "b.txt 를 써라"}).text
         events = [json.loads(line[6:]) for line in stream.splitlines() if line.startswith("data: ")]
         assert [e["kind"] for e in events] == ["approval", "done"]
@@ -583,22 +591,15 @@ def test_an_approval_goes_only_to_the_session_that_asked(tmp_path):
         assert web.post("/api/work/answer", json=right).status_code == 409
 
 
-def test_a_draft_carries_the_grounds_and_leaves_the_task_to_a_person(tmp_path):
+def test_the_draft_and_the_bare_worktree_are_gone(tmp_path):
+    """Loop stage 6: work starts from a spec's `[시작]` or a review loop. The
+    answer-to-draft route and the `새 작업` box's route are not there to call."""
+
     web = client()
-    with patch.object(chat_channels, "repo_for", return_value=tmp_path), \
-         patch.object(chat, "active_page", return_value=("", [])), \
-         patch.object(chat, "decisions", return_value=[("결정", "이유")]):
-        text = web.post("/api/draft", json={
-            "question": "왜 막히나?", "answer": "`tool/lint.py:12` 와 `docs/a.md:3–5` 를 보라. `tool/lint.py:12`\n"
-                      "craft/g.md:16 — 백틱 없이 온 인용. `tool/x.py` 는 줄이 없다",
-            "hits": ["hooks-fail-open"]}).json()["text"]
-        assert text.count("- `tool/lint.py:12`") == 1 and "- `docs/a.md:3–5`" in text
-        assert "- `craft/g.md:16`" in text
-        assert "- hooks-fail-open" in text and "- 결정 — 이유" in text
-        assert text.rstrip().endswith("(사람이 한 줄 적는다)")
-        retro = web.post("/api/draft", json={"question": "교정 3회 · 규칙 · 새 후보", "target": "wiki"}).json()["text"]
-        assert chat.WRITERS["wiki"] in retro and "교정 3회 · 규칙 · 새 후보" in retro
-        assert web.post("/api/draft", json={"target": "anything"}).status_code == 400
+    with patch.object(chat_channels, "repo_for", return_value=tmp_path):
+        assert web.post("/api/draft", json={"question": "x"}).status_code in (404, 405)
+        assert web.post("/api/worktrees", json={"task": "t1"}).status_code in (404, 405)
+    assert not hasattr(chat, "WRITERS") and not hasattr(work, "make")
 
 
 def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it():
@@ -647,7 +648,7 @@ def test_a_body_that_never_starts_holds_nothing(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent):
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         work.say(work.Order(path=path, text="x"))
         chat.say("wiki", chat.Say(text="x"))
         settled(path)   # a work turn runs on without its body, and lets go when it ends
@@ -663,10 +664,10 @@ def test_a_new_task_under_an_old_name_starts_fresh(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent):
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         web.post("/api/work/say", json={"path": path, "text": "old"}).raise_for_status()
         web.post("/api/worktrees/remove", json={"path": path}).raise_for_status()
-        again = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        again = _made()
         assert again == path
         assert web.get("/api/work/log", params={"path": again}).json()["rows"] == []
         web.post("/api/work/say", json={"path": again, "text": "new"}).raise_for_status()
@@ -705,7 +706,7 @@ def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_p
     with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
          patch.object(work, "ChatSession", Slow):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         waiting = work.say(work.Order(path=path, text="x"))
         assert work._busy[path].kind == "turn", "도는 턴은 전환을 막지 않는다"
         assert web.post("/api/worktrees/remove", json={"path": path}).status_code == 409
@@ -802,7 +803,7 @@ def test_a_removal_holds_its_worktree_until_it_is_done(tmp_path):
     with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
           patch.object(work, "ChatSession", Agent), patch.object(work, "remove", slow)):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         removing = threading.Thread(target=lambda: work.clear(work.Where(path=path)))
         removing.start()
         try:
@@ -839,7 +840,7 @@ def test_an_instruction_keeps_the_repository_it_was_held_in(tmp_path):
     with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
           patch.object(work, "ChatSession", Agent), patch.object(work, "ours", slow)):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
-        path = str(work.create(repos["a"], "t1"))
+        path = _made()
         sending = threading.Thread(target=lambda: work.say(work.Order(path=path, text="x")))
         sending.start()
         try:
@@ -856,38 +857,6 @@ def test_an_instruction_keeps_the_repository_it_was_held_in(tmp_path):
         assert [r["role"] for r in work.recall(Path(path))] == ["user", "assistant"]
         # A new instruction to the old project's worktree is refused now.
         assert web.post("/api/work/say", json={"path": path, "text": "y"}).status_code == 404
-
-
-def test_making_a_worktree_holds_the_project(tmp_path):
-    """Git takes a while to make a worktree. The project switched meanwhile,
-    and the new worktree came back as a success into the other screen."""
-
-    import threading
-
-    repos = _two_projects(tmp_path)
-    web = client()
-    gate, real = threading.Event(), work.create
-
-    def slow(*args):
-        gate.wait(10)
-        return real(*args)
-
-    with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
-          patch.object(work, "create", slow)):
-        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
-        making = threading.Thread(target=lambda: work.make(work.Task(task="t1")))
-        making.start()
-        try:
-            for _ in range(100):
-                if work._busy:
-                    break
-                threading.Event().wait(0.05)
-            assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
-        finally:
-            gate.set()
-            making.join(10)
-        assert not work._busy
-        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
 
 
 def test_a_failed_switch_leaves_the_project_where_it_was(tmp_path):
@@ -946,14 +915,13 @@ def test_a_screen_that_missed_a_switch_writes_nothing_into_the_new_project(tmp_p
     with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
           patch.object(work, "ChatSession", Agent)):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
-        path = web.post("/api/worktrees", json={"task": "t1"}, headers=showing_a).json()["path"]
+        path = _made()
         web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()   # the other window
 
         asked = web.post("/api/say/wiki", json={"text": "A 에 묻는다"}, headers=showing_a)
         assert asked.status_code == 409 and unquote(asked.headers["X-Project-Moved"]) == "b"
         assert web.get("/api/log/wiki").json() == []
         assert web.get("/api/worktrees", headers=showing_a).status_code == 409
-        assert web.post("/api/worktrees", json={"task": "t2"}, headers=showing_a).status_code == 409
         assert web.post("/api/work/say", json={"path": path, "text": "x"}, headers=showing_a).status_code == 409
         assert not work._busy and not chat._busy
         assert web.get("/api/worktrees", headers={"X-Project": "b"}).json()["rows"] == []
@@ -1001,7 +969,7 @@ def test_a_turn_outlives_its_response(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Slow):
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         work.say(work.Order(path=path, text="x"))
         gc.collect()
         assert path in work._busy
@@ -1020,7 +988,7 @@ def test_a_screen_reattaches_after_the_last_event_it_saw(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Slow):
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         work.say(work.Order(path=path, text="x"))
         running = web.get("/api/work/log", params={"path": path}).json()["running"]
         assert running["session_id"] == Agent.made[-1].id and running["seq"] == 1
@@ -1055,7 +1023,7 @@ def test_a_stopped_turn_ends_and_the_next_goes_on_in_the_same_session(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Slow):
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         work.say(work.Order(path=path, text="x"))
         agent = Agent.made[-1]
         turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
@@ -1080,7 +1048,7 @@ def test_a_turn_is_reachable_after_the_project_moves(tmp_path):
     with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
          patch.object(work, "ChatSession", Agent):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         said = parse(web.post("/api/work/say", json={"path": path, "text": "x"}).text)
         web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
         again = web.get("/api/work/events", params={"path": path, "turn": said[0]["turn"]})
@@ -1136,7 +1104,7 @@ def test_the_record_keeps_every_approval_and_who_answered_it(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Asker):
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         work.say(work.Order(path=path, text="x"))
         agent = Agent.made[-1]
 
@@ -1175,7 +1143,7 @@ def test_a_session_rule_is_shown_and_cleared_by_its_own_session(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Slow):
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         work.say(work.Order(path=path, text="x"))
         agent = Agent.made[-1]
         until(lambda: asked(path, "r1"))
@@ -1212,10 +1180,91 @@ def test_a_stop_during_start_up_is_recorded_as_a_stop(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Starting):
-        path = web.post("/api/worktrees", json={"task": "t1"}).json()["path"]
+        path = _made()
         work.say(work.Order(path=path, text="x"))
         assert Starting.started.wait(10)
         web.post("/api/work/stop", json={"path": path, "turn": work._runs[path].turn}).raise_for_status()
         run = settled(path)
         assert (run.events[-1]["kind"], run.events[-1]["text"]) == ("error", "사람이 멈춤")
         assert web.get("/api/work/log", params={"path": path}).json()["rows"][-1]["error"] == "사람이 멈춤"
+
+
+# -- the map ------------------------------------------------------------------
+
+
+def _documented(repo: Path, name: str) -> None:
+    """A repository with two linked documents, a knowledge page, a module page
+    and a committed `.wiki/graph.json` of the kind `sync` writes."""
+
+    (repo / "docs").mkdir()
+    (repo / "docs" / "a.md").write_text("# A\n\nSee [b](b.md).\n", encoding="utf-8")
+    (repo / "docs" / "b.md").write_text("# B\n", encoding="utf-8")
+    (repo / ".wiki" / "modules").mkdir(parents=True)
+    (repo / ".wiki" / f"{name}-rule.md").write_text(
+        f"---\nscope: {name}\nseverity: landmine\ntriggers: [\"x\"]\nreads: [docs/a.md]\n---\n# {name} rule\n",
+        encoding="utf-8")
+    (repo / ".wiki" / "modules" / "core.md").write_text("# core\n\n`docs/b.md`\n", encoding="utf-8")
+    (repo / ".wiki" / "graph.json").write_text("{}\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "docs"], check=True)
+
+
+def test_the_map_of_a_repository_writes_nothing_into_it(tmp_path):
+    """The server builds the map in memory. `repo_graph.write` would have
+    written the original checkout's `.wiki/graph.json`."""
+
+    repos = _two_projects(tmp_path)
+    _documented(repos["a"], "a")
+    web = client()
+
+    def status() -> str:
+        return subprocess.run(["git", "-C", str(repos["a"]), "status", "--porcelain", "--ignored"],
+                              capture_output=True, text=True, check=True).stdout
+
+    before, stamp = status(), (repos["a"] / ".wiki" / "graph.json").stat().st_mtime_ns
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get):
+        data = web.get("/api/graph", params={"repo": "a"}).json()
+        assert web.get("/api/graph", params={"repo": "nope"}).status_code == 404
+    assert status() == before and (repos["a"] / ".wiki" / "graph.json").stat().st_mtime_ns == stamp
+
+    mine = {n["id"]: n for n in data["layers"]["repo"]["nodes"]}
+    assert {"docs/a.md", "docs/b.md", ".wiki/a-rule.md", ".wiki/modules/core.md"} <= set(mine)
+    assert mine[".wiki/a-rule.md"]["injected"] and not mine[".wiki/modules/core.md"]["injected"]
+    edges = {(e["a"], e["b"]) for e in data["layers"]["repo"]["edges"]}
+    assert {("docs/a.md", "docs/b.md"), (".wiki/a-rule.md", "docs/a.md"),
+            (".wiki/modules/core.md", "docs/b.md")} <= edges
+    assert data["metrics"]["pages"] == len(mine) and data["metrics"]["orphans"] == 0
+
+
+def test_the_map_lists_documents_added_after_the_corpus_was_written(tmp_path):
+    """`corpus.json` is refreshed by hooks, not by edits; a document written
+    since then is still on the map, and still counts toward the orphans."""
+
+    import corpus
+    import repo_graph
+
+    repo = tmp_path / "r"
+    (repo / "docs").mkdir(parents=True)
+    (repo / "docs" / "a.md").write_text("# A\n", encoding="utf-8")
+    (repo / ".wiki").mkdir()
+    (repo / ".wiki" / "corpus.json").write_text(
+        json.dumps({"docs": corpus.collect(repo, corpus.DEFAULT_ROOTS)}), encoding="utf-8")
+    (repo / "docs" / "new.md").write_text("# New\n\nSee [a](a.md).\n", encoding="utf-8")
+
+    data = repo_graph.picture(repo)
+    assert "docs/new.md" in {n["id"] for n in data["nodes"]}
+    assert {"a": "docs/new.md", "b": "docs/a.md", "kind": "link"} in data["edges"]
+    assert "docs/new.md" in data["orphans"]
+
+
+def test_the_hub_layer_carries_no_other_repository_s_pages(tmp_path):
+    repos = _two_projects(tmp_path)
+    for name in ("a", "b"):
+        _documented(repos[name], name)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get):
+        data = web.get("/api/graph", params={"repo": "a"}).json()
+    hub = data["layers"]["hub"]["nodes"]
+    assert hub and all(n["scope"] in ("operator", "craft") for n in hub)
+    assert all(set(n["status"]) == {repos["a"].name} for n in hub)
+    assert not any("b-rule" in n["id"] for n in data["layers"]["repo"]["nodes"])

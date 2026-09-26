@@ -13,7 +13,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import corpus  # noqa: E402
-from wiki import front_matter, project_pages  # noqa: E402
+from wiki import INJECTABLE, front_matter, project_pages  # noqa: E402
 
 NS = "repo"
 
@@ -123,6 +123,65 @@ def build(repo: Path) -> dict | None:
             "injectable_decisions": sum(1 for d in records if d["injectable"]),
         },
     }
+
+
+def picture(repo: Path) -> dict:
+    """What the map draws of this repository: every document, knowledge page,
+    module page and decision record as a node, and what points at what.
+
+    Nothing is written — the map runs in the server, and the server does not
+    write to an original checkout. The listing is collected on every call:
+    `corpus.json` is refreshed by hooks, and a document written since then
+    would be missing from the map and its counts.
+    """
+
+    docs = corpus.collect(repo, corpus.DEFAULT_ROOTS)
+    nodes: dict[str, dict] = {
+        doc["path"]: {"id": doc["path"], "kind": "doc", "title": doc.get("title") or doc["path"],
+                      "chars": doc.get("chars", 0)}
+        for doc in docs
+    }
+    wiki = repo / ".wiki"
+    bodies: dict[str, str] = {}
+
+    def page(path: Path, kind: str) -> None:
+        name = path.relative_to(repo).as_posix()
+        meta, body = front_matter(path.read_text(encoding="utf-8", errors="replace"))
+        title = next((line[2:].strip() for line in body.splitlines() if line.startswith("# ")), path.stem)
+        triggers = [str(t) for t in (meta.get("triggers") or [])]
+        severity = str(meta.get("severity") or "")
+        nodes[name] = {"id": name, "kind": kind, "title": title, "chars": len(body),
+                       "severity": severity, "triggers": triggers,
+                       # Module pages are read, never injected (loop stage 5).
+                       "injected": kind == "page" and severity in INJECTABLE and bool(triggers)}
+        bodies[name] = body + "\n" + "\n".join(f"`{r}`" for r in meta.get("reads") or [])
+
+    for path in sorted(wiki.glob("*.md")):
+        page(path, "page")
+    for path in sorted((wiki / "modules").glob("*.md")):
+        page(path, "module")
+    for path in sorted((wiki / "decisions").glob("*.md")):
+        page(path, "decision")
+
+    known = set(nodes)
+    edges, seen = [], set()
+    for name in sorted(known):
+        if name in bodies:
+            text = bodies[name]
+        else:
+            try:
+                text = (repo / name).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+        for raw in sorted(targets(text)):
+            hit = resolve(raw, name, known)
+            if hit and hit != name and (name, hit) not in seen:
+                seen.add((name, hit))
+                edges.append({"a": name, "b": hit, "kind": "link"})
+
+    inbound = {edge["b"] for edge in edges}
+    orphans = sorted(n for n, node in nodes.items() if node["kind"] == "doc" and n not in inbound and n not in ENTRY)
+    return {"nodes": list(nodes.values()), "edges": edges, "orphans": orphans}
 
 
 def write(repo: Path) -> dict | None:

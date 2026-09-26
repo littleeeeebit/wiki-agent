@@ -88,16 +88,17 @@ export function Terminal({ cwd, theme }: { cwd: string; theme: string }) {
 
   return (
     <section aria-label="터미널" className="flex h-full min-h-0 flex-col bg-card">
-      <div className="flex items-center justify-between border-b border-border px-4 py-1.5">
-        <span className="font-heading text-[11px] font-semibold text-muted-foreground">터미널</span>
-        {fault
-          ? <span role="alert" className="truncate pl-3 text-[12.5px] text-destructive">{fault}</span>
-          : <span className="truncate pl-3 font-mono text-[10.5px] text-faint">{cwd}</span>}
-      </div>
+      {(fault || cwd) && (
+        <div className="flex h-8 shrink-0 items-center border-b border-border px-4">
+          {fault
+            ? <span role="alert" className="truncate text-[12.5px] text-destructive">{fault}</span>
+            : <span className="truncate font-mono text-[10.5px] text-faint">{cwd}</span>}
+        </div>
+      )}
       {!shell ? (
-        <p className="p-4 text-[12.5px] text-faint">터미널은 앱 창(tool\app.cmd)에서만 열린다. 브라우저 탭에는 셸이 없다.</p>
+        <p className="p-5 text-[13.5px] text-faint">터미널은 앱 창(tool\app.cmd)에서만 열린다. 브라우저 탭에는 셸이 없다.</p>
       ) : !cwd ? (
-        <p className="p-4 text-[12.5px] text-faint">작업트리를 고르면 그 안에서 셸이 열린다.</p>
+        <p className="p-5 text-[13.5px] text-faint">작업트리가 있는 작업을 고르면 그 안에서 셸이 열린다.</p>
       ) : (
         <div ref={box} className="min-h-0 flex-1 px-2 py-1" />
       )}

@@ -2,9 +2,8 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 
-/* 색과 서체는 `tool/graph_view.py` 의 토큰이다. wiki.html 과 한 벌로 보여야
-   같은 저장소의 화면 둘이지 서로 다른 앱 둘이 아니다. shadcn 의 변수 이름에
-   그 값을 얹었다. */
+/* 색과 서체의 기준은 `DESIGN.md` 다. shadcn 의 변수 이름에 그 값을 얹었다.
+   테마는 `index.html` 이 첫 그림 전에 `.dark` 나 `.light` 로 단다. */
 
 @custom-variant dark (&:is(.dark *));
 
@@ -43,6 +42,12 @@
     --color-added: var(--added);
     --color-wait: var(--wait);
     --color-wait-foreground: var(--wait-foreground);
+    --color-st-draft: var(--st-draft);
+    --color-st-work: var(--st-work);
+    --color-st-review: var(--st-review);
+    --color-st-ready: var(--st-ready);
+    --color-st-queued: var(--st-queued);
+    --color-st-stop: var(--st-stop);
     --radius-sm: calc(var(--radius) * 0.6);
     --radius-md: calc(var(--radius) * 0.8);
     --radius-lg: var(--radius);
@@ -88,6 +93,29 @@
     --sidebar-accent-foreground: #16181d;
     --sidebar-border: #d9d6d0;
     --sidebar-ring: #3f6b8f;
+
+    /* A spec's place in the loop, one hue each (`lib/tasks.ts`). Picked
+       2026-09-26 to tell six states apart on an 8px dot (OKLab distance
+       0.10 or more between any two, `wait` included); `wait` stays the one
+       amber. Values and contrast in DESIGN.md. */
+    --st-draft: #6b7078;
+    --st-work: #1f6cb0;
+    --st-review: #7b52a4;
+    --st-ready: #1d7d3e;
+    --st-queued: #006669;
+    --st-stop: #ba2b2e;
+
+    /* The map. A repository's documents are neutral; what the hub injects is
+       the one coloured thing, and the ladder runs solid to diffuse. */
+    --map-doc: #878d95;
+    --map-page: #3f6b8f;
+    --map-module: #b9b3a4;
+    --map-decision: #d9d6d0;
+    --map-l1: #2b3a67;
+    --map-l2: #3f6b8f;
+    --map-l3: #6b8ea3;
+    --map-l4: #93a8ac;
+    --map-l5: #b9b3a4;
 }
 
 .dark {
@@ -122,45 +150,23 @@
     --sidebar-accent-foreground: #eceae5;
     --sidebar-border: #2e333b;
     --sidebar-ring: #7fa9c9;
-}
 
-/* 아무것도 안 골랐으면 기계를 따른다 — wiki.html 과 같은 규칙. */
-@media (prefers-color-scheme: dark) {
-    :root:not(.light) {
-        --background: #14161a;
-        --foreground: #eceae5;
-        --card: #1c1f25;
-        --card-foreground: #eceae5;
-        --popover: #1c1f25;
-        --popover-foreground: #eceae5;
-        --primary: #7fa9c9;
-        --primary-foreground: #14161a;
-        --secondary: #232830;
-        --secondary-foreground: #eceae5;
-        --muted: #232830;
-        --muted-foreground: #a8aeb6;
-        --faint: #6f757d;
-        --accent: #262b32;
-        --accent-foreground: #eceae5;
-        --destructive: #d9705e;
-        --added: #7fbf9a;
-        --wait: #e0a458;
-        --wait-foreground: #14161a;
-    --wait: #e0a458;
-    --wait-foreground: #14161a;
-        --border: #2e333b;
-        --input: #2e333b;
-        --ring: #7fa9c9;
+    --st-draft: #8a9099;
+    --st-work: #6db6ff;
+    --st-review: #c49bf3;
+    --st-ready: #6fc884;
+    --st-queued: #65d2d2;
+    --st-stop: #ff7c75;
 
-        --sidebar: #1c1f25;
-        --sidebar-foreground: #eceae5;
-        --sidebar-primary: #7fa9c9;
-        --sidebar-primary-foreground: #14161a;
-        --sidebar-accent: #262b32;
-        --sidebar-accent-foreground: #eceae5;
-        --sidebar-border: #2e333b;
-        --sidebar-ring: #7fa9c9;
-    }
+    --map-doc: #6f757d;
+    --map-page: #7fa9c9;
+    --map-module: #8a8577;
+    --map-decision: #3a4049;
+    --map-l1: #a9b8e8;
+    --map-l2: #7fa9c9;
+    --map-l3: #6b8ea3;
+    --map-l4: #5d7275;
+    --map-l5: #6b665b;
 }
 
 @layer base {
@@ -191,13 +197,13 @@
     @apply text-primary underline underline-offset-2 decoration-primary/40;
 }
 .prose-answer code {
-    @apply font-mono text-[12.5px] bg-secondary px-1 py-[1px] rounded-sm;
+    @apply font-mono text-[12px] bg-secondary px-1 py-[1px] rounded-sm;
 }
 .prose-answer pre {
     @apply bg-secondary border border-border rounded-md p-3 overflow-x-auto;
 }
 .prose-answer pre code {
-    @apply bg-transparent p-0 text-[12.5px] leading-[1.6];
+    @apply bg-transparent p-0 text-[12px] leading-[1.6];
 }
 .prose-answer ul {
     @apply list-disc pl-5 space-y-1;
@@ -221,6 +227,6 @@
 
 /* 누를 수 있는 인용 — 경로:줄 이나 SHA. 코드 모양은 지키고 밑줄로 구별한다. */
 .prose-answer .cite {
-    @apply font-mono text-[12.5px] bg-secondary px-1 py-[1px] rounded-sm cursor-pointer
+    @apply font-mono text-[12px] bg-secondary px-1 py-[1px] rounded-sm cursor-pointer
            underline decoration-dotted decoration-primary/60 underline-offset-2 hover:bg-accent;
 }

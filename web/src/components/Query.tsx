@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Eraser } from 'lucide-react'
 import { Blocks } from '@/components/Blocks'
 import { Composer } from '@/components/Composer'
+import { Btn } from '@/components/Modal'
 import { Peek } from '@/components/Peek'
 import { Stream } from '@/components/Stream'
 import { Toolbar } from '@/components/Toolbar'
@@ -30,22 +32,52 @@ export type Msg = {
   simpleCost?: number
 }
 
+/** Text put in one focus's box from outside — the map's "ask about this
+ *  document". A new object each time, so the same text twice still lands. */
+export type Seed = { focus: string; text: string }
+
 type Props = {
   channels: Channel[]
   options: Options | null
   on: boolean
+  seed: Seed | null
   onChannels: (list: Channel[]) => void
   onBusy: (busy: boolean) => void
-  onDraft: (text: string) => void
   specs: Spec[]
   onSpecs: () => void
   onStart: (id: string) => Promise<void>
 }
 
-/** The main pane: ask the wiki under one focus, read the grounds, and carry
- *  an answer over to a worktree's agent. */
-export function Query({ channels, options, on, onChannels, onBusy, onDraft, specs, onSpecs, onStart }: Props) {
+// What a retro candidate carries into the `next` focus when a person sends
+// it somewhere: the old worktree instructions, split into the spec's goal and
+// what stays out. English, because the agent reads it.
+const MATERIAL: Record<'wiki' | 'claude_md', (candidate: string) => string> = {
+  wiki: (c) => [
+    'Turn this retro candidate into a spec.',
+    "Goal: one wiki page for it, following `SCHEMA.md`'s page minimum structure, severity set by the evidence. "
+      + "If the candidate names a page that already exists, climb that page's ladder instead of adding a page.",
+    'Out: every file but that one page.',
+    '', `Candidate: ${c}`,
+  ].join('\n'),
+  claude_md: (c) => [
+    'Turn this retro candidate into a spec.',
+    "Goal: one imperative sentence for it under the right section of this repository's `CLAUDE.md`. "
+      + 'If a sentence already says it, point at that one instead.',
+    'Out: every file but `CLAUDE.md`; no `CLAUDE.md` or no right place means stop and say so.',
+    '', `Candidate: ${c}`,
+  ].join('\n'),
+}
+
+/** The middle pane's conversation: ask the wiki under one focus, read the
+ *  grounds, and settle the next task into a spec. */
+export function Query({ channels, options, on, seed, onChannels, onBusy, specs, onSpecs, onStart }: Props) {
   const [active, setActive] = useState('wiki')
+  const [typed, setTyped] = useState<{ text: string } | null>(null)
+  useEffect(() => {
+    if (!seed) return
+    setActive(seed.focus)
+    setTyped({ text: seed.text })
+  }, [seed])
   const [messages, setMessages] = useState<Msg[]>([])
   const [legacy, setLegacy] = useState<api.Turn[]>([])
   const [configuring, setConfiguring] = useState(false)
@@ -210,28 +242,16 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft, spec
     [active, messages],
   )
 
-  const draftFrom = useCallback(
-    async (index: number) => {
-      const answer = messages[index]
-      const question = [...messages.slice(0, index)].reverse().find((m) => m.role === 'user')
-      try {
-        // The original answer, never the overlay: the agent reads English,
-        // and a translation of its grounds is a rewording of them.
-        onDraft((await api.draft({ question: question?.text ?? '', answer: answer.text, hits: answer.hits })).text)
-      } catch (err) {
-        setFault(String(err))
-      }
-    },
-    [messages, onDraft],
-  )
-
+  // The candidate as written, never the overlay: a page is English, and a
+  // rendering sent back would write a translation of a translation.
   const decideOne = useCallback(
     async (candidate: string, target: 'wiki' | 'claude_md' | 'drop') => {
       if (target === 'drop') return '버렸다.'
-      onDraft((await api.draft({ question: candidate, target })).text)
-      return '초안을 에이전트 입력칸에 넣었다. 작업트리를 고르고, 마지막 절을 적어 보낸다.'
+      setActive('next')
+      setTyped({ text: MATERIAL[target](candidate) })
+      return '다음 작업 입력칸에 넣었다. 보내면 명세로 정리한다.'
     },
-    [onDraft],
+    [],
   )
 
   const showPeek = useCallback(
@@ -248,9 +268,9 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft, spec
   )
 
   return (
-    <section aria-label="위키 질의" className="flex h-full min-w-0 flex-col">
-      <header className="border-b border-border bg-card px-5 pt-3 pb-2.5">
-        <nav aria-label="초점" className="flex h-7 gap-1 overflow-hidden">
+    <section aria-label="대화" className="flex h-full min-w-0 flex-col">
+      <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-5">
+        <nav aria-label="초점" className="flex min-w-0 gap-1">
           {channels.map((c) => (
             <button
               key={c.id}
@@ -259,7 +279,7 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft, spec
               onClick={() => setActive(c.id)}
               title={c.blurb}
               className={cn(
-                'flex items-center gap-1.5 rounded-md px-2.5 py-1 font-heading text-[14px] font-semibold',
+                'flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2.5 font-heading text-[14px] font-semibold',
                 c.id === active ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-secondary/60',
               )}
             >
@@ -268,24 +288,12 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft, spec
             </button>
           ))}
         </nav>
-        <div className="mt-2 flex items-center justify-between gap-2">
-          <p className="min-w-0 truncate text-[12.5px] text-muted-foreground">
-            {here?.blurb ?? ''}
-            {here?.model_name && (
-              <span className="ml-2 font-mono text-[10.5px] text-faint">{here.model_name.replace('claude-', '')}</span>
-            )}
-          </p>
-          <div className="flex shrink-0 items-center gap-1.5">
-            {here && <Toolbar value={here} options={options} busy={busy} onChange={apply} />}
-            <button
-              type="button"
-              onClick={wipe}
-              disabled={busy}
-              className="h-7 rounded-md border border-border px-2 text-[12.5px] text-muted-foreground hover:bg-secondary disabled:opacity-40"
-            >
-              문맥 비우기
-            </button>
-          </div>
+        <div className="flex shrink-0 items-center gap-1.5">
+          {here && <Toolbar value={here} options={options} busy={busy} onChange={apply} />}
+          <Btn tone="ghost" className="px-1.5" onClick={wipe} disabled={busy} aria-label="문맥 비우기"
+            title="문맥 비우기 — 이 초점의 대화를 새로 시작한다. 기록은 남는다">
+            <Eraser className="size-4" />
+          </Btn>
         </div>
       </header>
 
@@ -314,7 +322,6 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft, spec
             onPeek={showPeek}
             onDecide={active === 'retro' ? decideOne : undefined}
             onMark={markTurn}
-            onDraft={draftFrom}
             blocks={active === 'next' ? (m) => (
               <Blocks blocks={m.blocks ?? []} specs={specs} korean={on} busy={busy}
                 onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={onStart} />
@@ -322,14 +329,11 @@ export function Query({ channels, options, on, onChannels, onBusy, onDraft, spec
             empty={active === 'next' ? (
               <div className="space-y-2 text-[13.5px] text-faint">
                 <p>계획의 남은 행, 열린 PR, 최근 결정, 경고를 모아 다음 작업 후보를 낸다. 직접 물어도 된다.</p>
-                <button type="button" disabled={busy} onClick={() => void send('', true)}
-                  className="rounded-md border border-primary px-3 py-1 text-[13px] text-primary hover:bg-secondary disabled:opacity-40">
-                  후보 내기
-                </button>
+                <Btn tone="primary" disabled={busy} onClick={() => void send('', true)}>후보 내기</Btn>
               </div>
             ) : undefined}
           />
-          <Composer busy={busy} onSend={send} />
+          <Composer busy={busy} onSend={send} seed={typed} />
         </div>
         {peek && <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />}
       </div>

@@ -2,8 +2,8 @@
 
 Three languages meet here and each has a reason. The Korean this file *reads*
 is the plan documents and decision records, which are written in Korean; the
-Korean it *hands out* — `active_page` and `decisions` — goes into `/api/draft`,
-where a person reads it; and the context handed to the agent is English. Only
+Korean it *hands out* — `active_page` and `decisions` — goes into the `next`
+focus's materials (`main/specs.py`), where a person reads it; and the context handed to the agent is English. Only
 the last of those is translated, and only at the one point where it crosses over.
 """
 

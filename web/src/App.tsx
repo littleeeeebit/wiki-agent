@@ -2,22 +2,33 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 import { Agent } from '@/components/Agent'
 import type { Choice } from '@/components/Toolbar'
+import { Btn } from '@/components/Modal'
 import { Peek } from '@/components/Peek'
 import { Query } from '@/components/Query'
-import { Rail } from '@/components/Rail'
-import type { Other, View } from '@/components/Rail'
+import type { Seed } from '@/components/Query'
 import { Projects } from '@/components/Projects'
+import { RepoMap } from '@/components/RepoMap'
 import { Review } from '@/components/Review'
+import { Settings } from '@/components/Settings'
+import { SpecSummary } from '@/components/SpecSummary'
+import { TaskRail } from '@/components/TaskRail'
+import type { View } from '@/components/TaskRail'
 import { Terminal, closed } from '@/components/Terminal'
-import { WikiMap } from '@/components/WikiMap'
 import * as api from '@/lib/api'
 import type { Channel, LoopRow, LoopSettings, Options, Peek as PeekData, Pr, Spec, Switch, Worktree } from '@/lib/api'
+import { LOOPING, elsewhere, phase, tasks as taskList } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useWork } from '@/lib/work'
 
 type Theme = 'dark' | 'light'
+type Tab = 'agent' | 'review' | 'terminal'
+const TABS: { id: Tab; label: string }[] = [{ id: 'agent', label: '에이전트' }, { id: 'review', label: '리뷰' }, { id: 'terminal', label: '터미널' }]
 
-const LOOPING = /^(리뷰 대기|리뷰 R\d+|고치는 중 R\d+)$/
+// The state word's colour on the right pane's header: the rail's dot, in text.
+const TONE: Record<string, string> = {
+  draft: 'text-st-draft', work: 'text-st-work', review: 'text-st-review', ready: 'text-st-ready',
+  queued: 'text-st-queued', stop: 'text-st-stop', done: 'text-faint', none: 'text-faint',
+}
 
 /** An OS notification, only while the window is not in front. Without the
  *  person's leave the rail's mark is all there is. */
@@ -38,8 +49,9 @@ function stored<T extends string>(key: string, fallback: T): T {
   }
 }
 
-/** One window: the worktrees on the left, the wiki query in the middle, the
- *  selected worktree's agent and shell on the right. */
+/** One window in three columns: the project's tasks on the left, the wiki —
+ *  its conversation, its map, or every project — in the middle, and the
+ *  selected task's agent, review and shell on the right. */
 export default function App() {
   const [channels, setChannels] = useState<Channel[]>([])
   const [options, setOptions] = useState<Options | null>(null)
@@ -47,19 +59,25 @@ export default function App() {
   const [sw, setSw] = useState<Switch | null>(null)
   const [rows, setRows] = useState<Worktree[]>([])
   const [specs, setSpecs] = useState<Spec[]>([])
+  // A task's key: its worktree's path, or `spec:<id>` before it has one.
   const [selected, setSelected] = useState('')
-  const [view, setView] = useState<View>('query')
-  const [seed, setSeed] = useState<{ text: string } | null>(null)
+  const [view, setView] = useState<View>('chat')
+  // The map is drawn once it is first opened, and kept after.
+  const [mapped, setMapped] = useState(false)
+  const [seed, setSeed] = useState<Seed | null>(null)
+  const [setting, setSetting] = useState(false)
   const [queryBusy, setQueryBusy] = useState(false)
   const [choice, setChoice] = useState<Choice>({ model: '', effort: '' })
   const [peek, setPeek] = useState<{ data: PeekData | null; error?: string } | null>(null)
   // Dark unless the person chose light. Remembered per machine, not per server.
   const [theme, setTheme] = useState<Theme>(() => stored('theme', 'dark'))
-  const [prs, setPrs] = useState<Pr[]>([])
+  // The list carries the project it was read for, and is shown only under
+  // that project: right after a switch the old one still stands here.
+  const [prs, setPrs] = useState<{ project: string; rows: Pr[] }>({ project: '', rows: [] })
   const [loopRows, setLoopRows] = useState<LoopRow[]>([])
   const [turnsElsewhere, setTurnsElsewhere] = useState<{ path: string; repo: string }[]>([])
   const [loopSettings, setLoopSettings] = useState<LoopSettings | null>(null)
-  const [tab, setTab] = useState<'agent' | 'review'>('agent')
+  const [tab, setTab] = useState<Tab>('agent')
   const work = useWork()
   const { attach } = work
   const repo = channels[0]?.repo ?? ''
@@ -84,7 +102,6 @@ export default function App() {
   // come from several places — the first load, a switch, the query pane after
   // each answer — and one of them once turned the screen back a project.
   const expected = useRef('')
-  const [making, setMaking] = useState(false)
 
   const accept = useCallback((list: Channel[]) => {
     const of = list[0]?.repo ?? ''
@@ -123,7 +140,7 @@ export default function App() {
 
   // Worktrees of other projects the rail lists — a loop, a running turn. One
   // of them stays selected when this project's list does not have it.
-  const elsewhere = useRef(new Set<string>())
+  const away = useRef(new Set<string>())
 
   const refresh = useCallback(() => {
     const mine = ++listing.current
@@ -135,7 +152,8 @@ export default function App() {
           return
         }
         setRows(rows)
-        setSelected((path) => (rows.some((r) => r.path === path) || elsewhere.current.has(path) ? path : ''))
+        setSelected((key) => (key.startsWith('spec:') || rows.some((r) => r.path === key) || away.current.has(key)
+          ? key : ''))
       })
       .catch((err) => mine === listing.current && setFault(String(err)))
   }, [follow])
@@ -152,7 +170,7 @@ export default function App() {
   // the rail's other-projects group.
   const readPrs = useCallback(() => {
     api.getPrs()
-      .then(({ project, rows }) => project === expected.current && setPrs(rows))
+      .then(({ project, rows }) => project === expected.current && setPrs({ project, rows }))
       .catch(() => {})
   }, [])
   const readLoops = useCallback(() => {
@@ -209,6 +227,7 @@ export default function App() {
     const soon = () => {
       window.clearTimeout(timer)
       timer = window.setTimeout(() => {
+        refresh()
         readSpecs()
         readLoops()
         readPrs()
@@ -247,11 +266,12 @@ export default function App() {
       stop.abort()
       window.clearTimeout(timer)
     }
-  }, [repo, attach, readSpecs, readLoops, readPrs])
+  }, [repo, attach, refresh, readSpecs, readLoops, readPrs])
 
+  const path = selected.startsWith('spec:') ? '' : selected
   useEffect(() => {
-    if (selected) work.load(selected)
-  }, [selected, work])
+    if (path) work.load(path)
+  }, [path, work])
 
   // Closing the app window takes the server down, and every running turn with
   // it. A browser tab is not asked: closing it leaves the server and the turns.
@@ -313,11 +333,10 @@ export default function App() {
   }, [])
 
   const order = useCallback(async (text: string) => {
-    const path = selected
     await work.send(path, text, choice)
     refresh()
     api.getSwitch().then(setSw).catch(() => {})
-  }, [selected, choice, work, refresh])
+  }, [path, choice, work, refresh])
 
   // `[시작]`: the server makes the worktree and starts its first turn; the
   // screen selects it, and loading it attaches to that turn.
@@ -326,59 +345,91 @@ export default function App() {
     readSpecs()
     refresh()
     setSelected(path)
+    setTab('agent')
   }, [choice, readSpecs, refresh])
 
-  const showPeek = useCallback(async (path: string, line: number) => {
-    if (!selected) return
+  const showPeek = useCallback(async (file: string, line: number) => {
+    if (!path) return
     setPeek({ data: null })
     try {
-      setPeek({ data: await api.peek(selected, path, line) })
+      setPeek({ data: await api.peek(path, file, line) })
     } catch (err) {
       setPeek({ data: null, error: String(err) })
     }
-  }, [selected])
+  }, [path])
 
-  const others: Other[] = [
-    ...loopRows.filter((l) => l.repo !== repo && l.worktree).map((l) => ({
-      path: l.worktree!, repo: l.repo, label: `${l.pr ? `#${l.pr} ` : ''}${l.round ? `R${l.round} ` : ''}${l.state}` })),
-    ...turnsElsewhere.filter((t) => t.repo !== repo && !loopRows.some((l) => l.worktree === t.path))
-      .map((t) => ({ ...t, label: '도는 중' })),
-  ]
+  const remove = useCallback(async (target: string) => {
+    setFault('')
+    try {
+      // A terminal's shell may stand in that folder, and Windows will not
+      // delete a directory a process stands in. Rendered now so a selected
+      // one starts closing; then every close there is waited on — one
+      // started a moment ago by selecting elsewhere counts too.
+      if (target === selected) flushSync(() => setSelected(''))
+      await closed(target)
+      await api.removeWorktree(target)
+      // The same task name makes the same path again; its turns must not
+      // come back with it.
+      work.forget(target)
+      refresh()
+      readSpecs()
+    } catch (err) {
+      setFault(String(err instanceof Error ? err.message : err))
+    }
+  }, [selected, work, refresh, readSpecs])
+
+  // The rail leaves a terminal's changes to the next read: when the person
+  // leaves the terminal tab, the worktree list is read again.
+  const pick = useCallback((next: Tab) => {
+    if (tab === 'terminal' && next !== 'terminal') refresh()
+    setTab(next)
+  }, [tab, refresh])
+
+  const others = elsewhere(loopRows, turnsElsewhere, repo)
   const otherPaths = new Set(others.map((o) => o.path))
   useEffect(() => {
-    elsewhere.current = new Set(otherPaths)
+    away.current = new Set(otherPaths)
   })
+  // Open approvals by worktree, as this window's streams know them.
+  const asks = (p: string) => (work.turns[p] ?? []).filter((t) => t.pending)
+    .flatMap((t) => t.steps).filter((s) => s.kind === 'approval' && s.answer === undefined).length
+  // The server's `busy` is as old as the last listing; a turn this window is
+  // streaming is known here first.
+  const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.at(-1)?.pending)
+  const list = taskList(specs, rows, asks, busy)
+  const task = list.find((t) => t.key === selected)
+  const other = others.find((o) => o.path === selected)
   // A worktree of another project has no row in this project's list; the
   // pane still shows it, and a new instruction there is refused by the server.
-  const row = rows.find((r) => r.path === selected) ?? (otherPaths.has(selected)
-    ? { path: selected, name: selected.split(/[\\/]/).pop() ?? '', branch: '', dirty: false, merged: false,
-        live: true, busy: false }
+  const row = task?.row ?? (other
+    ? { path: selected, name: other.name, branch: '', dirty: false, merged: false, live: true, busy: false }
     : undefined)
-  const owning = specs.find((s) => s.worktree === selected)
-  const waiting = new Set([
-    ...Object.entries(work.turns).filter(([, turns]) => turns.some((t) => t.pending
-      && t.steps.some((s) => s.kind === 'approval' && s.answer === undefined))).map(([path]) => path),
-    ...loopRows.filter((l) => l.waiting && l.worktree).map((l) => l.worktree!),
-  ])
+  const spec = task?.spec ?? null
+  const waiting = (task?.waiting || other?.waiting) ?? false
   const on = sw?.translate ?? false
+  const tidy = row && task?.row && row.merged && !row.dirty && !task.busy
 
+  const middle = view === 'projects' ? '모든 프로젝트' : repo
   return (
-    <div className="grid h-screen grid-cols-[15rem_minmax(0,1fr)_minmax(0,1fr)] overflow-hidden">
-      <Rail
+    <div className="grid h-screen grid-cols-[15rem_minmax(0,1.1fr)_minmax(0,1fr)] overflow-hidden max-[1280px]:grid-cols-[3.25rem_minmax(0,1.1fr)_minmax(0,1fr)]">
+      <TaskRail
         repo={repo}
         options={options}
         // The server refuses the switch too; this keeps the picker from offering it.
-        projectBusy={queryBusy || making || rows.some((r) => r.busy)
+        projectBusy={queryBusy || rows.some((r) => r.busy)
           || Object.values(work.turns).some((turns) => turns.at(-1)?.pending)}
-        // The server's `busy` is as old as the last listing; a turn this
-        // window is streaming is known here first.
-        rows={rows.map((r) => ({ ...r, busy: r.busy || Boolean(work.turns[r.path]?.at(-1)?.pending) }))}
-        waiting={waiting}
-        specs={Object.fromEntries(specs.filter((s) => s.worktree).map((s) => [s.worktree, {
-          state: s.state, pr: s.pr?.number ?? null, round: (s.rounds ?? []).filter((r) => !r.stale).length }]))}
-        prs={prs}
+        view={view}
+        tasks={list}
         others={others}
-        loopSettings={loopSettings}
+        selected={selected}
+        prs={prs.project === repo ? prs.rows : []}
+        onProject={project}
+        onView={(v) => {
+          if (v === 'map') setMapped(true)
+          setView(v)
+        }}
+        onSelect={setSelected}
+        onSettings={() => setSetting(true)}
         onLoop={async (numbers) => {
           // Asked here, on a click: a browser grants it only to a gesture.
           if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission()
@@ -389,117 +440,132 @@ export default function App() {
           const failed = results.filter((r) => r.error)
           if (failed.length) throw new Error(failed.map((r) => `#${r.number} — ${r.error}`).join(' · '))
         }}
-        onLoopSettings={async (s) => setLoopSettings(await api.setLoopSettings(s))}
-        selected={selected}
-        view={view}
-        sw={sw}
-        theme={theme}
-        onProject={project}
-        onSelect={setSelected}
-        onMake={async (task) => {
-          setMaking(true)
-          try {
-            const { path } = await api.makeWorktree(task)
-            refresh()
-            setSelected(path)
-          } finally {
-            setMaking(false)
-          }
-        }}
-        onRemove={async (path) => {
-          // A terminal's shell may stand in that folder, and Windows will not
-          // delete a directory a process stands in. Rendered now so a selected
-          // one starts closing; then every close there is waited on — one
-          // started a moment ago by selecting elsewhere counts too.
-          if (path === selected) flushSync(() => setSelected(''))
-          await closed(path)
-          await api.removeWorktree(path)
-          // The same task name makes the same path again; its turns must not
-          // come back with it.
-          work.forget(path)
-          refresh()
-        }}
-        onView={setView}
-        onSwitch={flip}
-        onTheme={setTheme}
       />
 
       <main className="flex min-h-0 min-w-0 flex-col border-r border-border">
+        <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-5">
+          <h1 className="min-w-0 truncate font-mono text-[12px] text-muted-foreground">{middle}</h1>
+          {view === 'projects' ? (
+            <Btn tone="ghost" onClick={() => setView('chat')}>← 돌아가기</Btn>
+          ) : (
+            <div role="tablist" aria-label="가운데" className="flex h-7 shrink-0 rounded-md border border-border p-0.5">
+              {(['chat', 'map'] as const).map((v) => (
+                <button key={v} type="button" role="tab" aria-selected={view === v}
+                  onClick={() => {
+                    if (v === 'map') setMapped(true)
+                    setView(v)
+                  }}
+                  className={cn('rounded-[4px] px-2.5 text-[12.5px]',
+                    view === v ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground')}>
+                  {v === 'chat' ? '대화' : '지도'}
+                </button>
+              ))}
+            </div>
+          )}
+        </header>
         {fault && (
-          <div role="alert" className="border-b border-destructive/30 bg-destructive/10 px-5 py-2 text-[12.5px] text-destructive">
-            {fault}
+          <div role="alert" className="flex items-start gap-2 border-b border-destructive/30 bg-destructive/10 px-5 py-2 text-[12.5px] text-destructive">
+            <span className="min-w-0 flex-1 whitespace-pre-wrap">{fault}</span>
+            <button type="button" className="shrink-0 hover:underline" onClick={() => setFault('')}>닫기</button>
           </div>
         )}
-        <div className="min-h-0 flex-1">
-          {view === 'map' ? (
-            <div className="h-full overflow-auto"><WikiMap on={on} /></div>
-          ) : view === 'projects' ? (
-            <Projects />
-          ) : (
-            <Query
-              channels={channels}
-              options={options}
-              on={on}
-              onChannels={accept}
-              onBusy={setQueryBusy}
-              onDraft={(text) => setSeed({ text })}
-              specs={specs}
-              onSpecs={readSpecs}
-              onStart={start}
-            />
-          )}
+        {/* The conversation and the map stay mounted: an answer streaming in
+            one focus is not cut by a look at the map, nor the map redrawn. */}
+        <div className={cn('min-h-0 flex-1', view !== 'chat' && 'hidden')}>
+          <Query
+            channels={channels}
+            options={options}
+            on={on}
+            seed={seed}
+            onChannels={accept}
+            onBusy={setQueryBusy}
+            specs={specs}
+            onSpecs={readSpecs}
+            onStart={start}
+          />
         </div>
+        {mapped && (
+          <div className={cn('min-h-0 flex-1', view !== 'map' && 'hidden')}>
+            <RepoMap repo={repo} on={on} onAsk={(file) => {
+              setSeed({ focus: 'wiki', text: `\`${file}\` ` })
+              setView('chat')
+            }} />
+          </div>
+        )}
+        {view === 'projects' && <div className="min-h-0 flex-1"><Projects current={repo} /></div>}
       </main>
 
-      <div className="flex min-h-0 min-w-0 flex-col">
-        <div className="flex min-h-0 flex-[3]">
-          <div className="flex min-w-0 flex-1 flex-col">
-            {owning?.pr && (
-              <div role="tablist" className="flex gap-1 border-b border-border bg-card px-3 pt-1.5">
-                {(['agent', 'review'] as const).map((t) => (
-                  <button key={t} type="button" role="tab" aria-selected={tab === t} onClick={() => setTab(t)}
-                    className={cn('flex items-center gap-1.5 rounded-t-md px-2.5 py-1 text-[12.5px]',
-                      tab === t ? 'bg-background font-semibold' : 'text-muted-foreground hover:bg-secondary')}>
-                    {t === 'agent' ? '에이전트' : `리뷰 #${owning.pr!.number}`}
-                    {t === 'agent' && waiting.has(selected) && <span className="size-1.5 rounded-full bg-wait" title="승인을 기다린다" />}
-                  </button>
-                ))}
-              </div>
+      <section aria-label="작업" className="flex min-h-0 min-w-0 flex-col">
+        <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-5">
+          <h2 className="min-w-0 truncate font-heading text-[14px] font-semibold">
+            {task?.name ?? other?.name ?? '작업'}
+          </h2>
+          {(task || other) && (
+            <span className="flex shrink-0 gap-1.5 font-mono text-[10.5px]">
+              {(task?.pr ?? other?.pr) && <span className="text-muted-foreground">#{task?.pr ?? other?.pr}</span>}
+              {(task?.round || other?.round) ? <span className="text-muted-foreground">R{task?.round || other?.round}</span> : null}
+              <span className={TONE[spec ? phase(spec.state) : 'none']}>{spec?.state ?? (other ? other.line : '명세 없음')}</span>
+            </span>
+          )}
+          {!task && !other && <span className="truncate text-[12.5px] text-faint">왼쪽에서 작업을 고른다</span>}
+          {tidy && (
+            <Btn className="ml-auto" onClick={() => void remove(row!.path)}
+              title="작업트리와 브랜치를 지운다. 브랜치의 변경은 원본 HEAD 에 다 있다">
+              작업트리 정리
+            </Btn>
+          )}
+        </header>
+        {task && <SpecSummary key={spec?.id ?? task.key} spec={spec} onStart={start} />}
+        <div role="tablist" aria-label="작업 면" className="flex h-9 shrink-0 items-end gap-1 border-b border-border px-3">
+          {TABS.map((t) => (
+            <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => pick(t.id)}
+              className={cn('-mb-px flex h-8 items-center gap-1.5 border-b-2 px-2.5 text-[12.5px]',
+                tab === t.id ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground')}>
+              {t.label}
+              {t.id === 'agent' && waiting && <span className="size-1.5 rounded-full bg-wait" title="승인을 기다린다" />}
+            </button>
+          ))}
+        </div>
+        <div className="flex min-h-0 flex-1">
+          <div className="min-w-0 flex-1">
+            {tab === 'agent' && (
+              <Agent
+                row={row}
+                turns={(path && work.turns[path]) || []}
+                options={options}
+                choice={choice}
+                on={on}
+                onChoice={setChoice}
+                onSend={order}
+                onAnswer={(turn, id, allow, scope) => work.answer(path, turn, id, allow, scope)}
+                onStop={(turn) => work.stop(path, turn).catch((err) => setFault(String(err)))}
+                rules={(path && work.rules[path]?.list) || []}
+                onClearRules={() => work.clearRules(path).catch((err) => setFault(String(err)))}
+                onReset={() => work.reset(path).catch((err) => setFault(String(err)))}
+                onPeek={showPeek}
+              />
             )}
-            <div className="min-h-0 flex-1">
-            {owning?.pr && tab === 'review' ? (
-              <Review spec={owning} onChanged={() => {
+            {tab === 'review' && (
+              <Review key={spec?.id} spec={spec} onChanged={() => {
                 readSpecs()
                 readPrs()
                 readLoops()
                 refresh()
               }} />
-            ) : (
-            <Agent
-              row={row}
-              turns={(selected && work.turns[selected]) || []}
-              options={options}
-              choice={choice}
-              on={on}
-              seed={seed}
-              onChoice={setChoice}
-              onSend={order}
-              onAnswer={(turn, id, allow, scope) => work.answer(selected, turn, id, allow, scope)}
-              onStop={(turn) => work.stop(selected, turn).catch((err) => setFault(String(err)))}
-              rules={(selected && work.rules[selected]?.list) || []}
-              onClearRules={() => work.clearRules(selected).catch((err) => setFault(String(err)))}
-              onReset={() => work.reset(selected).catch((err) => setFault(String(err)))}
-              onPeek={showPeek}
-            />
             )}
+            {/* Kept mounted: leaving the tab must not end the shell. */}
+            <div className={cn('h-full', tab !== 'terminal' && 'hidden')}>
+              <Terminal cwd={path} theme={theme} />
             </div>
           </div>
           {peek && <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />}
         </div>
-        <div className="min-h-0 flex-[2] border-t border-border">
-          <Terminal cwd={selected} theme={theme} />
-        </div>
-      </div>
+      </section>
+
+      {setting && (
+        <Settings sw={sw} theme={theme} options={options} loop={loopSettings} onSwitch={flip} onTheme={setTheme}
+          onLoop={async (s) => setLoopSettings(await api.setLoopSettings(s))} onClose={() => setSetting(false)} />
+      )}
     </div>
   )
 }

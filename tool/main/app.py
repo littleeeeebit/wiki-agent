@@ -203,13 +203,46 @@ def peek(repo: str, path: str, line: int = 1, around: int = 25) -> dict:
 # -- The screen -------------------------------------------------------------
 
 @app.get("/api/graph")
-def wiki_graph() -> FileResponse:
-    """The policy graph: `graph.json` as `graph.py` produced it. The screen draws it."""
+def wiki_graph(repo: str = "") -> dict:
+    """The map of one repository, in two layers the screen toggles.
 
-    page = ROOT / "graph.json"
-    if not page.exists():
-        raise HTTPException(404, "python tool/graph.py 를 먼저 돌려라")
-    return FileResponse(page, media_type="application/json")
+    `repo`: the repository's own documents and what points at what, built in
+    memory (`repo_graph.picture`). `hub`: the hub rules as they stand in that
+    repository, in `graph.build`'s shape — for the hub itself, `graph.json`
+    as `graph.py` produced it, the policy graph unchanged. Nothing here writes:
+    `repo_graph.write` would write the original checkout's `.wiki/graph.json`,
+    which is the `sync` hook's to keep.
+    """
+
+    import graph
+    import repo_graph
+    import repo_lint
+
+    path = channels.repo_for(repo) if repo else ROOT
+    if path is None:
+        raise HTTPException(404, "그런 저장소가 없다")
+    if path == ROOT:
+        page = ROOT / "graph.json"
+        if not page.exists():
+            raise HTTPException(404, "python tool/graph.py 를 먼저 돌려라")
+        hub = json.loads(page.read_text(encoding="utf-8"))
+    else:
+        # Only the hub's own rules: another repository's knowledge pages do
+        # not apply here, and this one's are the other layer.
+        hub = graph.build(graph.load_pages(), [path])
+    mine = repo_graph.picture(path)
+    return {
+        "repo": path.name,
+        "hub": path == ROOT,
+        "wiki": ROOT.name,
+        "layers": {
+            "repo": {"nodes": mine["nodes"], "edges": mine["edges"]},
+            "hub": {"nodes": hub["nodes"], "edges": hub["links"],
+                    "ladder": hub["ladder"]},
+        },
+        "metrics": {"pages": len(mine["nodes"]), "orphans": len(mine["orphans"]),
+                    "lint": len(repo_lint.check(path))},
+    }
 
 
 if DIST.is_dir():

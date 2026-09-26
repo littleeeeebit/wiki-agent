@@ -12,19 +12,45 @@ export type Channel = {
   effort: string
 }
 
-/** The policy graph: `graph.json` exactly as `tool/graph.py` produced it.
- *
- *  The shape is not restated here. A node has a dozen or so fields, and
- *  copying them into a type means editing two places every time the Python
- *  side adds one. The drawing code only needs to know the fields it uses. */
-export type GraphData = {
-  ns: string
-  nodes: { id: string; injected: boolean; chars: number }[]
-  projects: { key: string; short: string; deny: number; corpus: number; note: string; status: Record<string, string> }[]
-  ladder: { n: number; title: string; color: string }[]
-  load: { max: number; median: number; hits: number }
-  corpus: number
-  cap: number
+/** A repository's own documents, as `repo_graph.picture` drew them. */
+export type DocNode = {
+  id: string
+  kind: 'doc' | 'page' | 'module' | 'decision'
+  title: string
+  chars: number
+  severity?: string
+  triggers?: string[]
+  injected?: boolean
+}
+
+/** A hub rule in `graph.build`'s shape — only the fields the map reads. */
+export type RuleNode = {
+  id: string
+  label: string
+  scope: string
+  severity: string
+  headline: string
+  rule: string
+  chars: number
+  injected: boolean
+  triggers: string[]
+  layer: number
+  status: Record<string, string>
+}
+
+/** One repository's map in two layers (`GET /api/graph?repo=`). */
+export type MapData = {
+  repo: string
+  /** The repository is the hub: its hub layer is `graph.json` unchanged. */
+  hub: boolean
+  /** The hub's name, for reading a rule page's file. */
+  wiki: string
+  layers: {
+    repo: { nodes: DocNode[]; edges: { a: string; b: string }[] }
+    hub: { nodes: RuleNode[]; edges: { a: string; b: string; kind: 'link' | 'co' }[];
+      ladder: { n: number; title: string }[] }
+  }
+  metrics: { pages: number; orphans: number; lint: number }
 }
 
 /** A repository and how far the wiki is attached to it (`tool/main/connect.py`). */
@@ -167,8 +193,8 @@ const post = async (url: string, body?: unknown, method = 'POST') =>
 export const getChannels = () =>
   get('/api/channels').then((r) => json<Channel[]>(r, '채널 목록'))
 
-export const getGraph = () =>
-  get('/api/graph').then((r) => json<GraphData>(r, '위키 지도'))
+export const getGraph = (repo: string) =>
+  get(`/api/graph?${new URLSearchParams({ repo })}`).then((r) => json<MapData>(r, '지도'))
 
 export const getOptions = () =>
   get('/api/options').then((r) => json<Options>(r, '고를 것'))
@@ -322,6 +348,8 @@ export type Spec = {
   extra?: number
   merge?: { commit: string; base: string } | null
   cleanup?: string[]
+  /** Who holds a `머지 대기`: "대기열" or "자동 머지 — 검사 대기". */
+  queued?: string | null
 }
 
 export const getSpecs = () =>
@@ -358,6 +386,7 @@ export type LoopRow = {
   round: number
   worktree: string | null
   waiting: boolean
+  queued?: string | null
 }
 
 export type LoopSettings = { rounds: number; concurrent: number; review_model: string }
@@ -408,8 +437,11 @@ export type Estimate = {
 }
 export type ConnectPlan = { hub: HubPlan; adapter: Record<string, string> | null; unwire: string[]; survey: Estimate | null }
 
+/** Whether this machine's hooks and skill links point at this hub yet. */
+export type Hub = { name: string; needed: boolean; refused: string }
+
 export const getConnect = () =>
-  get('/api/connect').then((r) => json<{ rows: Project[]; settings: SurveySettings }>(r, '프로젝트 목록'))
+  get('/api/connect').then((r) => json<{ rows: Project[]; settings: SurveySettings; hub: Hub }>(r, '프로젝트 목록'))
 export const connectPlan = (name: string) =>
   get(`/api/connect/${encodeURIComponent(name)}/plan`).then((r) => json<ConnectPlan>(r, '연결 계획'))
 export const connect = (name: string, body: { hub: string; survey: boolean }) =>
@@ -432,11 +464,6 @@ export async function loopEvents(onEvent: (ev: FeedEv) => void, signal: AbortSig
   const res = await fetch(url, { headers: await scoped(url), signal })
   await events<FeedEv | null>(res, (ev) => ev && onEvent(ev), () => null)
 }
-
-/** The instruction draft that carries an answer — or a retro candidate — to a
- *  worktree's agent. The last section is left for a person. */
-export const draft = (body: { question: string; answer?: string; hits?: string[]; target?: 'wiki' | 'claude_md' }) =>
-  post('/api/draft', body).then((r) => json<{ text: string }>(r, '작업 초안'))
 
 // -- The translation switch ---------------------------------------------------
 
@@ -461,8 +488,6 @@ export type Worktree = {
 
 export const getWorktrees = () =>
   get('/api/worktrees').then((r) => json<{ project: string; repo: string; rows: Worktree[] }>(r, '작업트리'))
-export const makeWorktree = (task: string) =>
-  post('/api/worktrees', { task }).then((r) => json<{ path: string }>(r, '작업트리 만들기'))
 export const removeWorktree = (path: string) =>
   post('/api/worktrees/remove', { path }).then((r) => json<{ text: string }>(r, '작업트리 정리'))
 
