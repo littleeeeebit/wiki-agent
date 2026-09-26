@@ -9,6 +9,7 @@ summary that fails loses nothing.
 
 from __future__ import annotations
 
+import itertools
 import json
 import re
 import threading
@@ -130,20 +131,22 @@ def page(memory: dict, meta: dict) -> str:
 
 def keep(repo: Path, focus: str, rows: list[dict], model: str = "", effort: str = "") -> dict:
     """Write the pair for `rows` and return their paths from `repo`. Nothing
-    said means nothing written. `RuntimeError` when the memory could not be
-    made; the transcript is on disk by then, and the message says where."""
+    said means nothing written. `RuntimeError`, saying what is where, when
+    either file could not be made — the rows themselves stay in the record
+    (`raw/`), which a kept clear never deletes from."""
 
     said = [r for r in rows if r.get("role") in SAID and str(r.get("text") or "").strip()]
     if not said:
         return {}
-    folder = repo / ".wiki" / "memory"
-    folder.mkdir(parents=True, exist_ok=True)
-    stem = f"{time.strftime('%Y-%m-%d-%H%M%S')}-{re.sub(r'[^A-Za-z0-9_-]+', '-', focus)}"
-    raw, mine = folder / f"{stem}.raw.md", folder / f"{stem}.md"
     meta = {"repo": repo.name, "focus": focus, "created": time.strftime("%Y-%m-%dT%H:%M:%S")}
-    raw.write_text(transcript(said, {"kind": "transcript", **meta, "memory": mine.name}),
-                   encoding="utf-8", newline="\n")
     where = lambda p: p.relative_to(repo).as_posix()  # noqa: E731
+    try:
+        raw, mine = claim(repo / ".wiki" / "memory",
+                          f"{time.strftime('%Y-%m-%d-%H%M%S')}-{re.sub(r'[^A-Za-z0-9_-]+', '-', focus)}")
+        raw.write_text(transcript(said, {"kind": "transcript", **meta, "memory": mine.name}),
+                       encoding="utf-8", newline="\n")
+    except OSError as exc:
+        raise RuntimeError(f"원시 대화를 쓰지 못했다 — {exc}. 대화는 서버의 기록(raw/)에 그대로 있다") from exc
     try:
         answer = ""
         for ev in oneshot("chat-memory.md", {"repo": repo.name, "focus": focus,
@@ -153,8 +156,24 @@ def keep(repo: Path, focus: str, rows: list[dict], model: str = "", effort: str 
                 raise RuntimeError(ev.text)
             if ev.kind == "done":
                 answer = ev.text
-        memory = shape(answer)
-    except (RuntimeError, ValueError) as exc:
+        mine.write_text(page(shape(answer), {"kind": "memory", **meta, "raw": raw.name}),
+                        encoding="utf-8", newline="\n")
+    except (RuntimeError, ValueError, OSError) as exc:
         raise RuntimeError(f"원시 대화는 {where(raw)} 에 남겼다. 메모리는 못 만들었다 — {exc}") from exc
-    mine.write_text(page(memory, {"kind": "memory", **meta, "raw": raw.name}), encoding="utf-8", newline="\n")
     return {"raw": where(raw), "memory": where(mine)}
+
+
+def claim(folder: Path, stem: str) -> tuple[Path, Path]:
+    """A transcript and memory pair of names no other clear holds. The
+    transcript is created exclusively, so two clears in one second — the
+    stamp's grain — get `-2` rather than overwriting each other."""
+
+    folder.mkdir(parents=True, exist_ok=True)
+    for n in itertools.count(1):
+        name = stem if n == 1 else f"{stem}-{n}"
+        try:
+            (folder / f"{name}.raw.md").open("x").close()
+        except FileExistsError:
+            continue
+        return folder / f"{name}.raw.md", folder / f"{name}.md"
+    raise AssertionError("unreachable")

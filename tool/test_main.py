@@ -320,6 +320,37 @@ def test_a_delete_takes_the_rows_by_place_and_an_append_waits_for_it(tmp_path):
     assert "늦은 결과" in (tmp_path / "next.jsonl").read_text(encoding="utf-8")
 
 
+def test_two_clears_in_one_second_keep_two_pairs_and_an_unwritable_folder_is_a_fault(tmp_path):
+    from main import memory
+
+    repo = tmp_path / "a"
+    (repo / ".git").mkdir(parents=True)
+
+    def oneshot(prompt, payload, model, effort):
+        text = payload["transcript"][0]["text"]
+        yield Event("done", json.dumps({"title": text, "summary": text}))
+
+    web = client()
+    with patch.object(chat_channels, "repo_for", return_value=repo), patch("main.memory.oneshot", oneshot), \
+         patch.object(memory.time, "strftime", return_value="2026-09-26-120000"):
+        web.post("/api/config/next", json={"repo": "a"}).raise_for_status()
+        kept = []
+        for said in ("첫째", "둘째"):
+            chat.remember("next", "user", said)
+            kept.append(web.post("/api/reset/next", json={"keep": "memory"}).json())
+        assert kept[0]["raw"] != kept[1]["raw"] and kept[0]["memory"] != kept[1]["memory"]
+        assert ["첫째" in (repo / k["raw"]).read_text(encoding="utf-8") for k in kept] == [True, False]
+        assert "# 둘째" in (repo / kept[1]["memory"]).read_text(encoding="utf-8")
+
+        # A folder that cannot be made: said, not a 500; the rows stay on record.
+        (repo / ".wiki/memory").rename(repo / ".wiki/moved")
+        (repo / ".wiki/memory").write_text("", encoding="utf-8")
+        chat.remember("next", "user", "셋째")
+        failed = web.post("/api/reset/next", json={"keep": "memory"})
+    assert failed.status_code == 200 and "raw/" in failed.json()["fault"]
+    assert "셋째" in (tmp_path / "next.jsonl").read_text(encoding="utf-8")
+
+
 def test_an_effort_the_review_or_survey_model_does_not_take_is_refused(tmp_path):
     from main import loop
 
