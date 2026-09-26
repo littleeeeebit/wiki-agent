@@ -1,0 +1,719 @@
+{
+ "schema": "jev-eval-result/1",
+ "manifest": {
+  "id": "smoke",
+  "version": 1,
+  "sha256": "600d19ac80e093b8547dcef8ffe822e82ec435ffd9295f0d3467e6a9c08cbb41"
+ },
+ "run": {
+  "started": "2026-09-26T11:22:29+00:00",
+  "commit": "09ab083b9471f37cc6933c38eca5a62479dabffa",
+  "dirty": false
+ },
+ "corpus": {
+  "kind": "synthetic",
+  "files": 9,
+  "sha256": "a603c8f1863c3d27831686f26dc98fc56fb720a58742f4b2802d1eb87f9d3f8c",
+  "snapshot": [
+   [
+    "hub/craft/one-retry-budget.md",
+    "4fa5c2c87772b5cc1d058c0fa054d0dc614cab191c205eb2f70316bef39d7162"
+   ],
+   [
+    "hub/operator/review-before-merge.md",
+    "e28d8de9f01e8c1a34efcb5641d72c671135018c898cd9b746225c5f6e98099d"
+   ],
+   [
+    "repo/.wiki/memory/2026-09-20-login.md",
+    "2bdfcad178468234ed64936fde19d984c398756db2d5d0492ae7586980071dd3"
+   ],
+   [
+    "repo/docs/atlas.md",
+    "365edf17431839844b3a76ec8cd737f372fb0cc662016f28db91edadbc06ce28"
+   ],
+   [
+    "repo/docs/decisions/cache-2025.md",
+    "5a5b0ea1f986ede755c74bfe84e93d3fae0c026e3e1ec2a0c39f1e232d86e5c8"
+   ],
+   [
+    "repo/docs/decisions/cache-2026.md",
+    "2e46051fbf1307f63a107e5c071455a059aeb64a55c0dad087d6878671c38160"
+   ],
+   [
+    "repo/docs/owners.md",
+    "cba91557fde56a0c52500a15e750b2c6a8f2c297a70a2b61db3bdab770be19f1"
+   ],
+   [
+    "repo/docs/ports.md",
+    "49236a8535538a3651097462d9eba2005f33c2d1d1198c96df94cda32b65c592"
+   ],
+   [
+    "repo/docs/translate-limit.md",
+    "86148faecdc9f990ef36a0c3cca47804835b0ba17f02bb540eec87ab39dd8086"
+   ]
+  ]
+ },
+ "retrieval": {
+  "method": "hybrid",
+  "vectors": true,
+  "k": 8,
+  "sources": null
+ },
+ "models": {
+  "embedding": "intfloat/multilingual-e5-small/onnx/model_qint8_avx512_vnni.onnx",
+  "jev": null,
+  "answering": null
+ },
+ "usage": {
+  "jev_calls": 0,
+  "jev_tokens": 0,
+  "answering_tokens": null,
+  "cost_usd": 0.0
+ },
+ "queries": [
+  {
+   "id": "smoke-01",
+   "hits": [
+    {
+     "id": "repo/docs/ports.md",
+     "line": 1,
+     "heading": "Ports",
+     "bm25": 10.205,
+     "cos": 0.8908,
+     "rrf": 0.03279
+    },
+    {
+     "id": "repo/docs/decisions/cache-2025.md",
+     "line": 1,
+     "heading": "Decision: translation cache in the checkout",
+     "bm25": 0.45,
+     "cos": 0.7538,
+     "rrf": 0.03175
+    },
+    {
+     "id": "repo/docs/decisions/cache-2026.md",
+     "line": 1,
+     "heading": "Decision: translation cache moved",
+     "bm25": 0.434,
+     "cos": 0.7538,
+     "rrf": 0.03151
+    },
+    {
+     "id": "repo/docs/atlas.md",
+     "line": 3,
+     "heading": "Atlas team > Rota",
+     "bm25": 1.81,
+     "cos": 0.7372,
+     "rrf": 0.03128
+    },
+    {
+     "id": "repo/.wiki/memory/2026-09-20-login.md",
+     "line": 1,
+     "heading": "Login decision",
+     "bm25": 0.295,
+     "cos": 0.7476,
+     "rrf": 0.03078
+    },
+    {
+     "id": "repo/docs/owners.md",
+     "line": 1,
+     "heading": "Owners",
+     "bm25": 0.434,
+     "cos": 0.7273,
+     "rrf": 0.03033
+    },
+    {
+     "id": "hub/operator/review-before-merge.md",
+     "line": 1,
+     "heading": "Review before merge",
+     "bm25": 0.223,
+     "cos": 0.7402,
+     "rrf": 0.03031
+    },
+    {
+     "id": "hub/craft/one-retry-budget.md",
+     "line": 1,
+     "heading": "One retry budget",
+     "bm25": 0.204,
+     "cos": 0.7133,
+     "rrf": 0.0292
+    }
+   ],
+   "elapsed_ms": 4.77,
+   "recall": 1.0
+  },
+  {
+   "id": "smoke-02",
+   "hits": [
+    {
+     "id": "repo/docs/translate-limit.md",
+     "line": 1,
+     "heading": "번역 월 한도",
+     "bm25": 0.0,
+     "cos": 0.7704,
+     "rrf": 0.01639
+    },
+    {
+     "id": "repo/docs/ports.md",
+     "line": 1,
+     "heading": "Ports",
+     "bm25": 0.0,
+     "cos": 0.756,
+     "rrf": 0.01613
+    },
+    {
+     "id": "repo/docs/atlas.md",
+     "line": 1,
+     "heading": "Atlas team",
+     "bm25": 0.0,
+     "cos": 0.7282,
+     "rrf": 0.01587
+    },
+    {
+     "id": "hub/operator/review-before-merge.md",
+     "line": 1,
+     "heading": "Review before merge",
+     "bm25": 0.0,
+     "cos": 0.715,
+     "rrf": 0.01562
+    },
+    {
+     "id": "hub/craft/one-retry-budget.md",
+     "line": 1,
+     "heading": "One retry budget",
+     "bm25": 0.0,
+     "cos": 0.7116,
+     "rrf": 0.01538
+    },
+    {
+     "id": "repo/docs/decisions/cache-2026.md",
+     "line": 1,
+     "heading": "Decision: translation cache moved",
+     "bm25": 0.0,
+     "cos": 0.7064,
+     "rrf": 0.01515
+    },
+    {
+     "id": "repo/.wiki/memory/2026-09-20-login.md",
+     "line": 1,
+     "heading": "Login decision",
+     "bm25": 0.0,
+     "cos": 0.7045,
+     "rrf": 0.01493
+    },
+    {
+     "id": "repo/docs/decisions/cache-2025.md",
+     "line": 1,
+     "heading": "Decision: translation cache in the checkout",
+     "bm25": 0.0,
+     "cos": 0.6829,
+     "rrf": 0.01471
+    }
+   ],
+   "elapsed_ms": 4.53,
+   "recall": 1.0
+  },
+  {
+   "id": "smoke-03",
+   "hits": [
+    {
+     "id": "repo/docs/owners.md",
+     "line": 1,
+     "heading": "Owners",
+     "bm25": 6.371,
+     "cos": 0.8486,
+     "rrf": 0.03279
+    },
+    {
+     "id": "repo/docs/atlas.md",
+     "line": 3,
+     "heading": "Atlas team > Rota",
+     "bm25": 6.146,
+     "cos": 0.7537,
+     "rrf": 0.032
+    },
+    {
+     "id": "repo/docs/ports.md",
+     "line": 1,
+     "heading": "Ports",
+     "bm25": 2.684,
+     "cos": 0.7564,
+     "rrf": 0.032
+    },
+    {
+     "id": "hub/craft/one-retry-budget.md",
+     "line": 1,
+     "heading": "One retry budget",
+     "bm25": 1.376,
+     "cos": 0.7282,
+     "rrf": 0.03078
+    },
+    {
+     "id": "repo/.wiki/memory/2026-09-20-login.md",
+     "line": 1,
+     "heading": "Login decision",
+     "bm25": 0.295,
+     "cos": 0.7332,
+     "rrf": 0.03009
+    },
+    {
+     "id": "repo/docs/decisions/cache-2025.md",
+     "line": 1,
+     "heading": "Decision: translation cache in the checkout",
+     "bm25": 1.086,
+     "cos": 0.7061,
+     "rrf": 0.02988
+    },
+    {
+     "id": "repo/docs/decisions/cache-2026.md",
+     "line": 1,
+     "heading": "Decision: translation cache moved",
+     "bm25": 1.023,
+     "cos": 0.7217,
+     "rrf": 0.02986
+    },
+    {
+     "id": "hub/operator/review-before-merge.md",
+     "line": 1,
+     "heading": "Review before merge",
+     "bm25": 0.823,
+     "cos": 0.7271,
+     "rrf": 0.02985
+    }
+   ],
+   "elapsed_ms": 4.25,
+   "recall": 1.0
+  },
+  {
+   "id": "smoke-04",
+   "hits": [
+    {
+     "id": "repo/docs/decisions/cache-2026.md",
+     "line": 1,
+     "heading": "Decision: translation cache moved",
+     "bm25": 7.196,
+     "cos": 0.8966,
+     "rrf": 0.03252
+    },
+    {
+     "id": "repo/docs/decisions/cache-2025.md",
+     "line": 1,
+     "heading": "Decision: translation cache in the checkout",
+     "bm25": 7.145,
+     "cos": 0.9111,
+     "rrf": 0.03252
+    },
+    {
+     "id": "repo/docs/ports.md",
+     "line": 1,
+     "heading": "Ports",
+     "bm25": 0.398,
+     "cos": 0.7952,
+     "rrf": 0.03102
+    },
+    {
+     "id": "repo/docs/owners.md",
+     "line": 1,
+     "heading": "Owners",
+     "bm25": 1.314,
+     "cos": 0.7329,
+     "rrf": 0.03037
+    },
+    {
+     "id": "repo/docs/atlas.md",
+     "line": 3,
+     "heading": "Atlas team > Rota",
+     "bm25": 0.99,
+     "cos": 0.7488,
+     "rrf": 0.03033
+    },
+    {
+     "id": "hub/operator/review-before-merge.md",
+     "line": 1,
+     "heading": "Review before merge",
+     "bm25": 0.823,
+     "cos": 0.7406,
+     "rrf": 0.03031
+    },
+    {
+     "id": "repo/.wiki/memory/2026-09-20-login.md",
+     "line": 1,
+     "heading": "Login decision",
+     "bm25": 0.295,
+     "cos": 0.7691,
+     "rrf": 0.03031
+    },
+    {
+     "id": "hub/craft/one-retry-budget.md",
+     "line": 1,
+     "heading": "One retry budget",
+     "bm25": 0.204,
+     "cos": 0.7216,
+     "rrf": 0.02899
+    }
+   ],
+   "elapsed_ms": 3.97,
+   "recall": 1.0
+  },
+  {
+   "id": "smoke-05",
+   "hits": [
+    {
+     "id": "repo/.wiki/memory/2026-09-20-login.md",
+     "line": 1,
+     "heading": "Login decision",
+     "bm25": 5.559,
+     "cos": 0.9005,
+     "rrf": 0.03279
+    },
+    {
+     "id": "repo/docs/decisions/cache-2026.md",
+     "line": 1,
+     "heading": "Decision: translation cache moved",
+     "bm25": 1.692,
+     "cos": 0.8017,
+     "rrf": 0.03226
+    },
+    {
+     "id": "repo/docs/decisions/cache-2025.md",
+     "line": 1,
+     "heading": "Decision: translation cache in the checkout",
+     "bm25": 0.45,
+     "cos": 0.7764,
+     "rrf": 0.03175
+    },
+    {
+     "id": "repo/docs/ports.md",
+     "line": 1,
+     "heading": "Ports",
+     "bm25": 0.398,
+     "cos": 0.7684,
+     "rrf": 0.03101
+    },
+    {
+     "id": "repo/docs/owners.md",
+     "line": 1,
+     "heading": "Owners",
+     "bm25": 0.434,
+     "cos": 0.7476,
+     "rrf": 0.03078
+    },
+    {
+     "id": "hub/operator/review-before-merge.md",
+     "line": 1,
+     "heading": "Review before merge",
+     "bm25": 0.223,
+     "cos": 0.7523,
+     "rrf": 0.03031
+    },
+    {
+     "id": "repo/docs/atlas.md",
+     "line": 3,
+     "heading": "Atlas team > Rota",
+     "bm25": 0.268,
+     "cos": 0.7451,
+     "rrf": 0.02944
+    },
+    {
+     "id": "hub/craft/one-retry-budget.md",
+     "line": 1,
+     "heading": "One retry budget",
+     "bm25": 0.204,
+     "cos": 0.7408,
+     "rrf": 0.02941
+    }
+   ],
+   "elapsed_ms": 3.84,
+   "recall": 1.0
+  },
+  {
+   "id": "smoke-06",
+   "hits": [
+    {
+     "id": "hub/operator/review-before-merge.md",
+     "line": 1,
+     "heading": "Review before merge",
+     "bm25": 9.818,
+     "cos": 0.8756,
+     "rrf": 0.03279
+    },
+    {
+     "id": "hub/craft/one-retry-budget.md",
+     "line": 1,
+     "heading": "One retry budget",
+     "bm25": 1.376,
+     "cos": 0.76,
+     "rrf": 0.0315
+    },
+    {
+     "id": "repo/docs/decisions/cache-2025.md",
+     "line": 1,
+     "heading": "Decision: translation cache in the checkout",
+     "bm25": 1.685,
+     "cos": 0.7468,
+     "rrf": 0.03105
+    },
+    {
+     "id": "repo/docs/decisions/cache-2026.md",
+     "line": 1,
+     "heading": "Decision: translation cache moved",
+     "bm25": 0.589,
+     "cos": 0.7588,
+     "rrf": 0.03054
+    },
+    {
+     "id": "repo/docs/owners.md",
+     "line": 1,
+     "heading": "Owners",
+     "bm25": 0.88,
+     "cos": 0.7206,
+     "rrf": 0.02991
+    },
+    {
+     "id": "repo/docs/atlas.md",
+     "line": 3,
+     "heading": "Atlas team > Rota",
+     "bm25": 0.721,
+     "cos": 0.7406,
+     "rrf": 0.02988
+    },
+    {
+     "id": "repo/.wiki/memory/2026-09-20-login.md",
+     "line": 1,
+     "heading": "Login decision",
+     "bm25": 0.0,
+     "cos": 0.7644,
+     "rrf": 0.01613
+    },
+    {
+     "id": "repo/docs/ports.md",
+     "line": 1,
+     "heading": "Ports",
+     "bm25": 0.0,
+     "cos": 0.7606,
+     "rrf": 0.01587
+    }
+   ],
+   "elapsed_ms": 4.05,
+   "recall": 1.0
+  },
+  {
+   "id": "smoke-07",
+   "hits": [
+    {
+     "id": "repo/docs/translate-limit.md",
+     "line": 1,
+     "heading": "번역 월 한도",
+     "bm25": 18.458,
+     "cos": 0.9276,
+     "rrf": 0.03279
+    },
+    {
+     "id": "repo/docs/decisions/cache-2026.md",
+     "line": 1,
+     "heading": "Decision: translation cache moved",
+     "bm25": 0.0,
+     "cos": 0.7775,
+     "rrf": 0.01613
+    },
+    {
+     "id": "repo/docs/decisions/cache-2025.md",
+     "line": 1,
+     "heading": "Decision: translation cache in the checkout",
+     "bm25": 0.0,
+     "cos": 0.7713,
+     "rrf": 0.01587
+    },
+    {
+     "id": "hub/operator/review-before-merge.md",
+     "line": 1,
+     "heading": "Review before merge",
+     "bm25": 0.0,
+     "cos": 0.7633,
+     "rrf": 0.01562
+    },
+    {
+     "id": "repo/docs/atlas.md",
+     "line": 1,
+     "heading": "Atlas team",
+     "bm25": 0.0,
+     "cos": 0.7516,
+     "rrf": 0.01538
+    },
+    {
+     "id": "hub/craft/one-retry-budget.md",
+     "line": 1,
+     "heading": "One retry budget",
+     "bm25": 0.0,
+     "cos": 0.7468,
+     "rrf": 0.01515
+    },
+    {
+     "id": "repo/.wiki/memory/2026-09-20-login.md",
+     "line": 1,
+     "heading": "Login decision",
+     "bm25": 0.0,
+     "cos": 0.7462,
+     "rrf": 0.01493
+    },
+    {
+     "id": "repo/docs/ports.md",
+     "line": 1,
+     "heading": "Ports",
+     "bm25": 0.0,
+     "cos": 0.7456,
+     "rrf": 0.01471
+    }
+   ],
+   "elapsed_ms": 4.0,
+   "recall": 1.0
+  },
+  {
+   "id": "smoke-08",
+   "hits": [
+    {
+     "id": "repo/.wiki/memory/2026-09-20-login.md",
+     "line": 1,
+     "heading": "Login decision",
+     "bm25": 2.573,
+     "cos": 0.7945,
+     "rrf": 0.03252
+    },
+    {
+     "id": "repo/docs/decisions/cache-2025.md",
+     "line": 1,
+     "heading": "Decision: translation cache in the checkout",
+     "bm25": 1.086,
+     "cos": 0.7966,
+     "rrf": 0.03227
+    },
+    {
+     "id": "repo/docs/decisions/cache-2026.md",
+     "line": 1,
+     "heading": "Decision: translation cache moved",
+     "bm25": 1.023,
+     "cos": 0.7912,
+     "rrf": 0.0315
+    },
+    {
+     "id": "repo/docs/atlas.md",
+     "line": 3,
+     "heading": "Atlas team > Rota",
+     "bm25": 0.99,
+     "cos": 0.7676,
+     "rrf": 0.03054
+    },
+    {
+     "id": "repo/docs/owners.md",
+     "line": 1,
+     "heading": "Owners",
+     "bm25": 1.314,
+     "cos": 0.7175,
+     "rrf": 0.03041
+    },
+    {
+     "id": "hub/craft/one-retry-budget.md",
+     "line": 1,
+     "heading": "One retry budget",
+     "bm25": 0.204,
+     "cos": 0.7868,
+     "rrf": 0.03033
+    },
+    {
+     "id": "repo/docs/ports.md",
+     "line": 1,
+     "heading": "Ports",
+     "bm25": 0.398,
+     "cos": 0.7819,
+     "rrf": 0.03031
+    },
+    {
+     "id": "hub/operator/review-before-merge.md",
+     "line": 1,
+     "heading": "Review before merge",
+     "bm25": 0.823,
+     "cos": 0.7613,
+     "rrf": 0.03008
+    }
+   ],
+   "elapsed_ms": 3.7,
+   "recall": null
+  },
+  {
+   "id": "smoke-09",
+   "hits": [
+    {
+     "id": "repo/docs/atlas.md",
+     "line": 1,
+     "heading": "Atlas team",
+     "bm25": 0.0,
+     "cos": 0.8106,
+     "rrf": 0.01639
+    },
+    {
+     "id": "repo/.wiki/memory/2026-09-20-login.md",
+     "line": 1,
+     "heading": "Login decision",
+     "bm25": 0.0,
+     "cos": 0.7759,
+     "rrf": 0.01613
+    },
+    {
+     "id": "repo/docs/translate-limit.md",
+     "line": 1,
+     "heading": "번역 월 한도",
+     "bm25": 0.0,
+     "cos": 0.7491,
+     "rrf": 0.01587
+    },
+    {
+     "id": "repo/docs/decisions/cache-2025.md",
+     "line": 1,
+     "heading": "Decision: translation cache in the checkout",
+     "bm25": 0.0,
+     "cos": 0.749,
+     "rrf": 0.01562
+    },
+    {
+     "id": "repo/docs/decisions/cache-2026.md",
+     "line": 1,
+     "heading": "Decision: translation cache moved",
+     "bm25": 0.0,
+     "cos": 0.7484,
+     "rrf": 0.01538
+    },
+    {
+     "id": "hub/craft/one-retry-budget.md",
+     "line": 1,
+     "heading": "One retry budget",
+     "bm25": 0.0,
+     "cos": 0.7468,
+     "rrf": 0.01515
+    },
+    {
+     "id": "repo/docs/ports.md",
+     "line": 1,
+     "heading": "Ports",
+     "bm25": 0.0,
+     "cos": 0.7455,
+     "rrf": 0.01493
+    },
+    {
+     "id": "hub/operator/review-before-merge.md",
+     "line": 1,
+     "heading": "Review before merge",
+     "bm25": 0.0,
+     "cos": 0.7419,
+     "rrf": 0.01471
+    }
+   ],
+   "elapsed_ms": 3.47,
+   "recall": null
+  }
+ ],
+ "summary": {
+  "queries": 9,
+  "scored": 7,
+  "mean_recall": 1.0
+ }
+}

@@ -129,8 +129,8 @@ def test_jev_dossier_reaches_answering_session_after_user_is_saved(monkeypatch):
     sent = []
     dossier = {"status": "insufficient", "evidence": [{"path": "docs/a.md", "line": 7}], "trace": []}
 
-    def prepare(text, repo, state):
-        assert chat.recall("wiki")[-1]["text"] == text
+    def prepare(text, repo, state, cfg):
+        assert chat.recall("wiki")[-1]["text"] == text and cfg.mode == "active"
         return dossier
 
     class Original:
@@ -147,6 +147,56 @@ def test_jev_dossier_reaches_answering_session_after_user_is_saved(monkeypatch):
         rows = chat.recall("wiki", include_context=True)
         assert next(r for r in rows if r["role"] == "retrieval")["dossier"] == dossier
         assert [r["text"] for r in rows if r["role"] == "user"] == ["Find the decision"]
+
+
+@pytest.mark.parametrize("mode", ["shadow", "off"])
+def test_jev_shadow_records_beside_the_turn_and_off_does_nothing(monkeypatch, tmp_path, mode):
+    """Shadow: the dossier is recorded, and the answering session never sees it.
+    Off: no decision at all. The mode comes from the settings file."""
+
+    envfile = tmp_path / "jev.env"
+    envfile.write_text(f"TYPESAFE_API_KEY=k\nWIKI_JEV_MODE={mode}\n", encoding="utf-8")
+    monkeypatch.setenv("JEV_ENV", str(envfile))
+    sent, asked = [], []
+    dossier = {"status": "supported", "evidence": [{"path": "docs/a.md", "line": 7}], "trace": []}
+
+    def prepare(text, repo, state, cfg):
+        asked.append(cfg.mode)
+        return dossier
+
+    class Original:
+        def say(self, text):
+            sent.append(text)
+            yield Event("done", "Answer", {"session_id": "jev-shadow"})
+
+    with patch.object(chat, "prepare", prepare), patch.object(chat, "session", return_value=Original()), \
+         patch.object(chat, "hits_for", return_value=[]), \
+         patch.object(chat, "explain", return_value=iter([Event("done", "Simple answer")])):
+        assert client().post("/api/say/wiki", json={"text": "Find the decision"}).status_code == 200
+        assert sent == ["Find the decision"], "the answering session saw a dossier"
+        if mode == "off":
+            time.sleep(0.2)
+            assert asked == []
+            return
+        until(lambda: any(r["role"] == "retrieval" for r in chat.recall("wiki", include_context=True)))
+        row = next(r for r in chat.recall("wiki", include_context=True) if r["role"] == "retrieval")
+        assert asked == ["shadow"] and row["shadow"] is True and row["dossier"] == dossier
+
+
+def test_jev_status_and_probe_endpoints_never_show_the_key(monkeypatch, tmp_path):
+    envfile = tmp_path / "jev.env"
+    envfile.write_text("TYPESAFE_API_KEY=endpoint-secret\n", encoding="utf-8")
+    monkeypatch.setenv("JEV_ENV", str(envfile))
+    web = client()
+    status = web.get("/api/jev")
+    assert status.json()["health"] == "configured" and status.json()["mode"] == "shadow"
+    import decision
+
+    probed = []
+    monkeypatch.setattr(decision, "probe", lambda cfg: probed.append(cfg.key) or {"health": "reachable"})
+    assert web.post("/api/jev/probe").json() == {"health": "reachable"}
+    assert probed == ["endpoint-secret"], "the probe did not use the file's key"
+    assert "endpoint-secret" not in status.text
 
 
 # A Codex `app-server`: a resume it cannot do, a read session's thread, and

@@ -1,0 +1,14 @@
+{
+  "schema": "jev-eval-manifest/1",
+  "id": "repo-smoke",
+  "version": 1,
+  "description": "Five questions against this hub and repository as they stand (corpus kind live). Results hold a snapshot of paths and hashes and stay under raw/eval/jev/. Stage 10 owns the full dataset.",
+  "corpus": {"kind": "live"},
+  "queries": [
+    {"id": "repo-01", "language": "en", "kind": "single", "text": "How do I connect the shared hook rules to my project?", "expect": ["repo/docs/hooks-setup.md"]},
+    {"id": "repo-02", "language": "en", "kind": "single", "text": "How is the public copy kept free of private records?", "expect": ["repo/docs/publishing.md"]},
+    {"id": "repo-03", "language": "en", "kind": "single", "text": "What does the Jev retrieval controller decide, and what may it never authorize?", "expect": ["repo/docs/research/jev-retrieval-controller.md"]},
+    {"id": "repo-04", "language": "ko", "kind": "cross-language", "text": "팀원 PC 에서 wiki-agent 를 어떻게 시작하나?", "expect": ["repo/docs/chat-setup.md"]},
+    {"id": "repo-05", "language": "en", "kind": "single", "text": "What is the quality bar for the plain explanation?", "expect": ["repo/docs/quality.md"]}
+  ]
+}

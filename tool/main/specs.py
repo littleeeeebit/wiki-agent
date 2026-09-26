@@ -30,7 +30,7 @@ from pydantic import BaseModel
 
 import translate
 from common import worktree_home
-from session_state import active_page, decisions, plans
+from session_state import active_page, decisions, plans, steps_block
 from wiki import slots_for
 from workspace import TASK, create, folder_for
 
@@ -252,20 +252,42 @@ def plan_row(repo: Path, plan) -> dict | None:
         return None
     if file.suffix != ".md" or not file.is_file():
         return None
-    if not re.search(rf"^\|\s*{re.escape(row)}\s*\|", file.read_text(encoding="utf-8"), re.M):
+    if not re.search(rf"^\|\s*{re.escape(row)}\s*\|", steps(file.read_text(encoding="utf-8")), re.M):
         return None
     return {"path": file.relative_to(top).as_posix(), "row": row}
 
 
+def steps(text: str) -> str:
+    """The plan's steps table, where a row number means a step; the whole text
+    when it has none (`.wiki/plan-active.md`). Another table in the same plan
+    can have a row `1` too, and that row is not the step."""
+
+    block = steps_block(text)
+    return block.group(2) if block else text
+
+
+def marker(path: Path, plan: dict) -> str:
+    """What the row's status cell is set to, in the plan's own language:
+    `완료` under a Korean `## 단계`, `Complete` in an English plan — the word
+    English plans here use and session-start reporting reads as done."""
+
+    try:
+        block = steps_block((path / plan["path"]).read_text(encoding="utf-8"))
+    except OSError:
+        block = None
+    return "완료" if block and block.group(1) == "단계" else "Complete"
+
+
 def row_done(path: Path, plan: dict, n: int) -> bool:
-    """Does the plan row's status cell say `Done — PR #n` (`완료 — PR #n` in a
-    plan from before they were English) in the worktree's committed HEAD?
-    Read from git, not the file: an edit left uncommitted is not in the pull
-    request."""
+    """Does the plan's step row say `Complete — PR #n` (`완료 — PR #n` in a
+    Korean plan, `Done — PR #n` as the English plans once did) in the
+    worktree's committed HEAD? Read from git, not the file: an edit left
+    uncommitted is not in the pull request."""
 
     shown = sh(["git", "show", f"HEAD:{plan['path']}"], path)
     return not shown.returncode and re.search(
-        rf"^\|\s*{re.escape(plan['row'])}\s*\|.*\|\s*(?:Done|완료) — PR #{n}\s*\|\s*$", shown.stdout, re.M) is not None
+        rf"^\|\s*{re.escape(plan['row'])}\s*\|.*\|\s*(?:Complete|Done|완료) — PR #{n}\s*\|\s*$",
+        steps(shown.stdout), re.M) is not None
 
 
 def missing(repo: Path, spec: dict) -> list[str]:
@@ -790,8 +812,9 @@ def opened(repo: Path, path: Path, run, spec: dict):
         return lambda: reviewed(spec)
     # The row says the pull request's number, and that exists only now. This
     # commit is in the pull request too, so the review sees it.
-    text = (f"PR #{n} is up. In `{plan['path']}`, change the status cell of the table row whose first cell "
-            f"is `{plan['row']}` to `Done — PR #{n}`, commit that one change, and stop. Change nothing else.")
+    text = (f"PR #{n} is up. In `{plan['path']}`, change the status cell of the steps table row whose "
+            f"first cell is `{plan['row']}` to `{marker(path, plan)} — PR #{n}`, commit that one change, "
+            "and stop. Change nothing else.")
     return lambda: again(path, run.chat, text, spec)
 
 
@@ -853,7 +876,7 @@ def _check(path: Path, run, final: str):
         plan = spec["source"]["plan"]
         if not row_done(path, plan, spec["pr"]["number"]):
             return failed(run, spec, f"계획 행 `{plan['path']}` {plan['row']} 이 커밋된 HEAD 에서 아직 "
-                                     f"`Done — PR #{spec['pr']['number']}` 가 아니다")
+                                     f"`{marker(path, plan)} — PR #{spec['pr']['number']}` 가 아니다")
         if run.halt.is_set():
             return failed(run, spec, "사람이 멈춤 — 계획 행 커밋을 push 하지 않았다")
         pushed = sh(["git", "push", "origin", branch_of(spec)], path, 120)

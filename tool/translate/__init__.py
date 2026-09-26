@@ -39,6 +39,8 @@ import tomllib
 import urllib.request
 from pathlib import Path
 
+from common import settings
+
 __all__ = ("translate", "usage", "glossary", "KO_EN", "EN_KO")
 
 HERE = Path(__file__).resolve().parents[1]  # `tool/`
@@ -259,17 +261,16 @@ def setting(name: str) -> str | None:
     A line that is present wins even when its value is empty. Falling through
     to the environment there would answer a half-filled `.env` with the shared
     key, and the split would read as done while the bill stayed merged.
+
+    The line format is `common.settings`'s. An unreadable file reads as no
+    file here: translation has always fallen back to the environment then.
     """
 
     try:
-        for line in ENV.read_text(encoding="utf-8").splitlines():
-            key, sep, value = line.partition("=")
-            if sep and key.strip() == name:
-                return value.strip().strip("\"'")
-    except Exception:
-        pass
-    value = os.environ.get(name)
-    return None if value is None else value.strip()
+        found = settings.entries(ENV)
+    except (OSError, ValueError):
+        found = {}
+    return settings.pick(found, name)[0]
 
 
 def api_key() -> str:

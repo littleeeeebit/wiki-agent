@@ -29,7 +29,7 @@ import threading
 import time
 from pathlib import Path
 
-__all__ = ("ask", "prepare", "notify", "PING", "spawn", "PORT", "HUB", "cache_dir", "state_path", "version")
+__all__ = ("ask", "prepare", "local_index", "notify", "PING", "spawn", "PORT", "HUB", "cache_dir", "state_path", "version")
 
 HERE = Path(__file__).resolve().parent
 # The hub whose `operator/` and `craft/` every search covers. `WIKI_ROOT` as in `wiki`.
@@ -124,11 +124,39 @@ def ask(query: str, project: str | Path | None, timeout: float, k: int = 8,
     return results if isinstance(results, list) else None
 
 
-def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8) -> dict:
-    """Jev's retrieval dossier; explicit callers opt into sending evidence to TypeSafe."""
+def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8, *,
+            evaluate, budget=None) -> dict:
+    """Jev's retrieval dossier; explicit callers opt into sending evidence to TypeSafe.
+
+    `evaluate` is the decision transport (`decision.evaluate` bound to a
+    configuration), handed in because this pipeline does not import another.
+    """
     from .controller import prepare as run
 
-    return run(query, project, state, k)
+    return run(query, project, state, k, evaluate=evaluate, budget=budget)
+
+
+def local_index(project: str | Path | None, hub: Path = HUB, vectors: bool = False, wait: float = 600.0):
+    """An index built in this process, not the daemon's.
+    `.search(query, k, sources)` asks it; `.files` holds every file it read.
+
+    Without `vectors`, BM25 only. With them, the daemon's own hybrid ranking:
+    the same e5 model and vector cache under `cache_dir()`, waited on up to
+    `wait` seconds until every chunk has been tried. `.complete()` says
+    whether it got there — an incomplete index ranks with BM25 alone, which
+    the caller must not report as hybrid.
+    """
+
+    from .daemon import Embedder, Index
+
+    embedder = Embedder(cache_dir() if vectors else None)
+    embedder.start()
+    index = Index(Path(hub), Path(project) if project else None, embedder)
+    index.refresh()
+    end = time.monotonic() + wait
+    while vectors and not index.complete() and embedder.state != "off" and time.monotonic() < end:
+        time.sleep(0.2)
+    return index
 
 
 # The keep-alive ping the daemon types into an idle Claude cell. The hook
