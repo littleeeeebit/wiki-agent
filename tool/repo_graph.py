@@ -152,9 +152,11 @@ def picture(repo: Path) -> dict:
                 edges.append({"a": name, "b": hit, "kind": "link"})
     # What the knowledge graph adds at document level — `reads`, `supersedes`,
     # a wiki link, a contradiction — read from the index as it stands, never built here.
-    # A pair the map already links keeps its link; one pair can hold two kinds.
+    # A link or `reads` the map already drew as a link is not drawn twice;
+    # any other kind on that pair is a relationship of its own and is shown.
     for edge in projection(repo):
-        if edge["a"] in known and edge["b"] in known and (edge["a"], edge["b"]) not in seen:
+        drawn = (edge["a"], edge["b"]) in seen and edge["kind"] in ("links_to", "reads")
+        if edge["a"] in known and edge["b"] in known and not drawn:
             edges.append(edge)
 
     inbound = {edge["b"] for edge in edges}

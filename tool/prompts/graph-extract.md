@@ -46,5 +46,6 @@ passage, in any order; empty lists where there is nothing.
 - Named things only. Not generic words ("the code", "a file", "users").
 - `relations` holds only `depends_on`: `from` uses, requires, calls, imports
   or reads `to`, in that direction, and the passage says so. Both names being
-  mentioned is not a dependency. Both ends are entities of the same passage.
+  mentioned is not a dependency. Both ends are entities of the same passage,
+  and the relation's `quote` is the span that says it, naming both.
 - At most 12 entities and 8 relations per passage.

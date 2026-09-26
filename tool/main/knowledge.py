@@ -606,10 +606,13 @@ def supported(items: list[tuple[dict, dict]], cfg: decision.Config, budget: Budg
             if chunk["chunk_id"] not in ids or (relation["support"] is not None and relation.get("english") == seen):
                 continue
             name = f"r{len(questions)}"
+            # The span the edge will cite. Jev reads English, so it is named only when it is English as written.
+            cited = (f' The claim is cited to the passage\'s words "{relation["quote"]}"; judge those words, '
+                     "read in their passage." if outcome.get("status") == "original_english" else "")
             questions[name] = decision.noul(
                 f"Does passage {ids[chunk['chunk_id']]} itself state that `{relation['from']}` depends on "
                 f"`{relation['to']}` — uses, requires, calls, imports or reads it, in that direction? Both being "
-                "mentioned, or the reverse direction, is insufficient.")
+                "mentioned, or the reverse direction, is insufficient." + cited)
             where[name] = (relation, seen)
     if not questions:
         return 0

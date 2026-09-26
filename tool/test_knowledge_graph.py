@@ -560,6 +560,64 @@ def test_the_map_reads_the_projection_and_never_builds_it(world, jev):
     assert all(e["a"] in ids and e["b"] in ids and e["a"] != e["b"] for e in picture["edges"])
 
 
+def chunk_(text: str, start: int, source: str = "a" * 64) -> dict:
+    return {"source_id": source, "repo_id": "r" * 64, "revision": "f" * 64, "chunk_id": evidence.digest(text, str(start)),
+            "kind": "document", "heading": "H", "heading_path": ["H"], "text": text, "path": "x.md", "record": None,
+            "locator": {"path": "x.md", "start_line": start, "end_line": start + text.count("\n")}}
+
+
+def test_a_dependency_is_cited_only_by_a_quote_that_names_both_ends():
+    text = "`Alpha` depends on `Beta`.\nUnrelated sentence."
+    proposal = {"entities": [{"name": "Alpha", "type": "module", "quote": "`Alpha`"},
+                             {"name": "Beta", "type": "module", "quote": "`Beta`"}],
+                "relations": [{"kind": "depends_on", "from": "Alpha", "to": "Beta", "quote": "Unrelated sentence."}]}
+    _entities, relations, rejected = knowledge_graph.validate(text, proposal)
+    assert relations == [] and rejected == [{"relation": "Alpha depends_on Beta", "reason": "quote does not name both ends"}]
+
+
+def test_two_sections_of_one_source_with_the_same_text_both_get_their_edges():
+    a, b = chunk_("Uses `Alpha`.", 1), chunk_("Uses `Alpha`.", 5)
+    result = {"entities": [{"name": "Alpha", "type": "module", "quote": "`Alpha`"}], "relations": [], "versions": "v"}
+    _nodes, edges, _spans = knowledge_graph.derive([a, b], [(a["source_id"], knowledge_graph.digest(a["text"]), result)])
+    mentioned = {e[1] for e in edges.values() if e[3] == "mentions"}
+    assert mentioned == {a["chunk_id"], b["chunk_id"]}
+
+
+def test_an_extraction_kept_while_a_rebuild_was_deriving_is_not_hidden_by_it(world, jev, monkeypatch):
+    hub, repo = world
+    index = index_of(hub, repo)
+    knowledge_graph.activate(index.store, "v")
+    chunk = next(c for c in index.chunks if "`search/daemon.py`" in c["text"] and c["repo_id"] == evidence.repo_id(repo))
+    row = (chunk["source_id"], knowledge_graph.digest(chunk["text"]), "v",
+           {"entities": [{"name": "search/daemon.py", "type": "module", "quote": "`search/daemon.py`"}],
+            "relations": []})
+    real = knowledge_graph.derive
+
+    def slow(*args):
+        out = real(*args)
+        knowledge_graph.keep(index.store, [row])     # lands while this rebuild derives
+        return out
+
+    monkeypatch.setattr(knowledge_graph, "derive", slow)
+    stamp = index.loaded.split("/")[0]
+    # Derived from the extraction set before the keep: not published.
+    assert knowledge_graph.update(index.store, index.chunks, stamp, stamp="x") is False
+    monkeypatch.setattr(knowledge_graph, "derive", real)
+    assert knowledge_graph.update(index.store, index.chunks, stamp, stamp="x") is True
+    assert index.graph.edges([chunk["chunk_id"]], "out", ["mentions"])
+    index.close()
+
+
+def test_the_map_shows_another_kind_on_a_pair_it_already_links(world, tmp_path):
+    hub, repo = world
+    new, old = ".wiki/decisions/2026-02-01-002-ports.md", ".wiki/decisions/2026-01-01-001-ports.md"
+    page = repo / new
+    page.write_text(page.read_text(encoding="utf-8") + f"\nSee [the old one]({Path(old).name}).\n", encoding="utf-8")
+    index_of(hub, repo).close()
+    kinds = {(e["a"], e["b"], e["kind"]) for e in repo_graph.picture(repo)["edges"]}
+    assert {(new, old, "link"), (new, old, "supersedes")} <= kinds
+
+
 def test_the_labeled_subset_scores_a_perfect_extraction_perfectly_and_catches_an_adopted_negative(jev):
     from eval import graph as scorer
 
@@ -570,7 +628,7 @@ def test_the_labeled_subset_scores_a_perfect_extraction_perfectly_and_catches_an
         for p, case in zip(passages, data["passages"]):
             wanted = case["relations"] + (case["not_relations"] if negatives else [])
             out[p["id"]] = {"entities": [{**e, "quote": e["name"]} for e in case["entities"]],
-                            "relations": [{"kind": "depends_on", **r, "quote": r["from"]} for r in wanted]}
+                            "relations": [{"kind": "depends_on", **r, "quote": p["text"]} for r in wanted]}
         return out, "labels"
 
     # English passages need no translator; the Korean one stays unjudged without one.

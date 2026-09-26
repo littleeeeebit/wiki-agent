@@ -108,7 +108,8 @@ def resolve(raw: str, source: str, known: set[str]) -> str | None:
 
     here = posixpath.dirname(source)
     for candidate in (posixpath.join(here, raw), raw):
-        name = posixpath.normpath(candidate).lstrip("./")
+        # Only a root slash goes: `lstrip("./")` also ate the dot of `.wiki/`.
+        name = posixpath.normpath(candidate).lstrip("/")
         if name in known:
             return name
     return None
@@ -407,19 +408,24 @@ def derive(chunks: list[dict], extracted: list[tuple[str, str, dict]] = (),
             if a in paths and b in paths:
                 build.edge("co_injected", repo, paths[a], paths[b], "observed", OBSERVED, [])
 
-    texts = {(c["source_id"], digest(c["text"])): c for c in chunks}
+    # A result is per text: every section of a source holding that text gets it.
+    texts: dict[tuple[str, str], list[dict]] = {}
+    for c in chunks:
+        texts.setdefault((c["source_id"], digest(c["text"])), []).append(c)
     for source, sha, result in extracted:
-        chunk = texts.get((source, sha))
-        if chunk is not None and "entities" in result:
-            materialize(build, chunk, result)
+        if "entities" in result:
+            for chunk in texts.get((source, sha), []):
+                materialize(build, chunk, result)
     for source, sha, result in extracted:
         pair = result.get("pair")
         if pair and source == pair[0][0]:
-            a, b = texts.get(tuple(pair[0])), texts.get(tuple(pair[1]))
-            if a is not None and b is not None and a["repo_id"] == b["repo_id"]:
-                spans = [{**own(a), "confidence": result["support"]}, {**own(b), "confidence": result["support"]}]
-                build.edge("contradicts", a["repo_id"], a["chunk_id"], b["chunk_id"], "extracted",
-                           result["versions"], spans)
+            for a in texts.get(tuple(pair[0]), []):
+                for b in texts.get(tuple(pair[1]), []):
+                    if a["repo_id"] == b["repo_id"]:
+                        spans = [{**own(a), "confidence": result["support"]},
+                                 {**own(b), "confidence": result["support"]}]
+                        build.edge("contradicts", a["repo_id"], a["chunk_id"], b["chunk_id"], "extracted",
+                                   result["versions"], spans)
     return build.rows()
 
 
@@ -471,7 +477,10 @@ def validate(text: str, proposal: dict) -> tuple[list[dict], list[dict], list[di
         why = ("kind" if kind not in RELATIONS else
                "endpoint is not an entity of this passage" if normal(a) not in names or normal(b) not in names
                else "same entity" if normal(a) == normal(b)
-               else "quote not in passage" if not quote or quote not in text else None)
+               else "quote not in passage" if not quote or quote not in text
+               # The span cited for the claim, not merely somewhere in its passage.
+               else "quote does not name both ends" if normal(a) not in normal(quote) or normal(b) not in normal(quote)
+               else None)
         if why:
             rejected.append({"relation": f"{a} {kind} {b}", "reason": why})
         else:
@@ -553,14 +562,18 @@ def update(store, chunks: list[dict], seen: str, co: list[tuple[str, str]] = (),
     """Bring the graph of the generation `store` reads in line with `chunks`,
     the chunks loaded at store version `seen`. `stamp` names what else went
     in (the records' version, `graph.json`'s). Nothing happens when the graph
-    was already built from the same; nothing is written when the store moved
-    on since `seen` — the next refresh builds from what is there now. One
+    was already built from the same; nothing is written when the store or
+    the extractions moved on while it derived — the next refresh builds from
+    what is there now. One
     transaction: a failure leaves the graph as it was. `True` when written."""
+
+    def extraction(db) -> tuple:
+        return meta(db, "graph_active"), meta(db, "graph_serial")
 
     with store.lock:
         gen = store.reading()
-        active = meta(store.db, "graph_active")
-        key = json.dumps([gen, seen, stamp, active, meta(store.db, "graph_serial"), STRUCTURE])
+        active, serial = read = extraction(store.db)
+        key = json.dumps([gen, seen, stamp, active, serial, STRUCTURE])
         if meta(store.db, "graph") == key:
             return False
         rows = store.db.execute("SELECT source_id, text_sha, result FROM extractions WHERE versions = ?",
@@ -568,7 +581,8 @@ def update(store, chunks: list[dict], seen: str, co: list[tuple[str, str]] = (),
     extracted = [(source, sha, {**json.loads(result), "versions": active}) for source, sha, result in rows]
     nodes, edges, spans = derive(chunks, extracted, co)
     with store.transaction() as db:
-        if f"{store.reading()}:{store.meta('version') or 0}" != seen:
+        # Neither the chunks nor the extractions it was derived from may have moved on.
+        if f"{store.reading()}:{store.meta('version') or 0}" != seen or extraction(db) != read:
             return False
         write(db, gen, nodes, edges, spans)
         db.execute("INSERT OR REPLACE INTO meta VALUES ('graph', ?)", (key,))
