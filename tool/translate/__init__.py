@@ -815,13 +815,14 @@ def page(text: str, deadline: float) -> str | None:
     body, title_en = translate([text], KO_EN, deadline)[0], translate([title], KO_EN, deadline)[0]
     if korean_prose(text) and body == text:
         # Line by line: a page the model always broke one placeholder of
-        # (temperature 0 — asking again breaks the same one). A fence spans
-        # lines, so it is one piece: split, it would lose its protection.
-        head = front.group(0) if front else ""
-        lines = re.split(r"(```.*?```|\n)", text[len(head):], flags=re.S)
+        # (temperature 0 — asking again breaks the same one). Split where the
+        # spans are masked: a fence, a comment or the front matter runs over
+        # lines and is one piece, or its halves would lose their protection.
+        masked, spans = protect(text)
+        lines = [restore(line, spans) for line in masked.split("\n")]
         done = translate(lines, KO_EN, deadline)
         if not any(korean_prose(a) and a == b for a, b in zip(lines, done)):
-            body = head + "".join(done)
+            body = "\n".join(done)
     if (korean_prose(text) and body == text) or (korean_prose(title) and title_en == title):
         return None
     if found:

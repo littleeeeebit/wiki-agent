@@ -674,6 +674,24 @@ def test_a_page_goes_english_whole_or_not_at_all(monkeypatch) -> None:
     assert T.page(page, time.monotonic() + 1) is None
 
 
+def test_the_line_by_line_retry_keeps_a_span_that_runs_over_lines(monkeypatch) -> None:
+    """Split on newlines alone, a multi-line comment's halves went to the model
+    as prose and came back translated."""
+
+    page = "# 화면\n\n<!-- 화면\n주석 -->\n\n```\n화면\n```\n\n멈췄다\n"
+
+    def refuses_the_page(texts, direction, deadline):
+        if len(texts) == 1 and texts[0] == page:
+            return list(texts)
+        # As the real one does: the model sees only what `protect` leaves.
+        return [T.restore(m.replace("화면", "Screen").replace("멈췄다", "it froze").replace("주석", "note"), s)
+                for m, s in map(T.protect, texts)]
+
+    monkeypatch.setattr(T, "translate", refuses_the_page)
+    done = T.page(page, time.monotonic() + 1)
+    assert done == "# Screen\n\n<!-- 화면\n주석 -->\n\n```\n화면\n```\n\nit froze\n"
+
+
 def test_in_place_skips_an_english_page_and_leaves_code_as_it_was(monkeypatch, tmp_path) -> None:
     """Korean `triggers` alone do not make a page Korean — counted, a rerun
     failed every English page. A label inside a fence is the code's."""
