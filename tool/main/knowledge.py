@@ -37,10 +37,11 @@ def disabled(*_args) -> dict:
     raise decision.JevError("disabled")
 
 
-def english(texts: list[str], seconds: float) -> list[dict]:
-    """English normalization for the controller, bounded by its seconds."""
+def english(texts: list[str], seconds: float, private: bool = False) -> list[dict]:
+    """English normalization for the controller, bounded by its seconds. A
+    private memory's is not cached by the translator; the caller keeps it."""
 
-    return translate.english(texts, time.monotonic() + seconds)
+    return translate.english(texts, time.monotonic() + seconds, cache=not private)
 
 
 def summarized(state: str, repo: Path | None) -> tuple[str, dict | None]:
@@ -79,7 +80,9 @@ def summarized(state: str, repo: Path | None) -> tuple[str, dict | None]:
 
 def cleanup(project: str | Path | None) -> int:
     """Forget the cached English of private memory the index deleted, as its
-    journal lists it. Returns how many were pending; what fails stays listed."""
+    journal lists it: what code before the evidence store kept its English
+    left in the translator's cache. Returns how many were pending; what fails
+    stays listed."""
 
     if not project:
         return 0
@@ -117,7 +120,8 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
 
 def ingest(project: str | Path | None, seconds: float = 600.0, estimate: bool = False) -> dict:
     """Index `project` and normalize its evidence into English ahead of the
-    questions, so a turn finds its passages' English cached.
+    questions, so a turn finds its passages' English cached — a private
+    memory's in the evidence store beside it, the rest in the translator's cache.
 
     `estimate` counts what would be sent and sends nothing. English needs no
     request; only Korean text, chunk and heading, is translated, `BATCH` per
@@ -129,8 +133,14 @@ def ingest(project: str | Path | None, seconds: float = 600.0, estimate: bool = 
         chunks = list(index.chunks)
     finally:
         index.close()
-    texts = list(dict.fromkeys([c["text"] for c in chunks] + [c["heading"] for c in chunks]))
-    korean = [t for t in texts if language(t) == "ko"]
+    names = translate.glossary()[0]
+    # A private memory's English is kept beside it in the evidence store, never in the translator's cache.
+    owners: dict[str, set[str]] = {}
+    for c in chunks:
+        for text in (c["text"], c["heading"]):
+            owners.setdefault(text, set()).add(c["source_id"] if c["visibility"] == "private" else "")
+    texts = list(owners)
+    korean = [t for t in texts if language(t, names) == "ko"]
     # Every chunk's citation, read back from its file: what it quotes must be what is there.
     unresolved = [f"{c['locator']['path']}:{c['line']}" for c in chunks if resolve(c, c["path"]) != c["text"]]
     counts = {"chunks": len(chunks), "texts": len(texts), "korean": len(korean),
@@ -139,7 +149,25 @@ def ingest(project: str | Path | None, seconds: float = 600.0, estimate: bool = 
         return counts
     end = time.monotonic() + seconds
     statuses: Counter = Counter()
-    for start in range(0, len(korean), BATCH):
-        deadline = min(end, time.monotonic() + BATCH_SECONDS)
-        statuses.update(o["status"] for o in translate.english(korean[start:start + BATCH], deadline))
+    # A text a shared file has too is the shared file's, cached as any.
+    private = [t for t in korean if "" not in owners[t]]
+    store = evidence_store(project)
+    try:
+        kept = {s: store.english(s, [t for t in private if s in owners[t]])
+                for s in {s for t in private for s in owners[t]}}
+        statuses.update(kept[min(owners[t])][t]["status"] for t in private
+                        if all(t in kept[s] for s in owners[t]))
+        private = [t for t in private if not all(t in kept[s] for s in owners[t])]
+        for group, cache in (([t for t in korean if "" in owners[t]], True), (private, False)):
+            for start in range(0, len(group), BATCH):
+                batch = group[start:start + BATCH]
+                deadline = min(end, time.monotonic() + BATCH_SECONDS)
+                outcomes = translate.english(batch, deadline, cache=cache)
+                statuses.update(o["status"] for o in outcomes)
+                if not cache:
+                    for source in {s for t in batch for s in owners[t]}:
+                        store.keep_english(source, [(t, o) for t, o in zip(batch, outcomes)
+                                                    if source in owners[t] and o["status"] == "translated"])
+    finally:
+        store.close()
     return {**counts, "statuses": dict(statuses), "journal_pending": cleanup(project)}

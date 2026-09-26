@@ -274,6 +274,11 @@ class Embedder:
 
     Off for good when the libraries are missing or the download fails; the
     daemon then ranks with BM25 alone. Only the worker thread touches SQLite.
+
+    A private memory's vectors stay in memory, never in `vectors.sqlite3`:
+    they are made again after a restart, and one deleted while still queued
+    is dropped when its batch is done (`drop`), so nothing on disk outlives
+    the memory.
     """
 
     def __init__(self, root: Path | None):
@@ -283,6 +288,10 @@ class Embedder:
         self.pending: set[str] = set()
         # Chunks the model could not embed this run. Not retried until restart.
         self.failed: set[str] = set()
+        # Keys of private chunks: embedded, never written to the cache.
+        self.private: set[str] = set()
+        # Guards `vectors` and `pending` between the worker and `drop`.
+        self.lock = threading.Lock()
         self.jobs: queue.Queue = queue.Queue()
 
     def start(self) -> None:
@@ -345,17 +354,23 @@ class Embedder:
         keys = [key for key, _text in batch]
         try:
             done = self.encode([text for _key, text in batch], "passage: ")
-            for key, vector in zip(keys, done):
-                self.vectors[key] = vector
+            with self.lock:
+                # One no longer pending was dropped while queued: a deleted memory's.
+                keys = [key for key in keys if key in self.pending]
+                for key, vector in zip([key for key, _text in batch], done):
+                    if key in keys:
+                        self.vectors[key] = vector
         except Exception as error:  # noqa: BLE001
             print(f"embedding skipped: {type(error).__name__}", file=sys.stderr)
             self.failed.update(keys)
             return
         finally:
-            self.pending.difference_update(keys)
+            with self.lock:
+                self.pending.difference_update(key for key, _text in batch)
         try:
             db.executemany("INSERT OR REPLACE INTO v VALUES (?, ?)",
-                           [(key, self.vectors[key].tobytes()) for key in keys])
+                           [(key, self.vectors[key].tobytes()) for key in keys
+                            if key not in self.private and key in self.vectors])
             db.commit()
         except Exception as error:  # noqa: BLE001
             print(f"vector cache not written: {type(error).__name__}", file=sys.stderr)
@@ -373,13 +388,26 @@ class Embedder:
         pooled = (hidden * mask[..., None]).sum(1) / mask.sum(1, keepdims=True)
         return (pooled / np.linalg.norm(pooled, axis=1, keepdims=True)).astype(np.float32)
 
-    def want(self, items: list[tuple[str, str]]) -> None:
+    def want(self, items: list[tuple[str, str]], private: set[str] = frozenset()) -> None:
+        """Queue these `(key, text)` for embedding; the keys in `private` are
+        never written to the cache."""
+
         if self.state == "off":
             return
+        self.private |= private
         for key, text in items:
             if key not in self.vectors and key not in self.pending and key not in self.failed:
                 self.pending.add(key)
                 self.jobs.put((key, text))
+
+    def drop(self, keys: list[str]) -> None:
+        """Forget these vectors, made or still queued."""
+
+        with self.lock:
+            for key in keys:
+                self.vectors.pop(key, None)
+                self.pending.discard(key)
+                self.private.discard(key)
 
 
 def key_of(text: str) -> str:
@@ -419,6 +447,7 @@ CREATE TABLE IF NOT EXISTS chunks (gen INTEGER, chunk_id TEXT, source_id TEXT, s
     end_line INTEGER, heading_path TEXT, text TEXT, completeness TEXT, PRIMARY KEY (gen, chunk_id));
 CREATE INDEX IF NOT EXISTS chunks_source ON chunks (gen, source_id);
 CREATE TABLE IF NOT EXISTS journal (id INTEGER PRIMARY KEY AUTOINCREMENT, vector_key TEXT, text TEXT);
+CREATE TABLE IF NOT EXISTS english (source_id TEXT, text_sha TEXT, outcome TEXT, PRIMARY KEY (source_id, text_sha));
 """
 
 
@@ -453,11 +482,16 @@ class Store:
     Within a generation an update is one transaction: a failure rolls back to
     what was there.
 
+    Private English. A private source's English is kept here, in `english`,
+    not in the translator's cache, and goes with the source in the same
+    transaction. Its vectors are never written to disk (`Embedder`).
+
     Deletion. A source that goes loses its rows in every generation. A private
     one's removed text and vector keys go to `journal` in the same
-    transaction: the vector cache is cleaned here (`Index.refresh`), the
-    cached English by `main.knowledge.cleanup`, and a crash between the two
-    leaves the journal to finish the job.
+    transaction, for what older code put elsewhere: vectors on disk, cleaned
+    here (`Index.refresh`), and English in the translator's cache, by
+    `main.knowledge.cleanup`. A crash between the two leaves the journal to
+    finish the job.
     """
 
     def __init__(self, path: Path | None):
@@ -568,12 +602,23 @@ class Store:
             source = evidence.source_id(repo, display)
             cut = [(evidence.chunk_id(source, revision, c["line"], c["end_line"]), c) for c in chunks(text, path)]
             fresh.append(((self.gen, source, repo, display, canonical, kind, evidence.visibility_of(kind),
-                           revision, stat.st_mtime_ns, stat.st_size), cut, old[0] if old else None))
-        gone = [(row[0], row[4]) for canonical, row in known.items() if canonical not in seen]
-        private = False
+                           revision, stat.st_mtime_ns, stat.st_size), cut, old[0] if old else None, path))
+        gone = [(row[0], row[4], row[3]) for canonical, row in known.items() if canonical not in seen]
+        private = changed = False
+        # Everything above ran outside the write lock, so another process may
+        # have synced since. Under it, a file is written only if it is still
+        # what was read, and a row removed only if it is still the one seen:
+        # a stale read must not bring back a memory another process deleted.
         with self.transaction() as db:
             db.executemany("UPDATE sources SET stamp = ?, size = ? WHERE gen = ? AND source_id = ?", touched)
-            for record, cut, previous in fresh:
+            for record, cut, previous, path in fresh:
+                try:
+                    now = path.stat()
+                except OSError:
+                    continue
+                if (now.st_mtime_ns, now.st_size) != (record[8], record[9]):
+                    continue
+                changed = True
                 source, visibility = record[1], record[6]
                 keep = {c["text"] for _id, c in cut} | {c["heading"] for _id, c in cut}
                 private |= self.remove(db, {source, previous} - {None}, visibility == "private", keep)
@@ -581,9 +626,13 @@ class Store:
                 db.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
                     (self.gen, cid, source, c["line"], c["end_line"], json.dumps(c["heading_path"], ensure_ascii=False),
                      c["text"], c["completeness"]) for cid, c in cut])
-            for source, visibility in gone:
+            for source, visibility, revision in gone:
+                row = db.execute("SELECT revision FROM sources WHERE gen = ? AND source_id = ?",
+                                 (self.gen, source)).fetchone()
+                if row is None or row[0] != revision:
+                    continue
+                changed = True
                 private |= self.remove(db, {source}, visibility == "private", set())
-            changed = bool(fresh or gone)
             current = self.meta("current")
             # Another process pruning generations may have taken this one's row.
             db.execute("INSERT OR IGNORE INTO generations VALUES (?, ?, ?)", (self.gen, evidence.CHUNKER, time.time()))
@@ -620,6 +669,7 @@ class Store:
                     titles.add(title)
                     journal.append((None, title))
             db.executemany("INSERT INTO journal (vector_key, text) VALUES (?, ?)", journal)
+            db.execute(f"DELETE FROM english WHERE source_id IN ({','.join('?' * len(sources))})", [*sources])
         for table in ("chunks", "sources"):
             db.execute(f"DELETE FROM {table} WHERE {where}", args)
         return bool(journal)
@@ -647,6 +697,25 @@ class Store:
                         "kind": kind, "visibility": visibility, "language": language(text),
                         "locator": {"path": display, "start_line": start, "end_line": end}})
         return out
+
+    def english(self, source: str, texts: list[str]) -> dict[str, dict]:
+        """The English kept for these texts of a private source: `{text: outcome}`."""
+
+        shas = {evidence.digest(text): text for text in texts}
+        with self.lock:
+            rows = self.db.execute("SELECT text_sha, outcome FROM english WHERE source_id = ?", (source,)).fetchall()
+        return {shas[sha]: {**json.loads(outcome), "cached": True} for sha, outcome in rows if sha in shas}
+
+    def keep_english(self, source: str, outcomes: list[tuple[str, dict]]) -> bool:
+        """Keep a private source's English beside it, while the source is still
+        here: a deletion that committed first is not undone. `True` when kept."""
+
+        with self.transaction() as db:
+            if db.execute("SELECT 1 FROM sources WHERE source_id = ? LIMIT 1", (source,)).fetchone() is None:
+                return False
+            db.executemany("INSERT OR REPLACE INTO english VALUES (?, ?, ?)", [
+                (source, evidence.digest(text), json.dumps(outcome, ensure_ascii=False)) for text, outcome in outcomes])
+        return True
 
     def journal(self, column: str) -> list[tuple[int, str]]:
         """Pending clean-ups: `vector_key` for this side, `text` for the cached English."""
@@ -740,7 +809,8 @@ class Index:
                 self.postings[term].append((i, n))
         self.average = sum(self.lengths) / max(1, len(self.lengths))
         self.matrix = None
-        self.embedder.want([(c["key"], c["indexed"]) for c in self.chunks])
+        self.embedder.want([(c["key"], c["indexed"]) for c in self.chunks],
+                           {c["key"] for c in self.chunks if c["visibility"] == "private"})
 
     def complete(self) -> bool:
         """Every chunk has been tried: it has a vector, or it failed."""
@@ -812,13 +882,13 @@ class Index:
         return pages
 
     def forget(self) -> None:
-        """Clear the vector cache of what the journal says was deleted."""
+        """Clear the vectors of what the journal says was deleted: in memory,
+        in the queue, and on disk, where older code wrote private ones."""
 
         pending = self.store.journal("vector_key")
         if not pending:
             return
-        for _id, key in pending:
-            self.embedder.vectors.pop(key, None)
+        self.embedder.drop([key for _id, key in pending])
         if drop_vectors([key for _id, key in pending]):
             self.store.cleared("vector_key", [i for i, _key in pending])
 

@@ -182,6 +182,42 @@ def test_edits_renames_and_deletions_never_return_obsolete_chunks(corpus):
     other.close()
 
 
+def test_a_stale_read_cannot_bring_back_a_memory_another_process_deleted(corpus, monkeypatch):
+    """Review round 1: one store read the edited memory and paused while
+    another deleted the file and its row; the first then wrote it back."""
+
+    import threading
+
+    hub, repo = corpus
+    memory = repo / ".wiki/memory/login.md"
+    first, second = searchd.Store(searchd.store_path(hub, repo)), searchd.Store(searchd.store_path(hub, repo))
+
+    def listed():
+        return [(memory, repo, memory.resolve(), False)] if memory.exists() else []
+
+    first.sync(listed())
+    bump(memory, "# Login\n\nKeep password login, edited.\n")
+    real, paused = searchd.chunks, threading.Event()
+
+    def slow(*args):
+        paused.wait(5)
+        return real(*args)
+
+    monkeypatch.setattr(searchd, "chunks", slow)
+    worker = threading.Thread(target=first.sync, args=(listed(),))
+    worker.start()
+    time.sleep(0.3)
+    memory.unlink()
+    monkeypatch.setattr(searchd, "chunks", real)
+    second.sync([])
+    paused.set()
+    worker.join()
+    assert second.db.execute("SELECT count(*) FROM sources").fetchone() == (0,)
+    assert second.db.execute("SELECT count(*) FROM chunks WHERE text LIKE '%password%'").fetchone() == (0,)
+    first.close()
+    second.close()
+
+
 def test_a_failed_update_keeps_what_was_there(corpus, monkeypatch):
     hub, repo = corpus
     index = index_of(hub, repo)
@@ -249,6 +285,84 @@ def test_a_crash_before_cleanup_leaves_the_journal_to_finish_it(corpus, monkeypa
     index.close()
 
 
+def test_a_private_vector_is_never_written_and_one_dropped_while_queued_is_not_kept(tmp_path):
+    np = pytest.importorskip("numpy")
+    embedder = searchd.Embedder(tmp_path)
+    embedder.state = "ready"
+    embedder.encode = lambda texts, prefix: np.ones((len(texts), 4), dtype=np.float32)
+    db = sqlite3.connect(tmp_path / "vectors.sqlite3")
+    db.execute("CREATE TABLE v (k TEXT PRIMARY KEY, v BLOB)")
+    embedder.want([("shared", "a rule"), ("memory", "a memory"), ("gone", "a deleted memory")], {"memory", "gone"})
+    embedder.drop(["gone"])   # its memory was deleted while it waited in the queue
+    embedder.store([embedder.jobs.get() for _ in range(3)], db)
+    assert sorted(k for (k,) in db.execute("SELECT k FROM v")) == ["shared"]
+    assert set(embedder.vectors) == {"shared", "memory"} and not embedder.pending
+    embedder.drop(["memory"])
+    assert set(embedder.vectors) == {"shared"}
+
+
+@pytest.fixture
+def private_korean(corpus, translator):
+    """A Korean memory, and a translator that knows its English."""
+
+    hub, repo = corpus
+    (repo / ".wiki/memory/push.md").write_text("# 푸시\n\n묻지 않고 푸시한다.\n", encoding="utf-8")
+    translator["# 푸시\n\n묻지 않고 푸시한다."] = "# Push\n\nPush without asking."
+    translator["푸시"] = "Push"
+    return hub, repo
+
+
+def shots(text: str) -> int:
+    key = translate._key(translate.KO_EN, translate.glossary()[2], text)
+    with sqlite3.connect(translate.CACHE) as db:
+        return db.execute("SELECT count(*) FROM shots WHERE k = ?", (key,)).fetchone()[0]
+
+
+def test_a_private_memorys_english_is_kept_beside_it_and_goes_with_it(private_korean, monkeypatch):
+    hub, repo = private_korean
+    index = index_of(hub, repo)
+    memory = by_path(index)[".wiki/memory/push.md"][0]
+    monkeypatch.setattr(controller, "retrieve", lambda *a: [index.search("푸시", 1)[0]])
+    seen = []
+
+    def evaluate(state, questions, *_):
+        seen.append(state)
+        return {q: 0.9 for q in questions}
+
+    controller.prepare("Push?", repo, evaluate=evaluate, normalize=knowledge.english)
+    assert next(s["passages"] for s in seen if "passages" in s)[0]["text"] == "# Push\n\nPush without asking."
+    assert shots(memory["text"]) == 0 and shots("푸시") == 0, "a private memory's English reached the shared cache"
+    store = search.evidence_store(repo)
+    assert store.english(memory["source_id"], [memory["text"]])[memory["text"]]["status"] == "translated"
+    store.close()
+
+    # Deleted, a plain refresh takes its English with it: no Jev turn, no cleanup.
+    (repo / ".wiki/memory/push.md").unlink()
+    index.refresh()
+    with sqlite3.connect(searchd.store_path(hub, repo)) as db:
+        assert db.execute("SELECT count(*) FROM english").fetchone() == (0,)
+    # A translation that lands after the deletion is not kept.
+    store = search.evidence_store(repo)
+    assert not store.keep_english(memory["source_id"], [(memory["text"], {"status": "translated"})])
+    store.close()
+    index.close()
+
+
+def test_ingest_keeps_a_private_memorys_english_out_of_the_shared_cache(private_korean, translator, monkeypatch):
+    hub, repo = private_korean
+    translator["한도"] = "Limit"
+    first = knowledge.ingest(repo)
+    assert shots("# 푸시\n\n묻지 않고 푸시한다.") == 0 and shots("푸시") == 0
+    assert shots("한도") == 1   # a shared document's is cached as before
+    asked = []
+    ask = translate._ask
+    monkeypatch.setattr(translate, "_ask", lambda system, batch, seconds: asked.extend(batch) or ask(system, batch,
+                                                                                                    seconds))
+    again = knowledge.ingest(repo)
+    assert again["statuses"] == first["statuses"]
+    assert not {"푸시", "# 푸시\n\n묻지 않고 푸시한다."} & set(asked), "the kept English was asked for again"
+
+
 def test_another_chunker_builds_its_own_generation_and_going_back_selects_the_old(corpus, monkeypatch):
     hub, repo = corpus
     first = index_of(hub, repo)
@@ -310,10 +424,16 @@ def test_english_outcomes_say_what_happened(translator):
 @pytest.mark.parametrize("text, expected", [
     ("Accept with [받아들임] or send [다시 PR] after the review.", "en"),   # Korean names of Korean things
     ("번역 요청이 한도를 넘으면 멈춘다.", "ko"),
-    ("WIKI_JEV_MODE 가 off 이면 Jev 요청을 보내지 않는다.", "ko"),           # a tie is Korean
+    ("WIKI_JEV_MODE 가 off 이면 Jev 요청을 보내지 않는다.", "ko"),
     ("`search.daemon.chunks()` 의 처리를 재사용한다.", "ko"),              # code is neither
+    # A Korean clause among much English is still Korean (review round 1).
+    ("For context, this document describes the approval workflow in detail. 단, 사용자가 거절하면 "
+     "실행하지 않는다.", "ko"),
     ("日本語の文", "und"),
     ("x = 1", "en"),
+    # A fenced sketch keeps its Korean, as the translator keeps it (live ingest, round 2).
+    ("## Screen\n\n```\n│ 프로젝트 │ 위키 질의 │\n```\n\nThe screen has two columns.", "en"),
+    ("## Screen\n\n```\n│ 프로젝트 │\n```\n\n화면은 두 칸이다.", "ko"),
 ])
 def test_language_weighs_prose_words(text, expected):
     from common.language import language
@@ -339,7 +459,7 @@ def test_numbers_and_identifiers_that_came_through_are_fine(translator):
     translator[source] = "Check port 8791 and search.daemon three times in v2."
     # `3번` became `three`: a lost number is uncertain, not quietly accepted.
     assert translate.english([source], time.monotonic() + 5)[0]["status"] == "uncertain"
-    assert translate.forget([source])
+    # Nor cached: a corrected translator is asked again (review round 1).
     translator[source] = "Check port 8791 and search.daemon 3 times in v2."
     assert translate.english([source], time.monotonic() + 5)[0]["status"] == "translated"
 

@@ -497,15 +497,20 @@ def translate(texts: list[str], direction: str, deadline: float) -> list[str]:
     return [text for text, _status in _outcomes(texts, direction, deadline)]
 
 
-def _outcomes(texts: list[str], direction: str, deadline: float) -> list[tuple[str, str]]:
+def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
+              cache: bool = True) -> list[tuple[str, str]]:
     """`(text, status)` per input. The status is `skipped` (nothing of the
     source language), `cached`, `translated`, or why the original came back:
-    `retired`, `no_key`, `limit`, `request_failed`, `spans_broken`, `deadline`."""
+    `retired`, `no_key`, `limit`, `request_failed`, `spans_broken`, `deadline`,
+    or what `accept(source, translation)` returned against a translation —
+    `None` accepts it. What it rejects is not cached, and a cached
+    translation it rejects is asked for again. With `cache` off the cache is
+    neither read nor written: the caller keeps the result."""
 
     if not texts:
         return []
     try:
-        return _translate(list(texts), direction, deadline)
+        return _translate(list(texts), direction, deadline, accept, cache)
     except Exception:
         # The callers are hooks part-way through assembling an injection. Their
         # own entry-point guard would catch this and pass the turn, which costs
@@ -514,7 +519,8 @@ def _outcomes(texts: list[str], direction: str, deadline: float) -> list[tuple[s
         return [(text, "request_failed") for text in texts]
 
 
-def _translate(texts: list[str], direction: str, deadline: float) -> list[tuple[str, str]]:
+def _translate(texts: list[str], direction: str, deadline: float, accept=None,
+               cache: bool = True) -> list[tuple[str, str]]:
     keep, fixed, version = glossary()
     out = [(text, "skipped") for text in texts]
 
@@ -531,13 +537,14 @@ def _translate(texts: list[str], direction: str, deadline: float) -> list[tuple[
     else:
         try:
             marks = ",".join("?" * len(keys))
-            hit = dict(db.execute(f"SELECT k, v FROM shots WHERE k IN ({marks})", list(keys.values())).fetchall())
+            hit = dict(db.execute(f"SELECT k, v FROM shots WHERE k IN ({marks})",
+                                  list(keys.values())).fetchall()) if cache else {}
             retired = {k for (k,) in db.execute(f"SELECT k FROM retired WHERE k IN ({marks})", list(keys.values()))}
             for i in list(wanted):
                 if keys[i] in retired:
                     out[i] = (texts[i], "retired")
                     wanted.remove(i)
-                elif keys[i] in hit:
+                elif keys[i] in hit and not (accept and accept(texts[i], hit[keys[i]])):
                     out[i] = (hit[keys[i]], "cached")
                     wanted.remove(i)
         except Exception:
@@ -573,9 +580,13 @@ def _translate(texts: list[str], direction: str, deadline: float) -> list[tuple[
                     out[i] = (texts[i], "spans_broken")
                     continue
                 done = restore(reply, spans)
+                refused = accept(texts[i], done) if accept else None
+                if refused:
+                    out[i] = (texts[i], refused)
+                    continue
                 fresh.append((keys[i], done))
                 out[i] = (done, "translated")
-            if fresh:
+            if fresh and cache:
                 try:
                     db.executemany("INSERT OR REPLACE INTO shots VALUES (?, ?)", fresh)
                     db.executemany("INSERT OR IGNORE INTO origins VALUES (?, ?)",
@@ -632,7 +643,7 @@ def kept(source: str, english: str, keep: tuple[str, ...]) -> bool:
     return found(source) == found(english)
 
 
-def english(texts: list[str], deadline: float) -> list[dict]:
+def english(texts: list[str], deadline: float, cache: bool = True) -> list[dict]:
     """English normalization with its outcome, one dict per input.
 
     `translate` returns the original on every failure, so its string cannot
@@ -648,14 +659,25 @@ def english(texts: list[str], deadline: float) -> list[dict]:
     - `language`, `model`, `prompt_version`, `glossary_version`, `version`,
       `spans` (`intact`, `broken` or `None` when nothing was translated),
       `cached`.
+
+    `cache` off for a private memory's text: no copy is left here, and the
+    caller keeps the English beside its source.
     """
 
     from common.language import language
 
     keep, _fixed, glossary_version = glossary()
-    langs = [language(text) for text in texts]
+
+    def accept(source: str, made: str) -> str | None:
+        # Held before caching, so a rejected reply is asked for again next time.
+        if language(made, keep) != "en":
+            # Came back still Korean: `translate` may keep that, English evidence may not.
+            return "not_english"
+        return None if kept(source, made, keep) else "protected_changed"
+
+    langs = [language(text, keep) for text in texts]
     korean = [i for i, lang in enumerate(langs) if lang == "ko"]
-    done = dict(zip(korean, _outcomes([texts[i] for i in korean], KO_EN, deadline)))
+    done = dict(zip(korean, _outcomes([texts[i] for i in korean], KO_EN, deadline, accept, cache)))
     version = f"{MODEL}/p{PROMPT_VERSION}/g{glossary_version}/e{ENGLISH_VERSION}"
     out = []
     for i, text in enumerate(texts):
@@ -669,14 +691,10 @@ def english(texts: list[str], deadline: float) -> list[dict]:
         else:
             made, how = done[i]
             if how in ("translated", "cached"):
-                result.update(model=MODEL, spans="intact", cached=how == "cached")
-                if language(protect(made, keep)[0]) != "en":
-                    # Came back still Korean: `translate` may keep that, English evidence may not.
-                    result.update(status="uncertain", reason="not_english")
-                elif kept(text, made, keep):
-                    result.update(text=made, status="translated", version=version)
-                else:
-                    result.update(status="uncertain", reason="protected_changed")
+                result.update(text=made, status="translated", version=version, model=MODEL, spans="intact",
+                              cached=how == "cached")
+            elif how in ("not_english", "protected_changed"):
+                result.update(status="uncertain", reason=how, model=MODEL, spans="intact")
             elif how == "spans_broken":
                 result.update(status="uncertain", reason=how, model=MODEL, spans="broken")
             elif how == "retired":
