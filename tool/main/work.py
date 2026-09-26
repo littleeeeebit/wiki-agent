@@ -685,7 +685,8 @@ def queue(body: Queued) -> dict:
     """The next instruction, written after the answer while the run still
     holds the worktree — the gate. The agent reads nothing more in this turn,
     so it is not steered: `dispatch` sends it once the worktree is let go. One
-    waits per worktree; a second replaces it."""
+    waits per worktree; a second is refused, not put in its place — the
+    first was already told it would go."""
 
     text = body.text.strip()
     if not text:
@@ -703,6 +704,8 @@ def queue(body: Queued) -> dict:
         if run.turn != body.turn or run.done:
             raise HTTPException(409, "턴이 막 끝났다. 새 지시로 보내라")
         with _lock:
+            if body.path in _queued:
+                raise HTTPException(409, "기다리는 지시가 이미 있다. 그것을 취소하고 다시 보내라")
             _queued[body.path] = Order(path=body.path, text=text, model=body.model, effort=body.effort)
     return {"ok": True}
 

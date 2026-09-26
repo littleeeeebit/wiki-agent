@@ -119,6 +119,13 @@ export function useWork() {
   const showQueued = useCallback((path: string, text: string | null) => {
     setQueued(({ [path]: _gone, ...rest }) => (text ? { ...rest, [path]: text } : rest))
   }, [])
+  // An instruction the server would not keep waiting, until the person puts
+  // it back or lets it go. Here, not in the pane or the box: it outlives a
+  // reattach, a switch to another pane, and whatever is typed meanwhile.
+  const [refused, setRefused] = useState<Record<string, { text: string; reason: string }>>({})
+  const dismiss = useCallback((path: string) => {
+    setRefused(({ [path]: _gone, ...rest }) => rest)
+  }, [])
   // Paths a server-started turn was announced for while this window's own
   // send still followed its turn: read again once that send lets go.
   const missed = useRef(new Set<string>())
@@ -276,8 +283,8 @@ export function useWork() {
   /** `text` as the next instruction, which the server sends once `turn`'s
    *  run lets go of the worktree. Refused, it is never sent from here: a
    *  lost answer and a refusal look alike, and the server may already have
-   *  sent it. What the server holds is read again, and the refusal goes to
-   *  the caller, which gives the text back to the person. */
+   *  sent it. What the server holds is read again, and the text is kept as
+   *  refused for the person to act on. */
   const queue = useCallback(async (path: string, turn: Turn, text: string,
     choice: { model: string; effort: string }) => {
     try {
@@ -285,7 +292,7 @@ export function useWork() {
       showQueued(path, text)
     } catch (err) {
       readRules(path)
-      throw err
+      setRefused((all) => ({ ...all, [path]: { text, reason: err instanceof Error ? err.message : String(err) } }))
     }
   }, [readRules, showQueued])
 
@@ -362,5 +369,6 @@ export function useWork() {
     load(path)
   }, [forget, load])
 
-  return { turns, rules, queued, load, send, queue, unqueue, answer, stop, steer, clearRules, reset, forget, attach }
+  return { turns, rules, queued, refused, load, send, queue, unqueue, dismiss, answer, stop, steer, clearRules, reset,
+    forget, attach }
 }

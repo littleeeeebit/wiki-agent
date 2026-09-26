@@ -1321,6 +1321,8 @@ def test_an_instruction_written_during_the_gate_goes_once_the_worktree_is_let_go
         other = {"path": path, "turn": "another", "text": "x"}
         assert web.post("/api/work/queue", json=other).status_code == 409
         web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
+        # The first was told it would go: a second is refused, not put in its place.
+        assert web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "딴것"}).status_code == 409
         assert web.get("/api/work/log", params={"path": path}).json()["queued"] == "둘째"
         go.set()
         said, log = _said(web, path, 2)

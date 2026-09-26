@@ -23,7 +23,10 @@ type Props = {
   onSteer: (turn: Turn, text: string) => void
   /** The next instruction, waiting for this run to end. */
   queued?: string
-  onQueue: (turn: Turn, text: string) => Promise<void>
+  onQueue: (turn: Turn, text: string) => void
+  /** An instruction the server would not keep waiting, with why. */
+  refused?: { text: string; reason: string }
+  onDismiss: () => void
   onUnqueue: () => void
   rules: Rule[]
   onClearRules: () => void
@@ -35,23 +38,14 @@ type Props = {
  *  ran and what it asks to write stay as they are, because a person approves
  *  those and a reworded command is not the command. */
 export function Agent({
-  row, turns, options, choice, on, onChoice, onSend, onAnswer, onStop, onSteer, queued, onQueue, onUnqueue, rules,
-  onClearRules, onReset, onPeek,
+  row, turns, options, choice, on, onChoice, onSend, onAnswer, onStop, onSteer, queued, onQueue, onUnqueue, refused,
+  onDismiss, rules, onClearRules, onReset, onPeek,
 }: Props) {
   const end = useRef<HTMLDivElement>(null)
   const [asking, setAsking] = useState(false)
   const [note, setNote] = useState('')
-  // A refused wait gives the instruction back to the box: the pane outlives
-  // a reattach, a step in the turn does not.
+  // Put back in the box only when the person asks: what they type meanwhile is theirs.
   const [seed, setSeed] = useState<{ text: string } | null>(null)
-  const [refused, setRefused] = useState('')
-  const wait = (turn: Turn, text: string) => {
-    setRefused('')
-    onQueue(turn, text).catch((err) => {
-      setSeed({ text })
-      setRefused(`대기 실패 · ${err instanceof Error ? err.message : err} — 지시를 입력칸에 되돌렸다`)
-    })
-  }
   const busy = turns.at(-1)?.pending ?? false
   const last = turns.at(-1)
   const grown = turns.length + (last?.text.length ?? 0) + (last?.steps.length ?? 0)
@@ -143,7 +137,19 @@ export function Agent({
           it between steps. Until the server names the turn there is nothing to
           send it to. Once it has answered, the agent reads nothing more — the
           gate is running — so it waits and goes as the next instruction. */}
-      {refused && <p role="alert" className="px-5 pb-1 text-[12.5px] text-destructive">{refused}</p>}
+      {refused && (
+        <div role="alert" className="mx-4 mb-1 rounded-md border border-destructive/40 px-3 py-2 text-[12.5px]">
+          <p className="text-destructive">대기 실패 · {refused.reason}</p>
+          <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{refused.text}</p>
+          <div className="mt-1 flex gap-1">
+            <Btn tone="ghost" onClick={() => {
+              setSeed({ text: refused.text })
+              onDismiss()
+            }}>입력칸에 넣기</Btn>
+            <Btn tone="ghost" onClick={onDismiss}>버리기</Btn>
+          </div>
+        </div>
+      )}
       <Composer
         busy={busy && !last?.turn}
         disabled={!row}
@@ -153,7 +159,7 @@ export function Agent({
           : last?.answered != null ? '답은 끝났고 마무리가 도는 중이다. 보내면 끝난 뒤 다음 지시로 보낸다.'
             : '도는 턴에 끼어든다. 에이전트가 다음 걸음 전에 읽는다.'}
         onSend={(text) => (!busy || !last ? onSend(text)
-          : last.answered != null ? wait(last, text) : onSteer(last, text))}
+          : last.answered != null ? onQueue(last, text) : onSteer(last, text))}
       />
       {asking && <ClearAsk onClear={onReset} onClose={(said) => {
         setAsking(false)

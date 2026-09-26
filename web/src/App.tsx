@@ -380,6 +380,7 @@ export default function App() {
       // The same task name makes the same path again; its turns must not
       // come back with it.
       work.forget(target)
+      work.dismiss(target)
       refresh()
       readSpecs()
     } catch (err) {
@@ -556,7 +557,9 @@ export default function App() {
                 onStop={(turn) => work.stop(path, turn).catch((err) => setFault(String(err)))}
                 onSteer={(turn, text) => void work.steer(path, turn, text)}
                 queued={work.queued[path]}
-                onQueue={(turn, text) => work.queue(path, turn, text, choice)}
+                onQueue={(turn, text) => void work.queue(path, turn, text, choice)}
+                refused={work.refused[path]}
+                onDismiss={() => work.dismiss(path)}
                 onUnqueue={() => work.unqueue(path).catch((err) => setFault(String(err)))}
                 rules={(path && work.rules[path]?.list) || []}
                 onClearRules={() => work.clearRules(path).catch((err) => setFault(String(err)))}
