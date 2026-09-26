@@ -318,12 +318,12 @@ def test_the_probe_cli_offline_reads_settings_and_sends_nothing(tmp_path):
 
 def test_mode_off_sends_nothing_and_keeps_baseline_retrieval(monkeypatch):
     from search import controller
+    from test_jev import hit
 
-    monkeypatch.setattr(controller, "retrieve", lambda *a: [{"path": "/r/a.md", "line": 1, "heading": "a",
-                                                             "text": "baseline"}])
+    monkeypatch.setattr(controller, "retrieve", lambda *a: [hit("a", "baseline")])
     monkeypatch.setattr(decision, "evaluate", lambda *a, **kw: pytest.fail("a request in off mode"))
     cfg = decision.Config("off", "m", "file", key="off-secret")
     out = knowledge.prepare("Question", None, cfg=cfg)
-    assert out["status"] == "fallback" and out["evidence"][0]["text"] == "baseline"
+    assert out["status"] == "fallback" and out["evidence"][0]["original_text"] == "baseline"
     assert out["trace"][0] == {"fallback": "JevError", "reason": "disabled"}
     assert out["jev"]["mode"] == "off" and "off-secret" not in json.dumps(out)

@@ -29,7 +29,8 @@ import threading
 import time
 from pathlib import Path
 
-__all__ = ("ask", "prepare", "local_index", "notify", "PING", "spawn", "PORT", "HUB", "cache_dir", "state_path", "version")
+__all__ = ("ask", "prepare", "local_index", "evidence_store", "resolve", "notify", "PING", "spawn", "PORT", "HUB",
+           "cache_dir", "state_path", "version")
 
 HERE = Path(__file__).resolve().parent
 # The hub whose `operator/` and `craft/` every search covers. `WIKI_ROOT` as in `wiki`.
@@ -125,18 +126,41 @@ def ask(query: str, project: str | Path | None, timeout: float, k: int = 8,
 
 
 def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8, *,
-            evaluate, budget=None) -> dict:
+            evaluate, budget=None, normalize=None, omitted: dict | None = None) -> dict:
     """Jev's retrieval dossier; explicit callers opt into sending evidence to TypeSafe.
 
     `evaluate` is the decision transport (`decision.evaluate` bound to a
-    configuration), handed in because this pipeline does not import another.
+    configuration) and `normalize` English normalization (`translate.english`),
+    handed in because this pipeline does not import another. `omitted`
+    describes what a summarized `state` left out.
     """
     from .controller import prepare as run
 
-    return run(query, project, state, k, evaluate=evaluate, budget=budget)
+    return run(query, project, state, k, evaluate=evaluate, budget=budget, normalize=normalize, omitted=omitted)
 
 
-def local_index(project: str | Path | None, hub: Path = HUB, vectors: bool = False, wait: float = 600.0):
+def evidence_store(project: str | Path | None, hub: Path | None = None):
+    """The evidence store of `project`'s index beside `hub` (this one by
+    default). It holds each chunk's source for checking a citation,
+    `.source_of(chunk_id)`, and a private source's English,
+    `.english(source_id, texts)` and `.keep_english(source_id, outcomes)`.
+    The caller closes it."""
+
+    from .daemon import Store, store_path
+
+    return Store(store_path(Path(hub or HUB), Path(project) if project else None))
+
+
+def resolve(chunk: dict, path: str | Path) -> str | None:
+    """The original span `chunk` cites, read again from `path`, or `None`
+    when that file is gone or no longer the revision it was cut from."""
+
+    from .evidence import resolve as read
+
+    return read(chunk, Path(path))
+
+
+def local_index(project: str | Path | None, hub: Path | None = None, vectors: bool = False, wait: float = 600.0):
     """An index built in this process, not the daemon's.
     `.search(query, k, sources)` asks it; `.files` holds every file it read.
 
@@ -151,7 +175,7 @@ def local_index(project: str | Path | None, hub: Path = HUB, vectors: bool = Fal
 
     embedder = Embedder(cache_dir() if vectors else None)
     embedder.start()
-    index = Index(Path(hub), Path(project) if project else None, embedder)
+    index = Index(Path(hub or HUB), Path(project) if project else None, embedder)
     index.refresh()
     end = time.monotonic() + wait
     while vectors and not index.complete() and embedder.state != "off" and time.monotonic() < end:

@@ -1,6 +1,8 @@
 """The search daemon. One per machine, started by `search.spawn`.
 
-Chunks every page at its `##`/`###` headings and ranks them two ways — BM25
+Chunks every page at its `##`/`###` headings, and a long section at its
+blocks, into `evidence.EvidenceChunk`s kept in a SQLite `Store` beside the
+vector cache. It ranks them two ways — BM25
 over English words and Hangul bigrams, and cosine over a local
 `multilingual-e5-small` — merged by reciprocal rank. It serves the wiki chat,
 and keeps idle Claude cells' prompt caches warm (`Keeper`). No hook asks it
@@ -43,13 +45,15 @@ import threading
 import time
 import urllib.request
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 # Run as a script by `spawn`: `tool/` goes on the path so the package imports.
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from search import PING, PORT, cache_dir, proof, state_path, version  # noqa: E402
+from common.language import language  # noqa: E402
+from search import PING, PORT, cache_dir, evidence, proof, state_path, version  # noqa: E402
 
 # The version this process runs, read once. Read per request it would follow
 # the files on disk and a pulled daemon would never be told it is stale.
@@ -121,12 +125,90 @@ def fenced(lines: list[str]) -> list[bool]:
     return out
 
 
+# A chunk's ceiling, Hangul counted twice: a Korean passage's English runs
+# about twice as long, and both must fit e5's 512 tokens and Jev's passage.
+MAX_CHUNK = 1500
+LIST_ITEM = re.compile(r"^ {0,3}(?:[-*+]|\d{1,9}[.)])[ \t]")
+
+
+def size(text: str) -> int:
+    return len(text) + sum("가" <= c <= "힣" for c in text)
+
+
+def blocks(lines: list[tuple[int, str, bool]]) -> list[list[tuple[int, str, bool]]]:
+    """A section's lines in blocks: paragraphs, tables and lists split at blank
+    lines, a code fence whole with its blank lines, and a loose list's items
+    and indented continuations kept with the list."""
+
+    found: list[list] = []
+    current: list = []
+    for item in lines:
+        _number, line, hidden = item
+        if not line.strip() and not hidden:
+            if current:
+                found.append(current)
+                current = []
+            continue
+        opens = not current and found and not hidden and (
+            line.startswith(("  ", "\t")) or LIST_ITEM.match(line)) and LIST_ITEM.match(found[-1][0][1])
+        if opens:
+            current = found.pop()
+        # A fence is a block of its own, even with no blank line around it.
+        elif current and current[-1][2] != hidden:
+            found.append(current)
+            current = []
+        current.append(item)
+    if current:
+        found.append(current)
+    return found
+
+
+def pieces(section: list[tuple[int, str, bool]]) -> list[tuple[list, str]]:
+    """A section in chunks of whole blocks up to `MAX_CHUNK`, as
+    `(lines, completeness)`. A block over the ceiling is cut at its lines and
+    each part says `partial`; a fence, which cannot be cut, stays whole as
+    `oversized` — a target to read in full rather than to judge."""
+
+    out: list[tuple[list, str]] = []
+    buf: list = []
+
+    def text(lines: list) -> str:
+        return "\n".join(line for _n, line, _h in lines)
+
+    for block in blocks(section):
+        joined = buf + ([(0, "", False)] if buf else []) + block
+        if size(text(joined)) <= MAX_CHUNK:
+            buf = joined
+            continue
+        if buf:
+            out.append((buf, "whole"))
+            buf = []
+        if size(text(block)) <= MAX_CHUNK:
+            buf = block
+        elif block[0][2] or len(block) == 1:
+            out.append((block, "oversized"))
+        else:
+            part: list = []
+            for line in block:
+                if part and size(text(part + [line])) > MAX_CHUNK:
+                    out.append((part, "partial"))
+                    part = []
+                part.append(line)
+            out.append((part, "partial"))
+    if buf:
+        out.append((buf, "whole"))
+    # Blank lines between blocks were dropped; a chunk spans its first to last line.
+    return [([item for item in lines if item[0]], kind) for lines, kind in out]
+
+
 def chunks(text: str, path: Path) -> list[dict]:
-    """A page cut at `##` and `###`. Each chunk knows its first line.
+    """A page cut at `##` and `###`, and a long section at its blocks. Each
+    chunk knows its first and last line.
 
     The page title and the heading path go in front of what is indexed — the
-    cheap form of contextual retrieval, no model call. A heading inside a
-    code fence is not a heading.
+    cheap form of contextual retrieval, no model call — and are not part of
+    the chunk's text, which is exactly its lines of the original. A heading
+    inside a code fence is not a heading.
     """
 
     body = body_of(text)
@@ -136,23 +218,29 @@ def chunks(text: str, path: Path) -> list[dict]:
     # The first `#` outside a fence; a `# Fake` in a code sample is not the title.
     title = next((m.group(2) for line, hidden in zip(lines, inside)
                   if not hidden and (m := HEADING.match(line)) and len(m.group(1)) == 1), path.stem)
-    found, trail, start, buf = [], [], offset + 1, []
+    found, trail, buf = [], [], []
 
     def flush() -> None:
         # A heading with nothing under it before the next one is not a chunk.
-        if "".join(buf[1:] if trail else buf).strip():
-            heading = " > ".join([title, *trail])
-            found.append({"path": str(path), "line": start, "heading": heading,
-                          "text": "\n".join(buf), "indexed": heading + "\n" + "\n".join(buf)})
+        if not "".join(line for _n, line, _h in (buf[1:] if trail else buf)).strip():
+            return
+        heading_path = [title, *trail]
+        heading = " > ".join(heading_path)
+        for part, completeness in pieces(buf):
+            start, end = part[0][0], part[-1][0]
+            original = "\n".join(lines[start - offset - 1:end - offset])
+            found.append({"path": str(path), "line": start, "end_line": end, "heading": heading,
+                          "heading_path": heading_path, "completeness": completeness,
+                          "text": original, "indexed": heading + "\n" + original})
 
     for number, (line, hidden) in enumerate(zip(lines, inside), offset + 1):
         match = None if hidden else HEADING.match(line)
         if match and len(match.group(1)) >= 2:
             flush()
             trail = trail[: len(match.group(1)) - 2] + [match.group(2)]
-            start, buf = number, [line]
+            buf = [(number, line, hidden)]
             continue
-        buf.append(line)
+        buf.append((number, line, hidden))
     flush()
     return found
 
@@ -186,6 +274,11 @@ class Embedder:
 
     Off for good when the libraries are missing or the download fails; the
     daemon then ranks with BM25 alone. Only the worker thread touches SQLite.
+
+    A private memory's vectors stay in memory, never in `vectors.sqlite3`:
+    they are made again after a restart, and one deleted while still queued
+    is dropped when its batch is done (`drop`), so nothing on disk outlives
+    the memory.
     """
 
     def __init__(self, root: Path | None):
@@ -195,6 +288,10 @@ class Embedder:
         self.pending: set[str] = set()
         # Chunks the model could not embed this run. Not retried until restart.
         self.failed: set[str] = set()
+        # Keys of private chunks: embedded, never written to the cache.
+        self.private: set[str] = set()
+        # Guards `vectors` and `pending` between the worker and `drop`.
+        self.lock = threading.Lock()
         self.jobs: queue.Queue = queue.Queue()
 
     def start(self) -> None:
@@ -257,17 +354,23 @@ class Embedder:
         keys = [key for key, _text in batch]
         try:
             done = self.encode([text for _key, text in batch], "passage: ")
-            for key, vector in zip(keys, done):
-                self.vectors[key] = vector
+            with self.lock:
+                # One no longer pending was dropped while queued: a deleted memory's.
+                keys = [key for key in keys if key in self.pending]
+                for key, vector in zip([key for key, _text in batch], done):
+                    if key in keys:
+                        self.vectors[key] = vector
         except Exception as error:  # noqa: BLE001
             print(f"embedding skipped: {type(error).__name__}", file=sys.stderr)
             self.failed.update(keys)
             return
         finally:
-            self.pending.difference_update(keys)
+            with self.lock:
+                self.pending.difference_update(key for key, _text in batch)
         try:
             db.executemany("INSERT OR REPLACE INTO v VALUES (?, ?)",
-                           [(key, self.vectors[key].tobytes()) for key in keys])
+                           [(key, self.vectors[key].tobytes()) for key in keys
+                            if key not in self.private and key in self.vectors])
             db.commit()
         except Exception as error:  # noqa: BLE001
             print(f"vector cache not written: {type(error).__name__}", file=sys.stderr)
@@ -285,53 +388,470 @@ class Embedder:
         pooled = (hidden * mask[..., None]).sum(1) / mask.sum(1, keepdims=True)
         return (pooled / np.linalg.norm(pooled, axis=1, keepdims=True)).astype(np.float32)
 
-    def want(self, items: list[tuple[str, str]]) -> None:
+    def want(self, items: list[tuple[str, str]], private: set[str] = frozenset()) -> None:
+        """Queue these `(key, text)` for embedding; the keys in `private` are
+        never written to the cache."""
+
         if self.state == "off":
             return
+        self.private |= private
         for key, text in items:
             if key not in self.vectors and key not in self.pending and key not in self.failed:
                 self.pending.add(key)
                 self.jobs.put((key, text))
+
+    def drop(self, keys: list[str]) -> None:
+        """Forget these vectors, made or still queued."""
+
+        with self.lock:
+            for key in keys:
+                self.vectors.pop(key, None)
+                self.pending.discard(key)
+                self.private.discard(key)
 
 
 def key_of(text: str) -> str:
     return hashlib.sha256((MODEL_ID + "\0" + text).encode("utf-8")).hexdigest()
 
 
+def drop_vectors(keys: list[str]) -> bool:
+    """Remove cached vectors — a deleted private memory's. `False` when the
+    cache could not be written; the journal then keeps the keys for next time.
+
+    ponytail: a daemon that already holds one in memory keeps it, unreferenced,
+    until it restarts; and a chunk still queued for embedding is written back.
+    """
+
+    path = cache_dir() / "vectors.sqlite3"
+    if not keys or not path.exists():
+        return True
+    try:
+        db = sqlite3.connect(path, timeout=5.0)
+        try:
+            db.execute("PRAGMA secure_delete=ON")
+            db.executemany("DELETE FROM v WHERE k = ?", [(k,) for k in keys])
+            db.commit()
+        finally:
+            db.close()
+        return True
+    except sqlite3.Error:
+        return False
+
+
+STORE_SCHEMA = """
+CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT);
+CREATE TABLE IF NOT EXISTS generations (gen INTEGER PRIMARY KEY, chunker TEXT NOT NULL, created REAL NOT NULL);
+CREATE TABLE IF NOT EXISTS sources (gen INTEGER, source_id TEXT, repo_id TEXT, display TEXT, canonical TEXT,
+    kind TEXT, visibility TEXT, revision TEXT, stamp INTEGER, size INTEGER, PRIMARY KEY (gen, source_id));
+CREATE TABLE IF NOT EXISTS chunks (gen INTEGER, chunk_id TEXT, source_id TEXT, start_line INTEGER,
+    end_line INTEGER, heading_path TEXT, text TEXT, completeness TEXT, PRIMARY KEY (gen, chunk_id));
+CREATE INDEX IF NOT EXISTS chunks_source ON chunks (gen, source_id);
+CREATE TABLE IF NOT EXISTS journal (id INTEGER PRIMARY KEY AUTOINCREMENT, vector_key TEXT);
+CREATE TABLE IF NOT EXISTS english (source_id TEXT, text_sha TEXT, outcome TEXT, PRIMARY KEY (source_id, text_sha));
+"""
+
+
+def store_path(hub: Path, project: Path | None) -> Path:
+    """`<cache>/knowledge/<repo_id>/index-<hub>.sqlite3`: per repository, and
+    per hub, since each hub brings its own rules."""
+
+    repo = evidence.repo_id(project or hub)
+    return cache_dir() / "knowledge" / repo / f"index-{evidence.repo_id(hub)[:16]}.sqlite3"
+
+
+class Store:
+    """One index's sources and chunks, in SQLite beside the vector cache.
+
+    The four questions of `craft/client-lifecycle-in-one-scope`:
+
+    - Creation. Its `Index`, in whichever thread builds that index.
+    - Sharing. Not shared: one connection per store, taken in turns under the
+      store's lock, because the daemon answers each request on its own thread.
+    - Closing. `Index.close()`, by whoever made a short-lived index — the
+      controller's cold build, the command lines. The daemon's indexes live as
+      long as it does. One never closed is closed by the collector with its
+      index; nothing else holds the connection.
+    - Ownership. The user's cache. A file that cannot be opened becomes an
+      in-memory store: retrieval goes on and nothing persists.
+
+    Generations. The chunk rows of one `evidence.CHUNKER` are one generation.
+    Code with another chunker builds its own beside the current one and
+    publishes it, by moving `meta.current`, in the same transaction that
+    completes it — no listed file left out. Until then it reads the published
+    one (`reading`). Publishing prunes to the new generation and the one it
+    replaced, which is kept, so going back to the older code selects it again
+    (and brings it up to date) instead of rebuilding; nothing else prunes.
+    Within a generation an update is one transaction: a failure rolls back to
+    what was there.
+
+    Private English. A private source's English is kept here, in `english`,
+    not in the translator's cache: kept only for a text the source has at
+    that moment, and gone with the source, or any edit of it, in the same
+    transaction. Its vectors are never written to disk (`Embedder`).
+
+    Deletion. A source that goes loses its rows in every generation; a
+    private one edited here loses them in every generation holding its old
+    content (`remove`). A private one's vector keys go to `journal` in the
+    same transaction, for the
+    daemon's memory and for what older code wrote to the vector cache;
+    `Index.refresh` clears them, and a crash first leaves the journal to
+    finish the job.
+    """
+
+    def __init__(self, path: Path | None):
+        self.lock = threading.Lock()
+        try:
+            if path is None:
+                raise OSError("no path")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            self.db = self.connect(str(path))
+        except (OSError, sqlite3.Error) as error:
+            if path is not None:
+                print(f"evidence store in memory: {type(error).__name__}", file=sys.stderr)
+            self.db = self.connect(":memory:")
+        self.gen = self.generation()
+
+    @staticmethod
+    def connect(where: str) -> sqlite3.Connection:
+        db = sqlite3.connect(where, timeout=5.0, check_same_thread=False, isolation_level=None)
+        db.execute("PRAGMA journal_mode=WAL")
+        # A deleted memory's text is overwritten, not left in free pages.
+        db.execute("PRAGMA secure_delete=ON")
+        db.executescript(STORE_SCHEMA)
+        return db
+
+    def close(self) -> None:
+        with self.lock:
+            self.db.close()
+
+    @contextmanager
+    def transaction(self):
+        with self.lock:
+            self.db.execute("BEGIN IMMEDIATE")
+            try:
+                yield self.db
+            except BaseException:
+                self.db.execute("ROLLBACK")
+                raise
+            self.db.execute("COMMIT")
+
+    def meta(self, key: str) -> str | None:
+        row = self.db.execute("SELECT v FROM meta WHERE k = ?", (key,)).fetchone()
+        return row[0] if row else None
+
+    def generation(self) -> int:
+        """The generation this code reads: the current one when its chunker is
+        this code's, else a kept one that is, else a new, empty one — which
+        becomes current only when `sync` has filled it."""
+
+        with self.transaction() as db:
+            current = self.meta("current")
+            gens = dict(db.execute("SELECT gen, chunker FROM generations"))
+            if current is not None and gens.get(int(current)) == evidence.CHUNKER:
+                return int(current)
+            mine = [g for g, chunker in gens.items() if chunker == evidence.CHUNKER]
+            if mine:
+                return max(mine)
+            gen = max(gens, default=0) + 1
+            db.execute("INSERT INTO generations VALUES (?, ?, ?)", (gen, evidence.CHUNKER, time.time()))
+            return gen
+
+    def reading(self) -> int:
+        """The generation read (`load`, `source_of`): this code's, unless it
+        is still being built while another is published — then that one,
+        whole, until this one is complete. Called under the lock."""
+
+        current = self.meta("current")
+        return self.gen if current is None or int(current) == self.gen else int(current)
+
+    def version(self) -> str:
+        """Changes whenever any process changes this store, or the generation read."""
+
+        with self.lock:
+            return f"{self.reading()}:{self.meta('version') or 0}"
+
+    def sync(self, listed: list[tuple[Path, Path, Path, bool]], attempts: int = 3) -> bool:
+        """Bring the generation in line with `listed` and publish it. Each file
+        comes as `(path, root, resolved, shared)`. `True` when anything changed.
+
+        A file is read again only when its size or modification time moved,
+        and re-cut only when its bytes did. A file that cannot be read counts
+        as gone. One that changed while it was read is read again, up to
+        `attempts` passes; a generation not yet published is published only
+        once no file was left out that way.
+        """
+
+        changed = False
+        for _ in range(attempts):
+            now, skipped = self.pass_(listed)
+            changed |= now
+            if not skipped:
+                break
+        return changed
+
+    def pass_(self, listed: list[tuple[Path, Path, Path, bool]]) -> tuple[bool, bool]:
+        """One pass of `sync`: whether anything changed, and whether a file
+        was left out because it changed while it was read."""
+
+        with self.lock:
+            known = {row[0]: row[1:] for row in self.db.execute(
+                "SELECT canonical, source_id, stamp, size, revision, visibility FROM sources WHERE gen = ?",
+                (self.gen,))}
+            # What other generations hold, which this one may never have
+            # indexed: a file's deletion reaches every generation, the
+            # published one this process may be reading included.
+            elsewhere = self.db.execute(
+                "SELECT gen, canonical, source_id, revision, visibility FROM sources WHERE gen != ?",
+                (self.gen,)).fetchall()
+        seen: set[str] = set()
+        touched, fresh = [], []
+        repos: dict[Path, str] = {}
+        for path, root, resolved, shared in listed:
+            canonical = os.path.normcase(str(resolved))
+            if canonical in seen:
+                continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            old = known.get(canonical)
+            seen.add(canonical)
+            if old and (old[1], old[2]) == (stat.st_mtime_ns, stat.st_size):
+                continue
+            try:
+                data = path.read_bytes()
+                text = data.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+            except (OSError, UnicodeDecodeError):
+                seen.discard(canonical)
+                continue
+            revision = hashlib.sha256(data).hexdigest()
+            if old and old[3] == revision:
+                touched.append((stat.st_mtime_ns, stat.st_size, self.gen, old[0]))
+                continue
+            repo = repos.get(root) or repos.setdefault(root, evidence.repo_id(root))
+            display = resolved.relative_to(root.resolve()).as_posix()
+            kind = evidence.kind_of(display, shared)
+            source = evidence.source_id(repo, display)
+            cut = [(evidence.chunk_id(source, revision, c["line"], c["end_line"]), c) for c in chunks(text, path)]
+            fresh.append(((self.gen, source, repo, display, canonical, kind, evidence.visibility_of(kind),
+                           revision, stat.st_mtime_ns, stat.st_size), cut, old[0] if old else None, path))
+        gone = [(self.gen, row[0], row[4], row[3]) for canonical, row in known.items() if canonical not in seen]
+        gone += [(gen, source, visibility, revision) for gen, canonical, source, revision, visibility in elsewhere
+                 if canonical not in seen]
+        private = changed = skipped = False
+        # Everything above ran outside the write lock, so another process may
+        # have synced since. Under it, a file is written only if it is still
+        # what was read, and a row removed only if it is still the one seen:
+        # a stale read must not bring back a memory another process deleted.
+        with self.transaction() as db:
+            db.executemany("UPDATE sources SET stamp = ?, size = ? WHERE gen = ? AND source_id = ?", touched)
+            for record, cut, previous, path in fresh:
+                try:
+                    now = path.stat()
+                except OSError:
+                    skipped = True
+                    continue
+                if (now.st_mtime_ns, now.st_size) != (record[8], record[9]):
+                    skipped = True
+                    continue
+                changed = True
+                source, visibility = record[1], record[6]
+                keep = {key_of(c["indexed"]) for _id, c in cut}
+                private |= self.remove(db, {source, previous} - {None}, visibility == "private", keep,
+                                       revision=record[7])
+                db.execute("INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", record)
+                db.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
+                    (self.gen, cid, source, c["line"], c["end_line"], json.dumps(c["heading_path"], ensure_ascii=False),
+                     c["text"], c["completeness"]) for cid, c in cut])
+            for gen, source, visibility, revision in gone:
+                row = db.execute("SELECT revision FROM sources WHERE gen = ? AND source_id = ?",
+                                 (gen, source)).fetchone()
+                if row is None or row[0] != revision:
+                    continue
+                changed = True
+                private |= self.remove(db, {source}, visibility == "private", set(), gen)
+            current = self.meta("current")
+            # Another process pruning generations may have taken this one's row.
+            db.execute("INSERT OR IGNORE INTO generations VALUES (?, ?, ?)", (self.gen, evidence.CHUNKER, time.time()))
+            # A generation not yet published stays unpublished while a file is
+            # missing from it: the one it would replace still has that file.
+            # Only publishing prunes: to this generation and the one it
+            # replaces, kept for rollback. A build that has not finished
+            # deletes nothing.
+            publish = current != str(self.gen) and not skipped
+            if publish:
+                kept = {self.gen} | ({int(current)} if current is not None else set())
+                for table in ("generations", "sources", "chunks"):
+                    db.execute(f"DELETE FROM {table} WHERE gen NOT IN ({','.join('?' * len(kept))})", list(kept))
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('current', ?)", (str(self.gen),))
+            if changed or publish:
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('version', ?)",
+                           (str(int(self.meta("version") or 0) + 1),))
+        if private:
+            # Deleted pages can linger in the write-ahead log until a checkpoint.
+            with self.lock:
+                self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+        return changed, skipped
+
+    def remove(self, db: sqlite3.Connection, sources: set[str], private: bool, keep: set[str],
+               gen: int | None = None, revision: str | None = None) -> bool:
+        """Delete these sources' rows in `gen` (this one by default), where
+        `revision` is the content replacing them, `None` when the file is gone.
+
+        A private source's rows go in every generation that holds other
+        content than `revision` — a memory deleted or edited here must not
+        come back with another generation — while a generation holding the
+        same revision keeps them: that is the same memory, still readable
+        there. With any of its rows goes its English, and each vector key of
+        those rows that `keep` (the new version's) does not name is
+        journalled: the key is the heading path with the text, so a title
+        edit alone drops it too. `True` for a private source.
+
+        ponytail: a key another generation still uses for the new content is
+        dropped too and embedded again; subtract the kept rows' keys if that
+        re-embedding ever costs.
+        """
+
+        gen = self.gen if gen is None else gen
+        marks = ",".join("?" * len(sources))
+        rows = db.execute(f"SELECT gen, source_id, revision FROM sources WHERE source_id IN ({marks})",
+                          [*sources]).fetchall()
+        doomed = [(g, s) for g, s, r in rows if g == gen or (private and r != revision)]
+        if private and doomed:
+            journal = {key_of(" > ".join(json.loads(heading)) + "\n" + text) for g, s in doomed
+                       for heading, text in db.execute(
+                           "SELECT heading_path, text FROM chunks WHERE gen = ? AND source_id = ?", (g, s))} - keep
+            db.executemany("INSERT INTO journal (vector_key) VALUES (?)", [(key,) for key in journal])
+            db.execute(f"DELETE FROM english WHERE source_id IN ({marks})", [*sources])
+        for table in ("chunks", "sources"):
+            db.executemany(f"DELETE FROM {table} WHERE gen = ? AND source_id = ?", doomed)
+        return private
+
+    def load(self, roots: dict[str, Path]) -> list[dict]:
+        """The chunks of the generation read as search hits, each path under the root
+        its repository has in `roots` (repo id -> root), so every asker sees
+        paths spelled as it spelled its own."""
+
+        with self.lock:
+            rows = self.db.execute(
+                "SELECT s.repo_id, s.source_id, s.revision, s.display, s.kind, s.visibility, c.chunk_id,"
+                " c.start_line, c.end_line, c.heading_path, c.text, c.completeness FROM chunks c JOIN sources s"
+                " ON s.gen = c.gen AND s.source_id = c.source_id WHERE c.gen = ?", (self.reading(),)).fetchall()
+        out = []
+        for repo, source, revision, display, kind, visibility, cid, start, end, heading, text, completeness in rows:
+            root = roots.get(repo)
+            if root is None:
+                continue
+            heading_path = json.loads(heading)
+            out.append({"path": str(root / display), "line": start, "end_line": end,
+                        "heading": " > ".join(heading_path), "heading_path": heading_path, "text": text,
+                        "indexed": " > ".join(heading_path) + "\n" + text, "completeness": completeness,
+                        "chunk_id": cid, "source_id": source, "repo_id": repo, "revision": revision,
+                        "kind": kind, "visibility": visibility, "language": language(text),
+                        "locator": {"path": display, "start_line": start, "end_line": end}})
+        return out
+
+    def english(self, source: str, texts: list[str]) -> dict[str, dict]:
+        """The English kept for these texts of a private source: `{text: outcome}`."""
+
+        shas = {evidence.digest(text): text for text in texts}
+        with self.lock:
+            rows = self.db.execute("SELECT text_sha, outcome FROM english WHERE source_id = ?", (source,)).fetchall()
+        return {shas[sha]: json.loads(outcome) for sha, outcome in rows if sha in shas}
+
+    def keep_english(self, source: str, outcomes: list[tuple[str, dict]]) -> int:
+        """Keep a private source's English beside it, for each text — a chunk
+        or a heading title — the source still has: a translation that lands
+        after an edit or a deletion does not bring back what was removed.
+        Returns how many were kept."""
+
+        with self.transaction() as db:
+            present = set()
+            for heading, text in db.execute("SELECT heading_path, text FROM chunks WHERE source_id = ?", (source,)):
+                present |= {text, " > ".join(json.loads(heading))}
+            rows = [(source, evidence.digest(text), json.dumps(outcome, ensure_ascii=False))
+                    for text, outcome in outcomes if text in present]
+            db.executemany("INSERT OR REPLACE INTO english VALUES (?, ?, ?)", rows)
+        return len(rows)
+
+    def journal(self) -> list[tuple[int, str]]:
+        """Pending clean-ups: the vector keys of deleted private chunks."""
+
+        with self.lock:
+            return self.db.execute("SELECT id, vector_key FROM journal WHERE vector_key IS NOT NULL").fetchall()
+
+    def cleared(self, ids: list[int]) -> None:
+        with self.transaction() as db:
+            db.executemany("DELETE FROM journal WHERE id = ?", [(i,) for i in ids])
+            # Rows older code journalled with a text and no key.
+            db.execute("DELETE FROM journal WHERE vector_key IS NULL")
+
+    def source_of(self, chunk: str) -> str | None:
+        """The canonical path a chunk of this generation was cut from, for
+        checking a citation against the file itself (`evidence.resolve`)."""
+
+        with self.lock:
+            row = self.db.execute("SELECT s.canonical FROM chunks c JOIN sources s ON s.gen = c.gen AND"
+                                  " s.source_id = c.source_id WHERE c.gen = ? AND c.chunk_id = ?",
+                                  (self.reading(), chunk)).fetchone()
+        return row[0] if row else None
+
+
+# What a hit carries besides its path, line, heading, text and scores:
+# everything `evidence.contract` needs to make it an EvidenceChunk.
+EVIDENCE = ("end_line", "chunk_id", "source_id", "repo_id", "revision", "kind", "visibility",
+            "locator", "heading_path", "completeness", "language")
+
+
 class Index:
-    """One repository's index, beside one hub. Re-cut only the files whose
-    modification time moved; re-embed only the chunks whose text changed."""
+    """One repository's index, beside one hub, kept in its `Store`. Re-cut
+    only the files whose bytes changed; re-embed only the chunks whose text
+    changed. One search reads one loaded set of chunks, so one answer never
+    mixes two states of the store."""
 
     def __init__(self, hub: Path, project: Path | None, embedder: Embedder):
         self.hub, self.project, self.embedder = hub, project, embedder
-        self.files: dict[Path, tuple[int, list[dict]]] = {}
+        self.store = Store(store_path(hub, project))
+        self.loaded: str | None = None
+        # Every file the loaded chunks came from, and its revision.
+        self.files: dict[Path, str] = {}
         self.chunks: list[dict] = []
         self.matrix = None
 
+    def close(self) -> None:
+        self.store.close()
+
     def refresh(self) -> None:
-        changed = False
-        now = {}
+        listed = []
+        hub_root = self.hub.resolve()
         for path in listing(self.hub, self.project):
+            shared = path.parent.parent == self.hub and path.parent.name in ("operator", "craft")
+            root = self.hub if shared else self.project
             try:
-                now[path] = path.stat().st_mtime_ns
+                resolved = path.resolve()
             except OSError:
                 continue
-        for path in list(self.files):
-            if path not in now:
-                del self.files[path]
-                changed = True
-        for path, stamp in now.items():
-            if path in self.files and self.files[path][0] == stamp:
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError):
-                continue
-            self.files[path] = (stamp, chunks(text, path))
-            changed = True
-        if not changed and self.chunks:
+            # A link that leads out of its repository is not that repository's evidence.
+            if resolved.is_relative_to(hub_root if shared else root.resolve()):
+                listed.append((path, root, resolved, shared))
+        try:
+            self.store.sync(listed)
+        except sqlite3.Error as error:
+            # What was loaded stays; the next refresh tries again.
+            print(f"evidence store not updated: {type(error).__name__}", file=sys.stderr)
+        self.forget()
+        if self.chunks and self.store.version() == self.loaded:
             return
-        self.chunks = [c for _stamp, cs in self.files.values() for c in cs]
+        self.loaded = self.store.version()
+        roots = {evidence.repo_id(self.hub): self.hub}
+        if self.project is not None:
+            roots.setdefault(evidence.repo_id(self.project), self.project)
+        order = {str(path): i for i, (path, _r, _resolved, _s) in enumerate(listed)}
+        found = self.store.load(roots)
+        # Listing order, as git lists, so equal scores rank the same on every machine.
+        found.sort(key=lambda c: (order.get(c["path"], len(order)), c["path"], c["line"]))
+        self.chunks = found
+        self.files = {Path(c["path"]): c["revision"] for c in found}
         for chunk in self.chunks:
             chunk["key"] = key_of(chunk["indexed"])
         self.postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
@@ -343,7 +863,8 @@ class Index:
                 self.postings[term].append((i, n))
         self.average = sum(self.lengths) / max(1, len(self.lengths))
         self.matrix = None
-        self.embedder.want([(c["key"], c["indexed"]) for c in self.chunks])
+        self.embedder.want([(c["key"], c["indexed"]) for c in self.chunks],
+                           {c["key"] for c in self.chunks if c["visibility"] == "private"})
 
     def complete(self) -> bool:
         """Every chunk has been tried: it has a vector, or it failed."""
@@ -399,7 +920,7 @@ class Index:
         best: dict[str, tuple[float, int]] = {}
         for i, score in fused.items():
             path = self.chunks[i]["path"]
-            if sources is not None and self.source(Path(path)) not in sources:
+            if sources is not None and source(self.chunks[i]) not in sources:
                 continue
             if path not in best or score > best[path][0]:
                 best[path] = (score, i)
@@ -411,15 +932,25 @@ class Index:
             pages.append({"path": path, "line": chunk["line"], "heading": chunk["heading"],
                           "text": chunk["text"], "rrf": round(score, 5),
                           "cos": None if top is None else round(top, 4),
-                          "bm25": round(lexical.get(i, 0.0), 3)})
+                          "bm25": round(lexical.get(i, 0.0), 3), **{f: chunk[f] for f in EVIDENCE}})
         return pages
 
-    def source(self, path: Path) -> str:
-        if path.parent in (self.hub / "operator", self.hub / "craft"):
-            return "hub"
-        if self.project and path.parent == self.project / ".wiki" / "memory":
-            return "memory"
-        return "documents"
+    def forget(self) -> None:
+        """Clear the vectors of what the journal says was deleted: in memory,
+        in the queue, and on disk, where older code wrote private ones."""
+
+        pending = self.store.journal()
+        if not pending:
+            return
+        self.embedder.drop([key for _id, key in pending])
+        if drop_vectors([key for _id, key in pending]):
+            self.store.cleared([i for i, _key in pending])
+
+
+def source(chunk: dict) -> str:
+    """The retrieval source a chunk belongs to, as Jev routes them."""
+
+    return {"rule": "hub", "memory": "memory"}.get(chunk["kind"], "documents")
 
 
 # ---- keep-alive -------------------------------------------------------------

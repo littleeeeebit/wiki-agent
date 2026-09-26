@@ -9,12 +9,23 @@ import pytest
 
 import decision
 from common.budget import Budget
+from common.language import language
 from search import controller as jev
+from search import evidence
 from search.daemon import Embedder, Index
 
 
-def hit(name, text="Useful evidence"):
-    return {"path": f"/repo/{name}.md", "line": 3, "heading": name, "text": text}
+def hit(name, text="Useful evidence", completeness="whole"):
+    """A hit shaped as the index returns one, EvidenceChunk fields and all."""
+
+    repo = evidence.digest("repo", "/repo")
+    source = evidence.source_id(repo, f"{name}.md")
+    revision = evidence.digest("revision", text)
+    return {"path": f"/repo/{name}.md", "line": 3, "end_line": 3 + text.count("\n"), "heading": name,
+            "heading_path": [name], "text": text, "repo_id": repo, "source_id": source, "revision": revision,
+            "chunk_id": evidence.chunk_id(source, revision, 3, 3 + text.count("\n")), "kind": "document",
+            "visibility": "repository", "completeness": completeness, "language": language(text),
+            "locator": {"path": f"{name}.md", "start_line": 3, "end_line": 3 + text.count("\n")}}
 
 
 def keyless():
@@ -41,7 +52,7 @@ def test_routes_grades_and_preserves_citations(monkeypatch):
     out = jev.prepare("What was decided?", "/repo", evaluate=evaluate)
     assert calls == [["documents"]]
     assert out["status"] == "supported" and out["sources"] == ["documents"]
-    assert [(h["path"], h["line"]) for h in out["evidence"]] == [
+    assert [(h["path"], h["locator"]["start_line"]) for h in out["evidence"]] == [
         ("/repo/contradiction.md", 3), ("/repo/partial.md", 3)]
 
 
@@ -68,14 +79,14 @@ def test_insufficient_evidence_widens_once_and_retains_bridge(monkeypatch):
     out = jev.prepare("Find the reason", "/repo", evaluate=evaluate)
     assert calls == [(["memory"], 10), (list(jev.SOURCES), 12)]
     assert out["status"] == "insufficient"
-    assert {h["heading"] for h in out["evidence"]} == {"bridge", "detail"}
+    assert {h["heading_path"][0] for h in out["evidence"]} == {"bridge", "detail"}
 
 
 def test_missing_key_and_invalid_judgment_fall_back_to_all_sources(monkeypatch):
     calls = []
     monkeypatch.setattr(jev, "retrieve", lambda q, p, s, k, t: calls.append(s) or [hit("baseline")])
     out = jev.prepare("Find evidence", "/repo", evaluate=keyless())
-    assert out["status"] == "fallback" and out["evidence"] == [hit("baseline")]
+    assert out["status"] == "fallback" and out["evidence"] == [jev.item(hit("baseline"))]
     assert calls == [list(jev.SOURCES)]
     assert out["trace"][-1] == {"fallback": "JevError", "reason": "missing_api_key"}
     out = jev.prepare("Find evidence", "/repo", evaluate=lambda *a: {})
@@ -90,7 +101,7 @@ def test_each_provider_failure_keeps_its_own_reason(monkeypatch, category):
 
     monkeypatch.setattr(jev, "retrieve", lambda *a: [hit("baseline")])
     out = jev.prepare("Find evidence", "/repo", evaluate=failing)
-    assert out["status"] == "fallback" and out["evidence"] == [hit("baseline")]
+    assert out["status"] == "fallback" and out["evidence"] == [jev.item(hit("baseline"))]
     assert out["trace"][-1] == {"fallback": "JevError", "reason": category}
 
 
@@ -154,7 +165,7 @@ def test_irrelevant_truncated_passage_does_not_block_whole_evidence(monkeypatch)
 
     out = jev.prepare("Question", None, evaluate=evaluate)
     assert out["status"] == "supported" and judged == [["short"]]
-    assert {h["heading"] for h in out["evidence"]} == {"long", "short"}
+    assert {h["heading_path"][0] for h in out["evidence"]} == {"long", "short"}
 
 
 def test_dossier_names_the_sources_actually_searched_after_widening(monkeypatch):
@@ -200,7 +211,7 @@ def test_one_budget_bounds_every_call_in_a_run(monkeypatch, budget, judged):
                   Budget(seconds=budget, calls=6, candidates=40, call_seconds=0.25))
     assert time.monotonic() - started < budget
     assert len(calls) == judged and len(searched) == 2
-    assert out["status"] == "fallback" and out["evidence"] == [hit("a")]
+    assert out["status"] == "fallback" and out["evidence"] == [jev.item(hit("a"))]
     assert out["trace"][-1] == {"fallback": "Exhausted", "reason": "budget"}
 
 
@@ -231,7 +242,7 @@ def test_searches_spend_the_same_budget(monkeypatch):
     assert len(asked) == 2 and asked[0] <= budget and asked[1] < budget
     assert out["trace"][-2:] == [{"fallback": "Exhausted", "reason": "budget"},
                                  {"fallback_retrieval": "unavailable"}]
-    assert [h["heading"] for h in out["evidence"]] == ["daemon"]
+    assert [h["heading_path"][0] for h in out["evidence"]] == ["daemon"]
 
 
 def test_a_slow_cold_index_cannot_hold_the_caller_past_the_budget(monkeypatch):
@@ -248,6 +259,9 @@ def test_a_slow_cold_index_cannot_hold_the_caller_past_the_budget(monkeypatch):
 
         def search(self, query, k, sources):
             return [hit("late")]
+
+        def close(self):
+            pass
 
     def evaluate(state, questions, trace, *_):
         if "retrieve" in questions:
@@ -285,6 +299,9 @@ def test_one_cold_build_at_a_time_and_none_without_time(monkeypatch):
 
         def search(self, query, k, sources):
             return [hit("cold")]
+
+        def close(self):
+            pass
 
     monkeypatch.setattr(jev, "ask", lambda *a, **kw: None)
     monkeypatch.setattr(daemon, "Index", Slow)

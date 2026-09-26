@@ -41,7 +41,7 @@ from pathlib import Path
 
 from common import settings
 
-__all__ = ("translate", "usage", "glossary", "KO_EN", "EN_KO")
+__all__ = ("translate", "english", "retire", "usage", "glossary", "KO_EN", "EN_KO")
 
 HERE = Path(__file__).resolve().parents[1]  # `tool/`
 ROOT = HERE.parent
@@ -123,7 +123,7 @@ TOKEN = re.compile(rf"{OPEN}(\d+){CLOSE}")
 # never matches.
 SPANS = (
     ("front_matter", re.compile(r"\A---\n.*?\n---\n", re.S)),  # triggers live here
-    ("fence", re.compile(r"```.*?```", re.S)),
+    ("fence", re.compile(r"```.*?```|~~~.*?~~~", re.S)),
     ("comment", re.compile(r"<!--.*?-->", re.S)),   # the markers inject.py plants
     # Before the wikilink: `[[name]]` in backticks masked as a link first left
     # its placeholder inside the code span's, and `intact` refused every such page.
@@ -445,6 +445,8 @@ def _store() -> sqlite3.Connection | None:
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("CREATE TABLE IF NOT EXISTS shots (k TEXT PRIMARY KEY, v TEXT)")
         db.execute("CREATE TABLE IF NOT EXISTS spend (month TEXT PRIMARY KEY, usd REAL)")
+        # What a person took out of use (`retire`).
+        db.execute("CREATE TABLE IF NOT EXISTS retired (k TEXT PRIMARY KEY)")
         return db
     except Exception:
         return None
@@ -490,21 +492,37 @@ def translate(texts: list[str], direction: str, deadline: float) -> list[str]:
     hooks' six seconds exactly that way (#19).
     """
 
+    return [text for text, _status in _outcomes(texts, direction, deadline)]
+
+
+def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
+              held: dict[str, str] | None = None) -> list[tuple[str, str]]:
+    """`(text, status)` per input. The status is `skipped` (nothing of the
+    source language), `cached`, `translated`, or why the original came back:
+    `retired`, `no_key`, `limit`, `request_failed`, `spans_broken`, `deadline`,
+    or what `accept(source, translation)` returned against a translation —
+    `None` accepts it. What it rejects is not cached, and a cached
+    translation it rejects is asked for again. `held` (source -> English)
+    stands in for the cache, which is then neither read nor written: the
+    caller keeps what it holds, and what is held is checked as a cache hit is
+    — retired, and `accept`."""
+
     if not texts:
         return []
     try:
-        return _translate(list(texts), direction, deadline)
+        return _translate(list(texts), direction, deadline, accept, held)
     except Exception:
         # The callers are hooks part-way through assembling an injection. Their
         # own entry-point guard would catch this and pass the turn, which costs
         # the whole injection rather than one translation — the failure this
         # function exists to make impossible. So it is caught here instead.
-        return list(texts)
+        return [(text, "request_failed") for text in texts]
 
 
-def _translate(texts: list[str], direction: str, deadline: float) -> list[str]:
+def _translate(texts: list[str], direction: str, deadline: float, accept=None,
+               held: dict[str, str] | None = None) -> list[tuple[str, str]]:
     keep, fixed, version = glossary()
-    out = list(texts)
+    out = [(text, "skipped") for text in texts]
 
     wanted = [i for i, t in enumerate(texts) if worth_translating(t, direction)]
     if not wanted:
@@ -512,16 +530,22 @@ def _translate(texts: list[str], direction: str, deadline: float) -> list[str]:
 
     db = _store()
     keys = {i: _key(direction, version, texts[i]) for i in wanted}
-    if db is not None:
+    if db is None:
+        for i in wanted:
+            out[i] = (texts[i], "limit")   # no store, no count: nothing is sent
+        wanted = []
+    else:
         try:
-            rows = db.execute(
-                f"SELECT k, v FROM shots WHERE k IN ({','.join('?' * len(keys))})",
-                list(keys.values()),
-            ).fetchall()
-            hit = dict(rows)
+            marks = ",".join("?" * len(keys))
+            hit = dict(db.execute(f"SELECT k, v FROM shots WHERE k IN ({marks})", list(keys.values())).fetchall()
+                       ) if held is None else {keys[i]: held[texts[i]] for i in wanted if texts[i] in held}
+            retired = {k for (k,) in db.execute(f"SELECT k FROM retired WHERE k IN ({marks})", list(keys.values()))}
             for i in list(wanted):
-                if keys[i] in hit:
-                    out[i] = hit[keys[i]]
+                if keys[i] in retired:
+                    out[i] = (texts[i], "retired")
+                    wanted.remove(i)
+                elif keys[i] in hit and not (accept and accept(texts[i], hit[keys[i]])):
+                    out[i] = (hit[keys[i]], "cached")
                     wanted.remove(i)
         except Exception:
             pass
@@ -534,25 +558,35 @@ def _translate(texts: list[str], direction: str, deadline: float) -> list[str]:
     # ponytail: read-then-send, so processes racing at the limit each send one.
     if wanted:
         try:
-            over = db is None or spent(db) >= limit()
+            over = spent(db) >= limit()
         except Exception:
             over = True
-        if over:
+        if over or not api_key():
+            for i in wanted:
+                out[i] = (texts[i], "limit" if over else "no_key")
             wanted = []
 
     if wanted:
         masked: list[tuple[str, list[str]]] = [protect(texts[i], keep) for i in wanted]
         seconds = max(0.0, deadline - time.monotonic())
         answer = _ask(instruction(direction, fixed), [m for m, _ in masked], seconds)
+        for i in wanted:
+            out[i] = (texts[i], "request_failed")
         if answer is not None:
             fresh: list[tuple[str, str]] = []
             for i, reply, (_, spans) in zip(wanted, answer, masked):
                 if not intact(reply, len(spans)):
-                    continue  # keep the original; a mangled span is not a translation
+                    # Keep the original; a mangled span is not a translation.
+                    out[i] = (texts[i], "spans_broken")
+                    continue
                 done = restore(reply, spans)
+                refused = accept(texts[i], done) if accept else None
+                if refused:
+                    out[i] = (texts[i], refused)
+                    continue
                 fresh.append((keys[i], done))
-                out[i] = done
-            if db is not None and fresh:
+                out[i] = (done, "translated")
+            if fresh and held is None:
                 try:
                     db.executemany("INSERT OR REPLACE INTO shots VALUES (?, ?)", fresh)
                     db.commit()
@@ -572,8 +606,122 @@ def _translate(texts: list[str], direction: str, deadline: float) -> list[str]:
     # the caller still gets handed a translation it no longer has room for.
     # The work is kept: it is cached, so the next turn has it for nothing.
     if time.monotonic() > deadline:
-        return list(texts)
+        return [(text, status if status == "skipped" else "deadline") for text, (_t, status) in zip(texts, out)]
     return out
+
+
+# What `english` reports, besides the text. Bump when its checks change.
+ENGLISH_VERSION = "1"
+# Numbers, and identifiers outside code spans — a dotted name, a path, a
+# snake_case word. The placeholders already guard what is masked; these are
+# what the model sees and must hand back unchanged.
+NUMBER = re.compile(r"\d+(?:[.,]\d+)*", re.A)
+IDENTIFIER = re.compile(r"[\w/\\:.-]*(?:\w\.[A-Za-z]|[\\_])[\w/\\:.-]*", re.A)
+
+
+def kept(source: str, english: str, keep: tuple[str, ...]) -> bool:
+    """Did every number and bare identifier of `source` come through
+    `english` exactly as often, with none added?
+
+    ponytail: a date written out (`9월` as `September`) reads as a lost
+    number and the chunk as `uncertain`; map month names if that turns out
+    to cost many chunks.
+    """
+
+    def found(text: str) -> list[str]:
+        prose = protect(text, keep)[0]
+        names = [n.rstrip(".:-") for n in IDENTIFIER.findall(prose)]
+        numbers = [n.replace(",", "") for n in NUMBER.findall(IDENTIFIER.sub(" ", prose))]
+        return sorted(names + numbers)
+
+    return found(source) == found(english)
+
+
+def english(texts: list[str], deadline: float, held: dict[str, dict] | None = None) -> list[dict]:
+    """English normalization with its outcome, one dict per input.
+
+    `translate` returns the original on every failure, so its string cannot
+    say whether English came about. This does:
+
+    - `text`: the English, or `None` when there is none to use.
+    - `status`: `original_english`, `translated`, `unavailable` (no key, the
+      monthly limit, a failed request, the deadline), `uncertain` (a
+      protected span, number or identifier came back changed, or a script
+      this translator does not read), or `retired` (a person found it
+      contradicts its original).
+    - `reason`: the failure behind a status without English.
+    - `language`, `model`, `prompt_version`, `glossary_version`, `version`,
+      `spans` (`intact`, `broken` or `None` when nothing was translated),
+      `cached`.
+
+    `held` for a private memory's texts: the outcomes the caller kept beside
+    their source (text -> outcome), used in place of this cache, which is
+    then neither read nor written. One made under another version, or
+    retired since, is not used; the caller keeps what comes back.
+    """
+
+    from common.language import language
+
+    keep, _fixed, glossary_version = glossary()
+
+    def accept(source: str, made: str) -> str | None:
+        # Held before caching, so a rejected reply is asked for again next time.
+        if language(made, keep) != "en":
+            # Came back still Korean: `translate` may keep that, English evidence may not.
+            return "not_english"
+        return None if kept(source, made, keep) else "protected_changed"
+
+    langs = [language(text, keep) for text in texts]
+    korean = [i for i, lang in enumerate(langs) if lang == "ko"]
+    version = f"{MODEL}/p{PROMPT_VERSION}/g{glossary_version}/e{ENGLISH_VERSION}"
+    usable = None if held is None else {t: o["text"] for t, o in held.items()
+                                        if o.get("status") == "translated" and o.get("version") == version}
+    done = dict(zip(korean, _outcomes([texts[i] for i in korean], KO_EN, deadline, accept, usable)))
+    out = []
+    for i, text in enumerate(texts):
+        result = {"text": None, "status": "unavailable", "reason": None, "language": langs[i],
+                  "model": None, "prompt_version": PROMPT_VERSION, "glossary_version": glossary_version,
+                  "version": None, "spans": None, "cached": False}
+        if langs[i] == "en":
+            result.update(text=text, status="original_english", version=f"e{ENGLISH_VERSION}")
+        elif langs[i] == "und":
+            result.update(status="uncertain", reason="unsupported_language")
+        else:
+            made, how = done[i]
+            if how in ("translated", "cached"):
+                result.update(text=made, status="translated", version=version, model=MODEL, spans="intact",
+                              cached=how == "cached")
+            elif how in ("not_english", "protected_changed"):
+                result.update(status="uncertain", reason=how, model=MODEL, spans="intact")
+            elif how == "spans_broken":
+                result.update(status="uncertain", reason=how, model=MODEL, spans="broken")
+            elif how == "retired":
+                result.update(status="retired", reason=how)
+            else:
+                result.update(reason=how)
+        out.append(result)
+    return out
+
+
+def retire(texts: list[str]) -> bool:
+    """Take these texts' current English out of automatic use: the original
+    governs where a translation contradicts it. The cached translation is
+    dropped and not made again until the glossary or prompt changes."""
+
+    _keep, _fixed, version = glossary()
+    db = _store()
+    if db is None:
+        return False
+    try:
+        keys = [(_key(KO_EN, version, t),) for t in texts]
+        db.executemany("DELETE FROM shots WHERE k = ?", keys)
+        db.executemany("INSERT OR IGNORE INTO retired VALUES (?)", keys)
+        db.commit()
+        return True
+    except Exception:
+        return False
+    finally:
+        db.close()
 
 
 # --------------------------------------------------------------------------
