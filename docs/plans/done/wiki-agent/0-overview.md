@@ -137,7 +137,7 @@ Agent session is a screen that writes to the server. Before building, write down
 Currently, web chat is bound by `READ_TOOLS = "Bash,Read,Glob,Grep"`. The reason for fixing files in the browser is that it is a remote shell. The agent pipeline needs writing, so this boundary is redrawn.
 
 - Server runs only on `127.0.0.1`
-- Writing only inside the worktree created by `workspace`. Do not write to the original checkout — two exceptions. If you click [Connect], the server writes one `.wiki/adapter.toml` of that repository to the original ([loop overview](../../loop/0-overview.md#연결과-전수조사)). In cleanup after [Merge], only `git merge --ff-only` when the original is on the base branch and there are no uncommitted changes ([loop step 4](../../loop/4-review.md#머지))
+- Writing only inside the worktree created by `workspace`. Do not write to the original checkout — two exceptions. If you click [Connect], the server writes one `.wiki/adapter.toml` of that repository to the original ([loop overview](../../loop/0-overview.md#connection-and-full-investigation)). In cleanup after [Merge], only `git merge --ff-only` when the original is on the base branch and there are no uncommitted changes ([loop step 4](../../loop/4-review.md#merge))
 - Worktree is created in `../<repo>-worktrees/<task>` next to the repository
 - All writing is approved on the screen — file editing, shell commands with writing, even `gh pr create`. Claude Code is received as `--permission-prompt-tool stdio`, Codex as `app-server`'s approval request. Writing outside the worktree is refused without asking ([step 5](5-agent-workspace.md))
 - The target repository's `permissions.deny` and wiki hooks are attached as is — because it is launching a CLI
@@ -161,5 +161,5 @@ Reason why step 2 is first. If steps 3-5 are done without boundary checks, a per
 ## Things not included in this plan
 
 - Coordinator and worker. The structure where one session splits tasks and distributes them to multiple workers is planned separately. Since it was decided to get approval for all writing, the problem of approval requests from multiple workers flocking at that time is solved together
-- Review cell. Read-only review session next to the work session — done in [loop step 4](../../loop/0-overview.md#리뷰-셀과-루프)
+- Review cell. Read-only review session next to the work session — done in [loop step 4](../../loop/0-overview.md#review-cell-and-loop)
 - Back-propagation to the public copy. Whether to return the changes of this repository to `ai-coding-agent-wiki-public` is judged each time by the procedure of `docs/publishing.md`

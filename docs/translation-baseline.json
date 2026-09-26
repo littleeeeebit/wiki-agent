@@ -3,8 +3,13 @@
   "entries": [
     {
       "output": "DESIGN.md",
-      "kind": "kept",
-      "why": "이 저장소의 화면 값을 사람이 읽고 고르는 문서다. 3단계가 웹 UI 를 건드릴 때 같이 본다."
+      "kind": "rewrite",
+      "source": "DESIGN.md",
+      "commit": "604058233a5df90b410e085670817d0c95a46a09",
+      "allow": [
+        "code"
+      ],
+      "why": "Same 44 code spans; English word order swaps `web/src/lib/tasks.ts` and `phase` (\"`phase` of `web/src/lib/tasks.ts`\")."
     },
     {
       "output": "ENFORCEMENT.md",
@@ -53,8 +58,13 @@
     },
     {
       "output": "docs/chat-setup.md",
-      "kind": "kept",
-      "why": "팀원이 자기 PC 에서 따라 하는 설치 안내다. 사용자 판단으로 한국어를 유지한다."
+      "kind": "rewrite",
+      "source": "docs/chat-setup.md",
+      "commit": "604058233a5df90b410e085670817d0c95a46a09",
+      "allow": [
+        "code"
+      ],
+      "why": "Same 28 code spans; English word order swaps `python` and `python3` in \"use `python3` instead of `python`\". The instruction reads the same."
     },
     {
       "output": "docs/development.md",

@@ -208,7 +208,7 @@ Problem of work order. The order chosen by the user is specification, review, co
 
 ## Safety boundary
 
-The boundaries of [wiki-agent overview](../done/wiki-agent/0-overview.md#안전-경계) remain the same. Adding.
+The boundaries of [wiki-agent overview](../done/wiki-agent/0-overview.md#safety-boundary) remain the same. Adding.
 
 - Review cell is read-only. Sees the same worktree as the work cell but does not write. Blocked by execution permission, not prompt — Codex is read-only sandbox, Claude is `Read,Glob,Grep` without `Bash`
 - Turns sent by the loop to the work cell are also approved for every write, just like turns sent by a human. "Allow during this session" applies only to that one session, that one tool
