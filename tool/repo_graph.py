@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import posixpath
-import re
 import sys
 from pathlib import Path
 
@@ -13,47 +11,21 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import corpus  # noqa: E402
+from search import knowledge_graph, projection  # noqa: E402
 from wiki import INJECTABLE, front_matter, project_pages  # noqa: E402
 
 NS = "repo"
 
-# Documents get pointed at in two shapes: a markdown link, and the backticked
-# path these repositories actually use more — `docs/development/TDD.md`, in
-# instructions and in documents alike. Not counting the second one inflates
-# the orphan count.
-MD_LINK = re.compile(r"\[[^\]]*\]\(([^)\s#]+\.md)[^)]*\)")
-# A line reference, `README.md:24`, points at the document as much as the bare
-# path does; the plans cite findings that way.
-BARE_PATH = re.compile(r"`([A-Za-z0-9_][A-Za-z0-9_./-]*\.md)(?::\d+(?:-\d+)?)?`")
+# A Markdown link or a backticked path — `docs/development/TDD.md`, or
+# `README.md:24` — resolved relative to the pointing document first. One
+# definition, in the knowledge graph, so the map and retrieval agree on links.
+targets = knowledge_graph.targets
+resolve = knowledge_graph.resolve
 
 # Where a reader walks in. Nothing points at the front door, so counting it as
 # an orphan reports every repository's README forever and teaches the reader
 # to skip the number.
 ENTRY = {"README.md"}
-
-
-def targets(text: str) -> set[str]:
-    return set(MD_LINK.findall(text)) | set(BARE_PATH.findall(text))
-
-
-def resolve(raw: str, source: str, known: set[str]) -> str | None:
-    """A pointed-at path, resolved against the repository. `None` when not found.
-
-    Relative first. `../architecture/x.md` only means anything from where the
-    pointing document sits; resolved from the repository root it lands on the
-    wrong file or on nothing at all.
-
-    The filesystem is never touched. Whether the file exists is already
-    answered by `known`, and `Path.resolve` measures against the current
-    directory, which would make the answer depend on where this was run.
-    """
-
-    here = posixpath.dirname(source)
-    for candidate in (posixpath.join(here, raw), raw):
-        name = posixpath.normpath(candidate).lstrip("./")
-        if name in known:
-            return name
-    return None
 
 
 def decisions_of(repo: Path) -> list[dict]:
@@ -178,6 +150,12 @@ def picture(repo: Path) -> dict:
             if hit and hit != name and (name, hit) not in seen:
                 seen.add((name, hit))
                 edges.append({"a": name, "b": hit, "kind": "link"})
+    # What the knowledge graph adds at document level — `reads`, `supersedes`,
+    # a wiki link, a contradiction — read from the index as it stands, never built here.
+    # A pair the map already links keeps its link; one pair can hold two kinds.
+    for edge in projection(repo):
+        if edge["a"] in known and edge["b"] in known and (edge["a"], edge["b"]) not in seen:
+            edges.append(edge)
 
     inbound = {edge["b"] for edge in edges}
     orphans = sorted(n for n, node in nodes.items() if node["kind"] == "doc" and n not in inbound and n not in ENTRY)
