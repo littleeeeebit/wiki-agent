@@ -61,3 +61,18 @@ def test_inside_a_series_the_lowest_number_comes_first(tmp_path):
     found = [p.relative_to(tmp_path / "docs" / "plans").as_posix() for p, _ in session_state.plans(tmp_path)]
 
     assert found == ["a/0-overview.md", "a/2-y.md"]
+
+
+def test_english_plan_statuses_and_discovery(tmp_path):
+    path = tmp_path / "docs/plans/jev/0-overview.md"
+    path.parent.mkdir(parents=True)
+    states = ["Complete — PR #1", "Cancelled — replaced", "Not completed", "Not started", ""]
+    path.write_text(
+        "# Plan\n\n## Steps\n\n| # | Stage | Deliverable | Status |\n| --- | --- | --- | --- |\n"
+        + "".join(f"| {n} | stage | item{n} | {state} |\n" for n, state in enumerate(states, 1))
+        + "\n## Notes\n\n| 6 | ignored | outside | Not started |\n",
+        encoding="utf-8",
+    )
+    expected = ["3 item3 — Not completed", "4 item4 — Not started", "5 item5 — Not started"]
+    assert session_state.open_steps(path) == expected
+    assert session_state.plans(tmp_path) == [(path, expected)]

@@ -69,7 +69,7 @@ def branch_line(repo: Path) -> str:
 
 
 def open_steps(path: Path, limit: int = MAX_ROWS) -> list[str]:
-    """The rows of a plan's `## 단계` table that are not finished.
+    """The unfinished rows in an English or Korean plan's steps table.
 
     A plan document here gives every step a status cell, and a row that is
     neither done nor cancelled is what is left. No table means an empty list
@@ -79,11 +79,12 @@ def open_steps(path: Path, limit: int = MAX_ROWS) -> list[str]:
 
     text = path.read_text(encoding="utf-8")
     # `Steps` since the plans are written in English; `단계` in older ones.
-    block = re.search(r"^##+ (?:단계|Steps)\s*$(.*?)(?=^##+ |\Z)", text, re.M | re.S)
+    block = re.search(r"^##+ (단계|Steps)\s*$(.*?)(?=^##+ |\Z)", text, re.M | re.S | re.I)
     if not block:
         return []
     rows = []
-    for line in block.group(1).splitlines():
+    default = "Not started" if block.group(1).casefold() == "steps" else "미착수"
+    for line in block.group(2).splitlines():
         if not line.startswith("|") or set(line) <= set("|- :"):
             continue
         cells = [c.strip() for c in line.strip("|").split("|")]
@@ -92,12 +93,12 @@ def open_steps(path: Path, limit: int = MAX_ROWS) -> list[str]:
         state = cells[-1].replace("*", "").strip()
         # The first word, not the whole cell: `완료 — 양 호스트 실측` is done.
         # Not a prefix either: `미완료` is not.
-        first = state.split()[0] if state else ""
+        first = state.split()[0].casefold() if state else ""
         # English plans say `Done`, or `Complete` where the translator chose it.
-        if first in ("완료", "취소", "상태") or first.lower() in ("done", "complete", "completed", "cancelled",
-                                                              "status") or "~~" in cells[1]:
+        if first in ("완료", "취소", "상태", "done", "complete", "completed", "cancelled", "canceled",
+                     "status") or "~~" in cells[1]:
             continue
-        rows.append(f"{cells[0]} {cells[2] if len(cells) > 2 else ''} — {state or '미착수'}")
+        rows.append(f"{cells[0]} {cells[2] if len(cells) > 2 else ''} — {state or default}")
     return rows[:limit]
 
 

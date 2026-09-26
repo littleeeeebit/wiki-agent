@@ -124,6 +124,31 @@ def test_failed_original_never_rewritten(tmp_path):
         assert chat.recall("wiki")[-1]["error"] == "모델 오류"
 
 
+def test_jev_dossier_reaches_answering_session_after_user_is_saved(monkeypatch):
+    monkeypatch.setenv("WIKI_JEV", "on")
+    sent = []
+    dossier = {"status": "insufficient", "evidence": [{"path": "docs/a.md", "line": 7}], "trace": []}
+
+    def prepare(text, repo, state):
+        assert chat.recall("wiki")[-1]["text"] == text
+        return dossier
+
+    class Original:
+        def say(self, text):
+            sent.append(text)
+            yield Event("done", "Answer", {"session_id": "jev-test"})
+
+    with patch.object(chat, "prepare", prepare), patch.object(chat, "session", return_value=Original()), \
+         patch.object(chat, "hits_for", return_value=[]), \
+         patch.object(chat, "explain", return_value=iter([Event("done", "Simple answer")])):
+        web = client()
+        assert web.post("/api/say/wiki", json={"text": "Find the decision"}).status_code == 200
+        assert '"status": "insufficient"' in sent[0] and '"line": 7' in sent[0]
+        rows = chat.recall("wiki", include_context=True)
+        assert next(r for r in rows if r["role"] == "retrieval")["dossier"] == dossier
+        assert [r["text"] for r in rows if r["role"] == "user"] == ["Find the decision"]
+
+
 # A Codex `app-server`: a resume it cannot do, a read session's thread, and
 # two turns in one process, each reporting two model calls' usage.
 APP_SERVER = '''import json, sys

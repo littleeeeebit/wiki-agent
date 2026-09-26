@@ -208,6 +208,37 @@ judges.
 
 ## Looking at it
 
+### Jev retrieval decisions
+
+The [full advancement plan](docs/plans/jev/0-overview.md) defines ten implementation
+stages beyond the current prototype, including graph traversal, English evidence,
+verified answers, agent choices, and measured rollout.
+
+The [research and design record](docs/research/jev-retrieval-controller.md)
+describes the current graph, the adopted primary sources, and the evaluation
+still needed. Jev can route searches among hub rules, repository documents,
+and saved memory, grade passages, and check whether the evidence is enough.
+The existing answering model writes the answer.
+
+Set `TYPESAFE_API_KEY` in the server environment and `WIKI_JEV=on` before
+starting the app to enable this in wiki queries. This sends the question,
+recent context, and retrieved excerpts to TypeSafe. The key stays server-side.
+`WIKI_JEV_MODEL` defaults to `jev-1.13.0`. For an individual search:
+
+```powershell
+python tool/search 'Why was this design chosen?' --project . --jev --state 'Reviewing the retrieval design'
+```
+
+The JSON result includes citations, probabilities, model usage, and one of
+`direct`, `supported`, `insufficient`, or `fallback`. These are retrieval
+judgments, not correctness guarantees. Missing credentials or a failed judgment
+returns baseline search; insufficient evidence permits one wider search, then
+asks the answering agent to verify further. Controller instructions are English;
+source excerpts retain their original language. Verify with
+`python -m pytest -q tool/test_jev.py tool/test_search.py tool/test_main.py`.
+
+### The graph window
+
 ```bash
 python tool/graph.py --project ~/PycharmProjects/<name> --project ...
 tool/app.cmd                       # the window · "위키 지도" at the lower left
