@@ -5,6 +5,7 @@ needs the e5 model, which a test run does not download.
 """
 
 import json
+import os
 from pathlib import Path
 
 import pytest
@@ -45,19 +46,32 @@ def test_hybrid_is_never_recorded_from_an_incomplete_index(monkeypatch):
     assert asked == [True]
 
 
-@pytest.mark.parametrize("name", ["../escape.md", "repo/../../escape.md", "docs/a.md", "hub", "{abs}"])
-def test_a_synthetic_file_stays_inside_the_corpus(tmp_path, name):
-    """A manifest names where its pages go; none may land outside `hub/` or
-    `repo/` in the scratch folder, and nothing is written before that is known."""
+WINDOWS = pytest.mark.skipif(os.name != "nt", reason="a backslash or a drive is a separator only on Windows")
 
-    outside = tmp_path / "escape.md"
+
+@pytest.mark.parametrize("name", [
+    "../escape.md", "repo/../../escape.md", "docs/a.md", "hub", "{abs}",
+    pytest.param("repo/..\\..\\escape.md", marks=WINDOWS),
+    pytest.param("C:escape.md", marks=WINDOWS),
+])
+def test_a_synthetic_file_stays_inside_the_corpus(tmp_path, monkeypatch, name):
+    """A manifest names where its pages go; none may land outside `hub/` or
+    `repo/` in the scratch folder, and nothing is written before that is known.
+    The scratch folder is made inside `tmp_path`, so an escape lands where
+    this test can see it."""
+
+    monkeypatch.setattr(baseline.tempfile, "tempdir", str(tmp_path / "scratch"))
+    (tmp_path / "scratch").mkdir()
+    monkeypatch.chdir(tmp_path / "scratch")
     manifest = json.loads(SMOKE.read_text(encoding="utf-8"))
-    manifest["corpus"]["files"] = {name.format(abs=outside.as_posix()): "# Escape\n\nwritten\n"}
+    manifest["corpus"]["files"] = {"repo/docs/first.md": "# First\n\nok\n",
+                                   name.format(abs=(tmp_path / "escape.md").as_posix()): "# Escape\n\nwritten\n"}
     path = tmp_path / "m.json"
     path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ValueError, match="outside the corpus"):
         baseline.run(path, method="bm25")
-    assert not outside.exists()
+    written = [p for p in tmp_path.rglob("*.md")]
+    assert written == [], f"written before or despite the check: {written}"
 
 
 def test_a_different_outcome_is_a_difference():

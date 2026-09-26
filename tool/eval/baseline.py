@@ -28,7 +28,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -64,14 +64,23 @@ def load(path: Path) -> dict:
         raise ValueError(f"{path}: duplicate query ids")
     if manifest["corpus"]["kind"] not in ("synthetic", "live"):
         raise ValueError(f"{path}: corpus kind must be synthetic or live")
-    # Checked before anything is written: a page goes under `hub/` or `repo/`
-    # of the scratch folder, by a relative forward-slash path with no `..`.
-    # A drive, a backslash or an absolute path fails the first part's test.
-    for name in manifest["corpus"].get("files") or {}:
-        parts = PurePosixPath(name).parts
-        if len(parts) < 2 or parts[0] not in ("hub", "repo") or ".." in parts:
-            raise ValueError(f"{path}: {name!r} is outside the corpus")
     return manifest
+
+
+def placed(scratch: Path, files: dict[str, str]) -> dict[Path, str]:
+    """Where each synthetic page lands, checked for every page before any is
+    written. Judged by the resolved location, not by how the name is spelled:
+    on Windows `\\` and a drive are separators too, and a spelling check
+    missed `repo/..\\..\\x` (review round 3)."""
+
+    roots = [(scratch / "hub").resolve(), (scratch / "repo").resolve()]
+    out = {}
+    for name, text in files.items():
+        target = (scratch / name).resolve()
+        if not any(root in target.parents for root in roots):
+            raise ValueError(f"{name!r} is outside the corpus")
+        out[target] = text
+    return out
 
 
 def run(manifest_path: Path, k: int = 8, project: Path | None = None, method: str = "hybrid") -> dict:
@@ -82,10 +91,10 @@ def run(manifest_path: Path, k: int = 8, project: Path | None = None, method: st
     with tempfile.TemporaryDirectory(prefix="jev-eval-") as scratch:
         if corpus["kind"] == "synthetic":
             hub, repo = Path(scratch) / "hub", Path(scratch) / "repo"
+            pages = placed(Path(scratch), corpus["files"])
             (hub / "operator").mkdir(parents=True)
             repo.mkdir()
-            for rel, text in corpus["files"].items():
-                target = Path(scratch) / rel
+            for target, text in pages.items():
                 target.parent.mkdir(parents=True, exist_ok=True)
                 # Bytes, so Windows does not turn `\n` into `\r\n` and change every hash.
                 target.write_bytes(text.encode("utf-8"))
