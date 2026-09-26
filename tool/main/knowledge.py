@@ -216,14 +216,15 @@ def read_into(store, record: dict, data: bytes, *, coverage: str, form: str, cit
               revision: str | None = None) -> dict:
     """`record` after reading `data`, its edition `revision` (the content's
     hash by default). Nothing in it to cut is a `FetchError`. Other content
-    than before is a new edition: the old snapshot stays, citable, with the
-    decision that was made about it."""
+    than before, or another edition of the same bytes — an arXiv version
+    whose abstract did not change — is a new edition: the old snapshot stays,
+    citable, with the decision that was made about it."""
 
     sha = store.keep(data)
     probe = {**record, "content_hash": sha, "form": form, "cite": cite, "coverage": coverage}
     if not sources.cut(probe, data.decode("utf-8", errors="replace"), store.snapshot(sha)):
         raise providers.FetchError("no_text")
-    if record["content_hash"] and record["content_hash"] != sha:
+    if record["content_hash"] and (record["content_hash"] != sha or record["revision"] != (revision or sha)):
         record["editions"].append({name: record[name] for name in
                                    ("revision", "content_hash", "fetched_at", "coverage", "form", "cite", "adoption")})
         # A decision was about what it read; new content is undecided.
@@ -253,9 +254,12 @@ def pdf_text(data: bytes) -> tuple[str, str]:
 
 def add_url(project: str | Path | None, url: str, seconds: float = providers.SECONDS) -> dict:
     """Fetch one explicit URL into `project`'s research. The same document
-    under another spelling is the same record."""
+    under another spelling is the same record. A URL the fetcher would refuse
+    as written — credentials in it, another scheme — is refused here, before
+    canonical spelling could drop what made it refused, and nothing is kept."""
 
     root = root_of(project)
+    providers.checked(url.strip())
     origin = sources.canonical_url(url)
     with records(project) as store:
         record = store.get(sources.new(root, "research", origin)["source_id"])

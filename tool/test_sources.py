@@ -564,6 +564,97 @@ def test_promotion_is_a_worktree_commit_and_the_checkout_is_untouched(repo, monk
     assert "We propose the Transformer" not in page
 
 
+# ---- review round 1 ----------------------------------------------------------------
+
+def test_a_credential_bearing_url_is_refused_before_it_is_canonicalized(repo, monkeypatch):
+    _hub, path = repo
+    monkeypatch.setattr(providers, "fetch", lambda *a, **k: pytest.fail("fetched a URL carrying credentials"))
+    with pytest.raises(providers.FetchError) as caught:
+        knowledge.add_url(path, "https://user:secret@example.com/doc")
+    assert caught.value.reason == "credentials"
+    store = search.records(path)
+    # Nothing recorded: the secret is never written, and no stripped URL stands in for the request.
+    assert store.all() == []
+    store.close()
+
+
+def test_an_ipv6_url_keeps_its_brackets():
+    assert sources.canonical_url("https://[2606:4700:4700::1111]:443/doc#x") == "https://[2606:4700:4700::1111]/doc"
+    assert sources.canonical_url("https://[2606:4700:4700::1111]:8443/doc") == "https://[2606:4700:4700::1111]:8443/doc"
+
+
+def test_two_sources_with_the_same_bytes_are_two_pieces_of_evidence(repo, monkeypatch):
+    hub, path = repo
+    body = ("text/plain", b"Identical words in two places.")
+    monkeypatch.setattr(providers, "fetch", fake_fetch({"https://a.example/doc": body, "https://b.example/doc": body}))
+    a = knowledge.add_url(path, "https://a.example/doc")
+    b = knowledge.add_url(path, "https://b.example/doc")
+    index = index_of(hub, path)
+    hits = index.search("identical words", 5, ["research"])
+    assert {(h["source_id"], h["locator"]["url"]) for h in hits} == {
+        (a["source_id"], "https://a.example/doc"), (b["source_id"], "https://b.example/doc")}
+    index.close()
+
+
+def test_a_new_arxiv_version_with_the_same_abstract_is_a_new_edition_and_undecided(repo, monkeypatch):
+    _hub, path = repo
+    v1 = providers.feed(FEED)[:1]
+    papers_fixture(monkeypatch, v1)
+    paper = knowledge.add_papers(path, ids=["1706.03762"], n=1)["papers"][0]
+    knowledge.decide(path, paper["source_id"], "adopted", rationale="fits", claims=["c"], scope="s")
+    v2 = [{**v1[0], "version": "v8", "abs_url": "https://arxiv.org/abs/1706.03762v8"}]
+    papers_fixture(monkeypatch, v2)
+    knowledge.add_papers(path, ids=["1706.03762"], n=1)
+    store = search.records(path)
+    record = store.get(paper["source_id"])
+    store.close()
+    assert record["revision"] == "1706.03762v8" and record["status"] == "indexed" and record["adoption"] is None
+    assert [(e["revision"], e["adoption"]["decision"]) for e in record["editions"]] == [("1706.03762v7", "adopted")]
+
+
+def test_the_deadline_bounds_name_resolution(site, monkeypatch):
+    real = socket.getaddrinfo
+
+    def slow(host, *args, **kwargs):
+        time.sleep(0.5)
+        return real(host, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", slow)
+    started = time.monotonic()
+    with pytest.raises(providers.FetchError) as caught:
+        providers.fetch("http://example.com/", seconds=0.1)
+    assert caught.value.reason == "timeout" and time.monotonic() - started < 0.4
+
+
+def test_a_trickled_header_cannot_outlast_the_deadline(site):
+    base, _lookups = site
+
+    def headers(handler):
+        handler.wfile.write(b"HTTP/1.1 200 OK\r\n")
+        for _ in range(30):
+            handler.wfile.write(b"X-Slow: y\r\n")
+            handler.wfile.flush()
+            time.sleep(0.05)
+
+    Site.routes["/headers"] = (200, {}, headers)
+    started = time.monotonic()
+    with pytest.raises(providers.FetchError) as caught:
+        providers.fetch(base + "/headers", seconds=0.5)
+    assert caught.value.reason == "timeout" and time.monotonic() - started < 1.0
+
+
+def test_an_unknown_charset_falls_back_to_utf8(repo, monkeypatch):
+    _hub, path = repo
+    url = "https://example.com/odd"
+
+    def fetch(*_a, **_k):
+        return {"url": url, "content_type": "text/plain", "charset": "x-no-such-charset", "body": b"Plain words."}
+
+    monkeypatch.setattr(providers, "fetch", fetch)
+    record = knowledge.add_url(path, url)
+    assert record["status"] == "indexed"
+
+
 def test_record_contract_refuses_what_it_cannot_stand_behind(repo):
     _hub, path = repo
     record = sources.new(path, "paper", "arxiv:1")

@@ -84,6 +84,8 @@ def canonical_url(url: str) -> str:
 
     parts = urlsplit(url.strip())
     host = (parts.hostname or "").lower()
+    if ":" in host:
+        host = f"[{host}]"
     port = parts.port
     if port and (parts.scheme.lower(), port) not in (("https", 443), ("http", 80)):
         host = f"{host}:{port}"
@@ -275,7 +277,11 @@ class Records:
         for record in self.all():
             if not record["enabled"] or record["status"] not in SEARCHABLE:
                 continue
-            key = f"{record['content_hash']}:{record['status']}:{json.dumps(record['adoption'], sort_keys=True)}"
+            # Everything a hit carries of its record: two records holding the
+            # same bytes are two sources, each cut with its own identity.
+            key = json.dumps({**brief(record), "form": record["form"], "cite": record["cite"],
+                              "content_hash": record["content_hash"], "adoption": record["adoption"]},
+                             sort_keys=True)
             if key not in self.cut:
                 path = self.snapshot(record["content_hash"])
                 try:

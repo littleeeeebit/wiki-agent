@@ -900,19 +900,21 @@ class Index:
                 cosine = {i: float(s) for i, s in zip(rows, scores)}
                 for rank, i in enumerate(sorted(cosine, key=cosine.get, reverse=True)):
                     fused[i] += 1 / (RRF_K + rank + 1)
+        # A page is its source, not its path: two external sources can hold
+        # the same bytes, and so the same snapshot file.
         best: dict[str, tuple[float, int]] = {}
         for i, score in fused.items():
-            path = self.chunks[i]["path"]
+            page = self.chunks[i]["source_id"]
             if sources is not None and source(self.chunks[i]) not in sources:
                 continue
-            if path not in best or score > best[path][0]:
-                best[path] = (score, i)
+            if page not in best or score > best[page][0]:
+                best[page] = (score, i)
         pages = []
-        for path, (score, i) in sorted(best.items(), key=lambda x: -x[1][0])[:k]:
+        for page, (score, i) in sorted(best.items(), key=lambda x: -x[1][0])[:k]:
             chunk = self.chunks[i]
-            mine = [s for j, s in cosine.items() if self.chunks[j]["path"] == path]
+            mine = [s for j, s in cosine.items() if self.chunks[j]["source_id"] == page]
             top = max(mine) if mine else None
-            pages.append({"path": path, "line": chunk["line"], "heading": chunk["heading"],
+            pages.append({"path": chunk["path"], "line": chunk["line"], "heading": chunk["heading"],
                           "text": chunk["text"], "rrf": round(score, 5),
                           "cos": None if top is None else round(top, 4),
                           "bm25": round(lexical.get(i, 0.0), 3), **{f: chunk[f] for f in EVIDENCE}})

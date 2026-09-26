@@ -21,6 +21,7 @@ extraction_failed, arxiv_error, invalid_feed.
 
 from __future__ import annotations
 
+import codecs
 import html.parser
 import http.client
 import io
@@ -86,17 +87,38 @@ def checked(url: str) -> tuple[str, str, int, str]:
     return parts.scheme, parts.hostname, port or PORTS[parts.scheme], target
 
 
-def vetted(host: str, port: int) -> str:
+def vetted(host: str, port: int, seconds: float) -> str:
     """The address to connect to. Every address the host resolves to must be
-    public: one private answer among public ones refuses the host."""
+    public: one private answer among public ones refuses the host.
 
-    try:
-        found = list(dict.fromkeys(info[4][0] for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)))
-    except (OSError, UnicodeError):
-        raise FetchError("dns") from None
+    The resolver cannot be given a timeout, so it runs in a thread the fetch
+    stops waiting for at `seconds`.
+
+    ponytail: an abandoned lookup's thread lives until the resolver gives up;
+    a pool with a cap if stalled resolvers ever pile up.
+    """
+
+    answer: list = []
+    worker = threading.Thread(target=lambda: answer.append(lookup(host, port)), daemon=True)
+    worker.start()
+    worker.join(max(0.0, seconds))
+    if not answer:
+        raise FetchError("timeout", "dns")
+    found = answer[0]
+    if found is None:
+        raise FetchError("dns")
     if not found or not all(public(address) for address in found):
         raise FetchError("address", host)
     return found[0]
+
+
+def lookup(host: str, port: int) -> list[str] | None:
+    """Every address `host` resolves to, or `None` when it does not resolve."""
+
+    try:
+        return list(dict.fromkeys(info[4][0] for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)))
+    except (OSError, UnicodeError):
+        return None
 
 
 class Plain(http.client.HTTPConnection):
@@ -130,11 +152,18 @@ def fetch(url: str, limit: int = MAX_BYTES, seconds: float = SECONDS,
     deadline = time.monotonic() + seconds
     for _hop in range(REDIRECTS + 1):
         scheme, host, port, target = checked(url)
-        address = vetted(host, port)
+        address = vetted(host, port, deadline - time.monotonic())
         left = deadline - time.monotonic()
         if left <= 0:
             raise FetchError("timeout")
         conn = (Pinned if scheme == "https" else Plain)(host, port, address, left)
+        # At the deadline the socket is shut, whatever read is waiting — a
+        # socket timeout restarts on every byte, so a peer trickling its
+        # headers would otherwise hold the fetch for as long as it likes.
+        expired = threading.Event()
+        watchdog = threading.Timer(left, cut, (conn, expired))
+        watchdog.daemon = True
+        watchdog.start()
         try:
             conn.request("GET", target, headers={"User-Agent": AGENT, "Accept-Encoding": "identity"})
             response = conn.getresponse()
@@ -166,6 +195,9 @@ def fetch(url: str, limit: int = MAX_BYTES, seconds: float = SECONDS,
                 body += piece
             if len(body) > limit:
                 raise FetchError("too_large")
+            if expired.is_set():
+                # Shut at the deadline: what was read is cut short, not the document.
+                raise FetchError("timeout")
             return {"url": url, "content_type": kind, "charset": response.headers.get_content_charset(),
                     "body": bytes(body)}
         except FetchError:
@@ -173,16 +205,35 @@ def fetch(url: str, limit: int = MAX_BYTES, seconds: float = SECONDS,
         except (TimeoutError, socket.timeout):
             raise FetchError("timeout") from None
         except (OSError, http.client.HTTPException, ValueError):
-            raise FetchError("network") from None
+            raise FetchError("timeout" if expired.is_set() else "network") from None
         finally:
+            watchdog.cancel()
             conn.close()
     raise FetchError("redirects")
+
+
+def cut(conn: http.client.HTTPConnection, expired: threading.Event) -> None:
+    """Shut a connection's socket from outside, which ends a read blocked on it."""
+
+    expired.set()
+    sock = getattr(conn, "raw", None)
+    if sock is not None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
 
 
 def decoded(got: dict) -> str:
     """A fetched text body as text, newlines as `\\n`."""
 
-    text = got["body"].decode(got.get("charset") or "utf-8", errors="replace")
+    charset = got.get("charset") or "utf-8"
+    try:
+        codecs.lookup(charset)
+    except LookupError:
+        # A charset the server made up: read as UTF-8, a wrong byte replaced, not fatal.
+        charset = "utf-8"
+    text = got["body"].decode(charset, errors="replace")
     return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
