@@ -89,23 +89,23 @@ def evaluate(state: dict, questions: dict, trace: list[dict]) -> dict[str, float
 
 
 def retrieve(query: str, project: Path | None, sources: list[str], k: int,
-             timeout: float = SEARCH_TIMEOUT) -> list[dict]:
-    """The daemon's hits within `timeout`, else a cold local index.
+             timeout: float = SEARCH_TIMEOUT) -> list[dict] | None:
+    """The daemon's hits within `timeout`, else a cold local index; `None` when
+    nothing was searched, which is not the same as a search that found nothing.
 
     The cold build takes no timeout; `prepare` stops waiting for it at the
     budget and abandons it. So nothing here starts once the time is gone, and
-    at most one build runs at a time: a turn that finds one still running gets
-    nothing rather than a second build beside it. Nothing, because the agent
-    searches on its own.
+    at most one build runs at a time: a turn that finds one still running does
+    not search rather than start a second build beside it.
     """
 
     if timeout <= 0:
-        return []
+        return None
     found = ask(query, str(project) if project else None, timeout=timeout, k=k, sources=sources)
     if found is not None:
         return found
     if not COLD.acquire(blocking=False):
-        return []
+        return None
     try:
         from .daemon import Embedder, Index
 
@@ -163,7 +163,7 @@ def run(query: str, root: Path | None, available: list[str], state: str, k: int,
         spend()
         return evaluate(state_, questions, trace)
 
-    def search(sources: list[str], limit: int) -> list[dict]:
+    def search(sources: list[str], limit: int) -> list[dict] | None:
         # The daemon gets what is left of the budget; with nothing left, no search at all.
         return retrieve(query, root, sources, limit, min(SEARCH_TIMEOUT, max(0.0, deadline - time.monotonic())))
 
@@ -187,6 +187,9 @@ def run(query: str, root: Path | None, available: list[str], state: str, k: int,
             # What the dossier names is what was searched, widened or not.
             dossier["sources"] = selected
             batch = search(selected, MAX_CANDIDATES if attempt else min(MAX_CANDIDATES, k + 2))
+            if batch is None:
+                # Not searched is not "found nothing": no evidence judgment follows.
+                raise RuntimeError("retrieval_unavailable")
             shortlist = batch[:MAX_CANDIDATES]
             if not shortlist:
                 selected = available
@@ -224,13 +227,16 @@ def run(query: str, root: Path | None, available: list[str], state: str, k: int,
     except Exception as exc:  # noqa: BLE001 — Jev never blocks a turn; any failure is plain retrieval
         trace.append({"fallback": type(exc).__name__,
                       "reason": "budget" if isinstance(exc, TimeoutError) and str(exc) == "jev_budget"
+                      else "retrieval_unavailable" if str(exc) == "retrieval_unavailable"
                       else "missing_api_key" if not os.environ.get("TYPESAFE_API_KEY")
                       else "invalid_or_unavailable_decision"})
         # A failed narrow route must not limit the fallback's source coverage.
         try:
-            # An empty answer (no time left, a build already running) keeps what was found.
+            # No search (no time left, a build already running) or an empty one keeps what was found.
             found = search(available, k)
-            if found:
+            if found is None:
+                trace.append({"fallback_retrieval": "unavailable"})
+            elif found:
                 dossier["evidence"], dossier["sources"] = found, available
         except Exception as error:  # noqa: BLE001 — keep what was found; the agent searches on its own
             trace.append({"fallback_retrieval": type(error).__name__})

@@ -186,7 +186,8 @@ def test_searches_spend_the_same_budget(monkeypatch):
     # it searches nothing and keeps what the daemon found.
     assert time.monotonic() - started < budget + 0.15
     assert len(asked) == 2 and asked[0] <= budget and asked[1] < budget
-    assert out["trace"][-1]["reason"] == "budget"
+    assert out["trace"][-2:] == [{"fallback": "TimeoutError", "reason": "budget"},
+                                 {"fallback_retrieval": "unavailable"}]
     assert [h["heading"] for h in out["evidence"]] == ["daemon"]
 
 
@@ -247,14 +248,33 @@ def test_one_cold_build_at_a_time_and_none_without_time(monkeypatch):
 
     monkeypatch.setattr(jev, "ask", lambda *a, **kw: None)
     monkeypatch.setattr(daemon, "Index", Slow)
-    assert jev.retrieve("Question", None, ["hub"], 8, 0) == [] and built == []
+    assert jev.retrieve("Question", None, ["hub"], 8, 0) is None and built == []
     first = threading.Thread(target=jev.retrieve, args=("Question", None, ["hub"], 8, 1.0))
     first.start()
     time.sleep(0.05)
-    assert jev.retrieve("Question", None, ["hub"], 8, 1.0) == []
+    assert jev.retrieve("Question", None, ["hub"], 8, 1.0) is None
     first.join()
     assert len(built) == 1
     assert jev.retrieve("Question", None, ["hub"], 8, 1.0) == [hit("cold")]
+
+
+def test_a_busy_cold_build_is_unavailable_not_insufficient(monkeypatch):
+    def evaluate(state, questions, trace):
+        if "retrieve" in questions:
+            return {"retrieve": 1, "hub": 1}
+        return {q: 1 for q in questions}
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "unused")
+    monkeypatch.setattr(jev, "evaluate", evaluate)
+    monkeypatch.setattr(jev, "ask", lambda *a, **kw: None)
+    assert jev.COLD.acquire(timeout=3)
+    try:
+        out = jev.prepare("Question", None)
+    finally:
+        jev.COLD.release()
+    assert out["status"] == "fallback" and out["evidence"] == []
+    assert out["trace"] == [{"fallback": "RuntimeError", "reason": "retrieval_unavailable"},
+                            {"fallback_retrieval": "unavailable"}]
 
 
 def test_source_selection_precedes_top_k_and_never_reads_other_memory(tmp_path):
