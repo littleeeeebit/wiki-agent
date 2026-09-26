@@ -558,19 +558,38 @@ class Store:
         with self.lock:
             return f"{self.gen}:{self.meta('version') or 0}"
 
-    def sync(self, listed: list[tuple[Path, Path, Path, bool]]) -> bool:
+    def sync(self, listed: list[tuple[Path, Path, Path, bool]], attempts: int = 3) -> bool:
         """Bring the generation in line with `listed` and publish it. Each file
         comes as `(path, root, resolved, shared)`. `True` when anything changed.
 
         A file is read again only when its size or modification time moved,
         and re-cut only when its bytes did. A file that cannot be read counts
-        as gone.
+        as gone. One that changed while it was read is read again, up to
+        `attempts` passes; a generation not yet published is published only
+        once no file was left out that way.
         """
+
+        changed = False
+        for _ in range(attempts):
+            now, skipped = self.pass_(listed)
+            changed |= now
+            if not skipped:
+                break
+        return changed
+
+    def pass_(self, listed: list[tuple[Path, Path, Path, bool]]) -> tuple[bool, bool]:
+        """One pass of `sync`: whether anything changed, and whether a file
+        was left out because it changed while it was read."""
 
         with self.lock:
             known = {row[0]: row[1:] for row in self.db.execute(
                 "SELECT canonical, source_id, stamp, size, revision, visibility FROM sources WHERE gen = ?",
                 (self.gen,))}
+            # A private source another generation still holds, which this one
+            # may never have indexed: its deletion reaches every generation too.
+            elsewhere = self.db.execute(
+                "SELECT gen, canonical, source_id, revision FROM sources WHERE gen != ? AND visibility = 'private'",
+                (self.gen,)).fetchall()
         seen: set[str] = set()
         touched, fresh = [], []
         repos: dict[Path, str] = {}
@@ -603,8 +622,10 @@ class Store:
             cut = [(evidence.chunk_id(source, revision, c["line"], c["end_line"]), c) for c in chunks(text, path)]
             fresh.append(((self.gen, source, repo, display, canonical, kind, evidence.visibility_of(kind),
                            revision, stat.st_mtime_ns, stat.st_size), cut, old[0] if old else None, path))
-        gone = [(row[0], row[4], row[3]) for canonical, row in known.items() if canonical not in seen]
-        private = changed = False
+        gone = [(self.gen, row[0], row[4], row[3]) for canonical, row in known.items() if canonical not in seen]
+        gone += [(gen, source, "private", revision) for gen, canonical, source, revision in elsewhere
+                 if canonical not in seen and canonical not in known]
+        private = changed = skipped = False
         # Everything above ran outside the write lock, so another process may
         # have synced since. Under it, a file is written only if it is still
         # what was read, and a row removed only if it is still the one seen:
@@ -615,8 +636,10 @@ class Store:
                 try:
                     now = path.stat()
                 except OSError:
+                    skipped = True
                     continue
                 if (now.st_mtime_ns, now.st_size) != (record[8], record[9]):
+                    skipped = True
                     continue
                 changed = True
                 source, visibility = record[1], record[6]
@@ -626,9 +649,9 @@ class Store:
                 db.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
                     (self.gen, cid, source, c["line"], c["end_line"], json.dumps(c["heading_path"], ensure_ascii=False),
                      c["text"], c["completeness"]) for cid, c in cut])
-            for source, visibility, revision in gone:
+            for gen, source, visibility, revision in gone:
                 row = db.execute("SELECT revision FROM sources WHERE gen = ? AND source_id = ?",
-                                 (self.gen, source)).fetchone()
+                                 (gen, source)).fetchone()
                 if row is None or row[0] != revision:
                     continue
                 changed = True
@@ -636,18 +659,22 @@ class Store:
             current = self.meta("current")
             # Another process pruning generations may have taken this one's row.
             db.execute("INSERT OR IGNORE INTO generations VALUES (?, ?, ?)", (self.gen, evidence.CHUNKER, time.time()))
-            if changed or current != str(self.gen):
+            # A generation not yet published stays unpublished while a file is
+            # missing from it: the one it would replace still has that file.
+            publish = current != str(self.gen) and not skipped
+            if changed or publish:
                 kept = {self.gen} | ({int(current)} if current is not None else set())
                 for table in ("generations", "sources", "chunks"):
                     db.execute(f"DELETE FROM {table} WHERE gen NOT IN ({','.join('?' * len(kept))})", list(kept))
-                db.execute("INSERT OR REPLACE INTO meta VALUES ('current', ?)", (str(self.gen),))
+                if publish:
+                    db.execute("INSERT OR REPLACE INTO meta VALUES ('current', ?)", (str(self.gen),))
                 db.execute("INSERT OR REPLACE INTO meta VALUES ('version', ?)",
                            (str(int(self.meta("version") or 0) + 1),))
         if private:
             # Deleted pages can linger in the write-ahead log until a checkpoint.
             with self.lock:
                 self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        return changed
+        return changed, skipped
 
     def remove(self, db: sqlite3.Connection, sources: set[str], private: bool, keep: set[str]) -> bool:
         """Delete these sources' rows: in this generation, or in every one for a

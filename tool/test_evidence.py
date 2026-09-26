@@ -440,6 +440,60 @@ def test_another_chunker_builds_its_own_generation_and_going_back_selects_the_ol
     back.close()
 
 
+def test_a_memory_deleted_before_a_new_generation_indexed_it_leaves_no_generation_holding_it(corpus, monkeypatch):
+    hub, repo = corpus
+    first = index_of(hub, repo)
+    memory = by_path(first)[".wiki/memory/login.md"][0]
+    first.close()
+    monkeypatch.setattr(evidence, "CHUNKER", "chunks/next")
+    (repo / ".wiki/memory/login.md").unlink()
+    second = index_of(hub, repo)
+    with sqlite3.connect(searchd.store_path(hub, repo)) as db:
+        assert db.execute("SELECT count(*) FROM chunks WHERE text LIKE '%password%'").fetchone() == (0,)
+    assert second.store.keep_english(memory["source_id"], [(memory["text"], {"status": "translated"})]) == 0
+    second.close()
+
+
+def test_a_file_edited_while_a_new_generation_reads_it_is_read_again_before_publishing(corpus, monkeypatch):
+    hub, repo = corpus
+    index_of(hub, repo).close()
+    monkeypatch.setattr(evidence, "CHUNKER", "chunks/next")
+    ports = repo / "docs/ports.md"
+    real, edits = searchd.chunks, []
+
+    def edited(text, path):
+        if path == ports and len(edits) < 1:
+            edits.append(path)
+            bump(ports, "# Ports\n\n## Search\n\nThe daemon listens on 8792.\n")
+        return real(text, path)
+
+    monkeypatch.setattr(searchd, "chunks", edited)
+    second = index_of(hub, repo)
+    assert edits and any("8792" in c["text"] for c in by_path(second)["docs/ports.md"])
+    with sqlite3.connect(searchd.store_path(hub, repo)) as db:
+        assert db.execute("SELECT v FROM meta WHERE k = 'current'").fetchone() == (str(second.store.gen),)
+    second.close()
+
+
+def test_a_new_generation_missing_a_file_is_not_published(corpus, monkeypatch):
+    hub, repo = corpus
+    first = index_of(hub, repo)
+    gen = first.store.gen
+    first.close()
+    monkeypatch.setattr(evidence, "CHUNKER", "chunks/next")
+    ports, real = repo / "docs/ports.md", searchd.chunks
+
+    def always_edited(text, path):
+        if path == ports:
+            bump(ports, text + "x")
+        return real(text, path)
+
+    monkeypatch.setattr(searchd, "chunks", always_edited)
+    index_of(hub, repo).close()
+    with sqlite3.connect(searchd.store_path(hub, repo)) as db:
+        assert db.execute("SELECT v FROM meta WHERE k = 'current'").fetchone() == (str(gen),)
+
+
 def test_a_link_out_of_the_repository_is_not_its_evidence(tmp_path):
     (tmp_path / "hub/operator").mkdir(parents=True)
     (tmp_path / "outside").mkdir()
