@@ -477,8 +477,10 @@ class Store:
     Generations. The chunk rows of one `evidence.CHUNKER` are one generation.
     Code with another chunker builds its own beside the current one and
     publishes it, by moving `meta.current`, in the same transaction that
-    completes it; the one it replaced is kept, so going back to the older
-    code selects it again (and brings it up to date) instead of rebuilding.
+    completes it — no listed file left out. Until then it reads the published
+    one (`reading`). Publishing prunes to the new generation and the one it
+    replaced, which is kept, so going back to the older code selects it again
+    (and brings it up to date) instead of rebuilding; nothing else prunes.
     Within a generation an update is one transaction: a failure rolls back to
     what was there.
 
@@ -552,11 +554,19 @@ class Store:
             db.execute("INSERT INTO generations VALUES (?, ?, ?)", (gen, evidence.CHUNKER, time.time()))
             return gen
 
+    def reading(self) -> int:
+        """The generation read (`load`, `source_of`): this code's, unless it
+        is still being built while another is published — then that one,
+        whole, until this one is complete. Called under the lock."""
+
+        current = self.meta("current")
+        return self.gen if current is None or int(current) == self.gen else int(current)
+
     def version(self) -> str:
-        """Changes whenever any process changes this store."""
+        """Changes whenever any process changes this store, or the generation read."""
 
         with self.lock:
-            return f"{self.gen}:{self.meta('version') or 0}"
+            return f"{self.reading()}:{self.meta('version') or 0}"
 
     def sync(self, listed: list[tuple[Path, Path, Path, bool]], attempts: int = 3) -> bool:
         """Bring the generation in line with `listed` and publish it. Each file
@@ -661,13 +671,16 @@ class Store:
             db.execute("INSERT OR IGNORE INTO generations VALUES (?, ?, ?)", (self.gen, evidence.CHUNKER, time.time()))
             # A generation not yet published stays unpublished while a file is
             # missing from it: the one it would replace still has that file.
+            # Only publishing prunes: to this generation and the one it
+            # replaces, kept for rollback. A build that has not finished
+            # deletes nothing.
             publish = current != str(self.gen) and not skipped
-            if changed or publish:
+            if publish:
                 kept = {self.gen} | ({int(current)} if current is not None else set())
                 for table in ("generations", "sources", "chunks"):
                     db.execute(f"DELETE FROM {table} WHERE gen NOT IN ({','.join('?' * len(kept))})", list(kept))
-                if publish:
-                    db.execute("INSERT OR REPLACE INTO meta VALUES ('current', ?)", (str(self.gen),))
+                db.execute("INSERT OR REPLACE INTO meta VALUES ('current', ?)", (str(self.gen),))
+            if changed or publish:
                 db.execute("INSERT OR REPLACE INTO meta VALUES ('version', ?)",
                            (str(int(self.meta("version") or 0) + 1),))
         if private:
@@ -697,7 +710,7 @@ class Store:
         return private
 
     def load(self, roots: dict[str, Path]) -> list[dict]:
-        """This generation's chunks as search hits, each path under the root
+        """The chunks of the generation read as search hits, each path under the root
         its repository has in `roots` (repo id -> root), so every asker sees
         paths spelled as it spelled its own."""
 
@@ -705,7 +718,7 @@ class Store:
             rows = self.db.execute(
                 "SELECT s.repo_id, s.source_id, s.revision, s.display, s.kind, s.visibility, c.chunk_id,"
                 " c.start_line, c.end_line, c.heading_path, c.text, c.completeness FROM chunks c JOIN sources s"
-                " ON s.gen = c.gen AND s.source_id = c.source_id WHERE c.gen = ?", (self.gen,)).fetchall()
+                " ON s.gen = c.gen AND s.source_id = c.source_id WHERE c.gen = ?", (self.reading(),)).fetchall()
         out = []
         for repo, source, revision, display, kind, visibility, cid, start, end, heading, text, completeness in rows:
             root = roots.get(repo)
@@ -762,7 +775,7 @@ class Store:
         with self.lock:
             row = self.db.execute("SELECT s.canonical FROM chunks c JOIN sources s ON s.gen = c.gen AND"
                                   " s.source_id = c.source_id WHERE c.gen = ? AND c.chunk_id = ?",
-                                  (self.gen, chunk)).fetchone()
+                                  (self.reading(), chunk)).fetchone()
         return row[0] if row else None
 
 

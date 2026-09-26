@@ -489,9 +489,42 @@ def test_a_new_generation_missing_a_file_is_not_published(corpus, monkeypatch):
         return real(text, path)
 
     monkeypatch.setattr(searchd, "chunks", always_edited)
-    index_of(hub, repo).close()
+    second = index_of(hub, repo)
     with sqlite3.connect(searchd.store_path(hub, repo)) as db:
         assert db.execute("SELECT v FROM meta WHERE k = 'current'").fetchone() == (str(gen),)
+    # Until its own is whole, it reads the published one (review round 5).
+    assert second.store.reading() == gen and second.search("8791", 3)
+    second.close()
+
+
+def test_an_unfinished_build_prunes_nothing_and_publishing_keeps_the_rollback(corpus, monkeypatch):
+    hub, repo = corpus
+    index_of(hub, repo).close()
+    monkeypatch.setattr(evidence, "CHUNKER", "chunks/2")
+    index_of(hub, repo).close()
+
+    def gens() -> list[int]:
+        with sqlite3.connect(searchd.store_path(hub, repo)) as db:
+            return sorted(g for (g,) in db.execute("SELECT gen FROM generations"))
+
+    assert gens() == [1, 2]
+    # A third build that never finishes: a file changes on every read.
+    monkeypatch.setattr(evidence, "CHUNKER", "chunks/3")
+    ports, real = repo / "docs/ports.md", searchd.chunks
+
+    def always_edited(text, path):
+        if path == ports:
+            bump(ports, text + "x")
+        return real(text, path)
+
+    monkeypatch.setattr(searchd, "chunks", always_edited)
+    (repo / "docs/new.md").write_text("# New\n\nA change in the same pass.\n", encoding="utf-8")
+    index_of(hub, repo).close()
+    assert gens() == [1, 2, 3], "an unfinished build pruned the rollback generation"
+    # Finished, it publishes and keeps the one it replaced.
+    monkeypatch.setattr(searchd, "chunks", real)
+    index_of(hub, repo).close()
+    assert gens() == [2, 3]
 
 
 def test_a_link_out_of_the_repository_is_not_its_evidence(tmp_path):
