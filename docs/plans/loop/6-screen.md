@@ -1,25 +1,25 @@
-# 6단계 — 화면과 지도
+# Step 6 — Screen and Map
 
-전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다.
+The relationship between the overall design and the steps is in [Overview](0-overview.md)].
 
-목표. 3–5단계가 옛 틀에 임시로 붙인 것을 걷고, 작업 중심 3단을 `design-pass` 순서로 처음부터 짓는다.
-지도는 레일의 프로젝트를 따라가고 그 저장소의 문서 그래프를 그린다.
+Goal. Remove the temporary patches from steps 3–5, and build the task-centric 3-column layout from scratch in the order of `design-pass`.
+The map follows the rail's projects and draws the document graph of that repository.
 
-## 사용자와 정한 것
+## User Agreements
 
 2026-09-25.
 
-| 무엇 | 정한 것 |
+| What | Agreement |
 | --- | --- |
-| 프로젝트 목록 | 가운데 면을 바꿔 끼운다. 레일의 프로젝트 고르기 아래 "모든 프로젝트". 설정 모달의 `연결` 구획에는 허브와 조사 설정만 |
-| 레일 순서 | 사람이 할 것(승인 대기, 머지 가능, 멈춤) → 도는 것(작업 중, 리뷰, `머지 대기`) → 정리됨. 머지됨은 맨 아래 "끝난 것 N" 으로 접히고, 작업트리를 치우면 사라진다. `머지 대기` 는 사람이 할 것이 없으므로 도는 것에 두고, 둘째 줄에 "대기열" 또는 "자동 머지 — 검사 대기" 를 적는다. 대기에서 빠지면 `멈춤` 이 되어 위로 올라온다 |
-| 색 | 팔레트를 다시 고른다. `design-pass` 4단계에서 후보를 내고 사용자가 고른다 |
-| 최소 폭 | 1280px 이상은 3단. 그 아래는 레일이 아이콘 폭으로 접힌다. 가로 스크롤 없음 |
-| 지도 옆 패널 | 본문 미리보기(번역 오버레이), 들어오고 나가는 링크, 범위·심각도·트리거, [이 문서에 대해 묻기] |
+| Project List | Swap the center panel. "All Projects" under Rail's project selection. Only Hub and Research settings in the `연결` section of the settings modal |
+| Rail Order | Human-led (Pending Approval, Mergeable, Stopped) → Rotating (In Progress, Review, `머지 대기`) → Done. Merged items are folded into "Done N" at the bottom and disappear when the task tree is cleared. `머지 대기` is placed in Rotating because there is no human action required, and "Queue" or "Auto-Merge — Waiting for Checks" is written on the second line. Once it leaves the queue, it becomes `멈춤` and moves up |
+| Color | Re-select the palette. Candidates are proposed in step 4 of `design-pass` and the user selects one |
+| Minimum Width | 3 columns for 1280px and above. Below that, the rail folds to icon width. No horizontal scrolling |
+| Map Side Panel | Body preview (translation overlay), incoming and outgoing links, scope/severity/trigger, [Ask about this document] |
 
-## 화면 목록
+## Screen List
 
-`design-pass` 의 0단계. 한 줄은 개요의 한 줄 목적이다.
+Step 0 of `design-pass`. One line is the one-line purpose of the overview.
 
 ```
 누가:   이 위키로 여러 저장소를 굴리는 한 사람
@@ -27,168 +27,168 @@
 성공:   레일만 보고 사람이 할 일을 알고, 한 번 눌러 그 자리로 간다
 ```
 
-| 영역 | 무엇 |
+| Area | What |
 | --- | --- |
-| 레일 | 프로젝트 고르기와 "모든 프로젝트", 톱니바퀴, "리뷰 루프 (N)", 작업(명세) 행 |
-| 가운데 | [대화 · 지도] 탭. 대화의 초점은 다음 작업·위키·회고. 프로젝트 목록이 이 자리를 바꿔 낀다 |
-| 오른쪽 | 선택한 작업의 명세 요약(접힘) 아래 [에이전트 · 리뷰 · 터미널] 탭. 승인을 기다리면 에이전트 탭에 `wait` 점 |
-| 설정 모달 | 일반(번역, 테마), 연결(허브 상태, 조사 스위치·한도·모델), 리뷰(라운드 상한, 동시 실행, 리뷰 모델) |
-| 모달 | 리뷰 루프의 PR 고르기, 허브 이전 확인, 조사 견적 확인 |
+| Rail | Project selection and "All Projects", gear icon, "Review Loop (N)", task (specification) row |
+| Center | [Chat · Map] tab. Chat focus is on next task/wiki/retrospective. Project list swaps into this spot |
+| Right | [Agent · Review · Terminal] tabs under the selected task's specification summary (folded). If waiting for approval, a `wait` dot appears on the Agent tab |
+| Settings Modal | General (translation, theme), Connection (hub status, research switch/limit/model), Review (round limit, concurrent execution, review model) |
+| Modal | PR selection for review loop, hub migration confirmation, research estimate confirmation |
 
-레일의 작업 행 하나.
+One task row in the rail.
 
 ```
 ● fix-login-redirect        #12 R2
   리뷰 중 · 승인 1
 ```
 
-첫 줄은 명세 `id` 와 PR, 라운드. 둘째 줄은 상태 한 마디와 사람이 할 것. 명세 없는 작업트리도 행이 되고
-둘째 줄이 "명세 없음" 이다.
+The first line is the specification `id`, PR, and round. The second line is a status snippet and human action. A task tree without a specification also becomes a row,
+and the second line is "No Specification".
 
-## 걷는 것
+## Walkthrough
 
-| 무엇 | 대신 |
+| What | Instead of |
 | --- | --- |
-| 3–5단계의 임시 화면 전부 — 카드의 임시 배치, 임시 설정 입력칸, 임시 목록 | 위 영역 |
-| "새 작업" 입력칸과 `POST /api/worktrees` | 명세의 [시작]. 빈 작업트리가 필요하면 다음 작업 초점에서 한 줄 명세 |
-| "→ 작업" 초안, `/api/draft`, `WRITERS` | 명세. 회고 후보의 두 버튼은 다음 작업 초점에 그 후보를 재료로 넘긴다 |
-| 번역·테마 스위치의 레일 자리 | 설정 모달의 일반 |
-| 오른쪽 면의 위아래 나눔 | 탭 |
-| 지도의 제목 문구와 숫자 카드 | 머리글 아래 지표 한 줄 |
+| All temporary screens from steps 3–5 — temporary card placement, temporary setting input fields, temporary lists | Above areas |
+| "New Task" input field and `POST /api/worktrees` | [Start] in the specification. If an empty task tree is needed, a one-line specification in the next task focus |
+| "→ Task" draft, `/api/draft`, `WRITERS` | Specification. The two buttons in the retrospective candidate pass that candidate as material to the next task focus |
+| Rail position for translation/theme switches | General in settings modal |
+| Top/bottom split of the right side | Tabs |
+| Map title text and number cards | One line of metrics under the header |
 
-`/api/draft` 를 지우면 회고의 "위키로", "CLAUDE.md 로" 는 명세가 된다. `WRITERS` 의 지시는 다음 작업 초점의
-명세 `goal` 과 `out` 으로 옮겨진다 — "한 파일만", "다른 파일은 건드리지 않는다" 가 `out` 이다.
+When `/api/draft` is deleted, "To Wiki" and "To CLAUDE.md" in the retrospective become specifications. The instructions in `WRITERS` are moved to the next task focus's
+specification `goal` and `out` — "One file only", "Do not touch other files" is `out`.
 
-1단계가 넘긴 "터미널의 변경이 작업트리 목록에 늦게 보이는 것" 도 여기서 닫는다. 레일은 창의 포커스, 루프
-이벤트, 터미널 탭을 떠날 때 목록을 다시 읽는다.
+The "terminal changes appearing late in the task tree list" issue passed from step 1 is also closed here. The rail re-reads the list when leaving the window focus, loop
+events, or terminal tab.
 
-## 저장소별 지도
+## Map per Repository
 
-`GET /api/graph?repo=<이름>`. 지금은 허브의 `graph.json` 을 파일로 준다(`tool/main/app.py:192`).
+`GET /api/graph?repo=<이름>`. Currently, it provides the hub's `graph.json` as a file (`tool/main/app.py:192`).
 
-| 층 | 무엇 | 어디서 |
+| Layer | What | From where |
 | --- | --- | --- |
-| 이 저장소 문서 | 문서와 링크, 결정 기록 | `repo_graph.build(repo)` 를 메모리에서. `write` 는 부르지 않는다(원본에 쓴다) |
-| 허브 규칙 | 이 저장소에 적용되는 허브 페이지와 그 트리거 | `graph.load_pages` 에서 `scope` 가 그 저장소에 걸리는 것, `graph.build` 의 모양 |
+| This repo document | Documents and links, decision records | `repo_graph.build(repo)` from memory. `write` is not called (writes to original) |
+| Hub rules | Hub pages and their triggers applied to this repository | `graph.load_pages` where `scope` is caught by that repository, `graph.build` shape |
 
-- 층은 머리글의 토글 — 이 저장소 문서, 허브 규칙, 둘 다. 기본은 이 저장소 문서다
-- 허브를 고르면 지금의 정책 그래프가 그대로 나온다
-- 지표 한 줄 — 페이지 수, 고아 문서(들어오는 링크 없음), `repo_lint` 경고 수
-- `.wiki/modules/*.md`(5단계)는 이 저장소 문서 층의 노드다. 주입되지 않는다는 표시를 단다
-- 지도는 앱 테마를 따른다. 지금의 색 상수를 토큰으로 바꾼다
-- 옆 패널. 본문은 `/api/file` 의 앞부분을 번역 오버레이로. [이 문서에 대해 묻기] 는 위키 초점의 입력칸에
-  `` `<경로>` `` 를 넣고 가운데를 대화로 돌린다
+- Layers are toggles in the header — This repo document, Hub rules, both. Default is This repo document
+- Selecting Hub shows the current policy graph as is
+- One line of metrics — page count, orphan documents (no incoming links), `repo_lint` warning count
+- `.wiki/modules/*.md` (step 5) is a node in the This repo document layer. It is marked as not being injected
+- The map follows the app theme. Current color constants are converted to tokens
+- Side panel. Body is the beginning of `/api/file` as a translation overlay. [Ask about this document] puts
+  `` `<path>` `` into the wiki focus input field and switches the center to chat
 
-계산이 무거우면 저장소마다 파일의 가장 늦은 수정 시각을 열쇠로 메모리에 둔다.
+- If calculation is heavy, the latest modification time of the file per repository is kept in memory as a key.
 
-## 순서
+## Sequence
 
-`design-pass` 다섯 단계. 값은 [`DESIGN.md`](../../../DESIGN.md) 에 적는다.
+`design-pass` five steps. Values are written in [`DESIGN.md`](../../../DESIGN.md)].
 
-| # | 할 것 |
+| # | Task |
 | --- | --- |
-| 1 | 목적과 배치. 위 화면 목록에서 영역을 세우고 `DESIGN.md` 를 이 창의 것으로 다시 쓴다 |
-| 2 | 1280·1440·1920px 과 1279px(접힌 레일)에서 패딩·폭·정렬을 잰다. 누르는 것을 모두 눌러 본다 — 후보, 선택지, 카드 저장, [시작], 승인 세 버튼, [멈춤], [계속], 리뷰 루프 모달, [머지], [받아들임]·[다시 PR], [연결], [다시 시험], 층 토글, 노드, 설정 |
-| 3 | 글자 위계. 상태 한 마디와 PR·라운드 표시가 한 단계를 쓴다 |
-| 4 | 팔레트 후보 셋을 내고 사용자가 고른다. 명세 상태 여섯과 `wait` 가 서로 갈려야 한다. 대비를 잰다 |
-| 5 | 남은 빈 곳 |
+| 1 | Purpose and layout. Set up areas from the screen list above and rewrite `DESIGN.md` for this window |
+| 2 | Measure padding, width, and alignment at 1280/1440/1920px and 1279px (folded rail). Click everything — candidates, options, card save, [Start], three approval buttons, [Stop], [Continue], review loop modal, [Merge], [Accept]·[Re-PR], [Connect], [Retry], layer toggle, nodes, settings |
+| 3 | Font hierarchy. Status snippet and PR/round display use one step |
+| 4 | Propose palette candidate sets and have the user choose. The six specification states and `wait` must be distinguishable. Measure contrast |
+| 5 | Remaining empty spaces |
 
-## 테스트
+## Test
 
-화면 테스트 틀은 없다. 서버 쪽만.
+No screen test framework. Server-side only.
 
-- `/api/graph?repo=` 가 원본에 아무것도 쓰지 않는다 — 부르기 전후 `git status --porcelain` 과 `.wiki/graph.json`
-  의 수정 시각이 같다
-- 허브 층이 그 저장소에 걸리지 않는 `project` 페이지를 싣지 않는다
-- `/api/draft`·`POST /api/worktrees` 가 없다. `lint` 의 공개 진입점 검사가 지운 이름의 호출을 잡는다
+- `/api/graph?repo=` writes nothing to the original — modification times of `git status --porcelain` and `.wiki/graph.json`
+  before and after calling are the same
+- Hub layer does not load `project` pages not caught by that repository
+- `/api/draft`·`POST /api/worktrees` do not exist. `lint`'s public entry point check catches calls to deleted names
 
-## 하지 않는 것
+## Non-goals
 
-| 무엇 | 왜 |
+| What | Why |
 | --- | --- |
-| 1280px 아래의 3단 | 사용자의 결정. 레일을 접는다 |
-| 지도 편집 | 지도는 읽기다. 고치는 것은 명세로 |
-| 모바일 | 이 앱은 책상에서 쓴다 |
+| 3 columns below 1280px | User decision. Fold the rail |
+| Map editing | Map is read-only. Editing is done via specification |
+| Mobile | This app is for desktop use |
 
-## 확인
+## Verification
 
 - `pytest tool/`, `python tool/lint.py --check`, `ruff check tool/`, `npm run build`
-- `design-pass` 2단계의 측정 표를 이 문서의 "한 일" 에 남긴다
-- 다른 창에서 명세를 시작하고, 루프를 돌리고, 승인을 기다리게 한 뒤 이 창의 레일이 순서와 점을 맞게 보이는지
+- Leave the measurement table from step 2 of `design-pass` in the "Done" section of this document
+- Start a specification in another window, run a loop, wait for approval, and check if the rail in this window shows the order and dots correctly
 
-## 단계
+## Steps
 
-| # | 단계 | 무엇 | 상태 |
+| # | Step | What | Status |
 | --- | --- | --- | --- |
-| 1 | 걷기 | 임시 화면, 초안, "새 작업" | 완료 |
-| 2 | 지도 서버 | `/api/graph?repo=`, 층, 지표 | 완료 |
-| 3 | design-pass 1–3 | 배치, 측정, 글자 | 완료 |
-| 4 | design-pass 4–5 | 팔레트 고르기, 빈 곳 | 완료 — "선명" |
-| 5 | 게이트 | 위 확인 전부 | 진행 중 — 자동 검사 통과, 창 확인 남음 |
+| 1 | Walkthrough | Temporary screens, drafts, "New Task" | Done |
+| 2 | Map Server | `/api/graph?repo=`, layers, metrics | Done |
+| 3 | design-pass 1–3 | Layout, measurement, font | Done |
+| 4 | design-pass 4–5 | Palette selection, empty spaces | Done — "Vivid" |
+| 5 | Gate | All verifications above | In progress — Auto-check passed, window verification remaining |
 
-## 한 일
+## Done
 
 2026-09-26.
 
-### 서버
+### Server
 
-- `POST /api/worktrees`, `/api/draft`, `WRITERS` 를 지웠다. 테스트가 두 경로가 없음을 본다
-- `repo_graph.picture(repo)` — 문서·지식 페이지·모듈·결정 기록과 링크, 고아 문서. `corpus.json` 이 없으면
-  메모리에서 모은다. 아무것도 쓰지 않는다
-- `GET /api/graph?repo=` — `layers.repo`, `layers.hub`(허브면 `graph.json` 그대로, 아니면 그 저장소로
-  `graph.build`), `metrics`(페이지, 고아, `repo_lint` 경고). 허브 자신을 고르면 허브 규칙 층이 기본이다
-- `loop.landed()` 가 `머지 대기` 에 "대기열" / "자동 머지 — 검사 대기" 를 `queued` 로 남긴다. 레일 둘째 줄이 읽는다
-- `GET /api/connect` 가 허브 상태(`hub`)를 같이 준다 — 설정 모달의 연결 구획
-- 캐시는 두지 않았다. 가장 무거운 저장소가 2.7초였다
+- Deleted `POST /api/worktrees`, `/api/draft`, `WRITERS`. Tests verify that the two paths do not exist
+- `repo_graph.picture(repo)` — Documents, knowledge pages, modules, decision records and links, orphan documents. If `corpus.json` is missing,
+  collect from memory. Writes nothing
+- `GET /api/graph?repo=` — `layers.repo`, `layers.hub` (if hub, `graph.json` as is, otherwise to that repository
+  `graph.build`), `metrics` (pages, orphans, `repo_lint` warnings). Selecting Hub itself defaults to Hub rules layer
+- `loop.landed()` leaves "Queue" / "Auto-Merge — Waiting for Checks" as `queued` in `머지 대기`. Rail second line reads it
+- `GET /api/connect` provides hub status (`hub`) together — Connection section of settings modal
+- No cache. Heaviest repository was 2.7 seconds
 
-### 화면
+### Screen
 
-`web/src/` 의 `Rail`·`WikiMap`·`graph/force.ts` 를 지우고 `TaskRail`·`RepoMap`·`graph/engine.ts`·`Modal`·
-`Settings`·`SpecSummary`·`lib/tasks.ts` 로 새로 지었다. 값은 [`DESIGN.md`](../../../DESIGN.md).
+Deleted `Rail`·`WikiMap`·`graph/force.ts` of `web/src/` and rebuilt with `TaskRail`·`RepoMap`·`graph/engine.ts`·`Modal`·
+`Settings`·`SpecSummary`·`lib/tasks.ts`. Values are [`DESIGN.md`](../../../DESIGN.md)].
 
-### design-pass 2단계 측정
+### design-pass step 2 measurement
 
-같은 창 안의 같은 출처 iframe 으로 폭을 정해 쟀다(`scrollWidth - 폭`, 넘치는 요소, 격자 열).
+Measured width using the same source iframe within the same window (`scrollWidth - 폭`, overflowing elements, grid columns).
 
-| 폭 | 격자 열 | 가로 넘침 | 넘치는 요소 |
+| Width | Grid Columns | Horizontal Overflow | Overflowing Elements |
 | --- | --- | --- | --- |
-| 1279 | 52 / 613.5 / 613.5 → 고친 뒤 52 / 642.7 / 584.3 | 0 | 없음 |
-| 1280 | 240 / 520 / 520 | 0 | 대화 머리글의 초점 `nav` 207 > 152 |
-| 1280 (고친 뒤) | 240 / 544.75 / 495.25 | 0 | 없음 |
-| 1440 | 240 / 628.6 / 571.4 | 0 | 없음 |
-| 1920 | 240 / 880 / 800 | 0 | 없음 |
+| 1279 | 52 / 613.5 / 613.5 → After fix 52 / 642.7 / 584.3 | 0 | None |
+| 1280 | 240 / 520 / 520 | 0 | Chat header focus `nav` 207 > 152 |
+| 1280 (After fix) | 240 / 544.75 / 495.25 | 0 | None |
+| 1440 | 240 / 628.6 / 571.4 | 0 | None |
+| 1920 | 240 / 880 / 800 | 0 | None |
 
-1280 과 1279 에서 지도(노드 고른 패널 포함)와 작업을 고른 오른쪽 면도 넘침 0 이었다.
+At 1280 and 1279, the map (including node selection panel) and the right side selecting tasks also had 0 overflow.
 
-찾아서 고친 것.
+Found and fixed items.
 
-| 무엇 | 고친 것 |
+| What | Fixed |
 | --- | --- |
-| 1279px 에서 레일이 안 접힘 | Tailwind v4 `max-[1279px]` 는 `width < 1279px` 다. `max-[1280px]` 로 |
-| 1280px 에서 대화 머리글이 한 줄에 안 섬(574 필요, 520) | 가운데 `1.1fr`, 문맥 비우기를 아이콘으로 |
-| 머리글 `gap` 이 12 와 8 로 갈림 | 셋 다 12 |
-| 지도 가장자리 노드의 이름이 잘림 | 벽 거리를 이름 폭의 반으로 |
-| 링크 없는 결정 기록이 벽에 붙어 겹침 | 반발력을 240px 안에서만. 결정 기록 이름에서 날짜·번호를 뗌 |
-| [되돌리기] 가 아래쪽 노드 이름을 덮음 | 지도 머리글로 |
-| "리뷰 루프 (1)" 이 모달 없이 바로 루프를 엶 | PR 이 하나여도 고르기 모달을 거친다 |
-| 글자 크기 10–13.5 사이에 단계 밖 여섯 | DESIGN 의 일곱 단계로 |
+| Rail doesn't fold at 1279px | Tailwind v4 `max-[1279px]` is `width < 1279px`. Changed to `max-[1280px]` |
+| Chat header doesn't fit on one line at 1280px (574 needed, 520) | Center `1.1fr`, context clearing to icon |
+| Header `gap` split into 12 and 8 | All three to 12 |
+| Map edge node names cut off | Wall distance to half of name width |
+| Decision records without links stuck to wall and overlapping | Repulsion only within 240px. Removed date/number from decision record name |
+| [Undo] covers bottom node name | To map header |
+| "Review Loop (1)" opens loop immediately without modal | Goes through selection modal even if only one PR |
+| Six steps outside of font size 10–13.5 | To seven steps of DESIGN |
 
-눌러 본 것 — 대화·지도, 층 셋, 노드, [이 문서에 대해 묻기](위키 초점 입력칸에 `` `.wiki/plan-active.md` ``),
-찾기, 설정 모달(번역·테마·조사 설정 읽기), 모든 프로젝트, ← 돌아가기, 레일 행, 명세 요약 펼치기, 오른쪽 탭 셋,
-[연결]. 라이트 테마에서 지도가 토큰을 따라 바뀌는 것도 봤다.
+What was clicked — chat and map, the three layers, a node, [ask about this document] (puts `` `.wiki/plan-active.md` `` in the wiki focus input),
+Search, settings modal (reading translation/theme/research settings), all projects, ← back, rail row, expand specification summary, three right tabs,
+[Connect]. Also saw the map change following tokens in light theme.
 
-[연결] 은 확인할 것(허브 이전, 조사)이 없으면 누르는 즉시 연결한다(5단계의 결정). 확인 모달이 뜰 줄 알고
-`book` 에 눌러, 그 저장소에 `.wiki/`·`.claude/settings.json` 이 생기고 SessionStart 시험이 돌았다.
+[Connect] connects immediately if there is nothing to verify (hub migration, research) (step 5 decision). Thinking the confirmation modal would appear,
+I clicked `book`, `.wiki/`·`.claude/settings.json` were created in that repository, and SessionStart test ran.
 
-못 누른 것 — 후보, 선택지, 카드 저장, [시작], 승인 세 버튼, [멈춤], [계속], 리뷰 루프 모달, [머지],
-[받아들임]·[다시 PR]. 지금 명세는 `정리됨` 하나뿐이고 열린 PR 이 없다. 5번 게이트의 창 확인에서 누른다.
+Items not clicked — Candidates, options, card save, [Start], three approval buttons, [Stop], [Continue], review loop modal, [Merge],
+[Accept]·[Re-PR]. Currently, there is only one specification `정리됨` and no open PRs. Will click during window verification in gate 5.
 
-### 팔레트
+### Palette
 
-후보 셋. 앱의 기존 강조색을 그대로 쓰는 후보는 라이트에서 작업 중·머지 대기가 OKLab 0.057 로 붙어 뺐다.
-남은 "차분"(가장 가까운 쌍 0.075)과 "선명"(0.102) 중 사용자가 "선명" 을 골랐다. 값과 대비는 `DESIGN.md` 의
-색 → 명세 상태.
+Candidate sets. Candidates using the app's existing accent colors were removed because In Progress/Merge Pending were too close at OKLab 0.057 in light mode.
+Of the remaining "Subtle" (closest pair 0.075) and "Vivid" (0.102), the user chose "Vivid". Values and contrast are `DESIGN.md`'s
+Color → Specification State.
 
-### 빈 곳
+### Empty Spaces
 
-작업을 안 골랐을 때의 오른쪽 면이 가장 넓게 빈다. 놓을 숫자도 설명할 것도 없어 비워 뒀다.
+The right side is emptiest when no task is selected. Left blank as there are no numbers to place or explanations to give.

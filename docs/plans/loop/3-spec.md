@@ -1,41 +1,36 @@
-# 3단계 — 명세와 인계
+# Step 3 — Specification and Handoff
 
-전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다. 이 단계는 [2단계](2-agent.md)의 턴 재접속 위에
-선다.
+The relationship between the overall design and the steps is in [Overview](0-overview.md)]. This step stands on top of the turn reconnection in [Step 2](2-agent.md)].
 
-목표. 위키와 나눈 대화가 작업 명세 하나로 끝나고, [시작] 을 누르면 작업트리에서 그 명세를 시스템
-프롬프트로 받은 세션이 일한다. 끝났다는 말은 서버가 게이트를 다시 돌려 확인한 뒤에야 믿는다. 확인되면
-서버가 PR 을 올리고, 결과가 원래 대화로 돌아온다.
+Goal. The conversation with the wiki ends with a single task specification, and when [Start] is pressed, a session that receives that specification as a system prompt in the task tree works. The server only believes it is finished after running the gate again to verify. Once verified, the server creates a PR, and the result returns to the original conversation.
 
-화면은 확인에 필요한 만큼만 붙인다. 6단계가 다시 짓는다.
+The screen is attached only as much as needed for verification. Step 6 rebuilds it.
 
-## 사용자와 정한 것
+## Agreed with the user
 
 2026-09-25.
 
-| 무엇 | 정한 것 |
+| What | Agreed |
 | --- | --- |
-| 초점 줄이기 | 단계마다. 3단계에서 `다음 작업` 이 진척도를 대신하고, 진단의 머리말은 위키 초점에 합친다. 리뷰 초점은 4단계에서 리뷰 셀로 간다. 지운 초점의 기록(`raw/chat/<id>.jsonl`)은 지우지 않는다 |
-| 후보의 재료 | 서버가 모아 첫 턴에 붙인다 |
-| 후보를 내는 때 | [후보 내기] 버튼. 누를 때만 턴이 든다. 직접 물어도 된다 |
-| 답의 모양 | 답 안의 이름 붙은 블록 — `candidates`, `choices`, `spec` |
-| 명세 고치기 | 카드에서 목표·빼는 것·완료 조건을 고친다. 근거와 결정은 대화로 고친다 |
-| 명세의 이름 | 에이전트가 `slug` 를 낸다. 서버가 모양을 검사하고 겹치면 `-2` 를 붙인다. 카드에서 고칠 수 있다 |
-| 완료 판정 | 에이전트의 `done-report` 블록, 그리고 서버가 작업트리에서 `gate_cmd` 를 한 번 더 돌린다 |
-| PR | 완료가 확인되면 서버가 사람의 `gh` 로 push 하고 `gh pr create` 한다 |
-| 결과 요약 | PR 이 설 때 한 번, 머지될 때 한 번. 모델을 부르지 않고 서버가 명세와 보고로 쓴다 |
-| 쪼개진 명세 | 카드 여럿이 서로 모른다. 순서는 사람이 [시작] 으로 정한다 |
-| 계획 행 | 명세가 나온 문서의 그 행 하나만 `완료 — PR #n` 으로 바꾼다. 출처 행이 없으면 어느 문서도 건드리지 않는다 |
+| Reducing focus | Per step. In step 3, `다음 작업` replaces progress, and the diagnosis header is merged into the wiki focus. The review focus goes to the review cell in step 4. The record of deleted focus (`raw/chat/<id>.jsonl`) is not deleted |
+| Candidate materials | The server collects them and attaches them to the first turn |
+| When to provide candidates | [Provide candidate] button. A turn is consumed only when pressed. You may also ask directly |
+| Shape of the answer | Named blocks within the answer — `candidates`, `choices`, `spec` |
+| Modifying specifications | Modify goals, exclusions, and completion conditions in the card. Modify evidence and decisions through conversation |
+| Name of the specification | The agent provides `slug`. The server checks the shape and appends `-2` if it overlaps. Can be modified in the card |
+| Completion judgment | The agent's `done-report` block, and the server runs `gate_cmd` once more in the task tree |
+| PR | Once completion is verified, the server pushes with the person's `gh` and `gh pr create` |
+| Result summary | Once when the PR is created, once when merged. The server writes it as a specification and report without calling the model |
+| Split specifications | Multiple cards do not know each other. The order is determined by the person via [Start] |
+| Plan line | Only that line in the document where the specification emerged is changed to `완료 — PR #n`. If there is no source line, no document is touched |
 
-개요와 달라지는 곳이 하나 있다. 개요는 "`done` 에 `gate_cmd` 없음은 카드가 되지 않는다" 고 했다. 여기서는
-서버가 `gate_cmd` 를 `done` 의 첫 항목으로 늘 넣는다. 에이전트가 빠뜨릴 수 있는 것을 검사하는 대신 빠질 수
-없게 한다. adapter 에 `gate_cmd` 가 없는 저장소의 명세는 카드가 되지 않고 "연결 먼저" 를 보인다.
+There is one difference from the overview. The overview stated "No `gate_cmd` in `done` cannot be a card." Here, the server always adds `gate_cmd` as the first item of `done`. Instead of checking what the agent might miss, it makes it impossible to miss. A specification for a repository without `gate_cmd` in the adapter does not become a card and shows "Connect first".
 
-## 명세
+## Specification
 
-### 모양
+### Shape
 
-`raw/specs/<repo>/<id>.json`. 개요의 칸에 운영 칸을 더한다.
+`raw/specs/<repo>/<id>.json`. Add an operation column to the overview column.
 
 ```json
 {
@@ -58,148 +53,132 @@
 }
 ```
 
-- `id` 는 작업트리 이름, 브랜치 이름과 같다. `workspace.TASK` 의 모양이다
-- `rev` 는 고칠 때마다 오른다. 카드의 저장은 자기가 본 `rev` 를 싣고, 다르면 409 다
-- `state` 의 값은 이 목록이 전부다. 명세의 상태를 정하는 곳은 여기 하나이고, 개요와 다른 단계 문서는 이
-  목록을 가리킨다(리뷰 라운드 6). `specs.py` 는 처음부터 이 값을 모두 받는다. 3단계 코드가 쓰는 것은 앞의 셋과
-  `머지됨`·`멈춤` 이고, 나머지는 4단계의 루프가 쓴다
+- `id` is the same as the task tree name and branch name. It is in the shape of `workspace.TASK`
+- `rev` increases every time it is modified. Saving a card carries the `rev` it saw, and if different, it is 409
+- The values of `state` are all in this list. This is the only place that determines the state of the specification, and the overview and other step documents point to this list (review round 6). `specs.py` receives all these values from the beginning. The step 3 code uses the first three and `머지됨`·`멈춤`, and the rest are used by the loop in step 4
 
-  | 값 | 뜻 |
+  | Value | Meaning |
   | --- | --- |
-  | `정리됨` | 카드가 섰고 시작하지 않았다. 고칠 수 있는 유일한 상태 |
-  | `작업 중` | 작업트리에서 작업 세션이 일한다. 4단계의 [다시 PR] 도 여기로 돌린다 |
-  | `PR #n` | PR 이 섰다. 계획 행 커밋과 다시 push 가 끝나기 전 |
-  | `리뷰 대기` | 루프의 동시 실행 자리를 기다린다 |
-  | `리뷰 Rn` | 리뷰 셀이 라운드 n 을 본다 |
-  | `고치는 중 Rn` | 작업 셀이 라운드 n 의 발견을 고친다. 게이트와 push 포함 |
-  | `머지 가능` | 마지막 라운드가 `머지 허용` |
-  | `머지 대기` | [머지] 뒤 merge queue 나 자동 머지에 들어가 PR 이 아직 열렸다 |
-  | `머지됨` | PR 이 `MERGED` |
-  | `멈춤` | `stopped: {reason, detail}` 이 붙는다. `reason` 의 값은 [4단계](4-review.md)의 멈춤 이유 표가 전부다 |
+  | `정리됨` | The card is created and has not started. The only state that can be modified |
+  | `작업 중` | A work session is working in the task tree. [Re-PR] in step 4 also returns here |
+  | `PR #n` | PR has been created. Before the plan line commit and re-push are finished |
+  | `리뷰 대기` | Waiting for a concurrent execution slot in the loop |
+  | `리뷰 Rn` | The review cell sees round n |
+  | `고치는 중 Rn` | The work cell fixes the discovery of round n. Includes gate and push |
+  | `머지 가능` | The last round was `머지 허용` |
+  | `머지 대기` | After [Merge], it is in the merge queue or auto-merge, and the PR is still open |
+  | `머지됨` | PR is `MERGED` |
+  | `멈춤` | `stopped: {reason, detail}` is attached. The value of `reason` is all in the stop reason table of [Step 4](4-review.md)] |
 
-  `waiting`(승인을 기다린다)은 상태가 아니라 따로 붙는 표시다. 어느 상태에서나 참일 수 있다
-- 명세는 `정리됨` 에서만 고친다. 시작한 명세의 목표가 바뀌면 그것은 새 명세다
+  `waiting` (waiting for approval) is not a state but a separately attached mark. It can be true in any state
+- Specifications are only modified in `정리됨`. If the goal of a started specification changes, it is a new specification
 
-### 서버
+### Server
 
-`tool/main/specs.py` 가 명세 파일의 유일한 주인이다. 읽기, 검사, 저장, 상태 바꾸기를 여기서만 한다.
-저장은 임시 파일에 쓰고 `replace` 한다.
+`tool/main/specs.py` is the sole owner of the specification file. Reading, checking, saving, and changing states are done only here. Saving is written to a temporary file and `replace`.
 
-| 길 | 하는 일 |
+| Path | Task |
 | --- | --- |
-| `GET /api/specs` | 선택한 프로젝트의 명세 목록 |
-| `PUT /api/specs/{id}` | 카드의 고침. `{rev, goal, out, done}`. `done` 의 첫 줄(게이트)은 서버가 다시 넣는다 |
-| `POST /api/specs/{id}/start` | [시작]. 아래 인계 |
-| `POST /api/specs/{id}/drop` | 버린다. 파일은 `raw/specs/<repo>/dropped/` 로 옮긴다 |
+| `GET /api/specs` | List of specifications for the selected project |
+| `PUT /api/specs/{id}` | Modification of the card. `{rev, goal, out, done}`. The first line of `done` (gate) is re-inserted by the server |
+| `POST /api/specs/{id}/start` | [Start]. Handoff below |
+| `POST /api/specs/{id}/drop` | Discard. The file is moved to `raw/specs/<repo>/dropped/` |
 
-검사.
+Check.
 
-- `goal` 이 비었으면 거절한다
-- `done` 의 첫 항목은 adapter 의 `gate_cmd` 다. 에이전트가 넣은 같은 줄은 한 번만 남긴다
-- `slug` 가 `TASK` 모양이 아니면 소문자로 바꾸고 허용되지 않는 글자를 `-` 로 바꾼다. 그래도 비면 거절한다
-- 같은 `id` 의 명세나 같은 이름의 작업트리가 있으면 `-2`, `-3` 을 붙인다
-- `grounds.files` 의 경로는 그 저장소 안에 있어야 한다. 없는 경로는 지우지 않고 카드에 "없는 경로" 로 표시한다
+- If `goal` is empty, reject
+- The first item of `done` is the `gate_cmd` of the adapter. The same line inserted by the agent is left only once
+- If `slug` is not in the shape of `TASK`, change to lowercase and change disallowed characters to `-`. If it is still empty, reject
+- If there is a specification with the same `id` or a task tree with the same name, append `-2`, `-3`
+- The path of `grounds.files` must be within that repository. Paths that do not exist are not deleted but marked as "non-existent path" on the card
 
-## 다음 작업 초점
+## Next work focus
 
-### 초점 바꾸기
+### Changing focus
 
 `channels.CHANNELS`.
 
-| 지금 | 3단계 뒤 |
+| Now | After step 3 |
 | --- | --- |
-| `progress` 진척도 | 지운다. `next` 다음 작업이 대신한다 |
-| `diagnose` 진단 | 지운다. 머리말의 "기록부터 본다" 를 `wiki` 의 머리말에 한 문단으로 합친다 |
-| `retro` 회고 | 그대로 |
-| `review` 리뷰 | 4단계까지 그대로 |
-| `wiki` 위키 | 진단을 합친 머리말 |
+| `progress` progress | Delete. The next work of `next` replaces it |
+| `diagnose` diagnosis | Delete. Merge "Look at the record first" in the header into one paragraph in the header of `wiki` |
+| `retro` retrospect | As is |
+| `review` review | As is until step 4 |
+| `wiki` wiki | Header with diagnosis merged |
 
-`next` 의 머리말은 `tool/prompts/next-task.md` 에 영어로 둔다. 블록의 모양과 되묻는 순서가 들어간다.
+The header of `next` is kept in English in `tool/prompts/next-task.md`. The shape of the block and the order of follow-up questions are included.
 
-### [후보 내기]
+### [Provide candidate]
 
-`POST /api/say/next` 의 몸에 `propose: true` 를 더한다. 서버가 말을 만든다.
+Add `propose: true` to the body of `POST /api/say/next`. The server creates the words.
 
-| 재료 | 어디서 | 최대 |
+| Material | Where | Max |
 | --- | --- | --- |
-| 계획의 남은 행 | `session_state.plans(repo)`, `active_page(repo)` | 계획 셋, 행 열 |
-| 열린 PR | `gh pr list --state open --json number,title,headRefName,isDraft,reviewDecision,url` | 열 |
-| 최근 결정 | `session_state.decisions(repo)` | 지금의 `MAX_DECISIONS` |
-| 경고 | 허브면 `lint --check`, 대상 저장소면 `repo_lint` 의 발견 | 열 |
-| 남은 P2 | 명세 파일의 `p2`. 4단계가 채운다. 그 전에는 비어 있다 |  |
+| Remaining lines of plan | `session_state.plans(repo)`, `active_page(repo)` | Plan set, line column |
+| Open PR | `gh pr list --state open --json number,title,headRefName,isDraft,reviewDecision,url` | Column |
+| Recent decisions | `session_state.decisions(repo)` | Current `MAX_DECISIONS` |
+| Warning | `lint --check` if hub, discovery of `repo_lint` if target repository | Column |
+| Remaining P2 | `p2` of the specification file. Step 4 fills it. Empty before that | |
 
-재료 하나를 못 읽으면 그 절에 이유 한 줄을 적고 나머지로 간다("gh 가 로그인되어 있지 않다"). 기록의 사용자
-행은 재료 전체를 담는다. `--resume` 한 CLI 가 같은 재료를 본 셈이 되어야 한다. 화면은 "(후보 요청)" 한 줄로
-접어 보인다.
+If one material cannot be read, write one line of reason in that section and move to the rest ("gh is not logged in"). The user line of the record contains the entire material. The `--resume` CLI must be seen as having seen the same material. The screen is folded into one line "(Candidate request)".
 
-### 블록
+### Block
 
-답의 끝에 둔다. 서버는 `done` 에서 블록을 꺼내 검사하고 `blocks` 이벤트로 따로 보낸다. 답의 본문에서는
-블록을 지워 번역 오버레이가 JSON 을 옮기지 않게 한다.
+Place at the end of the answer. The server extracts the block from `done`, checks it, and sends it separately as an `blocks` event. Delete the block in the body of the answer so that the translation overlay does not move the JSON.
 
-| 블록 | 모양 | 화면 |
+| Block | Shape | Screen |
 | --- | --- | --- |
-| `candidates` | `[{title, why, source}]`, 셋에서 다섯 | 버튼 목록. 누르면 그 `title` 이 다음 말로 간다 |
-| `choices` | `{question, options: [{label, note}], multi}` | 버튼 또는 체크박스와 [보내기]. 고른 것이 다음 말로 간다 |
-| `spec` | 위 명세의 사람이 채우는 칸 더하기 `slug`. 여럿이면 쪼개진 명세 | 명세 카드 |
+| `candidates` | `[{title, why, source}]`, three to five | Button list. If pressed, that `title` goes to the next word |
+| `choices` | `{question, options: [{label, note}], multi}` | Button or checkbox and [Send]. The selected one goes to the next word |
+| `spec` | Add fields filled by the person in the specification above `slug`. If multiple, split specifications | Specification card |
 
-블록이 깨지면(JSON 이 아니다, 칸이 빠졌다) 카드가 아니라 오류 줄과 [다시 요청] 이 보인다. [다시 요청] 은
-"The `spec` block failed: <이유>. Emit it again." 을 보낸다.
+If the block is broken (not JSON, missing fields), an error line and [Re-request] are shown instead of the card. [Re-request] sends "The `spec` block failed: <reason>. Emit it again."
 
-같은 대화에서 같은 `slug` 의 `spec` 이 다시 나오면, 그 명세가 아직 `정리됨` 일 때 `rev` 를 올려 덮는다.
-카드는 새 판을 보이고 "판 2" 를 단다.
+If the `spec` of the same `slug` appears again in the same conversation, and that specification is still `정리됨`, update it by increasing `rev`. The card shows the new version and attaches "Version 2".
 
-### 결과가 돌아오는 자리
+### Place where the result returns
 
-`raw/chat/next.jsonl` 에 `role: "result"` 행을 쓴다. `{spec, text}`. 화면은 그 행을 대화 사이에 한 줄로
-그린다. 다음에 사람이 그 초점에서 말하면, 서버는 그 뒤로 CLI 가 아직 못 본 결과 행을 말 앞에 붙인다
-("Since your last turn: …"). 모델을 따로 부르지 않고도 다음 대화가 결과를 안다.
+Write the `role: "result"` line in `raw/chat/next.jsonl`. `{spec, text}`. The screen draws that line as one line between conversations. When a person speaks from that focus next, the server attaches the result line that the CLI has not yet seen before the speech ("Since your last turn: …"). The next conversation knows the result without calling the model separately.
 
-## 인계
+## Handoff
 
-### [시작]
+### [Start]
 
-1. 명세를 잡는다. `정리됨` 이 아니면 409
-2. `workspace.create(repo, id)`. 실패하면 명세는 그대로 `정리됨`
-3. 명세의 `worktree` 를 적고 `작업 중` 으로 바꾼다
-4. 작업 세션을 명세를 시스템 프롬프트로 만든다. `work.session` 이 `system` 을 받게 넓힌다.
-   지금 쓰기 세션은 시스템 프롬프트가 없다(`tool/main/work.py:202`)
-5. 첫 턴 "Start." 를 2단계의 `Run` 으로 띄우고 턴 id 를 돌려준다. 화면은 그 작업트리를 고르고 붙는다
+1. Grab the specification. If not `정리됨`, 409
+2. `workspace.create(repo, id)`. If it fails, the specification remains `정리됨`
+3. Write the `worktree` of the specification and change it to `작업 중`
+4. Make the work session the system prompt for the specification. Expand `work.session` to receive `system`. The current write session has no system prompt (`tool/main/work.py:202`)
+5. Launch the first turn "Start." with the `Run` of step 2 and return the turn id. The screen selects and attaches to that task tree
 
-순서가 이렇게 된 이유. 명세가 먼저 `작업 중` 이 되면 작업트리 만들기가 실패했을 때 되돌려야 한다.
-작업트리가 먼저면 실패한 명세는 아무것도 바뀌지 않는다.
+Reason for this order. If the specification becomes `작업 중` first, it must be reverted if task tree creation fails. If the task tree is first, nothing changes for a failed specification.
 
-### 작업 세션의 시스템 프롬프트
+### System prompt for work session
 
-`tool/prompts/work-spec.md` 에 영어로 둔다. 명세를 그대로 싣고 규칙을 붙인다.
+Keep in English in `tool/prompts/work-spec.md`. Load the specification as is and attach rules.
 
-- 이 작업트리 안에서만 일한다. `out` 에 있는 것은 하지 않는다
-- 바꾼 것은 커밋한다. 커밋 메시지는 이 저장소의 관례를 따른다
-- push 와 PR 은 하지 않는다. 서버가 한다
-- 끝났다고 말하려면 답의 끝에 `done-report` 블록을 둔다. `done` 의 항목마다
-  `{item, pass, evidence}`. `evidence` 는 돌린 명령과 그 출력의 마지막 줄이다
-- 항목 하나라도 통과하지 못했으면 끝났다고 하지 않는다. 막힌 것을 적고 묻는다
+- Work only within this task tree. Do not do what is in `out`
+- Commit what you have changed. Commit messages follow the conventions of this repository
+- Do not do push and PR. The server does it
+- To say it is finished, place the `done-report` block at the end of the answer. For each item in `done`, `{item, pass, evidence}`. `evidence` is the command run and the last line of its output
+- If even one item does not pass, do not say it is finished. Write down what is blocked and ask
 
-### 완료 판정
+### Completion judgment
 
-작업 턴이 끝날 때마다 `specs` 가 본다.
+Every time a work turn ends, `specs` looks at it.
 
-1. 답에 `done-report` 가 없으면 아무것도 하지 않는다. 대화가 이어진다
-2. 블록이 있고 모든 `pass` 가 참이면 서버가 확인한다
-   - `git status --porcelain` 이 비어 있다. 아니면 "커밋 안 된 변경" 으로 판정 실패
-   - 작업트리에서 `gate_cmd` 를 돌린다. 셸 문자열이므로 셸로 돌린다. 마감은 20분. 출력의 끝 80줄을
-     명세의 `gate` 에 남긴다
-3. 판정이 실패하면 명세는 `작업 중` 에 머물고 카드에 이유와 출력 꼬리가 보인다. 작업 세션에 무엇을
-   보낼지는 사람이 정한다. 4단계의 루프가 이 자리를 자동으로 잇는다
-4. 판정이 통과하면 PR 을 올린다
+1. If there is no `done-report` in the answer, do nothing. The conversation continues
+2. If there is a block and all `pass` are true, the server verifies
+   - `git status --porcelain` is empty. Otherwise, judgment fails as "uncommitted changes"
+   - Run `gate_cmd` in the task tree. Since it is a shell string, run it as a shell. Deadline is 20 minutes. Leave the last 80 lines of output in `gate` of the specification
+3. If judgment fails, the specification remains at `작업 중` and the reason and output tail are visible on the card. The person decides what to send to the work session. The loop in step 4 automatically connects this spot
+4. If judgment passes, create a PR
 
-서버가 작업트리에서 명령을 돌리는 것은 이 단계에서 처음이다. 원본 체크아웃이 아니고, 에이전트가 이미 돌린
-명령과 같다. 개요의 "화면이 서버에 쓰는 곳" 에 이 행을 더한다.
+This is the first time the server runs a command in the task tree in this step. It is not an original checkout, and it is the same as the command the agent already ran. Add this line to "Where the screen writes to the server" in the overview.
 
 ### PR
 
 1. `git push -u origin <id>`
-2. 본문을 만든다. `harvest.record` 가 읽는 절 이름을 그대로 쓴다
+2. Create the body. Use the section name read by `harvest.record` as is
 
    ```markdown
    ## 변경 요약
@@ -216,107 +195,95 @@
    ```
 
 3. `gh pr create --base <기본 브랜치> --head <id> --title <goal> --body-file <임시 파일>`
-4. 명세를 `PR #n` 으로 바꾸고 결과 행을 쓴다 — "PR #n — <goal>. 완료 조건 k개 통과"
-5. 명세가 계획 행에서 나왔으면 작업 세션에 한 턴을 보낸다. "PR #n 이 섰다. `<path>` 의 `<row>` 행
-   상태 칸을 `완료 — PR #n` 으로 바꾸고 커밋하라." 그 턴이 끝나면 서버가 다시 push 한다
+4. Change the specification to `PR #n` and write the result line — "PR #n — <goal>. Completion condition k passed"
+5. If the specification came from a plan line, send one turn to the work session. "PR #n has been created. Change the status column of the `<row>` line of `<path>` to `완료 — PR #n` and commit." When that turn ends, the server pushes again
 
-행을 PR 뒤에 바꾸는 이유. 상태 칸에 PR 번호를 적기로 했고, 번호는 PR 이 서야 있다. 이 커밋도 PR 안에
-있으므로 4단계의 리뷰가 본다.
+Reason for changing the line after the PR. It was decided to write the PR number in the status column, and the number exists only after the PR is created. Since this commit is also inside the PR, the review in step 4 sees it.
 
-### 머지됨
+### Merged
 
-3단계에는 [머지] 가 없다. 사람이 GitHub 에서 머지하면 명세 목록을 읽을 때(창이 포커스를 받을 때)
-`gh pr view <n> --json state,mergedAt` 으로 알아채고 `머지됨` 으로 바꾼다. 결과 행 "PR #n 머지됨" 을 쓴다.
-4단계의 [머지] 가 서면 이 길은 그대로 두되 [머지] 가 먼저 바꾼다.
+There is no [Merge] in step 3. When a person merges on GitHub, when reading the specification list (when the window receives focus), it recognizes it as `gh pr view <n> --json state,mergedAt` and changes it to `머지됨`. Write the result line "PR #n merged". If [Merge] in step 4 is created, leave this path as is, but [Merge] changes it first.
 
-## 화면
+## Screen
 
-임시다. 6단계가 다시 짓는다.
+Temporary. Step 6 rebuilds it.
 
-- 질의 면의 `next` 초점. 빈 대화에 [후보 내기]. 답 아래에 후보 버튼, 선택지, 명세 카드
-- 명세 카드. 목표·빼는 것·완료 조건 입력칸(게이트 줄은 잠김), 근거와 결정 목록, 판 번호, [저장]
-  [시작] [버리기]. 시작한 카드는 상태와 작업트리 이름, PR 링크만 보인다
-- 레일의 작업트리 행에 명세 상태를 한 단어로 단다
-- 옛 "→ 작업" 초안(`/api/draft`)은 그대로 둔다. 6단계에서 걷는다
+- `next` focus on the query side. [Provide candidate] in an empty conversation. Candidate buttons, options, specification card below the answer
+- Specification card. Goal, exclusion, completion condition input fields (gate line is locked), list of evidence and decisions, version number, [Save] [Start] [Discard]. Started cards show only status, task tree name, and PR link
+- Attach the specification status as one word to the task tree line of the rail
+- Keep the old "→ Work" draft (`/api/draft`) as is. Remove in step 6
 
-## 테스트
+## Test
 
-`test_specs.py` 를 새로 둔다. 대역 CLI 는 `test_agent.py` 의 방식을 쓴다.
+Place `test_specs.py` newly. The proxy CLI uses the method of `test_agent.py`.
 
-| 무엇 | 빨강이 되는 경우 |
+| What | Case of becoming red |
 | --- | --- |
-| 빈 `goal` 거절, 게이트가 늘 첫 항목, adapter 없는 저장소 거절 | 검사를 하나씩 지우면 |
-| `slug` 정리와 겹칠 때 `-2` | 겹침 검사를 지우면 |
-| 낡은 `rev` 의 저장이 409 | `rev` 비교를 지우면 |
-| 블록 꺼내기. 깨진 JSON 은 오류, 본문에서 블록이 빠진다 | |
-| [시작] 이 작업트리를 먼저 만들고, 실패하면 명세가 `정리됨` 그대로 | 순서를 바꾸면 |
-| 작업 세션이 명세를 시스템 프롬프트로 받는다 | 대역이 받은 인자로 본다 |
-| `done-report` 가 다 통과해도 게이트가 실패하면 PR 이 없다. 커밋 안 된 변경도 같다 | 서버의 확인을 지우면 |
-| PR 본문을 `harvest.record` 에 넣으면 `무엇`·`왜` 가 비지 않는다 | 절 이름을 바꾸면 |
-| 결과 행이 다음 말 앞에 한 번만 붙는다 | |
+| Reject empty `goal`, gate is always the first item, reject repository without adapter | If you delete checks one by one |
+| `-2` when `slug` cleanup and overlap | If you delete overlap check |
+| Saving old `rev` is 409 | If you delete `rev` comparison |
+| Extracting block. Broken JSON is error, block is missing from body | |
+| [Start] creates task tree first, if it fails, specification remains `정리됨` | If you change the order |
+| Work session receives specification as system prompt | See as argument received by proxy |
+| Even if `done-report` passes, if gate fails, there is no PR. Uncommitted changes are the same | If you delete server's verification |
+| If PR body is put in `harvest.record`, `무엇`·`왜` are not empty | If you change section name |
+| Result line is attached only once before the next word | |
 
-`gh` 와 `git push` 는 대역으로 바꾼다. 실제 PR 은 확인 절에서 한 번 올린다.
+Replace `gh` and `git push` with proxy. The actual PR is created once in the verification step.
 
-## 하지 않는 것
+## What we do not do
 
-| 무엇 | 왜 |
+| What | Why |
 | --- | --- |
-| 명세 사이의 순서(`after`) | 사용자의 결정. 사람이 [시작] 으로 정한다 |
-| 게이트 실패 뒤 자동으로 다시 보내기 | 4단계의 루프가 한다 |
-| [머지] | 4단계 |
-| "→ 작업" 초안 지우기 | 6단계. 지금 지우면 명세 없이 일을 시킬 길이 없다 |
-| 결과 요약을 모델이 쓰기 | 사용자의 결정. 명세와 보고로 충분하다 |
+| Order between specifications (`after`) | User's decision. Person decides with [Start] |
+| Automatically resend after gate failure | Loop in step 4 does it |
+| [Merge] | Step 4 |
+| Deleting "→ Work" draft | Step 6. If deleted now, there is no way to assign work without a specification |
+| Model writing result summary | User's decision. Specification and report are enough |
 
-## 구현에서 정한 것
+## Agreed in implementation
 
-계획이 비워 둔 자리를 이렇게 채웠다.
+Filled the spots left empty by the plan like this.
 
-| 무엇 | 정한 것 |
+| What | Agreed |
 | --- | --- |
-| 계획 행 출처 | `spec` 블록에 `plan: {path, row}` 를 에이전트가 넣는다. 서버는 그 파일이 `docs/plans/` 아래나 `.wiki/plan-active.md` 이고 첫 칸이 `row` 인 표 행이 있을 때만 `source.plan` 으로 받는다. 아니면 출처 행이 없는 명세다 |
-| 같은 대화 | 명세의 `source.session` 이 CLI 의 세션 id 와 같을 때. 문맥을 지우면 새 대화라 같은 `slug` 도 `-2` 가 된다 |
-| 겹침 | 같은 이름의 명세, 작업트리 폴더, 브랜치. 브랜치가 있으면 `git worktree add -b` 가 [시작] 에서 늦게 실패한다 |
-| 경로 | 저장소 밖의 `grounds.files` 는 받지 않는다. 안에 있으나 없는 경로만 남겨 "없는 경로" 로 보인다 |
-| 판정이 도는 곳 | 작업 턴의 스레드에서, 작업트리를 쥔 채. 게이트 줄이 그 턴의 도구 줄과 기록에 남는다. 턴의 [멈춤] 이 게이트도 멈춘다. 게이트가 끝난 뒤에도 멈춤을 읽고, push 와 PR 만들기 바로 앞에서 한 번 더 읽는다 — 게이트가 통과했어도 멈춤 뒤에는 밖으로 내보내지 않는다 |
-| 완료 보고 | 항목 수가 `done` 보다 적거나 `pass` 가 하나라도 거짓이면 판정하지 않는다. 항목의 글은 대조하지 않는다 — 에이전트가 줄을 조금 바꿔 적어도 판정은 서버의 게이트가 한다 |
-| push·PR 실패 | 명세는 `작업 중` 그대로, `fault` 에 이유. 다시 보고하면 다시 판정한다 |
-| 계획 행 턴 | PR 을 올린 턴이 작업트리를 놓은 뒤 보낸다. 그 사이 사람이 먼저 보냈으면 보내지 않고 `fault` 에 적는다. 그 뒤 어느 턴이 끝나든 커밋된 HEAD 의 그 행이 `완료 — PR #n` 일 때만 push 하고 닫는다. 아니면 `fault` 에 적고 다음 턴을 기다린다 |
-| 버리기 | `정리됨` 과 `머지됨` 만 |
-| 세션의 시스템 프롬프트 | 세션을 만들 때마다 명세 파일에서 읽는다. 서버를 다시 띄운 뒤의 첫 지시도 명세를 받는다 |
+| Plan line source | Agent puts `plan: {path, row}` in `spec` block. Server accepts as `source.plan` only when that file is under `docs/plans/` or `.wiki/plan-active.md` and there is a table row where the first column is `row`. Otherwise, it is a specification without a source line |
+| Same conversation | When the `source.session` of the specification is the same as the session id of the CLI. If you delete the context, it is a new conversation, so the same `slug` becomes `-2` |
+| Overlap | Specification with the same name, task tree folder, branch. If there is a branch, `git worktree add -b` fails late in [Start] |
+| Path | `grounds.files` outside the repository is not accepted. Only paths that are inside but do not exist are left and shown as "non-existent path" |
+| Where judgment runs | In the thread of the work turn, while holding the task tree. The gate line remains in the tool line and record of that turn. [Stop] of the turn also stops the gate. Read stop even after the gate is finished, and read once more right before push and PR creation — even if the gate passed, it is not exported after stop |
+| Completion report | If the number of items is less than `done` or if even one `pass` is false, do not judge. Do not compare the text of the items — even if the agent writes the line slightly differently, the server's gate does the judgment |
+| push·PR failure | Specification remains `작업 중`, reason in `fault`. If reported again, judge again |
+| Plan line turn | Sent after the turn that created the PR releases the task tree. If a person sent it first in the meantime, do not send it and write in `fault`. After that, whenever any turn ends, push and close only when that line of the committed HEAD is `완료 — PR #n`. Otherwise, write in `fault` and wait for the next turn |
+| Discard | Only `정리됨` and `머지됨` |
+| System prompt of session | Read from the specification file every time a session is created. The first instruction after restarting the server also receives the specification |
 
-## 확인
+## Verification
 
 - `pytest tool/`, `python tool/lint.py --check`, `ruff check tool/`, `npm run build`
-- 창에서 이 저장소로 한 번. [후보 내기] → 후보 하나 → 되묻기 둘 → 명세 카드 → 완료 조건 하나 고침 →
-  [시작] → 작업 세션이 명세대로 일하고 `done-report` → 서버의 게이트 → PR 이 서고 본문의 절이 맞다 →
-  결과 행이 대화에 → 계획 행 커밋이 PR 에 → GitHub 에서 머지 → `머지됨` 과 결과 행
-- 그 PR 을 머지한 뒤 `harvest` 를 한 번 돌려 결정 기록의 `왜` 가 명세의 `decisions` 인지 본다
+- Once to this repository in the window. [Provide candidate] → one candidate → two follow-up questions → specification card → modify one completion condition → [Start] → work session works according to specification and `done-report` → server's gate → PR is created and sections in the body are correct → result line in conversation → plan line commit in PR → merge on GitHub → `머지됨` and result line
+- After merging that PR, run `harvest` once to see if `왜` of the decision record is `decisions` of the specification
 
-## 창 확인에서 본 것
+## What I saw in window verification
 
-2026-09-25, 이 저장소로 한 바퀴. [후보 내기] 에서 후보 셋, 되묻기 셋, 명세 카드 `readme-next-task-checks`, 완료 조건 한 줄
-고쳐 판 2, [시작], 작업 세션의 `done-report` 7항목, 서버의 게이트 332 통과, PR #15(본문의 네 절), 결과 행, 계획 행 커밋과
-다시 push, GitHub 머지, `머지됨` 과 결과 행, `harvest` 미리보기의 `왜` 가 명세의 첫 결정. 명세 하나(`loop-4-review-cell`)는
-`정리됨` 으로 남겨 두었다.
+2026-09-25, one round to this repository. Three candidates in [Provide candidate], three follow-up questions, specification card `readme-next-task-checks`, one line of completion condition modified to version 2, [Start], 7 items of `done-report` in work session, server's gate 332 passed, PR #15 (four sections in body), result line, plan line commit and re-push, GitHub merge, `머지됨` and result line, `왜` of `harvest` preview is the first decision of the specification. One specification (`loop-4-review-cell`) was left as `정리됨`.
 
-PR #15 의 base 는 서버가 정한 대로 `main` 이었다. 작업트리가 이 PR 의 브랜치에서 갈라져 이 PR 의 커밋까지 실었으므로 손으로
-base 를 이 PR 의 브랜치로 바꿔 머지했다.
+The base of PR #15 was `main` as determined by the server. Since the task tree branched from this PR's branch and carried the commits of this PR, I manually changed the base to this PR's branch and merged.
 
-화면의 빈 곳 둘. 둘 다 서버가 스스로 일을 일으키는 자리라 4단계 루프에서 더 잦아진다. 4단계가 화면이 서버의 변화를 듣는 길을
-세울 때 같이 닫고, 6단계가 다시 짓는다.
+Two empty spots on the screen. Both are spots where the server causes work itself, so they become more frequent in the 4-step loop. Close them together when step 4 sets up the path for the screen to listen to server changes, and step 6 rebuilds them.
 
-| 무엇 | 지금 |
+| What | Now |
 | --- | --- |
-| 서버가 띄운 턴 | 계획 행 턴처럼 서버가 보낸 턴은 이미 연 작업트리의 화면에 붙지 않는다. 새로 고치면 붙는다 |
-| 목록을 읽다 생긴 결과 행 | 명세 목록을 읽다 알아챈 `머지됨` 의 결과 행은 대화를 다시 읽을 때 보인다 |
+| Turn launched by server | Turns sent by the server like the plan line turn do not attach to the screen of the already opened task tree. Attach when refreshed |
+| Result line generated while reading list | The result line of `머지됨` noticed while reading the specification list is visible when reading the conversation again |
 
-## 단계
+## Steps
 
-| # | 단계 | 무엇 | 상태 |
+| # | Step | What | Status |
 | --- | --- | --- | --- |
-| 1 | 명세 | `specs.py` 의 모양·검사·저장, 테스트 | 완료 |
-| 2 | 초점 | `next` 초점, 진척도·진단 정리, 재료 모으기, 블록 꺼내기 | 완료 |
-| 3 | 인계 | [시작], 시스템 프롬프트, 완료 판정, 게이트 실행 | 완료 |
-| 4 | PR | push, 본문, `gh pr create`, 계획 행, 결과 행, `머지됨` 알아채기 | 완료 |
-| 5 | 화면 | 초점, 카드, 레일의 상태 | 완료 |
-| 6 | 게이트 | 위 확인 전부 | 완료 — PR #15 |
+| 1 | Specification | Shape·check·save of `specs.py`, test | Done |
+| 2 | Focus | `next` focus, progress·diagnosis cleanup, collecting materials, extracting blocks | Done |
+| 3 | Handoff | [Start], system prompt, completion judgment, gate execution | Done |
+| 4 | PR | push, body, `gh pr create`, plan line, result line, noticing `머지됨` | Done |
+| 5 | Screen | Focus, card, status of rail | Done |
+| 6 | Gate | All of the above verification | Done — PR #15 |

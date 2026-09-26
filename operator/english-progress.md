@@ -15,10 +15,11 @@ links: [ask-with-arrow-key-options, hooks-fail-open]
 
 Rule. Tool descriptions, progress reports and chat replies are written in
 English, and so is everything else the agent writes for the agent: comments,
-docstrings, test names, commit messages. What a person reads stays Korean — a
-hook's refusal, `systemMessage`, UI labels, the prose in `docs/`, a pull
-request (translated on the way up). Wiki pages — `operator/`, `craft/`,
-`.wiki/` — are English; only `triggers` keep the person's language. Korean
+docstrings, test names, commit messages, and every document — wiki pages,
+`docs/`, plans; only `triggers` keep the person's language, and the person
+reads documents through the translation overlay. What a person reads as it
+is stays Korean — a hook's refusal, `systemMessage`, UI labels, a pull
+request (translated on the way up). Korean
 survives in English text only where it names a Korean thing — the glossary
 holds that list, and a word the translator refuses to render is exactly a word
 this rule may not deny.
@@ -56,9 +57,11 @@ comments out as "each repository's business", and what that produced was one
 file in English sitting next to one in Korean, in the same change, by the same
 hand. A boundary nobody can state in a sentence is not a boundary.
 
-The line that does hold is about the reader. Anything a person reads stays
-Korean: the refusal above, `systemMessage`, UI labels, the prose in `docs/`
-and on these pages until the phase that rewrites them gets there.
+The line that does hold is about the reader. Anything a person reads as it is
+stays Korean: the refusal above, `systemMessage`, UI labels, a pull request.
+Documents are English even where a person is the main reader: a person opens
+a cited source through the overlay, and an agent searches it with a question
+already rendered in English — a Korean document is one that search misses.
 
 ## What it does not block
 

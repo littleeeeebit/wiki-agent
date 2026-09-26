@@ -83,11 +83,11 @@ components:
   - 빈 상태 (면마다 하나)
 ---
 
-# DESIGN — 이 저장소의 화면 값
+# DESIGN — Screen values for this repository
 
-`web/src/index.css` 의 토큰과 같은 값이다. 둘이 어긋나면 이 파일이 대조의 기준이다.
+These are the same values as the tokens in `web/src/index.css`. If the two diverge, this file is the reference for comparison.
 
-## 화면 목록
+## Screen List
 
 ```
 누가:   이 위키로 여러 저장소를 굴리는 한 사람
@@ -95,88 +95,72 @@ components:
 성공:   레일만 보고 사람이 할 일을 알고, 한 번 눌러 그 자리로 간다
 ```
 
-작업 중심 3단이다(loop 6단계, 2026-09-26). 대시보드도 상세 페이지도 없다.
+It is a 3-column layout centered on tasks (loop stage 6, 2026-09-26). There is no dashboard or detail page.
 
-| 영역 | 자리 | 왜 거기 |
+| Area | Position | Why there |
 | --- | --- | --- |
-| 레일 | 왼쪽 `15rem` | 작업(명세) 행이 사람이 할 것 → 도는 것 → 정리됨 순으로 선다. 할 일은 레일만 보고 안다 |
-| 가운데 | `1.1fr` | [대화 · 지도]. 대화의 초점은 다음 작업·위키·회고. "모든 프로젝트" 가 이 자리를 바꿔 낀다 |
-| 오른쪽 | `1fr` | 고른 작업. 명세 요약(접힘) 아래 [에이전트 · 리뷰 · 터미널] 탭. 승인을 기다리면 에이전트 탭에 `wait` 점 |
+| Rail | Left `15rem` | Task (specification) rows are lined up in the order of To-Do → In Progress → Done. You know what to do just by looking at the rail |
+| Center | `1.1fr` | [Conversation · Map]. The focus of the conversation is the next task · wiki · retrospective. "All Projects" swaps into this position |
+| Right | `1fr` | Selected task. [Agent · Review · Terminal] tabs below the specification summary (collapsed). If waiting for approval, a `wait` dot appears on the agent tab |
 
-1280px 이상이 3단이다. 그 아래는 레일이 `3.25rem` 아이콘 폭으로 접힌다 — 톱니바퀴, 모든 프로젝트,
-리뷰 루프, 작업마다 점 하나. 가로 스크롤은 어느 폭에서도 없다.
+1280px or wider is the 3-column layout. Below that, the rail collapses to the width of a `3.25rem` icon — gear, all projects, review loop, and one dot per task. There is no horizontal scroll at any width.
 
-가운데가 오른쪽보다 조금 넓은 것은 1280px 에서 대화 머리글(초점 셋, 모델 둘, 문맥 비우기)이
-한 줄로 서야 해서다. 같은 폭이면 `520px` 이고 머리글은 `574px` 가 필요했다. 문맥 비우기는
-그래서 두 면 모두 아이콘이고, 이름은 `aria-label` 과 `title` 에 있다.
+The center is slightly wider than the right because at 1280px, the conversation header (three focuses, two models, clear context) must fit on one line. If they were the same width, it would be `520px` and the header would need `574px`. Clear context is therefore an icon on both sides, and the names are in `aria-label` and `title`.
 
-세 면의 머리글은 높이가 같다(`44px`, `h-11`). 무엇을 보고 있는지만 쓴다. 탭 줄은 `36px`(`h-9`).
-설정은 톱니바퀴의 모달로 뺐다 — 번역과 테마는 한 번 정하면 다시 안 만지는 것이라 레일 자리를
-쓸 이유가 없다.
+The headers of the three sides have the same height (`44px`, `h-11`). They only state what is being viewed. The tab line is `36px` (`h-9`). Settings have been moved to a modal via the gear icon — since translation and theme are things you don't touch again once set, there is no reason to use rail space.
 
-## 색
+## Color
 
-중립 바탕에 강조색 둘. 2026-09-25 에 사용자가 골랐다.
+Neutral background with two accent colors. Selected by the user on 2026-09-25.
 
-- `ok` 파랑은 고른 것과 누를 수 있는 것 — 초점, 인용, 주 버튼, 살아 있는 세션
-- `wait` 호박색은 사람을 기다리는 쓰기 하나에만 — 승인 카드, 허용 버튼, 승인을 기다리는
-  작업트리의 점. 다른 창을 보다 돌아왔을 때 제일 먼저 찾아야 하는 것이라 화면에서 유일한
-  따뜻한 색이다. 다른 데 쓰면 그 구실을 잃는다
+- `ok` Blue is for selected items and clickable items — focus, citations, primary buttons, active sessions
+- `wait` Amber is only for writing that is waiting for a person — approval cards, allow buttons, dots in the task tree waiting for approval. Since it is the thing to find first when returning after looking at another window, it is the only warm color on the screen. If used elsewhere, it loses its purpose
 
-`warn` 은 실패에만 쓴다. 연결이 끊긴 것은 실패가 아니라 상태이므로 `ink-faint` 다.
+`warn` is used only for failure. A disconnected state is a state, not a failure, so it is `ink-faint`.
 
-`add`·`del` 은 패치의 `+`·`-` 줄에만 쓴다. 상태가 아니라 방향이므로 `ok`·`warn` 과 같은
-값을 쓰지 않는다 — 지워진 줄은 오류가 아니다.
+`add`·`del` are used only for the `+`·`-` lines of a patch. Since it is a direction, not a state, values like `ok`·`warn` are not used — deleted lines are not errors.
 
-다크가 기본이다. 라이트는 설정 모달의 일반에서 고르고, 기계마다 기억한다.
+Dark is the default. Light is selected in the general settings modal and remembered per machine.
 
-강조색은 모두 두 테마의 바탕과 카드에 WCAG AA 를 넘는다. 잰 대비는 다크 6.6–8.3,
-라이트 5.1–6.1 이다.
+All accent colors exceed WCAG AA against the backgrounds and cards of both themes. The measured contrast is 6.6–8.3 for dark and 5.1–6.1 for light.
 
-### 명세 상태
+### Specification Status
 
-`st-*` 여섯은 레일의 작업 점과 오른쪽 머리글의 상태 한 마디에만 쓴다(`web/src/lib/tasks.ts` 의
-`phase`). 2026-09-26 에 사용자가 "선명" 을 골랐다 — 8px 점에서도 여섯이 갈리는 쪽이다.
+The six `st-*` are used only for task dots on the rail and the status phrase in the right header (`phase` of `web/src/lib/tasks.ts`). On 2026-09-26, the user chose "vivid" — it is the side where the six are distinguishable even at 8px dots.
 
-| 토큰 | 상태 | 라이트 대비 | 다크 대비 |
+| Token | Status | Light Contrast | Dark Contrast |
 | --- | --- | --- | --- |
-| `st-draft` | 정리됨 | 4.53 | 5.13 |
-| `st-work` | 작업 중 | 4.98 | 7.69 |
-| `st-review` | PR·리뷰 대기·리뷰 Rn·고치는 중 Rn | 5.33 | 7.33 |
-| `st-ready` | 머지 가능 | 4.71 | 8.07 |
-| `st-queued` | 머지 대기 | 6.15 | 10.66 |
-| `st-stop` | 멈춤 | 5.50 | 6.60 |
+| `st-draft` | Done | 4.53 | 5.13 |
+| `st-work` | In Progress | 4.98 | 7.69 |
+| `st-review` | PR · Waiting for Review · Review Rn · Fixing Rn | 5.33 | 7.33 |
+| `st-ready` | Mergeable | 4.71 | 8.07 |
+| `st-queued` | Waiting for Merge | 6.15 | 10.66 |
+| `st-stop` | Stopped | 5.50 | 6.60 |
 
-대비는 바탕과 카드 중 낮은 쪽이다. `wait` 을 넣은 일곱 사이의 OKLab 거리는 가장 가까운 쌍이
-라이트 0.109(정리됨–머지 대기), 다크 0.102(머지 가능–머지 대기)다. 후보 "차분" 은 0.075 로
-작업 중·리뷰·정리됨이 작은 점에서 헷갈렸고, 앱의 기존 강조색(`ok`·`add`·`warn`)을 그대로 쓰는
-후보는 라이트에서 작업 중과 머지 대기가 0.057 로 붙어 떨어졌다.
+Contrast is the lower of the background or card. The OKLab distance between the seven including `wait` has the closest pair at 0.109 for light (Done–Waiting for Merge) and 0.102 for dark (Mergeable–Waiting for Merge). The candidate "subtle" was rejected at 0.075 because In Progress, Review, and Done were confusing at small sizes, and the candidate using the app's existing accent colors (`ok`·`add`·`warn`) as is was rejected because In Progress and Waiting for Merge were too close at 0.057 in light mode.
 
-승인을 기다리는 작업의 점은 상태 색 대신 `wait` 이다. 사람이 할 일이 상태보다 먼저다.
+The dot for a task waiting for approval is `wait` instead of the status color. What a person needs to do takes precedence over status.
 
-### 지도
+### Map
 
-지도는 앱 토큰을 따른다(`web/src/graph/map.css`). 저장소 문서는 중립(`map-doc`), 주입되는 지식
-페이지만 `map-page` 로 칠한다. 모듈 페이지는 점선, 결정 기록은 작고 옅다. 허브 규칙은 층 사다리
-`map-ladder` 1–5 로 진한 데서 옅은 데로 가고, 이 저장소에 안 걸리는 규칙은 흐리게 점선이다.
+The map follows the app tokens (`web/src/graph/map.css`). Repository documents are neutral (`map-doc`), and only injected knowledge pages are colored `map-page`. Module pages are dashed, and decision records are small and light. Hub rules go from dark to light in layer ladder `map-ladder` 1–5, and rules that do not apply to this repository are faint and dashed.
 
-## 타이포그래피
+## Typography
 
-단계가 일곱이고 쓰임이 겹치지 않는다. 2026-09-24 에 쟀을 때 19 가지였다. loop 6단계에서 다시
-짓고 쟀을 때 mono 11·11.5·12.5, sans 12·13, 10px 가 끼어 있어 모두 아래 일곱으로 옮겼다.
+There are seven stages, and their uses do not overlap. When measured on 2026-09-24, there were 19 types. When rebuilt and measured at loop stage 6, mono 11·11.5·12.5, sans 12·13, and 10px were included, so all were moved to the seven below.
 
-| 단계 | 값 | 쓰임 |
+| Stage | Value | Use |
 | --- | --- | --- |
-| title | heading 15 / 600 | 앱 이름 |
-| pane | heading 14 / 600 | 면이 지금 무엇인지 — 초점, 작업 이름, 지도 패널의 문서 제목 |
-| label | heading 11 / 600 | 구획 이름 — 레일의 할 것·도는 것·정리됨, 명세, 설정의 일반·연결·리뷰, 표 머리 |
-| body | sans 13.5 / 400 | 읽는 것 — 질문, 답, 지시, 빈 상태. 답 안의 강조만 700 |
-| control | sans 12.5 / 400 | 누르거나 고르는 것, 한 줄 설명, 상태 문장 |
-| code | mono 12 / 400 | 경로, 작업·저장소 이름, 도구 줄, 승인 내용, 답 안의 코드 |
-| meta | mono 10.5 / 400 | 숫자, 시간, 비용, 브랜치, 지도의 노드 이름과 지표. 작업의 상태 한 마디와 PR·라운드도 이 한 단계 |
+| title | heading 15 / 600 | App name |
+| pane | heading 14 / 600 | What the pane is currently — focus, task name, document title in map panel |
+| label | heading 11 / 600 | Section name — To-Do · In Progress · Done on the rail, specification, General · Connection · Review in settings, table headers |
+| body | sans 13.5 / 400 | Reading — questions, answers, instructions, empty states. Only emphasis within answers is 700 |
+| control | sans 12.5 / 400 | Clickable or selectable items, single-line descriptions, status sentences |
+| code | mono 12 / 400 | Paths, task · repository names, tool lines, approval content, code within answers |
+| meta | mono 10.5 / 400 | Numbers, time, cost, branches, node names and metrics on the map. The status phrase of a task and PR · round are also this stage |
 
-sr-only 이름표(프로젝트, 모델, 추론 강도)는 브라우저 기본 16px 로 재지만 화면에 안 보이므로 단계에 안 센다.
+sr-only labels (project, model, inference intensity) are measured at the browser default of 16px, but since they are not visible on screen, they are not counted in the stages.
 
-## 간격
+## Spacing
 
-2px 배수만 쓴다. 누르는 것의 높이는 `28px`(`h-7`) 하나다.
+Only multiples of 2px are used. The height of clickable items is one `28px` (`h-7`).

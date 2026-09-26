@@ -1,42 +1,35 @@
-# 5단계 — `agent`·`workspace`
+# Step 5 — `agent`·`workspace`
 
-전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다.
+The relationship between the overall design and the steps is in [Overview](0-overview.md)].
 
-목표. 에이전트가 쓰기를 할 수 있게 되고, 그 쓰기는 `workspace` 가 만든 작업트리 안에서
-사람이 하나씩 승인한 것만 일어난다. 두 파이프라인이 `__all__` 을 갖고, `translate`·`wiki`
-와 같은 검사가 붙는다. 화면은 없다 — 6단계가 이 계약 위에 짓는다.
+Goal. The agent becomes capable of writing, and that writing only occurs for items approved one by one by a human within a worktree created by `workspace`. Both pipelines have `__all__`, and checks like `translate`·`wiki` are attached. There is no screen — Step 6 builds upon this contract.
 
-## 승인은 CLI 가 이미 묻는다
+## Approval is already asked by the CLI
 
-두 CLI 모두 쓰기 전에 묻는 통로가 있다. 새로 짓는 것은 그 질문을 이벤트로 흘리고 답을
-돌려보내는 것뿐이다. 2026-09-24 에 버리는 저장소에서 둘 다 실제로 돌려 확인했다.
+Both CLIs have a channel to ask before writing. The newly built part simply flows that question as an event and returns the answer. Both were actually run and verified in a disposable repository on 2026-09-24.
 
-| CLI | 띄우는 법 | 묻는 것 | 답하는 것 |
+| CLI | How to launch | What it asks | How to answer |
 | --- | --- | --- | --- |
-| Claude Code 2.1 | `claude -p` stream-json 에 `--permission-prompt-tool stdio` | stdout 의 `control_request` (`subtype: can_use_tool`) | stdin 의 `control_response` — `allow` 에 `updatedInput`, 또는 `deny` 에 `message` |
-| Codex 0.156 | `codex app-server`, `thread/start` 에 `sandbox: read-only`, `approvalPolicy: untrusted` | 서버 요청 `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` | 그 id 로 `{"decision": "accept"}` 또는 `"decline"` |
+| Claude Code 2.1 | `claude -p` stream-json with `--permission-prompt-tool stdio` | `control_request` of stdout (`subtype: can_use_tool`) | `control_response` of stdin — `updatedInput` to `allow`, or `message` to `deny` |
+| Codex 0.156 | `codex app-server`, `sandbox: read-only` to `thread/start`, `approvalPolicy: untrusted` | Server request `item/commandExecution/requestApproval`, `item/fileChange/requestApproval` | `{"decision": "accept"}` or `"decline"` with that id |
 
-확인한 것. Claude 는 `Write` 를 허용하자 파일이 생겼고 `Bash` 를 거절하자 안 생겼다.
-Codex 는 거절하자 둘 다 안 생겼고, 승인하자 둘 다 생겼다. Windows 의 Codex 는 파일도
-PowerShell 명령으로 써서 `commandExecution` 승인으로 온다.
+Verified. In Claude, when `Write` was allowed, the file was created, and when `Bash` was rejected, it was not. In Codex, when rejected, neither was created, and when approved, both were created. Codex on Windows also writes files via PowerShell commands, coming in as `commandExecution` approval.
 
-Codex 의 쓰기 세션만 `app-server` 로 띄운다. `codex exec` 은 승인을 받을 수 없다. 읽기 세션
-(`chat.py` 의 채널, `explain`)은 지금의 `exec` 그대로 둔다. 둘을 하나로 합치는 것은 옛
-`chat.py` 를 지우는 6단계가 할 일이다.
+Only the Codex write session is launched with `app-server`. `codex exec` cannot receive approval. The read session (channel of `chat.py`, `explain`) is left as the current `exec`. Merging the two into one is the task of Step 6, which deletes the old `chat.py`.
 
 ## `agent`
 
-### 공개 진입점
+### Public Entry Points
 
-| 이름 | 무엇 | 부르는 쪽 |
+| Name | What | Caller |
 | --- | --- | --- |
-| `ChatSession(repo, ..., write=False, parent_id=None)` | CLI 하나를 한 대화로. `say(text)` 가 이벤트를 흘린다 | `chat` |
-| `ChatSession.answer(approval_id, allow)` | 승인 이벤트에 답한다 | 6단계 메인 |
-| `Event` | 이벤트 하나 — 아래 계약 | `chat` |
-| `explain` | 답을 쉬운 말로 다시 쓰는 격리 세션 | `chat` |
-| `CodexServer`, `cli_command`, `settings`, `ROOT`, `SETTINGS` | CLI 찾기와 로컬 설정 | `chat_channels`, `setup_chat`, `setup_agents` |
+| `ChatSession(repo, ..., write=False, parent_id=None)` | One CLI per conversation. `say(text)` flows events | `chat` |
+| `ChatSession.answer(approval_id, allow)` | Answers approval events | Step 6 main |
+| `Event` | One event — contract below | `chat` |
+| `explain` | Isolation session that rewrites answers in simple language | `chat` |
+| `CodexServer`, `cli_command`, `settings`, `ROOT`, `SETTINGS` | CLI discovery and local configuration | `chat_channels`, `setup_chat`, `setup_agents` |
 
-### 이벤트 계약
+### Event Contract
 
 ```python
 Event(kind, text="", meta={}, session_id="", parent_id=None)
@@ -44,142 +37,105 @@ Event(kind, text="", meta={}, session_id="", parent_id=None)
 
 | `kind` | `text` | `meta` |
 | --- | --- | --- |
-| `delta` | 답변 조각 | — |
-| `tool` | 도구 한 줄 요약 | — |
-| `approval` | 무엇을 하려는지 한 줄 | `id` (답할 때 쓴다), `tool`, `input` |
-| `done` | 최종 답변 | `ms`, `error`, `session_id` (CLI 의 이어가기 id), `model`, `tokens`, `cost_usd` |
-| `error` | 사람이 읽을 이유 | — |
+| `delta` | Answer fragment | — |
+| `tool` | One-line tool summary | — |
+| `approval` | One line of what it intends to do | `id` (used when answering), `tool`, `input` |
+| `done` | Final answer | `ms`, `error`, `session_id` (CLI's continuation id), `model`, `tokens`, `cost_usd` |
+| `error` | Reason for human to read | — |
 
-`session_id` 는 이 프로그램의 세션 id 다. `ChatSession` 이 만들 때 정하고 끝날 때까지 바뀌지
-않는다. 늦게 온 이벤트가 어느 세션 것인지는 이것이 판정한다. CLI 의 id 는 처음 응답이 와야
-알 수 있고 모델을 바꾸면 다시 붙으므로 판정에 못 쓴다. 그것은 지금처럼 `done.meta` 에 남는다.
-`parent_id` 는 부른 쪽이 넘긴다. 코디네이터가 워커를 띄울 때 쓸 자리이고 지금은 `None` 이다.
+`session_id` is the session id of this program. It is set when `ChatSession` creates it and does not change until it ends. This determines which session a late event belongs to. The CLI's id can only be known once the first response arrives and changes if the model is switched, so it cannot be used for determination. It remains in `done.meta` as it is now. `parent_id` is passed by the caller. It is the slot to be used when the coordinator launches a worker, and currently it is `None`.
 
-### 쓰기 세션
+### Write Session
 
-`write=True` 일 때만 쓰기 도구가 붙고 승인 통로가 열린다. 기본은 지금과 같은 읽기 세션이다.
+Only when `write=True` is true is the write tool attached and the approval channel opened. The default is the same read session as now.
 
-- `workspace` 가 만든 작업트리가 아니면 만들지 않는다(`ValueError`). 작업트리의 부모 폴더가
-  그 저장소의 `worktree_home` 이어야 한다. Orca 나 `claude -w` 가 만든 작업트리도 git 으로는
-  같은 작업트리라, 연결된 작업트리인지만 보면 남의 작업에 쓴다(리뷰 라운드 1). 원본 체크아웃은
-  자기 `-worktrees` 폴더 안에 있을 수 없으므로 같은 검사로 걸린다
-- Claude. 도구는 `Bash,Read,Glob,Grep,Edit,Write`, 묻지 않는 도구(`--allowedTools`)는
-  `Read,Glob,Grep` 뿐이다. `--permission-mode default` 를 명시해 설정의 `acceptEdits` 등이
-  승인을 건너뛰지 못하게 한다
-- Codex. `read-only` 샌드박스와 `untrusted` 승인. 알려진 읽기 명령 말고는 전부 묻는다
-- 작업트리 밖으로의 쓰기는 사람에게 묻지 않고 거절한다. Claude 의 `Edit`·`Write`·`NotebookEdit`
-  의 경로, Codex 의 `fileChange` 경로와 명령의 `cwd` 를 본다. 셸 명령 안의 경로는 읽지 않는다 —
-  그것은 사람이 승인 이벤트에서 본다
-- 승인을 기다리는 동안은 턴 마감(600초)이 흐르지 않는다. 사람이 자리를 비웠다고 턴이 죽으면
-  안 된다
-- 답은 물었던 프로세스로만 간다. 답이 늦는 사이 턴이 버려지고 다음 턴이 새 프로세스를 띄우면,
-  지금 도는 프로세스로 보낸 "허용" 이 새 프로세스의 요청에 붙는다. Codex 는 프로세스마다 요청
-  번호를 새로 센다(리뷰 라운드 1)
+- Does not create if it is not a worktree created by `workspace` (`ValueError`). The parent folder of the worktree must be the `worktree_home` of that repository. Since a worktree created by Orca or `claude -w` is the same worktree in git, it writes to others' work if it only checks if it is a connected worktree (Review Round 1). The original checkout cannot be inside its own `-worktrees` folder, so it is caught by the same check
+- Claude. Tools are `Bash,Read,Glob,Grep,Edit,Write`, non-asking tools (`--allowedTools`) are `Read,Glob,Grep` only. Specify `--permission-mode default` to prevent `acceptEdits` etc. in settings from skipping approval
+- Codex. `read-only` sandbox and `untrusted` approval. Asks for everything except known read commands
+- Writing outside the worktree is rejected without asking the human. Looks at the path of Claude's `Edit`·`Write`·`NotebookEdit`, and the `fileChange` path and command's `cwd` of Codex. Does not read paths inside shell commands — the human sees that in the approval event
+- Turn deadline (600 seconds) does not run while waiting for approval. The turn must not die because the human is away
+- The answer goes only to the process that asked. If the turn is discarded while the answer is late and the next turn launches a new process, the "allow" sent to the currently running process attaches to the new process's request. Codex counts request numbers anew for each process (Review Round 1)
 
-### 어느 계정으로 도는가
+### Which account does it run with
 
-`craft/screen-ownership-before-wiring` 의 세 가지 가운데 둘은 위에 있다 — 늦은 이벤트는
-`session_id` 가, 무엇을 써도 되나는 작업트리가 판정한다. 남은 하나가 계정이다.
+Two of the three in `craft/screen-ownership-before-wiring` are above — late events are determined by `session_id`, and what can be written is determined by the worktree. The remaining one is the account.
 
-세션은 이 프로그램을 띄운 환경의 로그인으로 돈다. Claude 는 그 사용자의 Claude Code 로그인,
-Codex 는 `CODEX_HOME` 이 있으면 그것, 없으면 `~/.codex` 의 로그인이다. `ChatSession` 을 만들 때
-환경을 통째로 붙잡아 두고 프로세스를 띄울 때마다 그것을 넘긴다. 그래서 재시작이나 `--resume`
-도 같은 계정으로 이어진다. 처음에는 띄울 때의 환경을 그대로 물려받아서, 그 사이 서버의
-`CODEX_HOME` 이 바뀌면 같은 세션이 다른 계정으로 이어질 수 있었다(리뷰 라운드 2). 계정을 고르는 화면은 이 계획에 없다.
-Orca 가 계정마다 `CODEX_HOME` 을 따로 두던 방식은 가져오지 않는다
+Sessions run with the login of the environment that launched this program. Claude is that user's Claude Code login, and Codex is that if `CODEX_HOME` exists, otherwise `~/.codex`'s login. When creating `ChatSession`, it captures the entire environment and passes it every time it launches a process. Therefore, restarts or `--resume` continue with the same account. Initially, it inherited the environment at launch as is, so if the server's `CODEX_HOME` changed in the meantime, the same session could continue with a different account (Review Round 2). A screen to select an account is not in this plan. The method where Orca kept `CODEX_HOME` separately for each account is not brought over
 
-### 안 막는 것
+### What is not blocked
 
-사용자나 대상 저장소의 설정에 있는 `permissions.allow` 규칙은 CLI 가 먼저 적용하므로 그
-규칙에 걸린 쓰기는 묻지 않는다. 사람이 직접 적은 허용이므로 그대로 둔다. `permissions.deny`
-와 위키 훅도 같은 이유로 그대로 붙는다.
+Since `permissions.allow` rules in the user or target repository settings are applied by the CLI first, writes caught by those rules are not asked about. Since it is an allowance written directly by a human, it is left as is. `permissions.deny` and wiki hooks are also left attached for the same reason.
 
 ## `workspace`
 
-### 공개 진입점
+### Public Entry Points
 
-| 무리 | 이름 | 부르는 쪽 |
+| Group | Name | Caller |
 | --- | --- | --- |
-| 작업트리 | `create`, `worktrees`, `remove` | 6단계 메인 |
-| 세션 로그 | `SESSIONS`, `INJECTED`, `MAX_HUMAN_CHARS`, `parse`, `checkout`, `checkouts`, `folder`, `logs`, `FINDERS` | `census`, `transcript`, `hook`, `mirror`, `setup_agents` |
+| Worktree | `create`, `worktrees`, `remove` | Step 6 main |
+| Session Log | `SESSIONS`, `INJECTED`, `MAX_HUMAN_CHARS`, `parse`, `checkout`, `checkouts`, `folder`, `logs`, `FINDERS` | `census`, `transcript`, `hook`, `mirror`, `setup_agents` |
 
-### 작업트리
+### Worktree
 
-| 함수 | 하는 일 |
+| Function | What it does |
 | --- | --- |
-| `create(repo, task)` | `../<repo>-worktrees/<task>` 에 브랜치 `<task>` 로 `git worktree add`. 경로를 돌려준다 |
-| `worktrees(repo)` | 그 폴더 아래 작업트리. 행마다 `path`, `branch`, `dirty`, `merged` |
-| `remove(repo, path)` | `git worktree remove`, 그리고 브랜치 삭제 |
+| `create(repo, task)` | `git worktree add` with branch `<task>` in `../<repo>-worktrees/<task>`. Returns the path |
+| `worktrees(repo)` | Worktree under that folder. `path`, `branch`, `dirty`, `merged` per line |
+| `remove(repo, path)` | `git worktree remove`, and branch deletion |
 
-- `repo` 는 원본 체크아웃이어야 한다. 작업트리 안에서 작업트리를 만들면 폴더가 엉뚱한 데 선다
-- `task` 는 소문자·숫자·`-` 만, 64자까지. 브랜치 이름과 폴더 이름을 겸하고, 한글 경로가 이
-  기계에서 `cp949` 로 깨진 적이 있다
-- 폴더 자리(`worktree_home`)는 `tool/common/` 에 있다. `workspace` 가 거기 만들고 `agent` 가
-  거기서만 쓰기 세션을 연다. 개요가 말한 "두 파이프라인이 실제로 같이 쓰는 것" 의 첫 예다
-- `merged` 는 "지워도 원본 체크아웃의 HEAD 에 없는 것을 잃지 않는다" 는 뜻이다. 머지 기반부터
-  브랜치까지 바뀐 모든 경로가, 지금 HEAD 에서 브랜치의 판과 똑같으면(같은 blob, 같은 모드) 참이다.
-  세 트리(기반, 브랜치, HEAD)를 `git ls-tree -r -z` 로 읽어 경로별 모드·객체를 여기서 비교한다.
-  git 에게는 목록만 받고 무엇이 바뀌었는지는 묻지 않는다. squash 머지, 보통 머지, 자기 변경이 없는 브랜치가 참이다. 화면은
-  이것을 보고 정리를 제안한다
-- 앞의 여섯 판정은 각각 유일한 커밋을 지웠다. 여섯 다 무엇이 바뀌었는지를 git 이 정하게 했고,
-  git 의 그 판단에는 저마다 설정과 규칙이 끼어 있었다
+- `repo` must be the original checkout. If you create a worktree inside a worktree, the folder ends up in the wrong place
+- `task` is lowercase, numbers, and `-` only, up to 64 characters. Serves as both branch name and folder name, and Korean paths have been corrupted to `cp949` on this machine before
+- The folder location (`worktree_home`) is in `tool/common/`. `workspace` creates it there and `agent` opens a write session only there. This is the first example of "two pipelines actually using it together" mentioned in the overview
+- `merged` means "you don't lose anything that isn't in the HEAD of the original checkout if you delete it". It is true if all paths changed from the merge base to the branch are identical to the branch's version in the current HEAD (same blob, same mode). It reads the three trees (base, branch, HEAD) with `git ls-tree -r -z` and compares the mode/object per path here. It only receives the list from git and does not ask what changed. Squash merge, normal merge, and branches without self-changes are true. The screen sees this and suggests cleanup
+- The previous six determinations each deleted a unique commit. All six let git decide what changed, and git's judgment had settings and rules involved in each
 
-  | 판정 | 틀린 경우 | 라운드 |
+  | Determination | Case of error | Round |
   | --- | --- | --- |
-  | 원격 브랜치가 지워졌다(`gone`) | 머지 없이 원격만 지울 수 있다 | 1 |
-  | `git cherry` 로 같은 패치 | HEAD 가 나중에 revert 해도 이력에서 찾는다 | 2 |
-  | diff 를 HEAD 에 거꾸로 적용(`git apply -R`) | 같은 줄이 파일의 다른 자리에 있으면 거기서 맞춘다 | 3 |
-  | HEAD 에 합친 트리(`merge-tree`), 충돌 종료 코드는 버림 | 수정/삭제 충돌은 HEAD 의 판을 남겨 트리가 HEAD 와 같다 | 4 |
-  | 같은 것, 종료 코드도 봄 | `.gitattributes` 의 `merge=ours` 같은 병합 드라이버가 브랜치 쪽을 깨끗이 버린다 | 5 |
-  | 경로별 비교를 porcelain `git diff` 로 | `diff.ignoreSubmodules=all` 이 브랜치만 가진 서브모듈 포인터를 숨긴다 | 6 |
-  | 같은 것을 plumbing `diff-tree` 로 | `.gitmodules` 의 `ignore = all`, `submodule.<name>.ignore` 는 plumbing 도 따른다 | 7 |
+  | Remote branch deleted (`gone`) | Can delete remote only without merge | 1 |
+  | Same patch with `git cherry` | Found in history even if HEAD reverts later | 2 |
+  | Apply diff to HEAD in reverse (`git apply -R`) | If the same line is in a different place in the file, it matches there | 3 |
+  | Tree merged into HEAD (`merge-tree`), conflict exit code discarded | Modify/delete conflict leaves HEAD's version, so tree is same as HEAD | 4 |
+  | Same thing, also look at exit code | Merge driver like `merge=ours` of `.gitattributes` clears the branch side | 5 |
+  | Path-by-path comparison with porcelain `git diff` | `diff.ignoreSubmodules=all` hides submodule pointers that only the branch has | 6 |
+  | Same thing with plumbing `diff-tree` | `ignore = all`, `submodule.<name>.ignore` of `.gitmodules` also follow plumbing | 7 |
 
-- 라운드 3 에서 충돌 종료 코드 검사를 지웠었다. 지워도 테스트가 초록이라 군더더기로 봤다.
-  초록은 그 검사를 보는 테스트가 없다는 뜻이었지 필요 없다는 뜻이 아니었다(라운드 4)
-- 라운드 6 에서 "plumbing 은 `diff.*` 설정을 읽지 않는다" 에 기대 `diff-tree` 로 옮겼는데,
-  서브모듈 무시 설정은 plumbing 도 따랐다(라운드 7). diff 계열은 무엇을 바뀜으로 칠지 설정이 정한다.
-  `ls-tree` 는 목록이라 걸러 낼 것이 없다
-- 이름 바꾸기도 여기서는 일어나지 않는다. 경로마다 따로 보므로 `a→b` 는 `a` 가 사라지고 `b` 가
-  생긴 두 경로다
-- 확실하지 않으면 거짓이다. 아직 pull 하지 않은 HEAD, 머지 뒤 HEAD 가 브랜치가 고친 파일을 다시
-  고친 것은 브랜치를 남긴다. 병합 시뮬레이션보다 남기는 경우가 많다. 남은 브랜치는 목록에 한
-  줄이지만, 잘못된 참은 일을 지운다
-- `remove` 는 더러운 작업트리를 지우지 않는다. 브랜치는 `merged` 일 때만 `-D` 로 지우고
-  나머지는 남긴다. 그 폴더 밖의 경로는 받지 않는다
+- In Round 3, the conflict exit code check was deleted. It was seen as clutter because the test was green even if deleted. Green meant there was no test looking at that check, not that it wasn't needed (Round 4)
+- In Round 6, it was moved to `diff-tree` relying on "plumbing does not read `diff.*` settings", but the submodule ignore setting was also followed by plumbing (Round 7). Settings determine what the diff family counts as changed. `ls-tree` is a list, so there is nothing to filter out
+- Renaming also does not happen here. Since it looks at each path separately, `a→b` is two paths where `a` disappeared and `b` was created
+- If not sure, it is false. HEAD not yet pulled, or HEAD after merge that re-modified a file modified by the branch, leaves the branch. There are more cases of leaving than merge simulation. The remaining branch is one line in the list, but a false true deletes work
+- `remove` does not delete a dirty worktree. It deletes with `-D` only when the branch is `merged`, and leaves the rest. It does not accept paths outside that folder
 
-## 검사
+## Check
 
-`lint.pipeline_surface` 는 `__all__` 이 있는 파이프라인을 본다. 두 `__init__.py` 에 `__all__`
-을 쓰는 것만으로 붙는다. 루트 모듈은 `from agent.chat_session import` 대신 `from agent import`
-를 쓴다.
+`lint.pipeline_surface` looks at the pipeline with `__all__`. It is attached just by using `__all__` in both `__init__.py`. The root module uses `from agent import` instead of `from agent.chat_session import`.
 
-## 넣지 않은 것
+## What was not included
 
-| 무엇 | 왜 |
+| What | Why |
 | --- | --- |
-| Codex 읽기 세션을 `app-server` 로 | 지금 도는 것을 바꿀 이유가 쓰기에는 없다. 6단계가 옛 `chat.py` 와 같이 정리한다 |
-| Codex 쓰기 세션의 토큰 수 | `thread/tokenUsage/updated` 에 있다. 화면이 사용량을 그릴 때 붙인다 |
-| 승인의 "이 세션 동안 허용" | 모든 쓰기를 승인받기로 했다. 필요해지면 `acceptForSession` 과 Claude 의 `permission_suggestions` 가 있다 |
-| 코디네이터와 워커 | 별도 계획서. 이벤트에 `parent_id` 자리만 둔다 |
+| Codex read session as `app-server` | There is no reason to change what is currently running for writing. Step 6 cleans it up with the old `chat.py` |
+| Token count of Codex write session | It is in `thread/tokenUsage/updated`. Attached when the screen draws usage |
+| "Allow for this session" in approval | Decided to get approval for all writes. If needed, there are `acceptForSession` and Claude's `permission_suggestions` |
+| Coordinator and worker | Separate plan. Only leave `parent_id` slot in event |
 
-## 검증
+## Verification
 
-| 확인 | 결과 |
+| Check | Result |
 | --- | --- |
-| `pytest tool/` | 304 통과. 전 285, 새 테스트 19개(`test_agent` 6, `test_worktrees` 13) |
-| `test_agent.py` 가 무엇을 보나 | 대기 중 턴 마감을 지우면, 작업트리 밖 거절을 지우면, 남의 작업트리 거절을 지우면, 답을 물었던 프로세스 대신 지금 프로세스로 보내면 각각 빨강. 승인은 화면처럼 다른 스레드에서 두 마감보다 늦게 보낸다 |
-| `test_worktrees.py` 가 무엇을 보나 | 앞의 일곱 판정이 틀린 경우와 이름 바꾸기, 모드만 바꾼 경우를 하나씩 심는다. HEAD 비교를 지우면 열, 지운 경로를 안 세면 둘, 모드를 안 보면 하나, `remove` 가 `merged` 를 무시하면 둘이 빨강 |
-| `python tool/lint.py --check` | 종료 0. `census.py` 에 `from workspace.sessions import codex_homes`, `workspace.home`, `agent.READ_TOOLS` 를 심으면 `공개 진입점` 셋 |
-| `python tool/test_lint.py`, `ruff check tool` | 통과 |
-| 직접 실행 스크립트 | `test_apply`·`test_inject`·`test_declared_continuation`·`test_repo_lint`·`test_trajectory` 종료 0. `chat.py --check` 통과 — 읽기 세션은 그대로 돈다 |
-| 실제 Claude (haiku) | `create` 로 만든 작업트리에서 두 파일을 쓰라고 했다. 승인 이벤트 둘, 하나 허용·하나 거절 → 허용한 파일만 생겼다. 두 번째 턴이 같은 프로세스에서 이어졌다. 작업트리 밖 경로에 쓰라고 하자 묻지 않고 거절했고 파일은 없다 |
-| 실제 Codex (`app-server`) | 같은 지시. `fileChange` 승인이 경로와 함께 왔고, 허용한 파일만 생겼다. 두 번째 턴이 이어졌다 |
-| 정리 | 더러운 작업트리 둘을 `remove` 가 거절했다. 치운 뒤 작업트리와 브랜치가 지워졌다 |
-| 리뷰 라운드 1 | P0 하나(`gone` 으로 `-D` — 미병합 커밋 유실), P1 둘(남의 작업트리에서 쓰기 세션, 늦은 답이 새 프로세스로). 셋 다 재현한 뒤 고쳤다. 실제 Claude 로 쓰기·승인·정리를 다시 돌렸다 |
-| 리뷰 라운드 2 | 계획 대비 점검 표 — 모든 항목이 됨 또는 다음 단계 몫, 둘만 일부. P0 하나(`git cherry` 가 revert 된 패치도 머지로 봄), P1 하나(계정이 세션 생성 때 고정된다는 서술이 코드와 다름). 둘 다 재현한 뒤 고쳤다 |
-| 리뷰 라운드 3 | P0 하나(`git apply -R` 이 같은 블록의 다른 자리에서 맞춤). 같은 함수의 세 번째라 판정을 삼방향 병합의 트리 비교로 바꿨다 |
-| 리뷰 라운드 4 | P0 하나(수정/삭제 충돌에서 합친 트리가 HEAD 와 같음). 라운드 3 에서 지운 충돌 종료 코드 검사를 되살렸다 |
-| 리뷰 라운드 5 | P0 하나(`merge=ours` 드라이버가 브랜치 변경을 버린 병합이 HEAD 와 같음). 같은 함수의 다섯 번째라 병합 시뮬레이션을 버리고 경로별 객체 비교로 바꿨다 |
-| 리뷰 라운드 6 | P0 하나(`diff.ignoreSubmodules=all` 이 서브모듈 포인터를 숨김). porcelain `git diff` 를 plumbing `diff-tree` 로 바꿨다 |
-| 리뷰 라운드 7 | P0 하나(`.gitmodules` 의 `ignore = all` 을 `diff-tree` 도 따름). diff 를 버리고 세 트리를 `ls-tree` 로 읽어 비교한다. 모드만 바꾼 경우를 테스트로 더했다 |
-| 리뷰 라운드 8 | 새 P0·P1 없음, 머지 허용. 계획 대비 점검 표의 모든 줄이 됨 또는 다음 단계 몫. P2 하나(중간 커밋은 남기지 않는다)는 PR 코멘트로 남겼다 |
+| `pytest tool/` | 304 passed. 285 before, 19 new tests (`test_agent` 6, `test_worktrees` 13) |
+| What `test_agent.py` sees | If you delete the waiting turn deadline, delete rejection outside worktree, delete rejection of others' worktree, or send to current process instead of the process that asked, each is red. Approval is sent from a different thread later than both deadlines like the screen |
+| What `test_worktrees.py` sees | Plants the case where the previous seven determinations are wrong, renaming, and mode-only changes one by one. If you delete HEAD comparison, ten are red; if you don't count deleted paths, two; if you don't look at mode, one; if `remove` ignores `merged`, two are red |
+| `python tool/lint.py --check` | Exit 0. If you plant `from workspace.sessions import codex_homes`, `workspace.home`, `agent.READ_TOOLS` in `census.py`, `공개 진입점` three |
+| `python tool/test_lint.py`, `ruff check tool` | Passed |
+| Direct execution script | `test_apply`·`test_inject`·`test_declared_continuation`·`test_repo_lint`·`test_trajectory` exit 0. `chat.py --check` passed — read session runs as is |
+| Actual Claude (haiku) | Asked to write two files in a worktree created with `create`. Two approval events, one allowed/one rejected → only allowed file created. Second turn continued in the same process. When asked to write to a path outside the worktree, it rejected without asking and no file exists |
+| Actual Codex (`app-server`) | Same instruction. `fileChange` approval came with path, and only allowed file created. Second turn continued |
+| Cleanup | `remove` rejected two dirty worktrees. After clearing, worktree and branch were deleted |
+| Review Round 1 | One P0 (`-D` with `gone` — unmerged commit loss), two P1 (write session in others' worktree, late answer to new process). Fixed after reproducing all three. Re-ran write/approval/cleanup with actual Claude |
+| Review Round 2 | Checklist against plan — all items done or for next step, only two partial. One P0 (`git cherry` also sees reverted patch as merge), one P1 (description that account is fixed at session creation differs from code). Fixed after reproducing both |
+| Review Round 3 | One P0 (`git apply -R` matches in different place of same block). Third time for same function, so changed determination to three-way merge tree comparison |
+| Review Round 4 | One P0 (merged tree same as HEAD in modify/delete conflict). Revived conflict exit code check deleted in Round 3 |
+| Review Round 5 | One P0 (merge where `merge=ours` driver discarded branch changes is same as HEAD). Fifth time for same function, so discarded merge simulation and changed to path-by-path object comparison |
+| Review Round 6 | One P0 (`diff.ignoreSubmodules=all` hides submodule pointers). Changed porcelain `git diff` to plumbing `diff-tree` |
+| Review Round 7 | One P0 (`diff-tree` also follows `ignore = all` of `.gitmodules`). Discarded diff and read three trees with `ls-tree` to compare. Added mode-only change case as test |
+| Review Round 8 | No new P0/P1, merge allowed. All lines of checklist against plan are done or for next step. One P2 (do not leave intermediate commits) left as PR comment |

@@ -1,106 +1,78 @@
-# 1단계 — 어긋남 정리
+# Phase 1 — Resolving Discrepancies
 
-전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다.
+The relationship between the overall design and the phases is in [Overview](0-overview.md)].
 
-목표. 계획 문서, 주석, 코드가 서로 다른 말을 하는 곳을 없앤다. 뒤 단계가 새 계획 문서를 쓰면
-SessionStart 가 그 남은 행을 에이전트에게 보여 준다. 그 판정이 틀려 있으면 다음 작업 초점(3단계)이
-후보를 틀린 데서 뽑는다.
+Goal. Eliminate places where the plan document, comments, and code say different things. When a later phase writes a new plan document, SessionStart shows the remaining lines to the agent. If that judgment is incorrect, the next task focus (Phase 3) selects candidates from where it was wrong.
 
-2026-09-25 에 계획 문서 11개와 `docs/verification.md`·`docs/quality.md` 를 전수조사하고 코드와
-대조했다.
+On 2026-09-25, 11 plan documents and `docs/verification.md`·`docs/quality.md` were thoroughly examined and cross-checked with the code.
 
-## 고칠 것
+## To Fix
 
-### 계획 상태 판정
+### Plan Status Judgment
 
-`session_state.open_steps` 는 상태 칸이 정확히 `완료`·`취소` 일 때만 끝난 행으로 친다
-(`tool/session_state.py:98`). `완료 — 양 호스트 실측` 처럼 뒤에 한 줄을 붙인 행은 남은 일로 센다.
-2026-09-25 에 english-first-2 의 3행, english-first-3 의 8행이 그렇게 SessionStart 에 떴다. 그 시리즈는
-이제 `done/` 아래라 읽히지 않지만, 같은 모양의 상태 칸은 앞으로의 계획에도 쓰인다.
+`session_state.open_steps` considers a line finished only when the status column is exactly `완료`·`취소` (`tool/session_state.py:98`). Lines with an extra line appended, like `완료 — 양 호스트 실측`, are counted as remaining work. On 2026-09-25, line 3 of english-first-2 and line 8 of english-first-3 appeared in SessionStart that way. That series is no longer read as it is under `done/`, but the same shape of status column is used in future plans.
 
-고침. 상태 칸의 첫 낱말로 판정한다. `완료`·`취소` 로 시작하면 끝난 행이다. `미완료` 는 끝나지
-않았다 — 앞글자 비교가 아니라 낱말 비교여야 하는 이유다.
+Fix. Judge by the first word of the status column. If it starts with `완료`·`취소`, it is a finished line. `미완료` is not finished — this is why it must be a word comparison, not a prefix comparison.
 
-테스트. `완료 — …`, `취소 — …`, `미완료 — 외부 조건으로 차단됨`, `미착수` 네 행의 표를 주고
-남는 행이 뒤의 둘뿐인지 본다. 고치기 전 코드에서 빨강이어야 한다.
+Test. Provide a table of four lines: `완료 — …`, `취소 — …`, `미완료 — 외부 조건으로 차단됨`, `미착수`, and check if only the last two remain. It must be red in the code before the fix.
 
-### 낡은 문서
+### Outdated Documents
 
-| 어디 | 어긋남 | 고침 |
+| Where | Discrepancy | Fix |
 | --- | --- | --- |
-| `docs/verification.md` | 공개 사본의 기록 그대로다. "다섯 채널", Slack 실행기가 나온다. wiki-agent 2–7단계의 검증은 없다 | 제목과 첫 절에 이 파일이 공개 사본 시절의 기록임을 적고, 지금의 검증은 `docs/plans/done/wiki-agent/7-verify.md` 를 가리킨다. 옛 기록은 지우지 않는다 |
-| `docs/plans/done/wiki-agent/0-overview.md` 의 "넣지 않은 것" | 리뷰 셀이 "나중" 으로 남아 있다 | `loop` 4단계를 가리킨다 |
+| `docs/verification.md` | It is exactly the record of the public copy. "Five channels", Slack executor appear. There is no verification for wiki-agent phases 2–7 | State in the title and the first section that this file is a record from the public copy era, and that current verification points to `docs/plans/done/wiki-agent/7-verify.md`. Do not delete old records |
+| "Things not included" in `docs/plans/done/wiki-agent/0-overview.md` | Review cell remains as "Later" | Point to `loop` Phase 4 |
 
-### 낡은 주석과 쓰지 않는 이름
+### Outdated Comments and Unused Names
 
-Slack, 미러, `chat.handoff` 는 6단계에서 지웠는데 주석이 아직 그것을 이유로 든다.
+Slack, mirror, and `chat.handoff` were deleted in Phase 6, but comments still cite them as reasons.
 
-| 어디 | 고침 |
+| Where | Fix |
 | --- | --- |
-| `tool/session_state.py:53` | `chat.handoff` 대신 지금 이 함수를 부르는 곳(`/api/draft`)을 이유로 |
-| `tool/workspace/sessions.py:207` | "Slack brief" 를 뺀다 |
-| `tool/test_sessions.py:188,216` | 미러가 아니라 지키는 소유 규칙을 이유로 |
+| `tool/session_state.py:53` | Instead of `chat.handoff`, cite the place that currently calls this function (`/api/draft`) as the reason |
+| `tool/workspace/sessions.py:207` | Remove "Slack brief" |
+| `tool/test_sessions.py:188,216` | Cite the ownership rule that protects it, not the mirror, as the reason |
 
-`claude_session`·`codex_session`·`FINDERS` 는 미러가 유일한 호출자였다. 지금 부르는 곳은
-테스트뿐이다. `sessions.py:7-8` 은 "소유 규칙을 테스트가 핀으로 박고 있어서" 남긴다고 적는다.
-그 규칙이 `checkouts()` 의 것이라면 테스트를 `checkouts()` 로 옮기고 셋을 지운다. 옮길 수 없는
-규칙이 있으면 남기고 이유를 그 규칙 이름으로 적는다. 어느 쪽인지는 테스트를 읽고 정한다.
+`claude_session`·`codex_session`·`FINDERS` had the mirror as the sole caller. The current calling place is only the test. `sessions.py:7-8` notes that it is kept "because the test pins the ownership rule". If that rule belongs to `checkouts()`, move the test to `checkouts()` and delete the three. If there is a rule that cannot be moved, keep it and write the rule name as the reason. Decide which is the case by reading the test.
 
-### 작은 미룬 것
+### Small Postponements
 
-| 무엇 | 어디서 미뤘나 | 고침 |
+| What | Where Postponed | Fix |
 | --- | --- | --- |
-| `wiki-agent` 가 `위키-에이전트` 로 번역된다 | 7단계 | `glossary.toml` 의 `fixed` 에 넣는다. 캐시가 한 번 무효가 된다. 7단계는 "다른 이유로 고칠 때" 라 했지만, 기다릴 다른 이유가 없다 |
-| 첫 채널 목록이 오기 전에 보낸 질의에 프로젝트 표시가 없다 | 6단계 리뷰 11 | `claimed` 가 비어 있으면 `/api/channels` 가 아닌 요청은 보내지 않고 기다린다(`web/src/lib/api.ts:96`). 서버도 쓰는 요청에서 `X-Project` 가 없으면 거절한다(`tool/main/app.py:86`) |
-| 번역 요청의 선불 차감이 출력 토큰 상한이 아니다 | 3단계 PR #4 | `generationConfig.maxOutputTokens` 를 입력 길이에 비례해 건다(`tool/translate/__init__.py:371`). 차감한 금액이 실제 상한이 된다 |
-| haiku 가 `chat-answer.md` 의 영어 지시를 어기고 한국어로 답한다 | 7단계 | 원인부터 본다. 사용자 단위 `CLAUDE.md` 의 언어 지시와 부딪치는지, `--append-system-prompt` 의 위치 문제인지. 원인이 이 저장소 밖이면 적어 두고 고치지 않는다 |
+| `wiki-agent` is translated as `위키-에이전트` | Phase 7 | Put it in `fixed` of `glossary.toml`. The cache is invalidated once. Phase 7 said "when fixing for other reasons", but there is no other reason to wait |
+| No project mark in queries sent before the first channel list arrives | Phase 6 Review 11 | If `claimed` is empty, do not send requests that are not `/api/channels` and wait (`web/src/lib/api.ts:96`). Also, reject requests that use the server if `X-Project` is missing (`tool/main/app.py:86`) |
+| Translation request prepayment deduction is not the output token limit | Phase 3 PR #4 | Apply `generationConfig.maxOutputTokens` proportional to the input length (`tool/translate/__init__.py:371`). The deducted amount becomes the actual limit |
+| haiku ignores the English instruction in `chat-answer.md` and answers in Korean | Phase 7 | Look at the cause first. Check if it conflicts with the language instruction of user unit `CLAUDE.md`, or if it is a location issue of `--append-system-prompt`. If the cause is outside this repository, note it and do not fix it |
 
-터미널의 변경이 작업트리 목록에 늦게 보이는 것(7단계)은 6단계로 넘긴다. 레일이 작업 단위로 바뀌며
-목록을 다시 읽는 때가 같이 바뀐다.
+Terminal changes appearing late in the work tree list (Phase 7) is passed to Phase 6. As the rail changes to work units, the time to re-read the list changes as well.
 
-## 하지 않는 것
+## Things Not Doing
 
-- 따옴표 안의 글을 번역에서 지키기. 7단계의 결정대로 둔다
-- 답변 이벤트 `hits` 에 심각도와 본문을 넣기. 4단계 문서가 "필요할 때" 라 했고 아직 필요한 곳이 없다
-- 계정 고르기 화면. 5단계의 결정대로 둔다
+- Keeping text inside quotes in translation. Leave as decided in Phase 7
+- Including severity and body in answer event `hits`. Phase 4 document said "when necessary" and there is no place where it is needed yet
+- Account selection screen. Leave as decided in Phase 5
 
-## 확인
+## Verification
 
 - `pytest tool/`, `python tool/lint.py --check`, `ruff check tool/`, `npm run build`
-- `session_state.plans()` 가 `done/` 의 문서를 읽지 않고, `loop/0-overview.md` 의
-  2–7행을 낸다
+- `session_state.plans()` does not read the document of `done/`, and outputs lines 2–7 of `loop/0-overview.md`
 
-## 단계
+## Phases
 
-| # | 단계 | 무엇 | 상태 |
+| # | Phase | What | Status |
 | --- | --- | --- | --- |
-| 1 | 판정 | `open_steps` 첫 낱말 판정과 테스트 | 완료 — 고치기 전 빨강 확인 |
-| 2 | 문서 | `verification.md`, wiki-agent 개요의 "넣지 않은 것" | 완료 |
-| 3 | 주석과 이름 | 낡은 주석, `claude_session`·`codex_session`·`FINDERS` 정리 | 완료 — 셋 다 지움 |
-| 4 | 작은 미룬 것 | 용어집, 프로젝트 표시 없는 요청, 번역 출력 상한, haiku 언어 원인 | 완료 — haiku 는 저장소 안의 원인 |
-| 5 | 게이트 | 위 확인 전부 초록 | 완료 |
+| 1 | Judgment | `open_steps` first word judgment and test | Done — confirmed red before fix |
+| 2 | Document | `verification.md`, "Things not included" in wiki-agent overview | Done |
+| 3 | Comments and Names | Old comments, `claude_session`·`codex_session`·`FINDERS` cleanup | Done — all three deleted |
+| 4 | Small Postponements | Glossary, requests without project marks, translation output limit, haiku language cause | Done — haiku cause is inside the repository |
+| 5 | Gate | All verifications above green | Done |
 
-## 한 일
+## Work Done
 
-- 판정. 첫 낱말이 `완료`·`취소` 인 행을 끝난 행으로 친다. `test_a_status_is_judged_by_its_first_word`
-- `branch_line`. 계획은 `/api/draft` 를 이유로 적으라 했지만 `/api/draft` 는 이 함수를 부르지 않는다.
-  부르는 곳은 `session_state.report` 하나이고 늘 영어로 불렀다. 그래서 한국어 갈래와 `english`
-  인자를 지웠다. `/api/draft` 가 쓰는 것은 `active_page`·`decisions` 이고, 모듈 머리말이 그것을 적는다
-- `claude_session`·`codex_session`·`FINDERS`. 세 테스트가 불렀다. cwd 로 rollout 을 가르는 규칙과
-  평탄화 충돌 규칙은 `checkouts()`·`logs()` 의 테스트가 이미 지킨다. 남은 하나는 미러가 1초마다
-  부르던 비용을 재는 테스트라 함수와 같이 지웠다
-- 프로젝트 표시. 화면은 `/api/channels` 말고는 첫 `claim` 까지 기다린다. 첫 적재가 채널 목록과
-  번역 스위치를 `Promise.all` 로 같이 받고 있어 그대로 두면 서로 기다린다 — 목록 다음에 스위치를
-  받는다. 서버는 `GET` 이 아닌 요청에 `X-Project` 가 없으면 400 으로 거절한다.
-  `test_a_write_that_names_no_project_is_refused`. 창에서 다시 읽어 채널이 먼저 가고 POST 가
-  모두 200 인 것을 봤다
-- 번역 상한. `maxOutputTokens = 2 × 입력 글자 수 + 64`. 선불 차감은 보낸 바이트를 입력 토큰으로,
-  상한을 출력 토큰으로 친다. `MODEL` 은 생각 토큰이 없다. `test_the_hold_is_the_most_the_request_can_cost`
-- 용어집. `"wiki-agent" = "wiki-agent"`. 실제 요청으로 `wiki-agent는 …` 이 나오는 것을 봤다
-- haiku 언어. 원인은 이 저장소 안이다. 사용자 단위 `CLAUDE.md` 는 없고 `language` 설정도 없다.
-  같은 질문을 hook 을 켜고 두 번, 끄고(`--setting-sources ""`, `disableAllHooks`) 두 번 보냈더니
-  영어는 켠 쪽 한 번뿐이었다 — hook 과 사용자 설정은 원인이 아니다. `--system-prompt` 로 바꾸면
-  두 번 다 영어였지만 Claude Code 의 기본 프롬프트를 잃는다. `chat-answer.md` 끝에 "질문은 대개
-  한국어로 온다, 그래도 영어로 답한다" 한 줄을 더하자 hook 을 켠 실제 조합(답변 프롬프트 + 위키
-  초점 머리말)에서 세 번 다 영어였다. 머리의 "영어로 쓰라" 는 한국어 질문을 예상하지 않았고,
-  haiku 는 질문의 언어를 따랐다
+- Judgment. Lines where the first word is `완료`·`취소` are considered finished lines. `test_a_status_is_judged_by_its_first_word`
+- `branch_line`. The plan said to cite `/api/draft` as the reason, but `/api/draft` does not call this function. The only calling place is `session_state.report` and it was always called in English. So, the Korean branch and `english` argument were deleted. What `/api/draft` uses is `active_page`·`decisions`, and the module header notes that
+- `claude_session`·`codex_session`·`FINDERS`. Three tests called them. The rule separating rollout by cwd and the flattening collision rule are already protected by the tests of `checkouts()`·`logs()`. The remaining one was a test measuring the cost the mirror called every second, so it was deleted along with the function
+- Project mark. The screen waits until the first `claim`, not `/api/channels`. The first load receives the channel list and translation switch together as `Promise.all`, so if left as is, they wait for each other — receive the switch after the list. The server rejects with 400 if `X-Project` is missing in requests that are not `GET`. `test_a_write_that_names_no_project_is_refused`. Re-read in the window and saw that the channel goes first and all POSTs are 200
+- Translation limit. `maxOutputTokens = 2 × 입력 글자 수 + 64`. Prepayment deduction counts sent bytes as input tokens and the limit as output tokens. `MODEL` has no thought tokens. `test_the_hold_is_the_most_the_request_can_cost`
+- Glossary. `"wiki-agent" = "wiki-agent"`. Saw that `wiki-agent는 …` comes out as an actual request
+- haiku language. The cause is inside this repository. There is no user unit `CLAUDE.md` and no `language` setting. Sent the same question twice with hook on, and twice off (`--setting-sources ""`, `disableAllHooks`), and English was only once when it was on — hook and user settings are not the cause. Changing to `--system-prompt` resulted in English both times, but lost the default prompt of Claude Code. Adding one line at the end of `chat-answer.md`, "Questions usually come in Korean, answer in English anyway", resulted in English all three times in the actual combination where the hook is on (answer prompt + wiki focus header). The "write in English" at the head did not anticipate Korean questions, and haiku followed the language of the question

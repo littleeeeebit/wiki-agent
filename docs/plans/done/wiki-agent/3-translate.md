@@ -1,100 +1,87 @@
-# 3단계 — `translate` 독립
+# Phase 3 — `translate` Independence
 
-전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다.
+The relationship between the overall design and the phases is [in Overview](0-overview.md)].
 
-목표. `translate` 는 계약 하나로만 불린다 — 문장 목록, 방향, 마감을 받아 같은 길이의 문장
-목록을 돌려준다. 예산은 둘이다. 마감은 부르는 쪽이 넘기고, 월 비용 한도는 `translate` 가
-스스로 센다. 한 예산을 여러 기능이 나눠 쓰던 구조(#18·#19)가 여기서 끝난다.
+Goal. `translate` is called by a single contract — it receives a list of sentences, direction, and deadline, and returns a list of sentences of the same length. There are two budgets. The caller passes the deadline, and `translate` counts the monthly cost limit itself. The structure (#18·#19) where multiple features shared a budget ends here.
 
-## 공개 진입점
+## Public Entry Points
 
-`tool/translate/__init__.py` 의 `__all__` 이 공개 진입점이다.
+`tool/translate/__init__.py`'s `__all__` is the public entry point.
 
-| 이름 | 무엇 | 부르는 쪽 |
+| Name | What | Caller |
 | --- | --- | --- |
-| `translate(texts, direction, deadline)` | 번역. 실패하면 원문을 돌려준다 | `inject`, `session_state`, `chat`, `mirror` |
-| `usage()` | 이번 달 사용액과 한도 | `python tool/translate --usage`, 6단계 화면 |
-| `glossary()` | 용어집. 번역하지 않는 한국어 용어 | `english_progress` |
-| `KO_EN`, `EN_KO` | 방향 | 위 전부 |
+| `translate(texts, direction, deadline)` | Translation. Returns original text if it fails | `inject`, `session_state`, `chat`, `mirror` |
+| `usage()` | Usage and limit for this month | `python tool/translate --usage`, Phase 6 screen |
+| `glossary()` | Glossary. Korean terms not to be translated | `english_progress` |
+| `KO_EN`, `EN_KO` | Direction | All of the above |
 
-- `direction` 과 `deadline` 에서 기본값을 뺀다. 마감의 기본값 60초(`TIMEOUT`)도 지운다.
-  기본값이 있으면 마감을 넘기지 않은 호출자가 남의 마감으로 돈다 — #19 가 그 모양이었다.
-  60초는 화면 쪽(`chat` 의 `/api/translate`, `mirror`)이 자기 상수로 넘긴다
-- `ko_to_en`·`en_to_ko` 는 지운다. `inject.rendering` 은 `translate([prompt], KO_EN, deadline)[0]`
-  을 부른다. 같은 일을 하는 입구가 셋이면 공개 진입점이 하나가 아니다
-- `--check` 와 그 도구들(`protect`, `by_kind`, `baseline` 등)은 패키지 안에 그대로 둔다.
-  테스트(`test_*.py`)는 내부를 들여다봐도 된다
+- Remove default values from `direction` and `deadline`. Also remove the 60-second default for the deadline (`TIMEOUT`). If there is a default value, a caller that does not pass a deadline runs on someone else's deadline — #19 was like that. The 60 seconds is passed by the screen side (`chat`'s `/api/translate`, `mirror`) as its own constant.
+- Remove `ko_to_en`·`en_to_ko`. `inject.rendering` calls `translate([prompt], KO_EN, deadline)[0]`. If there are three entry points doing the same thing, it is not a single public entry point.
+- Keep `--check` and its tools (`protect`, `by_kind`, `baseline`, etc.) inside the package. Tests (`test_*.py`) are allowed to look inside.
 
-### 검사
+### Inspection
 
-`lint.pipeline_surface` 가 본다. 파이프라인의 `__init__.py` 에 `__all__` 이 있으면, `tool/`
-루트 모듈(테스트 제외)이 그 파이프라인에서 쓰는 이름이 전부 `__all__` 안에 있어야 한다.
+`lint.pipeline_surface` checks this. If there is `__all__` in the pipeline's `__init__.py`, all names used by the `tool/` root module (excluding tests) in that pipeline must be within `__all__`.
 
-- `import translate as T` 뒤의 `T.x`, `from translate import x`, `from tool import translate`
-  를 다 본다
-- 하위 모듈 import(`import translate.x`, `from translate.x import y`)는 곧바로 발견이다
-- 발견의 종류는 `공개 진입점` 이다
+- Look at all `T.x`, `from translate import x`, `from tool import translate` after `import translate as T`
+- Sub-module imports (`import translate.x`, `from translate.x import y`) are immediate discoveries
+- The type of discovery is `공개 진입점`
 
-`__all__` 이 없는 파이프라인(`wiki`, `agent`, `workspace`)은 아직 보지 않는다. 4·5단계가
-`__all__` 을 쓰는 순간 같은 검사가 붙는다.
+Pipelines without `__all__` (`wiki`, `agent`, `workspace`) are not checked yet. The same inspection will be applied as soon as phases 4 and 5 use `__all__`.
 
-| `test_lint.py` 에 심는 것 | 기대 |
+| What to plant in `test_lint.py` | Expectation |
 | --- | --- |
-| 루트 모듈이 `import translate` 뒤 `translate._ask(...)` | 빨강 |
-| 루트 모듈이 `import translate as T` 뒤 `T.protect` | 빨강 |
-| 루트 모듈이 `from translate import protect` | 빨강 |
-| 루트 모듈이 `from translate.x import y` | 빨강 |
-| 루트 모듈이 `translate.translate`, `from translate import KO_EN`, 테스트 파일이 `translate._ask` | 초록 |
+| Root module `translate._ask(...)` after `import translate` | Red |
+| Root module `T.protect` after `import translate as T` | Red |
+| Root module `from translate import protect` | Red |
+| Root module `from translate.x import y` | Red |
+| Root module `translate.translate`, `from translate import KO_EN`, test file `translate._ask` | Green |
 
-## 월 비용 한도
+## Monthly Cost Limit
 
-| 무엇 | 어떻게 |
+| What | How |
 | --- | --- |
-| 한도 | `.env` 의 `TRANSLATE_MONTHLY_USD`, 없으면 같은 이름의 환경 변수, 둘 다 없으면 $5. 읽는 순서는 `GEMINI_API_KEY` 와 같다 |
-| `0` | 새 요청을 보내지 않는다. 캐시는 그대로 답한다 |
-| 읽을 수 없는 값 | `0` 으로 본다. 한도를 못 읽었을 때 돈 쪽으로 안전하게. 숫자가 아닌 값, 음수, `nan`·`inf`, 그리고 빈 값 — 키처럼 줄이 있으면 그 줄이 이긴다 |
-| 요금 | 응답의 `usageMetadata` — 입력은 `promptTokenCount`, 출력은 `candidatesTokenCount` 와 `thoughtsTokenCount` 의 합 — 에 요금표를 곱한다. `gemini-3.1-flash-lite` 입력 $0.25, 출력 $1.50 (100만 토큰당, 2026-09-24 ai.google.dev 요금표) |
-| 먼저 기록 | 요청을 보내기 전에 선차감을 쌓는다. 보낸 요청 본문의 바이트 수를 입력·출력 토큰 수로 본 값이라 보통 실제보다 많다 — 출력 상한이 없으니 보장은 아니다. 쓰지 못하면 보내지 않는다. 선차감을 쓰느라 기다린 시간은 호출자의 마감에서 빼고, 남은 시간이 없으면 되돌리고 보내지 않는다. 응답 뒤에 기록하면 잠김으로 쓰기가 실패할 때 비용이 장부에서 빠지기 때문이다(리뷰 라운드 1) |
-| 응답이 오면 | 실제 요금과 선차감의 차이로 정산한다. 정산 쓰기가 실패하면 선차감이 남는다. 응답을 받은 뒤 본문이 끊기거나 깨지면 청구된 것으로 보고 선차감을 남긴다 |
-| 응답 없이 시간이 다 된 요청 | 서버는 끝까지 처리하고 청구했을 수 있다. 선차감을 그대로 둔다 |
-| 연결 실패, HTTP 오류 | 청구되지 않으므로 선차감을 되돌린다 |
-| 달 | 선차감·정산·환불은 선차감한 달에 쓴다. 자정을 넘긴 요청이 새 달에 음수를 남기지 않게 |
-| 저장 | 캐시와 같은 sqlite 파일의 `spend(month, usd)` 표. 달은 UTC `YYYY-MM` |
-| 판정 | 요청을 보내기 전에 이번 달 사용액이 한도 이상이면 보내지 않고 원문을 돌려준다 |
-| 캐시를 못 열거나 사용액 조회가 실패할 때 | 셀 수 없으므로 요청하지 않는다. 이미 찾은 캐시 적중은 그대로 돌려준다 |
+| Limit | `TRANSLATE_MONTHLY_USD` of `.env`, if not present, environment variable of the same name, if neither, $5. The reading order is the same as `GEMINI_API_KEY` |
+| `0` | Do not send new requests. Cache responds as is |
+| Unreadable value | Treated as `0`. Safe for the money side when the limit cannot be read. Non-numeric values, negative numbers, `nan`·`inf`, and empty values — if there is a line like a key, that line wins |
+| Fee | `usageMetadata` of the response — input is `promptTokenCount`, output is the sum of `candidatesTokenCount` and `thoughtsTokenCount` — multiplied by the rate table. `gemini-3.1-flash-lite` input $0.25, output $1.50 (per 1 million tokens, 2026-09-24 ai.google.dev rate table) |
+| Record first | Accumulate pre-deduction before sending the request. It is usually higher than the actual amount because it is the value of the number of bytes in the request body sent as the number of input/output tokens — not a guarantee since there is no output limit. If it cannot be used, do not send. The time spent waiting to use the pre-deduction is subtracted from the caller's deadline, and if there is no time left, it is reverted and not sent. Recording after the response causes the cost to be missing from the ledger if writing fails due to a lock (Review Round 1) |
+| When response arrives | Settle with the difference between the actual fee and the pre-deduction. If the settlement write fails, the pre-deduction remains. If the body is cut off or corrupted after receiving the response, it is considered charged and the pre-deduction remains |
+| Request timed out without response | The server may have processed it to the end and charged for it. Keep the pre-deduction as is |
+| Connection failure, HTTP error | Not charged, so revert the pre-deduction |
+| Month | Pre-deduction, settlement, and refund are used in the month of pre-deduction. So that requests past midnight do not leave negative numbers in the new month |
+| Storage | `spend(month, usd)` table in the same sqlite file as the cache. Month is UTC `YYYY-MM` |
+| Judgment | If this month's usage is above the limit before sending the request, do not send and return the original text |
+| When cache cannot be opened or usage lookup fails | Cannot count, so do not request. Already found cache hits are returned as is |
 
-요금표는 `MODEL` 옆의 상수다. 모델을 바꾸면 같이 바꾼다.
+The rate table is a constant next to `MODEL`. Change it together when changing the model.
 
-한계. 두 프로세스가 한도 바로 아래에서 동시에 요청하면 둘 다 나간다. 넘치는 양은 요청
-하나 크기다.
+Limit. If two processes request simultaneously just below the limit, both go out. The excess amount is the size of one request.
 
-## 캐시
+## Cache
 
-바꾸지 않는다. 이미 파이프라인 안에 있고, 키에 모델·프롬프트·용어집 버전이 든다. 한도를
-넘어도 캐시는 답한다 — 이미 낸 돈이다.
+Do not change. It is already in the pipeline, and the key contains the model, prompt, and glossary version. Even if the limit is exceeded, the cache responds — it is money already paid.
 
-## 넣지 않은 것
+## Things Not Included
 
-| 무엇 | 언제 |
+| What | When |
 | --- | --- |
-| 화면의 사용량 표시 | 6단계. 여기서는 `usage()` 와 `python tool/translate --usage` 까지 |
-| 번역 켬·끔 스위치 | 6단계. 메인의 스위치다 |
+| Usage display on screen | Phase 6. Up to `usage()` and `python tool/translate --usage` here |
+| Translation on/off switch | Phase 6. It is the main switch |
 
-## 검증
+## Verification
 
-| 확인 | 결과 |
+| Check | Result |
 | --- | --- |
-| `pytest tool/` | 285 통과. 바꾸기 전 274, 한도 테스트 11개를 더했다 |
-| 한도 테스트가 빨개지는가 | 한도 판정을 지우면 2개, 시간 초과 기록을 지우면 1개, 읽을 수 없는 한도를 기본값으로 바꾸면 1개, `thoughtsTokenCount` 를 빼면 1개, 저장소가 없을 때 보내게 바꾸면 1개가 빨강. 리뷰 라운드 1 수정분 — 사용액 조회 예외를 안 잡으면, 선차감 실패를 무시하면, 환불·정산을 빼면, 한도 읽기를 되돌리면 각각 1개가 빨강. 라운드 2 수정분 — 달을 고정하지 않으면, 응답 뒤 실패에 환불하면, 선차감 뒤 마감을 다시 보지 않으면 각각 1개가 빨강 |
-| `python tool/lint.py --check` | 종료 0. `english_progress.py` 에 `translate.protect` 를 심으면 종료 1 과 `공개 진입점` 발견 |
-| `python tool/test_lint.py` | `공개 진입점` 위반 다섯 가지가 빨강, 공개 이름·테스트 파일·`__all__` 없는 파이프라인은 초록 |
-| 직접 실행 스크립트 | `test_apply`·`test_inject`·`test_declared_continuation`·`test_repo_lint`·`test_trajectory` 종료 0, `ruff check tool` 통과 |
-| 실제 요청 | 버리는 캐시로 한 문장을 번역했다. `usageMetadata` 로 $0.000067 이 기록됐다. 한도 0 에서 새 문장은 원문, 캐시된 문장은 번역이 돌아왔다. 선차감으로 바꾼 뒤 다시 한 문장 — 선차감 약 $0.0017 이 실제 $0.000083 으로 정산됐다 |
-| `python tool/translate --check` | 바꾸기 전과 출력이 같다 |
+| `pytest tool/` | 285 passed. 274 before change, 11 limit tests added |
+| Do limit tests turn red? | 2 red if limit judgment is removed, 1 if timeout record is removed, 1 if unreadable limit is changed to default, 1 if `thoughtsTokenCount` is removed, 1 if changed to send when storage is missing. Review Round 1 fixes — 1 red each if usage lookup exception is not caught, if pre-deduction failure is ignored, if refund/settlement is removed, if limit reading is reverted. Round 2 fixes — 1 red each if month is not fixed, if refunded on failure after response, if deadline is not re-checked after pre-deduction |
+| `python tool/lint.py --check` | Exit 0. If `translate.protect` is planted in `english_progress.py`, exit 1 and `공개 진입점` discovery |
+| `python tool/test_lint.py` | Five `공개 진입점` violations are red, public names/test files/pipelines without `__all__` are green |
+| Direct execution script | `test_apply`·`test_inject`·`test_declared_continuation`·`test_repo_lint`·`test_trajectory` exit 0, `ruff check tool` passed |
+| Actual request | Translated one sentence with a disposable cache. $0.000067 recorded with `usageMetadata`. At limit 0, new sentence returned original, cached sentence returned translation. One sentence again after changing to pre-deduction — pre-deduction approx $0.0017 settled to actual $0.000083 |
+| `python tool/translate --check` | Output is the same as before the change |
 
-검증하다 찾은 것. `lint` 는 발견을 찍을 때 종류 이름을 고정된 목록에서만 골랐다. 목록에 없는
-종류는 종료 코드를 1 로 만들면서 화면에는 안 나왔다 — 새 `공개 진입점` 이 그랬고, 기존
-`주석이 한국어다` 도 그랬다. 목록에 없는 종류를 뒤에 붙여 찍는다.
+Things found while verifying. `lint` only chose type names from a fixed list when printing discoveries. Types not in the list made the exit code 1 but did not appear on the screen — new `공개 진입점` did that, and existing `주석이 한국어다` did too. Print types not in the list by appending them at the end.
 
-리뷰. 라운드 1 이 P1 셋을 냈다. 한도 읽기(빈 값·`inf` 가 기본값·무제한이 됐다 — `nan` 은 이미 0 이었다), 사용액 조회 예외가 캐시 적중까지 버림, 응답 뒤 기록이 잠김으로 실패하면 비용이 빠짐. 셋 다 고쳤고, 마지막 것은 먼저 기록하고 보내는 쪽으로 바꿨다.
-라운드 2 가 그 선차감에서 P1 셋을 냈다. 자정을 넘긴 정산이 새 달에 음수를 남김, 응답을 받은 뒤의 실패까지 환불함, 선차감을 쓰느라 기다린 시간이 마감에서 안 빠짐. 셋 다 고쳤다.
+Review. Round 1 produced a set of P1s. Limit reading (empty value/`inf` became default/unlimited — `nan` was already 0), usage lookup exception discarded even cache hits, cost missing if recording after response failed due to lock. All three fixed, the last one changed to record first and then send.
+Round 2 produced a set of P1s from that pre-deduction. Settlement past midnight left negative numbers in the new month, refunded even on failure after receiving response, time spent waiting to use pre-deduction not subtracted from deadline. All three fixed.

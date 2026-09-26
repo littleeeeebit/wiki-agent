@@ -1,70 +1,64 @@
-# loop — 묻고, 맡기고, 리뷰하고, 위키로 돌아오는 한 바퀴
+# loop — A cycle of asking, delegating, reviewing, and returning to the wiki
 
-[wiki-agent 계획](../done/wiki-agent/0-overview.md)의 1–7단계로 한 창이 섰다. 위키에 묻고, 작업트리의
-에이전트에게 일을 시키고, 셸을 쓴다. 이 계획은 그 위에서 끊겨 있는 곳을 잇는다.
+[The wiki-agent plan ](../done/wiki-agent/0-overview.md) is set up in 7 steps. Ask the wiki, delegate work to agents in the worktree, and use the shell. This plan connects the gaps above it.
 
-단계별 계획은 착수 직전에 하위 문서로 쓴다.
+Step-by-step plans are written as sub-documents just before starting.
 
-- [1단계 — 어긋남 정리](1-cleanup.md)
-- [2단계 — 에이전트의 미룬 것](2-agent.md)
-- [3단계 — 명세와 인계](3-spec.md)
-- [4단계 — 리뷰 셀과 루프](4-review.md)
-- [5단계 — 연결과 전수조사](5-connect.md)
-- [6단계 — 화면과 지도](6-screen.md)
-- [7단계 — 검증](7-verify.md)
+- [Step 1 — Cleaning up discrepancies ](1-cleanup.md)
+- [Step 2 — Agent's deferred tasks ](2-agent.md)
+- [Step 3 — Specification and handover ](3-spec.md)
+- [Step 4 — Review cell and loop ](4-review.md)
+- [Step 5 — Connection and full investigation ](5-connect.md)
+- [Step 6 — Screen and map ](6-screen.md)
+- [Step 7 — Verification ](7-verify.md)
 
-2–7단계의 구체화에서 사용자와 더 정한 것은 각 문서의 "사용자와 정한 것" 에 있다. 이 개요와 달라진 곳은
-본문에 고쳐 적었다.
+What was decided with the user during the detailing of steps 2–7 is in the "Decided with user" section of each document. Changes from this overview were corrected in the main text.
 
-## 왜 하나
+## Why do this
 
-문제. 핵심 흐름은 "다음에 뭘 할지 모를 때 위키에 묻고, 대화로 다음 작업을 정리해, 작업 셀에
-인계한다" 인데 지금은 헐겁다.
+Problem. The core flow is "When you don't know what to do next, ask the wiki, organize the next task through conversation, and hand it over to the work cell," but it is currently loose.
 
-- "→ 작업" 은 질문 하나와 답 하나만 넘긴다. 그 뒤의 대화에서 바뀐 결정은 빠진다
-- 할 일은 초안 맨 아래의 빈 줄이다. 완료 조건이 없고, 작업 세션에는 시스템 프롬프트가 없다
-- 작업이 끝나도 위키 쪽으로 돌아오는 것이 없다
-- 리뷰 루프는 절차 문서와 스킬뿐이고, 사람이 매번 "리뷰 루프" 라고 쳐야 한다
-- 저장소를 위키에 붙이려면 그 저장소에 들어가 자연어로 부탁해야 한다
-- 지도는 이 위키의 규칙만 그린다. 저장소 자체의 문서 그래프(`repo_graph.py`)는 만들어지지만
-  보이지 않는다
-- 화면은 기능을 덧대며 자랐다. 지도는 옛 랜딩 페이지를 그대로 붙인 것이다
+- "→ Work" only passes one question and one answer. Decisions changed in subsequent conversations are lost
+- The to-do list is an empty line at the bottom of the draft. There are no completion conditions, and the work session lacks a system prompt
+- There is no return to the wiki side after work is finished
+- The review loop consists only of procedure documents and skills, and a human must type "review loop" every time
+- To attach a repository to the wiki, one must enter that repository and request it in natural language
+- The map only draws the rules of this wiki. The document graph (`repo_graph.py`) of the repository itself is created but not visible
+- The screen grew by adding features. The map is just the old landing page attached as is
 
-해법. 묻기에서 머지까지를 한 바퀴로 잇고, 그 바퀴의 단위를 작업 명세 하나로 둔다. 명세가
-작업트리·세션·PR·리뷰 라운드·결정 기록을 모두 묶는다.
+Solution. Connect from asking to merging as one cycle, and set the unit of that cycle as one work specification. The specification binds the worktree, session, PR, review round, and decision record together.
 
-한 줄 목적. 한 사람이 위키와 대화해 다음 작업을 명세로 정하고, 누르면 작업트리에서 일이 시작되고,
-PR 이 리뷰 루프를 돌아 머지되고, 그 결과가 위키로 돌아온다.
+One-line goal. A person talks to the wiki to define the next task as a specification, clicks it to start work in the worktree, the PR goes through the review loop and is merged, and the result returns to the wiki.
 
-## 결정
+## Decision
 
-2026-09-25 에 사용자와 확정했다.
+Confirmed with the user on 2026-09-25.
 
-| 무엇 | 결정 |
+| What | Decision |
 | --- | --- |
-| 미룬 것 | 어긋남 정리, 작업 턴 재접속, 승인 기록과 "이 세션 동안 허용", Codex 읽기 세션의 `app-server` 이전과 토큰 수. 넷 다 한다 |
-| 리뷰어 | 앱 안의 읽기 전용 리뷰 셀. Orca 터미널을 쓰지 않는다 |
-| 루프 범위 | 머지 허용까지 자동. 쓰기 승인 때만 사람을 기다린다. 라운드 상한을 넘으면 멈춘다 |
-| 루프 끝 | 멈추고 "머지 가능" 으로 알린다. 사람이 [머지] 를 누르면 `gh pr merge` 를 한다. PR 이 실제로 `MERGED` 가 된 뒤에만 정리한다 — merge queue 나 자동 머지에 들어가 아직 열려 있으면 `머지 대기` 로 두고 다시 확인한다. 남은 P2 는 PR 코멘트 하나 |
-| 루프 버튼 | 레일 위의 "리뷰 루프 (N)" 하나. 열린 PR 이 있으면 켜진다. 하나면 바로 시작, 여럿이면 모달에서 복수 선택. PR 이 딸린 작업은 레일에서 `#번호` 를 단다 |
-| 여러 PR | 동시에 돈다. 동시 실행 수는 설정에서 제한한다 |
-| 작업트리 없는 PR | PR 의 머리 브랜치를 받아 작업트리를 만든다. 포크에서 온 PR 은 받지 않는다 |
-| 지도 | 레일의 프로젝트를 따라간다. 그 저장소의 문서 그래프가 기본, 허브 규칙이 층으로 겹친다. 제목 문구와 숫자 카드를 걷고 한 줄 지표만 둔다 |
-| 정리 방식 | 전용 "다음 작업" 초점. 에이전트가 후보를 먼저 내고, 선택지로 되묻고, 명세를 낸다 |
-| 명세 | 목표와 빼는 것, 완료 조건, 근거 페이지와 파일, 대화에서 내린 결정 |
-| 인계 | [시작] 이 작업트리를 만들고 명세를 시스템 프롬프트로 첫 턴을 보낸다 |
-| 돌아오는 것 | 명세별 상태, 결과 요약을 원래 대화에, 결정 기록, `plan-active` 갱신. 뒤의 둘은 PR 에 실린다. `plan-active` 는 머지와 함께, 결정 기록은 다음 `sync` 에 들어간다 |
-| 연결 칸 | 프로젝트 목록 화면. 저장소마다 상태와 [연결] |
-| 허브 | wiki-agent 가 허브다. 사용자 단위 hook 과 `~/.claude/skills` 링크는 지금 `ai-coding-agent-wiki-public` 을 가리킨다. 첫 연결 때 바뀔 것을 보여 주고 확인받아 옮긴다 |
-| 설치 방식 | hook 은 사용자 단위로 한 번(`setup_agents --global`). [연결] 은 저장소에 `.wiki/adapter.toml` 을 만들고, 옛 프로젝트 단위 hook 을 걷고, 호스트마다 SessionStart 시험으로 확인한다. Claude 와 Codex 둘 다 |
-| 전수조사 | 설정의 스위치. 켜면 [연결] 이 조사까지 한다. 견적을 보여 주고 확인받고, 설정의 한도에서 멈춘다 |
-| 조사 산출 | 구조 개요와 모듈 페이지, 주입용 규칙 페이지, 결정 기록, adapter 슬롯 추정 |
-| 조사 반영 | `wiki-bootstrap` 작업트리에서 쓰고 PR 을 올린다. 리뷰 루프 대상이다 |
-| 문서가 있으면 | 빈 곳만 채운다 |
-| 화면 | 작업 중심 3단. 설정은 톱니바퀴 모달. 질의 초점은 다음 작업·위키·회고 셋 |
-| 진행 | 계획 문서 먼저, 단계마다 PR 하나 |
+| Deferred | Cleaning up discrepancies, work turn reconnection, approval records and "allow during this session", Codex reading session before `app-server` and token count. Doing all four |
+| Reviewer | Read-only review cell within the app. Does not use Orca terminal |
+| Loop scope | Automatic until merge approval. Waits for a human only for write approval. Stops if the round limit is exceeded |
+| Loop end | Stops and notifies "Merge possible". If a human clicks [Merge], it does `gh pr merge`. Only cleans up after the PR actually becomes `MERGED` — if it enters a merge queue or auto-merge and is still open, it leaves it as `머지 대기` and checks again. Remaining P2 is one PR comment |
+| Loop button | One "Review loop (N)" on the rail. Turns on if there is an open PR. If one, starts immediately; if multiple, multiple selection in a modal. Tasks with attached PRs display `#번호` on the rail |
+| Multiple PRs | Run simultaneously. Simultaneous execution count is limited in settings |
+| PR without worktree | Receives the PR's head branch to create a worktree. Does not accept PRs from forks |
+| Map | Follows the projects on the rail. The document graph of that repository is the default, with hub rules layered on top. Removes title phrases and number cards, leaving only one-line indicators |
+| Organization method | Dedicated "Next task" focus. The agent proposes candidates first, asks back with options, and issues a specification |
+| Specification | Goals and exclusions, completion conditions, evidence pages and files, decisions made in conversation |
+| Handover | [Start] creates a worktree and sends the specification as a system prompt for the first turn |
+| Returning | Status per specification, summary of results to the original conversation, decision record, `plan-active` update. The latter two are included in the PR. `plan-active` is with the merge, and the decision record goes into the next `sync` |
+| Connection tab | Project list screen. Status and [Connect] for each repository |
+| Hub | wiki-agent is the hub. User-level hook and `~/.claude/skills` links currently point to `ai-coding-agent-wiki-public`. Shows what will change during the first connection and asks for confirmation before moving |
+| Installation method | Hook is once per user (`setup_agents --global`). [Connect] creates `.wiki/adapter.toml` in the repository, removes old project-level hooks, and verifies with SessionStart test per host. Both Claude and Codex |
+| Full investigation | Switch in settings. If turned on, [Connect] also performs an investigation. Shows estimates, asks for confirmation, and stops at the limit in settings |
+| Investigation output | Structure overview and module page, rule page for injection, decision record, adapter slot estimation |
+| Investigation reflection | Uses `wiki-bootstrap` worktree and raises a PR. Subject to review loop |
+| If documents exist | Fills only empty spaces |
+| Screen | Work-centered 3-column. Settings is a gear modal. Query focus is on next task, wiki, and retrospective |
+| Progress | Plan document first, one PR per step |
 
-## 한 바퀴
+## One cycle
 
 ```
  다음 작업 초점 ─ 후보 3~5 ─ 되묻기 ─ 명세 카드
@@ -78,179 +72,118 @@ PR 이 리뷰 루프를 돌아 머지되고, 그 결과가 위키로 돌아온�
         └──────────── [머지] ◀── 머지 가능
 ```
 
-명세의 상태는 `정리됨 → 작업 중 → PR #n → 리뷰 대기 ⇄ 리뷰 Rn ⇄ 고치는 중 Rn → 머지 가능 → (머지 대기 →) 머지됨`
-이다. `머지 대기` 는 merge queue 나 자동 머지에 들어가 PR 이 아직 열린 때이고, 정리는 `머지됨` 에서만
-한다. 상태는 어디서든 `멈춤` 으로 빠질 수 있고, 멈춤에는 이유가 붙는다. 상태 값의 목록은
-[3단계](3-spec.md)의 표, 멈춤 이유와 이유별 [계속] 은 [4단계](4-review.md)의 표가 전부다. 이 문서는 목록을
-옮겨 적지 않는다. 승인 대기는 멈춤이 아니라 서 있는 것이고, 명세의 `waiting` 으로 따로 보인다.
+The status of the specification is `정리됨 → 작업 중 → PR #n → 리뷰 대기 ⇄ 리뷰 Rn ⇄ 고치는 중 Rn → 머지 가능 → (머지 대기 →) 머지됨`.
+`머지 대기` is when it enters a merge queue or auto-merge and the PR is still open, and cleanup is done only at `머지됨`. The status can exit to `멈춤` from anywhere, and a stop includes a reason. The list of status values is the table in [Step 3](3-spec.md), and the stop reasons and [Continue] per reason are all in the table in [Step 4](4-review.md). This document does not transcribe the list. Waiting for approval is not a stop but standing by, and is shown separately as `waiting` of the specification.
 
-## 작업 명세
+## Work specification
 
-명세는 JSON 하나다. 허브의 `raw/specs/<repo>/<id>.json` 에 둔다. 이 기계의 운영 상태라서
-대상 저장소에 커밋하지 않는다. 대상 저장소로 가는 것은 PR 에 실린 것뿐이다.
+Specification is one JSON. Placed in `raw/specs/<repo>/<id>.json` of the hub. Since this is the operating state of the machine, it is not committed to the target repository. Only what is included in the PR goes to the target repository.
 
-머지 때 서버는 대상 저장소에 쓰지 않는다. 위키로 돌아가는 두 가지는 머지 전에 PR 에 싣는다.
+During merge, the server does not write to the target repository. The two things returning to the wiki are included in the PR before merging.
 
-- 결정 기록. 명세의 `decisions` 를 PR 본문의 `## 변경 이유` 절에 쓴다. 머지 뒤에는 지금 있는
-  `harvest` 가 그 절로 결정 기록을 만든다(`tool/harvest.py:177`). 조사를 켰든 껐든 위키가 같은
-  길로 쌓이는 것과 같은 이유다. 기록은 머지 순간이 아니라 그 저장소의 다음 `sync` 에 생긴다.
-  `sync` 는 Stop hook 이고 결정은 6시간 간격으로 찾는다(`tool/sync.py:28`). 서버가 머지 직후
-  `harvest` 를 돌리면 원본에 쓰게 되므로 돌리지 않는다. 그래서 명세의 `머지됨` 은 기록을 기다리지
-  않고, 명세 카드는 "결정 기록: 다음 sync 때" 를 보이다가 그 PR 번호의 기록 파일이 생기면 링크로
-  바꾼다
-- `plan-active` 갱신. 명세가 계획의 한 행에서 나왔으면(`docs/plans/` 의 표든 `.wiki/plan-active.md` 든
-  명세의 `source` 가 가리키는 그 행 하나), PR 이 선 뒤 작업 셀이 그 행의 상태 칸을 `완료 — PR #n` 으로
-  바꾸는 커밋을 PR 에 더한다. 리뷰 셀이 이 커밋도 본다. 출처 행이 없는 명세는 어느 문서도 바꾸지 않는다
+- Decision record. Writes `decisions` of the specification to the `## 변경 이유` section of the PR body. After merge, the existing `harvest` creates a decision record in that section (`tool/harvest.py:177`). It is the same reason why the wiki accumulates in the same path whether investigation is on or off. The record is created not at the moment of merge, but at the next `sync` of that repository.
+  `sync` is the Stop hook and decisions are found at 6-hour intervals (`tool/sync.py:28`). If the server runs `harvest` immediately after merge, it would write to the original, so it does not run it. Therefore, `머지됨` of the specification does not wait for the record, and the specification card shows "Decision record: at next sync" and changes to a link when the record file for that PR number is created
+- `plan-active` update. If the specification came from a row in the plan (the table in `docs/plans/` or `.wiki/plan-active.md`, that one row pointed to by `source` of the specification), after the PR is raised, the work cell adds a commit to the PR that changes the status column of that row to `완료 — PR #n`. The review cell also sees this commit. Specifications without a source row do not change any documents
 
-| 칸 | 무엇 | 누가 채우나 |
+| Column | What | Who fills it |
 | --- | --- | --- |
-| `goal` | 한 줄 목표 | 다음 작업 초점, 사람이 고친다 |
-| `out` | 범위 밖으로 두는 것 | 같음 |
-| `done` | 완료 조건. adapter 의 `gate_cmd` 와 이 작업 고유의 확인 항목 | 같음. `gate_cmd` 는 서버가 첫 항목으로 늘 넣는다 |
-| `grounds` | 인용한 위키 페이지와 파일 경로, 걸리는 규칙. 본문이 아니라 목록 | 대화에서 뽑는다 |
-| `decisions` | 왜 이 방식인지, 버린 대안 | 대화에서 뽑는다. PR 본문의 `변경 이유` 가 되고, 머지 뒤 `harvest` 가 결정 기록으로 만든다 |
-| `source` | 명세가 나온 대화의 초점과 턴, 계획 문서의 행이 있으면 그 행 | 기계 |
-| `task`·`worktree`·`pr`·`rounds`·`state` | 바퀴가 도는 동안의 자리 | 기계 |
+| `goal` | One-line goal | Next task focus, human modifies |
+| `out` | Exclusions | Same |
+| `done` | Completion conditions. Adapter's `gate_cmd` and confirmation items unique to this task | Same. `gate_cmd` is always added by the server as the first item |
+| `grounds` | Cited wiki pages and file paths, rules applied. List, not body | Extracted from conversation |
+| `decisions` | Why this method, discarded alternatives | Extracted from conversation. Becomes `변경 이유` of the PR body, and `harvest` makes it a decision record after merge |
+| `source` | Focus and turn of the conversation where the specification emerged, and the row of the plan document if any | Machine |
+| `task`·`worktree`·`pr`·`rounds`·`state` | Position while the cycle is running | Machine |
 
-작업 세션은 명세를 시스템 프롬프트로 받는다. 끝났다고 말하려면 `done` 의 항목을 하나씩 돌린
-결과를 적어야 한다. 서버는 그 보고를 믿지 않고 작업트리에서 `gate_cmd` 를 한 번 더 돌린 뒤에 push 하고
-PR 을 올린다. 지금 작업 세션은 시스템 프롬프트가 없다(`work.py:202`).
+Work sessions receive the specification as a system prompt. To say it is finished, one must write the results of running the items in `done` one by one. The server does not trust that report and runs `gate_cmd` one more time in the worktree before pushing and raising a PR. Currently, work sessions have no system prompt (`work.py:202`).
 
-## 다음 작업 초점
+## Next task focus
 
-지금의 진척도·진단 초점이 하던 일을 흡수한다. 첫 턴에 후보를 낸다. 후보의 출처는 다섯이다.
+Absorbs the work previously done by progress and diagnostic focus. Proposes candidates in the first turn. There are five sources for candidates.
 
-- `plan-active` 와 `docs/plans/` 의 남은 행
-- 열린 PR 과 그 리뷰 상태
-- 최근 결정 기록
-- `lint --check` 의 경고
-- 리뷰에서 남은 P2
+- Remaining rows of `plan-active` and `docs/plans/`
+- Open PRs and their review status
+- Recent decision records
+- Warnings from `lint --check`
+- P2 remaining from review
 
-후보를 고르면 범위·완료 조건·빼는 것을 선택지로 되묻는다. 선택지는 답 안의 버튼으로 그린다.
-다 정해지면 명세 카드를 낸다. 명세의 모양은 서버가 검사한다 — 빈 `goal` 은 카드가 되지 않는다.
-`gate_cmd` 는 서버가 넣으므로 빠질 수 없고, adapter 에 `gate_cmd` 가 없는 저장소는 연결부터 하라고 한다. 명세 하나가 작업 여럿으로 쪼개지면 카드도 여럿이다.
+When a candidate is selected, it asks back for scope, completion conditions, and exclusions as options. Options are drawn as buttons within the answer. Once everything is decided, it issues a specification card. The server checks the shape of the specification — an empty `goal` cannot become a card. `gate_cmd` is added by the server and cannot be omitted, and repositories without `gate_cmd` in the adapter are told to connect first. If one specification is split into multiple tasks, there are multiple cards.
 
-## 리뷰 셀과 루프
+## Review cell and loop
 
-리뷰 셀은 작업트리마다 하나인 읽기 전용 세션이다. 모델은 설정에서 고르고, 기본은 Codex 다.
-라운드 지시와 결과의 모양은 `operator/codex-review-loop` 를 그대로 쓴다. 리뷰 셀은 결과를 파일로 쓰지
-않고 최종 답으로 낸다. 서버가 지시와 결과를 허브의 `raw/review/<repo>/<pr>/` 에 남긴다. 작업트리의
-`review_dir` 에 두면 작업 셀이 커밋할 수 있고, 작업트리를 지우면 같이 사라진다.
+Review cell is a read-only session, one per worktree. The model is selected in settings, default is Codex. The round instructions and the shape of the results use `operator/codex-review-loop` as is. The review cell does not write results to a file but issues them as the final answer. The server leaves the instructions and results in `raw/review/<repo>/<pr>/` of the hub. If placed in `review_dir` of the worktree, the work cell can commit it, and it disappears when the worktree is deleted.
 
-한 라운드는 이렇다.
+One round is as follows.
 
-1. 서버가 라운드 지시를 쓴다. 허용 목록, `git diff --shortstat`, 지난 발견의 처리 결과가 들어간다
-2. 리뷰 셀이 `gh pr diff` 를 읽고 `[P0|P1|P2] file:line` 과 마지막 줄 `머지 허용`·`머지 불가` 를 낸다
-3. 서버가 결과를 파싱한다. 마지막 줄이 없거나 라운드 번호가 안 맞으면 그 라운드는 실패다
-4. 머지 불가면 발견을 작업 셀에 한 턴으로 보낸다. 작업 셀은 재현하고 고치고 커밋한다. 동의하지 않으면
-   근거를 낸다. 쓰기는 지금처럼 승인받는다. 서버가 `gate_cmd` 를 돌리고 통과하면 push 한다
-5. 다음 라운드
+1. Server writes round instructions. Includes allow list, `git diff --shortstat`, and processing results of past findings
+2. Review cell reads `gh pr diff` and issues `[P0|P1|P2] file:line` and the last line `머지 허용`·`머지 불가`
+3. Server parses the results. If the last line is missing or the round number does not match, that round is a failure
+4. If not mergeable, sends findings to the work cell as one turn. The work cell reproduces, fixes, and commits. If it disagrees, it provides evidence. Writing is approved as it is now. Server runs `gate_cmd` and if it passes, pushes
+5. Next round
 
-루프는 머지 허용이 나오면 `머지 가능` 으로 끝나고, 그 밖에는 멈춤 이유 표(4단계)의 이유로만 멈춘다. 라운드
-수는 줄어야 한다. 발견이 줄지 않으면 `codex-review-loop`
-의 발견 묶기를 지시에 넣는다.
+Loop ends with `머지 가능` when merge approval is issued, and otherwise stops only for reasons in the stop reason table (Step 4). The number of rounds must decrease. If findings do not decrease, insert `codex-review-loop` finding bundling into the instructions.
 
-루프는 HTTP 응답보다 오래 산다. 그래서 2단계의 재접속이 먼저 서야 한다. 창을 새로 고쳐도 루프는
-돌고 있고, 화면은 이벤트 버퍼에서 따라잡는다. 앱을 닫으면 서버가 내려가므로 루프도 멈춘다. 도는
-것이 있으면 닫기 전에 확인받고, 다시 띄우면 `멈춤 — 서버 재시작` 에서 [계속] 한다.
+Loops live longer than HTTP responses. Therefore, the reconnection in step 2 must be set up first. Even if the window is refreshed, the loop is running, and the screen catches up from the event buffer. If the app is closed, the server goes down, so the loop also stops. If something is running, it asks for confirmation before closing, and if relaunched, [Continue] at `멈춤 — 서버 재시작`.
 
-열린 PR 목록은 `gh pr list --json number,title,headRefName,headRefOid,headRepositoryOwner,url` 이다.
-창이 포커스를 받을 때와 루프 상태가 바뀔 때 다시 읽는다.
+Open PR list is `gh pr list --json number,title,headRefName,headRefOid,headRepositoryOwner,url`.
+Re-read when the window receives focus and when the loop status changes.
 
-작업트리가 없는 PR 은 `workspace.create` 로 받을 수 없다. `create` 는 원본 HEAD 에서 새 브랜치를
-만든다(`tool/workspace/worktrees.py:38`). 그러면 리뷰 셀이 PR 과 다른 코드를 본다. 그래서
-`workspace` 에 기존 브랜치를 받는 진입점을 더한다. `origin/<headRefName>` 을 fetch 하고, 그 브랜치를
-추적하는 작업트리를 만들고, 작업트리의 HEAD 가 PR 의 `headRefOid` 와 같은지 확인한다. 다르면
-만든 작업트리를 치우고 거절한다. 머리 저장소의 주인이 원본과 다른 포크 PR 은 푸시할 곳이 없으므로
-목록에 이유와 함께 보이고 고를 수 없다.
+PRs without a worktree cannot be received with `workspace.create`. `create` creates a new branch from the original HEAD (`tool/workspace/worktrees.py:38`). Then the review cell sees code different from the PR. Therefore, add an entry point to receive existing branches in `workspace`. Fetch `origin/<headRefName>`, create a worktree tracking that branch, and verify if the worktree's HEAD is the same as the PR's `headRefOid`. If different, clear the created worktree and reject. Fork PRs where the head repository owner is different from the original cannot be listed and selected because there is nowhere to push.
 
-## 연결과 전수조사
+## Connection and full investigation
 
-프로젝트 목록 화면은 워크스페이스에서 `.git` 이 있는 폴더를 모두 보여 준다(`channels.projects`).
-행마다 상태가 셋이다.
+Project list screen shows all folders with `.git` in the workspace (`channels.projects`).
+There are three statuses per row.
 
-| 상태 | 조건 |
+| Status | Condition |
 | --- | --- |
-| 연결 완료 | `.wiki/adapter.toml` 이 있고 슬롯이 다 찼다. 사용자 단위 hook 이 이 허브를 부른다. Claude 와 Codex 각각의 SessionStart 시험이 주입한다. Codex 의 위키 hook 이 신뢰됐다. 옛 프로젝트 단위 hook 이 없다 |
-| 일부 | 위 중 하나라도 빠졌다. 무엇이 빠졌는지 행에 적는다 |
-| 미연결 | adapter 가 없다 |
+| Connection complete | Has `.wiki/adapter.toml` and slots are full. User-level hook calls this hub. Injected by SessionStart test of Claude and Codex respectively. Codex's wiki hook is trusted. No old project-level hooks |
+| Partial | Any of the above is missing. Writes what is missing in the row |
+| Unconnected | No adapter |
 
-지금 `channels.projects` 는 이 저장소를 무조건 `wired: True` 로 적는다. 이 판정으로 바꾼다.
+Currently `channels.projects` unconditionally writes this repository as `wired: True`. Change to this judgment.
 
-[연결] 이 하는 일.
+What [Connect] does.
 
-1. 허브가 아직 wiki-agent 가 아니면, 사용자 단위 hook 과 스킬 링크에서 바뀔 줄을 보여 주고
-   확인받은 뒤 `setup_agents --global` 과 링크 교체를 한다. 기계에 한 번뿐이다
-2. `.wiki/adapter.toml` 을 만든다. 슬롯은 저장소를 보고 추정한다 — `pyproject.toml` 이면
-   `pytest`, `package.json` 이면 그 `test` 스크립트. 모르는 슬롯은 행에 "채워야 함" 으로 남긴다
-3. 옛 프로젝트 단위 hook 을 걷는다(`setup_agents` 의 `unwire`)
-4. 호스트마다 SessionStart 시험. 지금 `setup_agents.probe` 는 `hook.py claude session_state.py`
-   하나만 흉내 내 돌린다(`tool/setup_agents.py:213`). Codex 는 hook 목록과 신뢰 상태만 본다. 그래서
-   두 호스트의 실제 CLI 세션을 한 턴씩 돌리고, 그 세션이 부른 hook 이 주입했다는 흔적이 둘 다 남아야
-   연결 완료다
+1. If the hub is not yet wiki-agent, shows the lines to be changed in user-level hook and skill links, and after confirmation, performs `setup_agents --global` and link replacement. Only once per machine
+2. Creates `.wiki/adapter.toml`. Slots are estimated by looking at the repository — if `pyproject.toml`, then `pytest`, if `package.json`, then that `test` script. Unknown slots are left as "Must fill" in the row
+3. Removes old project-level hooks (`setup_agents` of `unwire`)
+4. SessionStart test per host. Currently `setup_agents.probe` simulates only `hook.py claude session_state.py` (`tool/setup_agents.py:213`). Codex only looks at the hook list and trust status. Therefore, run actual CLI sessions of both hosts one turn each, and connection is complete only if both leave traces that the hook called by that session injected
 
-전수조사가 켜져 있으면 4 뒤에 이어진다.
+If full investigation is on, it continues after 4.
 
-1. 견적. 파일 수, docs 분량, 커밋과 머지된 PR 수로 예상 토큰과 시간을 내고 확인받는다
-2. `wiki-bootstrap` 작업트리를 만들고, 원본에 쓴 `adapter.toml` 을 그 브랜치의 첫 커밋으로
-   옮긴다. 작업트리는 원본 HEAD 에서 만들어지므로 커밋하지 않은 adapter 는 따라오지 않는다.
-   그다음 조사 세션을 띄운다. 이것도 명세 하나다 — 목표는 "이 저장소의 위키 초기화", 완료
-   조건은 `lint --check` 와 `repo_lint`
-3. 쓰는 것은 구조 개요(`.wiki/project.md`)와 모듈 페이지(`.wiki/modules/`, 주입하지 않는다), SCHEMA
-   형식의 규칙 페이지, `harvest` 를 처음부터 돌린 결정 기록, 추정한 슬롯의 보정이다. 그 이름의 파일이
-   이미 있으면 건드리지 않는다
-4. 설정의 토큰 한도나 시간 한도에 닿으면 거기까지 쓴 것으로 PR 을 올린다
+1. Estimate. Issues expected tokens and time based on file count, docs volume, commits, and merged PR count, and asks for confirmation
+2. Creates `wiki-bootstrap` worktree, and moves `adapter.toml` written to the original to the first commit of that branch. Since the worktree is created from the original HEAD, uncommitted adapters do not follow. Then launches an investigation session. This is also one specification — goal is "Initialize wiki of this repository", completion conditions are `lint --check` and `repo_lint`
+3. Writing is structure overview (`.wiki/project.md`) and module page (`.wiki/modules/`, does not inject), rule page in SCHEMA format, decision record running `harvest` from the beginning, and correction of estimated slots. If a file with that name already exists, it does not touch it
+4. If it hits the token limit or time limit in settings, it raises a PR with what has been written up to that point
 
-불변식. 연결 뒤에 위키가 쌓이는 방식은 조사를 켰든 껐든 같다. `sync` Stop hook, `harvest`,
-회고가 똑같이 돈다. 조사는 첫 내용만 다르게 한다. 조사 코드가 이 경로들에 분기를 두면 안 된다.
+Invariant. The way the wiki accumulates after connection is the same whether investigation is on or off. `sync` Stop hook, `harvest`, and retrospective run the same way. Investigation only makes the first content different. Investigation code must not have branches in these paths.
 
-adapter 는 서버가 [연결] 을 누른 사람 대신 원본 체크아웃에 쓴다. 손으로 `setup_agents` 를 돌리던
-것과 같은 쓰기이고, 원본 체크아웃에 쓰는 두 예외 가운데 하나다(다른 하나는 [머지] 뒤의 ff-only). 쓰는 곳은 그 파일 하나다. 원본에 바로
-쓰므로 연결은 누르는 순간 돈다.
+Adapter is used by the server for original checkout instead of the person who clicked [Connect]. It is the same write as manually running `setup_agents`, and one of the two exceptions for writing to original checkout (the other is ff-only after [Merge]). The place it writes is that one file. Since it writes directly to the original, connection runs the moment it is clicked.
 
-- [연결] 은 쓴 내용의 해시를 허브의 `raw/connect/<repo>.json` 에 남긴다. 원본의 사본이 그 뒤 사람
-  손으로 바뀌었는지는 이 해시로 가른다
-- 조사를 켰으면 adapter 는 `wiki-bootstrap` PR 에도 들어가고, 조사가 슬롯을 보정해 원본과 달라질 수
-  있다. 리뷰를 거친 PR 의 것이 기준이다
-- 조사를 껐으면 커밋은 사람이 한다. 행에 "adapter 커밋 안 됨" 을 보인다
+- [Connect] leaves the hash of the written content in `raw/connect/<repo>.json` of the hub. Whether the copy of the original has been changed by human hands since then is determined by this hash
+- If investigation is on, the adapter also enters the `wiki-bootstrap` PR, and the investigation may correct slots, making it different from the original. The one in the PR that passed review is the standard
+- If investigation is off, a human does the commit. Shows "adapter not committed" in the row
 
-bootstrap PR 이 머지된 뒤 원본의 사본은 이렇게 넘긴다. 원칙은 둘이다. 검사한 내용과 치운 내용이
-같은 파일이어야 하고, 치운 파일은 갱신이 확인될 때까지 남는다.
+After the bootstrap PR is merged, the copy of the original is passed as follows. There are two principles. The inspected content and the cleared content must be the same file, and the cleared file remains until the update is confirmed.
 
-1. 조건을 본다. 원본 체크아웃이 PR 의 base 브랜치에 있다. 그 브랜치의 upstream 이 PR 이 머지된
-   저장소의 원격을 가리킨다. adapter 말고는 미커밋 변경이 없다. 하나라도 어긋나면 아무것도
-   건드리지 않고 연결을 "일부 — adapter 반영 대기" 로 두고 이유를 적는다
-2. `.git/wiki-connect/` 에 파일이 하나라도 남아 있으면 앞선 넘기기가 끝나지 않은 것이다. 새로
-   옮기지 않고 "일부 — 앞선 넘기기의 사본이 남음" 으로 두고 그 경로를 알린다. 비어 있을 때만
-   원본의 `.wiki/adapter.toml` 을 `.git/wiki-connect/<시각>-adapter.toml` 로 옮긴다(`os.replace`).
-   `os.replace` 는 목적지를 덮어쓰므로 경로를 시도마다 다르게 하고, 남은 사본이 있으면 시작하지
-   않는 두 겹으로 막는다. 복사가 아니라 이동이라서, 검사 뒤에 사람이 고친 내용이 지워지고 옛
-   내용만 남는 틈이 없다. `.git` 안이라 작업 파일도 아니다
-3. 옮긴 파일의 해시를 [연결] 이 남긴 해시와 비교한다. 다르면 사람 손이 탄 사본이다. 원래 자리가
-   비어 있을 때만 되돌리고 멈춘다. 자리가 차 있으면 되돌리지 않고 옮긴 파일의 경로를 알린다.
-   어느 쪽이든 "일부" 로 두고 두 사본의 차이를 보인다
-4. `git fetch <원격> <base>` 로 가져오고, PR 의 머지 커밋(`gh pr view --json mergeCommit`)이 가져온
-   ref 의 조상인지 본다. 아니면 갱신이 아직 안 닿은 것이다 — 3 과 같이 되돌리고 멈춘다. `mergeCommit` 이
-   비어 있으면 머지 커밋을 아직 모르는 것이고, 같은 경우로 친다. 조상인지 모르는 채로는 5 로 가지 않는다
-5. `git merge --ff-only <원격>/<base>`. git 은 추적하지 않는 파일을 덮어쓰지 않으므로, 그사이 사람이
-   새 adapter 를 만들었으면 여기서 멈춘다
-6. 확인한다. HEAD 가 머지 커밋을 포함하고, `.wiki/adapter.toml` 이 추적되며 PR 의 것과 같다. 다
-   맞아야 `.git/wiki-connect/` 의 파일을 지우고 연결 완료로 돌린다. 5 나 6 이 실패하면 3 과 같이
-   되돌리고 "일부" 로 둔다
+1. Check conditions. Original checkout is on the PR's base branch. The upstream of that branch points to the remote of the repository where the PR was merged. No uncommitted changes except for the adapter. If even one is off, it touches nothing and leaves the connection as "Partial — waiting for adapter reflection" and writes the reason
+2. If even one file remains in `.git/wiki-connect/`, the previous handover is not finished. Does not move newly, leaves as "Partial — copy of previous handover remains" and notifies the path. Only when empty, moves `.wiki/adapter.toml` of the original to `.git/wiki-connect/<시각>-adapter.toml` (`os.replace`).
+   `os.replace` overwrites the destination, so it blocks with two layers: making the path different for each attempt, and not starting if there is a remaining copy. Since it is a move, not a copy, there is no gap where human-fixed content is deleted after inspection and only old content remains. It is inside `.git`, so it is not a work file
+3. Compare the hash of the moved file with the hash left by [Connect]. If different, it is a copy touched by human hands. Revert and stop only when the original spot is empty. If the spot is full, do not revert and notify the path of the moved file. Either way, leave as "Partial" and show the difference between the two copies
+4. Bring in with `git fetch <원격> <base>`, and see if the PR's merge commit (`gh pr view --json mergeCommit`) is an ancestor of the brought ref. Otherwise, the update has not reached yet — revert and stop as in 3. If `mergeCommit` is empty, it does not yet know the merge commit, and counts as the same case. Does not go to 5 without knowing if it is an ancestor
+5. `git merge --ff-only <원격>/<base>`. Since git does not overwrite untracked files, stop here if a human created a new adapter in the meantime
+6. Verify. HEAD includes the merge commit, and `.wiki/adapter.toml` is tracked and same as the PR's. If all match, delete the file in `.git/wiki-connect/` and return to connection complete. If 5 or 6 fails, revert as in 3 and leave as "Partial"
 
-## 저장소별 지도
+## Map per repository
 
-`/api/graph` 가 `repo` 를 받는다. 그 저장소의 문서 그래프를 `repo_graph.build` 로 메모리에서
-만든다. `repo_graph.write` 는 원본의 `.wiki/graph.json` 에 쓰므로 서버는 부르지 않는다
-(`tool/repo_graph.py:128`). 그 파일은 지금처럼 `sync` Stop hook 이 갱신한다.
+`/api/graph` receives `repo`. Creates the document graph of that repository in memory as `repo_graph.build`. `repo_graph.write` writes to `.wiki/graph.json` of the original, so the server does not call it (`tool/repo_graph.py:128`). That file is updated by `sync` Stop hook as it is now.
 
-그 위에 `graph.py` 의 허브 규칙 중 그 저장소에 적용되는 것을 층으로 겹친다. 층은 머리글의
-토글이다 — 이 저장소 문서, 허브 규칙, 둘 다.
+Layer the hub rules of `graph.py` that apply to that repository on top. Layers are toggles in the header — this repository document, hub rules, both.
 
-지도는 앱 테마를 따른다. 머리글 한 줄 밑에 지표 한 줄(페이지 수, 고아 문서, lint 경고)을 두고
-나머지는 그래프가 채운다. 노드를 고르면 옆 패널이 열린다.
+Map follows the app theme. Places a one-line indicator (page count, orphan documents, lint warnings) under the header line, and the rest is filled by the graph. Selecting a node opens a side panel.
 
-## 화면
+## Screen
 
 ```
 ┌───────────┬──────────────────┬────────────────────┐
@@ -265,67 +198,56 @@ bootstrap PR 이 머지된 뒤 원본의 사본은 이렇게 넘긴다. 원칙�
 └───────────┴──────────────────┴────────────────────┘
 ```
 
-- 레일의 단위가 작업트리에서 작업(명세)으로 바뀐다. 명세 없이 만든 작업트리도 행이 된다
-- "새 작업" 입력칸은 없앤다. 작업은 명세의 [시작] 이나 리뷰 루프가 만든다. 빈 작업트리가
-  필요하면 다음 작업 초점에서 한 줄 명세로 만든다
-- 번역·테마 스위치는 설정 모달로 간다. 모달의 구획은 일반, 연결, 리뷰다
-- 오른쪽 면은 에이전트 위, 터미널 아래로 나누지 않고 탭으로 둔다. 승인을 기다리면 에이전트
-  탭에 `wait` 점이 붙는다
-- 초점은 셋이다. 진단은 위키에 합치고, 리뷰는 리뷰 셀로 간다
+- The unit of the rail changes from worktree to work (specification). Worktrees created without a specification also become rows
+- Remove the "New work" input field. Work is created by [Start] of a specification or the review loop. If an empty worktree is needed, create it as a one-line specification in the next task focus
+- Translation/theme switches go to the settings modal. Modal sections are General, Connection, Review
+- The right side is not divided into agent above and terminal below, but placed as tabs. If waiting for approval, a `wait` dot is attached to the agent tab
+- There are three focuses. Diagnostics are merged into the wiki, and reviews go to the review cell
 
-작업 순서의 문제. 사용자가 고른 순서는 명세·리뷰·연결이 화면보다 먼저다. 그대로 가면 새 기능을
-옛 틀에 덧대게 된다. 그래서 3–5단계는 서버, 계약, 테스트를 짓고 화면에는 확인에 필요한 만큼만
-붙인다. 6단계가 `design-pass` 순서로 화면 전체를 다시 짓는다. 이때 3–5단계의 임시 화면은
-남기지 않는다.
+Problem of work order. The order chosen by the user is specification, review, connection before the screen. If followed as is, new features will be added to the old frame. Therefore, steps 3–5 build the server, contract, and tests, and attach to the screen only as much as needed for verification. Step 6 rebuilds the entire screen in `design-pass` order. At this time, the temporary screens of steps 3–5 are not left behind.
 
-## 안전 경계
+## Safety boundary
 
-[wiki-agent 개요](../done/wiki-agent/0-overview.md#안전-경계)의 경계는 그대로다. 더하는 것.
+The boundaries of [wiki-agent overview](../done/wiki-agent/0-overview.md#안전-경계) remain the same. Adding.
 
-- 리뷰 셀은 읽기 전용이다. 작업 셀과 같은 작업트리를 보지만 쓰지 않는다. 프롬프트가 아니라 실행 권한이 막는다 —
-  Codex 는 읽기 전용 샌드박스, Claude 는 `Bash` 없는 `Read,Glob,Grep`
-- 루프가 작업 셀에 보내는 턴도 사람이 보낸 턴과 같이 쓰기마다 승인받는다. "이 세션 동안 허용"
-  은 그 세션 하나, 그 도구 하나에만 걸린다
-- 머지는 [머지] 버튼으로만 한다. 루프가 스스로 머지하지 않는다. 머지는 리뷰가 `머지 허용` 을 낸 머리 커밋에 묶인다.
-  머지 뒤 원격 브랜치는 그 커밋에 그대로 있을 때만 지운다
-- 서버가 작업트리에서 `gate_cmd` 를 돌린다. 에이전트가 이미 돌린 명령과 같고 원본 체크아웃이 아니다
-- 사용자 단위 설정과 스킬 링크는 바뀔 줄을 보여 주고 확인받은 뒤에만 바꾼다
-- 전수조사의 쓰기는 `wiki-bootstrap` 작업트리 안에서만 한다
-- 서버가 원본 체크아웃에 쓰는 것은 둘뿐이다. [연결] 의 `.wiki/adapter.toml`, 그리고 [머지] 뒤 정리의
-  `git merge --ff-only`. 뒤의 것은 원본이 base 브랜치에 있고 미커밋 변경이 없을 때만 한다. 지도도 원본에 쓰지 않는다. `docs/plans/done/wiki-agent/0-overview.md` 의 경계에도 두 예외를 적는다. 대상 저장소의 호스트 안에서 도는 hook(`sync` 의 `corpus.json`·`graph.json`)은 지금처럼 그 저장소에 쓴다 — 서버의 쓰기가 아니다
+- Review cell is read-only. Sees the same worktree as the work cell but does not write. Blocked by execution permission, not prompt — Codex is read-only sandbox, Claude is `Read,Glob,Grep` without `Bash`
+- Turns sent by the loop to the work cell are also approved for every write, just like turns sent by a human. "Allow during this session" applies only to that one session, that one tool
+- Merging is done only with the [Merge] button. The loop does not merge itself. Merge is bound to the head commit that the review issued `머지 허용`. After merge, the remote branch is deleted only when it remains at that commit
+- Server runs `gate_cmd` in the worktree. Same as the command the agent already ran and is not original checkout
+- User-level settings and skill links are changed only after showing the lines to be changed and receiving confirmation
+- Writing for full investigation is done only within the `wiki-bootstrap` worktree
+- Server writes to original checkout only in two cases. `.wiki/adapter.toml` of [Connect], and `git merge --ff-only` of cleanup after [Merge]. The latter is done only when the original is on the base branch and there are no uncommitted changes. Map also does not write to the original. Also write the two exceptions in the boundary of `docs/plans/done/wiki-agent/0-overview.md`. Hooks running inside the host of the target repository (`corpus.json`·`graph.json` of `sync`) write to that repository as now — not a write by the server
 
-### 화면이 서버에 쓰는 곳
+### Where the screen writes to the server
 
-`craft/screen-ownership-before-wiring` 의 세 질문에 미리 답한다.
+Answers the three questions of `craft/screen-ownership-before-wiring` in advance.
 
-| 화면 | 어느 계정으로 도나 | 늦게 온 이벤트의 판정 | 무엇을 써도 되나 |
+| Screen | Which account runs | Judgment of late events | What can be written |
 | --- | --- | --- | --- |
-| 명세 [시작] | 작업 세션과 같다 | 명세 `id` 와 작업트리 경로 | 새 작업트리, 명세 파일 |
-| 완료 판정과 PR | 서버, 사람의 `gh` | 명세 `id` 와 작업트리의 머리 커밋 | 작업트리에서 `gate_cmd`, push, PR 만들기 |
-| 리뷰 루프 | 리뷰 셀은 읽기, 작업 셀은 작업 세션 | 명세 `id`, PR 번호, 라운드 번호 | 허브 `raw/review/` 의 라운드 파일, 작업 셀을 거친 쓰기, 게이트와 push |
-| [머지] | 사람의 `gh` | PR 번호와 머리 커밋. 리뷰가 허용한 머리 커밋을 화면이 본 것과 맞춰 본 뒤 `gh pr merge --match-head-commit` 로 넘겨 GitHub 이 원자적으로 거절하게 한다. 미리 읽고 비교하면 그 사이의 푸시를 못 막고, 화면이 본 커밋만 넘기면 허용 뒤의 푸시를 못 막는다 | 머지, 머지 뒤 정리, 깨끗한 원본의 ff-only, 허용한 커밋에 머문 원격 브랜치의 삭제 |
-| [연결] | 서버 | 저장소 경로 | 그 저장소의 `.wiki/adapter.toml`, 확인받은 사용자 단위 설정 |
+| Specification [Start] | Same as work session | Specification `id` and worktree path | New worktree, specification file |
+| Completion judgment and PR | Server, human's `gh` | Specification `id` and head commit of worktree | `gate_cmd` in worktree, push, create PR |
+| Review loop | Review cell is read, work cell is work session | Specification `id`, PR number, round number | Round file in hub `raw/review/`, write through work cell, gate and push |
+| [Merge] | Human's `gh` | PR number and head commit. After matching the head commit allowed by review with what the screen saw, pass to `gh pr merge --match-head-commit` to make GitHub reject atomically. If read and compared in advance, cannot block push in between, and if only passing the commit seen by the screen, cannot block push after approval | Merge, cleanup after merge, ff-only of clean original, deletion of remote branch staying at allowed commit |
+| [Connect] | Server | Repository path | `.wiki/adapter.toml` of that repository, confirmed user-level settings |
 
-## 단계
+## Steps
 
-| # | 단계 | 무엇 | 상태 |
+| # | Step | What | Status |
 | --- | --- | --- | --- |
-| 1 | 어긋남 정리 | 계획 상태 판정 버그, 낡은 문서와 주석, 쓰지 않는 export, 작은 미룬 것들 | 완료 |
-| 2 | 에이전트의 미룬 것 | 턴 재접속(세션별 이벤트 버퍼), 승인 기록과 "이 세션 동안 허용", Codex 읽기 세션 `app-server` 이전과 토큰 수 | 완료 |
-| 3 | 명세와 인계 | 명세 계약과 저장, 다음 작업 초점, [시작], 작업 세션의 시스템 프롬프트, 결과 요약 되돌림, PR 본문의 `변경 이유`, PR 안의 `plan-active` 갱신 | 완료 |
-| 4 | 리뷰 셀과 루프 | 리뷰 셀, 라운드 파서, 루프 상태 기계, 동시 실행 제한, PR 목록, 기존 PR 브랜치 받기, [머지] | 진행 중 |
-| 5 | 연결과 전수조사 | 연결 상태 판정, 호스트별 SessionStart 시험, 허브 이전, [연결], 슬롯 추정, 견적과 한도, 조사 세션 | 진행 중 |
-| 6 | 화면과 지도 | `design-pass` 로 작업 중심 3단, 설정 모달, 프로젝트 목록, 리뷰 모달, 저장소별 지도 | 진행 중 — 자동 검사 통과, 창 확인 남음 |
-| 7 | 검증 | 창에서 한 바퀴를 두 번 — 조사를 켠 새 저장소와 끈 저장소 | 미착수 |
+| 1 | Cleaning up discrepancies | Plan status judgment bug, old documents and comments, unused exports, small deferred tasks | Complete |
+| 2 | Agent's deferred tasks | Turn reconnection (event buffer per session), approval records and "allow during this session", Codex reading session before `app-server` and token count | Complete |
+| 3 | Specification and handover | Specification contract and storage, next task focus, [Start], system prompt of work session, returning result summary, `변경 이유` of PR body, `plan-active` update in PR | Complete |
+| 4 | Review cell and loop | Review cell, round parser, loop state machine, concurrent execution limit, PR list, receiving existing PR branch, [Merge] | In progress |
+| 5 | Connection and full investigation | Connection status judgment, SessionStart test per host, hub migration, [Connect], slot estimation, estimate and limit, investigation session | In progress |
+| 6 | Screen and map | Work-centered 3-column with `design-pass`, settings modal, project list, review modal, map per repository | In progress — auto-test passed, window verification remaining |
+| 7 | Verification | Two cycles in the window — new repository with investigation on and repository with it off | Not started |
 
-2단계가 3·4단계보다 먼저인 이유. 명세로 시작한 작업과 리뷰 루프는 길다. 창을 새로 고치면
-죽는 턴 위에 자동 루프를 얹으면 루프가 창의 수명에 묶인다.
+Reason why step 2 is before steps 3 and 4. Work started with a specification and the review loop are long. If an automatic loop is placed on top of a turn that dies when the window is refreshed, the loop is tied to the lifespan of the window.
 
-## 이 계획에 넣지 않은 것
+## Things not included in this plan
 
-- 코디네이터와 워커. 명세가 여럿으로 쪼개지는 것은 작업트리 여럿으로 풀고, 한 세션이 워커를
-  띄우지는 않는다
-- 공개 사본으로의 역반영. `docs/publishing.md` 의 절차로 그때마다 판단한다
-- 설치 프로그램, 번들 Python, 코드 서명
-- 따옴표 안의 글을 번역에서 지키기. 7단계에서 정한 대로 둔다
-- 쉬운 설명의 품질 기준(`docs/quality.md`). 초점을 셋으로 줄인 뒤 다시 본다
+- Coordinator and worker. Splitting a specification into multiple is solved by multiple worktrees, and one session does not launch workers
+- Back-reflection to public copies. Judged each time by the procedure of `docs/publishing.md`
+- Installer, bundled Python, code signing
+- Keeping text inside quotes in translation. Left as decided in step 7
+- Quality standard for easy explanation (`docs/quality.md`). Re-examine after reducing focus to three

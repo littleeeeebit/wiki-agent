@@ -1,72 +1,65 @@
-# 7단계 — 검증
+# Step 7 — Verification
 
-전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다.
+The relationship between the overall design and the steps is in [Overview](0-overview.md)].
 
-목표. 6단계까지 지은 것을 처음부터 끝까지 한 번씩 돌려, 한 사람이 한 창에서 위키에 묻고
-그 답으로 작업트리의 에이전트에게 일을 시키는 과정이 번역을 끈 채로도, 켠 채로도 서는지
-본다. 돌리다 걸린 것은 이 단계에서 고친다.
+Goal. Run everything built up to step 6 from start to finish once, to see if the process of one person asking the wiki in one window and using the answer to assign tasks to the agent in the worktree works both with translation turned off and on. Fix anything that gets stuck while running in this step.
 
-## 어떻게 돌렸나
+## How it was run
 
-브라우저가 아니라 실제 Tauri 창에서 돌렸다. 터미널이 창에만 있기 때문이다. 창을
-`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<포트>` 로 띄우고
-Playwright 의 `connect_over_cdp` 로 붙어 누르고, 읽고, 화면을 찍었다. 모델은 질의와
-에이전트 둘 다 haiku 다.
+It was run in an actual Tauri window, not a browser, because the terminal is only in the window. I launched it with `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=<포트>`, attached with Playwright's `connect_over_cdp`, clicked, read, and took screenshots. The model for both the query and the agent is haiku.
 
-한 과정은 이렇다.
+One process is as follows:
 
-1. 번역 스위치를 정한다
-2. 새 작업트리를 만든다
-3. 위키에 묻는다
-4. 답의 `file:line` 인용을 연다
-5. "→ 작업" 으로 초안을 만들고 "할 일" 을 적어 에이전트에게 보낸다
-6. 쓰기 승인 카드에서 허용한다
-7. 파일이 작업트리에만 생겼는지 본다
-8. 같은 작업트리의 터미널에서 결과를 읽는다
-9. 작업트리를 정리한다
+1. Set the translation switch
+2. Create a new worktree
+3. Ask the wiki
+4. Open the `file:line` citation of the answer
+5. Create a draft with "→ Task" and send it to the agent with "To-do" written
+6. Approve in the write approval card
+7. Check if the file was created only in the worktree
+8. Read the result in the terminal of the same worktree
+9. Clean up the worktree
 
-번역 요청은 페이지의 `fetch` 를 감싸 `/api/translate` 호출을 셌고, 비용은 `translate.usage()`
-를 앞뒤로 읽었다.
+Translation requests counted `/api/translate` calls wrapping the page's `fetch`, and costs read `translate.usage()` before and after.
 
-## 결과
+## Results
 
-| 확인 | 결과 |
+| Check | Result |
 | --- | --- |
-| `pytest tool/` | 298 통과. 6단계 끝의 296에 새 테스트 둘 |
-| `python tool/lint.py --check` | 종료 0 |
-| `ruff check tool/` | 통과 |
-| `npm run build` | 통과(`tsc -b` 포함) |
-| `cargo build --release` | 통과 |
-| 번역 끈 과정 | 스위치를 끄자 `raw/chat/main.json` 이 `false`. 질의 두 번, 초안, 승인, 에이전트 답까지 `/api/translate` 0건, 이달 사용액 그대로($0.050876). 에이전트 답은 영어 원문 그대로. 허용 전에는 파일이 없고, 허용 뒤에는 작업트리에만 있다. 터미널이 그 작업트리에서 PowerShell 로 열리고 `git status`·한글 출력이 오간다 |
-| 창을 다시 띄우면 | 스위치가 꺼진 채로 돌아온다 |
-| 번역 켠 과정 | 같은 순서. 에이전트의 영어 답이 한국어로 보이고, 이달 사용액이 $0.051265 → $0.051502 로 늘었다. 원본 체크아웃에는 `notes/` 가 없다 |
-| 창 닫기 | 매번 서버(`python tool/main`)도 같이 내려갔다 |
+| `pytest tool/` | 298 passed. Two new tests at the end of step 6 |
+| `python tool/lint.py --check` | Exit 0 |
+| `ruff check tool/` | Passed |
+| `npm run build` | Passed (including `tsc -b`) |
+| `cargo build --release` | Passed |
+| Process with translation off | When the switch was turned off, `raw/chat/main.json` was `false`. Two queries, draft, approval, and agent answer resulted in 0 `/api/translate`, monthly usage remained the same ($0.050876). The agent's answer is in the original English. There is no file before approval, and it exists only in the worktree after approval. The terminal opens in PowerShell in that worktree and `git status`/Korean output is exchanged |
+| When relaunching the window | It returns with the switch turned off |
+| Process with translation on | Same sequence. The agent's English answer appears in Korean, and the monthly usage increased from $0.051265 → $0.051502. There is no `notes/` in the original checkout |
+| Closing the window | The server (`python tool/main`) also went down every time |
 
-## 돌리다 걸린 것
+## Things that got stuck while running
 
-넷을 고쳤다. 셋은 테스트가 있고, 각각 고치기 전 코드에서 빨강이었다. 인용 서랍의 폭은
-창에서 쟀다.
+I fixed four things. Three had tests, and each was red in the code before fixing. The width of the citation drawer was measured in the window.
 
-| 무엇 | 원인 | 고친 것 |
+| What | Cause | Fixed |
 | --- | --- | --- |
-| 초안에 "근거" 절이 없고 답의 인용을 누를 수 없었다 | 프롬프트는 인용을 인라인 코드로 적으라지만 haiku 가 `craft/destructive-git-guards.md:16 — …` 처럼 백틱 없이 적었다. 두 곳 모두 백틱 안만 봤다 | 줄 번호가 붙은 맨 인용도 인용으로 친다. 초안은 `query.CITE`, 화면은 `Answer.tsx` 의 remark 플러그인이 파싱된 글 노드에서만 맨 인용을 인라인 코드로 바꾼다 — 링크 목적지·링크 글·코드 블록은 글 노드가 아니다. `test_a_draft_carries_the_grounds…` |
-| 인용 서랍을 열면 질의 면이 76px 로 짓눌려 글이 세로로 섰다 | 서랍이 `w-[34rem]` 에 `shrink-0`. 1480px 창에서 질의 면은 620px 다 | 서랍 폭을 `min(34rem, 55%)` 로. 같은 창에서 대화 279px, 서랍 340px |
-| 번역을 켜자 한국어 답이 영어로 바뀌었다 | `worth_translating` 은 영→한 요청을 라틴 글자 하나만 있어도 보냈다. 경로와 이름이 섞인 한국어 답을 받은 Gemini 가 영어로 돌려주었고, 그것이 캐시에 남았다 | 인라인 코드와 파일·모듈 이름(점이 든 토큰)·백슬래시 경로·밑줄 식별자를 빼고 남은 산문에서 라틴 단어가 한글 단어보다 많을 때만 영→한으로 보낸다. 잘못 들어간 캐시 항목은 이제 찾지 않는다. `test_korean_with_a_few_identifiers_is_not_sent_to_korean` |
-| 선택한 작업트리를 정리하자 `Permission denied`, 브랜치가 남았다 | 그 작업트리의 터미널 셸이 폴더 안에 서 있었다. Windows 는 프로세스가 선 폴더를 지우지 못한다. git 은 작업트리를 이미 잊은 뒤라 목록에서 사라졌고, 브랜치를 지울 길이 화면에 없었다. 같은 작업 이름으로 다시 만들 수도 없다 | 화면은 작업트리를 지우기 전에 그 폴더에서 시작된 터미널 닫기를 모두 기다린다 — `pty_close` 가 셸이 끝난 뒤에야 답하고, 여는 중인 셸도 닫는다. `workspace.remove` 는 git 이 작업트리를 잊었으면 실패로 멈추지 않고 브랜치를 마저 처리하고, 남은 폴더를 알린다. `test_a_folder_held_by_a_shell_still_loses_its_branch`. 창에서 터미널을 연 채로, 또 셸이 열리는 중에 정리해 폴더·브랜치·목록이 다 사라지는 것을 봤다 |
+| The draft lacked an "evidence" section and could not click the answer's citation | The prompt says to write citations as inline code, but haiku wrote them like `craft/destructive-git-guards.md:16 — …` without backticks. Both places only looked inside backticks | Citations with line numbers are also counted as citations. The draft is `query.CITE`, and the screen only changes the top citation to inline code in the text node parsed by the remark plugin of `Answer.tsx` — link destinations, link text, and code blocks are not text nodes. `test_a_draft_carries_the_grounds…` |
+| When opening the citation drawer, the query side was crushed to 76px, making the text stand vertically | The drawer was `w-[34rem]` at `shrink-0`. In a 1480px window, the query side is 620px | Set drawer width to `min(34rem, 55%)`. In the same window, conversation 279px, drawer 340px |
+| When translation was turned on, the Korean answer changed to English | `worth_translating` sent an Eng→Kor request even if there was only one Latin character. Gemini, having received a Korean answer mixed with paths and names, returned it in English, which remained in the cache | Only send for Eng→Kor when Latin words outnumber Korean words in the prose remaining after removing inline code, file/module names (tokens with dots), backslash paths, and underscore identifiers. Incorrectly entered cache entries are no longer searched. `test_korean_with_a_few_identifiers_is_not_sent_to_korean` |
+| When cleaning up the selected worktree, `Permission denied`, the branch remained | The terminal shell of that worktree was standing inside the folder. Windows cannot delete a folder where a process is standing. git had already forgotten the worktree, so it disappeared from the list, and there was no way on the screen to delete the branch. It cannot be recreated with the same task name | The screen waits for all terminal closures started in that folder before deleting the worktree — `pty_close` only answers after the shell ends, and also closes shells that are opening. `workspace.remove` does not stop with failure if git has forgotten the worktree, but finishes processing the branch and notifies of the remaining folder. `test_a_folder_held_by_a_shell_still_loses_its_branch`. I saw the folder, branch, and list all disappear by cleaning up while the terminal was open in the window and while the shell was opening |
 
-## 고치지 않고 적어 두는 것
+## Things noted without fixing
 
-| 무엇 | 왜 두나 |
+| What | Why keep it |
 | --- | --- |
-| 질의 답이 영어가 아니라 한국어로 온다 | `chat-answer.md` 는 영어로 쓰라지만 haiku 는 네 번 모두 한국어로 답했다. 번역을 켜도 이제 보내지 않으므로 화면은 맞다. 오버레이가 할 일이 없어질 뿐이다. 프롬프트와 사용자 단위 지시가 부딪치는지는 따로 본다 |
-| 따옴표 안의 글도 번역된다 | 에이전트의 `Wrote "gate ok"` 가 `"게이트 ok"` 로 보였다. 번역기는 백틱 안만 지킨다. 따옴표까지 지키면 따옴표로 인용한 영어 문장도 번역되지 않는다 |
-| `wiki-agent` 한 단어가 `위키-에이전트` 로 번역된다 | 용어집에 넣으면 되지만, 용어집이 바뀌면 캐시 전체가 무효가 된다. 다른 이유로 용어집을 고칠 때 같이 한다 |
-| 터미널에서 바꾼 것이 작업트리 목록에 바로 안 보인다 | 목록은 창이 포커스를 받을 때 다시 읽는다. 창 안의 터미널은 포커스를 옮기지 않는다. 정리 버튼이 늦게 나타나는 것 말고는 틀린 것이 없다 |
+| Query answers come in Korean instead of English | `chat-answer.md` says to write in English, but haiku answered in Korean all four times. Since it no longer sends even when translation is on, the screen is correct. The overlay just has nothing to do. I will look separately at whether the prompt and user-level instructions conflict |
+| Text inside quotation marks is also translated | The agent's `Wrote "gate ok"` appeared as `"게이트 ok"`. The translator only respects inside backticks. If it also respected quotation marks, English sentences quoted with quotation marks would not be translated |
+| `wiki-agent` one word is translated as `위키-에이전트` | It could be put in the glossary, but if the glossary changes, the entire cache becomes invalid. I will do it when fixing the glossary for other reasons |
+| Changes in the terminal are not immediately visible in the worktree list | The list is re-read when the window receives focus. The terminal inside the window does not move focus. There is nothing wrong except that the cleanup button appears late |
 
-## 리뷰
+## Review
 
-| 라운드 | 결과 |
+| Round | Result |
 | --- | --- |
-| 1 | P1 셋, 모두 재현했다. 맨 인용을 문자열에서 바꿔 링크 목적지와 `~~~`·들여쓰기 코드 블록까지 바꿨다 — 파싱된 트리의 글 노드에서만 바꾼다. 번역 판별이 라틴 단어 대 한글 음절이라 경로가 많은 한국어는 보내고, 긴 한국어 이름이 든 영어는 건너뛰었다 — 코드와 경로를 빼고 단어 대 단어로 잰다. 터미널 닫기가 지우기보다 먼저 나갈 뿐 끝나기를 기다리지 않았다 — 기다린다 |
-| 2 | P1 둘, 모두 재현했다. 방금 다른 작업트리를 골라 닫히는 중인 셸이나 테마 전환으로 갈린 셸의 닫기는 기다리지 않았다 — 닫기를 폴더마다 모아 두고 지울 때 그 폴더의 것을 모두 기다린다. `Pass/Fail` 처럼 슬래시로 이은 영어를 경로로 보고 번역하지 않았다 — 슬래시만으로는 경로로 치지 않는다 |
-| 3 | 새 발견 없음, 머지 허용 |
+| 1 | Three P1s, all reproduced. Changed top citations from strings, also changed link destinations and `~~~`/indented code blocks — only changed in text nodes of the parsed tree. Translation judgment was Latin words vs. Korean syllables, so Korean with many paths was sent, and English with long Korean names was skipped — measured word-for-word excluding code and paths. Terminal closing just went out before deletion and did not wait for completion — it waits |
+| 2 | Two P1s, all reproduced. Did not wait for the closing of shells that were closing because a different worktree was just selected or shells split by theme switching — collected closures by folder and waited for all of that folder's when deleting. Did not see English connected by slashes like `Pass/Fail` as a path and did not translate — slashes alone are not counted as paths |
+| 3 | No new discoveries, merge approved |

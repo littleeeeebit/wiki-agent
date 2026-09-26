@@ -1,141 +1,103 @@
-# wiki-agent — 위키 질의를 메인으로 하는 코딩 에이전트 프로그램
+# wiki-agent — A coding agent program centered on wiki queries
 
-이 저장소는 `ai-coding-agent-wiki-public` 의 이력을 그대로 이어받은 비공개 사본이다.
-여기서부터 목적이 바뀐다. 위키를 Orca 에 붙이는 부속품이 아니라, 위키에 묻는 것을
-메인 기능으로 두고 그 위에 코딩 에이전트를 얹은 프로그램 하나로 만든다.
+This repository is a private copy that inherits the history of `ai-coding-agent-wiki-public` as is. The purpose changes from here. It is no longer an accessory that attaches a wiki to Orca, but a single program that makes querying the wiki its main function and layers a coding agent on top of it.
 
-단계별 계획은 착수 직전에 하위 문서로 쓴다.
+Step-by-step plans are written as sub-documents just before starting.
 
-- [2단계 — 경계 검사](2-boundary.md)
-- [3단계 — `translate` 독립](3-translate.md)
-- [4단계 — `wiki` 독립](4-wiki.md)
-- [5단계 — `agent`·`workspace`](5-agent-workspace.md)
-- [6단계 — 메인과 새 화면](6-main.md)
-- [7단계 — 검증](7-verify.md)
+- [Step 2 — Boundary check](2-boundary.md)
+- [Step 3 — `translate` independence](3-translate.md)
+- [Step 4 — `wiki` independence](4-wiki.md)
+- [Step 5 — `agent`·`workspace`](5-agent-workspace.md)
+- [Step 6 — Main and new screen](6-main.md)
+- [Step 7 — Verification](7-verify.md)
 
-## 왜 하나
+## Why do this
 
-문제. 지금은 Orca 의 터미널 셀에서 에이전트를 돌리고, 한국어는 위키 앱의 미러 탭이나
-두 번째 셀에서 따로 읽는다. 두 화면을 오가야 하고, 미러는 세션 로그를 꼬리 물어 읽는
-구조라 로그 경로·`CODEX_HOME`·작업트리가 바뀔 때마다 끊긴다.
+Problem. Currently, the agent runs in Orca's terminal shell, and Korean is read separately in the wiki app's mirror tab or a second shell. One has to switch between two screens, and the mirror is structured to read session logs by tailing them, so it disconnects whenever the log path, `CODEX_HOME`, or worktree changes.
 
-해법. 에이전트를 띄우는 쪽과 번역을 보여주는 쪽을 한 프로그램이 쥔다. 그러면 에이전트
-출력이 나오는 바로 그 자리에 한국어 오버레이를 얹을 수 있고, 로그를 거꾸로 추적할
-필요가 없다. 번역에 돈을 쓰고 싶지 않은 날은 번역 모드를 끄면 된다 — 끄면 요청 자체가
-나가지 않는다.
+Solution. One program holds both the side that launches the agent and the side that displays the translation. Then, a Korean overlay can be placed right where the agent output appears, and there is no need to trace logs backward. On days when you don't want to spend money on translation, you can turn off translation mode — if turned off, the request itself is not sent.
 
-한 줄 목적. 한 사람이, 위키에 먼저 묻고 그 답을 근거로 에이전트에게 일을 시키며,
-그 전 과정을 한 화면에서 한국어로 읽는다.
+One-line purpose. A person queries the wiki first, tasks the agent based on that answer, and reads the entire process in Korean on one screen.
 
-## Orca 에서 가져오는 것
+## What is brought from Orca
 
-이 프로그램은 Orca 를 완전히 대체한다. Orca 를 같이 쓰는 기간을 두지 않으므로, Orca
-전용 코드는 대신할 화면이 서면 지운다. 2026-09-24 에 사용자와 확정했다.
+This program completely replaces Orca. Since there is no period of using Orca together, Orca-specific code is deleted once the replacement screen is ready. Confirmed with the user on 2026-09-24.
 
-| Orca 의 방식 | 여기서 |
+| Orca's method | Here |
 | --- | --- |
-| 에이전트는 다시 만들지 않고 이미 있는 CLI 를 띄운다 | 그대로. Claude Code 와 Codex 둘 다. `ChatSession` 이 이미 두 CLI 를 한 대화 모양으로 감싼다 |
-| 작업 하나에 작업트리 하나 | 그대로. 에이전트가 파일을 쓰는 곳은 항상 격리된 작업트리 |
-| 작업트리 목록과 상태 | 그대로. 화면 왼쪽 목록 |
-| 여러 세션 동시 실행 | 그대로. 작업트리마다 세션 하나 |
-| 작업 셀과 리뷰 셀을 나란히 둔다 | 나중. 이 계획에서는 리뷰를 `review-loop` 스킬로 한다 |
-| 에이전트 사이의 작업 배분 | 별도 계획서. 여기서는 이벤트에 자리만 둔다 — 아래 |
-| 화면은 터미널 여러 개 | 바뀐다. 메인 화면은 위키 질의이고, 에이전트 세션과 터미널은 그 옆에 붙는다 |
+| Agent is not recreated, existing CLI is launched | Same. Both Claude Code and Codex. `ChatSession` already wraps both CLIs into one conversation shape |
+| One worktree per task | Same. Where the agent writes files is always an isolated worktree |
+| Worktree list and status | Same. List on the left of the screen |
+| Multiple sessions running simultaneously | Same. One session per worktree |
+| Place task cell and review cell side by side | Later. In this plan, review is done as a `review-loop` skill |
+| Task distribution between agents | Separate plan. Here, only a placeholder is left for events — below |
+| Screen is multiple terminals | Changed. Main screen is wiki query, agent session and terminal are attached next to it |
 
-에이전트와 터미널은 서로 다른 것이다.
+Agent and terminal are different things.
 
-- 에이전트는 이벤트 스트림으로 돈다(`stream-json`). 한국어 오버레이는 이 이벤트 위에
-  얹는다. CLI 를 터미널 안에서 돌리고 로그를 꼬리 물어 읽는 방식은 지금 미러의 문제를
-  되살리므로 쓰지 않는다
-- 터미널은 같은 작업트리에서 사람이 쓰는 셸이다. xterm.js 로 그리고, pty 는 Tauri 본체의
-  Rust(`portable-pty`)가 쥔다. Python 쪽은 터미널을 모른다
+- The agent runs on an event stream (`stream-json`). The Korean overlay is placed on top of this event. The method of running the CLI inside a terminal and reading logs by tailing them is not used because it revives the current mirror's problems
+- The terminal is a shell used by a person in the same worktree. It is drawn with xterm.js, and the pty is held by the Tauri host's Rust (`portable-pty`). The Python side does not know about the terminal
 
-## 직교성 — 파이프라인끼리 서로를 모른다
+## Orthogonality — Pipelines do not know each other
 
-규칙. 메인 기능 하나가 파이프라인 하나다. 파이프라인은 다른 파이프라인을 import 하지도,
-호출하지도 않는다. 둘 이상을 엮는 일은 메인만 한다.
+Rule. One main function is one pipeline. Pipelines do not import or call other pipelines. Only the main does the work of weaving two or more together.
 
-어겼을 때. 번역이 늦으면 위키 답이 늦고, 에이전트가 죽으면 번역 캐시가 깨지는 식으로
-한 곳의 실패가 옆으로 번진다. 지금 코드가 이미 그 모양의 사고를 두 번 냈다 — 발화 번역과
-페이지 번역이 한 마감을 나눠 써서 영어본이 굶었고(#18), 긴 답변의 오버레이가 훅용 6초
-제한에 잘렸다(#19). 둘 다 서로 다른 기능이 한 예산을 공유해서 생긴 일이다.
+When violated. If translation is slow, the wiki answer is slow, and if the agent dies, the translation cache breaks, causing failure in one place to spread to the side. The current code has already caused accidents of that shape twice — utterance translation and page translation shared one deadline, so the English version starved (#18), and the overlay of long answers was cut off by the 6-second limit for hooks (#19). Both are things that happened because different functions shared one budget.
 
-### 파이프라인 목록과 계약
+### Pipeline list and contract
 
-파이프라인마다 `tool/` 아래 폴더 하나다. 폴더는 패키지다. 공개 진입점은 `__init__.py` 의
-`__all__` 이다. 5단계 뒤 네 파이프라인 모두 `__all__` 을 갖는다.
+Each pipeline is one folder under `tool/`. The folder is a package. The public entry point is `__all__` of `__init__.py`. After step 5, all four pipelines have `__all__`.
 
-| 파이프라인 | 폴더 | 하는 일 | 입력 | 출력 | 옮겨 오는 코드 |
+| Pipeline | Folder | Task | Input | Output | Code to move |
 | --- | --- | --- | --- | --- | --- |
-| `wiki` | `tool/wiki/` | 규칙 매칭, 위키 질의 답변, 지식 그래프 | 질문, 대상 저장소 | 답변 이벤트, 인용 페이지, 매칭된 규칙 | `inject.py` 의 매칭 부분, `wikilib.py` |
-| `translate` | `tool/translate/` | 번역. 실패하면 원문을 돌려준다 | 문장 목록, 방향, 마감 | 같은 길이의 문장 목록 | `translate.py` |
-| `agent` | `tool/agent/` | CLI 에이전트를 작업트리에서 띄우고 이벤트를 흘린다 | 지시, 작업트리, 모델·노력 | `delta`·`tool`·`approval`·`done`·`error` 이벤트 | `chat_session.py`, `chat_local.py` |
-| `workspace` | `tool/workspace/` | 작업트리 생성·정리, 세션 로그 찾기 | 저장소, 작업 이름 | 작업트리 경로 | `sessions.py` |
-| 메인 | `tool/` 루트, 6단계부터 `tool/main/` | 위를 엮는다. 번역 켬·끔, 예산, 화면 | 사람의 입력 | 화면 | `chat.py`·훅 진입점. 6단계에서 새로 짠다 |
+| `wiki` | `tool/wiki/` | Rule matching, wiki query answer, knowledge graph | Question, target repository | Answer event, citation page, matched rule | Matching part of `inject.py`, `wikilib.py` |
+| `translate` | `tool/translate/` | Translation. If it fails, return the original text | List of sentences, direction, deadline | List of sentences of the same length | `translate.py` |
+| `agent` | `tool/agent/` | Launch CLI agent in worktree and stream events | Instruction, worktree, model/effort | `delta`·`tool`·`approval`·`done`·`error` event | `chat_session.py`, `chat_local.py` |
+| `workspace` | `tool/workspace/` | Worktree creation/cleanup, find session log | Repository, task name | Worktree path | `sessions.py` |
+| Main | `tool/` root, from step 6 `tool/main/` | Weaves the above. Translation on/off, budget, screen | Human input | Screen | `chat.py`·hook entry point. Rewritten in step 6 |
 
-계약은 데이터로만 오간다. 한 파이프라인의 출력 모양을 다른 파이프라인이 알아서는
-안 되고, 그 변환은 메인이 한다. 예산도 파이프라인마다 따로 갖는다 — 마감 하나를 나눠
-쓰는 구조가 #18·#19 의 원인이었다.
+Contracts are exchanged only as data. One pipeline must not know the output shape of another pipeline, and that conversion is done by the main. Budgets are also held separately for each pipeline — the structure of sharing one deadline was the cause of #18 and #19.
 
-에이전트 이벤트에는 처음부터 `session_id` 와 `parent_id` 를 둔다. 코디네이터가 워커를
-띄우는 구조는 별도 계획서에서 짓지만, 이벤트 모양을 나중에 바꾸면 화면과 오버레이를
-다 고쳐야 하기 때문이다.
+Agent events have `session_id` and `parent_id` from the beginning. The structure where the coordinator launches workers is built in a separate plan, but it is because if the event shape is changed later, the screen and overlay must all be fixed.
 
-### 메인이 둘이다
+### There are two mains
 
-훅은 호스트 CLI 안에서 따로 돈다. 그래서 메인이 둘이다 — 프로그램의 메인과, 호스트 안의
-훅 진입점(`hook.py` 가 부르는 `inject.py`·`session_state.py` 등). 둘 다 파이프라인을
-엮기만 하고 파이프라인 안으로 들어가지 않는다.
+Hooks run separately inside the host CLI. So there are two mains — the program's main, and the hook entry point inside the host (`inject.py`·`session_state.py`, etc., called by `hook.py`). Both only weave pipelines and do not enter into the pipelines.
 
-훅 진입점은 `tool/` 루트에 그대로 둔다. 사용자 단위 훅 설정과 예전 프로젝트 단위 설치가
-`tool/hook.py`·`tool/inject.py` 경로를 이름으로 부르기 때문에, 이 파일들이 움직이면
-이미 설치된 기계의 훅이 말없이 끊긴다.
+Hook entry points are left as is in the `tool/` root. Because user-level hook settings and old project-level installations call `tool/hook.py`·`tool/inject.py` paths by name, if these files move, the hooks of already installed machines will silently break.
 
-`tool/main/` 은 6단계에서 새 메인을 짤 때 만든다. 지금의 `chat.py` 를 거기로 옮기기만
-하면 `chat.cmd`·`setup_chat.py`·문서의 경로만 바뀌고 얻는 것이 없다. 어차피 6단계에서
-새로 짜고 지운다.
+`tool/main/` is created when writing the new main in step 6. Just moving the current `chat.py` there only changes the paths of `chat.cmd`·`setup_chat.py`·documents and nothing is gained. It is rewritten and deleted in step 6 anyway.
 
-### 2단계 전에 어긋나 있던 곳
+### Places that were misaligned before step 2
 
-import 를 세어 본 결과다. 2단계(#3)에서 0 이 됐다. `mirror.py` 와 `chat.py` 는 메인 쪽이라
-검사 대상이 아니고, 6단계에서 지운다.
+This is the result of counting imports. It became 0 in step 2 (#3). `mirror.py` and `chat.py` are on the main side, so they are not subject to inspection, and are deleted in step 6.
 
-| 어디 | 무엇이 무엇을 부르나 | 어떻게 푸나 |
+| Where | What calls what | How to solve |
 | --- | --- | --- |
-| `inject.py` | `wiki` 가 `translate` 를 부른다 | 매칭·렌더링은 `tool/wiki/` 로 간다. `inject.py` 는 훅 진입점으로 남아 매칭과 번역을 엮는다 |
-| `mirror.py` | 로그 읽기가 `translate` 를 부른다 | 메인 쪽(`tool/` 루트)에 남는다. 6단계 오버레이가 서면 지운다 |
-| `chat.py` | 서버 하나가 채널·미러·번역·세션 상태·Slack 을 다 import 한다 | 메인 쪽에 남는다. Slack 은 지운다. 6단계에서 새 메인이 파이프라인의 공개 진입점만 부르게 짠다 |
+| `inject.py` | `wiki` calls `translate` | Matching/rendering goes to `tool/wiki/`. `inject.py` remains as a hook entry point to weave matching and translation |
+| `mirror.py` | Log reading calls `translate` | Remains on the main side (`tool/` root). Deleted when step 6 overlay is ready |
+| `chat.py` | One server imports channel, mirror, translation, session state, Slack | Remains on the main side. Slack is deleted. In step 6, the new main is written to call only the public entry points of the pipelines |
 
-### 규칙을 검사로
+### Rules as checks
 
-이 위키의 원칙대로, 직교성은 문장으로 두지 않고 검사로 만든다. `lint --check` 가
-파이프라인 폴더 안의 import 를 본다.
+As per the principles of this wiki, orthogonality is not left as a sentence but made into a check. `lint --check` looks at imports inside pipeline folders.
 
-- 같은 파이프라인, 표준 라이브러리, 설치된 패키지는 된다
-- `tool/common/` 은 된다. 두 파이프라인이 실제로 같이 쓰는 것이 생기면 그때 만든다.
-  `common/` 은 어느 파이프라인도 import 하지 못한다. 5단계에서 작업트리 자리(`worktree_home`)로
-  처음 생겼다
-- 다른 파이프라인은 안 된다
-- `tool/` 루트 모듈도 안 된다. 루트 모듈이 다른 파이프라인을 부르면 그 길로 경계를
-  돌아가기 때문이다
-- 같은 모듈의 다른 철자도 같이 본다. `tool.translate`, 그리고 폴더 밖으로 올라가는 상대
-  import(`from .. import translate`). 리뷰 라운드 1 이 이 두 길로 검사를 통과시켰다
-- 함수 안의 지연 import 도 센다
+- Same pipeline, standard library, installed packages are allowed
+- `tool/common/` is allowed. If something that two pipelines actually use together arises, create it then. `common/` cannot be imported by any pipeline. It was first created in step 5 as a worktree location (`worktree_home`)
+- Other pipelines are not allowed
+- `tool/` root module is also not allowed. Because if the root module calls another pipeline, it goes around the boundary that way
+- Different spellings of the same module are also checked together. `tool.translate`, and relative imports going out of the folder (`from .. import translate`). Review round 1 passed the check through these two paths
+- Delayed imports inside functions are also counted
 
-- `tool/` 루트 모듈은 파이프라인의 `__all__` 안의 이름만 쓴다. `__all__` 이 있는 파이프라인만
-  본다(`lint.pipeline_surface`, 발견 `공개 진입점`). 테스트는 내부를 봐도 된다. `import tool.translate`
-  는 `tool` 을 묶으므로 `tool.translate.x` 도 같이 본다(PR #4 에서 미룬 구멍, 4단계에서 막았다)
+- `tool/` root module uses only names inside the pipeline's `__all__`. It only looks at pipelines that have `__all__` (`lint.pipeline_surface`, discovery `공개 진입점`). Tests can look inside. `import tool.translate` binds `tool`, so it also looks at `tool.translate.x` (a hole postponed in PR #4, blocked in step 4)
 
-검사가 실제로 빨개지는지는 `test_lint.py` 가 확인한다. 구현은 `lint.pipeline_imports`,
-`lint.reached`, `lint.pipeline_surface` 다.
+Whether the check actually turns red is confirmed by `test_lint.py`. Implementation is `lint.pipeline_imports`, `lint.reached`, `lint.pipeline_surface`.
 
-## 프런트엔드
+## Frontend
 
-앱은 Tauri 로 싼다. 지금의 Python 코드(FastAPI·번역·위키 매칭)는 사이드카 프로세스로
-그대로 쓰고, 화면은 지금처럼 React 로 그린다. 백엔드를 Rust 로 다시 쓰지 않는다.
+The app is wrapped in Tauri. The current Python code (FastAPI, translation, wiki matching) is used as is as a sidecar process, and the screen is drawn with React as it is now. The backend is not rewritten in Rust.
 
-화면 순서는 `craft/screen-follows-the-purpose` 를 따른다 — 목적 한 줄에서 화면 목록을
-뽑고, 정렬을 측정하고, 타이포, 색은 사용자가 고르고, 여백은 마지막.
+Screen order follows `craft/screen-follows-the-purpose` — extract the screen list from the one-line purpose, measure alignment, user chooses typo and color, margins last.
 
 ```
 ┌──────────┬──────────────┬──────────────┐
@@ -147,75 +109,57 @@ import 를 세어 본 결과다. 2단계(#3)에서 0 이 됐다. `mirror.py` 와
 └──────────┴──────────────┴──────────────┘
 ```
 
-| 영역 | 무엇 | 지금 있는 것 |
+| Area | What | What exists now |
 | --- | --- | --- |
-| 작업트리 목록 | 브랜치, 변경 여부, 세션 연결 상태. 머지된 것은 정리를 제안한다 | 없음 |
-| 위키 질의 (메인) | 묻고, 답과 근거 `file:line` 을 본다 | `#위키` 채널, `Answer`·`Peek` |
-| 에이전트 세션 | 에이전트 출력 위에 한국어 오버레이. 도구 호출·패치는 번역하지 않는다. 쓰기 승인도 여기서 한다 | `Mirror`, `useOverlay` |
-| 터미널 | 선택한 작업트리의 셸 | 없음 |
-| 위키 지도 | 규칙 그래프. 별도 화면 | `WikiMap` |
+| Worktree list | Branch, change status, session connection status. Suggest cleanup for merged ones | None |
+| Wiki query (main) | Ask, see answer and evidence `file:line` | `#위키` channel, `Answer`·`Peek` |
+| Agent session | Korean overlay on top of agent output. Tool calls/patches are not translated. Write approval is also done here | `Mirror`, `useOverlay` |
+| Terminal | Shell of the selected worktree | None |
+| Wiki map | Rule graph. Separate screen | `WikiMap` |
 
-위키 답에서 작업으로 넘길 때는 초안을 만든다. 질문, 답 요약, 인용 `file:line`, 매칭된
-규칙을 담은 지시 초안을 사람이 고친 뒤 보낸다. 지금 `Handoff` 를 넓힌다.
+When passing from a wiki answer to a task, create a draft. A person modifies and sends the instruction draft containing the question, answer summary, citation `file:line`, and matched rules. Currently expanding `Handoff`.
 
-테마는 다크가 기본이고 라이트도 둔다. 팔레트는 화면 순서의 색 단계에서 사용자가 고른다.
+Theme is dark by default, and light is also provided. Palette is chosen by the user in the color step of screen order.
 
-번역 토글은 화면이 아니라 메인의 스위치다. 앱 전체에 하나이고, 마지막 값을 기억한다.
-끄면 앱 화면의 번역이 `translate` 에 요청을 보내지 않는다. 훅이 에이전트에게 넣는 영어본은
-이 스위치와 따로 설정한다 — 에이전트 입력이라 화면 사정으로 끊기면 안 된다.
+Translation toggle is a switch in the main, not the screen. It is one for the entire app and remembers the last value. If turned off, the app screen's translation does not send requests to `translate`. The English version that the hook puts into the agent is set separately from this switch — it is agent input, so it must not be cut off due to screen circumstances.
 
-에이전트 세션은 서버에 쓰는 화면이다. 짓기 전에 `craft/screen-ownership-before-wiring`
-의 세 가지를 적는다 — 어느 CLI 계정으로 도는가, 늦게 온 이벤트가 이 세션 것인지 무엇이
-판정하나, 무엇을 써도 되나.
+Agent session is a screen that writes to the server. Before building, write down three things of `craft/screen-ownership-before-wiring` — which CLI account it runs as, what determines if a late event belongs to this session, what is allowed to be written.
 
-## 번역 예산
+## Translation budget
 
-`translate` 는 자기 예산을 두 가지로 잰다.
+`translate` measures its budget in two ways.
 
-- 호출자별 마감(초). 호출자가 넘긴다. 기본값은 없다. 훅은 짧게, 오버레이는 길게 — #19 가
-  다시 나지 않게
-- 월 비용 한도($). 응답의 토큰 수에 Gemini 요금을 곱해 센다. 넘으면 그 달 남은 기간은 원문을
-  돌려준다. 한도는 `.env` 의 `TRANSLATE_MONTHLY_USD`, 기본 $5. 화면의 사용량 표시는 6단계가
-  `usage()` 로 한다
+- Deadline per caller (seconds). The caller passes it. There is no default value. Hooks short, overlays long — so #19 does not happen again
+- Monthly cost limit ($). Multiply the number of tokens in the response by the Gemini rate and count. If exceeded, return the original text for the remainder of the month. The limit is `TRANSLATE_MONTHLY_USD` of `.env`, default $5. Usage display on the screen is done by `usage()` in step 6
 
-## 안전 경계
+## Safety boundary
 
-지금 웹 채팅은 `READ_TOOLS = "Bash,Read,Glob,Grep"` 로 묶여 있다. 브라우저에서 파일을
-고치는 것은 원격 셸이라는 이유다. 에이전트 파이프라인은 쓰기가 필요하므로 이 경계를
-새로 긋는다.
+Currently, web chat is bound by `READ_TOOLS = "Bash,Read,Glob,Grep"`. The reason for fixing files in the browser is that it is a remote shell. The agent pipeline needs writing, so this boundary is redrawn.
 
-- 서버는 `127.0.0.1` 에만 뜬다
-- 쓰기는 `workspace` 가 만든 작업트리 안에서만. 원본 체크아웃에는 쓰지 않는다
-  — 예외 둘. [연결] 을 누르면 서버가 그 저장소의 `.wiki/adapter.toml` 하나를 원본에 쓴다
-  ([loop 개요](../../loop/0-overview.md#연결과-전수조사)). [머지] 뒤 정리에서, 원본이 base 브랜치에
-  있고 미커밋 변경이 없을 때만 `git merge --ff-only` 한다([loop 4단계](../../loop/4-review.md#머지))
-- 작업트리는 저장소 옆 `../<repo>-worktrees/<task>` 에 만든다
-- 쓰기는 모두 화면에서 승인한다 — 파일 편집, 쓰기가 있는 셸 명령, `gh pr create` 까지.
-  Claude Code 는 `--permission-prompt-tool stdio` 로, Codex 는 `app-server` 의 승인 요청으로 받는다.
-  작업트리 밖으로의 쓰기는 묻지 않고 거절한다([5단계](5-agent-workspace.md))
-- 대상 저장소의 `permissions.deny` 와 위키 훅은 그대로 붙는다 — CLI 를 띄우는 것이니까
+- Server runs only on `127.0.0.1`
+- Writing only inside the worktree created by `workspace`. Do not write to the original checkout — two exceptions. If you click [Connect], the server writes one `.wiki/adapter.toml` of that repository to the original ([loop overview](../../loop/0-overview.md#연결과-전수조사)). In cleanup after [Merge], only `git merge --ff-only` when the original is on the base branch and there are no uncommitted changes ([loop step 4](../../loop/4-review.md#머지))
+- Worktree is created in `../<repo>-worktrees/<task>` next to the repository
+- All writing is approved on the screen — file editing, shell commands with writing, even `gh pr create`. Claude Code is received as `--permission-prompt-tool stdio`, Codex as `app-server`'s approval request. Writing outside the worktree is refused without asking ([step 5](5-agent-workspace.md))
+- The target repository's `permissions.deny` and wiki hooks are attached as is — because it is launching a CLI
 
-## 단계
+## Steps
 
-| # | 단계 | 무엇 | 상태 |
+| # | Step | What | Status |
 | --- | --- | --- | --- |
-| 1 | 방향 확정 | 위 결정들. Tauri + Python 사이드카, Orca 완전 대체, 에이전트는 이벤트 스트림 | 완료 |
-| 2 | 경계 검사 | 파이프라인 폴더 넷, 폴더 간 import 금지 검사와 그 검사가 빨개지는 테스트. 어긋난 곳 3개 해소, Slack 삭제 | 완료 |
-| 3 | `translate` 독립 | 공개 진입점 하나, 월 비용 한도와 캐시. 호출자별 마감은 호출자가 넘긴다 | 완료 |
-| 4 | `wiki` 독립 | 질의·그래프를 번역 없이 돌린다. 답변 이벤트 계약 | 완료 |
-| 5 | `agent`·`workspace` | 작업트리 생성·정리, 쓰기 가능한 CLI 세션, 승인 이벤트, 이벤트 계약. 안전 경계 적용 | 완료 |
-| 6 | 메인과 새 화면 | Tauri 창, `tool/main/`, 세 영역 + 터미널, 오버레이, 번역 토글. 화면 순서 5단계. 끝나면 `mirror.py`·옛 `chat.py` 삭제 | 완료 |
-| 7 | 검증 | `pytest tool/`, `lint --check`, 웹 빌드, 번역 끈 상태로 전 과정 한 번, 켠 상태로 한 번 | 완료 |
+| 1 | Direction confirmation | Decisions above. Tauri + Python sidecar, complete Orca replacement, agent is event stream | Done |
+| 2 | Boundary check | Four pipeline folders, check for forbidden imports between folders and tests where that check turns red. Resolved 3 misaligned places, deleted Slack | Done |
+| 3 | `translate` independence | One public entry point, monthly cost limit and cache. Deadline per caller is passed by the caller | Done |
+| 4 | `wiki` independence | Run query/graph without translation. Answer event contract | Done |
+| 5 | `agent`·`workspace` | Worktree creation/cleanup, writable CLI session, approval event, event contract. Apply safety boundary | Done |
+| 6 | Main and new screen | Tauri window, `tool/main/`, three areas + terminal, overlay, translation toggle. Screen order step 5. When finished, delete `mirror.py`·old `chat.py` | Done |
+| 7 | Verification | `pytest tool/`, `lint --check`, web build, entire process once with translation off, once with it on | Done |
 
-단계마다 PR 하나다.
+One PR per step.
 
-2단계가 먼저인 이유. 경계 검사 없이 3~5단계를 하면, 각 단계가 끝날 때마다 경계가
-지켜졌는지를 사람이 눈으로 확인해야 한다. 검사가 먼저 서 있으면 어긋나는 순간 빨개진다.
+Reason why step 2 is first. If steps 3-5 are done without boundary checks, a person must visually confirm whether the boundary is kept every time each step ends. If the check is in place first, it turns red the moment it misaligns.
 
-## 이 계획에 넣지 않은 것
+## Things not included in this plan
 
-- 코디네이터와 워커. 한 세션이 작업을 쪼개 여러 워커에 나눠 주는 구조는 따로 계획한다.
-  모든 쓰기를 승인받기로 했으므로, 그때 워커 여럿의 승인 요청이 몰리는 문제를 같이 푼다
-- 리뷰 셀. 작업 세션 옆의 읽기 전용 리뷰 세션 — [loop 4단계](../../loop/0-overview.md#리뷰-셀과-루프)에서 한다
-- 공개 사본으로의 역반영. 이 저장소의 변경을 `ai-coding-agent-wiki-public` 에 돌려줄지는
-  `docs/publishing.md` 의 절차로 그때마다 판단한다
+- Coordinator and worker. The structure where one session splits tasks and distributes them to multiple workers is planned separately. Since it was decided to get approval for all writing, the problem of approval requests from multiple workers flocking at that time is solved together
+- Review cell. Read-only review session next to the work session — done in [loop step 4](../../loop/0-overview.md#리뷰-셀과-루프)
+- Back-propagation to the public copy. Whether to return the changes of this repository to `ai-coding-agent-wiki-public` is judged each time by the procedure of `docs/publishing.md`
