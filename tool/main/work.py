@@ -540,9 +540,13 @@ def dispatch(path: Path, ended: Run) -> None:
         release = hold(_busy, _lock, key, "", kind="turn")
     try:
         begin(path, session(path, order.model, order.effort), order.text, release)
-    except BaseException:
+    except Exception as exc:
+        # Nobody's request is waiting on this thread: the failure and the
+        # instruction itself go on record, and screens read it again.
         release()
-        raise
+        remember(path, "assistant", "", error=f"기다리던 지시를 보내지 못했다 — {type(exc).__name__}: {exc}"
+                                                f"\n지시: {order.text}")
+        feed.put({"kind": "turn", "path": key, "turn": "", "session_id": ""})
 
 
 def attached(path: str) -> Run:
@@ -678,6 +682,12 @@ def queue(body: Queued) -> dict:
     text = body.text.strip()
     if not text:
         raise HTTPException(400, "빈 지시")
+    # A new instruction, as `say` takes one: only in the selected project's
+    # worktrees. A turn left in another after a switch is read, stopped and
+    # answered, never given more work.
+    with _lock:
+        repo = current_repo()
+    ours(body.path, repo)
     run = attached(body.path)
     # Under the run's lock: `finish` takes it too, so an instruction taken
     # here is one `dispatch`, after the finish, finds.

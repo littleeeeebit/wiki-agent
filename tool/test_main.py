@@ -1357,6 +1357,49 @@ def test_a_turn_the_server_starts_after_the_gate_goes_before_the_waiting_one(tmp
         assert _said(web, path, 3)[0] == ["첫째", "계획 행", "둘째"]
 
 
+def test_a_waiting_instruction_is_taken_only_in_the_selected_project(tmp_path):
+    """A turn left in another project after a switch is read and stopped, not given more work."""
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    check, entered, go = _gated()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
+         patch.object(work, "ChatSession", Agent), patch.object(specs, "check", check):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        path = _made()
+        work.say(work.Order(path=path, text="첫째"))
+        assert entered.wait(10)
+        turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
+        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
+        assert web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).status_code == 404
+        go.set()
+        assert _said(web, path, 1)[0] == ["첫째"]
+
+
+def test_a_waiting_instruction_that_cannot_start_is_on_record(tmp_path):
+    """Its turn starts on a thread nobody's request waits on: a failure there
+    is written down with the instruction, and screens are told to read again."""
+
+    repo = _repo(tmp_path)
+    web = client()
+    check, entered, go = _gated()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent), \
+         patch.object(specs, "check", check):
+        path = _made()
+        work.say(work.Order(path=path, text="첫째"))
+        assert entered.wait(10)
+        turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
+        web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
+        told = len(work.feed.events)
+        with patch.object(work, "session", side_effect=RuntimeError("CLI 가 없다")):
+            go.set()
+            said, log = _said(web, path, 2)
+        assert said == ["첫째"] and log["queued"] is None and not work._busy
+        assert "CLI 가 없다" in log["rows"][-1]["error"] and "둘째" in log["rows"][-1]["error"]
+        assert any(e["kind"] == "turn" and e["path"] == path for e in work.feed.events[told:])
+
+
 class Answered(Agent):
     """Stopped during the gate: the agent has already answered."""
 
