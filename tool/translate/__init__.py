@@ -41,7 +41,7 @@ from pathlib import Path
 
 from common import settings
 
-__all__ = ("translate", "english", "forget", "retire", "usage", "glossary", "KO_EN", "EN_KO")
+__all__ = ("translate", "english", "retire", "usage", "glossary", "KO_EN", "EN_KO")
 
 HERE = Path(__file__).resolve().parents[1]  # `tool/`
 ROOT = HERE.parent
@@ -123,7 +123,7 @@ TOKEN = re.compile(rf"{OPEN}(\d+){CLOSE}")
 # never matches.
 SPANS = (
     ("front_matter", re.compile(r"\A---\n.*?\n---\n", re.S)),  # triggers live here
-    ("fence", re.compile(r"```.*?```", re.S)),
+    ("fence", re.compile(r"```.*?```|~~~.*?~~~", re.S)),
     ("comment", re.compile(r"<!--.*?-->", re.S)),   # the markers inject.py plants
     # Before the wikilink: `[[name]]` in backticks masked as a link first left
     # its placeholder inside the code span's, and `intact` refused every such page.
@@ -445,9 +445,7 @@ def _store() -> sqlite3.Connection | None:
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("CREATE TABLE IF NOT EXISTS shots (k TEXT PRIMARY KEY, v TEXT)")
         db.execute("CREATE TABLE IF NOT EXISTS spend (month TEXT PRIMARY KEY, usd REAL)")
-        # Which source text each translation came from, so `forget` finds it
-        # under any model or glossary; and what a person took out of use.
-        db.execute("CREATE TABLE IF NOT EXISTS origins (digest TEXT, k TEXT, PRIMARY KEY (digest, k))")
+        # What a person took out of use (`retire`).
         db.execute("CREATE TABLE IF NOT EXISTS retired (k TEXT PRIMARY KEY)")
         return db
     except Exception:
@@ -498,19 +496,21 @@ def translate(texts: list[str], direction: str, deadline: float) -> list[str]:
 
 
 def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
-              cache: bool = True) -> list[tuple[str, str]]:
+              held: dict[str, str] | None = None) -> list[tuple[str, str]]:
     """`(text, status)` per input. The status is `skipped` (nothing of the
     source language), `cached`, `translated`, or why the original came back:
     `retired`, `no_key`, `limit`, `request_failed`, `spans_broken`, `deadline`,
     or what `accept(source, translation)` returned against a translation —
     `None` accepts it. What it rejects is not cached, and a cached
-    translation it rejects is asked for again. With `cache` off the cache is
-    neither read nor written: the caller keeps the result."""
+    translation it rejects is asked for again. `held` (source -> English)
+    stands in for the cache, which is then neither read nor written: the
+    caller keeps what it holds, and what is held is checked as a cache hit is
+    — retired, and `accept`."""
 
     if not texts:
         return []
     try:
-        return _translate(list(texts), direction, deadline, accept, cache)
+        return _translate(list(texts), direction, deadline, accept, held)
     except Exception:
         # The callers are hooks part-way through assembling an injection. Their
         # own entry-point guard would catch this and pass the turn, which costs
@@ -520,7 +520,7 @@ def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
 
 
 def _translate(texts: list[str], direction: str, deadline: float, accept=None,
-               cache: bool = True) -> list[tuple[str, str]]:
+               held: dict[str, str] | None = None) -> list[tuple[str, str]]:
     keep, fixed, version = glossary()
     out = [(text, "skipped") for text in texts]
 
@@ -537,8 +537,8 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
     else:
         try:
             marks = ",".join("?" * len(keys))
-            hit = dict(db.execute(f"SELECT k, v FROM shots WHERE k IN ({marks})",
-                                  list(keys.values())).fetchall()) if cache else {}
+            hit = dict(db.execute(f"SELECT k, v FROM shots WHERE k IN ({marks})", list(keys.values())).fetchall()
+                       ) if held is None else {keys[i]: held[texts[i]] for i in wanted if texts[i] in held}
             retired = {k for (k,) in db.execute(f"SELECT k FROM retired WHERE k IN ({marks})", list(keys.values()))}
             for i in list(wanted):
                 if keys[i] in retired:
@@ -586,11 +586,9 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
                     continue
                 fresh.append((keys[i], done))
                 out[i] = (done, "translated")
-            if fresh and cache:
+            if fresh and held is None:
                 try:
                     db.executemany("INSERT OR REPLACE INTO shots VALUES (?, ?)", fresh)
-                    db.executemany("INSERT OR IGNORE INTO origins VALUES (?, ?)",
-                                   [(_digest(texts[i]), keys[i]) for i in wanted if out[i][1] == "translated"])
                     db.commit()
                 except Exception:
                     pass
@@ -610,10 +608,6 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
     if time.monotonic() > deadline:
         return [(text, status if status == "skipped" else "deadline") for text, (_t, status) in zip(texts, out)]
     return out
-
-
-def _digest(text: str) -> str:
-    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 # What `english` reports, besides the text. Bump when its checks change.
@@ -643,7 +637,7 @@ def kept(source: str, english: str, keep: tuple[str, ...]) -> bool:
     return found(source) == found(english)
 
 
-def english(texts: list[str], deadline: float, cache: bool = True) -> list[dict]:
+def english(texts: list[str], deadline: float, held: dict[str, dict] | None = None) -> list[dict]:
     """English normalization with its outcome, one dict per input.
 
     `translate` returns the original on every failure, so its string cannot
@@ -660,8 +654,10 @@ def english(texts: list[str], deadline: float, cache: bool = True) -> list[dict]
       `spans` (`intact`, `broken` or `None` when nothing was translated),
       `cached`.
 
-    `cache` off for a private memory's text: no copy is left here, and the
-    caller keeps the English beside its source.
+    `held` for a private memory's texts: the outcomes the caller kept beside
+    their source (text -> outcome), used in place of this cache, which is
+    then neither read nor written. One made under another version, or
+    retired since, is not used; the caller keeps what comes back.
     """
 
     from common.language import language
@@ -677,8 +673,10 @@ def english(texts: list[str], deadline: float, cache: bool = True) -> list[dict]
 
     langs = [language(text, keep) for text in texts]
     korean = [i for i, lang in enumerate(langs) if lang == "ko"]
-    done = dict(zip(korean, _outcomes([texts[i] for i in korean], KO_EN, deadline, accept, cache)))
     version = f"{MODEL}/p{PROMPT_VERSION}/g{glossary_version}/e{ENGLISH_VERSION}"
+    usable = None if held is None else {t: o["text"] for t, o in held.items()
+                                        if o.get("status") == "translated" and o.get("version") == version}
+    done = dict(zip(korean, _outcomes([texts[i] for i in korean], KO_EN, deadline, accept, usable)))
     out = []
     for i, text in enumerate(texts):
         result = {"text": None, "status": "unavailable", "reason": None, "language": langs[i],
@@ -703,37 +701,6 @@ def english(texts: list[str], deadline: float, cache: bool = True) -> list[dict]
                 result.update(reason=how)
         out.append(result)
     return out
-
-
-def forget(texts: list[str]) -> bool:
-    """Remove every cached English form of these texts — a deleted private
-    memory's. `False` when the cache could not be written; try again.
-
-    What was translated since `origins` existed goes under any model or
-    glossary; older entries only under the current ones.
-    """
-
-    if not texts:
-        return True
-    _keep, _fixed, version = glossary()
-    db = _store()
-    if db is None:
-        return False
-    try:
-        db.execute("PRAGMA secure_delete=ON")
-        digests = [(_digest(t),) for t in texts]
-        keys = [(_key(KO_EN, version, t),) for t in texts]
-        for (digest,) in digests:
-            keys += db.execute("SELECT k FROM origins WHERE digest = ?", (digest,)).fetchall()
-        db.executemany("DELETE FROM shots WHERE k = ?", keys)
-        db.executemany("DELETE FROM retired WHERE k = ?", keys)
-        db.executemany("DELETE FROM origins WHERE digest = ?", digests)
-        db.commit()
-        return True
-    except Exception:
-        return False
-    finally:
-        db.close()
 
 
 def retire(texts: list[str]) -> bool:

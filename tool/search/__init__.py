@@ -141,9 +141,8 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
 
 def evidence_store(project: str | Path | None, hub: Path | None = None):
     """The evidence store of `project`'s index beside `hub` (this one by
-    default). It holds the deletion journal, read with `.journal("text")` and
-    marked with `.cleared("text", ids)`; each chunk's source for checking a
-    citation, `.source_of(chunk_id)`; and a private source's English,
+    default). It holds each chunk's source for checking a citation,
+    `.source_of(chunk_id)`, and a private source's English,
     `.english(source_id, texts)` and `.keep_english(source_id, outcomes)`.
     The caller closes it."""
 

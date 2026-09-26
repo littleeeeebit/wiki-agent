@@ -3,6 +3,7 @@ English normalization and the store. No credentials and no external calls:
 the translator's request (`translate._ask`) is replaced where a test needs an
 answer from it."""
 
+import functools
 import json
 import os
 import sqlite3
@@ -239,22 +240,22 @@ def test_a_failed_update_keeps_what_was_there(corpus, monkeypatch):
     index.close()
 
 
-def test_a_deleted_memory_leaves_no_text_vector_or_english_behind(corpus):
+def journalled(hub: Path, repo: Path) -> int:
+    with sqlite3.connect(searchd.store_path(hub, repo)) as db:
+        return db.execute("SELECT count(*) FROM journal").fetchone()[0]
+
+
+def test_a_deleted_memory_leaves_no_text_or_vector_behind(corpus):
     hub, repo = corpus
     index = index_of(hub, repo)
     memory = by_path(index)[".wiki/memory/login.md"][0]
-    # Its vector and its cached English, as the daemon and a turn would have left them.
+    # Its vector on disk, as code before this one wrote a private memory's.
     vectors = cache_dir() / "vectors.sqlite3"
     db = sqlite3.connect(vectors)
     db.execute("CREATE TABLE IF NOT EXISTS v (k TEXT PRIMARY KEY, v BLOB)")
     db.execute("INSERT OR REPLACE INTO v VALUES (?, ?)", (memory["key"], b"\0" * 4))
     db.commit()
     db.close()
-    cache = translate._store()
-    key = translate._key(translate.KO_EN, translate.glossary()[2], memory["text"])
-    cache.execute("INSERT OR REPLACE INTO shots VALUES (?, ?)", (key, "english of a private memory"))
-    cache.commit()
-    cache.close()
 
     (repo / ".wiki/memory/login.md").unlink()
     index.refresh()
@@ -263,25 +264,20 @@ def test_a_deleted_memory_leaves_no_text_vector_or_english_behind(corpus):
         assert db.execute("SELECT count(*) FROM v WHERE k = ?", (memory["key"],)).fetchone() == (0,)
     with sqlite3.connect(searchd.store_path(hub, repo)) as db:
         assert db.execute("SELECT count(*) FROM chunks WHERE text LIKE '%password%'").fetchone() == (0,)
-        assert db.execute("SELECT count(*) FROM journal WHERE text IS NOT NULL").fetchone()[0] >= 1
-    assert knowledge.cleanup(repo) >= 1
-    with sqlite3.connect(translate.CACHE) as db:
-        assert db.execute("SELECT count(*) FROM shots WHERE k = ?", (key,)).fetchone() == (0,)
-    with sqlite3.connect(searchd.store_path(hub, repo)) as db:
-        assert db.execute("SELECT count(*) FROM journal").fetchone() == (0,)
+    assert journalled(hub, repo) == 0
     index.close()
 
 
-def test_a_crash_before_cleanup_leaves_the_journal_to_finish_it(corpus, monkeypatch):
+def test_a_vector_cache_that_cannot_be_written_leaves_the_journal_to_finish_it(corpus, monkeypatch):
     hub, repo = corpus
     index = index_of(hub, repo)
     (repo / ".wiki/memory/login.md").unlink()
-    forget = translate.forget
-    monkeypatch.setattr(translate, "forget", lambda texts: False)   # the cache could not be written
+    monkeypatch.setattr(searchd, "drop_vectors", lambda keys: False)
     index.refresh()
-    assert knowledge.cleanup(repo) >= 1
-    monkeypatch.setattr(translate, "forget", forget)
-    assert knowledge.cleanup(repo) >= 1 and knowledge.cleanup(repo) == 0
+    assert journalled(hub, repo) >= 1
+    monkeypatch.undo()
+    index.refresh()
+    assert journalled(hub, repo) == 0
     index.close()
 
 
@@ -329,23 +325,51 @@ def test_a_private_memorys_english_is_kept_beside_it_and_goes_with_it(private_ko
         seen.append(state)
         return {q: 0.9 for q in questions}
 
-    controller.prepare("Push?", repo, evaluate=evaluate, normalize=knowledge.english)
+    normalize = functools.partial(knowledge.english, project=repo)
+    controller.prepare("Push?", repo, evaluate=evaluate, normalize=normalize)
     assert next(s["passages"] for s in seen if "passages" in s)[0]["text"] == "# Push\n\nPush without asking."
     assert shots(memory["text"]) == 0 and shots("푸시") == 0, "a private memory's English reached the shared cache"
     store = search.evidence_store(repo)
     assert store.english(memory["source_id"], [memory["text"]])[memory["text"]]["status"] == "translated"
     store.close()
 
-    # Deleted, a plain refresh takes its English with it: no Jev turn, no cleanup.
+    # Edited, a plain refresh drops the old English, and a translation of the
+    # old text that lands afterwards is not kept.
+    bump(repo / ".wiki/memory/push.md", "# 푸시\n\n묻고 나서 푸시한다.\n")
+    index.refresh()
+    store = search.evidence_store(repo)
+    assert store.english(memory["source_id"], [memory["text"]]) == {}
+    assert store.keep_english(memory["source_id"], [(memory["text"], {"status": "translated"})]) == 0
+    store.close()
+
+    # Deleted, a plain refresh takes its English with it: no Jev turn, nothing else to run.
     (repo / ".wiki/memory/push.md").unlink()
     index.refresh()
     with sqlite3.connect(searchd.store_path(hub, repo)) as db:
         assert db.execute("SELECT count(*) FROM english").fetchone() == (0,)
-    # A translation that lands after the deletion is not kept.
-    store = search.evidence_store(repo)
-    assert not store.keep_english(memory["source_id"], [(memory["text"], {"status": "translated"})])
-    store.close()
     index.close()
+
+
+def test_kept_private_english_of_another_version_or_retired_is_not_used(private_korean):
+    hub, repo = private_korean
+    index = index_of(hub, repo)
+    memory = by_path(index)[".wiki/memory/push.md"][0]
+    text, source = memory["text"], memory["source_id"]
+    index.close()
+    fresh = knowledge.english([text], 5, [(source,)], repo)[0]
+    assert (fresh["text"], fresh["cached"]) == ("# Push\n\nPush without asking.", False)
+
+    store = search.evidence_store(repo)
+    store.keep_english(source, [(text, {**fresh, "text": "Push only after asking.",
+                                        "version": "an older model/p0/g0/e0"})])
+    store.close()
+    again = knowledge.english([text], 5, [(source,)], repo)[0]
+    assert again["text"] == "# Push\n\nPush without asking.", "English of another version was used"
+    assert knowledge.english([text], 5, [(source,)], repo)[0]["cached"]
+
+    assert translate.retire([text])
+    retired = knowledge.english([text], 5, [(source,)], repo)[0]
+    assert (retired["status"], retired["text"]) == ("retired", None)
 
 
 def test_ingest_keeps_a_private_memorys_english_out_of_the_shared_cache(private_korean, translator, monkeypatch):
@@ -446,6 +470,8 @@ def test_language_weighs_prose_words(text, expected):
     ("포트 8791 을 쓴다.", "It uses a port.", "protected_changed"),           # a number lost
     ("search.daemon 을 고친다.", "Fix the daemon.", "protected_changed"),     # an identifier lost
     ("`tool/x.py` 를 고친다.", "Fix it.", "spans_broken"),                    # a placeholder dropped
+    # A `~~~` fence is code as a backtick fence is (review round 2).
+    ("~~~\n실행하지 않는다\n~~~\n설명한다.", "~~~\nExecute\n~~~\nExplain.", "spans_broken"),
 ])
 def test_a_protected_span_that_changed_is_uncertain_not_translated(translator, source, reply, reason):
     masked, _spans = translate.protect(source, translate.glossary()[0])
@@ -482,8 +508,6 @@ def test_a_retired_translation_is_not_used_or_made_again(translator):
     assert translate.retire(["원문이 이긴다."])
     out = translate.english(["원문이 이긴다."], time.monotonic() + 5)[0]
     assert (out["status"], out["text"]) == ("retired", None)
-    assert translate.forget(["원문이 이긴다."])
-    assert translate.english(["원문이 이긴다."], time.monotonic() + 5)[0]["status"] == "translated"
 
 
 # ---- the controller reads English ---------------------------------------------
@@ -517,7 +541,6 @@ def test_jev_reads_english_and_an_untranslated_passage_proves_nothing(corpus, tr
 
     # Translated, its English is what Jev reads; the citation stays the original.
     seen.clear()
-    assert translate.forget([korean["text"], "한도"])
     translator[translate.protect(korean["text"], translate.glossary()[0])[0]] = (
         "# Limit\n\nIt stops when a request is over the limit.")
     translator["한도"] = "Limit"

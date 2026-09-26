@@ -11,9 +11,9 @@ English is kept as evidence, ungraded, and cannot prove sufficiency; a question
 or state with none means no Jev at all (`normalization_failed`), and baseline
 retrieval, which reads both languages, goes on.
 
-A private memory's English is not left in the translator's cache: it is asked
-for with `private=True` and kept in the evidence store beside its source
-(`Store.english`), so it goes when the memory does.
+Each passage goes with its owners: the private sources it came from, empty for
+the rest. The caller keeps a private memory's English beside its source, not in
+the translator's cache, so it goes when the memory does.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from typing import Callable
 from common.budget import QUESTION, Budget, Cancelled
 from common.language import language
 
-from . import HUB, ask, evidence, evidence_store
+from . import HUB, ask, evidence
 
 SOURCES = {
     "hub": "Shared operator rules and engineering techniques.",
@@ -47,16 +47,16 @@ NORMALIZE_SECONDS = 4.0
 
 # `(state, questions, trace, budget, stage) -> {question: probability}`
 Evaluate = Callable[..., dict]
-# `(texts, seconds, private=False) -> [translate.english outcome]`; `private`
-# texts are not cached by the translator.
-Normalize = Callable[..., list[dict]]
+# `(texts, seconds, owners) -> [translate.english outcome]`; `owners` is `None`
+# or, per text, the private sources it came from (`()` for none).
+Normalize = Callable[[list[str], float, list[tuple[str, ...]] | None], list[dict]]
 
 
 class NormalizationFailed(Exception):
     category = "normalization_failed"
 
 
-def untranslated(texts: list[str], _seconds: float, private: bool = False) -> list[dict]:
+def untranslated(texts: list[str], _seconds: float, _owners=None) -> list[dict]:
     """Normalization with no translator handed in: English stands as it is,
     and anything else has no English."""
 
@@ -178,41 +178,9 @@ def run(query: str, root: Path | None, available: list[str], state: str, k: int,
     # The English each chunk's heading path was given, for the passages Jev reads.
     headings: dict[str, str | None] = {}
 
-    def english(texts: list[str]) -> list[dict]:
-        return normalize(texts, max(0.0, min(NORMALIZE_SECONDS, budget.left() - budget.call_seconds)))
+    def english(texts: list[str], owners: list[tuple[str, ...]] | None = None) -> list[dict]:
+        return normalize(texts, max(0.0, min(NORMALIZE_SECONDS, budget.left() - budget.call_seconds)), owners)
 
-    def normalized(hits: list[dict]) -> list[dict]:
-        """Each hit's text, then each heading title, in English. A private
-        hit's comes from, and goes to, the evidence store."""
-
-        texts = [h["text"] for h in hits] + [" > ".join(h["heading_path"]) for h in hits]
-        owner = [h["source_id"] if h["visibility"] == "private" else None for h in hits] * 2
-        out: list[dict | None] = [None] * len(texts)
-        store = evidence_store(root) if root and any(owner) else None
-        try:
-            if store:
-                for source in set(filter(None, owner)):
-                    kept = store.english(source, [t for t, o in zip(texts, owner) if o == source])
-                    for i, text in enumerate(texts):
-                        if owner[i] == source and text in kept:
-                            out[i] = kept[text]
-            cap = max(0.0, min(NORMALIZE_SECONDS, budget.left() - budget.call_seconds))
-            end = budget.left() - cap
-            for private in (False, True):
-                todo = [i for i, o in enumerate(owner) if out[i] is None and bool(o) == private]
-                if not todo:
-                    continue
-                made = normalize([texts[i] for i in todo], max(0.0, budget.left() - end), private=private)
-                for i, outcome in zip(todo, made):
-                    out[i] = outcome
-                if private and store:
-                    for source in {owner[i] for i in todo}:
-                        store.keep_english(source, [(texts[i], out[i]) for i in todo
-                                                    if owner[i] == source and out[i]["status"] == "translated"])
-        finally:
-            if store:
-                store.close()
-        return out
 
     def judge(stage: str, state_: dict, questions: dict) -> dict[str, float]:
         # A step starts only if a Jev call after it can still finish inside the
@@ -263,7 +231,10 @@ def run(query: str, root: Path | None, available: list[str], state: str, k: int,
                 continue
             # Graded candidates come out of the run's one allowance, both attempts together.
             shortlist = batch[:budget.take(min(len(batch), MAX_CANDIDATES))]
-            outcomes = normalized(shortlist)
+            # Each text, then each heading title; a private memory's names its source.
+            owners = [(h["source_id"],) if h["visibility"] == "private" else () for h in shortlist] * 2
+            outcomes = english([h["text"] for h in shortlist] + [" > ".join(h["heading_path"]) for h in shortlist],
+                               owners)
             items = [item(h, o) for h, o in zip(shortlist, outcomes)]
             for chunk, title in zip(items, outcomes[len(items):]):
                 headings[chunk["chunk_id"]] = title["text"]

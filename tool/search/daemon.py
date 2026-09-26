@@ -446,7 +446,7 @@ CREATE TABLE IF NOT EXISTS sources (gen INTEGER, source_id TEXT, repo_id TEXT, d
 CREATE TABLE IF NOT EXISTS chunks (gen INTEGER, chunk_id TEXT, source_id TEXT, start_line INTEGER,
     end_line INTEGER, heading_path TEXT, text TEXT, completeness TEXT, PRIMARY KEY (gen, chunk_id));
 CREATE INDEX IF NOT EXISTS chunks_source ON chunks (gen, source_id);
-CREATE TABLE IF NOT EXISTS journal (id INTEGER PRIMARY KEY AUTOINCREMENT, vector_key TEXT, text TEXT);
+CREATE TABLE IF NOT EXISTS journal (id INTEGER PRIMARY KEY AUTOINCREMENT, vector_key TEXT);
 CREATE TABLE IF NOT EXISTS english (source_id TEXT, text_sha TEXT, outcome TEXT, PRIMARY KEY (source_id, text_sha));
 """
 
@@ -483,14 +483,14 @@ class Store:
     what was there.
 
     Private English. A private source's English is kept here, in `english`,
-    not in the translator's cache, and goes with the source in the same
+    not in the translator's cache: kept only for a text the source has at
+    that moment, and gone with the source, or any edit of it, in the same
     transaction. Its vectors are never written to disk (`Embedder`).
 
     Deletion. A source that goes loses its rows in every generation. A private
-    one's removed text and vector keys go to `journal` in the same
-    transaction, for what older code put elsewhere: vectors on disk, cleaned
-    here (`Index.refresh`), and English in the translator's cache, by
-    `main.knowledge.cleanup`. A crash between the two leaves the journal to
+    one's vector keys go to `journal` in the same transaction, for the
+    daemon's memory and for what older code wrote to the vector cache;
+    `Index.refresh` clears them, and a crash first leaves the journal to
     finish the job.
     """
 
@@ -651,28 +651,20 @@ class Store:
 
     def remove(self, db: sqlite3.Connection, sources: set[str], private: bool, keep: set[str]) -> bool:
         """Delete these sources' rows: in this generation, or in every one for a
-        private source, journalling each of its texts not in `keep` — so a
-        memory deleted here does not come back with an older generation.
-        `True` when anything was journalled."""
+        private source — so a memory deleted here does not come back with an
+        older generation — with its English, journalling the vector of each
+        of its texts not in `keep`. `True` for a private source."""
 
         where = f"source_id IN ({','.join('?' * len(sources))})" + ("" if private else " AND gen = ?")
         args = [*sources] + ([] if private else [self.gen])
-        journal = []
         if private:
-            titles = set()
-            for heading, text in db.execute(f"SELECT DISTINCT heading_path, text FROM chunks WHERE {where}", args):
-                title = " > ".join(json.loads(heading))
-                if text not in keep:
-                    journal.append((key_of(title + "\n" + text), text))
-                # The title is translated on its own too (`controller.run`).
-                if title not in keep and title not in titles:
-                    titles.add(title)
-                    journal.append((None, title))
-            db.executemany("INSERT INTO journal (vector_key, text) VALUES (?, ?)", journal)
+            journal = list({key_of(" > ".join(json.loads(heading)) + "\n" + text) for heading, text in db.execute(
+                f"SELECT DISTINCT heading_path, text FROM chunks WHERE {where}", args) if text not in keep})
+            db.executemany("INSERT INTO journal (vector_key) VALUES (?)", [(key,) for key in journal])
             db.execute(f"DELETE FROM english WHERE source_id IN ({','.join('?' * len(sources))})", [*sources])
         for table in ("chunks", "sources"):
             db.execute(f"DELETE FROM {table} WHERE {where}", args)
-        return bool(journal)
+        return private
 
     def load(self, roots: dict[str, Path]) -> list[dict]:
         """This generation's chunks as search hits, each path under the root
@@ -704,33 +696,34 @@ class Store:
         shas = {evidence.digest(text): text for text in texts}
         with self.lock:
             rows = self.db.execute("SELECT text_sha, outcome FROM english WHERE source_id = ?", (source,)).fetchall()
-        return {shas[sha]: {**json.loads(outcome), "cached": True} for sha, outcome in rows if sha in shas}
+        return {shas[sha]: json.loads(outcome) for sha, outcome in rows if sha in shas}
 
-    def keep_english(self, source: str, outcomes: list[tuple[str, dict]]) -> bool:
-        """Keep a private source's English beside it, while the source is still
-        here: a deletion that committed first is not undone. `True` when kept."""
+    def keep_english(self, source: str, outcomes: list[tuple[str, dict]]) -> int:
+        """Keep a private source's English beside it, for each text — a chunk
+        or a heading title — the source still has: a translation that lands
+        after an edit or a deletion does not bring back what was removed.
+        Returns how many were kept."""
 
         with self.transaction() as db:
-            if db.execute("SELECT 1 FROM sources WHERE source_id = ? LIMIT 1", (source,)).fetchone() is None:
-                return False
-            db.executemany("INSERT OR REPLACE INTO english VALUES (?, ?, ?)", [
-                (source, evidence.digest(text), json.dumps(outcome, ensure_ascii=False)) for text, outcome in outcomes])
-        return True
+            present = set()
+            for heading, text in db.execute("SELECT heading_path, text FROM chunks WHERE source_id = ?", (source,)):
+                present |= {text, " > ".join(json.loads(heading))}
+            rows = [(source, evidence.digest(text), json.dumps(outcome, ensure_ascii=False))
+                    for text, outcome in outcomes if text in present]
+            db.executemany("INSERT OR REPLACE INTO english VALUES (?, ?, ?)", rows)
+        return len(rows)
 
-    def journal(self, column: str) -> list[tuple[int, str]]:
-        """Pending clean-ups: `vector_key` for this side, `text` for the cached English."""
+    def journal(self) -> list[tuple[int, str]]:
+        """Pending clean-ups: the vector keys of deleted private chunks."""
 
-        if column not in ("vector_key", "text"):
-            raise ValueError(column)
         with self.lock:
-            return self.db.execute(f"SELECT id, {column} FROM journal WHERE {column} IS NOT NULL").fetchall()
+            return self.db.execute("SELECT id, vector_key FROM journal WHERE vector_key IS NOT NULL").fetchall()
 
-    def cleared(self, column: str, ids: list[int]) -> None:
-        if column not in ("vector_key", "text"):
-            raise ValueError(column)
+    def cleared(self, ids: list[int]) -> None:
         with self.transaction() as db:
-            db.executemany(f"UPDATE journal SET {column} = NULL WHERE id = ?", [(i,) for i in ids])
-            db.execute("DELETE FROM journal WHERE vector_key IS NULL AND text IS NULL")
+            db.executemany("DELETE FROM journal WHERE id = ?", [(i,) for i in ids])
+            # Rows older code journalled with a text and no key.
+            db.execute("DELETE FROM journal WHERE vector_key IS NULL")
 
     def source_of(self, chunk: str) -> str | None:
         """The canonical path a chunk of this generation was cut from, for
@@ -885,12 +878,12 @@ class Index:
         """Clear the vectors of what the journal says was deleted: in memory,
         in the queue, and on disk, where older code wrote private ones."""
 
-        pending = self.store.journal("vector_key")
+        pending = self.store.journal()
         if not pending:
             return
         self.embedder.drop([key for _id, key in pending])
         if drop_vectors([key for _id, key in pending]):
-            self.store.cleared("vector_key", [i for i, _key in pending])
+            self.store.cleared([i for i, _key in pending])
 
 
 def source(chunk: dict) -> str:

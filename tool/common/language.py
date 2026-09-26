@@ -13,7 +13,7 @@ import re
 import unicodedata
 
 # A fenced block — a screen sketch, a command — or a code span: kept as written, never prose.
-CODE = re.compile(r"^```.*?^```|`[^`\n]*`", re.M | re.S)
+CODE = re.compile(r"^(```|~~~).*?^\1|`[^`\n]*`", re.M | re.S)
 # A bracketed label: a button or a state, the name of a Korean thing.
 LABEL = re.compile(r"\[[^\]\n]{1,40}\]")
 HANGUL = re.compile(r"[가-힣]")
