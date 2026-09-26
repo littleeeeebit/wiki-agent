@@ -642,6 +642,15 @@ def test_the_hold_is_the_most_the_request_can_cost(
     )
 
 
+def test_a_wikilink_inside_code_is_one_span_not_two() -> None:
+    """Nested, the inner placeholder vanished into the outer span's text, and
+    no answer could ever pass `intact`."""
+
+    masked, spans = T.protect("본문의 `[[이름]]` 만 센다, 밖의 [[다른]] 도")
+    assert spans == ["`[[이름]]`", "[[다른]]"]
+    assert T.intact(masked, len(spans))
+
+
 def test_a_page_goes_english_whole_or_not_at_all(monkeypatch) -> None:
     """`--in-place`: the record labels are set, not left to the model; the
     front matter keeps its triggers and takes an English title; a page the

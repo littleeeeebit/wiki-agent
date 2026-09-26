@@ -123,9 +123,11 @@ SPANS = (
     ("front_matter", re.compile(r"\A---\n.*?\n---\n", re.S)),  # triggers live here
     ("fence", re.compile(r"```.*?```", re.S)),
     ("comment", re.compile(r"<!--.*?-->", re.S)),   # the markers inject.py plants
+    # Before the wikilink: `[[name]]` in backticks masked as a link first left
+    # its placeholder inside the code span's, and `intact` refused every such page.
+    ("code", re.compile(r"`[^`\n]+`")),             # commands, paths, identifiers
     ("wikilink", re.compile(r"\[\[[^\]\n]*\]\]")),  # the slug keys graph.json
     ("linkdest", re.compile(r"\]\([^)\n]*\)")),
-    ("code", re.compile(r"`[^`\n]+`")),             # commands, paths, identifiers
     ("slot", re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")),  # apply.py fills these
 )
 
