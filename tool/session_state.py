@@ -159,13 +159,14 @@ def decisions(repo: Path) -> list[tuple[str, str]]:
         if not title:
             first = next((x for x in body.splitlines() if x.startswith("# ")), "")
             title = first[2:].strip() or path.stem
+        # `Why.` since records are written in English; `왜.` in the older ones.
         why = next(
-            (x[3:].strip() for x in body.splitlines() if x.startswith("왜.")),
+            (x.split(".", 1)[1].strip() for x in body.splitlines() if x.startswith(("왜.", "Why."))),
             "",
         )
         # The first sentence only. The full text is in the file, and four full
         # texts at session start push out the work the session came to do.
-        head = re.split(r"(?<=다\.)\s", why, maxsplit=1)[0]
+        head = re.split(r"(?<=\.)\s", why, maxsplit=1)[0]
         found.append((title, head[:160] + (" …" if len(head) > 160 else "")))
     return found
 

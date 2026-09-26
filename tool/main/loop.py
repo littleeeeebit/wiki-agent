@@ -31,6 +31,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+import translate
 from agent import ChatSession
 from common import worktree_home
 from workspace import adopt, folder_for, remove, worktrees
@@ -209,8 +210,15 @@ def disputed(before: list[dict] | None, now: list[dict] | None) -> str:
 
 # -- The instruction ----------------------------------------------------------
 
+def kept_rounds(spec: dict) -> list[dict]:
+    """Every round, the stale ones too. A spec `[시작]` made has no `rounds`
+    until its first round: read as `spec["rounds"]`, round 1 broke the loop."""
+
+    return spec.get("rounds") or []
+
+
 def counted(spec: dict) -> list[dict]:
-    return [r for r in spec.get("rounds") or [] if not r.get("stale")]
+    return [r for r in kept_rounds(spec) if not r.get("stale")]
 
 
 def cap(spec: dict) -> int:
@@ -417,7 +425,8 @@ def kick(repo: str, sid: str) -> None:
         if spec is None:
             raise HTTPException(404, "그런 명세가 없다")
         if spec["state"] != "리뷰 대기" or spec.get("stopped"):
-            specs.save(specs.moved(spec, "리뷰 대기", stopped=None))
+            # A fault is the work stage's; in the loop it only misleads.
+            specs.save(specs.moved(spec, "리뷰 대기", stopped=None, fault=None))
     loop = Loop(repo, sid)
     with _lock:
         if _loops.get(key) not in (None, old):
@@ -700,18 +709,21 @@ def step(loop: Loop) -> bool:
         for name in (f"round-{n}.md", f"round-{n}-result.md"):
             if (kept / name).exists():
                 (kept / name).replace(kept / name.replace(f"round-{n}", f"round-{n}-stale-{head[:7]}"))
-        return change(loop, rounds=[*spec["rounds"], {**record, "stale": True}]) is not None
+        return change(loop, rounds=[*kept_rounds(spec), {**record, "stale": True}]) is not None
 
     deferred = list(spec.get("deferred") or [])
     for f in parsed["findings"]:
         if f["grade"] == "P2" and not any(same(f["head"], d) for d in deferred):
             deferred.append(f["head"])
-    spec = change(loop, rounds=[*spec["rounds"], record], deferred=deferred)
+    spec = change(loop, rounds=[*kept_rounds(spec), record], deferred=deferred)
     if spec is None:
         return False
     if parsed["verdict"] == "allow":
         kept_p2 = pick(loop, chat, deferred)
-        comment = ("리뷰에서 남긴 P2 — 따로 할 만한 것\n\n" + "\n".join(f"- {p}" for p in kept_p2)) if kept_p2 else ""
+        # `p2` stays as the cell wrote it — the next candidates read it; the
+        # comment goes up on GitHub, read by a person, in Korean.
+        shown = translate.translate(kept_p2, translate.EN_KO, time.monotonic() + specs.TRANSLATE_SECONDS)
+        comment = ("리뷰에서 남긴 P2 — 따로 할 만한 것\n\n" + "\n".join(f"- {p}" for p in shown)) if kept_p2 else ""
         change(loop, "머지 가능", p2=kept_p2, p2_comment=comment)
         return False
 
@@ -1104,6 +1116,17 @@ def halt_loop(repo: str, sid: str) -> None:
     stop(None, repo, sid, Why.PERSON)
 
 
+def stranded(spec: dict) -> bool:
+    """A pull request that is up but never went into review: the plan row's
+    turn after it failed, so nothing kicked the loop, and neither `[계속]`
+    (not `멈춤`) nor the list (`이미 PR #n`) could. Not while the plan row is
+    still owed: a round started now would review the head without it, and
+    the agent tab's next turn is what commits, pushes and kicks it."""
+
+    return (spec["state"].startswith("PR #") and bool(spec.get("fault"))
+            and spec.get("plan_commit") != "asked")
+
+
 def refusal(row: dict, spec: dict | None) -> str:
     """Why a pull request cannot go into a loop from the list, or ``""``."""
 
@@ -1112,6 +1135,10 @@ def refusal(row: dict, spec: dict | None) -> str:
     if spec is None:
         return ""
     reason = (spec.get("stopped") or {}).get("reason")
+    if stranded(spec):
+        return ""
+    if spec["state"].startswith("PR #") and spec.get("plan_commit") == "asked":
+        return "계획 행 커밋이 아직이다 — 에이전트 탭에서 행을 고쳐 커밋하게 하면 리뷰로 간다"
     if spec["state"] != "멈춤":
         return f"이미 {spec['state']}"
     if reason == Why.WRONG_BASE.value:
@@ -1174,6 +1201,9 @@ def take(repo: Path, n: int) -> str:
         why = refusal({}, spec)
         if why:
             raise HTTPException(409, why)
+        if stranded(spec):
+            kick(repo.name, spec["id"])
+            return spec["id"]
         return proceed(repo, spec, "")["id"]
     view = gh_or_502(repo, ["pr", "view", str(n), "--json",
                             "number,title,body,headRefName,headRefOid,baseRefName,isCrossRepository,url"])

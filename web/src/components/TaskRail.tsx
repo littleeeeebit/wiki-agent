@@ -236,7 +236,7 @@ export function TaskRail(props: Props) {
         )}>
           <p>
             <span className="font-mono text-[12.5px]">{doomed.name}</span> 작업트리를 지운다. 도는 에이전트와 리뷰 루프는
-            멈추고, 커밋하지 않은 변경은 사라진다. 머지되지 않은 브랜치는 남긴다.
+            멈추고, 커밋하지 않은 변경은 사라진다. 머지 전 작업이면 목록에서도 빠진다. 브랜치와 올린 PR 은 남긴다.
           </p>
         </Modal>
       )}

@@ -311,6 +311,54 @@ def test_an_allow_ends_at_mergeable_and_keeps_the_p2_worth_doing(world):
     assert specs.view(world.repo, spec)["approved"] == spec["rounds"][0]["head"]
 
 
+def test_a_spec_start_made_runs_its_first_round(world):
+    """`[시작]` makes a spec with no `rounds` (`specs.card`). Read as
+    `spec["rounds"]`, round 1 broke the loop — PR #27 stopped at `KeyError`."""
+
+    pr_spec(world, "fix-r", 7)
+    spec = specs.load("proj", "fix-r")
+    del spec["rounds"]
+    specs.save(spec)
+    Reviewer.replies = [allow]
+    assert looped("fix-r")["state"] == "머지 가능"
+
+
+def test_a_pr_the_plan_row_left_behind_goes_into_review_from_the_list(world):
+    """The row's turn failed after the pull request went up: nothing kicked the
+    loop, and it was neither `멈춤` for `[계속]` nor pickable in the list."""
+
+    pr_spec(world, "fix-p", 7, fault="계획 행을 고칠 턴을 보내지 못했다")
+    web = client()
+    assert next(r for r in web.get("/api/prs").json()["rows"] if r["number"] == 7)["pickable"]
+    Reviewer.replies = [allow]
+    assert web.post("/api/loops", json={"prs": [7]}).json()["results"] == [{"number": 7, "id": "fix-p"}]
+    waited(lambda: not loop._loops)
+    spec = specs.load("proj", "fix-p")
+    assert spec["state"] == "머지 가능" and spec["fault"] is None
+    pr_spec(world, "fix-q", 8)
+    assert loop.refusal({}, specs.load("proj", "fix-q")) == "이미 PR #8", "잘못 없이 도는 PR 은 그대로"
+    pr_spec(world, "fix-r", 9, fault="계획 행 커밋의 push 실패", plan_commit="asked")
+    assert not loop.stranded(specs.load("proj", "fix-r")), "계획 행이 빠진 머리를 리뷰하지 않는다"
+    assert "계획 행 커밋이 아직" in loop.refusal({}, specs.load("proj", "fix-r"))
+
+
+def test_deleting_a_worktree_takes_its_unmerged_spec_off_the_rail(world):
+    """Kept, the spec stood on the rail with no worktree under it."""
+
+    web = client()
+    spec = pr_spec(world, "fix-d", 7)
+    specs.update("proj", "fix-d", state="멈춤", stopped={"reason": "사람이 멈춤", "detail": ""})
+    web.post("/api/worktrees/remove", json={"path": spec["worktree"], "force": True}).raise_for_status()
+    assert specs.load("proj", "fix-d") is None
+    assert list((specs.SPECS / "proj" / "dropped").glob("fix-d.*.json")), "지우지 않고 치운다"
+    assert "fix-d" not in [s["id"] for s in web.get("/api/specs").json()["specs"]]
+    assert next(r for r in web.get("/api/prs").json()["rows"] if r["number"] == 7)["pickable"], "PR 은 남는다"
+    merged = pr_spec(world, "fix-e", 8)
+    specs.update("proj", "fix-e", state="머지됨")
+    web.post("/api/worktrees/remove", json={"path": merged["worktree"], "force": True}).raise_for_status()
+    assert specs.load("proj", "fix-e")["state"] == "머지됨", "머지된 명세는 P2 를 들고 남는다"
+
+
 def test_a_refusal_goes_to_the_work_cell_through_the_gate_and_up(world):
     """The gate fails once after the fix and is sent back with its tail; the
     second run passes, the fix is pushed, and the next round names it all."""

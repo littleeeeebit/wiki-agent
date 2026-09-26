@@ -54,7 +54,10 @@ LEAD = (
     "Survey turn {i} of {n}, for this repository's first wiki. Write only under `.wiki/`. Never change or "
     "delete a file that already exists; the server reverts it. Read `README*` and `docs/`, never change them. "
     "Every page is Markdown with YAML front matter, in the shape the section \"The minimum shape of a page\" "
-    "of `{schema}` gives, with `scope: project`. Commit what you wrote as one commit, then stop. Do not push.\n\n"
+    "of `{schema}` gives, with `scope: project`. Write the pages in English whatever language the repository "
+    "is written in: agents read them, and what they are asked reaches them in English. Only `triggers` match "
+    "what a person types, so write those in the person's language, and keep a Korean word that names a Korean "
+    "thing (a UI label, a state name) as written. Commit what you wrote as one commit, then stop. Do not push.\n\n"
 )
 REPORT = ("The survey's writing is over{why}. Run each item of `done` in this worktree and end with the "
           "`done-report` block, as your instructions say. Change nothing.")

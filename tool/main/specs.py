@@ -28,6 +28,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import translate
 from common import worktree_home
 from session_state import active_page, decisions, plans
 from wiki import slots_for
@@ -40,6 +41,7 @@ SPECS = ROOT / "raw" / "specs"
 SPEC_PROMPT = (ROOT / "tool/prompts/work-spec.md").read_text(encoding="utf-8")
 
 GATE_SECONDS = 20 * 60
+TRANSLATE_SECONDS = 60   # the pull request's prose into Korean, one request
 TAIL = 80          # lines of the gate's output kept on the spec
 MAX_PLANS = 3      # materials for the candidates
 MAX_ROWS = 10
@@ -547,10 +549,18 @@ def edit(sid: str, body: Edit) -> dict:
     return view(repo, spec)
 
 
+def aside(repo: str, sid: str) -> None:
+    """Set aside, not deleted: `raw/specs/<repo>/dropped/`."""
+
+    away = SPECS / repo / "dropped" / f"{sid}.{time.time_ns()}.json"
+    away.parent.mkdir(parents=True, exist_ok=True)
+    file_of(repo, sid).replace(away)
+
+
 @router.post("/api/specs/{sid}/drop")
 def drop(sid: str) -> dict:
-    """Set aside, not deleted: `raw/specs/<repo>/dropped/`. A started spec
-    has a worktree and maybe a pull request, and is not dropped until merged."""
+    """A started spec has a worktree and maybe a pull request, and is not
+    dropped until merged — or until a person deletes its worktree (`forsaken`)."""
 
     repo = current_repo()
     with _files:
@@ -559,10 +569,28 @@ def drop(sid: str) -> dict:
             raise HTTPException(404, "그런 명세가 없다")
         if spec["state"] not in ("정리됨", "머지됨"):
             raise HTTPException(409, "시작한 명세는 머지된 뒤에 버린다")
-        away = SPECS / repo.name / "dropped" / f"{sid}.{time.time_ns()}.json"
-        away.parent.mkdir(parents=True, exist_ok=True)
-        file_of(repo.name, sid).replace(away)
+        aside(repo.name, sid)
     return {"ok": True}
+
+
+def forsaken(path: Path) -> None:
+    """A person deleted the worktree of an unmerged spec: the task goes with
+    it. Kept, the rail went on showing a task whose worktree was gone. A
+    pull request it opened stays on GitHub and can go into a loop from the
+    list again. A merged spec stays: it is off the rail already, and its P2
+    are material for the next candidates."""
+
+    with _files:
+        spec = owner(path)
+        if spec is None or spec["state"] == "머지됨":
+            return
+        # The repository as `owner` read it: from the path. Gone already is
+        # nothing to set aside.
+        repo = path.parent.name.removesuffix("-worktrees")
+        if not file_of(repo, spec["id"]).exists():
+            return
+        aside(repo, spec["id"])
+    publish(spec)
 
 
 @router.post("/api/specs/{sid}/start")
@@ -701,6 +729,19 @@ def body_of(spec: dict) -> str:
     return "\n".join(lines)
 
 
+def korean(spec: dict) -> dict:
+    """The spec as the pull request shows it. The agents wrote it in English;
+    GitHub is read by a person, so the prose goes up in Korean. Commands and
+    their output (`evidence`) stay as they ran. Translation fails open: a
+    line it could not translate goes up as it was."""
+
+    kinds = ("what", "why", "rejected")
+    texts = [spec["goal"], *(d[k] for d in spec["decisions"] for k in kinds), *(i["item"] for i in spec["report"])]
+    done = iter(translate.translate(texts, translate.EN_KO, time.monotonic() + TRANSLATE_SECONDS))
+    return {**spec, "goal": next(done), "decisions": [{k: next(done) for k in kinds} for _ in spec["decisions"]],
+            "report": [{**i, "item": next(done)} for i in spec["report"]]}
+
+
 def opened(repo: Path, path: Path, run, spec: dict):
     """Push, and open the pull request as the person's `gh`. The next turn to
     start, when the spec came from a plan row that now says done.
@@ -723,11 +764,13 @@ def opened(repo: Path, path: Path, run, spec: dict):
         return failed(run, spec, f"기본 브랜치를 모른다 — {said(base)}")
     if run.halt.is_set():
         return failed(run, spec, "사람이 멈춤 — push 는 했고 PR 은 만들지 않았다")
+    note(run, "PR 을 한국어로 옮기는 중")
+    shown = korean(spec)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
-        fh.write(body_of(spec))
+        fh.write(body_of(shown))
     try:
         made = sh(["gh", "pr", "create", "--base", base.stdout.strip(), "--head", branch,
-                   "--title", spec["goal"], "--body-file", fh.name], path, 120)
+                   "--title", shown["goal"], "--body-file", fh.name], path, 120)
     finally:
         os.unlink(fh.name)
     number = re.search(r"/pull/(\d+)", made.stdout)

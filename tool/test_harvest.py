@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 sys.stdout.reconfigure(encoding="utf-8")
 
-from harvest import record, triggers_for  # noqa: E402 -- the reconfigure above runs first
+from harvest import NO_WHAT, NO_WHY, record, triggers_for  # noqa: E402 -- the reconfigure above runs first
 
 BODY = """## 왜 셀을 지우면 안 됐나
 
@@ -22,7 +22,7 @@ PR = {"number": 95, "mergedAt": "2026-09-06T00:00:00Z", "title": "제목",
 
 
 def _record(body: str) -> str:
-    return record({**PR, "body": body})[1]
+    return record({**PR, "body": body}, 0)[1]   # a spent deadline: no translation
 
 
 def test_a_crlf_body_produces_the_same_record_as_an_lf_one() -> None:
@@ -40,18 +40,18 @@ def test_a_crlf_body_produces_the_same_record_as_an_lf_one() -> None:
 
 def test_a_body_that_has_a_reason_is_not_recorded_as_having_none() -> None:
     for body in (BODY, BODY.replace("\n", "\r\n")):
-        assert "이 결정의 근거는 기록되지 않았다" not in _record(body)
+        assert NO_WHY not in _record(body)
         assert "혼합 문서" in _record(body)
 
 
 def test_a_body_with_genuinely_no_reason_is_recorded_as_having_none() -> None:
     """The other half: it must not invent a reason that is not there."""
-    assert "이 결정의 근거는 기록되지 않았다" in _record("한 문단뿐인 본문.")
+    assert NO_WHY in _record("한 문단뿐인 본문.")
 
 
 def _what(body: str) -> str:
-    line = next(ln for ln in _record(body).splitlines() if ln.startswith("무엇."))
-    return line[len("무엇."):].strip()
+    line = next(ln for ln in _record(body).splitlines() if ln.startswith("What."))
+    return line[len("What."):].strip()
 
 
 def test_a_markdown_heading_does_not_land_inside_the_what() -> None:
@@ -86,7 +86,21 @@ def test_prose_is_found_with_no_blank_line_between_heading_and_body() -> None:
 
 def test_a_body_of_nothing_but_headings_records_no_summary() -> None:
     """With no prose left after the headings are stripped, it invents none."""
-    assert "PR 본문에 요약 절이 없다" in _record("## 제목뿐\n\n### 또 제목뿐")
+    assert NO_WHAT in _record("## 제목뿐\n\n### 또 제목뿐")
+
+
+def test_the_record_is_written_in_english_and_its_domain_read_from_the_original() -> None:
+    """The wiki is read in English; the triggers match what a person types."""
+
+    def english(texts, direction, deadline):
+        assert direction == "ko->en"
+        return [f"EN({t})" if t else t for t in texts]
+
+    with patch("translate.translate", english):
+        _, text = record({**PR, "title": "화면 공유가 멈춘다", "body": BODY}, 0)
+    assert 'title: "EN(화면 공유가 멈춘다)"' in text and "# EN(화면 공유가 멈춘다)" in text
+    assert "What. EN(" in text and "Why. EN(" in text and "Source. PR #95 · `feat/branch`" in text
+    assert "domain: vision" in text and '"화면"' in text, "도메인과 트리거는 한국어 원문에서"
 
 
 def test_a_short_ascii_marker_does_not_match_inside_a_word() -> None:

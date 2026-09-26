@@ -474,6 +474,27 @@ def test_the_pr_body_gives_harvest_its_what_and_why():
             "gate": {"cmd": PASS, "tail": "git version 2"},
             "grounds": {"pages": ["craft/x"], "files": ["a.txt:1"], "rules": []}}
     _, text = harvest.record({"number": 7, "title": spec["goal"], "body": specs.body_of(spec),
-                              "headRefName": "fix-login", "mergedAt": "2026-09-25"})
-    assert "무엇. 로그인 뒤 원래 페이지로 돌아간다" in text
-    assert "왜. 서버에서 돌린다 — 화면은 기록을 모른다 (버린 것: history)" in text
+                              "headRefName": "fix-login", "mergedAt": "2026-09-25"}, 0)
+    assert "What. 로그인 뒤 원래 페이지로 돌아간다" in text
+    assert "Why. 서버에서 돌린다 — 화면은 기록을 모른다 (버린 것: history)" in text
+
+
+def test_the_pr_goes_up_in_korean_and_the_spec_stays_english(repo):
+    """GitHub is read by a person; the spec is read by the agents."""
+
+    def korean(texts, direction, deadline):
+        assert direction == "en->ko"
+        return [f"KO({t})" if t else t for t in texts]
+
+    web, remote = client(), Remote()
+    Worker.replies = [report(True, True)]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
+         patch.object(specs.translate, "translate", korean):
+        sid = made(repo, spec_block(goal="Return to the page after login"))[0]["id"]
+        started(web, sid)
+    create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
+    assert create[create.index("--title") + 1] == "KO(Return to the page after login)"
+    assert "## 변경 요약\n\nKO(Return to the page after login)" in remote.body
+    assert "- KO(서버에서 돌린다) — KO(화면은 기록을 모른다) (버린 것: KO(history))" in remote.body
+    assert "- [x] KO(항목 1) — ran 1 · ok" in remote.body, "명령과 그 출력은 옮기지 않는다"
+    assert specs.load("proj", sid)["goal"] == "Return to the page after login"

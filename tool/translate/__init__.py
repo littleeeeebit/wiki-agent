@@ -123,9 +123,11 @@ SPANS = (
     ("front_matter", re.compile(r"\A---\n.*?\n---\n", re.S)),  # triggers live here
     ("fence", re.compile(r"```.*?```", re.S)),
     ("comment", re.compile(r"<!--.*?-->", re.S)),   # the markers inject.py plants
+    # Before the wikilink: `[[name]]` in backticks masked as a link first left
+    # its placeholder inside the code span's, and `intact` refused every such page.
+    ("code", re.compile(r"`[^`\n]+`")),             # commands, paths, identifiers
     ("wikilink", re.compile(r"\[\[[^\]\n]*\]\]")),  # the slug keys graph.json
     ("linkdest", re.compile(r"\]\([^)\n]*\)")),
-    ("code", re.compile(r"`[^`\n]+`")),             # commands, paths, identifiers
     ("slot", re.compile(r"\{[A-Za-z_][A-Za-z0-9_]*\}")),  # apply.py fills these
 )
 
@@ -771,6 +773,96 @@ def review(names: list[str]) -> None:
         print(f"\n표본 역번역을 못 썼다: {type(error).__name__}")
 
 
+# --------------------------------------------------------------------------
+# `--in-place`: a page rewritten in English where it stands.
+#
+# The wiki is read by agents, and a question reaches them already rendered in
+# English, so a Korean page is one search does not find. Front matter stays
+# protected — `triggers` match what a person types — except `title:`.
+# --------------------------------------------------------------------------
+
+# A decision record's labels, set before the model sees them: left to it, `왜.`
+# came back `Reason.` as often as `Why.`, and the readers look for one word.
+LABELS = (("무엇. ", "What. "), ("왜. ", "Why. "), ("출처. ", "Source. "))
+TITLE = re.compile(r"^title: (.+)$", re.M)
+IN_PLACE_SECONDS = 300
+IN_PLACE_THREADS = 8
+
+
+def korean_prose(text: str) -> bool:
+    """Korean left where the model would see it. An English page keeps its
+    Korean `triggers` and backticked Korean names, and is done."""
+
+    return bool(HANGUL.search(protect(text, glossary()[0])[0]))
+
+
+def page(text: str, deadline: float) -> str | None:
+    """`text`, a Markdown page, in English. `None` when any of it could not be
+    translated: half a page is not written."""
+
+    # Only where the model would see it: a label inside code is the code's.
+    masked, spans = protect(text)
+    for ko, en in LABELS:
+        masked = re.sub(rf"^{re.escape(ko)}", en, masked, flags=re.M)
+    text = restore(masked, spans)
+    front = SPANS[0][1].match(text)
+    found = TITLE.search(front.group(0)) if front else None
+    raw = found.group(1).strip() if found else ""
+    quoted = raw.startswith('"')
+    title = json.loads(raw) if quoted else raw
+    # Two requests: batched with its title, a long body came back with its
+    # placeholders broken where the same body alone did not.
+    body, title_en = translate([text], KO_EN, deadline)[0], translate([title], KO_EN, deadline)[0]
+    if korean_prose(text) and body == text:
+        # Line by line: a page the model always broke one placeholder of
+        # (temperature 0 — asking again breaks the same one). Split where the
+        # spans are masked: a fence, a comment or the front matter runs over
+        # lines and is one piece, or its halves would lose their protection.
+        masked, spans = protect(text)
+        lines = [restore(line, spans) for line in masked.split("\n")]
+        done = translate(lines, KO_EN, deadline)
+        if not any(korean_prose(a) and a == b for a, b in zip(lines, done)):
+            body = "\n".join(done)
+    if (korean_prose(text) and body == text) or (korean_prose(title) and title_en == title):
+        return None
+    if found:
+        value = json.dumps(title_en, ensure_ascii=False) if quoted else title_en
+        head = SPANS[0][1].match(body).group(0)
+        body = TITLE.sub(lambda _: f"title: {value}", head, count=1) + body[len(head):]
+    return body
+
+
+def in_place(paths: list[Path]) -> int:
+    """Each Korean page, rewritten in English. Line endings are kept."""
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(path: Path) -> str:
+        raw = path.read_bytes().decode("utf-8")
+        text = raw.replace("\r\n", "\n")
+        front = SPANS[0][1].match(text)
+        title = TITLE.search(front.group(0)) if front else None
+        if not korean_prose(text) and not (title and korean_prose(title.group(1))):
+            return "skip"
+        # Once more on a failure: a refused answer is often not refused twice.
+        done = page(text, time.monotonic() + IN_PLACE_SECONDS) or page(text, time.monotonic() + IN_PLACE_SECONDS)
+        if done is None:
+            return "failed"
+        # Beside it, then over it: a write cut short leaves the original whole.
+        spare = path.with_name(path.name + ".in-place")
+        spare.write_bytes((done.replace("\n", "\r\n") if "\r\n" in raw else done).encode("utf-8"))
+        os.replace(spare, path)
+        return "done"
+
+    with ThreadPoolExecutor(IN_PLACE_THREADS) as pool:
+        results = list(pool.map(one, paths))
+    failed = [p for p, r in zip(paths, results) if r == "failed"]
+    print(f"옮김 {results.count('done')} · 이미 영어 {results.count('skip')} · 못 옮김 {len(failed)}")
+    for path in failed:
+        print(f"- {path}")
+    return 1 if failed else 0
+
+
 def main() -> int:
     # Output is a pipe more often than not, and the default there is cp949.
     sys.stdout.reconfigure(encoding="utf-8")
@@ -786,8 +878,11 @@ def main() -> int:
                         help="표본 N건을 역번역해 사람이 읽을 파일에 적는다")
     parser.add_argument("--en-to-ko", action="store_true")
     parser.add_argument("--usage", action="store_true", help="이번 달 번역 사용액과 한도")
+    parser.add_argument("--in-place", action="store_true", help="한국어 페이지를 영어로 옮겨 그 자리에 쓴다")
     args = parser.parse_args()
 
+    if args.in_place:
+        return in_place([Path(p) for p in args.paths])
     if args.usage:
         now = usage()
         usd = "읽을 수 없다" if now["usd"] is None else f"${now['usd']:.4f}"
