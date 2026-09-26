@@ -302,10 +302,17 @@ export function useWork() {
     }
   }, [readRules, showQueued])
 
+  /** Refused when it no longer waits — already sent, or dropped by a stop:
+   *  the refusal goes to the caller, and the card follows the server. */
   const unqueue = useCallback(async (path: string) => {
-    await api.workUnqueue(path)
-    showQueued(path, null)
-  }, [showQueued])
+    try {
+      await api.workUnqueue(path)
+      showQueued(path, null)
+    } catch (err) {
+      readRules(path)
+      throw err
+    }
+  }, [readRules, showQueued])
 
   const answer = useCallback(
     async (path: string, turn: Turn, id: string, allow: boolean, scope: 'once' | 'session' = 'once',

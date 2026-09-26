@@ -712,8 +712,12 @@ def queue(body: Queued) -> dict:
 
 @router.post("/api/work/unqueue")
 def unqueue(body: Where) -> dict:
+    """Taken back only while it still waits. Already sent, a cancel that said
+    yes would hide a turn that is running."""
+
     with _lock:
-        _queued.pop(body.path, None)
+        if _queued.pop(body.path, None) is None:
+            raise HTTPException(409, "기다리는 지시가 없다 — 이미 보냈거나 멈춤으로 버려졌다")
     return {"ok": True}
 
 

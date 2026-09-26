@@ -1327,6 +1327,8 @@ def test_an_instruction_written_during_the_gate_goes_once_the_worktree_is_let_go
         go.set()
         said, log = _said(web, path, 2)
         assert said == ["첫째", "둘째"] and log["queued"] is None
+        # Already sent: a cancel must not say it took it back.
+        assert web.post("/api/work/unqueue", json={"path": path}).status_code == 409
         first = [r for r in log["rows"] if r["role"] == "assistant"][0]
         assert [s["kind"] for s in first["steps"]] == ["approval", "tool"] and first["answered"] == 1
         done = {"path": path, "turn": turn, "text": "셋째"}
