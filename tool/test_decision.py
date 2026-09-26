@@ -184,6 +184,23 @@ def test_invalid_probabilities_are_invalid_responses(monkeypatch, value):
     assert caught.value.category == "invalid_response"
 
 
+@pytest.mark.parametrize("drop", [
+    {"model": None}, {"model": ""}, {"model": 7}, {"usage": None}, {"usage": {"input_tokens": 20}},
+    {"usage": {"input_tokens": -1, "output_tokens": 1}}, {"usage": {"input_tokens": 1.5, "output_tokens": 1}},
+])
+def test_a_response_without_its_model_or_usage_is_invalid(monkeypatch, drop):
+    """The stage 1 gate verifies the responding model and usage, so a 200
+    that lacks either is not a reachable service answering properly."""
+
+    payload = {**noul_payload(0.9), **drop}
+    connection(monkeypatch, payload={k: v for k, v in payload.items() if v is not None})
+    with pytest.raises(decision.JevError, match="invalid_response"):
+        decision.evaluate(CFG, {}, {"q": decision.noul("Relevant?")}, [])
+    connection(monkeypatch, payload={**PROBE_ANSWERS, **drop})
+    out = decision.probe(CFG)
+    assert out["health"] == "unavailable" and out["category"] == "invalid_response"
+
+
 CHOICE = {"c": decision.choice("Which?", {"a": None, "b": None})}
 
 
@@ -195,7 +212,8 @@ CHOICE = {"c": decision.choice("Which?", {"a": None, "b": None})}
     ({"type": "noul", "noul": 0.9}, False),
 ])
 def test_a_choice_must_name_an_offered_option(monkeypatch, answer, valid):
-    connection(monkeypatch, payload={"model": "m", "answers": {"c": answer}})
+    connection(monkeypatch, payload={"model": "m", "answers": {"c": answer},
+                                     "usage": {"input_tokens": 1, "output_tokens": 1}})
     if valid:
         assert decision.evaluate(CFG, {}, CHOICE, [])["c"]["choice"] == "a"
     else:

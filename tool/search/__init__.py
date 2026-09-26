@@ -29,7 +29,7 @@ import threading
 import time
 from pathlib import Path
 
-__all__ = ("ask", "prepare", "lexical", "notify", "PING", "spawn", "PORT", "HUB", "cache_dir", "state_path", "version")
+__all__ = ("ask", "prepare", "local_index", "notify", "PING", "spawn", "PORT", "HUB", "cache_dir", "state_path", "version")
 
 HERE = Path(__file__).resolve().parent
 # The hub whose `operator/` and `craft/` every search covers. `WIKI_ROOT` as in `wiki`.
@@ -136,15 +136,26 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     return run(query, project, state, k, evaluate=evaluate, budget=budget)
 
 
-def lexical(project: str | Path | None, hub: Path = HUB):
-    """A BM25-only index built in this process — no daemon, no vectors, so the
-    same files give the same ranking. `.search(query, k, sources)` asks it;
-    `.files` holds every file it read."""
+def local_index(project: str | Path | None, hub: Path = HUB, vectors: bool = False, wait: float = 600.0):
+    """An index built in this process, not the daemon's.
+    `.search(query, k, sources)` asks it; `.files` holds every file it read.
+
+    Without `vectors`, BM25 only. With them, the daemon's own hybrid ranking:
+    the same e5 model and vector cache under `cache_dir()`, waited on up to
+    `wait` seconds until every chunk has been tried. `.complete()` says
+    whether it got there — an incomplete index ranks with BM25 alone, which
+    the caller must not report as hybrid.
+    """
 
     from .daemon import Embedder, Index
 
-    index = Index(Path(hub), Path(project) if project else None, Embedder(None))
+    embedder = Embedder(cache_dir() if vectors else None)
+    embedder.start()
+    index = Index(Path(hub), Path(project) if project else None, embedder)
     index.refresh()
+    end = time.monotonic() + wait
+    while vectors and not index.complete() and embedder.state != "off" and time.monotonic() < end:
+        time.sleep(0.2)
     return index
 
 

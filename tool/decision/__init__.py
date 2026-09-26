@@ -170,11 +170,15 @@ def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
             raise JevError("state_too_large")
         budget = budget or Budget(**PROBE)
         payload = send(cfg.key, body, budget.call(), budget.cancel)
-        budget.charge(payload.get("usage"))
-        entry.update(model=payload.get("model"), usage=payload.get("usage"))
-        answers = payload.get("answers")
-        if not isinstance(answers, dict):
+        model, usage, answers = payload.get("model"), payload.get("usage"), payload.get("answers")
+        entry.update(model=model, usage=usage)
+        # The responding model and the tokens spent are part of the answer:
+        # without them a run cannot be reproduced or priced.
+        if (not isinstance(model, str) or not model or not isinstance(usage, dict)
+                or not all(type(usage.get(k)) is int and usage[k] >= 0 for k in ("input_tokens", "output_tokens"))
+                or not isinstance(answers, dict)):
             raise JevError("invalid_response")
+        budget.charge(usage)
         values = {name: answer(q, answers.get(name)) for name, q in questions.items()}
         entry["answers"] = values
         return values

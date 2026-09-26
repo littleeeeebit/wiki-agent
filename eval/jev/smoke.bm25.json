@@ -6,8 +6,8 @@
   "sha256": "600d19ac80e093b8547dcef8ffe822e82ec435ffd9295f0d3467e6a9c08cbb41"
  },
  "run": {
-  "started": "2026-09-26T10:49:30+00:00",
-  "commit": "82be98300afd91154d74e46d60744e7c483289d4",
+  "started": "2026-09-26T11:05:48+00:00",
+  "commit": "39d6a007395e56522443257e97adaa4890f80ff6",
   "dirty": true
  },
  "corpus": {
@@ -79,6 +79,7 @@
      "line": 1,
      "heading": "Ports",
      "bm25": 10.205,
+     "cos": null,
      "rrf": 0.01639
     },
     {
@@ -86,6 +87,7 @@
      "line": 3,
      "heading": "Atlas team > Rota",
      "bm25": 1.81,
+     "cos": null,
      "rrf": 0.01613
     },
     {
@@ -93,6 +95,7 @@
      "line": 1,
      "heading": "Decision: translation cache in the checkout",
      "bm25": 0.45,
+     "cos": null,
      "rrf": 0.01587
     },
     {
@@ -100,6 +103,7 @@
      "line": 1,
      "heading": "Owners",
      "bm25": 0.434,
+     "cos": null,
      "rrf": 0.01562
     },
     {
@@ -107,6 +111,7 @@
      "line": 1,
      "heading": "Decision: translation cache moved",
      "bm25": 0.434,
+     "cos": null,
      "rrf": 0.01538
     },
     {
@@ -114,6 +119,7 @@
      "line": 1,
      "heading": "Login decision",
      "bm25": 0.295,
+     "cos": null,
      "rrf": 0.01515
     },
     {
@@ -121,6 +127,7 @@
      "line": 1,
      "heading": "Review before merge",
      "bm25": 0.223,
+     "cos": null,
      "rrf": 0.01493
     },
     {
@@ -128,6 +135,7 @@
      "line": 1,
      "heading": "One retry budget",
      "bm25": 0.204,
+     "cos": null,
      "rrf": 0.01471
     }
    ],
@@ -148,6 +156,7 @@
      "line": 1,
      "heading": "Owners",
      "bm25": 6.371,
+     "cos": null,
      "rrf": 0.01639
     },
     {
@@ -155,6 +164,7 @@
      "line": 3,
      "heading": "Atlas team > Rota",
      "bm25": 6.146,
+     "cos": null,
      "rrf": 0.01613
     },
     {
@@ -162,6 +172,7 @@
      "line": 1,
      "heading": "Ports",
      "bm25": 2.684,
+     "cos": null,
      "rrf": 0.01587
     },
     {
@@ -169,6 +180,7 @@
      "line": 1,
      "heading": "One retry budget",
      "bm25": 1.376,
+     "cos": null,
      "rrf": 0.01562
     },
     {
@@ -176,6 +188,7 @@
      "line": 1,
      "heading": "Decision: translation cache in the checkout",
      "bm25": 1.086,
+     "cos": null,
      "rrf": 0.01538
     },
     {
@@ -183,6 +196,7 @@
      "line": 1,
      "heading": "Decision: translation cache moved",
      "bm25": 1.023,
+     "cos": null,
      "rrf": 0.01515
     },
     {
@@ -190,6 +204,7 @@
      "line": 1,
      "heading": "Review before merge",
      "bm25": 0.823,
+     "cos": null,
      "rrf": 0.01493
     },
     {
@@ -197,6 +212,7 @@
      "line": 1,
      "heading": "Login decision",
      "bm25": 0.295,
+     "cos": null,
      "rrf": 0.01471
     }
    ],
@@ -211,6 +227,7 @@
      "line": 1,
      "heading": "Decision: translation cache moved",
      "bm25": 7.196,
+     "cos": null,
      "rrf": 0.01639
     },
     {
@@ -218,6 +235,7 @@
      "line": 1,
      "heading": "Decision: translation cache in the checkout",
      "bm25": 7.145,
+     "cos": null,
      "rrf": 0.01613
     },
     {
@@ -225,6 +243,7 @@
      "line": 1,
      "heading": "Owners",
      "bm25": 1.314,
+     "cos": null,
      "rrf": 0.01587
     },
     {
@@ -232,6 +251,7 @@
      "line": 3,
      "heading": "Atlas team > Rota",
      "bm25": 0.99,
+     "cos": null,
      "rrf": 0.01562
     },
     {
@@ -239,6 +259,7 @@
      "line": 1,
      "heading": "Review before merge",
      "bm25": 0.823,
+     "cos": null,
      "rrf": 0.01538
     },
     {
@@ -246,6 +267,7 @@
      "line": 1,
      "heading": "Ports",
      "bm25": 0.398,
+     "cos": null,
      "rrf": 0.01515
     },
     {
@@ -253,6 +275,7 @@
      "line": 1,
      "heading": "Login decision",
      "bm25": 0.295,
+     "cos": null,
      "rrf": 0.01493
     },
     {
@@ -260,10 +283,11 @@
      "line": 1,
      "heading": "One retry budget",
      "bm25": 0.204,
+     "cos": null,
      "rrf": 0.01471
     }
    ],
-   "elapsed_ms": 0.05,
+   "elapsed_ms": 0.04,
    "recall": 1.0
   },
   {
@@ -274,6 +298,7 @@
      "line": 1,
      "heading": "Login decision",
      "bm25": 5.559,
+     "cos": null,
      "rrf": 0.01639
     },
     {
@@ -281,6 +306,7 @@
      "line": 1,
      "heading": "Decision: translation cache moved",
      "bm25": 1.692,
+     "cos": null,
      "rrf": 0.01613
     },
     {
@@ -288,6 +314,7 @@
      "line": 1,
      "heading": "Decision: translation cache in the checkout",
      "bm25": 0.45,
+     "cos": null,
      "rrf": 0.01587
     },
     {
@@ -295,6 +322,7 @@
      "line": 1,
      "heading": "Owners",
      "bm25": 0.434,
+     "cos": null,
      "rrf": 0.01562
     },
     {
@@ -302,6 +330,7 @@
      "line": 1,
      "heading": "Ports",
      "bm25": 0.398,
+     "cos": null,
      "rrf": 0.01538
     },
     {
@@ -309,6 +338,7 @@
      "line": 3,
      "heading": "Atlas team > Rota",
      "bm25": 0.268,
+     "cos": null,
      "rrf": 0.01515
     },
     {
@@ -316,6 +346,7 @@
      "line": 1,
      "heading": "Review before merge",
      "bm25": 0.223,
+     "cos": null,
      "rrf": 0.01493
     },
     {
@@ -323,10 +354,11 @@
      "line": 1,
      "heading": "One retry budget",
      "bm25": 0.204,
+     "cos": null,
      "rrf": 0.01471
     }
    ],
-   "elapsed_ms": 0.06,
+   "elapsed_ms": 0.03,
    "recall": 1.0
   },
   {
@@ -337,6 +369,7 @@
      "line": 1,
      "heading": "Review before merge",
      "bm25": 9.818,
+     "cos": null,
      "rrf": 0.01639
     },
     {
@@ -344,6 +377,7 @@
      "line": 1,
      "heading": "Decision: translation cache in the checkout",
      "bm25": 1.685,
+     "cos": null,
      "rrf": 0.01613
     },
     {
@@ -351,6 +385,7 @@
      "line": 1,
      "heading": "One retry budget",
      "bm25": 1.376,
+     "cos": null,
      "rrf": 0.01587
     },
     {
@@ -358,6 +393,7 @@
      "line": 1,
      "heading": "Owners",
      "bm25": 0.88,
+     "cos": null,
      "rrf": 0.01562
     },
     {
@@ -365,6 +401,7 @@
      "line": 3,
      "heading": "Atlas team > Rota",
      "bm25": 0.721,
+     "cos": null,
      "rrf": 0.01538
     },
     {
@@ -372,10 +409,11 @@
      "line": 1,
      "heading": "Decision: translation cache moved",
      "bm25": 0.589,
+     "cos": null,
      "rrf": 0.01515
     }
    ],
-   "elapsed_ms": 0.05,
+   "elapsed_ms": 0.03,
    "recall": 1.0
   },
   {
@@ -386,10 +424,11 @@
      "line": 1,
      "heading": "번역 월 한도",
      "bm25": 18.458,
+     "cos": null,
      "rrf": 0.01639
     }
    ],
-   "elapsed_ms": 0.04,
+   "elapsed_ms": 0.03,
    "recall": 1.0
   },
   {
@@ -400,6 +439,7 @@
      "line": 1,
      "heading": "Login decision",
      "bm25": 2.573,
+     "cos": null,
      "rrf": 0.01639
     },
     {
@@ -407,6 +447,7 @@
      "line": 1,
      "heading": "Owners",
      "bm25": 1.314,
+     "cos": null,
      "rrf": 0.01613
     },
     {
@@ -414,6 +455,7 @@
      "line": 1,
      "heading": "Decision: translation cache in the checkout",
      "bm25": 1.086,
+     "cos": null,
      "rrf": 0.01587
     },
     {
@@ -421,6 +463,7 @@
      "line": 1,
      "heading": "Decision: translation cache moved",
      "bm25": 1.023,
+     "cos": null,
      "rrf": 0.01562
     },
     {
@@ -428,6 +471,7 @@
      "line": 3,
      "heading": "Atlas team > Rota",
      "bm25": 0.99,
+     "cos": null,
      "rrf": 0.01538
     },
     {
@@ -435,6 +479,7 @@
      "line": 1,
      "heading": "Review before merge",
      "bm25": 0.823,
+     "cos": null,
      "rrf": 0.01515
     },
     {
@@ -442,6 +487,7 @@
      "line": 1,
      "heading": "Ports",
      "bm25": 0.398,
+     "cos": null,
      "rrf": 0.01493
     },
     {
@@ -449,16 +495,17 @@
      "line": 1,
      "heading": "One retry budget",
      "bm25": 0.204,
+     "cos": null,
      "rrf": 0.01471
     }
    ],
-   "elapsed_ms": 0.04,
+   "elapsed_ms": 0.03,
    "recall": null
   },
   {
    "id": "smoke-09",
    "hits": [],
-   "elapsed_ms": 0.02,
+   "elapsed_ms": 0.01,
    "recall": null
   }
  ],

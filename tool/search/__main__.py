@@ -14,7 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from search import HUB, ask, lexical  # noqa: E402
+from search import HUB, ask, local_index  # noqa: E402
 
 
 def node_of(path: Path, project: Path | None) -> str:
@@ -68,7 +68,7 @@ def local(query: str, project: str | None, k: int) -> list[dict]:
     that forbids the connection, say. No vectors: loading the model here
     would cost more than the question."""
 
-    return lexical(project).search(query, k)
+    return local_index(project).search(query, k)
 
 
 def main() -> int:
