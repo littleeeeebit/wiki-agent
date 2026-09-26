@@ -1,0 +1,478 @@
+"""Stage 2 of `docs/plans/jev/`: evidence chunks, their original provenance,
+English normalization and the store. No credentials and no external calls:
+the translator's request (`translate._ask`) is replaced where a test needs an
+answer from it."""
+
+import json
+import os
+import sqlite3
+import time
+from pathlib import Path
+
+import pytest
+
+import search
+import translate
+from main import knowledge
+from search import cache_dir, controller, evidence
+from search import daemon as searchd
+
+
+def index_of(hub: Path, repo: Path | None) -> searchd.Index:
+    index = searchd.Index(hub, repo, searchd.Embedder(None))
+    index.refresh()
+    return index
+
+
+@pytest.fixture
+def corpus(tmp_path, monkeypatch):
+    """A hub and a repository. The hub stands in for this one, as
+    `main.knowledge` finds the store beside it."""
+
+    hub, repo = tmp_path / "hub", tmp_path / "repo"
+    monkeypatch.setattr(search, "HUB", hub)
+    for folder in (hub / "operator", repo / "docs", repo / ".wiki/memory"):
+        folder.mkdir(parents=True)
+    (hub / "operator/rule.md").write_text("# Rule\n\nReview before merge.\n", encoding="utf-8")
+    (repo / "docs/ports.md").write_text("# Ports\n\n## Search\n\nThe daemon listens on 8791.\n", encoding="utf-8")
+    (repo / "docs/limit.md").write_text("# 한도\n\n번역 요청이 한도를 넘으면 멈춘다.\n", encoding="utf-8")
+    (repo / ".wiki/memory/login.md").write_text("# Login\n\nKeep password login.\n", encoding="utf-8")
+    return hub, repo
+
+
+def by_path(index: searchd.Index) -> dict[str, list[dict]]:
+    found: dict[str, list[dict]] = {}
+    for chunk in index.chunks:
+        found.setdefault(chunk["locator"]["path"], []).append(chunk)
+    return found
+
+
+def bump(path: Path, text: str) -> None:
+    """Write and move the modification time on, as a later edit would."""
+
+    path.write_text(text, encoding="utf-8")
+    stamp = path.stat().st_mtime_ns + 10**9
+    os.utime(path, ns=(stamp, stamp))
+
+
+# ---- contract -----------------------------------------------------------------
+
+def test_every_hit_is_a_valid_evidence_chunk_that_resolves_to_its_original(corpus):
+    hub, repo = corpus
+    index = index_of(hub, repo)
+    hits = index.search("daemon 8791 한도 password review", 10)
+    assert len(hits) == 4
+    for hit in hits:
+        chunk = evidence.contract(hit)
+        assert chunk["translation"] == {"status": "pending", "version": None} and chunk["text_en"] is None
+        # The citation is exactly the original's lines, read again from the file.
+        assert evidence.resolve(chunk, Path(index.store.source_of(chunk["chunk_id"]))) == chunk["original_text"]
+    kinds = {h["locator"]["path"]: (h["kind"], h["visibility"]) for h in hits}
+    assert kinds == {"operator/rule.md": ("rule", "shared"), "docs/ports.md": ("document", "repository"),
+                     "docs/limit.md": ("document", "repository"), ".wiki/memory/login.md": ("memory", "private")}
+    index.close()
+
+
+@pytest.mark.parametrize("locator, ok", [
+    ({"path": "a.md", "start_line": 1, "end_line": 2}, True),
+    ({"path": "a.md", "start_line": 0, "end_line": 2}, False),
+    ({"path": "a.md", "start_line": 3, "end_line": 2}, False),
+    ({"path": "a.md", "start_line": None, "end_line": None}, False),   # unknown is not line 1
+    ({"path": "a.md"}, False),
+    ({"url": "https://arxiv.org/abs/1", "snapshot": "a" * 64, "start": 0, "end": 10}, True),
+    ({"url": "https://arxiv.org/abs/1", "snapshot": "latest", "start": 0, "end": 10}, False),
+    ({"url": "file:///etc/passwd", "snapshot": "a" * 64, "start": 0, "end": 10}, False),
+    ({"document": "paper.pdf", "page": 3, "block": 0}, True),
+    ({"document": "paper.pdf", "page": 0, "block": 0}, False),
+])
+def test_locators_have_three_shapes_and_no_invented_position(locator, ok):
+    assert (evidence.locator_problem(locator) is None) is ok
+
+
+def test_english_that_did_not_come_about_cannot_look_as_if_it_had(corpus):
+    hub, repo = corpus
+    hit = index_of(hub, repo).search("한도", 1)[0]
+    failed = {"text": None, "status": "unavailable", "language": "ko", "reason": "no_key"}
+    chunk = evidence.contract(hit, {**failed, "text": hit["text"]})
+    assert chunk["translation"] == {"status": "unavailable", "version": None, "reason": "no_key"}
+    assert chunk["text_en"] is None, "the original was passed off as English"
+    assert evidence.problems({**chunk, "text_en": hit["text"]}) == ["unavailable with English text"]
+    with pytest.raises(ValueError):
+        evidence.contract(hit, {"text": None, "status": "translated", "language": "ko"})
+
+
+def test_the_same_sentence_in_two_sources_is_two_pieces_of_evidence(tmp_path):
+    for name in ("one", "two"):
+        (tmp_path / name / "docs").mkdir(parents=True)
+        (tmp_path / name / "docs/x.md").write_text("# X\n\nSame sentence.\n", encoding="utf-8")
+    (tmp_path / "hub/operator").mkdir(parents=True)
+    one, two = (index_of(tmp_path / "hub", tmp_path / n).search("same sentence", 1)[0] for n in ("one", "two"))
+    assert one["text"] == two["text"]
+    assert one["repo_id"] != two["repo_id"] and one["chunk_id"] != two["chunk_id"]
+    assert searchd.store_path(tmp_path / "hub", tmp_path / "one") != searchd.store_path(tmp_path / "hub", tmp_path / "two")
+
+
+# ---- chunking -----------------------------------------------------------------
+
+def test_a_long_section_is_cut_at_its_blocks_and_labels_what_it_had_to_cut(tmp_path):
+    paragraph = " ".join(["word"] * 120)            # about 600 characters
+    table = "| a | b |\n|---|---|\n" + "\n".join(f"| row {i} | {'v' * 40} |" for i in range(60))
+    fence = "```\n" + "\n".join("code line " * 20 for _ in range(12)) + "\n\nstill code\n```"
+    items = "- one\n\n  continued\n- two"
+    text = f"# T\n\n## Long\n\n{paragraph}\n\n{paragraph}\n\n{paragraph}\n\n{items}\n\n{table}\n\n{fence}\n\nend\n"
+    path = tmp_path / "long.md"
+    path.write_text(text, encoding="utf-8")
+    found = searchd.chunks(text, path)
+    lines = text.splitlines()
+    assert found[0]["text"] == "# T" and found[0]["heading_path"] == ["T"]
+    long = found[1:]
+    for chunk in long:
+        # Exactly the original's lines; the heading path is context, not quoted text.
+        assert chunk["text"] == "\n".join(lines[chunk["line"] - 1:chunk["end_line"]])
+        assert chunk["heading_path"] == ["T", "Long"]
+        if chunk["completeness"] != "oversized":
+            assert searchd.size(chunk["text"]) <= searchd.MAX_CHUNK
+    shapes = [c["completeness"] for c in long]
+    assert shapes.count("whole") >= 2 and "partial" in shapes and shapes.count("oversized") == 1
+    oversized = next(c for c in long if c["completeness"] == "oversized")
+    assert oversized["text"].startswith("```") and oversized["text"].endswith("```"), "a fence was cut"
+    assert "- one\n\n  continued\n- two" in next(c["text"] for c in long if "- one" in c["text"]), "a loose list was cut"
+    assert long[0]["text"].startswith("## Long") and not long[1]["text"].startswith("## Long")
+
+
+def test_hangul_counts_double_toward_the_ceiling(tmp_path):
+    korean = "\n\n".join("가" * 400 for _ in range(3))    # 1200 characters, 2400 by weight
+    found = searchd.chunks(f"# T\n\n{korean}\n", tmp_path / "k.md")
+    assert len(found) == 3 and all(c["completeness"] == "whole" for c in found)
+
+
+# ---- updates ------------------------------------------------------------------
+
+def test_edits_renames_and_deletions_never_return_obsolete_chunks(corpus):
+    hub, repo = corpus
+    index = index_of(hub, repo)
+    before = {c["chunk_id"] for c in index.chunks}
+    ports = repo / "docs/ports.md"
+    old = by_path(index)["docs/ports.md"][-1]
+    bump(ports, "# Ports\n\n## Search\n\nThe daemon listens on 9999.\n")
+    index.refresh()
+    new = by_path(index)["docs/ports.md"][-1]
+    assert "8791" in old["text"] and "9999" in new["text"]
+    assert new["chunk_id"] != old["chunk_id"] and old["chunk_id"] not in {c["chunk_id"] for c in index.chunks}
+    # The old citation no longer resolves: the file is not the revision it was cut from.
+    assert evidence.resolve(evidence.contract(old), ports) is None
+    assert index.search("8791", 5) == [] and index.search("9999", 1)[0]["chunk_id"] == new["chunk_id"]
+
+    ports.rename(repo / "docs/network.md")
+    index.refresh()
+    assert "docs/ports.md" not in by_path(index) and "docs/network.md" in by_path(index)
+    (repo / "docs/network.md").unlink()
+    index.refresh()
+    assert "docs/network.md" not in by_path(index) and index.search("9999", 5) == []
+    assert before - {c["chunk_id"] for c in index.chunks} >= {old["chunk_id"]}
+
+    # A second index on the same store, as the daemon and a command line share
+    # it, sees the change another made.
+    other = index_of(hub, repo)
+    bump(repo / "docs/limit.md", "# 한도\n\n한도를 넘어도 캐시는 답한다.\n")
+    other.refresh()
+    index.refresh()
+    assert "캐시는" in by_path(index)["docs/limit.md"][0]["text"]
+    index.close()
+    other.close()
+
+
+def test_a_failed_update_keeps_what_was_there(corpus, monkeypatch):
+    hub, repo = corpus
+    index = index_of(hub, repo)
+    before = [c["chunk_id"] for c in index.chunks]
+    bump(repo / "docs/ports.md", "# Ports\n\nChanged.\n")
+
+    def full_disk(*_a):
+        raise sqlite3.OperationalError("database or disk is full")
+
+    monkeypatch.setattr(searchd.Store, "remove", full_disk)
+    index.refresh()   # fails inside the transaction
+    assert [c["chunk_id"] for c in index.chunks] == before
+    fresh = index_of(hub, repo)
+    assert [c["chunk_id"] for c in fresh.chunks] == before, "a half-written update reached the store"
+    fresh.close()
+    monkeypatch.undo()
+    index.refresh()
+    assert "Changed." in by_path(index)["docs/ports.md"][0]["text"]
+    index.close()
+
+
+def test_a_deleted_memory_leaves_no_text_vector_or_english_behind(corpus):
+    hub, repo = corpus
+    index = index_of(hub, repo)
+    memory = by_path(index)[".wiki/memory/login.md"][0]
+    # Its vector and its cached English, as the daemon and a turn would have left them.
+    vectors = cache_dir() / "vectors.sqlite3"
+    db = sqlite3.connect(vectors)
+    db.execute("CREATE TABLE IF NOT EXISTS v (k TEXT PRIMARY KEY, v BLOB)")
+    db.execute("INSERT OR REPLACE INTO v VALUES (?, ?)", (memory["key"], b"\0" * 4))
+    db.commit()
+    db.close()
+    cache = translate._store()
+    key = translate._key(translate.KO_EN, translate.glossary()[2], memory["text"])
+    cache.execute("INSERT OR REPLACE INTO shots VALUES (?, ?)", (key, "english of a private memory"))
+    cache.commit()
+    cache.close()
+
+    (repo / ".wiki/memory/login.md").unlink()
+    index.refresh()
+    assert ".wiki/memory/login.md" not in by_path(index) and index.search("password", 5) == []
+    with sqlite3.connect(vectors) as db:
+        assert db.execute("SELECT count(*) FROM v WHERE k = ?", (memory["key"],)).fetchone() == (0,)
+    with sqlite3.connect(searchd.store_path(hub, repo)) as db:
+        assert db.execute("SELECT count(*) FROM chunks WHERE text LIKE '%password%'").fetchone() == (0,)
+        assert db.execute("SELECT count(*) FROM journal WHERE text IS NOT NULL").fetchone()[0] >= 1
+    assert knowledge.cleanup(repo) >= 1
+    with sqlite3.connect(translate.CACHE) as db:
+        assert db.execute("SELECT count(*) FROM shots WHERE k = ?", (key,)).fetchone() == (0,)
+    with sqlite3.connect(searchd.store_path(hub, repo)) as db:
+        assert db.execute("SELECT count(*) FROM journal").fetchone() == (0,)
+    index.close()
+
+
+def test_a_crash_before_cleanup_leaves_the_journal_to_finish_it(corpus, monkeypatch):
+    hub, repo = corpus
+    index = index_of(hub, repo)
+    (repo / ".wiki/memory/login.md").unlink()
+    forget = translate.forget
+    monkeypatch.setattr(translate, "forget", lambda texts: False)   # the cache could not be written
+    index.refresh()
+    assert knowledge.cleanup(repo) >= 1
+    monkeypatch.setattr(translate, "forget", forget)
+    assert knowledge.cleanup(repo) >= 1 and knowledge.cleanup(repo) == 0
+    index.close()
+
+
+def test_another_chunker_builds_its_own_generation_and_going_back_selects_the_old(corpus, monkeypatch):
+    hub, repo = corpus
+    first = index_of(hub, repo)
+    gen, ids = first.store.gen, {c["chunk_id"] for c in first.chunks}
+    first.close()
+    monkeypatch.setattr(evidence, "CHUNKER", "chunks/next")
+    second = index_of(hub, repo)
+    assert second.store.gen == gen + 1 and ids.isdisjoint(c["chunk_id"] for c in second.chunks)
+    second.close()
+    monkeypatch.undo()
+    back = index_of(hub, repo)
+    assert back.store.gen == gen, "rollback rebuilt instead of selecting the kept generation"
+    assert {c["chunk_id"] for c in back.chunks} == ids
+    with sqlite3.connect(searchd.store_path(hub, repo)) as db:
+        assert db.execute("SELECT v FROM meta WHERE k = 'current'").fetchone() == (str(gen),)
+        assert sorted(g for (g,) in db.execute("SELECT gen FROM generations")) == [gen, gen + 1]
+    back.close()
+
+
+def test_a_link_out_of_the_repository_is_not_its_evidence(tmp_path):
+    (tmp_path / "hub/operator").mkdir(parents=True)
+    (tmp_path / "outside").mkdir()
+    (tmp_path / "outside/secret.md").write_text("# Secret\n\nbanana\n", encoding="utf-8")
+    (tmp_path / "repo/docs").mkdir(parents=True)
+    try:
+        (tmp_path / "repo/docs/link.md").symlink_to(tmp_path / "outside/secret.md")
+    except OSError:
+        pytest.skip("symbolic links need privileges here")
+    assert index_of(tmp_path / "hub", tmp_path / "repo").search("banana", 5) == []
+
+
+# ---- normalization ------------------------------------------------------------
+
+@pytest.fixture
+def translator(monkeypatch, tmp_path):
+    """A translator that answers from `answers` (masked input -> reply), with
+    a cache of its own so one test's replies never answer another's."""
+
+    answers: dict[str, str] = {}
+    monkeypatch.setattr(translate, "CACHE", tmp_path / "translate.sqlite3")
+    monkeypatch.setattr(translate, "api_key", lambda: "test-key")
+    monkeypatch.setattr(translate, "_ask", lambda system, batch, seconds: [answers.get(b, b) for b in batch])
+    return answers
+
+
+def test_english_outcomes_say_what_happened(translator):
+    translator["한도를 넘으면 멈춘다."] = "It stops when over the limit."
+    later = time.monotonic() + 5
+    en, ko, other = translate.english(["Plain English.", "한도를 넘으면 멈춘다.", "日本語の文"], later)
+    assert (en["status"], en["text"]) == ("original_english", "Plain English.")
+    assert (ko["status"], ko["text"], ko["spans"], ko["cached"]) == (
+        "translated", "It stops when over the limit.", "intact", False)
+    assert ko["model"] == translate.MODEL and ko["version"].startswith(translate.MODEL)
+    assert (other["status"], other["text"], other["reason"]) == ("uncertain", None, "unsupported_language")
+    again = translate.english(["한도를 넘으면 멈춘다."], later)[0]
+    assert again["status"] == "translated" and again["cached"]
+
+
+@pytest.mark.parametrize("text, expected", [
+    ("Accept with [받아들임] or send [다시 PR] after the review.", "en"),   # Korean names of Korean things
+    ("번역 요청이 한도를 넘으면 멈춘다.", "ko"),
+    ("WIKI_JEV_MODE 가 off 이면 Jev 요청을 보내지 않는다.", "ko"),           # a tie is Korean
+    ("`search.daemon.chunks()` 의 처리를 재사용한다.", "ko"),              # code is neither
+    ("日本語の文", "und"),
+    ("x = 1", "en"),
+])
+def test_language_weighs_prose_words(text, expected):
+    from common.language import language
+
+    assert language(text) == expected
+
+
+@pytest.mark.parametrize("source, reply, reason", [
+    ("포트 8791 을 쓴다.", "It uses port 8790.", "protected_changed"),        # a number substituted
+    ("포트 8791 을 쓴다.", "It uses a port.", "protected_changed"),           # a number lost
+    ("search.daemon 을 고친다.", "Fix the daemon.", "protected_changed"),     # an identifier lost
+    ("`tool/x.py` 를 고친다.", "Fix it.", "spans_broken"),                    # a placeholder dropped
+])
+def test_a_protected_span_that_changed_is_uncertain_not_translated(translator, source, reply, reason):
+    masked, _spans = translate.protect(source, translate.glossary()[0])
+    translator[masked] = reply
+    out = translate.english([source], time.monotonic() + 5)[0]
+    assert (out["status"], out["text"], out["reason"]) == ("uncertain", None, reason)
+
+
+def test_numbers_and_identifiers_that_came_through_are_fine(translator):
+    source = "포트 8791 과 search.daemon 을 v2 에서 3번 확인한다."
+    translator[source] = "Check port 8791 and search.daemon three times in v2."
+    # `3번` became `three`: a lost number is uncertain, not quietly accepted.
+    assert translate.english([source], time.monotonic() + 5)[0]["status"] == "uncertain"
+    assert translate.forget([source])
+    translator[source] = "Check port 8791 and search.daemon 3 times in v2."
+    assert translate.english([source], time.monotonic() + 5)[0]["status"] == "translated"
+
+
+def test_failures_are_unavailable_with_their_reason(monkeypatch, translator):
+    assert translate.english(["한도"], time.monotonic() - 1)[0]["reason"] == "deadline"
+    monkeypatch.setattr(translate, "api_key", lambda: "")
+    out = translate.english(["다른 문장"], time.monotonic() + 5)[0]
+    assert (out["status"], out["text"], out["reason"]) == ("unavailable", None, "no_key")
+    monkeypatch.setattr(translate, "api_key", lambda: "test-key")
+    monkeypatch.setattr(translate, "_ask", lambda *a: None)
+    assert translate.english(["또 다른 문장"], time.monotonic() + 5)[0]["reason"] == "request_failed"
+    # And `translate` itself still hands back the original, as its callers expect.
+    assert translate.translate(["또 다른 문장"], translate.KO_EN, time.monotonic() + 5) == ["또 다른 문장"]
+
+
+def test_a_retired_translation_is_not_used_or_made_again(translator):
+    translator["원문이 이긴다."] = "The translation wins."
+    assert translate.english(["원문이 이긴다."], time.monotonic() + 5)[0]["status"] == "translated"
+    assert translate.retire(["원문이 이긴다."])
+    out = translate.english(["원문이 이긴다."], time.monotonic() + 5)[0]
+    assert (out["status"], out["text"]) == ("retired", None)
+    assert translate.forget(["원문이 이긴다."])
+    assert translate.english(["원문이 이긴다."], time.monotonic() + 5)[0]["status"] == "translated"
+
+
+# ---- the controller reads English ---------------------------------------------
+
+def test_jev_reads_english_and_an_untranslated_passage_proves_nothing(corpus, translator, monkeypatch):
+    hub, repo = corpus
+    index = index_of(hub, repo)
+    korean, english_hit = index.search("한도", 1)[0], index.search("daemon 8791", 1)[0]
+    monkeypatch.setattr(controller, "retrieve", lambda *a: [korean, english_hit])
+    seen = []
+
+    def evaluate(state, questions, trace, *_):
+        seen.append(state)
+        if "retrieve" in questions:
+            return {"retrieve": 1, **{s: 1 for s in controller.SOURCES}}
+        if "sufficient" in questions:
+            return {"sufficient": 1}
+        return {q: 0.9 for q in questions}
+
+    # Nothing translates the Korean passage: it stays, ungraded, and cannot prove sufficiency.
+    out = controller.prepare("Which port?", repo, evaluate=evaluate, normalize=knowledge.english)
+    passages = next(s["passages"] for s in seen if "passages" in s)
+    assert [p["text"] for p in passages] == [english_hit["text"]]
+    assert {"normalization_failed": [korean["chunk_id"]]} in out["trace"]
+    untranslated = next(e for e in out["evidence"] if e["chunk_id"] == korean["chunk_id"])
+    assert untranslated["relevance"] is None and untranslated["translation"]["status"] == "uncertain"
+    assert {"chunk_id": korean["chunk_id"], "path": korean["path"], "locator": korean["locator"],
+            "reason": "not_normalized"} in out["reads"]
+    assessed = next(s["evidence"] for s in seen if "evidence" in s)
+    assert [e["text"] for e in assessed] == [english_hit["text"]]
+
+    # Translated, its English is what Jev reads; the citation stays the original.
+    seen.clear()
+    assert translate.forget([korean["text"], "한도"])
+    translator[translate.protect(korean["text"], translate.glossary()[0])[0]] = (
+        "# Limit\n\nIt stops when a request is over the limit.")
+    translator["한도"] = "Limit"
+    out = controller.prepare("Which port?", repo, evaluate=evaluate, normalize=knowledge.english)
+    passages = next(s["passages"] for s in seen if "passages" in s)
+    assert "It stops when a request is over the limit." in passages[0]["text"] + passages[1]["text"]
+    chunk = next(e for e in out["evidence"] if e["chunk_id"] == korean["chunk_id"])
+    assert chunk["original_text"] == korean["text"] and chunk["translation"]["status"] == "translated"
+    assert out["status"] == "supported" and out["reads"] == []
+    index.close()
+
+
+def test_a_question_without_english_means_no_jev_but_retrieval_goes_on(monkeypatch):
+    monkeypatch.setattr(controller, "retrieve", lambda *a: [])
+    out = controller.prepare("포트는?", None, evaluate=lambda *a: pytest.fail("Jev was asked"))
+    assert out["normalization"] == {"query": "unavailable", "state": None}
+    assert {"fallback": "NormalizationFailed", "reason": "normalization_failed"} in out["trace"]
+
+
+def test_the_meaning_labels_accept_their_reference_and_catch_a_flipped_meaning():
+    from eval import meaning
+
+    cases = json.loads(meaning.MANIFEST.read_text(encoding="utf-8"))["cases"]
+    assert {c["kind"] for c in cases} >= {"negation", "partial-negation", "condition", "version", "quantity"}
+    for case in cases:
+        assert meaning.check(case, {"status": "translated", "text": case["reference"]}) == [], case["id"]
+    negation = next(c for c in cases if c["id"] == "negation-01")
+    assert meaning.check(negation, {"status": "translated", "text": "A hook grants tool permissions."})
+    partial = next(c for c in cases if c["id"] == "negation-02")
+    assert meaning.check(partial, {"status": "translated", "text": "No test reads the real key."})
+    assert meaning.check(negation, {"status": "uncertain", "reason": "protected_changed", "text": None})
+
+
+def test_ingest_counts_before_it_sends_and_every_citation_resolves(corpus, translator):
+    hub, repo = corpus
+    translator["번역 요청이 한도를 넘으면 멈춘다."] = "A translation request stops over the limit."
+    translator["한도"] = "Limit"
+    estimate = knowledge.ingest(repo, estimate=True)
+    assert estimate["korean"] == 2 and estimate["requests_at_most"] == 1 and estimate["unresolved_citations"] == []
+    assert "statuses" not in estimate
+    done = knowledge.ingest(repo)
+    assert done["statuses"] == {"uncertain": 1, "translated": 1}   # the chunk also carries its `# 한도` line
+
+
+def test_mode_off_sends_nothing_to_the_translator(monkeypatch):
+    monkeypatch.setattr(translate, "english", lambda *a: pytest.fail("the translator was asked"))
+    monkeypatch.setattr(controller, "retrieve", lambda *a: [])
+    out = knowledge.prepare("포트는?", None)   # no key in a test run: mode off
+    assert out["jev"]["mode"] == "off" and out["normalization"]["query"] == "unavailable"
+
+
+def test_a_long_state_is_summarized_not_dropped(tmp_path, monkeypatch):
+    repo = tmp_path / "repo"
+    (repo / "docs/plans").mkdir(parents=True)
+    (repo / "docs/plans/1-x.md").write_text(
+        "# X\n\n## Steps\n\n| # | Step | Status |\n| --- | --- | --- |\n| 1 | Build | Not started |\n",
+        encoding="utf-8")
+    state = "user: " + "earlier turn. " * 600 + "user: the latest ask"
+    brief, omitted = knowledge.summarized(state, repo)
+    summary = json.loads(brief)
+    assert len(brief) <= knowledge.STATE_CHARS == controller.MAX_STATE
+    assert summary["recent_state"].endswith("the latest ask")
+    assert summary["unresolved_requirements"][0].startswith("docs/plans/1-x.md: ")
+    assert omitted["characters"] == len(state) - len(summary["recent_state"])
+    assert knowledge.summarized("short", repo) == ("short", None)
+
+    seen = []
+
+    def evaluate(state_, questions, trace, *_):
+        seen.append((state_, questions))
+        if "retrieve" in questions:
+            return {"retrieve": 1, "hub": 1}
+        return {q: 1 for q in questions}
+
+    monkeypatch.setattr(controller, "retrieve", lambda *a: [])
+    out = controller.prepare("Question", None, brief, evaluate=evaluate, omitted=omitted)
+    assert not any(t.get("reason") == "invalid_or_unavailable_decision" for t in out["trace"])
+    assert seen[0][0]["omitted_context"] == omitted

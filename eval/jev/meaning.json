@@ -1,0 +1,32 @@
+{
+  "schema": "jev-meaning-manifest/1",
+  "id": "meaning",
+  "version": 1,
+  "description": "Stage 2 meaning preservation for Korean-to-English evidence normalization. Each case has a human-written reference translation and human-written labels: every `require` group needs one of its phrases in the English (case-insensitive), and no `forbid` phrase may appear. The labels, not the translating model's own judgment, decide a pass. Covers negation, partial negation, conditions, versions, quantities and identifiers.",
+  "cases": [
+    {"id": "negation-01", "kind": "negation", "source": "훅은 도구 권한을 절대 부여하지 않는다.",
+     "reference": "A hook never grants tool permissions.",
+     "require": [["never", "not", "n't"], ["permission"]], "forbid": []},
+    {"id": "negation-02", "kind": "partial-negation", "source": "모든 테스트가 실제 키를 읽는 것은 아니다.",
+     "reference": "Not every test reads the real key.",
+     "require": [["not every", "not all"]], "forbid": ["no test", "none of the tests"]},
+    {"id": "condition-01", "kind": "condition", "source": "한도를 넘으면 새 요청을 멈추고 캐시에 있는 번역만 돌려준다.",
+     "reference": "When the limit is exceeded, new requests stop and only translations already in the cache are returned.",
+     "require": [["if", "when", "once"], ["limit"], ["only"]], "forbid": []},
+    {"id": "condition-02", "kind": "condition", "source": "15초보다 오래 걸리면 기다리지 않고 중단한다.",
+     "reference": "If it takes longer than 15 seconds, it stops without waiting.",
+     "require": [["if", "when", "once"], ["15"], ["longer", "more than", "exceed", "over"]], "forbid": []},
+    {"id": "version-01", "kind": "version", "source": "jev-1.13.0 모델을 쓰고, 0.9 버전은 쓰지 않는다.",
+     "reference": "Use the jev-1.13.0 model, not version 0.9.",
+     "require": [["jev-1.13.0"], ["0.9"], ["not", "n't", "never"]], "forbid": []},
+    {"id": "quantity-01", "kind": "quantity", "source": "한 질문에 후보는 최대 40개까지 본다.",
+     "reference": "One question looks at up to 40 candidates.",
+     "require": [["40"], ["up to", "at most", "maximum", "no more than"]], "forbid": []},
+    {"id": "identifier-01", "kind": "identifier", "source": "`search.daemon.chunks()` 의 코드 펜스 처리를 그대로 재사용한다.",
+     "reference": "Reuse the code-fence handling of `search.daemon.chunks()` as it is.",
+     "require": [["search.daemon.chunks()"], ["reuse"]], "forbid": []},
+    {"id": "mixed-01", "kind": "condition", "source": "WIKI_JEV_MODE 가 off 이면 Jev 요청을 보내지 않는다.",
+     "reference": "When WIKI_JEV_MODE is off, no Jev request is sent.",
+     "require": [["WIKI_JEV_MODE"], ["off"], ["not", "no ", "n't", "never"], ["if", "when"]], "forbid": []}
+  ]
+}
