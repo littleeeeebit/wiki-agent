@@ -25,7 +25,7 @@ def test_routes_grades_and_preserves_citations(monkeypatch):
             return {"sufficient": 0.95}
         return {"0": 0.1, "1": 0.5, "2": 0.99}
 
-    def retrieve(query, root, sources, k):
+    def retrieve(query, root, sources, k, timeout):
         calls.append(sources)
         return [hit("irrelevant"), hit("partial"), hit("contradiction")]
 
@@ -52,7 +52,7 @@ def test_insufficient_evidence_widens_once_and_retains_bridge(monkeypatch):
             return {"retrieve": 0.9, "hub": 0.01, "documents": 0.01, "memory": 0.9}
         return {q: 0.3 if q != "sufficient" else 0.1 for q in questions}
 
-    def retrieve(query, root, sources, k):
+    def retrieve(query, root, sources, k, timeout):
         calls.append((sources, k))
         return [hit("bridge" if len(calls) == 1 else "detail")]
 
@@ -67,7 +67,7 @@ def test_insufficient_evidence_widens_once_and_retains_bridge(monkeypatch):
 def test_missing_key_and_invalid_judgment_fall_back_to_all_sources(monkeypatch):
     monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
     calls = []
-    monkeypatch.setattr(jev, "retrieve", lambda q, p, s, k: calls.append(s) or [hit("baseline")])
+    monkeypatch.setattr(jev, "retrieve", lambda q, p, s, k, t: calls.append(s) or [hit("baseline")])
     out = jev.prepare("Find evidence", "/repo")
     assert out["status"] == "fallback" and out["evidence"] == [hit("baseline")]
     assert calls == [list(jev.SOURCES)]
@@ -113,7 +113,7 @@ def test_dossier_names_the_sources_actually_searched_after_widening(monkeypatch)
         return {q: 1 for q in questions}
 
     monkeypatch.setattr(jev, "evaluate", evaluate)
-    monkeypatch.setattr(jev, "retrieve", lambda q, r, s, k: [] if s == ["memory"] else [hit("doc")])
+    monkeypatch.setattr(jev, "retrieve", lambda q, r, s, k, t: [] if s == ["memory"] else [hit("doc")])
     out = jev.prepare("Question", "/repo")
     assert out["status"] == "supported" and out["sources"] == list(jev.SOURCES)
 
@@ -156,6 +156,46 @@ def test_one_budget_bounds_every_call_in_a_run(monkeypatch, budget, judged):
     assert len(calls) == judged and len(searched) == 2
     assert out["status"] == "fallback" and out["evidence"] == [hit("a")]
     assert out["trace"][-1] == {"fallback": "TimeoutError", "reason": "budget"}
+
+
+def test_searches_spend_the_same_budget(monkeypatch):
+    import search.daemon as daemon
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "unused")
+    asked = []
+
+    def slow_daemon(query, project, timeout, k, sources):
+        asked.append(timeout)
+        time.sleep(min(timeout, 0.3))
+        return [hit("daemon")]
+
+    class Cold:
+        def __init__(self, *a):
+            pass
+
+        def refresh(self):
+            pass
+
+        def search(self, query, k, sources):
+            return [hit("cold")]
+
+    def evaluate(state, questions, trace):
+        if "retrieve" in questions:
+            return {"retrieve": 1, "hub": 1}
+        return {q: 0.5 for q in questions}
+
+    monkeypatch.setattr(jev, "ask", slow_daemon)
+    monkeypatch.setattr(daemon, "Index", Cold)
+    monkeypatch.setattr(jev, "evaluate", evaluate)
+    monkeypatch.setattr(jev, "TIMEOUT", 0.1)
+    monkeypatch.setattr(jev, "BUDGET", 0.6)
+    started = time.monotonic()
+    out = jev.prepare("Question", None)
+    # Two daemon searches use the budget up; the fallback gets nothing left, so
+    # it skips the daemon for the cold index instead of waiting three seconds more.
+    assert time.monotonic() - started < jev.BUDGET + 0.15
+    assert len(asked) == 2 and asked[0] <= jev.BUDGET and asked[1] < jev.BUDGET
+    assert out["trace"][-1]["reason"] == "budget" and out["evidence"] == [hit("cold")]
 
 
 def test_source_selection_precedes_top_k_and_never_reads_other_memory(tmp_path):

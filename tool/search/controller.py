@@ -21,8 +21,9 @@ SOURCES = {
 NO = 0.2
 YES = 0.8
 TIMEOUT = 6.0
-# ponytail: one fixed budget for every Jev call in a turn; tune with real latencies from step 1.
+# ponytail: one fixed budget for every Jev call and search in a turn; tune with real latencies from step 1.
 BUDGET = 15.0
+SEARCH_TIMEOUT = 3.0
 MAX_STATE = 4000
 MAX_PASSAGE = 3000
 MAX_CANDIDATES = 12
@@ -85,8 +86,16 @@ def evaluate(state: dict, questions: dict, trace: list[dict]) -> dict[str, float
     return values
 
 
-def retrieve(query: str, project: Path | None, sources: list[str], k: int) -> list[dict]:
-    found = ask(query, str(project) if project else None, timeout=3.0, k=k, sources=sources)
+def retrieve(query: str, project: Path | None, sources: list[str], k: int,
+             timeout: float = SEARCH_TIMEOUT) -> list[dict]:
+    """The daemon's hits within `timeout`, else a cold local index.
+
+    ponytail: the cold index is BM25 only and is not under the budget; it took
+    0.1 s over this repository's 81 pages. Bound it too if a repository makes it slow.
+    """
+
+    found = ask(query, str(project) if project else None, timeout=timeout, k=k,
+                sources=sources) if timeout > 0 else None
     if found is not None:
         return found
     from .daemon import Embedder, Index
@@ -120,6 +129,10 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8)
         spend()
         return evaluate(state_, questions, trace)
 
+    def search(sources: list[str], limit: int) -> list[dict]:
+        # The daemon gets what is left of the budget; with nothing left, only the cold index.
+        return retrieve(query, root, sources, limit, min(SEARCH_TIMEOUT, max(0.0, deadline - time.monotonic())))
+
     try:
         if len(state) > MAX_STATE or len(query) > MAX_STATE:
             raise ValueError("context_too_large")
@@ -139,7 +152,7 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8)
                 spend()
             # What the dossier names is what was searched, widened or not.
             dossier["sources"] = selected
-            batch = retrieve(query, root, selected, MAX_CANDIDATES if attempt else min(MAX_CANDIDATES, k + 2))
+            batch = search(selected, MAX_CANDIDATES if attempt else min(MAX_CANDIDATES, k + 2))
             shortlist = batch[:MAX_CANDIDATES]
             if not shortlist:
                 selected = available
@@ -176,12 +189,12 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8)
         return dossier
     except Exception as exc:  # noqa: BLE001 — Jev never blocks a turn; any failure is plain retrieval
         trace.append({"fallback": type(exc).__name__,
-                      "reason": "missing_api_key" if not os.environ.get("TYPESAFE_API_KEY")
-                      else "budget" if isinstance(exc, TimeoutError) and str(exc) == "jev_budget"
+                      "reason": "budget" if isinstance(exc, TimeoutError) and str(exc) == "jev_budget"
+                      else "missing_api_key" if not os.environ.get("TYPESAFE_API_KEY")
                       else "invalid_or_unavailable_decision"})
         # A failed narrow route must not limit the fallback's source coverage.
         try:
-            dossier["evidence"] = retrieve(query, root, available, k)
+            dossier["evidence"] = search(available, k)
             dossier["sources"] = available
         except Exception as error:  # noqa: BLE001 — keep what was found; the agent searches on its own
             trace.append({"fallback_retrieval": type(error).__name__})
