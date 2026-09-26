@@ -78,7 +78,8 @@ def open_steps(path: Path, limit: int = MAX_ROWS) -> list[str]:
     """
 
     text = path.read_text(encoding="utf-8")
-    block = re.search(r"^##+ 단계\s*$(.*?)(?=^##+ |\Z)", text, re.M | re.S)
+    # `Steps` since the plans are written in English; `단계` in older ones.
+    block = re.search(r"^##+ (?:단계|Steps)\s*$(.*?)(?=^##+ |\Z)", text, re.M | re.S)
     if not block:
         return []
     rows = []
@@ -92,7 +93,9 @@ def open_steps(path: Path, limit: int = MAX_ROWS) -> list[str]:
         # The first word, not the whole cell: `완료 — 양 호스트 실측` is done.
         # Not a prefix either: `미완료` is not.
         first = state.split()[0] if state else ""
-        if first in ("완료", "취소", "상태") or "~~" in cells[1]:
+        # English plans say `Done`, or `Complete` where the translator chose it.
+        if first in ("완료", "취소", "상태") or first.lower() in ("done", "complete", "completed", "cancelled",
+                                                              "status") or "~~" in cells[1]:
             continue
         rows.append(f"{cells[0]} {cells[2] if len(cells) > 2 else ''} — {state or '미착수'}")
     return rows[:limit]
@@ -272,7 +275,7 @@ def report(repo: Path, checkout: Path | None = None) -> str:
             lines.append("")
             taken += len(steps)
         lines.append(
-            "This only reads the status column of the `## 단계` table, so it "
+            "This only reads the status column of the `## Steps` table, so it "
             "carries neither why something was cancelled nor what comes next. "
             "Read the plan document before deciding what to change."
         )

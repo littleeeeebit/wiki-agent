@@ -1,49 +1,37 @@
-# 1단계 — 번역 엔진과 입력 경로
+# Phase 1 — Translation Engine and Input Path
 
-전체 설계와 세 단계의 관계는 [개요](0-overview.md)에 있다.
+The overall design and the relationship between the three phases are in [Overview](0-overview.md)].
 
-목표. 사람이 한국어로 쓰면 에이전트가 영어로 받는다. 사용자 화면은 아직
-아무것도 안 바뀐다 — 화면을 바꾸는 것은 2단계의 미러가 생긴 뒤다.
+Goal. When a human writes in Korean, the agent receives it in English. The user screen does not change yet — changing the screen happens after the mirror in Phase 2 is created.
 
-## 만들 것
+## What to build
 
 ### `tool/translate.py`
 
-Gemini REST 를 `urllib` 로 직접 친다. 새 의존성 0개다 — `requirements-chat.txt`
-는 `fastapi`·`uvicorn`·`PyYAML` 뿐이고 여기 더할 이유가 없다.
+Call Gemini REST directly with `urllib`. There are 0 new dependencies — `requirements-chat.txt`
+is only `fastapi`·`uvicorn`·`PyYAML` and there is no reason to add more here.
 
 ```
 ko_to_en(text: str) -> str
 en_to_ko(text: str) -> str
 ```
 
-- 모델 `gemini-3.1-flash-lite`. 키는 `GEMINI_API_KEY` 환경변수 (이미 있다)
+- Model `gemini-3.1-flash-lite`. The key is the `GEMINI_API_KEY` environment variable (already exists)
 
-  실측이 계획을 고친 자리다. 처음 적은 `gemini-2.5-flash` 는 이 계정에
-  404 다 — "no longer available to new users". `gemini-2.5-flash-lite` 도
-  같은 404 라 2.5 세대는 통째로 못 쓴다. 후보를 재 보니 짧은 문자열
-  2건 왕복이 `3.6-flash` 6.3초, `3.8-flash` 4.5초, `3.5-flash-lite` 1.2초였다.
-  lite 둘만 세 회차씩 다시 재니 중앙값이 `3.1-flash-lite` 1.17초,
-  `3.5-flash-lite` 1.00초다. 0.17초 차이로는 두 세대의 가격차를 못 산다 —
-  사용자 판단으로 `3.1-flash-lite` 에 고정했다.
-  큰 모델은 그 시간을 thinking 에 쓰는데, 보호 구간을 이미 빼낸 번역에서는
-  그것이 사는 게 없다. lite 는 `thinkingConfig` 를 400 으로 거부한다 — 끌
-  필요 없이 애초에 꺼져 있다. 발화마다 도는 경로이므로 싼 티어가 맞다.
+  The actual measurement is where the plan was corrected. The `gemini-2.5-flash` written initially is 404 for this account — "no longer available to new users". `gemini-2.5-flash-lite` is also the same 404, so the 2.5 generation cannot be used at all. Re-measuring the candidates, the round trip for 2 short strings was `3.6-flash` 6.3 seconds, `3.8-flash` 4.5 seconds, and `3.5-flash-lite` 1.2 seconds. Measuring only the two lites three times each, the median is `3.1-flash-lite` 1.17 seconds and `3.5-flash-lite` 1.00 seconds. The price difference between the two generations cannot be bought with a 0.17-second difference — fixed to `3.1-flash-lite` based on user judgment.
+  The large model uses that time for thinking, but in translation where the protected sections are already extracted, there is nothing for it to live on. lite rejects `thinkingConfig` as 400 — it is turned off from the start without needing to be turned off. Since it is a path that runs for every utterance, the cheap tier is correct.
 
-  별칭은 안 쓴다. `gemini-flash-latest` 는 캐시 키를 안 바꾸고 모델만
-  바꾸므로, 캐시가 지금 쓰지 않는 모델의 번역을 계속 내주게 된다.
-- 실패하면 원문을 그대로 돌려준다. 예외도 타임아웃도 키 없음도 전부 그렇다.
-  번역이 세션을 못 멈추게 한다 — `craft/hooks-fail-open`
-- `stdin`·`stdout` UTF-8 고정, `subprocess` 를 쓸 일이 있으면
-  `encoding="utf-8", errors="replace"`. `lint.fragile_tools`·`fragile_io` 가 검사한다
+  Aliases are not used. `gemini-flash-latest` does not change the cache key but only changes the model, so the cache would continue to output translations of the model not currently in use.
+- If it fails, return the original text as is. This applies to exceptions, timeouts, and missing keys. Do not let translation stop the session — `craft/hooks-fail-open`
+- `stdin`·`stdout` UTF-8 fixed, if there is a need to use `subprocess`, then `encoding="utf-8", errors="replace"`. `lint.fragile_tools`·`fragile_io` checks it
 
-### 자리표시자 보호 — 번역기 판단에 안 맡긴다
-번역 전에 아래를 토큰(``+index 같은 사용자 영역 문자)으로 빼내고, 번역 뒤 되돌린다.
+### Placeholder protection — Do not leave it to the translator's judgment
+Before translation, extract the following into tokens (user-area characters like ``+index) and restore them after translation.
 
-| 보호 대상 | 왜 |
+| Protected Target | Why |
 | --- | --- |
-| 인라인 백틱 `` `...` `` | 명령·경로·식별자. 번역되면 실행이 깨진다 |
-| 펜스 코드블록 ` ``` ` | 같은 이유, 통째로 |
+| Inline backticks `` `...` `` | Commands, paths, identifiers. Execution breaks if translated |
+| Fence code blocks ` ``` ` | 같은 이유, 통째로 |
 | `[[링크]]` | 위키 링크. 슬러그가 바뀌면 `graph.json` 이 끊긴다 |
 | YAML front matter | `triggers` 정규식이 여기 있다. 번역하면 주입이 죽는다 |
 | `<!-- wiki:... -->` 주석 | `inject.py` 가 심는 출처 표지 |
@@ -51,18 +39,18 @@ en_to_ko(text: str) -> str
 ### 용어집 `tool/markers/glossary.toml` (새 파일)
 
 ```toml
-# keep_korean — 영어로 옮기면 다른 것을 가리키게 되는 말. 원문 그대로 남긴다.
+# keep_korean — Words that would point to something else if translated to English. Keep as original text.
 keep_korean = ["전자조달", "나라장터", "입찰공고", "지방계약법", "낙찰하한율"]
 
-# fixed — 이 위키 안에서 뜻이 정해진 말. 호출마다 다르게 번역되면 안 된다.
+# fixed — Words with defined meanings within this wiki. Must not be translated differently per call.
 [fixed]
-"위키" = "wiki"
-"지뢰" = "landmine"
-"계약" = "contract"      # 페이지 심각도. 법률상 계약이 아니다
-"게이트" = "gate"
-"주입" = "injection"
-"발화" = "utterance"
-"훅" = "hook"
+"wiki" = "wiki"
+"landmine" = "landmine"
+"contract" = "contract"      # Page severity. Not a legal contract
+"gate" = "gate"
+"injection" = "injection"
+"utterance" = "utterance"
+"hook" = "hook"
 ```
 
 두 표를 번역 프롬프트에 싣는다. `keep_korean` 은 "이 낱말은 한국어 그대로 두라",
@@ -77,7 +65,7 @@ stdlib SQLite로 훅·미러의 동시 쓰기를 처리한다. 실패 결과는 
 ### `translate.py --check`
 
 ```
-python tool/translate.py --check --manifest docs/translation-baseline.json <경로...>
+python tool/translate.py --check --manifest docs/translation-baseline.json <path...>
 ```
 
 Git 원문과 번역 산출물의 기계 검사. `--source-root`는 커밋 전 작업 검사용 대체 입력이다.
@@ -128,125 +116,78 @@ English rendering of the user's message (Gemini; the Korean above is authoritati
 ...
 ```
 
-한국어 원문이 정본이라고 적는 것이 중요하다. 번역이 틀렸을 때 에이전트가
-원문으로 돌아갈 수 있어야 한다.
+It is important to write that the Korean original is the authoritative version. When a translation is incorrect, the agent must be able to return to the original text.
 
-### `tool/session_state.py` — 세션 시작 컨텍스트 ko→en
+### `tool/session_state.py` — Session start context ko→en
 
-사용자는 커밋 메시지·PR·`.wiki/decisions/` 를 계속 한국어로 쓴다. 그것이
-에이전트 컨텍스트로 들어가는 `report()` 조립 시점에서 영어로 바꾼다.
-발화별 결정 요약은 `inject`의 컨텍스트 조립 시점에서도 번역한다.
+Users continue to write commit messages, PRs, and `.wiki/decisions/` in Korean. It is translated to English at the point of assembling `report()` that enters the agent context. The summary of decisions per utterance is also translated at the point of assembling the context in `inject`.
 
-- `decisions()` 가 내는 `(title, why)` 두 문자열 — 커밋 제목과 `왜.` 첫 문장
-- `active_page()` 가 내는 `.wiki/plan-active.md` 본문
-- `open_steps()` 가 내는 계획 표의 행
-- `branch_line()`의 기본 한국어 출력은 보존하고, `report()`만 영어 출력을 명시적으로
-  선택하게 한다. 고정 문자열의 영어 표기는 직접 제공하고 Gemini에 맡기지 않는다
-- `report()` 의 고정 산문(`## 브랜치`, `## 최근 결정 — 다시 뒤집기 전에 이유를 보라` 등)도
-  마찬가지로 영어로 직접 고쳐 쓴다
-- `open_steps()` 의 `## 단계` 표 파서와 `완료`·`취소`·`상태` 판정은 한국어 그대로
-  둔다. 이 폴더의 계획서가 한국어 표를 쓰고, 사용자도 한국어로 쓴다.
-  2단계에서 페이지가 영어로 가도 계획 문서는 사람이 쓰는 것이라 안 따라간다
-- 이 훅 `timeout` 은 15 → 25. 결정 4건 + 계획 표를 번역한다
+- `(title, why)` two strings produced by `decisions()` — commit title and `왜.` first sentence
+- `.wiki/plan-active.md` body produced by `active_page()`
+- Rows of the plan table produced by `open_steps()`
+- Preserve the default Korean output of `branch_line()`, and make only `report()` explicitly select English output. Provide English notation for fixed strings directly and do not leave it to Gemini
+- Fixed prose of `report()` (`## 브랜치`, `## 최근 결정 — 다시 뒤집기 전에 이유를 보라`, etc.) is also rewritten directly in English in the same way
+- `## 단계` table parser of `open_steps()` and `완료`·`취소`·`상태` judgments are left in Korean as is. The plan documents in this folder use Korean tables, and users also write in Korean. Even if the page goes to English in Phase 2, the plan document is written by humans, so it does not follow
+- This hook `timeout` is 15 → 25. Translates 4 decisions + plan table
 
-`decisions()`·`active_page()`·`open_steps()`는 한국어 정본을 읽는 함수로 유지한다.
-`slack_brief.standup()`과 `chat.handoff()`도 이 함수들을 호출하므로 여기서 번역하면
-1단계부터 Slack·웹 사용자 화면이 바뀐다. 번역은 `report()`의 출력 조립에만 적용하고
-Slack·인계의 한국어 보존을 기존 검사에 추가한다.
+`decisions()`·`active_page()`·`open_steps()` are maintained as functions that read the Korean authoritative version. Since `slack_brief.standup()` and `chat.handoff()` also call these functions, translating here changes the Slack/web user screen from Phase 1. Translation is applied only to the output assembly of `report()`, and Korean preservation for Slack/handover is added to existing tests.
 
-번역은 문자열마다 6초씩 순차 호출하지 않는다. 훅 전체의 남은 시간 안에서 한 번에
-묶어 번역하거나 공통 마감 시간을 전달하고, 시간이 다 되면 아직 번역하지 않은 부분은
-원문으로 조립해 반드시 주입한다. 결정 네 건만 각각 기다려도 24초이므로 25초 설정만으로
-실패 시 주입 보존을 보장하지 못한다. 네트워크 지연을 가짜로 주는 검사로 확인한다.
+Translation does not call sequentially for 6 seconds per string. Bundle and translate at once within the remaining time of the entire hook or pass a common deadline, and if time runs out, assemble the untranslated parts as original text and inject them without fail. Since waiting for each of the four decisions alone is 24 seconds, the 25-second setting alone cannot guarantee injection preservation upon failure. Verify with a test that fakes network latency.
 
-### 에이전트 전용 프롬프트 영어화 — 사용자 화면이 아니다
+### English-only prompts for agents — Not user screens
 
-| 파일 | 비고 |
+| File | Remarks |
 | --- | --- |
 | `tool/prompts/chat-answer.md` | |
 | `tool/prompts/chat-explain.md` | |
-| `tool/prompts/slack-retro.md` | Slack 에 출력되는 문구는 한국어로 남긴다 |
-| `tool/prompts/slack-standup.md` | 같음 |
-| `skills/after-merge/SKILL.md` | `description` 의 한국어 트리거 낱말(`머지했다` 등)은 남긴다 |
-| `skills/review-loop/SKILL.md` | 같음 |
-| `skills/retrospect/SKILL.md` | 같음 |
-| `skills/design-pass/SKILL.md` | 같음 |
+| `tool/prompts/slack-retro.md` | Phrases output to Slack remain in Korean |
+| `tool/prompts/slack-standup.md` | Same |
+| `skills/after-merge/SKILL.md` | Korean trigger words of `description` (`머지했다`, etc.) remain |
+| `skills/review-loop/SKILL.md` | Same |
+| `skills/retrospect/SKILL.md` | Same |
+| `skills/design-pass/SKILL.md` | Same |
 
-스킬 `description` 의 한국어 트리거는 `triggers` 정규식과 같은 성질이다 —
-사용자 발화에 걸리라고 있는 것이라 영어로 바꾸면 스킬이 안 뜬다.
+Korean triggers for skill `description` have the same nature as the `triggers` regex — they exist to catch user utterances, so if changed to English, the skill will not trigger.
 
-`chat-answer.md`와 `chat-explain.md`는 이미 영어 지시문이다. 한국어 출력을 요구하는
-지시는 3단계 웹 오버레이 검증까지 유지한다. 프롬프트의 언어와 출력 언어는 별개다.
-`tool/chat.py::WIKI_WRITER`와 `CLAUDE_MD_WRITER`도 에이전트용 지시문이므로 이 단계에
-영어로 옮기되 웹에 돌아오는 결과 설명은 한국어로 유지한다. UI 라벨·오류와는 구분한다.
+`chat-answer.md` and `chat-explain.md` are already English instructions. Instructions requiring Korean output are maintained until Phase 3 web overlay verification. The language of the prompt and the language of the output are separate. `tool/chat.py::WIKI_WRITER` and `CLAUDE_MD_WRITER` are also instructions for the agent, so translate them to English at this stage, but maintain the result explanation returned to the web in Korean. Distinguish from UI labels/errors.
 
-## 안 건드리는 것
+## Things not touched
 
-`tool/markers/ko.toml` · `census.py` 의 한글 낱말 추출 · 페이지 front matter 의
-`triggers` · `korean_progress.py` (2단계) · `settings.json`의 `statusMessage` (한국어 유지) ·
-페이지 산문 (2단계) · `tool/*.py` 주석 (3단계) · `lint.broken_wraps` (2단계)
+Korean word extraction of `tool/markers/ko.toml` · `census.py` · `triggers` · `korean_progress.py` of page front matter (Phase 2) · `statusMessage` of `settings.json` (keep Korean) · Page prose (Phase 2) · `tool/*.py` comments (Phase 3) · `lint.broken_wraps` (Phase 2)
 
-## 단계
+## Phases
 
-| # | 이름 | 무엇 | 상태 |
+| # | Name | What | Status |
 | --- | --- | --- | --- |
-| 1 | translate | `tool/translate.py` + `glossary.toml` + 캐시 | 완료 |
-| 2 | check | Git 기준 manifest·`translate.py --check`·원문/이름 변경/새 문서 표본·역번역 기록 | 완료 |
-| 3 | test | `tool/test_translate.py` — 자리표시자 왕복·키 없음·파이프 인코딩 | 완료 |
-| 4 | inject | `inject.py` 에 ko→en (트리거 매칭 뒤에) + timeout 15 | 완료 |
-| 5 | session | `report()`에서만 결정·계획 번역, 공용 함수 한국어 유지 + timeout 25 | 완료 |
-| 6 | prompts | 프롬프트 4개·스킬 4개·chat 인라인 writer 2개 점검/영어화, 출력 한국어 유지 | 완료 |
-| 7 | gate | `tool/lint.py --check` 와 `pytest tool/` 초록 | 완료 |
+| 1 | translate | `tool/translate.py` + `glossary.toml` + cache | Done |
+| 2 | check | Git-based manifest·`translate.py --check`·original/rename/new document sample·back-translation record | Done |
+| 3 | test | `tool/test_translate.py` — placeholder round-trip·no key·pipe encoding | Done |
+| 4 | inject | ko→en in `inject.py` (after trigger matching) + timeout 15 | Done |
+| 5 | session | Translate decisions/plans only in `report()`, keep common functions in Korean + timeout 25 | Done |
+| 6 | prompts | 4 prompts·4 skills·2 chat inline writers check/English, keep output in Korean | Done |
+| 7 | gate | `tool/lint.py --check` and `pytest tool/` green | Done |
 
-## 검증
+## Verification
 
-- `pytest tool/` 전부 초록
+- All `pytest tool/` green
 - `python tool/test_apply.py` · `python tool/test_inject.py` · `python tool/test_slack_brief.py`
-  — 직접 실행 main 검사도 통과한다. pytest 수집 수로 이 검사 실행을 대신하지 않는다
-- `python tool/lint.py --check` 초록 — 특히 `fragile_tools`·`fragile_io`·
-  `missing_hook_guards` 가 새 `translate.py` 를 통과하는지
-- `python tool/apply.py --project . --agent claude --check`와
-  `python tool/apply.py --project . --agent codex --check` 초록 — 생성 원본과 배선을 대조한다
-- 실측: 한국어 발화 하나를 실제로 쳐서 (a) 페이지가 여전히 주입되는가
-  (b) 영어본이 붙는가 (c) 체감 지연이 얼마인가
-- 키를 일부러 빼고 같은 발화 — 주입이 그대로 돌고 영어본만 없어야 한다
+  — Direct execution main check also passes. Do not replace this test execution with pytest collection count
+- `python tool/lint.py --check` green — especially whether `fragile_tools`·`fragile_io`·
+  `missing_hook_guards` passes new `translate.py`
+- `python tool/apply.py --project . --agent claude --check` and
+  `python tool/apply.py --project . --agent codex --check` green — compare generation source and wiring
+- Actual measurement: Type one Korean utterance and check (a) is the page still injected (b) is the English version attached (c) what is the perceived latency
+- Same utterance with key intentionally removed — injection should run as is and only the English version should be missing
 
-## 되돌리는 법
+## How to revert
 
-번역 호출·고정 산문·프롬프트·`apply.py`의 timeout 변경을 함께 되돌리고 두 호스트
-설정을 재생성한다. 생성된 settings만 되돌리면 다음 apply가 다시 바꾼다.
-캐시는 비활성화하거나 버전을 바꿔 옛 번역을 재사용하지 않게 한다.
+Revert translation calls, fixed prose, prompts, and timeout changes of `apply.py` together and regenerate the two host settings. If only the generated settings are reverted, the next apply will change them again. Disable the cache or change the version so that old translations are not reused.
 
-## 리뷰 반영 — 번역 계약과 빠진 주입 경로
+## Review reflection — Translation contract and missing injection path
 
-- `--check`는 원문 없이는 비교할 수 없다. 원문의 정본은 git 이다. 1단계 check
-  담당자가 추적되는 `docs/translation-baseline.json` 형식과 검사기를 만든다. 각 대상에
-  번역 전 고정 전체 commit SHA·원문 경로·산출물 경로·종류(번역/재작성/신규)를 기록한다.
-  `HEAD`를 기본 원문으로 쓰거나 rename을 추측하지 않는다. 2단계 pages 담당자가 번역 전에
-  실제 대상을 채운다. 새 클론은 지정 커밋을 포함한 이력이 필요하며 없으면 명시적으로 실패한다.
-  `git show <SHA>:<원문 경로>`로 읽고, 페이지 이름 변경은 옛 경로를 명시한다.
-  커밋 안 된 한국어 원문은 먼저 정본 커밋에 포함한 뒤 SHA를 고정한다. 그 전 작업 검사만
-  `--source-root raw/translate-source`를 허용하며 배포 게이트 통과로 세지 않는다.
-  처음부터 영어로 쓴 신규 문서는 신규로 명시하여 원문 비교 대상에서 제외하되 링크·형식
-  검사는 받는다. 원문이 없다는 이유로 기존 번역 문서를 신규로 자동 분류하지 않는다.
-  재작성·이름 변경의 보호 구간 예외는 파일별 이전 값과 허용 새 값을 manifest에 기록하여
-  검토한다. 파일 전체의 검사를 끄지 않는다. 일반 번역 항목은 모든 보호 구간이 같아야 한다.
-  원문 부재·빈 대상·보호 구간 변조는 실패다. 디렉터리와 `*.md` 패턴은 CLI 내부에서
-  확장하되 `docs/plans/`는 번역 대상에서 제외한다. 재작성 페이지는 승인한 변경만
-  별도로 기록하고 그 밖의 front matter 전체·링크·백틱은 원문과 대조한다.
-  1단계에서는 임시 Git 저장소의 커밋·rename·신규·누락 원문 표본으로 검사기를 완료한다.
-  실제 32개 영어 번역과 사용자 의미 검수는 2단계 gate 담당이 수행하므로 1단계 완료가
-  2단계 산출물을 기다리지 않는다. manifest 자신과 계획서는 번역 대상에서 제외한다.
-- 자리표시자의 유실·중복·변조를 복원 전에 검사한다. `keep_korean`도 프롬프트만
-  믿지 말고 보호하며, 검증 실패 시 원문을 반환하고 실패 번역은 캐시하지 않는다.
-  Markdown 링크의 목적지와 `{slot}`도 보호한다. 보호 토큰을 훼손하는 가짜 응답을 검사한다.
-- 캐시 키에는 방향·원문 외에 모델·프롬프트·용어집 버전을 포함한다. 훅과 미러가
-  동시에 쓰므로 stdlib SQLite 등 원자적 저장을 사용한다. 실패 원문은 성공 캐시에 넣지 않는다.
-- `inject.py`의 `source_map`·고정 주입 산문·`knowledge/digest` 결정 요약과 대상
-  `.wiki/*.md` 본문도 에이전트 입력이다. 한국어 정본과 트리거 판정은 보존하고,
-  선택·요약 뒤에 번역한다. 페이지가 하나도 매칭되지 않아도 발화 번역은 출력한다.
-  `trajectory`는 원문 발화를 계속 기록한다. 실패 시 영어본 표지를 붙이지 않는다.
-- `session_state.doc_catalog()`의 문서 제목도 번역 대상이다. 카탈로그 전체를 코드
-  펜스로 감싼 뒤 번역하면 보호에 걸리므로 제목만 먼저 번역하고 경로는 보존한다.
-- `inject.shrink()`는 `규칙.`으로 문단을 찾는다. 2단계 본문 전환 전에 `Rule.`도
-  인식하게 하고, 한·영 페이지의 작은 rule_budget에서 규칙 한 줄이 남는지 검사한다.
+- `--check` cannot be compared without the original text. The authoritative version of the original text is git. The Phase 1 check manager creates a `docs/translation-baseline.json` format and checker that can be tracked. For each target, record the pre-translation fixed full commit SHA·original path·output path·type (translation/rewrite/new). Do not use `HEAD` as the default original text or guess renames. The Phase 2 pages manager fills in the actual target before translation. New clones need history including the specified commit, and if not, it explicitly fails. Read with `git show <SHA>:<원문 경로>`, and page renames specify the old path. Uncommitted Korean original text must first be included in the authoritative commit before fixing the SHA. Only checks for work before that allow `--source-root raw/translate-source` and it does not count as passing the deployment gate. New documents written in English from the start are specified as new and excluded from original text comparison, but undergo link/format checks. Do not automatically classify existing translated documents as new because the original text is missing. Record the previous value and allowed new value per file in the manifest for rewrite/rename protection section exceptions and review. Do not turn off checks for the entire file. General translation items must have the same protection sections. Absence of original text, empty targets, and tampering with protection sections are failures. Expand directories and `*.md` patterns inside the CLI, but exclude `docs/plans/` from translation targets. For rewrite pages, record only approved changes separately and compare the rest of the front matter, links, and backticks with the original text. In Phase 1, complete the checker with commits/renames/new/missing original text samples from a temporary Git repository. Since actual 32 English translations and user meaning verification are performed by the Phase 2 gate manager, Phase 1 completion does not wait for Phase 2 outputs. Exclude the manifest itself and plan documents from translation targets.
+- Check for loss, duplication, or tampering of placeholders before restoration. Also protect `keep_korean` instead of trusting only the prompt, and return the original text upon verification failure and do not cache failed translations. Also protect the destination of Markdown links and `{slot}`. Check for fake responses that damage protection tokens.
+- Include model, prompt, and glossary versions in the cache key in addition to direction and original text. Since hooks and mirrors are used simultaneously, use atomic storage such as stdlib SQLite. Do not put failed original text into the success cache.
+- `source_map` of `inject.py`, fixed injection prose, `knowledge/digest` decision summary, and target `.wiki/*.md` body are also agent inputs. Preserve Korean authoritative version and trigger judgment, and translate after selection/summary. Even if no pages match, utterance translation is output. `trajectory` continues to record original utterances. Do not attach an English version label upon failure.
+- The document title of `session_state.doc_catalog()` is also a translation target. If the entire catalog is wrapped in code fences and then translated, it will be caught by protection, so translate only the title first and preserve the path.
+- `inject.shrink()` finds paragraphs with `규칙.`. Before Phase 2 body conversion, also make it recognize `Rule.`, and check if one line of rule remains in the small rule_budget of Korean/English pages.

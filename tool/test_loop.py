@@ -285,7 +285,7 @@ def test_the_parser_checks_the_round_the_head_and_the_last_line():
 
 def test_the_stop_reasons_are_the_plan_s_table_and_nothing_else():
     plan = (Path(__file__).resolve().parents[1] / "docs/plans/loop/4-review.md").read_text(encoding="utf-8")
-    table = plan.split("| 멈춤 이유 | 다시 시작 |")[1].split("\n\n")[0]
+    table = plan.split("| Reason for stopping | Restart |")[1].split("\n\n")[0]
     listed = re.findall(r"^\| `([^`]+)` \|", table, re.M)
     assert listed == [w.value for w in loop.Why]
     with pytest.raises(ValueError, match="표에 없는"):

@@ -1,128 +1,93 @@
-# 2단계 — 에이전트의 미룬 것
+# Phase 2 — Agent's Deferred Tasks
 
-전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다.
+The relationship between the overall design and the phases is in [Overview](0-overview.md)].
 
-목표. 3·4단계가 얹을 긴 일을 받칠 수 있게 작업 세션을 고친다. 턴은 요청 하나보다 오래 살고,
-화면은 새로 고친 뒤 도는 턴에 다시 붙는다. 무엇을 허용하고 거절했는지가 기록에 남는다. 같은
-쓰기를 매번 묻지 않도록 "이 세션 동안 허용" 을 둔다. Codex 는 초점 세션도 쓰기 세션과 같은
-`app-server` 로 돌고, 토큰 수를 낸다.
+Goal. Modify the work session to support long-running tasks that phases 3 and 4 will introduce. A turn lives longer than a single request, and the screen reattaches to the running turn after a refresh. What was allowed and denied is recorded. Introduce "Allow for this session" so the same write is not asked every time. Codex runs the focus session on the same `app-server` as the write session and reports the token count.
 
-## 사용자와 정한 것
+## Agreements with the User
 
 2026-09-25.
 
-| 무엇 | 정한 것 |
+| What | Agreement |
 | --- | --- |
-| 창을 닫을 때 | 재접속은 새로 고침, 웹뷰 재적재, 브라우저 탭을 다시 여는 것만 잇는다. 앱 창을 닫으면 서버가 내려가고 턴도 멈춘다. 도는 턴이 있으면 닫기 전에 확인받는다. 트레이와 따로 뜨는 서버는 하지 않는다 |
-| "이 세션 동안 허용" 의 폭 | 파일 쓰기(Claude `Edit`·`Write`·`MultiEdit`·`NotebookEdit`, Codex `fileChange`)는 도구 단위. 명령(Claude `Bash`, Codex `command`)은 글자까지 같은 명령과 같은 `cwd` 만 |
-| Codex 읽기 세션 이전 | 초점 세션만 `app-server` 로 옮긴다. 쉬운 설명(`explain`)은 `exec` 에 남긴다. `app-server` 에는 `--ignore-user-config` 에 해당하는 것이 없어 사용자 `config.toml` 의 hook·MCP·프로필이 섞인다 |
+| When closing the window | Reconnection only connects via refresh, webview reload, or reopening the browser tab. Closing the app window shuts down the server and stops the turn. If there is a running turn, confirmation is requested before closing. No server that runs separately from the tray. |
+| Scope of "Allow for this session" | File writes (Claude `Edit`·`Write`·`MultiEdit`·`NotebookEdit`, Codex `fileChange`) are per tool. Commands (Claude `Bash`, Codex `command`) are only for the same command with the same `cwd` up to the text. |
+| Before Codex read session | Only focus sessions are moved to `app-server`. Easy explanations (`explain`) are left in `exec`. In `app-server`, there is nothing corresponding to `--ignore-user-config`, so the user `config.toml`'s hook, MCP, and profile are mixed. |
 
-개요의 "창을 닫았다 열어도 루프는 돌고 있고" 는 첫 결정에 맞춰 고쳤다. 루프는 새로 고침을
-넘어 살고, 앱을 닫으면 멈춘다.
+"The loop keeps running even if the window is closed and reopened" in the overview has been corrected according to the first decision. The loop survives refreshes and stops when the app is closed.
 
-## 먼저 — 계획 문서의 순서
+## First — Order of Planning Documents
 
-`session_state.plans` 는 `docs/plans/` 아래 문서를 경로의 역순으로 늘어놓고 앞의 둘(`MAX_PLANS`)만
-읽는다(`tool/session_state.py:111`). 시리즈 폴더가 하나이던 때는 최신 시리즈가 앞에 오라는 뜻이었다. 이제
-`loop/` 에 단계 문서가 여덟 있어 `7-verify.md` 와 `6-screen.md` 가 앞에 온다. SessionStart 는 다음에 할
-2단계가 아니라 7·6단계의 행을 보인다. 3단계의 후보 재료도 같은 함수를 읽는다.
+`session_state.plans` lists documents under `docs/plans/` in reverse order of the path and reads only the first two (`MAX_PLANS`) (`tool/session_state.py:111`). When there was only one series folder, it meant the latest series should come first. Now there are eight phase documents in `loop/`, so `7-verify.md` and `6-screen.md` come first. SessionStart shows the rows for phases 7 and 6, not the next phase 2. Candidate materials for phase 3 also read the same function.
 
-고침. 시리즈 폴더끼리는 지금처럼 최신이 앞이다. 한 폴더 안에서는 앞 번호가 먼저다. 그러면 `0-overview.md`
-와 가장 앞의 남은 단계 문서가 읽힌다.
+Correction. Between series folders, the latest is first as it is now. Within one folder, the earlier number is first. Then `0-overview.md` and the remaining earliest phase document are read.
 
-테스트. `a/0-overview.md`, `a/1-x.md`(다 끝남), `a/2-y.md`, `a/7-z.md` 를 두고 `plans` 가 `0-overview`
-와 `2-y` 를 내는지 본다. 지금 코드에서 빨강이어야 한다.
+Test. Set up `a/0-overview.md`, `a/1-x.md` (all finished), `a/2-y.md`, `a/7-z.md`, and see if `plans` outputs `0-overview` and `2-y`. It should be red in the current code.
 
-## 턴 재접속
+## Turn Reconnection
 
-### 지금
+### Current
 
-턴은 `/api/work/say` 의 응답 본문이다(`tool/main/work.py:256`). 화면이 끊기면 본문 생성기가
-닫히고, `ChatSession._say` 의 `finally` 가 끝나지 않은 턴의 프로세스를 닫는다
-(`tool/agent/chat_session.py:442`). 연결이 끊기는 것이 곧 멈춤이다. 작업트리의 잡음(`_busy`)도
-본문이 끝나거나 수거될 때 풀린다(`query.held`).
+A turn is the response body of `/api/work/say` (`tool/main/work.py:256`). If the screen disconnects, the body generator closes, and `ChatSession._say`'s `finally` closes the process of the unfinished turn (`tool/agent/chat_session.py:442`). Disconnection is equivalent to stopping. Noise in the worktree (`_busy`) is also released when the body ends or is collected (`query.held`).
 
-### 바꾸는 것
+### Changes
 
-턴을 응답에서 떼어 스레드에서 돌린다. 이벤트는 작업트리마다 둔 버퍼에 쌓이고, 응답은 그 버퍼를
-꼬리 문다.
+Detach the turn from the response and run it in a thread. Events are accumulated in a buffer kept for each worktree, and the response tails that buffer.
 
-| 자리 | 무엇 |
+| Location | What |
 | --- | --- |
-| `Run` | 작업트리 하나의 지금 턴. `turn`(턴 id, `uuid4().hex`), `session_id`, `events`(순서대로), `done`, 깨우기용 `threading.Condition` |
-| `_runs: dict[str, Run]` | 작업트리 경로 → 마지막 턴. 다음 턴이 시작될 때까지 남는다. 끝난 직후에 다시 붙은 화면도 끝을 받는다 |
-| `tail(run, after)` | `after` 다음 이벤트부터 흘리고, 새 것이 없으면 `Condition` 에서 기다린다. `done` 이고 다 흘렸으면 끝난다. 화면이 떠나도 턴에는 아무 일도 없다 |
+| `Run` | The current turn of one worktree. `turn` (turn id, `uuid4().hex`), `session_id`, `events` (in order), `done`, `threading.Condition` for waking up. |
+| `_runs: dict[str, Run]` | Worktree path → last turn. Remains until the next turn starts. A screen reattached immediately after finishing also receives the end. |
+| `tail(run, after)` | Streams from the next event after `after`, and waits at `Condition` if there is nothing new. If it is `done` and all have been streamed, it ends. Even if the screen leaves, nothing happens to the turn. |
 
-이벤트 하나는 지금의 모양에 `seq`(버퍼 안 순번, 0부터)와 `turn` 을 더한다.
+One event adds `seq` (sequence number in buffer, starting from 0) and `turn` to the current shape.
 
-엔드포인트.
+Endpoints.
 
-| 길 | 하는 일 |
+| Path | Action |
 | --- | --- |
-| `POST /api/work/say` | 받는 순간 작업트리를 잡는다(지금과 같다). 턴 스레드를 띄우고 `tail(run, -1)` 을 돌려준다. 화면 코드는 지금처럼 한 요청으로 받는다 |
-| `GET /api/work/events?path=&turn=&after=` | 다시 붙기. `turn` 이 지금 버퍼의 턴이 아니면 410. 경로는 아래 "세션이 있는 경로" 로 본다 |
-| `GET /api/work/log` | 지금의 기록에 `running: {turn, session_id, seq}` 를 더한다. 도는 턴이 없으면 `null` |
-| `POST /api/work/stop` | `{path, turn}`. 그 턴이 아직 돌면 멈춘다. 다른 턴이면 409 |
+| `POST /api/work/say` | Captures the worktree the moment it is received (same as now). Launches the turn thread and returns `tail(run, -1)`. Screen code receives it as one request as now. |
+| `GET /api/work/events?path=&turn=&after=` | Reattachment. If `turn` is not the turn in the current buffer, 410. The path is viewed as "path with session" below. |
+| `GET /api/work/log` | Adds `running: {turn, session_id, seq}` to the current record. If there is no running turn, `null`. |
+| `POST /api/work/stop` | `{path, turn}`. If that turn is still running, stop it. If it is a different turn, 409. |
 
-세션이 있는 경로. `events`, `stop`, 승인의 답(`/api/work/answer`)은 `ours` 가 아니라 서버가 이미 세션을 만든
-경로(`_sessions`·`_runs` 의 열쇠)인지로 본다. 그 경로는 세션을 만들 때 `ours` 를 한 번 거쳤다. `ours` 는 선택한
-프로젝트의 목록으로 보므로(`tool/main/work.py:44`), 프로젝트를 바꾼 뒤 옛 턴에 다시 붙으면 404 가 된다. 승인의
-답은 지금도 세션만 본다(`tool/main/work.py:290`). 새 지시, 비우기, 지우기는 지금처럼 `ours` 다. 4단계가 전환을
-도는 턴과 떼어 놓을 때 이 계약이 그대로 쓰인다(리뷰 라운드 2).
+Path with session. `events`, `stop`, and the approval answer (`/api/work/answer`) are viewed not by `ours`, but by whether it is a path where the server has already created a session (key of `_sessions`·`_runs`). That path went through `ours` once when creating the session. Since `ours` is viewed as a list of selected projects (`tool/main/work.py:44`), reattaching to an old turn after changing projects results in 404. The approval answer still only looks at the session (`tool/main/work.py:290`). New instructions, clearing, and deletion are `ours` as they are now. This contract is used as is when phase 4 separates the transition from the running turn (Review Round 2).
 
-잡음은 턴 스레드가 쥐고 스레드의 `finally` 에서 놓는다. `work.say` 는 더 이상 `query.held` 를
-쓰지 않는다. 스레드를 띄우지 못하면 그 자리에서 놓는다. 기록(`remember(path, "assistant", …)`)도
-스레드의 `finally` 에서 한다. 화면이 없는 동안 끝난 턴도 기록에 남는다.
+Noise is held by the turn thread and released at the thread's `finally`. `work.say` no longer uses `query.held`. If the thread cannot be launched, it is released on the spot. The record (`remember(path, "assistant", …)`) is also done at the thread's `finally`. Turns that finished while there was no screen also remain in the record.
 
-### 멈추기
+### Stopping
 
-연결이 끊겨도 턴이 돌기 때문에, 멈추는 길이 따로 있어야 한다. `ChatSession.stop()` 은 지금의
-`close()` 와 같이 프로세스를 닫는다. `_drain` 이 `__closed__` 를 받아 턴이 `error` 로 끝나고,
-이유는 "사람이 멈춤" 으로 바꿔 적는다. CLI 의 `session_id` 는 남으므로 다음 턴은 `--resume`·
-`thread/resume` 으로 이어진다.
+Since the turn runs even if the connection is lost, there must be a separate way to stop it. `ChatSession.stop()` closes the process like the current `close()`. `_drain` receives `__closed__`, the turn ends with `error`, and the reason is changed to "manually stopped". Since the CLI's `session_id` remains, the next turn continues with `--resume`·`thread/resume`.
 
-ponytail: Claude 의 `interrupt` 제어 요청과 Codex 의 `turn/interrupt` 는 쓰지 않는다. 프로세스를
-닫는 것이 두 호스트에 같고 이어가기도 잃지 않는다. 다음 턴의 기동 시간(수 초)이 비용이다. 멈춤이
-잦아지면(4단계의 루프) 그때 바꾼다.
+ponytail: Do not use Claude's `interrupt` control request and Codex's `turn/interrupt`. Closing the process is the same for both hosts and does not lose the continuation. The startup time of the next turn (a few seconds) is the cost. If stops become frequent (phase 4 loop), change it then.
 
-### 화면
+### Screen
 
-- 처음 적재와 새로 고침. `/api/work/log` 의 `running` 이 있으면 기록 뒤에 `pending` 인 답 턴을
-  하나 붙이고 `events?after=-1` 로 붙는다. 버퍼가 처음부터 있으므로 도구 줄과 승인 카드가 다시
-  그려진다
-- 스트림이 끊기면(네트워크, 서버 재시작 아님) 마지막으로 받은 `seq` 로 한 번 다시 붙는다. 410 이면
-  기록을 다시 읽는다
-- 늦은 이벤트의 판정. 지금은 경로와 `session_id` 다. 여기에 `turn` 을 더한다
-- 오른쪽 면의 머리글에 [멈춤]. 도는 턴이 있을 때만 켜진다
-- Tauri 창을 닫을 때. `getCurrentWindow().onCloseRequested` 에서 도는 턴이 있으면 "도는 작업 N개가
-  멈춘다" 를 묻는다. 권한은 `core:window:allow-close` 만 더한다. 브라우저는 묻지 않는다 — 탭을
-  닫아도 서버와 턴은 산다. 권한은 실제로는 `core:window:allow-destroy` 다. 닫기 리스너가 있으면 Tauri 가
-  창을 닫지 않고 화면이 `destroy()` 로 닫는다(`@tauri-apps/api` 2.11 의 `onCloseRequested`). `allow-close`
-  만으로는 확인해도 창이 닫히지 않는다
+- Initial load and refresh. If there is `running` of `/api/work/log`, attach one answer turn that is `pending` after the record and attach as `events?after=-1`. Since the buffer exists from the beginning, the tool bar and approval card are redrawn.
+- If the stream breaks (not network or server restart), reattach once with the last received `seq`. If 410, reread the record.
+- Judgment of late events. Currently, it is path and `session_id`. Add `turn` to this.
+- [Stop] in the header on the right side. Only turns on when there is a running turn.
+- When closing the Tauri window. If there is a running turn in `getCurrentWindow().onCloseRequested`, ask "N running tasks will be stopped". Permissions only add `core:window:allow-close`. Browsers do not ask — even if the tab is closed, the server and turn live. Permissions are actually `core:window:allow-destroy`. If there is a close listener, Tauri does not close the window, and the screen closes with `destroy()` (`@tauri-apps/api` 2.11's `onCloseRequested`). `allow-close` alone does not close the window even if confirmed.
 
-### 테스트
+### Test
 
-`test_main.py` 에 더한다. 모두 지금의 `work.py` 에서 빨강이어야 한다.
+Add to `test_main.py`. All must be red in the current `work.py`.
 
-- 턴이 응답보다 오래 산다. `say` 의 응답 본문을 받자마자 버리고 수거한다. 대역 CLI 가 끝낸 뒤
-  기록에 답 행이 있고, 잡음은 그때 풀린다
-- 다시 붙기. 이벤트 몇 개 뒤 `events?after=k` 가 `k+1` 부터 `done` 까지 빠짐없이 준다. 끝난 턴에
-  붙어도 같다. 다른 턴 id 는 410
-- 멈추기. `stop` 뒤 `error` 이벤트가 오고, 잡음이 풀리고, 프로세스가 없다. 다음 `say` 가 같은
-  CLI 세션 id 로 이어진다
-- 두 화면이 한 턴을 꼬리 물면 둘 다 같은 순서로 받는다
-- 턴이 끝난 뒤 프로젝트를 바꿔도 그 턴의 `events` 에 붙을 수 있다. 세션이 없는 경로는 404
+- Turn lives longer than the response. Discard and collect the response body of `say` as soon as it is received. After the band CLI finishes, there is an answer row in the record, and noise is released then.
+- Reattachment. After a few events, `events?after=k` gives everything from `k+1` to `done` without omission. Same when attaching to a finished turn. Different turn id is 410.
+- Stopping. After `stop`, `error` event comes, noise is released, and there is no process. The next `say` continues with the same CLI session id.
+- If two screens tail one turn, both receive in the same order.
+- Even if the project is changed after the turn ends, one can attach to that turn's `events`. Paths without a session are 404.
 
-## 승인 기록
+## Approval Record
 
-### 지금
+### Current
 
-기록의 답 행은 도구 줄(`tools`)까지다(`tool/main/work.py:282`). 승인은 화면에만 있다가 새로 고치면
-사라진다. 6단계가 "다시 열면 무엇을 허용했는지는 도구 줄로만 보인다" 로 미뤘다.
+The answer row of the record is up to the tool bar (`tools`) (`tool/main/work.py:282`). Approval only exists on the screen and disappears when refreshed. Phase 6 deferred "what was allowed is only visible as a tool bar when reopened".
 
-### 바꾸는 것
+### Changes
 
-도구 줄과 승인을 한 줄에 순서대로 적는다. 답 행의 `tools` 를 `steps` 로 바꾼다.
+Write the tool bar and approval in order on one line. Change the `tools` of the answer row to `steps`.
 
 ```json
 {"steps": [
@@ -133,171 +98,144 @@ ponytail: Claude 의 `interrupt` 제어 요청과 Codex 의 `turn/interrupt` 는
 ]}
 ```
 
-| 칸 | 값 |
+| Column | Value |
 | --- | --- |
-| `answer` | `allow`, `deny`, `none`(답이 오기 전에 턴이 끝났다) |
-| `by` | `person`(사람이 눌렀다), `session`(세션 규칙이 답했다), `outside`(작업트리 밖이라 묻지 않고 거절), `read`(읽기 세션이라 거절) |
+| `answer` | `allow`, `deny`, `none` (turn ended before answer arrived) |
+| `by` | `person` (human pressed), `session` (session rule answered), `outside` (denied without asking because it is outside the worktree), `read` (denied because it is a read session) |
 
-승인의 `input` 은 적지 않는다. `Write` 의 본문 전체가 기록에 쌓인다. 무엇이 쓰였는지는 작업트리와
-커밋이 말한다.
+Approval's `input` is not recorded. The entire body of `Write` is accumulated in the record. What was used is told by the worktree and commit.
 
-- 사람이 답하면 버퍼에 `answered` 이벤트(`{id, allow, by}`)가 쌓인다. 다시 붙은 화면과 다른 창이
-  카드를 답한 것으로 그린다
-- 작업트리 밖과 읽기 세션의 거절은 지금 `tool` 줄이다(`chat_session.py:340`). 이것도 `approval` 에
-  `by` 를 달아 낸다. 화면은 답이 끝난 카드로 그린다
-- 옛 기록의 `tools` 는 `/api/work/log` 가 `steps` 로 바꿔 준다. 화면은 한 모양만 안다
+- If a human answers, a `answered` event (`{id, allow, by}`) is accumulated in the buffer. Reattached screens and other windows draw the card as answered.
+- Denials for outside the worktree and read sessions are currently `tool` lines (`chat_session.py:340`). This also outputs by attaching `by` to `approval`. The screen draws as a card with the answer finished.
+- `tools` of old records is changed to `steps` by `/api/work/log`. The screen only knows one shape.
 
-테스트. 허용 하나, 거절 하나, 밖 하나, 답 없이 멈춘 것 하나의 턴을 돌리고 기록의 `steps` 가 그
-순서와 값인지 본다. 새로 고친 화면의 모양은 `log` 의 응답으로 본다.
+Test. Run a turn with one allowed, one denied, one outside, and one stopped without an answer, and see if the record's `steps` is in that order and value. The shape of the refreshed screen is viewed by the response of `log`.
 
-## 이 세션 동안 허용
+## Allow for This Session
 
-### 규칙이 어디에 사나
+### Where the Rules Live
 
-`ChatSession` 이 쥔다. CLI 에 넘기지 않는다.
+Held by `ChatSession`. Not passed to the CLI.
 
-- Codex 의 `acceptForSession` 과 Claude 의 `permission_suggestions` 를 쓰면 CLI 가 더는 묻지 않는다.
-  그러면 `_approval` 의 작업트리 밖 검사(`chat_session.py:338`)를 거치지 않는다. Claude 의 `Edit`
-  허용 규칙은 경로를 가리지 않는다
-- 두 호스트의 뜻도 다르다. Codex 의 명령 캐시와 Claude 의 규칙은 맞추는 방식이 다르다. 여기서 하나로
-  정한다
+- If Codex's `acceptForSession` and Claude's `permission_suggestions` are used, the CLI no longer asks. Then it does not go through `_approval`'s outside worktree check (`chat_session.py:338`). Claude's `Edit` allow rule does not distinguish paths.
+- The meanings of the two hosts are also different. Codex's command cache and Claude's rules are matched differently. Decide on one here.
 
 `ChatSession._rules: set[tuple]`.
 
-| 요청 | 규칙의 열쇠 |
+| Request | Rule Key |
 | --- | --- |
 | Claude `Edit`·`Write`·`MultiEdit`·`NotebookEdit` | `("file", 도구 이름)` |
 | Codex `fileChange` | `("file", "fileChange")` |
 | Claude `Bash` | `("command", "Bash", input.command)` |
 | Codex `command` | `("command", "command", command, cwd)` |
 
-`_approval` 의 순서는 이렇다. 작업트리 밖이면 거절한다. 읽기 세션이면 거절한다. 규칙에 맞으면
-묻지 않고 허용하고 `by: "session"` 인 승인 이벤트를 낸다. 셋 다 아니면 사람에게 묻는다. 밖 검사가
-규칙보다 앞이다.
+The order of `_approval` is as follows. If outside the worktree, deny. If a read session, deny. If it matches the rule, allow without asking and issue an approval event that is `by: "session"`. If none of the three, ask the human. Outside check is before the rule.
 
-### 수명
+### Lifespan
 
-규칙은 `ChatSession.id` 에 붙는다. id 가 바뀌면 규칙도 없다.
+Rules attach to `ChatSession.id`. If the id changes, there is no rule.
 
-| 일 | 규칙 |
+| Event | Rule |
 | --- | --- |
-| 모델·effort 바꾸기(`reconfigure`), 멈추기 | 남는다. 같은 객체, 같은 id |
-| 문맥 비우기, CLI 바꾸기, 작업트리 지우기 | 없어진다. 새 객체 |
-| 서버 재시작 | 없어진다. 디스크에 적지 않는다 |
+| Changing model/effort (`reconfigure`), stopping | Remains. Same object, same id |
+| Clearing context, changing CLI, deleting worktree | Disappears. New object |
+| Server restart | Disappears. Not written to disk |
 
-### API 와 화면
+### API and Screen
 
-- `/api/work/answer` 의 몸에 `scope: "once" | "session"` 을 더한다. 기본은 `once`. 읽기 세션이나
-  밖 거절에는 `session` 이 올 수 없다(409)
-- 승인 카드의 버튼은 [허용] [세션 동안] [거절]. 명령이면 가운데가 "이 명령은 세션 동안" 이다
-- `/api/work/log` 가 `rules` 를 낸다. 머리글 아래 한 줄로 "세션 허용: Edit · Write · `pytest -q`"
-  를 보이고 [해제] 하나를 둔다. `POST /api/work/rules/clear {path, session_id}`
-- 4단계의 루프가 보내는 턴도 같은 세션이므로 같은 규칙을 탄다. 개요의 안전 경계와 같다
+- Add `scope: "once" | "session"` to the body of `/api/work/answer`. Default is `once`. `session` cannot come for read sessions or outside denials (409).
+- Approval card buttons are [Allow] [For Session] [Deny]. If it is a command, the middle is "This command for session".
+- `/api/work/log` issues `rules`. Shows "Session Allow: Edit · Write · `pytest -q`" in one line below the header and places one [Release]. `POST /api/work/rules/clear {path, session_id}`
+- Turns sent by phase 4's loop are also the same session, so they follow the same rules. Same as the safety boundary in the overview.
 
-### 테스트
+### Test
 
-`test_agent.py` 의 대역 CLI 로.
+With `test_agent.py`'s band CLI.
 
-- `Write` 를 `session` 으로 허용하면 다음 `Write` 는 묻지 않고 허용된다. `Edit` 는 묻는다
-- 규칙이 있어도 작업트리 밖 `Write` 는 거절된다. 이 테스트는 밖 검사를 규칙 뒤로 옮기면 빨강이다
-- `Bash` 의 `pytest -q` 를 허용하면 `pytest -q` 는 묻지 않고 `pytest -q -x` 는 묻는다
-- Codex `command` 는 `cwd` 가 다르면 묻는다
-- 새 `ChatSession` 은 규칙이 없다. `reconfigure` 뒤에는 남는다
+- If `Write` is allowed as `session`, the next `Write` is allowed without asking. `Edit` asks.
+- Even if there is a rule, `Write` outside the worktree is denied. This test is red if the outside check is moved after the rule.
+- If `Bash`'s `pytest -q` is allowed, `pytest -q` is not asked and `pytest -q -x` asks.
+- Codex `command` asks if `cwd` is different.
+- New `ChatSession` has no rules. Remains after `reconfigure`.
 
-## Codex 초점 세션을 `app-server` 로
+## Codex Focus Session to `app-server`
 
-### 지금
+### Current
 
-`ChatSession.app` 은 Codex 쓰기 세션만이다(`chat_session.py:151`). 초점 세션은 턴마다 `codex exec` 을
-띄우고 `resume <id>` 로 잇는다(`chat_session.py:185`). 첫 턴의 기동이 매 턴 반복된다.
+`ChatSession.app` is only for Codex write sessions (`chat_session.py:151`). Focus sessions launch `codex exec` every turn and connect with `resume <id>` (`chat_session.py:185`). The startup of the first turn is repeated every turn.
 
-### 바꾸는 것
+### Changes
 
-`app` 을 `is_codex and not isolated` 로 바꾼다. 초점 세션과 쓰기 세션이 한 갈래를 탄다.
+Change `app` to `is_codex and not isolated`. Focus sessions and write sessions follow one path.
 
-| `thread/start` 인자 | 쓰기 | 초점 |
+| `thread/start` Argument | Write | Focus |
 | --- | --- | --- |
 | `sandbox` | `read-only` | `read-only` |
 | `approvalPolicy` | `untrusted` | `never` |
-| `developerInstructions` | 있으면 | 초점의 머리말 |
-| 기동 인자 | 없음 | `--disable multi_agent`. 지금의 `exec` 과 같다 |
+| `developerInstructions` | If exists | Focus header |
+| Startup argument | None | `--disable multi_agent`. Same as current `exec` |
 
-- 초점 세션에 승인 요청이 오면 지금처럼 `_approval` 이 묻지 않고 거절한다. `never` 라 올 일이 없지만
-  길은 남긴다
-- `exec` 갈래는 `explain` 전용으로 줄인다. `resume` 인자와 비격리 분기를 지운다. 격리 플래그는
-  그대로 둔다
-- 서버 재시작 뒤 옛 기록의 `session_id` 는 `exec` 이 만든 스레드 id 다. `thread/resume` 이 그것을
-  받는지 실제로 본다. 받지 못하면 새 스레드로 시작하고 기록에 `context` 행 "Codex 이어가기 실패" 를
-  남긴다. 조용히 대화를 잃지 않는다
+- If an approval request comes to a focus session, `_approval` denies without asking as now. It shouldn't happen because it is `never`, but the path is left.
+- Reduce `exec` path to `explain` only. Delete `resume` argument and non-isolated branch. Keep isolation flag as is.
+- After server restart, `session_id` of old records is the thread id created by `exec`. Actually see if `thread/resume` receives it. If it cannot receive it, start with a new thread and leave the `context` row "Codex continuation failed" in the record. Do not lose the conversation silently.
 
-### 확인할 것
+### Things to Check
 
-- 위키 hook 이 `app-server` 초점 세션에서도 주입하는가. `exec` 은 사용자 설정과 hook 을 탔다.
-  `hook_diagnostics` 의 기록으로 한 질문에 주입이 있었는지 본다. 없으면 이 이전은 멈추고 원인을
-  적는다
-- 두 번째 턴의 시간. 프로세스가 살아 있으므로 기동이 빠져야 한다. 전후를 한 번씩 잰다
+- Does the wiki hook inject even in `app-server` focus sessions? `exec` followed user settings and hooks. See if there was an injection in a question with `hook_diagnostics`'s record. If not, stop before this and write the cause.
+- Time of the second turn. Since the process is alive, startup should be missing. Measure before and after once.
 
-2026-09-25 에 실제 Codex(`gpt-6-astra`, CLI 0.156.0)로 본 것.
+Observed with actual Codex (`gpt-6-astra`, CLI 0.156.0) on 2026-09-25.
 
-| 무엇 | 결과 |
+| What | Result |
 | --- | --- |
-| hook 주입 | 한다. `app-server` 가 `hook/completed` 알림에 주입한 `context` 를 싣는다. 연결된 `ai-nara-shop` 에서 위키의 `sessionStart` 가 15,203자, `userPromptSubmit` 이 13,000자·6,760자를 넣었다. 이 저장소에서는 주입이 없는데, 옛 허브가 `.wiki/adapter.toml` 이 없는 저장소를 연결 안 된 것으로 보기 때문이다. 같은 입력으로 hook 을 손으로 돌려도 비어 있다. `exec` 도 같다 |
-| 두 번째 턴 | `app-server` 5.2s, `exec resume` 8.3s. 첫 턴은 41s·33s 로 같은 질문의 편차 안이다 |
-| `exec` 스레드의 이어가기 | `thread/resume` 이 `exec` 이 만든 스레드 id 를 받는다. 옛 기록의 대화는 이어진다. 실패하면 새 스레드와 `context` 행 "Codex 이어가기 실패" 를 남기는 길은 그대로 둔다 |
+| Hook injection | Does it. `app-server` carries `context` injected into `hook/completed` notification. In the connected `ai-nara-shop`, the wiki's `sessionStart` is 15,203 characters, and `userPromptSubmit` put in 13,000 and 6,760 characters. There is no injection in this repository because the old hub views repositories without `.wiki/adapter.toml` as unconnected. Even if the hook is run manually with the same input, it is empty. `exec` is the same. |
+| Second turn | `app-server` 5.2s, `exec resume` 8.3s. The first turn is 41s·33s, which is within the deviation of the same question. |
+| `exec` thread continuation | `thread/resume` receives the thread id created by `exec`. The conversation of the old record continues. If it fails, the path to leave a new thread and `context` row "Codex continuation failed" is kept as is. |
 
-## 토큰 수
+## Token Count
 
-### 지금
+### Current
 
-Claude 는 `done` 에 토큰과 비용을 싣는다. Codex `exec` 은 `turn.completed` 의 `usage` 를 싣는다.
-Codex `app-server` 는 싣지 않는다(`chat_session.py:500`). 초점을 `app-server` 로 옮기면 초점도
-토큰 수를 잃는다.
+Claude carries tokens and costs in `done`. Codex `exec` carries `usage` of `turn.completed`. Codex `app-server` does not carry (`chat_session.py:500`). If focus is moved to `app-server`, focus also loses the token count.
 
-### 바꾸는 것
+### Changes
 
-`thread/tokenUsage/updated` 알림을 받는다. `tokenUsage` 에 `last` 와 `total` 이 있다.
+Receive `thread/tokenUsage/updated` notification. `tokenUsage` contains `last` and `total`.
 
-- `last` 가 턴 하나의 합인지 모델 호출 하나인지는 스키마가 말하지 않는다. 실제 알림으로 확인한다.
-  턴 하나면 마지막 `last` 를, 호출 하나면 턴 동안의 `total` 차이를 쓴다
-- 확인한 것. `last` 는 모델 호출 하나다. 도구를 쓴 턴에 알림이 셋 왔다. 턴의 수는 그 턴에 온 `last` 의
-  합으로 낸다. `total` 차이는 쓰지 않는다 — 이어간 스레드의 첫 알림에서 `total` 이 130만을 넘었고, 턴 앞의
-  `total` 을 서버가 알 길이 없다
-- `done.meta.tokens` 는 지금의 모양 그대로다 — `in`(`inputTokens`), `out`(`outputTokens`),
-  `cache_read`(`cachedInputTokens`). `reasoningOutputTokens` 는 `reasoning` 으로 더한다
-- 비용은 계산하지 않는다. Codex 는 구독 한도이고 요금을 곱할 표가 없다
+- The schema does not say whether `last` is the sum of one turn or one model call. Confirm with actual notifications. If it is one turn, use the last `last`; if it is one call, use the difference of `total` during the turn.
+- Confirmed. `last` is one model call. Three notifications came in a turn that used tools. The number of turns is calculated by the sum of `last` that came in that turn. Do not use `total` difference — in the first notification of the continued thread, `total` exceeded 1.3 million, and the server has no way of knowing the `total` before the turn.
+- `done.meta.tokens` is the same as the current shape — `in` (`inputTokens`), `out` (`outputTokens`), `cache_read` (`cachedInputTokens`). `reasoningOutputTokens` is added as `reasoning`.
+- Costs are not calculated. Codex is a subscription limit and there is no table to multiply fees.
 
-화면. 질의 면은 이미 토큰을 그린다(`web/src/components/Stream.tsx:152`). 에이전트 면의 답 아래
-줄(`Agent.tsx` 의 `Reply`)에 같은 모양을 더한다.
+Screen. The query side already draws tokens (`web/src/components/Stream.tsx:152`). Add the same shape to the line below the answer on the agent side (`Agent.tsx`'s `Reply`).
 
-테스트. 대역 `app-server` 가 알림 둘을 보내면 `done` 의 `tokens` 가 확인한 규칙대로 나오는지 본다.
+Test. If band `app-server` sends two notifications, see if `done`'s `tokens` comes out according to the confirmed rules.
 
-## 하지 않는 것
+## Things Not Done
 
-| 무엇 | 왜 |
+| What | Why |
 | --- | --- |
-| 위키 질의 턴의 재접속 | 답 하나가 짧고, 끊기면 다시 물으면 된다. 쉬운 설명과 번역이 한 스트림에 붙어 있어 나누는 일이 크다 |
-| 앱을 닫아도 도는 턴 | 사용자의 결정. 트레이나 따로 뜨는 서버가 필요해지면 그때 계획을 쓴다 |
-| 규칙을 디스크에 남기기 | 서버를 다시 띄우면 다시 묻는 것이 맞다. 세션 하나라는 약속이 그것이다 |
-| 승인의 OS 알림 | 루프가 승인에서 멈추는 일이 생기는 4단계, 또는 화면을 다시 짓는 6단계에서 정한다 |
-| 버퍼 크기 상한 | 턴 하나의 이벤트는 턴 마감 안에서 끝난다. 수만 개의 `delta` 가 실제로 보이면 묶는다 |
+| Reconnection of wiki query turns | One answer is short, and if it breaks, one can just ask again. Easy explanation and translation are attached to one stream, so splitting them is a big task. |
+| Turns running even if app is closed | User's decision. If a tray or separately running server becomes necessary, write a plan then. |
+| Leaving rules on disk | It is correct to ask again if the server is restarted. The promise of one session is that. |
+| OS notification for approval | Decided in phase 4 where the loop stops at approval, or phase 6 where the screen is rebuilt. |
+| Buffer size limit | Events of one turn end within the turn deadline. If tens of thousands of `delta` actually appear, bundle them. |
 
-## 확인
+## Confirmation
 
 - `pytest tool/`, `python tool/lint.py --check`, `ruff check tool/`, `npm run build`
-- 창에서. 쓰기 승인을 기다리는 턴을 두고 새로 고친다 — 카드가 다시 그려지고 [허용] 이 먹는다.
-  도는 턴을 [멈춤] 으로 멈춘 뒤 다음 지시가 이어진다. [세션 동안] 으로 허용한 `Write` 가 다음에는
-  `by: session` 으로 지나간다
-- 실제 Codex 로 초점 한 질문, 쓰기 한 턴. 둘 다 `done` 에 토큰이 있다
-- Tauri 창에서 도는 턴을 두고 닫기 — 물음이 뜨고, 취소하면 턴이 계속 돈다
+- In the window. Leave a turn waiting for write approval and refresh — the card is redrawn and [Allow] works. After stopping the running turn with [Stop], the next instruction continues. `Write` allowed with [For Session] passes as `by: session` next time.
+- One focus question, one write turn with actual Codex. Both have tokens in `done`.
+- Leave a running turn in the Tauri window and close — a question pops up, and if canceled, the turn continues to run.
 
-## 단계
+## Phases
 
-| # | 단계 | 무엇 | 상태 |
+| # | Phase | What | Status |
 | --- | --- | --- | --- |
-| 0 | 계획 순서 | `plans` 의 폴더 안 순서와 테스트 | 완료 |
-| 1 | 재접속 | `Run`·버퍼·`tail`, `events`·`stop`, 스레드가 쥐는 잡음, 테스트 | 완료 |
-| 2 | 승인 기록 | `steps`, `answered`, 옛 `tools` 변환, 테스트 | 완료 |
-| 3 | 세션 허용 | `_rules`, `scope`, 규칙 해제, 테스트 | 완료 |
-| 4 | Codex 이전과 토큰 | 초점의 `app-server`, `exec` 을 `explain` 전용으로, `tokenUsage`, 실제 Codex 확인 | 완료 |
-| 5 | 화면 | 다시 붙기, [멈춤], 세 버튼, 규칙 줄, 토큰, 창 닫기 확인 | 완료 |
-| 6 | 게이트 | 위 확인 전부 | 완료 |
+| 0 | Planning order | Order in `plans`'s folder and test | Done |
+| 1 | Reconnection | `Run`·buffer·`tail`, `events`·`stop`, noise held by thread, test | Done |
+| 2 | Approval record | `steps`, `answered`, old `tools` conversion, test | Done |
+| 3 | Session allow | `_rules`, `scope`, rule release, test | Done |
+| 4 | Codex before and tokens | Focus's `app-server`, `exec` to `explain` only, `tokenUsage`, actual Codex confirmation | Done |
+| 5 | Screen | Reattach, [Stop], three buttons, rule line, tokens, window close confirmation | Done |
+| 6 | Gate | All of the above confirmation | Done |

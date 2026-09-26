@@ -1,81 +1,77 @@
-# 7단계 — 검증
+# Step 7 — Verification
 
-전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다.
+The relationship between the overall design and the steps is in [Overview](0-overview.md)].
 
-목표. 개요의 한 줄 목적이 창에서 두 번 선다. 한 번은 조사를 켠 새 저장소, 한 번은 조사를 끈 저장소다.
-걸린 것은 이 단계에서 고치고, 고친 것마다 무엇이 걸렸는지 적는다.
+Goal. The one-line purpose of the overview stands twice in the window. Once for a new repository with investigation turned on, and once for a repository with investigation turned off.
+What is caught is fixed in this step, and for each fix, record what was caught.
 
-## 사용자와 정한 것
+## Agreements with the User
 
 2026-09-25.
 
-| 무엇 | 정한 것 |
+| What | Agreement |
 | --- | --- |
-| 조사를 켜는 쪽 | 작은 실제 저장소 하나. 착수할 때 `fresh-labeler` 와 `ml-interactive-lab` 의 크기를 재고 작은 쪽을 고른다 |
-| 조사를 끄는 쪽 | 이미 연결된 저장소. `ai-generation` 또는 `ai-nara-shop`. 허브 이전 뒤 "자동으로 따라온다" 가 맞는지도 여기서 본다 |
-| 호스트 | 두 바퀴 다 기본값. 작업 Claude, 리뷰 Codex |
+| Side with investigation on | One small actual repository. When starting, measure the sizes of `fresh-labeler` and `ml-interactive-lab` and choose the smaller one |
+| Side with investigation off | An already connected repository. `ai-generation` or `ai-nara-shop`. Also check here if "automatically follows" is correct after hub migration |
+| Host | Default for both wheels. Task Claude, Review Codex |
 
-## 두 바퀴
+## Two Wheels
 
-### 바퀴 A — 조사를 켠 새 저장소
+### Wheel A — New repository with investigation on
 
-1. 설정에서 조사를 켜고 한도를 기본값으로
-2. 프로젝트 목록에서 [연결]. 허브 이전 확인 창이 이미 옮겼다면 뜨지 않는다
-3. adapter 추정 슬롯을 본다. 빈 슬롯이 행과 다음 작업 후보 재료에 보인다
-4. 두 호스트의 실제 시험이 통과한다
-5. 견적 확인 → 조사 세션. 턴마다 토큰과 시간이 쌓이는 것을 본다
-6. `wiki-bootstrap` PR → 루프 → [머지] → 넘기기. 원본의 adapter 가 추적 파일이 되고 `.git/wiki-connect/` 가
-   빈다
-7. 지도에서 그 저장소의 문서와 모듈 페이지가 보인다
-8. 다음 작업 초점에서 [후보 내기]. 빈 슬롯이 후보로 나온다. 그 명세로 한 바퀴를 더 돈다
+1. Turn on investigation in settings and set limits to default
+2. [Connect] in the project list. If the hub migration confirmation window has already moved, it does not appear
+3. Look at the adapter estimation slot. Empty slots appear in the row and the next task candidate material
+4. Actual tests of both hosts pass
+5. Estimate confirmation → Investigation session. Watch tokens and time accumulate per turn
+6. `wiki-bootstrap` PR → Loop → [Merge] → Hand over. The original's adapter becomes a tracking file and `.git/wiki-connect/` becomes empty
+7. Documents and module pages for that repository are visible on the map
+8. [Propose candidate] in the next task focus. Empty slots appear as candidates. Run one more wheel with that specification
 
-### 바퀴 B — 조사를 끈 연결된 저장소
+### Wheel B — Connected repository with investigation off
 
-1. 목록에서 그 저장소의 상태가 맞다. 옛 프로젝트 hook 이 남았으면 `일부`, [연결] 뒤 `연결 완료`
-2. 다음 작업 초점에서 [후보 내기] → 되묻기 → 명세 → [시작]
-3. 작업 도중 창을 새로 고친다. 도는 턴과 승인 카드에 다시 붙는다
-4. [세션 동안] 으로 같은 쓰기를 한 번만 승인한다
-5. `done-report` → 서버 게이트 → PR → 결과 행
-6. 루프가 스스로 시작한다. 라운드 도중 [멈춤] 과 [계속]. 승인 대기 때 창을 떠나 OS 알림을 받는다
-7. `머지 가능` → P2 코멘트 초안 → [머지] → `MERGED` 확인 → 정리. 원본이 깨끗하면 ff, 아니면 "원본이 뒤처짐".
-   그 저장소에 merge queue 나 필수 검사가 있으면 먼저 `머지 대기` 가 보이고, 그동안 작업트리와 브랜치가
-   그대로인지, `MERGED` 가 된 뒤에야 정리되는지 본다. 없으면 이 걸음은 곧바로 `MERGED` 다 — 어느 쪽이었는지
-   적는다
-8. 그 저장소의 다음 `sync` 뒤 결정 기록이 생기고 명세 카드가 링크로 바뀐다
-9. 명세가 계획 행에서 나왔다면 그 행이 `완료 — PR #n` 이다
-10. 앱을 닫을 때 도는 턴이 있으면 물음이 뜬다
+1. The status of that repository in the list is correct. If an old project hook remains, `일부`, after [Connect] `연결 완료`
+2. [Propose candidate] → Ask back → Specification → [Start] in the next task focus
+3. Refresh the window during the task. Re-attach to the running turn and approval card
+4. Approve the same write only once with [During session]
+5. `done-report` → Server gate → PR → Result row
+6. The loop starts by itself. [Stop] and [Continue] during a round. Leave the window when waiting for approval to receive OS notifications
+7. `머지 가능` → P2 comment draft → [Merge] → `MERGED` confirmation → Cleanup. If the original is clean, ff, otherwise "Original is behind".
+   If that repository has a merge queue or mandatory checks, `머지 대기` appears first, and check if the worktree and branch remain the same during that time, and if it is cleaned up only after `MERGED`. If not, this step is immediately `MERGED` — record which one it was
+8. A decision record is created after the next `sync` of that repository and the specification card changes to a link
+9. If the specification came from a plan row, that row is `완료 — PR #n`
+10. If there is a running turn when closing the app, a question appears
 
-## 적는 것
+## Recording
 
-`docs/plans/done/wiki-agent/7-verify.md` 의 모양을 따른다. 걸음마다 한 줄 — 무엇을 했고, 무엇을 봤고, 걸렸으면
-무엇을 고쳤는지. 걸린 것은 고치기 전에 재현을 적는다. 고친 커밋은 이 단계의 PR 에 들어간다.
+Follow the format of `docs/plans/done/wiki-agent/7-verify.md`. One line per step — what was done, what was seen, and if something was caught, what was fixed. For what was caught, record the reproduction before fixing. The fixed commit goes into the PR of this step.
 
-바퀴마다 잰다.
+Measure for each wheel.
 
-| 잰 것 | 왜 |
+| Measured | Why |
 | --- | --- |
-| 명세까지 걸린 턴 수와 시간 | 되묻기가 길어지는지 |
-| 라운드 수와 라운드마다 발견 수 | 개요의 "라운드 수는 줄어야 한다" |
-| 사람이 누른 횟수(승인, [계속], [머지]) | 자동화가 실제로 손을 덜었는지 |
-| 조사의 견적과 실제 | 5단계 견적 계수를 맞춘다 |
+| Number of turns and time to specification | Whether asking back gets longer |
+| Number of rounds and discoveries per round | "Number of rounds should decrease" in overview |
+| Number of human clicks (approval, [Continue], [Merge]) | Whether automation actually reduced manual effort |
+| Investigation estimate vs actual | Match the step 5 estimate coefficient |
 
-## 하지 않는 것
+## What Not to Do
 
-- 번역을 끈 바퀴. wiki-agent 의 7단계가 했고 이 계획은 번역을 건드리지 않았다
-- Codex 작업 셀. 사용자가 기본값 조합만 보기로 했다. 2단계의 실제 Codex 확인이 쓰기 세션을 한 번 돌린다
+- Wheel with translation turned off. Step 7 of wiki-agent did it and this plan did not touch translation
+- Codex task cell. The user decided to look only at default combinations. The actual Codex check in step 2 runs a write session once
 
-## 확인
+## Confirmation
 
-- 두 바퀴의 표가 이 문서에 있다
+- Tables for both wheels are in this document
 - `pytest tool/`, `python tool/lint.py --check`, `ruff check tool/`, `npm run build`
-- 개요의 단계 표가 모두 `완료` 이고, 이 시리즈를 `docs/plans/done/loop/` 로 옮긴다
+- All step tables in the overview are `완료`, and move this series to `docs/plans/done/loop/`
 
-## 단계
+## Steps
 
-| # | 단계 | 무엇 | 상태 |
+| # | Step | What | Status |
 | --- | --- | --- | --- |
-| 1 | 고르기 | 두 저장소, 크기 재기 | 미착수 |
-| 2 | 바퀴 A | 조사를 켠 연결부터 두 번째 명세까지 | 미착수 |
-| 3 | 바퀴 B | 조사를 끈 저장소의 한 바퀴 | 미착수 |
-| 4 | 고침 | 걸린 것 | 미착수 |
-| 5 | 게이트와 정리 | 확인 전부, `done/` 으로 옮기기 | 미착수 |
+| 1 | Selection | Two repositories, measure size | Not started |
+| 2 | Wheel A | From connection with investigation on to second specification | Not started |
+| 3 | Wheel B | One wheel of repository with investigation off | Not started |
+| 4 | Fix | What was caught | Not started |
+| 5 | Gate and cleanup | All confirmations, move to `done/` | Not started |

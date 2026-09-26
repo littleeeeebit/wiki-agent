@@ -1,93 +1,69 @@
-# 영어 우선 + 한국어 오버레이 — 전체 설계
+# English First + Korean Overlay — Overall Design
 
-이 폴더의 세 계획서를 묶는 문서다. 단계별 상세는 `1-engine.md`,
-`2-mirror.md`, `3-comments.md` 가 든다.
+This document binds the three plans in this folder. Step-by-step details are in `1-engine.md`,
+`2-mirror.md`, and `3-comments.md`.
 
-## 무엇을 왜 바꾸나
+## What and Why to Change
 
-문제. 위키 페이지·훅 프롬프트·진행 보고가 전부 한국어라, 에이전트가 한국어로
-사고·출력하는 동안 지능이 떨어진다. 이것은 hooks 와 wiki 양쪽 모두에서 관찰됐다.
+Problem. Wiki pages, hook prompts, and progress reports are all in Korean, so the agent's intelligence drops while thinking and outputting in Korean. This was observed in both hooks and wiki.
 
-해법. 에이전트가 닿는 모든 표면(문서·프롬프트·진행 보고·코드 주석)을 영어로
-쓰고, 그 위에 Gemini 번역 오버레이를 올려 사람은 한국어로 읽고 한국어로 쓴다.
+Solution. Write everything the agent touches (documents, prompts, progress reports, code comments) in English, and place a Gemini translation overlay on top so humans can read and write in Korean.
 
-절대 조건. 번역에서 의미가 새지 않는다. 한국어 원문을 영어로 옮길 때도,
-영어 출력을 한국어로 되돌릴 때도 마찬가지다. 법령 용어·고유명사는 한국어로 남는다.
+Absolute Condition. Meaning must not leak during translation. This applies both when moving Korean originals to English and when returning English outputs to Korean. Legal terms and proper nouns remain in Korean.
 
-## 네 개의 경로
+## Four Paths
 
-| 경로 | 어디서 | 방향 | 단계 |
+| Path | Where | Direction | Step |
 | --- | --- | --- | --- |
-| 사용자 입력 | `tool/inject.py` (UserPromptSubmit) | ko→en | 1 |
-| 세션 시작 컨텍스트 | `tool/session_state.py::report()` | ko→en | 1 |
-| 터미널 출력 | `tool/mirror.py` → Orca 두 번째 셀 | en→ko | 2 |
-| 웹 채팅 | `tool/chat.py` + `web/src` | 양방향 | 문서·지도 표시 2, 대화 3 |
+| User Input | `tool/inject.py` (UserPromptSubmit) | ko→en | 1 |
+| Session Start Context | `tool/session_state.py::report()` | ko→en | 1 |
+| Terminal Output | `tool/mirror.py` → Orca second cell | en→ko | 2 |
+| Web Chat | `tool/chat.py` + `web/src` | Bidirectional | Document/map display 2, conversation 3 |
 
-## 순서를 정하는 단 하나의 규칙
+## The Single Rule for Ordering
 
-**한국어로 읽을 경로가 서기 전에는 사용자 화면을 영어로 바꾸지 않는다.**
+**Do not switch the user screen to English before the path for reading in Korean is established.**
 
-이것이 단계 경계를 정한다. `english_progress.py`(보호 구간 밖 진행 설명의 한글 차단)는
-1단계가 아니라 2단계의 양 호스트 미러 검증 뒤에 켠다. 1단계에서 켜면 미러가
-없는 상태로 사용자가 영어만 보게 되고, 그건 이 작업의 목적을 정확히 뒤집는다.
+This defines the step boundaries. `english_progress.py` (blocking Korean in progress explanations outside protected zones) is turned on after the mirror verification of both hosts in step 2, not step 1. If turned on in step 1, the user would see only English without a mirror, which exactly reverses the purpose of this work.
 
-`settings.json`의 `statusMessage`와 훅의 사용자용 차단·오류 문구는 한국어로 유지한다.
-이 계획에 상태 UI 영어화는 포함하지 않는다.
+The `statusMessage` of `settings.json` and the user-facing blocking/error messages of hooks remain in Korean. This plan does not include English localization of the status UI.
 
-전환은 호스트별로 검증한다. Claude 로그만 읽는 미러로 Codex까지 전환할 수 없다.
-Codex의 실제 출력 경로를 확인하고 한국어 미러를 검증하기 전에는 공통 진행 규칙을
-영어로 뒤집지 않는다. 웹 대화 출력은 3단계 오버레이 검증까지 한국어를 유지한다.
-질문 도구의 선택지·훅 상태와 오류처럼 로그 미러가 담지 못하는 사용자 UI는 한국어로
-남긴다. 이 예외는 영어 진행 규칙과 `ask-with-arrow-key-options`에도 함께 명시한다.
+Transitions are verified per host. You cannot switch to Codex with a mirror that only reads Claude logs. Do not flip common progress rules to English before verifying the actual output path of Codex and verifying the Korean mirror. Web chat output maintains Korean until step 3 overlay verification. User UI that logs cannot capture, such as question tool options, hook status, and errors, remains in Korean. This exception is also specified in the English progress rules and `ask-with-arrow-key-options`.
 
-## 단계
+## Steps
 
-| # | 단계 | 무엇 | 상태 |
+| # | Step | What | Status |
 | --- | --- | --- | --- |
-| 1 | 번역 엔진과 입력 경로 | `translate.py`·용어집·`--check`·`inject.py` ko→en·`session_state` 번역·에이전트 전용 프롬프트 영어화 | 완료 |
-| 2 | 미러와 위키 산문 | 양 호스트 미러·문서/지도 한국어 표시·강제 뒤집기·페이지 32개 영어화·lint 교체 | 완료 |
-| 3 | 코드 주석과 웹 UI | `tool/*.py` 주석·웹 대화 양방향 오버레이 | 완료 |
+| 1 | Translation Engine and Input Path | `translate.py`, glossary, `--check`, `inject.py` ko→en, `session_state` translation, English localization of agent-only prompts | Complete |
+| 2 | Mirror and Wiki Prose | Both host mirrors, Korean display of documents/maps, flipping enforcement, English localization of 32 pages, lint replacement | Complete |
+| 3 | Code Comments and Web UI | `tool/*.py` comments, web chat bidirectional overlay | Complete |
 
-## 끝까지 한국어로 남는 것 — 건드리면 깨진다
+## What Remains in Korean Until the End — Touching Breaks It
 
-| 무엇 | 왜 |
+| What | Why |
 | --- | --- |
-| 페이지 front matter 의 `triggers` 정규식 | 사용자 발화를 매칭한다. 발화는 계속 한국어다. 영어로 바꾸면 주입이 통째로 죽는다 |
-| `tool/markers/ko.toml` | `census`·`harvest` 가 사용자 발화를 부류로 가르는 표지다. 같은 이유 |
-| `census.py:277` 의 `[가-힣]{2,}` 낱말 추출 | 발화에서 낱말을 뽑는다 |
-| 커밋 메시지·PR 본문·`.wiki/decisions/` | 사람이 GitHub 에서 읽는다. `session_state.report`와 `inject`에서 에이전트 컨텍스트로 조립할 때만 번역한다 |
-| 용어집 `keep_korean` 의 법령·고유명사 | 번역하면 다른 것을 가리키게 된다 |
+| `triggers` regex in page front matter | Matches user utterance. Utterance remains in Korean. Changing to English kills the entire injection |
+| `tool/markers/ko.toml` | `census` and `harvest` are markers that categorize user utterances. Same reason |
+| `[가-힣]{2,}` word extraction in `census.py:277` | Extracts words from utterance |
+| Commit messages, PR bodies, `.wiki/decisions/` | Humans read these on GitHub. Translate only when assembling into agent context from `session_state.report` and `inject` |
+| Legal terms and proper nouns in glossary `keep_korean` | Translating them makes them point to something else |
 
-## 선행 검증의 담당과 종료 조건
+## Responsibility for Prior Verification and Exit Conditions
 
-구현자는 이 세션의 에이전트 한 명이다. 네 계획서의 mirror·웹 표시·status·gate·check
-“담당자”는 모두 이 에이전트가 순서대로 수행하는 걸음 이름이며, 별도 인력이나 위임을
-뜻하지 않는다. 구현과 아래 검증을 직접 수행하고 결과를 단계 기록에 남긴다.
-사용자는 수동 미러 셀 열기와 명시된 의미 검수만 맡는다. 확인되지 않은 조건은
-통과로 간주하지 않는다.
+The implementer is one agent in this session. The mirror, web display, status, gate, and check “person in charge” in the four plans are all names of steps performed sequentially by this agent, and do not imply separate personnel or delegation. Perform implementation and the verifications below directly and record the results in the step logs. The user is only responsible for opening manual mirror cells and verifying specified meanings. Unverified conditions are not considered passed.
 
-| 언제 / 담당 | 검증 | 실패하거나 확인할 수 없을 때 |
+| When / In Charge | Verification | When failed or unverifiable |
 | --- | --- | --- |
-| 1단계 구현 담당 | 양 호스트 입력 주입·키 없음·전체 시간 예산 | 번역 배선을 활성화하지 않고 원문 주입 유지. 실패 항목과 재현법을 기록하고 해당 행은 보류 |
-| 2단계 mirror 담당, 첫 작업 | Claude·Codex의 실제 출력 수집과 세션 식별 | 2단계는 조사·구현까지 진행 가능. 수집 불가면 mirror-live를 보류하고 공통 규칙·훅은 한국어 유지. 지원 경로 확보 후 재검증 |
-| 2단계 웹 표시 담당, pages 전 | 인용 서랍·지도에서 영어 문서의 한국어 표시 | 페이지 영어화 배포를 보류. 3단계 산출물을 기다리지 않고 이 단계에서 최소 표시 기능을 구현 |
-| 2단계 구현 담당 → 사용자 | 동일 census 전후 대조, 3개 페이지 역번역과 재작성 차이 | 입력·검수 결과가 없으면 gate 보류. 사용자가 확인하기 전 배포·완료로 표시하지 않음 |
-| 3단계 웹 담당 | 양 호스트 대화·토글·번역 실패·원문 인계 | 답변 영어 전환은 보류하고 기존 한국어 출력 유지. 주석 작업과 UI 구현은 계속 가능 |
+| Step 1 implementation lead | Both host input injection, no keys, total time budget | Keep original injection without activating translation wiring. Record failed items and reproduction methods, and hold that row |
+| Step 2 mirror lead, first task | Collection of actual output from Claude/Codex and session identification | Step 2 can proceed up to investigation/implementation. If collection is impossible, hold mirror-live and keep common rules/hooks in Korean. Re-verify after securing support path |
+| Step 2 web display lead, before pages | Korean display of English documents in citation drawers/maps | Hold distribution of English-localized pages. Implement minimum display functionality at this step without waiting for step 3 outputs |
+| Step 2 implementation lead → user | Comparison before/after identical census, difference between back-translation and rewriting of 3 pages | Hold gate if there are no input/verification results. Do not mark as distributed/complete before user confirmation |
+| Step 3 web lead | Both host conversation, toggle, translation failure, handover of original text | Hold English conversion of answers and maintain existing Korean output. Comment work and UI implementation can continue |
 
-2단계 미러가 막혀도 3단계 대화 UI는 1단계 엔진과 가짜 영어 답변으로 먼저 개발할 수 있다.
-그때 2단계는 완료가 아니라 보류다. 미지원 호스트를 지원한다고 표시하거나 미러 없이
-공통 영어 강제를 출하하는 것은 출구로 쓰지 않는다.
+Even if the step 2 mirror is blocked, the step 3 conversation UI can be developed first with the step 1 engine and fake English answers. In that case, step 2 is on hold, not complete. Marking an unsupported host as supported or shipping common English enforcement without a mirror is not used as an exit.
 
-보류 중에도 의존하지 않는 구현·검증은 끝낸다. 그것까지 마쳤는데 호스트 수집 경로나
-사용자 검수가 확보되지 않으면 전체 작업은 `미완료 — 외부 조건으로 차단됨` 으로
-종료 보고한다. 해당 단계 행은 보류로 남기고, 확인한 실패 증거와 재개에 필요한 조건을
-함께 기록한다. 같은 조건에서 반복 대기·재시도하거나 전체 완료로 바꾸지 않는다.
-수집 경로가 확보되면 같은 에이전트가 양 호스트 mirror-live를 다시 검증하고, 사용자
-검수가 도착하면 해당 gate를 다시 판정한다. 그 조건이 충족돼야 보류가 풀린다.
-범위 축소나 취소는 사용자의 별도 결정 없이는 하지 않는다.
+Even while on hold, complete implementations/verifications that do not depend on it. If those are finished but the host collection path or user verification is not secured, report the entire task as finished with `미완료 — 외부 조건으로 차단됨`. Leave the corresponding step row as on hold, and record the confirmed failure evidence together with the conditions required for resumption. Do not repeatedly wait/retry under the same conditions or change to overall complete. Once the collection path is secured, the same agent re-verifies both host mirror-live, and when user verification arrives, re-adjudicate the corresponding gate. The hold is lifted only when those conditions are met. Do not reduce scope or cancel without the user's separate decision.
 
-## 이 폴더의 계획서가 SessionStart 에 실리는 법
+## How Plans in This Folder Are Loaded into SessionStart
 
-`session_state.plans()` 가 `docs/plans/*.md` 를 훑어 `## 단계` 표의 미완 행을 싣는다.
-파일명 역순으로 최대 2개까지다 — 세 개가 다 미완이면 3·2 번만 실리고 1번은 안 실린다.
-단계를 끝내면 그 파일의 상태 칸을 `완료` 로 바꿔라. 미완 행이 없는 파일은 빠진다.
+`session_state.plans()` scans `docs/plans/*.md` and loads incomplete rows from the `## 단계` table. Up to 2 files in reverse alphabetical order — if all three are incomplete, only 3 and 2 are loaded, and 1 is not. When a step is finished, change the status cell of that file to `완료`. Files without incomplete rows are omitted.
