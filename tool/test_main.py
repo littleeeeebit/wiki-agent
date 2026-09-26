@@ -844,6 +844,34 @@ def test_a_forced_delete_of_another_projects_worktree_stops_nothing(tmp_path):
         del waiting
 
 
+def test_a_forced_delete_stays_with_the_project_it_checked(tmp_path):
+    """A switch right after the path is checked: the loop stopped and the
+    worktree removed are the checked project's, not the one selected now."""
+
+    from main import loop
+
+    for name in ("a", "b"):
+        (tmp_path / name).mkdir()
+    repos = {"a": _repo(tmp_path / "a"), "b": _repo(tmp_path / "b").rename(tmp_path / "b" / "other")}
+    web = client()
+    halted, real = [], work.ours
+
+    def switching(path, repo=None):
+        found = real(path, repo)
+        chat._project = "b"   # the switch lands here
+        return found
+
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
+         patch.object(specs, "owner", lambda path: {"id": "t1", "state": "리뷰 R1"}), \
+         patch.object(loop, "halt_loop", lambda repo, sid: halted.append((repo, sid))):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        path = _made()
+        with patch.object(work, "ours", switching):
+            done = web.post("/api/worktrees/remove", json={"path": path, "force": True})
+    assert done.status_code == 200 and "지웠다" in done.json()["text"]
+    assert halted == [("proj", "t1")] and not Path(path).exists()
+
+
 def test_a_switch_waits_for_a_short_request_and_not_for_a_turn(tmp_path):
     """Making, removing and resetting read the project partway through, and a
     switch waits for them. A turn took its repository with its hold, and its

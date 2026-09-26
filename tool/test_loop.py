@@ -754,8 +754,14 @@ class Hangs:
 
     def __init__(self):
         self.go = threading.Event()
+        self.sent = []   # what reached the CLI: said with no halt set
 
     def say(self, text, halt=None):
+        # As `ChatSession._say`: a halt set before the send stops the turn unsent.
+        if halt is not None and halt.is_set():
+            yield Event("error", "멈췄다.", {}, self.id)
+            return
+        self.sent.append(text)
         yield Event("tool", "x", {}, self.id)
         self.go.wait(10)
         yield Event("error", "프로세스가 닫혔다.", {}, self.id)
@@ -764,19 +770,26 @@ class Hangs:
         self.go.set()
 
 
-def test_a_stop_between_the_hold_and_the_turn_still_stops_the_turn(tmp_path):
-    """The loop holds the worktree and has no run yet when the stop lands:
-    `stop` finds nothing to kill, so the loop has to see its halt itself."""
+@pytest.mark.parametrize("where", ["session", "begin"])
+def test_a_stopped_loop_sends_no_turn(tmp_path, where):
+    """The loop holds the worktree when the stop lands — before its run
+    exists, or once the run is there and its thread not started. Either way
+    nothing reaches the CLI."""
 
     spot, cell = loop.Loop("proj", "t1"), Hangs()
+    real = work.begin
 
     def session(*args):
-        spot.stop()
+        if where == "session":
+            spot.stop()
         return cell
 
+    def begin(*args, **kwargs):
+        if where == "begin":
+            spot.stop()
+        return real(*args, **kwargs)
+
     path = tmp_path / "proj-worktrees" / "t1"
-    started = time.monotonic()
-    with patch.object(work, "session", session):
+    with patch.object(work, "session", session), patch.object(work, "begin", begin):
         assert loop.told(spot, {}, path, "x") is None
-    assert time.monotonic() - started < 5, "the turn ran until its own end"
-    assert str(path) not in work._busy
+    assert cell.sent == [] and str(path) not in work._busy

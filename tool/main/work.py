@@ -131,18 +131,17 @@ class Removal(Where):
     force: bool = False
 
 
-def halt_all(path: str) -> None:
-    """Stop a spec's loop in `path`, then its running turn, and wait for the
-    turn to let go of the worktree."""
+def halt_all(path: str, repo: Path) -> None:
+    """Stop a spec's loop in `path` of `repo`, then its running turn, and
+    wait for the turn to let go of the worktree. `repo` is the one the path
+    was checked against: a switch meanwhile must not aim this at another
+    project's spec of the same id."""
 
     from . import loop, specs  # both import this module
 
     spec = specs.owner(Path(path))
     if spec and loop.LOOPING.fullmatch(spec["state"]):
-        try:
-            loop.halt(spec["id"])
-        except HTTPException:
-            pass   # it ended on its own meanwhile
+        loop.halt_loop(repo.name, spec["id"])
     run = _runs.get(path)
     if run is not None and not run.done:
         run.halt.set()
@@ -153,24 +152,24 @@ def halt_all(path: str) -> None:
 
 @router.post("/api/worktrees/remove")
 def clear(body: Removal) -> dict:
+    # The repository is read once and used to the end — for the check, the
+    # stops, the hold and the removal. Read again later, a switch in between
+    # handed it another repository, and a stop aimed at another project.
+    with _lock:
+        repo = current_repo()
     if body.force:
-        # Only the selected project's worktree is stopped: a path from
-        # anywhere else is a 404 before anything halts.
-        with _lock:
-            repo = current_repo()
+        # Only that project's worktree is stopped: a path from anywhere else
+        # is a 404 before anything halts.
         ours(body.path, repo)
-        halt_all(body.path)
+        halt_all(body.path, repo)
     # Held for the whole removal, as a turn holds it. Checked and let go, a
-    # new instruction was accepted while the worktree was being deleted. The
-    # repository is taken with the hold and used to the end: read again
-    # before `remove`, a switch in between handed it another repository.
+    # new instruction was accepted while the worktree was being deleted.
     # Forced, the hold is tried for a while: a stopped loop lets go of the
     # worktree once its step sees the halt.
     deadline = time.monotonic() + (HALT_WAIT if body.force else 0)
     while True:
         try:
             with _lock:
-                repo = current_repo()
                 release = hold(_busy, _lock, body.path, "에이전트가 도는 동안은 지우지 않는다")
             break
         except HTTPException:
@@ -555,11 +554,12 @@ def say(body: Order) -> StreamingResponse:
     return streaming(tail(run, -1))
 
 
-def begin(path: Path, chat: ChatSession, text: str, release) -> Run:
+def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = None) -> Run:
     """Start one turn of `chat` on its own thread, which owns `release` from
-    here. The caller holds the worktree already."""
+    here. The caller holds the worktree already. `run` is one the caller made
+    first, so a stop could reach it before the thread starts."""
 
-    run = Run(chat)
+    run = run or Run(chat)
     remember(path, "user", text)
     with _lock:
         _runs[str(path)] = run
