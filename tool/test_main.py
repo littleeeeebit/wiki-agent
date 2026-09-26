@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from unittest.mock import patch
 
@@ -688,6 +689,39 @@ def test_work_opens_only_its_own_worktrees(tmp_path):
         assert web.get("/api/worktrees").json()["rows"] == []
 
 
+def test_a_cite_finds_its_file_the_ways_answers_write_it(tmp_path):
+    """From the root, as a hub page, or by a tail one file ends with. A tail
+    several files end with is refused with their names, not guessed."""
+
+    repo, hub = _repo(tmp_path), tmp_path / "hub"
+    for rel in ("docs/plans/7-verify.md", "a/x.md", "b/x.md"):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(rel + "\n", encoding="utf-8")
+    (hub / "craft").mkdir(parents=True)
+    (hub / "craft/rule.md").write_text("rule\n", encoding="utf-8")
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat_channels, "WIKI", hub):
+        got = lambda path: web.get("/api/file", params={"repo": "proj", "path": path})
+        assert got("a.txt").json()["lines"] == ["a"]
+        assert got("craft/rule.md").json()["lines"] == ["rule"]
+        found = got("7-verify.md").json()   # not yet committed: a file the agent just wrote
+        assert (found["path"], found["lines"]) == ("docs/plans/7-verify.md", ["docs/plans/7-verify.md"])
+        assert got("plans/7-verify.md").json()["path"] == "docs/plans/7-verify.md"
+        many = got("x.md")
+        assert many.status_code == 404 and "a/x.md" in many.json()["detail"] and "b/x.md" in many.json()["detail"]
+        assert got("verify.md").status_code == 404   # a tail is whole names, not letters
+        # Touched most recently wins: commit by commit, then what is not committed yet.
+        for rel in ("a/x.md", "b/x.md"):
+            subprocess.run(["git", "-C", str(repo), "add", rel], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", rel], check=True)
+        assert got("x.md").json()["path"] == "b/x.md"
+        (repo / "a/x.md").write_text("changed\n", encoding="utf-8")
+        assert got("x.md").json()["path"] == "a/x.md"
+        (tmp_path / "secret.txt").write_text("s\n", encoding="utf-8")
+        assert got("../secret.txt").status_code == 404   # above both the checkout and the hub
+
+
 def test_an_approval_goes_only_to_the_session_that_asked(tmp_path):
     """Answered with the asking session's id, once. A reset makes a new id."""
 
@@ -1208,6 +1242,9 @@ def test_a_screen_reattaches_after_the_last_event_it_saw(tmp_path):
         assert [e["kind"] for e in seen["first"]] == ["tool", "approval", "done"]
         assert [e["seq"] for e in seen["first"]] == [0, 1, 2]
         assert {e["turn"] for e in seen["first"]} == {running["turn"]}
+        # When each came, from the server: a reattach still knows how long the last step has run.
+        stamps = [e["ts"] for e in seen["first"]]
+        assert stamps == sorted(stamps) and time.time() - 60 < stamps[0] <= time.time()
         assert seen["second"] == seen["first"] and seen["late"] == seen["first"][1:]
         ended = web.get("/api/work/events", params={"path": path, "turn": running["turn"], "after": 1})
         assert parse(ended.text) == seen["first"][2:]
@@ -1236,6 +1273,189 @@ def test_a_stopped_turn_ends_and_the_next_goes_on_in_the_same_session(tmp_path):
         assert Agent.made[-1] is agent and work._runs[path].session_id == agent.id
         agent.go.set()
         settled(path)
+
+
+def _gated(then_first=None):
+    """A spec gate that notes itself and waits to be let go; on the first
+    turn it may hand back a turn to start next, as `specs.check` does."""
+
+    entered, go, calls = threading.Event(), threading.Event(), []
+
+    def check(path, run, final):
+        calls.append(run.turn)
+        specs.note(run, "게이트 · python -m pytest tool")
+        entered.set()
+        go.wait(10)
+        return then_first(path, run) if then_first and len(calls) == 1 else None
+
+    return check, entered, go
+
+
+def _said(web, path, count, wait=10.0):
+    """The record's instructions, once `count` turns have ended."""
+
+    deadline = time.monotonic() + wait
+    while True:
+        log = web.get("/api/work/log", params={"path": path}).json()
+        if sum(r["role"] == "assistant" for r in log["rows"]) >= count and log["running"] is None:
+            return [r["text"] for r in log["rows"] if r["role"] == "user"], log
+        assert time.monotonic() < deadline, log
+        time.sleep(0.05)
+
+
+def test_an_instruction_written_during_the_gate_goes_once_the_worktree_is_let_go(tmp_path):
+    """After the answer the agent reads nothing more, so it is not steered: the
+    server keeps it and starts it when the gate's run ends. The record keeps
+    where the answer stood, so a reload shows the gate after it."""
+
+    repo = _repo(tmp_path)
+    web = client()
+    check, entered, go = _gated()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent), \
+         patch.object(specs, "check", check):
+        path = _made()
+        work.say(work.Order(path=path, text="첫째"))
+        assert entered.wait(10)
+        turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
+        other = {"path": path, "turn": "another", "text": "x"}
+        assert web.post("/api/work/queue", json=other).status_code == 409
+        web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
+        # The first was told it would go: a second is refused, not put in its place.
+        assert web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "딴것"}).status_code == 409
+        assert web.get("/api/work/log", params={"path": path}).json()["queued"] == "둘째"
+        go.set()
+        said, log = _said(web, path, 2)
+        assert said == ["첫째", "둘째"] and log["queued"] is None
+        # Already sent: a cancel must not say it took it back.
+        assert web.post("/api/work/unqueue", json={"path": path}).status_code == 409
+        first = [r for r in log["rows"] if r["role"] == "assistant"][0]
+        assert [s["kind"] for s in first["steps"]] == ["approval", "tool"] and first["answered"] == 1
+        done = {"path": path, "turn": turn, "text": "셋째"}
+        assert web.post("/api/work/queue", json=done).status_code in (409, 410)
+
+
+def test_a_turn_the_server_starts_after_the_gate_goes_before_the_waiting_one(tmp_path):
+    """The plan row's turn, handed back by the gate, takes the worktree first;
+    the instruction that waited goes after it, not into a 409."""
+
+    repo = _repo(tmp_path)
+    web = client()
+
+    def plan_row(path, run):
+        def then():
+            release = chat.hold(work._busy, work._lock, str(path), "", kind="turn")
+            work.begin(path, run.chat, "계획 행", release)
+        return then
+
+    check, entered, go = _gated(plan_row)
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent), \
+         patch.object(specs, "check", check):
+        path = _made()
+        work.say(work.Order(path=path, text="첫째"))
+        assert entered.wait(10)
+        turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
+        web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
+        go.set()
+        assert _said(web, path, 3)[0] == ["첫째", "계획 행", "둘째"]
+
+
+def test_a_waiting_instruction_is_taken_only_in_the_selected_project(tmp_path):
+    """A turn left in another project after a switch is read and stopped, not given more work."""
+
+    repos = _two_projects(tmp_path)
+    web = client()
+    check, entered, go = _gated()
+    with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
+         patch.object(work, "ChatSession", Agent), patch.object(specs, "check", check):
+        web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
+        path = _made()
+        work.say(work.Order(path=path, text="첫째"))
+        assert entered.wait(10)
+        turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
+        web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
+        assert web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).status_code == 404
+        go.set()
+        assert _said(web, path, 1)[0] == ["첫째"]
+
+
+def test_a_waiting_instruction_that_cannot_start_is_on_record(tmp_path):
+    """Its turn starts on a thread nobody's request waits on: a failure there
+    is written down with the instruction, and screens are told to read again."""
+
+    repo = _repo(tmp_path)
+    web = client()
+    check, entered, go = _gated()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent), \
+         patch.object(specs, "check", check):
+        path = _made()
+        work.say(work.Order(path=path, text="첫째"))
+        assert entered.wait(10)
+        turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
+        web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
+        told = len(work.feed.events)
+        with patch.object(work, "session", side_effect=RuntimeError("CLI 가 없다")):
+            go.set()
+            said, log = _said(web, path, 2)
+        assert said == ["첫째"] and log["queued"] is None and not work._busy
+        assert "CLI 가 없다" in log["rows"][-1]["error"] and "둘째" in log["rows"][-1]["error"]
+        assert any(e["kind"] == "turn" and e["path"] == path for e in work.feed.events[told:])
+
+
+def test_a_turn_whose_thread_cannot_start_is_ended(tmp_path):
+    """Nothing else would end it: it would read as running, and a screen
+    that attaches would wait on a stream that never closes."""
+
+    class Unstartable:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def start(self):
+            raise RuntimeError("스레드가 없다")
+
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent):
+        path = _made()
+        chat_ = work.session(Path(path), "", "")
+        released = []
+        with patch.object(work.threading, "Thread", Unstartable), pytest.raises(RuntimeError):
+            work.begin(Path(path), chat_, "첫째", lambda: released.append(1))
+        run = work._runs[path]
+        assert run.done and run.events[-1]["kind"] == "error"
+        assert web.get("/api/work/log", params={"path": path}).json()["running"] is None
+
+
+class Answered(Agent):
+    """Stopped during the gate: the agent has already answered."""
+
+    def stop(self, halt=None):
+        pass
+
+
+def test_a_stop_drops_the_waiting_instruction(tmp_path):
+    repo = _repo(tmp_path)
+    web = client()
+    check, entered, go = _gated()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Answered), \
+         patch.object(specs, "check", check):
+        path = _made()
+        work.say(work.Order(path=path, text="첫째"))
+        assert entered.wait(10)
+        turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
+        web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
+        web.post("/api/work/stop", json={"path": path, "turn": turn}).raise_for_status()
+        go.set()
+        settled(path)
+        said, log = _said(web, path, 1)
+        assert said == ["첫째"] and log["queued"] is None and not work._busy
+        # Its run ended: nothing would send it.
+        late = {"path": path, "turn": turn, "text": "셋째"}
+        assert web.post("/api/work/queue", json=late).status_code == 409
 
 
 def test_a_turn_is_reachable_after_the_project_moves(tmp_path):

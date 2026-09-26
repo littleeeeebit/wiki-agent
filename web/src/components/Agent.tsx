@@ -21,6 +21,13 @@ type Props = {
   onAnswer: (turn: Turn, id: string, allow: boolean, scope?: 'once' | 'session', answers?: string[]) => void
   onStop: (turn: Turn) => void
   onSteer: (turn: Turn, text: string) => void
+  /** The next instruction, waiting for this run to end. */
+  queued?: string
+  onQueue: (turn: Turn, text: string) => void
+  /** Instructions the server would not keep waiting, each with why. */
+  refused?: { text: string; reason: string }[]
+  onDismiss: (at: number) => void
+  onUnqueue: () => void
   rules: Rule[]
   onClearRules: () => void
   onReset: (keep: Keep) => Promise<Kept>
@@ -31,11 +38,14 @@ type Props = {
  *  ran and what it asks to write stay as they are, because a person approves
  *  those and a reworded command is not the command. */
 export function Agent({
-  row, turns, options, choice, on, onChoice, onSend, onAnswer, onStop, onSteer, rules, onClearRules, onReset, onPeek,
+  row, turns, options, choice, on, onChoice, onSend, onAnswer, onStop, onSteer, queued, onQueue, onUnqueue, refused,
+  onDismiss, rules, onClearRules, onReset, onPeek,
 }: Props) {
   const end = useRef<HTMLDivElement>(null)
   const [asking, setAsking] = useState(false)
   const [note, setNote] = useState('')
+  // Put back in the box only when the person asks: what they type meanwhile is theirs.
+  const [seed, setSeed] = useState<{ text: string } | null>(null)
   const busy = turns.at(-1)?.pending ?? false
   const last = turns.at(-1)
   const grown = turns.length + (last?.text.length ?? 0) + (last?.steps.length ?? 0)
@@ -108,20 +118,51 @@ export function Agent({
               <Reply key={t.key} turn={t} on={on} onAnswer={onAnswer} onPeek={onPeek} />
             ),
           )}
+          {queued && (
+            <div className="flex flex-col items-end gap-1">
+              <div className="max-w-[90%] rounded-lg rounded-br-sm border border-dashed border-border px-3 py-2 text-[13.5px] leading-relaxed whitespace-pre-wrap text-muted-foreground">
+                {queued}
+              </div>
+              <span className="text-[11.5px] text-faint">
+                대기 · 이 턴이 끝나면 보낸다{' '}
+                <button type="button" onClick={onUnqueue} className="rounded px-1 text-primary hover:bg-secondary">취소</button>
+              </span>
+            </div>
+          )}
           <div ref={end} />
         </div>
       </div>
 
       {/* While a turn runs, what is sent goes into that turn: the agent reads
           it between steps. Until the server names the turn there is nothing to
-          send it to. */}
+          send it to. Once it has answered, the agent reads nothing more — the
+          gate is running — so it waits and goes as the next instruction. */}
+      {refused?.map((r, i) => (
+        <div key={i} role="alert" className="mx-4 mb-1 rounded-md border border-destructive/40 px-3 py-2 text-[12.5px]">
+          <p className="text-destructive">대기 실패 · {r.reason}</p>
+          <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{r.text}</p>
+          <div className="mt-1 flex gap-1">
+            <Btn tone="ghost" onClick={() => {
+              setSeed({ text: r.text })
+              onDismiss(i)
+            }}>입력칸에 넣기</Btn>
+            <Btn tone="ghost" onClick={() => onDismiss(i)}>버리기</Btn>
+          </div>
+        </div>
+      ))}
+      {/* One waits at a time: a second would only be refused, so it stays in the box. */}
       <Composer
-        busy={busy && !last?.turn}
+        busy={busy && (!last?.turn || (last.answered != null && !!queued))}
         disabled={!row}
         max={320}
-        placeholder={busy ? '도는 턴에 끼어든다. 에이전트가 다음 걸음 전에 읽는다.'
-          : '지시를 적어라. Enter 로 보내고 Shift+Enter 로 줄바꿈.'}
-        onSend={(text) => (busy && last ? onSteer(last, text) : onSend(text))}
+        seed={seed}
+        placeholder={!busy ? '지시를 적어라. Enter 로 보내고 Shift+Enter 로 줄바꿈.'
+          : last?.answered != null
+            ? queued ? '지시 하나가 이미 기다린다. 그것을 취소하면 이것을 보낼 수 있다.'
+              : '답은 끝났고 마무리가 도는 중이다. 보내면 끝난 뒤 다음 지시로 보낸다.'
+            : '도는 턴에 끼어든다. 에이전트가 다음 걸음 전에 읽는다.'}
+        onSend={(text) => (!busy || !last ? onSend(text)
+          : last.answered != null ? onQueue(last, text) : onSteer(last, text))}
       />
       {asking && <ClearAsk onClear={onReset} onClose={(said) => {
         setAsking(false)
@@ -139,27 +180,37 @@ function Reply({ turn, on, onAnswer, onPeek }: {
 }) {
   // Only once the answer is finished: a half-streamed paragraph translated
   // reads exactly like a whole one.
-  const [text] = useOverlay([turn.text], on && !turn.pending)
+  const [text] = useOverlay([turn.text], on && (!turn.pending || turn.answered != null))
+  // The steps after the answer — the gate — stand after it, in the order they ran.
+  const cut = turn.answered ?? turn.steps.length
+  const lastStep = turn.steps.at(-1)
+  // What is running is the latest thing that came: a step gets the marker
+  // under it, text or nothing yet gets it at the end.
+  const marker = turn.pending && (
+    <Running since={turn.since}
+      label={lastStep?.kind === 'approval' && lastStep.answer === undefined && turn.latest === 'step' ? '답을 기다린다'
+        : turn.latest !== 'step' && turn.answered != null ? '마무리 중' : '실행 중'} />
+  )
+  const list = (from: number, to: number) => to > from && (
+    <ul className="space-y-1.5">
+      {turn.steps.slice(from, to).map((s, j) => (
+        <li key={from + j}>
+          {s.kind === 'tool' ? <Tool text={s.text} />
+            : s.kind === 'said' ? <Said text={s.text} />
+              : s.kind === 'hook' ? <Hook text={s.text} context={s.context} />
+                : QUESTIONS.has(s.tool) ? <Question step={s} turn={turn} onAnswer={onAnswer} />
+                  : <Ask step={s} turn={turn} onAnswer={onAnswer} />}
+          {turn.latest === 'step' && from + j === turn.steps.length - 1 && marker}
+        </li>
+      ))}
+    </ul>
+  )
   return (
     <div className="space-y-2">
-      {turn.steps.length > 0 && (
-        <ul className="space-y-1.5">
-          {turn.steps.map((s, i) => (
-            <li key={i}>
-              {s.kind === 'tool' ? <Tool text={s.text} />
-                : s.kind === 'said' ? <Said text={s.text} />
-                  : s.kind === 'hook' ? <Hook text={s.text} context={s.context} />
-                    : QUESTIONS.has(s.tool) ? <Question step={s} turn={turn} onAnswer={onAnswer} />
-                      : <Ask step={s} turn={turn} onAnswer={onAnswer} />}
-            </li>
-          ))}
-        </ul>
-      )}
-      {turn.text ? (
-        <Answer text={text} korean={on} remote="" onPeek={onPeek} />
-      ) : (
-        turn.pending && <span className="inline-block h-3.5 w-1.5 animate-pulse rounded-[1px] bg-faint align-middle" />
-      )}
+      {list(0, cut)}
+      {turn.text && <Answer text={text} korean={on} remote="" onPeek={onPeek} />}
+      {list(cut, turn.steps.length)}
+      {turn.latest !== 'step' && marker}
       {turn.error && <p role="alert" className="text-[12.5px] text-destructive">{turn.error}</p>}
       {!turn.pending && turn.ms != null && (
         <p className="font-mono text-[10.5px] text-faint">
@@ -177,6 +228,24 @@ function tokens(turn: Turn): string {
   if (!t || (t.in == null && t.out == null)) return ''
   const n = (v?: number) => (v == null ? '?' : v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v))
   return `${n(t.in)}→${n(t.out)}${t.cache_read ? ` · 캐시 ${n(t.cache_read)}` : ''}`
+}
+
+/** "⟳ 실행 중 · 3분 12초": nothing newer has come, and the run has not ended,
+ *  so this is what is running and for how long. The same on both hosts: it
+ *  reads only the events' arrival. */
+function Running({ since, label }: { since?: number; label: string }) {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(id)
+  }, [])
+  const s = Math.max(0, Math.floor((now - (since ?? now)) / 1000))
+  return (
+    <p role="status" className="mt-0.5 flex items-center gap-1 font-mono text-[11.5px] text-primary">
+      <span aria-hidden className={cn('inline-block', label !== '답을 기다린다' && 'motion-safe:animate-spin')}>⟳</span>
+      {label} · {s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`}
+    </p>
+  )
 }
 
 function Tool({ text }: { text: string }) {

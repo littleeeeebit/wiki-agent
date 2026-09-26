@@ -13,6 +13,7 @@ import json
 import mimetypes
 import os
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -177,6 +178,53 @@ def render(body: Rendering) -> dict:
 
 # -- Looking inside a file --------------------------------------------------
 
+def inside(base: Path, path: str) -> Path | None:
+    target = (base / path).resolve()
+    return target if base.resolve() in target.parents and target.is_file() else None
+
+
+def git_lines(base: Path, *args: str) -> list[str]:
+    try:
+        return subprocess.run(["git", *args], cwd=base, capture_output=True, text=True,
+                              encoding="utf-8", timeout=10).stdout.splitlines()
+    except (OSError, subprocess.SubprocessError):
+        return []
+
+
+def locate(base: Path, path: str) -> tuple[Path, str]:
+    """The file a cite means, and its path from where it was found.
+
+    An answer cites three ways: from the checkout's root, as a hub page
+    (`craft/x.md` — the injected rules live in the hub, not in the
+    repository being worked on), or by a tail of the path (`7-verify.md`,
+    `main/work.py`). Several files ending with that tail: an answer talks
+    about what was just worked on, so the one touched most recently —
+    uncommitted first, then commit by commit. Still a tie, they are named in
+    the refusal instead of a guess.
+    """
+
+    if found := inside(base, path):
+        return found, path
+    if found := inside(channels.WIKI, path):
+        return found, path
+    tail = "/" + path.removeprefix("./")
+    hits = [f for f in git_lines(base, "ls-files", "-co", "--exclude-standard") if ("/" + f).endswith(tail)]
+    if len(hits) > 1:
+        groups = [git_lines(base, "diff", "--name-only", "HEAD")
+                  + git_lines(base, "ls-files", "-o", "--exclude-standard")]
+        for line in git_lines(base, "log", "--name-only", "--format=format:@", "-n", "50"):
+            if line == "@":
+                groups.append([])
+            elif line:
+                groups[-1].append(line)
+        hits = next(([h for h in hits if h in group] for group in groups if set(hits) & set(group)), hits)
+    if len(hits) == 1 and (found := inside(base, hits[0])):
+        return found, hits[0]
+    if hits:
+        raise HTTPException(404, f"그 이름의 파일이 여럿이다 — {', '.join(hits[:5])}")
+    raise HTTPException(404, f"그 파일이 없다 — {path}")
+
+
 @app.get("/api/file")
 def peek(repo: str, path: str, line: int = 1, around: int = 25) -> dict:
     """Show the place a quoted `path:line` points at.
@@ -188,9 +236,7 @@ def peek(repo: str, path: str, line: int = 1, around: int = 25) -> dict:
     base = channels.repo_for(repo) or (work.known(repo) if Path(repo).is_absolute() else None)
     if base is None:
         raise HTTPException(400, "그런 저장소가 없다")
-    target = (base / path).resolve()
-    if base.resolve() not in target.parents or not target.is_file():
-        raise HTTPException(404, "그 파일이 없다")
+    target, path = locate(base, path)
     if target.stat().st_size > 2_000_000:
         raise HTTPException(413, "너무 크다")
     rows = target.read_text(encoding="utf-8", errors="replace").splitlines()

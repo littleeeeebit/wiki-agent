@@ -572,3 +572,14 @@ def test_codex_hooks_show_and_a_question_is_answered_by_its_id(tree):
     asked = next(e for e in events if e.kind == "approval")
     assert asked.meta["tool"] == "requestUserInput" and not asked.meta["session"]
     assert json.loads(events[-1].text) == {"fruit": {"answers": ["A"]}}
+
+
+def test_a_tool_line_shows_the_command_beside_what_it_is_for():
+    """How long a step may take is read off the command, not its description."""
+
+    brief = chat_session._tool_brief
+    assert brief({"name": "Bash", "input": {"description": "Run the tests", "command": "python -m pytest -q tool"}}) \
+        == "Bash · Run the tests · $ python -m pytest -q tool"
+    assert brief({"name": "Bash", "input": {"command": "git  status\n"}}) == "Bash · $ git status"
+    assert brief({"name": "Read", "input": {"file_path": "a.py"}}) == "Read · a.py"
+    assert brief({"name": "TodoWrite", "input": {}}) == "TodoWrite"

@@ -34,7 +34,16 @@ export type Turn = {
   sessionId?: string
   /** The server's id for this turn, once an event named it. */
   turn?: string
+  /** Until the server's run ends — not at the answer: the gate runs after it,
+   *  still holding the worktree. */
   pending?: boolean
+  /** How many steps stood when the answer came. Later ones — the gate — ran
+   *  after it. */
+  answered?: number
+  /** When the latest event came, in ms, and what it was: the clock on the
+   *  running marker counts from it. */
+  since?: number
+  latest?: 'step' | 'text'
   error?: string
   ms?: number
   cost?: number
@@ -55,11 +64,18 @@ function restored(s: WorkStep): Step {
 /** One event folded into its turn. */
 function apply(t: Turn, ev: WorkEv): Turn {
   const m = ev.meta
-  if (ev.kind === 'delta') return { ...t, text: t.text + ev.text }
-  if (ev.kind === 'tool' || ev.kind === 'said') return { ...t, steps: [...t.steps, { kind: ev.kind, text: ev.text }] }
-  if (ev.kind === 'hook') return { ...t, steps: [...t.steps, { kind: 'hook', text: ev.text, context: m.context }] }
+  // The server's time, so a reattach that reads the buffer again still
+  // counts from when the step started, not from the reread.
+  t = { ...t, since: ev.ts ? ev.ts * 1000 : Date.now() }
+  if (ev.kind === 'delta') return { ...t, text: t.text + ev.text, latest: 'text' }
+  if (ev.kind === 'tool' || ev.kind === 'said') {
+    return { ...t, steps: [...t.steps, { kind: ev.kind, text: ev.text }], latest: 'step' }
+  }
+  if (ev.kind === 'hook') {
+    return { ...t, steps: [...t.steps, { kind: 'hook', text: ev.text, context: m.context }], latest: 'step' }
+  }
   if (ev.kind === 'approval') {
-    return { ...t, steps: [...t.steps, { kind: 'approval', text: ev.text, id: String(m.id ?? ''),
+    return { ...t, latest: 'step', steps: [...t.steps, { kind: 'approval', text: ev.text, id: String(m.id ?? ''),
       tool: String(m.tool ?? ''), input: m.input ?? {}, session: m.session,
       ...(m.by ? { by: m.by, answer: m.answer === 'allow' } : {}) }] }
   }
@@ -68,8 +84,8 @@ function apply(t: Turn, ev: WorkEv): Turn {
       ? { ...s, answer: m.allow, by: m.by, answers: m.answers, sending: false, error: undefined } : s)) }
   }
   if (ev.kind === 'done') {
-    return { ...t, text: ev.text || t.text, pending: false, ms: m.ms, cost: m.cost_usd, model: m.model,
-      tokens: m.tokens }
+    return { ...t, text: ev.text || t.text, answered: t.steps.length, latest: 'text', ms: m.ms, cost: m.cost_usd,
+      model: m.model, tokens: m.tokens }
   }
   return { ...t, error: ev.text, pending: false }
 }
@@ -96,6 +112,30 @@ export function useWork() {
   // same task name gives the same path, so a record fetched for the old one
   // and landing after `forget` would otherwise fill the new one's pane.
   const lives = useRef(new Map<string, number>())
+  // An instruction written after the answer, while the gate still holds the
+  // worktree: there is no turn left to steer, so the server keeps it and
+  // sends it once the worktree is let go. This is only what the record says.
+  const [queued, setQueued] = useState<Record<string, string>>({})
+  const showQueued = useCallback((path: string, text: string | null) => {
+    setQueued(({ [path]: _gone, ...rest }) => (text ? { ...rest, [path]: text } : rest))
+  }, [])
+  // An instruction the server would not keep waiting, until the person puts
+  // it back or lets it go. Here, not in the pane or the box: it outlives a
+  // reattach, a switch to another pane, and whatever is typed meanwhile.
+  // Every one of them: each was cleared from the box when it was sent.
+  const [refused, setRefused] = useState<Record<string, { text: string; reason: string }[]>>({})
+  /** One refused instruction by its place, or all of the path's. */
+  const dismiss = useCallback((path: string, at?: number) => {
+    setRefused(({ [path]: list = [], ...rest }) => {
+      const left = at === undefined ? [] : list.filter((_, i) => i !== at)
+      return left.length ? { ...rest, [path]: left } : rest
+    })
+  }, [])
+  // Paths a server-started turn was announced for while this window's own
+  // send still followed its turn: read again once that send lets go.
+  const missed = useRef(new Set<string>())
+  // The server's turns this window already follows.
+  const own = useRef(new Set<string>())
 
   const patch = useCallback((path: string, key: number, fn: (t: Turn) => Turn) => {
     setTurns((all) => {
@@ -113,16 +153,19 @@ export function useWork() {
     loading.current.delete(path)
     setTurns(({ [path]: _gone, ...rest }) => rest)
     setRules(({ [path]: _gone, ...rest }) => rest)
-  }, [])
+    showQueued(path, null)
+  }, [showQueued])
 
   const readRules = useCallback((path: string) => {
     const life = lives.current.get(path) ?? 0
     api.workLog(path)
-      .then(({ session_id, rules: list }) => {
-        if ((lives.current.get(path) ?? 0) === life) setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
+      .then(({ session_id, rules: list, queued: waiting }) => {
+        if ((lives.current.get(path) ?? 0) !== life) return
+        setRules((all) => ({ ...all, [path]: { session: session_id, list } }))
+        showQueued(path, waiting)
       })
       .catch(() => {})
-  }, [])
+  }, [showQueued])
 
   /** Follow one turn's events into `key` until it ends. `first` is the
    *  stream that starts it — the instruction's own, or a reattach. */
@@ -142,6 +185,7 @@ export function useWork() {
       if (ev.turn) {
         turn ||= ev.turn
         if (ev.turn !== turn) return
+        own.current.add(turn)
       }
       if (ev.seq !== undefined) {
         if (ev.seq <= last) return
@@ -150,25 +194,34 @@ export function useWork() {
       if (ev.kind === 'done' || ev.kind === 'error') ended = true
       patch(path, key, (t) => apply({ ...t, sessionId: owner || t.sessionId, turn: turn || t.turn }, ev))
     }
+    // The stream closes when the server's run ends; the answer comes before
+    // that, and the gate runs between the two.
     let gone = false
+    let cut = false
     try {
       gone = (await first(on)) === 'gone'
     } catch {
-      // Cut; tried once more below.
+      cut = true
     }
-    // A cut stream is not the end of the turn: once more, after the last event seen.
-    if (!ended && !gone && turn) {
+    // A cut stream is not the end of the turn, even after the answer: once
+    // more, after the last event seen.
+    if ((cut || !ended) && !gone && turn) {
       try {
         gone = (await api.workEvents(path, turn, last, on)) === 'gone'
+        cut = false
       } catch {
         // The server itself is gone; nothing more to read.
       }
     }
     patch(path, key, (t) => (t.pending
-      ? { ...t, pending: false, error: t.error || (gone ? '다른 턴이 시작됐다. 기록을 다시 읽는다' : '스트림이 끊겼다') }
+      ? { ...t, pending: false, error: t.error
+          || (gone ? '다른 턴이 시작됐다. 기록을 다시 읽는다' : cut || !ended ? '스트림이 끊겼다' : undefined) }
       : t))
+    // Another CLI is another session, and its rules start empty; and what
+    // waited was sent, kept for a turn the server started, or dropped by a stop.
+    if (!gone) readRules(path)
     return gone
-  }, [patch])
+  }, [patch, readRules])
 
   // Named, so the reload after a replaced turn calls itself, not the outer binding.
   const load = useCallback(function load(path: string) {
@@ -176,12 +229,13 @@ export function useWork() {
     loading.current.add(path)
     const life = lives.current.get(path) ?? 0
     api.workLog(path)
-      .then(({ rows, running, rules: list, session_id }) => {
+      .then(({ rows, running, rules: list, session_id, queued: waiting }) => {
         if ((lives.current.get(path) ?? 0) !== life) return
         const past: Turn[] = rows.map((r) => ({
           key: ++seq, role: r.role, text: r.text, error: r.error, ms: r.ms, cost: r.cost_usd, model: r.model,
-          tokens: r.tokens, steps: (r.steps ?? []).map(restored),
+          tokens: r.tokens, steps: (r.steps ?? []).map(restored), answered: r.answered,
         }))
+        showQueued(path, waiting)
         // The turn still running: its reply is not on record yet. Its events
         // are, in the server's buffer, from the first.
         const live = running && !sending.current.has(path)
@@ -205,11 +259,11 @@ export function useWork() {
       .catch(() => {
         if ((lives.current.get(path) ?? 0) === life) loading.current.delete(path)
       })
-  }, [follow, forget])
+  }, [follow, forget, showQueued])
 
   const send = useCallback(
     async (path: string, text: string, choice: { model: string; effort: string }) => {
-      const mine: Turn = { key: ++seq, role: 'assistant', text: '', steps: [], pending: true }
+      const mine: Turn = { key: ++seq, role: 'assistant', text: '', steps: [], pending: true, since: Date.now() }
       setTurns((all) => ({
         ...all,
         [path]: [...(all[path] ?? []), { key: ++seq, role: 'user', text, steps: [] }, mine],
@@ -223,16 +277,42 @@ export function useWork() {
       } finally {
         sending.current.delete(path)
       }
-      if (gone) {
+      if (gone || missed.current.delete(path)) {
         forget(path)
         load(path)
-        return
       }
-      // Another CLI is another session, and its rules start empty.
-      readRules(path)
     },
-    [follow, forget, load, patch, readRules],
+    [follow, forget, load, patch],
   )
+
+  /** `text` as the next instruction, which the server sends once `turn`'s
+   *  run lets go of the worktree. Refused, it is never sent from here: a
+   *  lost answer and a refusal look alike, and the server may already have
+   *  sent it. What the server holds is read again, and the text is kept as
+   *  refused for the person to act on. */
+  const queue = useCallback(async (path: string, turn: Turn, text: string,
+    choice: { model: string; effort: string }) => {
+    try {
+      await api.workQueue({ path, turn: turn.turn ?? '', text, ...choice })
+      showQueued(path, text)
+    } catch (err) {
+      readRules(path)
+      setRefused((all) => ({ ...all, [path]: [...(all[path] ?? []),
+        { text, reason: err instanceof Error ? err.message : String(err) }] }))
+    }
+  }, [readRules, showQueued])
+
+  /** Refused when it no longer waits — already sent, or dropped by a stop:
+   *  the refusal goes to the caller, and the card follows the server. */
+  const unqueue = useCallback(async (path: string) => {
+    try {
+      await api.workUnqueue(path)
+      showQueued(path, null)
+    } catch (err) {
+      readRules(path)
+      throw err
+    }
+  }, [readRules, showQueued])
 
   const answer = useCallback(
     async (path: string, turn: Turn, id: string, allow: boolean, scope: 'once' | 'session' = 'once',
@@ -290,11 +370,18 @@ export function useWork() {
   /** A turn the server started in `path` — the plan row's, a loop's. A
    *  window that already shows that worktree reads it again, which attaches
    *  to the running turn; this window's own sends are already on screen. */
-  const attach = useCallback((path: string) => {
-    if (sending.current.has(path) || !loading.current.has(path)) return
+  const attach = useCallback((path: string, turn?: string) => {
+    if (!loading.current.has(path) || (turn && own.current.has(turn))) return
+    // Announced while this window's send still follows its own turn — the
+    // instruction that waited, the plan row's: read once that send lets go.
+    if (sending.current.has(path)) {
+      missed.current.add(path)
+      return
+    }
     forget(path)
     load(path)
   }, [forget, load])
 
-  return { turns, rules, load, send, answer, stop, steer, clearRules, reset, forget, attach }
+  return { turns, rules, queued, refused, load, send, queue, unqueue, dismiss, answer, stop, steer, clearRules, reset,
+    forget, attach }
 }

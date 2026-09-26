@@ -894,15 +894,19 @@ def _user(text: str) -> dict:
 
 
 def _tool_brief(block: dict) -> str:
-    """One line per tool. All it has to show is what is being done."""
+    """One line per tool. All it has to show is what is being done — and for
+    a command, the command itself beside what it says it is for: how long it
+    may take is read off the command, not off its description."""
 
     name = str(block.get("name") or "?")
     args = block.get("input") or {}
-    for key in ("description", "file_path", "pattern", "path", "command"):
+    command = args.get("command")
+    ran = f" · $ {' '.join(command.split())[:160]}" if isinstance(command, str) and command.strip() else ""
+    for key in ("description", "file_path", "pattern", "path"):
         value = args.get(key)
         if isinstance(value, str) and value.strip():
-            return f"{name} · {' '.join(value.split())[:90]}"
-    return name
+            return f"{name} · {' '.join(value.split())[:90]}{ran}"
+    return f"{name}{ran}"
 
 
 def explain(answer: str, model: str = "", effort: str = ""):
