@@ -609,6 +609,35 @@ def test_jev_judges_the_cited_words_in_english_even_for_a_translated_passage(mon
     assert untranslatable["relations"][0]["support"] is None
 
 
+@pytest.mark.parametrize("now", ["failing", "unreadable"])
+def test_a_verdict_on_english_that_changed_since_is_withdrawn_even_when_it_cannot_be_judged_again(
+        world, jev, monkeypatch, now):
+    hub, repo = world
+    # A second page supports the same dependency, so the verdict past the first `limit` counts too.
+    (repo / "docs/also.md").write_text("# Also\n\n`search/daemon.py` imports `search/evidence.py` too.\n",
+                                       encoding="utf-8")
+    knowledge.extract_graph(repo, cfg=ACTIVE, proposer=proposer([]))
+    index = index_of(hub, repo)
+    assert [e["status"] for e in index.graph.edges(kinds=["depends_on"])] == ["adopted"]
+    index.close()
+    # The passage and its quote now normalize to other English, and Jev cannot say again.
+    new = {"text": "`search/daemon.py` imports `search/evidence.py`", "status": "translated", "version": "t2"}
+    if now == "unreadable":
+        new = {"text": None, "status": "unavailable", "version": None}
+    monkeypatch.setattr(knowledge, "english", lambda texts, *_a: [dict(new) for _ in texts])
+
+    def broken(*_a, **_k):
+        raise decision.JevError("unavailable")
+
+    monkeypatch.setattr(decision, "evaluate", broken)
+    knowledge.extract_graph(repo, limit=1, cfg=ACTIVE, proposer=proposer([]))
+    index = index_of(hub, repo)
+    assert index.graph.edges(kinds=["depends_on"]) == []
+    (candidate,) = index.graph.edges(kinds=["depends_on"], statuses=("candidate",))
+    assert candidate["confidence"] is None
+    index.close()
+
+
 def test_two_sections_of_one_source_with_the_same_text_both_get_their_edges():
     a, b = chunk_("Uses `Alpha`.", 1), chunk_("Uses `Alpha`.", 5)
     result = {"entities": [{"name": "Alpha", "type": "module", "quote": "`Alpha`"}], "relations": [], "versions": "v"}

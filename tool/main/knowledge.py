@@ -593,8 +593,10 @@ def supported(items: list[tuple[dict, dict]], cfg: decision.Config, budget: Budg
     normalized as any passage is; the passage is only its context. So another
     sentence of the passage can never stand behind a cited span that does not
     say it. Mode off, a failed request, or a passage or quote with no English
-    leaves it `None` — a candidate, never a rejection. Returns how many were
-    judged."""
+    leaves it `None` — a candidate, never a rejection. A verdict holds only
+    for the English it was given on: once that has changed it is withdrawn
+    first, so one that cannot be given again is not kept. Returns how many
+    verdicts were written or withdrawn."""
 
     if cfg.mode == "off":
         return 0
@@ -608,13 +610,18 @@ def supported(items: list[tuple[dict, dict]], cfg: decision.Config, budget: Budg
     english_ = english_of(chunks + list(quotes.values()), budget, project)
     ids = {c["chunk_id"]: str(i) for i, c in enumerate(c for c in chunks if readable(english_[c["chunk_id"]]))}
     questions, where, claims = {}, {}, []
+    withdrawn = 0
     for chunk, result in items:
         outcome = english_.get(chunk["chunk_id"], {})
         for relation in result["relations"]:
             quoted = english_.get(quotes[(chunk["chunk_id"], relation["quote"])]["chunk_id"], {})
             seen = "|".join(str(o.get("version") or o.get("status")) for o in (outcome, quoted))
-            if (chunk["chunk_id"] not in ids or not readable(quoted)
-                    or (relation["support"] is not None and relation.get("english") == seen)):
+            if relation["support"] is not None:
+                if relation.get("english") == seen:
+                    continue
+                relation.update(support=None, english=None)
+                withdrawn += 1
+            if chunk["chunk_id"] not in ids or not readable(quoted):
                 continue
             name = f"r{len(questions)}"
             claims.append({"id": name, "passage": ids[chunk["chunk_id"]], "cited_words": quoted["text"]})
@@ -625,18 +632,18 @@ def supported(items: list[tuple[dict, dict]], cfg: decision.Config, budget: Budg
                 "not. Both being mentioned, or the reverse direction, is insufficient.")
             where[name] = (relation, seen)
     if not questions:
-        return 0
+        return withdrawn
     state = {"passages": [{"id": ids[c["chunk_id"]], "heading": c["heading"], "text": english_[c["chunk_id"]]["text"]}
                           for c in chunks if c["chunk_id"] in ids], "claims": claims}
     try:
         got = decision.evaluate(cfg, state, questions, trace, budget, "graph_support")
     except Exception as error:  # noqa: BLE001 — no verdict is no verdict, never a rejection
         trace.append({"fallback": type(error).__name__, "reason": getattr(error, "category", "")})
-        return 0
+        return withdrawn
     for name, value in got.items():
         relation, seen = where[name]
         relation.update(support=value, english=seen)
-    return len(got)
+    return withdrawn + len(got)
 
 
 def contradictions(index, repo: str, versions: str, cfg: decision.Config, budget: Budget, trace: list,
@@ -749,11 +756,22 @@ def extract_graph(project: str | Path | None, limit: int = 40, seconds: float = 
             counts["judged"] += supported(items, cfg, budget, trace, project)
             knowledge_graph.keep(store, [(c["source_id"], knowledge_graph.digest(c["text"]), versions, r)
                                          for c, r in items], external)
-        judged = supported(again[:limit], cfg, budget, trace, project)
-        counts["judged"] += judged
-        if judged:
-            knowledge_graph.keep(store, [(c["source_id"], knowledge_graph.digest(c["text"]), versions, r)
-                                         for c, r in again[:limit]], external)
+        # Every cached result is looked at, not only the first `limit`: a
+        # verdict past them would otherwise never be withdrawn or given.
+        # ponytail: each run starts from the first; if the budget ends first
+        # every time, later ones wait — rotate a cursor if that shows up.
+        for start in range(0, len(again), limit):
+            batch = again[start:start + limit]
+            try:
+                budget.check()
+            except Exception as error:  # noqa: BLE001 — the rest waits for the next run
+                trace.append({"stopped": type(error).__name__, "reason": str(error)})
+                break
+            changed = supported(batch, cfg, budget, trace, project)
+            counts["judged"] += changed
+            if changed:
+                knowledge_graph.keep(store, [(c["source_id"], knowledge_graph.digest(c["text"]), versions, r)
+                                             for c, r in batch], external)
         index.refresh()
         pairs = contradictions(index, repo, versions, cfg, budget, trace, project, external)
         index.refresh()
