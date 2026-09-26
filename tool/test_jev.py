@@ -149,10 +149,10 @@ def test_one_budget_bounds_every_call_in_a_run(monkeypatch, budget, judged):
     monkeypatch.setattr(jev, "evaluate", evaluate)
     monkeypatch.setattr(jev, "retrieve", lambda *a: searched.append(a) or [hit("a")])
     monkeypatch.setattr(jev, "TIMEOUT", 0.25)
-    monkeypatch.setattr(jev, "BUDGET", budget)
+    # `run`, not `prepare`: the steps' own budget, without the exit's bound.
     started = time.monotonic()
-    out = jev.prepare("Question", None)
-    assert time.monotonic() - started < jev.BUDGET
+    out = jev.run("Question", None, ["hub"], "", 8, started + budget)
+    assert time.monotonic() - started < budget
     assert len(calls) == judged and len(searched) == 2
     assert out["status"] == "fallback" and out["evidence"] == [hit("a")]
     assert out["trace"][-1] == {"fallback": "TimeoutError", "reason": "budget"}
@@ -188,14 +188,38 @@ def test_searches_spend_the_same_budget(monkeypatch):
     monkeypatch.setattr(daemon, "Index", Cold)
     monkeypatch.setattr(jev, "evaluate", evaluate)
     monkeypatch.setattr(jev, "TIMEOUT", 0.1)
-    monkeypatch.setattr(jev, "BUDGET", 0.6)
+    budget = 0.6
     started = time.monotonic()
-    out = jev.prepare("Question", None)
+    out = jev.run("Question", None, ["hub"], "", 8, started + budget)
     # Two daemon searches use the budget up; the fallback gets nothing left, so
     # it skips the daemon for the cold index instead of waiting three seconds more.
-    assert time.monotonic() - started < jev.BUDGET + 0.15
-    assert len(asked) == 2 and asked[0] <= jev.BUDGET and asked[1] < jev.BUDGET
+    assert time.monotonic() - started < budget + 0.15
+    assert len(asked) == 2 and asked[0] <= budget and asked[1] < budget
     assert out["trace"][-1]["reason"] == "budget" and out["evidence"] == [hit("cold")]
+
+
+def test_a_slow_cold_index_cannot_hold_the_caller_past_the_budget(monkeypatch):
+    import search.daemon as daemon
+
+    class Slow:
+        def __init__(self, *a):
+            pass
+
+        def refresh(self):
+            time.sleep(1.0)
+
+        def search(self, query, k, sources):
+            return [hit("late")]
+
+    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    monkeypatch.setattr(jev, "ask", lambda *a, **kw: None)
+    monkeypatch.setattr(daemon, "Index", Slow)
+    monkeypatch.setattr(jev, "BUDGET", 0.2)
+    started = time.monotonic()
+    out = jev.prepare("Question", "/repo")
+    assert time.monotonic() - started < 0.5
+    assert out["status"] == "fallback" and out["evidence"] == []
+    assert out["trace"] == [{"fallback": "TimeoutError", "reason": "budget"}]
 
 
 def test_source_selection_precedes_top_k_and_never_reads_other_memory(tmp_path):
