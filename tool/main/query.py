@@ -24,6 +24,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from agent import ChatSession, explain
+from search import refresh
 from session_state import run
 from wiki import label, match_pages, pages
 import decision
@@ -491,9 +492,13 @@ def keep(repo: Path, focus: str, rows: list[dict], cfg: dict, body: Clear) -> di
     if body.keep != "memory":
         return {}
     try:
-        return memory.keep(repo, focus, rows, cfg.get("model", ""), cfg.get("effort", ""))
+        kept = memory.keep(repo, focus, rows, cfg.get("model", ""), cfg.get("effort", ""))
     except RuntimeError as exc:
         return {"fault": str(exc)}
+    if kept:
+        # Searchable now, not at the next question (stage 3 of `docs/plans/jev/`).
+        refresh(repo)
+    return kept
 
 
 @router.post("/api/say/{cid}")

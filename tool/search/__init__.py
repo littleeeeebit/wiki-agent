@@ -30,7 +30,7 @@ import time
 from pathlib import Path
 
 __all__ = ("ask", "prepare", "local_index", "evidence_store", "resolve", "notify", "PING", "spawn", "PORT", "HUB",
-           "cache_dir", "state_path", "version")
+           "cache_dir", "state_path", "version", "records", "refresh", "sources", "providers")
 
 HERE = Path(__file__).resolve().parent
 # The hub whose `operator/` and `craft/` every search covers. `WIKI_ROOT` as in `wiki`.
@@ -152,12 +152,33 @@ def evidence_store(project: str | Path | None, hub: Path | None = None):
 
 
 def resolve(chunk: dict, path: str | Path) -> str | None:
-    """The original span `chunk` cites, read again from `path`, or `None`
-    when that file is gone or no longer the revision it was cut from."""
+    """The original span `chunk` cites, read again from `path` — a file, or
+    an external source's snapshot — or `None` when that is gone or no longer
+    the revision it was cut from."""
 
-    from .evidence import resolve as read
+    if "path" in chunk["locator"]:
+        from .evidence import resolve as read
+    else:
+        from .sources import resolve as read
 
     return read(chunk, Path(path))
+
+
+def records(project: str | Path | None):
+    """The external source records of `project` (the hub's without one),
+    `sources.Records`. The caller closes it, or uses it in a `with` block."""
+
+    from .sources import Records, records_folder
+
+    return Records(records_folder(Path(project).resolve() if project else HUB))
+
+
+def refresh(project: str | Path | None) -> None:
+    """Bring `project`'s evidence store up to date now — after a memory is
+    saved or deleted — rather than at the next question. A running daemon
+    sees the store change and reloads."""
+
+    local_index(project).close()
 
 
 def local_index(project: str | Path | None, hub: Path | None = None, vectors: bool = False, wait: float = 600.0):
@@ -302,3 +323,7 @@ def exchange(conn: http.client.HTTPConnection, token: str, path: str, body: dict
         return None, False
     finally:
         conn.close()
+
+
+# The stage 3 modules, whole, for the main to compose. Last: they import from here.
+from . import providers, sources  # noqa: E402
