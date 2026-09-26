@@ -124,8 +124,36 @@ def listing() -> dict:
     return {"project": name, "repo": str(repo), "rows": out}
 
 
+class Removal(Where):
+    # A person's explicit delete: what runs there is stopped first, and
+    # uncommitted changes go with the worktree.
+    force: bool = False
+
+
+def halt_all(path: str) -> None:
+    """Stop a spec's loop in `path`, then its running turn, and wait for the
+    turn to let go of the worktree."""
+
+    from . import loop, specs  # both import this module
+
+    spec = specs.owner(Path(path))
+    if spec and loop.LOOPING.fullmatch(spec["state"]):
+        try:
+            loop.halt(spec["id"])
+        except HTTPException:
+            pass   # it ended on its own meanwhile
+    run = _runs.get(path)
+    if run is not None and not run.done:
+        run.halt.set()
+        run.chat.stop(run.halt)
+        with run.wake:
+            run.wake.wait_for(lambda: run.done, 30)
+
+
 @router.post("/api/worktrees/remove")
-def clear(body: Where) -> dict:
+def clear(body: Removal) -> dict:
+    if body.force:
+        halt_all(body.path)
     # Held for the whole removal, as a turn holds it. Checked and let go, a
     # new instruction was accepted while the worktree was being deleted. The
     # repository is taken with the hold and used to the end: read again
@@ -141,7 +169,7 @@ def clear(body: Where) -> dict:
         if chat:
             chat.close()
         try:
-            text = remove(repo, path)
+            text = remove(repo, path, force=body.force)
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(409, str(exc)) from exc
         # The same task name makes the same path again, and the record is
@@ -206,6 +234,7 @@ class Answer(BaseModel):
     id: str
     allow: bool
     scope: Literal["once", "session"] = "once"
+    answers: list[str] | None = None   # a question's, one per question
 
 
 def session(path: Path, model: str, effort: str) -> ChatSession:
@@ -219,6 +248,7 @@ def session(path: Path, model: str, effort: str) -> ChatSession:
     from . import specs  # `specs` imports this module
 
     key = str(path)
+    bypass = settings()["bypass"]
     with _lock:
         chat = _sessions.get(key)
         if chat is not None and chat.is_codex != model.startswith("codex:"):
@@ -227,12 +257,45 @@ def session(path: Path, model: str, effort: str) -> ChatSession:
             remember(path, "context", "CLI 변경")
             chat = None
         if chat is None:
-            chat = ChatSession(path, model=model, effort=effort, write=True, system=specs.system(path))
+            chat = ChatSession(path, model=model, effort=effort, write=True, system=specs.system(path),
+                               bypass=bypass)
             chat.session_id = resumable(recall(path), chat.is_codex)
             _sessions[key] = chat
         else:
+            if chat.bypass != bypass:
+                # Fixed at start-up: the next turn starts it again and resumes.
+                chat.bypass = bypass
+                chat.close()
             chat.reconfigure(model, effort)
         return chat
+
+
+# -- Settings ---------------------------------------------------------------
+
+WORK_DEFAULTS = {"bypass": True}
+
+
+def settings() -> dict:
+    from . import loop  # `loop` imports this module
+
+    return loop.settings(WORK_DEFAULTS)
+
+
+class WorkSettings(BaseModel):
+    bypass: bool
+
+
+@router.get("/api/work/settings")
+def get_settings() -> dict:
+    return settings()
+
+
+@router.post("/api/work/settings")
+def set_settings(body: WorkSettings) -> dict:
+    from . import loop
+
+    loop.store(bypass=body.bypass)
+    return settings()
 
 
 @router.get("/api/work/log")
@@ -362,8 +425,9 @@ def steps(events: list[dict]) -> list[dict]:
     asked: dict[str, dict] = {}
     for ev in events:
         meta = ev["meta"]
-        if ev["kind"] == "tool":
-            out.append({"kind": "tool", "text": ev["text"]})
+        # A hook's `context` is left out too: it is the wiki's, and the wiki has it.
+        if ev["kind"] in ("tool", "said", "hook"):
+            out.append({"kind": ev["kind"], "text": ev["text"]})
         elif ev["kind"] == "approval":
             # `none`: the turn ended before anyone answered.
             step = asked[str(meta.get("id"))] = {
@@ -371,7 +435,8 @@ def steps(events: list[dict]) -> list[dict]:
                 "answer": meta.get("answer", "none"), "by": meta.get("by", "person")}
             out.append(step)
         elif ev["kind"] == "answered" and str(meta.get("id")) in asked:
-            asked[str(meta["id"])].update(answer="allow" if meta["allow"] else "deny", by=meta["by"])
+            asked[str(meta["id"])].update(answer="allow" if meta["allow"] else "deny", by=meta["by"],
+                                          **({"answers": meta["answers"]} if meta.get("answers") else {}))
     return out
 
 
@@ -522,6 +587,29 @@ def stop(body: Stop) -> dict:
     return {"ok": True}
 
 
+class Steer(Stop):
+    text: str
+
+
+@router.post("/api/work/steer")
+def steer(body: Steer) -> dict:
+    """Say something into a running turn. It lands in that turn's buffer as
+    `said`, before anything the agent does with it, and in its record."""
+
+    text = body.text.strip()
+    if not text:
+        raise HTTPException(400, "빈 지시")
+    run = attached(body.path)
+    if run.turn != body.turn:
+        raise HTTPException(409, "지금 도는 턴이 아니다")
+    with run.wake:
+        if run.done or not run.chat.steer(text):
+            raise HTTPException(409, "턴이 막 끝났다. 새 지시로 보내라")
+        run.put({"kind": "said", "text": text, "meta": {}, "session_id": run.chat.id,
+                 "parent_id": run.chat.parent_id})
+    return {"ok": True}
+
+
 @router.post("/api/work/answer")
 def answer(body: Answer) -> dict:
     """A person's answer to one approval, sent to the session that asked.
@@ -542,14 +630,15 @@ def answer(body: Answer) -> dict:
     # CLI does with it — the record is read from there.
     with run.wake if run else nullcontext():
         try:
-            sent = chat.answer(body.id, body.allow, body.scope)
+            sent = chat.answer(body.id, body.allow, body.scope, body.answers)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
         if not sent:
             raise HTTPException(409, "이미 답했거나, 물은 프로세스가 내려갔다")
         if run:
             # Another window, and a reattached one, draw the card as answered.
-            run.put({"kind": "answered", "text": "", "meta": {"id": body.id, "allow": body.allow, "by": "person"},
+            run.put({"kind": "answered", "text": "", "meta": {"id": body.id, "allow": body.allow, "by": "person",
+                                                              **({"answers": body.answers} if body.answers else {})},
                      "session_id": chat.id, "parent_id": chat.parent_id})
     return {"ok": True}
 

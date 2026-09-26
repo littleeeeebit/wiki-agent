@@ -312,10 +312,10 @@ class Spender:
     tokens = 0
     heard: list = []
 
-    def __init__(self, path, model="", effort="", write=False, system=""):
+    def __init__(self, path, model="", effort="", write=False, system="", bypass=False):
         self.path, self.system = Path(path), system
         self.id, self.session_id, self.alive, self.parent_id = "s", None, True, None
-        self.is_codex, self.rules = False, []
+        self.is_codex, self.rules, self.bypass = False, [], bypass
 
     def say(self, text, halt=None):
         Spender.heard.append(text)

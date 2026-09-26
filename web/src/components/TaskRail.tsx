@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import type { MouseEvent } from 'react'
 import { FolderGit2, Plus, Repeat, Settings as Gear } from 'lucide-react'
 import { Btn, Modal } from '@/components/Modal'
 import { Picker } from '@/components/Toolbar'
@@ -25,7 +26,11 @@ type Props = {
   onLoop: (prs: number[]) => Promise<void>
   onSettings: () => void
   onNew: () => void
+  /** Delete a worktree even while it runs: what runs is stopped first. */
+  onRemove: (path: string) => void
 }
+
+type Target = { path: string; name: string }
 
 const DOT: Record<Phase, string> = {
   draft: 'bg-st-draft', work: 'bg-st-work', review: 'bg-st-review', ready: 'bg-st-ready',
@@ -59,6 +64,26 @@ export function TaskRail(props: Props) {
     })
   const pickable = prs.filter((p) => p.pickable)
   const done = tasks.filter((t) => t.group === 'done')
+  // Right-click on a task with a worktree: a menu at the pointer, then a confirm.
+  const [menu, setMenu] = useState<(Target & { x: number; y: number }) | null>(null)
+  const [doomed, setDoomed] = useState<Target | null>(null)
+  useEffect(() => {
+    if (!menu) return
+    const close = () => setMenu(null)
+    const esc = (e: KeyboardEvent) => e.key === 'Escape' && close()
+    window.addEventListener('click', close)
+    window.addEventListener('blur', close)
+    window.addEventListener('keydown', esc)
+    return () => {
+      window.removeEventListener('click', close)
+      window.removeEventListener('blur', close)
+      window.removeEventListener('keydown', esc)
+    }
+  }, [menu])
+  const onMenu = (t: Task) => (t.path ? (e: MouseEvent) => {
+    e.preventDefault()
+    setMenu({ path: t.path!, name: t.name, x: e.clientX, y: e.clientY })
+  } : undefined)
 
   const projects: Item[] = options?.projects.map((p) => ({ value: p.id, label: p.id,
     note: p.state === '미연결' ? undefined : p.state })) ?? []
@@ -158,7 +183,8 @@ export function TaskRail(props: Props) {
           return list.length > 0 && (
             <div key={g.id} className="mb-2">
               <Label>{g.label}</Label>
-              {list.map((t) => <Row key={t.key} task={t} selected={t.key === selected} onSelect={props.onSelect} />)}
+              {list.map((t) => <Row key={t.key} task={t} selected={t.key === selected} onSelect={props.onSelect}
+                onMenu={onMenu(t)} />)}
             </div>
           )
         })}
@@ -168,7 +194,8 @@ export function TaskRail(props: Props) {
               <span className={WIDE}>끝난 것 {done.length}</span>
               <span className={NARROW}>{done.length}</span>
             </summary>
-            {done.map((t) => <Row key={t.key} task={t} selected={t.key === selected} onSelect={props.onSelect} />)}
+            {done.map((t) => <Row key={t.key} task={t} selected={t.key === selected} onSelect={props.onSelect}
+              onMenu={onMenu(t)} />)}
           </details>
         )}
         {props.others.length > 0 && (
@@ -183,6 +210,36 @@ export function TaskRail(props: Props) {
           </div>
         )}
       </nav>
+
+      {menu && (
+        <div role="menu" style={{ left: menu.x, top: menu.y }}
+          className="fixed z-50 min-w-28 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
+          <button type="button" role="menuitem" autoFocus onClick={() => setDoomed(menu)}
+            className="w-full rounded px-2 py-1 text-left text-[12.5px] text-destructive hover:bg-secondary">
+            삭제
+          </button>
+        </div>
+      )}
+
+      {doomed && (
+        <Modal title="작업트리 삭제" onClose={() => setDoomed(null)} foot={(
+          <>
+            <Btn onClick={() => setDoomed(null)}>닫기</Btn>
+            <Btn tone="danger" onClick={() => {
+              const path = doomed.path
+              setDoomed(null)
+              props.onRemove(path)
+            }}>
+              삭제
+            </Btn>
+          </>
+        )}>
+          <p>
+            <span className="font-mono text-[12.5px]">{doomed.name}</span> 작업트리를 지운다. 도는 에이전트와 리뷰 루프는
+            멈추고, 커밋하지 않은 변경은 사라진다. 머지되지 않은 브랜치는 남긴다.
+          </p>
+        </Modal>
+      )}
 
       {picking && (
         <Modal title="리뷰 루프에 넣을 PR" onClose={() => setPicking(null)} foot={(
@@ -228,11 +285,13 @@ type RowTask = Pick<Task, 'key' | 'name' | 'pr' | 'round' | 'phase' | 'waiting' 
 /** One task: its name, PR and round; then one word of state and what a
  *  person has to do. Folded, only the dot stays, and the words move to the
  *  tooltip. */
-function Row({ task: t, selected, onSelect, title }:
-  { task: RowTask; selected: boolean; onSelect: (key: string) => void; title?: string }) {
+function Row({ task: t, selected, onSelect, onMenu, title }: {
+  task: RowTask; selected: boolean; onSelect: (key: string) => void; onMenu?: (e: MouseEvent) => void; title?: string
+}) {
   const tip = `${t.name}${t.pr ? ` #${t.pr}` : ''}${t.round ? ` R${t.round}` : ''} — ${t.line}`
   return (
-    <button type="button" onClick={() => onSelect(t.key)} aria-current={selected} title={title ?? tip}
+    <button type="button" onClick={() => onSelect(t.key)} onContextMenu={onMenu} aria-current={selected}
+      title={title ?? tip}
       className={cn('mb-0.5 w-full rounded-md px-2.5 py-1.5 text-left hover:bg-sidebar-accent max-[1280px]:grid max-[1280px]:h-8 max-[1280px]:place-items-center max-[1280px]:px-0',
         selected && 'bg-sidebar-accent')}>
       <span className="flex items-center gap-2">

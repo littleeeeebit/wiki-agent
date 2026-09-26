@@ -4,6 +4,7 @@ the answer goes back, and nothing outside the worktree is even asked about.
 The CLIs are stand-in child processes that speak each host's protocol.
 """
 
+import json
 import subprocess
 import sys
 import threading
@@ -45,7 +46,7 @@ say({"id": 100, "method": "item/fileChange/requestApproval", "params": {"itemId"
 a = read()["result"]["decision"]
 say({"id": 101, "method": "item/commandExecution/requestApproval", "params": {"command": "rm -rf x", "cwd": out}})
 b = read()["result"]["decision"]
-say({"id": 102, "method": "item/tool/requestUserInput", "params": {}})
+say({"id": 102, "method": "item/tool/call", "params": {}})
 c = "error" in read()
 say({"method": "item/agentMessage/delta", "params": {"delta": "ok"}})
 say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": f"{a},{b},{c}"}}})
@@ -102,9 +103,9 @@ def tree(tmp_path, monkeypatch):
     return create(repo, "task")
 
 
-def run(session, fixture, tree, answer=None, halt=None):
+def run(session, fixture, tree, answer=None, halt=None, each=None):
     """Drive one turn against a stand-in CLI. `answer` sees each approval a
-    person is asked."""
+    person is asked; `each` sees every event."""
 
     real_popen, commands, events = subprocess.Popen, [], []
 
@@ -117,6 +118,8 @@ def run(session, fixture, tree, answer=None, halt=None):
          patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
         for event in session.say("write it", halt):
             events.append(event)
+            if each:
+                each(event)
             if event.kind == "approval" and answer and "by" not in event.meta:
                 answer(event)
     session.close()
@@ -163,7 +166,7 @@ def test_a_read_session_refuses_without_asking(tmp_path):
 def test_codex_write_runs_app_server_and_answers_by_id(tree):
     session = ChatSession(tree, model="codex:test-model", write=True)
     command, events = run(session, CODEX, tree, lambda e: session.answer(e.meta["id"], True))
-    assert command == ["codex", "app-server"]
+    assert command == ["codex", "app-server", "--enable", "default_mode_request_user_input"]
     approvals = [e for e in events if e.kind == "approval"]
     # the command ran in a cwd outside the worktree: declined unasked
     assert [(e.meta["id"], e.meta["tool"], e.meta.get("by")) for e in approvals] == [
@@ -195,12 +198,12 @@ def test_a_late_answer_never_reaches_the_next_process(tree):
         approval_id = event.meta["id"]
         asker, reply, rule = session._pending[approval_id]
 
-        def racing(allow):
+        def racing(allow, answers=()):
             # Between `answer` taking the reply and sending it, the turn is
             # abandoned and the next one starts.
             session.close()
             session.ensure()
-            return reply(allow)
+            return reply(allow, answers)
 
         session._pending[approval_id] = (asker, racing, rule)
         restarted.append(session.answer(approval_id, True))
@@ -403,3 +406,140 @@ def test_a_late_stop_for_another_turn_leaves_this_one_running(tree):
 
     _, events = run(session, CLAUDE, tree, answer, threading.Event())
     assert events[-1].kind == "done" and events[-1].text == "allow,deny"
+
+
+CODEX_BYPASS = '''import json, sys
+read = lambda: json.loads(sys.stdin.readline())
+say = lambda m: print(json.dumps(m), flush=True)
+m = read(); say({"id": m["id"], "result": {}})
+read()
+m = read()
+assert (m["params"]["sandbox"], m["params"]["approvalPolicy"]) == ("danger-full-access", "never"), m
+say({"id": m["id"], "result": {"thread": {"id": "th-1"}}})
+m = read(); say({"id": m["id"], "result": {"turn": {}}})
+say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})
+say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+sys.stdin.read()
+'''
+
+
+CLAUDE_ANSWERS = '''import json, sys
+sys.stdin.readline()
+print(json.dumps({"type": "result", "result": "ran", "session_id": "cli-1"}), flush=True)
+sys.stdin.read()
+'''
+
+
+def test_bypass_opens_both_hosts_without_asking(tree):
+    command, _ = run(ChatSession(tree, write=True, bypass=True), CLAUDE_ANSWERS, tree)
+    assert command[command.index("--permission-mode") + 1] == "bypassPermissions"
+    _, events = run(ChatSession(tree, model="codex:m", write=True, bypass=True), CODEX_BYPASS, tree)
+    assert events[-1].kind == "done" and events[-1].text == "ran"
+    assert not ChatSession(tree, bypass=True).bypass   # a read session never bypasses
+
+
+# The turn's result comes before the steered message was taken in: the CLI
+# answers it as one more turn, and that is still this turn.
+CLAUDE_STEER = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+first = json.loads(sys.stdin.readline())
+say({"type": "user", "isReplay": True, "message": first["message"]})
+say({"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "x"}}]}})
+say({"type": "result", "result": "one", "session_id": "cli-1"})
+m = json.loads(sys.stdin.readline())
+say({"type": "user", "isReplay": True, "message": m["message"]})
+say({"type": "result", "result": "two:" + m["message"]["content"][0]["text"], "session_id": "cli-1"})
+sys.stdin.read()
+'''
+
+
+def test_a_steer_after_the_last_step_is_still_this_turn(tree):
+    session = ChatSession(tree, write=True, bypass=True)
+    assert not session.steer("early")   # no turn runs
+    steered = []
+    _, events = run(session, CLAUDE_STEER, tree,
+                    each=lambda e: e.kind == "tool" and steered.append(session.steer("more")))
+    assert steered == [True]
+    assert [e.kind for e in events].count("done") == 1 and events[-1].text == "two:more"
+    assert not session.steer("late")
+
+
+CODEX_STEER = '''import json, sys
+read = lambda: json.loads(sys.stdin.readline())
+say = lambda m: print(json.dumps(m), flush=True)
+m = read(); say({"id": m["id"], "result": {}})
+read()
+m = read(); say({"id": m["id"], "result": {"thread": {"id": "th-1"}}})
+m = read(); say({"id": m["id"], "result": {"turn": {}}})
+say({"method": "turn/started", "params": {"turn": {"id": "t-1"}}})
+say({"method": "item/started", "params": {"item": {"type": "commandExecution", "command": "x"}}})
+m = read()
+assert m["method"] == "turn/steer" and m["params"]["expectedTurnId"] == "t-1", m
+say({"id": m["id"], "error": {"message": "no active turn"}})
+say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": m["params"]["input"][0]["text"]}}})
+say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+sys.stdin.read()
+'''
+
+
+def test_a_codex_steer_names_the_turn_and_its_refusal_does_not_end_it(tree):
+    session = ChatSession(tree, model="codex:m", write=True, bypass=True)
+    _, events = run(session, CODEX_STEER, tree,
+                    each=lambda e: e.kind == "tool" and e.text == "x" and session.steer("more"))
+    assert any(e.kind == "tool" and e.text.startswith("끼어들기 실패") for e in events)
+    assert events[-1].kind == "done" and events[-1].text == "more"
+
+
+# A hook that spoke, one that injected, one silent; then a question.
+CLAUDE_QUESTION = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+hook = lambda event, output: say({"type": "system", "subtype": "hook_response", "hook_event": event,
+                                  "output": output, "stderr": "", "exit_code": 0})
+hook("UserPromptSubmit", json.dumps({"systemMessage": "위키 주입: a", "hookSpecificOutput": {"additionalContext": "rules"}}))
+hook("SessionStart", "plain context")
+hook("Stop", "")
+q = {"question": "Pick", "header": "P", "options": [{"label": "A"}, {"label": "B"}], "multiSelect": False}
+say({"type": "control_request", "request_id": "q1",
+     "request": {"subtype": "can_use_tool", "tool_name": "AskUserQuestion", "input": {"questions": [q]}}})
+got = json.loads(sys.stdin.readline())["response"]["response"]
+say({"type": "result", "result": json.dumps(got["updatedInput"]["answers"]), "session_id": "cli-1"})
+sys.stdin.read()
+'''
+
+
+def test_claude_hooks_show_and_a_question_takes_its_answers(tree):
+    session = ChatSession(tree, write=True, bypass=True)
+    command, events = run(session, CLAUDE_QUESTION, tree, lambda e: session.answer(e.meta["id"], True, answers=["B"]))
+    assert "AskUserQuestion" in command[command.index("--tools") + 1]
+    assert command[command.index("--permission-prompt-tool") + 1] == "stdio"   # kept under bypass
+    hooks = [(e.text, e.meta.get("context")) for e in events if e.kind == "hook"]
+    assert hooks == [("위키 주입: a", "rules"), ("SessionStart · 문맥 13자", "plain context")]
+    assert json.loads(events[-1].text) == {"Pick": "B"}
+
+
+CODEX_QUESTION = '''import json, sys
+read = lambda: json.loads(sys.stdin.readline())
+say = lambda m: print(json.dumps(m), flush=True)
+m = read(); say({"id": m["id"], "result": {}})
+read()
+m = read(); say({"id": m["id"], "result": {"thread": {"id": "th-1"}}})
+m = read(); say({"id": m["id"], "result": {"turn": {}}})
+say({"method": "hook/completed", "params": {"run": {"eventName": "userPromptSubmit", "entries": [
+     {"kind": "warning", "text": "위키 주입: a"}, {"kind": "context", "text": "rules"}]}}})
+say({"id": 7, "method": "item/tool/requestUserInput", "params": {"questions": [
+     {"id": "fruit", "header": "F", "question": "Pick", "options": [{"label": "A", "description": ""}]}]}})
+got = read()["result"]["answers"]
+say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": json.dumps(got)}}})
+say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+sys.stdin.read()
+'''
+
+
+def test_codex_hooks_show_and_a_question_is_answered_by_its_id(tree):
+    session = ChatSession(tree, model="codex:m", write=True)
+    _, events = run(session, CODEX_QUESTION, tree, lambda e: session.answer(e.meta["id"], True, answers=["A"]))
+    assert [(e.text, e.meta.get("context")) for e in events if e.kind == "hook"] == [("위키 주입: a", "rules")]
+    asked = next(e for e in events if e.kind == "approval")
+    assert asked.meta["tool"] == "requestUserInput" and not asked.meta["session"]
+    assert json.loads(events[-1].text) == {"fruit": {"answers": ["A"]}}

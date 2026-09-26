@@ -602,9 +602,10 @@ class Agent:
 
     made: list = []
 
-    def __init__(self, path, model="", effort="", write=False, system=""):
+    def __init__(self, path, model="", effort="", write=False, system="", bypass=False):
         assert write
         self.id, self.session_id, self.alive, self.parent_id = uuid.uuid4().hex, None, True, None
+        self.bypass = bypass
         self.is_codex = model.startswith("codex:")
         self.pending, self.rules = {"r1"}, []
         Agent.made.append(self)
@@ -613,7 +614,7 @@ class Agent:
         yield Event("approval", "Write · b.txt", {"id": "r1", "tool": "Write", "input": {}}, self.id)
         yield Event("done", "했다", {"session_id": "cli-1", "error": False}, self.id)
 
-    def answer(self, rid, allow, scope="once"):
+    def answer(self, rid, allow, scope="once", answers=None):
         if rid not in self.pending:
             return False
         self.pending.discard(rid)
@@ -804,6 +805,24 @@ def test_a_new_task_under_an_old_name_starts_fresh(tmp_path):
         assert Agent.made[-1].session_id is None
 
 
+def test_a_forced_delete_stops_the_running_turn_and_drops_its_changes(tmp_path):
+    """A person's right-click delete: refused plain while a turn runs, done
+    when forced — the turn stopped and let go first, uncommitted work gone."""
+
+    repo = _repo(tmp_path)
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Slow):
+        path = _made()
+        (Path(path) / "wip.txt").write_text("x", encoding="utf-8")
+        waiting = work.say(work.Order(path=path, text="x"))
+        assert web.post("/api/worktrees/remove", json={"path": path}).status_code == 409
+        text = web.post("/api/worktrees/remove", json={"path": path, "force": True}).json()["text"]
+        assert "지웠다" in text and not Path(path).exists()
+        assert not work._busy and path not in work._runs
+        del waiting
+
+
 def test_a_switch_waits_for_a_short_request_and_not_for_a_turn(tmp_path):
     """Making, removing and resetting read the project partway through, and a
     switch waits for them. A turn took its repository with its hold, and its
@@ -926,15 +945,15 @@ def test_a_removal_holds_its_worktree_until_it_is_done(tmp_path):
     web = client()
     gate, real = threading.Event(), work.remove
 
-    def slow(*args):
+    def slow(*args, **kwargs):
         gate.wait(10)
-        return real(*args)
+        return real(*args, **kwargs)
 
     with (patch.object(chat_channels, "repo_for", side_effect=repos.get),
           patch.object(work, "ChatSession", Agent), patch.object(work, "remove", slow)):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         path = _made()
-        removing = threading.Thread(target=lambda: work.clear(work.Where(path=path)))
+        removing = threading.Thread(target=lambda: work.clear(work.Removal(path=path)))
         removing.start()
         try:
             for _ in range(100):
@@ -1209,7 +1228,7 @@ class Asker(Slow):
         self.go.wait(10)
         yield Event("error", "프로세스가 닫혔다.", {}, self.id)
 
-    def answer(self, rid, allow, scope="once"):
+    def answer(self, rid, allow, scope="once", answers=None):
         ok = super().answer(rid, allow, scope)
         self.heard.set()
         return ok

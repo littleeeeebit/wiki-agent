@@ -496,8 +496,9 @@ export type Worktree = {
 
 export const getWorktrees = () =>
   get('/api/worktrees').then((r) => json<{ project: string; repo: string; rows: Worktree[] }>(r, '작업트리'))
-export const removeWorktree = (path: string) =>
-  post('/api/worktrees/remove', { path }).then((r) => json<{ text: string }>(r, '작업트리 정리'))
+/** `force`: stop what runs there and drop uncommitted changes — a person's delete. */
+export const removeWorktree = (path: string, force = false) =>
+  post('/api/worktrees/remove', { path, force }).then((r) => json<{ text: string }>(r, '작업트리 정리'))
 
 /** Who answered an approval: a person, a session rule, or the server itself
  *  refusing a write outside the worktree or anything a read session asks. */
@@ -508,9 +509,14 @@ export type AnsweredBy = 'person' | 'session' | 'outside' | 'read'
  *  one, and what an approval answer has to name. `turn` and `seq` place it in
  *  the server's buffer of that turn, which a reattaching screen reads from. */
 export type WorkEv = {
-  kind: 'delta' | 'tool' | 'approval' | 'answered' | 'done' | 'error'
+  kind: 'delta' | 'tool' | 'said' | 'hook' | 'approval' | 'answered' | 'done' | 'error'
   text: string
   meta: {
+    /** A hook's: which event, and what it put into context. */
+    event?: string
+    context?: string
+    /** A question's answers, one per question. */
+    answers?: string[]
     id?: string
     tool?: string
     input?: Record<string, unknown>
@@ -531,8 +537,9 @@ export type WorkEv = {
 }
 
 export type WorkStep =
-  | { kind: 'tool'; text: string }
-  | { kind: 'approval'; tool: string; text: string; answer: 'allow' | 'deny' | 'none'; by: AnsweredBy }
+  | { kind: 'tool' | 'said' | 'hook'; text: string }
+  | { kind: 'approval'; tool: string; text: string; answer: 'allow' | 'deny' | 'none'; by: AnsweredBy;
+      answers?: string[] }
 
 export type WorkTurn = {
   role: 'user' | 'assistant'
@@ -558,10 +565,16 @@ export const workLog = (path: string) =>
 export const workReset = (path: string, keep: Keep) =>
   post('/api/work/reset', { path, keep }).then((r) => json<Kept>(r, '작업 문맥 비우기'))
 export const workAnswer = (body: {
-  path: string; session_id: string; id: string; allow: boolean; scope: 'once' | 'session'
+  path: string; session_id: string; id: string; allow: boolean; scope: 'once' | 'session'; answers?: string[]
 }) => post('/api/work/answer', body).then((r) => json(r, '승인'))
 export const workStop = (path: string, turn: string) =>
   post('/api/work/stop', { path, turn }).then((r) => json(r, '멈춤'))
+export const workSteer = (path: string, turn: string, text: string) =>
+  post('/api/work/steer', { path, turn, text }).then((r) => json(r, '끼어들기'))
+export type WorkSettings = { bypass: boolean }
+export const getWorkSettings = () => get('/api/work/settings').then((r) => json<WorkSettings>(r, '작업 설정'))
+export const setWorkSettings = (body: WorkSettings) =>
+  post('/api/work/settings', body).then((r) => json<WorkSettings>(r, '작업 설정'))
 export const clearRules = (path: string, session_id: string) =>
   post('/api/work/rules/clear', { path, session_id }).then((r) => json(r, '세션 허용 해제'))
 

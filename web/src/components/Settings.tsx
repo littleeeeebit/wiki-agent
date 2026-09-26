@@ -24,6 +24,7 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   const [survey, setSurvey] = useState<SurveySettings | null>(null)
   const [savedSurvey, setSavedSurvey] = useState<SurveySettings | null>(null)
   const [hub, setHub] = useState<Hub | null>(null)
+  const [bypass, setBypass] = useState<boolean | null>(null)
   const [rounds, setRounds] = useState(0)
   const [seats, setSeats] = useState(0)
   const [model, setModel] = useState('')
@@ -38,6 +39,9 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
         setSavedSurvey(settings)
         setHub(hub)
       })
+      .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
+    api.getWorkSettings()
+      .then((s) => setBypass(s.bypass))
       .catch((err) => setFault(String(err instanceof Error ? err.message : err)))
   }, [])
 
@@ -87,6 +91,15 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
           <Row label="한국어 번역" note={usage ? `이번 달 ${usage.usd == null ? '?' : `$${usage.usd.toFixed(2)}`} / $${usage.limit.toFixed(0)}` : undefined}>
             <input type="checkbox" role="switch" className="size-4 accent-primary" checked={sw?.translate ?? false}
               disabled={!sw} onChange={(e) => onSwitch(e.target.checked)} />
+          </Row>
+          <Row label="작업 권한 묻지 않기"
+            note="켜면 작업 에이전트가 작업트리에서 묻지 않고 쓰고 실행한다(bypass). 다음 턴부터 적용된다">
+            <input type="checkbox" role="switch" className="size-4 accent-primary" checked={bypass ?? false}
+              disabled={bypass === null || working === 'bypass'}
+              onChange={(e) => {
+                const on = e.target.checked
+                void act('bypass', async () => setBypass((await api.setWorkSettings({ bypass: on })).bypass))
+              }} />
           </Row>
           <Row label="어두운 화면" note="이 기계에만 기억한다">
             <input type="checkbox" role="switch" className="size-4 accent-primary" checked={theme === 'dark'}

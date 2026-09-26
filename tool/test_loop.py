@@ -712,7 +712,7 @@ class Asking(Worker):
         yield Event("done", fixed(("[P1] a.txt:1 — 틀렸다", "fixed"))(self.path, halt),
                     {"session_id": "cli-1", "error": False}, self.id)
 
-    def answer(self, rid, allow, scope="once"):
+    def answer(self, rid, allow, scope="once", answers=None):
         self.answered.set()
         return True
 
