@@ -17,6 +17,7 @@ import threading
 import time
 import weakref
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -26,7 +27,7 @@ from agent import ChatSession, explain
 from session_state import run
 from wiki import label, match_pages, pages
 
-from . import channels
+from . import channels, memory
 
 ROOT = channels.WIKI
 LOGS = ROOT / "raw" / "chat"
@@ -212,15 +213,16 @@ def remember(cid: str, role: str, text: str, error: str = "", repo: Path | None 
     """`repo` for a row written outside a request — a spec's result, from a
     turn's thread — which names its repository rather than the selected one."""
 
-    LOGS.mkdir(parents=True, exist_ok=True)
     row = {"ts": time.time(), "role": role, "text": text, "repo": str(repo or current_repo()), **extra}
     if error:
         row["error"] = error
-    with (LOGS / f"{cid}.jsonl").open("a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    memory.append(LOGS / f"{cid}.jsonl", row)
 
 
 def recall(cid: str, legacy: bool = False, include_context: bool = False) -> list[dict]:
+    """This project's rows since the last clear. A cleared conversation came
+    back on the next switch of focus when this read the whole file."""
+
     path = LOGS / f"{cid}.jsonl"
     if not path.exists():
         return []
@@ -228,11 +230,13 @@ def recall(cid: str, legacy: bool = False, include_context: bool = False) -> lis
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
             row = json.loads(line)
-            belongs = not row.get("repo") if legacy else row.get("repo") == str(current_repo())
-            if belongs and (include_context or row.get("role") in ("user", "assistant", "result")):
-                rows.append(row)
         except json.JSONDecodeError:
             continue
+        if (not row.get("repo")) if legacy else row.get("repo") == str(current_repo()):
+            rows.append(row)
+    rows = memory.since_clear(rows)
+    if not include_context:
+        rows = [r for r in rows if r.get("role") in memory.SAID]
     return rows[-MAX_REPLAY:]
 
 
@@ -421,17 +425,38 @@ def log(cid: str, legacy: bool = False) -> list[dict]:
     return recall(cid, legacy)
 
 
+class Clear(BaseModel):
+    # `memory`: the pair in the repository's `.wiki/memory/`. `delete`: the
+    # rows go from the record too.
+    keep: Literal["memory", "delete"]
+
+
 @router.post("/api/reset/{cid}")
-def reset(cid: str) -> dict:
+def reset(cid: str, body: Clear) -> dict:
     known(cid)
     with _lock:
         if cid in _busy:
             raise HTTPException(409, "답변 생성이 끝난 뒤 대화를 초기화해 주세요")
-        remember(cid, "context", "사용자가 문맥 지우기")
+        repo, cfg = current_repo(), dict(config(cid))
+        rows = memory.clear(LOGS / f"{cid}.jsonl", lambda r: r.get("repo") == str(repo),
+                            {"ts": time.time(), "role": "context", "text": memory.CLEARED, "repo": str(repo)},
+                            body.keep == "delete")
         chat = _sessions.pop(session_key(cid), None)
     if chat:
         chat.close()
-    return {"ok": True}
+    return {"ok": True, **keep(repo, cid, rows, cfg, body)}
+
+
+def keep(repo: Path, focus: str, rows: list[dict], cfg: dict, body: Clear) -> dict:
+    """The memory pair, outside every lock: it is a model turn. A failure is
+    said, not raised — the conversation is cleared by then either way."""
+
+    if body.keep != "memory":
+        return {}
+    try:
+        return memory.keep(repo, focus, rows, cfg.get("model", ""), cfg.get("effort", ""))
+    except RuntimeError as exc:
+        return {"fault": str(exc)}
 
 
 @router.post("/api/say/{cid}")

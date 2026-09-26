@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Eraser } from 'lucide-react'
 import { Blocks } from '@/components/Blocks'
 import { Composer } from '@/components/Composer'
-import { Btn } from '@/components/Modal'
+import { Btn, ClearAsk } from '@/components/Modal'
 import { Peek } from '@/components/Peek'
 import { Stream } from '@/components/Stream'
 import { Toolbar } from '@/components/Toolbar'
@@ -97,11 +97,14 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
   // Switching focus restores that focus's record. The server holds the
   // process, so there is nothing for the screen to remember.
   //
-  // Two guards. A further switch discards this one (`stale`), and a record
-  // arriving after the person has typed something does not overwrite it.
+  // Three guards. A further switch discards this one (`stale`), a clear
+  // since it was asked discards it too (`clears`), and a record arriving
+  // after the person has typed something does not overwrite it.
+  const clears = useRef(0)
   useEffect(() => {
     if (!active || !selectedRepo) return
     let stale = false
+    const asked = clears.current
     setMessages([])
     setLegacy([])
     setNote('')
@@ -109,7 +112,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
     api
       .getLog(active)
       .then((rows) => {
-        if (stale) return
+        if (stale || asked !== clears.current) return
         const restored: Msg[] = rows.map((r) => ({ role: r.role, text: r.said ?? r.text, blocks: r.blocks,
           tools: [], source: r.source, error: r.error,
           ms: r.ms, cost: r.cost_usd, model: r.model, sessionId: r.session_id, tokens: r.tokens,
@@ -218,16 +221,18 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
     [active, here, onChannels],
   )
 
-  const wipe = useCallback(async () => {
-    try {
-      await api.reset(active)
-      setMessages([])
-      setNote('')
-      api.getChannels().then(onChannels).catch(() => {})
-    } catch (err) {
-      setFault(String(err))
-    }
+  // Always asked: an empty pane is not an empty conversation — its record may
+  // still be on the way, and a silent delete took it.
+  const [asking, setAsking] = useState(false)
+  const clear = useCallback(async (keep: api.Keep) => {
+    const kept = await api.reset(active, keep)
+    clears.current++
+    setMessages([])
+    setNote('')
+    api.getChannels().then(onChannels).catch(() => {})
+    return kept
   }, [active, onChannels])
+  const wipe = useCallback(() => setAsking(true), [])
 
   // "That was wrong" — recorded in the census's format, together with the
   // utterance immediately before that answer.
@@ -291,7 +296,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         <div className="flex shrink-0 items-center gap-1.5">
           {here && <Toolbar value={here} options={options} busy={busy} onChange={apply} />}
           <Btn tone="ghost" className="px-1.5" onClick={wipe} disabled={busy} aria-label="문맥 비우기"
-            title="문맥 비우기 — 이 초점의 대화를 새로 시작한다. 기록은 남는다">
+            title="문맥 비우기 — 이 초점의 대화를 새로 시작한다. 지금 대화는 메모리로 남기거나 지운다">
             <Eraser className="size-4" />
           </Btn>
         </div>
@@ -337,6 +342,10 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         </div>
         {peek && <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />}
       </div>
+      {asking && <ClearAsk onClear={clear} onClose={(said) => {
+        setAsking(false)
+        if (said) setNote(said)
+      }} />}
     </section>
   )
 }

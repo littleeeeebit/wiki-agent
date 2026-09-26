@@ -87,6 +87,16 @@ def codex_models() -> list[dict]:
 codex_models.cache_clear = _codex_cache.clear
 
 
+def efforts_of(model: str) -> set[str]:
+    """The efforts `model` takes: a Codex model's own list — empty for a model
+    Codex does not list — else the Claude CLI's five and the CLI default."""
+
+    if model.startswith("codex:"):
+        found = next((m for m in codex_models() if m["id"] == model), None)
+        return {e["id"] for e in found["efforts"]} if found else set()
+    return {e["id"] for e in EFFORTS}
+
+
 def projects() -> list[dict]:
     """The repositories that can be chosen: whatever in the workspace has a `.git`.
 

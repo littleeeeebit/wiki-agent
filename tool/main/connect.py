@@ -531,6 +531,7 @@ class SurveySettings(BaseModel):
     survey_tokens: int
     survey_minutes: int
     survey_model: str = "opus"
+    survey_effort: str = ""
 
 
 @router.get("/api/connect")
@@ -559,8 +560,14 @@ def set_settings(body: SurveySettings) -> dict:
     model = body.survey_model.strip()
     if model and not model.startswith("codex:") and not channels.CLAUDE_MODEL.fullmatch(model):
         raise HTTPException(400, "그런 모델 이름은 받지 않는다")
+    try:
+        allowed = channels.efforts_of(model)
+    except Exception as exc:
+        raise HTTPException(503, f"Codex 모델 목록 확인 실패: {exc}") from exc
+    if body.survey_effort not in allowed:
+        raise HTTPException(400, "이 모델이 지원하지 않는 추론 강도")
     loop.store(survey=body.survey, survey_tokens=body.survey_tokens, survey_minutes=body.survey_minutes,
-               survey_model=model)
+               survey_model=model, survey_effort=body.survey_effort)
     return survey.settings()
 
 

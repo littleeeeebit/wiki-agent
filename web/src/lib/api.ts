@@ -78,7 +78,7 @@ export type SurveyProgress = {
 export type Choice = { id: string; label: string; note: string }
 export type Options = {
   projects: Project[]
-  models: (Choice & { efforts?: Choice[] })[]
+  models: (Choice & { efforts?: Choice[]; is_default?: boolean })[]
   efforts: Choice[]
   codex_error: string
 }
@@ -202,7 +202,13 @@ export const getOptions = () =>
 export const getLog = (id: string, legacy = false) =>
   get(`/api/log/${id}?legacy=${legacy}`).then((r) => json<Turn[]>(r, '기록'))
 
-export const reset = (id: string) => post(`/api/reset/${id}`).then((r) => json(r, '문맥 지우기'))
+/** What a clear does with the conversation: kept as a transcript and memory
+ *  pair in the repository's `.wiki/memory/`, or deleted from the record. */
+export type Keep = 'memory' | 'delete'
+export type Kept = { ok: boolean; raw?: string; memory?: string; fault?: string }
+
+export const reset = (id: string, keep: Keep) =>
+  post(`/api/reset/${id}`, { keep }).then((r) => json<Kept>(r, '문맥 지우기'))
 
 /** Every channel shares the project; conversations are kept per project and
  *  per channel. */
@@ -389,7 +395,7 @@ export type LoopRow = {
   queued?: string | null
 }
 
-export type LoopSettings = { rounds: number; concurrent: number; review_model: string }
+export type LoopSettings = { rounds: number; concurrent: number; review_model: string; review_effort: string }
 
 export const getPrs = () =>
   get('/api/prs').then((r) => json<{ project: string; rows: Pr[]; error?: string }>(r, 'PR 목록'))
@@ -413,7 +419,9 @@ export const setLoopSettings = (body: LoopSettings) =>
 
 // -- Connecting a repository --------------------------------------------------
 
-export type SurveySettings = { survey: boolean; survey_tokens: number; survey_minutes: number; survey_model: string }
+export type SurveySettings = {
+  survey: boolean; survey_tokens: number; survey_minutes: number; survey_model: string; survey_effort: string
+}
 export type HubPlan = {
   needed: boolean
   refused: string
@@ -547,8 +555,8 @@ export const workLog = (path: string) =>
     json<{ rows: WorkTurn[]; session_id: string; busy: boolean; running: Running | null; rules: Rule[] }>(
       r, '작업 기록'),
   )
-export const workReset = (path: string) =>
-  post('/api/work/reset', { path }).then((r) => json(r, '작업 문맥 비우기'))
+export const workReset = (path: string, keep: Keep) =>
+  post('/api/work/reset', { path, keep }).then((r) => json<Kept>(r, '작업 문맥 비우기'))
 export const workAnswer = (body: {
   path: string; session_id: string; id: string; allow: boolean; scope: 'once' | 'session'
 }) => post('/api/work/answer', body).then((r) => json(r, '승인'))

@@ -13,19 +13,21 @@ type Props = {
   onTheme: (theme: 'dark' | 'light') => void
   onLoop: (s: LoopSettings) => Promise<void>
   onClose: () => void
+  onProjects: () => void
 }
 
 const field = 'h-7 rounded-md border border-input bg-background px-2 font-mono text-[12px]'
 
 /** Everything the whole window shares, in three parts: general, connection,
  *  review. What a part edits is saved by that part's own button. */
-export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, onClose }: Props) {
+export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, onClose, onProjects }: Props) {
   const [survey, setSurvey] = useState<SurveySettings | null>(null)
   const [savedSurvey, setSavedSurvey] = useState<SurveySettings | null>(null)
   const [hub, setHub] = useState<Hub | null>(null)
   const [rounds, setRounds] = useState(0)
   const [seats, setSeats] = useState(0)
   const [model, setModel] = useState('')
+  const [effort, setEffort] = useState('')
   const [working, setWorking] = useState('')
   const [fault, setFault] = useState('')
 
@@ -46,6 +48,7 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
     setRounds(loop.rounds)
     setSeats(loop.concurrent)
     setModel(loop.review_model)
+    setEffort(loop.review_effort)
   }, [loop])
 
   async function act(key: string, fn: () => Promise<void>) {
@@ -60,10 +63,22 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
     }
   }
 
-  const loopEdited = !!loop && (rounds !== loop.rounds || seats !== loop.concurrent || model !== loop.review_model)
+  const loopEdited = !!loop && (rounds !== loop.rounds || seats !== loop.concurrent || model !== loop.review_model
+    || effort !== loop.review_effort)
   const surveyEdited = JSON.stringify(survey) !== JSON.stringify(savedSurvey)
   const usage = sw?.usage
   const models = options?.models.filter((m) => m.id) ?? []
+  // A model's own efforts, as the toolbar reads them; a model without a list
+  // takes the CLI's five.
+  const efforts = (id: string) => options?.models.find((m) => m.id === id)?.efforts ?? options?.efforts ?? []
+  // The review's empty model is Codex's default, not the Claude CLI's.
+  const reviewing = (id: string) => id || options?.models.find((m) => m.is_default)?.id || ''
+  const effortPicker =(id: string, value: string, set: (v: string) => void) => (
+    <select value={value} aria-label="추론 강도" onChange={(e) => set(e.target.value)} className={`${field} w-24 font-sans`}>
+      {!efforts(id).some((e) => e.id === value) && <option value={value}>{value}</option>}
+      {efforts(id).map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
+    </select>
+  )
 
   return (
     <Modal title="설정" onClose={onClose}>
@@ -85,6 +100,9 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
               : '이 기계의 hook 과 스킬 링크가 이 허브를 가리킨다') : '읽는 중…'}>
             <span className="font-mono text-[12px]">{hub?.name ?? ''}</span>
           </Row>
+          <Row label="저장소마다 [연결]" note="위키가 붙었는지 보고 붙인다">
+            <Btn onClick={onProjects}>프로젝트 목록 ▸</Btn>
+          </Row>
           {survey && (
             <>
               <Row label="[연결] 이 전수조사까지" note="켜면 견적을 보여 주고 확인받는다">
@@ -100,8 +118,17 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
                   onChange={(e) => setSurvey({ ...survey, survey_minutes: Number(e.target.value) })} />
               </Row>
               <Row label="조사 모델">
-                <input value={survey.survey_model} spellCheck={false} className={`${field} w-32`}
-                  onChange={(e) => setSurvey({ ...survey, survey_model: e.target.value })} />
+                <span className="flex gap-1.5">
+                  <select value={survey.survey_model} className={`${field} w-32 font-sans`}
+                    onChange={(e) => setSurvey({ ...survey, survey_model: e.target.value, survey_effort: '' })}>
+                    {!models.some((m) => m.id === survey.survey_model) && (
+                      <option value={survey.survey_model}>{survey.survey_model || 'CLI 기본'}</option>
+                    )}
+                    {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+                  </select>
+                  {effortPicker(survey.survey_model, survey.survey_effort,
+                    (v) => setSurvey({ ...survey, survey_effort: v }))}
+                </span>
               </Row>
               <Save edited={surveyEdited} busy={working === 'survey'} onSave={() => act('survey', async () => {
                 const saved = await api.setSurveySettings(survey)
@@ -123,13 +150,20 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
               onChange={(e) => setSeats(Number(e.target.value))} />
           </Row>
           <Row label="리뷰 모델">
-            <select value={model} onChange={(e) => setModel(e.target.value)} className={`${field} w-40 font-sans`}>
-              <option value="">Codex 기본</option>
-              {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-            </select>
+            <span className="flex gap-1.5">
+              <select value={model} className={`${field} w-32 font-sans`} onChange={(e) => {
+                // The effort goes with the model: one the new model does not take is dropped.
+                setModel(e.target.value)
+                if (!efforts(reviewing(e.target.value)).some((x) => x.id === effort)) setEffort('')
+              }}>
+                <option value="">Codex 기본</option>
+                {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+              </select>
+              {effortPicker(reviewing(model), effort, setEffort)}
+            </span>
           </Row>
           <Save edited={loopEdited} busy={working === 'loop'}
-            onSave={() => act('loop', () => onLoop({ rounds, concurrent: seats, review_model: model }))} />
+            onSave={() => act('loop', () => onLoop({ rounds, concurrent: seats, review_model: model, review_effort: effort }))} />
           </>)}
         </Part>
 

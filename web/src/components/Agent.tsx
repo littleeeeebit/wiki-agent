@@ -1,11 +1,11 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Eraser } from 'lucide-react'
 import { Answer } from '@/components/Answer'
 import { Composer } from '@/components/Composer'
-import { Btn } from '@/components/Modal'
+import { Btn, ClearAsk } from '@/components/Modal'
 import { Toolbar } from '@/components/Toolbar'
 import type { Choice } from '@/components/Toolbar'
-import type { Options, Rule, Worktree } from '@/lib/api'
+import type { Keep, Kept, Options, Rule, Worktree } from '@/lib/api'
 import { useOverlay } from '@/lib/overlay'
 import type { Step, Turn } from '@/lib/work'
 import { cn } from '@/lib/utils'
@@ -22,7 +22,7 @@ type Props = {
   onStop: (turn: Turn) => void
   rules: Rule[]
   onClearRules: () => void
-  onReset: () => void
+  onReset: (keep: Keep) => Promise<Kept>
   onPeek: (path: string, line: number) => void
 }
 
@@ -33,6 +33,8 @@ export function Agent({
   row, turns, options, choice, on, onChoice, onSend, onAnswer, onStop, rules, onClearRules, onReset, onPeek,
 }: Props) {
   const end = useRef<HTMLDivElement>(null)
+  const [asking, setAsking] = useState(false)
+  const [note, setNote] = useState('')
   const busy = turns.at(-1)?.pending ?? false
   const last = turns.at(-1)
   const grown = turns.length + (last?.text.length ?? 0) + (last?.steps.length ?? 0)
@@ -42,21 +44,23 @@ export function Agent({
 
   return (
     <section aria-label="에이전트 세션" className="flex h-full min-h-0 flex-col">
-      <header className={cn('border-b border-border px-5', !row && 'hidden')}>
+      <header className="border-b border-border px-5">
+        {/* The model and effort stand here before there is a worktree too:
+            a spec's [시작] runs its first turn on them. */}
         <div className="flex h-11 items-center justify-end gap-1.5">
+          <span className="mr-auto truncate font-heading text-[11px] font-semibold text-faint">작업 모델</span>
+          {row && busy && last?.turn && (
+            <Btn tone="danger" onClick={() => onStop(last)} title="도는 턴을 멈춘다. 대화는 남아 다음 지시가 이어진다">
+              멈춤
+            </Btn>
+          )}
+          <Toolbar value={choice} options={options} busy={busy} onChange={onChoice} />
           {row && (
-            <>
-              {busy && last?.turn && (
-                <Btn tone="danger" onClick={() => onStop(last)} title="도는 턴을 멈춘다. 대화는 남아 다음 지시가 이어진다">
-                  멈춤
-                </Btn>
-              )}
-              <Toolbar value={choice} options={options} busy={busy} onChange={onChoice} />
-              <Btn tone="ghost" className="px-1.5" onClick={onReset} disabled={busy} aria-label="문맥 비우기"
-                title="문맥 비우기 — 이 작업트리의 대화를 새로 시작한다">
-                <Eraser className="size-4" />
-              </Btn>
-            </>
+            <Btn tone="ghost" className="px-1.5" onClick={() => setAsking(true)}
+              disabled={busy} aria-label="문맥 비우기"
+              title="문맥 비우기 — 이 작업트리의 대화를 새로 시작한다. 지금 대화는 메모리로 남기거나 지운다">
+              <Eraser className="size-4" />
+            </Btn>
           )}
         </div>
         {row && rules.length > 0 && (
@@ -85,12 +89,13 @@ export function Agent({
         <div className="space-y-5 px-4 py-4">
           {!row && (
             <p className="text-[13.5px] text-faint">
-              아직 작업트리가 없다. 명세의 [시작] 이 작업트리를 만들고 첫 턴을 보낸다. 에이전트는 그 안에서만 쓰고, 쓰기마다 여기서 묻는다.
+              아직 작업트리가 없다. 명세의 [시작] 이 작업트리를 만들고 위의 작업 모델로 첫 턴을 보낸다. 에이전트는 그 안에서만 쓰고, 쓰기마다 여기서 묻는다.
             </p>
           )}
           {row && turns.length === 0 && (
             <p className="text-[13.5px] text-faint">지시를 보내라. 파일을 고치거나 명령을 돌리기 전에 여기서 허용을 묻는다.</p>
           )}
+          {note && turns.length === 0 && <p className="text-[12.5px] text-muted-foreground">{note}</p>}
           {turns.map((t) =>
             t.role === 'user' ? (
               <div key={t.key} className="flex justify-end">
@@ -113,6 +118,10 @@ export function Agent({
         placeholder="지시를 적어라. Enter 로 보내고 Shift+Enter 로 줄바꿈."
         onSend={onSend}
       />
+      {asking && <ClearAsk onClear={onReset} onClose={(said) => {
+        setAsking(false)
+        setNote(said)
+      }} />}
     </section>
   )
 }

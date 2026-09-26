@@ -22,6 +22,10 @@ import { useWork } from '@/lib/work'
 
 type Theme = 'dark' | 'light'
 type Tab = 'agent' | 'review' | 'terminal'
+// What `[+ 새 작업]` puts in the next-task box: a spec in one go, the worktree
+// made by its [시작]. The person writes the task after it.
+const NEW_TASK = '이것 하나를 바로 명세로 만들어라. 되묻지 말고 빼는 것과 완료 조건은 네가 정해라.\n할 일: '
+
 const TABS: { id: Tab; label: string }[] = [{ id: 'agent', label: '에이전트' }, { id: 'review', label: '리뷰' }, { id: 'terminal', label: '터미널' }]
 
 // The state word's colour on the right pane's header: the rail's dot, in text.
@@ -195,6 +199,11 @@ export default function App() {
     // Apart, because listing Codex's models starts Codex. The screen does not
     // wait on that; only the pickers do.
     api.getOptions().then(setOptions).catch((err) => setFault(String(err)))
+    // The projects' connection states ride on the options; the rail shows
+    // the current one's, so a connection read again reads them again.
+    const reread = () => api.getOptions().then(setOptions).catch(() => {})
+    window.addEventListener('connect-changed', reread)
+    return () => window.removeEventListener('connect-changed', reread)
   }, [])
 
   // The project decides which worktrees exist. Whatever else changes them —
@@ -409,7 +418,7 @@ export default function App() {
   const on = sw?.translate ?? false
   const tidy = row && task?.row && row.merged && !row.dirty && !task.busy
 
-  const middle = view === 'projects' ? '모든 프로젝트' : repo
+  const middle = view === 'projects' ? '프로젝트 · 연결' : repo
   return (
     <div className="grid h-screen grid-cols-[15rem_minmax(0,1.1fr)_minmax(0,1fr)] overflow-hidden max-[1280px]:grid-cols-[3.25rem_minmax(0,1.1fr)_minmax(0,1fr)]">
       <TaskRail
@@ -430,6 +439,10 @@ export default function App() {
         }}
         onSelect={setSelected}
         onSettings={() => setSetting(true)}
+        onNew={() => {
+          setView('chat')
+          setSeed({ focus: 'next', text: NEW_TASK })
+        }}
         onLoop={async (numbers) => {
           // Asked here, on a click: a browser grants it only to a gesture.
           if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission()
@@ -530,6 +543,7 @@ export default function App() {
           <div className="min-w-0 flex-1">
             {tab === 'agent' && (
               <Agent
+                key={path}
                 row={row}
                 turns={(path && work.turns[path]) || []}
                 options={options}
@@ -541,7 +555,7 @@ export default function App() {
                 onStop={(turn) => work.stop(path, turn).catch((err) => setFault(String(err)))}
                 rules={(path && work.rules[path]?.list) || []}
                 onClearRules={() => work.clearRules(path).catch((err) => setFault(String(err)))}
-                onReset={() => work.reset(path).catch((err) => setFault(String(err)))}
+                onReset={(keep) => work.reset(path, keep)}
                 onPeek={showPeek}
               />
             )}
@@ -564,7 +578,11 @@ export default function App() {
 
       {setting && (
         <Settings sw={sw} theme={theme} options={options} loop={loopSettings} onSwitch={flip} onTheme={setTheme}
-          onLoop={async (s) => setLoopSettings(await api.setLoopSettings(s))} onClose={() => setSetting(false)} />
+          onLoop={async (s) => setLoopSettings(await api.setLoopSettings(s))} onClose={() => setSetting(false)}
+          onProjects={() => {
+            setSetting(false)
+            setView('projects')
+          }} />
       )}
     </div>
   )

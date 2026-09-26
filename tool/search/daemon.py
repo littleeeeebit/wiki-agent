@@ -173,8 +173,11 @@ def listing(hub: Path, project: Path | None) -> list[Path]:
         mine = [p for p in project.rglob("*.md")
                 if not any(part.startswith(".") or part == "node_modules"
                            for part in p.relative_to(project).parts[:-1])]
+    # The memories a cleared conversation left (`main.memory`): git-ignored,
+    # so the listing above misses them. Not their transcripts.
+    mine += [p for p in sorted((project / ".wiki" / "memory").glob("*.md")) if not p.name.endswith(".raw.md")]
     seen = {p.resolve() for p in files}
-    return files + [p for p in mine if p.resolve() not in seen]
+    return files + [p for p in dict.fromkeys(mine) if p.resolve() not in seen]
 
 
 class Embedder:

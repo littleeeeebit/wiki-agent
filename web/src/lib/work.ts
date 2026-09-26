@@ -257,10 +257,14 @@ export function useWork() {
     setRules((all) => ({ ...all, [path]: { ...mine, list: [] } }))
   }, [rules])
 
-  const reset = useCallback(async (path: string) => {
-    await api.workReset(path)
+  const reset = useCallback(async (path: string, keep: api.Keep) => {
+    const kept = await api.workReset(path, keep)
+    // A record read before the clear and landing after it would bring the
+    // cleared conversation back.
+    lives.current.set(path, (lives.current.get(path) ?? 0) + 1)
     setTurns((all) => ({ ...all, [path]: [] }))
     setRules((all) => ({ ...all, [path]: { session: '', list: [] } }))
+    return kept
   }, [])
 
   /** A turn the server started in `path` — the plan row's, a loop's. A
