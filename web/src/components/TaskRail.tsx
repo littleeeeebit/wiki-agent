@@ -45,7 +45,17 @@ export function TaskRail(props: Props) {
   const { repo, options, view, tasks, selected, prs } = props
   const [fault, setFault] = useState('')
   const [looping, setLooping] = useState(false)
-  const [picking, setPicking] = useState<number[] | null>(null)
+  // A choice belongs to the project it was made in. When the window follows
+  // another project the modal is gone with it: the same numbers there are
+  // other pull requests, and [시작] would loop them.
+  const [choice, setChoice] = useState<{ repo: string; numbers: number[] } | null>(null)
+  const picking = choice?.repo === repo ? choice.numbers : null
+  const setPicking = (next: number[] | null | ((now: number[] | null) => number[])) =>
+    setChoice((was) => {
+      const now = was?.repo === repo ? was.numbers : null
+      const numbers = typeof next === 'function' ? next(now) : next
+      return numbers ? { repo, numbers } : null
+    })
   const pickable = prs.filter((p) => p.pickable)
   const done = tasks.filter((t) => t.group === 'done')
 
