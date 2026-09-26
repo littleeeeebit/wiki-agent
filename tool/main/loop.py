@@ -1119,9 +1119,12 @@ def halt_loop(repo: str, sid: str) -> None:
 def stranded(spec: dict) -> bool:
     """A pull request that is up but never went into review: the plan row's
     turn after it failed, so nothing kicked the loop, and neither `[계속]`
-    (not `멈춤`) nor the list (`이미 PR #n`) could."""
+    (not `멈춤`) nor the list (`이미 PR #n`) could. Not while the plan row is
+    still owed: a round started now would review the head without it, and
+    the agent tab's next turn is what commits, pushes and kicks it."""
 
-    return spec["state"].startswith("PR #") and bool(spec.get("fault"))
+    return (spec["state"].startswith("PR #") and bool(spec.get("fault"))
+            and spec.get("plan_commit") != "asked")
 
 
 def refusal(row: dict, spec: dict | None) -> str:
@@ -1134,6 +1137,8 @@ def refusal(row: dict, spec: dict | None) -> str:
     reason = (spec.get("stopped") or {}).get("reason")
     if stranded(spec):
         return ""
+    if spec["state"].startswith("PR #") and spec.get("plan_commit") == "asked":
+        return "계획 행 커밋이 아직이다 — 에이전트 탭에서 행을 고쳐 커밋하게 하면 리뷰로 간다"
     if spec["state"] != "멈춤":
         return f"이미 {spec['state']}"
     if reason == Why.WRONG_BASE.value:

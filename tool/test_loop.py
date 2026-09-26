@@ -337,6 +337,9 @@ def test_a_pr_the_plan_row_left_behind_goes_into_review_from_the_list(world):
     assert spec["state"] == "머지 가능" and spec["fault"] is None
     pr_spec(world, "fix-q", 8)
     assert loop.refusal({}, specs.load("proj", "fix-q")) == "이미 PR #8", "잘못 없이 도는 PR 은 그대로"
+    pr_spec(world, "fix-r", 9, fault="계획 행 커밋의 push 실패", plan_commit="asked")
+    assert not loop.stranded(specs.load("proj", "fix-r")), "계획 행이 빠진 머리를 리뷰하지 않는다"
+    assert "계획 행 커밋이 아직" in loop.refusal({}, specs.load("proj", "fix-r"))
 
 
 def test_deleting_a_worktree_takes_its_unmerged_spec_off_the_rail(world):

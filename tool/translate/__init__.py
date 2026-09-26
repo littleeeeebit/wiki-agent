@@ -789,19 +789,40 @@ IN_PLACE_SECONDS = 300
 IN_PLACE_THREADS = 8
 
 
+def korean_prose(text: str) -> bool:
+    """Korean left where the model would see it. An English page keeps its
+    Korean `triggers` and backticked Korean names, and is done."""
+
+    return bool(HANGUL.search(protect(text, glossary()[0])[0]))
+
+
 def page(text: str, deadline: float) -> str | None:
     """`text`, a Markdown page, in English. `None` when any of it could not be
     translated: half a page is not written."""
 
+    # Only where the model would see it: a label inside code is the code's.
+    masked, spans = protect(text)
     for ko, en in LABELS:
-        text = re.sub(rf"^{re.escape(ko)}", en, text, flags=re.M)
+        masked = re.sub(rf"^{re.escape(ko)}", en, masked, flags=re.M)
+    text = restore(masked, spans)
     front = SPANS[0][1].match(text)
     found = TITLE.search(front.group(0)) if front else None
     raw = found.group(1).strip() if found else ""
     quoted = raw.startswith('"')
     title = json.loads(raw) if quoted else raw
-    body, title_en = translate([text, title], KO_EN, deadline)
-    if (worth_translating(text, KO_EN) and body == text) or (worth_translating(title, KO_EN) and title_en == title):
+    # Two requests: batched with its title, a long body came back with its
+    # placeholders broken where the same body alone did not.
+    body, title_en = translate([text], KO_EN, deadline)[0], translate([title], KO_EN, deadline)[0]
+    if korean_prose(text) and body == text:
+        # Line by line: a page the model always broke one placeholder of
+        # (temperature 0 — asking again breaks the same one). A fence spans
+        # lines, so it is one piece: split, it would lose its protection.
+        head = front.group(0) if front else ""
+        lines = re.split(r"(```.*?```|\n)", text[len(head):], flags=re.S)
+        done = translate(lines, KO_EN, deadline)
+        if not any(korean_prose(a) and a == b for a, b in zip(lines, done)):
+            body = head + "".join(done)
+    if (korean_prose(text) and body == text) or (korean_prose(title) and title_en == title):
         return None
     if found:
         value = json.dumps(title_en, ensure_ascii=False) if quoted else title_en
@@ -818,12 +839,18 @@ def in_place(paths: list[Path]) -> int:
     def one(path: Path) -> str:
         raw = path.read_bytes().decode("utf-8")
         text = raw.replace("\r\n", "\n")
-        if not worth_translating(text, KO_EN):
+        front = SPANS[0][1].match(text)
+        title = TITLE.search(front.group(0)) if front else None
+        if not korean_prose(text) and not (title and korean_prose(title.group(1))):
             return "skip"
-        done = page(text, time.monotonic() + IN_PLACE_SECONDS)
+        # Once more on a failure: a refused answer is often not refused twice.
+        done = page(text, time.monotonic() + IN_PLACE_SECONDS) or page(text, time.monotonic() + IN_PLACE_SECONDS)
         if done is None:
             return "failed"
-        path.write_bytes((done.replace("\n", "\r\n") if "\r\n" in raw else done).encode("utf-8"))
+        # Beside it, then over it: a write cut short leaves the original whole.
+        spare = path.with_name(path.name + ".in-place")
+        spare.write_bytes((done.replace("\n", "\r\n") if "\r\n" in raw else done).encode("utf-8"))
+        os.replace(spare, path)
         return "done"
 
     with ThreadPoolExecutor(IN_PLACE_THREADS) as pool:

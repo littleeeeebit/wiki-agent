@@ -343,6 +343,8 @@ export type Spec = {
   report: { item: string; pass: boolean; evidence?: string }[] | null
   gate: { ok: boolean; reason: string; cmd: string; tail: string } | null
   fault: string | null
+  /** A plan row's commit still owed after the PR went up: no round before it. */
+  plan_commit?: 'asked' | 'pushed' | null
   missing: string[]
   rounds?: Round[]
   /** The head the last counted round allowed: what `[머지]` is bound to. */

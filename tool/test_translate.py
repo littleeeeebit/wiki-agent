@@ -672,3 +672,21 @@ def test_a_page_goes_english_whole_or_not_at_all(monkeypatch) -> None:
     assert "무엇." not in seen[0], "라벨은 모델에 맡기지 않는다"
     monkeypatch.setattr(T, "translate", lambda texts, direction, deadline: list(texts))
     assert T.page(page, time.monotonic() + 1) is None
+
+
+def test_in_place_skips_an_english_page_and_leaves_code_as_it_was(monkeypatch, tmp_path) -> None:
+    """Korean `triggers` alone do not make a page Korean — counted, a rerun
+    failed every English page. A label inside a fence is the code's."""
+
+    english = tmp_path / "english.md"
+    english.write_text('---\ntriggers: ["화면"]\ntitle: Screen\n---\n\n# Screen\n\nIt froze.\n', encoding="utf-8")
+    korean = tmp_path / "korean.md"
+    korean.write_text("# 화면\n\n왜. 멈췄다\n\n```\n왜. keep\n```\n", encoding="utf-8")
+    monkeypatch.setattr(T, "translate", lambda texts, direction, deadline: [
+        t.replace("화면", "Screen").replace("멈췄다", "it froze") for t in texts])
+
+    assert T.in_place([english, korean]) == 0
+    assert english.read_text(encoding="utf-8").startswith('---\ntriggers: ["화면"]')
+    done = korean.read_text(encoding="utf-8")
+    assert "Why. it froze" in done and "```\n왜. keep\n```" in done
+    assert not list(tmp_path.glob("*.in-place")), "옆에 쓴 파일은 원본 자리로 옮겨졌다"

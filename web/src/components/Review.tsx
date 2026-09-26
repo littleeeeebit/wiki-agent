@@ -89,12 +89,16 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
       {/^PR #\d+$/.test(spec.state) && spec.fault && (
         <div className="mt-3 rounded-md border border-border p-3">
           <div className="text-muted-foreground">PR 은 올라갔는데 리뷰에 들어가지 못했다 — {spec.fault}</div>
-          <Btn tone="primary" className="mt-2" disabled={!!working}
-            onClick={() => act('review', () => api.startLoops([spec.pr!.number]).then(({ results }) => {
-              if (results[0]?.error) throw new Error(results[0].error)
-            }))}>
-            {working === 'review' ? '…' : '리뷰 시작'}
-          </Btn>
+          {spec.plan_commit === 'asked' ? (
+            <div className="mt-2">계획 행 커밋이 아직이다 — 에이전트 탭에서 행을 고쳐 커밋하게 하면 리뷰로 간다</div>
+          ) : (
+            <Btn tone="primary" className="mt-2" disabled={!!working}
+              onClick={() => act('review', () => api.startLoops([spec.pr!.number]).then(({ results }) => {
+                if (results[0]?.error) throw new Error(results[0].error)
+              }))}>
+              {working === 'review' ? '…' : '리뷰 시작'}
+            </Btn>
+          )}
         </div>
       )}
 
