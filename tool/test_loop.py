@@ -712,7 +712,7 @@ class Asking(Worker):
         yield Event("done", fixed(("[P1] a.txt:1 — 틀렸다", "fixed"))(self.path, halt),
                     {"session_id": "cli-1", "error": False}, self.id)
 
-    def answer(self, rid, allow, scope="once"):
+    def answer(self, rid, allow, scope="once", answers=None):
         self.answered.set()
         return True
 
@@ -745,3 +745,51 @@ def test_a_switch_leaves_the_loop_and_its_approvals_where_they_are(world, tmp_pa
         assert web.post("/api/work/say", json={"path": path, "text": "새 지시"}).status_code == 404
     spec = specs.load("proj", "fix-s")
     assert spec["state"] == "머지 가능" and [r["verdict"] for r in spec["rounds"]] == ["deny", "allow"]
+
+
+class Hangs:
+    """A work cell whose turn runs until it is stopped."""
+
+    id, parent_id, is_codex = "h", None, False
+
+    def __init__(self):
+        self.go = threading.Event()
+        self.sent = []   # what reached the CLI: said with no halt set
+
+    def say(self, text, halt=None):
+        # As `ChatSession._say`: a halt set before the send stops the turn unsent.
+        if halt is not None and halt.is_set():
+            yield Event("error", "멈췄다.", {}, self.id)
+            return
+        self.sent.append(text)
+        yield Event("tool", "x", {}, self.id)
+        self.go.wait(10)
+        yield Event("error", "프로세스가 닫혔다.", {}, self.id)
+
+    def stop(self, halt):
+        self.go.set()
+
+
+@pytest.mark.parametrize("where", ["session", "begin"])
+def test_a_stopped_loop_sends_no_turn(tmp_path, where):
+    """The loop holds the worktree when the stop lands — before its run
+    exists, or once the run is there and its thread not started. Either way
+    nothing reaches the CLI."""
+
+    spot, cell = loop.Loop("proj", "t1"), Hangs()
+    real = work.begin
+
+    def session(*args):
+        if where == "session":
+            spot.stop()
+        return cell
+
+    def begin(*args, **kwargs):
+        if where == "begin":
+            spot.stop()
+        return real(*args, **kwargs)
+
+    path = tmp_path / "proj-worktrees" / "t1"
+    with patch.object(work, "session", session), patch.object(work, "begin", begin):
+        assert loop.told(spot, {}, path, "x") is None
+    assert cell.sent == [] and str(path) not in work._busy

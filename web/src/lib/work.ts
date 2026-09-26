@@ -6,6 +6,10 @@ import type { AnsweredBy, Rule, Tokens, WorkEv, WorkStep } from '@/lib/api'
  *  never translated: they are what ran, not the agent describing itself. */
 export type Step =
   | { kind: 'tool'; text: string }
+  /** What the person said into the turn while it ran. */
+  | { kind: 'said'; text: string }
+  /** A hook that said something; `context` is what it put in, live turns only. */
+  | { kind: 'hook'; text: string; context?: string }
   | {
       kind: 'approval'
       text: string
@@ -16,6 +20,8 @@ export type Step =
       session?: boolean
       answer?: boolean
       by?: AnsweredBy
+      /** A question's answers, one per question. */
+      answers?: string[]
       sending?: boolean
       error?: string
     }
@@ -41,8 +47,8 @@ export type Rules = { session: string; list: Rule[] }
 let seq = 0
 
 function restored(s: WorkStep): Step {
-  if (s.kind === 'tool') return s
-  return { kind: 'approval', text: s.text, id: '', tool: s.tool, input: {}, by: s.by,
+  if (s.kind !== 'approval') return s
+  return { kind: 'approval', text: s.text, id: '', tool: s.tool, input: {}, by: s.by, answers: s.answers,
     answer: s.answer === 'none' ? undefined : s.answer === 'allow' }
 }
 
@@ -50,7 +56,8 @@ function restored(s: WorkStep): Step {
 function apply(t: Turn, ev: WorkEv): Turn {
   const m = ev.meta
   if (ev.kind === 'delta') return { ...t, text: t.text + ev.text }
-  if (ev.kind === 'tool') return { ...t, steps: [...t.steps, { kind: 'tool', text: ev.text }] }
+  if (ev.kind === 'tool' || ev.kind === 'said') return { ...t, steps: [...t.steps, { kind: ev.kind, text: ev.text }] }
+  if (ev.kind === 'hook') return { ...t, steps: [...t.steps, { kind: 'hook', text: ev.text, context: m.context }] }
   if (ev.kind === 'approval') {
     return { ...t, steps: [...t.steps, { kind: 'approval', text: ev.text, id: String(m.id ?? ''),
       tool: String(m.tool ?? ''), input: m.input ?? {}, session: m.session,
@@ -58,7 +65,7 @@ function apply(t: Turn, ev: WorkEv): Turn {
   }
   if (ev.kind === 'answered') {
     return { ...t, steps: t.steps.map((s) => (s.kind === 'approval' && s.id === m.id
-      ? { ...s, answer: m.allow, by: m.by, sending: false, error: undefined } : s)) }
+      ? { ...s, answer: m.allow, by: m.by, answers: m.answers, sending: false, error: undefined } : s)) }
   }
   if (ev.kind === 'done') {
     return { ...t, text: ev.text || t.text, pending: false, ms: m.ms, cost: m.cost_usd, model: m.model,
@@ -228,7 +235,8 @@ export function useWork() {
   )
 
   const answer = useCallback(
-    async (path: string, turn: Turn, id: string, allow: boolean, scope: 'once' | 'session' = 'once') => {
+    async (path: string, turn: Turn, id: string, allow: boolean, scope: 'once' | 'session' = 'once',
+      answers?: string[]) => {
       const step = (fn: (s: Extract<Step, { kind: 'approval' }>) => Step) =>
         patch(path, turn.key, (t) => ({
           ...t,
@@ -236,8 +244,8 @@ export function useWork() {
         }))
       step((s) => ({ ...s, sending: true, error: undefined }))
       try {
-        await api.workAnswer({ path, session_id: turn.sessionId ?? '', id, allow, scope })
-        step((s) => ({ ...s, sending: false, answer: allow, by: 'person' }))
+        await api.workAnswer({ path, session_id: turn.sessionId ?? '', id, allow, scope, answers })
+        step((s) => ({ ...s, sending: false, answer: allow, by: 'person', answers }))
         if (scope === 'session') readRules(path)
       } catch (err) {
         step((s) => ({ ...s, sending: false, error: String(err) }))
@@ -249,6 +257,18 @@ export function useWork() {
   const stop = useCallback(async (path: string, turn: Turn) => {
     if (turn.turn) await api.workStop(path, turn.turn)
   }, [])
+
+  /** Say `text` into the running `turn`. It comes back through the turn's
+   *  own events as a `said` step; a refusal is shown in its place. */
+  const steer = useCallback(async (path: string, turn: Turn, text: string) => {
+    try {
+      if (!turn.turn) throw new Error('턴이 아직 시작되지 않았다')
+      await api.workSteer(path, turn.turn, text)
+    } catch (err) {
+      patch(path, turn.key, (t) => ({ ...t, steps: [...t.steps,
+        { kind: 'tool', text: `끼어들기 실패 · ${err instanceof Error ? err.message : err} — "${text}"` }] }))
+    }
+  }, [patch])
 
   const clearRules = useCallback(async (path: string) => {
     const mine = rules[path]
@@ -276,5 +296,5 @@ export function useWork() {
     load(path)
   }, [forget, load])
 
-  return { turns, rules, load, send, answer, stop, clearRules, reset, forget, attach }
+  return { turns, rules, load, send, answer, stop, steer, clearRules, reset, forget, attach }
 }

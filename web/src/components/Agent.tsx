@@ -18,8 +18,9 @@ type Props = {
   on: boolean
   onChoice: (c: Choice) => void
   onSend: (text: string) => void
-  onAnswer: (turn: Turn, id: string, allow: boolean, scope?: 'once' | 'session') => void
+  onAnswer: (turn: Turn, id: string, allow: boolean, scope?: 'once' | 'session', answers?: string[]) => void
   onStop: (turn: Turn) => void
+  onSteer: (turn: Turn, text: string) => void
   rules: Rule[]
   onClearRules: () => void
   onReset: (keep: Keep) => Promise<Kept>
@@ -30,7 +31,7 @@ type Props = {
  *  ran and what it asks to write stay as they are, because a person approves
  *  those and a reworded command is not the command. */
 export function Agent({
-  row, turns, options, choice, on, onChoice, onSend, onAnswer, onStop, rules, onClearRules, onReset, onPeek,
+  row, turns, options, choice, on, onChoice, onSend, onAnswer, onStop, onSteer, rules, onClearRules, onReset, onPeek,
 }: Props) {
   const end = useRef<HTMLDivElement>(null)
   const [asking, setAsking] = useState(false)
@@ -89,11 +90,11 @@ export function Agent({
         <div className="space-y-5 px-4 py-4">
           {!row && (
             <p className="text-[13.5px] text-faint">
-              아직 작업트리가 없다. 명세의 [시작] 이 작업트리를 만들고 위의 작업 모델로 첫 턴을 보낸다. 에이전트는 그 안에서만 쓰고, 쓰기마다 여기서 묻는다.
+              아직 작업트리가 없다. 명세의 [시작] 이 작업트리를 만들고 위의 작업 모델로 첫 턴을 보낸다. 에이전트는 그 안에서 쓴다. 설정에서 권한 묻기를 켜 두면 쓰기마다 여기서 묻는다.
             </p>
           )}
           {row && turns.length === 0 && (
-            <p className="text-[13.5px] text-faint">지시를 보내라. 파일을 고치거나 명령을 돌리기 전에 여기서 허용을 묻는다.</p>
+            <p className="text-[13.5px] text-faint">지시를 보내라. 도는 동안에도 보내면 그 턴에 끼어든다.</p>
           )}
           {note && turns.length === 0 && <p className="text-[12.5px] text-muted-foreground">{note}</p>}
           {turns.map((t) =>
@@ -111,12 +112,16 @@ export function Agent({
         </div>
       </div>
 
+      {/* While a turn runs, what is sent goes into that turn: the agent reads
+          it between steps. Until the server names the turn there is nothing to
+          send it to. */}
       <Composer
-        busy={busy}
+        busy={busy && !last?.turn}
         disabled={!row}
         max={320}
-        placeholder="지시를 적어라. Enter 로 보내고 Shift+Enter 로 줄바꿈."
-        onSend={onSend}
+        placeholder={busy ? '도는 턴에 끼어든다. 에이전트가 다음 걸음 전에 읽는다.'
+          : '지시를 적어라. Enter 로 보내고 Shift+Enter 로 줄바꿈.'}
+        onSend={(text) => (busy && last ? onSteer(last, text) : onSend(text))}
       />
       {asking && <ClearAsk onClear={onReset} onClose={(said) => {
         setAsking(false)
@@ -140,7 +145,13 @@ function Reply({ turn, on, onAnswer, onPeek }: {
       {turn.steps.length > 0 && (
         <ul className="space-y-1.5">
           {turn.steps.map((s, i) => (
-            <li key={i}>{s.kind === 'tool' ? <Tool text={s.text} /> : <Ask step={s} turn={turn} onAnswer={onAnswer} />}</li>
+            <li key={i}>
+              {s.kind === 'tool' ? <Tool text={s.text} />
+                : s.kind === 'said' ? <Said text={s.text} />
+                  : s.kind === 'hook' ? <Hook text={s.text} context={s.context} />
+                    : QUESTIONS.has(s.tool) ? <Question step={s} turn={turn} onAnswer={onAnswer} />
+                      : <Ask step={s} turn={turn} onAnswer={onAnswer} />}
+            </li>
           ))}
         </ul>
       )}
@@ -170,6 +181,109 @@ function tokens(turn: Turn): string {
 
 function Tool({ text }: { text: string }) {
   return <p className="font-mono text-[12px] leading-snug text-faint">· {text}</p>
+}
+
+/** A hook that spoke — the wiki's injection, its auto-update. What it put into
+ *  the agent's context folds under it, as it went in. */
+function Hook({ text, context }: { text: string; context?: string }) {
+  return (
+    <div className="font-mono text-[12px] leading-snug text-faint">
+      <p className="whitespace-pre-wrap">↳ {text}</p>
+      {context && (
+        <details className="pl-3">
+          <summary className="cursor-pointer hover:text-muted-foreground">주입된 문맥 {context.length.toLocaleString()}자</summary>
+          <pre className="mt-1 max-h-56 overflow-auto whitespace-pre-wrap break-all">{context}</pre>
+        </details>
+      )}
+    </div>
+  )
+}
+
+/** The two hosts' question tools: Claude's `AskUserQuestion`, Codex's `request_user_input`. */
+const QUESTIONS = new Set(['AskUserQuestion', 'requestUserInput'])
+
+type Asked = {
+  question?: string
+  header?: string
+  multiSelect?: boolean
+  options?: { label: string; description?: string }[] | null
+}
+
+/** The agent asking with options. One answer per question: the options
+ *  picked, or what the person typed instead. */
+function Question({ step, turn, onAnswer }: {
+  step: Extract<Step, { kind: 'approval' }>
+  turn: Turn
+  onAnswer: Props['onAnswer']
+}) {
+  const asked = (Array.isArray(step.input.questions) ? step.input.questions : []) as Asked[]
+  const [picked, setPicked] = useState<string[][]>(() => asked.map(() => []))
+  const [typed, setTyped] = useState<string[]>(() => asked.map(() => ''))
+  const open = step.answer === undefined
+  const live = open && !!turn.pending && !step.sending
+  const answers = asked.map((_, i) => typed[i].trim() || picked[i].join(', '))
+  const ready = answers.length > 0 && answers.every(Boolean)
+  const toggle = (i: number, label: string, many: boolean) =>
+    setPicked((all) => all.map((now, j) => (j !== i ? now
+      : many ? (now.includes(label) ? now.filter((l) => l !== label) : [...now, label]) : [label])))
+  return (
+    <div className={cn('rounded-md border p-2.5', open ? 'border-wait bg-wait/10' : 'border-border bg-secondary/40')}>
+      <span className="font-heading text-[11px] font-semibold">
+        {open ? '에이전트가 묻는다' : step.answer ? '답함' : '답하지 않음'}
+      </span>
+      {!open && (
+        <p className="mt-1 text-[13px] whitespace-pre-wrap">
+          {step.text}
+          {step.answers?.length ? <span className="block text-muted-foreground">→ {step.answers.join(' · ')}</span> : null}
+        </p>
+      )}
+      {open && asked.map((q, i) => (
+        <fieldset key={i} className="mt-2 space-y-1.5">
+          <legend className="text-[13px]">
+            {q.header && <span className="mr-1.5 font-mono text-[10.5px] text-muted-foreground">{q.header}</span>}
+            {q.question}
+          </legend>
+          {(q.options ?? []).map((o) => (
+            <button key={o.label} type="button" disabled={!live} aria-pressed={picked[i].includes(o.label)}
+              onClick={() => toggle(i, o.label, !!q.multiSelect)}
+              className={cn('block w-full rounded-md border px-2.5 py-1.5 text-left text-[12.5px] disabled:opacity-40',
+                picked[i].includes(o.label) ? 'border-wait bg-wait/20' : 'border-border hover:bg-secondary')}>
+              {o.label}
+              {o.description && <span className="block text-[12px] text-muted-foreground">{o.description}</span>}
+            </button>
+          ))}
+          <input value={typed[i]} disabled={!live} aria-label="직접 적기" placeholder="직접 적기"
+            onChange={(e) => setTyped((all) => all.map((t, j) => (j === i ? e.target.value : t)))}
+            className="h-7 w-full rounded-md border border-input bg-background px-2 text-[12.5px]" />
+        </fieldset>
+      ))}
+      {open && (
+        <div className="mt-2 flex justify-end gap-1.5">
+          <button type="button" disabled={!live || !ready} onClick={() => onAnswer(turn, step.id, true, 'once', answers)}
+            className="rounded-md bg-wait px-2.5 py-1 text-[12.5px] text-wait-foreground hover:opacity-90 disabled:opacity-40">
+            답하기
+          </button>
+          <button type="button" disabled={!live} onClick={() => onAnswer(turn, step.id, false)}
+            className="rounded-md border border-border px-2.5 py-1 text-[12.5px] hover:bg-secondary disabled:opacity-40">
+            답하지 않기
+          </button>
+        </div>
+      )}
+      {step.error && <p role="alert" className="mt-1 text-[12.5px] text-destructive">{step.error}</p>}
+      {open && !turn.pending && <p className="mt-1 text-[12.5px] text-faint">이 턴은 끝났다. 물은 프로세스가 없어 답할 수 없다.</p>}
+    </div>
+  )
+}
+
+/** What the person said while the turn ran, where in the turn it landed. */
+function Said({ text }: { text: string }) {
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[90%] rounded-lg rounded-br-sm bg-secondary px-3 py-1.5 text-[13px] leading-relaxed whitespace-pre-wrap">
+        {text}
+      </div>
+    </div>
+  )
 }
 
 /** How an answered card reads, by who answered it. */

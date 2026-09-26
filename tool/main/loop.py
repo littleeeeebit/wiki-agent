@@ -555,11 +555,22 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         return None
     try:
         chosen = spec.get("cell") or {}
-        run = work.begin(path, work.session(path, chosen.get("model", ""), chosen.get("effort", "")), text, release)
+        run = work.Run(work.session(path, chosen.get("model", ""), chosen.get("effort", "")))
+        # Seen by `stop` before its thread starts. `stop` sets the halt, then
+        # reads `run`: either it saw this run and set the run's halt, which
+        # the turn reads before it sends anything, or this sees the halt and
+        # the turn never starts.
+        loop.run = run
+        if loop.halt.is_set():
+            loop.run = None
+            release()
+            return None
+        work.begin(path, run.chat, text, release, run)
     except BaseException:
+        loop.run = None
         release()
         raise
-    loop.run, asked = run, False
+    asked = False
     try:
         while not run.done:
             with run.wake:
@@ -1074,16 +1085,23 @@ def halt(sid: str) -> dict:
     repo, spec = mine(sid)
     if not LOOPING.fullmatch(spec["state"]):
         raise HTTPException(409, "도는 루프가 아니다")
-    with _lock:
-        loop = _loops.get((repo.name, sid))
-    if loop is not None:
-        loop.stop()
-    stop(None, repo.name, sid, Why.PERSON)
+    halt_loop(repo.name, sid)
     spec = specs.load(repo.name, sid)
     if spec["state"] != "멈춤":
         # The loop got to its end first; that end stands.
         raise HTTPException(409, f"루프가 먼저 끝났다 — {spec['state']}")
     return specs.view(repo, spec)
+
+
+def halt_loop(repo: str, sid: str) -> None:
+    """Stop the loop of `sid` in `repo` — the repository named, never the
+    one selected now — and put the spec in `멈춤` by a person."""
+
+    with _lock:
+        loop = _loops.get((repo, sid))
+    if loop is not None:
+        loop.stop()
+    stop(None, repo, sid, Why.PERSON)
 
 
 def refusal(row: dict, spec: dict | None) -> str:

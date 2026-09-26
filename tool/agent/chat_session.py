@@ -41,8 +41,11 @@ READ_TOOLS = "Bash,Read,Glob,Grep"
 
 # A write session. Everything outside `ASK_FREE` goes through an approval
 # event, so `Bash` here is a shell a person approves command by command.
-WRITE_TOOLS = "Bash,Read,Glob,Grep,Edit,Write"
+# `AskUserQuestion` always does: its approval is the person's answer.
+WRITE_TOOLS = "Bash,Read,Glob,Grep,Edit,Write,AskUserQuestion"
 ASK_FREE = "Read,Glob,Grep"
+# The two hosts' question tools. Their approval carries the answers.
+QUESTIONS = {"AskUserQuestion", "requestUserInput"}
 # Claude's tools that name the file they write.
 WRITES_PATH = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path",
                "NotebookEdit": "notebook_path"}
@@ -79,7 +82,7 @@ class Event:
     one — room for a coordinator, `None` until there is one.
     """
 
-    kind: str          # "delta" | "tool" | "approval" | "done" | "error" | "context"
+    kind: str          # "delta" | "tool" | "hook" | "approval" | "done" | "error" | "context"
     text: str = ""
     meta: dict = field(default_factory=dict)
     session_id: str = ""
@@ -118,12 +121,17 @@ class ChatSession:
                  system: str = "", model: str | None = None,
                  effort: str | None = None, resume: str | None = None,
                  isolated: bool = False, write: bool = False,
-                 parent_id: str | None = None) -> None:
+                 parent_id: str | None = None, bypass: bool = False) -> None:
         self.repo = Path(repo)
         # Writes go to a worktree, never to the checkout a person works in.
         if write and not our_worktree(self.repo):
             raise ValueError(f"쓰기 세션은 workspace 가 만든 작업트리에서만 연다: {self.repo}")
         self.write = write
+        # A write session that asks nobody: Claude's `bypassPermissions`, Codex
+        # `danger-full-access` with `never`. The CLI then never asks, so the
+        # outside-the-worktree refusal in `_approval` does not run either;
+        # Claude's `permissions.deny` still does. Fixed at start-up, like the model.
+        self.bypass = bypass and write
         self.tools = WRITE_TOOLS if write else tools
         self.id = uuid.uuid4().hex
         self.parent_id = parent_id
@@ -170,6 +178,21 @@ class ChatSession:
         # Claude's `Edit` rule does not look at paths at all. Tied to this
         # object: a model change keeps it, a reset makes a new object.
         self._rules: set[tuple] = set()
+        # A message a person sends into the running turn. `_open` says a turn
+        # is taking them; `_steering` guards it against the turn's end, so a
+        # message is either in this turn or refused, never left for the next.
+        # Claude's are counted until the CLI replays them: a result that comes
+        # before one was taken in is not the end of the turn. Counted, not
+        # matched by text: stdin is read in order, so a turn's first replay is
+        # its prompt, whatever a steer says.
+        self._steering = threading.Lock()
+        self._open = False
+        self._unread = 0
+        self._prompt_seen = False
+        # Questions waiting on a person: id -> how many answers they need.
+        self._asks: dict[str, int] = {}
+        self._turn_id = ""       # Codex's id for the running turn, for `turn/steer`
+        self._start_rpc = None   # the `turn/start` request, whose error ends the turn
 
     @property
     def is_codex(self) -> bool:
@@ -191,10 +214,20 @@ class ChatSession:
             "--output-format", "stream-json",
             "--include-partial-messages",
             "--verbose",
+            # Each message comes back once the CLI takes it in — how `steer`
+            # knows one sent mid-turn was not left for the next turn.
+            "--replay-user-messages",
+            # What the hooks did — the wiki's injection, its auto-update — reaches
+            # the screen only through these.
+            "--include-hook-events",
             "--tools", self.tools,
-            "--allowedTools", ASK_FREE if self.write else self.tools,
+            "--allowedTools", ASK_FREE if self.write and not self.bypass else self.tools,
         ]
-        if self.write:
+        if self.bypass:
+            # The prompt tool stays: without it the CLI drops `AskUserQuestion`,
+            # which is the one thing a bypass session still asks.
+            cmd += ["--permission-mode", "bypassPermissions", "--permission-prompt-tool", "stdio"]
+        elif self.write:
             # Named, so a `defaultMode` of `acceptEdits` in someone's settings
             # cannot skip the question.
             cmd += ["--permission-mode", "default", "--permission-prompt-tool", "stdio"]
@@ -212,7 +245,9 @@ class ChatSession:
         if self._resume:
             cmd += ["--resume", self._resume]
         if self.app:
-            cmd = ["codex", "app-server"] + ([] if self.write else ["--disable", "multi_agent"])
+            # `request_user_input` is Plan mode's only, unless this is on (CLI 0.156.0).
+            cmd = ["codex", "app-server"] + (["--enable", "default_mode_request_user_input"] if self.write
+                                             else ["--disable", "multi_agent"])
             self.model_name = self.model.removeprefix("codex:")
         elif self.is_codex:
             cmd = ["codex", "exec", "--model", self.model.removeprefix("codex:"),
@@ -300,8 +335,9 @@ class ChatSession:
 
         self._call("initialize", {"clientInfo": {"name": "wiki-agent", "version": "0.1.0"}})
         self._send({"method": "initialized"})
-        params = {"cwd": str(self.repo), "sandbox": "read-only",
-                  "approvalPolicy": "untrusted" if self.write else "never", "model": self.model_name}
+        params = {"cwd": str(self.repo), "sandbox": "danger-full-access" if self.bypass else "read-only",
+                  "approvalPolicy": "untrusted" if self.write and not self.bypass else "never",
+                  "model": self.model_name}
         if self.system:
             params["developerInstructions"] = self.system
         result = None
@@ -353,10 +389,12 @@ class ChatSession:
             except (AttributeError, BrokenPipeError, OSError, ValueError):
                 return False
 
-    def answer(self, approval_id: str, allow: bool, scope: str = "once") -> bool:
+    def answer(self, approval_id: str, allow: bool, scope: str = "once",
+               answers: list[str] | None = None) -> bool:
         """Answer an `approval` event. `False` when nothing waits under that id:
         answered already, or the process that asked is gone. `scope="session"`
         with `allow` also lets the same thing through unasked from now on.
+        A question's `answers` are one per question, in its order.
 
         Written to the process that asked, never to whatever runs now: after a
         restart a late "allow" would land on the new process, and Codex
@@ -365,11 +403,49 @@ class ChatSession:
 
         if scope == "session" and allow and approval_id in self._pending and self._pending[approval_id][2] is None:
             raise ValueError("이 요청은 세션 동안 허용할 수 없다")
+        # A question answered is one answer per question; declining needs none.
+        needed = self._asks.get(approval_id)
+        if allow and needed is not None and (len(answers or []) != needed or not all(a.strip() for a in answers)):
+            raise ValueError(f"질문 {needed}개에 답이 하나씩 있어야 한다")
+        self._asks.pop(approval_id, None)
         proc, reply, rule = self._pending.pop(approval_id, (None, None, None))
-        sent = proc is not None and self._send(reply(allow), proc)
+        sent = proc is not None and self._send(reply(allow, answers or []), proc)
         if sent and scope == "session" and allow:
             self._rules.add(rule)
         return sent
+
+    def steer(self, text: str) -> bool:
+        """Say `text` into the running turn. `False` when no turn takes it —
+        none runs, it is ending, or this is the isolated `exec`.
+
+        Claude reads it from stdin between steps; Codex takes it as
+        `turn/steer`. Either way the turn goes on with it, and ends once."""
+
+        with self._steering:
+            if not self._open:
+                return False
+            if self.app:
+                if not self._turn_id:
+                    return False
+                return self._send(self._request("turn/steer", {
+                    "threadId": self.session_id, "expectedTurnId": self._turn_id,
+                    "input": [{"type": "text", "text": text}]}))
+            if self.is_codex:
+                return False
+            sent = self._send(_user(text))
+            if sent:
+                self._unread += 1
+            return sent
+
+    def _closing(self) -> bool:
+        """At a turn's end: may it end? Not while a steered message waits to
+        be taken in. Once it may, no more are taken."""
+
+        with self._steering:
+            if self._unread:
+                return False
+            self._open = False
+            return True
 
     @staticmethod
     def _rule(tool: str, args: dict) -> tuple | None:
@@ -424,16 +500,28 @@ class ChatSession:
             return Event("approval", text, {"id": key, "tool": tool, "input": args, "answer": "allow",
                                             "by": "session"})
         self._pending[key] = (self._proc, reply, rule)
+        if tool in QUESTIONS:
+            self._asks[key] = len(args.get("questions") or [])
         return Event("approval", text, {"id": key, "tool": tool, "input": args, "session": rule is not None})
 
     def _codex_asks(self, rid, method: str, params: dict) -> Event | None:
         """A request from `app-server`. Two kinds are approvals; the rest are
         refused so the turn does not wait on an answer that never comes."""
 
-        def reply(allow, rid=rid):
+        def reply(allow, answers=(), rid=rid):
             return {"id": rid, "result": {"decision": "accept" if allow else "decline"}}
 
         reason = params.get("reason")
+        if method == "item/tool/requestUserInput":
+            questions = params.get("questions") or []
+
+            def said(allow, answers=(), rid=rid):
+                # Declined, no question has an answer; the model reads that.
+                return {"id": rid, "result": {"answers": {
+                    str(q.get("id")): {"answers": [a]} for q, a in zip(questions, answers if allow else ())}}}
+
+            return self._approval(str(rid), said, "requestUserInput", {"questions": questions},
+                                  " · ".join(str(q.get("question") or "") for q in questions)[:300], "")
         if method == "item/commandExecution/requestApproval":
             command = str(params.get("command") or "")
             return self._approval(str(rid), reply, "command",
@@ -486,6 +574,7 @@ class ChatSession:
     def close(self) -> None:
         proc, self._proc = self._proc, None
         self._pending.clear()
+        self._asks.clear()
         self._changes.clear()
         if proc is None:
             return
@@ -532,12 +621,13 @@ class ChatSession:
             assert self._proc and self._proc.stdin
             # An abandoned turn is closed in `finally`. A queue that already
             # holds a start event is not drained.
-            payload = {"type": "user", "message": {
-                "role": "user", "content": [{"type": "text", "text": text}]}}
+            self._turn_id = ""
             if self.app:
-                sent = self._send(self._request("turn/start", {
+                start = self._request("turn/start", {
                     "threadId": self.session_id, "input": [{"type": "text", "text": text}],
-                    **({"effort": self.effort} if self.effort else {})}))
+                    **({"effort": self.effort} if self.effort else {})})
+                self._start_rpc = start["id"]
+                sent = self._send(start)
             elif self.is_codex:
                 try:
                     self._proc.stdin.write(text)
@@ -546,11 +636,13 @@ class ChatSession:
                 except (BrokenPipeError, OSError, ValueError):
                     sent = False
             else:
-                sent = self._send(payload)
+                sent = self._send(_user(text))
             if not sent:
                 self.close()
                 yield Event("error", "프로세스가 죽었다. 다시 보내면 새로 띄운다.")
                 return
+            with self._steering:
+                self._open, self._unread, self._prompt_seen = True, 0, False
             if self._lost:
                 # The caller writes it on record; a resume must not try that thread again.
                 yield Event("context", f"Codex 이어가기 실패 — 새 대화로 시작했다 ({self._lost})")
@@ -559,6 +651,8 @@ class ChatSession:
                 completed = event.kind == "done"
                 yield event
         finally:
+            with self._steering:
+                self._open, self._unread = False, 0
             # `codex exec` is one process per turn; the others live on.
             if (self.is_codex and not self.app) or not completed:
                 self.close()
@@ -601,10 +695,25 @@ class ChatSession:
                     if event:
                         yield event
                 elif "id" in ev and ev.get("error"):
-                    # `turn/start` refused, so no `turn/completed` is coming.
                     error = ev["error"]
-                    yield Event("error", str(error.get("message") if isinstance(error, dict) else error))
+                    message = str(error.get("message") if isinstance(error, dict) else error)
+                    if ev["id"] != self._start_rpc:
+                        # A `turn/steer` refused; the turn goes on without it.
+                        yield Event("tool", f"끼어들기 실패 · {message}"[:120])
+                        continue
+                    # `turn/start` refused, so no `turn/completed` is coming.
+                    yield Event("error", message)
                     return
+                elif method == "turn/started":
+                    self._turn_id = str((params.get("turn") or {}).get("id") or "")
+                elif method == "hook/completed":
+                    run = params.get("run") or {}
+                    entries = run.get("entries") or []
+                    event = _hook(str(run.get("eventName") or ""),
+                                  "\n".join(e["text"] for e in entries if e.get("kind") != "context"),
+                                  "\n".join(e["text"] for e in entries if e.get("kind") == "context"))
+                    if event:
+                        yield event
                 elif method == "item/agentMessage/delta" and params.get("delta"):
                     yield Event("delta", str(params["delta"]))
                 elif method == "item/started" and item.get("type") in (
@@ -625,6 +734,7 @@ class ChatSession:
                                          ("cache_read", "cachedInputTokens"), ("reasoning", "reasoningOutputTokens")):
                         used[mine] += int(last.get(theirs) or 0)
                 elif method == "turn/completed":
+                    self._closing()   # Codex holds no queue: a late steer is refused by the CLI
                     turn = params.get("turn") or {}
                     if turn.get("status") == "failed":
                         yield Event("error", str((turn.get("error") or {}).get("message") or "Codex 요청 실패"))
@@ -687,7 +797,11 @@ class ChatSession:
                     continue
                 name, args = str(request.get("tool_name") or "?"), request.get("input") or {}
 
-                def reply(allow, rid=rid, args=args):
+                def reply(allow, answers=(), rid=rid, args=args, name=name):
+                    if allow and name == "AskUserQuestion":
+                        # The CLI reads the answers off the input, by question text.
+                        args = {**args, "answers": {str(q.get("question")): a
+                                                    for q, a in zip(args.get("questions") or [], answers)}}
                     said = ({"behavior": "allow", "updatedInput": args} if allow
                             else {"behavior": "deny", "message": DECLINED})
                     return {"type": "control_response",
@@ -700,6 +814,23 @@ class ChatSession:
                 for block in _blocks(ev.get("message") or {}):
                     if block.get("type") == "tool_use":
                         yield Event("tool", _tool_brief(block))
+
+            elif kind == "system" and ev.get("subtype") == "hook_response":
+                event = _hook(str(ev.get("hook_event") or ""), *_claude_hook(ev))
+                if event:
+                    yield event
+
+            elif kind == "user" and ev.get("isReplay"):
+                with self._steering:
+                    if not self._prompt_seen:
+                        self._prompt_seen = True
+                    elif self._unread:
+                        self._unread -= 1
+
+            elif kind == "result" and not self._closing():
+                # A steered message came after the last step: the CLI answers it
+                # as one more turn of its own, and this turn waits for that.
+                continue
 
             elif kind == "result":
                 usage = ev.get("usage") or {}
@@ -722,6 +853,44 @@ class ChatSession:
                      }},
                 )
                 return
+
+
+def _claude_hook(ev: dict) -> tuple[str, str]:
+    """What one Claude hook said to the person, and what it put in context.
+
+    JSON output speaks by its fields; plain output of the two events that
+    inject is context; a blocking exit (2) says why on stderr."""
+
+    output = str(ev.get("output") or "").strip()
+    said, context = "", ""
+    try:
+        data = json.loads(output) if output.startswith("{") else None
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, dict):
+        specific = data.get("hookSpecificOutput") or {}
+        said = str(data.get("systemMessage") or specific.get("permissionDecisionReason")
+                   or (data.get("reason") if data.get("decision") == "block" else "") or "")
+        context = str(specific.get("additionalContext") or "")
+    elif ev.get("hook_event") in ("SessionStart", "UserPromptSubmit"):
+        context = output
+    if str(ev.get("exit_code")) == "2":
+        said = said or str(ev.get("stderr") or "").strip()
+    return said, context
+
+
+def _hook(name: str, said: str, context: str) -> Event | None:
+    """One hook that said something, as the screen shows it; `None` for a
+    silent one. The context rides in `meta` whole — it is what went in."""
+
+    if not said.strip() and not context.strip():
+        return None
+    return Event("hook", said.strip() or f"{name} · 문맥 {len(context):,}자",
+                 {"event": name, **({"context": context} if context.strip() else {})})
+
+
+def _user(text: str) -> dict:
+    return {"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]}}
 
 
 def _tool_brief(block: dict) -> str:

@@ -176,21 +176,22 @@ def worktrees(repo: Path) -> list[dict]:
     return rows
 
 
-def remove(repo: Path, path: Path) -> str:
+def remove(repo: Path, path: Path, force: bool = False) -> str:
     """Remove one worktree made here, then its branch. Returns what happened.
 
-    A dirty worktree is refused: that is work nobody has looked at. The branch
-    goes only when `merged` says its work is in HEAD — `-D`, since git itself
-    does not recognise a squash merge. Otherwise it stays.
+    A dirty worktree is refused: that is work nobody has looked at — unless
+    `force`, a person's explicit delete, which drops it. The branch goes only
+    when `merged` says its work is in HEAD — `-D`, since git itself does not
+    recognise a squash merge. Otherwise it stays, `force` or not.
     """
 
     repo = _main(repo)
     row = next((r for r in worktrees(repo) if r["path"] == Path(path).resolve()), None)
     if row is None:
         raise ValueError(f"{worktree_home(repo)} 아래 작업트리가 아니다: {path}")
-    if row["dirty"]:
+    if row["dirty"] and not force:
         raise ValueError(f"커밋하지 않은 변경이 있다: {path}")
-    done = _git(repo, "worktree", "remove", str(row["path"]))
+    done = _git(repo, "worktree", "remove", *(["--force"] if force else []), str(row["path"]))
     left = ""
     if done.returncode:
         # On Windows a process whose current directory is in there — a shell,

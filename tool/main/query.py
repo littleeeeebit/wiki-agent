@@ -508,6 +508,9 @@ def say(cid: str, body: Say) -> StreamingResponse:
                 if ev.kind == "approval":
                     yield sse({"kind": "tool", "text": f"거절 · {ev.text}"})
                     continue
+                if ev.kind == "hook":   # a line of what ran, as the work pane has it
+                    yield sse({"kind": "tool", "text": f"훅 · {ev.text}"})
+                    continue
                 if ev.kind == "context":   # the CLI's conversation could not be resumed
                     remember(cid, "context", ev.text)
                     yield sse({"kind": "tool", "text": ev.text})

@@ -102,10 +102,10 @@ class Worker:
     replies: list = []
     made: list = []
 
-    def __init__(self, path, model="", effort="", write=False, system=""):
+    def __init__(self, path, model="", effort="", write=False, system="", bypass=False):
         self.path, self.system = Path(path), system
         self.id, self.session_id, self.alive, self.parent_id = uuid.uuid4().hex, None, True, None
-        self.is_codex, self.rules, self.heard = False, [], []
+        self.is_codex, self.rules, self.heard, self.bypass = False, [], [], bypass
         Worker.made.append(self)
 
     def say(self, text, halt=None):

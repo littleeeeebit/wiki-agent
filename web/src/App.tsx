@@ -367,7 +367,7 @@ export default function App() {
     }
   }, [path])
 
-  const remove = useCallback(async (target: string) => {
+  const remove = useCallback(async (target: string, force = false) => {
     setFault('')
     try {
       // A terminal's shell may stand in that folder, and Windows will not
@@ -376,7 +376,7 @@ export default function App() {
       // started a moment ago by selecting elsewhere counts too.
       if (target === selected) flushSync(() => setSelected(''))
       await closed(target)
-      await api.removeWorktree(target)
+      await api.removeWorktree(target, force)
       // The same task name makes the same path again; its turns must not
       // come back with it.
       work.forget(target)
@@ -438,6 +438,7 @@ export default function App() {
           setView(v)
         }}
         onSelect={setSelected}
+        onRemove={(target) => void remove(target, true)}
         onSettings={() => setSetting(true)}
         onNew={() => {
           setView('chat')
@@ -551,8 +552,9 @@ export default function App() {
                 on={on}
                 onChoice={setChoice}
                 onSend={order}
-                onAnswer={(turn, id, allow, scope) => work.answer(path, turn, id, allow, scope)}
+                onAnswer={(turn, id, allow, scope, answers) => work.answer(path, turn, id, allow, scope, answers)}
                 onStop={(turn) => work.stop(path, turn).catch((err) => setFault(String(err)))}
+                onSteer={(turn, text) => void work.steer(path, turn, text)}
                 rules={(path && work.rules[path]?.list) || []}
                 onClearRules={() => work.clearRules(path).catch((err) => setFault(String(err)))}
                 onReset={(keep) => work.reset(path, keep)}
