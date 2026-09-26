@@ -279,7 +279,8 @@ def demo() -> None:
 
     cid = "wiki"
     token = "QUOKKA-9"
-    query.reset(cid)
+    wipe = query.Clear(keep="delete")
+    query.reset(cid, wipe)
     try:
         first = last = {}
         for ev in query.session(cid).say(f"이 표를 기억해라: {token}. '알겠다' 한 마디만."):
@@ -299,7 +300,7 @@ def demo() -> None:
         assert token in text, text
         print(f"ok  effort 를 바꿔도 대화가 남는다 — session {first['session_id']}")
     finally:
-        query.reset(cid)
+        query.reset(cid, wipe)
         query.close_all()
 
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Eraser } from 'lucide-react'
 import { Blocks } from '@/components/Blocks'
 import { Composer } from '@/components/Composer'
-import { Btn } from '@/components/Modal'
+import { Btn, ClearAsk } from '@/components/Modal'
 import { Peek } from '@/components/Peek'
 import { Stream } from '@/components/Stream'
 import { Toolbar } from '@/components/Toolbar'
@@ -218,16 +218,19 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
     [active, here, onChannels],
   )
 
-  const wipe = useCallback(async () => {
-    try {
-      await api.reset(active)
-      setMessages([])
-      setNote('')
-      api.getChannels().then(onChannels).catch(() => {})
-    } catch (err) {
-      setFault(String(err))
-    }
+  // A conversation on screen is asked about first; an empty one just clears.
+  const [asking, setAsking] = useState(false)
+  const clear = useCallback(async (keep: api.Keep) => {
+    const kept = await api.reset(active, keep)
+    setMessages([])
+    setNote('')
+    api.getChannels().then(onChannels).catch(() => {})
+    return kept
   }, [active, onChannels])
+  const wipe = useCallback(() => {
+    if (messages.length) return setAsking(true)
+    clear('delete').catch((err) => setFault(String(err)))
+  }, [messages.length, clear])
 
   // "That was wrong" — recorded in the census's format, together with the
   // utterance immediately before that answer.
@@ -291,7 +294,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         <div className="flex shrink-0 items-center gap-1.5">
           {here && <Toolbar value={here} options={options} busy={busy} onChange={apply} />}
           <Btn tone="ghost" className="px-1.5" onClick={wipe} disabled={busy} aria-label="문맥 비우기"
-            title="문맥 비우기 — 이 초점의 대화를 새로 시작한다. 기록은 남는다">
+            title="문맥 비우기 — 이 초점의 대화를 새로 시작한다. 지금 대화는 메모리로 남기거나 지운다">
             <Eraser className="size-4" />
           </Btn>
         </div>
@@ -337,6 +340,10 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         </div>
         {peek && <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />}
       </div>
+      {asking && <ClearAsk onClear={clear} onClose={(said) => {
+        setAsking(false)
+        if (said) setNote(said)
+      }} />}
     </section>
   )
 }

@@ -31,6 +31,8 @@ MODELS = [
 # What a hand-typed Claude model name may look like: `opus`, `claude-opus-5-5`,
 # `opus[1m]`. It reaches the CLI as one argument, never through a shell.
 CLAUDE_MODEL = re.compile(r"[a-z][a-z0-9.\-]{0,63}(\[1m\])?")
+# An effort saved in the settings: one of `EFFORTS`, or a Codex model's own.
+EFFORT = re.compile(r"[a-z]{0,16}")
 
 # The five `--effort` takes. Further up thinks longer and costs more.
 EFFORTS = [

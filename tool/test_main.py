@@ -222,7 +222,7 @@ def test_provider_switch_and_config_validation(tmp_path):
         assert web.post("/api/config/wiki", json={"repo": "sample", "model": "claude-opus-5-5"}).status_code == 200
         assert web.post("/api/config/wiki", json={"repo": "sample", "model": "opus; rm -rf"}).status_code == 400
         with patch.object(chat, "_busy", {"wiki": object()}):
-            assert web.post("/api/reset/wiki").status_code == 409
+            assert web.post("/api/reset/wiki", json={"keep": "delete"}).status_code == 409
 
 
 def test_project_shared_sessions_and_records_isolated(tmp_path):
@@ -251,10 +251,64 @@ def test_project_shared_sessions_and_records_isolated(tmp_path):
         assert chat.project() == "a", "서버 재시작 때 프로젝트 선택을 복원해야 한다"
         chat._sessions.clear()
         assert chat.session("retro").session_id == "a-context"
-        web.post("/api/reset/retro").raise_for_status()
+        web.post("/api/reset/retro", json={"keep": "delete"}).raise_for_status()
         assert chat.session("retro") is not a
         assert chat.session("retro").session_id is None
-        assert web.get("/api/log/retro").json()[0]["text"] == "a 회고"
+        # Cleared is gone from the screen, and deleted is gone from the record;
+        # another project's rows stay.
+        assert web.get("/api/log/retro").json() == []
+        assert "a 회고" not in (tmp_path / "retro.jsonl").read_text(encoding="utf-8")
+        assert "b 회고" in (tmp_path / "retro.jsonl").read_text(encoding="utf-8")
+
+
+def test_a_cleared_conversation_kept_as_memory_leaves_the_pair(tmp_path):
+    repo = tmp_path / "a"
+    (repo / ".git").mkdir(parents=True)
+    said = []
+
+    def oneshot(prompt, payload, model, effort):
+        said.append((prompt, payload))
+        yield Event("done", json.dumps({
+            "title": "Chose the rail button", "summary": "Asked where to make a worktree.",
+            "decisions": [{"what": "a rail button", "why": "keeps the spec path"}],
+            "facts": [], "preferences": [], "open": ["measure it"], "references": [], "keywords": ["작업트리"]}))
+
+    web = client()
+    with patch.object(chat_channels, "repo_for", return_value=repo), \
+         patch("main.memory.oneshot", oneshot):
+        web.post("/api/config/next", json={"repo": "a"}).raise_for_status()
+        chat.remember("next", "user", "작업트리 어디서 만들지?")
+        chat.remember("next", "assistant", "레일 버튼으로.")
+        kept = web.post("/api/reset/next", json={"keep": "memory"}).json()
+        assert web.get("/api/log/next").json() == []
+        # Nothing said since: nothing to keep, nothing written.
+        assert web.post("/api/reset/next", json={"keep": "memory"}).json() == {"ok": True}
+
+    raw, page = repo / kept["raw"], repo / kept["memory"]
+    assert raw.name.endswith("-next.raw.md") and page.name == raw.name.replace(".raw.md", ".md")
+    assert "작업트리 어디서 만들지?" in raw.read_text(encoding="utf-8")
+    text = page.read_text(encoding="utf-8")
+    assert "# Chose the rail button" in text and "- a rail button — keeps the spec path" in text
+    assert "## Open" in text and "## Facts" not in text
+    assert said[0][0] == "chat-memory.md" and [t["role"] for t in said[0][1]["transcript"]] == ["user", "assistant"]
+
+
+def test_a_memory_the_model_got_wrong_keeps_the_transcript(tmp_path):
+    repo = tmp_path / "a"
+    (repo / ".git").mkdir(parents=True)
+
+    def oneshot(*_args):
+        yield Event("done", "not json")
+
+    web = client()
+    with patch.object(chat_channels, "repo_for", return_value=repo), \
+         patch("main.memory.oneshot", oneshot):
+        web.post("/api/config/next", json={"repo": "a"}).raise_for_status()
+        chat.remember("next", "user", "질문")
+        failed = web.post("/api/reset/next", json={"keep": "memory"})
+        assert web.get("/api/log/next").json() == []
+    assert failed.status_code == 200 and ".raw.md" in failed.json()["fault"]
+    assert [p.name.endswith(".raw.md") for p in (repo / ".wiki/memory").iterdir()] == [True]
 
 
 def test_a_focus_is_told_how_to_search_its_own_repository(tmp_path):
@@ -587,7 +641,8 @@ def test_an_approval_goes_only_to_the_session_that_asked(tmp_path):
         web.post("/api/work/say", json={"path": path, "text": "다음"}).raise_for_status()
         assert Agent.made[-1].session_id == "cli-1"
 
-        web.post("/api/work/reset", json={"path": path}).raise_for_status()
+        web.post("/api/work/reset", json={"path": path, "keep": "delete"}).raise_for_status()
+        assert web.get("/api/work/log", params={"path": path}).json()["rows"] == []
         assert web.post("/api/work/answer", json=right).status_code == 409
 
 
@@ -710,7 +765,7 @@ def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_p
         waiting = work.say(work.Order(path=path, text="x"))
         assert work._busy[path].kind == "turn", "도는 턴은 전환을 막지 않는다"
         assert web.post("/api/worktrees/remove", json={"path": path}).status_code == 409
-        assert web.post("/api/work/reset", json={"path": path}).status_code == 409
+        assert web.post("/api/work/reset", json={"path": path, "keep": "delete"}).status_code == 409
         asking = chat.say("next", chat.Say(text="x"))
         assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
         del waiting, asking
@@ -812,7 +867,7 @@ def test_a_removal_holds_its_worktree_until_it_is_done(tmp_path):
                     break
                 threading.Event().wait(0.05)
             assert web.post("/api/work/say", json={"path": path, "text": "x"}).status_code == 409
-            assert web.post("/api/work/reset", json={"path": path}).status_code == 409
+            assert web.post("/api/work/reset", json={"path": path, "keep": "delete"}).status_code == 409
             assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
         finally:
             gate.set()

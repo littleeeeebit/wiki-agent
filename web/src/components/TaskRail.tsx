@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { FolderGit2, Repeat, Settings as Gear } from 'lucide-react'
+import { FolderGit2, Plus, Repeat, Settings as Gear } from 'lucide-react'
 import { Btn, Modal } from '@/components/Modal'
 import { Picker } from '@/components/Toolbar'
 import type { Item } from '@/components/Toolbar'
@@ -24,6 +24,7 @@ type Props = {
   onSelect: (key: string) => void
   onLoop: (prs: number[]) => Promise<void>
   onSettings: () => void
+  onNew: () => void
 }
 
 const DOT: Record<Phase, string> = {
@@ -61,6 +62,10 @@ export function TaskRail(props: Props) {
 
   const projects: Item[] = options?.projects.map((p) => ({ value: p.id, label: p.id,
     note: p.state === '미연결' ? undefined : p.state })) ?? []
+  // The current project's state when the wiki is not wholly attached: the
+  // rail says so and offers [연결] right there.
+  const state = options?.projects.find((p) => p.id === repo)?.state
+  const unwired = state && state !== '연결 완료' ? state : ''
 
   async function loop(numbers: number[]) {
     setFault('')
@@ -90,13 +95,25 @@ export function TaskRail(props: Props) {
       <div className={cn('shrink-0 space-y-2 border-b border-sidebar-border p-3', WIDE)}>
         <Picker label="프로젝트" hideLabel width="w-full" mono items={projects} value={repo}
           disabled={props.projectBusy || !options} onPick={(v) => v && v !== repo && props.onProject(v)} />
+        {unwired && (
+          <div className="flex items-center gap-2 text-[12.5px]">
+            <span aria-hidden className={cn('size-2 shrink-0 rounded-full', unwired === '일부' ? 'bg-wait' : 'bg-border')} />
+            <span className="min-w-0 flex-1 truncate text-muted-foreground">위키 {unwired}</span>
+            <Btn tone="primary" onClick={() => props.onView('projects')}>연결</Btn>
+          </div>
+        )}
+        <button type="button" onClick={props.onNew}
+          className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-sidebar-border text-[12.5px] hover:bg-sidebar-accent"
+          title="다음 작업 대화에 한 줄 명세 틀을 넣는다. 명세의 [시작] 이 작업트리를 만든다">
+          <Plus className="size-3.5" /> 새 작업
+        </button>
         <div className="grid grid-cols-2 gap-1.5">
           <button type="button" aria-pressed={view === 'projects'}
             onClick={() => props.onView(view === 'projects' ? 'chat' : 'projects')}
             className={cn('h-7 rounded-md border border-sidebar-border px-2 text-[12.5px] hover:bg-sidebar-accent',
               view === 'projects' && 'bg-sidebar-accent')}
             title="저장소마다 위키가 붙었는지, [연결]">
-            모든 프로젝트
+            프로젝트 · 연결
           </button>
           <button type="button" disabled={pickable.length === 0 || looping} onClick={openLoop}
             className="h-7 rounded-md border border-sidebar-border px-2 text-[12.5px] hover:bg-sidebar-accent disabled:opacity-40"
@@ -108,10 +125,16 @@ export function TaskRail(props: Props) {
       </div>
 
       <div className={cn('flex shrink-0 flex-col items-center gap-1 border-b border-sidebar-border py-2', NARROW)}>
-        <button type="button" aria-pressed={view === 'projects'} aria-label="모든 프로젝트" title={`모든 프로젝트 — 지금 ${repo}`}
+        <button type="button" aria-label="새 작업" title="새 작업" onClick={props.onNew}
+          className="grid size-8 place-items-center rounded-md hover:bg-sidebar-accent">
+          <Plus className="size-4" />
+        </button>
+        <button type="button" aria-pressed={view === 'projects'} aria-label="프로젝트 · 연결"
+          title={`프로젝트 · 연결 — 지금 ${repo}${unwired ? ` (위키 ${unwired})` : ''}`}
           onClick={() => props.onView(view === 'projects' ? 'chat' : 'projects')}
-          className={cn('grid size-8 place-items-center rounded-md hover:bg-sidebar-accent', view === 'projects' && 'bg-sidebar-accent')}>
+          className={cn('relative grid size-8 place-items-center rounded-md hover:bg-sidebar-accent', view === 'projects' && 'bg-sidebar-accent')}>
           <FolderGit2 className="size-4" />
+          {unwired && <span aria-hidden className="absolute top-1 right-1 size-1.5 rounded-full bg-wait" />}
         </button>
         <button type="button" aria-label={loopLabel} title={loopLabel} disabled={pickable.length === 0 || looping} onClick={openLoop}
           className="relative grid size-8 place-items-center rounded-md hover:bg-sidebar-accent disabled:opacity-40">
@@ -127,7 +150,7 @@ export function TaskRail(props: Props) {
       <nav aria-label="작업" className="min-h-0 flex-1 overflow-y-auto px-2 py-2 max-[1280px]:px-1">
         {tasks.length === 0 && (
           <p className={cn('px-2 py-1 text-[12.5px] text-faint', WIDE)}>
-            아직 작업이 없다. 다음 작업 대화에서 명세를 정하고 [시작] 한다.
+            아직 작업이 없다. [새 작업] 으로 명세를 정하고 [시작] 한다.
           </p>
         )}
         {GROUPS.map((g) => {

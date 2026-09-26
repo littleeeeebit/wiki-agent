@@ -1,6 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { X } from 'lucide-react'
+import type { Keep, Kept } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 /** Every modal of the window, on the platform's `<dialog>`: it traps focus,
@@ -41,6 +42,48 @@ export function Modal({ title, onClose, children, foot, wide }: {
         {foot && <div className="flex shrink-0 justify-end gap-2 border-t border-border px-4 py-3">{foot}</div>}
       </div>
     </dialog>
+  )
+}
+
+/** A clear's question: what becomes of the conversation. `onClose` gets the
+ *  line to show after — empty when nothing was done. */
+export function ClearAsk({ onClear, onClose }: {
+  onClear: (keep: Keep) => Promise<Kept>
+  onClose: (said: string) => void
+}) {
+  const [working, setWorking] = useState<Keep | ''>('')
+  const [fault, setFault] = useState('')
+  const pick = async (keep: Keep) => {
+    setFault('')
+    setWorking(keep)
+    try {
+      const kept = await onClear(keep)
+      onClose(keep === 'delete' ? '대화를 지웠다.'
+        : kept.fault ?? (kept.memory ? `메모리로 남겼다 — ${kept.memory} · 원시 대화 ${kept.raw}` : '남길 대화가 없었다.'))
+    } catch (err) {
+      setFault(String(err instanceof Error ? err.message : err))
+      setWorking('')
+    }
+  }
+  return (
+    <Modal title="문맥 비우기" onClose={() => !working && onClose('')} foot={(
+      <>
+        <Btn disabled={!!working} onClick={() => onClose('')}>취소</Btn>
+        <Btn tone="danger" disabled={!!working} onClick={() => void pick('delete')}>
+          {working === 'delete' ? '지우는 중…' : '지우기'}
+        </Btn>
+        <Btn tone="primary" disabled={!!working} onClick={() => void pick('memory')}>
+          {working === 'memory' ? '정리하는 중…' : '메모리로 남기기'}
+        </Btn>
+      </>
+    )}>
+      <p>비우면 다음 지시부터 새 대화다. 지금까지의 대화는 어떻게 할까?</p>
+      <ul className="mt-2 space-y-1 text-muted-foreground">
+        <li>· 메모리로 남기기 — 원시 대화와, 그것을 정리한 메모리 한 쌍을 이 저장소의 <code className="font-mono text-[12px]">.wiki/memory/</code> 에 쓴다. 위키 검색이 메모리를 찾는다. 정리에 모델 한 턴이 든다</li>
+        <li>· 지우기 — 기록에서도 지운다. 되돌릴 수 없다</li>
+      </ul>
+      {fault && <p role="alert" className="mt-2 whitespace-pre-wrap text-destructive">{fault}</p>}
+    </Modal>
   )
 }
 

@@ -41,7 +41,7 @@ from .query import ROOT, _lock, current_repo, hold, project, streaming
 REVIEW = ROOT / "raw" / "review"
 PROMPT = (ROOT / "tool/prompts/review-round.md").read_text(encoding="utf-8")
 
-DEFAULTS = {"rounds": 12, "concurrent": 3, "review_model": ""}
+DEFAULTS = {"rounds": 12, "concurrent": 3, "review_model": "", "review_effort": "high"}
 MORE = 4        # rounds a `[계속]` past the cap adds, to that spec only
 POLL = 60.0     # seconds between reads of a pull request waiting to merge
 # Never `READ_TOOLS`: its `Bash` is on `--allowedTools`, runs unasked, and one
@@ -340,7 +340,8 @@ def cell(spec: dict, path: Path) -> ChatSession:
     if chat is not None:
         return chat
     # Outside the lock: listing Codex's models starts Codex.
-    chat = ChatSession(path, tools=REVIEW_TOOLS, system=PROMPT, model=review_model(), effort="high")
+    chat = ChatSession(path, tools=REVIEW_TOOLS, system=PROMPT, model=review_model(),
+                       effort=settings()["review_effort"])
     try:
         saved = json.loads((folder(*key) / "session.json").read_text(encoding="utf-8"))
         if saved.get("provider") == ("codex" if chat.is_codex else "claude"):
@@ -1229,6 +1230,7 @@ class Settings(BaseModel):
     rounds: int
     concurrent: int
     review_model: str = ""
+    review_effort: str = "high"
 
 
 @router.get("/api/loop/settings")
@@ -1243,7 +1245,9 @@ def set_settings(body: Settings) -> dict:
     model = body.review_model.strip()
     if model and not model.startswith("codex:") and not channels.CLAUDE_MODEL.fullmatch(model):
         raise HTTPException(400, "그런 모델 이름은 받지 않는다")
-    store(rounds=body.rounds, concurrent=body.concurrent, review_model=model)
+    if not channels.EFFORT.fullmatch(body.review_effort):
+        raise HTTPException(400, "그런 추론 강도는 받지 않는다")
+    store(rounds=body.rounds, concurrent=body.concurrent, review_model=model, review_effort=body.review_effort)
     with _seats:
         _seats.notify_all()   # more seats may be free now
     return settings()

@@ -33,7 +33,8 @@ from workspace import create
 from . import channels, loop, query, specs, work
 from .connect import ADAPTER, RECORDS, digest, git, keep, record, tracked
 
-DEFAULTS = {"survey": False, "survey_tokens": 2_000_000, "survey_minutes": 90, "survey_model": "opus"}
+DEFAULTS = {"survey": False, "survey_tokens": 2_000_000, "survey_minutes": 90, "survey_model": "opus",
+            "survey_effort": ""}
 RATES = RECORDS / "survey" / "rates.json"
 BOOTSTRAP = "wiki-bootstrap"
 PER_SECOND = 200.0     # tokens a second, until a survey on this machine measures it
@@ -236,7 +237,7 @@ def start(repo: Path) -> str | None:
                        "why": "[연결] 에서 조사를 켰다. 이미 있는 파일은 건드리지 않았다", "rejected": ""}],
         "source": {"focus": "connect", "plan": None}, "state": "작업 중", "stopped": None,
         "worktree": str(path), "pr": None, "report": None, "gate": None, "fault": None,
-        "cell": {"model": limits["survey_model"], "effort": ""},
+        "cell": {"model": limits["survey_model"], "effort": limits["survey_effort"]},
         "survey": {"handover": handover, "first": first},
         "history": [{"ts": now, "state": "정리됨"}, {"ts": now, "state": "작업 중"}],
     })

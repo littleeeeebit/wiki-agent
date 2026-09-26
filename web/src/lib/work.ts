@@ -257,10 +257,11 @@ export function useWork() {
     setRules((all) => ({ ...all, [path]: { ...mine, list: [] } }))
   }, [rules])
 
-  const reset = useCallback(async (path: string) => {
-    await api.workReset(path)
+  const reset = useCallback(async (path: string, keep: api.Keep) => {
+    const kept = await api.workReset(path, keep)
     setTurns((all) => ({ ...all, [path]: [] }))
     setRules((all) => ({ ...all, [path]: { session: '', list: [] } }))
+    return kept
   }, [])
 
   /** A turn the server started in `path` — the plan row's, a loop's. A

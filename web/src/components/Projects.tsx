@@ -46,7 +46,8 @@ export function Projects({ current }: { current: string }) {
       setFault(String(err instanceof Error ? err.message : err))
     } finally {
       setWorking('')
-      read()
+      // Read here and by the rail, which shows the current project's state.
+      window.dispatchEvent(new Event('connect-changed'))
     }
   }
 

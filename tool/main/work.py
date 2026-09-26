@@ -29,7 +29,8 @@ from workspace import remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
 # changes the project under it, so a hold can never land in between.
-from .query import ROOT, _lock, current_repo, hold, project, resumable, sse, streaming
+from . import memory
+from .query import ROOT, _lock, current_repo, hold, keep, project, resumable, sse, streaming
 
 LOGS = ROOT / "raw" / "work"
 MAX_REPLAY = 200
@@ -85,9 +86,9 @@ def remember(path: Path, role: str, text: str, **extra) -> None:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
-def recall(path: Path) -> list[dict]:
-    """This worktree's turns. Rows of a removed worktree that had the same
-    name are left out by path."""
+def recall(path: Path, limit: int = MAX_REPLAY) -> list[dict]:
+    """This worktree's turns since the last clear. Rows of a removed worktree
+    that had the same name are left out by path."""
 
     file = record(path)
     if not file.exists():
@@ -100,7 +101,8 @@ def recall(path: Path) -> list[dict]:
             continue
         if row.get("path") == str(path):
             rows.append(row)
-    return rows[-MAX_REPLAY:]
+    rows = memory.since_clear(rows)
+    return rows[-limit:] if limit else rows
 
 
 # -- Worktrees --------------------------------------------------------------
@@ -250,8 +252,12 @@ def log(path: str) -> dict:
             {"turn": run.turn, "session_id": run.session_id, "seq": len(run.events) - 1}}
 
 
+class Clearing(Where):
+    keep: Literal["memory", "delete"]
+
+
 @router.post("/api/work/reset")
-def reset(body: Where) -> dict:
+def reset(body: Clearing) -> dict:
     # Held until the reset is on record, or a turn in between resumed the CLI
     # context the reset was meant to drop.
     with _lock:
@@ -262,12 +268,18 @@ def reset(body: Where) -> dict:
         with _lock:
             chat = _sessions.pop(body.path, None)
             _runs.pop(body.path, None)
-        remember(path, "context", "사용자가 문맥 지우기")
+        rows = recall(path, limit=0)
+        if body.keep == "delete":
+            memory.drop(record(path), rows)
+        remember(path, "context", memory.CLEARED)
         if chat:
             chat.close()
-        return {"ok": True}
     finally:
         release()
+    # The memory goes in the original checkout's `.wiki/`: the worktree's
+    # goes with the worktree.
+    cfg = {"model": chat.model or "", "effort": chat.effort or ""} if chat and body.keep == "memory" else {}
+    return {"ok": True, **keep(repo, f"work-{path.name}", rows, cfg, body)}
 
 
 class Run:
