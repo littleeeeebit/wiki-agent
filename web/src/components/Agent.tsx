@@ -24,9 +24,9 @@ type Props = {
   /** The next instruction, waiting for this run to end. */
   queued?: string
   onQueue: (turn: Turn, text: string) => void
-  /** An instruction the server would not keep waiting, with why. */
-  refused?: { text: string; reason: string }
-  onDismiss: () => void
+  /** Instructions the server would not keep waiting, each with why. */
+  refused?: { text: string; reason: string }[]
+  onDismiss: (at: number) => void
   onUnqueue: () => void
   rules: Rule[]
   onClearRules: () => void
@@ -137,26 +137,29 @@ export function Agent({
           it between steps. Until the server names the turn there is nothing to
           send it to. Once it has answered, the agent reads nothing more — the
           gate is running — so it waits and goes as the next instruction. */}
-      {refused && (
-        <div role="alert" className="mx-4 mb-1 rounded-md border border-destructive/40 px-3 py-2 text-[12.5px]">
-          <p className="text-destructive">대기 실패 · {refused.reason}</p>
-          <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{refused.text}</p>
+      {refused?.map((r, i) => (
+        <div key={i} role="alert" className="mx-4 mb-1 rounded-md border border-destructive/40 px-3 py-2 text-[12.5px]">
+          <p className="text-destructive">대기 실패 · {r.reason}</p>
+          <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{r.text}</p>
           <div className="mt-1 flex gap-1">
             <Btn tone="ghost" onClick={() => {
-              setSeed({ text: refused.text })
-              onDismiss()
+              setSeed({ text: r.text })
+              onDismiss(i)
             }}>입력칸에 넣기</Btn>
-            <Btn tone="ghost" onClick={onDismiss}>버리기</Btn>
+            <Btn tone="ghost" onClick={() => onDismiss(i)}>버리기</Btn>
           </div>
         </div>
-      )}
+      ))}
+      {/* One waits at a time: a second would only be refused, so it stays in the box. */}
       <Composer
-        busy={busy && !last?.turn}
+        busy={busy && (!last?.turn || (last.answered != null && !!queued))}
         disabled={!row}
         max={320}
         seed={seed}
         placeholder={!busy ? '지시를 적어라. Enter 로 보내고 Shift+Enter 로 줄바꿈.'
-          : last?.answered != null ? '답은 끝났고 마무리가 도는 중이다. 보내면 끝난 뒤 다음 지시로 보낸다.'
+          : last?.answered != null
+            ? queued ? '지시 하나가 이미 기다린다. 그것을 취소하면 이것을 보낼 수 있다.'
+              : '답은 끝났고 마무리가 도는 중이다. 보내면 끝난 뒤 다음 지시로 보낸다.'
             : '도는 턴에 끼어든다. 에이전트가 다음 걸음 전에 읽는다.'}
         onSend={(text) => (!busy || !last ? onSend(text)
           : last.answered != null ? onQueue(last, text) : onSteer(last, text))}

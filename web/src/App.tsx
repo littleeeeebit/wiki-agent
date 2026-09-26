@@ -559,7 +559,7 @@ export default function App() {
                 queued={work.queued[path]}
                 onQueue={(turn, text) => void work.queue(path, turn, text, choice)}
                 refused={work.refused[path]}
-                onDismiss={() => work.dismiss(path)}
+                onDismiss={(at) => work.dismiss(path, at)}
                 onUnqueue={() => work.unqueue(path).catch((err) => setFault(String(err)))}
                 rules={(path && work.rules[path]?.list) || []}
                 onClearRules={() => work.clearRules(path).catch((err) => setFault(String(err)))}

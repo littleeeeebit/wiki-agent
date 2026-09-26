@@ -122,9 +122,14 @@ export function useWork() {
   // An instruction the server would not keep waiting, until the person puts
   // it back or lets it go. Here, not in the pane or the box: it outlives a
   // reattach, a switch to another pane, and whatever is typed meanwhile.
-  const [refused, setRefused] = useState<Record<string, { text: string; reason: string }>>({})
-  const dismiss = useCallback((path: string) => {
-    setRefused(({ [path]: _gone, ...rest }) => rest)
+  // Every one of them: each was cleared from the box when it was sent.
+  const [refused, setRefused] = useState<Record<string, { text: string; reason: string }[]>>({})
+  /** One refused instruction by its place, or all of the path's. */
+  const dismiss = useCallback((path: string, at?: number) => {
+    setRefused(({ [path]: list = [], ...rest }) => {
+      const left = at === undefined ? [] : list.filter((_, i) => i !== at)
+      return left.length ? { ...rest, [path]: left } : rest
+    })
   }, [])
   // Paths a server-started turn was announced for while this window's own
   // send still followed its turn: read again once that send lets go.
@@ -292,7 +297,8 @@ export function useWork() {
       showQueued(path, text)
     } catch (err) {
       readRules(path)
-      setRefused((all) => ({ ...all, [path]: { text, reason: err instanceof Error ? err.message : String(err) } }))
+      setRefused((all) => ({ ...all, [path]: [...(all[path] ?? []),
+        { text, reason: err instanceof Error ? err.message : String(err) }] }))
     }
   }, [readRules, showQueued])
 
