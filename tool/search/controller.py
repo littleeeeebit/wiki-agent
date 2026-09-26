@@ -24,6 +24,8 @@ TIMEOUT = 6.0
 # ponytail: one fixed budget for every Jev call and search in a turn; tune with real latencies from step 1.
 BUDGET = 15.0
 SEARCH_TIMEOUT = 3.0
+# Held by the one cold index build allowed at a time, across every run.
+COLD = threading.Lock()
 MAX_STATE = 4000
 MAX_PASSAGE = 3000
 MAX_CANDIDATES = 12
@@ -90,18 +92,28 @@ def retrieve(query: str, project: Path | None, sources: list[str], k: int,
              timeout: float = SEARCH_TIMEOUT) -> list[dict]:
     """The daemon's hits within `timeout`, else a cold local index.
 
-    The cold build takes no timeout; `prepare` stops waiting for it at the budget.
+    The cold build takes no timeout; `prepare` stops waiting for it at the
+    budget and abandons it. So nothing here starts once the time is gone, and
+    at most one build runs at a time: a turn that finds one still running gets
+    nothing rather than a second build beside it. Nothing, because the agent
+    searches on its own.
     """
 
-    found = ask(query, str(project) if project else None, timeout=timeout, k=k,
-                sources=sources) if timeout > 0 else None
+    if timeout <= 0:
+        return []
+    found = ask(query, str(project) if project else None, timeout=timeout, k=k, sources=sources)
     if found is not None:
         return found
-    from .daemon import Embedder, Index
+    if not COLD.acquire(blocking=False):
+        return []
+    try:
+        from .daemon import Embedder, Index
 
-    index = Index(HUB, project, Embedder(None))
-    index.refresh()
-    return index.search(query, k, sources)
+        index = Index(HUB, project, Embedder(None))
+        index.refresh()
+        return index.search(query, k, sources)
+    finally:
+        COLD.release()
 
 
 def blank(available: list[str]) -> dict:
@@ -152,7 +164,7 @@ def run(query: str, root: Path | None, available: list[str], state: str, k: int,
         return evaluate(state_, questions, trace)
 
     def search(sources: list[str], limit: int) -> list[dict]:
-        # The daemon gets what is left of the budget; with nothing left, only the cold index.
+        # The daemon gets what is left of the budget; with nothing left, no search at all.
         return retrieve(query, root, sources, limit, min(SEARCH_TIMEOUT, max(0.0, deadline - time.monotonic())))
 
     try:
@@ -216,8 +228,10 @@ def run(query: str, root: Path | None, available: list[str], state: str, k: int,
                       else "invalid_or_unavailable_decision"})
         # A failed narrow route must not limit the fallback's source coverage.
         try:
-            dossier["evidence"] = search(available, k)
-            dossier["sources"] = available
+            # An empty answer (no time left, a build already running) keeps what was found.
+            found = search(available, k)
+            if found:
+                dossier["evidence"], dossier["sources"] = found, available
         except Exception as error:  # noqa: BLE001 — keep what was found; the agent searches on its own
             trace.append({"fallback_retrieval": type(error).__name__})
         return dossier

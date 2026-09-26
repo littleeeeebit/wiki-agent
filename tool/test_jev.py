@@ -2,6 +2,7 @@
 
 import json
 import math
+import threading
 import time
 
 import pytest
@@ -169,57 +170,91 @@ def test_searches_spend_the_same_budget(monkeypatch):
         time.sleep(min(timeout, 0.3))
         return [hit("daemon")]
 
-    class Cold:
-        def __init__(self, *a):
-            pass
-
-        def refresh(self):
-            pass
-
-        def search(self, query, k, sources):
-            return [hit("cold")]
-
     def evaluate(state, questions, trace):
         if "retrieve" in questions:
             return {"retrieve": 1, "hub": 1}
         return {q: 0.5 for q in questions}
 
     monkeypatch.setattr(jev, "ask", slow_daemon)
-    monkeypatch.setattr(daemon, "Index", Cold)
+    monkeypatch.setattr(daemon, "Index", lambda *a: pytest.fail("cold build with no time left"))
     monkeypatch.setattr(jev, "evaluate", evaluate)
     monkeypatch.setattr(jev, "TIMEOUT", 0.1)
     budget = 0.6
     started = time.monotonic()
     out = jev.run("Question", None, ["hub"], "", 8, started + budget)
-    # Two daemon searches use the budget up; the fallback gets nothing left, so
-    # it skips the daemon for the cold index instead of waiting three seconds more.
+    # Two daemon searches use the budget up. The fallback gets nothing left, so
+    # it searches nothing and keeps what the daemon found.
     assert time.monotonic() - started < budget + 0.15
     assert len(asked) == 2 and asked[0] <= budget and asked[1] < budget
-    assert out["trace"][-1]["reason"] == "budget" and out["evidence"] == [hit("cold")]
+    assert out["trace"][-1]["reason"] == "budget"
+    assert [h["heading"] for h in out["evidence"]] == ["daemon"]
 
 
 def test_a_slow_cold_index_cannot_hold_the_caller_past_the_budget(monkeypatch):
     import search.daemon as daemon
 
+    built = []
+
     class Slow:
         def __init__(self, *a):
-            pass
+            built.append(a)
 
         def refresh(self):
-            time.sleep(1.0)
+            time.sleep(0.6)
 
         def search(self, query, k, sources):
             return [hit("late")]
 
-    monkeypatch.delenv("TYPESAFE_API_KEY", raising=False)
+    def evaluate(state, questions, trace):
+        if "retrieve" in questions:
+            return {"retrieve": 1, "hub": 1}
+        return {q: 0.5 for q in questions}
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "unused")
+    monkeypatch.setattr(jev, "evaluate", evaluate)
     monkeypatch.setattr(jev, "ask", lambda *a, **kw: None)
     monkeypatch.setattr(daemon, "Index", Slow)
+    monkeypatch.setattr(jev, "TIMEOUT", 0.05)
     monkeypatch.setattr(jev, "BUDGET", 0.2)
     started = time.monotonic()
-    out = jev.prepare("Question", "/repo")
+    out = jev.prepare("Question", None)
     assert time.monotonic() - started < 0.5
     assert out["status"] == "fallback" and out["evidence"] == []
     assert out["trace"] == [{"fallback": "TimeoutError", "reason": "budget"}]
+    # The abandoned run's build ends late (0.6 s); its fallback then has no time
+    # left and must not start a second one. Wait by the clock: waiting on `COLD`
+    # would hold it just when that fallback tries, and hide a second build.
+    time.sleep(0.8)
+    assert len(built) == 1
+    assert jev.COLD.acquire(timeout=3)
+    jev.COLD.release()
+
+
+def test_one_cold_build_at_a_time_and_none_without_time(monkeypatch):
+    import search.daemon as daemon
+
+    built = []
+
+    class Slow:
+        def __init__(self, *a):
+            built.append(a)
+
+        def refresh(self):
+            time.sleep(0.3)
+
+        def search(self, query, k, sources):
+            return [hit("cold")]
+
+    monkeypatch.setattr(jev, "ask", lambda *a, **kw: None)
+    monkeypatch.setattr(daemon, "Index", Slow)
+    assert jev.retrieve("Question", None, ["hub"], 8, 0) == [] and built == []
+    first = threading.Thread(target=jev.retrieve, args=("Question", None, ["hub"], 8, 1.0))
+    first.start()
+    time.sleep(0.05)
+    assert jev.retrieve("Question", None, ["hub"], 8, 1.0) == []
+    first.join()
+    assert len(built) == 1
+    assert jev.retrieve("Question", None, ["hub"], 8, 1.0) == [hit("cold")]
 
 
 def test_source_selection_precedes_top_k_and_never_reads_other_memory(tmp_path):
