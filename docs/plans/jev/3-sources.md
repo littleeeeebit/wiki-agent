@@ -97,7 +97,7 @@ assuming git lists every permitted knowledge source.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Local sources | Document, memory, decision catalogs and deletion | Not started |
-| 2 | External sources | arXiv, explicit URLs, local files, coverage | Not started |
-| 3 | Adoption | Rationale, counterevidence, editions, wiki promotion | Not started |
-| 4 | Verification | Live paper retrieval, isolation, errors, write boundaries | Not started |
+| 1 | Local sources | Document, memory, decision catalogs and deletion | Done |
+| 2 | External sources | arXiv, explicit URLs, local files, coverage | Done |
+| 3 | Adoption | Rationale, counterevidence, editions, wiki promotion | In progress — promotion commits in a worktree; routing it through a specification and its pull request is deferred to stages 8–9 |
+| 4 | Verification | Live paper retrieval, isolation, errors, write boundaries | Done — `tool/test_sources.py`, a live arXiv lookup, and one live Jev grading of five arXiv abstracts (268 ms, 2,039 input tokens) |

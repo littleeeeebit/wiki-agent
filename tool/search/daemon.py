@@ -54,6 +54,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from common.language import language  # noqa: E402
 from search import PING, PORT, cache_dir, evidence, proof, state_path, version  # noqa: E402
+from search.sources import FAMILIES, SOURCE_NAMES, Records, listing, records_folder  # noqa: E402
 
 # The version this process runs, read once. Read per request it would follow
 # the files on disk and a pulled daemon would never be told it is stale.
@@ -243,30 +244,6 @@ def chunks(text: str, path: Path) -> list[dict]:
         buf.append((number, line, hidden))
     flush()
     return found
-
-
-def listing(hub: Path, project: Path | None) -> list[Path]:
-    """The hub's rules, and every Markdown file the repository keeps as git
-    sees it, so `node_modules` and the like never come in."""
-
-    files = [p for scope in ("operator", "craft") for p in sorted((hub / scope).glob("*.md"))]
-    if project is None:
-        return files
-    try:
-        out = subprocess.run(
-            ["git", "-C", str(project), "ls-files", "-co", "--exclude-standard", "-z", "--", "*.md"],
-            capture_output=True, timeout=30, check=True).stdout.decode("utf-8", errors="replace")
-        mine = [project / name for name in out.split("\0") if name]
-    except (OSError, subprocess.SubprocessError):
-        # Sorted as git's list is, so equal scores rank the same on every machine.
-        mine = sorted(p for p in project.rglob("*.md")
-                      if not any(part.startswith(".") or part == "node_modules"
-                                 for part in p.relative_to(project).parts[:-1]))
-    # The memories a cleared conversation left (`main.memory`): git-ignored,
-    # so the listing above misses them. Not their transcripts.
-    mine += [p for p in sorted((project / ".wiki" / "memory").glob("*.md")) if not p.name.endswith(".raw.md")]
-    seen = {p.resolve() for p in files}
-    return files + [p for p in dict.fromkeys(mine) if p.resolve() not in seen]
 
 
 class Embedder:
@@ -748,7 +725,8 @@ class Store:
                         "indexed": " > ".join(heading_path) + "\n" + text, "completeness": completeness,
                         "chunk_id": cid, "source_id": source, "repo_id": repo, "revision": revision,
                         "kind": kind, "visibility": visibility, "language": language(text),
-                        "locator": {"path": display, "start_line": start, "end_line": end}})
+                        "locator": {"path": display, "start_line": start, "end_line": end},
+                        "coverage": "full_text", "record": None})
         return out
 
     def english(self, source: str, texts: list[str]) -> dict[str, dict]:
@@ -798,20 +776,23 @@ class Store:
 
 
 # What a hit carries besides its path, line, heading, text and scores:
-# everything `evidence.contract` needs to make it an EvidenceChunk.
+# everything `evidence.contract` needs to make it an EvidenceChunk, how much
+# of its source was read, and an external source's record (`sources.brief`).
 EVIDENCE = ("end_line", "chunk_id", "source_id", "repo_id", "revision", "kind", "visibility",
-            "locator", "heading_path", "completeness", "language")
+            "locator", "heading_path", "completeness", "language", "coverage", "record")
 
 
 class Index:
-    """One repository's index, beside one hub, kept in its `Store`. Re-cut
-    only the files whose bytes changed; re-embed only the chunks whose text
-    changed. One search reads one loaded set of chunks, so one answer never
-    mixes two states of the store."""
+    """One repository's index, beside one hub, kept in its `Store`, with the
+    repository's external sources from its `Records`. Re-cut only the files
+    whose bytes changed; re-embed only the chunks whose text changed. One
+    search reads one loaded set of chunks, so one answer never mixes two
+    states of the store."""
 
     def __init__(self, hub: Path, project: Path | None, embedder: Embedder):
         self.hub, self.project, self.embedder = hub, project, embedder
         self.store = Store(store_path(hub, project))
+        self.records = Records(records_folder(project or hub))
         self.loaded: str | None = None
         # Every file the loaded chunks came from, and its revision.
         self.files: dict[Path, str] = {}
@@ -820,6 +801,7 @@ class Index:
 
     def close(self) -> None:
         self.store.close()
+        self.records.close()
 
     def refresh(self) -> None:
         listed = []
@@ -840,9 +822,10 @@ class Index:
             # What was loaded stays; the next refresh tries again.
             print(f"evidence store not updated: {type(error).__name__}", file=sys.stderr)
         self.forget()
-        if self.chunks and self.store.version() == self.loaded:
+        version = f"{self.store.version()}/{self.records.version()}"
+        if self.chunks and version == self.loaded:
             return
-        self.loaded = self.store.version()
+        self.loaded = version
         roots = {evidence.repo_id(self.hub): self.hub}
         if self.project is not None:
             roots.setdefault(evidence.repo_id(self.project), self.project)
@@ -850,7 +833,7 @@ class Index:
         found = self.store.load(roots)
         # Listing order, as git lists, so equal scores rank the same on every machine.
         found.sort(key=lambda c: (order.get(c["path"], len(order)), c["path"], c["line"]))
-        self.chunks = found
+        self.chunks = found + self.records.hits()
         self.files = {Path(c["path"]): c["revision"] for c in found}
         for chunk in self.chunks:
             chunk["key"] = key_of(chunk["indexed"])
@@ -898,7 +881,7 @@ class Index:
         """
 
         if sources is not None and (not isinstance(sources, list) or
-                                    any(s not in ("hub", "documents", "memory") for s in sources)):
+                                    any(s not in SOURCE_NAMES for s in sources)):
             raise ValueError("Unknown retrieval source")
         lexical = self.bm25(query)
         fused: dict[int, float] = defaultdict(float)
@@ -948,8 +931,12 @@ class Index:
 
 
 def source(chunk: dict) -> str:
-    """The retrieval source a chunk belongs to, as Jev routes them."""
+    """The retrieval source a chunk belongs to, as Jev routes them. The
+    repository's own research notes are its documents; `research` is what was
+    ingested from outside."""
 
+    if chunk.get("record"):
+        return next(family for family, kind in FAMILIES.items() if kind == chunk["kind"])
     return {"rule": "hub", "memory": "memory"}.get(chunk["kind"], "documents")
 
 

@@ -347,4 +347,4 @@ def test_source_selection_precedes_top_k_and_never_reads_other_memory(tmp_path):
     assert index.search("banana", 1, ["memory"])[0]["heading"] == "Memory"
     assert len(index.search("banana", 10)) == 3
     with pytest.raises(ValueError):
-        index.search("banana", 1, ["papers"])
+        index.search("banana", 1, ["web"])
