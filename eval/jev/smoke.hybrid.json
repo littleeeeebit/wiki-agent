@@ -6,9 +6,9 @@
   "sha256": "600d19ac80e093b8547dcef8ffe822e82ec435ffd9295f0d3467e6a9c08cbb41"
  },
  "run": {
-  "started": "2026-09-26T11:05:49+00:00",
-  "commit": "39d6a007395e56522443257e97adaa4890f80ff6",
-  "dirty": true
+  "started": "2026-09-26T11:22:29+00:00",
+  "commit": "09ab083b9471f37cc6933c38eca5a62479dabffa",
+  "dirty": false
  },
  "corpus": {
   "kind": "synthetic",
@@ -139,7 +139,7 @@
      "rrf": 0.0292
     }
    ],
-   "elapsed_ms": 3.97,
+   "elapsed_ms": 4.77,
    "recall": 1.0
   },
   {
@@ -210,7 +210,7 @@
      "rrf": 0.01471
     }
    ],
-   "elapsed_ms": 5.4,
+   "elapsed_ms": 4.53,
    "recall": 1.0
   },
   {
@@ -281,7 +281,7 @@
      "rrf": 0.02985
     }
    ],
-   "elapsed_ms": 4.69,
+   "elapsed_ms": 4.25,
    "recall": 1.0
   },
   {
@@ -352,7 +352,7 @@
      "rrf": 0.02899
     }
    ],
-   "elapsed_ms": 5.01,
+   "elapsed_ms": 3.97,
    "recall": 1.0
   },
   {
@@ -423,7 +423,7 @@
      "rrf": 0.02941
     }
    ],
-   "elapsed_ms": 4.43,
+   "elapsed_ms": 3.84,
    "recall": 1.0
   },
   {
@@ -494,7 +494,7 @@
      "rrf": 0.01587
     }
    ],
-   "elapsed_ms": 3.71,
+   "elapsed_ms": 4.05,
    "recall": 1.0
   },
   {
@@ -565,7 +565,7 @@
      "rrf": 0.01471
     }
    ],
-   "elapsed_ms": 4.27,
+   "elapsed_ms": 4.0,
    "recall": 1.0
   },
   {
@@ -636,7 +636,7 @@
      "rrf": 0.03008
     }
    ],
-   "elapsed_ms": 3.89,
+   "elapsed_ms": 3.7,
    "recall": null
   },
   {
@@ -707,7 +707,7 @@
      "rrf": 0.01471
     }
    ],
-   "elapsed_ms": 3.17,
+   "elapsed_ms": 3.47,
    "recall": null
   }
  ],
