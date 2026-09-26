@@ -276,8 +276,8 @@ export function useWork() {
   /** `text` as the next instruction, which the server sends once `turn`'s
    *  run lets go of the worktree. Refused, it is never sent from here: a
    *  lost answer and a refusal look alike, and the server may already have
-   *  sent it. What the server holds is shown, and a refusal stays on screen
-   *  with the text, for the person to send again. */
+   *  sent it. What the server holds is read again, and the refusal goes to
+   *  the caller, which gives the text back to the person. */
   const queue = useCallback(async (path: string, turn: Turn, text: string,
     choice: { model: string; effort: string }) => {
     try {
@@ -285,10 +285,9 @@ export function useWork() {
       showQueued(path, text)
     } catch (err) {
       readRules(path)
-      patch(path, turn.key, (t) => ({ ...t, steps: [...t.steps,
-        { kind: 'tool', text: `대기 실패 · ${err instanceof Error ? err.message : err} — "${text}"` }] }))
+      throw err
     }
-  }, [patch, readRules, showQueued])
+  }, [readRules, showQueued])
 
   const unqueue = useCallback(async (path: string) => {
     await api.workUnqueue(path)
