@@ -56,8 +56,7 @@ export function Agent({
           )}
           <Toolbar value={choice} options={options} busy={busy} onChange={onChoice} />
           {row && (
-            <Btn tone="ghost" className="px-1.5" onClick={() => (turns.length ? setAsking(true)
-                : void onReset('delete').catch((err) => setNote(String(err instanceof Error ? err.message : err))))}
+            <Btn tone="ghost" className="px-1.5" onClick={() => setAsking(true)}
               disabled={busy} aria-label="문맥 비우기"
               title="문맥 비우기 — 이 작업트리의 대화를 새로 시작한다. 지금 대화는 메모리로 남기거나 지운다">
               <Eraser className="size-4" />

@@ -79,14 +79,10 @@ def record(path: Path) -> Path:
 
 
 def remember(path: Path, role: str, text: str, **extra) -> None:
-    file = record(path)
-    file.parent.mkdir(parents=True, exist_ok=True)
-    row = {"ts": time.time(), "role": role, "text": text, "path": str(path), **extra}
-    with file.open("a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    memory.append(record(path), {"ts": time.time(), "role": role, "text": text, "path": str(path), **extra})
 
 
-def recall(path: Path, limit: int = MAX_REPLAY) -> list[dict]:
+def recall(path: Path) -> list[dict]:
     """This worktree's turns since the last clear. Rows of a removed worktree
     that had the same name are left out by path."""
 
@@ -101,8 +97,7 @@ def recall(path: Path, limit: int = MAX_REPLAY) -> list[dict]:
             continue
         if row.get("path") == str(path):
             rows.append(row)
-    rows = memory.since_clear(rows)
-    return rows[-limit:] if limit else rows
+    return memory.since_clear(rows)[-MAX_REPLAY:]
 
 
 # -- Worktrees --------------------------------------------------------------
@@ -268,10 +263,9 @@ def reset(body: Clearing) -> dict:
         with _lock:
             chat = _sessions.pop(body.path, None)
             _runs.pop(body.path, None)
-        rows = recall(path, limit=0)
-        if body.keep == "delete":
-            memory.drop(record(path), rows)
-        remember(path, "context", memory.CLEARED)
+        rows = memory.clear(record(path), lambda r: r.get("path") == str(path),
+                            {"ts": time.time(), "role": "context", "text": memory.CLEARED, "path": str(path)},
+                            body.keep == "delete")
         if chat:
             chat.close()
     finally:

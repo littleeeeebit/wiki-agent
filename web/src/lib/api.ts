@@ -78,7 +78,7 @@ export type SurveyProgress = {
 export type Choice = { id: string; label: string; note: string }
 export type Options = {
   projects: Project[]
-  models: (Choice & { efforts?: Choice[] })[]
+  models: (Choice & { efforts?: Choice[]; is_default?: boolean })[]
   efforts: Choice[]
   codex_error: string
 }

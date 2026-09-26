@@ -97,11 +97,14 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
   // Switching focus restores that focus's record. The server holds the
   // process, so there is nothing for the screen to remember.
   //
-  // Two guards. A further switch discards this one (`stale`), and a record
-  // arriving after the person has typed something does not overwrite it.
+  // Three guards. A further switch discards this one (`stale`), a clear
+  // since it was asked discards it too (`clears`), and a record arriving
+  // after the person has typed something does not overwrite it.
+  const clears = useRef(0)
   useEffect(() => {
     if (!active || !selectedRepo) return
     let stale = false
+    const asked = clears.current
     setMessages([])
     setLegacy([])
     setNote('')
@@ -109,7 +112,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
     api
       .getLog(active)
       .then((rows) => {
-        if (stale) return
+        if (stale || asked !== clears.current) return
         const restored: Msg[] = rows.map((r) => ({ role: r.role, text: r.said ?? r.text, blocks: r.blocks,
           tools: [], source: r.source, error: r.error,
           ms: r.ms, cost: r.cost_usd, model: r.model, sessionId: r.session_id, tokens: r.tokens,
@@ -218,19 +221,18 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
     [active, here, onChannels],
   )
 
-  // A conversation on screen is asked about first; an empty one just clears.
+  // Always asked: an empty pane is not an empty conversation — its record may
+  // still be on the way, and a silent delete took it.
   const [asking, setAsking] = useState(false)
   const clear = useCallback(async (keep: api.Keep) => {
     const kept = await api.reset(active, keep)
+    clears.current++
     setMessages([])
     setNote('')
     api.getChannels().then(onChannels).catch(() => {})
     return kept
   }, [active, onChannels])
-  const wipe = useCallback(() => {
-    if (messages.length) return setAsking(true)
-    clear('delete').catch((err) => setFault(String(err)))
-  }, [messages.length, clear])
+  const wipe = useCallback(() => setAsking(true), [])
 
   // "That was wrong" — recorded in the census's format, together with the
   // utterance immediately before that answer.

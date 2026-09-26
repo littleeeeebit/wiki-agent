@@ -31,8 +31,6 @@ MODELS = [
 # What a hand-typed Claude model name may look like: `opus`, `claude-opus-5-5`,
 # `opus[1m]`. It reaches the CLI as one argument, never through a shell.
 CLAUDE_MODEL = re.compile(r"[a-z][a-z0-9.\-]{0,63}(\[1m\])?")
-# An effort saved in the settings: one of `EFFORTS`, or a Codex model's own.
-EFFORT = re.compile(r"[a-z]{0,16}")
 
 # The five `--effort` takes. Further up thinks longer and costs more.
 EFFORTS = [
@@ -87,6 +85,16 @@ def codex_models() -> list[dict]:
 
 
 codex_models.cache_clear = _codex_cache.clear
+
+
+def efforts_of(model: str) -> set[str]:
+    """The efforts `model` takes: a Codex model's own list — empty for a model
+    Codex does not list — else the Claude CLI's five and the CLI default."""
+
+    if model.startswith("codex:"):
+        found = next((m for m in codex_models() if m["id"] == model), None)
+        return {e["id"] for e in found["efforts"]} if found else set()
+    return {e["id"] for e in EFFORTS}
 
 
 def projects() -> list[dict]:

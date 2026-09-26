@@ -213,16 +213,13 @@ def remember(cid: str, role: str, text: str, error: str = "", repo: Path | None 
     """`repo` for a row written outside a request — a spec's result, from a
     turn's thread — which names its repository rather than the selected one."""
 
-    LOGS.mkdir(parents=True, exist_ok=True)
     row = {"ts": time.time(), "role": role, "text": text, "repo": str(repo or current_repo()), **extra}
     if error:
         row["error"] = error
-    with (LOGS / f"{cid}.jsonl").open("a", encoding="utf-8", newline="\n") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    memory.append(LOGS / f"{cid}.jsonl", row)
 
 
-def recall(cid: str, legacy: bool = False, include_context: bool = False,
-           limit: int = MAX_REPLAY) -> list[dict]:
+def recall(cid: str, legacy: bool = False, include_context: bool = False) -> list[dict]:
     """This project's rows since the last clear. A cleared conversation came
     back on the next switch of focus when this read the whole file."""
 
@@ -240,7 +237,7 @@ def recall(cid: str, legacy: bool = False, include_context: bool = False,
     rows = memory.since_clear(rows)
     if not include_context:
         rows = [r for r in rows if r.get("role") in memory.SAID]
-    return rows[-limit:] if limit else rows
+    return rows[-MAX_REPLAY:]
 
 
 def unseen(cid: str) -> list[dict]:
@@ -441,10 +438,9 @@ def reset(cid: str, body: Clear) -> dict:
         if cid in _busy:
             raise HTTPException(409, "답변 생성이 끝난 뒤 대화를 초기화해 주세요")
         repo, cfg = current_repo(), dict(config(cid))
-        rows = recall(cid, include_context=True, limit=0)
-        if body.keep == "delete":
-            memory.drop(LOGS / f"{cid}.jsonl", rows)
-        remember(cid, "context", memory.CLEARED)
+        rows = memory.clear(LOGS / f"{cid}.jsonl", lambda r: r.get("repo") == str(repo),
+                            {"ts": time.time(), "role": "context", "text": memory.CLEARED, "repo": str(repo)},
+                            body.keep == "delete")
         chat = _sessions.pop(session_key(cid), None)
     if chat:
         chat.close()

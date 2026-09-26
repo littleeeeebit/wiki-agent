@@ -293,6 +293,50 @@ def test_a_cleared_conversation_kept_as_memory_leaves_the_pair(tmp_path):
     assert said[0][0] == "chat-memory.md" and [t["role"] for t in said[0][1]["transcript"]] == ["user", "assistant"]
 
 
+def test_a_delete_takes_the_rows_by_place_and_an_append_waits_for_it(tmp_path):
+    from main import memory
+
+    repo = tmp_path / "a"
+    (repo / ".git").mkdir(parents=True)
+    web = client()
+    with patch.object(chat_channels, "repo_for", return_value=repo), patch.object(chat.time, "time", return_value=1.0):
+        web.post("/api/config/next", json={"repo": "a"}).raise_for_status()
+        # Identical rows, one in an earlier conversation and one in this.
+        chat.remember("next", "result", "PR 올림")
+        web.post("/api/reset/next", json={"keep": "memory"}).raise_for_status()
+        chat.remember("next", "result", "PR 올림")
+        web.post("/api/reset/next", json={"keep": "delete"}).raise_for_status()
+    rows = [json.loads(line) for line in (tmp_path / "next.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert [r["role"] for r in rows] == ["result", "context", "context"]
+
+    # A spec's result is written from a loop's thread holding nothing else;
+    # it waits for a clear instead of landing between its read and write.
+    with memory._writing:
+        late = threading.Thread(target=chat.remember, args=("next", "result", "늦은 결과"), kwargs={"repo": repo})
+        late.start()
+        late.join(0.2)
+        assert late.is_alive()
+    late.join()
+    assert "늦은 결과" in (tmp_path / "next.jsonl").read_text(encoding="utf-8")
+
+
+def test_an_effort_the_review_or_survey_model_does_not_take_is_refused(tmp_path):
+    from main import loop
+
+    codex = [{"id": "codex:gpt", "is_default": True, "efforts": [{"id": ""}, {"id": "high"}]}]
+    web = client()
+    with patch.object(chat_channels, "repo_for", return_value=tmp_path), \
+         patch.object(chat_channels, "codex_models", return_value=codex), \
+         patch.object(loop, "_file", return_value=tmp_path / "loop.json"):
+        body = {"rounds": 3, "concurrent": 1, "review_model": "", "review_effort": "banana"}
+        assert web.post("/api/loop/settings", json=body).status_code == 400
+        assert web.post("/api/loop/settings", json={**body, "review_effort": "max"}).status_code == 400
+        assert web.post("/api/loop/settings", json={**body, "review_effort": "high"}).json()["review_effort"] == "high"
+        survey = {"survey": False, "survey_tokens": 100000, "survey_minutes": 10, "survey_model": "opus"}
+        assert web.post("/api/connect/settings", json={**survey, "survey_effort": "banana"}).status_code == 400
+        assert web.post("/api/connect/settings", json={**survey, "survey_effort": "max"}).json()["survey_effort"] == "max"
+
+
 def test_a_memory_the_model_got_wrong_keeps_the_transcript(tmp_path):
     repo = tmp_path / "a"
     (repo / ".git").mkdir(parents=True)

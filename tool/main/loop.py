@@ -315,10 +315,10 @@ def fixing(n: int, findings: list[dict], said: str) -> str:
 _cells: dict[tuple[str, int], ChatSession] = {}   # (repo, pr) -> its review cell
 
 
-def review_model() -> str:
-    """The model chosen in the settings, else Codex's default."""
+def review_model(chosen: str | None = None) -> str:
+    """`chosen`, by default the model in the settings, else Codex's default."""
 
-    chosen = settings()["review_model"]
+    chosen = settings()["review_model"] if chosen is None else chosen
     if chosen:
         return chosen
     models = channels.codex_models()
@@ -1245,8 +1245,14 @@ def set_settings(body: Settings) -> dict:
     model = body.review_model.strip()
     if model and not model.startswith("codex:") and not channels.CLAUDE_MODEL.fullmatch(model):
         raise HTTPException(400, "그런 모델 이름은 받지 않는다")
-    if not channels.EFFORT.fullmatch(body.review_effort):
-        raise HTTPException(400, "그런 추론 강도는 받지 않는다")
+    # Checked against the model it will run on: an effort that model does not
+    # take was saved, and every review round then failed on it.
+    try:
+        allowed = channels.efforts_of(review_model(model))
+    except Exception as exc:
+        raise HTTPException(503, f"Codex 모델 목록 확인 실패: {exc}") from exc
+    if body.review_effort not in allowed:
+        raise HTTPException(400, "이 모델이 지원하지 않는 추론 강도")
     store(rounds=body.rounds, concurrent=body.concurrent, review_model=model, review_effort=body.review_effort)
     with _seats:
         _seats.notify_all()   # more seats may be free now

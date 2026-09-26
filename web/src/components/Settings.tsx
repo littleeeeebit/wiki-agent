@@ -71,7 +71,9 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   // A model's own efforts, as the toolbar reads them; a model without a list
   // takes the CLI's five.
   const efforts = (id: string) => options?.models.find((m) => m.id === id)?.efforts ?? options?.efforts ?? []
-  const effortPicker = (id: string, value: string, set: (v: string) => void) => (
+  // The review's empty model is Codex's default, not the Claude CLI's.
+  const reviewing = (id: string) => id || options?.models.find((m) => m.is_default)?.id || ''
+  const effortPicker =(id: string, value: string, set: (v: string) => void) => (
     <select value={value} aria-label="추론 강도" onChange={(e) => set(e.target.value)} className={`${field} w-24 font-sans`}>
       {!efforts(id).some((e) => e.id === value) && <option value={value}>{value}</option>}
       {efforts(id).map((e) => <option key={e.id} value={e.id}>{e.label}</option>)}
@@ -149,11 +151,15 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
           </Row>
           <Row label="리뷰 모델">
             <span className="flex gap-1.5">
-              <select value={model} onChange={(e) => setModel(e.target.value)} className={`${field} w-32 font-sans`}>
+              <select value={model} className={`${field} w-32 font-sans`} onChange={(e) => {
+                // The effort goes with the model: one the new model does not take is dropped.
+                setModel(e.target.value)
+                if (!efforts(reviewing(e.target.value)).some((x) => x.id === effort)) setEffort('')
+              }}>
                 <option value="">Codex 기본</option>
                 {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
               </select>
-              {effortPicker(model, effort, setEffort)}
+              {effortPicker(reviewing(model), effort, setEffort)}
             </span>
           </Row>
           <Save edited={loopEdited} busy={working === 'loop'}

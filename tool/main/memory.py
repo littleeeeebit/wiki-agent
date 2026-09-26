@@ -11,7 +11,9 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -26,29 +28,55 @@ LISTS = ("decisions", "facts", "preferences", "open", "references", "keywords")
 WHO = {"user": "사람", "assistant": "답", "result": "결과"}
 
 
+# Every append to a record and every clear of one. A clear reads the file and
+# replaces it; an append in between — a spec's result lands in `next` from a
+# loop's thread, holding nothing else — was lost.
+_writing = threading.Lock()
+
+
+def cleared(row: dict) -> bool:
+    return row.get("role") == "context" and row.get("text") == CLEARED
+
+
 def since_clear(rows: list[dict]) -> list[dict]:
-    last = max((i for i, r in enumerate(rows)
-                if r.get("role") == "context" and r.get("text") == CLEARED), default=-1)
+    last = max((i for i, r in enumerate(rows) if cleared(r)), default=-1)
     return rows[last + 1:]
 
 
-def drop(file: Path, rows: list[dict]) -> None:
-    """Rewrite `file` without `rows`. Every other line stays as it was."""
+def append(file: Path, row: dict) -> None:
+    file.parent.mkdir(parents=True, exist_ok=True)
+    with _writing, file.open("a", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    if not rows or not file.exists():
-        return
-    doomed = {json.dumps(r, ensure_ascii=False, sort_keys=True) for r in rows}
-    kept = []
-    for line in file.read_text(encoding="utf-8").splitlines():
-        try:
-            gone = json.dumps(json.loads(line), ensure_ascii=False, sort_keys=True) in doomed
-        except json.JSONDecodeError:
-            gone = False
-        if not gone:
-            kept.append(line)
-    temporary = file.with_suffix(".tmp")
-    temporary.write_text("".join(f"{line}\n" for line in kept), encoding="utf-8", newline="\n")
-    temporary.replace(file)
+
+def clear(file: Path, owns: Callable[[dict], bool], marker: dict, delete: bool) -> list[dict]:
+    """End the conversation `owns` picks out of `file`: its rows since its last
+    clear are returned, `marker` goes after them, and with `delete` those rows
+    leave the file. One read and one write under the lock appends take, so
+    nothing lands in between; rows go by their place, so an identical row in
+    another conversation or an earlier one stays."""
+
+    with _writing:
+        lines = file.read_text(encoding="utf-8").splitlines() if file.exists() else []
+        mine = []
+        for i, line in enumerate(lines):
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict) and owns(row):
+                if cleared(row):
+                    mine.clear()
+                else:
+                    mine.append((i, row))
+        doomed = {i for i, _ in mine} if delete else set()
+        kept = [line for i, line in enumerate(lines) if i not in doomed]
+        kept.append(json.dumps(marker, ensure_ascii=False))
+        file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = file.with_suffix(".tmp")
+        temporary.write_text("".join(f"{line}\n" for line in kept), encoding="utf-8", newline="\n")
+        temporary.replace(file)
+    return [row for _, row in mine]
 
 
 def shape(text: str) -> dict:
