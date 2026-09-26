@@ -38,6 +38,18 @@ def test_a_status_is_judged_by_its_first_word(tmp_path):
     assert session_state.open_steps(path) == ["3 w3 — 미완료 — 외부 조건으로 차단됨", "4 w4 — 미착수"]
 
 
+def test_an_english_plan_reads_the_same(tmp_path):
+    path = tmp_path / "plan.md"
+    rows = ["Done — PR #16", "Cancelled — another plan", "Complete", "In progress", "Not started"]
+    path.write_text(
+        "# plan\n\n## Steps\n\n| # | Step | What | Status |\n| --- | --- | --- | --- |\n"
+        + "".join(f"| {n} | s{n} | w{n} | {state} |\n" for n, state in enumerate(rows, 1)),
+        encoding="utf-8",
+    )
+
+    assert session_state.open_steps(path) == ["4 w4 — In progress", "5 w5 — Not started"]
+
+
 def test_inside_a_series_the_lowest_number_comes_first(tmp_path):
     """The overview and the next step to do, not the last two steps."""
 

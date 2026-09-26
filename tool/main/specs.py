@@ -258,13 +258,14 @@ def plan_row(repo: Path, plan) -> dict | None:
 
 
 def row_done(path: Path, plan: dict, n: int) -> bool:
-    """Does the plan row's status cell say `완료 — PR #n` in the worktree's
-    committed HEAD? Read from git, not the file: an edit left uncommitted is
-    not in the pull request."""
+    """Does the plan row's status cell say `Done — PR #n` (`완료 — PR #n` in a
+    plan from before they were English) in the worktree's committed HEAD?
+    Read from git, not the file: an edit left uncommitted is not in the pull
+    request."""
 
     shown = sh(["git", "show", f"HEAD:{plan['path']}"], path)
     return not shown.returncode and re.search(
-        rf"^\|\s*{re.escape(plan['row'])}\s*\|.*\|\s*완료 — PR #{n}\s*\|\s*$", shown.stdout, re.M) is not None
+        rf"^\|\s*{re.escape(plan['row'])}\s*\|.*\|\s*(?:Done|완료) — PR #{n}\s*\|\s*$", shown.stdout, re.M) is not None
 
 
 def missing(repo: Path, spec: dict) -> list[str]:
@@ -790,7 +791,7 @@ def opened(repo: Path, path: Path, run, spec: dict):
     # The row says the pull request's number, and that exists only now. This
     # commit is in the pull request too, so the review sees it.
     text = (f"PR #{n} is up. In `{plan['path']}`, change the status cell of the table row whose first cell "
-            f"is `{plan['row']}` to `완료 — PR #{n}`, commit that one change, and stop. Change nothing else.")
+            f"is `{plan['row']}` to `Done — PR #{n}`, commit that one change, and stop. Change nothing else.")
     return lambda: again(path, run.chat, text, spec)
 
 
@@ -852,7 +853,7 @@ def _check(path: Path, run, final: str):
         plan = spec["source"]["plan"]
         if not row_done(path, plan, spec["pr"]["number"]):
             return failed(run, spec, f"계획 행 `{plan['path']}` {plan['row']} 이 커밋된 HEAD 에서 아직 "
-                                     f"`완료 — PR #{spec['pr']['number']}` 가 아니다")
+                                     f"`Done — PR #{spec['pr']['number']}` 가 아니다")
         if run.halt.is_set():
             return failed(run, spec, "사람이 멈춤 — 계획 행 커밋을 push 하지 않았다")
         pushed = sh(["git", "push", "origin", branch_of(spec)], path, 120)

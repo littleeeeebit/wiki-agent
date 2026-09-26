@@ -431,13 +431,13 @@ def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
 
         spec = specs.load("proj", sid)
         assert spec["state"] == "PR #7" and spec["pr"]["number"] == 7 and spec["pr"]["base"] == "main"
-        assert spec["gate"]["ok"] and spec["plan_commit"] == "asked" and "완료 — PR #7" in spec["fault"]
+        assert spec["gate"]["ok"] and spec["plan_commit"] == "asked" and "Done — PR #7" in spec["fault"]
         assert KICKED == [], "계획 행 커밋 전에는 리뷰 루프가 받지 않는다"
         assert remote.pushes() == 1, "행을 고치지 않은 턴은 push 도, 닫기도 하지 않는다"
         create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
         assert create[create.index("--head") + 1] == sid and create[create.index("--title") + 1] == spec["goal"]
         asked = Worker.made[-1].heard[-1]
-        assert "`docs/plans/p.md`" in asked and "`2`" in asked and "`완료 — PR #7`" in asked
+        assert "`docs/plans/p.md`" in asked and "`2`" in asked and "`Done — PR #7`" in asked
 
         parse(web.post("/api/work/say", json={"path": path, "text": "행을 고쳐라"}).text)
         settled(path)

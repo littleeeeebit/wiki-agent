@@ -1,163 +1,115 @@
-# 4단계 — 리뷰 셀과 루프
+# Step 4 — Review Cell and Loop
 
-전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다. [2단계](2-agent.md)의 재접속과 세션 허용,
-[3단계](3-spec.md)의 명세와 게이트 실행 위에 선다.
+The relationship between the overall design and the steps is in [Overview](0-overview.md)]. It stands upon the reconnection and session allowance of [Step 2](2-agent.md)], and the specification and gate execution of [Step 3](3-spec.md)].
 
-목표. PR 하나가 사람 손 없이 리뷰 라운드를 돌아 "머지 가능" 까지 간다. 사람을 기다리는 곳은 쓰기 승인과
-[머지] 뿐이다. `operator/codex-review-loop` 의 절차가 터미널 대신 앱 안의 두 세션 사이에서 돈다.
+Goal. A single PR goes through review rounds without human intervention until it is "mergeable". The only places waiting for a human are write approval and [Merge]. The procedure of `operator/codex-review-loop` runs between two sessions inside the app instead of a terminal.
 
-## 사용자와 정한 것
+## Agreements with the User
 
 2026-09-25.
 
-| 무엇 | 정한 것 |
+| What | Agreement |
 | --- | --- |
-| 리뷰 결과 | 리뷰 셀은 아무것도 쓰지 않고 최종 답으로 결과를 낸다. 서버가 그 답을 결과 파일로 적는다 |
-| 라운드 파일 | 허브의 `raw/review/<repo>/<pr>/`. 작업트리의 `review_dir` 에 두지 않는다 |
-| 불동의 | 작업 셀이 발견마다 고침·재현 안 됨·반대를 근거와 함께 낸다. 서버가 다음 라운드 지시의 "지난 발견의 처리" 에 넣는다. 같은 발견이 두 라운드 연속 반대로 남으면 멈추고 사람에게 넘긴다 |
-| 기본값 | 라운드 상한 12, 동시 실행 3. 설정에서 바꾼다 |
-| 루프 시작 | 명세 작업은 PR 이 서면 자리가 나는 대로 라운드 1 을 보낸다. "리뷰 루프 (N)" 버튼은 명세 없는 PR 과 멈춘 루프를 위한 것이다 |
-| 명세 없는 PR | 서버가 PR 에서 최소 명세를 만든다. 제목이 `goal`, 본문의 `변경 이유` 가 `decisions`, `done` 은 `gate_cmd` 하나 |
-| 머지 방식 | squash |
-| 원본 체크아웃 | 머지 뒤 정리에서, 원본이 base 브랜치에 있고 미커밋 변경이 없을 때만 `git merge --ff-only`. 아니면 건드리지 않고 "원본이 뒤처짐" 을 보인다 |
-| 리뷰 모델 | Codex 기본 모델, effort `high` |
-| 승인 알림 | 레일 표시와 OS 알림. 루프가 승인에서 멈출 때 한 번, 창에 포커스가 없을 때만 |
-| 남은 P2 | 머지 허용이 나온 라운드에서 리뷰 셀이 할 만한 것만 고른다. [머지] 옆에 코멘트 초안이 보이고 머지할 때 서버가 단다 |
-| 루프와 프로젝트 전환 | 루프는 자기 저장소를 들고 돈다. 전환해도 멈추지 않는다(리뷰 라운드 1) |
+| Review result | The review cell writes nothing and produces the result as the final answer. The server writes that answer into a result file |
+| Round file | `raw/review/<repo>/<pr>/` of the hub. Not placed in `review_dir` of the worktree |
+| Disagreement | The work cell submits fixes, non-reproducibility, or objections with evidence for each discovery. The server puts it into "Handling of previous discoveries" in the next round's instructions. If the same discovery remains an objection for two consecutive rounds, it stops and hands it over to a human |
+| Default value | Round limit 12, concurrency 3. Changed in settings |
+| Loop start | Specification work sends round 1 as soon as the PR is written and there is a spot. The "Review Loop (N)" button is for PRs without specifications and stopped loops |
+| PR without specification | The server creates a minimal specification from the PR. Title is `goal`, body's `변경 이유` is `decisions`, `done` is one `gate_cmd` |
+| Merge method | squash |
+| Original checkout | In post-merge cleanup, only `git merge --ff-only` if the original is on the base branch and there are no uncommitted changes. Otherwise, it leaves it alone and shows "Original is behind" |
+| Review model | Codex base model, effort `high` |
+| Approval notification | Rail indicator and OS notification. Once when the loop stops at approval, only when the window does not have focus |
+| Remaining P2 | Select only what the review cell can do in the round where merge permission is granted. A draft comment appears next to [Merge] and the server attaches it when merging |
+| Loop and project switching | The loop runs with its own repository. It does not stop even if switched (review round 1) |
 
-개요와 달라지는 곳 둘. 라운드 파일은 `review_dir` 가 아니라 허브에 둔다 — 작업 셀의 `git add -A` 가 라운드
-파일을 커밋할 수 있고, 작업트리를 지우면 기록도 사라진다. 원본 체크아웃의 ff-only 는 서버가 원본에 쓰는 두
-번째 예외다. 개요의 안전 경계와 wiki-agent 개요의 경계에 같이 적는다.
+Two points differ from the overview. The round file is placed in the hub, not `review_dir` — `git add -A` of the work cell can commit the round file, and if the worktree is deleted, the record also disappears. The ff-only of original checkout is the second exception where the server writes to the original. It is recorded together in the safety boundary of the overview and the boundary of the wiki-agent overview.
 
-## 리뷰 셀
+## Review Cell
 
-작업트리마다 하나. `ChatSession(worktree, system=<리뷰 프롬프트>, model=<설정>)`. 쓰기 세션이 아니다.
-2단계 뒤 Codex 읽기 세션은 `app-server` 에 `sandbox: read-only`, `approvalPolicy: never` 로 돈다. 쓰려는
-모든 것은 묻지 않고 거절된다(`chat_session.py` 의 `_approval`).
+One per worktree. `ChatSession(worktree, system=<리뷰 프롬프트>, model=<설정>)`. Not a write session. After step 2, the Codex read session runs as `app-server` with `sandbox: read-only`, `approvalPolicy: never`. Everything it tries to write is rejected without asking (`_approval` of `chat_session.py`).
 
-- Codex 의 읽기 전용은 샌드박스가 지킨다. 명령은 돌지만 파일을 쓰지 못한다. 테스트를 돌려 볼 수 있다
-- 설정에서 Claude 모델을 고르면 도구는 `Read,Glob,Grep` 뿐이다. `READ_TOOLS` 를 쓰지 않는다 — 거기의 `Bash`
-  는 `--allowedTools` 에 들어 승인 없이 돌고(`tool/agent/chat_session.py:39`, `:163`), `python -c` 하나로
-  작업트리 안팎에 쓴다. 프롬프트는 쓰기를 막지 못한다(리뷰 라운드 1). 그래서 Claude 리뷰 셀이 `gh pr diff` 를
-  돌릴 수 없으므로, 서버가 지시 파일에 `gh pr diff <n>` 의 출력을 싣는다. 테스트는 돌리지 못하고 서버의 게이트
-  결과를 읽는다
-- 리뷰 셀의 대화는 PR 이 살아 있는 동안 이어진다. 다음 라운드는 앞 라운드를 기억하는 같은 세션에 간다
-- `raw/review/<repo>/<pr>/session.json` 에 CLI 세션 id 를 적는다. 서버를 다시 띄워도 이어진다
+- The read-only nature of Codex is protected by the sandbox. Commands run but cannot write files. Tests can be run
+- If the Claude model is selected in settings, the tool is only `Read,Glob,Grep`. It does not use `READ_TOOLS` — its `Bash` runs in `--allowedTools` without approval (`tool/agent/chat_session.py:39`, `:163`), and writes inside and outside the worktree with one `python -c`. The prompt cannot block writing (review round 1). Therefore, since the Claude review cell cannot run `gh pr diff`, the server loads the output of `gh pr diff <n>` into the instruction file. Tests cannot be run, and it reads the server's gate results
+- The review cell's conversation continues while the PR is alive. The next round goes to the same session that remembers the previous round
+- Write the CLI session id in `raw/review/<repo>/<pr>/session.json`. It continues even if the server is restarted
 
-프롬프트는 `tool/prompts/review-round.md`. `operator/codex-review-loop` 의 "지시가 담아야 할 것" 을 그대로
-옮기되 결과 파일 대신 최종 답을 쓰라고 한다. 첫 줄은 `Round <n> · PR #<pr> · <머리 커밋 7자>` 다.
+The prompt is `tool/prompts/review-round.md`. It translates "what the instructions should contain" of `operator/codex-review-loop` as is, but tells it to write the final answer instead of a result file. The first line is `Round <n> · PR #<pr> · <머리 커밋 7자>`.
 
-## 한 라운드
+## One Round
 
-1. 서버가 지시를 쓴다 — `raw/review/<repo>/<pr>/round-<n>.md`
-   - 라운드 번호, PR 번호, 머리 커밋, base 브랜치
-   - 허용 목록. 읽기, `git log`·`show`·`diff`, `gh pr view`·`diff`, 테스트 돌리기. 금지 목록은 그 뒤에
-   - `git diff --shortstat <base>...<head>` 의 실제 숫자
-   - 지난 라운드 발견의 처리. 작업 셀의 `disposition` 블록을 그대로
-   - 이미 돌린 것. 서버의 게이트 결과
-   - `Deferred P2`. 새 근거나 등급 변경 없이 다시 보고하지 말라는 지시
-   - 발견 수가 두 라운드 연속 줄지 않았으면 "발견 묶기" 절을 넣는다
-2. 리뷰 셀에 한 턴. "Read `<지시 경로>` and review." 지시 파일은 허브에 있으므로 경로를 절대 경로로 준다.
-   리뷰 셀의 작업 디렉터리 밖이지만 읽기다
-3. 서버가 답을 `round-<n>-result.md` 로 적고 파싱한다
-   - 첫 줄이 `Round <n>` 이고 머리 커밋이 맞아야 한다
-   - 발견은 `^\[(P0|P1|P2)\] (\S+):(\d+)` 로 시작하는 줄이다. 그 아래 줄들이 본문이다
-   - 마지막 비지 않은 줄이 `머지 허용` 이거나 `머지 불가` 로 시작해야 한다
-   - 어긋나면 라운드 실패다. 한 번 다시 보내고, 또 실패하면 `멈춤 — 라운드 형식`
-4. `머지 허용` 이면 루프가 끝난다. 명세는 `머지 가능`. 아래 P2 고르기로 간다
-5. `머지 불가` 면 P0·P1 을 작업 셀에 한 턴으로 보낸다. P2 는 `Deferred P2` 에 적고 보내지 않는다.
-   작업 셀의 지시는 절차 문서의 "받는 쪽이 쥐는 것" 그대로 — 재현 먼저, 가리킨 곳을 고치고 규칙이 걸리는
-   다른 곳은 따로 센다, 동의하지 않으면 근거. 답의 끝에 `disposition` 블록
+1. The server writes instructions — `raw/review/<repo>/<pr>/round-<n>.md`
+   - Round number, PR number, head commit, base branch
+   - Allow list. Read, `git log`·`show`·`diff`, `gh pr view`·`diff`, running tests. Deny list is after that
+   - Actual number of `git diff --shortstat <base>...<head>`
+   - Handling of previous round discoveries. The `disposition` block of the work cell as is
+   - Already run. Server's gate results
+   - `Deferred P2`. Instruction not to report again without new evidence or grade change
+   - If the number of discoveries has not decreased for two consecutive rounds, insert a "Discovery grouping" clause
+2. One turn to the review cell. "Read `<지시 경로>` and review." Since the instruction file is in the hub, provide the path as an absolute path. It is outside the review cell's working directory but is a read
+3. The server writes the answer to `round-<n>-result.md` and parses it
+   - The first line must be `Round <n>` and the head commit must match
+   - Discoveries are lines starting with `^\[(P0|P1|P2)\] (\S+):(\d+)`. The lines below are the body
+   - The last non-empty line must start with `머지 허용` or `머지 불가`
+   - If it deviates, the round fails. Send it again once, and if it fails again, `멈춤 — 라운드 형식`
+4. If `머지 허용`, the loop ends. The specification is `머지 가능`. Go to P2 selection below
+5. If `머지 불가`, send P0·P1 to the work cell in one turn. P2 is written in `Deferred P2` and not sent. The work cell's instructions are exactly as in the procedure document's "what the receiver holds" — reproduce first, fix the pointed place and count other places affected by the rule separately, if you disagree, provide evidence. `disposition` block at the end of the answer
    `[{finding, action: "fixed" | "not-reproduced" | "disagree", evidence}]`
-6. 서버가 게이트를 돌린다(3단계의 실행기). 실패하면 출력의 꼬리를 작업 셀에 한 턴으로 보내고 다시 돌린다.
-   연속 두 번 실패하면 `멈춤 — 게이트`
-7. 통과하면 push. 다음 라운드
+6. The server runs the gate (executor of step 3). If it fails, send the tail of the output to the work cell in one turn and run it again. If it fails twice in a row, `멈춤 — 게이트`
+7. If it passes, push. Next round
 
-작업 셀의 쓰기는 2단계 그대로 하나씩 승인받는다. [세션 동안] 으로 허용한 도구와 명령은 묻지 않고 지나간다.
-작업 셀이 고친 뒤 스스로 돌려 보는 게이트 명령도 한 번 [세션 동안] 으로 허용하면 라운드마다 묻지 않는다.
+Writing by the work cell is approved one by one as in step 2. Tools and commands allowed as [during session] pass without asking. The gate command that the work cell runs itself after fixing is also not asked every round if allowed once as [during session].
 
-## 상태
+## Status
 
-명세의 상태 값은 [3단계](3-spec.md)의 표가 전부다. 루프가 쓰는 것은 `리뷰 대기`, `리뷰 Rn`, `고치는 중 Rn`,
-`머지 가능`, `머지 대기`, `머지됨`, `멈춤` 이다.
+The status values of the specification are all in the table of [Step 3](3-spec.md)]. What the loop uses are `리뷰 대기`, `리뷰 Rn`, `고치는 중 Rn`, `머지 가능`, `머지 대기`, `머지됨`, `멈춤`.
 
-멈춤 이유는 아래 표가 전부다. 개요와 다른 단계 문서는 이 표를 가리킨다(리뷰 라운드 6). 코드에서는 이 표가
-열거형 하나이고, 루프가 표에 없는 이유로 멈추려 하면 테스트가 빨개진다.
-`멈춤` 의 이유는 `승인 대기` 가 아니다. 승인을 기다리는 루프는 멈춘 것이 아니라 서 있는 것이고, 명세의
-`waiting: true` 로 따로 보인다.
+The reasons for stopping are all in the table below. The overview and other step documents point to this table (review round 6). In the code, this table is one enum, and if the loop tries to stop for a reason not in the table, the test turns red. The reason for `멈춤` is not `승인 대기`. A loop waiting for approval is not stopped but standing, and is shown separately as `waiting: true` of the specification.
 
-| 멈춤 이유 | 다시 시작 |
+| Reason for stopping | Restart |
 | --- | --- |
-| `라운드 상한` | [계속] 이 상한을 이 명세에서만 4 올린다 |
-| `게이트` | 사람이 작업 셀과 이야기한 뒤 [계속] |
-| `반론` | 사람이 그 발견에 정한 것을 적고 [계속]. 그 말이 다음 지시의 처리 절에 들어간다 |
-| `라운드 형식` | [계속] |
-| `사람이 멈춤` | [계속] |
-| `서버 재시작` | [계속]. 서버가 뜰 때 루프 상태의 명세를 모두 이것으로 바꾼다 |
-| `저장소 없음` | 명세의 `repo` 가 경로로 풀리지 않는다. 그 저장소가 돌아오면 [계속] |
-| `작업트리 없음` | 명세의 `worktree` 가 그 저장소의 목록에 없다. [계속] 은 PR 에서 `adopt` 로 다시 받고 이어간다 |
-| `검토하지 않은 base 에 머지됨` | [계속] 이 없다. 아래 "base 가 어긋난 머지의 끝" 의 두 버튼 가운데 하나로 끝낸다 |
-| `머지 대기에서 빠짐` | [계속] 이 PR 을 다시 읽는다. `OPEN` 이고 머리와 base 가 허용 라운드와 같으면 `머지 가능`, `OPEN` 인데 다르면 `리뷰 대기`, `CLOSED` 면 409 "GitHub 에서 PR 을 다시 열어야 한다" 로 멈춘 채 둔다 |
+| `라운드 상한` | [Continue] increases this limit by 4 only in this specification |
+| `게이트` | [Continue] after a human talks to the work cell |
+| `반론` | [Continue] after a human writes what they decided for that discovery. That statement goes into the handling clause of the next instruction |
+| `라운드 형식` | [Continue] |
+| `사람이 멈춤` | [Continue] |
+| `서버 재시작` | [Continue]. When the server starts, it changes all specifications in loop status to this |
+| `저장소 없음` | `repo` of the specification cannot be resolved to a path. [Continue] when that repository returns |
+| `작업트리 없음` | `worktree` of the specification is not in the list of that repository. [Continue] receives it again from the PR as `adopt` and continues |
+| `검토하지 않은 base 에 머지됨` | No [Continue]. End with one of the two buttons under "End of merge with mismatched base" below |
+| `머지 대기에서 빠짐` | [Continue] reads the PR again. If `OPEN` and head and base are the same as the allowed round, `머지 가능`, if `OPEN` but different, `리뷰 대기`, if `CLOSED`, leave it stopped with 409 "Must reopen PR on GitHub" |
 
-명세의 `rounds` 는 `[{n, head, base, findings: {P0, P1, P2}, verdict, gate, disposition}]` 다. `base` 는 그 라운드가
-본 PR 의 base 브랜치 이름(`baseRefName`)이다.
+`rounds` of the specification is `[{n, head, base, findings: {P0, P1, P2}, verdict, gate, disposition}]`. `base` is the base branch name (`baseRefName`) of the PR that the round saw.
 
-## 머리나 base 가 움직일 때
+## When head or base moves
 
-라운드는 한 머리 커밋과 한 base 브랜치를 본다. 리뷰 셀이 읽는 동안이나 허용 뒤에 둘 중 하나가 움직이면 그
-판정은 낡는다. base 는 `gh pr edit -B` 로 바뀐다. 머리만 비교하면 같은 커밋이 리뷰하지 않은 base 로
-머지된다(리뷰 라운드 2).
+The round looks at one head commit and one base branch. If either moves while the review cell is reading or after permission, that judgment becomes stale. Base changes to `gh pr edit -B`. If only the head is compared, the same commit is merged into an unreviewed base (review round 2).
 
-base 브랜치가 앞으로 가는 것(다른 PR 의 머지)은 낡음으로 치지 않는다. 그것까지 막으면 base 에 머지가 있을
-때마다 라운드를 다시 돌아야 한다. 충돌은 GitHub 이 머지에서 거절한다.
+Base branch moving forward (merge of another PR) is not counted as stale. If even that is blocked, the round must be run again whenever there is a merge in the base. Conflicts are rejected by GitHub in the merge.
 
-- 명세 작업의 첫 라운드는 3단계의 PR 뒤 걸음(계획 행 커밋과 다시 push)이 끝난 뒤에 `리뷰 대기` 로 간다. PR 이
-  서는 순간이 아니다. 그 턴이 첫 라운드와 겹치면 첫 라운드가 계획 행 커밋 전의 머리를 본다(리뷰 라운드 1)
-- 그래도 사람이 GitHub 에서 push 하거나 base 를 바꿀 수 있다. 결과를 파싱한 뒤
-  `gh pr view <n> --json headRefOid,baseRefName` 이 그 라운드의 `head`·`base` 와 다르면 그 라운드를 버리고 새
-  머리로 다시 보낸다. 버린 라운드는 상한에 세지 않고 `rounds` 에
-  `stale: true` 로 남긴다
+- The first round of specification work goes to `리뷰 대기` after the PR post-step (plan row commit and push again) of step 3 is finished. It is not the moment the PR stands. If that turn overlaps with the first round, the first round sees the head before the plan row commit (review round 1)
+- Still, a human can push or change the base on GitHub. After parsing the result, if `gh pr view <n> --json headRefOid,baseRefName` is different from `head`·`base` of that round, discard that round and send it again with the new head. The discarded round is not counted in the limit and is left in `rounds` as `stale: true`
 
-## 프로젝트와 루프
+## Project and Loop
 
-서버의 프로젝트 선택은 하나다. 루프는 그 선택에 기대지 않는다(리뷰 라운드 1, 사용자의 결정).
+The server's project selection is one. The loop does not rely on that selection (review round 1, user's decision).
 
-- 명세의 `repo` 는 3단계의 계약대로 프로젝트 이름이다(`raw/specs/<repo>/` 의 폴더 이름과 같다). 루프는 시작할
-  때 `channels.repo_for(repo)` 로 원본 경로를 한 번 정하고, 그 뒤 모든 호출(`gh`, `git`, 게이트, 세션)은 그
-  경로와 명세의 `worktree` 로 한다. 이름이 더는 경로로 풀리지 않으면 `멈춤 — 저장소 없음`(리뷰 라운드 2). `current_repo()` 와 `work.ours()` 를 부르지 않는다. 지금 `ours` 는 선택한
-  프로젝트의 목록으로 보므로(`tool/main/work.py:44`) 전환 뒤 루프의 작업트리를 거절한다
-- 루프가 시작할 때와 라운드마다 명세의 `worktree` 가 `workspace.worktrees(<그 경로>)` 에 있는지 본다. 없으면
-  `멈춤 — 작업트리 없음`
-- 한 번 서버가 확인해 세션을 만든 경로는 그 세션의 것이다. 2단계가 `events`·[멈춤]·승인의 답을 이 규칙으로
-  정했다. 여기서 `/api/work/log` 도 같은 규칙으로 넓힌다. 새 지시, 비우기, 지우기는 지금처럼 선택한 프로젝트의
-  것만 받는다
-- 전환이 기다리는 것을 둘로 가른다. 지금 `configure` 는 `work.busy()` 하나로 모든 잡음을 기다린다
-  (`tool/main/query.py:306`). 잡음에는 도는 턴과 짧은 요청(만들기·지우기·비우기)이 섞여 있다
-  - 도는 턴과 루프는 기다리지 않는다. 기다린 까닭이 "전환하면 기다리는 승인의 작업트리가 목록에서 사라져 답이
-    404" 였고, 위의 규칙이 그 답을 받는다
-  - 짧은 요청은 지금처럼 기다린다. 만들기는 선택한 저장소를 읽은 뒤 잠금을 놓고 `git worktree add` 를
-    돌리고(`tool/main/work.py:121-131`), 지우기는 `ours` 와 `remove(current_repo(), …)` 사이에 저장소를 다시
-    읽는다(`:139-149`). 전환이 그 사이에 끼면 옛 프로젝트의 작업트리가 새 화면의 응답으로 가거나 다른 저장소가
-    `remove` 로 넘어간다. wiki-agent 6단계의 리뷰 라운드 3–5 가 막은 경쟁이다(리뷰 라운드 2)
-  - 그래서 잡음에 종류를 단다. `hold(..., kind="turn" | "short")`. `configure` 는 `short` 가 하나라도 있으면
-    거절하고 `turn` 은 보지 않는다
-  - 잡는 요청은 모두 잡을 때 저장소를 확정하고 끝까지 그것을 쓴다. 지금 `say` 는 잡은 뒤 잠금을 놓고
-    `ours(body.path)` 를 부른다(`tool/main/work.py:249-251`). `turn` 을 보지 않는 전환이 그 사이에 끼면 `ours` 가
-    새 프로젝트의 목록에서 옛 경로를 찾다 404 를 낸다(리뷰 라운드 3). 그래서 `say`·`make`·`reset`·`clear` 는
-    `with _lock:` 안에서 `repo = current_repo()` 와 `hold` 를 같이 하고, 경로 확인은 `ours(path, repo)` 로
-    그 저장소의 목록에서 한다. 전환은 작업트리를 지우지 않으므로, 잡은 뒤의 전환은 이 요청이 무엇을 하든
-    바꾸지 않는다. 기록(`remember`)은 경로가 열쇠라(`tool/main/work.py:53`) 새 프로젝트 쪽에 섞이지 않는다
-  - 질의 초점의 `_busy` 는 그대로다
-- 레일은 선택한 프로젝트의 행 아래 "다른 프로젝트" 묶음을 둔다. 다른 프로젝트의 도는 턴과 루프가 저장소 이름과
-  상태로 보인다. 누르면 전환하지 않고 오른쪽 면에 그 작업트리를 연다. 승인 알림도 프로젝트와 상관없이 온다
+- `repo` of the specification is the project name according to the contract of step 3 (same as the folder name of `raw/specs/<repo>/`). When the loop starts, it sets the original path once as `channels.repo_for(repo)`, and all subsequent calls (`gh`, `git`, gate, session) use that path and `worktree` of the specification. If the name can no longer be resolved to a path, `멈춤 — 저장소 없음` (review round 2). It does not call `current_repo()` and `work.ours()`. Since `ours` now looks at the list of selected projects (`tool/main/work.py:44`), it rejects the loop's worktree after switching
+- When the loop starts and every round, it checks if `worktree` of the specification is in `workspace.worktrees(<그 경로>)`. If not, `멈춤 — 작업트리 없음`
+- The path where the server once confirmed and created a session belongs to that session. Step 2 decided the answer of `events`·[Stop]·approval with this rule. Here, `/api/work/log` is also expanded with the same rule. New instructions, clearing, and deleting only receive those of the selected project as now
+- Switching splits waiting. `configure` now waits for all noise with one `work.busy()` (`tool/main/query.py:306`). Noise is a mix of running turns and short requests (create·delete·clear)
+  - Running turns and loops do not wait. The reason for waiting was "if switched, the worktree of the approval waiting disappears from the list and the answer is 404", and the above rule receives that answer
+  - Short requests wait as now. Create reads the selected repository, releases the lock, and runs `git worktree add` (`tool/main/work.py:121-131`), and delete reads the repository again between `ours` and `remove(current_repo(), …)` (`:139-149`). If switching intervenes in between, the old project's worktree goes to the new screen's response or another repository goes to `remove`. This is the competition blocked by review round 3–5 of the wiki-agent step 6 (review round 2)
+  - So, attach types to noise. `hold(..., kind="turn" | "short")`. `configure` rejects if there is even one `short` and does not see `turn`
+  - All requests that catch determine the repository when catching and use it until the end. `say` now releases the lock after catching and calls `ours(body.path)` (`tool/main/work.py:249-251`). If a switch that does not see `turn` intervenes in between, `ours` gives a 404 while looking for the old path in the new project's list (review round 3). So `say`·`make`·`reset`·`clear` do `repo = current_repo()` and `hold` together inside `with _lock:`, and path confirmation is done in the list of that repository with `ours(path, repo)`. Since switching does not delete the worktree, switching after catching does not change what this request does. Records (`remember`) are not mixed into the new project side because the path is the key (`tool/main/work.py:53`)
+  - `_busy` of query focus remains the same
+- The rail places a "Other projects" bundle under the row of the selected project. Running turns and loops of other projects appear with repository name and status. If clicked, it opens that worktree on the right side without switching. Approval notifications also come regardless of the project
 
-## 동시 실행
+## Concurrency
 
-루프 하나가 스레드 하나다. `threading.BoundedSemaphore(설정)` 이 자리를 준다. 자리를 기다리는 명세는
-`리뷰 대기`. 스레드는 2단계의 `Run` 으로 턴을 띄우고 그 끝을 기다린다. 화면은 같은 버퍼에 붙으므로 루프가
-보내는 턴도 사람이 보낸 턴처럼 보인다.
+One loop is one thread. `threading.BoundedSemaphore(설정)` gives a spot. Specifications waiting for a spot are `리뷰 대기`. The thread launches a turn with `Run` of step 2 and waits for its end. Since the screen is attached to the same buffer, turns sent by the loop also look like turns sent by a human.
 
-## 열린 PR 과 받아 오기
+## Open PR and Fetching
 
 `GET /api/prs`.
 
@@ -165,199 +117,171 @@ base 브랜치가 앞으로 가는 것(다른 PR 의 머지)은 낡음으로 치
 gh pr list --state open --json number,title,headRefName,headRefOid,headRepositoryOwner,isCrossRepository,url
 ```
 
-- 창이 포커스를 받을 때와 루프 상태가 바뀔 때 다시 읽는다
-- `isCrossRepository` 가 참이면 행에 "포크 — 푸시할 곳이 없다" 를 보이고 고를 수 없다
-- 명세가 있는 PR 은 명세의 행이 된다. 명세가 없는 PR 은 고를 때 최소 명세를 만든다
+- Reads again when the window receives focus and when the loop status changes
+- If `isCrossRepository` is true, show "Fork — nowhere to push" on the row and it cannot be selected
+- A PR with a specification becomes a row of the specification. A PR without a specification creates a minimal specification when selected
 
-작업트리가 없는 PR 은 `workspace.adopt(repo, branch, oid)` 로 받는다. `workspace` 의 공개 진입점에 더한다.
+A PR without a worktree is received with `workspace.adopt(repo, branch, oid)`. Added to the public entry point of `workspace`.
 
 1. `git fetch origin <branch>`
-2. 폴더 이름은 브랜치를 `TASK` 모양으로 바꾼 것. 브랜치 이름은 그대로 둔다
-3. 로컬에 그 이름의 브랜치가 있는지 본다(`git rev-parse --verify refs/heads/<branch>`). 손으로 올린 PR 은 로컬
-   브랜치가 남은 채 작업트리만 없는 일이 흔하고, `-b` 는 거기서 실패한다(리뷰 라운드 1)
+2. Folder name is the branch changed to `TASK` shape. Keep the branch name as is
+3. Check if there is a branch of that name locally (`git rev-parse --verify refs/heads/<branch>`). It is common for a PR uploaded by hand to have the local branch remaining but no worktree, and `-b` fails there (review round 1)
 
-   | 로컬 브랜치 | 하는 일 |
+   | Local branch | Action |
    | --- | --- |
-   | 없다 | `git worktree add --track -b <branch> <path> origin/<branch>` |
-   | 있고 `oid` 와 같다 | `git worktree add <path> <branch>` |
-   | 있고 `oid` 와 다르다 | 거절. "로컬 `<branch>` 가 PR 머리와 다르다" 와 두 커밋을 보인다. 로컬에만 있는 커밋을 지울 수 있으므로 서버가 맞추지 않는다 |
-   | 다른 작업트리나 원본 체크아웃에 체크아웃되어 있다 | 거절. git 의 이유를 그대로 보인다 |
+   | None | `git worktree add --track -b <branch> <path> origin/<branch>` |
+   | Exists and same as `oid` | `git worktree add <path> <branch>` |
+   | Exists and different from `oid` | Reject. Show "Local `<branch>` is different from PR head" and the two commits. Since commits only in local can be deleted, the server does not match them |
+   | Checked out to another worktree or original checkout | Reject. Show git's reason as is |
 
-4. 새로 만든 브랜치인데 작업트리의 `HEAD` 가 `oid` 와 다르면 작업트리와 그 브랜치를 치우고 거절한다. 있던
-   브랜치는 치우지 않는다
+4. If it is a newly created branch but `HEAD` of the worktree is different from `oid`, clear the worktree and that branch and reject. Do not clear an existing branch
 
-## [머지]
+## [Merge]
 
-`POST /api/specs/{id}/merge {head}`. `head` 는 화면이 본 머리 커밋이다.
+`POST /api/specs/{id}/merge {head}`. `head` is the head commit the screen saw.
 
-머지가 묶이는 것은 리뷰가 허용한 커밋이다. 화면의 커밋이 아니다. `--match-head-commit` 은 넘긴 커밋과 지금
-PR 머리만 비교한다. 허용 뒤 새 커밋이 push 되고 화면이 목록을 다시 읽으면, 화면의 `head` 가 검토하지 않은
-커밋이 되어 그대로 머지된다(리뷰 라운드 1).
+The merge is bound to the commit allowed by the review. Not the screen's commit. `--match-head-commit` compares only the passed commit and the current PR head. If a new commit is pushed after permission and the screen reads the list again, `head` of the screen becomes an unreviewed commit and is merged as is (review round 1).
 
-1. `approved` 는 마지막 라운드가 `머지 허용` 일 때 그 라운드의 `head` 다. 없으면 409
-2. 화면의 `head` 가 `approved` 와 다르면 409 "리뷰 뒤 새 커밋". 명세를 `리뷰 대기` 로 돌려 새 라운드를 받는다.
-   `gh pr view <n> --json baseRefName` 이 그 라운드의 `base` 와 다르면 같은 409 "리뷰 뒤 base 변경" 이다
-3. `gh pr merge <n> --squash --match-head-commit <approved>`. 그 사이 push 가 있었으면 GitHub 이 거절하고, 명세는
-   같은 이유로 `리뷰 대기` 로 간다
-4. 머지 뒤 확인. 명령의 종료 코드 0 은 머지가 아니다. merge queue 를 쓰는 base 에서는 필수 검사가 남았으면
-   자동 머지가 켜지고, 통과했으면 대기열에 들어갈 뿐 PR 은 아직 열려 있다(`gh pr merge --help`, 리뷰 라운드 4).
-   `gh pr view <n> --json state,mergeCommit,baseRefName` 을 읽는다
+1. `approved` is `head` of that round when the last round is `머지 허용`. If none, 409
+2. If `head` of the screen is different from `approved`, 409 "New commit after review". Return the specification to `리뷰 대기` to receive a new round. If `gh pr view <n> --json baseRefName` is different from `base` of that round, it is the same 409 "Base change after review"
+3. `gh pr merge <n> --squash --match-head-commit <approved>`. If there was a push in between, GitHub rejects it, and the specification goes to `리뷰 대기` for the same reason
+4. Check after merge. Command exit code 0 is not a merge. In a base using merge queue, if mandatory checks remain, auto-merge is turned on, and if passed, it just enters the queue, so the PR is still open (`gh pr merge --help`, review round 4). Read `gh pr view <n> --json state,mergeCommit,baseRefName`
 
-   `state` 와 조건 하나로 모든 경우가 나뉜다. 두 줄이 한 응답에 같이 맞는 일은 없다(리뷰 라운드 9)
+   All cases are divided by `state` and one condition. Two lines never match one response (review round 9)
 
-   | `state` | 조건 | 하는 일 |
+   | `state` | Condition | Action |
    | --- | --- | --- |
-   | `MERGED` | base 가 허용 라운드와 같다 | 5 로. `mergeCommit` 은 있으면 명세에 적고, 비었으면 비운 채 간다. 정리는 이것을 쓰지 않는다. 쓰는 곳은 5단계의 넘기기 하나이고, 그쪽이 자기 걸음에서 다시 읽는다 |
-   | `MERGED` | base 가 다르다 | `멈춤 — 검토하지 않은 base 에 머지됨`. OS 알림과 PR 코멘트. 5 이하는 하지 않는다 — 작업트리와 브랜치를 남겨야 사람이 되돌릴 수 있다 |
-   | `OPEN` | 대기열에 있거나 자동 머지가 켜졌다 | `머지 대기`. 5 이하는 하지 않는다. 창이 포커스를 받을 때와 1분마다 이 표를 다시 읽는다 |
-   | `OPEN` | 대기열에도 없고 자동 머지도 꺼졌다 | `멈춤 — 머지 대기에서 빠짐`. 5 이하는 하지 않는다 |
-   | `CLOSED` | — | `멈춤 — 머지 대기에서 빠짐`. 5 이하는 하지 않는다 |
-   | 읽기 실패 | `gh` 가 실패하거나 응답에 `state` 가 없다 | 상태를 바꾸지 않고 1분 뒤 다시 읽는다. 5 이하는 하지 않는다 |
+   | `MERGED` | base is same as allowed round | To 5. If `mergeCommit` exists, write it in the specification, if empty, go empty. Cleanup does not use this. The place that uses it is one of passing in step 5, and that side reads it again in its own step |
+   | `MERGED` | base is different | `멈춤 — 검토하지 않은 base 에 머지됨`. OS notification and PR comment. Do not do 5 or less — must leave worktree and branch so a human can revert |
+   | `OPEN` | In queue or auto-merge turned on | `머지 대기`. Do not do 5 or less. Read this table again when the window receives focus and every 1 minute |
+   | `OPEN` | Not in queue and auto-merge turned off | `멈춤 — 머지 대기에서 빠짐`. Do not do 5 or less |
+   | `CLOSED` | — | `멈춤 — 머지 대기에서 빠짐`. Do not do 5 or less |
+   | Read failure | `gh` fails or no `state` in response | Read again after 1 minute without changing status. Do not do 5 or less |
 
-   대기열과 자동 머지는 `gh pr view --json autoMergeRequest` 가 비었는지와 `gh api graphql` 의
-   `pullRequest.isInMergeQueue` 로 본다. `gh pr view --json` 에는 `isInMergeQueue` 가 없다
-5. P2 코멘트 초안이 있으면 `gh pr comment <n> --body-file`
-6. 명세를 `머지됨` 으로, 결과 행 "PR #n 머지됨 — 라운드 k, 남은 P2 j" 를 쓴다
-7. 정리. 원본 체크아웃에 `git fetch`. 원본이 base 브랜치에 있고 `git status --porcelain` 이 비었으면
-   `git merge --ff-only origin/<base>`. 아니면 "원본이 뒤처짐" 으로 두고 넘어간다
-8. `workspace.remove`. 원본이 앞으로 갔으면 `merged` 가 참이 되어 브랜치까지 지운다. 원본이 뒤처졌으면
-   작업트리만 지우고 브랜치는 남는다 — 지금 판정 그대로다
-9. 원격 브랜치는 머지한 커밋에 그대로 있을 때만 지운다.
-   `git push --force-with-lease=refs/heads/<branch>:<approved> origin --delete <branch>`. 머지 뒤 누가 같은
-   브랜치에 push 했으면 git 이 거절하고, 브랜치는 남는다. 거절은 실패가 아니라 "원격 브랜치에 새 커밋 — 남김"
-   이다. 무조건 지우면 머지되지 않은 커밋을 원격에서 잃는다(리뷰 라운드 1)
-10. 리뷰 셀을 닫는다. `raw/review/<repo>/<pr>/` 는 남긴다
+   Queue and auto-merge are seen by whether `gh pr view --json autoMergeRequest` is empty and `pullRequest.isInMergeQueue` of `gh api graphql`. `gh pr view --json` does not have `isInMergeQueue`
+5. If there is a P2 comment draft, `gh pr comment <n> --body-file`
+6. Write the specification to `머지됨`, result row "PR #n merged — round k, remaining P2 j"
+7. Cleanup. `git fetch` in original checkout. If original is on base branch and `git status --porcelain` is empty, `git merge --ff-only origin/<base>`. Otherwise, leave as "Original is behind" and move on
+8. `workspace.remove`. If original moved forward, `merged` becomes true and deletes even the branch. If original is behind, delete only the worktree and leave the branch — judgment as now
+9. Delete remote branch only when it is still on the merged commit. `git push --force-with-lease=refs/heads/<branch>:<approved> origin --delete <branch>`. If someone pushed to the same branch after merge, git rejects it, and the branch remains. Rejection is not a failure but "New commit on remote branch — kept". If deleted unconditionally, unmerged commits are lost on remote (review round 1)
+10. Close the review cell. `raw/review/<repo>/<pr>/` remains
 
-base 는 막지 못하고 알아채기만 한다. GitHub 의 머지는 머리 커밋만 원자적으로 묶는다. GraphQL
-`MergePullRequestInput` 의 가드는 `expectedHeadOid` 하나이고(2026-09-25 `gh api graphql` 로 확인), REST 도 `sha`
-하나다. 2 의 확인과 3 의 머지 사이에 누가 `gh pr edit -B` 를 하면 그 머지는 성립한다(리뷰 라운드 3). 서버가 base
-에 직접 squash 커밋을 push 하면 `--force-with-lease` 로 base 까지 원자적으로 묶을 수 있지만, PR 이 GitHub 에서
-머지된 것이 아니게 되어 `harvest` 가 읽는 머지 기록이 사라지고 base 의 보호 규칙도 건너뛴다. 그래서 틈은 몇 초로
-좁히고, 생기면 4 가 잡는다
+Base cannot be blocked, only noticed. GitHub's merge binds only the head commit atomically. The guard of GraphQL `MergePullRequestInput` is only `expectedHeadOid` (confirmed with 2026-09-25 `gh api graphql`), and REST is also only `sha`. If someone does `gh pr edit -B` between 2's confirmation and 3's merge, that merge stands (review round 3). If the server pushes a squash commit directly to the base, it can bind up to the base atomically with `--force-with-lease`, but the PR becomes not merged on GitHub, so the merge record that `harvest` reads disappears and it skips the base's protection rules. So narrow the gap to a few seconds, and if it occurs, 4 catches it
 
-### base 가 어긋난 머지의 끝
+### End of merge with mismatched base
 
-`멈춤 — 검토하지 않은 base 에 머지됨` 인 동안 작업트리, 로컬 브랜치, 원격 브랜치, 리뷰 셀은 모두 그대로다.
-`POST /api/specs/{id}/settle {choice}` 가 끝낸다. 명세 카드에 두 버튼이 있다(리뷰 라운드 7).
+While `멈춤 — 검토하지 않은 base 에 머지됨`, worktree, local branch, remote branch, and review cell are all as is. `POST /api/specs/{id}/settle {choice}` ends it. There are two buttons on the specification card (review round 7).
 
-| 버튼 | `choice` | 하는 일 |
+| Button | `choice` | Action |
 | --- | --- | --- |
-| [받아들임] | `accept` | 사람이 그 base 로의 머지를 받아들였다. 명세를 `머지됨` 으로 두고 결과 행에 "검토하지 않은 base `<실제 base>` 로 머지됨 — 받아들임" 을 쓴 뒤, [머지] 의 5–10 을 실제 base 로 한다. 정리는 여전히 `머지됨` 에서만 한다 |
-| [다시 PR] | `reopen` | 원래 base 로 새 PR 을 올린다. 잘못 들어간 base 의 머지를 되돌리는지는 조건이 아니다 — 새 PR 은 원래 base 로 가는 별개의 PR 이고, 잘못 들어간 base 를 어떻게 할지는 그 base 의 일이다. 서버는 그 base 에 쓰지 않는다. 버튼 옆에 "`<실제 base>` 의 머지는 그대로다. 되돌리려면 GitHub 에서" 를 적는다(리뷰 라운드 8). 명세의 `pr` 을 비우고 `작업 중` 으로 돌린다. 작업트리와 브랜치가 남아 있으므로 3단계의 완료 판정(`done-report` → 게이트 → PR)이 원래 base 로 새 PR 을 올리고, 루프가 새 PR 로 다시 돈다 |
+| [Accept] | `accept` | Human accepted the merge to that base. Leave specification as `머지됨`, write "Merged to unreviewed base `<실제 base>` — accepted" in the result row, and do 5–10 of [Merge] with the actual base. Cleanup is still done only in `머지됨` |
+| [Re-PR] | `reopen` | Upload a new PR to the original base. Whether to revert the merge of the wrongly entered base is not a condition — new PR is a separate PR going to the original base, and what to do with the wrongly entered base is that base's business. Server does not write to that base. Write "Merge of `<실제 base>` remains. To revert, on GitHub" next to the button (review round 8). Clear `pr` of the specification and return to `작업 중`. Since worktree and branch remain, step 3's completion judgment (`done-report` → gate → PR) uploads a new PR to the original base, and the loop runs again with the new PR |
 
-둘 다 명세가 이 멈춤일 때만 받는다. 아니면 409.
+Both are received only when the specification is this stop. Otherwise 409.
 
-[다시 PR] 은 리뷰의 경계를 새로 긋는다. 라운드와 허용은 PR 하나에 딸린 것이다(리뷰 라운드 8).
+[Re-PR] redraws the boundary of the review. Round and permission belong to one PR (review round 8).
 
-- 명세의 `rounds` 를 `history` 에 `{pr: <옛 번호>, rounds, closed: "검토하지 않은 base 에 머지됨"}` 으로 옮기고
-  `rounds` 를 비운다. `approved` 는 `rounds` 에서 나오므로 같이 없어진다
-- 이 명세에서만 올렸던 라운드 상한([계속] 의 +4)은 기본값으로 돌아간다
-- 옛 PR 의 리뷰 셀을 닫는다. 새 PR 은 새 번호의 `raw/review/<repo>/<새 번호>/` 와 새 리뷰 셀을 받는다. 옛 폴더는 남는다
+- Move `rounds` of the specification to `history` as `{pr: <옛 번호>, rounds, closed: "검토하지 않은 base 에 머지됨"}` and clear `rounds`. `approved` comes from `rounds`, so it disappears together
+- The round limit increased only in this specification (+4 of [Continue]) returns to the default value
+- Close the old PR's review cell. The new PR receives a new number `raw/review/<repo>/<새 번호>/` and a new review cell. The old folder remains
 
-## P2 고르기
+## P2 Selection
 
-`머지 허용` 이 나온 라운드에 리뷰 셀에 한 턴을 더 보낸다. "Deferred P2 가운데 할 만한 것만 골라
-`p2-keep` 블록으로 내라. 사소한 스타일과 취향은 버린다." 고른 것은 명세의 `p2` 에 적는다. 3단계의 다음 작업
-초점이 이것을 후보 재료로 읽는다.
+Send one more turn to the review cell in the round where `머지 허용` appeared. "Select only what is doable among Deferred P2 and issue as `p2-keep` block. Discard trivial styles and tastes." What is selected is written in `p2` of the specification. The next work focus of step 3 reads this as candidate material.
 
-## 화면
+## Screen
 
-임시다. 6단계가 다시 짓는다.
+Temporary. Step 6 rebuilds it.
 
-- 레일 위 "리뷰 루프 (N)". N 은 루프에 들지 않은 고를 수 있는 PR 수. 하나면 바로 시작, 여럿이면 복수 선택
-  모달. 포크 PR 은 이유와 함께 흐리게
-- 레일 행에 `#번호` 와 `R<n>`, 승인 대기면 `wait` 점
-- 오른쪽 면에 [리뷰] 탭 — 라운드마다 판정, 발견 수, 결과 파일 열기
-- `머지 가능` 인 명세에 [머지] 와 P2 코멘트 초안
-- 서버가 루프의 상태 변화를 하나의 스트림(`GET /api/loops/events`)으로 흘린다. 화면은 이것 하나로 레일과
-  알림을 고친다
-- OS 알림은 `tauri-plugin-notification`. 새 의존성이다. 브라우저에서는 `Notification` 을 쓰고, 허락이 없으면
-  레일 표시만 남는다
-- 설정 세 값(라운드 상한, 동시 실행, 리뷰 모델)은 `raw/chat/main.json` 에 둔다. 임시 입력칸 셋. 6단계의 설정
-  모달이 가져간다
-- 리뷰 초점을 지운다. 기록은 남긴다
+- "Review Loop (N)" on the rail. N is the number of selectable PRs not in the loop. If one, start immediately, if many, multi-select modal. Fork PRs are dimmed with reason
+- `#번호` and `R<n>` on the rail row, `wait` dot if waiting for approval
+- [Review] tab on the right side — judgment per round, number of discoveries, open result file
+- [Merge] and P2 comment draft on `머지 가능` specification
+- The server streams loop status changes as one stream (`GET /api/loops/events`). The screen fixes the rail and notifications with this one
+- OS notification is `tauri-plugin-notification`. New dependency. In browser, use `Notification`, if no permission, only rail indicator remains
+- Three setting values (round limit, concurrency, review model) are in `raw/chat/main.json`. Three temporary input fields. Step 6's setting modal takes them
+- Delete review focus. Records remain
 
-## 테스트
+## Test
 
-`test_loop.py`. 두 셀 모두 대역이다.
+`test_loop.py`. Both cells are bandwidth.
 
-| 무엇 | 빨강이 되는 경우 |
+| What | Case of becoming red |
 | --- | --- |
-| 라운드 파서. 첫 줄의 번호·머리 커밋 불일치, 마지막 줄 없음은 실패 | 검사를 하나씩 지우면 |
-| `머지 허용` 에서 멈추고 `머지 가능` | |
-| 상한에서 멈춤, 게이트 연속 두 번 실패에서 멈춤, 한 번은 계속 | 연속 판정을 지우면 |
-| 같은 발견 두 번 연속 `disagree` 에서 멈춤 | |
-| 지시에 지난 처리, `--shortstat`, `Deferred P2` 가 들어간다. 발견이 줄지 않으면 묶기 절 | |
-| 동시 실행 3 에서 넷째는 `리뷰 대기` | 세마포어를 지우면 |
-| `adopt` 가 머리 커밋이 다르면 치우고 거절 | 비교를 지우면 |
-| 포크 PR 은 고를 수 없다 | |
-| [머지] 가 화면의 머리 커밋을 `--match-head-commit` 으로 넘긴다 | 인자를 빼면 |
-| 정리가 더러운 원본에는 ff 를 하지 않는다 | 검사를 지우면 |
-| 서버 재시작 뒤 루프 상태가 `멈춤 — 서버 재시작` | |
-| 멈춤 이유가 이 문서의 표와 같은 열거형이다. 표에 없는 이유로 멈추면 실패 | |
-| `settle` 의 `accept` 는 `머지됨` 뒤에만 정리하고, `reopen` 은 작업트리와 브랜치를 지우지 않고 `작업 중` 으로 돌린다. 다른 상태에서는 409 | 상태 검사를 지우면 |
-| `reopen` 뒤 `rounds` 가 비고 옛 라운드는 `history` 에, 상한은 기본값, 새 PR 의 첫 라운드는 R1 이고 새 리뷰 셀이다 | 초기화를 빼면 |
-| Claude 리뷰 셀의 인자에 `Bash` 가 없다 | 도구 목록을 `READ_TOOLS` 로 되돌리면 |
-| [머지] 가 화면의 `head` 가 아니라 허용한 라운드의 `head` 로 묶이고, 둘이 다르면 409 | 비교를 지우면 |
-| 원격 브랜치 삭제가 `--force-with-lease` 에 허용한 커밋을 싣는다. 머지 뒤 push 된 원격 브랜치가 남는다(실제 git, 로컬 bare 원격) | 인자를 빼면 |
-| 첫 라운드가 계획 행 push 뒤에 간다. 결과 뒤 머리가 움직였으면 라운드를 버리고 다시 보낸다 | 순서나 머리 비교를 지우면 |
-| `adopt` 의 로컬 브랜치 네 경우. 다른 커밋의 로컬 브랜치는 치우지도 맞추지도 않는다 | 분기를 지우면 |
-| 프로젝트를 바꿔도 루프가 다음 라운드를 보내고, 다른 프로젝트 작업트리의 승인에 답할 수 있다. 새 지시는 거절된다 | 루프가 `current_repo` 를 부르게 하면 |
-| 결과 뒤 base 가 바뀌었으면 라운드를 버리고, [머지] 도 base 가 허용한 라운드와 다르면 409 | base 비교를 지우면 |
-| 도는 턴이 있어도 전환은 되고, 만들기·지우기가 잡은 동안은 전환이 409. 잡는 요청은 잡을 때의 저장소로 끝까지 간다 — `say` 를 잡은 직후 전환해도 그 턴은 옛 저장소의 경로로 돈다 | 종류 구분을 지우거나 잡은 뒤 저장소를 다시 읽게 하면 |
-| 머지 뒤 base 가 허용 라운드와 다르면 `멈춤` 이고 정리를 하지 않는다 | 머지 뒤 확인을 지우면 |
-| `gh pr merge` 가 성공해도 PR 이 `OPEN` 이면 `머지 대기` 이고 작업트리·로컬·원격 브랜치가 그대로다. `MERGED` 가 된 뒤에야 정리한다 | 종료 코드로 머지를 판정하게 하면 |
-| 머지 뒤 표의 여섯 줄을 하나씩 — `mergeCommit` 이 빈 `MERGED` 도 5 로 가고, 읽기 실패는 아무것도 바꾸지 않는다 | 줄을 하나씩 지우면 |
-| 명세의 `repo` 가 이름이고 루프가 `repo_for` 로 경로를 정한다 | |
+| Round parser. First line number·head commit mismatch, no last line is failure | If checks are deleted one by one |
+| Stop at `머지 허용` and `머지 가능` | |
+| Stop at limit, stop at gate failure twice in a row, once is continue | If consecutive judgment is deleted |
+| Stop at same discovery twice in a row `disagree` | |
+| Previous handling, `--shortstat`, `Deferred P2` go into instructions. Grouping clause if discoveries do not decrease | |
+| Fourth at concurrency 3 is `리뷰 대기` | If semaphore is deleted |
+| `adopt` clears and rejects if head commit is different | If comparison is deleted |
+| Fork PR cannot be selected | |
+| [Merge] passes screen's head commit as `--match-head-commit` | If argument is removed |
+| Cleanup does not ff on dirty original | If check is deleted |
+| Loop status after server restart is `멈춤 — 서버 재시작` | |
+| Stop reason is same enum as this document's table. Failure if stopped for reason not in table | |
+| `accept` of `settle` cleans up only after `머지됨`, and `reopen` returns to `작업 중` without deleting worktree and branch. 409 in other statuses | If status check is deleted |
+| After `reopen`, `rounds` is empty, old round is in `history`, limit is default, new PR's first round is R1 and new review cell | If initialization is removed |
+| `Bash` is not in Claude review cell's arguments | If tool list is returned to `READ_TOOLS` |
+| [Merge] is bound to `head` of allowed round, not `head` of screen, 409 if different | If comparison is deleted |
+| Remote branch deletion loads allowed commit to `--force-with-lease`. Remote branch pushed after merge remains (actual git, local bare remote) | If argument is removed |
+| First round goes after plan row push. If head moved after result, discard round and send again | If order or head comparison is deleted |
+| Four cases of local branch of `adopt`. Local branches of other commits are neither cleared nor matched | If branching is deleted |
+| Even if project is changed, loop sends next round, can answer approval of other project worktree. New instructions are rejected | If loop is made to call `current_repo` |
+| If base changed after result, discard round, 409 if [Merge] is also different from base allowed round | If base comparison is deleted |
+| Switching is possible even if there is a running turn, switching is 409 while create·delete is catching. Catching request goes to the end with the repository at the time of catching — even if switched immediately after catching `say`, that turn runs with the old repository's path | If type distinction is deleted or repository is read again after catching |
+| If base is different from allowed round after merge, `멈춤` and no cleanup | If check after merge is deleted |
+| Even if `gh pr merge` succeeds, if PR is `OPEN`, it is `머지 대기` and worktree·local·remote branch remain. Cleanup only after becoming `MERGED` | If merge is judged by exit code |
+| Six lines of table after merge one by one — `MERGED` where `mergeCommit` is empty also goes to 5, read failure changes nothing | If lines are deleted one by one |
+| `repo` of specification is name and loop sets path as `repo_for` | |
 
-## 하지 않는 것
+## Things not done
 
-| 무엇 | 왜 |
+| What | Why |
 | --- | --- |
-| 루프가 스스로 머지하기 | 개요의 안전 경계 |
-| 포크 PR | 푸시할 곳이 없다 |
-| 리뷰 셀에 쓰기 허용 | 사용자의 결정 |
-| 재시작 뒤 루프 자동 재개 | 사람이 없는 사이 무엇이 바뀌었는지 모른다. [계속] 한 번이면 된다 |
+| Loop merging itself | Safety boundary of overview |
+| Fork PR | Nowhere to push |
+| Allow writing to review cell | User's decision |
+| Automatic loop resume after restart | Don't know what changed while human was away. One [Continue] is enough |
 
-## 구현에서 정한 것
+## Agreements in implementation
 
-계획이 비워 둔 자리를 이렇게 채웠다.
+Filled the spots left empty by the plan like this.
 
-| 무엇 | 정한 것 |
+| What | Agreement |
 | --- | --- |
-| 자리 | `BoundedSemaphore` 대신 조건 변수와 수 하나. 설정의 동시 실행을 자리를 기다릴 때마다 읽어, 바꾼 값이 다음에 기다리는 루프부터 듣는다 |
-| 라운드 앞의 게이트 | 라운드마다 리뷰에 보내기 전에 그 머리에서 게이트가 통과했는지 본다. 명세의 `gate` 가 그 머리의 통과가 아니면 먼저 돌린다. 명세 없이 받은 PR 의 첫 라운드도, 계획 행 커밋이 더해진 머리도 이렇게 게이트를 거친다. 지시의 "이미 돌린 것" 은 늘 그 머리의 결과다 |
-| 다른 곳의 push | 사람이 GitHub 쪽 브랜치에 push 해 작업트리가 PR 머리의 조상이면, 라운드 앞에서 작업트리를 `--ff-only` 로 따라가게 한다. 리뷰 셀이 읽는 파일이 리뷰하는 머리와 같아야 한다. 갈라졌으면 push 가 거절되고 `멈춤 — 게이트` |
-| push 실패 | `멈춤 — 게이트`. 상태 `고치는 중` 이 "게이트와 push 포함" 이고, 표에 따로 이유를 두지 않았다 |
-| 리뷰 셀의 실패 | 셀이 답하지 못하면(프로세스가 죽었다, Codex 목록을 못 읽었다) 형식 실패와 같이 한 번 다시 보내고 `멈춤 — 라운드 형식`. 루프 안의 뜻밖의 예외도 `라운드 형식` 에 "루프가 깨졌다 — …" 를 붙인다. 어느 쪽이든 [계속] 한 번이다 |
-| 머지 허용과 발견 | 마지막 줄이 `머지 허용` 이면 P1 이 적혀 있어도 허용이다. 판정은 리뷰 셀의 것이다 |
-| P2 만 남은 `머지 불가` | P0·P1 이 없어도 작업 셀에 한 턴을 보낸다. 판정 줄을 싣는다. 보내지 않으면 같은 판정이 상한까지 돈다 |
-| 같은 발견 | 파일이 같고, 줄이나 `—` 뒤의 글이 같으면 같은 발견이다. 리뷰 셀이 글을 바꾸고 줄도 옮기면 놓치고, 그때는 상한이 멈춘다 |
-| 버린 라운드의 파일 | `round-<n>-stale-<머리 7자>.md` 와 `-result.md` 로 이름을 바꿔 남긴다. 같은 번호의 다음 시도가 `round-<n>.md` 를 쓴다 |
-| [머지] 뒤 | `gh pr merge` 가 0 으로 끝나면 명세를 먼저 `머지 대기` 로 두고 표를 읽는다. 읽기가 실패해도 1분 폴러와 창의 포커스가 다시 읽는다 |
-| 원격 브랜치가 이미 없다 | 저장소 설정이 머지 때 지웠으면 "이미 없다" 로 적고 넘어간다 |
-| 명세 없는 PR 의 이름 | 폴더와 명세 `id` 는 머리 브랜치를 `TASK` 모양으로 바꾼 것(`workspace.folder_for`). 브랜치 이름은 명세의 `pr.branch` 에 남고 push 와 PR 만들기가 그것을 쓴다. 같은 이름의 명세가 있으면 받지 않는다 |
-| [다시 PR] 의 base | 명세의 `base` 에 허용 라운드의 base 를 적고, 3단계의 PR 만들기가 기본 브랜치 대신 그것을 쓴다 |
-| 작업 셀의 모델 | [시작] 이 고른 모델을 명세의 `cell` 에 적는다. 루프가 작업 셀에 보내는 턴이 그것으로 세션을 연다 |
-| 서버가 띄운 턴과 목록 | 3단계 창 확인에서 남긴 빈 곳 둘을 `GET /api/loops/events` 가 닫는다. 명세를 저장할 때마다, 서버가 턴을 띄울 때마다 한 줄이 가고, 화면은 그 작업트리를 연 창이면 다시 붙고 목록을 다시 읽는다 |
-| 알림 | 루프 상태의 명세가 승인을 기다리게 될 때 한 번, 검토하지 않은 base 에 머지됐을 때 한 번. 창에 포커스가 없고 허락이 있을 때만. 허락은 "리뷰 루프" 를 누를 때 묻는다 |
-| 읽기 | `/api/file` 도 `/api/work/log` 와 같이, 서버가 세션을 만든 경로면 선택한 프로젝트와 상관없이 읽는다 |
+| Spot | Condition variable and one number instead of `BoundedSemaphore`. Read concurrency of settings whenever waiting for a spot, changed value is heard from the next waiting loop |
+| Gate before round | Check if gate passed at that head before sending to review every round. If `gate` of specification is not pass of that head, run it first. First round of PR received without specification, and head with plan row commit added also go through gate like this. "Already run" in instructions is always the result of that head |
+| Push elsewhere | If human pushes to GitHub side branch and worktree is ancestor of PR head, make worktree follow `--ff-only` before round. File read by review cell must be same as head being reviewed. If split, push is rejected and `멈춤 — 게이트` |
+| Push failure | `멈춤 — 게이트`. Status `고치는 중` is "including gate and push", no separate reason in table |
+| Review cell failure | If cell cannot answer (process died, could not read Codex list), send again once like format failure and `멈춤 — 라운드 형식`. Unexpected exception in loop also attaches "Loop broken — …" to `라운드 형식`. Either way, one [Continue] is enough |
+| Merge permission and discovery | If last line is `머지 허용`, it is permission even if P1 is written. Judgment is review cell's |
+| `머지 불가` with only P2 left | Send one turn to work cell even if no P0·P1. Load judgment line. If not sent, same judgment runs until limit |
+| Same discovery | Same discovery if file is same, and line or text after `—` is same. If review cell changes text and moves line, it misses it, and then limit stops |
+| File of discarded round | Rename to `round-<n>-stale-<머리 7자>.md` and `-result.md` and keep. Next attempt of same number uses `round-<n>.md` |
+| After [Merge] | If `gh pr merge` ends with 0, set specification to `머지 대기` first and read table. Even if reading fails, 1-minute poller and window focus read again |
+| Remote branch already gone | If repository setting deleted at merge, write as "already gone" and move on |
+| Name of PR without specification | Folder and specification `id` is head branch changed to `TASK` shape (`workspace.folder_for`). Branch name remains in `pr.branch` of specification and push and PR creation use it. If there is a specification of same name, do not receive |
+| Base of [Re-PR] | Write base of allowed round in `base` of specification, and step 3's PR creation uses it instead of default branch |
+| Work cell's model | Write model selected by [Start] in `cell` of specification. Turn loop sends to work cell opens session with it |
+| Turn and list launched by server | `GET /api/loops/events` closes two empty spots left in step 3 window confirmation. Every time specification is saved, every time server launches turn, one line goes, and screen attaches again if it is window opening that worktree and reads list again |
+| Notification | Once when specification of loop status becomes waiting for approval, once when merged to unreviewed base. Only when window does not have focus and there is permission. Permission is asked when pressing "Review Loop" |
+| Read | `/api/file` is same as `/api/work/log`, read regardless of selected project if it is path where server created session |
 
-## 확인
+## Confirmation
 
 - `pytest tool/`, `python tool/lint.py --check`, `ruff check tool/`, `npm run build`
-- 창에서 이 저장소로. 3단계로 명세 하나를 PR 까지 → 루프가 스스로 시작 → 라운드 셋 이상에서 작업 셀의 고침과
-  승인 → 도중에 창을 새로 고쳐 다시 붙음 → [멈춤] 과 [계속] → `머지 가능` → [머지] → 정리
-- 손으로 올린 PR 하나를 "리뷰 루프" 로 받아 작업트리가 PR 의 머리 커밋에 서는지 본다
-- 머지 뒤 다음 `sync` 에서 결정 기록이 생기는지 본다
+- From window to this repository. One specification to PR in step 3 → loop starts itself → work cell fix and approval in three or more rounds → refresh window in middle and attach again → [Stop] and [Continue] → `머지 가능` → [Merge] → cleanup
+- Receive PR uploaded by hand with "Review Loop" and see if worktree stands on PR's head commit
+- See if decision record is created in next `sync` after merge
 
-## 단계
+## Steps
 
-| # | 단계 | 무엇 | 상태 |
+| # | Step | What | Status |
 | --- | --- | --- | --- |
-| 1 | 리뷰 셀 | 프롬프트, 세션, 라운드 파일, 파서 | 완료 |
-| 2 | 루프 | 상태, 한 라운드, 멈춤과 계속, 동시 실행 | 완료 |
-| 3 | PR | 목록, `adopt`, 최소 명세 | 완료 |
-| 4 | 머지 | [머지], P2 고르기와 코멘트, 정리 | 완료 |
-| 5 | 화면 | 버튼과 모달, 레일, 리뷰 탭, 알림, 임시 설정 | 완료 |
-| 6 | 게이트 | 위 확인 전부 | 진행 중 — 자동 확인은 통과, 창 확인 남음 |
+| 1 | Review cell | Prompt, session, round file, parser | Done |
+| 2 | Loop | Status, one round, stop and continue, concurrency | Done |
+| 3 | PR | List, `adopt`, minimal specification | Done |
+| 4 | Merge | [Merge], P2 selection and comment, cleanup | Done |
+| 5 | Screen | Button and modal, rail, review tab, notification, temporary settings | Done |
+| 6 | Gate | All confirmation above | In progress — auto confirmation passed, window confirmation remaining |

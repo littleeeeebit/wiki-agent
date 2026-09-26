@@ -586,7 +586,8 @@ def _translate(texts: list[str], direction: str, deadline: float) -> list[str]:
 BASELINE = ROOT / "docs" / "translation-baseline.json"
 REVIEW = ROOT / "raw" / "translate-review.md"
 
-# Written by hand in Korean and never translated, so they are not targets.
+# Translated by `--in-place` with no pinned original, so there is nothing to
+# hold them against; not targets.
 SKIP = ("docs/plans/",)
 
 SCOPES = ("operator", "craft", ".wiki")

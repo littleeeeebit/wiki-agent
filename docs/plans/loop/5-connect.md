@@ -1,228 +1,195 @@
-# 5단계 — 연결과 전수조사
+# Step 5 — Connection and Full Investigation
 
-전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다. 조사 세션은 [3단계](3-spec.md)의 명세로, 조사 PR 은
-[4단계](4-review.md)의 루프로 돈다.
+The relationship between the overall design and the steps is in [Overview](0-overview.md)]. The investigation session is the specification of [Step 3](3-spec.md)], and the investigation PR runs in the loop of [Step 4](4-review.md)].
 
-목표. 저장소를 위키에 붙이는 일이 목록 화면의 [연결] 하나가 된다. 붙었는지는 파일이 아니라 두 호스트의
-실제 세션이 주입을 받는지로 판정한다. 켜 두면 [연결] 이 그 저장소의 첫 위키를 조사해 PR 로 올린다.
+Goal. Attaching a repository to the wiki becomes a single [Connection] on the list screen. Whether it is attached is determined not by files, but by whether the actual session of the two hosts receives an injection. If turned on, [Connection] investigates the first wiki of that repository and uploads it as a PR.
 
-## 사용자와 정한 것
+## Agreements with Users
 
 2026-09-25.
 
-| 무엇 | 정한 것 |
+| What | Agreement |
 | --- | --- |
-| 옛 허브에 붙은 저장소 | 따로 옮기지 않는다. hook 은 사용자 단위라 허브를 바꾸면 모두가 새 허브를 부른다. adapter 는 그대로 쓰인다. 옛 프로젝트 단위 hook 이 남은 저장소만 `일부` 로 보이고 [연결] 을 권한다. `ai-coding-agent-wiki-public` 은 배포용 사본으로 남는다 |
-| 조사 스위치 | 기본 꺼짐 |
-| 조사 한도 | 토큰과 시간 둘. 먼저 닿는 쪽에서 멈춘다. 견적도 토큰과 시간으로 낸다 |
-| 조사 모델 | Claude opus. 설정에서 바꾼다 |
-| 조사가 쓰는 페이지 | `.wiki/project.md` 에 구조 개요 한 장, `.wiki/modules/*.md` 에 모듈 페이지. 모듈 페이지는 `triggers` 가 없어 주입되지 않는다. 검색과 지도에만 쓰인다. 주입은 규칙 페이지만 한다 |
-| 빈 곳의 기준 | 파일 단위. 그 이름의 파일이 있으면 건드리지 않는다. README 와 `docs/` 는 읽기만 한다 |
-| SessionStart 시험 | 실제 CLI 세션 한 턴. 호스트마다 |
-| Codex hook 신뢰 | [연결] 의 확인 창에 바뀔 줄과 함께 넣는다. 확인하면 `--trust-codex` 로 신뢰한다 |
-| 추정 못 한 슬롯 | 다음 작업 초점의 후보 재료가 된다. 작업트리에서 채워 PR 로 들어간다 |
+| Repository attached to old hub | Do not move separately. The hook is per-user, so if the hub is changed, everyone calls the new hub. The adapter is used as is. Only repositories with remaining old project-level hooks are seen as `일부` and [Connection] is recommended. `ai-coding-agent-wiki-public` remains as a copy for distribution |
+| Investigation switch | Default off |
+| Investigation limit | Both tokens and time. Stops at whichever is reached first. Estimates are also provided in tokens and time |
+| Investigation model | Claude opus. Changed in settings |
+| Pages used by investigation | One structure overview in `.wiki/project.md`, module pages in `.wiki/modules/*.md`. Module pages are not injected because `triggers` is missing. Used only for search and map. Injection is only done for rule pages |
+| Criteria for empty space | File-based. If a file with that name exists, do not touch it. README and `docs/` are read-only |
+| SessionStart test | One actual CLI session turn. Per host |
+| Codex hook trust | Included in the [Connection] confirmation window with the lines to be changed. If confirmed, trusted as `--trust-codex` |
+| Unestimated slots | Becomes candidate material for the next work focus. Filled in the work tree and entered as a PR |
 
-## 연결 상태
+## Connection Status
 
-`tool/main/connect.py`. `channels.projects` 의 `wired: True` 고정(`tool/main/channels.py:100`)을 이 판정으로
-바꾼다. 목록은 계산이 싼 것만 매번 보고, 비싼 시험은 기록을 읽는다.
+`tool/main/connect.py`. Change the `wired: True` fixation (`tool/main/channels.py:100`) of `channels.projects` to this judgment. For the list, only cheap calculations are reported every time, and expensive tests read the record.
 
-| 항목 | 어떻게 보나 | 비용 |
+| Item | How to view | Cost |
 | --- | --- | --- |
-| adapter | `.wiki/adapter.toml` 이 있고 필수 슬롯(`gate_cmd`)이 찼다. 빈 선택 슬롯은 `일부` 가 아니라 행의 알림 | 파일 하나 |
-| 사용자 단위 hook | 각 호스트의 사용자 설정에 이 허브의 `tool/hook.py` 를 부르는 명령이 있다 | 파일 둘 |
-| 옛 프로젝트 hook | `apply.unwire` 를 쓰지 않고 돌려 바꿀 것이 없다 | 파일 둘 |
-| Codex 신뢰 | `setup_agents.codex_hooks` 의 `trustStatus` | `app-server` 한 번. 목록에서는 기록을 읽는다 |
-| 호스트별 시험 | `raw/connect/<repo>.json` 의 마지막 시험 결과와 시각 | 기록 읽기 |
+| adapter | `.wiki/adapter.toml` exists and required slots (`gate_cmd`) are filled. Empty selection slots are not `일부` but a row notification | One file |
+| Per-user hook | There is a command in each host's user settings that calls this hub's `tool/hook.py` | Two files |
+| Old project hook | Does not use `apply.unwire` and there is nothing to turn and change | Two files |
+| Codex trust | `trustStatus` of `setup_agents.codex_hooks` | `app-server` once. Reads record in the list |
+| Per-host test | Last test result and time of `raw/connect/<repo>.json` | Read record |
 
-상태는 개요의 셋이다. `일부` 는 빠진 항목을 이름으로 적는다 — "Codex 시험 실패", "옛 hook 남음".
+Status is the three in the overview. `일부` writes missing items by name — "Codex test failed", "Old hook remaining".
 
-## SessionStart 시험
+## SessionStart Test
 
-지금 `setup_agents.probe` 는 `hook.py claude session_state.py` 를 흉내 내 돌린다(`tool/setup_agents.py:212`).
-CLI 가 그 hook 을 실제로 부르는지는 모른다. 정한 대로 실제 세션을 돌린다.
+Currently, `setup_agents.probe` runs by imitating `hook.py claude session_state.py` (`tool/setup_agents.py:212`). We do not know if the CLI actually calls that hook. As decided, run an actual session.
 
-1. 서버가 한 번 쓰는 값(`nonce`)을 만들고 환경 변수 `WIKI_PROBE=<nonce>` 를 붙여 CLI 를 띄운다
-   - Claude — `claude -p --model haiku "Reply OK"`, 대상 저장소에서
-   - Codex — `codex exec --model <가장 싼 모델> -c model_reasoning_effort="low" "Reply OK"`, 대상 저장소에서
-2. `hook.py` 는 `WIKI_PROBE` 가 있으면 `raw/connect/probe/<nonce>.json` 에 `{host, event, injected, chars}` 를
-   남긴다. hook 은 CLI 의 자식이라 환경을 물려받는다. 값이 없을 때는 아무것도 하지 않는다
-3. CLI 가 끝나면 그 파일을 읽는다. `SessionStart` 의 `injected` 가 참이면 그 호스트는 통과다
-4. 결과를 `raw/connect/<repo>.json` 의 `probe` 에 시각과 함께 남긴다
+1. The server creates a one-time value (`nonce`) and launches the CLI with the environment variable `WIKI_PROBE=<nonce>` attached
+   - Claude — `claude -p --model haiku "Reply OK"`, in the target repository
+   - Codex — `codex exec --model <가장 싼 모델> -c model_reasoning_effort="low" "Reply OK"`, in the target repository
+2. `hook.py` leaves `{host, event, injected, chars}` in `raw/connect/probe/<nonce>.json` if `WIKI_PROBE` exists. The hook is a child of the CLI and inherits the environment. When there is no value, it does nothing
+3. When the CLI ends, read that file. If `injected` of `SessionStart` is true, that host passes
+4. Leave the result in `probe` of `raw/connect/<repo>.json` with the time
 
-`hook.py` 에 더하는 것은 이 한 갈래다. hook 은 실패해도 열린 채 지나가야 하므로(`craft/hooks-fail-open`)
-기록을 못 쓰면 조용히 넘어간다. 그 경우 시험은 실패로 보인다.
+Adding to `hook.py` is this one branch. Since the hook must remain open even if it fails (`craft/hooks-fail-open`), if the record cannot be written, it passes quietly. In that case, the test appears as a failure.
 
-시험은 [연결] 끝과 목록 행의 [다시 시험] 에서만 돈다. 한 번에 모델 두 턴의 비용이 든다.
+Tests run only at the end of [Connection] and [Re-test] in the list row. It costs two turns of the model at a time.
 
-## 허브 이전
+## Hub Migration
 
-기계에 한 번. 사용자 단위 hook 이 이 허브가 아닌 곳을 부르면, 첫 [연결] 이 먼저 이것을 묻는다.
+Once per machine. If a per-user hook calls a place other than this hub, the first [Connection] asks this first.
 
-- `setup_agents.install_global` 을 바꿀 목록을 돌려주는 부분과 쓰는 부분으로 나눈다. 지금은 `check` 가
-  문자열을 찍는다. 목록은 `[(파일, 바뀔 줄)]` 이다
-- 스킬 링크. `~/.claude/skills` 에서 옛 허브의 `skills/` 를 가리키는 링크마다 이 허브의 같은 이름으로 바꿀
-  것을 목록에 더한다. 이 허브에 없는 이름은 두고 알린다. 링크는 지금 것과 같은 종류로 만든다
-- Codex 신뢰가 필요하면 같은 창에 넣는다
-- 확인 창은 모든 줄을 보인다. [확인] 이 쓰고, 그 뒤 모든 adapter 저장소의 상태를 다시 판정한다
+- Divide the part that returns the list to change `setup_agents.install_global` into the part that returns it and the part that uses it. Currently, `check` prints a string. The list is `[(파일, 바뀔 줄)]`
+- Skill link. Add to the list to change every link pointing to the old hub's `skills/` in `~/.claude/skills` to the same name of this hub. Leave names not in this hub and notify. Links are made of the same type as the current ones
+- If Codex trust is needed, include it in the same window
+- The confirmation window shows all lines. [Confirm] writes, and then re-judges the status of all adapter repositories
 
-## [연결]
+## [Connection]
 
-순서는 개요 그대로다. 구체화한 것만 적는다.
+The order is exactly as in the overview. Only the concretized parts are written.
 
-1. 허브 이전(필요할 때)
-2. adapter 를 만든다. 서버가 원본 체크아웃에 쓰는 예외 하나
+1. Hub migration (when needed)
+2. Create adapter. One exception used by the server for original checkout
 
-   | 슬롯 | 추정 |
+   | Slot | Estimation |
    | --- | --- |
-   | `gate_cmd` | `pyproject.toml`·`setup.cfg`·`pytest.ini` → `python -m pytest`. `package.json` 의 `scripts.test` → `npm test`. `Cargo.toml` → `cargo test`. `go.mod` → `go test ./...`. 여럿이면 가장 위의 것. 없으면 빈 값이고 연결은 `일부` |
+   | `gate_cmd` | `pyproject.toml`·`setup.cfg`·`pytest.ini` → `python -m pytest`. `scripts.test` of `package.json` → `npm test`. `Cargo.toml` → `cargo test`. `go.mod` → `go test ./...`. If multiple, the top one. If none, empty value and connection is `일부` |
    | `review_dir`, `scratch_dirs` | `artifacts/review`, `artifacts/` |
-   | `live_cmd`, `server_stop` | 추정하지 않는다. 빈 값 |
+   | `live_cmd`, `server_stop` | Do not estimate. Empty value |
 
-   쓴 내용의 해시를 `raw/connect/<repo>.json` 에 남긴다
-3. 옛 프로젝트 단위 hook 을 걷는다. `apply.unwire` 와 `keep_denies`
-4. 호스트별 시험
+   Leave the hash of the written content in `raw/connect/<repo>.json`
+3. Remove old project-level hooks. `apply.unwire` and `keep_denies`
+4. Per-host test
 
-빈 슬롯은 3단계 다음 작업 초점의 재료에 "빈 adapter 슬롯" 절로 들어간다. 그 명세가 작업트리에서 adapter 를
-고쳐 PR 로 올리면, 머지 뒤 원본의 사본은 개요의 "넘기기" 절차로 바뀐다.
+Empty slots enter the material for the next work focus of Step 3 as an "Empty adapter slot" section. When that specification fixes the adapter in the work tree and uploads it as a PR, the copy of the original after merge changes to the "Handover" procedure of the overview.
 
-## 전수조사
+## Full Investigation
 
-켜져 있으면 [연결] 의 4 뒤에 이어진다.
+If turned on, it follows after 4 of [Connection].
 
-### 견적
+### Estimation
 
-| 재는 것 | 어떻게 |
+| Measuring | How |
 | --- | --- |
-| 파일 수와 코드 크기 | `git ls-files` 와 크기. 생성물과 잠금 파일은 뺀다 |
-| 문서 분량 | `*.md` 의 바이트 |
-| 이력 | `git rev-list --count HEAD`, `gh pr list --state merged --limit 1000 --json number` 의 수 |
+| Number of files and code size | `git ls-files` and size. Exclude products and lock files |
+| Document volume | Bytes of `*.md` |
+| History | Number of `git rev-list --count HEAD`, `gh pr list --state merged --limit 1000 --json number` |
 
-토큰 견적은 읽을 양의 바이트를 4로 나눈 값에 쓰는 양과 도구 호출의 몫을 더한다. 계수는 첫 조사의 실측으로
-맞춘다. 시간 견적은 토큰을 이 기계에서 잰 초당 처리량으로 나눈다. 둘을 보이고 확인받는다. 설정의 한도가
-견적보다 작으면 "한도에서 멈춘다 — 모듈 페이지 일부만" 을 같이 보인다.
+The token estimate adds the quotient of the amount to be read divided by 4 to the amount written and tool calls. The coefficient is adjusted by the actual measurement of the first investigation. The time estimate divides tokens by the throughput measured per second on this machine. Both are shown and confirmed. If the limit in settings is smaller than the estimate, "Stops at limit — only part of module pages" is shown together.
 
-### 조사 세션
+### Investigation Session
 
-3단계의 명세 하나다. 서버가 만든다.
+One specification of Step 3. Created by the server.
 
-- `id` `wiki-bootstrap`, `goal` "이 저장소의 위키 초기화"
-- `done` — `gate_cmd`(있으면), 허브의 `lint --check`, `repo_lint`
-- `out` — 이미 있는 파일 고치기, 코드 고치기
+- `id` `wiki-bootstrap`, `goal` "Initialize wiki for this repository"
+- `done` — `gate_cmd` (if exists), hub's `lint --check`, `repo_lint`
+- `out` — Fix existing files, fix code
 
-작업트리를 만든 뒤 서버가 원본의 `adapter.toml` 을 작업트리에 쓰고 첫 커밋으로 남긴다. 그다음 조사 세션을
-띄운다.
+After creating the work tree, the server writes the original's `adapter.toml` to the work tree and leaves it as the first commit. Then launch the investigation session.
 
-한도를 지키려면 턴 사이에서 재야 한다. Claude 는 토큰 수를 턴이 끝날 때 준다. 그래서 조사를 한 턴이 아니라
-단계마다 한 턴으로 나눈다.
+To keep the limit, it must be measured between turns. Claude gives the token count when the turn ends. Therefore, the investigation is divided into one turn per step, not one turn.
 
-| 턴 | 쓰는 것 |
+| Turn | What is used |
 | --- | --- |
-| 1 | `.wiki/project.md` — 구조 개요 |
-| 2…k | `.wiki/modules/<이름>.md` — 모듈 몇 개씩 |
-| k+1 | 규칙 페이지. SCHEMA 의 형식, 근거가 없으면 `landmine` 을 쓰지 않는다 |
-| k+2 | 결정 기록. `harvest` 를 처음부터 돌린다 |
-| k+3 | adapter 슬롯의 보정 |
+| 1 | `.wiki/project.md` — Structure overview |
+| 2…k | `.wiki/modules/<이름>.md` — A few modules each |
+| k+1 | Rule page. If there is no SCHEMA format or evidence, do not use `landmine` |
+| k+2 | Decision record. Run `harvest` from the beginning |
+| k+3 | Correction of adapter slots |
 
-턴이 끝날 때마다 쓴 토큰과 지난 시간을 한도와 비교한다. 닿으면 거기서 멈추고 쓴 만큼으로 `done-report` 를
-받아 PR 을 올린다. 시간 한도는 턴 도중에도 닿는다 — 그때는 2단계의 [멈춤] 으로 턴을 끊고 앞 턴까지 커밋한
-것으로 간다.
+Every time a turn ends, compare the tokens used and elapsed time with the limit. If reached, stop there and receive `done-report` for the amount used and upload a PR. The time limit is reached even during a turn — at that time, cut the turn with [Stop] of Step 2 and go with what was committed up to the previous turn.
 
-PR 이 서면 4단계의 루프가 돈다.
+When the PR is established, the loop of Step 4 runs.
 
-### 불변식
+### Invariants
 
-개요의 불변식 그대로다. 조사 코드는 `sync`, `harvest`, 회고에 분기를 두지 않는다. 테스트가 이것을 핀으로
-박는다 — `sync.py`·`harvest.py`·`session_state.py` 가 `connect` 나 조사 설정을 import 하면 빨강.
+Exactly the invariants of the overview. Investigation code does not have branches in `sync`, `harvest`, or retrospection. Tests pin this down — `sync.py`·`harvest.py`·`session_state.py` become red if they import `connect` or investigation settings.
 
-## 넘기기
+## Handover
 
-bootstrap PR 이 머지된 뒤 원본의 adapter 사본을 넘기는 여섯 걸음은 개요에 있다. 코드는 `connect.handover(repo, pr)`
-하나다. 4단계의 [머지] 가 `wiki-bootstrap` 명세를 머지한 뒤에 부른다.
+There are six steps to hand over the adapter copy of the original after the bootstrap PR is merged in the overview. The code is `connect.handover(repo, pr)`. Called after [Merge] of Step 4 merges the `wiki-bootstrap` specification.
 
-- 4단계의 원본 ff-only 와 순서가 겹친다. 넘기기가 먼저다 — adapter 를 옮겨 두지 않으면 ff 가 추적하지 않는
-  adapter 에 막힌다. 넘기기가 성공하면 그 안의 5 가 ff 를 한다. 실패하면 4단계의 정리는 ff 를 건너뛴다
-- 넘기기가 멈춘 채 끝나는 곳은 하나다 — 연결이 "일부 — adapter 반영 대기" 이고, 원본의 adapter 는 원래 자리에
-  있거나(되돌림) 경로가 알려져 있다. 머지 커밋이 아직 안 닿았거나 `mergeCommit` 이 비었을 때가 여기다. 이
-  상태의 저장소는 목록을 읽을 때(창이 포커스를 받을 때) 넘기기를 다시 부른다. 1분에 한 번까지. 넘기기는 처음부터
-  다시 걷는다 — 1 의 조건 검사부터이고, 앞 시도의 사본이 `.git/wiki-connect/` 에 남았으면 2 가 멈춘다(리뷰 라운드 10)
-- 4단계 [머지] 의 명세는 넘기기와 따로 끝난다. 명세는 `머지됨` 이 되고 작업트리와 브랜치는 정리된다. 넘기기에
-  필요한 것은 PR 번호와 원본 체크아웃뿐이고 작업트리는 쓰지 않는다. 넘기기가 멈추면 [머지] 의 7 은 ff 를
-  건너뛴다(위)
-- 개요의 여섯 걸음이 각각 테스트 하나다. 어긋난 조건마다 아무것도 건드리지 않았는지, 되돌림이 원래 자리가
-  비었을 때만인지 본다
+- The order overlaps with the original ff-only of Step 4. Handover is first — if the adapter is not moved, it is blocked by the adapter that ff does not track. If handover succeeds, 5 inside it does ff. If it fails, the cleanup of Step 4 skips ff
+- There is one place where handover ends while stopped — connection is "Partial — waiting for adapter reflection", and the original's adapter is in its original place (reversion) or the path is known. This is when the merge commit has not reached yet or `mergeCommit` is empty. A repository in this state calls handover again when reading the list (when the window receives focus). Up to once per minute. Handover starts from the beginning — from condition check 1, and if a copy of the previous attempt remains in `.git/wiki-connect/`, 2 stops (Review Round 10)
+- The specification of [Merge] in Step 4 ends separately from handover. The specification becomes `머지됨` and the work tree and branch are cleaned up. What is needed for handover is only the PR number and original checkout, and the work tree is not used. If handover stops, 7 of [Merge] skips ff (above)
+- Each of the six steps of the overview is one test. Check if nothing was touched for each violated condition, and if reversion is only when the original place is empty
 
-## 화면
+## Screen
 
-임시다. 6단계가 가운데 면의 프로젝트 목록으로 다시 짓는다.
+Temporary. Step 6 rebuilds it into the project list on the center face.
 
-- 레일의 프로젝트 고르기 옆 [목록] 이 가운데 면을 목록으로 바꾼다. 행마다 상태, 빠진 항목, [연결]
-  [다시 시험], 조사 진행
-- 허브 이전의 확인 창. 파일마다 바뀔 줄
-- 조사 견적의 확인 창
-- 설정 셋(조사 스위치, 토큰 한도, 시간 한도, 조사 모델)은 `raw/chat/main.json`. 임시 입력칸
+- [List] next to project selection on the rail changes the center face to a list. Status, missing items, [Connection], [Re-test], investigation progress for each row
+- Confirmation window for hub migration. Lines to be changed per file
+- Confirmation window for investigation estimate
+- Three settings (investigation switch, token limit, time limit, investigation model) are `raw/chat/main.json`. Temporary input fields
 
-## 테스트
+## Test
 
-| 무엇 | 빨강이 되는 경우 |
+| What | Case of becoming red |
 | --- | --- |
-| 상태 판정. 항목 하나씩 빠진 저장소가 `일부` 와 그 이름 | 항목 검사를 하나씩 지우면 |
-| 슬롯 추정 네 가지와 추정 못 함 | |
-| 시험. 대역 CLI 가 환경을 물려받아 `hook.py` 를 부르면 통과, 안 부르면 실패 | 파일 확인을 지우면 |
-| `hook.py` 가 `WIKI_PROBE` 없이는 아무것도 쓰지 않고, 쓰기 실패에도 hook 이 성공한다 | |
-| 허브 이전의 목록이 쓰기 전에 다 나오고, 확인 없이는 아무것도 바뀌지 않는다 | |
-| 조사 한도. 대역 세션의 토큰이 한도를 넘으면 다음 턴을 보내지 않는다 | |
-| 빈 곳 판정. 있는 `project.md` 는 그대로 | |
-| 넘기기의 여섯 걸음 | 개요의 조건을 하나씩 어기면 |
-| `mergeCommit` 이 빈 응답에서 넘기기가 ff 하지 않고 "일부 — adapter 반영 대기" 로 멈추고, 다음 목록 읽기에서 값이 오면 끝까지 간다 | 빈 값 검사를 지우면 |
-| 불변식 import 검사 | |
+| Status judgment. Repository missing one item each is `일부` and its name | If item checks are deleted one by one |
+| Four slot estimations and failure to estimate | |
+| Test. Pass if band CLI inherits environment and calls `hook.py`, fail if not | If file check is deleted |
+| `hook.py` writes nothing without `WIKI_PROBE`, and hook succeeds even if writing fails | |
+| List of hub migration appears fully before writing, and nothing changes without confirmation | |
+| Investigation limit. If band session tokens exceed limit, do not send next turn | |
+| Empty space judgment. Existing `project.md` remains as is | |
+| Six steps of handover | If conditions of overview are violated one by one |
+| `mergeCommit` does not ff in empty response and stops at "Partial — waiting for adapter reflection", and goes to the end when value comes in next list read | If empty value check is deleted |
+| Invariant import check | |
 
-## 하지 않는 것
+## Things Not Done
 
-| 무엇 | 왜 |
+| What | Why |
 | --- | --- |
-| 옛 허브의 저장소를 한꺼번에 다시 연결 | 사용자의 결정. 행마다 [연결] |
-| 모듈 페이지 주입 | 사용자의 결정 |
-| 있는 페이지의 내용 보태기 | 파일 단위로 정했다 |
-| `live_cmd` 추정 | 저장소마다 뜻이 다르다. 사람이 다음 작업으로 채운다 |
+| Reconnect repositories of old hub all at once | User's decision. [Connection] per row |
+| Module page injection | User's decision |
+| Adding content to existing pages | Decided per file |
+| `live_cmd` estimation | Meaning differs per repository. Human fills in as next work |
 
-## 확인
+## Confirmation
 
 - `pytest tool/`, `python tool/lint.py --check`, `ruff check tool/`, `npm run build`
-- 이 기계의 허브를 실제로 옮긴다. 확인 창의 줄이 실제로 바뀐 줄과 같다. 옮긴 뒤 `ai-generation`,
-  `ai-nara-shop` 의 상태가 맞는지 본다
-- 조사를 끈 [연결] 한 번은 7단계가 한다. 여기서는 버리는 저장소로 조사를 켠 [연결] 을 끝까지 한 번 돌린다
+- Actually move this machine's hub. The lines in the confirmation window are the same as the lines actually changed. After moving, check if the status of `ai-generation`, `ai-nara-shop` is correct
+- One [Connection] with investigation turned off is done by Step 7. Here, run [Connection] with investigation turned on to the end once with a discarded repository
 
-## 단계
+## Steps
 
-| # | 단계 | 무엇 | 상태 |
+| # | Step | What | Status |
 | --- | --- | --- | --- |
-| 1 | 상태 | `connect.status`, `channels.projects` 교체 | 완료 |
-| 2 | 시험 | `WIKI_PROBE`, 호스트별 실제 시험 | 완료 |
-| 3 | 허브 이전 | `install_global` 나누기, 스킬 링크, 확인 창 | 완료 |
-| 4 | [연결] | adapter 추정과 쓰기, 해시, unwire | 완료 |
-| 5 | 조사 | 견적, 조사 명세, 턴 나누기, 한도 | 완료 |
-| 6 | 넘기기 | `handover` 와 여섯 테스트 | 완료 |
-| 7 | 화면 | 임시 목록, 확인 창 둘, 임시 설정 | 완료 |
-| 8 | 게이트 | 위 확인 전부 | 진행 중 — 자동 확인 통과. 버리는 저장소로 조사를 켠 [연결] 남음 |
+| 1 | Status | `connect.status`, `channels.projects` replacement | Complete |
+| 2 | Test | `WIKI_PROBE`, actual test per host | Complete |
+| 3 | Hub migration | `install_global` division, skill link, confirmation window | Complete |
+| 4 | [Connection] | adapter estimation and writing, hash, unwire | Complete |
+| 5 | Investigation | Estimate, investigation specification, turn division, limit | Complete |
+| 6 | Handover | `handover` and six tests | Complete |
+| 7 | Screen | Temporary list, two confirmation windows, temporary settings | Complete |
+| 8 | Gate | All of the above confirmation | In progress — auto confirmation passed. [Connection] with investigation turned on for discarded repository remaining |
 
-## 구현에서 정한 것
+## Decisions in Implementation
 
-계획이 말하지 않은 곳을 구현하며 정했다.
+Decided while implementing parts not mentioned in the plan.
 
-- 시험 기록은 `raw/connect/probe/<nonce>.jsonl` 에 hook 마다 한 줄씩 덧붙인다. 한 세션이 hook 을 여럿
-  부르고, 주입하지 않는 hook(`keepalive.py`)이 주입한 줄을 덮으면 안 된다
-- 조사의 게이트는 `repo_lint --no-wiring` 이다. 새 작업트리에는 `.claude/settings.json` 이 없어 deny 규칙이
-  모두 배선 드리프트로 잡힌다. 배선은 원본 체크아웃에서 본다
-- 넘기기의 "adapter 말고는 미커밋 변경이 없다" 는 hook 이 쓰는 `.wiki/` 산출물(`corpus.json`, `graph.json`,
-  `trajectory.jsonl`, `installed-agents.json`, `.gitignore`)을 세지 않는다. 연결한 저장소에서는 첫 세션부터 생긴다
-- 조사 턴이 끝날 때마다 서버가 남은 것을 커밋하고, `.wiki/` 밖이나 이미 있던 파일(adapter 제외)에 닿은 변경을
-  되돌려 커밋한다. `.wiki/*` 를 무시하는 저장소가 있어 `.wiki/**/*.md` 는 강제로 더한다
-- 토큰 한도는 새 입력·출력·캐시 쓰기를 센다. 캐시 읽기는 호출마다 문맥을 다시 세어 한도를 삼킨다
-- 허브 이전 뒤에는 모든 저장소의 시험 기록을 지운다. 옛 배선에 대한 시험은 새 허브의 증거가 아니다
-- `[연결]` 이 이미 있는 adapter 는 덮지 않는다. 옛 허브에 붙은 저장소는 unwire 와 시험만 한다
+- Test records are appended one line per hook in `raw/connect/probe/<nonce>.jsonl`. One session calls multiple hooks, and a hook that does not inject (`keepalive.py`) must not overwrite an injected line
+- The gate of investigation is `repo_lint --no-wiring`. The new work tree does not have `.claude/settings.json`, so all deny rules are caught as wiring drift. Wiring is seen from the original checkout
+- "No uncommitted changes except adapter" in handover does not count output products (`.wiki/`, `corpus.json`, `graph.json`, `trajectory.jsonl`, `installed-agents.json`, `.gitignore`) used by the hook. In connected repositories, it occurs from the first session
+- Every time an investigation turn ends, the server commits what remains, and reverts changes that touched outside `.wiki/` or existing files (except adapter) to commit. There are repositories that ignore `.wiki/*`, so `.wiki/**/*.md` is forcibly added
+- Token limit counts new input/output/cache writes. Cache reading counts context again per call and consumes the limit
+- After hub migration, delete test records of all repositories. Tests for old wiring are not evidence of the new hub
+- Do not overwrite adapter where `[연결]` already exists. Repositories attached to the old hub only do unwire and test
 
-2026-09-25 에 이 기계에서 본 것. 사용자 단위 hook 과 스킬 링크는 이미 wiki-agent 를 가리켜, 확인 창에 옮길 줄이
-없었다. `wiki-agent` 의 [다시 시험] 이 Claude 와 Codex 의 실제 세션 둘 다에서 SessionStart 주입(4,439자)을
-확인해 `연결 완료` 가 됐다. `ai-generation`·`ai-nara-shop` 은 시험을 아직 돌리지 않아 `일부` 이고, 빠진 것은 두
-호스트의 시험과 Codex 신뢰 확인뿐이다
+Seen on this machine on 2026-09-25. Per-user hooks and skill links already pointed to wiki-agent, so there were no lines to move in the confirmation window. [Re-test] of `wiki-agent` confirmed SessionStart injection (4,439 characters) in both actual sessions of Claude and Codex, becoming `연결 완료`. `ai-generation`·`ai-nara-shop` are `일부` because tests have not been run yet, and what is missing is only the test of the two hosts and Codex trust confirmation

@@ -1,14 +1,12 @@
-# 6단계 — 메인과 새 화면
+# Step 6 — Main and New Screen
 
-전체 설계와 단계의 관계는 [개요](0-overview.md)에 있다.
+The relationship between the overall design and the steps is in [Overview](0-overview.md)].
 
-목표. 한 창에서 위키에 묻고, 그 답으로 작업트리의 에이전트에게 일을 시키고, 쓰기를
-승인하고, 같은 작업트리의 셸을 쓴다. 메인은 `tool/main/` 이고 네 파이프라인을 `__all__`
-로만 부른다. 이것이 서면 `mirror.py` 와 옛 `chat.py` 를 지운다.
+Goal. Ask the wiki in one window, use the answer to assign tasks to the agent in the worktree, approve writing, and use the shell of the same worktree. Main is `tool/main/` and calls the four pipelines only as `__all__`. Once this is written, it deletes `mirror.py` and the old `chat.py`.
 
-## 한 줄
+## One-liner
 
-`design-pass` 의 0단계다. 화면 목록은 이 세 줄에서 나온다.
+It is step 0 of `design-pass`. The screen list comes from these three lines.
 
 ```
 누가:   이 위키를 쓰는 한 사람
@@ -16,50 +14,45 @@
 성공:   답의 근거를 연 채 작업 초안을 보내고, 쓰기를 승인하고, 결과를 한국어로 읽는다
 ```
 
-## 사용자와 정한 것
+## Agreements with the User
 
 2026-09-24.
 
-| 무엇 | 정한 것 |
+| What | Agreement |
 | --- | --- |
-| 채널 다섯(진척도·진단·회고·리뷰·위키) | 위키 질의 영역의 초점으로 남긴다. 프롬프트와 기록(`raw/chat/<초점>.jsonl`)은 그대로 |
-| 회고 후보의 "위키에 쓰기·`CLAUDE.md` 에 쓰기" | 작업 초안으로 넘긴다. 쓰기는 작업트리의 에이전트가 하고 사람이 승인한다. 승인 없이 원본에 쓰던 `oneshot` 은 지운다 |
-| Tauri 범위 | 실행 명령까지. 설치 파일과 Python 동봉은 없다 |
+| Five channels (Progress, Diagnosis, Retrospective, Review, Wiki) | Remain as the focus of the wiki query area. Prompts and records (`raw/chat/<초점>.jsonl`) remain as is |
+| "Write to wiki, write to `CLAUDE.md`" in retrospective candidates | Move to work draft. Writing is done by the agent in the worktree and approved by a human. Delete `oneshot` that wrote to the original without approval |
+| Tauri scope | Up to execution command. No installation files or Python bundling |
 
-## 구조
+## Structure
 
 ### `tool/main/`
 
-| 모듈 | 하는 일 | 옮겨 오는 것 |
+| Module | Task | What is moved |
 | --- | --- | --- |
-| `app.py` | FastAPI 앱, 출처 검사, 번역 스위치, 파일 보기, 지도, 정적 파일, `main()` | `chat.py` 의 뼈대 |
-| `query.py` | 위키 질의 — 초점별 대화, 기록, 걸린 규칙, 쉬운 설명, 어긋남 표시, 작업 초안 | `chat.py` 의 채널 부분 |
-| `channels.py` | 초점 정의, 프로젝트·모델 목록 | `chat_channels.py` 를 그대로 옮긴다 |
-| `work.py` | 작업트리 목록·생성·삭제, 작업트리마다 쓰기 세션 하나, 승인 | 새로 |
+| `app.py` | FastAPI app, source check, translation switch, file viewer, map, static files, `main()` | Skeleton of `chat.py` |
+| `query.py` | Wiki query — conversation by focus, record, applied rules, easy explanation, discrepancy display, work draft | Channel part of `chat.py` |
+| `channels.py` | Focus definition, project/model list | Move `chat_channels.py` as is |
+| `work.py` | Worktree list/creation/deletion, one write session per worktree, approval | New |
 
-`python tool/main` 으로 뜬다. `chat_post.py` 는 같은 기록 파일에 쓰므로 `channels` 를 보게만
-고친다.
+It launches as `python tool/main`. Since `chat_post.py` writes to the same record file, it is modified to only view `channels`.
 
-`lint` 는 `tool/main/` 을 루트와 같은 메인으로 본다.
+`lint` views `tool/main/` as the same main as the root.
 
-- `pipeline_surface` 가 `tool/main/` 의 모듈도 읽는다 — 새 메인도 `__all__` 로만 부른다
-- `pipeline_imports` 가 파이프라인의 `main` import 를 막는다 — 루트 모듈과 같은 이유
+- `pipeline_surface` also reads the modules of `tool/main/` — the new main also calls only as `__all__`
+- `pipeline_imports` blocks the `main` import of the pipeline — same reason as the root module
 
 ### Tauri — `web/src-tauri/`
 
-Rust 는 세 가지만 한다.
+Rust does only three things.
 
-- Python 사이드카를 띄운다. 빈 포트를 골라 `--port` 로 넘기고, 그 포트가 답하면 창을
-  `http://127.0.0.1:<port>/` 로 연다. API 가 같은 출처라 화면 코드는 브라우저와 똑같다
-- 사이드카는 stdin 이 닫히면 세션을 닫고 내려간다(`--exit-with-stdin`). 창이 닫혀도,
-  앱이 죽어도 파이프가 닫히므로 `claude.exe` 가 남지 않는다
-- 터미널. `portable-pty` 로 셸을 띄우고 `pty_open`·`pty_write`·`pty_resize`·`pty_close`
-  명령과 `pty://<id>` 이벤트로 xterm.js 와 잇는다. Python 은 터미널을 모른다
+- Launches the Python sidecar. Picks an empty port and passes it to `--port`, and if that port answers, it opens the window as `http://127.0.0.1:<port>/`. Since the API has the same origin, the screen code is identical to the browser
+- The sidecar closes the session and goes down when stdin is closed (`--exit-with-stdin`). Even if the window is closed or the app dies, the pipe closes, so no `claude.exe` remains
+- Terminal. Launches a shell with `portable-pty` and connects to xterm.js with `pty_open`·`pty_write`·`pty_resize`·`pty_close` commands and `pty://<id>` events. Python does not know about the terminal
 
-실행은 `tool/app.cmd`(macOS·Linux 는 `tool/app.command`)다. 바뀐 것이 있으면
-`cargo build --release` 하고 창을 띄운 뒤 콘솔은 놓는다. 처음 한 번만 몇 분 걸린다. 브라우저로 `python tool/main` 에 붙으면 터미널만 빠지고 나머지는 같다.
+Execution is `tool/app.cmd` (`tool/app.command` for macOS/Linux). If there are changes, it performs `cargo build --release` and launches the window, then releases the console. It takes a few minutes only for the first time. If you connect to `python tool/main` via browser, only the terminal is missing, and the rest is the same.
 
-### 화면
+### Screen
 
 ```
 ┌──────────┬──────────────────┬──────────────────┐
@@ -73,113 +66,106 @@ Rust 는 세 가지만 한다.
 └──────────┴──────────────────┴──────────────────┘
 ```
 
-| 영역 | 무엇 | 가져오는 컴포넌트 |
+| Area | What | Component brought in |
 | --- | --- | --- |
-| 왼쪽 | 프로젝트 선택, 작업트리 목록(브랜치·변경·세션·머지됨이면 정리 제안), 새 작업, 위키 지도, 번역 스위치와 이달 사용량 | `ChannelRail` 을 바꾼다 |
-| 가운데 | 초점을 고르고 묻는다. 답의 `file:line` 을 연다. 답마다 "→ 작업" | `Stream`·`Answer`·`Peek`·`Composer`·`Toolbar` |
-| 오른쪽 위 | 선택한 작업트리의 에이전트. 답에 한국어 오버레이, 도구 줄과 승인은 번역하지 않는다 | 새로. 초안은 여기 입력칸에 들어간다 |
-| 오른쪽 아래 | 선택한 작업트리의 셸 | 새로(xterm.js) |
-| 위키 지도 | 가운데를 바꿔 끼운다 | `WikiMap` |
+| Left | Project selection, worktree list (branch/changes/session/suggest cleanup if merged), new task, wiki map, translation switch and this month's usage | Replace `ChannelRail` |
+| Center | Select focus and ask. Open `file:line` of the answer. "→ Task" for each answer | `Stream`·`Answer`·`Peek`·`Composer`·`Toolbar` |
+| Top right | Agent of the selected worktree. Korean overlay on the answer, tool bar and approval are not translated | New. Draft enters the input field here |
+| Bottom right | Shell of the selected worktree | New (xterm.js) |
+| Wiki map | Replaces the center | `WikiMap` |
 
-작업 초안은 서버가 만든다(`/api/draft`). 질문, 답, 답이 인용한 `file:line`, 걸린 규칙,
-열린 계획과 최근 결정을 담고 마지막 절 "할 일" 은 사람이 적는다. 지금 "인계" 가 담던
-브랜치·미커밋 변경은 빠진다 — 일은 새 작업트리에서 하므로 원본 체크아웃의 상태가 아니다.
-회고 후보의 두 버튼은 같은 초안에 옛 `WIKI_WRITER`·`CLAUDE_MD_WRITER` 지시를 붙인다.
+Work draft is created by the server (`/api/draft`). It contains the question, answer, `file:line` cited by the answer, applied rules, open plans, and recent decisions, and the last section "To-do" is written by a human. The branch/uncommitted changes that "Handover" used to contain are omitted — since work is done in a new worktree, it is not in the state of the original checkout. The two buttons of the retrospective candidate attach old `WIKI_WRITER`·`CLAUDE_MD_WRITER` instructions to the same draft.
 
-화면은 `design-pass` 다섯 단계를 거친다. 색은 사용자가 고른다.
+The screen goes through five stages of `design-pass`. Colors are chosen by the user.
 
-## 화면 소유권
+## Screen Ownership
 
-`craft/screen-ownership-before-wiring` 의 세 가지.
+Three things of `craft/screen-ownership-before-wiring`.
 
-| 무엇 | 판정 |
+| What | Judgment |
 | --- | --- |
-| 어느 계정 | 5단계 그대로. 세션은 만들 때의 서버 환경을 붙잡고 그 로그인으로 돈다 |
-| 늦게 온 것이 누구 것인가 | 에이전트 이벤트는 `session_id`. 화면은 작업트리 경로와 `session_id` 가 둘 다 맞아야 받는다. 승인 답에도 `session_id` 를 실어 보내고, 서버의 지금 세션과 다르면 409 다. 번역은 `useOverlay` 의 세대가 판정한다 |
-| 무엇을 써도 되나 | 서버는 화면이 넘긴 경로를 열지 않는다. 자기 목록(`workspace.worktrees`)에 있는 경로만 받는다. 쓰기 세션은 5단계의 `our_worktree` 가 한 번 더 본다 |
+| Which account | Same as step 5. The session holds the server environment at the time of creation and runs with that login |
+| Whose is the late arrival | Agent events are `session_id`. The screen accepts only if both the worktree path and `session_id` match. It also carries `session_id` in the approval answer, and if it differs from the server's current session, it is 409. Translation is judged by the generation of `useOverlay` |
+| What can be written | The server does not open the path passed by the screen. It only accepts paths in its own list (`workspace.worktrees`). The write session is checked once more by `our_worktree` of step 5 |
 
-## 안전 경계
+## Safety Boundary
 
-이제 서버가 쓰기를 승인한다. 127.0.0.1 에만 뜨는 것으로는 모자란다 — 브라우저의 다른 탭이
-`fetch("http://127.0.0.1:…/api/…")` 를 보낼 수 있다.
+Now the server approves writing. Launching only on 127.0.0.1 is not enough — other tabs in the browser can send `fetch("http://127.0.0.1:…/api/…")`.
 
-- `Host` 의 호스트 이름이 `127.0.0.1`·`localhost` 가 아니면 거절한다(DNS 리바인딩). 포트는 보지 않는다 —
-  이 포트에 닿은 요청이고, 리바인딩은 호스트 이름으로 드러난다
-- `Origin` 이 있고 `http://<Host>` 와 다르면 거절한다
-- 요청마다 화면이 보이는 프로젝트(`X-Project`)를 싣는다. 서버의 선택과 다르면 전환을 포함해 모두 거절한다 — 다른 창이 바꾼 뒤에 이 화면이 보낸 것이 다른 프로젝트에 쓰이지 않는다
-- 번역 스위치는 서버가 쥔다. 꺼져 있으면 `/api/translate` 가 `translate` 를 부르지 않고 원문을
-  돌려준다. 화면도 요청을 보내지 않지만, 그것은 약속이고 서버의 것이 검사다
+- If the host name of `Host` is not `127.0.0.1`·`localhost`, reject it (DNS rebinding). It does not look at the port — it is a request that reached this port, and rebinding is revealed by the host name
+- If `Origin` exists and differs from `http://<Host>`, reject it
+- Every request carries the project (`X-Project`) visible on the screen. If it differs from the server's selection, reject everything including switching — this prevents this screen from writing to a different project after another window changes it
+- The translation switch is held by the server. If it is off, `/api/translate` does not call `translate` and returns the original text. The screen also does not send a request, but that is a promise, and the server's is the check |
 
-## 번역 스위치
+## Translation Switch
 
-앱 전체에 하나다. `raw/chat/main.json` 에 마지막 값을 적는다. 기본은 켬. 옆에 `translate.usage()`
-의 이달 사용액과 한도를 적는다. 훅의 영어본은 이 스위치와 관계없다.
+One for the entire app. Writes the last value to `raw/chat/main.json`. Default is on. Next to it, write this month's usage and limit of `translate.usage()`. The English version of the hook has nothing to do with this switch.
 
-## 지우는 것
+## Things to Delete
 
-| 무엇 | 대신 |
+| What | Instead |
 | --- | --- |
 | `tool/chat.py`, `tool/chat.cmd`·`chat.command`, `tool/test_chat.py` | `tool/main/`, `tool/app.cmd`, `tool/test_main.py` |
-| `tool/mirror.py`, `mirror.cmd`·`mirror.command`, `test_mirror.py`, `docs/mirror-setup.md`, `Mirror.tsx` | 에이전트 세션의 오버레이 |
+| `tool/mirror.py`, `mirror.cmd`·`mirror.command`, `test_mirror.py`, `docs/mirror-setup.md`, `Mirror.tsx` | Agent session overlay |
 | `tool/chat_channels.py` | `tool/main/channels.py` |
-| `/api/decide`, `oneshot` | 작업 초안 |
+| `/api/decide`, `oneshot` | Work draft |
 | `/api/handoff` | `/api/draft` |
 
-`setup_chat.py`·`docs/chat-setup.md`·`README.md` 의 경로는 새 것으로 고친다.
+Paths of `setup_chat.py`·`docs/chat-setup.md`·`README.md` are fixed to the new ones.
 
-## 넣지 않은 것
+## Things Not Included
 
-| 무엇 | 왜 |
+| What | Why |
 | --- | --- |
-| 도는 턴에 다시 붙기 | 턴은 요청 하나의 스트림이다. 창을 새로 고치면 그 턴이 끊긴다. 작업트리를 옮겨 다니는 것은 화면이 스트림을 쥐고 있어 끊기지 않는다. 필요해지면 세션마다 이벤트 버퍼를 두고 스트림이 그것을 꼬리 문다 |
-| Codex 읽기 세션을 `app-server` 로 | 5단계가 여기로 미뤘다. 읽기 세션의 `exec` 는 쉬운 설명의 격리 플래그(`--ephemeral`, `--ignore-user-config`, 도구 끄기)를 쓰고, `app-server` 에서 같은 격리를 찾는 일은 화면과 관계없다. 따로 한다 |
-| 설치 파일, Python 동봉, 코드 서명 | 사용자와 정한 범위 밖 |
-| 코디네이터·리뷰 셀 | 개요 그대로 |
-| `workspace.sessions` 의 `claude_session`·`codex_session`·`FINDERS` | 미러가 유일한 호출자였다. 그 테스트가 `checkouts` 도 따르는 소유 판정을 재고 있어, 지우는 일은 테스트를 옮기는 일과 같이 따로 한다 |
-| 작업 기록에 승인 남기기 | 기록은 턴의 도구 줄까지다. 다시 열면 무엇을 허용했는지는 도구 줄로만 보인다 |
+| Reconnecting to a running turn | A turn is a stream of one request. If you refresh the window, that turn is broken. Moving between worktrees does not break because the screen holds the stream. If needed, place an event buffer per session and the stream tails it |
+| Codex read session to `app-server` | Step 5 deferred this here. The `exec` of the read session uses the isolation flag of easy explanation (`--ephemeral`, `--ignore-user-config`, tool off), and finding the same isolation in `app-server` has nothing to do with the screen. Do it separately |
+| Installation file, Python bundling, code signing | Outside the scope agreed with the user |
+| Coordinator/Review cell | Same as overview |
+| `claude_session`·`codex_session`·`FINDERS` of `workspace.sessions` | Mirror was the only caller. Since that test is reconsidering the ownership judgment that also follows `checkouts`, deleting it is done separately, like moving the test |
+| Leaving approval in work record | The record is up to the turn's tool bar. If you reopen it, what was allowed is only visible through the tool bar |
 
-## 순서
+## Order
 
-커밋 단위다. PR 은 하나.
+Commit unit. One PR.
 
-1. `lint` 가 `tool/main/` 을 메인으로 본다. 빨개지는 테스트
-2. `tool/main/` — 질의를 옮기고, 작업·승인·스위치·출처 검사를 붙인다. `test_main.py`
-3. Tauri 껍데기 — 사이드카, 창, 터미널, 실행 명령
-4. 화면 — `design-pass` 1~5
-5. 지우기와 문서
+1. `lint` views `tool/main/` as main. Red tests
+2. `tool/main/` — Move queries, attach work/approval/switch/source check. `test_main.py`
+3. Tauri shell — sidecar, window, terminal, execution command
+4. Screen — `design-pass` 1~5
+5. Deletion and documentation
 
-## 화면 순서
+## Screen Order
 
-`design-pass` 다섯 단계. 값은 [`DESIGN.md`](../../../../DESIGN.md) 에 있다.
+Five stages of `design-pass`. Values are in [`DESIGN.md`](../../../../DESIGN.md)].
 
-| # | 한 것 |
+| # | Done |
 | --- | --- |
-| 1 | 한 줄에서 네 영역. `DESIGN.md` 를 미러의 것에서 이 창의 것으로 다시 썼다 |
-| 2 | 두 머리글 아래 끝이 87/58px 로 어긋났다 → 둘 다 두 줄, 87px. 960px 에서 147/128px 로 접혔다 → 모델 고르기 이름표를 화면 읽기 전용으로, 폭을 줄였다. 가로 스크롤 없음. 버튼 높이 27/28 → 28 하나. 누르는 것은 전부 눌러 봤다 — 만들기, 초점, 모델, → 작업, 허용, 인용 열기, 지도, 번역, 테마 |
-| 3 | 글자 조합 19 → 7 단계. 쓰임이 겹치지 않는다 |
-| 4 | 후보 셋의 대비를 재고 사용자에게 물었다. 파랑 + 승인만 호박색(`wait`) |
-| 5 | 채울 자리가 없었다. 질의 면의 빈 곳은 대화가 자라는 자리이고, 면마다 빈 상태 문장이 있다 |
+| 1 | Four areas from one line. Rewrote `DESIGN.md` from mirror's to this window's |
+| 2 | Ends under two headers misaligned at 87/58px → both two lines, 87px. Folded at 960px to 147/128px → model selection label to screen read-only, reduced width. No horizontal scroll. Button height 27/28 → 28 one. Pressed everything that can be pressed — create, focus, model, → task, allow, open citation, map, translation, theme |
+| 3 | Character combination 19 → 7 stages. Usages do not overlap |
+| 4 | Reconsidered contrast of candidate set and asked user. Blue + approval only amber (`wait`) |
+| 5 | No place to fill. Empty space on query side is where conversation grows, and there is an empty state sentence for each side |
 
-## 검증
+## Verification
 
-| 확인 | 결과 |
+| Check | Result |
 | --- | --- |
-| `pytest tool/` | 296 통과. 미러 테스트 25개가 빠지고, `test_main.py` 에 새 테스트 여섯, 리뷰 라운드에서 열넷 더 |
-| 새 테스트가 무엇을 보나 | 출처 검사, 꺼진 번역 스위치, 작업트리 목록 밖 경로, 승인의 `session_id`, 초안의 인용 중복을 각각 지우면 빨강. 파이프 테스트는 고치기 전 코드에서 20초 제한으로 빨강 |
-| `python tool/lint.py --check` | 종료 0. `tool/main/` 의 `__all__` 밖 호출과 파이프라인의 `main` import 를 심은 테스트가 고치기 전에는 초록이었다 |
-| `test_lint`·`test_apply`·`test_inject`·`test_declared_continuation`·`test_repo_lint`·`test_trajectory`, `graph.py`, `ruff`, `npm run build` | 통과 |
-| `python tool/main --check` | 실제 Claude 로 effort 를 바꿔도 대화가 이어진다 |
-| 브라우저 전 과정 | 작업트리 만들기 → 위키 질의(haiku) → 답의 인용 열기 → "→ 작업" 초안 → 에이전트(haiku)가 쓰기를 물음 → 허용 → 파일이 작업트리에만 생김, 원본에는 없음 → 에이전트 답이 한국어로 |
-| Tauri 창 | 사이드카가 빈 포트에 뜨고 창이 연다. 터미널에 PowerShell 7 이 작업트리에서 열리고 입력·출력·한글이 오간다. 창을 닫으면 서버와 셸 둘이 모두 내려간다. 앱을 강제로 죽여도 서버가 내려간다 |
-| 창에서 찾은 것 둘 | 사이드카가 stdin 파이프를 스레드에서 읽는 동안 Windows 의 `CreateProcess` 가 막혀 `git` 을 부르는 모든 경로가 멈췄다. 원격 출처에서는 앱 매니페스트에 없는 명령을 ACL 이 막아 `pty_open` 이 거절됐다. 둘 다 고쳤다 |
-| 리뷰 라운드 1 | P1 셋. 모두 재현한 뒤 고쳤다 — 에이전트가 도는 중에 프로젝트를 바꾸면 기다리는 승인의 작업트리가 목록에서 사라져 답이 404(전환을 서버와 화면 둘 다에서 막는다), 지운 작업트리와 같은 이름을 다시 만들면 옛 대화와 CLI 세션이 붙음(지울 때 기록을 옆으로 옮긴다), 본문이 시작되기 전에 끊긴 스트림이 busy 를 영영 쥠(잡는 일을 본문 안으로). 계획 대비 `일부` 둘 — 지도가 번역 스위치를 안 따름(고쳤다), 출처 검사의 포트(문장을 코드에 맞췄다). 새 테스트 셋과 뮤테이션 넷이 각각 빨강 |
-| 리뷰 라운드 2 | P1 둘. 라운드 1 이 잡는 일을 본문 안으로 옮기자 요청을 받은 뒤 본문이 시작되기 전 사이에 프로젝트 전환·정리가 끼어들었다 — 받는 순간 잡고, 본문의 `finally` 와 본문이 수거될 때(`weakref.finalize`) 둘 다에서 놓는다. 표식이 늦은 해제가 다음 요청의 잡음을 풀지 못하게 한다. 화면은 정리 전에 시작한 기록 조회가 정리 뒤에 끝나 같은 이름의 새 작업에 옛 대화를 채웠다 — 경로마다 세대를 두었다. 고치다가 하나를 더 찾았다: 수거 때의 해제가 같은 스레드가 쥔 잠금을 기다려 멈췄다(뮤테이션 실행이 가끔 걸렸다). 잠금을 재진입 가능하게 했다 |
-| 리뷰 라운드 3 | P1 셋, 같은 가족의 세 얼굴 — 확인하고 놓은 뒤 행동했다. 모델을 바꿨다: 작업트리를 바꾸는 요청은 모두(`say`·`reset`·`remove`) 그 작업트리를 잡고, `say` 는 경로 확인보다 먼저 잡는다. 질의와 작업이 잠금 하나를 쓴다 — 프로젝트 전환이 모든 잡음을 읽고 그 아래서 바꾼다. 잡은 뒤 해제가 걸리기 전에는 실패할 것을 두지 않는다(`query.say` 는 설정을 먼저 읽는다). 셋 다 재현한 뒤 고쳤고, 새 테스트 셋이 각각 되돌리면 빨강 |
-| 리뷰 라운드 4 | 라운드 3 의 셋은 해결. 새 P1 셋은 모델을 한 칸 넓힌 것 — 프로젝트가 누구 것인가. 작업트리 생성도 만들 경로를 잡고, 프로젝트와 같은 잠금 아래서 읽는다. 전환은 새 프로젝트의 설정을 읽은 뒤에야 선택과 `project.json` 을 바꾼다. 화면의 작업트리 목록은 가장 새 요청의 응답만 받는다(브라우저에서 옛 응답을 늦춰 재현 — 가드를 빼면 새 프로젝트 이름 옆에 옛 작업트리가 섰다) |
-| 리뷰 라운드 5 | P1 둘, 라운드 4 고침의 남은 모서리. 전환은 새 프로젝트를 이름으로 넘겨 설정을 읽고(`config(cid, name)`), 다 된 뒤에야 `_project` 를 바꾼다 — 잠금 없이 읽는 목록에 실패할 전환이 비치지 않는다. 화면은 전환하는 순간 옛 목록을 비운다(브라우저에서 새 목록을 실패시켜 확인 — 빈 목록과 오류) |
-| 리뷰 라운드 6 | P1 하나. 서버 전환은 성공했는데 뒤따른 `/api/channels` 가 실패하면 화면은 옛 프로젝트, 서버는 새 프로젝트였다. 화면은 전환 응답의 프로젝트를 바로 따르고, 작업트리 목록은 자기 프로젝트 이름을 싣고 와서 화면이 보이는 프로젝트와 다르면 버리고 다시 맞춘다(브라우저에서 `/api/channels` 를 실패시켜 확인) |
-| 리뷰 라운드 7 | P1 하나. 목록이 서버의 프로젝트 변경을 알려 줘도(다른 창의 전환) 옛 목록과 선택을 두었다. 화면이 서버의 프로젝트를 따르는 길을 `follow` 하나로 모아 — 자기 전환이든 목록이 알려 준 것이든 — 그 순간 옛 목록과 선택을 비운다(브라우저에서 다른 클라이언트가 전환하고 이어지는 목록을 실패시켜 확인) |
-| 리뷰 라운드 8 | P1 하나. 연속 전환에서 앞 전환의 늦은 `/api/channels` 가 화면을 옛 프로젝트로 되돌렸다. 채널 목록을 부르는 곳이 여럿(첫 적재, 전환, 질의 뒤)이라 부를 때마다 번호를 매기지 않고 내용으로 판정한다 — 화면이 기대하는 프로젝트(`follow` 만 바꾼다)의 목록만 받는다. 브라우저에서 B 의 응답을 20초 잡아 두고 C 로 전환 — 풀린 뒤에도 C |
-| 리뷰 라운드 9 | P1 하나가 이 가족의 뿌리를 짚었다 — 서버의 프로젝트 선택은 하나인데 화면의 요청이 어느 프로젝트를 뜻하는지 말하지 않았다. 다른 창의 전환을 알아채기 전에 보낸 질문이 새 프로젝트의 대화에 들어갔다. 모든 요청이 `X-Project` 로 화면의 프로젝트를 싣고, 서버는 프로젝트를 읽는 한 곳(`project()`)에서 다르면 409 로 거절하며 어디로 바뀌었는지 알려 준다. 잡는 요청은 잡은 뒤나 같은 잠금 안에서 읽으므로 확인과 일이 전환에 갈리지 않는다. 전환 자체(`/api/config`)만 뺀다. 화면은 거절을 받으면 `follow` 한다 |
-| 리뷰 라운드 10 | P1 하나. `/api/config/*` 를 검사에서 뺐는데 그 길은 초점의 모델 변경도 맡아, 옛 화면의 모델 변경이 서버를 그 화면의 프로젝트로 되돌렸다. 예외를 없앴다 — 지금 프로젝트를 보이는 화면의 전환은 검사를 통과하고, 옛 화면은 전환도 하지 않는다. 전환한 요청은 그 뒤 자기 주장을 새 프로젝트로 바꾼다 |
-| 리뷰 라운드 11 | 새 P0·P1 없음, 머지 허용. P2 하나(첫 채널 적재 전의 질의는 주장이 없다)는 PR 코멘트로 남겼다 |
+| `pytest tool/` | 296 passed. 25 mirror tests removed, six new tests in `test_main.py`, fourteen more in review round |
+| What new tests look at | Source check, translation switch off, path outside worktree list, `session_id` of approval, duplicate citation in draft, each red if deleted. Pipe test red in pre-fix code with 20s limit |
+| `python tool/lint.py --check` | Exit 0. Tests that planted calls outside `__all__` of `tool/main/` and `main` import of pipeline were green before fix |
+| `test_lint`·`test_apply`·`test_inject`·`test_declared_continuation`·`test_repo_lint`·`test_trajectory`, `graph.py`, `ruff`, `npm run build` | Passed |
+| `python tool/main --check` | Conversation continues even if effort is changed to actual Claude |
+| Browser full process | Create worktree → wiki query (haiku) → open answer citation → "→ task" draft → agent (haiku) asks for write → allow → file created only in worktree, not in original → agent answer in Korean |
+| Tauri window | Sidecar launches on empty port and window opens. PowerShell 7 opens in worktree in terminal, input/output/Korean characters exchanged. If window is closed, both server and shell go down. Even if app is forced killed, server goes down |
+| Two things found in window | While sidecar was reading stdin pipe in thread, Windows `CreateProcess` blocked, stopping all paths calling `git`. In remote source, ACL blocked commands not in app manifest, so `pty_open` was rejected. Both fixed |
+| Review round 1 | P1 set. Fixed after reproducing all — if project is changed while agent is running, the worktree of the waiting approval disappears from the list, answer 404 (blocks switching on both server and screen), if a name same as deleted worktree is created again, old conversation and CLI session attach (move record aside when deleting), stream broken before body starts holds busy forever (move holding to inside body). Two `일부` against plan — map does not follow translation switch (fixed), source check port (matched sentence to code). New test set and mutation net red each |
+| Review round 2 | P1 two. As round 1 moved holding to inside body, project switch/cleanup intervened between receiving request and body start — hold at the moment of receiving, release at both `finally` of body and when body is collected (`weakref.finalize`). Marker's late release could not clear noise of next request. Screen filled old conversation into new task of same name because record lookup started before cleanup finished after cleanup — placed generation per path. Found one more while fixing: release at collection stopped waiting for lock held by same thread (mutation execution sometimes hung). Made lock reentrant |
+| Review round 3 | P1 three, three faces of same family — acted after checking and releasing. Changed model: all requests changing worktree (`say`·`reset`·`remove`) hold that worktree, `say` holds before path check. Query and task use one lock — project switch reads all noise and changes under it. Nothing that will fail is placed before release after holding (`query.say` reads settings first). Fixed all three after reproducing, new test sets red if reverted each |
+| Review round 4 | Three of round 3 resolved. New P1 set is widening model by one cell — whose is the project. Worktree creation also holds path to create, reads under same lock as project. Switch changes selection and `project.json` only after reading new project's settings. Screen's worktree list accepts only response of newest request (reproduce by delaying old response in browser — without guard, old worktree stood next to new project name) |
+| Review round 5 | P1 two, remaining corners of round 4 fix. Switch reads settings by passing new project as name (`config(cid, name)`), and changes `_project` only after done — switch that will fail does not appear in list read without lock. Screen clears old list at the moment of switching (verify by failing new list in browser — empty list and error) |
+| Review round 6 | P1 one. Server switch succeeded but if following `/api/channels` failed, screen was old project, server was new project. Screen follows project of switch response immediately, worktree list carries its own project name and if it differs from project visible on screen, discards and re-matches (verify by failing `/api/channels` in browser) |
+| Review round 7 | P1 one. Even if list informed server's project change (switch of other window), kept old list and selection. Gathered path for screen to follow server's project into one `follow` — whether own switch or informed by list — clears old list and selection at that moment (verify by failing list following switch by other client in browser) |
+| Review round 8 | P1 one. In continuous switch, late `/api/channels` of front switch reverted screen to old project. Since there are multiple places calling channel list (first load, switch, after query), judge by content instead of numbering each time — accepts only list of project screen expects (changes only `follow`). Hold B's response for 20s in browser and switch to C — C even after released |
+| Review round 9 | P1 one pointed to root of this family — server's project selection is one but screen's request did not say which project it meant. Question sent before noticing switch of other window entered conversation of new project. All requests carry screen's project with `X-Project`, server rejects with 409 if it differs at one place reading project (`project()`) and informs where it changed to. Since holding requests read after holding or within same lock, check and work are not split by switch. Only switch itself (`/api/config`) is excluded. Screen `follow` if it receives rejection |
+| Review round 10 | P1 one. Removed `/api/config/*` from check, but that path also handles focus's model change, so old screen's model change reverted server to that screen's project. Eliminated exception — switch of screen showing current project passes check, old screen does not even switch. Switched request changes its own claim to new project afterwards |
+| Review round 11 | No new P0/P1, merge allowed. P2 one (query before first channel load has no claim) left as PR comment |
