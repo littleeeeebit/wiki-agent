@@ -7,10 +7,14 @@ import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
+
+import translate
 
 MAX_WHY = 400      # How much of the reason to carry
 MAX_WHAT = 260
+TRANSLATE_SECONDS = 30   # one record's title, what and why, one request
 
 # The domain table: (name, what to look for in a branch or title, the
 # triggers that call that domain in).
@@ -163,7 +167,22 @@ def _marks(text: str, mark: str) -> bool:
     return re.search(rf"(?<![a-z0-9]){re.escape(mark)}(?![a-z0-9])", text) is not None
 
 
-def record(pr: dict) -> tuple[str, str]:
+# What a record says when its PR body had nothing to squeeze. `main` counts
+# the second to report the PRs whose reasons were never written down.
+NO_WHAT = "(the PR body has no summary section)"
+NO_WHY = "(the PR body has no reason section; the grounds for this decision were not recorded)"
+
+
+def record(pr: dict, deadline: float) -> tuple[str, str]:
+    """`(file name, text)` of one decision record, in English.
+
+    The wiki is read by agents, and what they are asked arrives already
+    rendered in English, so the record is written in English whatever
+    language the PR was written in. `deadline` bounds the translation; past
+    it, or with no key, the prose stays as the PR wrote it. The domain and
+    its triggers come from the original title: they match what a person
+    types, and that is Korean."""
+
     number = pr["number"]
     date = str(pr.get("mergedAt") or "")[:10] or "0000-00-00"
     title = " ".join(str(pr.get("title") or "").split())
@@ -192,6 +211,7 @@ def record(pr: dict) -> tuple[str, str]:
         what = squeeze(blocks[0], MAX_WHAT) if blocks else ""
         why = squeeze(" ".join(blocks[1:]), MAX_WHY) if len(blocks) > 1 else ""
     domain, trig = triggers_for(title, branch or title)
+    title, what, why = translate.translate([title, what, why], translate.KO_EN, deadline)
 
     # The number goes in the filename. On the branch name alone, a reused name
     # collides and the later record quietly overwrites the earlier one.
@@ -215,13 +235,12 @@ def record(pr: dict) -> tuple[str, str]:
         "",
         f"# {title}",
         "",
-        f"무엇. {what}" if what else "무엇. (PR 본문에 요약 절이 없다)",
+        f"What. {what or NO_WHAT}",
         "",
-        f"왜. {why}" if why else
-        "왜. (PR 본문에 이유 절이 없다. 이 결정의 근거는 기록되지 않았다)",
+        f"Why. {why or NO_WHY}",
         "",
-        f"출처. PR #{number} · `{branch}`" if branch
-        else f"출처. 커밋 `{pr.get('sha', '')}`",
+        f"Source. PR #{number} · `{branch}`" if branch
+        else f"Source. Commit `{pr.get('sha', '')}`",
         "",
     ]
     return name, "\n".join(lines)
@@ -255,8 +274,9 @@ def main() -> int:
     print(f"# harvest — {repo.name}\n")
     print(f"{what} {len(merged)}건\n")
     for pr in merged:
-        name, text = record(pr)
-        if "이유 절이 없다" in text:
+        # Without `--write` only the first is shown; the rest need no translation.
+        name, text = record(pr, time.monotonic() + (TRANSLATE_SECONDS if args.write else 0))
+        if NO_WHY in text:
             thin.append(f"#{pr['number']} {pr['title'][:52]}")
         domain, _ = triggers_for(str(pr.get("title") or ""), str(pr.get("headRefName") or ""))
         by_domain[domain or "(없음)"] = by_domain.get(domain or "(없음)", 0) + 1
@@ -284,7 +304,7 @@ def main() -> int:
             print(f"- {line}")
         print()
     if not args.write:
-        name, text = record(merged[0])
+        name, text = record(merged[0], time.monotonic() + TRANSLATE_SECONDS)
         print(f"## 미리보기 — `.wiki/decisions/{name}.md`\n")
         print("```markdown")
         print(text.rstrip())

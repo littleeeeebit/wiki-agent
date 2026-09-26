@@ -24,7 +24,7 @@ type Theme = 'dark' | 'light'
 type Tab = 'agent' | 'review' | 'terminal'
 // What `[+ 새 작업]` puts in the next-task box: a spec in one go, the worktree
 // made by its [시작]. The person writes the task after it.
-const NEW_TASK = '이것 하나를 바로 명세로 만들어라. 되묻지 말고 빼는 것과 완료 조건은 네가 정해라.\n할 일: '
+const NEW_TASK = '이것 하나를 바로 명세로 만들어라. 되묻지 말고 완료 조건은 네가 정해라. 할 일을 줄이지 말고 전부 담아라.\n할 일: '
 
 const TABS: { id: Tab; label: string }[] = [{ id: 'agent', label: '에이전트' }, { id: 'review', label: '리뷰' }, { id: 'terminal', label: '터미널' }]
 

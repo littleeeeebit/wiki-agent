@@ -26,6 +26,7 @@ import repo_lint  # noqa: E402
 
 STAMP = ".sync"
 DEFAULT_EVERY = 6 * 3600  # How many seconds between looking for new decisions
+TRANSLATE_BUDGET = 12     # Seconds of the hook's 30 that new records may spend becoming English
 
 
 def stale_docs(repo: Path, roots: list[str]) -> tuple[bool, str]:
@@ -107,10 +108,15 @@ def new_decisions(repo: Path, limit: int) -> list[str]:
     known = recorded(repo)
     written = []
     source = harvest.prs(repo, limit) or harvest.commits(repo, limit)
+    end = time.monotonic() + TRANSLATE_BUDGET
     for pr in source:
         if pr["number"] in known:
             continue
-        name, text = harvest.record(pr)
+        name, text = harvest.record(pr, end)
+        if time.monotonic() > end:
+            # Translation ran out of this hook's time: written now, it stays
+            # in the PR's language for good. The next sync takes it up.
+            break
         out = repo / ".wiki" / "decisions"
         out.mkdir(parents=True, exist_ok=True)
         path = out / f"{name}.md"

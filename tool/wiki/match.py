@@ -170,7 +170,7 @@ def digest(body: str, path: Path) -> str:
          if x.startswith(("왜.", "Why."))),
         "",
     )
-    head = re.split(r"(?<=다\.)\s", why, maxsplit=1)[0][:180] if why else ""
+    head = re.split(r"(?<=\.)\s", why, maxsplit=1)[0][:180] if why else ""
     return f"- {title}\n  {head}\n  Full record: `.wiki/decisions/{path.stem}.md`"
 
 

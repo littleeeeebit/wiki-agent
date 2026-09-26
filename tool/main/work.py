@@ -191,6 +191,9 @@ def clear(body: Removal) -> dict:
             text = remove(repo, path, force=body.force)
         except (ValueError, RuntimeError) as exc:
             raise HTTPException(409, str(exc)) from exc
+        from . import specs  # `specs` imports this module
+
+        specs.forsaken(path)
         # The same task name makes the same path again, and the record is
         # keyed by it: a new `t1` came up with the old one's conversation, and
         # `--resume` carried the old CLI session into the new work. The record

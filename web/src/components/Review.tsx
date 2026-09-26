@@ -86,6 +86,18 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
         </div>
       )}
 
+      {/^PR #\d+$/.test(spec.state) && spec.fault && (
+        <div className="mt-3 rounded-md border border-border p-3">
+          <div className="text-muted-foreground">PR 은 올라갔는데 리뷰에 들어가지 못했다 — {spec.fault}</div>
+          <Btn tone="primary" className="mt-2" disabled={!!working}
+            onClick={() => act('review', () => api.startLoops([spec.pr!.number]).then(({ results }) => {
+              if (results[0]?.error) throw new Error(results[0].error)
+            }))}>
+            {working === 'review' ? '…' : '리뷰 시작'}
+          </Btn>
+        </div>
+      )}
+
       {spec.state === '머지 가능' && spec.approved && (
         <div className="mt-3 rounded-md border border-st-ready/50 p-3">
           <div className="flex items-center gap-2">

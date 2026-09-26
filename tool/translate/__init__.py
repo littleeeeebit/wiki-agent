@@ -771,6 +771,68 @@ def review(names: list[str]) -> None:
         print(f"\n표본 역번역을 못 썼다: {type(error).__name__}")
 
 
+# --------------------------------------------------------------------------
+# `--in-place`: a page rewritten in English where it stands.
+#
+# The wiki is read by agents, and a question reaches them already rendered in
+# English, so a Korean page is one search does not find. Front matter stays
+# protected — `triggers` match what a person types — except `title:`.
+# --------------------------------------------------------------------------
+
+# A decision record's labels, set before the model sees them: left to it, `왜.`
+# came back `Reason.` as often as `Why.`, and the readers look for one word.
+LABELS = (("무엇. ", "What. "), ("왜. ", "Why. "), ("출처. ", "Source. "))
+TITLE = re.compile(r"^title: (.+)$", re.M)
+IN_PLACE_SECONDS = 300
+IN_PLACE_THREADS = 8
+
+
+def page(text: str, deadline: float) -> str | None:
+    """`text`, a Markdown page, in English. `None` when any of it could not be
+    translated: half a page is not written."""
+
+    for ko, en in LABELS:
+        text = re.sub(rf"^{re.escape(ko)}", en, text, flags=re.M)
+    front = SPANS[0][1].match(text)
+    found = TITLE.search(front.group(0)) if front else None
+    raw = found.group(1).strip() if found else ""
+    quoted = raw.startswith('"')
+    title = json.loads(raw) if quoted else raw
+    body, title_en = translate([text, title], KO_EN, deadline)
+    if (worth_translating(text, KO_EN) and body == text) or (worth_translating(title, KO_EN) and title_en == title):
+        return None
+    if found:
+        value = json.dumps(title_en, ensure_ascii=False) if quoted else title_en
+        head = SPANS[0][1].match(body).group(0)
+        body = TITLE.sub(lambda _: f"title: {value}", head, count=1) + body[len(head):]
+    return body
+
+
+def in_place(paths: list[Path]) -> int:
+    """Each Korean page, rewritten in English. Line endings are kept."""
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    def one(path: Path) -> str:
+        raw = path.read_bytes().decode("utf-8")
+        text = raw.replace("\r\n", "\n")
+        if not worth_translating(text, KO_EN):
+            return "skip"
+        done = page(text, time.monotonic() + IN_PLACE_SECONDS)
+        if done is None:
+            return "failed"
+        path.write_bytes((done.replace("\n", "\r\n") if "\r\n" in raw else done).encode("utf-8"))
+        return "done"
+
+    with ThreadPoolExecutor(IN_PLACE_THREADS) as pool:
+        results = list(pool.map(one, paths))
+    failed = [p for p, r in zip(paths, results) if r == "failed"]
+    print(f"옮김 {results.count('done')} · 이미 영어 {results.count('skip')} · 못 옮김 {len(failed)}")
+    for path in failed:
+        print(f"- {path}")
+    return 1 if failed else 0
+
+
 def main() -> int:
     # Output is a pipe more often than not, and the default there is cp949.
     sys.stdout.reconfigure(encoding="utf-8")
@@ -786,8 +848,11 @@ def main() -> int:
                         help="표본 N건을 역번역해 사람이 읽을 파일에 적는다")
     parser.add_argument("--en-to-ko", action="store_true")
     parser.add_argument("--usage", action="store_true", help="이번 달 번역 사용액과 한도")
+    parser.add_argument("--in-place", action="store_true", help="한국어 페이지를 영어로 옮겨 그 자리에 쓴다")
     args = parser.parse_args()
 
+    if args.in_place:
+        return in_place([Path(p) for p in args.paths])
     if args.usage:
         now = usage()
         usd = "읽을 수 없다" if now["usd"] is None else f"${now['usd']:.4f}"

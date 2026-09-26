@@ -16,7 +16,9 @@ links: [ask-with-arrow-key-options, hooks-fail-open]
 Rule. Tool descriptions, progress reports and chat replies are written in
 English, and so is everything else the agent writes for the agent: comments,
 docstrings, test names, commit messages. What a person reads stays Korean — a
-hook's refusal, `systemMessage`, UI labels, the prose in `docs/`. Korean
+hook's refusal, `systemMessage`, UI labels, the prose in `docs/`, a pull
+request (translated on the way up). Wiki pages — `operator/`, `craft/`,
+`.wiki/` — are English; only `triggers` keep the person's language. Korean
 survives in English text only where it names a Korean thing — the glossary
 holds that list, and a word the translator refuses to render is exactly a word
 this rule may not deny.

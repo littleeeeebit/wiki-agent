@@ -640,3 +640,26 @@ def test_the_hold_is_the_most_the_request_can_cost(
     assert holds[0] == pytest.approx(
         T.cost({"promptTokenCount": len(sent[0]), "candidatesTokenCount": most})
     )
+
+
+def test_a_page_goes_english_whole_or_not_at_all(monkeypatch) -> None:
+    """`--in-place`: the record labels are set, not left to the model; the
+    front matter keeps its triggers and takes an English title; a page the
+    model gave back unchanged is not written as if it were done."""
+
+    page = ('---\ntriggers: ["화면"]\ntitle: "화면이 멈춘다"\n---\n\n# 화면이 멈춘다\n\n'
+            "무엇. 고쳤다\n\n왜. 멈췄다\n\n출처. PR #3 · `fix/x`\n")
+    seen = []
+
+    def english(texts, direction, deadline):
+        seen.extend(texts)
+        return [t.replace("화면이 멈춘다", "The screen freezes").replace("고쳤다", "fixed it")
+                .replace("멈췄다", "it froze") for t in texts]
+
+    monkeypatch.setattr(T, "translate", english)
+    done = T.page(page, time.monotonic() + 1)
+    assert 'triggers: ["화면"]' in done and 'title: "The screen freezes"' in done
+    assert "What. fixed it" in done and "Why. it froze" in done and "Source. PR #3 · `fix/x`" in done
+    assert "무엇." not in seen[0], "라벨은 모델에 맡기지 않는다"
+    monkeypatch.setattr(T, "translate", lambda texts, direction, deadline: list(texts))
+    assert T.page(page, time.monotonic() + 1) is None
