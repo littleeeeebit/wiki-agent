@@ -28,7 +28,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -64,6 +64,13 @@ def load(path: Path) -> dict:
         raise ValueError(f"{path}: duplicate query ids")
     if manifest["corpus"]["kind"] not in ("synthetic", "live"):
         raise ValueError(f"{path}: corpus kind must be synthetic or live")
+    # Checked before anything is written: a page goes under `hub/` or `repo/`
+    # of the scratch folder, by a relative forward-slash path with no `..`.
+    # A drive, a backslash or an absolute path fails the first part's test.
+    for name in manifest["corpus"].get("files") or {}:
+        parts = PurePosixPath(name).parts
+        if len(parts) < 2 or parts[0] not in ("hub", "repo") or ".." in parts:
+            raise ValueError(f"{path}: {name!r} is outside the corpus")
     return manifest
 
 

@@ -45,6 +45,21 @@ def test_hybrid_is_never_recorded_from_an_incomplete_index(monkeypatch):
     assert asked == [True]
 
 
+@pytest.mark.parametrize("name", ["../escape.md", "repo/../../escape.md", "docs/a.md", "hub", "{abs}"])
+def test_a_synthetic_file_stays_inside_the_corpus(tmp_path, name):
+    """A manifest names where its pages go; none may land outside `hub/` or
+    `repo/` in the scratch folder, and nothing is written before that is known."""
+
+    outside = tmp_path / "escape.md"
+    manifest = json.loads(SMOKE.read_text(encoding="utf-8"))
+    manifest["corpus"]["files"] = {name.format(abs=outside.as_posix()): "# Escape\n\nwritten\n"}
+    path = tmp_path / "m.json"
+    path.write_text(json.dumps(manifest), encoding="utf-8")
+    with pytest.raises(ValueError, match="outside the corpus"):
+        baseline.run(path, method="bm25")
+    assert not outside.exists()
+
+
 def test_a_different_outcome_is_a_difference():
     before = json.loads(RECORDED.read_text(encoding="utf-8"))
     after = json.loads(RECORDED.read_text(encoding="utf-8"))
