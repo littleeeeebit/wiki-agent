@@ -534,6 +534,8 @@ export type WorkEv = {
   parent_id: string | null
   turn?: string
   seq?: number
+  /** When the server took it, in epoch seconds. */
+  ts?: number
 }
 
 export type WorkStep =

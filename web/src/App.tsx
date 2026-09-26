@@ -555,6 +555,9 @@ export default function App() {
                 onAnswer={(turn, id, allow, scope, answers) => work.answer(path, turn, id, allow, scope, answers)}
                 onStop={(turn) => work.stop(path, turn).catch((err) => setFault(String(err)))}
                 onSteer={(turn, text) => void work.steer(path, turn, text)}
+                queued={work.queued[path]}
+                onQueue={(text) => work.queue(path, text, choice)}
+                onUnqueue={() => work.unqueue(path)}
                 rules={(path && work.rules[path]?.list) || []}
                 onClearRules={() => work.clearRules(path).catch((err) => setFault(String(err)))}
                 onReset={(keep) => work.reset(path, keep)}

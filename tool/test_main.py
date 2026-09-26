@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from unittest.mock import patch
 
@@ -688,6 +689,39 @@ def test_work_opens_only_its_own_worktrees(tmp_path):
         assert web.get("/api/worktrees").json()["rows"] == []
 
 
+def test_a_cite_finds_its_file_the_ways_answers_write_it(tmp_path):
+    """From the root, as a hub page, or by a tail one file ends with. A tail
+    several files end with is refused with their names, not guessed."""
+
+    repo, hub = _repo(tmp_path), tmp_path / "hub"
+    for rel in ("docs/plans/7-verify.md", "a/x.md", "b/x.md"):
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(rel + "\n", encoding="utf-8")
+    (hub / "craft").mkdir(parents=True)
+    (hub / "craft/rule.md").write_text("rule\n", encoding="utf-8")
+    web = client()
+    with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
+         patch.object(chat_channels, "WIKI", hub):
+        got = lambda path: web.get("/api/file", params={"repo": "proj", "path": path})
+        assert got("a.txt").json()["lines"] == ["a"]
+        assert got("craft/rule.md").json()["lines"] == ["rule"]
+        found = got("7-verify.md").json()   # not yet committed: a file the agent just wrote
+        assert (found["path"], found["lines"]) == ("docs/plans/7-verify.md", ["docs/plans/7-verify.md"])
+        assert got("plans/7-verify.md").json()["path"] == "docs/plans/7-verify.md"
+        many = got("x.md")
+        assert many.status_code == 404 and "a/x.md" in many.json()["detail"] and "b/x.md" in many.json()["detail"]
+        assert got("verify.md").status_code == 404   # a tail is whole names, not letters
+        # Touched most recently wins: commit by commit, then what is not committed yet.
+        for rel in ("a/x.md", "b/x.md"):
+            subprocess.run(["git", "-C", str(repo), "add", rel], check=True)
+            subprocess.run(["git", "-C", str(repo), "commit", "-qm", rel], check=True)
+        assert got("x.md").json()["path"] == "b/x.md"
+        (repo / "a/x.md").write_text("changed\n", encoding="utf-8")
+        assert got("x.md").json()["path"] == "a/x.md"
+        (tmp_path / "secret.txt").write_text("s\n", encoding="utf-8")
+        assert got("../secret.txt").status_code == 404   # above both the checkout and the hub
+
+
 def test_an_approval_goes_only_to_the_session_that_asked(tmp_path):
     """Answered with the asking session's id, once. A reset makes a new id."""
 
@@ -1208,6 +1242,9 @@ def test_a_screen_reattaches_after_the_last_event_it_saw(tmp_path):
         assert [e["kind"] for e in seen["first"]] == ["tool", "approval", "done"]
         assert [e["seq"] for e in seen["first"]] == [0, 1, 2]
         assert {e["turn"] for e in seen["first"]} == {running["turn"]}
+        # When each came, from the server: a reattach still knows how long the last step has run.
+        stamps = [e["ts"] for e in seen["first"]]
+        assert stamps == sorted(stamps) and time.time() - 60 < stamps[0] <= time.time()
         assert seen["second"] == seen["first"] and seen["late"] == seen["first"][1:]
         ended = web.get("/api/work/events", params={"path": path, "turn": running["turn"], "after": 1})
         assert parse(ended.text) == seen["first"][2:]

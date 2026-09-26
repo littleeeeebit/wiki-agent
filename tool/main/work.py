@@ -357,9 +357,10 @@ def reset(body: Clearing) -> dict:
 class Run:
     """One worktree's turn, as a buffer of its events in order.
 
-    Each event is the screen's payload plus `seq`, its place here from 0, and
+    Each event is the screen's payload plus `seq`, its place here from 0,
     `turn`, so a screen that reattaches after `seq` k gets k+1 onwards and
-    can tell this turn's events from the next one's.
+    can tell this turn's events from the next one's, and `ts`, when it came:
+    a screen that reattaches still knows how long the last step has run.
     """
 
     def __init__(self, chat: ChatSession) -> None:
@@ -373,7 +374,7 @@ class Run:
 
     def put(self, payload: dict) -> None:
         with self.wake:
-            self.events.append({**payload, "seq": len(self.events), "turn": self.turn})
+            self.events.append({**payload, "seq": len(self.events), "turn": self.turn, "ts": time.time()})
             self.wake.notify_all()
 
     def finish(self) -> None:
