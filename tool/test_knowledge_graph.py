@@ -575,6 +575,40 @@ def test_a_dependency_is_cited_only_by_a_quote_that_names_both_ends():
     assert relations == [] and rejected == [{"relation": "Alpha depends_on Beta", "reason": "quote does not name both ends"}]
 
 
+def test_jev_judges_the_cited_words_in_english_even_for_a_translated_passage(monkeypatch):
+    korean = "`Alpha` 는 `Beta` 에 의존한다.\n`Alpha` 와 `Beta` 는 테스트된다."
+    english = {korean: "`Alpha` depends on `Beta`.\n`Alpha` and `Beta` are tested.",
+               "`Alpha` 는 `Beta` 에 의존한다.": "`Alpha` depends on `Beta`.",
+               "`Alpha` 와 `Beta` 는 테스트된다.": "`Alpha` and `Beta` are tested."}
+    monkeypatch.setattr(knowledge, "english", lambda texts, *_a: [
+        {"text": english[t], "status": "translated", "version": "t1"} if t in english else
+        {"text": None, "status": "unavailable", "version": None} for t in texts])
+    asked = []
+
+    def evaluate(cfg, state, questions, trace, budget, stage):
+        claims = {c["id"]: c["cited_words"] for c in state["claims"]}
+        asked.append(claims)
+        # A judge that reads only what it is told to: the cited words.
+        return {name: 0.95 if "depends on" in claims[name] else 0.05 for name in questions}
+
+    monkeypatch.setattr(decision, "evaluate", evaluate)
+    chunk = chunk_(korean, 1)
+    entities = [{"name": n, "type": "module", "quote": f"`{n}`"} for n in ("Alpha", "Beta")]
+    wrong = {"entities": entities, "relations": [{"kind": "depends_on", "from": "Alpha", "to": "Beta", "quote":
+                                                   "`Alpha` 와 `Beta` 는 테스트된다.", "support": None}]}
+    right = {"entities": entities, "relations": [{"kind": "depends_on", "from": "Alpha", "to": "Beta", "quote":
+                                                   "`Alpha` 는 `Beta` 에 의존한다.", "support": None}]}
+    budget = knowledge.Budget(seconds=60, calls=4, candidates=0)
+    assert knowledge.supported([(chunk, wrong), (chunk, right)], ACTIVE, budget, [], None) == 2
+    assert asked == [{"r0": "`Alpha` and `Beta` are tested.", "r1": "`Alpha` depends on `Beta`."}]
+    assert wrong["relations"][0]["support"] == 0.05 and right["relations"][0]["support"] == 0.95
+    # A quote with no English is not judged at all.
+    untranslatable = {"entities": entities, "relations": [{"kind": "depends_on", "from": "Alpha", "to": "Beta",
+                                                           "quote": "`Alpha` 는 `Beta`", "support": None}]}
+    assert knowledge.supported([(chunk, untranslatable)], ACTIVE, budget, [], None) == 0
+    assert untranslatable["relations"][0]["support"] is None
+
+
 def test_two_sections_of_one_source_with_the_same_text_both_get_their_edges():
     a, b = chunk_("Uses `Alpha`.", 1), chunk_("Uses `Alpha`.", 5)
     result = {"entities": [{"name": "Alpha", "type": "module", "quote": "`Alpha`"}], "relations": [], "versions": "v"}

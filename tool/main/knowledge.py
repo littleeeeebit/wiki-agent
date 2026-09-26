@@ -587,37 +587,47 @@ def supported(items: list[tuple[dict, dict]], cfg: decision.Config, budget: Budg
               project: str | Path | None) -> int:
     """Jev's support for each proposed dependency of `(chunk, result)`,
     written into the result: one not judged yet, or judged on other English
-    than the passage has now. Mode off, a failed request, or a passage with no
-    English leaves it `None` — a candidate, never a rejection. Returns how
-    many were judged."""
+    than the passage and its quote have now.
+
+    What is judged is the quote — the span the edge will cite — in English,
+    normalized as any passage is; the passage is only its context. So another
+    sentence of the passage can never stand behind a cited span that does not
+    say it. Mode off, a failed request, or a passage or quote with no English
+    leaves it `None` — a candidate, never a rejection. Returns how many were
+    judged."""
 
     if cfg.mode == "off":
         return 0
     chunks = list({c["chunk_id"]: c for c, r in items if r["relations"]}.values())
     if not chunks:
         return 0
-    english_ = english_of(chunks, budget, project)
+    # Each quote as a text of its passage's owner, so a private one stays private.
+    quotes = {(c["chunk_id"], rel["quote"]): {**c, "chunk_id": knowledge_graph.digest("quote", c["chunk_id"], rel["quote"]),
+                                              "text": rel["quote"]}
+              for c, r in items for rel in r["relations"]}
+    english_ = english_of(chunks + list(quotes.values()), budget, project)
     ids = {c["chunk_id"]: str(i) for i, c in enumerate(c for c in chunks if readable(english_[c["chunk_id"]]))}
-    questions, where = {}, {}
+    questions, where, claims = {}, {}, []
     for chunk, result in items:
         outcome = english_.get(chunk["chunk_id"], {})
-        seen = outcome.get("version") or outcome.get("status")
         for relation in result["relations"]:
-            if chunk["chunk_id"] not in ids or (relation["support"] is not None and relation.get("english") == seen):
+            quoted = english_.get(quotes[(chunk["chunk_id"], relation["quote"])]["chunk_id"], {})
+            seen = "|".join(str(o.get("version") or o.get("status")) for o in (outcome, quoted))
+            if (chunk["chunk_id"] not in ids or not readable(quoted)
+                    or (relation["support"] is not None and relation.get("english") == seen)):
                 continue
             name = f"r{len(questions)}"
-            # The span the edge will cite. Jev reads English, so it is named only when it is English as written.
-            cited = (f' The claim is cited to the passage\'s words "{relation["quote"]}"; judge those words, '
-                     "read in their passage." if outcome.get("status") == "original_english" else "")
+            claims.append({"id": name, "passage": ids[chunk["chunk_id"]], "cited_words": quoted["text"]})
             questions[name] = decision.noul(
-                f"Does passage {ids[chunk['chunk_id']]} itself state that `{relation['from']}` depends on "
-                f"`{relation['to']}` — uses, requires, calls, imports or reads it, in that direction? Both being "
-                "mentioned, or the reverse direction, is insufficient." + cited)
+                f"Do the cited_words of claim {name}, read in their passage, themselves state that "
+                f"`{relation['from']}` depends on `{relation['to']}` — uses, requires, calls, imports or reads it, "
+                "in that direction? Only the cited words count: another sentence of the passage saying so does "
+                "not. Both being mentioned, or the reverse direction, is insufficient.")
             where[name] = (relation, seen)
     if not questions:
         return 0
     state = {"passages": [{"id": ids[c["chunk_id"]], "heading": c["heading"], "text": english_[c["chunk_id"]]["text"]}
-                          for c in chunks if c["chunk_id"] in ids]}
+                          for c in chunks if c["chunk_id"] in ids], "claims": claims}
     try:
         got = decision.evaluate(cfg, state, questions, trace, budget, "graph_support")
     except Exception as error:  # noqa: BLE001 — no verdict is no verdict, never a rejection

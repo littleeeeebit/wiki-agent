@@ -56,7 +56,7 @@ SCHEMA_VERSION = 1
 STRUCTURE = "structure/1"
 OBSERVED = "co-injection/1"
 # Part of every extraction's `versions`: the questions and thresholds below.
-POLICY = "graph-support/1"
+POLICY = "graph-support/2"
 
 NODE_KINDS = ("source", "chunk", "entity", "decision")
 # Edge kind -> directed.
