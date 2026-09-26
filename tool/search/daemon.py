@@ -489,8 +489,10 @@ class Store:
     that moment, and gone with the source, or any edit of it, in the same
     transaction. Its vectors are never written to disk (`Embedder`).
 
-    Deletion. A source that goes loses its rows in every generation. A private
-    one's vector keys go to `journal` in the same transaction, for the
+    Deletion. A source that goes loses its rows in every generation; a
+    private one edited here loses them in every generation holding its old
+    content (`remove`). A private one's vector keys go to `journal` in the
+    same transaction, for the
     daemon's memory and for what older code wrote to the vector cache;
     `Index.refresh` clears them, and a crash first leaves the journal to
     finish the job.
@@ -595,10 +597,11 @@ class Store:
             known = {row[0]: row[1:] for row in self.db.execute(
                 "SELECT canonical, source_id, stamp, size, revision, visibility FROM sources WHERE gen = ?",
                 (self.gen,))}
-            # A private source another generation still holds, which this one
-            # may never have indexed: its deletion reaches every generation too.
+            # What other generations hold, which this one may never have
+            # indexed: a file's deletion reaches every generation, the
+            # published one this process may be reading included.
             elsewhere = self.db.execute(
-                "SELECT gen, canonical, source_id, revision FROM sources WHERE gen != ? AND visibility = 'private'",
+                "SELECT gen, canonical, source_id, revision, visibility FROM sources WHERE gen != ?",
                 (self.gen,)).fetchall()
         seen: set[str] = set()
         touched, fresh = [], []
@@ -633,8 +636,8 @@ class Store:
             fresh.append(((self.gen, source, repo, display, canonical, kind, evidence.visibility_of(kind),
                            revision, stat.st_mtime_ns, stat.st_size), cut, old[0] if old else None, path))
         gone = [(self.gen, row[0], row[4], row[3]) for canonical, row in known.items() if canonical not in seen]
-        gone += [(gen, source, "private", revision) for gen, canonical, source, revision in elsewhere
-                 if canonical not in seen and canonical not in known]
+        gone += [(gen, source, visibility, revision) for gen, canonical, source, revision, visibility in elsewhere
+                 if canonical not in seen]
         private = changed = skipped = False
         # Everything above ran outside the write lock, so another process may
         # have synced since. Under it, a file is written only if it is still
@@ -654,7 +657,8 @@ class Store:
                 changed = True
                 source, visibility = record[1], record[6]
                 keep = {key_of(c["indexed"]) for _id, c in cut}
-                private |= self.remove(db, {source, previous} - {None}, visibility == "private", keep)
+                private |= self.remove(db, {source, previous} - {None}, visibility == "private", keep,
+                                       revision=record[7])
                 db.execute("INSERT INTO sources VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", record)
                 db.executemany("INSERT INTO chunks VALUES (?, ?, ?, ?, ?, ?, ?, ?)", [
                     (self.gen, cid, source, c["line"], c["end_line"], json.dumps(c["heading_path"], ensure_ascii=False),
@@ -665,7 +669,7 @@ class Store:
                 if row is None or row[0] != revision:
                     continue
                 changed = True
-                private |= self.remove(db, {source}, visibility == "private", set())
+                private |= self.remove(db, {source}, visibility == "private", set(), gen)
             current = self.meta("current")
             # Another process pruning generations may have taken this one's row.
             db.execute("INSERT OR IGNORE INTO generations VALUES (?, ?, ?)", (self.gen, evidence.CHUNKER, time.time()))
@@ -689,24 +693,38 @@ class Store:
                 self.db.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         return changed, skipped
 
-    def remove(self, db: sqlite3.Connection, sources: set[str], private: bool, keep: set[str]) -> bool:
-        """Delete these sources' rows: in this generation, or in every one for a
-        private source — so a memory deleted here does not come back with an
-        older generation — with its English, journalling each of its vector
-        keys not in `keep` (those the new version still has): the key is the
-        heading path with the text, so a title edit alone drops it too.
-        `True` for a private source."""
+    def remove(self, db: sqlite3.Connection, sources: set[str], private: bool, keep: set[str],
+               gen: int | None = None, revision: str | None = None) -> bool:
+        """Delete these sources' rows in `gen` (this one by default), where
+        `revision` is the content replacing them, `None` when the file is gone.
 
-        where = f"source_id IN ({','.join('?' * len(sources))})" + ("" if private else " AND gen = ?")
-        args = [*sources] + ([] if private else [self.gen])
-        if private:
-            keys = {key_of(" > ".join(json.loads(heading)) + "\n" + text) for heading, text in db.execute(
-                f"SELECT DISTINCT heading_path, text FROM chunks WHERE {where}", args)}
-            journal = list(keys - keep)
+        A private source's rows go in every generation that holds other
+        content than `revision` — a memory deleted or edited here must not
+        come back with another generation — while a generation holding the
+        same revision keeps them: that is the same memory, still readable
+        there. With any of its rows goes its English, and each vector key of
+        those rows that `keep` (the new version's) does not name is
+        journalled: the key is the heading path with the text, so a title
+        edit alone drops it too. `True` for a private source.
+
+        ponytail: a key another generation still uses for the new content is
+        dropped too and embedded again; subtract the kept rows' keys if that
+        re-embedding ever costs.
+        """
+
+        gen = self.gen if gen is None else gen
+        marks = ",".join("?" * len(sources))
+        rows = db.execute(f"SELECT gen, source_id, revision FROM sources WHERE source_id IN ({marks})",
+                          [*sources]).fetchall()
+        doomed = [(g, s) for g, s, r in rows if g == gen or (private and r != revision)]
+        if private and doomed:
+            journal = {key_of(" > ".join(json.loads(heading)) + "\n" + text) for g, s in doomed
+                       for heading, text in db.execute(
+                           "SELECT heading_path, text FROM chunks WHERE gen = ? AND source_id = ?", (g, s))} - keep
             db.executemany("INSERT INTO journal (vector_key) VALUES (?)", [(key,) for key in journal])
-            db.execute(f"DELETE FROM english WHERE source_id IN ({','.join('?' * len(sources))})", [*sources])
+            db.execute(f"DELETE FROM english WHERE source_id IN ({marks})", [*sources])
         for table in ("chunks", "sources"):
-            db.execute(f"DELETE FROM {table} WHERE {where}", args)
+            db.executemany(f"DELETE FROM {table} WHERE gen = ? AND source_id = ?", doomed)
         return private
 
     def load(self, roots: dict[str, Path]) -> list[dict]:

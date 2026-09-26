@@ -225,7 +225,7 @@ def test_a_failed_update_keeps_what_was_there(corpus, monkeypatch):
     before = [c["chunk_id"] for c in index.chunks]
     bump(repo / "docs/ports.md", "# Ports\n\nChanged.\n")
 
-    def full_disk(*_a):
+    def full_disk(*_a, **_k):
         raise sqlite3.OperationalError("database or disk is full")
 
     monkeypatch.setattr(searchd.Store, "remove", full_disk)
@@ -494,6 +494,43 @@ def test_a_new_generation_missing_a_file_is_not_published(corpus, monkeypatch):
         assert db.execute("SELECT v FROM meta WHERE k = 'current'").fetchone() == (str(gen),)
     # Until its own is whole, it reads the published one (review round 5).
     assert second.store.reading() == gen and second.search("8791", 3)
+    second.close()
+
+
+def unfinished(repo: Path, monkeypatch) -> None:
+    """A new chunker whose build never finishes: `ports.md` changes on every read."""
+
+    monkeypatch.setattr(evidence, "CHUNKER", "chunks/next")
+    ports, real = repo / "docs/ports.md", searchd.chunks
+
+    def always_edited(text, path):
+        if path == ports:
+            bump(ports, text + "x")
+        return real(text, path)
+
+    monkeypatch.setattr(searchd, "chunks", always_edited)
+
+
+def test_an_unfinished_build_serves_neither_a_deleted_document_nor_loses_a_memory(corpus, monkeypatch):
+    hub, repo = corpus
+    first = index_of(hub, repo)
+    gen = first.store.gen
+    memory = by_path(first)[".wiki/memory/login.md"][0]
+    first.store.keep_english(memory["source_id"], [(memory["text"], {"status": "translated", "text": "Kept."})])
+    first.close()
+    (repo / "docs/limit.md").unlink()
+    unfinished(repo, monkeypatch)
+    second = searchd.Index(hub, repo, searchd.Embedder(None))
+    second.embedder.vectors[memory["key"]] = b"vector"
+    second.refresh()
+    assert second.store.reading() == gen
+    # The published generation it reads loses the deleted document (review round 6)...
+    assert "docs/limit.md" not in by_path(second)
+    # ...and keeps the memory the new generation indexed unchanged, with its
+    # vector and its English: the same content, still read there.
+    assert second.search("password login", 3, sources=["memory"])
+    assert memory["key"] in second.embedder.vectors
+    assert second.store.english(memory["source_id"], [memory["text"]])
     second.close()
 
 
