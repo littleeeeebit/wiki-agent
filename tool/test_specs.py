@@ -397,6 +397,51 @@ def test_a_stop_publishes_nothing_even_after_a_fast_gate_passed(repo):
         assert "PR 은 만들지 않았다" in specs.load("proj", sid)["fault"]
 
 
+ENGLISH_PLAN = ("# Plan\n\n## Requirements\n\n| # | Need | Status |\n| --- | --- | --- |\n"
+                "| 2 | Other table | Complete — PR #7 |\n\n"
+                "## Steps\n\n| # | Step | Status |\n| --- | --- | --- |\n| 2 | Login | Not started |\n"
+                "| 3 | Logout | Not started |\n")
+
+
+@pytest.mark.parametrize("cell, row, n, done", [
+    ("Complete — PR #7", "2", 7, True),
+    ("Done — PR #7", "2", 7, True),          # English plans from before `Complete`
+    ("완료 — PR #7", "2", 7, True),           # a Korean status cell
+    ("Complete — PR #71", "2", 7, False),     # another pull request
+    ("Complete — PR #7", "3", 7, False),      # another row
+    ("Not completed — PR #7", "2", 7, False),
+])
+def test_an_english_plan_row_is_bound_to_its_steps_row_and_pr(tmp_path, cell, row, n, done):
+    """The requirements table's row `2` already says `Complete — PR #7`, and it
+    is not the step: only the steps table counts."""
+
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)
+    plan = tmp_path / "docs/plans/p.md"
+    plan.parent.mkdir(parents=True)
+    plan.write_text(ENGLISH_PLAN.replace("| 2 | Login | Not started |", f"| 2 | Login | {cell} |"),
+                    encoding="utf-8")
+    subprocess.run(["git", "-C", str(tmp_path), "add", "."], check=True)
+    subprocess.run(["git", "-C", str(tmp_path), "-c", "user.name=t", "-c", "user.email=t@t",
+                    "commit", "-qm", "plan"], check=True)
+    ref = {"path": "docs/plans/p.md", "row": row}
+    assert specs.row_done(tmp_path, ref, n) is done
+    assert specs.marker(tmp_path, ref) == "Complete"
+
+
+def test_the_marker_follows_the_plan_language_and_rows_come_from_steps(tmp_path):
+    plans = tmp_path / "docs/plans"
+    plans.mkdir(parents=True)
+    (plans / "ko.md").write_text("## 단계\n\n| # | 무엇 | 상태 |\n| --- | --- | --- |\n| 1 | 로그인 | 미착수 |\n",
+                                 encoding="utf-8")
+    (plans / "en.md").write_text(ENGLISH_PLAN, encoding="utf-8")
+    assert specs.marker(tmp_path, {"path": "docs/plans/ko.md"}) == "완료"
+    assert specs.marker(tmp_path, {"path": "docs/plans/missing.md"}) == "Complete"
+    assert specs.plan_row(tmp_path, {"path": "docs/plans/en.md", "row": "3"})
+    # Row `9` exists only in the requirements table.
+    (plans / "en.md").write_text(ENGLISH_PLAN.replace("| 2 | Other table", "| 9 | Other table"), encoding="utf-8")
+    assert specs.plan_row(tmp_path, {"path": "docs/plans/en.md", "row": "9"}) is None
+
+
 def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
     plan = repo / "docs/plans/p.md"
     plan.parent.mkdir(parents=True)
@@ -431,13 +476,13 @@ def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
 
         spec = specs.load("proj", sid)
         assert spec["state"] == "PR #7" and spec["pr"]["number"] == 7 and spec["pr"]["base"] == "main"
-        assert spec["gate"]["ok"] and spec["plan_commit"] == "asked" and "Done — PR #7" in spec["fault"]
+        assert spec["gate"]["ok"] and spec["plan_commit"] == "asked" and "완료 — PR #7" in spec["fault"]
         assert KICKED == [], "계획 행 커밋 전에는 리뷰 루프가 받지 않는다"
         assert remote.pushes() == 1, "행을 고치지 않은 턴은 push 도, 닫기도 하지 않는다"
         create = next(c for c in remote.calls if c[:3] == ["gh", "pr", "create"])
         assert create[create.index("--head") + 1] == sid and create[create.index("--title") + 1] == spec["goal"]
         asked = Worker.made[-1].heard[-1]
-        assert "`docs/plans/p.md`" in asked and "`2`" in asked and "`Done — PR #7`" in asked
+        assert "`docs/plans/p.md`" in asked and "`2`" in asked and "`완료 — PR #7`" in asked
 
         parse(web.post("/api/work/say", json={"path": path, "text": "행을 고쳐라"}).text)
         settled(path)

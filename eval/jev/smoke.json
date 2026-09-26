@@ -1,0 +1,31 @@
+{
+  "schema": "jev-eval-manifest/1",
+  "id": "smoke",
+  "version": 1,
+  "description": "Synthetic smoke set for stage 1: one small corpus with a single-hop fact, a bridge across two documents, a superseded decision, a saved memory, a hub rule, Korean text, and questions the corpus cannot answer. Written inline so its pages never enter this wiki's own index or link checks.",
+  "corpus": {
+    "kind": "synthetic",
+    "files": {
+      "hub/operator/review-before-merge.md": "# Review before merge\n\nRule. Every pull request receives one independent review round before it is merged. The author's own checks are not a review.\n",
+      "hub/craft/one-retry-budget.md": "# One retry budget\n\nRule. A loop shares one deadline, one call count and one token ceiling across all of its steps. A step's own limit never multiplies the total.\n",
+      "repo/docs/ports.md": "# Ports\n\nThe search daemon listens on port 8791. The chat server listens on port 8787.\n",
+      "repo/docs/owners.md": "# Owners\n\nThe ingest pipeline is owned by the Atlas team.\n",
+      "repo/docs/atlas.md": "# Atlas team\n\n## Rota\n\nThe Atlas team is on call every Tuesday and handles incidents for everything it owns.\n",
+      "repo/docs/decisions/cache-2025.md": "# Decision: translation cache in the checkout\n\nThe translation cache is stored as a SQLite file inside the repository checkout.\n",
+      "repo/docs/decisions/cache-2026.md": "# Decision: translation cache moved\n\nThis supersedes the 2025 cache decision. The translation cache is now stored under the user cache folder, never inside the checkout.\n",
+      "repo/docs/translate-limit.md": "# 번역 월 한도\n\n번역 요청이 이번 달 한도를 넘으면 새 요청을 멈추고, 캐시에 있는 번역만 돌려준다.\n",
+      "repo/.wiki/memory/2026-09-20-login.md": "# Login decision\n\nThe user decided to keep password login and add passkeys later.\n"
+    }
+  },
+  "queries": [
+    {"id": "smoke-01", "language": "en", "kind": "single", "text": "Which port does the search daemon listen on?", "expect": ["repo/docs/ports.md"]},
+    {"id": "smoke-02", "language": "ko", "kind": "cross-language", "text": "검색 데몬은 몇 번 포트를 쓰나?", "expect": ["repo/docs/ports.md"]},
+    {"id": "smoke-03", "language": "en", "kind": "bridge", "text": "Who is on call for the ingest pipeline?", "expect": ["repo/docs/owners.md", "repo/docs/atlas.md"]},
+    {"id": "smoke-04", "language": "en", "kind": "conflict", "text": "Where is the translation cache stored?", "expect": ["repo/docs/decisions/cache-2026.md", "repo/docs/decisions/cache-2025.md"]},
+    {"id": "smoke-05", "language": "en", "kind": "memory", "text": "What did the user decide about login?", "expect": ["repo/.wiki/memory/2026-09-20-login.md"]},
+    {"id": "smoke-06", "language": "en", "kind": "hub-rule", "text": "What must happen before a pull request is merged?", "expect": ["hub/operator/review-before-merge.md"]},
+    {"id": "smoke-07", "language": "ko", "kind": "single", "text": "번역 요청이 월 한도를 넘으면 어떻게 되나?", "expect": ["repo/docs/translate-limit.md"]},
+    {"id": "smoke-08", "language": "en", "kind": "unanswerable", "text": "What is the database password rotation schedule?", "expect": []},
+    {"id": "smoke-09", "language": "en", "kind": "direct", "text": "Hello, thank you!", "expect": []}
+  ]
+}

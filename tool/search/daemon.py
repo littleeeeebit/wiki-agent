@@ -170,9 +170,10 @@ def listing(hub: Path, project: Path | None) -> list[Path]:
             capture_output=True, timeout=30, check=True).stdout.decode("utf-8", errors="replace")
         mine = [project / name for name in out.split("\0") if name]
     except (OSError, subprocess.SubprocessError):
-        mine = [p for p in project.rglob("*.md")
-                if not any(part.startswith(".") or part == "node_modules"
-                           for part in p.relative_to(project).parts[:-1])]
+        # Sorted as git's list is, so equal scores rank the same on every machine.
+        mine = sorted(p for p in project.rglob("*.md")
+                      if not any(part.startswith(".") or part == "node_modules"
+                                 for part in p.relative_to(project).parts[:-1]))
     # The memories a cleared conversation left (`main.memory`): git-ignored,
     # so the listing above misses them. Not their transcripts.
     mine += [p for p in sorted((project / ".wiki" / "memory").glob("*.md")) if not p.name.endswith(".raw.md")]

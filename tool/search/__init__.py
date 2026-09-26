@@ -29,7 +29,7 @@ import threading
 import time
 from pathlib import Path
 
-__all__ = ("ask", "prepare", "notify", "PING", "spawn", "PORT", "HUB", "cache_dir", "state_path", "version")
+__all__ = ("ask", "prepare", "lexical", "notify", "PING", "spawn", "PORT", "HUB", "cache_dir", "state_path", "version")
 
 HERE = Path(__file__).resolve().parent
 # The hub whose `operator/` and `craft/` every search covers. `WIKI_ROOT` as in `wiki`.
@@ -124,11 +124,28 @@ def ask(query: str, project: str | Path | None, timeout: float, k: int = 8,
     return results if isinstance(results, list) else None
 
 
-def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8) -> dict:
-    """Jev's retrieval dossier; explicit callers opt into sending evidence to TypeSafe."""
+def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8, *,
+            evaluate, budget=None) -> dict:
+    """Jev's retrieval dossier; explicit callers opt into sending evidence to TypeSafe.
+
+    `evaluate` is the decision transport (`decision.evaluate` bound to a
+    configuration), handed in because this pipeline does not import another.
+    """
     from .controller import prepare as run
 
-    return run(query, project, state, k)
+    return run(query, project, state, k, evaluate=evaluate, budget=budget)
+
+
+def lexical(project: str | Path | None, hub: Path = HUB):
+    """A BM25-only index built in this process — no daemon, no vectors, so the
+    same files give the same ranking. `.search(query, k, sources)` asks it;
+    `.files` holds every file it read."""
+
+    from .daemon import Embedder, Index
+
+    index = Index(Path(hub), Path(project) if project else None, Embedder(None))
+    index.refresh()
+    return index
 
 
 # The keep-alive ping the daemon types into an idle Claude cell. The hook

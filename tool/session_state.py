@@ -68,6 +68,13 @@ def branch_line(repo: Path) -> str:
     return " · ".join(bits)
 
 
+def steps_block(text: str) -> re.Match | None:
+    """A plan's steps section: group 1 the heading word, group 2 the body.
+    `Steps` since the plans are written in English; `단계` in older ones."""
+
+    return re.search(r"^##+ (단계|Steps)\s*$(.*?)(?=^##+ |\Z)", text, re.M | re.S | re.I)
+
+
 def open_steps(path: Path, limit: int = MAX_ROWS) -> list[str]:
     """The unfinished rows in an English or Korean plan's steps table.
 
@@ -77,9 +84,7 @@ def open_steps(path: Path, limit: int = MAX_ROWS) -> list[str]:
     been, is how a wrong thing gets said confidently.
     """
 
-    text = path.read_text(encoding="utf-8")
-    # `Steps` since the plans are written in English; `단계` in older ones.
-    block = re.search(r"^##+ (단계|Steps)\s*$(.*?)(?=^##+ |\Z)", text, re.M | re.S | re.I)
+    block = steps_block(path.read_text(encoding="utf-8"))
     if not block:
         return []
     rows = []

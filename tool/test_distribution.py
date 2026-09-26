@@ -12,7 +12,7 @@ def test_private_runtime_paths_are_ignored():
     paths = ["raw/chat/progress.jsonl", "raw/census-example.jsonl", "raw/corrections.jsonl",
              ".wiki/decisions/example.md", ".wiki/adapter.toml", ".claude/settings.json",
              ".codex/auth.json", ".chat-local.json", ".env", "graph.json",
-             "adapters/local-project.toml", "artifacts/result.json"]
+             "adapters/local-project.toml", "artifacts/result.json", "raw/eval/jev/repo-smoke-result.json"]
     result = subprocess.run(["git", "check-ignore", "--no-index", "--", *paths], cwd=ROOT,
                             capture_output=True, text=True, encoding="utf-8", check=True)
     assert set(result.stdout.splitlines()) == set(paths)

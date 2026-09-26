@@ -58,8 +58,14 @@ evidence allows one wider search, then hands control back to the answering
 agent with an explicit need for further verification. Jev never authorizes
 tools, merges, writes, or declarations that an answer is true.
 
-`WIKI_JEV=on` and a server-side `TYPESAFE_API_KEY` enable the query integration.
-The search CLI exposes `--jev` for explicit use. Requests send the question,
+Stage 1 of the [plan](../plans/jev/1-runtime-baseline.md) moved configuration
+into the hub's `.env` (or the file `JEV_ENV` names), read per request by
+`tool/decision/`: `TYPESAFE_API_KEY`, `WIKI_JEV_MODEL`, and
+`WIKI_JEV_MODE=off|shadow|active`, which defaults to shadow with a key and off
+without one; the older `WIKI_JEV=on` still means active. Shadow records the
+dossier beside the turn without giving it to the answering agent.
+`python tool/jev_search.py` replaces `tool/search --jev` for explicit use, and
+`python tool/jev_probe.py --live` checks connectivity. Requests send the question,
 supplied context, and candidate excerpts to TypeSafe. No key or network error
 silently counts as a negative judgment: return baseline retrieval and an
 explicit fallback status. Keep the key out of logs. Do not modify hook routing.
