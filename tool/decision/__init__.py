@@ -302,7 +302,17 @@ def send(key: str, body: bytes, timeout: float, cancel: threading.Event) -> dict
                 IN_FLIGHT.release()
 
     worker = threading.Thread(target=request, daemon=True)
-    worker.start()
+    try:
+        worker.start()
+    except BaseException as exc:
+        # No worker, so its `finally` never runs: the slot and the connection are released here.
+        try:
+            abort(conn)
+        finally:
+            IN_FLIGHT.release()
+        if isinstance(exc, Exception):
+            raise JevError("network") from exc
+        raise
     while worker.is_alive():
         stop = "cancelled" if cancel.is_set() else "timeout" if time.monotonic() >= end else None
         if stop:

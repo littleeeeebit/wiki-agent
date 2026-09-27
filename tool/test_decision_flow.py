@@ -309,6 +309,21 @@ def slow_connection(monkeypatch, opened, closed):
     monkeypatch.setattr(decision.http.client, "HTTPSConnection", Connection)
 
 
+def test_a_worker_that_cannot_start_frees_its_slot_and_connection(monkeypatch):
+    opened, closed = [], []
+    slow_connection(monkeypatch, opened, closed)
+
+    def refuse(self):
+        raise RuntimeError("can't start new thread")
+
+    monkeypatch.setattr(threading.Thread, "start", refuse)
+    cfg = decision.Config("active", MODEL, "file", key="k")
+    for _ in range(decision.MAX_IN_FLIGHT + 1):
+        with pytest.raises(decision.JevError, match="network"):
+            decision.evaluate(cfg, {}, {"q": decision.noul("?")}, [], Budget(seconds=5, calls=2, candidates=0))
+    assert decision.IN_FLIGHT._value == decision.MAX_IN_FLIGHT and len(closed) == len(opened)
+
+
 def test_a_cancelled_or_late_request_is_aborted_and_frees_its_slot(monkeypatch):
     opened, closed = [], []
     slow_connection(monkeypatch, opened, closed)
@@ -444,19 +459,38 @@ ASKS = ["Who owns the ingest pipeline?", "Which port does the ingest pipeline us
 
 
 def test_one_sentence_asking_two_things_is_split_and_each_ask_is_covered_on_its_own():
-    world = World(answering(coverage=lambda name: 0.95 if name == "coverage_r0" else 0.1),
+    world = World(answering(coverage=lambda name: 0.95 if name == "coverage_r1" else 0.1),
                   [found([chunk("owners", "Atlas owns the ingest pipeline.")])],
                   [found([chunk("port", "The ingest pipeline listens on 8791.")], spent=2)])
     asked = []
     tape = knowledge.Tape()
     out = run(world, query=BOTH, available=["documents"], tape=tape,
               divide=lambda question, seconds: asked.append(question) or list(ASKS))
-    assert asked == [BOTH] and [r["text"] for r in out["requirements"]] == ASKS
+    # The whole question stays a requirement beside its asks.
+    assert asked == [BOTH] and [r["text"] for r in out["requirements"]] == [BOTH, *ASKS]
     assert out["split"] == {"asks": 2, "rejected": [], "failed": False}
     assert tape.data["split"][0]["calls"] == 1
-    # Only the uncovered ask is missing, and the subquery round searches the asks themselves.
-    assert out["transitions"][5]["missing"] == ["r1"]
-    assert world.mended[0][1:] == ("subqueries", ASKS)
+    # The uncovered ask is named, and the subquery round searches the requirements themselves.
+    assert out["transitions"][5]["missing"] == ["r0", "r2"]
+    assert world.mended[0][1:] == ("subqueries", [BOTH, *ASKS])
+
+
+def test_a_split_that_omits_an_ask_cannot_end_ready_on_the_rest():
+    three = "Who owns ingest, which port does it use, and where are its logs?"
+    base = answering()
+
+    def answer(stage, state, questions):
+        # Each ask the split kept is covered; the question whole, with its logs, is not.
+        out = base(stage, state, questions)
+        for r in state.get("requirements", []):
+            if f"coverage_{r['id']}" in out:
+                out[f"coverage_{r['id']}"] = 0.1 if r["text"] == three else 0.95
+        return out
+
+    world = World(answer, [found([chunk("a")])])
+    out = run(world, query=three, available=["documents"],
+              divide=lambda q, s: ["Who owns ingest?", "Which port does ingest use?"])
+    assert out["status"] != "ready" and out["missing"] == ["r0"]
 
 
 @pytest.mark.parametrize("asks, reason", [
@@ -515,7 +549,7 @@ def test_a_split_replays_from_its_tape():
                            "repo_id": REPO, "graph": True, "model": MODEL, "live": True, "external": False},
                 "transitions": knowledge.steps(out)}
     again = knowledge.replay(recorded)
-    assert again["matches"] and len(again["dossier"]["requirements"]) == 2
+    assert again["matches"] and [r["text"] for r in again["dossier"]["requirements"]] == [BOTH, *ASKS]
 
 
 def test_translate_parts_reads_one_ask_an_item(monkeypatch):
@@ -614,6 +648,24 @@ def test_a_truncated_passage_is_kept_on_a_no_and_never_shows_coverage():
     assert not any(n.startswith("coverage_") for n in judged[2])
     assert out["status"] == "partial" and out["evidence"][0]["heading_path"] == ["long"]
     assert out["reads"][0]["reason"] == "truncated"
+
+
+def test_coverage_stands_only_on_evidence_still_held():
+    world = World(answering(useful=0.0, coverage=0.95), [found([chunk("only", "The port is 8791.")])])
+    out = run(world, available=["documents"])
+    assert out["status"] != "ready" and out["requirements"][0]["verdict"] == "uncertain"
+
+
+def test_what_is_kept_past_k_is_in_the_evidence_or_named():
+    top = chunk("top", "The port is 8791.")
+    cut = chunk("cut", "Part of a section.", completeness="partial")
+    doubt = chunk("doubt", "Ports may differ.")
+    world = World(answering(useful=lambda n: 0.95 if n.endswith("p0") else 0.0,
+                            conflict=lambda n: 0.5 if n.endswith("p2") else 0.0),
+                  [found([top, cut, doubt])])
+    out = run(world, k=1, available=["documents"])
+    assert [e["chunk_id"] for e in out["evidence"]] == [top["chunk_id"], doubt["chunk_id"]]
+    assert {"beyond_k": [cut["chunk_id"]]} in out["limits"]
 
 
 @pytest.mark.parametrize("partial, conflict", [(True, 0.0), (False, 0.5)])

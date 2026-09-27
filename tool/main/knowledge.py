@@ -496,11 +496,17 @@ class Flow:
 
     def ranked(self) -> list[dict]:
         """Graded evidence best first, ungraded after in retrieval order; `k`
-        of it, and every passage that contradicts besides."""
+        of it, and besides every passage whose conflict is not ruled out.
+        The rest held past `k` is named in `limits` (`beyond_k`), never
+        left out silently."""
 
         order = sorted(self.pool.values(), key=lambda c: (c["relevance"] is None, -(c["relevance"] or 0)))
-        kept = order[:self.k]
-        return kept + [c for c in order[self.k:] if (c["judgment"] or {}).get("conflict") == "yes"]
+        rest = order[self.k:]
+        lane = [c for c in rest if (c["judgment"] or {}).get("conflict") in ("yes", "uncertain")]
+        past = [c["chunk_id"] for c in rest if c not in lane]
+        if past:
+            self.dossier["limits"].append({"beyond_k": past})
+        return order[:self.k] + lane
 
     def add(self, hits: list[dict], outcomes: list[dict] | None = None) -> list[dict]:
         items = [item(h, o) for h, o in zip(hits, outcomes or [None] * len(hits))]
@@ -563,11 +569,13 @@ class Flow:
     def split(self) -> None:
         """A question code left whole that may still ask several things is
         split by the model, one request of the run, when a round's request
-        and the reserve for stage 7 still fit beside it. The split stands
-        only whole: if any ask is refused (`retrieval.checked_subqueries`,
-        every exclusion kept in every ask), or they are more than
-        `retrieval.MAX_SUBQUERIES`, or fewer than two, the question stays
-        whole — a requirement dropped would never be checked."""
+        and the reserve for stage 7 still fit beside it. The asks join the
+        whole question, which stays a requirement: an ask the model left
+        out is still checked there, so a split can name what is missing but
+        never make `ready` easier. The split stands only whole: if any ask
+        is refused (`retrieval.checked_subqueries`, every exclusion kept in
+        every ask), or they are more than `retrieval.MAX_SUBQUERIES`, or
+        fewer than two, the question stays as it was."""
 
         if self.divide is None or len(self.requirements) > 1 or not SEVERAL.search(self.query_en):
             return
@@ -586,7 +594,7 @@ class Flow:
         self.dossier["split"] = {"asks": len(kept), "rejected": rejected, "failed": asked is None}
         if len(kept) > 1 and not rejected:
             self.requirements = [{"id": f"r{i}", "text": text, "verdict": "not_judged", "score": None}
-                                 for i, text in enumerate(kept)]
+                                 for i, text in enumerate([self.query_en, *kept])]
 
     def share(self, round_: int, spent: int) -> int:
         """This round's part of what is left of the candidate allowance, split
@@ -721,10 +729,17 @@ class Flow:
             if judgment["redirect"] != "no":
                 # A flag, not a barrier: the passage stays evidence, and stays data.
                 self.dossier["untrusted"].append({"chunk_id": chunk["chunk_id"], "verdict": judgment["redirect"]})
+        # Coverage stands only on evidence still held: a `yes` over complete
+        # passages all judged not useful contradicts itself and stays uncertain.
+        backed = any(complete(c) and (c["judgment"] or {}).get("useful") != "no"
+                     for c in self.pool.values() if c["chunk_id"] in ids)
         for r in self.requirements:
             name = f"coverage_{r['id']}"
             if name in answers:
-                r.update(verdict=verdicts[name], score=answers[name])
+                verdict = verdicts[name]
+                if verdict == "yes" and not backed:
+                    verdict, r["unbacked"] = "uncertain", True
+                r.update(verdict=verdict, score=answers[name])
         return res
 
     def room_for_round(self, calls: int) -> bool:
