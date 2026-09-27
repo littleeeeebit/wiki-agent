@@ -412,7 +412,7 @@ def jev_status() -> dict:
 
     from . import decisions  # `decisions` imports this module
 
-    return {**decision.config().status(), "agent_decisions": decisions.coverage()}
+    return {**decision.config(current_repo()).status(), "agent_decisions": decisions.coverage()}
 
 
 @router.post("/api/jev/probe")
@@ -427,16 +427,18 @@ class JevSettings(BaseModel):
     mode: str | None = None          # none: `.env` decides
     disabled_sources: list[str] = []
     limits: dict = {}
+    active_projects: list[str] | None = None   # none: the saved canary list stays
 
 
 @router.post("/api/jev/settings")
 def jev_settings(body: JevSettings) -> dict:
     """The app's Jev settings (stage 9): mode, the source families a
-    question may search, and a question's limits. A new run reads them; a
-    run in flight keeps what it started with. The key is not among them."""
+    question may search, a question's limits, and the checkouts active mode
+    is limited to (stage 10). A new run reads them; a run in flight keeps
+    what it started with. The key is not among them."""
 
     try:
-        decision.save(body.model_dump())
+        decision.save(body.model_dump(exclude={"active_projects"} if body.active_projects is None else set()))
     except ValueError as exc:
         raise HTTPException(400, f"설정을 저장하지 않았다 — {exc}") from exc
     return jev_status()
@@ -684,7 +686,8 @@ def say(cid: str, body: Say) -> StreamingResponse:
         cfg = dict(config(cid))
         release = hold(_busy, _lock, cid, "이 초점의 답변을 생성하고 있습니다")
     try:
-        run = Run(current_repo(), cid, text or "(후보 요청)", decision.config())
+        repo = current_repo()
+        run = Run(repo, cid, text or "(후보 요청)", decision.config(repo))
         # The thread reads the project this request was checked against.
         threading.Thread(target=contextvars.copy_context().run, args=(ask, cid, body, text, cfg, run, release),
                          daemon=True).start()

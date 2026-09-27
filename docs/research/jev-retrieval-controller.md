@@ -94,3 +94,13 @@ questions the corpus cannot answer. Record the exact model and thresholds.
 English controller instructions are a consistency choice, not proof that every
 language or task performs equally. Entity extraction and graph expansion need
 their own retrieval evaluation before becoming a default.
+
+That comparison is stage 10 of the [plan](../plans/jev/10-evaluation-rollout.md):
+a frozen dataset (`eval/jev/intents.json`, 120 intents in English and Korean,
+split 60 calibration and 60 held out), frozen gates (`eval/jev/gates.json`),
+and `tool/eval/compare.py` and `tool/eval/report.py` to run and read it, with
+intervals resampled by intent. The plan's Reproduction section holds the exact
+commands and its Measured section the numbers so far. As of 2026-09-28 only the
+calibration split and a free held-out baseline have been run, on model-drafted
+labels; no quality claim rests on them until a person reviews the labels and
+the held-out arms with Jev run.

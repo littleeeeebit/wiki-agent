@@ -894,7 +894,7 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
 
     if not query.strip() or not 1 <= k <= MAX_K:
         raise ValueError(f"A query and k between 1 and {MAX_K} are required")
-    cfg = cfg or decision.config()
+    cfg = cfg or decision.config(project or HUB)
     live = cfg.mode != "off"
     root = Path(project).resolve() if project else None
     brief, omitted = summarized(state, root)
@@ -1733,7 +1733,7 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
     """
 
     root = root_of(project)
-    cfg = cfg or decision.config()
+    cfg = cfg or decision.config(root)
     if query:
         asked = english([query], QUERY_SECONDS)[0]
         query = asked["text"] if asked["status"] in ("original_english", "translated") else query
@@ -2209,7 +2209,7 @@ def extract_graph(project: str | Path | None, limit: int = 40, seconds: float = 
 
     if limit < 1:
         raise ValueError("limit must be at least 1")
-    cfg = cfg or decision.config()
+    cfg = cfg or decision.config(project or HUB)
     proposer = proposer or propose
     repo = knowledge_graph.evidence.repo_id(root_of(project))
     versions = graph_versions(model, cfg)
@@ -2354,7 +2354,7 @@ def retrieve(query: str, project: str | Path | None, k: int = 8, *, sources_: li
     the switch (`graph_enabled`).
     """
 
-    cfg = cfg or decision.config()
+    cfg = cfg or decision.config(project or HUB)
     budget = budget or Budget(**QUESTION)
     root = Path(project).resolve() if project else None
     query_en = None
@@ -2864,7 +2864,7 @@ def status(repo: str | Path) -> dict:
     nothing."""
 
     root = Path(repo).resolve()
-    cfg = decision.config()
+    cfg = decision.config(root)
     try:
         store = evidence_store(root)
         try:

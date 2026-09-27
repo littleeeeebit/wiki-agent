@@ -5,128 +5,135 @@
  "normalization_version": "original_english",
  "dataset": {
   "path": "eval/jev/calibration.json",
-  "sha256": "795aca59e263e7ec3010acc8f48bc1585cf8a98a02fae6fa581cbabb62d90f17",
+  "sha256": "b6f269f0d9542d3e9f8c8fd5cc982dd51697f2fb3bf9393160b250b07007d91a",
   "split": "calibration",
-  "cases": 35
+  "cases": 89
  },
  "rules": {
   "route": {
-   "no": 0.4,
-   "yes": 0.8
-  },
-  "source": {
-   "no": 0.35,
-   "yes": 0.8
-  },
-  "useful": {
-   "no": 0.2,
-   "yes": 0.65
-  },
-  "coverage": {
-   "no": 0.2,
-   "yes": 0.6
-  },
-  "conflict": {
-   "no": 0.4,
-   "yes": 0.8
-  },
-  "redirect": {
    "no": 0.25,
    "yes": 0.8
   },
+  "source": {
+   "no": 0.4,
+   "yes": 0.85
+  },
+  "useful": {
+   "no": 0.2,
+   "yes": 0.8
+  },
+  "coverage": {
+   "no": 0.2,
+   "yes": 0.65
+  },
+  "conflict": {
+   "no": 0.05,
+   "yes": 0.8
+  },
+  "redirect": {
+   "no": 0.3,
+   "yes": 0.8
+  },
   "repair": {
-   "confidence": 0.6,
+   "confidence": 0.5,
    "margin": 0.2
   }
  },
  "errors": {
   "route": {
-   "n": 35,
-   "positives": 31,
+   "n": 89,
+   "positives": 83,
    "fitted": true,
    "cost": 0,
    "provisional_cost": 1,
    "counts": {
-    "positive_yes": 31,
-    "negative_no": 4
+    "negative_no": 6,
+    "positive_yes": 83
    }
   },
   "source": {
-   "n": 16,
-   "positives": 6,
+   "n": 192,
+   "positives": 48,
    "fitted": true,
-   "cost": 3.0,
-   "provisional_cost": 4.5,
+   "cost": 37.5,
+   "provisional_cost": 52.0,
    "counts": {
-    "negative_uncertain": 6,
-    "positive_uncertain": 4,
-    "negative_no": 4,
-    "positive_yes": 2
+    "negative_uncertain": 75,
+    "positive_uncertain": 38,
+    "negative_no": 69,
+    "positive_yes": 10
    }
   },
   "useful": {
-   "n": 40,
-   "positives": 30,
+   "n": 159,
+   "positives": 76,
    "fitted": true,
-   "cost": 1.0,
-   "provisional_cost": 4.5,
+   "cost": 7.0,
+   "provisional_cost": 7.0,
    "counts": {
-    "positive_yes": 28,
-    "negative_no": 10,
-    "positive_uncertain": 2
+    "positive_yes": 70,
+    "negative_no": 76,
+    "negative_uncertain": 6,
+    "positive_uncertain": 6,
+    "negative_yes": 1
    }
   },
   "coverage": {
-   "n": 33,
-   "positives": 16,
+   "n": 83,
+   "positives": 48,
    "fitted": true,
-   "cost": 0,
-   "provisional_cost": 1,
+   "cost": 2,
+   "provisional_cost": 5,
    "counts": {
-    "positive_yes": 16,
-    "negative_no": 17
-   }
-  },
-  "conflict": {
-   "n": 40,
-   "positives": 3,
-   "fitted": true,
-   "cost": 0,
-   "provisional_cost": 1.0,
-   "counts": {
-    "negative_no": 37,
-    "positive_yes": 1,
+    "positive_yes": 46,
+    "negative_uncertain": 3,
+    "negative_no": 32,
     "positive_uncertain": 2
    }
   },
-  "redirect": {
-   "n": 40,
-   "positives": 3,
+  "conflict": {
+   "n": 159,
+   "positives": 8,
    "fitted": true,
-   "cost": 0,
-   "provisional_cost": 0.5,
+   "cost": 34.5,
+   "provisional_cost": 40.5,
    "counts": {
-    "negative_no": 37,
-    "positive_yes": 3
+    "negative_no": 102,
+    "negative_uncertain": 49,
+    "positive_uncertain": 6,
+    "positive_no": 2
+   }
+  },
+  "redirect": {
+   "n": 159,
+   "positives": 9,
+   "fitted": true,
+   "cost": 2.5,
+   "provisional_cost": 5.0,
+   "counts": {
+    "negative_no": 145,
+    "positive_yes": 9,
+    "negative_uncertain": 5
    }
   },
   "repair": {
-   "n": 10,
+   "n": 29,
    "fitted": true,
-   "cost": 2,
-   "provisional_cost": 2,
+   "cost": 5,
+   "provisional_cost": 6,
    "counts": {
-    "accepted_right": 8,
-    "deferred_wrong": 2
+    "accepted_right": 16,
+    "deferred_right": 8,
+    "deferred_wrong": 5
    }
   }
  },
  "costs": {
-  "requests": 64,
-  "input_tokens": 39986,
-  "output_tokens": 5900,
-  "elapsed_ms": 17325
+  "requests": 172,
+  "input_tokens": 126572,
+  "output_tokens": 19978,
+  "elapsed_ms": 39973
  },
- "fitted_at": "2026-09-27T05:22:12+00:00",
+ "fitted_at": "2026-09-27T15:11:36+00:00",
  "note": "Error rates on the calibration split only; not a calibration claim. The relation Choice (stage 7) and kinds without enough labels stay provisional. Stage 10 holds the held-out evaluation."
 }

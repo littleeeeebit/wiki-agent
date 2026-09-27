@@ -1,0 +1,536 @@
+{
+ "schema": "jev-action-fixtures/1",
+ "id": "actions",
+ "version": 1,
+ "frozen": "2026-09-27",
+ "description": "Stage 10's held-out fixtures for the three decision points this server owns. Each is what the owner would offer and what Jev would read, built by `main.decisions`' own functions from the fields here (`start_offer`/`start_state` from a spec; the registered checks as `check_offer` describes them; `fix_offer`), and labelled with the candidate a careful operator would pick. None of them is used to fit anything.",
+ "labels": {
+  "author": "model-drafted",
+  "reviewed_by": null,
+  "reviewed_at": null
+ },
+ "gate": "python -m pytest -q",
+ "fixtures": [
+  {
+   "id": "s01",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "s01",
+    "goal": "Rename the heading of docs/ports.md from 'Ports' to 'Network ports'",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "docs/ports.md's first line reads '# Network ports'"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "docs/ports.md:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out"
+  },
+  {
+   "id": "s02",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "s02",
+    "goal": "Fix the typo 'recieve' in src/upload.py's docstring",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/upload.py no longer contains 'recieve'"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/upload.py"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out"
+  },
+  {
+   "id": "s03",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "s03",
+    "goal": "Make the cache location follow the most recent recorded decision about it",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the cache path in the code matches the current decision"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out"
+  },
+  {
+   "id": "s04",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "s04",
+    "goal": "Apply the team's shared rule on logging tokens to src/client.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/client.py follows the rule"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/client.py"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out"
+  },
+  {
+   "id": "s05",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "s05",
+    "goal": "Make uploads faster",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out"
+  },
+  {
+   "id": "s06",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "s06",
+    "goal": "Improve the dashboard",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out"
+  },
+  {
+   "id": "s07",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "s07",
+    "goal": "Add a unit test for parse_port('8080') returning 8080 in tests/test_ports.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "tests/test_ports.py has a test for parse_port('8080')",
+     "the test passes"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/ports.py",
+      "tests/test_ports.py"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out"
+  },
+  {
+   "id": "s08",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "s08",
+    "goal": "Set the session lifetime in src/auth.py to whatever the latest decision says",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/auth.py's lifetime equals the latest recorded decision"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/auth.py"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out"
+  },
+  {
+   "id": "s09",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "s09",
+    "goal": "Bump the pinned requests version in requirements.txt from 2.31.0 to 2.32.3",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "requirements.txt pins requests==2.32.3"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "requirements.txt"
+     ],
+     "rules": [
+      "craft/pin-dependencies"
+     ]
+    },
+    "decisions": []
+   },
+   "split": "held_out"
+  },
+  {
+   "id": "s10",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "s10",
+    "goal": "Clean up the code",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out"
+  },
+  {
+   "id": "c01",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Link the escalation page from docs/alerts.md",
+   "criteria": [
+    "Link the escalation page from docs/alerts.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/"
+   },
+   "changed_files": [
+    "docs/alerts.md"
+   ],
+   "split": "held_out"
+  },
+  {
+   "id": "c02",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Handle an empty port list in src/ports.py",
+   "criteria": [
+    "Handle an empty port list in src/ports.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/"
+   },
+   "changed_files": [
+    "src/ports.py"
+   ],
+   "split": "held_out"
+  },
+  {
+   "id": "c03",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Rename a prop in web/src/Panel.tsx",
+   "criteria": [
+    "Rename a prop in web/src/Panel.tsx is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/"
+   },
+   "changed_files": [
+    "web/src/Panel.tsx"
+   ],
+   "split": "held_out"
+  },
+  {
+   "id": "c04",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Update the team calendar note",
+   "criteria": [
+    "Update the team calendar note is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/"
+   },
+   "changed_files": [
+    "notes/calendar.txt"
+   ],
+   "split": "held_out"
+  },
+  {
+   "id": "c05",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Move docs/limits.md to docs/reference/limits.md",
+   "criteria": [
+    "Move docs/limits.md to docs/reference/limits.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/"
+   },
+   "changed_files": [
+    "docs/limits.md",
+    "docs/reference/limits.md"
+   ],
+   "split": "held_out"
+  },
+  {
+   "id": "c06",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Add retries to src/uploader.py",
+   "criteria": [
+    "Add retries to src/uploader.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/"
+   },
+   "changed_files": [
+    "src/uploader.py",
+    "src/retry.py"
+   ],
+   "split": "held_out"
+  },
+  {
+   "id": "c07",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Change the logo image",
+   "criteria": [
+    "Change the logo image is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/"
+   },
+   "changed_files": [
+    "assets/logo.png"
+   ],
+   "split": "held_out"
+  },
+  {
+   "id": "c08",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Add a loading state to web/src/App.tsx",
+   "criteria": [
+    "Add a loading state to web/src/App.tsx is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/"
+   },
+   "changed_files": [
+    "web/src/App.tsx",
+    "web/src/app.css"
+   ],
+   "split": "held_out"
+  },
+  {
+   "id": "c09",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Edit the repository's .gitignore",
+   "criteria": [
+    "Edit the repository's .gitignore is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/"
+   },
+   "changed_files": [
+    ".gitignore"
+   ],
+   "split": "held_out"
+  },
+  {
+   "id": "c10",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Add a heading to docs/onboarding.md and link it from docs/index.md",
+   "criteria": [
+    "Add a heading to docs/onboarding.md and link it from docs/index.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/"
+   },
+   "changed_files": [
+    "docs/onboarding.md",
+    "docs/index.md"
+   ],
+   "split": "held_out"
+  },
+  {
+   "id": "f01",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/ports.py:2 - `range(n)` skips the last port; use `range(n + 1)`"
+   ],
+   "disputed": [],
+   "split": "held_out"
+  },
+  {
+   "id": "f02",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/cache.py:3 - the cache path is inside the checkout, which the recorded translation cache decision no longer allows"
+   ],
+   "disputed": [],
+   "split": "held_out"
+  },
+  {
+   "id": "f03",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/upload.py:14 - the variable `sz` should be named `size`"
+   ],
+   "disputed": [],
+   "split": "held_out"
+  },
+  {
+   "id": "f04",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/client.py:40 - the token is written to the log, which a shared rule forbids"
+   ],
+   "disputed": [],
+   "split": "held_out"
+  },
+  {
+   "id": "f05",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P2] src/auth.py:8 - the session lifetime does not match the current decision"
+   ],
+   "disputed": [
+    "[P2] src/auth.py:8 - the session lifetime does not match the current decision"
+   ],
+   "split": "held_out"
+  },
+  {
+   "id": "f06",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] tests/test_ports.py:12 - the assertion compares to 8081; the function returns 8080"
+   ],
+   "disputed": [],
+   "split": "held_out"
+  },
+  {
+   "id": "f07",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P3] docs/ports.md:3 - trailing whitespace at the end of the line"
+   ],
+   "disputed": [],
+   "split": "held_out"
+  },
+  {
+   "id": "f08",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] infra/deploy.yaml:5 - this change needs the review the recorded infra decision requires"
+   ],
+   "disputed": [],
+   "split": "held_out"
+  },
+  {
+   "id": "f09",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/retry.py:22 - `except Exception` swallows KeyboardInterrupt; catch `OSError`"
+   ],
+   "disputed": [],
+   "split": "held_out"
+  },
+  {
+   "id": "f10",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] requirements.txt:3 - `requests>=2` breaks the dependency rule this repository follows"
+   ],
+   "disputed": [
+    "[P1] requirements.txt:3 - `requests>=2` breaks the dependency rule this repository follows"
+   ],
+   "split": "held_out"
+  }
+ ]
+}

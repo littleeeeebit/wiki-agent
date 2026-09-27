@@ -222,7 +222,10 @@ function Save({ edited, busy, onSave }: { edited: boolean; busy: boolean; onSave
 const SOURCE: Record<Jev['mode_source'], string> = {
   app: '이 화면에서 정함', file: '.env 파일', environment: '환경 변수', legacy: '옛 설정 이름', default: '기본값',
 }
-const HEALTH: Record<Jev['health'], string> = { configured: '설정됨', disabled: '꺼짐', unavailable: '쓸 수 없음' }
+// The mode this screen saved, if it saved one: active even where a canary makes this checkout shadow,
+// so saving the form here never drops it.
+const saved = (j: Jev): JevMode | null => j.mode_source === 'app' ? (j.canary ? 'active' : j.mode) : null
+const HEALTH: Record<Jev['health'], string> ={ configured: '설정됨', disabled: '꺼짐', unavailable: '쓸 수 없음' }
 const PROBED: Record<Probe['health'], string> = { reachable: '응답함', auth_failed: '키가 거절됨', unavailable: '닿지 않음' }
 const MODES: { id: JevMode | null; label: string; note: string }[] = [
   { id: null, label: '파일 따름', note: '.env 의 모드를 쓴다' },
@@ -249,7 +252,7 @@ function JevPart() {
 
   const seed = (j: Jev) => {
     setJev(j)
-    setMode(j.mode_source === 'app' ? j.mode : null)
+    setMode(saved(j))
     setOff(j.disabled_sources)
     setLimits(j.limits)
   }
@@ -272,7 +275,7 @@ function JevPart() {
   if (!jev || !limits) {
     return <Part title="질문 (Jev)"><p className="text-faint">{fault || '읽는 중…'}</p></Part>
   }
-  const edited = mode !== (jev.mode_source === 'app' ? jev.mode : null)
+  const edited = mode !== saved(jev)
     || JSON.stringify([...off].sort()) !== JSON.stringify([...jev.disabled_sources].sort())
     || JSON.stringify(limits) !== JSON.stringify(jev.limits)
   return (
@@ -289,7 +292,8 @@ function JevPart() {
         </span>
       </Row>
       <fieldset className="space-y-1.5">
-        <legend className="mb-1">모드 <span className="text-[12.5px] text-faint">· 지금 {jev.mode} ({SOURCE[jev.mode_source]})</span></legend>
+        <legend className="mb-1">모드 <span className="text-[12.5px] text-faint">· 지금 {jev.mode} ({SOURCE[jev.mode_source]})
+          {jev.active_projects.length > 0 && ` · 켬은 지정한 체크아웃 ${jev.active_projects.length}곳에서만`}</span></legend>
         <div role="radiogroup" aria-label="Jev 모드" className="grid grid-cols-2 gap-1.5">
           {MODES.map((m) => (
             <label key={m.label} className={`flex min-h-9 cursor-pointer items-start gap-2 rounded-md border px-2 py-1.5 ${

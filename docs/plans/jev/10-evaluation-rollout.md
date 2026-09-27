@@ -153,13 +153,149 @@ Move the series to `docs/plans/done/jev/` only when every mandatory gate is met,
 then repair relative links and verify plan discovery. If capability is implemented
 but quality remains inconclusive, leave this stage open.
 
+## Reproduction
+
+Frozen inputs, committed:
+
+| Artifact | What it holds |
+| --- | --- |
+| `eval/jev/intents.json` | `jev-intents/1` v1, frozen 2026-09-27: 120 intents × English and Korean (240 variants), 10 categories × 6 calibration + 6 held-out (split by the SHA-256 of the intent id), exclusions none, the synthetic corpus inline (95 pages and 11 papers). Labels: evidence groups with alternatives, `bridged` group, answer parts with references, forbidden assertions, abstention, direct |
+| `eval/jev/actions.json` | `jev-action-fixtures/1` v1: 30 held-out fixtures, 10 each for `work.start`, `specs.check`, `loop.fix` |
+| `eval/jev/gates.json` | `jev-gates/1` v1: the release targets above as machine-read rules, frozen before any held-out run |
+| `eval/jev/calibration.json` | Stage 6's split, now v2: 89 cases derived from the calibration intents alone (`tool/eval/dataset.py --calibration`), replacing the 35 synthetic ones |
+| `eval/jev/policy.json` | Refit on it (below); the stage 6 fit stays in git history |
+
+Commands, in order. `tool/eval/compare.py` refuses different options for an
+existing run directory, resumes where a batch stopped, and stops every batch at
+60 minutes, USD 10 of host spend, or `--jev-tokens` (Jev's price is unknown).
+
+```powershell
+python tool/eval/dataset.py --check
+python tool/eval/dataset.py --calibration
+python tool/eval/policy.py --collect
+python tool/eval/compare.py raw/eval/jev/compare-heldout --estimate
+python tool/eval/compare.py raw/eval/jev/compare-heldout                      # four arms, retrieval level
+python tool/eval/compare.py raw/eval/jev/compare-heldout-answers --level answer  # repeat until no row is left
+python tool/eval/compare.py raw/eval/jev/compare-heldout-repeat --ids <stratified subset> --arms B D --repeat 3
+python tool/eval/compare.py raw/eval/jev/fixed-heldout --experiment fixed
+python tool/eval/compare.py raw/eval/jev/actions-heldout --experiment actions
+python tool/eval/report.py raw/eval/jev/compare-heldout raw/eval/jev/fixed-heldout raw/eval/jev/actions-heldout --out raw/eval/jev/report-heldout.json
+python tool/eval/rollout.py rehearse
+python tool/jev_search.py --replay <tape>                                     # deterministic replay, stage 6
+```
+
+`tool/eval/rollout.py canary <checkout>` limits active mode to named checkouts
+(`active_projects` in `raw/jev/settings.json`; every other checkout, and a
+question with no project, runs shadow). `off` turns Jev off, `follow` drops the
+saved mode and the canary. None of them touches documents, indexes, traces or
+the policy; a run in flight keeps its settings.
+
+## Measured so far
+
+Nothing below is a held-out result, and every label is still model-drafted:
+`labels.reviewed_by` is empty in both fixture files. On 2026-09-27 the user
+chose to refit on the calibration intents now and run the held-out comparison
+after reviewing the labels.
+
+Calibration refit, 2026-09-27. `policy.py --collect` over the 89 derived cases:
+172 Jev requests, 126,572 input and 19,978 output tokens, 40 s, model
+`jev-1.13.0`, prompt `afa145931e76393e`, normalization `original_english`.
+
+| Kind | Stage 6 rule (no / yes) | Refit | Labels (n, positives) |
+| --- | --- | --- | --- |
+| route | 0.4 / 0.8 | 0.25 / 0.8 | 89, 83 |
+| source | 0.35 / 0.8 | 0.4 / 0.85 | 192, 48 |
+| useful | 0.2 / 0.65 | 0.2 / 0.8 | 159, 76 |
+| coverage | 0.2 / 0.6 | 0.2 / 0.65 | 83, 48 |
+| conflict | 0.4 / 0.8 | 0.05 / 0.8 | 159, 8 |
+| redirect | 0.25 / 0.8 | 0.3 / 0.8 | 159, 9 |
+| repair (confidence / margin) | 0.6 / 0.2 | 0.5 / 0.2 | 29 cases |
+
+Most source positives land in the uncertain band (38 of 48), which the workflow
+searches anyway: coverage over precision. Conflict has only 8 positives, none
+answered yes; 49 of 151 negatives and 6 positives fall in its uncertain band,
+so this rule rests on too few positives to trust.
+The relation, answers and faithful Choices keep stage 7's fit: replacing their
+splits needs drafted claims from calibration answers, which need host spend
+this session did not use.
+
+Calibration-split comparison, 2026-09-27 (`raw/eval/jev/compare-calibration`,
+`fixed-calibration`, `report-calibration.json`; four arms, hybrid, cold, retrieval
+level, 60 intents × 2 languages). In-sample: the policy above was fit on these
+intents, so this is a development check of the harness and the direction, not
+evidence for a gate. 554 Jev requests, 1,196,607 Jev tokens, 4.5 minutes, no
+host turn.
+
+| Arm | Recall@8 (96) | Candidate recall | Bridge recall (12) | English − Korean | p95 s | Jev tokens |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 0.906 [0.844, 0.958] | 0.906 | 0.583 [0.375, 0.792] | +0.104 [0.031, 0.188] | 0.07 | 0 |
+| B | 0.948 [0.901, 0.984] | 0.948 | 0.708 [0.542, 0.875] | +0.021 [−0.021, 0.073] | 2.64 | 459,298 |
+| C | 0.906 [0.844, 0.958] | 0.938 | 0.583 [0.375, 0.792] | +0.104 [0.031, 0.188] | 0.06 | 0 |
+| D | 0.984 [0.958, 1.0] | 0.984 | 1.0 [1.0, 1.0] | +0.031 [0.0, 0.083] | 1.71 | 532,604 |
+
+D − A: recall +0.078 [0.031, 0.135], bridge recall +0.417 [0.208, 0.625]; D − B
+bridge recall +0.292 [0.125, 0.458]. In B and D: no Jev fallback, no route
+false exclusion, no false rejection, premature sufficiency 1 of 96 in B and 0
+in D, direct answers 10 of 12 where labelled direct and none where evidence
+was needed. Integrity errors and Budget breaches 0 in every arm. Fixed
+candidates (54 requests over arm C's candidates at k = 12): false rejection 0
+of 60 supporting passages (4 uncertain), false acceptance 0.0085 of 588
+(22 uncertain), recall@4 RRF 0.958 against Jev's order 0.969, all 51
+adversarial pages flagged for redirect and none of the other 597. Read against
+the frozen gates, as a preview only: graph benefit and overall recall above target, language
+parity 0.031 under 0.05, added latency 1.6 s; answer support and decision
+quality unmeasured (host spend, held-out fixtures).
+
+Free held-out retrieval, 2026-09-27 (`raw/eval/jev/compare-heldout-free`, arms A
+and C, hybrid e5 + BM25, no request sent). This run was started before the
+sequencing decision above; it tunes nothing and is recorded as it came. Recall@8
+of supporting-evidence groups: A 0.912 [0.854, 0.964], C 0.912 (96 evidence
+variants); bridge recall 0.625 for both (12). Candidate recall, counting what
+was retrieved but past k: A 0.912, C 0.948. English minus Korean recall: +0.094
+[0.010, 0.177] in both arms.
+
+Finding for stage 5. Without Jev, the graph lane's passages reach the dossier
+but are cut past k: `Flow.ranked` puts ungraded chunks in retrieval order, RRF
+seeds fill k, and the walked passages land in `limits.beyond_k`. The rota page
+of `bridge-01` is one. So C hands the answer exactly what A does; the graph can
+only change an answer where Jev grades it forward (B→D). Left as measured: the
+held-out comparison decides whether D meets the graph-benefit gate, and a change
+to ranking would be a new evaluation.
+
+Rollback rehearsal, 2026-09-27 (`python tool/eval/rollout.py rehearse`, also
+`tool/test_evaluation.py`): 21 of 21 checks. Canary active in its checkout and
+shadow elsewhere and for the hub; an outage (Jev's host pointed at a closed local
+port) ended `unavailable` with reason `network` while baseline retrieval still
+found the page; switching off mid-run left the run on its active snapshot and
+new work off with nothing asked; `follow` returned to the `.env`'s shadow; the
+checkout's HEAD, status and files, the worktree and its HEAD, the memory, the
+pending approval (recorded, never executed) and the run history came through
+unchanged.
+
+Limits of what is above. In arms B and D a Korean wording goes through the
+product's translator before Jev sees it, as it does in the app; those short
+calls are not counted in `host_turns` or USD, and they are the one spend
+outside "Jev requests only". The stage 7 relation fit is kept, not refit
+(host spend). Window checks for this stage were not run.
+
+Left before completion, in order:
+
+1. A person reviews the labels in `eval/jev/intents.json` and
+   `eval/jev/actions.json`, fixes any, and sets `labels.reviewed_by` and
+   `labels.reviewed_at` in both. A label changed after that is a new version.
+2. The held-out four arms, retrieval and answer level, the repetition subset,
+   the fixed and the action experiments (commands above), then
+   `report.py` over them. Answer level needs host spend under the ceiling.
+3. Every gate `pass`, then `rollout.py canary <this checkout>`; `.env` stays
+   `WIKI_JEV_MODE=shadow` until the canary has run without a rollback.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | Not started |
-| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | Not started |
-| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | Not started |
-| 4 | Product | App/CLI parity, window checks, operational failures | Not started |
-| 5 | Rollout | Shadow, active canary, rollback rehearsal | Not started |
+| 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | In progress — `eval/jev/intents.json` and `actions.json` frozen with corpus hashes and splits; labels await a person's review |
+| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; calibration-split runs only; held-out waits on step 1 |
+| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; no held-out numbers yet |
+| 4 | Product | App/CLI parity, window checks, operational failures | In progress — the canary in settings, the API and the window's mode line; window checks not run this stage |
+| 5 | Rollout | Shadow, active canary, rollback rehearsal | In progress — canary, off and follow commands; rehearsal passed; active canary waits for the gates |
 | 6 | Completion | Reproduction report, all gates, plan archival | Not started |

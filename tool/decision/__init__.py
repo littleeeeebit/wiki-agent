@@ -13,9 +13,10 @@ every call, so a changed key reaches a long-running server on its next
 request, and the key is never copied into the process environment. What
 leaves this module about the key is whether it exists and where it came from.
 The app's settings (`save`, stage 9) sit beside it in `raw/jev/settings.json`:
-a mode over the file's, the source families a question may search, and a
-question's limits. Both are read into one `Config`, which a run keeps to its
-end. The app never writes the key.
+a mode over the file's, the source families a question may search, a
+question's limits, and (stage 10) the checkouts active mode is limited to.
+Both are read into one `Config`, which a run keeps to its end. The app never
+writes the key.
 
 `__all__` is the contract, held by `lint.pipeline_surface`.
 """
@@ -96,6 +97,8 @@ class Config:
     mode_source: str = "default"   # app, file, environment, legacy (`WIKI_JEV=on`), default
     disabled: tuple[str, ...] = ()
     limits: dict = field(default_factory=lambda: dict(QUESTION))
+    active_projects: tuple[str, ...] = ()   # empty: active mode is active everywhere
+    canary: bool = False   # active where it came from, shadow here: this checkout is not in `active_projects`
 
     def status(self) -> dict:
         """What may be shown or logged: no part of the key."""
@@ -106,15 +109,19 @@ class Config:
         return {"mode": self.mode, "model": self.model, "key": bool(self.key),
                 "key_source": self.key_source, "health": health, "problem": self.problem,
                 "file": env_file().name, "mode_source": self.mode_source,
-                "disabled_sources": list(self.disabled), "limits": dict(self.limits)}
+                "disabled_sources": list(self.disabled), "limits": dict(self.limits),
+                "active_projects": list(self.active_projects), "canary": self.canary}
 
 
 def checked_settings(data: object) -> dict:
     """The app's settings, validated; `ValueError` names what is wrong."""
 
-    if not isinstance(data, dict) or not set(data) <= {"mode", "disabled_sources", "limits"}:
-        raise ValueError("settings are mode, disabled_sources and limits")
+    if not isinstance(data, dict) or not set(data) <= {"mode", "disabled_sources", "limits", "active_projects"}:
+        raise ValueError("settings are mode, disabled_sources, limits and active_projects")
     mode, disabled, limits = data.get("mode"), data.get("disabled_sources") or [], data.get("limits") or {}
+    canary = data.get("active_projects") or []
+    if not isinstance(canary, list) or not all(isinstance(p, str) and Path(p).is_absolute() for p in canary):
+        raise ValueError("active_projects are absolute checkout paths")
     if mode is not None and mode not in MODES:
         raise ValueError(f"mode is one of {', '.join(MODES)}, or none to follow {env_file().name}")
     if not isinstance(disabled, list) or not all(f in FAMILIES for f in disabled):
@@ -129,16 +136,27 @@ def checked_settings(data: object) -> dict:
         if type(value) not in (int, float) or not low <= value <= high or (type(low) is int and value % 1):
             raise ValueError(f"{name} is between {low} and {high}")
         out[name] = type(low)(value)
-    return {"mode": mode, "disabled_sources": sorted(set(disabled)), "limits": out}
+    return {"mode": mode, "disabled_sources": sorted(set(disabled)), "limits": out,
+            "active_projects": sorted({canonical(p) for p in canary})}
+
+
+def canonical(project: str | Path) -> str:
+    """A checkout as the canary list names it: resolved, and on Windows one case."""
+
+    path = Path(project).resolve().as_posix()
+    return path.casefold() if os.name == "nt" else path
 
 
 def save(data: dict) -> Config:
     """Write the app's settings — `mode` none leaves the mode to the file —
     and return the snapshot they make. A new run reads them; a run in flight
-    keeps the snapshot it started with."""
+    keeps the snapshot it started with. `active_projects` left out keeps the
+    list already saved: the window's settings form does not carry it."""
 
-    checked = checked_settings(data)
     path = settings_file()
+    if "active_projects" not in data and path.exists():
+        data = {**data, "active_projects": json.loads(path.read_text(encoding="utf-8")).get("active_projects", [])}
+    checked = checked_settings(data)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(json.dumps(checked, indent=1) + "\n", encoding="utf-8")
@@ -146,9 +164,12 @@ def save(data: dict) -> Config:
     return config()
 
 
-def config() -> Config:
-    """The current settings. Precedence per name: file entry, environment, default;
-    the mode the app saved (`save`) over all three.
+def config(project: str | Path | None = None) -> Config:
+    """The current settings for a question or choice in `project`. Precedence
+    per name: file entry, environment, default; the mode the app saved
+    (`save`) over all three. Active mode with `active_projects` saved is a
+    canary (stage 10): active only in those checkouts, shadow in every other
+    and wherever the project is not known.
 
     `WIKI_JEV_MODE` is off, shadow or active. Unset or empty, the older
     `WIKI_JEV=on` still means active; otherwise shadow with a key, off without.
@@ -180,8 +201,12 @@ def config() -> Config:
         return Config("off", model, key_source, "unreadable_settings", key, "app")
     if saved["mode"] and not problem:
         mode, mode_source = saved["mode"], "app"
-    return Config(mode, model, key_source, problem, key, mode_source, tuple(saved["disabled_sources"]),
-                  {**QUESTION, **saved["limits"]})
+    # `mode_source` still says where active came from: a form seeded from it keeps the saved mode.
+    canary = mode == "active" and bool(saved["active_projects"]) and (
+        project is None or canonical(project) not in saved["active_projects"])
+    return Config("shadow" if canary else mode, model, key_source, problem, key, mode_source,
+                  tuple(saved["disabled_sources"]), {**QUESTION, **saved["limits"]}, tuple(saved["active_projects"]),
+                  canary)
 
 
 def noul(text: str) -> dict:

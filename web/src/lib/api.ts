@@ -349,6 +349,10 @@ export type Jev = {
   file: string
   disabled_sources: string[]
   limits: JevLimits
+  /** Checkouts active mode is limited to; empty: every checkout. */
+  active_projects: string[]
+  /** Active where the mode came from, shadow here: this checkout is not among `active_projects`. */
+  canary: boolean
 }
 export type Probe = { health: 'reachable' | 'auth_failed' | 'unavailable'; category: string; expected: boolean | null;
   elapsed_ms?: number | null }
