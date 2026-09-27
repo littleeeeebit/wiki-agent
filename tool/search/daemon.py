@@ -910,15 +910,17 @@ class Index:
         postings and the matrix rather than changing them, so a shallow copy
         keeps one loaded set of chunks. The graph is the other half: `update`
         rewrites rows inside the same generation, so the copy walks a
-        `knowledge_graph.Frozen` read now, kept until the graph changes. The
-        matrix is stacked here, once, not per copy."""
+        `knowledge_graph.Frozen` read now, kept until the graph changes. A
+        graph built from other chunks than these — another index of the same
+        store refreshed in between — is not walked: `graph` is `None` until
+        the next refresh. The matrix is stacked here, once, not per copy."""
 
         if self.chunks and self.complete():
             self.vectors()
         if self.frozen is None or self.frozen.key != knowledge_graph.state(self.store):
             self.frozen = knowledge_graph.Frozen(self.store)
         snap = copy.copy(self)
-        snap.graph = self.frozen
+        snap.graph = self.frozen if self.frozen.built == self.loaded else None
         return snap
 
     def vectors(self) -> tuple[list[int], object]:

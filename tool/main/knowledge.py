@@ -287,8 +287,11 @@ def add_url(project: str | Path | None, url: str, seconds: float = providers.SEC
 
 
 def add_papers(project: str | Path | None, query: str | None = None, ids: list[str] | None = None, n: int = 5,
-               full: bool = False, cfg: decision.Config | None = None) -> dict:
-    """arXiv papers into `project`: a search, or identifiers.
+               full: bool = False, cfg: decision.Config | None = None, budget: Budget | None = None) -> dict:
+    """arXiv papers into `project`: a search, or identifiers. Inside a run,
+    `budget` is the run's: grading spends from it, and once it is spent or
+    cancelled no further paper is written — a caller that stopped waiting
+    finds nothing arriving after it.
 
     Each paper's abstract is read and indexed as `abstract_only`; with `full`,
     its PDF too, and only a successful extraction makes it `full_text`. With
@@ -305,11 +308,13 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
         asked = english([query], QUERY_SECONDS)[0]
         query = asked["text"] if asked["status"] in ("original_english", "translated") else query
     entries = providers.arxiv(query, ids, n)
-    grades, trace = grade_papers(query, entries, cfg) if query else ({}, [])
+    grades, trace = grade_papers(query, entries, cfg, budget) if query else ({}, [])
     acting = cfg.mode == "active"
     out = []
     with records(project) as store:
         for i, entry in enumerate(entries):
+            if budget is not None and (budget.cancel.is_set() or budget.left() <= 0):
+                break
             origin = f"arxiv:{entry['arxiv_id']}"
             record = store.get(sources.new(root, "paper", origin)["source_id"])
             if unwanted(record):
@@ -340,9 +345,11 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
             "papers": [sources.brief(r) | {"relevance": r["relevance"], "error": r["error"]} for r in out]}
 
 
-def grade_papers(query: str, entries: list[dict], cfg: decision.Config) -> tuple[dict[int, float], list]:
+def grade_papers(query: str, entries: list[dict], cfg: decision.Config,
+                 budget: Budget | None = None) -> tuple[dict[int, float], list]:
     """Jev's relevance of each abstract to the query, to decide what to read.
-    `{}` when Jev is off or fails: every paper is then read."""
+    `{}` when Jev is off or fails: every paper is then read. `budget` is the
+    run's, when there is one; alone, a question's allowance of its own."""
 
     trace: list[dict] = []
     if cfg.mode == "off" or not entries:
@@ -353,7 +360,7 @@ def grade_papers(query: str, entries: list[dict], cfg: decision.Config) -> tuple
                                        "including a partial answer or a contradiction? Topic overlap alone is "
                                        "insufficient.") for i in range(len(entries))}
     try:
-        got = decision.evaluate(cfg, state, questions, trace, Budget(**QUESTION), "papers")
+        got = decision.evaluate(cfg, state, questions, trace, budget or Budget(**QUESTION), "papers")
     except Exception as error:  # noqa: BLE001 — no grade is no ranking, never a rejection
         trace.append({"fallback": type(error).__name__, "reason": getattr(error, "category", "")})
         return {}, trace
@@ -985,7 +992,7 @@ def repair(req: dict, result: dict, need: str, project: str | Path | None, *, bu
         if not external:
             return {"note": {"need": need, "skipped": "external_not_allowed"}, "requests": [], "results": []}
         note["fetched"] = bounded(lambda: add_papers(project, req["query_en"] or req["query_original"],
-                                                     n=REPAIR_PAPERS, cfg=cfg), budget)
+                                                     n=REPAIR_PAPERS, cfg=cfg, budget=budget), budget)
     requests, made = retrieval.repair(req, result, need, sources=available(root), subqueries=proposals,
                                       chunk_ids=list(chunk_ids), entities=entities)
     return {"note": {**made, **note}, "requests": requests,

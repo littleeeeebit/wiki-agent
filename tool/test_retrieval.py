@@ -514,3 +514,73 @@ def test_a_cold_round_is_one_at_a_time_and_ends_with_the_budget(world, monkeypat
     assert knowledge.run_round(req, repo, Budget(seconds=0.5, calls=1, candidates=40)) is None
     assert time.monotonic() - started < 2
     release.set()
+
+
+# ---- round 2 review -------------------------------------------------------------------
+
+def test_a_snapshot_walks_no_graph_another_index_rebuilt_from_other_chunks(world):
+    hub, repo = world
+    owners = repo / "docs/owners.md"
+    owners.write_text("# Owners\n\nThe ingest pipeline is owned by the Atlas team.\n", encoding="utf-8")
+    mine, other = index_of(hub, repo), index_of(hub, repo)
+    # Another index of the same store adds the link and rebuilds the graph of the same generation.
+    owners.write_text("# Owners\n\nThe ingest pipeline is owned by [the Atlas team](atlas.md).\n", encoding="utf-8")
+    stamp = owners.stat().st_mtime_ns + 10**9
+    os.utime(owners, ns=(stamp, stamp))
+    other.refresh()
+    assert mine.generation() == other.generation()
+    req = retrieval.request(evidence.repo_id(repo), QUESTION, sources=["documents"])
+    # Its chunks hold no link, so no walk may follow one: no graph rather than a mixed one.
+    stale = retrieval.run(mine.snapshot(), req)
+    assert texts(stale, "graph") == [] and "graph_stale" in stale["truncated"]
+    mine.refresh()
+    fresh = retrieval.run(mine.snapshot(), req)
+    assert ANSWER in "".join(texts(fresh, "graph")) and "graph_stale" not in fresh["truncated"]
+    mine.close()
+    other.close()
+
+
+def test_the_allowance_counts_candidates_not_the_ids_of_their_identical_twins(world):
+    hub, repo = world
+    (repo / "docs/c.md").write_text((repo / "docs/a.md").read_text(encoding="utf-8"), encoding="utf-8")
+    index = index_of(hub, repo)
+    req = retrieval.request(evidence.repo_id(repo), "circular alpha", sources=["documents"], limit=1,
+                            max_candidates=2, graph=None)
+    first = retrieval.run(index.snapshot(), req)
+    assert len(first["chunks"]) == 1 and first["chunks"][0]["duplicates"] and first["spent"] == 1
+    subs, note = retrieval.repair(req, first, "subqueries", subqueries=["circular beta"])
+    assert note["rejected"] == [] and [s["max_candidates"] - s["spent"] for s in subs] == [1]
+    assert len(retrieval.run(index.snapshot(), subs[0])["chunks"]) == 1
+    index.close()
+
+
+def test_an_external_repair_writes_no_paper_once_the_budget_is_spent(world, monkeypatch):
+    hub, repo = world
+    from common.budget import Budget
+    from search import providers
+
+    entry = {"arxiv_id": "2401.00001", "version": "v1", "title": "Rotas", "authors": ["A"],
+             "published": "2024-01-01", "summary": "On-call rotas.", "abs_url": "https://arxiv.org/abs/2401.00001v1",
+             "pdf_url": "https://arxiv.org/pdf/2401.00001v1"}
+    done = threading.Event()
+
+    def arxiv(query=None, ids=None, n=5, seconds=0):
+        time.sleep(0.6)
+        return [entry]
+
+    monkeypatch.setattr(providers, "arxiv", arxiv)
+    graded = []
+    monkeypatch.setattr(decision, "evaluate", lambda cfg, state, questions, trace, budget, name:
+                        graded.append(budget) or {})
+    real = knowledge.add_papers
+    monkeypatch.setattr(knowledge, "add_papers", lambda *a, **k: [real(*a, **k), done.set()][0])
+    budget = Budget(seconds=0.3, calls=6, candidates=40)
+    req = retrieval.request(evidence.repo_id(repo), QUESTION, graph=None)
+    out = knowledge.repair(req, {"seen_chunk_ids": [], "spent": 0, "generation": None, "chunks": [], "paths": []},
+                           "external", repo, budget=budget, cfg=ACTIVE, external=True)
+    assert out["note"]["fetched"] is None
+    assert done.wait(5)
+    # Grading spent from the run's allowance, not a fresh one of its own.
+    assert graded == [budget]
+    with knowledge.records(repo) as store:
+        assert store.all() == []

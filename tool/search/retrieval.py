@@ -107,14 +107,16 @@ def normal(text: str) -> str:
 def request(repo_id: str, query: str, *, query_en: str | None = None,
             sources: list[str] | tuple[str, ...] = ("hub", "documents", "memory"), filters: dict | None = None,
             generation: int | None = None, limit: int = 8, seconds: float = 15.0, graph: dict | None = GRAPH,
-            max_candidates: int = MAX_CANDIDATES, seen: list[str] = (), graph_seeds: list[str] = (),
-            context_of: list[str] = ()) -> dict:
-    """A RetrievalRequest for round 1. `graph=None` switches the graph lane off."""
+            max_candidates: int = MAX_CANDIDATES, seen: list[str] = (), spent: int | None = None,
+            graph_seeds: list[str] = (), context_of: list[str] = ()) -> dict:
+    """A RetrievalRequest for round 1. `graph=None` switches the graph lane off.
+    `spent` is how many candidates `seen` already cost: one per id unless said."""
 
     return {"schema_version": REQUEST, "repo_id": repo_id, "query_original": query, "query_en": query_en,
             "source_allowlist": list(sources), "filters": dict(filters or {}), "generation": generation,
             "limit": limit, "deadline": time.time() + seconds, "graph_budget": dict(graph) if graph else None,
-            "max_candidates": max_candidates, "seen_chunk_ids": list(seen), "round": 1,
+            "max_candidates": max_candidates, "seen_chunk_ids": list(seen),
+            "spent": len(seen) if spent is None else spent, "round": 1,
             "graph_seeds": list(graph_seeds), "context_of": list(context_of)}
 
 
@@ -170,6 +172,10 @@ def problems(req: object) -> list[str]:
         ids = req.get(name)
         if not isinstance(ids, list) or not all(evidence.ID.match(str(i)) for i in ids):
             found.append(f"{name} are not sha256 ids")
+    # Candidates earlier rounds returned; an identical twin's id is seen but costs nothing.
+    spent, seen = req.get("spent"), req.get("seen_chunk_ids")
+    if type(spent) is not int or not 0 <= spent <= (len(seen) if isinstance(seen, list) else 0):
+        found.append("spent")
     if type(req.get("round")) is not int or not 1 <= req["round"] <= MAX_ROUNDS:
         found.append("round")
     return found
@@ -264,7 +270,7 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
 
     budget = req["graph_budget"]
     # What earlier rounds left of the question's allowance; every lane of this one spends from it.
-    allowance = req["max_candidates"] - len(seen)
+    allowance = req["max_candidates"] - req["spent"]
     slots = max(0, min(req["limit"], allowance))
     names = req["source_allowlist"]
     groups = {name: [i for i in ranked if family(chunks[i]) == name] for name in names}
@@ -283,14 +289,17 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
     truncated: list[str] = ["candidates"] if req["limit"] and slots < req["limit"] else []
     taken = set(selected)
     walk = dict(index=index, req=req, repos=repos, seen=seen, relevance=relevance, paths=paths, cancel=cancel)
+    # The snapshot's graph was built from other chunks than its own: nothing is walked.
+    if index.graph is None and (req["context_of"] or budget):
+        truncated.append("graph_stale")
     context = {}
-    if req["context_of"]:
+    if req["context_of"] and index.graph is not None:
         context, cut = expand(**walk, starts=req["context_of"], kinds=("next_chunk",), hops=1, fanout=CONTEXT,
                               room=allowance - len(taken), taken=taken, lane="context")
         truncated += cut
         taken |= set(context)
     found = {}
-    if budget:
+    if budget and index.graph is not None:
         seeds = [chunks[i]["chunk_id"] for i in selected[:budget["seeds"]]] + req["graph_seeds"]
         found, cut = expand(**walk, starts=seeds, kinds=tuple(PRIORITY), hops=budget["hops"],
                             fanout=budget["fanout"], room=allowance - len(taken), taken=taken, lane="graph")
@@ -339,6 +348,7 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
             "coverage": coverage, "missing_sources": [name for name in names if not groups[name]],
             "truncated": sorted(set(truncated)), "seen_chunk_ids": list(dict.fromkeys([*req["seen_chunk_ids"],
                                                                                        *returned])),
+            "spent": req["spent"] + len(out),
             "elapsed_ms": round((time.monotonic() - started) * 1000, 2)}
 
 
@@ -536,7 +546,7 @@ def repair(req: dict, result: dict, need: str, *, sources: list[str] = (), subqu
     if req["round"] >= MAX_ROUNDS:
         raise Exhausted("rounds")
     base = {**req, "round": req["round"] + 1, "seen_chunk_ids": list(result["seen_chunk_ids"]),
-            "generation": result["generation"], "graph_seeds": [], "context_of": []}
+            "spent": result["spent"], "generation": result["generation"], "graph_seeds": [], "context_of": []}
     note: dict = {"need": need, "round": base["round"]}
     if need == "sources":
         rest = [s for s in dict.fromkeys(sources) if s in SOURCE_NAMES and s not in req["source_allowlist"]]
@@ -559,11 +569,11 @@ def repair(req: dict, result: dict, need: str, *, sources: list[str] = (), subqu
     kept, rejected = checked_subqueries(req["query_en"] or req["query_original"], list(subqueries))
     # Sibling rounds share what is left of the allowance, split between
     # them: each would otherwise spend all of it, since none sees the others.
-    left = req["max_candidates"] - len(base["seen_chunk_ids"])
+    left = req["max_candidates"] - base["spent"]
     rejected += [{"subquery": q, "reason": "no_allowance"} for q in kept[max(0, left):]]
     kept = kept[:max(0, left)]
     note |= {"subqueries": kept, "rejected": rejected}
     share = max(1, req["limit"] // max(1, len(kept)))
     room = left // max(1, len(kept))
     return [{**base, "query_original": q, "query_en": None, "limit": min(share, room),
-             "max_candidates": len(base["seen_chunk_ids"]) + room} for q in kept], note
+             "max_candidates": base["spent"] + room} for q in kept], note

@@ -763,7 +763,9 @@ class Frozen:
     read transaction — for a retrieval that must walk the graph as it stood
     when its chunks were loaded, whatever `update` rewrites in that same
     generation meanwhile. `nodes` and `edges` answer as `Graph`'s do, without
-    spans, which a walk never reads. `key` is the `state` it was read at."""
+    spans, which a walk never reads. `key` is the `state` it was read at;
+    `built` the store and records versions of the chunks `update` last built
+    it from — another index of the same store may have built it from others."""
 
     def __init__(self, store):
         with store.lock:
@@ -772,6 +774,8 @@ class Frozen:
                 gen = store.reading()
                 self.key = (gen, meta(store.db, "version"), meta(store.db, "graph"), meta(store.db, "graph_serial"))
                 self.gen = gen
+                built = json.loads(self.key[2]) if self.key[2] else None
+                self.built = f"{built[1]}/{built[2].split('|')[0]}" if built else None
                 self._nodes = {row[0]: {"node_id": row[0], "repo_id": row[1], "kind": row[2], "source_id": row[3],
                                         "label": row[4], "type": row[5]} for row in store.db.execute(
                     "SELECT node_id, repo_id, kind, source_id, label, type FROM nodes WHERE gen = ?", (gen,))}
