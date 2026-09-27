@@ -436,10 +436,19 @@ def switch(project: str | Path | None, source: str, enabled: bool) -> dict:
 
 
 def forget(project: str | Path | None, source: str) -> bool:
-    """Remove a source record and the snapshots only it held."""
+    """Remove a source record, the snapshots only it held, and the cached
+    graph extractions that quote it."""
 
     with records(project) as store:
-        return store.delete(find(store, source)["source_id"])
+        source_id = find(store, source)["source_id"]
+        if not store.delete(source_id):
+            return False
+    store = evidence_store(project)
+    try:
+        knowledge_graph.forget(store, source_id)
+    finally:
+        store.close()
+    return True
 
 
 def catalog(project: str | Path | None) -> dict:
@@ -710,6 +719,8 @@ def extract_graph(project: str | Path | None, limit: int = 40, seconds: float = 
     the graph's check (`knowledge_graph.verify`).
     """
 
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
     cfg = cfg or decision.config()
     proposer = proposer or propose
     repo = knowledge_graph.evidence.repo_id(root_of(project))

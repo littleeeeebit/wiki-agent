@@ -394,6 +394,21 @@ def test_a_disabled_source_is_neither_searched_nor_fetched_and_removal_takes_its
     index.close()
 
 
+def test_forgetting_a_source_takes_its_cached_extractions_too(repo, monkeypatch):
+    hub, path = repo
+    url = "https://example.com/c.txt"
+    monkeypatch.setattr(providers, "fetch", fake_fetch({url: ("text/plain", b"Zeta uses eta.")}))
+    record = knowledge.add_url(path, url)
+    index = index_of(hub, path)
+    chunk = next(c for c in index.chunks if c.get("record"))
+    key = (chunk["source_id"], search.knowledge_graph.digest(chunk["text"]))
+    result = {"entities": [{"name": "Zeta", "type": "concept", "quote": "Zeta uses eta."}], "relations": []}
+    assert search.knowledge_graph.keep(index.store, [(*key, "v", result)], {key}) == 1
+    assert knowledge.forget(path, record["source_id"])
+    assert search.knowledge_graph.cached(index.store, "v") == {}
+    index.close()
+
+
 def papers_fixture(monkeypatch, entries=None):
     entries = entries or providers.feed(FEED)
     monkeypatch.setattr(providers, "arxiv", lambda query=None, ids=None, n=5, seconds=0: entries[:n])

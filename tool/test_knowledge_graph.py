@@ -638,6 +638,17 @@ def test_a_verdict_on_english_that_changed_since_is_withdrawn_even_when_it_canno
     index.close()
 
 
+def test_a_limit_below_one_is_refused_before_anything_runs(world):
+    import relations
+
+    _hub, repo = world
+    with pytest.raises(ValueError):
+        knowledge.extract_graph(repo, limit=0, cfg=OFF, proposer=proposer([]))
+    with pytest.raises(SystemExit) as exit_:
+        relations.main(["--project", str(repo), "extract", "--limit", "0"])
+    assert exit_.value.code == 2
+
+
 def test_two_sections_of_one_source_with_the_same_text_both_get_their_edges():
     a, b = chunk_("Uses `Alpha`.", 1), chunk_("Uses `Alpha`.", 5)
     result = {"entities": [{"name": "Alpha", "type": "module", "quote": "`Alpha`"}], "relations": [], "versions": "v"}

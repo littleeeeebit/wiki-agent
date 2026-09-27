@@ -616,6 +616,14 @@ def keep(store, rows: list[tuple[str, str, str, dict]], external: set[tuple[str,
     return len(kept)
 
 
+def forget(store, source: str) -> None:
+    """Remove every cached extraction of an external source that is gone:
+    they quote its text. The graph itself follows at the next refresh."""
+
+    with store.transaction() as db:
+        db.execute("DELETE FROM extractions WHERE source_id = ?", (source,))
+
+
 def cached(store, versions: str) -> dict[tuple[str, str], dict]:
     with store.lock:
         rows = store.db.execute("SELECT source_id, text_sha, result FROM extractions WHERE versions = ?",

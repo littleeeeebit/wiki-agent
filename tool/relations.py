@@ -42,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     project = str(Path(args.project).expanduser().resolve()) if args.project else None
     if args.command == "extract":
+        if args.limit < 1:
+            parser.error("--limit must be at least 1")
         out = extract_graph(project, args.limit, args.seconds, args.estimate, model=args.model)
     else:
         out = check_graph(project) if args.command == "check" else retire_graph(project)
