@@ -316,12 +316,14 @@ def test_a_worker_that_cannot_start_frees_its_slot_and_connection(monkeypatch):
     def refuse(self):
         raise RuntimeError("can't start new thread")
 
+    # Another test's fake may still hold a slot while its sleep runs out: count from here.
+    free = decision.IN_FLIGHT._value
     monkeypatch.setattr(threading.Thread, "start", refuse)
     cfg = decision.Config("active", MODEL, "file", key="k")
     for _ in range(decision.MAX_IN_FLIGHT + 1):
         with pytest.raises(decision.JevError, match="network"):
             decision.evaluate(cfg, {}, {"q": decision.noul("?")}, [], Budget(seconds=5, calls=2, candidates=0))
-    assert decision.IN_FLIGHT._value == decision.MAX_IN_FLIGHT and len(closed) == len(opened)
+    assert decision.IN_FLIGHT._value == free and len(closed) == len(opened)
 
 
 def test_a_cancelled_or_late_request_is_aborted_and_frees_its_slot(monkeypatch):
