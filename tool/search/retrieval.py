@@ -444,10 +444,17 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
             truncated.append("deadline")
             break
         # Every copy's own edges: the same words in another file may link elsewhere.
-        # `owner` is the copy each id asked for belongs to, which a step names.
-        owner = {x: m for node, _trail in frontier if node in by_id for m in members(node) for x in own_ids(by_id[m])}
-        asks = {node: [x for m in members(node) for x in own_ids(by_id[m])] if node in by_id else [node]
-                for node, _trail in frontier}
+        # `owner` is, per node, the copy each id asked for belongs to, which a
+        # step names; the node's own ids first, since a source is shared by
+        # every section of its file.
+        owner: dict[tuple[str, str], str] = {}
+        for node, _trail in frontier:
+            if node in by_id:
+                for m in (node, *members(node)):
+                    for x in own_ids(by_id[m]):
+                        owner.setdefault((node, x), m)
+        asks = {node: list(dict.fromkeys(x for m in members(node) for x in own_ids(by_id[m])))
+                if node in by_id else [node] for node, _trail in frontier}
         edges = graph.edges(sorted({x for ids in asks.values() for x in ids}), kinds=list(kinds))
         by_via: dict[str, list[dict]] = defaultdict(list)
         for edge in edges:
@@ -473,7 +480,8 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
                         offered = [("gone", other)]
                     for kind, tid in offered:
                         score = relevance(by_id[tid]) if kind == "chunk" else 0.0
-                        options.append((PRIORITY[edge["kind"]], -score, tid, kind, edge, other, owner.get(x, node)))
+                        options.append((PRIORITY[edge["kind"]], -score, tid, kind, edge, other,
+                                        owner.get((node, x), node)))
             options.sort(key=lambda o: o[:3])
             taken_here = 0
             for n, (_p, _s, tid, kind, edge, other, copy) in enumerate(options):

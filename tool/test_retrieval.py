@@ -741,6 +741,24 @@ def test_the_copies_of_a_seed_are_one_node_whose_links_are_pooled_and_whose_cut_
     index.close()
 
 
+def test_a_step_names_as_its_copy_only_a_chunk_of_the_same_text(world):
+    hub, repo = world
+    (repo / "docs/start.md").write_text(
+        "---\nreads: [docs/answer.md]\n---\n\n# Start\n\n## Shared\n\nThe quarry conveyor manual.\n\n"
+        "## Other\n\nThe quarry conveyor other notes.\n\n## Shared\n\nThe quarry conveyor manual.\n", encoding="utf-8")
+    (repo / "docs/answer.md").write_text("# Answer\n\nMira covers Tuesday.\n", encoding="utf-8")
+    index = index_of(hub, repo)
+    text = {c["chunk_id"]: retrieval.text_key(c) for c in index.chunks}
+    req = retrieval.request(evidence.repo_id(repo), "quarry conveyor", sources=["documents"], limit=2)
+    result = retrieval.run(index.snapshot(), req)
+    assert "Mira covers Tuesday." in "".join(texts(result, "graph"))
+    named = [(p["steps"][n - 1]["node"], s["copy"]) for p in result["paths"]
+             for n, s in enumerate(p["steps"]) if "copy" in s]
+    # A section of the same file is not a copy: a source's edge belongs to the node that asked for it.
+    assert all(text[node] == text[copy] for node, copy in named)
+    index.close()
+
+
 def test_a_link_to_a_copy_of_a_seed_is_credited_to_that_seed(world):
     hub, repo = world
     for name in ("r", "s"):
