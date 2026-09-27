@@ -1,0 +1,27 @@
+{
+ "schema": "jev-gates/1",
+ "version": 1,
+ "frozen": "2026-09-27",
+ "description": "Stage 10's release targets, frozen before any held-out run. Changing one after a failure is a new version and a new evaluation, never an edit of this one. `tool/eval/report.py` reads them: `min`/`max` compare a point estimate, `improvement` needs the estimate at the target and the 95% interval (resampled by intent) above zero, `non_inferiority` needs the interval's lower end at or above the target, `zero` needs no observed case. A result whose interval does not settle it is inconclusive, and any result on labels no person reviewed is provisional.",
+ "confidence": 0.95,
+ "resamples": 2000,
+ "seed": 20260927,
+ "gates": [
+  {"id": "integrity", "label": "Deterministic integrity", "kind": "zero",
+   "metric": "integrity_violations", "about": "cross-repository leaks, fabricated accepted locators, unauthorized executions, duplicated actions"},
+  {"id": "graph_benefit", "label": "Graph benefit", "kind": "improvement", "target": 0.10,
+   "metric": "bridge_recall_D_minus_A", "about": "supporting-evidence recall on bridge intents, D over A"},
+  {"id": "overall_recall", "label": "Overall recall", "kind": "non_inferiority", "target": -0.02,
+   "metric": "recall_D_minus_A", "about": "supporting-evidence recall over every evidence intent, D against A"},
+  {"id": "answer_support", "label": "Answer support", "kind": "answer_support", "target": 0.25,
+   "metric": "unsupported_claim_rate", "about": "D's unsupported-claim rate at least 25% below A's (zero if A's is zero), coverage no lower"},
+  {"id": "decision_quality", "label": "Decision quality", "kind": "min", "target": 0.90,
+   "metric": "action_correct_rate", "about": "allowed useful choice on the held-out action fixtures; execution authority violations are the integrity gate"},
+  {"id": "language_parity", "label": "Language parity", "kind": "max", "target": 0.05,
+   "metric": "language_gap", "about": "largest English/Korean gap of D, in recall and in coverage"},
+  {"id": "added_latency", "label": "Added latency", "kind": "max", "target": 10.0,
+   "metric": "p95_overhead_seconds", "about": "D's p95 retrieval and verification time over A's, same workload"},
+  {"id": "operating_ceiling", "label": "Operating ceiling", "kind": "zero",
+   "metric": "ceiling_breaches", "about": "runs over their deadline, call or token allowance; an unknown price stays unknown"}
+ ]
+}

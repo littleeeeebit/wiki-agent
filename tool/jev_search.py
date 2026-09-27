@@ -46,8 +46,8 @@ def answer(question: str, project: str | None, state: str, k: int, model: str) -
     from agent import ChatSession
     from main import channels
 
-    cfg = decision.config()
     repo = Path(project) if project else knowledge.HUB
+    cfg = decision.config(repo)
     run = knowledge.Run(repo, "cli", question, cfg)
     out, outcome, reason = None, "failed", None
     chat = ChatSession(repo, tools="Read,Glob,Grep", system=channels.ANSWER_PROMPT, model=model or None,
@@ -103,7 +103,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--with-text", action="store_true", help="keep the texts in an --export")
     args = parser.parse_args(argv)
     project = str(Path(args.project).expanduser().resolve()) if args.project else None
-    status = decision.config().status()
+    status = decision.config(project or knowledge.HUB).status()
     print(f"jev: mode {status['mode']} (from {status['mode_source']}), key {'set' if status['key'] else 'missing'}"
           f" ({status['key_source']}), model {status['model']}", file=sys.stderr)
     if args.run or args.export:

@@ -59,7 +59,8 @@ SCORES = "jev-calibration-scores/1"
 DATASET = HUB / "eval" / "jev" / "calibration.json"
 SCORE_FILE = HUB / "eval" / "jev" / "calibration.scores.json"
 ARTIFACT = HUB / "eval" / "jev" / "policy.json"
-SOURCES = ["hub", "documents", "memory"]
+# Stage 10's calibration intents search registered papers too.
+SOURCES = ["hub", "documents", "memory", "papers"]
 # English written as English: the split is what Jev reads after normalization.
 NORMALIZATION = "original_english"
 GRID_NO = [round(0.05 * i, 2) for i in range(1, 9)]       # 0.05 .. 0.40

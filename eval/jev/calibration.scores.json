@@ -2,477 +2,1487 @@
  "schema": "jev-calibration-scores/1",
  "model": "jev-1.13.0",
  "prompt_version": "afa145931e76393e",
- "collected_at": "2026-09-27T05:22:12+00:00",
+ "collected_at": "2026-09-27T15:11:36+00:00",
  "answers": {
-  "c01": {
+  "direct-03": {
+   "retrieve": 0.22,
+   "source_hub": 0.29,
+   "source_documents": 0.23,
+   "source_memory": 0.18,
+   "source_papers": 0.07
+  },
+  "direct-06": {
+   "retrieve": 0.1,
+   "source_hub": 0.22,
+   "source_documents": 0.18,
+   "source_memory": 0.14,
+   "source_papers": 0.03
+  },
+  "direct-07": {
+   "retrieve": 0.1,
+   "source_hub": 0.21,
+   "source_documents": 0.12,
+   "source_memory": 0.11,
+   "source_papers": 0.04
+  },
+  "direct-09": {
+   "retrieve": 0.14,
+   "source_hub": 0.44,
+   "source_documents": 0.25,
+   "source_memory": 0.18,
+   "source_papers": 0.07
+  },
+  "direct-11": {
+   "retrieve": 0.13,
+   "source_hub": 0.17,
+   "source_documents": 0.13,
+   "source_memory": 0.15,
+   "source_papers": 0.04
+  },
+  "direct-12": {
+   "retrieve": 0.17,
+   "source_hub": 0.14,
+   "source_documents": 0.18,
+   "source_memory": 0.19,
+   "source_papers": 0.13
+  },
+  "fact-02": {
    "retrieve": 0.96,
-   "source_hub": 0.47,
-   "source_documents": 0.72,
-   "source_memory": 0.48,
+   "source_hub": 0.44,
+   "source_documents": 0.78,
+   "source_memory": 0.53,
+   "source_papers": 0.14,
    "useful_p0": 0.98,
    "conflict_p0": 0.03,
    "redirect_p0": 0.02,
-   "useful_p1": 0.02,
-   "conflict_p1": 0.03,
+   "useful_p1": 0.04,
+   "conflict_p1": 0.04,
    "redirect_p1": 0.02,
    "coverage_r0": 0.98
   },
-  "c02": {
-   "retrieve": 0.96,
-   "source_hub": 0.35,
-   "source_documents": 0.64,
-   "source_memory": 0.58,
-   "useful_p0": 0.92,
-   "conflict_p0": 0.05,
-   "redirect_p0": 0.02,
-   "useful_p1": 0.91,
-   "conflict_p1": 0.06,
-   "redirect_p1": 0.02,
-   "coverage_r0": 0.6
-  },
-  "c03": {
-   "retrieve": 0.96,
-   "source_hub": 0.35,
-   "source_documents": 0.64,
-   "source_memory": 0.59,
-   "useful_p0": 0.67,
-   "conflict_p0": 0.09,
-   "redirect_p0": 0.02,
-   "coverage_r0": 0.1
-  },
-  "c04": {
-   "retrieve": 0.94,
-   "source_hub": 0.48,
-   "source_documents": 0.65,
-   "source_memory": 0.31,
-   "useful_p0": 0.85,
-   "conflict_p0": 0.07,
-   "redirect_p0": 0.03,
-   "useful_p1": 0.96,
-   "conflict_p1": 0.08,
-   "redirect_p1": 0.04,
-   "coverage_r0": 0.87
-  },
-  "c05": {
+  "fact-03": {
    "retrieve": 0.95,
-   "source_hub": 0.16,
-   "source_documents": 0.62,
-   "source_memory": 0.9,
+   "source_hub": 0.58,
+   "source_documents": 0.65,
+   "source_memory": 0.34,
+   "source_papers": 0.07,
    "useful_p0": 0.98,
    "conflict_p0": 0.04,
-   "redirect_p0": 0.03,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.03,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.27,
    "coverage_r0": 0.97
   },
-  "c06": {
-   "retrieve": 0.94,
-   "source_hub": 0.72,
-   "source_documents": 0.82,
-   "source_memory": 0.44,
-   "useful_p0": 0.97,
-   "conflict_p0": 0.04,
-   "redirect_p0": 0.04,
-   "coverage_r0": 0.95
-  },
-  "c07": {
-   "retrieve": 0.96,
-   "source_hub": 0.65,
-   "source_documents": 0.76,
-   "source_memory": 0.53,
-   "useful_p0": 0.03,
+  "fact-05": {
+   "retrieve": 0.93,
+   "source_hub": 0.55,
+   "source_documents": 0.68,
+   "source_memory": 0.35,
+   "source_papers": 0.12,
+   "useful_p0": 0.98,
    "conflict_p0": 0.04,
    "redirect_p0": 0.02,
-   "useful_p1": 0.08,
-   "conflict_p1": 0.07,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.04,
+   "coverage_r0": 0.97
+  },
+  "fact-06": {
+   "retrieve": 0.93,
+   "source_hub": 0.46,
+   "source_documents": 0.72,
+   "source_memory": 0.43,
+   "source_papers": 0.1,
+   "useful_p0": 0.98,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
    "redirect_p1": 0.03,
-   "coverage_r0": 0.01
+   "coverage_r0": 0.97
   },
-  "c08": {
-   "retrieve": 0.08,
-   "source_hub": 0.17,
-   "source_documents": 0.15,
-   "source_memory": 0.18
-  },
-  "c09": {
-   "retrieve": 0.12,
-   "source_hub": 0.29,
-   "source_documents": 0.22,
-   "source_memory": 0.21
-  },
-  "c10": {
-   "retrieve": 0.16,
-   "source_hub": 0.18,
-   "source_documents": 0.31,
-   "source_memory": 0.49
-  },
-  "c11": {
+  "fact-07": {
    "retrieve": 0.96,
-   "source_hub": 0.32,
-   "source_documents": 0.88,
-   "source_memory": 0.88,
-   "useful_p0": 0.89,
-   "conflict_p0": 0.4,
-   "redirect_p0": 0.25,
-   "coverage_r0": 0.87
+   "source_hub": 0.44,
+   "source_documents": 0.68,
+   "source_memory": 0.39,
+   "source_papers": 0.11,
+   "useful_p0": 0.98,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.05,
+   "useful_p1": 0.03,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.97,
+   "coverage_r0": 0.96
   },
-  "c12": {
-   "retrieve": 0.92,
-   "source_hub": 0.68,
-   "source_documents": 0.73,
-   "source_memory": 0.49,
+  "fact-08": {
+   "retrieve": 0.96,
+   "source_hub": 0.6,
+   "source_documents": 0.61,
+   "source_memory": 0.48,
+   "source_papers": 0.15,
+   "useful_p0": 0.98,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.04,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.02,
+   "coverage_r0": 0.98
+  },
+  "route-01": {
+   "retrieve": 0.95,
+   "source_hub": 0.86,
+   "source_documents": 0.78,
+   "source_memory": 0.52,
+   "source_papers": 0.07,
+   "useful_p0": 0.97,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.04,
+   "useful_p1": 0.16,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.03,
+   "coverage_r0": 0.96
+  },
+  "route-01-missing": {
+   "retrieve": 0.96,
+   "source_hub": 0.85,
+   "source_documents": 0.8,
+   "source_memory": 0.52,
+   "source_papers": 0.08,
+   "useful_p0": 0.6,
+   "conflict_p0": 0.08,
+   "redirect_p0": 0.04,
+   "coverage_r0": 0.63,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.62,
+    "probabilities": {
+     "external": 0.0,
+     "bridge": 0.05,
+     "sources": 0.71,
+     "defer": 0.24
+    }
+   }
+  },
+  "route-06": {
+   "retrieve": 0.96,
+   "source_hub": 0.89,
+   "source_documents": 0.75,
+   "source_memory": 0.53,
+   "source_papers": 0.23,
+   "useful_p0": 0.98,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.05,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.03,
+   "coverage_r0": 0.97
+  },
+  "route-06-missing": {
+   "retrieve": 0.96,
+   "source_hub": 0.88,
+   "source_documents": 0.75,
+   "source_memory": 0.53,
+   "source_papers": 0.26,
    "useful_p0": 0.03,
    "conflict_p0": 0.08,
-   "redirect_p0": 0.98,
-   "useful_p1": 0.97,
-   "conflict_p1": 0.05,
-   "redirect_p1": 0.06,
-   "coverage_r0": 0.92
+   "redirect_p0": 0.04,
+   "coverage_r0": 0.02,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.54,
+    "probabilities": {
+     "external": 0.01,
+     "defer": 0.3,
+     "sources": 0.65,
+     "bridge": 0.04
+    }
+   }
   },
-  "c13": {
-   "retrieve": 0.96,
-   "source_hub": 0.53,
-   "source_documents": 0.79,
-   "source_memory": 0.47,
-   "useful_p0": 0.91,
-   "conflict_p0": 0.93,
-   "redirect_p0": 0.02,
-   "coverage_r0": 0.04
-  },
-  "c14": {
+  "route-07": {
    "retrieve": 0.97,
-   "source_hub": 0.46,
-   "source_documents": 0.76,
-   "source_memory": 0.62,
+   "source_hub": 0.85,
+   "source_documents": 0.71,
+   "source_memory": 0.44,
+   "source_papers": 0.14,
+   "useful_p0": 0.98,
+   "conflict_p0": 0.06,
+   "redirect_p0": 0.07,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.11,
+   "coverage_r0": 0.96
+  },
+  "route-07-missing": {
+   "retrieve": 0.97,
+   "source_hub": 0.83,
+   "source_documents": 0.71,
+   "source_memory": 0.46,
+   "source_papers": 0.14,
+   "useful_p0": 0.03,
+   "conflict_p0": 0.09,
+   "redirect_p0": 0.07,
+   "coverage_r0": 0.02,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.48,
+    "probabilities": {
+     "external": 0.01,
+     "bridge": 0.01,
+     "sources": 0.62,
+     "defer": 0.36
+    }
+   }
+  },
+  "route-08": {
+   "retrieve": 0.94,
+   "source_hub": 0.87,
+   "source_documents": 0.68,
+   "source_memory": 0.46,
+   "source_papers": 0.1,
+   "useful_p0": 0.97,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.04,
+   "useful_p1": 0.05,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.02,
+   "coverage_r0": 0.97
+  },
+  "route-08-missing": {
+   "retrieve": 0.94,
+   "source_hub": 0.87,
+   "source_documents": 0.67,
+   "source_memory": 0.44,
+   "source_papers": 0.09,
+   "useful_p0": 0.39,
+   "conflict_p0": 0.11,
+   "redirect_p0": 0.03,
+   "coverage_r0": 0.11,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.57,
+    "probabilities": {
+     "sources": 0.68,
+     "defer": 0.25,
+     "bridge": 0.06,
+     "external": 0.01
+    }
+   }
+  },
+  "route-10": {
+   "retrieve": 0.96,
+   "source_hub": 0.84,
+   "source_documents": 0.78,
+   "source_memory": 0.47,
+   "source_papers": 0.14,
+   "useful_p0": 0.95,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.05,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.19,
+   "coverage_r0": 0.93
+  },
+  "route-10-missing": {
+   "retrieve": 0.96,
+   "source_hub": 0.83,
+   "source_documents": 0.77,
+   "source_memory": 0.51,
+   "source_papers": 0.13,
+   "useful_p0": 0.02,
+   "conflict_p0": 0.06,
+   "redirect_p0": 0.21,
+   "coverage_r0": 0.01,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.61,
+    "probabilities": {
+     "defer": 0.27,
+     "bridge": 0.02,
+     "sources": 0.7,
+     "external": 0.01
+    }
+   }
+  },
+  "route-11": {
+   "retrieve": 0.96,
+   "source_hub": 0.87,
+   "source_documents": 0.6,
+   "source_memory": 0.37,
+   "source_papers": 0.07,
    "useful_p0": 0.97,
    "conflict_p0": 0.04,
-   "redirect_p0": 0.02,
-   "useful_p1": 0.97,
-   "conflict_p1": 0.03,
-   "redirect_p1": 0.02,
-   "coverage_r0": 0.98,
-   "coverage_r1": 0.98
+   "redirect_p0": 0.03,
+   "useful_p1": 0.03,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.04,
+   "coverage_r0": 0.97
   },
-  "c15": {
+  "route-11-missing": {
    "retrieve": 0.97,
-   "source_hub": 0.47,
-   "source_documents": 0.77,
-   "source_memory": 0.61,
-   "useful_p0": 0.92,
-   "conflict_p0": 0.05,
-   "redirect_p0": 0.02,
-   "coverage_r0": 0.98,
-   "coverage_r1": 0.02
+   "source_hub": 0.87,
+   "source_documents": 0.62,
+   "source_memory": 0.38,
+   "source_papers": 0.07,
+   "useful_p0": 0.05,
+   "conflict_p0": 0.08,
+   "redirect_p0": 0.05,
+   "coverage_r0": 0.02,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.75,
+    "probabilities": {
+     "external": 0.0,
+     "defer": 0.15,
+     "bridge": 0.03,
+     "sources": 0.8200000000000001
+    }
+   }
   },
-  "c16": {
-   "retrieve": 0.95,
-   "source_hub": 0.13,
-   "source_documents": 0.37,
-   "source_memory": 0.64
-  },
-  "c17": {
-   "retrieve": 0.96,
-   "source_hub": 0.55,
-   "source_documents": 0.71,
-   "source_memory": 0.59,
-   "useful_p0": 0.88,
+  "bridge-02": {
+   "retrieve": 0.97,
+   "source_hub": 0.58,
+   "source_documents": 0.74,
+   "source_memory": 0.53,
+   "source_papers": 0.12,
+   "useful_p0": 0.94,
    "conflict_p0": 0.05,
    "redirect_p0": 0.02,
    "useful_p1": 0.94,
    "conflict_p1": 0.04,
    "redirect_p1": 0.02,
+   "useful_p2": 0.03,
+   "conflict_p2": 0.04,
+   "redirect_p2": 0.05,
    "coverage_r0": 0.95
   },
-  "c18": {
-   "retrieve": 0.94,
-   "source_hub": 0.38,
-   "source_documents": 0.62,
-   "source_memory": 0.56,
-   "useful_p0": 0.07,
-   "conflict_p0": 0.11,
+  "bridge-02-missing": {
+   "retrieve": 0.97,
+   "source_hub": 0.57,
+   "source_documents": 0.74,
+   "source_memory": 0.52,
+   "source_papers": 0.12,
+   "useful_p0": 0.82,
+   "conflict_p0": 0.09,
    "redirect_p0": 0.02,
-   "coverage_r0": 0.03
-  },
-  "c19": {
-   "retrieve": 0.94,
-   "source_hub": 0.36,
-   "source_documents": 0.62,
-   "source_memory": 0.57,
-   "useful_p0": 0.98,
-   "conflict_p0": 0.04,
-   "redirect_p0": 0.04,
-   "coverage_r0": 0.97
-  },
-  "c20": {
-   "retrieve": 0.91,
-   "source_hub": 0.52,
-   "source_documents": 0.72,
-   "source_memory": 0.48,
-   "useful_p0": 0.94,
-   "conflict_p0": 0.07,
-   "redirect_p0": 0.95,
-   "coverage_r0": 0.91
-  },
-  "c21": {
-   "retrieve": 0.4,
-   "source_hub": 0.15,
-   "source_documents": 0.19,
-   "source_memory": 0.5
-  },
-  "c22": {
-   "retrieve": 0.9,
-   "source_hub": 0.11,
-   "source_documents": 0.29,
-   "source_memory": 0.43
-  },
-  "c23": {
-   "retrieve": 0.96,
-   "source_hub": 0.69,
-   "source_documents": 0.85,
-   "source_memory": 0.53,
-   "useful_p0": 0.93,
-   "conflict_p0": 0.12,
-   "redirect_p0": 0.97,
    "useful_p1": 0.03,
    "conflict_p1": 0.04,
-   "redirect_p1": 0.03,
-   "coverage_r0": 0.87
+   "redirect_p1": 0.06,
+   "coverage_r0": 0.29,
+   "repair": {
+    "choice": "bridge",
+    "confidence": 0.63,
+    "probabilities": {
+     "bridge": 0.73,
+     "defer": 0.07,
+     "sources": 0.2,
+     "external": 0.0
+    }
+   }
   },
-  "c24": {
+  "bridge-04": {
    "retrieve": 0.96,
-   "source_hub": 0.42,
-   "source_documents": 0.83,
-   "source_memory": 0.71,
-   "useful_p0": 0.71,
-   "conflict_p0": 0.78,
+   "source_hub": 0.53,
+   "source_documents": 0.71,
+   "source_memory": 0.48,
+   "source_papers": 0.17,
+   "useful_p0": 0.86,
+   "conflict_p0": 0.05,
    "redirect_p0": 0.02,
-   "useful_p1": 0.06,
-   "conflict_p1": 0.15,
-   "redirect_p1": 0.05,
-   "coverage_r0": 0.02
+   "useful_p1": 0.91,
+   "conflict_p1": 0.05,
+   "redirect_p1": 0.02,
+   "useful_p2": 0.03,
+   "conflict_p2": 0.04,
+   "redirect_p2": 0.04,
+   "coverage_r0": 0.83
   },
-  "c25": {
-   "retrieve": 0.97,
-   "source_hub": 0.27,
-   "source_documents": 0.74,
-   "source_memory": 0.61,
-   "useful_p0": 0.65,
-   "conflict_p0": 0.67,
+  "bridge-04-missing": {
+   "retrieve": 0.96,
+   "source_hub": 0.51,
+   "source_documents": 0.72,
+   "source_memory": 0.49,
+   "source_papers": 0.15,
+   "useful_p0": 0.36,
+   "conflict_p0": 0.06,
    "redirect_p0": 0.02,
-   "coverage_r0": 0.03
+   "useful_p1": 0.02,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.04,
+   "coverage_r0": 0.08,
+   "repair": {
+    "choice": "bridge",
+    "confidence": 0.41,
+    "probabilities": {
+     "sources": 0.21,
+     "defer": 0.23,
+     "external": 0.0,
+     "bridge": 0.56
+    }
+   }
   },
-  "c26": {
-   "retrieve": 0.97,
-   "source_hub": 0.62,
-   "source_documents": 0.79,
-   "source_memory": 0.46,
-   "useful_p0": 0.85,
+  "bridge-05": {
+   "retrieve": 0.95,
+   "source_hub": 0.78,
+   "source_documents": 0.72,
+   "source_memory": 0.42,
+   "source_papers": 0.36,
+   "useful_p0": 0.89,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.96,
+   "conflict_p1": 0.05,
+   "redirect_p1": 0.03,
+   "useful_p2": 0.02,
+   "conflict_p2": 0.03,
+   "redirect_p2": 0.08,
+   "coverage_r0": 0.81
+  },
+  "bridge-05-missing": {
+   "retrieve": 0.94,
+   "source_hub": 0.78,
+   "source_documents": 0.73,
+   "source_memory": 0.42,
+   "source_papers": 0.37,
+   "useful_p0": 0.81,
    "conflict_p0": 0.05,
    "redirect_p0": 0.03,
    "useful_p1": 0.02,
    "conflict_p1": 0.03,
-   "redirect_p1": 0.02,
-   "coverage_r0": 0.02,
+   "redirect_p1": 0.1,
+   "coverage_r0": 0.18,
    "repair": {
-    "choice": "context",
-    "confidence": 0.99,
+    "choice": "bridge",
+    "confidence": 0.49,
     "probabilities": {
-     "context": 0.99,
+     "bridge": 0.62,
+     "sources": 0.25,
      "external": 0.0,
-     "sources": 0.01,
-     "defer": 0.0
+     "defer": 0.13
     }
    }
   },
-  "c27": {
+  "bridge-06": {
+   "retrieve": 0.91,
+   "source_hub": 0.32,
+   "source_documents": 0.55,
+   "source_memory": 0.34,
+   "source_papers": 0.17,
+   "useful_p0": 0.92,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.94,
+   "conflict_p1": 0.05,
+   "redirect_p1": 0.02,
+   "useful_p2": 0.02,
+   "conflict_p2": 0.03,
+   "redirect_p2": 0.04,
+   "coverage_r0": 0.95
+  },
+  "bridge-06-missing": {
+   "retrieve": 0.91,
+   "source_hub": 0.32,
+   "source_documents": 0.55,
+   "source_memory": 0.32,
+   "source_papers": 0.17,
+   "useful_p0": 0.66,
+   "conflict_p0": 0.06,
+   "redirect_p0": 0.03,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.03,
+   "coverage_r0": 0.16,
+   "repair": {
+    "choice": "bridge",
+    "confidence": 0.37,
+    "probabilities": {
+     "bridge": 0.53,
+     "defer": 0.28,
+     "external": 0.01,
+     "sources": 0.18
+    }
+   }
+  },
+  "bridge-11": {
+   "retrieve": 0.95,
+   "source_hub": 0.55,
+   "source_documents": 0.69,
+   "source_memory": 0.47,
+   "source_papers": 0.4,
+   "useful_p0": 0.88,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.95,
+   "conflict_p1": 0.05,
+   "redirect_p1": 0.02,
+   "useful_p2": 0.02,
+   "conflict_p2": 0.04,
+   "redirect_p2": 0.04,
+   "coverage_r0": 0.95
+  },
+  "bridge-11-missing": {
    "retrieve": 0.96,
-   "source_hub": 0.38,
-   "source_documents": 0.81,
-   "source_memory": 0.56,
-   "useful_p0": 0.67,
+   "source_hub": 0.56,
+   "source_documents": 0.69,
+   "source_memory": 0.47,
+   "source_papers": 0.42,
+   "useful_p0": 0.31,
    "conflict_p0": 0.07,
-   "redirect_p0": 0.04,
-   "useful_p1": 0.13,
-   "conflict_p1": 0.07,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.04,
+   "coverage_r0": 0.04,
+   "repair": {
+    "choice": "bridge",
+    "confidence": 0.43,
+    "probabilities": {
+     "bridge": 0.58,
+     "defer": 0.15,
+     "sources": 0.26,
+     "external": 0.01
+    }
+   }
+  },
+  "bridge-12": {
+   "retrieve": 0.93,
+   "source_hub": 0.55,
+   "source_documents": 0.63,
+   "source_memory": 0.41,
+   "source_papers": 0.24,
+   "useful_p0": 0.64,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.97,
+   "conflict_p1": 0.05,
+   "redirect_p1": 0.02,
+   "useful_p2": 0.02,
+   "conflict_p2": 0.03,
+   "redirect_p2": 0.03,
+   "coverage_r0": 0.95
+  },
+  "bridge-12-missing": {
+   "retrieve": 0.93,
+   "source_hub": 0.51,
+   "source_documents": 0.62,
+   "source_memory": 0.42,
+   "source_papers": 0.22,
+   "useful_p0": 0.38,
+   "conflict_p0": 0.07,
+   "redirect_p0": 0.03,
+   "useful_p1": 0.03,
+   "conflict_p1": 0.05,
    "redirect_p1": 0.03,
    "coverage_r0": 0.04,
    "repair": {
-    "choice": "context",
-    "confidence": 0.99,
-    "probabilities": {
-     "bridge": 0.0,
-     "context": 1.0,
-     "external": 0.0,
-     "defer": 0.0
-    }
-   }
-  },
-  "c28": {
-   "retrieve": 0.97,
-   "source_hub": 0.39,
-   "source_documents": 0.48,
-   "source_memory": 0.87,
-   "useful_p0": 0.03,
-   "conflict_p0": 0.09,
-   "redirect_p0": 0.12,
-   "coverage_r0": 0.01,
-   "repair": {
     "choice": "sources",
-    "confidence": 0.95,
+    "confidence": 0.23,
     "probabilities": {
-     "bridge": 0.0,
-     "sources": 0.97,
-     "external": 0.0,
-     "defer": 0.03
+     "bridge": 0.4,
+     "defer": 0.17,
+     "external": 0.01,
+     "sources": 0.42
     }
    }
   },
-  "c29": {
-   "retrieve": 0.98,
-   "source_hub": 0.85,
-   "source_documents": 0.66,
+  "multi-01": {
+   "retrieve": 0.97,
+   "source_hub": 0.52,
+   "source_documents": 0.81,
    "source_memory": 0.42,
-   "useful_p0": 0.68,
-   "conflict_p0": 0.24,
-   "redirect_p0": 0.03,
-   "coverage_r0": 0.11,
-   "repair": {
-    "choice": "sources",
-    "confidence": 0.63,
-    "probabilities": {
-     "subqueries": 0.24,
-     "sources": 0.73,
-     "defer": 0.03,
-     "external": 0.0
-    }
-   }
-  },
-  "c30": {
-   "retrieve": 0.96,
-   "source_hub": 0.37,
-   "source_documents": 0.65,
-   "source_memory": 0.6,
-   "useful_p0": 0.68,
-   "conflict_p0": 0.1,
-   "redirect_p0": 0.02,
-   "coverage_r0": 0.09,
-   "repair": {
-    "choice": "sources",
-    "confidence": 0.33,
-    "probabilities": {
-     "external": 0.0,
-     "defer": 0.04,
-     "bridge": 0.46,
-     "sources": 0.5
-    }
-   }
-  },
-  "c31": {
-   "retrieve": 0.97,
-   "source_hub": 0.42,
-   "source_documents": 0.69,
-   "source_memory": 0.53,
-   "useful_p0": 0.72,
-   "conflict_p0": 0.06,
-   "redirect_p0": 0.02,
-   "coverage_r0": 0.02,
-   "repair": {
-    "choice": "sources",
-    "confidence": 0.4,
-    "probabilities": {
-     "bridge": 0.41,
-     "sources": 0.55,
-     "external": 0.0,
-     "defer": 0.04
-    }
-   }
-  },
-  "c32": {
-   "retrieve": 0.97,
-   "source_hub": 0.46,
-   "source_documents": 0.76,
-   "source_memory": 0.61,
-   "useful_p0": 0.94,
+   "source_papers": 0.12,
+   "useful_p0": 0.97,
    "conflict_p0": 0.04,
    "redirect_p0": 0.02,
-   "coverage_r0": 0.97,
-   "coverage_r1": 0.02,
+   "useful_p1": 0.97,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.02,
+   "useful_p2": 0.04,
+   "conflict_p2": 0.03,
+   "redirect_p2": 0.47,
+   "coverage_r0": 0.97
+  },
+  "multi-01-missing": {
+   "retrieve": 0.97,
+   "source_hub": 0.52,
+   "source_documents": 0.81,
+   "source_memory": 0.41,
+   "source_papers": 0.11,
+   "useful_p0": 0.94,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.06,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.55,
+   "coverage_r0": 0.05,
    "repair": {
     "choice": "subqueries",
-    "confidence": 0.77,
+    "confidence": 0.83,
     "probabilities": {
-     "external": 0.0,
-     "bridge": 0.15,
-     "defer": 0.02,
-     "subqueries": 0.83
+     "defer": 0.03,
+     "subqueries": 0.87,
+     "external": 0.01,
+     "bridge": 0.09
     }
    }
   },
-  "c33": {
+  "multi-03": {
+   "retrieve": 0.97,
+   "source_hub": 0.65,
+   "source_documents": 0.8,
+   "source_memory": 0.5,
+   "source_papers": 0.08,
+   "useful_p0": 0.97,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.97,
+   "conflict_p1": 0.05,
+   "redirect_p1": 0.02,
+   "useful_p2": 0.11,
+   "conflict_p2": 0.07,
+   "redirect_p2": 0.11,
+   "coverage_r0": 0.97
+  },
+  "multi-03-missing": {
+   "retrieve": 0.97,
+   "source_hub": 0.66,
+   "source_documents": 0.79,
+   "source_memory": 0.49,
+   "source_papers": 0.08,
+   "useful_p0": 0.93,
+   "conflict_p0": 0.07,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.08,
+   "conflict_p1": 0.06,
+   "redirect_p1": 0.13,
+   "coverage_r0": 0.05,
+   "repair": {
+    "choice": "subqueries",
+    "confidence": 0.84,
+    "probabilities": {
+     "defer": 0.04,
+     "subqueries": 0.88,
+     "bridge": 0.07,
+     "external": 0.01
+    }
+   }
+  },
+  "multi-04": {
    "retrieve": 0.97,
    "source_hub": 0.62,
-   "source_documents": 0.82,
-   "source_memory": 0.48,
-   "useful_p0": 0.87,
-   "conflict_p0": 0.07,
-   "redirect_p0": 0.03,
-   "coverage_r0": 0.95,
-   "coverage_r1": 0.02,
+   "source_documents": 0.81,
+   "source_memory": 0.55,
+   "source_papers": 0.12,
+   "useful_p0": 0.99,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.02,
+   "coverage_r0": 0.97
+  },
+  "multi-05": {
+   "retrieve": 0.96,
+   "source_hub": 0.53,
+   "source_documents": 0.78,
+   "source_memory": 0.38,
+   "source_papers": 0.11,
+   "useful_p0": 0.97,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.95,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.02,
+   "useful_p2": 0.2,
+   "conflict_p2": 0.05,
+   "redirect_p2": 0.02,
+   "coverage_r0": 0.96
+  },
+  "multi-05-missing": {
+   "retrieve": 0.96,
+   "source_hub": 0.53,
+   "source_documents": 0.78,
+   "source_memory": 0.38,
+   "source_papers": 0.1,
+   "useful_p0": 0.93,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.01,
+   "useful_p1": 0.08,
+   "conflict_p1": 0.05,
+   "redirect_p1": 0.02,
+   "coverage_r0": 0.08,
+   "repair": {
+    "choice": "subqueries",
+    "confidence": 0.68,
+    "probabilities": {
+     "bridge": 0.17,
+     "subqueries": 0.76,
+     "external": 0.01,
+     "defer": 0.06
+    }
+   }
+  },
+  "multi-06": {
+   "retrieve": 0.97,
+   "source_hub": 0.57,
+   "source_documents": 0.77,
+   "source_memory": 0.51,
+   "source_papers": 0.13,
+   "useful_p0": 0.96,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.97,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.02,
+   "useful_p2": 0.02,
+   "conflict_p2": 0.03,
+   "redirect_p2": 0.04,
+   "coverage_r0": 0.97
+  },
+  "multi-06-missing": {
+   "retrieve": 0.97,
+   "source_hub": 0.56,
+   "source_documents": 0.78,
+   "source_memory": 0.47,
+   "source_papers": 0.14,
+   "useful_p0": 0.92,
+   "conflict_p0": 0.08,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.03,
+   "coverage_r0": 0.04,
    "repair": {
     "choice": "subqueries",
     "confidence": 0.81,
     "probabilities": {
-     "bridge": 0.11,
-     "subqueries": 0.86,
-     "defer": 0.03,
-     "external": 0.0
+     "subqueries": 0.85,
+     "bridge": 0.04,
+     "external": 0.01,
+     "defer": 0.1
     }
    }
   },
-  "c34": {
+  "multi-07": {
    "retrieve": 0.95,
-   "source_hub": 0.2,
+   "source_hub": 0.7,
+   "source_documents": 0.76,
+   "source_memory": 0.5,
+   "source_papers": 0.09,
+   "useful_p0": 0.96,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.96,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.02,
+   "useful_p2": 0.64,
+   "conflict_p2": 0.07,
+   "redirect_p2": 0.03,
+   "coverage_r0": 0.95
+  },
+  "multi-07-missing": {
+   "retrieve": 0.96,
+   "source_hub": 0.7,
    "source_documents": 0.77,
-   "source_memory": 0.35,
-   "useful_p0": 0.21,
-   "conflict_p0": 0.07,
+   "source_memory": 0.51,
+   "source_papers": 0.09,
+   "useful_p0": 0.95,
+   "conflict_p0": 0.06,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.81,
+   "conflict_p1": 0.09,
+   "redirect_p1": 0.03,
+   "coverage_r0": 0.2,
+   "repair": {
+    "choice": "subqueries",
+    "confidence": 0.59,
+    "probabilities": {
+     "defer": 0.16,
+     "external": 0.0,
+     "subqueries": 0.7,
+     "bridge": 0.14
+    }
+   }
+  },
+  "conflict-01": {
+   "retrieve": 0.95,
+   "source_hub": 0.44,
+   "source_documents": 0.63,
+   "source_memory": 0.32,
+   "source_papers": 0.14,
+   "useful_p0": 0.94,
+   "conflict_p0": 0.1,
+   "redirect_p0": 0.04,
+   "useful_p1": 0.93,
+   "conflict_p1": 0.09,
+   "redirect_p1": 0.03,
+   "useful_p2": 0.09,
+   "conflict_p2": 0.06,
+   "redirect_p2": 0.02,
+   "coverage_r0": 0.58
+  },
+  "conflict-02": {
+   "retrieve": 0.97,
+   "source_hub": 0.72,
+   "source_documents": 0.82,
+   "source_memory": 0.58,
+   "source_papers": 0.09,
+   "useful_p0": 0.96,
+   "conflict_p0": 0.11,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.88,
+   "conflict_p1": 0.12,
+   "redirect_p1": 0.03,
+   "useful_p2": 0.03,
+   "conflict_p2": 0.04,
+   "redirect_p2": 0.02,
+   "coverage_r0": 0.71
+  },
+  "conflict-05": {
+   "retrieve": 0.95,
+   "source_hub": 0.54,
+   "source_documents": 0.74,
+   "source_memory": 0.37,
+   "source_papers": 0.17,
+   "useful_p0": 0.95,
+   "conflict_p0": 0.06,
+   "redirect_p0": 0.05,
+   "useful_p1": 0.94,
+   "conflict_p1": 0.06,
+   "redirect_p1": 0.04,
+   "useful_p2": 0.03,
+   "conflict_p2": 0.05,
+   "redirect_p2": 0.12,
+   "coverage_r0": 0.68
+  },
+  "conflict-06": {
+   "retrieve": 0.96,
+   "source_hub": 0.59,
+   "source_documents": 0.73,
+   "source_memory": 0.54,
+   "source_papers": 0.09,
+   "useful_p0": 0.95,
+   "conflict_p0": 0.06,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.91,
+   "conflict_p1": 0.07,
+   "redirect_p1": 0.03,
+   "useful_p2": 0.1,
+   "conflict_p2": 0.06,
+   "redirect_p2": 0.02,
+   "coverage_r0": 0.58
+  },
+  "conflict-11": {
+   "retrieve": 0.95,
+   "source_hub": 0.13,
+   "source_documents": 0.64,
+   "source_memory": 0.41,
+   "source_papers": 0.05,
+   "useful_p0": 0.96,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.95,
+   "conflict_p1": 0.07,
+   "redirect_p1": 0.02,
+   "useful_p2": 0.02,
+   "conflict_p2": 0.04,
+   "redirect_p2": 0.03,
+   "coverage_r0": 0.84
+  },
+  "conflict-12": {
+   "retrieve": 0.96,
+   "source_hub": 0.58,
+   "source_documents": 0.63,
+   "source_memory": 0.44,
+   "source_papers": 0.22,
+   "useful_p0": 0.97,
+   "conflict_p0": 0.05,
    "redirect_p0": 0.03,
+   "useful_p1": 0.23,
+   "conflict_p1": 0.11,
+   "redirect_p1": 0.03,
+   "useful_p2": 0.2,
+   "conflict_p2": 0.13,
+   "redirect_p2": 0.21,
+   "coverage_r0": 0.97
+  },
+  "memory-05": {
+   "retrieve": 0.96,
+   "source_hub": 0.24,
+   "source_documents": 0.82,
+   "source_memory": 0.9,
+   "source_papers": 0.11,
+   "useful_p0": 0.97,
+   "conflict_p0": 0.31,
+   "redirect_p0": 0.04,
+   "useful_p1": 0.03,
+   "conflict_p1": 0.05,
+   "redirect_p1": 0.09,
+   "coverage_r0": 0.96
+  },
+  "memory-05-missing": {
+   "retrieve": 0.96,
+   "source_hub": 0.25,
+   "source_documents": 0.82,
+   "source_memory": 0.89,
+   "source_papers": 0.12,
+   "useful_p0": 0.04,
+   "conflict_p0": 0.07,
+   "redirect_p0": 0.1,
+   "coverage_r0": 0.02,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.51,
+    "probabilities": {
+     "sources": 0.63,
+     "defer": 0.32,
+     "bridge": 0.01,
+     "external": 0.04
+    }
+   }
+  },
+  "memory-06": {
+   "retrieve": 0.94,
+   "source_hub": 0.5,
+   "source_documents": 0.66,
+   "source_memory": 0.79,
+   "source_papers": 0.06,
+   "useful_p0": 0.95,
+   "conflict_p0": 0.06,
+   "redirect_p0": 0.29,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.09,
+   "coverage_r0": 0.93
+  },
+  "memory-06-missing": {
+   "retrieve": 0.94,
+   "source_hub": 0.52,
+   "source_documents": 0.66,
+   "source_memory": 0.78,
+   "source_papers": 0.06,
+   "useful_p0": 0.02,
+   "conflict_p0": 0.06,
+   "redirect_p0": 0.04,
+   "coverage_r0": 0.01,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.47,
+    "probabilities": {
+     "external": 0.0,
+     "bridge": 0.03,
+     "defer": 0.37,
+     "sources": 0.6
+    }
+   }
+  },
+  "memory-07": {
+   "retrieve": 0.97,
+   "source_hub": 0.52,
+   "source_documents": 0.74,
+   "source_memory": 0.84,
+   "source_papers": 0.09,
+   "useful_p0": 0.98,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.03,
+   "useful_p1": 0.05,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.11,
+   "coverage_r0": 0.97
+  },
+  "memory-07-missing": {
+   "retrieve": 0.96,
+   "source_hub": 0.5,
+   "source_documents": 0.75,
+   "source_memory": 0.84,
+   "source_papers": 0.08,
+   "useful_p0": 0.12,
+   "conflict_p0": 0.13,
+   "redirect_p0": 0.27,
+   "coverage_r0": 0.07,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.71,
+    "probabilities": {
+     "external": 0.0,
+     "sources": 0.79,
+     "bridge": 0.03,
+     "defer": 0.18
+    }
+   }
+  },
+  "memory-09": {
+   "retrieve": 0.94,
+   "source_hub": 0.24,
+   "source_documents": 0.57,
+   "source_memory": 0.78,
+   "source_papers": 0.11,
+   "useful_p0": 0.97,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.07,
+   "useful_p1": 0.03,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.46,
+   "coverage_r0": 0.96
+  },
+  "memory-09-missing": {
+   "retrieve": 0.94,
+   "source_hub": 0.24,
+   "source_documents": 0.59,
+   "source_memory": 0.77,
+   "source_papers": 0.1,
+   "useful_p0": 0.08,
+   "conflict_p0": 0.09,
+   "redirect_p0": 0.19,
+   "coverage_r0": 0.03,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.51,
+    "probabilities": {
+     "external": 0.0,
+     "defer": 0.35,
+     "bridge": 0.02,
+     "sources": 0.63
+    }
+   }
+  },
+  "memory-10": {
+   "retrieve": 0.97,
+   "source_hub": 0.15,
+   "source_documents": 0.75,
+   "source_memory": 0.85,
+   "source_papers": 0.11,
+   "useful_p0": 0.98,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.04,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.03,
+   "coverage_r0": 0.97
+  },
+  "memory-10-missing": {
+   "retrieve": 0.97,
+   "source_hub": 0.16,
+   "source_documents": 0.74,
+   "source_memory": 0.86,
+   "source_papers": 0.12,
+   "useful_p0": 0.08,
+   "conflict_p0": 0.11,
+   "redirect_p0": 0.03,
+   "coverage_r0": 0.02,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.62,
+    "probabilities": {
+     "external": 0.0,
+     "defer": 0.23,
+     "bridge": 0.06,
+     "sources": 0.71
+    }
+   }
+  },
+  "memory-11": {
+   "retrieve": 0.96,
+   "source_hub": 0.15,
+   "source_documents": 0.61,
+   "source_memory": 0.84,
+   "source_papers": 0.04,
+   "useful_p0": 0.98,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.03,
+   "useful_p1": 0.05,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.97,
+   "coverage_r0": 0.97
+  },
+  "memory-11-missing": {
+   "retrieve": 0.97,
+   "source_hub": 0.14,
+   "source_documents": 0.62,
+   "source_memory": 0.83,
+   "source_papers": 0.04,
+   "useful_p0": 0.05,
+   "conflict_p0": 0.08,
+   "redirect_p0": 0.96,
+   "coverage_r0": 0.01,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.65,
+    "probabilities": {
+     "defer": 0.23,
+     "bridge": 0.03,
+     "external": 0.0,
+     "sources": 0.74
+    }
+   }
+  },
+  "paper-02": {
+   "retrieve": 0.97,
+   "source_hub": 0.1,
+   "source_documents": 0.53,
+   "source_memory": 0.37,
+   "source_papers": 0.88,
+   "useful_p0": 0.97,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.08,
+   "coverage_r0": 0.88
+  },
+  "paper-02-missing": {
+   "retrieve": 0.98,
+   "source_hub": 0.11,
+   "source_documents": 0.5,
+   "source_memory": 0.34,
+   "source_papers": 0.88,
+   "useful_p0": 0.02,
+   "conflict_p0": 0.12,
+   "redirect_p0": 0.09,
+   "coverage_r0": 0.01,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.48,
+    "probabilities": {
+     "bridge": 0.01,
+     "external": 0.3,
+     "sources": 0.61,
+     "defer": 0.08
+    }
+   }
+  },
+  "paper-05": {
+   "retrieve": 0.93,
+   "source_hub": 0.29,
+   "source_documents": 0.47,
+   "source_memory": 0.23,
+   "source_papers": 0.77,
+   "useful_p0": 0.98,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.04,
+   "useful_p1": 0.09,
+   "conflict_p1": 0.06,
+   "redirect_p1": 0.04,
+   "coverage_r0": 0.96
+  },
+  "paper-05-missing": {
+   "retrieve": 0.93,
+   "source_hub": 0.3,
+   "source_documents": 0.49,
+   "source_memory": 0.23,
+   "source_papers": 0.77,
+   "useful_p0": 0.17,
+   "conflict_p0": 0.15,
+   "redirect_p0": 0.04,
    "coverage_r0": 0.05,
    "repair": {
     "choice": "external",
-    "confidence": 0.84,
+    "confidence": 0.47,
     "probabilities": {
-     "defer": 0.01,
-     "external": 0.88,
-     "bridge": 0.02,
-     "sources": 0.09
+     "defer": 0.08,
+     "sources": 0.27,
+     "bridge": 0.04,
+     "external": 0.61
     }
    }
   },
-  "c35": {
-   "retrieve": 0.95,
-   "source_hub": 0.25,
-   "source_documents": 0.75,
-   "source_memory": 0.35,
-   "useful_p0": 0.35,
-   "conflict_p0": 0.07,
-   "redirect_p0": 0.04,
-   "coverage_r0": 0.1,
+  "paper-08": {
+   "retrieve": 0.92,
+   "source_hub": 0.44,
+   "source_documents": 0.65,
+   "source_memory": 0.29,
+   "source_papers": 0.77,
+   "useful_p0": 0.98,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.03,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.6,
+   "coverage_r0": 0.96
+  },
+  "paper-08-missing": {
+   "retrieve": 0.93,
+   "source_hub": 0.46,
+   "source_documents": 0.67,
+   "source_memory": 0.3,
+   "source_papers": 0.79,
+   "useful_p0": 0.03,
+   "conflict_p0": 0.06,
+   "redirect_p0": 0.66,
+   "coverage_r0": 0.07,
    "repair": {
-    "choice": "external",
-    "confidence": 0.93,
+    "choice": "sources",
+    "confidence": 0.3,
     "probabilities": {
-     "bridge": 0.01,
-     "external": 0.95,
-     "sources": 0.02,
-     "defer": 0.02
+     "external": 0.33,
+     "defer": 0.17,
+     "bridge": 0.02,
+     "sources": 0.48
     }
    }
+  },
+  "paper-09": {
+   "retrieve": 0.95,
+   "source_hub": 0.12,
+   "source_documents": 0.49,
+   "source_memory": 0.22,
+   "source_papers": 0.93,
+   "useful_p0": 0.97,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.06,
+   "coverage_r0": 0.95
+  },
+  "paper-09-missing": {
+   "retrieve": 0.95,
+   "source_hub": 0.12,
+   "source_documents": 0.51,
+   "source_memory": 0.23,
+   "source_papers": 0.93,
+   "useful_p0": 0.02,
+   "conflict_p0": 0.05,
+   "redirect_p0": 0.11,
+   "coverage_r0": 0.01,
+   "repair": {
+    "choice": "sources",
+    "confidence": 0.46,
+    "probabilities": {
+     "bridge": 0.0,
+     "defer": 0.02,
+     "sources": 0.6,
+     "external": 0.38
+    }
+   }
+  },
+  "paper-10": {
+   "retrieve": 0.91,
+   "source_hub": 0.24,
+   "source_documents": 0.54,
+   "source_memory": 0.28,
+   "source_papers": 0.82,
+   "useful_p0": 0.98,
+   "conflict_p0": 0.03,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.01,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.06,
+   "coverage_r0": 0.93
+  },
+  "paper-10-missing": {
+   "retrieve": 0.93,
+   "source_hub": 0.25,
+   "source_documents": 0.54,
+   "source_memory": 0.26,
+   "source_papers": 0.84,
+   "useful_p0": 0.01,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.06,
+   "coverage_r0": 0.01,
+   "repair": {
+    "choice": "external",
+    "confidence": 0.4,
+    "probabilities": {
+     "sources": 0.35,
+     "defer": 0.09,
+     "external": 0.55,
+     "bridge": 0.01
+    }
+   }
+  },
+  "paper-11": {
+   "retrieve": 0.96,
+   "source_hub": 0.14,
+   "source_documents": 0.51,
+   "source_memory": 0.26,
+   "source_papers": 0.91,
+   "useful_p0": 0.97,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.02,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.03,
+   "coverage_r0": 0.95
+  },
+  "paper-11-missing": {
+   "retrieve": 0.96,
+   "source_hub": 0.16,
+   "source_documents": 0.51,
+   "source_memory": 0.26,
+   "source_papers": 0.91,
+   "useful_p0": 0.01,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.03,
+   "coverage_r0": 0.01,
+   "repair": {
+    "choice": "external",
+    "confidence": 0.4,
+    "probabilities": {
+     "external": 0.55,
+     "bridge": 0.01,
+     "sources": 0.38,
+     "defer": 0.06
+    }
+   }
+  },
+  "none-03": {
+   "retrieve": 0.97,
+   "source_hub": 0.21,
+   "source_documents": 0.63,
+   "source_memory": 0.5,
+   "source_papers": 0.6,
+   "useful_p0": 0.32,
+   "conflict_p0": 0.07,
+   "redirect_p0": 0.02,
+   "coverage_r0": 0.04
+  },
+  "none-05": {
+   "retrieve": 0.97,
+   "source_hub": 0.5,
+   "source_documents": 0.68,
+   "source_memory": 0.54,
+   "source_papers": 0.11,
+   "useful_p0": 0.7,
+   "conflict_p0": 0.14,
+   "redirect_p0": 0.02,
+   "coverage_r0": 0.43
+  },
+  "none-06": {
+   "retrieve": 0.95,
+   "source_hub": 0.12,
+   "source_documents": 0.44,
+   "source_memory": 0.54,
+   "source_papers": 0.02,
+   "useful_p0": 0.01,
+   "conflict_p0": 0.04,
+   "redirect_p0": 0.04,
+   "coverage_r0": 0.01
+  },
+  "none-09": {
+   "retrieve": 0.96,
+   "source_hub": 0.18,
+   "source_documents": 0.5,
+   "source_memory": 0.41,
+   "source_papers": 0.07,
+   "useful_p0": 0.23,
+   "conflict_p0": 0.07,
+   "redirect_p0": 0.02,
+   "coverage_r0": 0.02
+  },
+  "none-11": {
+   "retrieve": 0.97,
+   "source_hub": 0.09,
+   "source_documents": 0.34,
+   "source_memory": 0.55,
+   "source_papers": 0.35,
+   "useful_p0": 0.11,
+   "conflict_p0": 0.08,
+   "redirect_p0": 0.03,
+   "coverage_r0": 0.02
+  },
+  "none-12": {
+   "retrieve": 0.96,
+   "source_hub": 0.76,
+   "source_documents": 0.84,
+   "source_memory": 0.5,
+   "source_papers": 0.45,
+   "useful_p0": 0.05,
+   "conflict_p0": 0.06,
+   "redirect_p0": 0.02,
+   "coverage_r0": 0.01
+  },
+  "adv-01": {
+   "retrieve": 0.92,
+   "source_hub": 0.31,
+   "source_documents": 0.58,
+   "source_memory": 0.45,
+   "source_papers": 0.14,
+   "useful_p0": 0.96,
+   "conflict_p0": 0.07,
+   "redirect_p0": 0.97,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.03,
+   "coverage_r0": 0.9
+  },
+  "adv-05": {
+   "retrieve": 0.97,
+   "source_hub": 0.5,
+   "source_documents": 0.62,
+   "source_memory": 0.46,
+   "source_papers": 0.08,
+   "useful_p0": 0.93,
+   "conflict_p0": 0.12,
+   "redirect_p0": 0.86,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.13,
+   "coverage_r0": 0.77
+  },
+  "adv-07": {
+   "retrieve": 0.94,
+   "source_hub": 0.6,
+   "source_documents": 0.73,
+   "source_memory": 0.48,
+   "source_papers": 0.23,
+   "useful_p0": 0.93,
+   "conflict_p0": 0.13,
+   "redirect_p0": 0.96,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.02,
+   "coverage_r0": 0.83
+  },
+  "adv-08": {
+   "retrieve": 0.95,
+   "source_hub": 0.54,
+   "source_documents": 0.64,
+   "source_memory": 0.35,
+   "source_papers": 0.37,
+   "useful_p0": 0.96,
+   "conflict_p0": 0.1,
+   "redirect_p0": 0.96,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.03,
+   "coverage_r0": 0.86
+  },
+  "adv-10": {
+   "retrieve": 0.95,
+   "source_hub": 0.43,
+   "source_documents": 0.61,
+   "source_memory": 0.5,
+   "source_papers": 0.05,
+   "useful_p0": 0.96,
+   "conflict_p0": 0.06,
+   "redirect_p0": 0.95,
+   "useful_p1": 0.02,
+   "conflict_p1": 0.03,
+   "redirect_p1": 0.06,
+   "coverage_r0": 0.88
+  },
+  "adv-11": {
+   "retrieve": 0.96,
+   "source_hub": 0.44,
+   "source_documents": 0.67,
+   "source_memory": 0.62,
+   "source_papers": 0.1,
+   "useful_p0": 0.97,
+   "conflict_p0": 0.08,
+   "redirect_p0": 0.97,
+   "useful_p1": 0.06,
+   "conflict_p1": 0.04,
+   "redirect_p1": 0.03,
+   "coverage_r0": 0.91
   }
  },
  "costs": {
-  "requests": 64,
-  "input_tokens": 39986,
-  "output_tokens": 5900,
-  "elapsed_ms": 17325
+  "requests": 172,
+  "input_tokens": 126572,
+  "output_tokens": 19978,
+  "elapsed_ms": 39973
  },
- "dataset_sha256": "795aca59e263e7ec3010acc8f48bc1585cf8a98a02fae6fa581cbabb62d90f17"
+ "dataset_sha256": "b6f269f0d9542d3e9f8c8fd5cc982dd51697f2fb3bf9393160b250b07007d91a"
 }

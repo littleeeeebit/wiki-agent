@@ -537,7 +537,7 @@ def start_turn(path: Path, run, text: str) -> tuple[str | None, str, str]:
         return text, "", "done"
     pick = choose("work.start", lambda: start_offer(specs.owner(path)), lambda: start_state(specs.owner(path)),
                   lambda: facts(repo, path, specs.owner(path), session_of(path)), occasion=f"start:{run.turn}",
-                  baseline="dispatch", log=(spec["repo"], spec["id"]), cancel=run.halt,
+                  baseline="dispatch", log=(spec["repo"], spec["id"]), cancel=run.halt, cfg=decision.config(repo),
                   evidence_ids=[e["id"] for e in spec["grounds"].get("evidence", [])])
     how = said(pick)
     if pick.candidate is None:
@@ -628,7 +628,7 @@ def extra_check(repo: Path, path: Path, run, spec: dict) -> tuple[bool, str]:
                            "goal": spec["goal"], "acceptance_criteria": spec["done"][1:],
                            "gate": {"command": gate, "result": "passed"}, "changed_files": changed(path, spec)},
                   lambda: facts(repo, path, specs.owner(path), session_of(path)), occasion=f"check:{run.turn}",
-                  baseline="none", log=(spec["repo"], spec["id"]), cancel=run.halt)
+                  baseline="none", log=(spec["repo"], spec["id"]), cancel=run.halt, cfg=decision.config(repo))
     if pick.candidate is None:
         return False, "사람이 멈춤" if run.halt.is_set() else f"확인을 이어 가지 않았다 — {pick.record['basis']}"
     if pick.operation != "run_registered_check":
@@ -682,7 +682,8 @@ def fix_turn(loop, spec: dict, repo: Path, path: Path, n: int, head: str, findin
                            "rounds_left": max(0, loops.cap(spec) - n),
                            "findings": [f["head"] for f in findings], "disputed_before": disputed},
                   lambda: facts(repo, path, specs.load(spec["repo"], spec["id"]), session_of(path)),
-                  occasion=f"fix:{n}:{head}", baseline="fix", log=(spec["repo"], spec["id"]), cancel=loop.halt)
+                  occasion=f"fix:{n}:{head}", baseline="fix", log=(spec["repo"], spec["id"]), cancel=loop.halt,
+                  cfg=decision.config(repo))
     if pick.candidate is None:
         return None
     if pick.operation == "retrieve_evidence" and findings:
@@ -698,7 +699,7 @@ def recommend(repo: Path, items: list[dict]) -> list[dict]:
     """The proposed next tasks, the one Jev finds best supported first and
     marked `recommended`. Nothing runs: the person chooses the goal."""
 
-    cfg = decision.config()
+    cfg = decision.config(repo)
     if cfg.mode == "off" or len(items) < 2:
         return items
     ids = [f"c{i}" for i in range(1, len(items) + 1)]
