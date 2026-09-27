@@ -376,10 +376,16 @@ def test_the_connection_dials_the_resolved_address_and_checks_the_host_name(monk
         def setsockopt(self, *args):
             pass
 
-    class Context:
-        def wrap_socket(self, sock, server_hostname):
-            wrapped.append(server_hostname)
+    class Tls:
+        def do_handshake(self):
+            assert conn.live is self, "the TLS socket was not recorded before its handshake"
             raise OSError("handshake refused")
+
+    class Context:
+        def wrap_socket(self, sock, server_hostname, do_handshake_on_connect):
+            assert not do_handshake_on_connect, "a handshake inside the wrap is out of `stop`'s reach"
+            wrapped.append(server_hostname)
+            return Tls()
 
     found = decision.Lookup()
     found.target, found.context = TARGET, Context()
@@ -396,7 +402,67 @@ def test_the_connection_dials_the_resolved_address_and_checks_the_host_name(monk
     with pytest.raises(OSError):
         conn.connect()
     assert dialled == [(TARGET[:3], TARGET[3], 1.0)] and wrapped == [decision.HOST]
-    assert isinstance(conn.sock, Sock), "the raw socket was not `sock` for `abort` during the handshake"
+
+
+def local(listener):
+    """A `Lookup` pointed at a local listener, with a real TLS context."""
+
+    found = decision.Lookup()
+    found.target = (socket.AF_INET, socket.SOCK_STREAM, 0, listener.getsockname())
+    found.context = decision.ssl.create_default_context()
+    return found
+
+
+def test_an_abort_reaches_a_handshake_that_the_server_never_answers():
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        conn = decision.connection(local(listener), 5.0)
+        failed = []
+        worker = threading.Thread(target=lambda: failed.append(pytest.raises(OSError, conn.connect)))
+        worker.start()
+        time.sleep(0.2)  # connected; the ClientHello is waiting for an answer
+        started = time.monotonic()
+        decision.abort(conn)
+        worker.join(2)
+        assert not worker.is_alive() and failed, "the handshake ran on past the abort"
+        assert time.monotonic() - started < 1.0
+
+
+def test_an_aborted_connection_opens_nothing_and_sends_nothing():
+    with socket.create_server(("127.0.0.1", 0)) as listener:
+        listener.settimeout(0.2)
+        conn = decision.connection(local(listener), 5.0)
+        decision.abort(conn)
+        with pytest.raises(OSError, match="aborted"):
+            conn.connect()
+        with pytest.raises(TimeoutError):
+            listener.accept()
+
+
+def test_a_stop_reaches_the_socket_after_http_client_lets_go_of_it():
+    # A `Connection: close` response sets `sock` to None while the response still reads it.
+    here, there = socket.socketpair()
+    with here, there:
+        conn = decision.connection(local(here), 5.0)
+        conn.hold(here)
+        conn.sock = None
+        here.settimeout(5)
+        file = here.makefile("rb")  # what a response reads through, holding `close()` back
+        ended = []
+
+        def read():
+            try:
+                ended.append(file.read(1))
+            except (OSError, ValueError) as exc:
+                ended.append(exc)
+
+        worker = threading.Thread(target=read)
+        worker.start()
+        time.sleep(0.1)
+        started = time.monotonic()
+        conn.stop()
+        worker.join(2)
+        assert not worker.is_alive() and ended, "the read was not ended by the stop"
+        assert time.monotonic() - started < 1.0
 
 
 def test_a_worker_that_cannot_start_frees_its_slot_and_connection(monkeypatch):

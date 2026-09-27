@@ -303,22 +303,57 @@ def resolve(end: float, cancel: threading.Event) -> Lookup:
 
 class Pinned(http.client.HTTPSConnection):
     """TLS to a resolved target, with SNI and the certificate checked against
-    HOST. Inside a slot nothing is looked up and nothing is read from disk:
-    the socket is `sock` from before its connect, so `abort` always has a
-    socket to shut, and every step on it is bounded by this call's timeout."""
+    HOST. Inside a slot nothing is looked up and nothing is read from disk.
+
+    `http.client` moves `sock` about — the handshake detaches the raw socket,
+    a closing response takes `sock` away while it is still read — so the
+    socket `stop` must reach is kept here, in `live`, under a lock: every
+    socket is recorded before any step that can block on it, and once
+    stopped, no new socket starts, so a cancelled call sends nothing."""
 
     def __init__(self, found: Lookup, timeout: float):
         super().__init__(HOST, timeout=timeout, context=found.context)
         self.target = found.target
+        self.live: socket.socket | None = None
+        self.stopped = False
+        self._guard = threading.Lock()
+
+    def hold(self, sock: socket.socket) -> None:
+        with self._guard:
+            if self.stopped:
+                raise OSError("aborted")
+            self.live = sock
+
+    def stop(self) -> None:
+        with self._guard:
+            self.stopped, sock, self.live = True, self.live, None
+        if sock is None:
+            return
+        try:
+            # The TCP socket under any TLS layer: a blocked call returns now on POSIX.
+            socket.socket.shutdown(sock, socket.SHUT_RDWR)
+        except OSError:
+            pass
+        # Windows wakes a blocked call only when the handle closes, and `close()`
+        # waits while a response still holds the socket's file. Detached first,
+        # so only one of this and the worker's own close ever gets the handle.
+        fd = socket.socket.detach(sock)
+        if fd != -1:
+            socket.close(fd)
 
     def connect(self) -> None:
         family, kind, proto, sockaddr = self.target
         # A numeric sockaddr: `connect` parses it, it does not resolve it.
-        self.sock = sock = socket.socket(family, kind, proto)
+        sock = socket.socket(family, kind, proto)
+        self.sock = sock
+        self.hold(sock)
         sock.settimeout(self.timeout)
         sock.connect(sockaddr)
         sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
+        tls = self._context.wrap_socket(sock, server_hostname=self.host, do_handshake_on_connect=False)
+        self.sock = tls
+        self.hold(tls)  # a stop between the wrap and here met the detached socket: this raises
+        tls.do_handshake()
 
 
 def connection(found: Lookup, timeout: float) -> http.client.HTTPSConnection:
@@ -409,17 +444,13 @@ def send(key: str, body: bytes, timeout: float, cancel: threading.Event) -> dict
 
 
 def abort(conn) -> None:
-    """End `conn`'s exchange from another thread. A connection that has not
-    begun to open has no socket and no work to stop; once it begins, its
-    socket is `sock`, and each step on it is bounded by its own timeout,
-    never past this call's."""
+    """End `conn`'s exchange from another thread: `Pinned.stop` shuts the
+    socket it last recorded and refuses any new one, so nothing blocks past
+    this call and nothing is sent after it."""
 
-    sock = getattr(conn, "sock", None)
-    try:
-        if sock is not None:
-            sock.shutdown(2)  # both directions: a blocked read returns now
-    except OSError:
-        pass
+    stop = getattr(conn, "stop", None)
+    if stop is not None:
+        stop()
     try:
         conn.close()
     except Exception:  # noqa: BLE001 — closed mid-read is closed all the same
