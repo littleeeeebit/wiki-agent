@@ -215,6 +215,10 @@ def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
     with the responding model, usage and elapsed time. A failure raises
     `JevError` (or the budget's own `Exhausted`/`Cancelled`) and is never
     turned into an answer.
+
+    An answer is returned only if the run was live after its last check
+    here, so no caller has to check again before using it. What a caller
+    does after that is its own step, bounded by its own checks.
     """
 
     started = time.monotonic()
@@ -240,6 +244,7 @@ def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
             raise JevError("invalid_response")
         budget.charge(usage)
         values = {name: answer(q, answers.get(name)) for name, q in questions.items()}
+        budget.check()  # the last step: a run stopped by now gets no answer
         entry["answers"] = values
         return values
     except Exception as exc:

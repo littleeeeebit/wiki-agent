@@ -14,7 +14,7 @@ import pytest
 
 import decision
 import search
-from common.budget import Budget, Exhausted
+from common.budget import Budget, Cancelled, Exhausted
 from common.language import language
 from main import knowledge
 from search import evidence, retrieval
@@ -451,6 +451,29 @@ def test_an_answer_that_lands_after_the_cancel_is_not_returned(monkeypatch):
     with pytest.raises(decision.JevError, match="cancelled"):
         decision.send("k", b"{}", 5.0, cancel)
     assert len(sent) == 1 and decision.IN_FLIGHT._value == free
+
+
+@pytest.mark.parametrize("stop", ["cancel", "deadline"])
+def test_a_run_stopped_while_its_answer_is_checked_gets_no_answer(monkeypatch, stop):
+    budget = Budget(seconds=5, calls=2, candidates=0)
+    payload = {"model": MODEL, "usage": {"input_tokens": 1, "output_tokens": 1},
+               "answers": {"q": {"type": "noul", "noul": 0.9}}}
+    monkeypatch.setattr(decision, "send", lambda *a: payload)
+    real = decision.answer
+
+    def answer(question, got):
+        if stop == "cancel":
+            budget.cancel.set()
+        else:
+            budget.deadline = time.monotonic() - 1
+        return real(question, got)
+
+    monkeypatch.setattr(decision, "answer", answer)
+    trace = []
+    with pytest.raises(Cancelled if stop == "cancel" else Exhausted):
+        decision.evaluate(decision.Config("active", MODEL, "file", key="k"), {}, {"q": decision.noul("?")},
+                          trace, budget)
+    assert "answers" not in trace[0] and trace[0]["error"]
 
 
 def local(listener):
