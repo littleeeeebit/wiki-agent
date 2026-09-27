@@ -1365,8 +1365,9 @@ class Grounding:
         if last["unavailable"]:
             return None
         reasons = {c["reason"] for c in last["checks"].values() if c["state"] == "rejected"}
-        # A direct run needs a repository fact when its draft stated one or, as it is told to, left it unresolved.
-        needs_fact = last["direct"] and ("direct_mode" in reasons
+        # A direct run needs a repository fact when its draft stated one — as a source_fact, or as text the
+        # conversation does not hold — or, as it is told to, left it unresolved.
+        needs_fact = last["direct"] and (bool(reasons & {"direct_mode", "new_fact", "unfaithful"})
                                          or bool((last["draft"] or {}).get("unresolved_requirements")))
         # Back to retrieval needs a route and a round, and still a call to check the draft after.
         if needs_fact and self.calls >= 3:
@@ -1476,7 +1477,7 @@ def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict]) -> str:
 
 def grounded(question: str, project: str | Path | None, state: str, dossier: dict, generate,
              cfg: decision.Config, cancel: threading.Event | None = None, cache: decision.Cache | None = DECISIONS,
-             evaluate=None):
+             evaluate=None, said: str = ""):
     """Draft, verify, repair once at most, publish.
 
     A generator. It yields `{"progress": step}` — draft, verify, retrieve,
@@ -1485,10 +1486,18 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
     (the host's text outside the draft block, where other blocks ride) and
     `record` (the drafts and checks, an internal artifact). `generate(message)`
     is itself a generator whose return value is the host's finished text; a
-    failed turn raises out of it, and nothing is published."""
+    failed turn raises out of it, and nothing is published.
+
+    `said` is what of the conversation a direct run's text may restate
+    besides the English question: English only, since Jev reads it, and
+    never an answer that was not verified — restated, it would come out
+    verified (review round 3). `state` routes; it is not a ground.
+
+    ponytail: an earlier user turn is not normalized, so restating one sends
+    the run to retrieval; normalize the turns if that costs many answers."""
 
     run = Grounding(dossier, cfg, cancel, cache, evaluate,
-                    said="\n".join(filter(None, (state, question, dossier.get("question_en")))))
+                    said="\n".join(filter(None, (said, dossier.get("question_en")))))
     yield {"progress": "draft"}
     text = yield from generate(run.brief())
     yield {"progress": "verify"}

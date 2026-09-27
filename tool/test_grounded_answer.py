@@ -449,6 +449,24 @@ def test_a_direct_runs_text_states_no_fact_the_conversation_did_not(tmp_path):
     assert out["verified"]["uncertainty"] == [{"claim_id": "c1", "reason": "uncertain"}] and "Acme" not in out["text"]
 
 
+def test_a_direct_runs_invented_fact_sends_it_back_to_retrieval(tmp_path, monkeypatch):
+    # Review round 3 (P1): rejected as unfaithful, it was drafted again with no evidence and abstained.
+    owners = item(tmp_path, "docs/owners.md", OWNERS)
+    asked = []
+
+    def prepare(question, project, state, *, cfg, cache, require, budget):
+        asked.append(require)
+        return dossier([owners], ["Who owns the ingest pipeline?"], calls_left=0)
+
+    monkeypatch.setattr(knowledge, "prepare", prepare)
+    d = dossier([], ["Who owns the ingest pipeline?"], direct=True, calls_left=5)
+    made_up = claim("c1", "Acme owns the ingest pipeline.", kind="direct_text", cites=())
+    out, events, _ = answer(d, [draft(made_up), draft(claim("c1", "The ingest pipeline is owned by the Atlas team."))],
+                            Judge(faithful={"c1": ("adds", 0.95)}))
+    assert asked == [True] and "retrieve" in [e.get("progress") for e in events]
+    assert out["verified"]["status"] == "complete" and "Atlas" in out["text"] and "Acme" not in out["text"]
+
+
 def test_a_recommendation_states_no_fact_its_premises_do_not(tmp_path):
     # Review round 2 (P0): "switch clients to 9999" reached an abstained answer with no judgment at all.
     ports = item(tmp_path, "docs/ports.md", PORTS)
@@ -752,6 +770,30 @@ def test_rejected_content_never_reaches_the_stream_the_history_or_the_explanatio
     record = next(r for r in rows if r["role"] == "draft")
     assert record["record"]["generations"][0]["checks"]["c2"]["reason"] == "fabricated_quote"
     assert "chat" not in chat._busy and "wiki" not in chat._busy
+
+
+def test_a_direct_run_restates_only_answers_that_were_verified(tmp_path, active):
+    # Review round 3 (P0): an old unverified answer, restated in a direct run, came out verified.
+    chat.remember("wiki", "assistant", "The search daemon listens on port 9999.")
+    chat.remember("wiki", "assistant", "The search daemon listens on port 8791. `docs/ports.md:3`",
+                  verification={"status": "complete", "verified": True, "degraded": False})
+    d = dossier([], direct=True, calls_left=1)
+    reply = draft(claim("c1", "The search daemon listens on port 8791.", kind="direct_text", cites=()),
+                  claim("c2", "The search daemon listens on port 9999.", kind="direct_text", cites=(), reqs=()))
+    session, _sent = session_saying(reply)
+
+    def explain(source, model, effort):
+        yield Event("done", "검색 데몬은 8791 포트를 쓴다.")
+
+    with patch.object(chat, "prepare", return_value=d), patch.object(chat, "session", return_value=session), \
+         patch.object(chat, "explain", explain):
+        response = Screen(main_app.app, base_url="http://127.0.0.1:8787").post("/api/say/wiki",
+                                                                               json={"text": "그 포트가 뭐였지?"})
+    done = next(e for e in events_of(response) if e["kind"] == "done")
+    assert done["verification"]["rejected"] == [{"claim_id": "c2", "reason": "new_fact"}]
+    assert "9999" not in done["text"] and done["verification"]["citations"] == []
+    conversation = active.asked[0][0]["conversation"]
+    assert "8791" in conversation and "9999" not in conversation and "포트" not in conversation
 
 
 def test_an_explanation_that_adds_a_number_is_a_presentation_error(tmp_path, active):

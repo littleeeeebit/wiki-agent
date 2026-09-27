@@ -125,6 +125,7 @@ export type Verification = {
   reason: string | null
   missing_requirements: { id: string; text: string }[]
   conflicts: { claim_id: string; evidence: string[] }[]
+  citations: { cite: string }[]
 }
 
 export type Ev = {

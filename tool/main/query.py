@@ -627,7 +627,13 @@ def say(cid: str, body: Say) -> StreamingResponse:
                 # Active: the answer is drafted, checked, and only then published
                 # (stage 7 of `docs/plans/jev/`). Nothing of the draft is sent on.
                 spent: dict = {}
-                flow = grounded(text or sent, current_repo(), context, dossier, drafting(cid, sent, spent), jev)
+                # What a direct run's text may restate: answers that were verified, English as code wrote them.
+                # An unverified one restated would come out verified.
+                verified = "\n".join(r["text"] for r in prior if r["role"] == "assistant"
+                                     and (r.get("verification") or {}).get("verified")
+                                     and not r["verification"].get("degraded"))
+                flow = grounded(text or sent, current_repo(), context, dossier, drafting(cid, sent, spent), jev,
+                                said=verified)
                 try:
                     while True:
                         try:
