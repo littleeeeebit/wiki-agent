@@ -36,7 +36,7 @@ from agent import ChatSession
 from common import worktree_home
 from workspace import adopt, folder_for, remove, worktrees
 
-from . import channels, connect, query, specs, work
+from . import channels, connect, decisions, query, specs, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 
 REVIEW = ROOT / "raw" / "review"
@@ -731,7 +731,22 @@ def step(loop: Loop) -> bool:
     if spec is None:
         return False
     serious = [f for f in parsed["findings"] if f["grade"] != "P2"]
-    answer = told(loop, spec, path, fixing(n, serious, parsed["said"]))
+    # Jev may gather the context the findings touch first. The verdict, the
+    # cap and the merge conditions above are settled; this only shapes the turn.
+    against = [d["finding"] for d in (rounds[-1].get("disposition") or [] if rounds else [])
+               if d["action"] == "disagree"]
+    text = decisions.fix_turn(loop, spec, repo, path, n, head, serious,
+                              [f["head"] for f in serious if any(same(f["head"], a) for a in against)],
+                              fixing(n, serious, parsed["said"]))
+    if text is None:
+        # Refused at the execution boundary three times over: the worktree went, or its
+        # state kept moving under the loop. Stopped with the reason, never sent regardless.
+        if loop.halt.is_set():
+            return False
+        gone = not path.is_dir()
+        return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE if gone else Why.FORMAT,
+                    f"R{n} 수정 턴을 보내지 않았다 — 제안이 실행 직전 확인을 넘지 못했다")
+    answer = told(loop, spec, path, text)
     if answer is None:
         return False
     disposition = disposed(answer)

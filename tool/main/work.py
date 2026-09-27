@@ -475,13 +475,33 @@ def shown(row: dict) -> dict:
     return row
 
 
-def run_turn(path: Path, run: Run, text: str, release) -> None:
+def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> None:
     """One turn, to its end, whoever is watching. The hold and the record are
-    let go here, so a turn nobody watched is still on record."""
+    let go here, so a turn nobody watched is still on record.
+
+    `decide`: a turn the server starts on its own, where Jev may choose to
+    gather evidence first or to ask the person instead (`decisions.start_turn`).
+    Decided here, on the turn's thread, so a stop reaches it; what is sent is
+    what the record keeps."""
 
     chat, final, failed, meta, then = run.chat, "", "", {}, None
     try:
-        for ev in chat.say(text, run.halt):
+        events = None
+        if decide:
+            from . import decisions  # `decisions` reads this module's sessions
+
+            sent, shown, kind = decisions.start_turn(path, run, text)
+            if run.halt.is_set():
+                sent, shown, kind = None, "사람이 멈춤", "error"
+            if sent is None:
+                # Nothing goes to the CLI: a question for the person, or why not.
+                final, failed = (shown, "") if kind == "done" else ("", shown)
+                run.put({"kind": kind, "text": shown, "meta": {}, "session_id": chat.id, "parent_id": chat.parent_id})
+                events = ()
+            else:
+                text = sent
+                remember(path, "user", text)
+        for ev in chat.say(text, run.halt) if events is None else events:
             if ev.kind == "context":   # the CLI's conversation could not be resumed
                 remember(path, "context", ev.text)
                 ev.kind = "tool"
@@ -598,17 +618,19 @@ def say(body: Order) -> StreamingResponse:
     return streaming(tail(run, -1))
 
 
-def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = None) -> Run:
+def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = None, decide: bool = False) -> Run:
     """Start one turn of `chat` on its own thread, which owns `release` from
     here. The caller holds the worktree already. `run` is one the caller made
-    first, so a stop could reach it before the thread starts."""
+    first, so a stop could reach it before the thread starts. `decide`: the
+    turn's thread decides what is sent, and records it (`run_turn`)."""
 
     run = run or Run(chat)
-    remember(path, "user", text)
+    if not decide:
+        remember(path, "user", text)
     with _lock:
         _runs[str(path)] = run
     try:
-        threading.Thread(target=run_turn, args=(path, run, text, release), daemon=True).start()
+        threading.Thread(target=run_turn, args=(path, run, text, release, decide), daemon=True).start()
     except BaseException as exc:
         # No thread will end it: ended here, or it reads as running forever
         # and a screen that attaches never sees its stream close.

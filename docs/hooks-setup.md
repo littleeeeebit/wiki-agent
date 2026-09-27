@@ -53,6 +53,19 @@ server_stop = "Ctrl+C in the terminal that started it"
 scratch_dirs = "artifacts/"
 ```
 
+A `[checks]` table registers checks beyond the gate, each by an id with a
+command and what it examines. Once a work turn's gate has passed, Jev may
+pick one whose description covers the files the change touched, and the
+server runs it before the pull request goes up; a failure holds the pull
+request. Only registered commands run, the gate always runs first, and
+without the table nothing changes.
+
+```toml
+[checks]
+lint = { cmd = "python tool/lint.py --check", about = "checks the wiki pages and plans under docs/ and the hub" }
+ruff = { cmd = "python -m ruff check tool", about = "lints the Python under tool/" }
+```
+
 `keep_alive = 2`, above `agents`, turns on keep-alive for the repository. A
 Claude session in an Orca cell that sits idle for 55 minutes gets a one-line
 ping, at most that many times per utterance a person types, so its prompt

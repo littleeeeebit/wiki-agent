@@ -23,6 +23,9 @@ CALL_SECONDS = 6.0
 
 # Added retrieval and decision work per question.
 QUESTION = {"seconds": 15.0, "calls": 6, "candidates": 40}
+# One server-owned choice (stage 8): the action Choice, and the retrieval it may
+# pick spending what is left — never a second allowance.
+ACTION = {"seconds": 25.0, "calls": 6, "candidates": 40}
 # A connectivity smoke check.
 PROBE = {"seconds": 15.0, "calls": 2, "candidates": 0}
 
