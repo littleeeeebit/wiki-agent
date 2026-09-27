@@ -15,6 +15,10 @@ release, freeze at least 120 distinct intents with both English and Korean
 wordings: 240 query variants. Keep paraphrases and translated variants of one
 intent in the same split. Use 60 intents for calibration and 60 held-out intents
 for evaluation. Do not tune on held-out results and then report them as held-out.
+The 60 calibration intents replace stage 6's 35-case synthetic split
+(`eval/jev/calibration.json`): refit `eval/jev/policy.json` on them with
+`tool/eval/policy.py --collect`, with labels for every decision kind including
+the repair and relation Choices, before the held-out run.
 
 Cover these categories in both splits: direct transformation/no retrieval,
 explicit factual retrieval, source routing, indirect graph bridges, multi-part

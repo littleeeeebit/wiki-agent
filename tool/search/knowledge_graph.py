@@ -66,7 +66,7 @@ ORIGINS = ("deterministic", "extracted", "observed")
 STATUSES = ("adopted", "candidate")
 ENTITY_TYPES = ("module", "setting", "feature", "paper_subject")
 RELATIONS = ("depends_on",)
-# ponytail: the retrieval controller's uncalibrated thresholds (`controller.NO/YES`); tune on the labeled subset.
+# ponytail: the provisional 0.2/0.8 of `decision.policy`, not fitted for graph support; tune on the labeled subset.
 ADOPT = 0.8
 DROP = 0.2
 MAX_NAME = 80

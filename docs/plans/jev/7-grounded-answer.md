@@ -89,6 +89,24 @@ For specification cards, factual grounds use accepted evidence IDs and source
 revisions. User choices remain user choices; a verified evidence record does not
 approve a proposed implementation.
 
+## Inherited from stage 6
+
+Stage 6 leaves two decisions for this stage to enforce and fit. Both belong
+here because their only consumer is the answer.
+
+- A dossier with `direct` carries `restrictions`, which are instructions to the
+  generator and nothing more. Verification rejects every `source_fact` claim in a
+  direct run: direct mode cannot introduce a repository fact. A draft that needs
+  such a claim goes back to retrieval, never through to publication.
+- The `relation` Choice (supports, contradicts, insufficient) is still on
+  `decision.policy`'s provisional confidence and margin. Label claim–evidence
+  pairs in the calibration split and fit it with `tool/eval/policy.py`, as the
+  repair Choice was fitted. False acceptance is costed above false rejection.
+
+The dossier's `requirements` are the question's parts. Stage 6 split them, with
+the model where one sentence asks several things; they are what
+`question_requirements` and `unresolved_requirements` refer to.
+
 ## Files
 
 - `tool/main/knowledge.py`: generation/validation orchestration and publication policy.
@@ -112,7 +130,7 @@ partial/abstained answer. Measure false acceptance separately from false rejecti
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Draft | Structured claims, requirements, and evidence references | Not started |
-| 2 | Verification | Original-span checks and semantic support | Not started |
+| 2 | Verification | Original-span checks, semantic support, a fitted relation policy, direct-mode enforcement | Not started |
 | 3 | Publication | Buffering, repair, partial answer, abstention | Not started |
 | 4 | Consumers | Explanation, memory, and specification boundaries | Not started |
 | 5 | Verification gate | Adversarial, bilingual, and live answer checks | Not started |

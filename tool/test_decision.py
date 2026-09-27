@@ -156,7 +156,8 @@ def connection(monkeypatch, status=200, payload=None, delay=0.0, fail=None):
         def close(self):
             pass
 
-    monkeypatch.setattr(decision.http.client, "HTTPSConnection", Connection)
+    monkeypatch.setattr(decision, "resolve", lambda end, cancel: "192.0.2.1")
+    monkeypatch.setattr(decision, "connection", lambda address, timeout: Connection(decision.HOST, timeout))
     return sent
 
 
@@ -317,13 +318,13 @@ def test_the_probe_cli_offline_reads_settings_and_sends_nothing(tmp_path):
 # -- Composition ------------------------------------------------------------
 
 def test_mode_off_sends_nothing_and_keeps_baseline_retrieval(monkeypatch):
-    from search import controller
-    from test_jev import hit
+    from test_decision_flow import chunk, found
 
-    monkeypatch.setattr(controller, "retrieve", lambda *a: [hit("a", "baseline")])
+    monkeypatch.setattr(knowledge, "run_round", lambda req, project, budget: found([chunk("a", "baseline")]))
     monkeypatch.setattr(decision, "evaluate", lambda *a, **kw: pytest.fail("a request in off mode"))
+    monkeypatch.setattr(knowledge, "english", lambda *a, **kw: pytest.fail("a translation in off mode"))
     cfg = decision.Config("off", "m", "file", key="off-secret")
     out = knowledge.prepare("Question", None, cfg=cfg)
-    assert out["status"] == "fallback" and out["evidence"][0]["original_text"] == "baseline"
-    assert out["trace"][0] == {"fallback": "JevError", "reason": "disabled"}
+    assert out["status"] == "unavailable" and out["evidence"][0]["original_text"] == "baseline"
+    assert out["reason"] == "disabled" and out["decisions"] == []
     assert out["jev"]["mode"] == "off" and "off-secret" not in json.dumps(out)
