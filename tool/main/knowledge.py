@@ -12,6 +12,7 @@ running on its next turn.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import re
@@ -24,10 +25,12 @@ from pathlib import Path
 import decision
 import translate
 from agent import oneshot
+from common import settings
 from common.budget import QUESTION, Budget
 from common.language import language
-from search import HUB, evidence_store, knowledge_graph, local_index, providers, records, resolve, sources
+from search import HUB, evidence_store, knowledge_graph, local_index, providers, records, resolve, retrieval, sources
 from search import prepare as controlled
+from search import retrieve as retrieve_from_daemon
 from workspace import create, folder_for
 from session_state import active_page, decisions, plans
 from session_state import run as git
@@ -285,8 +288,13 @@ def add_url(project: str | Path | None, url: str, seconds: float = providers.SEC
 
 
 def add_papers(project: str | Path | None, query: str | None = None, ids: list[str] | None = None, n: int = 5,
-               full: bool = False, cfg: decision.Config | None = None) -> dict:
-    """arXiv papers into `project`: a search, or identifiers.
+               full: bool = False, cfg: decision.Config | None = None, budget: Budget | None = None,
+               gate: Gate | None = None) -> dict:
+    """arXiv papers into `project`: a search, or identifiers. Inside a run,
+    `budget` is the run's, and grading spends from it; each paper's record
+    is put through `gate`, which a caller that stops waiting closes
+    (`bounded`), so no record arrives after it returned. What is read before
+    the put — content kept by its hash — names no record until then.
 
     Each paper's abstract is read and indexed as `abstract_only`; with `full`,
     its PDF too, and only a successful extraction makes it `full_text`. With
@@ -303,44 +311,54 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
         asked = english([query], QUERY_SECONDS)[0]
         query = asked["text"] if asked["status"] in ("original_english", "translated") else query
     entries = providers.arxiv(query, ids, n)
-    grades, trace = grade_papers(query, entries, cfg) if query else ({}, [])
+    grades, trace = grade_papers(query, entries, cfg, budget) if query else ({}, [])
     acting = cfg.mode == "active"
     out = []
+
+    def paper(store, i: int, entry: dict) -> tuple[dict, bool]:
+        """`(record, whether to put it)`."""
+
+        origin = f"arxiv:{entry['arxiv_id']}"
+        record = store.get(sources.new(root, "paper", origin)["source_id"])
+        if unwanted(record):
+            return record, False
+        record = record or sources.new(root, "paper", origin)
+        record.update(title=entry["title"], authors=entry["authors"], published_at=entry["published"],
+                      license_note=LICENSE_ARXIV, relevance=grades.get(i, record["relevance"]))
+        edition = f"{entry['arxiv_id']}{entry['version']}"
+        if acting and grades.get(i) is not None and grades[i] <= NOT_RELEVANT and record["content_hash"] is None:
+            record.update(status="discovered", revision=edition)
+            return record, True
+        try:
+            # A full text already read of this edition is not traded for its abstract.
+            if not (record["revision"] == edition and record["coverage"] in ("full_text", "partial")):
+                read_into(store, record, sources.text_of(entry["summary"]).encode("utf-8"), revision=edition,
+                          coverage="abstract_only", form="text", cite=entry["abs_url"])
+            if full and record["coverage"] == "abstract_only":
+                got = providers.fetch(entry["pdf_url"], providers.PDF_BYTES, types=("application/pdf",))
+                text, coverage = pdf_text(got["body"])
+                read_into(store, record, text.encode("utf-8"), revision=edition, coverage=coverage,
+                          form="pages", cite=f"arxiv:{edition}")
+        except providers.FetchError as error:
+            failed(record, error)
+        return record, True
+
     with records(project) as store:
         for i, entry in enumerate(entries):
-            origin = f"arxiv:{entry['arxiv_id']}"
-            record = store.get(sources.new(root, "paper", origin)["source_id"])
-            if unwanted(record):
-                out.append(record)
-                continue
-            record = record or sources.new(root, "paper", origin)
-            record.update(title=entry["title"], authors=entry["authors"], published_at=entry["published"],
-                          license_note=LICENSE_ARXIV, relevance=grades.get(i, record["relevance"]))
-            edition = f"{entry['arxiv_id']}{entry['version']}"
-            if acting and grades.get(i) is not None and grades[i] <= NOT_RELEVANT and record["content_hash"] is None:
-                record.update(status="discovered", revision=edition)
-                out.append(store.put(record))
-                continue
-            try:
-                # A full text already read of this edition is not traded for its abstract.
-                if not (record["revision"] == edition and record["coverage"] in ("full_text", "partial")):
-                    read_into(store, record, sources.text_of(entry["summary"]).encode("utf-8"), revision=edition,
-                              coverage="abstract_only", form="text", cite=entry["abs_url"])
-                if full and record["coverage"] == "abstract_only":
-                    got = providers.fetch(entry["pdf_url"], providers.PDF_BYTES, types=("application/pdf",))
-                    text, coverage = pdf_text(got["body"])
-                    read_into(store, record, text.encode("utf-8"), revision=edition, coverage=coverage,
-                              form="pages", cite=f"arxiv:{edition}")
-            except providers.FetchError as error:
-                failed(record, error)
-            out.append(store.put(record))
+            record, put = paper(store, i, entry)
+            with gate.passing() if gate else contextlib.nullcontext(True) as open_:
+                if not open_:
+                    break
+                out.append(store.put(record) if put else record)
     return {"query": query, "trace": trace,
             "papers": [sources.brief(r) | {"relevance": r["relevance"], "error": r["error"]} for r in out]}
 
 
-def grade_papers(query: str, entries: list[dict], cfg: decision.Config) -> tuple[dict[int, float], list]:
+def grade_papers(query: str, entries: list[dict], cfg: decision.Config,
+                 budget: Budget | None = None) -> tuple[dict[int, float], list]:
     """Jev's relevance of each abstract to the query, to decide what to read.
-    `{}` when Jev is off or fails: every paper is then read."""
+    `{}` when Jev is off or fails: every paper is then read. `budget` is the
+    run's, when there is one; alone, a question's allowance of its own."""
 
     trace: list[dict] = []
     if cfg.mode == "off" or not entries:
@@ -351,7 +369,7 @@ def grade_papers(query: str, entries: list[dict], cfg: decision.Config) -> tuple
                                        "including a partial answer or a contradiction? Topic overlap alone is "
                                        "insufficient.") for i in range(len(entries))}
     try:
-        got = decision.evaluate(cfg, state, questions, trace, Budget(**QUESTION), "papers")
+        got = decision.evaluate(cfg, state, questions, trace, budget or Budget(**QUESTION), "papers")
     except Exception as error:  # noqa: BLE001 — no grade is no ranking, never a rejection
         trace.append({"fallback": type(error).__name__, "reason": getattr(error, "category", "")})
         return {}, trace
@@ -616,9 +634,7 @@ def propose(passages: list[dict], model: str = "") -> tuple[dict[str, dict], str
             raise RuntimeError(ev.text)
         if ev.kind == "done":
             answer, used = ev.text, ev.meta.get("model") or used
-    body = answer.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", body, re.S)
-    data = json.loads(fenced.group(1) if fenced else body)
+    data = parsed(answer)
     items = data.get("passages") if isinstance(data, dict) else None
     if not isinstance(items, list):
         raise ValueError("the proposal has no passages")
@@ -859,3 +875,215 @@ def check_graph(project: str | Path | None) -> dict:
         return knowledge_graph.verify(index.graph, index.chunks)
     finally:
         index.close()
+
+
+# ---- retrieval rounds (stage 5 of `docs/plans/jev/`) ------------------------------
+#
+# `search.retrieval` ranks, walks and repairs within one index; here the
+# question gets its English, the settings decide the graph lane, and a repair
+# that needs another pipeline — a model's subqueries, an arXiv search — is
+# done before its round is sent. Every round of one question spends one
+# `Budget`, and every request carries its deadline.
+
+SUBQUERY_PROMPT = "retrieval-subqueries.md"
+# How long one round waits for the daemon, as the controller does (`search.controller.SEARCH_TIMEOUT`).
+ROUND_SECONDS = 3.0
+# Papers one external repair asks arXiv for.
+REPAIR_PAPERS = 3
+
+
+def graph_enabled() -> bool:
+    """The graph lane's switch: `WIKI_GRAPH_RETRIEVAL=off` in the hub's
+    `.env` (or the environment) restores RRF alone. On by default."""
+
+    try:
+        found = settings.entries(decision.env_file())
+    except (OSError, ValueError):
+        found = {}
+    return (settings.pick(found, "WIKI_GRAPH_RETRIEVAL")[0] or "on").strip().lower() != "off"
+
+
+def available(root: Path | None) -> list[str]:
+    """The sources a question in `root` may search: the local three, and each
+    external family holding something enabled and read."""
+
+    if root is None:
+        return ["hub"]
+    with records(root) as store:
+        held = {r["kind"] for r in store.all() if r["enabled"] and r["status"] in sources.SEARCHABLE}
+    return ["hub", "documents", "memory", *(f for f, kind in sources.FAMILIES.items() if kind in held)]
+
+
+def retrieve(query: str, project: str | Path | None, k: int = 8, *, sources_: list[str] | None = None,
+             graph: bool | None = None, budget: Budget | None = None, cfg: decision.Config | None = None) -> dict:
+    """Round 1 for `query`: its RetrievalRequest and RetrievalResult, as
+    `{"request", "result"}`, `result` `None` when nothing could be searched.
+
+    The question's English goes in beside it when Jev is on — normalization
+    sends it to the translator, which mode off never does. `graph` overrides
+    the switch (`graph_enabled`).
+    """
+
+    cfg = cfg or decision.config()
+    budget = budget or Budget(**QUESTION)
+    root = Path(project).resolve() if project else None
+    query_en = None
+    if cfg.mode != "off":
+        asked = english([query], min(ROUND_SECONDS, budget.left()), project=project)[0]
+        query_en = asked["text"] if asked["status"] in ("original_english", "translated") else None
+    on = graph_enabled() if graph is None else graph
+    req = retrieval.request(knowledge_graph.evidence.repo_id(root or HUB), query, query_en=query_en,
+                            sources=sources_ or available(root), limit=k, seconds=budget.left(),
+                            graph=retrieval.GRAPH if on else None)
+    return {"request": req, "result": run_round(req, project, budget)}
+
+
+def run_round(req: dict, project: str | Path | None, budget: Budget) -> dict | None:
+    """One request answered by the daemon, else by a cold index built here;
+    `None` when there is no time left or the generation it names is gone."""
+
+    if budget.cancel.is_set() or budget.left() <= 0:
+        return None
+    found = retrieve_from_daemon(req, project, min(ROUND_SECONDS, budget.left()))
+    if found is not None:
+        return found
+    found = bounded(lambda: cold(req, project, budget.cancel), budget)
+    return found if (found or {}).get("schema_version") == retrieval.RESULT else None
+
+
+# Held by the one cold index build allowed at a time, as the controller's (`search.controller.COLD`).
+COLD = threading.Lock()
+
+
+def cold(req: dict, project: str | Path | None, cancel: threading.Event) -> dict | None:
+    """A round answered by an index built in this process. A build already
+    running is not joined by a second: this round then has no answer."""
+
+    if not COLD.acquire(blocking=False):
+        return None
+    try:
+        index = local_index(project)
+        try:
+            return retrieval.run(index.snapshot(), req, cancel)
+        except retrieval.Stale:
+            return None
+        finally:
+            index.close()
+    finally:
+        COLD.release()
+
+
+def repair(req: dict, result: dict, need: str, project: str | Path | None, *, budget: Budget,
+           cfg: decision.Config | None = None, chunk_ids: list[str] = (), entities: list[str] | None = None,
+           external: bool = False, model: str = "") -> dict:
+    """The next round for what `result` is missing (`retrieval.repair`),
+    run: `{"note", "requests", "results"}`. Nothing is asked twice the same
+    way; past three rounds `retrieval.Exhausted`, before anything is done.
+
+    `subqueries` asks a model first, taking one request of the budget
+    (`common.budget.Exhausted` when none is left); `external` searches
+    arXiv first, only when the caller says the provider may be used, since
+    that sends the question outside.
+    """
+
+    root = Path(project).resolve() if project else None
+    # Before any work is spent on a round that cannot be run.
+    if req["round"] >= retrieval.MAX_ROUNDS:
+        raise retrieval.Exhausted("rounds")
+    note: dict = {}
+    proposals: list = []
+    if need == "subqueries":
+        # A model request, out of the question's one allowance: `Exhausted` when none is left.
+        budget.call()
+        proposals = subqueries(req["query_en"] or req["query_original"], budget, model)
+        note["proposed"] = len(proposals)
+    if need == "external":
+        if not external:
+            return {"note": {"need": need, "skipped": "external_not_allowed"}, "requests": [], "results": []}
+        gate = Gate()
+        note["fetched"] = bounded(lambda: add_papers(project, req["query_en"] or req["query_original"],
+                                                     n=REPAIR_PAPERS, cfg=cfg, budget=budget, gate=gate),
+                                  budget, gate)
+    requests, made = retrieval.repair(req, result, need, sources=available(root), subqueries=proposals,
+                                      chunk_ids=list(chunk_ids), entities=entities)
+    return {"note": {**made, **note}, "requests": requests,
+            "results": [run_round(r, project, budget) for r in requests]}
+
+
+class Gate:
+    """What an abandonable worker writes passes through here, one write at a
+    time. `close` waits out a write in progress and lets none through after
+    it: a caller that gave up finds nothing written once it has returned."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._open = True
+
+    @contextlib.contextmanager
+    def passing(self):
+        with self._lock:
+            yield self._open
+
+    def close(self) -> None:
+        with self._lock:
+            self._open = False
+
+
+def bounded(work, budget: Budget, gate: Gate | None = None):
+    """`work()`'s value, or `None` once the budget is spent or cancelled.
+    What is still running then is abandoned in its thread, as `search.prepare`
+    abandons a slow run, and `gate`, the one its writes pass through, is
+    closed before this returns — waiting out at most one write in progress,
+    which is why a write is kept to the put. A value that arrives while
+    closing is past the budget, and is `None` too.
+
+    ponytail: an abandoned model session or fetch runs to its own end; bound
+    in-flight work per process if that ever piles up (stage 6).
+    """
+
+    if budget.cancel.is_set() or budget.left() <= 0:
+        return None
+    got: list = []
+
+    def call() -> None:
+        try:
+            got.append(work())
+        except Exception as error:  # noqa: BLE001 — a failed repair is no repair, and says why
+            got.append({"error": type(error).__name__})
+
+    worker = threading.Thread(target=call, daemon=True)
+    worker.start()
+    while worker.is_alive() and budget.left() > 0 and not budget.cancel.is_set():
+        worker.join(min(0.05, budget.left()))
+    if worker.is_alive():
+        if gate is not None:
+            gate.close()
+        return None
+    return got[0] if got else None
+
+
+def subqueries(question: str, budget: Budget, model: str = "") -> list:
+    """Up to three scoped subqueries a model proposes for a question with
+    several requirements, unchecked — `retrieval.checked_subqueries` decides
+    which stand. `[]` when none came within the budget."""
+
+    def ask() -> list:
+        answer = ""
+        for ev in oneshot(SUBQUERY_PROMPT, {"question": question}, model):
+            if ev.kind == "error":
+                raise RuntimeError(ev.text)
+            if ev.kind == "done":
+                answer = ev.text
+        data = parsed(answer)
+        return data.get("subqueries") if isinstance(data, dict) else []
+
+    got = bounded(ask, budget)
+    return got if isinstance(got, list) else []
+
+
+def parsed(answer: str):
+    """A model's JSON answer, a code fence around it allowed."""
+
+    body = answer.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", body, re.S)
+    return json.loads(fenced.group(1) if fenced else body)

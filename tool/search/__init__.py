@@ -31,7 +31,7 @@ from pathlib import Path
 
 __all__ = ("ask", "prepare", "local_index", "evidence_store", "resolve", "notify", "PING", "spawn", "PORT", "HUB",
            "cache_dir", "state_path", "version", "records", "refresh", "sources", "providers",
-           "knowledge_graph", "projection")
+           "knowledge_graph", "projection", "retrieval", "retrieve")
 
 HERE = Path(__file__).resolve().parent
 # The hub whose `operator/` and `craft/` every search covers. `WIKI_ROOT` as in `wiki`.
@@ -124,6 +124,23 @@ def ask(query: str, project: str | Path | None, timeout: float, k: int = 8,
                                         "k": k, "wait": wait, "sources": sources}, timeout, wait, start)
     results = (answer or {}).get("results")
     return results if isinstance(results, list) else None
+
+
+def retrieve(request: dict, project: str | Path | None, timeout: float, wait: float = 0.0,
+             start: bool = True) -> dict | None:
+    """The daemon's RetrievalResult for a RetrievalRequest (`retrieval`), or
+    `None` — no answer, as for `ask`, and a request naming a generation the
+    daemon no longer reads is no answer too.
+
+    Its own endpoint beside `/search`: a client of `ask` keeps getting pages
+    with a path and a line, and a chunk-level result is never mistaken for
+    them — it carries `retrieval.RESULT` as its schema.
+    """
+
+    answer, _started = call("/retrieve", {"request": request, "hub": str(HUB),
+                                          "project": str(project) if project else None, "wait": wait},
+                            timeout, wait, start)
+    return answer if (answer or {}).get("schema_version") == retrieval.RESULT else None
 
 
 def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8, *,
@@ -339,5 +356,5 @@ def exchange(conn: http.client.HTTPConnection, token: str, path: str, body: dict
         conn.close()
 
 
-# The stage 3 and 4 modules, whole, for the main to compose. Last: they import from here.
-from . import knowledge_graph, providers, sources  # noqa: E402
+# The stage 3 to 5 modules, whole, for the main to compose. Last: they import from here.
+from . import knowledge_graph, providers, retrieval, sources  # noqa: E402

@@ -4,8 +4,10 @@ Chunks every page at its `##`/`###` headings, and a long section at its
 blocks, into `evidence.EvidenceChunk`s kept in a SQLite `Store` beside the
 vector cache. It ranks them two ways — BM25
 over English words and Hangul bigrams, and cosine over a local
-`multilingual-e5-small` — merged by reciprocal rank. It serves the wiki chat,
-and keeps idle Claude cells' prompt caches warm (`Keeper`). No hook asks it
+`multilingual-e5-small` — merged by reciprocal rank. It serves the wiki chat
+pages (`/search`) and chunk-level results with the graph lane (`/retrieve`,
+`retrieval.run`), each from an index snapshot read outside its lock, and
+keeps idle Claude cells' prompt caches warm (`Keeper`). No hook asks it
 what to inject: the regex triggers stay the only authority there (in the
 public copy a one-line hint for pages they missed was built and measured, and
 no threshold reached 8% precision).
@@ -29,6 +31,7 @@ and it does the same while the model downloads (about 120 MB, first start).
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import hmac
 import json
@@ -53,8 +56,9 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from common.language import language  # noqa: E402
-from search import PING, PORT, cache_dir, evidence, knowledge_graph, proof, state_path, version  # noqa: E402
-from search.sources import FAMILIES, SOURCE_NAMES, Records, listing, records_folder  # noqa: E402
+from search import PING, PORT, cache_dir, evidence, knowledge_graph, proof, retrieval, state_path, version  # noqa: E402
+from search.retrieval import family  # noqa: E402
+from search.sources import SOURCE_NAMES, Records, listing, records_folder  # noqa: E402
 
 # The version this process runs, read once. Read per request it would follow
 # the files on disk and a pulled daemon would never be told it is stale.
@@ -804,6 +808,8 @@ class Index:
         self.chunks: list[dict] = []
         self.matrix = None
         self.graph = knowledge_graph.Graph(self.store)
+        # The graph as the last snapshot read it (`snapshot`).
+        self.frozen: knowledge_graph.Frozen | None = None
         self.co: tuple[str, list[tuple[str, str]]] = ("", [])
 
     def close(self) -> None:
@@ -893,6 +899,51 @@ class Index:
         done = self.embedder.vectors.keys() | self.embedder.failed
         return self.embedder.state == "ready" and all(c["key"] in done for c in self.chunks)
 
+    def generation(self) -> int:
+        """The store generation the loaded chunks came from."""
+
+        return int(self.loaded.split(":")[0]) if self.loaded else self.store.gen
+
+    def snapshot(self) -> Index:
+        """What one search reads from start to end, taken under the daemon's
+        lock and read outside it. `refresh` replaces the chunk list, the
+        postings and the matrix rather than changing them, so a shallow copy
+        keeps one loaded set of chunks. The graph is the other half: `update`
+        rewrites rows inside the same generation, so the copy walks a
+        `knowledge_graph.Frozen` read now, kept until the graph changes. A
+        graph that is not exactly what `update` built from these chunks —
+        another index of the same store refreshed in between, a forget — is
+        not walked: `graph` is `None` until the next refresh. The matrix is stacked here, once, not per copy."""
+
+        if self.chunks and self.complete():
+            self.vectors()
+        if self.frozen is None or self.frozen.key != knowledge_graph.state(self.store):
+            self.frozen = knowledge_graph.Frozen(self.store)
+        snap = copy.copy(self)
+        snap.graph = self.frozen if self.frozen.built == self.loaded else None
+        return snap
+
+    def vectors(self) -> tuple[list[int], object]:
+        """`(chunk indexes, their vectors stacked)` for the chunks that have one."""
+
+        if self.matrix is None:
+            np = self.embedder.np
+            rows = [i for i, c in enumerate(self.chunks) if c["key"] in self.embedder.vectors]
+            self.matrix = (rows, np.stack([self.embedder.vectors[self.chunks[i]["key"]] for i in rows])
+                           if rows else None)
+        return self.matrix
+
+    def cosines(self, queries: list[str]) -> list[dict[int, float]] | None:
+        """Per query, `{chunk index: cosine}`, the queries encoded in one
+        batch — or `None` while the vectors are incomplete."""
+
+        if not self.chunks or not self.complete():
+            return None
+        rows, matrix = self.vectors()
+        if not rows:
+            return [{} for _query in queries]
+        return [{i: float(s) for i, s in zip(rows, matrix @ q)} for q in self.embedder.encode(queries, "query: ")]
+
     def bm25(self, query: str) -> dict[int, float]:
         k1, b, total = 1.5, 0.75, len(self.chunks)
         scores: dict[int, float] = defaultdict(float)
@@ -925,25 +976,15 @@ class Index:
         fused: dict[int, float] = defaultdict(float)
         for rank, i in enumerate(sorted(lexical, key=lexical.get, reverse=True)):
             fused[i] += 1 / (RRF_K + rank + 1)
-        cosine: dict[int, float] = {}
-        if self.chunks and self.complete():
-            np = self.embedder.np
-            if self.matrix is None:
-                rows = [i for i, c in enumerate(self.chunks) if c["key"] in self.embedder.vectors]
-                self.matrix = (rows, np.stack([self.embedder.vectors[self.chunks[i]["key"]] for i in rows])
-                               if rows else None)
-            rows, matrix = self.matrix
-            if rows:
-                scores = matrix @ self.embedder.encode([query], "query: ")[0]
-                cosine = {i: float(s) for i, s in zip(rows, scores)}
-                for rank, i in enumerate(sorted(cosine, key=cosine.get, reverse=True)):
-                    fused[i] += 1 / (RRF_K + rank + 1)
+        cosine = (self.cosines([query]) or [{}])[0]
+        for rank, i in enumerate(sorted(cosine, key=cosine.get, reverse=True)):
+            fused[i] += 1 / (RRF_K + rank + 1)
         # A page is its source, not its path: two external sources can hold
         # the same bytes, and so the same snapshot file.
         best: dict[str, tuple[float, int]] = {}
         for i, score in fused.items():
             page = self.chunks[i]["source_id"]
-            if sources is not None and source(self.chunks[i]) not in sources:
+            if sources is not None and family(self.chunks[i]) not in sources:
                 continue
             if page not in best or score > best[page][0]:
                 best[page] = (score, i)
@@ -968,16 +1009,6 @@ class Index:
         self.embedder.drop([key for _id, key in pending])
         if drop_vectors([key for _id, key in pending]):
             self.store.cleared([i for i, _key in pending])
-
-
-def source(chunk: dict) -> str:
-    """The retrieval source a chunk belongs to, as Jev routes them. The
-    repository's own research notes are its documents; `research` is what was
-    ingested from outside."""
-
-    if chunk.get("record"):
-        return next(family for family, kind in FAMILIES.items() if kind == chunk["kind"])
-    return {"rule": "hub", "memory": "memory"}.get(chunk["kind"], "documents")
 
 
 # ---- keep-alive -------------------------------------------------------------
@@ -1223,6 +1254,18 @@ class Daemon:
         """The hub is the asker's, not this process's: two checkouts at the
         same version share one daemon, and each must search its own rules."""
 
+        return self.snapshot(hub, project, wait).search(query, k, sources)
+
+    def retrieve(self, request: dict, hub: str, project: str | None, wait: float) -> dict:
+        """A RetrievalRequest answered from one snapshot (`retrieval.run`)."""
+
+        return retrieval.run(self.snapshot(hub, project, wait), request)
+
+    def snapshot(self, hub: str, project: str | None, wait: float) -> Index:
+        """The asker's index, refreshed, as a snapshot. The lock is held to
+        refresh and to copy, never while a query is encoded or a graph walked:
+        those run on the copy, so one slow search does not hold up the rest."""
+
         home = Path(hub).resolve()
         root = Path(project).resolve() if project else None
         with self.lock:
@@ -1232,7 +1275,7 @@ class Daemon:
         while not index.complete() and self.embedder.state != "off" and time.monotonic() < until:
             time.sleep(0.2)
         with self.lock:
-            return index.search(query, k, sources)
+            return index.snapshot()
 
 
 def handler(daemon: Daemon, server_ref: list) -> type:
@@ -1276,6 +1319,16 @@ def handler(daemon: Daemon, server_ref: list) -> type:
                 except Exception as error:  # noqa: BLE001
                     return self.reply(400, {"error": type(error).__name__})
                 return self.reply(200, {"ping": pinged})
+            if self.path == "/retrieve":
+                try:
+                    ask = json.loads(data)
+                    result = daemon.retrieve(ask["request"], str(ask["hub"]), ask.get("project"),
+                                             float(ask.get("wait") or 0))
+                except retrieval.Stale as error:
+                    return self.reply(409, {"error": str(error)})
+                except Exception as error:  # noqa: BLE001
+                    return self.reply(400, {"error": type(error).__name__})
+                return self.reply(200, result)
             if self.path != "/search":
                 return self.reply(404, {})
             try:

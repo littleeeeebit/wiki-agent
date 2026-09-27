@@ -1,0 +1,34 @@
+{
+  "schema": "jev-eval-manifest/1",
+  "id": "bridge",
+  "version": 1,
+  "description": "Synthetic set for stage 5: answers one explicit relationship away from what a question matches — a Markdown link, a front-matter `reads`, a decision that supersedes another — whose passages share no word with the question, beside a two-section answer, direct hits, a hub rule, an unanswerable question, and a bridge only prose states, which no structural edge can find. An expectation `file#Heading` names one section; a bare file, any of its sections. Written inline so its pages never enter this wiki's own index or link checks.",
+  "graph": {"seeds": 8, "hops": 2, "fanout": 5},
+  "max_candidates": 40,
+  "corpus": {
+    "kind": "synthetic",
+    "files": {
+      "hub/operator/review-before-merge.md": "# Review before merge\n\nRule. Every pull request receives one independent review round before it is merged.\n",
+      "repo/docs/owners.md": "# Owners\n\nThe ingest pipeline is owned by [the Atlas team](atlas.md).\n",
+      "repo/docs/atlas.md": "# Atlas\n\n## Rota\n\nEvery Tuesday, Mira covers pages.\n\n## History\n\nFormed from two groups in 2019.\n",
+      "repo/.wiki/modules/translate.md": "---\nreads: [docs/glossary-rules.md]\n---\n\n# translate module\n\nThe translate module renders Korean prose into English.\n",
+      "repo/docs/glossary-rules.md": "# Protected names\n\nProduct names and file paths stay verbatim; a code span is lifted out untouched.\n",
+      "repo/.wiki/decisions/2025-03-01-001-cache.md": "# Translation cache in the checkout\n\nDecision. The translation cache is stored as a SQLite file inside the checkout.\n",
+      "repo/.wiki/decisions/2026-02-01-002-relocation.md": "---\nsupersedes: [2025-03-01-001-cache]\n---\n\n# Relocation\n\nDecision. It now lives under each user's home folder, beside vectors.\n",
+      "repo/docs/release.md": "# Release\n\n## Build\n\nThe release build signs every artifact.\n\n## Publish\n\nThe release publish step uploads every artifact.\n",
+      "repo/docs/ports.md": "# Ports\n\nThe search daemon listens on port 8791.\n",
+      "repo/docs/schema.md": "# Schema changes\n\nA schema change needs sign-off from the data council.\n",
+      "repo/docs/council.md": "# Council\n\nOrla leads it; it meets Fridays.\n"
+    }
+  },
+  "queries": [
+    {"id": "bridge-01", "language": "en", "kind": "bridge", "text": "Who is on call for the ingest pipeline?", "expect": ["repo/docs/owners.md", "repo/docs/atlas.md#Rota"]},
+    {"id": "bridge-02", "language": "en", "kind": "bridge", "text": "How does the translate module render Korean prose?", "expect": ["repo/.wiki/modules/translate.md", "repo/docs/glossary-rules.md"]},
+    {"id": "bridge-03", "language": "en", "kind": "superseded", "text": "Where is the translation cache stored?", "expect": ["repo/.wiki/decisions/2025-03-01-001-cache.md", "repo/.wiki/decisions/2026-02-01-002-relocation.md"]},
+    {"id": "bridge-04", "language": "en", "kind": "multi-section", "text": "How is a release artifact built and published?", "expect": ["repo/docs/release.md#Build", "repo/docs/release.md#Publish"]},
+    {"id": "bridge-05", "language": "en", "kind": "single", "text": "Which port does the search daemon listen on?", "expect": ["repo/docs/ports.md"]},
+    {"id": "bridge-06", "language": "en", "kind": "hub-rule", "text": "What must happen before a pull request is merged?", "expect": ["hub/operator/review-before-merge.md"]},
+    {"id": "bridge-07", "language": "en", "kind": "prose-bridge", "text": "Who chairs sign-off on schema changes?", "expect": ["repo/docs/schema.md", "repo/docs/council.md"]},
+    {"id": "bridge-08", "language": "en", "kind": "unanswerable", "text": "What is the database password rotation schedule?", "expect": []}
+  ]
+}
