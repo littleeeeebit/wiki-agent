@@ -49,6 +49,13 @@ The simplified explanation preserves citations and uncertainty from stage 7.
 The UI never appends internal drafts to the visible assistant message while
 waiting for verification.
 
+Stage 7 leaves: the CLI has no grounded-answer path — `tool/eval/answers.py`
+drives `knowledge.grounded` for the live sample only. The answer's status line
+and checked overlay were seen in a window; the `표시 오류` fallback was seen
+only while its causes were being fixed, and the plain overlay (`useOverlay`)
+still sends a whole answer as one string, whose Korean silently fails when the
+translator splits its paragraphs.
+
 ## Graph view
 
 Reuse `RepoMap` and the current engine. Add a selected-run projection showing

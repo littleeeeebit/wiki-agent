@@ -26,6 +26,7 @@ caller elsewhere breaking over it.
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import json
 import math
@@ -41,7 +42,7 @@ from pathlib import Path
 
 from common import settings
 
-__all__ = ("translate", "english", "parts", "retire", "usage", "glossary", "KO_EN", "EN_KO")
+__all__ = ("translate", "english", "parts", "retire", "usage", "glossary", "KO_EN", "EN_KO", "checked", "added")
 
 HERE = Path(__file__).resolve().parents[1]  # `tool/`
 ROOT = HERE.parent
@@ -618,24 +619,73 @@ ENGLISH_VERSION = "1"
 # what the model sees and must hand back unchanged.
 NUMBER = re.compile(r"\d+(?:[.,]\d+)*", re.A)
 IDENTIFIER = re.compile(r"[\w/\\:.-]*(?:\w\.[A-Za-z]|[\\_])[\w/\\:.-]*", re.A)
+# English number words, by value. "eight characters" rendered `8자` states the
+# same number; only the side that spells it out may excuse the digit.
+WORDS = {w: str(i) for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen twenty".split())} | {
+    w: str(30 + 10 * i) for i, w in enumerate("thirty forty fifty sixty seventy eighty ninety".split())}
+SPELLED = re.compile(r"\b(" + "|".join(WORDS) + r")\b", re.I)
 
 
-def kept(source: str, english: str, keep: tuple[str, ...]) -> bool:
+def spelled(text: str) -> collections.Counter:
+    """The numbers `text` spells out, as digits."""
+
+    return collections.Counter(WORDS[w.lower()] for w in SPELLED.findall(text))
+
+
+def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False) -> bool:
     """Did every number and bare identifier of `source` come through
-    `english` exactly as often, with none added?
+    `english` exactly as often, with none added? With `words`, a number one
+    side spells out and the other writes in digits is the same number — for
+    a presentation; evidence keeps its digits (`3번` as `three` is uncertain).
 
     ponytail: a date written out (`9월` as `September`) reads as a lost
     number and the chunk as `uncertain`; map month names if that turns out
     to cost many chunks.
     """
 
-    def found(text: str) -> list[str]:
+    def found(text: str) -> collections.Counter:
         prose = protect(text, keep)[0]
         names = [n.rstrip(".:-") for n in IDENTIFIER.findall(prose)]
         numbers = [n.replace(",", "") for n in NUMBER.findall(IDENTIFIER.sub(" ", prose))]
-        return sorted(names + numbers)
+        return collections.Counter(names + numbers)
 
-    return found(source) == found(english)
+    ours, theirs = found(source), found(english)
+    if not words:
+        return ours == theirs
+    return (not theirs - ours - spelled(protect(source, keep)[0])
+            and not ours - theirs - spelled(protect(english, keep)[0]))
+
+
+def facts(text: str, keep: tuple[str, ...] = ()) -> set[str]:
+    """The numbers (by value: `09` is `9`) and identifiers `text` states,
+    code spans included — what a rewrite of it may drop but never add. A
+    list's own numbering (`1. `) is layout, not a fact."""
+
+    text = re.sub(r"(?m)^\s*\d+[.)]\s+", " ", text)
+    names = {n.rstrip(".:-") for n in IDENTIFIER.findall(text)}
+    numbers = {n.replace(",", "").lstrip("0") or "0" for n in NUMBER.findall(IDENTIFIER.sub(" ", text))}
+    return names | numbers
+
+
+def added(source: str, derived: str) -> list[str]:
+    """Numbers and identifiers `derived` states that `source` does not: a
+    presentation of an answer that says one of these made up a fact. A
+    digit for a number `source` spells out is not one."""
+
+    return sorted(facts(derived, glossary()[0]) - facts(source, glossary()[0]) - set(spelled(source)))
+
+
+def checked(texts: list[str], direction: str, deadline: float) -> list[tuple[str, str]]:
+    """`(text, status)` per input, as `translate` renders it, but a
+    translation that changed a number or identifier is refused
+    (`meaning_changed`) and the original comes back: what a verified answer
+    is shown through may reword it, never restate its facts."""
+
+    keep = glossary()[0]
+    return _outcomes(list(texts), direction, deadline,
+                     lambda source, made: None if kept(source, made, keep, words=True) else "meaning_changed")
 
 
 def english(texts: list[str], deadline: float, held: dict[str, dict] | None = None) -> list[dict]:

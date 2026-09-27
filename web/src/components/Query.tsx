@@ -7,7 +7,7 @@ import { Peek } from '@/components/Peek'
 import { Stream } from '@/components/Stream'
 import { Toolbar } from '@/components/Toolbar'
 import * as api from '@/lib/api'
-import type { Block, Channel, Kind, Options, Peek as PeekData, Spec, Tokens } from '@/lib/api'
+import type { Block, Channel, Kind, Options, Peek as PeekData, Spec, Tokens, Verification } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 export type Msg = {
@@ -24,6 +24,7 @@ export type Msg = {
   sessionId?: string
   marked?: Kind
   error?: string
+  verification?: Verification
   pending?: boolean
   simpleText?: string
   simpleError?: string
@@ -114,7 +115,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
       .then((rows) => {
         if (stale || asked !== clears.current) return
         const restored: Msg[] = rows.map((r) => ({ role: r.role, text: r.said ?? r.text, blocks: r.blocks,
-          tools: [], source: r.source, error: r.error,
+          tools: [], source: r.source, error: r.error, verification: r.verification,
           ms: r.ms, cost: r.cost_usd, model: r.model, sessionId: r.session_id, tokens: r.tokens,
           simpleText: r.simple_text, simpleError: r.simple_error,
           simpleMs: r.simple_meta?.ms, simpleCost: r.simple_meta?.cost_usd }))
@@ -166,7 +167,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
             // The final body is the server's copy. A missed chunk is corrected
             // right here.
             patch((m) => ({ ...m, text: ev.text || m.text, ms: ev.ms, cost: ev.cost_usd, tokens: ev.tokens,
-              model: ev.model, sessionId: ev.session_id, pending: false }))
+              model: ev.model, sessionId: ev.session_id, verification: ev.verification, pending: false }))
           } else if (ev.kind === 'error') {
             patch((m) => ({ ...m, error: ev.text, pending: false }))
           } else if (ev.kind === 'blocks') {

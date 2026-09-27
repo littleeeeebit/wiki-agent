@@ -18,7 +18,11 @@ for evaluation. Do not tune on held-out results and then report them as held-out
 The 60 calibration intents replace stage 6's 35-case synthetic split
 (`eval/jev/calibration.json`): refit `eval/jev/policy.json` on them with
 `tool/eval/policy.py --collect`, with labels for every decision kind including
-the repair and relation Choices, before the held-out run.
+the repair and relation Choices, before the held-out run. The relation Choice
+has its own split and artifact (`eval/jev/relation.json`,
+`eval/jev/relation-policy.json`, `--relation`): stage 7 fitted it on 39
+synthetic claim–evidence pairs; the calibration intents' drafted claims replace
+them, and false acceptance is reported on held-out claims apart from false rejection.
 
 Cover these categories in both splits: direct transformation/no retrieval,
 explicit factual retrieval, source routing, indirect graph bridges, multi-part

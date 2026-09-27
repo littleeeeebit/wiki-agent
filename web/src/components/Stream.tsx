@@ -4,7 +4,8 @@ import { Answer } from '@/components/Answer'
 import type { AnswerProps } from '@/components/Answer'
 import { KINDS } from '@/lib/api'
 import type { Kind } from '@/lib/api'
-import { useOverlay } from '@/lib/overlay'
+import { useCheckedOverlay, useOverlay } from '@/lib/overlay'
+import type { Verification } from '@/lib/api'
 import type { Msg } from '@/components/Query'
 
 type Props = {
@@ -119,9 +120,19 @@ function AnswerVersions(
   // requests, each for a prefix that was about to be replaced. A cut
   // translation also reads exactly like a whole one, so a half-streamed
   // paragraph is the wrong thing to render Korean.
-  const [text] = useOverlay([m.text], korean && !m.pending)
+  const [plain] = useOverlay([m.text], korean && !m.pending && !m.verification)
+  const checked = useCheckedOverlay(m.text, korean && !m.pending && Boolean(m.verification))
+  const text = m.verification ? checked.text : plain
   return (
     <div className="space-y-3">
+      {m.verification && <Checked v={m.verification} />}
+      {checked.fault && (
+        <p role="status" className="text-[12.5px] text-muted-foreground">
+          {checked.fault === 'changed'
+            ? '표시 오류 · 한국어로 옮기며 숫자나 식별자가 바뀌어 검증된 원문을 그대로 보인다.'
+            : '표시 오류 · 한국어 번역을 받지 못해 검증된 원문을 그대로 보인다.'}
+        </p>
+      )}
       {available && (
         <div role="group" aria-label="답변 보기" className="inline-flex gap-1 rounded-lg border border-border p-1">
           {[{ value: false, label: '1. 정확한 답변' }, { value: true, label: '2. 쉬운 설명' }].map((option) => (
@@ -144,6 +155,27 @@ function AnswerVersions(
         </div>
       ) : <Answer text={text} korean={korean} {...props} />}
       {!simple && m.simplePending && <p role="status" className="text-[12.5px] text-muted-foreground">원문을 읽는 동안 쉬운 설명을 준비하고 있습니다.</p>}
+    </div>
+  )
+}
+
+/** How the answer above was checked, as the server recorded it. Only the
+ *  claims that passed were published; this says what that means here. */
+const CHECKED: Record<Verification['status'], string> = {
+  complete: '검증됨 · 질문의 모든 부분이 인용한 근거로 확인됐다',
+  partial: '부분 답 · 근거로 확인된 부분만 싣는다',
+  abstained: '답 보류 · 찾은 근거로는 확인되는 답이 없다',
+  verification_unavailable: '검증 불가 · 근거 대조를 하지 못했다',
+}
+
+function Checked({ v }: { v: Verification }) {
+  const line = v.degraded ? '미검증 답 · 검증이 안 돼 기본 모드로 싣는다' : CHECKED[v.status]
+  const missing = v.status === 'complete' ? 0 : v.missing_requirements.length
+  return (
+    <div role="status" className={`font-mono text-[10.5px] leading-snug ${v.status === 'complete' ? 'text-primary/80' : 'text-muted-foreground'}`}>
+      {line}
+      {missing > 0 && ` · 확인 못 한 부분 ${missing}`}
+      {v.conflicts.length > 0 && ` · 근거와 충돌 ${v.conflicts.length}`}
     </div>
   )
 }

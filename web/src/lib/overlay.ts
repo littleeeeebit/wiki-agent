@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { renderAll } from '@/lib/api'
+import { renderAll, renderChecked } from '@/lib/api'
 
 /** The Korean overlay over an English answer.
  *
@@ -51,4 +51,48 @@ export function useOverlay(texts: string[], on: boolean): string[] {
 
   if (!on) return texts
   return texts.map((t) => done.get(t) ?? memory.get(t) ?? t)
+}
+
+/** The overlay over a verified answer. The server refuses a rendering that
+ *  changed a number or an identifier (`changed`), and any other failure
+ *  (`failed`) leaves the English too: either way the whole accepted original
+ *  is shown. A translation cannot add a fact to an answer that was checked.
+ *
+ *  Sent a paragraph at a time: asked for one multi-paragraph string, the
+ *  translator has answered with one string per paragraph, and a reply of the
+ *  wrong length is no reply. Code renders the answer, blank line between
+ *  paragraphs, so the split is its own. */
+export type Fault = '' | 'changed' | 'failed'
+const checkedMemory = new Map<string, { text: string; fault: Fault }>()
+const SHOWN = ['translated', 'cached', 'skipped']
+
+export function useCheckedOverlay(text: string, on: boolean): { text: string; fault: Fault } {
+  const [, setTick] = useState(0)
+  const wanted = on && text.trim() !== '' && !checkedMemory.has(text)
+
+  useEffect(() => {
+    if (!wanted) return
+    let alive = true
+    const parts = text.split(/\n{2,}/)
+    renderChecked(parts)
+      .then((r) => {
+        const statuses = parts.map((_, i) => r.statuses?.[i] ?? '')
+        const fault: Fault = r.off
+          ? ''
+          : statuses.includes('meaning_changed')
+            ? 'changed'
+            : statuses.every((s) => SHOWN.includes(s))
+              ? ''
+              : 'failed'
+        checkedMemory.set(text, { text: fault ? text : parts.map((p, i) => r.texts[i] ?? p).join('\n\n'), fault })
+      })
+      .catch(() => checkedMemory.set(text, { text, fault: 'failed' }))
+      .finally(() => alive && setTick((n) => n + 1))
+    return () => {
+      alive = false
+    }
+  }, [text, wanted])
+
+  if (!on) return { text, fault: '' }
+  return checkedMemory.get(text) ?? { text, fault: '' }
 }

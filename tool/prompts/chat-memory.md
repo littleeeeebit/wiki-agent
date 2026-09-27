@@ -37,6 +37,12 @@ an empty list where there is nothing.
   string, never a guess.
 - A fact the conversation later corrected is written in its corrected form
   only.
+- An assistant turn's `verification` says how its text was checked:
+  `verified:complete` or `verified:partial` means each statement in it was
+  checked against its cited source. A fact taken from any other assistant
+  turn — `unverified`, `verified:abstained`, or no label — ends with
+  ` (unverified)`. Parts an answer lists as not established go to `open`,
+  never to `facts`.
 - `keywords`: three to twelve, both languages, no sentence.
 - A conversation with nothing worth keeping still gets a `title` and a
   `summary`, and empty lists.

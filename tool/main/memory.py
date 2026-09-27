@@ -110,9 +110,23 @@ def front(meta: dict) -> str:
     return "---\n" + yaml.safe_dump(meta, allow_unicode=True, sort_keys=False) + "---\n"
 
 
+def verification(row: dict) -> str | None:
+    """What an answer's text was checked as (stage 7 of `docs/plans/jev/`):
+    `verified:<status>`, or `unverified` — an answer published without a
+    check, and every answer older than the check, whose plain text says
+    nothing of it. `None` for what is not an answer."""
+
+    if row.get("role") != "assistant":
+        return None
+    checked = row.get("verification")
+    if isinstance(checked, dict) and checked.get("verified") is True and not checked.get("degraded"):
+        return f"verified:{checked.get('status')}"
+    return "unverified"
+
+
 def transcript(rows: list[dict], meta: dict) -> str:
-    turns = [f"## {WHO[r['role']]} · {time.strftime('%Y-%m-%d %H:%M', time.localtime(r.get('ts', 0)))}\n\n"
-             f"{r['text'].strip()}\n" for r in rows]
+    turns = [f"## {WHO[r['role']]} · {time.strftime('%Y-%m-%d %H:%M', time.localtime(r.get('ts', 0)))}"
+             f"{f' · {verification(r)}' if verification(r) else ''}\n\n{r['text'].strip()}\n" for r in rows]
     return front(meta) + "\n" + "\n".join(turns)
 
 
@@ -149,8 +163,9 @@ def keep(repo: Path, focus: str, rows: list[dict], model: str = "", effort: str 
         raise RuntimeError(f"원시 대화를 쓰지 못했다 — {exc}. 대화는 서버의 기록(raw/)에 그대로 있다") from exc
     try:
         answer = ""
-        for ev in oneshot("chat-memory.md", {"repo": repo.name, "focus": focus,
-                                             "transcript": [{"role": r["role"], "text": r["text"]} for r in said]},
+        turns = [{"role": r["role"], "text": r["text"],
+                  **({"verification": verification(r)} if verification(r) else {})} for r in said]
+        for ev in oneshot("chat-memory.md", {"repo": repo.name, "focus": focus, "transcript": turns},
                           model, effort):
             if ev.kind == "error":
                 raise RuntimeError(ev.text)

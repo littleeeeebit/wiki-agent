@@ -96,6 +96,7 @@ export type Turn = {
   spec?: string
   source?: string
   error?: string
+  verification?: Verification
   simple_text?: string
   simple_error?: string
   simple_meta?: { ms?: number; cost_usd?: number }
@@ -114,12 +115,25 @@ export type Tokens = {
   reasoning?: number
 }
 
+/** How an answer was checked before it was published (stage 7 of
+ *  `docs/plans/jev/`): only what the server's `verified-answer/1` says, never
+ *  guessed from the text. An answer without one was not checked. */
+export type Verification = {
+  status: 'complete' | 'partial' | 'abstained' | 'verification_unavailable'
+  verified: boolean
+  degraded: boolean
+  reason: string | null
+  missing_requirements: { id: string; text: string }[]
+  conflicts: { claim_id: string; evidence: string[] }[]
+}
+
 export type Ev = {
   kind: 'hits' | 'delta' | 'tool' | 'done' | 'error' | 'blocks'
     | 'simple_start' | 'simple_delta' | 'simple_done' | 'simple_error'
   text: string
   pages?: string[]
   blocks?: Block[]
+  verification?: Verification
   ms?: number
   error?: boolean
   session_id?: string
@@ -235,6 +249,13 @@ export const peek = (repo: string, path: string, line: number) =>
 export const render = (texts: string[], direction: 'en->ko' | 'ko->en' = 'en->ko') =>
   post('/api/translate', { texts, direction }).then((r) =>
     json<{ texts: string[] }>(r, '번역'),
+  )
+
+/** A verified answer's rendering. A translation that changed a number or an
+ *  identifier comes back as the original, with a status saying so. */
+export const renderChecked = (texts: string[]) =>
+  post('/api/translate', { texts, direction: 'en->ko', checked: true }).then((r) =>
+    json<{ texts: string[]; statuses?: string[]; off?: boolean }>(r, '번역'),
   )
 
 /** For more than one request holds. Order and count survive intact.
