@@ -241,14 +241,15 @@
    "tokens": 0
   }
  ],
+ "split": [],
  "decisions": [
   {
    "value": {
     "answers": {
      "retrieve": 0.96,
-     "source_hub": 0.38,
-     "source_documents": 0.63,
-     "source_memory": 0.59
+     "source_hub": 0.37,
+     "source_documents": 0.65,
+     "source_memory": 0.58
     },
     "model": "jev-1.13.0",
     "usage": {
@@ -263,18 +264,18 @@
    "value": {
     "answers": {
      "useful_p0": 0.92,
-     "conflict_p0": 0.07,
+     "conflict_p0": 0.06,
      "redirect_p0": 0.02,
      "useful_p1": 0.91,
-     "conflict_p1": 0.09,
-     "redirect_p1": 0.02,
+     "conflict_p1": 0.1,
+     "redirect_p1": 0.03,
      "useful_p2": 0.03,
      "conflict_p2": 0.04,
      "redirect_p2": 0.02,
      "useful_p3": 0.02,
-     "conflict_p3": 0.04,
-     "redirect_p3": 0.11,
-     "useful_p4": 0.02,
+     "conflict_p3": 0.03,
+     "redirect_p3": 0.1,
+     "useful_p4": 0.03,
      "conflict_p4": 0.03,
      "redirect_p4": 0.03,
      "useful_p5": 0.03,
@@ -282,14 +283,14 @@
      "redirect_p5": 0.04,
      "useful_p6": 0.02,
      "conflict_p6": 0.03,
-     "redirect_p6": 0.07,
+     "redirect_p6": 0.08,
      "useful_p7": 0.02,
      "conflict_p7": 0.03,
-     "redirect_p7": 0.02,
-     "useful_p8": 0.18,
-     "conflict_p8": 0.06,
-     "redirect_p8": 0.03,
-     "coverage_r0": 0.62
+     "redirect_p7": 0.03,
+     "useful_p8": 0.17,
+     "conflict_p8": 0.05,
+     "redirect_p8": 0.02,
+     "coverage_r0": 0.61
     },
     "model": "jev-1.13.0",
     "usage": {
@@ -328,9 +329,9 @@
       ],
       "text": "# Owners\n\nThe ingest pipeline is owned by the Atlas team.",
       "completeness": "whole",
-      "chunk_id": "4d92b1aff2a7b752e795d62eabc64962a55f507fd3adb10e8a7c644151ceccc7",
-      "source_id": "faed04b426941f16a2da7e1a9eeba129432f38cc9a72b633d8566816fe2b5f64",
-      "repo_id": "787cedb013732c89f90c4caadf9d4d8a8be412b71a501f2b47af8acfa6bf5ad3",
+      "chunk_id": "935d11d7ef1f5084bd600bbfd15f88e46a9b4f0275090648a0ecab707e4a1f14",
+      "source_id": "7994a15d8d138801a1f23ba9f130fa0db8a9160b5713d3b2d776738b5b961897",
+      "repo_id": "7ad6c69bea327ce571ee205011f8850d9fba09ff7442af14744117196680b7b4",
       "revision": "cba91557fde56a0c52500a15e750b2c6a8f2c297a70a2b61db3bdab770be19f1",
       "kind": "document",
       "visibility": "repository",
@@ -356,9 +357,9 @@
       ],
       "text": "## Rota\n\nThe Atlas team is on call every Tuesday and handles incidents for everything it owns.",
       "completeness": "whole",
-      "chunk_id": "aea522e95f62ce46e1eaf2b2b0774809218cef67a64f52fd18ae89f0b16132ce",
-      "source_id": "9a352404a24e72ba1b1a922288e288d4e7748b1250abcfecf0b5efb0de9a327a",
-      "repo_id": "787cedb013732c89f90c4caadf9d4d8a8be412b71a501f2b47af8acfa6bf5ad3",
+      "chunk_id": "b20e5fe7ec4c0ef44e7094b7af10008661ea82adff373201eeb2cc494495de73",
+      "source_id": "1af4a96385f724019ae2b00b7df7fa3aa82d3334d05c26fd0fd46a5af3b74acb",
+      "repo_id": "7ad6c69bea327ce571ee205011f8850d9fba09ff7442af14744117196680b7b4",
       "revision": "365edf17431839844b3a76ec8cd737f372fb0cc662016f28db91edadbc06ce28",
       "kind": "document",
       "visibility": "repository",
@@ -383,9 +384,9 @@
       ],
       "text": "# Ports\n\nThe search daemon listens on port 8791. The chat server listens on port 8787.",
       "completeness": "whole",
-      "chunk_id": "3ce8e3e62d7897fba9866aa9d348597b29eb8d77e691fffe0dd4f9af6561fc26",
-      "source_id": "734392ac175280bcdbfd089ae3abd7f947ec17375aa9726024b83e6d8aac162c",
-      "repo_id": "787cedb013732c89f90c4caadf9d4d8a8be412b71a501f2b47af8acfa6bf5ad3",
+      "chunk_id": "05d295202cb34031f2804ef5650b80a8a138fa59157a15562984948ccde5fac1",
+      "source_id": "dfaf0ff0d35ef427692cdc638045022cd97b41ec9bd73dfa46d8b77b396518d1",
+      "repo_id": "7ad6c69bea327ce571ee205011f8850d9fba09ff7442af14744117196680b7b4",
       "revision": "49236a8535538a3651097462d9eba2005f33c2d1d1198c96df94cda32b65c592",
       "kind": "document",
       "visibility": "repository",
@@ -410,9 +411,9 @@
       ],
       "text": "# One retry budget\n\nRule. A loop shares one deadline, one call count and one token ceiling across all of its steps. A step's own limit never multiplies the total.",
       "completeness": "whole",
-      "chunk_id": "39f10f26be3cd00cefd01f06a3e375405f82295a501a341408e962cf5b54bf7e",
-      "source_id": "e49a958d1f62fe4bd8ea380326d8cdaea79838d67ba61c910632a1c0223f2f12",
-      "repo_id": "bcf1027f88c80c8d87e02389086e7c0017ef8682e46d75753b862d0ed437a710",
+      "chunk_id": "aaacaed697cae734ae42eeb21d9aec3bc0ca317c1edaf057d11c9b14db5a6b0c",
+      "source_id": "679c602db6357b02d846b34f8ad53618bc57a8824c43979f564f3cdd1479a93f",
+      "repo_id": "08b0bc4de94ad0ac26b22e38163f461ac3388c7ca6f3feb4d43f7cd058bef6e3",
       "revision": "4fa5c2c87772b5cc1d058c0fa054d0dc614cab191c205eb2f70316bef39d7162",
       "kind": "rule",
       "visibility": "shared",
@@ -437,9 +438,9 @@
       ],
       "text": "# Decision: translation cache in the checkout\n\nThe translation cache is stored as a SQLite file inside the repository checkout.",
       "completeness": "whole",
-      "chunk_id": "050826f5b84f658e15cf4a88b55eb5e51b8d17375717e10ebb214a03e7e01809",
-      "source_id": "2929abd539dbe72140df9a2b5fb3a58e5eda8ffd1b81b88b607f18fda4c39605",
-      "repo_id": "787cedb013732c89f90c4caadf9d4d8a8be412b71a501f2b47af8acfa6bf5ad3",
+      "chunk_id": "120ce73139dcbfdb3bfe9144ac8218d2dd93ddec6ceb0faa944be2964e977a0e",
+      "source_id": "22c7c61cd645641775a6fae86fa60657329d52ac10af83a067ae454cb3734405",
+      "repo_id": "7ad6c69bea327ce571ee205011f8850d9fba09ff7442af14744117196680b7b4",
       "revision": "5a5b0ea1f986ede755c74bfe84e93d3fae0c026e3e1ec2a0c39f1e232d86e5c8",
       "kind": "document",
       "visibility": "repository",
@@ -464,9 +465,9 @@
       ],
       "text": "# Decision: translation cache moved\n\nThis supersedes the 2025 cache decision. The translation cache is now stored under the user cache folder, never inside the checkout.",
       "completeness": "whole",
-      "chunk_id": "fd9223437712e3b30338e978cae69db4bd9e28577ab97dbbc325f285d999a65b",
-      "source_id": "f57a2fafd442116cee027a800f136a87e38738c996d39f966d26d6ed8f17df00",
-      "repo_id": "787cedb013732c89f90c4caadf9d4d8a8be412b71a501f2b47af8acfa6bf5ad3",
+      "chunk_id": "e0d56e8c131501f111b379cd4bbb00ed267f85df17b4d491ff6f564d22b52d9d",
+      "source_id": "9659601fb1516f06a6dbc1e6f589b03c00dabeb3a1ac57f7b3b88c1f01292ef9",
+      "repo_id": "7ad6c69bea327ce571ee205011f8850d9fba09ff7442af14744117196680b7b4",
       "revision": "2e46051fbf1307f63a107e5c071455a059aeb64a55c0dad087d6878671c38160",
       "kind": "document",
       "visibility": "repository",
@@ -491,9 +492,9 @@
       ],
       "text": "# Review before merge\n\nRule. Every pull request receives one independent review round before it is merged. The author's own checks are not a review.",
       "completeness": "whole",
-      "chunk_id": "eed05200648a122b816530e5936d917ecd684e786e6e0b639a5e88da9b9e8768",
-      "source_id": "90593fabb5958c2938497902d65ac13be0b268bd1d95ed0137b9b4f40a82adda",
-      "repo_id": "bcf1027f88c80c8d87e02389086e7c0017ef8682e46d75753b862d0ed437a710",
+      "chunk_id": "4e11a2531f4e7d453dcd58fd8685e8fd7755e56cad7db9609141fa6ca62f8b4e",
+      "source_id": "5d1e73ec891722ef8d321149c827eb4d16af7ce74fe8316e7a17749ff0271e7d",
+      "repo_id": "08b0bc4de94ad0ac26b22e38163f461ac3388c7ca6f3feb4d43f7cd058bef6e3",
       "revision": "e28d8de9f01e8c1a34efcb5641d72c671135018c898cd9b746225c5f6e98099d",
       "kind": "rule",
       "visibility": "shared",
@@ -518,9 +519,9 @@
       ],
       "text": "# Login decision\n\nThe user decided to keep password login and add passkeys later.",
       "completeness": "whole",
-      "chunk_id": "a28cc995fd27dfbd9997b942074defeed5b68b75eb8eac9f94204a7bf0118796",
-      "source_id": "121105541e5fee7679b5f4eb30027cfc7588e8d0bd241e35db306fea69e97a54",
-      "repo_id": "787cedb013732c89f90c4caadf9d4d8a8be412b71a501f2b47af8acfa6bf5ad3",
+      "chunk_id": "d69e9d30d6cfaa72d923bb06312eb6c05b2996dcc50165c10262950f5672a921",
+      "source_id": "ecdd0e4d21bd93eeaf0c4479a613e2850230ebe0adbd2daf461ccbcbcef75207",
+      "repo_id": "7ad6c69bea327ce571ee205011f8850d9fba09ff7442af14744117196680b7b4",
       "revision": "2bdfcad178468234ed64936fde19d984c398756db2d5d0492ae7586980071dd3",
       "kind": "memory",
       "visibility": "private",
@@ -545,9 +546,9 @@
       ],
       "text": "# Atlas team",
       "completeness": "whole",
-      "chunk_id": "facdf09f0fa7c765c3f3e39a21a76c17727d3a474ebf9b233ed89dd94aed2b91",
-      "source_id": "9a352404a24e72ba1b1a922288e288d4e7748b1250abcfecf0b5efb0de9a327a",
-      "repo_id": "787cedb013732c89f90c4caadf9d4d8a8be412b71a501f2b47af8acfa6bf5ad3",
+      "chunk_id": "0449d7b07ddc7973b8ba2710c976b70c1c62d0eb27d60105e17198a31559557e",
+      "source_id": "1af4a96385f724019ae2b00b7df7fa3aa82d3334d05c26fd0fd46a5af3b74acb",
+      "repo_id": "7ad6c69bea327ce571ee205011f8850d9fba09ff7442af14744117196680b7b4",
       "revision": "365edf17431839844b3a76ec8cd737f372fb0cc662016f28db91edadbc06ce28",
       "kind": "document",
       "visibility": "repository",
@@ -564,7 +565,7 @@
      }
     ],
     "scores": {
-     "4d92b1aff2a7b752e795d62eabc64962a55f507fd3adb10e8a7c644151ceccc7": {
+     "935d11d7ef1f5084bd600bbfd15f88e46a9b4f0275090648a0ecab707e4a1f14": {
       "rrf": {
        "rank": 1,
        "score": 0.01639
@@ -576,7 +577,7 @@
       "cos": null,
       "graph": null
      },
-     "aea522e95f62ce46e1eaf2b2b0774809218cef67a64f52fd18ae89f0b16132ce": {
+     "b20e5fe7ec4c0ef44e7094b7af10008661ea82adff373201eeb2cc494495de73": {
       "rrf": {
        "rank": 2,
        "score": 0.01613
@@ -588,7 +589,7 @@
       "cos": null,
       "graph": null
      },
-     "3ce8e3e62d7897fba9866aa9d348597b29eb8d77e691fffe0dd4f9af6561fc26": {
+     "05d295202cb34031f2804ef5650b80a8a138fa59157a15562984948ccde5fac1": {
       "rrf": {
        "rank": 3,
        "score": 0.01587
@@ -600,7 +601,7 @@
       "cos": null,
       "graph": null
      },
-     "39f10f26be3cd00cefd01f06a3e375405f82295a501a341408e962cf5b54bf7e": {
+     "aaacaed697cae734ae42eeb21d9aec3bc0ca317c1edaf057d11c9b14db5a6b0c": {
       "rrf": {
        "rank": 4,
        "score": 0.01562
@@ -612,7 +613,7 @@
       "cos": null,
       "graph": null
      },
-     "050826f5b84f658e15cf4a88b55eb5e51b8d17375717e10ebb214a03e7e01809": {
+     "120ce73139dcbfdb3bfe9144ac8218d2dd93ddec6ceb0faa944be2964e977a0e": {
       "rrf": {
        "rank": 5,
        "score": 0.01538
@@ -624,7 +625,7 @@
       "cos": null,
       "graph": null
      },
-     "fd9223437712e3b30338e978cae69db4bd9e28577ab97dbbc325f285d999a65b": {
+     "e0d56e8c131501f111b379cd4bbb00ed267f85df17b4d491ff6f564d22b52d9d": {
       "rrf": {
        "rank": 6,
        "score": 0.01515
@@ -636,7 +637,7 @@
       "cos": null,
       "graph": null
      },
-     "eed05200648a122b816530e5936d917ecd684e786e6e0b639a5e88da9b9e8768": {
+     "4e11a2531f4e7d453dcd58fd8685e8fd7755e56cad7db9609141fa6ca62f8b4e": {
       "rrf": {
        "rank": 7,
        "score": 0.01493
@@ -648,7 +649,7 @@
       "cos": null,
       "graph": null
      },
-     "a28cc995fd27dfbd9997b942074defeed5b68b75eb8eac9f94204a7bf0118796": {
+     "d69e9d30d6cfaa72d923bb06312eb6c05b2996dcc50165c10262950f5672a921": {
       "rrf": {
        "rank": 8,
        "score": 0.01471
@@ -660,7 +661,7 @@
       "cos": null,
       "graph": null
      },
-     "facdf09f0fa7c765c3f3e39a21a76c17727d3a474ebf9b233ed89dd94aed2b91": {
+     "0449d7b07ddc7973b8ba2710c976b70c1c62d0eb27d60105e17198a31559557e": {
       "rrf": null,
       "bm25": null,
       "cos": null,
@@ -676,19 +677,19 @@
     "paths": [
      {
       "lane": "graph",
-      "seed": "aea522e95f62ce46e1eaf2b2b0774809218cef67a64f52fd18ae89f0b16132ce",
-      "to": "facdf09f0fa7c765c3f3e39a21a76c17727d3a474ebf9b233ed89dd94aed2b91",
+      "seed": "b20e5fe7ec4c0ef44e7094b7af10008661ea82adff373201eeb2cc494495de73",
+      "to": "0449d7b07ddc7973b8ba2710c976b70c1c62d0eb27d60105e17198a31559557e",
       "hops": 1,
       "status": "discovered",
       "steps": [
        {
-        "node": "aea522e95f62ce46e1eaf2b2b0774809218cef67a64f52fd18ae89f0b16132ce",
+        "node": "b20e5fe7ec4c0ef44e7094b7af10008661ea82adff373201eeb2cc494495de73",
         "node_kind": "chunk"
        },
        {
-        "node": "facdf09f0fa7c765c3f3e39a21a76c17727d3a474ebf9b233ed89dd94aed2b91",
+        "node": "0449d7b07ddc7973b8ba2710c976b70c1c62d0eb27d60105e17198a31559557e",
         "node_kind": "chunk",
-        "edge_id": "379bb0114385d237c7b43d2ea60ceb6a48d9cb43ef48bac3c9a86595430801d9",
+        "edge_id": "d14449422e1d88e54234b3ec08afd25c1f4c815b46fe3617c250c1145e763c4a",
         "kind": "next_chunk",
         "reverse": true,
         "origin": "deterministic",
@@ -717,18 +718,18 @@
     "missing_sources": [],
     "truncated": [],
     "seen_chunk_ids": [
-     "4d92b1aff2a7b752e795d62eabc64962a55f507fd3adb10e8a7c644151ceccc7",
-     "aea522e95f62ce46e1eaf2b2b0774809218cef67a64f52fd18ae89f0b16132ce",
-     "3ce8e3e62d7897fba9866aa9d348597b29eb8d77e691fffe0dd4f9af6561fc26",
-     "39f10f26be3cd00cefd01f06a3e375405f82295a501a341408e962cf5b54bf7e",
-     "050826f5b84f658e15cf4a88b55eb5e51b8d17375717e10ebb214a03e7e01809",
-     "fd9223437712e3b30338e978cae69db4bd9e28577ab97dbbc325f285d999a65b",
-     "eed05200648a122b816530e5936d917ecd684e786e6e0b639a5e88da9b9e8768",
-     "a28cc995fd27dfbd9997b942074defeed5b68b75eb8eac9f94204a7bf0118796",
-     "facdf09f0fa7c765c3f3e39a21a76c17727d3a474ebf9b233ed89dd94aed2b91"
+     "935d11d7ef1f5084bd600bbfd15f88e46a9b4f0275090648a0ecab707e4a1f14",
+     "b20e5fe7ec4c0ef44e7094b7af10008661ea82adff373201eeb2cc494495de73",
+     "05d295202cb34031f2804ef5650b80a8a138fa59157a15562984948ccde5fac1",
+     "aaacaed697cae734ae42eeb21d9aec3bc0ca317c1edaf057d11c9b14db5a6b0c",
+     "120ce73139dcbfdb3bfe9144ac8218d2dd93ddec6ceb0faa944be2964e977a0e",
+     "e0d56e8c131501f111b379cd4bbb00ed267f85df17b4d491ff6f564d22b52d9d",
+     "4e11a2531f4e7d453dcd58fd8685e8fd7755e56cad7db9609141fa6ca62f8b4e",
+     "d69e9d30d6cfaa72d923bb06312eb6c05b2996dcc50165c10262950f5672a921",
+     "0449d7b07ddc7973b8ba2710c976b70c1c62d0eb27d60105e17198a31559557e"
     ],
     "spent": 9,
-    "elapsed_ms": 0.76
+    "elapsed_ms": 0.6
    },
    "calls": 0,
    "tokens": 0
@@ -766,7 +767,7 @@
    "documents",
    "memory"
   ],
-  "repo_id": "787cedb013732c89f90c4caadf9d4d8a8be412b71a501f2b47af8acfa6bf5ad3",
+  "repo_id": "7ad6c69bea327ce571ee205011f8850d9fba09ff7442af14744117196680b7b4",
   "graph": true,
   "model": "jev-1.13.0",
   "live": true,
@@ -779,7 +780,7 @@
   "tokens": null
  },
  "policy": {
-  "version": "fitted-3a95c42e86cd",
+  "version": "fitted-29747850769c",
   "rules": {
    "route": {
     "no": 0.4,
@@ -798,12 +799,12 @@
     "yes": 0.8
    },
    "redirect": {
-    "no": 0.3,
+    "no": 0.25,
     "yes": 0.8
    },
    "coverage": {
     "no": 0.2,
-    "yes": 0.8
+    "yes": 0.6
    },
    "repair": {
     "confidence": 0.6,
@@ -820,99 +821,12 @@
    "useful",
    "coverage",
    "conflict",
-   "redirect"
+   "redirect",
+   "repair"
   ],
   "source": "eval/jev/policy.json",
   "problem": "",
-  "provenance": {
-   "dataset": {
-    "path": "eval/jev/calibration.json",
-    "sha256": "f8fd7cf1c3c757f3379df9a80a72bd9e197a9706715b135485418906ac0c6a79",
-    "split": "calibration",
-    "cases": 25
-   },
-   "prompt_version": "afa145931e76393e",
-   "normalization_version": "original_english",
-   "fitted_at": "2026-09-27T04:48:00+00:00",
-   "costs": {
-    "requests": 44,
-    "input_tokens": 26677,
-    "output_tokens": 3822,
-    "elapsed_ms": 11271
-   },
-   "errors": {
-    "route": {
-     "n": 25,
-     "positives": 21,
-     "fitted": true,
-     "cost": 0,
-     "provisional_cost": 1,
-     "counts": {
-      "positive_yes": 21,
-      "negative_no": 4
-     }
-    },
-    "source": {
-     "n": 16,
-     "positives": 6,
-     "fitted": true,
-     "cost": 3.0,
-     "provisional_cost": 4.5,
-     "counts": {
-      "negative_uncertain": 6,
-      "positive_uncertain": 4,
-      "negative_no": 4,
-      "positive_yes": 2
-     }
-    },
-    "useful": {
-     "n": 28,
-     "positives": 21,
-     "fitted": true,
-     "cost": 0,
-     "provisional_cost": 1.5,
-     "counts": {
-      "positive_yes": 21,
-      "negative_no": 7
-     }
-    },
-    "coverage": {
-     "n": 21,
-     "positives": 14,
-     "fitted": true,
-     "cost": 1,
-     "provisional_cost": 1,
-     "counts": {
-      "positive_yes": 13,
-      "positive_uncertain": 1,
-      "negative_no": 7
-     }
-    },
-    "conflict": {
-     "n": 28,
-     "positives": 3,
-     "fitted": true,
-     "cost": 0,
-     "provisional_cost": 0.5,
-     "counts": {
-      "negative_no": 25,
-      "positive_yes": 1,
-      "positive_uncertain": 2
-     }
-    },
-    "redirect": {
-     "n": 28,
-     "positives": 3,
-     "fitted": true,
-     "cost": 0,
-     "provisional_cost": 0.5,
-     "counts": {
-      "negative_no": 25,
-      "positive_yes": 3
-     }
-    }
-   }
-  }
+  "dataset": "795aca59e263e7ec3010acc8f48bc1585cf8a98a02fae6fa581cbabb62d90f17"
  },
  "prompt_version": "afa145931e76393e",
  "transitions": [
@@ -970,8 +884,10 @@
    "from": "grade",
    "to": "assess",
    "reason": "graded",
-   "kept": 2,
-   "covered": [],
+   "kept": 9,
+   "covered": [
+    "r0"
+   ],
    "budget": {
     "calls": 2,
     "candidates": 9,
@@ -980,11 +896,8 @@
   },
   {
    "from": "assess",
-   "to": "partial",
-   "reason": "no_repair",
-   "missing": [
-    "r0"
-   ],
+   "to": "ready",
+   "reason": "requirements_covered",
    "budget": {
     "calls": 2,
     "candidates": 9,

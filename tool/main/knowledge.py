@@ -366,6 +366,8 @@ class Flow:
         self.versions: set[str] = set()
         self.searched: list[str] = []
         self.pool: dict[str, dict] = {}
+        # The chunks a coverage `yes` was judged over: evidence whatever `k` is.
+        self.rested: set[str] = set()
         self.dropped = 0
         self.requirements: list[dict] = []
         self.cut: list[str] = []
@@ -416,15 +418,6 @@ class Flow:
     def cancelled(self) -> bool:
         return self.outside("clock", lambda: self.budget.cancel.is_set())
 
-    def stopped(self) -> None:
-        """After a round that came back with nothing: a cancel or the spent
-        deadline behind it is the run's outcome, not a retrieval failure."""
-
-        if self.cancelled():
-            raise Cancelled("cancelled")
-        if not self.time_for(0.0):
-            raise Exhausted("deadline")
-
     def english(self, texts: list[str], owners: list[tuple[str, ...]] | None = None) -> list[dict]:
         seconds = max(0.0, min(NORMALIZE_SECONDS, self.budget.left() - self.budget.call_seconds))
         outcomes = self.outside("normalize", lambda: self.normalize(texts, seconds, owners))
@@ -473,6 +466,13 @@ class Flow:
     # -- transitions -------------------------------------------------------------------
 
     def go(self, to: str, reason: str, **detail) -> None:
+        # The one exit every short ending passes: a run cancelled or out of time
+        # ended because of that, whichever path brought it here.
+        if to in ("partial", "unavailable"):
+            if self.cancelled():
+                to, reason, detail = "cancelled", "cancelled", {**detail, "instead_of": to}
+            elif not self.time_for(0.0):
+                to, reason, detail = "exhausted", "deadline", {**detail, "instead_of": to}
         used = self.budget.used
         self.dossier["transitions"].append({
             "from": self.state, "to": to, "reason": reason, **detail,
@@ -505,13 +505,14 @@ class Flow:
 
     def ranked(self) -> list[dict]:
         """Graded evidence best first, ungraded after in retrieval order; `k`
-        of it, and besides every passage whose conflict is not ruled out.
-        The rest held past `k` is named in `limits` (`beyond_k`), never
-        left out silently."""
+        of it, and besides every passage a verdict rests on — a coverage
+        `yes` judged over it, or a conflict not ruled out. The rest held
+        past `k` is named in `limits` (`beyond_k`), never left out silently."""
 
         order = sorted(self.pool.values(), key=lambda c: (c["relevance"] is None, -(c["relevance"] or 0)))
         rest = order[self.k:]
-        lane = [c for c in rest if (c["judgment"] or {}).get("conflict") in ("yes", "uncertain")]
+        lane = [c for c in rest if c["chunk_id"] in self.rested
+                or (c["judgment"] or {}).get("conflict") in ("yes", "uncertain")]
         past = [c["chunk_id"] for c in rest if c not in lane]
         if past:
             self.dossier["limits"].append({"beyond_k": past})
@@ -619,7 +620,6 @@ class Flow:
             if self.cancelled():
                 raise Cancelled("cancelled")
             if result is None:
-                self.stopped()
                 # Not searched is not "found nothing": no evidence judgment follows.
                 return self.go("partial" if self.graded() else "unavailable", "retrieval_unavailable",
                                round=req["round"])
@@ -724,6 +724,8 @@ class Flow:
         # Jev does not say which passages a coverage `yes` rests on, so a request
         # that judged any requirement covered keeps every passage it read.
         covered = any(verdicts.get(f"coverage_{r['id']}") == "yes" for r in self.requirements)
+        if covered:
+            self.rested |= {c["chunk_id"] for c in earlier + graded if c["chunk_id"] in ids and complete(c)}
         for chunk in graded:
             pid = ids.get(chunk["chunk_id"])
             if pid is None:
@@ -814,8 +816,6 @@ class Flow:
             self.searched += out["note"].get("sources", [])
             for found in out["results"]:
                 self.add([h for h in (found or {}).get("chunks", []) if h["chunk_id"] not in self.pool])
-            if None in out["results"]:
-                self.stopped()
         self.go("unavailable", reason)
 
     def baseline(self, reason: str) -> None:
@@ -835,7 +835,6 @@ class Flow:
             if found is not None:
                 self.add(found["chunks"])
             else:
-                self.stopped()
                 self.dossier["limits"].append({"baseline": "retrieval_unavailable"})
         self.go("unavailable", reason)
 

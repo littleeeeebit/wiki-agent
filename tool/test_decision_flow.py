@@ -665,6 +665,39 @@ def test_a_passage_coverage_was_judged_on_is_never_dropped():
     assert {e["chunk_id"] for e in out["evidence"]} == {one["chunk_id"], two["chunk_id"]}
 
 
+def test_evidence_a_coverage_rests_on_is_in_the_dossier_whatever_k():
+    one, two = chunk("owner", "Atlas owns ingest."), chunk("port", "Ingest listens on 8791.")
+    world = World(answering(useful=lambda n: 0.95 if n.endswith("p0") else 0.0, coverage=0.95),
+                  [found([one, two])])
+    out = run(world, k=1, query="Who owns ingest? Which port does it use?", available=["documents"])
+    assert out["status"] == "ready"
+    assert {e["chunk_id"] for e in out["evidence"]} == {one["chunk_id"], two["chunk_id"]}
+
+
+def test_a_deadline_spent_before_the_baseline_or_a_repair_is_exhausted():
+    budget = Budget(seconds=0.3, calls=6, candidates=40)
+
+    def slow(texts, seconds, owners=None):
+        time.sleep(budget.left() + 0.01)
+        return [{"text": None, "status": "unavailable", "language": "en", "reason": "late"} for _ in texts]
+
+    out = run(World(answering(), []), budget=budget, available=["documents"], normalize=slow)
+    assert out["status"] == "exhausted" and out["reason"] == "deadline"
+
+    budget = Budget(seconds=0.5, calls=6, candidates=40)
+
+    class Late(World):
+        def evaluate(self, state, questions, trace, b, stage):
+            got = super().evaluate(state, questions, trace, b, stage)
+            if stage == "judge":
+                time.sleep(budget.left() + 0.01)
+            return got
+
+    world = Late(answering(coverage=0.1), [found([chunk("a")])])
+    out = run(world, budget=budget)
+    assert out["status"] == "exhausted" and out["reason"] == "deadline" and world.mended == []
+
+
 @pytest.mark.parametrize("stop, status", [("cancel", "cancelled"), ("deadline", "exhausted")])
 @pytest.mark.parametrize("where", ["baseline", "round"])
 def test_a_round_ended_by_a_cancel_or_the_deadline_ends_the_run_so(stop, status, where):
@@ -802,7 +835,8 @@ def test_a_live_run_s_committed_tape_replays_exactly():
     tape = json.loads((EVAL / "replay.smoke-03.tape.json").read_text(encoding="utf-8"))
     again = knowledge.replay(tape)
     assert again["matches"] and not again["prompt_changed"], "the prompts changed: record the tape again"
-    assert "partial" in [t["to"] for t in again["transitions"]]
+    # The bridge question: both passages found, covered together under the fitted policy.
+    assert [t["to"] for t in again["transitions"]][-1] == "ready"
 
 
 def test_the_committed_policy_is_fitted_for_the_model_and_prompts_in_use():
