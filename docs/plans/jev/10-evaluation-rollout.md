@@ -284,6 +284,37 @@ checkout's HEAD, status and files, the worktree and its HEAD, the memory, the
 pending approval (recorded, never executed) and the run history came through
 unchanged.
 
+Held-out, retrieval level, 2026-09-28 (`raw/eval/jev/compare-heldout`,
+`fixed-heldout`, `actions-heldout`, `report-heldout.json`; intents v2 and actions
+v2, commit `5a63a7b`, clean; four arms, hybrid, cold, k = 8, 60 intents × 2
+languages). This is the held-out half: nothing was fitted or changed on it.
+Jev requests only, no host turn: 579 requests, 1,193,912 Jev tokens, 4.3 minutes.
+
+| Arm | Recall@8 (96) | Candidate recall | Bridge recall (12) | English − Korean | p95 s | Jev tokens |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 0.896 [0.833, 0.953] | 0.896 | 0.583 [0.417, 0.792] | +0.104 [0.021, 0.208] | 0.03 | 0 |
+| B | 0.953 [0.912, 0.990] | 0.953 | 0.625 [0.5, 0.792] | −0.010 [−0.031, 0.0] | 2.47 | 451,713 |
+| C | 0.896 [0.833, 0.953] | 0.938 | 0.583 [0.417, 0.792] | +0.104 [0.021, 0.208] | 0.02 | 0 |
+| D | 1.0 [1.0, 1.0] | 1.0 | 1.0 [1.0, 1.0] | 0.0 [0.0, 0.0] | 1.60 | 518,656 |
+
+D − A: recall +0.104 [0.047, 0.167], bridge recall +0.417 [0.208, 0.583] (6
+intents); D − B bridge recall +0.375 [0.208, 0.5]; C − A 0, as the stage 5
+finding below predicts. Fixed candidates (54 requests over arm C's candidates at
+k = 12): false rejection 0 of 57 supporting passages (3 uncertain), false
+acceptance 0.010 of 591 (19 uncertain), recall@4 RRF 0.938 against Jev's order
+0.948; 49 of 50 adversarial pages flagged for redirect and none of the other
+598. Actions (30 requests): 29 of 30 chosen right. work.start 10/10 (2
+uncertain, both ran a baseline equal to the label), specs.check 10/10,
+loop.fix 9/10 (f04, a finding resting on a shared rule, came back uncertain
+and ran the baseline `fix` where the label is `context`); no authority violation
+and no unoffered candidate executed.
+
+Gates against v1 of `gates.json`: integrity, graph benefit, overall recall,
+decision quality (0.967), language parity (0.0), added latency (1.57 s) and
+operating ceiling pass. Answer support is not measured: it needs the answer
+level, which spends host turns. The labels were reviewed by a model, not a
+person, and the report says so.
+
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
 calls are not counted in `host_turns` or USD, and they are the one spend
@@ -294,9 +325,10 @@ Left before completion, in order:
 
 1. Label review — done 2026-09-28 by a model at the user's
    direction (above). A label changed after that is a new version.
-2. The held-out four arms, retrieval and answer level, the repetition subset,
-   the fixed and the action experiments (commands above), then
-   `report.py` over them. Answer level needs host spend under the ceiling.
+2. Held-out retrieval level, fixed and action experiments — done 2026-09-28
+   (above). Still to run: answer level (`--level answer`, host spend under the
+   ceiling), which the answer-support gate needs, and the 3× repetition subset;
+   then `report.py` over all of them.
 3. Every gate `pass`, then `rollout.py canary <this checkout>`; `.env` stays
    `WIKI_JEV_MODE=shadow` until the canary has run without a rollback.
 
@@ -305,8 +337,8 @@ Left before completion, in order:
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | In progress — `eval/jev/intents.json` and `actions.json` frozen with corpus hashes and splits; labels reviewed 2026-09-28 by a model at the user's direction, version 2 of both |
-| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; calibration-split runs only; held-out waits on step 1 |
-| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; no held-out numbers yet |
+| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level and the repetition subset not run |
+| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; seven of eight gates pass on the held-out half, answer support not measured |
 | 4 | Product | App/CLI parity, window checks, operational failures | In progress — the canary in settings, the API and the window's mode line; window checks not run this stage |
 | 5 | Rollout | Shadow, active canary, rollback rehearsal | In progress — canary, off and follow commands; rehearsal passed; active canary waits for the gates |
 | 6 | Completion | Reproduction report, all gates, plan archival | Not started |
