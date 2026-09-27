@@ -394,7 +394,8 @@ def test_a_disabled_source_is_neither_searched_nor_fetched_and_removal_takes_its
     index.close()
 
 
-def test_forgetting_a_source_takes_its_cached_extractions_too(repo, monkeypatch):
+@pytest.mark.parametrize("after", ["graph", "snapshot"])
+def test_forgetting_a_source_takes_its_cached_extractions_too(repo, monkeypatch, after):
     hub, path = repo
     url = "https://example.com/c.txt"
     monkeypatch.setattr(providers, "fetch", fake_fetch({url: ("text/plain", b"Zeta uses eta.")}))
@@ -422,13 +423,32 @@ def test_forgetting_a_source_takes_its_cached_extractions_too(repo, monkeypatch)
     with pytest.raises(OSError):
         knowledge.forget(path, record["source_id"])
     monkeypatch.setattr(knowledge, "evidence_store", opened)
-    # A record deletion that fails takes the graph cleanup back with it; forgetting again is the retry.
+    # A record deletion that fails before its commit changes nothing.
     monkeypatch.setattr(sources.Records, "delete", lambda *_a: (_ for _ in ()).throw(OSError("disk")))
     with pytest.raises(OSError):
         knowledge.forget(path, record["source_id"])
     monkeypatch.setattr(sources.Records, "delete", delete)
     assert ("Zeta uses eta.",) in quoted() and search.knowledge_graph.cached(index.store, "v")
-    assert knowledge.forget(path, record["source_id"])
+    # Something failing after the record's commit: the graph step, or a snapshot left behind.
+    graph_step = search.knowledge_graph.forget
+    if after == "graph":
+        monkeypatch.setattr(search.knowledge_graph, "forget", lambda *_a: (_ for _ in ()).throw(OSError("disk")))
+    else:
+        def committed_then_failed(store, source):
+            delete(store, source)
+            raise OSError("snapshot")
+        monkeypatch.setattr(sources.Records, "delete", committed_then_failed)
+    with pytest.raises(OSError) as failed:
+        knowledge.forget(path, record["source_id"])
+    monkeypatch.setattr(search.knowledge_graph, "forget", graph_step)
+    monkeypatch.setattr(sources.Records, "delete", delete)
+    with search.records(path) as held:
+        assert held.get(record["source_id"]) is None
+    if after == "graph":
+        # The record is gone; its full id still finishes the graph step.
+        assert record["source_id"] in "".join(failed.value.__notes__)
+        assert ("Zeta uses eta.",) in quoted()
+        assert knowledge.forget(path, record["source_id"])
     # Nothing that quotes it is left: no cached extraction, and no node or span in any generation.
     assert search.knowledge_graph.cached(index.store, "v") == {} and quoted() == []
     # A model answer arriving after the forget is not cached.

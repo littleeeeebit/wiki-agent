@@ -439,26 +439,49 @@ def forget(project: str | Path | None, source: str) -> bool:
     """Remove a source record, the snapshots only it held, and its place in
     the graph with the cached extractions — all of which quote it.
 
-    Both happen inside one write transaction of the evidence store, the
-    record last: `keep` and a graph rebuild take that same lock, so neither
-    writes the source back — one that came first is removed here, one that
-    comes after finds the record gone. If anything fails before the record
-    is deleted, nothing is, and forgetting again is the retry. A store that
+    Two databases cannot commit as one, so the record goes first — it is
+    the decision — and the graph after it. The graph step is idempotent and
+    needs no record: when it fails, forgetting the full source id again
+    finishes it. `keep` asks whether the record exists inside its own
+    write transaction, so a model answer landing before the graph step is
+    removed by it and one landing after finds the record gone. A store that
     could not be opened (in memory) forgets nothing.
-    ponytail: the record is deleted before the evidence store commits; a
-    failed commit there leaves the graph with no record to retry through."""
+    ponytail: a rebuild that loaded the record just before its deletion can
+    write its structure — no extraction, so no quote — until the refresh the
+    deletion triggers."""
 
-    with records(project) as store:
-        source_id = find(store, source)["source_id"]
-        evidence = evidence_store(project)
+    evidence, late = evidence_store(project), None
+    try:
+        if not evidence.persistent:
+            raise OSError("the evidence store could not be opened; nothing was forgotten")
+        with records(project) as store:
+            try:
+                source_id = find(store, source)["source_id"]
+            except KeyError:
+                # A record already gone whose graph step failed: its full id retries that step.
+                if not re.fullmatch(r"[0-9a-f]{64}", source):
+                    raise
+                source_id, removed = source, False
+            else:
+                try:
+                    removed = store.delete(source_id)
+                except Exception as error:
+                    # Failing after its commit (a snapshot) the record is gone all the same:
+                    # the graph step still runs, and this is raised after it.
+                    if store.get(source_id) is not None:
+                        raise
+                    removed, late = True, error
         try:
-            if not evidence.persistent:
-                raise OSError("the evidence store could not be opened; nothing was forgotten")
             with evidence.transaction() as db:
-                knowledge_graph.forget(db, source_id)
-                return store.delete(source_id)
-        finally:
-            evidence.close()
+                cleaned = knowledge_graph.forget(db, source_id)
+        except Exception as error:
+            error.add_note(f"the record is gone; forget {source_id} again to finish")
+            raise
+        if late:
+            raise late
+        return removed or cleaned
+    finally:
+        evidence.close()
 
 
 def still(project: str | Path | None, external: set[tuple[str, str]]):

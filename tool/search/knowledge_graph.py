@@ -618,18 +618,20 @@ def keep(store, rows: list[tuple[str, str, str, dict]], external=frozenset) -> i
     return len(kept)
 
 
-def forget(db: sqlite3.Connection, source: str) -> None:
+def forget(db: sqlite3.Connection, source: str) -> bool:
     """Remove an external source that is being forgotten from the graph of
     every generation, and its cached extractions — all of them quote its
     text — in the caller's transaction. The serial moves, so a rebuild that
-    read the graph before this does not write it back."""
+    read the graph before this does not write it back. Idempotent; says
+    whether anything was there."""
 
     gens = {g for (g,) in db.execute("SELECT gen FROM nodes WHERE source_id = ? UNION"
                                      " SELECT gen FROM spans WHERE source_id = ?", (source, source))}
     drop(db, [(g, source) for g in sorted(gens)], False, True)
-    db.execute("DELETE FROM extractions WHERE source_id = ?", (source,))
+    cached_ = db.execute("DELETE FROM extractions WHERE source_id = ?", (source,)).rowcount
     db.execute("INSERT OR REPLACE INTO meta VALUES ('graph_serial', ?)",
                (str(int(meta(db, "graph_serial") or 0) + 1),))
+    return bool(gens or cached_)
 
 
 def cached(store, versions: str) -> dict[tuple[str, str], dict]:
