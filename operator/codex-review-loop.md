@@ -6,7 +6,7 @@ triggers: ["리뷰\\s*루프", "review\\s*loop", "codex.{0,12}(리뷰|보내|돌
 slots: [review_dir, gate_cmd, live_cmd]
 sources: []
 sources_withheld: true
-links: [pick-up-async-results, ask-with-arrow-key-options, agent-delegation, gate-the-exit-not-the-callers, measure-after-the-last-change]
+links: [pick-up-async-results, ask-with-arrow-key-options, agent-delegation, gate-the-exit-not-the-callers, measure-after-the-last-change, verify-narrow-then-wide]
 ---
 
 # The Codex review loop — files carry it, the terminal is a doorbell
@@ -19,10 +19,12 @@ independent review does not widen into spawning another implementation agent
 `'read that file and review it'`. The reviewer writes the result to
 `<topic>-round-<n>-result.md`. Do not scrape the result off the terminal. Arm
 the watch before sending, and do not end the turn between the two —
-[[pick-up-async-results]]. Every round runs the offline gate `{gate_cmd}`,
+[[pick-up-async-results]]. Every round runs only the tests its fixes touch,
 carries the live run's result where there is one (`{live_cmd}`), and is
-committed and pushed. Where the skill is not installed, its steps are in the
-hub wiki's `skills/review-loop/SKILL.md`.
+committed and pushed; the offline gate `{gate_cmd}` runs once, after the
+result says `머지 허용`, before the merge — [[verify-narrow-then-wide]].
+Where the skill is not installed, its steps are in the hub wiki's
+`skills/review-loop/SKILL.md`.
 
 What goes wrong. The round disappears quietly. Worse is
 **a review that looks like it happened and did not** — a session that never

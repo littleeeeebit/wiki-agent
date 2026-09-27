@@ -1,29 +1,38 @@
 ---
 scope: craft
-severity: contract
+severity: landmine
 repeat: rule
-triggers: ["테스트를? (돌|실행)", "pytest", "전체를? 돌리", "다 돌리", "라이브를? (돌|실행)", "회차를? (돌|실행)", "게이트", "검증", "확인해 ?보"]
+triggers: ["테스트를? (돌|실행)", "pytest", "전체를? 돌리", "다 돌리", "라이브를? (돌|실행)", "회차를? (돌|실행)", "게이트", "검증", "확인해 ?보", "리뷰\\s*루프", "review\\s*loop", "머지\\s*허용"]
 slots: []
 sources: []
 sources_withheld: true
-links: [diagnose-from-what-ran, pick-up-async-results, do-the-whole-instruction]
+links: [diagnose-from-what-ran, pick-up-async-results, do-the-whole-instruction, codex-review-loop]
 ---
 
-# Measure narrow, go wide at the end — not everything on every repair
+# Measure narrow, go wide once at the end — not everything on every repair
 
-Rule. While fixing, run **only what the change touches**. The full suite and
-the full live run happen once, just before a commit, a review or a PR.
-Fixing one judgement runs that test file; closing out a domain, that
-directory; a change whose main evidence is live, one live run, not driven to
-the end once it has given its answer. Anything untouched since the last run is
-not run again. Two exceptions: a failure with an unknown cause runs
-everything, and a change to a shared file looks at every place that uses it.
+Rule. While fixing, run only what the change touches: the test file of the
+judgement you changed, the directory of a domain you closed. The full suite
+runs **once** — in a review loop, after the result says `머지 허용` and
+before the merge; outside one, just before the PR. Never per round, never per
+commit. A change whose main evidence is live gets one live run, not driven to
+the end once it has given its answer. Anything untouched since the last run
+is not run again. Two exceptions: a failure with an unknown cause runs
+everything, and a change to a shared file runs the tests of every place that
+uses it.
+
+Why. In one review loop (Jev stage 5, six rounds) the whole gate — 780
+tests, 7.5 to 10 minutes — ran before every round, while the one file the
+fixes touched ran in 15 seconds and caught every regression the rounds had.
+About an hour of the loop went to a suite that answered nothing new. The user
+set this rule at the top.
 
 | When | What |
 | --- | --- |
 | Fixing one judgement | That one test file |
 | Closing out a domain | That domain's directory |
-| Before a commit, a review round or a PR | The whole gate |
+| A review round, a commit, a push | What the change touches |
+| After `머지 허용`, before the merge (no review: before the PR) | The whole gate, once |
 | A change whose main evidence is live | One live run |
 
 Do not run a whole scenario for one measurement. Add instrumentation if it is

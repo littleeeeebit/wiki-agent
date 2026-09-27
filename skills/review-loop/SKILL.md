@@ -119,10 +119,13 @@ When there are several ways to repair it, hand the choice to the user — with
 arrow-key options, not prose (`operator/ask-with-arrow-key-options`). Put the
 consequence in each option, not a label: what it costs and what it rules out.
 
-### 7. Gate, then live, then commit, then push
+### 7. Touched tests, then live, then commit, then push
 
-The offline gate and the live run are the page's `gate_cmd` and `live_cmd`.
-Carry the live result in the next instruction.
+A round runs only the tests its fixes touch — the test file of each changed
+judgement, and the tests of every user of a changed shared file. Not the
+offline gate: that is the page's `gate_cmd`, run **once**, after a result says
+`머지 허용` and before the merge (`craft/verify-narrow-then-wide`). The live
+run is the page's `live_cmd`; carry its result in the next instruction.
 
 Push without asking. Twenty rounds piled up locally leave the PR looking
 exactly as it did before the review started, and from outside that is
