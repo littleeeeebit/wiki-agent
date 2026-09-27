@@ -18,7 +18,7 @@ import pytest
 import decision
 import search
 from main import knowledge
-from search import controller, evidence, providers, sources
+from search import evidence, providers, sources
 from search import daemon as searchd
 
 FEED = b"""<?xml version='1.0' encoding='UTF-8'?>
@@ -383,7 +383,7 @@ def test_a_disabled_source_is_neither_searched_nor_fetched_and_removal_takes_its
     knowledge.switch(path, record["source_id"][:10], False)
     index.refresh()
     assert not index.search("epsilon", 5)
-    assert controller.families(path) == []
+    assert knowledge.available(path) == ["hub", "documents", "memory"]
     with pytest.raises(ValueError):
         knowledge.add_url(path, url)
     snapshot = search.records(path)
@@ -477,16 +477,16 @@ def test_an_arxiv_abstract_is_never_taken_for_the_full_text(repo, monkeypatch):
     papers_fixture(monkeypatch)
     out = knowledge.add_papers(path, "attention transformer", n=2)
     assert [p["coverage"] for p in out["papers"]] == ["abstract_only", "abstract_only"]
-    assert controller.families(path) == ["papers"]
+    assert knowledge.available(path) == ["hub", "documents", "memory", "papers"]
     index = index_of(hub, path)
     hit = index.search("Transformer attention mechanisms", 1, ["papers"])[0]
-    chunk = controller.item(hit, {"text": hit["text"], "status": "original_english", "language": "en"})
+    chunk = knowledge.item(hit,{"text": hit["text"], "status": "original_english", "language": "en"})
     assert chunk["kind"] == "paper" and chunk["coverage"] == "abstract_only"
     assert chunk["locator"]["url"] == "https://arxiv.org/abs/1706.03762v7"
     assert chunk["source_record"]["revision"] == "1706.03762v7"
     assert search.resolve(chunk, hit["path"]) == chunk["original_text"]
     # The dossier says so: a read of what the abstract stands for is still owed.
-    assert controller.reads([chunk]) == [{"chunk_id": chunk["chunk_id"], "path": hit["path"],
+    assert knowledge.reads([chunk]) == [{"chunk_id": chunk["chunk_id"], "path": hit["path"],
                                           "locator": chunk["locator"], "reason": "abstract_only"}]
     index.close()
 

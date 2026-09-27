@@ -29,7 +29,7 @@ import threading
 import time
 from pathlib import Path
 
-__all__ = ("ask", "prepare", "local_index", "evidence_store", "resolve", "notify", "PING", "spawn", "PORT", "HUB",
+__all__ = ("ask", "local_index", "evidence_store", "resolve", "notify", "PING", "spawn", "PORT", "HUB",
            "cache_dir", "state_path", "version", "records", "refresh", "sources", "providers",
            "knowledge_graph", "projection", "retrieval", "retrieve")
 
@@ -141,20 +141,6 @@ def retrieve(request: dict, project: str | Path | None, timeout: float, wait: fl
                                           "project": str(project) if project else None, "wait": wait},
                             timeout, wait, start)
     return answer if (answer or {}).get("schema_version") == retrieval.RESULT else None
-
-
-def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8, *,
-            evaluate, budget=None, normalize=None, omitted: dict | None = None) -> dict:
-    """Jev's retrieval dossier; explicit callers opt into sending evidence to TypeSafe.
-
-    `evaluate` is the decision transport (`decision.evaluate` bound to a
-    configuration) and `normalize` English normalization (`translate.english`),
-    handed in because this pipeline does not import another. `omitted`
-    describes what a summarized `state` left out.
-    """
-    from .controller import prepare as run
-
-    return run(query, project, state, k, evaluate=evaluate, budget=budget, normalize=normalize, omitted=omitted)
 
 
 def evidence_store(project: str | Path | None, hub: Path | None = None):

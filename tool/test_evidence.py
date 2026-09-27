@@ -3,7 +3,6 @@ English normalization and the store. No credentials and no external calls:
 the translator's request (`translate._ask`) is replaced where a test needs an
 answer from it."""
 
-import functools
 import json
 import os
 import sqlite3
@@ -12,11 +11,29 @@ from pathlib import Path
 
 import pytest
 
+import decision
 import search
 import translate
 from main import knowledge
-from search import cache_dir, controller, evidence
+from search import cache_dir, evidence
 from search import daemon as searchd
+from test_decision_flow import answering, found
+
+ACTIVE = decision.Config("active", "jev-1.13.0", "file", key="k")
+
+
+def jev(monkeypatch, hits: list[dict], seen: list[dict], answer=None) -> None:
+    """Every round finds `hits`; Jev is a fake that keeps each state it is sent."""
+
+    monkeypatch.setattr(knowledge, "run_round", lambda req, project, budget: found(hits))
+
+    def evaluate(cfg, state, questions, trace, budget, stage):
+        budget.call()
+        seen.append(state)
+        trace.append({"stage": stage, "model": cfg.model, "usage": {"input_tokens": 1, "output_tokens": 1}})
+        return (answer or answering())(stage, state, questions)
+
+    monkeypatch.setattr(decision, "evaluate", evaluate)
 
 
 def index_of(hub: Path, repo: Path | None) -> searchd.Index:
@@ -343,15 +360,9 @@ def test_a_private_memorys_english_is_kept_beside_it_and_goes_with_it(private_ko
     hub, repo = private_korean
     index = index_of(hub, repo)
     memory = by_path(index)[".wiki/memory/push.md"][0]
-    monkeypatch.setattr(controller, "retrieve", lambda *a: [index.search("푸시", 1)[0]])
     seen = []
-
-    def evaluate(state, questions, *_):
-        seen.append(state)
-        return {q: 0.9 for q in questions}
-
-    normalize = functools.partial(knowledge.english, project=repo)
-    controller.prepare("Push?", repo, evaluate=evaluate, normalize=normalize)
+    jev(monkeypatch, [index.search("푸시", 1)[0]], seen)
+    knowledge.prepare("Push?", repo, cfg=ACTIVE, cache=None)
     assert next(s["passages"] for s in seen if "passages" in s)[0]["text"] == "# Push\n\nPush without asking."
     assert shots(memory["text"]) == 0 and shots("푸시") == 0, "a private memory's English reached the shared cache"
     store = search.evidence_store(repo)
@@ -668,54 +679,49 @@ def test_a_retired_translation_is_not_used_or_made_again(translator):
     assert (out["status"], out["text"]) == ("retired", None)
 
 
-# ---- the controller reads English ---------------------------------------------
+# ---- the decision workflow reads English ----------------------------------------
 
 def test_jev_reads_english_and_an_untranslated_passage_proves_nothing(corpus, translator, monkeypatch):
     hub, repo = corpus
     index = index_of(hub, repo)
     korean, english_hit = index.search("한도", 1)[0], index.search("daemon 8791", 1)[0]
-    monkeypatch.setattr(controller, "retrieve", lambda *a: [korean, english_hit])
     seen = []
+    jev(monkeypatch, [korean, english_hit], seen)
 
-    def evaluate(state, questions, trace, *_):
-        seen.append(state)
-        if "retrieve" in questions:
-            return {"retrieve": 1, **{s: 1 for s in controller.SOURCES}}
-        if "sufficient" in questions:
-            return {"sufficient": 1}
-        return {q: 0.9 for q in questions}
-
-    # Nothing translates the Korean passage: it stays, ungraded, and cannot prove sufficiency.
-    out = controller.prepare("Which port?", repo, evaluate=evaluate, normalize=knowledge.english)
-    passages = next(s["passages"] for s in seen if "passages" in s)
-    assert [p["text"] for p in passages] == [english_hit["text"]]
-    assert {"normalization_failed": [korean["chunk_id"]]} in out["trace"]
+    # Nothing translates the Korean passage: it stays, ungraded, and cannot show coverage.
+    out = knowledge.prepare("Which port?", repo, cfg=ACTIVE, cache=None)
+    judged = next(s for s in seen if "passages" in s)
+    assert [p["text"] for p in judged["passages"]] == [english_hit["text"]]
+    assert judged["complete_passages"] == ["p0"]
+    assert {"not_normalized": [korean["chunk_id"]]} in out["limits"]
     untranslated = next(e for e in out["evidence"] if e["chunk_id"] == korean["chunk_id"])
     assert untranslated["relevance"] is None and untranslated["translation"]["status"] == "uncertain"
     assert {"chunk_id": korean["chunk_id"], "path": korean["path"], "locator": korean["locator"],
             "reason": "not_normalized"} in out["reads"]
-    assessed = next(s["evidence"] for s in seen if "evidence" in s)
-    assert [e["text"] for e in assessed] == [english_hit["text"]]
 
     # Translated, its English is what Jev reads; the citation stays the original.
     seen.clear()
     translator[translate.protect(korean["text"], translate.glossary()[0])[0]] = (
         "# Limit\n\nIt stops when a request is over the limit.")
     translator["한도"] = "Limit"
-    out = controller.prepare("Which port?", repo, evaluate=evaluate, normalize=knowledge.english)
+    out = knowledge.prepare("Which port?", repo, cfg=ACTIVE, cache=None)
     passages = next(s["passages"] for s in seen if "passages" in s)
     assert "It stops when a request is over the limit." in passages[0]["text"] + passages[1]["text"]
     chunk = next(e for e in out["evidence"] if e["chunk_id"] == korean["chunk_id"])
     assert chunk["original_text"] == korean["text"] and chunk["translation"]["status"] == "translated"
-    assert out["status"] == "supported" and out["reads"] == []
+    assert out["status"] == "ready" and out["reads"] == []
     index.close()
 
 
 def test_a_question_without_english_means_no_jev_but_retrieval_goes_on(monkeypatch):
-    monkeypatch.setattr(controller, "retrieve", lambda *a: [])
-    out = controller.prepare("포트는?", None, evaluate=lambda *a: pytest.fail("Jev was asked"))
+    from test_decision_flow import english
+
+    seen = []
+    jev(monkeypatch, [], seen, answer=lambda *a: pytest.fail("Jev was asked"))
+    monkeypatch.setattr(knowledge, "english", lambda texts, seconds, owners=None, project=None: english(texts, 0))
+    out = knowledge.prepare("포트는?", None, cfg=ACTIVE, cache=None)
     assert out["normalization"] == {"query": "unavailable", "state": None}
-    assert {"fallback": "NormalizationFailed", "reason": "normalization_failed"} in out["trace"]
+    assert out["status"] == "unavailable" and out["reason"] == "normalization_failed" and seen == []
 
 
 def test_the_meaning_labels_accept_their_reference_and_catch_a_flipped_meaning():
@@ -745,9 +751,9 @@ def test_ingest_counts_before_it_sends_and_every_citation_resolves(corpus, trans
 
 def test_mode_off_sends_nothing_to_the_translator(monkeypatch):
     monkeypatch.setattr(translate, "english", lambda *a: pytest.fail("the translator was asked"))
-    monkeypatch.setattr(controller, "retrieve", lambda *a: [])
+    monkeypatch.setattr(knowledge, "run_round", lambda req, project, budget: found([]))
     out = knowledge.prepare("포트는?", None)   # no key in a test run: mode off
-    assert out["jev"]["mode"] == "off" and out["normalization"]["query"] == "unavailable"
+    assert out["jev"]["mode"] == "off" and out["normalization"] is None and out["reason"] == "disabled"
 
 
 def test_a_long_state_is_summarized_not_dropped(tmp_path, monkeypatch):
@@ -759,21 +765,19 @@ def test_a_long_state_is_summarized_not_dropped(tmp_path, monkeypatch):
     state = "user: " + "earlier turn. " * 600 + "user: the latest ask"
     brief, omitted = knowledge.summarized(state, repo)
     summary = json.loads(brief)
-    assert len(brief) <= knowledge.STATE_CHARS == controller.MAX_STATE
+    assert len(brief) <= knowledge.STATE_CHARS
     assert summary["recent_state"].endswith("the latest ask")
     assert summary["unresolved_requirements"][0].startswith("docs/plans/1-x.md: ")
     assert omitted["characters"] == len(state) - len(summary["recent_state"])
     assert knowledge.summarized("short", repo) == ("short", None)
 
+    # The summary is what Jev judges, told what it left out.
+    from test_decision_flow import english
+
     seen = []
-
-    def evaluate(state_, questions, trace, *_):
-        seen.append((state_, questions))
-        if "retrieve" in questions:
-            return {"retrieve": 1, "hub": 1}
-        return {q: 1 for q in questions}
-
-    monkeypatch.setattr(controller, "retrieve", lambda *a: [])
-    out = controller.prepare("Question", None, brief, evaluate=evaluate, omitted=omitted)
-    assert not any(t.get("reason") == "invalid_or_unavailable_decision" for t in out["trace"])
-    assert seen[0][0]["omitted_context"] == omitted
+    jev(monkeypatch, [], seen)
+    monkeypatch.setattr(knowledge, "english", lambda texts, seconds, owners=None, project=None: english(texts, 0))
+    out = knowledge.prepare("Question", None, state, cfg=ACTIVE, cache=None)
+    brief, omitted = knowledge.summarized(state, None)
+    assert out["state"]["summarized"] and out["status"] != "unavailable"
+    assert seen[0]["current_state"] == brief and seen[0]["omitted_context"] == omitted

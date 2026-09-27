@@ -140,8 +140,9 @@ quote inside it is written '\\'' in Bash and '' in PowerShell.
 It returns matching sections with `path:line` and the pages linked to each.
 For the configured Jev retrieval controller, run the same command with
 `tool/jev_search.py` in place of `tool/search` and add
---state '<brief current state>'. Its JSON dossier includes evidence, routing
-and sufficiency status. An insufficient or fallback status requires further
+--state '<brief current state>'. Its JSON dossier includes evidence, routing,
+the requirements it covered and its status. Only `ready` means covered; a
+partial, unavailable, cancelled or exhausted status requires further
 verification. Jev judgments never override hook rules or authorize actions.
 The hub's pages are English and many repository documents are Korean, so
 search with terms in both languages."""
