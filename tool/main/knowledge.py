@@ -458,9 +458,15 @@ class Flow:
                           for n, q in questions.items()},
             **{name: res[name] for name in ("status", "reason_code", "answers", "verdicts",
                                             "selected_candidate_ids", "model", "usage", "elapsed_ms", "cached")}})
-        # A cancel heard while the answer came back ends the run before anything acts on it.
-        if res["status"] in ("decided", "uncertain") and self.cancelled():
-            raise Cancelled("cancelled")
+        # A cancel heard, or the deadline passed, while the answer came back ends
+        # the run before anything acts on it. One read of the clock lane, as before.
+        if res["status"] in ("decided", "uncertain"):
+            halted = self.outside("clock", lambda: "cancelled" if self.budget.cancel.is_set()
+                                  else "deadline" if self.budget.left() <= 0 else False)
+            if halted == "cancelled" or halted is True:   # `True`: a tape recorded before the deadline was read
+                raise Cancelled("cancelled")
+            if halted == "deadline":
+                raise Exhausted("deadline")
         return res
 
     # -- transitions -------------------------------------------------------------------

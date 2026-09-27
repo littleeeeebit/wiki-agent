@@ -698,6 +698,21 @@ def test_a_deadline_spent_before_the_baseline_or_a_repair_is_exhausted():
     assert out["status"] == "exhausted" and out["reason"] == "deadline" and world.mended == []
 
 
+@pytest.mark.parametrize("stage", ["route", "judge"])
+def test_an_answer_back_past_the_deadline_is_not_acted_on(stage):
+    budget = Budget(seconds=0.5, calls=6, candidates=40)
+
+    class Late(World):
+        def evaluate(self, state, questions, trace, b, stage_):
+            got = super().evaluate(state, questions, trace, b, stage_)
+            if stage_ == stage:
+                time.sleep(budget.left() + 0.01)
+            return got
+
+    out = run(Late(answering(), [found([chunk("a")])]), budget=budget)
+    assert out["status"] == "exhausted" and out["reason"] == "deadline"
+
+
 @pytest.mark.parametrize("stop, status", [("cancel", "cancelled"), ("deadline", "exhausted")])
 @pytest.mark.parametrize("where", ["baseline", "round"])
 def test_a_round_ended_by_a_cancel_or_the_deadline_ends_the_run_so(stop, status, where):
