@@ -73,6 +73,7 @@ EXCERPT = 500
 CHECK_NAME = re.compile(r"[a-z0-9][a-z0-9_-]{0,31}")
 # State fields that are identifiers, commands or paths: sent as they are, never translated.
 LITERAL = ("id", "pages", "files", "command", "source", "changed_files")
+HANGUL = re.compile(r"[ᄀ-ᇿ㄰-㆏가-힯]+")
 DEFERRED = "None of these clearly; leave it to the server's usual step."
 
 PROMPTS = {
@@ -191,7 +192,11 @@ def normalized(state: dict, seconds: float) -> tuple[dict | None, str]:
     texts: list[str] = []
 
     def walk(value, key, made=None):
-        if isinstance(value, str) and key not in LITERAL and value.strip():
+        if isinstance(value, str) and key in LITERAL:
+            # A path or a command is not translated — that would change what it names —
+            # and its Hangul is not sent either: `docs/설계.md` goes as `docs/….md`.
+            return HANGUL.sub("…", value)
+        if isinstance(value, str) and value.strip():
             if made is None:
                 texts.append(value)
                 return value
@@ -229,11 +234,13 @@ def ask(point: str, options: dict[str, str], state: dict, cfg: decision.Config, 
     accepted it; a deferral or a doubt leaves it `None`."""
 
     seconds = max(0.0, min(knowledge.NORMALIZE_SECONDS, budget.left() - budget.call_seconds))
-    state_en, version = normalized(state, seconds)
+    # The options too: a registered check's description is the adapter's prose, in any language.
+    both, version = normalized({"state": state, "options": options}, seconds)
     empty = {"request_id": None, "answer": None, "verdict": None, "choice": None, "model": None, "usage": None,
              "elapsed_ms": 0}
-    if state_en is None:
+    if both is None:
         return {**empty, "status": "unavailable", "reason": "normalization_failed"}
+    state_en, options = both["state"], both["options"]
     if budget.cancel.is_set():
         return {**empty, "status": "cancelled", "reason": "cancelled"}
     question = {"action": {"decision": "action", "candidate": None,
@@ -581,10 +588,14 @@ def check_offer(repo: Path, gate: str) -> list[dict]:
               for name, c in registered(repo).items() if c["cmd"] != gate)]
 
 
-def changed(path: Path) -> list[str]:
-    """The files the branch's own commits touched: those no remote has yet."""
+def changed(path: Path, spec: dict) -> list[str]:
+    """The files the pull request will show: the branch against the base it goes
+    to, pushed commits included. Without that ref, what no remote has yet."""
 
-    out = git(path, "log", "--name-only", "--format=", "HEAD", "--not", "--remotes")
+    base = f"origin/{spec['base']}" if spec.get("base") else "origin/HEAD"
+    out = git(path, "-c", "core.quotepath=off", "diff", "--name-only", f"{base}...HEAD") \
+        if git(path, "rev-parse", "--verify", "--quiet", base) else \
+        git(path, "-c", "core.quotepath=off", "log", "--name-only", "--format=", "HEAD", "--not", "--remotes")
     return list(dict.fromkeys(line for line in out.splitlines() if line.strip()))[:MAX_FILES]
 
 
@@ -601,7 +612,7 @@ def extra_check(repo: Path, path: Path, run, spec: dict) -> tuple[bool, str]:
                   lambda: {"task": "The required gate passed; the server may run one registered check more "
                                    "before it opens the pull request.",
                            "goal": spec["goal"], "acceptance_criteria": spec["done"][1:],
-                           "gate": {"command": gate, "result": "passed"}, "changed_files": changed(path)},
+                           "gate": {"command": gate, "result": "passed"}, "changed_files": changed(path, spec)},
                   lambda: facts(repo, path, specs.owner(path), session_of(path)), occasion=f"check:{run.turn}",
                   baseline="none", log=(spec["repo"], spec["id"]), cancel=run.halt)
     if pick.candidate is None:
@@ -613,12 +624,20 @@ def extra_check(repo: Path, path: Path, run, spec: dict) -> tuple[bool, str]:
         return True, ""
     name, cmd = pick.candidate["args"]["name"], pick.candidate["args"]["cmd"]
     note(run, f"Jev · 추가 확인 `{name}` ({said(pick)}) · {cmd}")
+    gated = (spec.get("gate") or {}).get("head")
+    before = git(path, "status", "--porcelain")
     code, out, cut = specs.gate(cmd, path, run.halt)
     tail = "\n".join(out.splitlines()[-specs.TAIL:])
-    pick.done("executed" if code == 0 else "failed", check=name, code=code, cut=cut, tail=tail[-2000:])
+    # What goes up is what the gate passed: a check that committed, or changed the
+    # tree it ran in, holds the pull request whatever it exited with.
+    moved = "" if git(path, "rev-parse", "HEAD") == gated else "HEAD 가 바뀌었다"
+    moved = moved or ("" if git(path, "status", "--porcelain") == before else "작업트리가 바뀌었다")
+    ok = code == 0 and not moved
+    pick.done("executed" if ok else "failed", check=name, code=code, cut=cut, moved=moved, tail=tail[-2000:])
     specs.update(spec["repo"], spec["id"],
-                 checks=[{"name": name, "cmd": cmd, "ok": code == 0, "code": code,
-                          "head": (spec.get("gate") or {}).get("head"), "ts": time.time()}])
+                 checks=[{"name": name, "cmd": cmd, "ok": ok, "code": code, "head": gated, "ts": time.time()}])
+    if moved:
+        return False, f"추가 확인 `{name}` 이 게이트가 본 것을 바꿨다 — {moved}. PR 을 올리지 않는다"
     if code != 0:
         return False, f"추가 확인 `{name}` 실패 — {cut or f'{code} 로 끝났다'}"
     note(run, f"추가 확인 `{name}` 통과")

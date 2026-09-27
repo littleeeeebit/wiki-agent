@@ -30,12 +30,13 @@ class Jev:
     callable (`state, budget` -> answer) or an exception to raise."""
 
     def __init__(self, **picks):
-        self.picks, self.states = picks, []
+        self.picks, self.states, self.questions = picks, [], []
 
     def __call__(self, cfg):
         def evaluate(state, questions, trace, budget, stage):
             budget.call()
             self.states.append(state)
+            self.questions.append(questions)
             instructions = questions["action"]["instructions"]
             point = next(p for p, text in decisions.PROMPTS.items() if instructions.startswith(text))
             pick = self.picks.get(point, "defer")
@@ -242,6 +243,22 @@ def test_nothing_korean_is_sent_and_mode_off_or_shadow_runs_the_baseline(jev, mo
     assert shadow["predicted"] == "look" and shadow["selected"] == "send"
 
 
+def test_a_korean_description_is_normalized_and_a_korean_path_goes_masked(jev, monkeypatch):
+    stand_in = jev(**{"loop.fix": "look"})
+    monkeypatch.setattr(decisions.knowledge, "english", lambda texts, seconds: [
+        {"status": "original_english", "text": t} if language(t) == "en" else
+        {"status": "translated", "text": "Look at the links first."} for t in texts])
+
+    def offered():
+        return [decisions.candidate("send", "prepare_work_turn", "Send it."),
+                decisions.candidate("look", "retrieve_evidence", "링크를 먼저 본다")]
+
+    chosen(stand_in, offered=offered, state={"changed_files": ["docs/설계.md", "a.py"]})
+    assert stand_in.states == [{"changed_files": ["docs/….md", "a.py"]}]
+    sent = json.dumps(stand_in.questions[0], ensure_ascii=False)
+    assert "Look at the links first." in sent and not decisions.HANGUL.search(sent)
+
+
 def test_a_replay_decides_again_from_the_record_and_runs_nothing(jev):
     stand_in = jev(**{"loop.fix": "look"})
     record = chosen(stand_in).record
@@ -364,6 +381,42 @@ def test_a_failing_picked_check_holds_the_pr_and_an_unregistered_name_is_never_r
     (repo / ".wiki/adapter.toml").write_text('[slots]\ngate_cmd = "x"\n[checks]\n"../x" = "rm -rf ."\n',
                                              encoding="utf-8")
     assert decisions.registered(repo) == {}, "a name that is not a check id registers nothing"
+
+
+def test_a_picked_check_that_commits_holds_the_pr_it_would_have_published(repo, jev):
+    checks(repo, advance="git -c user.name=c -c user.email=c@c commit --allow-empty -m check")
+    jev(**{"work.start": "dispatch", "specs.check": "check:advance"})
+    remote = Remote()
+    Worker.replies = [report(True, True)]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote):
+        sid = made(repo, english_block())[0]["id"]
+        settled(client().post(f"/api/specs/{sid}/start", json={}).json()["path"])
+    spec = specs.load("proj", sid)
+    assert not remote.created() and "HEAD 가 바뀌었다" in spec["fault"]
+    assert spec["checks"][0]["ok"] is False and "Jev 가 고른" not in specs.body_of(spec)
+
+
+def test_the_changed_files_are_the_branch_against_its_base_pushed_commits_included(tmp_path):
+    def git(*args, cwd=tmp_path / "w"):
+        import subprocess
+        subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=cwd, check=True,
+                       capture_output=True)
+
+    (tmp_path / "w").mkdir()
+    git("init", "-b", "main")
+    (tmp_path / "w/a.txt").write_text("a")
+    git("add", ".")
+    git("commit", "-m", "a")
+    assert decisions.changed(tmp_path / "w", {}) == ["a.txt"], "no remote: what no remote has yet"
+    git("init", "--bare", str(tmp_path / "o"), cwd=tmp_path)
+    git("remote", "add", "origin", str(tmp_path / "o"))
+    git("push", "-u", "origin", "main")
+    git("switch", "-c", "feature")
+    (tmp_path / "w/설계.md").write_text("b")
+    git("add", ".")
+    git("commit", "-m", "b")
+    git("push", "-u", "origin", "feature")
+    assert decisions.changed(tmp_path / "w", {"base": "main"}) == ["설계.md"]
 
 
 # -- loop.fix ---------------------------------------------------------------------
