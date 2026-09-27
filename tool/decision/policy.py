@@ -108,16 +108,18 @@ def verdict(pol: Policy, kind: str, value: float | dict) -> str:
     """`yes`, `no` or `uncertain` for a validated answer under `pol`.
 
     A Noul at or under `no` is no, at or over `yes` is yes. A Choice is
-    accepted (`yes`) only when it names no deferral, its confidence reaches
-    the rule, and it leads the runner-up by the margin; otherwise the choice
-    is left to code (`uncertain`). A Score is accepted on its confidence.
+    accepted (`yes`) only when it names no deferral, is what its own
+    probabilities rank first, its confidence reaches the rule, and it leads
+    the runner-up by the margin; otherwise the choice is left to code
+    (`uncertain`). A Score is accepted on its confidence.
     """
 
     rule = pol.rules[kind]
     if kind in NOUL:
         return "no" if value <= rule["no"] else "yes" if value >= rule["yes"] else "uncertain"
     ranked = sorted(value["probabilities"].values(), reverse=True) + [0.0, 0.0]
-    if "choice" in value and value["choice"] == "defer":
+    if "choice" in value and (value["choice"] == "defer"
+                              or value["probabilities"].get(value["choice"], 0.0) < ranked[0]):
         return "uncertain"
     if value["confidence"] < rule["confidence"] or ranked[0] - ranked[1] < rule["margin"]:
         return "uncertain"

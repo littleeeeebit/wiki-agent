@@ -548,12 +548,15 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
 
 # ---- the next round -------------------------------------------------------------------
 
-def checked_subqueries(original: str, proposals: object) -> tuple[list[str], list[dict]]:
+def checked_subqueries(original: str, proposals: object,
+                       every_exclusion: bool = False) -> tuple[list[str], list[dict]]:
     """`(kept, rejected)` of a generator's subqueries for `original`.
 
     Code keeps what the question is scoped to: every version or year it
     names stays in each subquery and none is added, and a subquery that
-    names what the question excludes must exclude it too. Up to
+    names what the question excludes must exclude it too — with
+    `every_exclusion`, every subquery must, named or not: a requirement
+    that dropped an exclusion would be judged covered on broader evidence. Up to
     `MAX_SUBQUERIES`, none the question itself. Whether a subquery keeps
     the question's intent is the decision workflow's to judge.
     """
@@ -569,7 +572,8 @@ def checked_subqueries(original: str, proposals: object) -> tuple[list[str], lis
                else "same_as_question" if normal(query) == normal(original)
                else "duplicate" if normal(query) in map(normal, kept)
                else "version_added" if mine - versions else "version_dropped" if versions - mine
-               else "exclusion_dropped" if any(term in folded and phrase not in folded for phrase, term in exclusions)
+               else "exclusion_dropped" if any((every_exclusion or term in folded) and phrase not in folded
+                                               for phrase, term in exclusions)
                else "over_limit" if len(kept) >= MAX_SUBQUERIES else None)
         if why:
             rejected.append({"subquery": raw, "reason": why})

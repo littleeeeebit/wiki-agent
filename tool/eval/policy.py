@@ -184,10 +184,9 @@ def chosen(dataset: dict, answers: dict) -> list[tuple[dict, str, str]]:
 
 
 def choice_outcome(answer: dict, right: str, first: str, confidence: float, margin: float) -> str:
-    ranked = sorted(answer["probabilities"].values(), reverse=True) + [0.0, 0.0]
-    accepted = (answer["choice"] != decision.DEFER and answer["confidence"] >= confidence
-                and ranked[0] - ranked[1] >= margin)
-    if accepted:
+    # The workflow's own verdict, so the fit accepts exactly what a run would.
+    rule = decision.Policy("fit", {"repair": {"confidence": confidence, "margin": margin}})
+    if decision.verdict(rule, "repair", answer) == "yes":
         return "accepted_right" if answer["choice"] == right else "accepted_wrong"
     return "deferred_right" if first == right else "deferred_wrong"
 

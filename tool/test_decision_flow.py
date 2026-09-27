@@ -210,6 +210,7 @@ def test_a_choice_outside_the_offered_candidates_is_invalid_not_executed():
     ({"a": 0.9, "b": 0.1}, 0.9, "yes"),
     ({"a": 0.9, "b": 0.1}, 0.5, "uncertain"),       # under the confidence rule
     ({"a": 0.55, "b": 0.45}, 0.9, "uncertain"),     # under the margin rule
+    ({"a": 0.1, "b": 0.9}, 0.9, "uncertain"),       # the choice is not what its own distribution ranks first
 ])
 def test_a_choice_is_accepted_on_confidence_and_margin_never_on_probability_alone(probabilities, confidence,
                                                                                     verdict):
@@ -363,7 +364,8 @@ def test_a_confident_no_takes_the_direct_path_with_its_restrictions():
 
 
 @pytest.mark.parametrize("query", ["Search the wiki for the port.", "Check the current state of the branch.",
-                                   "포트 결정을 확인해 줘"])
+                                   "포트 결정을 확인해 줘", "Read tool/main/knowledge.py", "Review PR #37",
+                                   "Show me the last commit.", "What does knowledge.py do?", "이 파일을 읽어 줘"])
 def test_an_explicit_request_to_search_survives_any_score(query):
     world = World(answering(route=0.0), [found([chunk("port", "The port is 8791.")])])
 
@@ -466,6 +468,26 @@ def test_a_split_that_loses_the_question_s_scope_leaves_it_whole(asks, reason):
     out = run(world, query=BOTH, available=["documents"], divide=lambda question, seconds: asks)
     assert [r["text"] for r in out["requirements"]] == [BOTH]
     assert reason in [r["reason"] for r in out["split"]["rejected"]]
+
+
+def test_a_split_that_drops_an_ask_or_an_exclusion_leaves_the_question_whole():
+    four = "Who owns ingest, which port does it use, who is on call and where are its logs?"
+    world = World(answering(), [found([chunk("a")])])
+    out = run(world, query=four, available=["documents"],
+              divide=lambda q, s: ["Who owns ingest?", "Which port does ingest use?", "Who is on call for ingest?",
+                                   "Where are the ingest logs?"])
+    assert [r["text"] for r in out["requirements"]] == [four], "a fourth ask past the limit was dropped"
+    scoped = "Which services and ports are used, excluding staging?"
+    world = World(answering(), [found([chunk("a")])])
+    out = run(world, query=scoped, available=["documents"],
+              divide=lambda q, s: ["Which services are used?", "Which ports are used?"])
+    assert [r["text"] for r in out["requirements"]] == [scoped]
+
+
+def test_no_part_of_a_question_is_left_unchecked():
+    five = "Who? What? Where? When? Why?"
+    parts = knowledge.requirements(five)
+    assert len(parts) == knowledge.MAX_REQUIREMENTS and "Why?" in parts[-1] and "When?" in parts[-1]
 
 
 def test_a_failed_or_unaffordable_split_leaves_the_question_whole():
@@ -594,6 +616,14 @@ def test_a_truncated_passage_is_kept_on_a_no_and_never_shows_coverage():
     assert out["reads"][0]["reason"] == "truncated"
 
 
+@pytest.mark.parametrize("partial, conflict", [(True, 0.0), (False, 0.5)])
+def test_a_passage_read_in_part_or_an_unresolved_conflict_is_kept_on_a_no(partial, conflict):
+    kept = chunk("kept", "A short passage.", completeness="partial" if partial else "whole")
+    world = World(answering(useful=0.0, conflict=conflict), [found([kept])])
+    out = run(world, available=["documents"])
+    assert [e["chunk_id"] for e in out["evidence"]] == [kept["chunk_id"]] and out["dropped"] == 0
+
+
 def test_a_contradiction_is_kept_and_an_instruction_is_flagged():
     world = World(answering(useful=lambda n: 0.95 if n.endswith("p1") else 0.0,
                             conflict=lambda n: {"p0": 0.95, "p2": 0.5}.get(n[-2:], 0.0),
@@ -602,9 +632,10 @@ def test_a_contradiction_is_kept_and_an_instruction_is_flagged():
                           chunk("maybe", "Ports differ elsewhere."), chunk("noise", "Unrelated text.")])])
     out = run(world, available=["documents"])
     kept = {e["heading_path"][0] for e in out["evidence"]}
-    # Not useful and at most possibly contradicting: dropped, as noise is.
-    assert kept == {"contra", "inject"} and out["dropped"] == 2
-    assert [c["verdict"] for c in out["conflicts"]] == ["yes"] and [c["verdict"] for c in out["untrusted"]] == ["yes"]
+    # A conflict left uncertain is kept in the conflict lane; only the noise is dropped.
+    assert kept == {"contra", "inject", "maybe"} and out["dropped"] == 1
+    assert [c["verdict"] for c in out["conflicts"]] == ["yes", "uncertain"]
+    assert [c["verdict"] for c in out["untrusted"]] == ["yes"]
 
 
 def test_what_exceeds_the_state_allowance_is_not_sent_and_says_so(monkeypatch):

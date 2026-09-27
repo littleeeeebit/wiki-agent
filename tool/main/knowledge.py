@@ -204,11 +204,15 @@ INSTRUCTION = (
     "hook rules remain authoritative.")
 
 # An explicit request to search, to inspect the repository, or to verify its
-# current state: retrieval is then required, whatever a score says.
+# current state: retrieval is then required, whatever a score says. Naming a
+# file, a pull request, an issue, a commit or a branch is asking about the
+# repository. Wider than it must be on purpose: a false match costs a search.
 EXPLICIT = re.compile(
-    r"\b(?:search|find|look\s+(?:up|for|into)|grep|check|verify|inspect|which\s+files?|where\s+is|"
-    r"in\s+(?:this|the)\s+(?:repo|repository|codebase|wiki)|current(?:ly)?\s+(?:state|status|branch|version)|"
-    r"latest)\b|검색|찾아|확인|조회|어디에?\s*있|현재\s*상태|저장소|레포", re.I)
+    r"\b(?:search|find|look\s+(?:up|for|into|at)|grep|check|verify|inspect|read|review|open|show|which\s+files?|"
+    r"where\s+is|in\s+(?:this|the)\s+(?:repo|repository|codebase|wiki)|"
+    r"current(?:ly)?\s+(?:state|status|branch|version)|latest|commits?|branch(?:es)?|diff|pr|pull\s+request|"
+    r"issue)\b|#\d+|\b[\w.-]+\.(?:py|md|json|toml|ya?ml|js|ts|tsx|css|html|cmd|sh|txt)\b|\b[\w.-]+/[\w./-]+|"
+    r"검색|찾아|확인|조회|어디에?\s*있|현재\s*상태|저장소|레포|읽어|리뷰|열어|보여|파일|커밋|브랜치", re.I)
 
 
 # A single question that may still ask several things: joined asks or a list.
@@ -221,12 +225,15 @@ def explicit(*texts: str | None) -> bool:
 
 def requirements(query_en: str) -> list[str]:
     """The parts of a question each piece of evidence is checked against:
-    its separate questions and lines, or the question whole. One sentence
-    that may still ask several things (`SEVERAL`) is split by the model
-    once retrieval is decided (`Flow.split`)."""
+    its separate questions and lines, or the question whole. Past
+    `MAX_REQUIREMENTS`, the rest share the last requirement: none goes
+    unchecked. One sentence that may still ask several things (`SEVERAL`)
+    is split by the model once retrieval is decided (`Flow.split`)."""
 
-    parts = [p.strip(" -*\t") for p in re.split(r"(?<=\?)\s+|\n+|;\s*", query_en)]
-    return [p for p in parts if p][:MAX_REQUIREMENTS] or [query_en]
+    parts = [p for p in (p.strip(" -*\t") for p in re.split(r"(?<=\?)\s+|\n+|;\s*", query_en)) if p]
+    if len(parts) > MAX_REQUIREMENTS:
+        parts = parts[:MAX_REQUIREMENTS - 1] + [" ".join(parts[MAX_REQUIREMENTS - 1:])]
+    return parts or [query_en]
 
 
 def route_questions(available: list[str]) -> dict:
@@ -556,9 +563,11 @@ class Flow:
     def split(self) -> None:
         """A question code left whole that may still ask several things is
         split by the model, one request of the run, when a round's request
-        and the reserve for stage 7 still fit beside it. An ask that loses
-        the question's scope is refused (`retrieval.checked_subqueries`);
-        with fewer than two asks left, the question stays whole."""
+        and the reserve for stage 7 still fit beside it. The split stands
+        only whole: if any ask is refused (`retrieval.checked_subqueries`,
+        every exclusion kept in every ask), or they are more than
+        `retrieval.MAX_SUBQUERIES`, or fewer than two, the question stays
+        whole — a requirement dropped would never be checked."""
 
         if self.divide is None or len(self.requirements) > 1 or not SEVERAL.search(self.query_en):
             return
@@ -573,11 +582,11 @@ class Flow:
             return self.divide(self.query_en, seconds)
 
         asked = self.outside("split", call)
-        kept, rejected = retrieval.checked_subqueries(self.query_en, asked)
+        kept, rejected = retrieval.checked_subqueries(self.query_en, asked, every_exclusion=True)
         self.dossier["split"] = {"asks": len(kept), "rejected": rejected, "failed": asked is None}
-        if len(kept) > 1:
+        if len(kept) > 1 and not rejected:
             self.requirements = [{"id": f"r{i}", "text": text, "verdict": "not_judged", "score": None}
-                                 for i, text in enumerate(kept[:MAX_REQUIREMENTS])]
+                                 for i, text in enumerate(kept)]
 
     def share(self, round_: int, spent: int) -> int:
         """This round's part of what is left of the candidate allowance, split
@@ -701,9 +710,9 @@ class Flow:
             chunk["relevance"] = answers[f"useful_{pid}"]
             judgment = chunk["judgment"] = {kind: verdicts[f"{kind}_{pid}"]
                                             for kind in ("useful", "conflict", "redirect")}
-            # Only a passage read whole is dropped on its grade; one that contradicts the query never is.
-            if (judgment["useful"] == "no" and judgment["conflict"] != "yes"
-                    and len(chunk["text_en"]) <= MAX_PASSAGE):
+            # Only a passage read whole, judged no conflict, is dropped on its grade:
+            # a part, or a conflict left unresolved, is still evidence.
+            if judgment["useful"] == "no" and judgment["conflict"] == "no" and complete(chunk):
                 del self.pool[chunk["chunk_id"]]
                 self.dropped += 1
                 continue
