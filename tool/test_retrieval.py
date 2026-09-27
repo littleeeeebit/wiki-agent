@@ -677,3 +677,38 @@ def test_a_twin_another_lane_returns_carries_the_id_of_the_one_ranked_first(worl
     # Both ids are seen: no later round returns the same text as new.
     assert len(shared) == 2 and shared <= set(second["seen_chunk_ids"])
     index.close()
+
+
+# ---- round 5 review -------------------------------------------------------------------
+
+def test_the_walk_starts_from_every_copy_of_a_seed_since_the_same_words_link_elsewhere(world):
+    hub, repo = world
+    for side, detail in (("a", "Nothing about rotas."), ("b", "Mira covers Tuesday.")):
+        (repo / f"docs/{side}").mkdir()
+        (repo / f"docs/{side}/intro.md").write_text("# Intro\n\nThe quarry conveyor points to [details](detail.md).\n",
+                                                    encoding="utf-8")
+        (repo / f"docs/{side}/detail.md").write_text(f"# Detail\n\n{detail}\n", encoding="utf-8")
+    index = index_of(hub, repo)
+    req = retrieval.request(evidence.repo_id(repo), "quarry conveyor", sources=["documents"], limit=1)
+    result = retrieval.run(index.snapshot(), req)
+    (seed,) = result["chunks"][:1]
+    assert "quarry conveyor" in seed["text"] and len(seed["duplicates"]) == 1
+    assert "Mira covers Tuesday." in "".join(texts(result, "graph"))
+    index.close()
+
+
+def test_every_seed_that_reaches_a_chunk_keeps_its_path_to_it(world):
+    hub, repo = world
+    for name in ("p", "q"):
+        (repo / f"docs/{name}.md").write_text(f"# {name.upper()}\n\nThe quarry conveyor {name}, see [answer](answer.md).\n",
+                                              encoding="utf-8")
+    (repo / "docs/answer.md").write_text("# Answer\n\nMira covers Tuesday.\n", encoding="utf-8")
+    index = index_of(hub, repo)
+    req = retrieval.request(evidence.repo_id(repo), "quarry conveyor", sources=["documents"], limit=2)
+    result = retrieval.run(index.snapshot(), req)
+    seeds = {c["chunk_id"] for c in result["chunks"] if c["lane"] == "rrf"}
+    answer = next(c for c in result["chunks"] if "Mira covers Tuesday." in c["text"])
+    reached = [result["paths"][p] for p in result["scores"][answer["chunk_id"]]["graph"]["paths"]]
+    assert len(seeds) == 2 and {p["seed"] for p in reached} == seeds
+    assert sorted(p["status"] for p in reached) == ["corroborated", "discovered"]
+    index.close()
