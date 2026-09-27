@@ -53,7 +53,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from common.language import language  # noqa: E402
-from search import PING, PORT, cache_dir, evidence, proof, state_path, version  # noqa: E402
+from search import PING, PORT, cache_dir, evidence, knowledge_graph, proof, state_path, version  # noqa: E402
 from search.sources import FAMILIES, SOURCE_NAMES, Records, listing, records_folder  # noqa: E402
 
 # The version this process runs, read once. Read per request it would follow
@@ -459,7 +459,8 @@ class Store:
     replaced, which is kept, so going back to the older code selects it again
     (and brings it up to date) instead of rebuilding; nothing else prunes.
     Within a generation an update is one transaction: a failure rolls back to
-    what was there.
+    what was there. The knowledge graph (`knowledge_graph`) keeps its tables
+    here too, per generation, so it is published, kept and pruned with its chunks.
 
     Private English. A private source's English is kept here, in `english`,
     not in the translator's cache: kept only for a text the source has at
@@ -482,10 +483,12 @@ class Store:
                 raise OSError("no path")
             path.parent.mkdir(parents=True, exist_ok=True)
             self.db = self.connect(str(path))
+            self.persistent = True
         except (OSError, sqlite3.Error) as error:
             if path is not None:
                 print(f"evidence store in memory: {type(error).__name__}", file=sys.stderr)
             self.db = self.connect(":memory:")
+            self.persistent = False
         self.gen = self.generation()
 
     @staticmethod
@@ -494,7 +497,7 @@ class Store:
         db.execute("PRAGMA journal_mode=WAL")
         # A deleted memory's text is overwritten, not left in free pages.
         db.execute("PRAGMA secure_delete=ON")
-        db.executescript(STORE_SCHEMA)
+        db.executescript(STORE_SCHEMA + knowledge_graph.SCHEMA)
         return db
 
     def close(self) -> None:
@@ -658,7 +661,7 @@ class Store:
             publish = current != str(self.gen) and not skipped
             if publish:
                 kept = {self.gen} | ({int(current)} if current is not None else set())
-                for table in ("generations", "sources", "chunks"):
+                for table in ("generations", "sources", "chunks", *knowledge_graph.TABLES):
                     db.execute(f"DELETE FROM {table} WHERE gen NOT IN ({','.join('?' * len(kept))})", list(kept))
                 db.execute("INSERT OR REPLACE INTO meta VALUES ('current', ?)", (str(self.gen),))
             if changed or publish:
@@ -702,6 +705,8 @@ class Store:
             db.execute(f"DELETE FROM english WHERE source_id IN ({marks})", [*sources])
         for table in ("chunks", "sources"):
             db.executemany(f"DELETE FROM {table} WHERE gen = ? AND source_id = ?", doomed)
+        # Its place in the graph goes in the same transaction: nothing derived outlives it.
+        knowledge_graph.drop(db, doomed, private, revision is None)
         return private
 
     def load(self, roots: dict[str, Path]) -> list[dict]:
@@ -798,6 +803,8 @@ class Index:
         self.files: dict[Path, str] = {}
         self.chunks: list[dict] = []
         self.matrix = None
+        self.graph = knowledge_graph.Graph(self.store)
+        self.co: tuple[str, list[tuple[str, str]]] = ("", [])
 
     def close(self) -> None:
         self.store.close()
@@ -824,6 +831,7 @@ class Index:
         self.forget()
         version = f"{self.store.version()}/{self.records.version()}"
         if self.chunks and version == self.loaded:
+            self.link()
             return
         self.loaded = version
         roots = {evidence.repo_id(self.hub): self.hub}
@@ -848,6 +856,36 @@ class Index:
         self.matrix = None
         self.embedder.want([(c["key"], c["indexed"]) for c in self.chunks],
                            {c["key"] for c in self.chunks if c["visibility"] == "private"})
+        self.link()
+
+    def link(self) -> None:
+        """Bring the knowledge graph in line with the loaded chunks. A no-op
+        unless they, the extractions in use or the hub's `graph.json` changed.
+        A failure leaves the graph as it was, and search goes on without it."""
+
+        store, records = self.loaded.split("/")
+        stamp, pairs = self.observed()
+        try:
+            knowledge_graph.update(self.store, self.chunks, store, pairs, f"{records}|{stamp}")
+        except sqlite3.Error as error:
+            print(f"knowledge graph not updated: {type(error).__name__}", file=sys.stderr)
+
+    def observed(self) -> tuple[str, list[tuple[str, str]]]:
+        """The hub rules `graph.json` saw injected together, read again only when it changed."""
+
+        path = self.hub / "graph.json"
+        try:
+            stamp = str(path.stat().st_mtime_ns)
+        except OSError:
+            return "", []
+        if self.co[0] != stamp:
+            try:
+                links = json.loads(path.read_text(encoding="utf-8")).get("links") or []
+            except (OSError, ValueError, AttributeError):
+                links = []
+            self.co = (stamp, [(f"{x['a']}.md", f"{x['b']}.md") for x in links
+                               if isinstance(x, dict) and x.get("kind") == "co" and (x.get("by") or {}).get("all")])
+        return self.co
 
     def complete(self) -> bool:
         """Every chunk has been tried: it has a vector, or it failed."""

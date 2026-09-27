@@ -394,6 +394,78 @@ def test_a_disabled_source_is_neither_searched_nor_fetched_and_removal_takes_its
     index.close()
 
 
+@pytest.mark.parametrize("after", ["graph", "snapshot"])
+def test_forgetting_a_source_takes_its_cached_extractions_too(repo, monkeypatch, after):
+    hub, path = repo
+    url = "https://example.com/c.txt"
+    monkeypatch.setattr(providers, "fetch", fake_fetch({url: ("text/plain", b"Zeta uses eta.")}))
+    record = knowledge.add_url(path, url)
+    index = index_of(hub, path)
+    chunk = next(c for c in index.chunks if c.get("record"))
+    key = (chunk["source_id"], search.knowledge_graph.digest(chunk["text"]))
+    result = {"entities": [{"name": "Zeta", "type": "feature", "quote": "Zeta uses eta."}], "relations": []}
+    # What an extraction run holds from its start: the records' chunks, asked again at each write.
+    external = knowledge.still(path, {key})
+    assert search.knowledge_graph.keep(index.store, [(*key, "v", result)], external) == 1
+    search.knowledge_graph.activate(index.store, "v")
+    index.close()
+    index = index_of(hub, path)
+
+    def quoted():
+        with index.store.lock:
+            return index.store.db.execute("SELECT quote FROM spans WHERE source_id = ? UNION ALL SELECT label"
+                                          " FROM nodes WHERE source_id = ?", (key[0], key[0])).fetchall()
+
+    assert ("Zeta uses eta.",) in quoted()
+    # A local source's full id is never taken for a forgotten record: its graph stays.
+    local = next(c["source_id"] for c in index.chunks if not c.get("record"))
+    with index.store.lock:
+        before = index.store.db.execute("SELECT COUNT(*) FROM nodes WHERE source_id = ?", (local,)).fetchone()
+    with pytest.raises(KeyError):
+        knowledge.forget(path, local)
+    with index.store.lock:
+        assert index.store.db.execute("SELECT COUNT(*) FROM nodes WHERE source_id = ?", (local,)).fetchone() == before
+    assert before[0]
+    # An evidence store that could not be opened forgets nothing, and says so.
+    opened, delete = knowledge.evidence_store, sources.Records.delete
+    monkeypatch.setattr(knowledge, "evidence_store", lambda _p: searchd.Store(None))
+    with pytest.raises(OSError):
+        knowledge.forget(path, record["source_id"])
+    monkeypatch.setattr(knowledge, "evidence_store", opened)
+    # A record deletion that fails before its commit changes nothing.
+    monkeypatch.setattr(sources.Records, "delete", lambda *_a: (_ for _ in ()).throw(OSError("disk")))
+    with pytest.raises(OSError):
+        knowledge.forget(path, record["source_id"])
+    monkeypatch.setattr(sources.Records, "delete", delete)
+    assert ("Zeta uses eta.",) in quoted() and search.knowledge_graph.cached(index.store, "v")
+    # Something failing after the record's commit: the graph step, or a snapshot left behind.
+    graph_step = search.knowledge_graph.forget
+    if after == "graph":
+        monkeypatch.setattr(search.knowledge_graph, "forget", lambda *_a: (_ for _ in ()).throw(OSError("disk")))
+    else:
+        def committed_then_failed(store, source):
+            delete(store, source)
+            raise OSError("snapshot")
+        monkeypatch.setattr(sources.Records, "delete", committed_then_failed)
+    with pytest.raises(OSError) as failed:
+        knowledge.forget(path, record["source_id"])
+    monkeypatch.setattr(search.knowledge_graph, "forget", graph_step)
+    monkeypatch.setattr(sources.Records, "delete", delete)
+    with search.records(path) as held:
+        assert held.get(record["source_id"]) is None
+    if after == "graph":
+        # The record is gone; its full id still finishes the graph step.
+        assert record["source_id"] in "".join(failed.value.__notes__)
+        assert ("Zeta uses eta.",) in quoted()
+        assert knowledge.forget(path, record["source_id"])
+    # Nothing that quotes it is left: no cached extraction, and no node or span in any generation.
+    assert search.knowledge_graph.cached(index.store, "v") == {} and quoted() == []
+    # A model answer arriving after the forget is not cached.
+    assert search.knowledge_graph.keep(index.store, [(*key, "v", result)], external) == 0
+    assert search.knowledge_graph.cached(index.store, "v") == {}
+    index.close()
+
+
 def papers_fixture(monkeypatch, entries=None):
     entries = entries or providers.feed(FEED)
     monkeypatch.setattr(providers, "arxiv", lambda query=None, ids=None, n=5, seconds=0: entries[:n])

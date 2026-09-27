@@ -23,9 +23,10 @@ from pathlib import Path
 
 import decision
 import translate
+from agent import oneshot
 from common.budget import QUESTION, Budget
 from common.language import language
-from search import HUB, evidence_store, local_index, providers, records, resolve, sources
+from search import HUB, evidence_store, knowledge_graph, local_index, providers, records, resolve, sources
 from search import prepare as controlled
 from workspace import create, folder_for
 from session_state import active_page, decisions, plans
@@ -435,10 +436,64 @@ def switch(project: str | Path | None, source: str, enabled: bool) -> dict:
 
 
 def forget(project: str | Path | None, source: str) -> bool:
-    """Remove a source record and the snapshots only it held."""
+    """Remove a source record, the snapshots only it held, and its place in
+    the graph with the cached extractions — all of which quote it.
 
-    with records(project) as store:
-        return store.delete(find(store, source)["source_id"])
+    Two databases cannot commit as one, so the record goes first — it is
+    the decision — and the graph after it. The graph step is idempotent and
+    needs no record: when it fails, forgetting the full source id again
+    finishes it. `keep` asks whether the record exists inside its own
+    write transaction, so a model answer landing before the graph step is
+    removed by it and one landing after finds the record gone. A store that
+    could not be opened (in memory) forgets nothing.
+    ponytail: a rebuild that loaded the record just before its deletion can
+    write its structure — no extraction, so no quote — until the refresh the
+    deletion triggers."""
+
+    evidence, late = evidence_store(project), None
+    try:
+        if not evidence.persistent:
+            raise OSError("the evidence store could not be opened; nothing was forgotten")
+        with records(project) as store:
+            try:
+                source_id = find(store, source)["source_id"]
+            except KeyError:
+                # A record already gone whose graph step failed: its full id retries that step.
+                if not re.fullmatch(r"[0-9a-f]{64}", source):
+                    raise
+                source_id, removed = source, False
+            else:
+                try:
+                    removed = store.delete(source_id)
+                except Exception as error:
+                    # Failing after its commit (a snapshot) the record is gone all the same:
+                    # the graph step still runs, and this is raised after it.
+                    if store.get(source_id) is not None:
+                        raise
+                    removed, late = True, error
+        try:
+            with evidence.transaction() as db:
+                cleaned = knowledge_graph.forget(db, source_id)
+        except Exception as error:
+            error.add_note(f"the record is gone; forget {source_id} again to finish")
+            raise
+        if late:
+            raise late
+        return removed or cleaned
+    finally:
+        evidence.close()
+
+
+def still(project: str | Path | None, external: set[tuple[str, str]]):
+    """`external`, the records' chunks as `(source, text sha)`, narrowed to
+    the records that still exist when it is called — for `keep`."""
+
+    def now() -> set[tuple[str, str]]:
+        with records(project) as store:
+            held = {r["source_id"] for r in store.all()}
+        return {key for key in external if key[0] in held}
+
+    return now
 
 
 def catalog(project: str | Path | None) -> dict:
@@ -515,3 +570,292 @@ def promote(project: str | Path, source: str, task: str | None = None) -> dict:
             raise RuntimeError(done.stderr.strip() or f"git {args[0]} failed in {tree}")
     return {"worktree": str(tree), "branch": task, "file": name,
             "commit": git(tree, "rev-parse", "HEAD"), "stat": git(tree, "show", "--stat", "--format=", "HEAD")}
+
+
+# ---- the knowledge graph (stage 4 of `docs/plans/jev/`) ----------------------------
+#
+# Structure the index builds on its own (`search.knowledge_graph.update`). What
+# needs a model is here, and runs only when somebody asks: a generative model
+# proposes each passage's entities and dependencies, code keeps what it finds
+# verbatim in the passage, and Jev judges whether each dependency is
+# supported — and, for bounded pairs of passages naming the same entity,
+# whether they contradict each other. Results are cached per passage under
+# the versions they were made with; the graph uses only those of the versions
+# last run, and `retire_graph` stops using any.
+
+GRAPH_PROMPT = "graph-extract.md"
+# Passages per proposal request.
+GRAPH_BATCH = 8
+# Pairs per Jev request, and the most pairs one run compares.
+PAIR_BATCH = 6
+MAX_PAIRS = 24
+# An entity more passages than this mention is too common to make two of them a pair.
+FANOUT = 8
+# The longest English passage Jev judges, as for retrieval (`search.controller.MAX_PASSAGE`).
+MAX_PASSAGE = 3000
+# One extraction run's allowance, shared by all its Jev requests. Design defaults, not measurements.
+EXTRACTION = {"seconds": 900.0, "calls": 60, "candidates": 0}
+
+
+def graph_versions(model: str, cfg: decision.Config) -> str:
+    """What an extraction is reused under: the proposing model, the prompt,
+    Jev's model and the support policy. English normalization is checked per
+    judgment (`supported`)."""
+
+    prompt = (Path(__file__).resolve().parents[1] / "prompts" / GRAPH_PROMPT).read_text(encoding="utf-8")
+    return knowledge_graph.digest("graph", model or "default", prompt, cfg.model, knowledge_graph.POLICY)
+
+
+def propose(passages: list[dict], model: str = "") -> tuple[dict[str, dict], str]:
+    """The model's proposal per passage id, and the model that answered.
+    `RuntimeError` or `ValueError` when there is none."""
+
+    answer, used = "", model or "default"
+    for ev in oneshot(GRAPH_PROMPT, {"passages": passages}, model):
+        if ev.kind == "error":
+            raise RuntimeError(ev.text)
+        if ev.kind == "done":
+            answer, used = ev.text, ev.meta.get("model") or used
+    body = answer.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", body, re.S)
+    data = json.loads(fenced.group(1) if fenced else body)
+    items = data.get("passages") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        raise ValueError("the proposal has no passages")
+    return {str(p.get("id")): p for p in items if isinstance(p, dict)}, used
+
+
+def english_of(chunks: list[dict], budget: Budget, project: str | Path | None) -> dict[str, dict]:
+    """Each chunk's English outcome by chunk id; a private one's kept beside its source."""
+
+    owners = [(c["source_id"],) if c.get("visibility") == "private" else () for c in chunks]
+    outcomes = english([c["text"] for c in chunks], min(BATCH_SECONDS, budget.left()), owners, project)
+    return {c["chunk_id"]: o for c, o in zip(chunks, outcomes)}
+
+
+def readable(outcome: dict) -> bool:
+    return outcome.get("status") in ("original_english", "translated") and len(outcome["text"]) <= MAX_PASSAGE
+
+
+def supported(items: list[tuple[dict, dict]], cfg: decision.Config, budget: Budget, trace: list,
+              project: str | Path | None) -> int:
+    """Jev's support for each proposed dependency of `(chunk, result)`,
+    written into the result: one not judged yet, or judged on other English
+    than the passage and its quote have now.
+
+    What is judged is the quote — the span the edge will cite — in English,
+    normalized as any passage is; the passage is only its context. So another
+    sentence of the passage can never stand behind a cited span that does not
+    say it. Mode off, a failed request, or a passage or quote with no English
+    leaves it `None` — a candidate, never a rejection. A verdict holds only
+    for the English it was given on: once that has changed it is withdrawn
+    first, so one that cannot be given again is not kept. Returns how many
+    verdicts were written or withdrawn."""
+
+    if cfg.mode == "off":
+        return 0
+    chunks = list({c["chunk_id"]: c for c, r in items if r["relations"]}.values())
+    if not chunks:
+        return 0
+    # Each quote as a text of its passage's owner, so a private one stays private.
+    quotes = {(c["chunk_id"], rel["quote"]): {**c, "chunk_id": knowledge_graph.digest("quote", c["chunk_id"], rel["quote"]),
+                                              "text": rel["quote"]}
+              for c, r in items for rel in r["relations"]}
+    english_ = english_of(chunks + list(quotes.values()), budget, project)
+    ids = {c["chunk_id"]: str(i) for i, c in enumerate(c for c in chunks if readable(english_[c["chunk_id"]]))}
+    questions, where, claims = {}, {}, []
+    withdrawn = 0
+    for chunk, result in items:
+        outcome = english_.get(chunk["chunk_id"], {})
+        for relation in result["relations"]:
+            quoted = english_.get(quotes[(chunk["chunk_id"], relation["quote"])]["chunk_id"], {})
+            seen = "|".join(str(o.get("version") or o.get("status")) for o in (outcome, quoted))
+            if relation["support"] is not None:
+                if relation.get("english") == seen:
+                    continue
+                relation.update(support=None, english=None)
+                withdrawn += 1
+            if chunk["chunk_id"] not in ids or not readable(quoted):
+                continue
+            name = f"r{len(questions)}"
+            claims.append({"id": name, "passage": ids[chunk["chunk_id"]], "cited_words": quoted["text"]})
+            questions[name] = decision.noul(
+                f"Do the cited_words of claim {name}, read in their passage, themselves state that "
+                f"`{relation['from']}` depends on `{relation['to']}` — uses, requires, calls, imports or reads it, "
+                "in that direction? Only the cited words count: another sentence of the passage saying so does "
+                "not. Both being mentioned, or the reverse direction, is insufficient.")
+            where[name] = (relation, seen)
+    if not questions:
+        return withdrawn
+    state = {"passages": [{"id": ids[c["chunk_id"]], "heading": c["heading"], "text": english_[c["chunk_id"]]["text"]}
+                          for c in chunks if c["chunk_id"] in ids], "claims": claims}
+    try:
+        got = decision.evaluate(cfg, state, questions, trace, budget, "graph_support")
+    except Exception as error:  # noqa: BLE001 — no verdict is no verdict, never a rejection
+        trace.append({"fallback": type(error).__name__, "reason": getattr(error, "category", "")})
+        return withdrawn
+    for name, value in got.items():
+        relation, seen = where[name]
+        relation.update(support=value, english=seen)
+    return withdrawn + len(got)
+
+
+def contradictions(index, repo: str, versions: str, cfg: decision.Config, budget: Budget, trace: list,
+                   project: str | Path | None, external) -> dict:
+    """Jev's comparison of bounded pairs: passages that name the same entity,
+    one of them a decision or a memory, not compared under these versions
+    yet — at most `MAX_PAIRS`. A pair Jev did not judge is not an edge."""
+
+    if cfg.mode == "off":
+        return {"pairs": 0, "judged": 0}
+    have = knowledge_graph.cached(index.store, versions)
+    chunks = {c["chunk_id"]: c for c in index.chunks}
+    todo = []
+    for a, b, subject in index.graph.pairs(repo, FANOUT):
+        if a not in chunks or b not in chunks:
+            continue
+        ends = sorted([[c["source_id"], knowledge_graph.digest(c["text"])] for c in (chunks[a], chunks[b])])
+        sha = knowledge_graph.digest("pair", *ends[0], *ends[1])
+        if (ends[0][0], sha) not in have:
+            todo.append((chunks[a], chunks[b], subject, ends, sha))
+    todo = todo[:MAX_PAIRS]
+    judged = 0
+    for start in range(0, len(todo), PAIR_BATCH):
+        group = todo[start:start + PAIR_BATCH]
+        try:
+            budget.check(budget.call_seconds)
+        except Exception as error:  # noqa: BLE001 — out of time or cancelled: the rest waits for the next run
+            trace.append({"stopped": type(error).__name__, "reason": str(error)})
+            break
+        english_ = english_of(list({c["chunk_id"]: c for g in group for c in g[:2]}.values()), budget, project)
+        asked = [g for g in group if readable(english_[g[0]["chunk_id"]]) and readable(english_[g[1]["chunk_id"]])]
+        if not asked:
+            continue
+        state = {"pairs": [{"id": str(i), "subject": subject, "a": english_[a["chunk_id"]]["text"],
+                            "b": english_[b["chunk_id"]]["text"]} for i, (a, b, subject, _e, _s) in enumerate(asked)]}
+        questions = {f"p{i}": decision.noul(
+            f"In pair {i}, do passages a and b make claims about `{subject}` that cannot both be true at the same "
+            "time? A difference of scope or version, or one passage only adding detail, is not a contradiction.")
+            for i, (_a, _b, subject, _e, _s) in enumerate(asked)}
+        try:
+            got = decision.evaluate(cfg, state, questions, trace, budget, "graph_contradiction")
+        except Exception as error:  # noqa: BLE001
+            trace.append({"fallback": type(error).__name__, "reason": getattr(error, "category", "")})
+            continue
+        rows = []
+        for i, (_a, _b, subject, ends, sha) in enumerate(asked):
+            result = {"pair": ends, "subject": subject, "support": got[f"p{i}"]}
+            rows += [(ends[0][0], sha, versions, result), (ends[1][0], sha, versions, result)]
+        judged += len(asked)
+        knowledge_graph.keep(index.store, rows, external)
+    return {"pairs": len(todo), "judged": judged}
+
+
+def extract_graph(project: str | Path | None, limit: int = 40, seconds: float = EXTRACTION["seconds"],
+                  estimate: bool = False, cfg: decision.Config | None = None, model: str = "",
+                  proposer=None) -> dict:
+    """Propose, check and judge the entities and relations of up to `limit`
+    of `project`'s passages not yet extracted under the current versions,
+    then compare bounded pairs for contradictions. The hub's rules are the
+    hub's to extract. `estimate` counts and sends nothing.
+
+    The versions run become the ones the graph uses: until a passage is
+    extracted under them, it has no semantic edges. Returns what was done and
+    the graph's check (`knowledge_graph.verify`).
+    """
+
+    if limit < 1:
+        raise ValueError("limit must be at least 1")
+    cfg = cfg or decision.config()
+    proposer = proposer or propose
+    repo = knowledge_graph.evidence.repo_id(root_of(project))
+    versions = graph_versions(model, cfg)
+    index = local_index(project)
+    try:
+        store = index.store
+        mine = {(c["source_id"], knowledge_graph.digest(c["text"])): c for c in index.chunks if c["repo_id"] == repo}
+        have = knowledge_graph.cached(store, versions)
+        pending = [c for key, c in mine.items() if key not in have]
+        todo = pending[:limit]
+        # Judged before, perhaps on English that has changed since, or not at all.
+        again = [(mine[key], result) for key, result in have.items() if key in mine and result.get("relations")]
+        report = {"versions": versions, "passages": len(mine), "extracted_before": len(mine) - len(pending),
+                  "to_extract": len(todo), "jev": cfg.status()}
+        if estimate:
+            return {**report, "model_requests_at_most": -(-len(todo) // GRAPH_BATCH)}
+        knowledge_graph.activate(store, versions)
+        external = still(project, {key for key, c in mine.items() if c.get("record")})
+        budget = Budget(seconds=seconds, calls=EXTRACTION["calls"], candidates=EXTRACTION["candidates"])
+        trace: list[dict] = []
+        rejected: Counter = Counter()
+        counts: Counter = Counter()
+        for start in range(0, len(todo), GRAPH_BATCH):
+            batch = todo[start:start + GRAPH_BATCH]
+            try:
+                budget.check()
+            except Exception as error:  # noqa: BLE001 — the rest waits for the next run
+                trace.append({"stopped": type(error).__name__, "reason": str(error)})
+                break
+            try:
+                proposals, used = proposer([{"id": str(i), "heading": c["heading"], "text": c["text"]}
+                                            for i, c in enumerate(batch)], model)
+            except (RuntimeError, ValueError, OSError) as error:
+                # Nothing cached: the batch is proposed again next run.
+                trace.append({"proposal_failed": type(error).__name__, "detail": str(error)[:200]})
+                continue
+            items = []
+            for i, chunk in enumerate(batch):
+                entities, relations, bad = knowledge_graph.validate(chunk["text"], proposals.get(str(i)) or {})
+                rejected.update(b["reason"] for b in bad)
+                counts.update(entities=len(entities), relations=len(relations))
+                items.append((chunk, {"model": used, "entities": entities, "relations": relations, "rejected": bad}))
+            counts["judged"] += supported(items, cfg, budget, trace, project)
+            knowledge_graph.keep(store, [(c["source_id"], knowledge_graph.digest(c["text"]), versions, r)
+                                         for c, r in items], external)
+        # Every cached result is looked at, not only the first `limit`: a
+        # verdict past them would otherwise never be withdrawn or given.
+        # ponytail: each run starts from the first; if the budget ends first
+        # every time, later ones wait — rotate a cursor if that shows up.
+        for start in range(0, len(again), limit):
+            batch = again[start:start + limit]
+            try:
+                budget.check()
+            except Exception as error:  # noqa: BLE001 — the rest waits for the next run
+                trace.append({"stopped": type(error).__name__, "reason": str(error)})
+                break
+            changed = supported(batch, cfg, budget, trace, project)
+            counts["judged"] += changed
+            if changed:
+                knowledge_graph.keep(store, [(c["source_id"], knowledge_graph.digest(c["text"]), versions, r)
+                                             for c, r in batch], external)
+        index.refresh()
+        pairs = contradictions(index, repo, versions, cfg, budget, trace, project, external)
+        index.refresh()
+        return {**report, "proposed": dict(counts), "rejected": dict(rejected), "contradictions": pairs,
+                "trace": trace, "budget": budget.record(), "graph": knowledge_graph.verify(index.graph, index.chunks)}
+    finally:
+        index.close()
+
+
+def retire_graph(project: str | Path | None) -> dict:
+    """Stop using every extracted relationship. Structure and baseline
+    retrieval stay; the cached extractions stay too, so running the same
+    versions again brings them back without asking a model."""
+
+    index = local_index(project)
+    try:
+        knowledge_graph.activate(index.store, None)
+        index.refresh()
+        return knowledge_graph.verify(index.graph, index.chunks)
+    finally:
+        index.close()
+
+
+def check_graph(project: str | Path | None) -> dict:
+    """The graph as the index has it now, checked (`knowledge_graph.verify`)."""
+
+    index = local_index(project)
+    try:
+        return knowledge_graph.verify(index.graph, index.chunks)
+    finally:
+        index.close()

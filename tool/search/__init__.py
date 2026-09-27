@@ -30,7 +30,8 @@ import time
 from pathlib import Path
 
 __all__ = ("ask", "prepare", "local_index", "evidence_store", "resolve", "notify", "PING", "spawn", "PORT", "HUB",
-           "cache_dir", "state_path", "version", "records", "refresh", "sources", "providers")
+           "cache_dir", "state_path", "version", "records", "refresh", "sources", "providers",
+           "knowledge_graph", "projection")
 
 HERE = Path(__file__).resolve().parent
 # The hub whose `operator/` and `craft/` every search covers. `WIKI_ROOT` as in `wiki`.
@@ -181,9 +182,22 @@ def refresh(project: str | Path | None) -> None:
     local_index(project).close()
 
 
+def projection(project: str | Path) -> list[dict]:
+    """The map's document-level view of `project`'s knowledge graph:
+    `{a, b, kind}` between two of its files.
+    Read only: nothing is built, and before the index is there it is `[]`."""
+
+    from .daemon import store_path
+    from .evidence import repo_id
+
+    root = Path(project).resolve()
+    return knowledge_graph.projection(store_path(HUB, root), repo_id(root))
+
+
 def local_index(project: str | Path | None, hub: Path | None = None, vectors: bool = False, wait: float = 600.0):
     """An index built in this process, not the daemon's.
-    `.search(query, k, sources)` asks it; `.files` holds every file it read.
+    `.search(query, k, sources)` asks it; `.files` holds every file it read;
+    `.graph` is its knowledge graph (`knowledge_graph.Graph`).
 
     Without `vectors`, BM25 only. With them, the daemon's own hybrid ranking:
     the same e5 model and vector cache under `cache_dir()`, waited on up to
@@ -325,5 +339,5 @@ def exchange(conn: http.client.HTTPConnection, token: str, path: str, body: dict
         conn.close()
 
 
-# The stage 3 modules, whole, for the main to compose. Last: they import from here.
-from . import providers, sources  # noqa: E402
+# The stage 3 and 4 modules, whole, for the main to compose. Last: they import from here.
+from . import knowledge_graph, providers, sources  # noqa: E402
