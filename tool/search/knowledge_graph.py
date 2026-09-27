@@ -599,15 +599,17 @@ def activate(store, versions: str | None) -> None:
             db.execute("INSERT OR REPLACE INTO meta VALUES ('graph_active', ?)", (versions,))
 
 
-def keep(store, rows: list[tuple[str, str, str, dict]], external: set[tuple[str, str]] = frozenset()) -> int:
+def keep(store, rows: list[tuple[str, str, str, dict]], external=frozenset) -> int:
     """Cache extraction results, `(source_id, text sha, versions, result)`,
-    only for text the store still holds — or in `external`, the records'
-    chunks as `(source, text sha)`, which live beside it.
-    A memory deleted while the model was answering is not brought back.
-    A pair's result needs both of its passages. Returns how many were kept."""
+    only for text the store still holds — or that `external()` names, the
+    records' chunks as `(source, text sha)`, which live beside it. It is
+    asked inside this transaction, the one `forget` also takes, so a memory
+    deleted or a record forgotten while the model was answering is not
+    brought back. A pair's result needs both of its passages. Returns how
+    many were kept."""
 
     with store.transaction() as db:
-        present = {(s, digest(t)) for s, t in db.execute("SELECT source_id, text FROM chunks")} | set(external)
+        present = {(s, digest(t)) for s, t in db.execute("SELECT source_id, text FROM chunks")} | set(external())
         kept = [(s, sha, v, json.dumps(r, ensure_ascii=False)) for s, sha, v, r in rows
                 if (all(tuple(end) in present for end in r["pair"]) if r.get("pair") else (s, sha) in present)]
         db.executemany("INSERT OR REPLACE INTO extractions VALUES (?, ?, ?, ?)", kept)
@@ -616,19 +618,18 @@ def keep(store, rows: list[tuple[str, str, str, dict]], external: set[tuple[str,
     return len(kept)
 
 
-def forget(store, source: str) -> None:
+def forget(db: sqlite3.Connection, source: str) -> None:
     """Remove an external source that is being forgotten from the graph of
     every generation, and its cached extractions — all of them quote its
-    text — in one transaction. The serial moves, so a rebuild that read the
-    graph before this does not write it back."""
+    text — in the caller's transaction. The serial moves, so a rebuild that
+    read the graph before this does not write it back."""
 
-    with store.transaction() as db:
-        gens = {g for (g,) in db.execute("SELECT gen FROM nodes WHERE source_id = ? UNION"
-                                         " SELECT gen FROM spans WHERE source_id = ?", (source, source))}
-        drop(db, [(g, source) for g in sorted(gens)], False, True)
-        db.execute("DELETE FROM extractions WHERE source_id = ?", (source,))
-        db.execute("INSERT OR REPLACE INTO meta VALUES ('graph_serial', ?)",
-                   (str(int(meta(db, "graph_serial") or 0) + 1),))
+    gens = {g for (g,) in db.execute("SELECT gen FROM nodes WHERE source_id = ? UNION"
+                                     " SELECT gen FROM spans WHERE source_id = ?", (source, source))}
+    drop(db, [(g, source) for g in sorted(gens)], False, True)
+    db.execute("DELETE FROM extractions WHERE source_id = ?", (source,))
+    db.execute("INSERT OR REPLACE INTO meta VALUES ('graph_serial', ?)",
+               (str(int(meta(db, "graph_serial") or 0) + 1),))
 
 
 def cached(store, versions: str) -> dict[tuple[str, str], dict]:

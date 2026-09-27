@@ -439,21 +439,38 @@ def forget(project: str | Path | None, source: str) -> bool:
     """Remove a source record, the snapshots only it held, and its place in
     the graph with the cached extractions — all of which quote it.
 
-    The graph goes first: if that fails the record is still there, and
-    forgetting it again is the retry.
-    ponytail: a refresh landing between the two steps derives the record's
-    structure once more — with no extraction, so no quote — and the refresh
-    the record's deletion triggers removes it; hold the records lock across
-    both if that window ever matters."""
+    Both happen inside one write transaction of the evidence store, the
+    record last: `keep` and a graph rebuild take that same lock, so neither
+    writes the source back — one that came first is removed here, one that
+    comes after finds the record gone. If anything fails before the record
+    is deleted, nothing is, and forgetting again is the retry. A store that
+    could not be opened (in memory) forgets nothing.
+    ponytail: the record is deleted before the evidence store commits; a
+    failed commit there leaves the graph with no record to retry through."""
 
     with records(project) as store:
         source_id = find(store, source)["source_id"]
         evidence = evidence_store(project)
         try:
-            knowledge_graph.forget(evidence, source_id)
+            if not evidence.persistent:
+                raise OSError("the evidence store could not be opened; nothing was forgotten")
+            with evidence.transaction() as db:
+                knowledge_graph.forget(db, source_id)
+                return store.delete(source_id)
         finally:
             evidence.close()
-        return store.delete(source_id)
+
+
+def still(project: str | Path | None, external: set[tuple[str, str]]):
+    """`external`, the records' chunks as `(source, text sha)`, narrowed to
+    the records that still exist when it is called — for `keep`."""
+
+    def now() -> set[tuple[str, str]]:
+        with records(project) as store:
+            held = {r["source_id"] for r in store.all()}
+        return {key for key in external if key[0] in held}
+
+    return now
 
 
 def catalog(project: str | Path | None) -> dict:
@@ -661,7 +678,7 @@ def supported(items: list[tuple[dict, dict]], cfg: decision.Config, budget: Budg
 
 
 def contradictions(index, repo: str, versions: str, cfg: decision.Config, budget: Budget, trace: list,
-                   project: str | Path | None, external: set) -> dict:
+                   project: str | Path | None, external) -> dict:
     """Jev's comparison of bounded pairs: passages that name the same entity,
     one of them a decision or a memory, not compared under these versions
     yet — at most `MAX_PAIRS`. A pair Jev did not judge is not an edge."""
@@ -744,7 +761,7 @@ def extract_graph(project: str | Path | None, limit: int = 40, seconds: float = 
         if estimate:
             return {**report, "model_requests_at_most": -(-len(todo) // GRAPH_BATCH)}
         knowledge_graph.activate(store, versions)
-        external = {key for key, c in mine.items() if c.get("record")}
+        external = still(project, {key for key, c in mine.items() if c.get("record")})
         budget = Budget(seconds=seconds, calls=EXTRACTION["calls"], candidates=EXTRACTION["candidates"])
         trace: list[dict] = []
         rejected: Counter = Counter()

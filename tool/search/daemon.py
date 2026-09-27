@@ -483,10 +483,12 @@ class Store:
                 raise OSError("no path")
             path.parent.mkdir(parents=True, exist_ok=True)
             self.db = self.connect(str(path))
+            self.persistent = True
         except (OSError, sqlite3.Error) as error:
             if path is not None:
                 print(f"evidence store in memory: {type(error).__name__}", file=sys.stderr)
             self.db = self.connect(":memory:")
+            self.persistent = False
         self.gen = self.generation()
 
     @staticmethod
