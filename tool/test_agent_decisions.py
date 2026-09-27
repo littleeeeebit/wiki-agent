@@ -253,8 +253,9 @@ def test_a_korean_description_is_normalized_and_a_korean_path_goes_masked(jev, m
         return [decisions.candidate("send", "prepare_work_turn", "Send it."),
                 decisions.candidate("look", "retrieve_evidence", "링크를 먼저 본다")]
 
-    chosen(stand_in, offered=offered, state={"changed_files": ["docs/설계.md", "a.py"]})
-    assert stand_in.states == [{"changed_files": ["docs/….md", "a.py"]}]
+    chosen(stand_in, offered=offered, state={"changed_files": ["docs/설계.md", "a.py"],
+                                             "goal": "Implement the [시작] button"})
+    assert stand_in.states == [{"changed_files": ["docs/….md", "a.py"], "goal": "Implement the […] button"}]
     sent = json.dumps(stand_in.questions[0], ensure_ascii=False)
     assert "Look at the links first." in sent and not decisions.HANGUL.search(sent)
 
@@ -417,6 +418,7 @@ def test_the_changed_files_are_the_branch_against_its_base_pushed_commits_includ
     git("commit", "-m", "b")
     git("push", "-u", "origin", "feature")
     assert decisions.changed(tmp_path / "w", {"base": "main"}) == ["설계.md"]
+    assert decisions.changed(tmp_path / "w", {}) == ["설계.md"], "no origin/HEAD: the branch's own push still counts"
 
 
 # -- loop.fix ---------------------------------------------------------------------

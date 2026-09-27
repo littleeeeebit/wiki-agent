@@ -200,7 +200,8 @@ def normalized(state: dict, seconds: float) -> tuple[dict | None, str]:
             if made is None:
                 texts.append(value)
                 return value
-            return next(made)
+            # English prose may keep a protected Korean label (`[시작]`); it goes masked too.
+            return HANGUL.sub("…", next(made))
         if isinstance(value, dict):
             return {k: walk(v, k, made) for k, v in value.items()}
         if isinstance(value, list):
@@ -590,12 +591,15 @@ def check_offer(repo: Path, gate: str) -> list[dict]:
 
 def changed(path: Path, spec: dict) -> list[str]:
     """The files the pull request will show: the branch against the base it goes
-    to, pushed commits included. Without that ref, what no remote has yet."""
+    to, pushed commits included. Without that ref, what no remote branch but
+    this branch's own has."""
 
     base = f"origin/{spec['base']}" if spec.get("base") else "origin/HEAD"
+    own = git(path, "rev-parse", "--abbrev-ref", "HEAD")
     out = git(path, "-c", "core.quotepath=off", "diff", "--name-only", f"{base}...HEAD") \
         if git(path, "rev-parse", "--verify", "--quiet", base) else \
-        git(path, "-c", "core.quotepath=off", "log", "--name-only", "--format=", "HEAD", "--not", "--remotes")
+        git(path, "-c", "core.quotepath=off", "log", "--name-only", "--format=", "HEAD",
+            "--not", f"--exclude=origin/{own}", "--remotes")
     return list(dict.fromkeys(line for line in out.splitlines() if line.strip()))[:MAX_FILES]
 
 
