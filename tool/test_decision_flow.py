@@ -404,6 +404,55 @@ def test_the_connection_dials_the_resolved_address_and_checks_the_host_name(monk
     assert dialled == [(TARGET[:3], TARGET[3], 1.0)] and wrapped == [decision.HOST]
 
 
+def prompt_connection(monkeypatch, sent, when=None):
+    """A connection that answers at once; `when` runs as the request goes out."""
+
+    class Connection:
+        def request(self, *a, **kw):
+            sent.append(a)
+            if when:
+                when()
+
+        def getresponse(self):
+            self.status = 200
+            return self
+
+        def read(self, limit):
+            return b'{"answers": {}}'
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(decision, "connection", lambda found, timeout: Connection())
+
+
+def test_a_call_cancelled_before_its_slot_sends_nothing(monkeypatch):
+    cancel, sent = threading.Event(), []
+
+    def resolve(end, cancelled):
+        cancel.set()  # the cancel lands as the lookup finishes, with a slot free
+        return "192.0.2.1"
+
+    monkeypatch.setattr(decision, "resolve", resolve)
+    prompt_connection(monkeypatch, sent)
+    free = drained()
+    with pytest.raises(decision.JevError, match="cancelled"):
+        decision.send("k", b"{}", 5.0, cancel)
+    assert sent == [] and decision.IN_FLIGHT._value == free
+
+
+def test_an_answer_that_lands_after_the_cancel_is_not_returned(monkeypatch):
+    cancel, sent = threading.Event(), []
+    monkeypatch.setattr(decision, "resolve", lambda end, cancelled: "192.0.2.1")
+    prompt_connection(monkeypatch, sent, when=cancel.set)
+    # The worker runs to its end before `send` first looks at it.
+    monkeypatch.setattr(threading.Thread, "start", lambda self: self._target())
+    free = drained()
+    with pytest.raises(decision.JevError, match="cancelled"):
+        decision.send("k", b"{}", 5.0, cancel)
+    assert len(sent) == 1 and decision.IN_FLIGHT._value == free
+
+
 def local(listener):
     """A `Lookup` pointed at a local listener, with a real TLS context."""
 

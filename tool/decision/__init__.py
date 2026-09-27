@@ -369,17 +369,28 @@ def send(key: str, body: bytes, timeout: float, cancel: threading.Event) -> dict
     or a timeout aborts the connection — the socket is shut down, so the
     worker's read fails at once and the worker ends, releasing its slot —
     rather than leaving it to run to its own timeout.
+
+    One check, `halted`, runs once the slot is taken, while the worker
+    runs, and after it ends: a cancelled or late call starts nothing and
+    returns nothing, however fast its worker was.
     """
 
     if timeout <= 0:
         raise JevError("timeout")
     end = time.monotonic() + timeout
+
+    def halted() -> str | None:
+        return "cancelled" if cancel.is_set() else "timeout" if time.monotonic() >= end else None
+
     found = resolve(end, cancel)
     while not IN_FLIGHT.acquire(timeout=max(0.0, min(0.05, end - time.monotonic()))):
         if cancel.is_set():
             raise JevError("cancelled")
         if time.monotonic() >= end:
             raise JevError("busy")
+    if stop := halted():
+        IN_FLIGHT.release()
+        raise JevError(stop)
     result: list[dict] = []
     errors: list[JevError] = []
     try:
@@ -431,11 +442,12 @@ def send(key: str, body: bytes, timeout: float, cancel: threading.Event) -> dict
             raise JevError("network") from exc
         raise
     while worker.is_alive():
-        stop = "cancelled" if cancel.is_set() else "timeout" if time.monotonic() >= end else None
-        if stop:
+        if stop := halted():
             abort(conn)
             raise JevError(stop)
         worker.join(min(0.05, max(0.0, end - time.monotonic())))
+    if stop := halted():
+        raise JevError(stop)  # the worker finished between two looks; its answer came too late
     if errors:
         raise errors[0]
     if not result:
