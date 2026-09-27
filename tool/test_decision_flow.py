@@ -5,6 +5,7 @@ through `knowledge.prepare`, which builds a real (BM25) index in `tmp_path`."""
 
 import json
 import math
+import socket
 import threading
 import time
 from pathlib import Path
@@ -320,16 +321,28 @@ def drained():
     pytest.fail("in-flight slots still held before the test started")
 
 
-def test_a_stalled_name_lookup_holds_no_slot_and_runs_once(monkeypatch):
+TARGET = (socket.AF_INET, socket.SOCK_STREAM, 6, ("192.0.2.1", 443))
+
+
+@pytest.mark.parametrize("stalled", ["getaddrinfo", "create_default_context"])
+def test_a_stalled_name_lookup_holds_no_slot_and_runs_once(monkeypatch, stalled):
     stall, calls = threading.Event(), []
 
     def getaddrinfo(*args, **kwargs):
         calls.append(args)
-        stall.wait(5)
-        return [(None, None, None, "", ("192.0.2.1", 443))]
+        if stalled == "getaddrinfo":
+            stall.wait(5)
+        return [(*TARGET[:3], "", TARGET[3])]
 
+    def create_default_context():
+        if stalled == "create_default_context":
+            stall.wait(5)  # the system trust store is slow to read
+        return real_context()
+
+    real_context = decision.ssl.create_default_context
     monkeypatch.setattr(decision.socket, "getaddrinfo", getaddrinfo)
-    monkeypatch.setattr(decision, "RESOLVED", {"address": None, "at": 0.0, "lookup": None})
+    monkeypatch.setattr(decision.ssl, "create_default_context", create_default_context)
+    monkeypatch.setattr(decision, "RESOLVED", {"found": None, "at": 0.0, "lookup": None})
     free = drained()
     cfg = decision.Config("active", MODEL, "file", key="k")
     try:
@@ -344,22 +357,46 @@ def test_a_stalled_name_lookup_holds_no_slot_and_runs_once(monkeypatch):
     finally:
         stall.set()
     decision.RESOLVED["lookup"].join(1)
-    assert decision.resolve(time.monotonic() + 1, threading.Event()) == "192.0.2.1"
+    assert decision.resolve(time.monotonic() + 1, threading.Event()).target == TARGET
 
 
 def test_the_connection_dials_the_resolved_address_and_checks_the_host_name(monkeypatch):
-    dialled = []
+    dialled, wrapped = [], []
 
-    def create_connection(address, timeout):
-        dialled.append(address)
-        raise OSError("refused")
+    class Sock:
+        def __init__(self, *args):
+            self.made = args
 
-    monkeypatch.setattr(decision.socket, "create_connection", create_connection)
-    conn = decision.connection("192.0.2.1", 1.0)
+        def settimeout(self, timeout):
+            self.timeout = timeout
+
+        def connect(self, sockaddr):
+            dialled.append((self.made, sockaddr, self.timeout))
+
+        def setsockopt(self, *args):
+            pass
+
+    class Context:
+        def wrap_socket(self, sock, server_hostname):
+            wrapped.append(server_hostname)
+            raise OSError("handshake refused")
+
+    found = decision.Lookup()
+    found.target, found.context = TARGET, Context()
+
+    def forbidden(*args, **kwargs):
+        raise AssertionError("a lookup or a trust-store read inside the slot")
+
+    monkeypatch.setattr(decision.socket, "socket", Sock)
+    for name in ("getaddrinfo", "create_connection"):
+        monkeypatch.setattr(decision.socket, name, forbidden)
+    monkeypatch.setattr(decision.ssl, "create_default_context", forbidden)
+    conn = decision.connection(found, 1.0)
     assert conn.host == decision.HOST
     with pytest.raises(OSError):
         conn.connect()
-    assert dialled == [("192.0.2.1", 443)]
+    assert dialled == [(TARGET[:3], TARGET[3], 1.0)] and wrapped == [decision.HOST]
+    assert isinstance(conn.sock, Sock), "the raw socket was not `sock` for `abort` during the handshake"
 
 
 def test_a_worker_that_cannot_start_frees_its_slot_and_connection(monkeypatch):
