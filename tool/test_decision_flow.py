@@ -656,6 +656,36 @@ def test_coverage_stands_only_on_evidence_still_held():
     assert out["status"] != "ready" and out["requirements"][0]["verdict"] == "uncertain"
 
 
+def test_a_passage_coverage_was_judged_on_is_never_dropped():
+    one, two = chunk("owner", "Atlas owns ingest."), chunk("port", "Ingest listens on 8791.")
+    world = World(answering(useful=lambda n: 0.95 if n.endswith("p0") else 0.0, coverage=0.95),
+                  [found([one, two])])
+    out = run(world, query="Who owns ingest? Which port does it use?", available=["documents"])
+    assert out["status"] == "ready" and out["dropped"] == 0
+    assert {e["chunk_id"] for e in out["evidence"]} == {one["chunk_id"], two["chunk_id"]}
+
+
+@pytest.mark.parametrize("stop, status", [("cancel", "cancelled"), ("deadline", "exhausted")])
+@pytest.mark.parametrize("where", ["baseline", "round"])
+def test_a_round_ended_by_a_cancel_or_the_deadline_ends_the_run_so(stop, status, where):
+    budget = Budget(seconds=0.5, calls=6, candidates=40)
+
+    class Stopping(World):
+        def first(self, req):
+            self.firsts.append(req)
+            if stop == "cancel":
+                budget.cancel.set()
+            else:
+                time.sleep(budget.left() + 0.01)
+            return None
+
+    world = Stopping(answering(), [])
+    out = run(world, budget=budget, available=["documents"],
+              normalize=english if where == "round" else lambda texts, s, o=None: [
+                  {"text": None, "status": "unavailable", "language": "en", "reason": "down"} for _ in texts])
+    assert world.firsts and out["status"] == status
+
+
 def test_what_is_kept_past_k_is_in_the_evidence_or_named():
     top = chunk("top", "The port is 8791.")
     cut = chunk("cut", "Part of a section.", completeness="partial")
