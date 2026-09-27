@@ -147,7 +147,8 @@ def test_fan_out_and_the_candidate_allowance_bound_the_walk(world):
     index = index_of(hub, repo)
     one = {"seeds": 1, "hops": 1, "fanout": 5}
     wide = ask(index, "index of leaves", graph=one, limit=1)
-    assert len(texts(wide, "graph")) == 5 and wide["truncated"] == []
+    # Twelve links, five walked — and the result says the fan-out cut the rest.
+    assert len(texts(wide, "graph")) == 5 and wide["truncated"] == ["fanout"]
     tight = ask(index, "index of leaves", graph=one, limit=1, max_candidates=3)
     assert len(tight["chunks"]) == 3 and tight["truncated"] == ["candidates"]
     # One refusal says the allowance ran out; the walk does not go on counting.
@@ -716,19 +717,41 @@ def test_every_seed_that_reaches_a_chunk_keeps_its_path_to_it(world):
 
 # ---- round 6 review -------------------------------------------------------------------
 
-def test_a_seed_with_many_copies_walks_from_a_fanout_of_them_and_names_them_all(world):
+def test_the_copies_of_a_seed_are_one_node_whose_links_are_pooled_and_whose_cut_is_said(world):
     hub, repo = world
-    for n in range(12):
+    for n in range(7):
         (repo / f"docs/c{n}").mkdir()
         (repo / f"docs/c{n}/intro.md").write_text("# Intro\n\nThe quarry conveyor points to [details](detail.md).\n",
                                                   encoding="utf-8")
-        (repo / f"docs/c{n}/detail.md").write_text(f"# Detail\n\nDetail number {n}.\n", encoding="utf-8")
+        detail = "Mira runs the conveyor on Tuesday." if n == 6 else f"Detail number {n}."
+        (repo / f"docs/c{n}/detail.md").write_text(f"# Detail\n\n{detail}\n", encoding="utf-8")
     index = index_of(hub, repo)
     req = retrieval.request(evidence.repo_id(repo), "quarry conveyor", sources=["documents"], limit=1)
     result = retrieval.run(index.snapshot(), req)
-    assert len(result["chunks"][0]["duplicates"]) == 11
-    starts = {p["seed"] for p in result["paths"]}
-    assert len(starts) == 1 + retrieval.GRAPH["fanout"]
+    assert "Intro" in result["chunks"][0]["text"] and len(result["chunks"][0]["duplicates"]) == 6
+    # The last copy's link competes with the others', by relevance, not by where the copy stands.
+    assert "Mira runs the conveyor on Tuesday." in "".join(texts(result, "graph"))
+    assert "fanout" in result["truncated"]
+    index.close()
+
+
+def test_a_link_to_a_copy_of_a_seed_is_credited_to_that_seed(world):
+    hub, repo = world
+    for name in ("r", "s"):
+        (repo / f"docs/{name}.md").write_text("# Shared\n\nThe quarry conveyor manual.\n", encoding="utf-8")
+    for name in ("p", "q"):
+        (repo / f"docs/{name}.md").write_text(f"# {name.upper()}\n\nThe quarry conveyor {name}, see [manual](s.md).\n",
+                                              encoding="utf-8")
+    index = index_of(hub, repo)
+    s = chunk_of(index, "docs/s.md", "manual")["chunk_id"]
+    req = retrieval.request(evidence.repo_id(repo), "quarry conveyor", sources=["documents"], limit=3)
+    result = retrieval.run(index.snapshot(), req)
+    rrf = [c for c in result["chunks"] if c["lane"] == "rrf"]
+    held = next(c for c in rrf if "manual." in c["text"])
+    others = {c["chunk_id"] for c in rrf} - {held["chunk_id"]}
+    assert held["duplicates"] == [s] or held["chunk_id"] == s
+    reached = [result["paths"][p] for p in (result["scores"][held["chunk_id"]]["graph"] or {}).get("paths", [])]
+    assert {p["seed"] for p in reached} == others and {p["to"] for p in reached} <= {s, held["chunk_id"]}
     index.close()
 
 

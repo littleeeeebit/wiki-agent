@@ -324,8 +324,7 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
 
     # The graph lane's order: fewer hops, then a better seed — a graph seed
     # after every chunk seed — then cosine once there are vectors, else BM25.
-    order = {c: n for n, i in enumerate(selected)
-             for c in (chunks[i]["chunk_id"], *twins.get(chunks[i]["chunk_id"], ()))}
+    order = {chunks[i]["chunk_id"]: n for n, i in enumerate(selected)}
 
     def discovery(i: int) -> tuple:
         mine = [paths[p] for p in found[i]]
@@ -363,26 +362,26 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
 def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: list[dict], cancel,
            starts: list[str], kinds: tuple[str, ...], hops: int, fanout: int, room: int, taken: set[int],
            lane: str, twins: dict[str, list[str]]) -> tuple[dict[int, list[int]], list[str]]:
-    """Walk adopted edges of `kinds` from `starts` (chunk or entity ids) and
-    from the copies of each in `twins` — chunks of the same text, which it
-    stands for — at most `fanout` of them, as for any node's neighbours.
+    """Walk adopted edges of `kinds` from `starts` (chunk or entity ids).
     Returns `{chunk index: [indexes into paths]}` for every chunk reached,
     new or already `taken`, and why the walk stopped short, if it did.
+
+    A node of the walk is a text, not a file: the copies of a chunk in
+    `twins` are one candidate, so they are one node — walked from all of
+    them at once, their edges pooled, reached when any of them is. A copy
+    reached is recorded as reached (the path names it) and credited to the
+    chunk holding that text, taken or found.
 
     One hop is one edge. A source stands for its chunks, and a decision for
     its record's: reaching either offers their chunks, best BM25 first. From
     a chunk the walk also follows its source's and its decision's own edges
-    — a front-matter `reads`, a `supersedes`. At each visited node at most
-    `fanout` new neighbours are taken, by `PRIORITY` and then BM25, so a hub
-    with a hundred links costs five. Every neighbour is checked as a seed is
-    (`blocked`); a blocked one is recorded and not walked through. The
-    visited set is chunk ids, which carry their source's revision, and
-    entity ids, so a cycle ends; a chunk reached again from another seed is
-    not walked again, but that seed's path to it is kept, one per seed, as
-    corroboration — a seed another seed links to as well. Only `room`
-    chunks not already taken may be
-    added; one whose text a taken or reached chunk already holds costs none —
-    its path corroborates that one, which carries its id. Every path,
+    — a front-matter `reads`, a `supersedes`. At each node at most `fanout`
+    new neighbours are taken, by `PRIORITY` and then BM25, so a hub with a
+    hundred links costs five; a node that had more says so (`fanout`). Every
+    neighbour is checked as a seed is (`blocked`); a blocked one is recorded
+    and not walked through. A node is walked once, so a cycle ends; a node
+    reached again from another seed keeps that seed's path, one per seed, as
+    corroboration. Only `room` new candidates may be added. Every path,
     reached or refused, goes into `paths`.
     """
 
@@ -396,6 +395,14 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
 
     # Each text a candidate already holds, and which candidate holds it.
     held = {text_key(chunks[i]): i for i in taken}
+
+    def key(node: str) -> str:
+        """The walk's node for an id: a chunk's text group, else the id."""
+
+        return twins[node][0] if node in twins else node
+
+    def members(node: str) -> list[str]:
+        return twins.get(node, [node])
 
     def record(trail: list[dict], status: str) -> int:
         paths.append({"lane": lane, "seed": trail[0]["node"], "to": trail[-1]["node"], "hops": len(trail) - 1,
@@ -412,8 +419,7 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
     nodes = graph.nodes([s for s in starts if s not in by_id])
     frontier: list[tuple[str, list[dict]]] = []
     visited: set[str] = set()
-    copies = {x: [c for c in twins.get(x, ()) if c != x][:fanout] for x in starts}
-    for start in dict.fromkeys(s for x in starts for s in (x, *copies[x])):
+    for start in dict.fromkeys(starts):
         node = nodes.get(start)
         trail = [{"node": start, "node_kind": "chunk" if start in by_id else (node or {}).get("kind")}]
         # A start the caller named is checked as any node is: a walk never
@@ -423,8 +429,8 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
             record(trail, "deleted")
         elif why or (node is not None and node["repo_id"] not in repos):
             record(trail, why or "out_of_scope")
-        else:
-            visited.add(start)
+        elif key(start) not in visited:
+            visited.add(key(start))
             frontier.append((start, trail))
 
     for _hop in range(hops):
@@ -436,7 +442,9 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
         if time.time() >= req["deadline"]:
             truncated.append("deadline")
             break
-        asks = {node: own_ids(by_id[node]) if node in by_id else [node] for node, _trail in frontier}
+        # Every copy's own edges: the same words in another file may link elsewhere.
+        asks = {node: [x for m in members(node) for x in own_ids(by_id[m])] if node in by_id else [node]
+                for node, _trail in frontier}
         edges = graph.edges(sorted({x for ids in asks.values() for x in ids}), kinds=list(kinds))
         by_via: dict[str, list[dict]] = defaultdict(list)
         for edge in edges:
@@ -465,22 +473,26 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
                         options.append((PRIORITY[edge["kind"]], -score, tid, kind, edge, other))
             options.sort(key=lambda o: o[:3])
             taken_here = 0
-            for _p, _s, tid, kind, edge, other in options:
+            for n, (_p, _s, tid, kind, edge, other) in enumerate(options):
                 if taken_here >= fanout:
+                    # More than a fan-out of new neighbours: the rest are not walked, and that is said.
+                    if any(key(o[2]) not in visited for o in options[n:]):
+                        truncated.append("fanout")
                     break
                 step = {"node": tid, "node_kind": kind, "edge_id": edge["edge_id"], "kind": edge["kind"],
                         "reverse": edge["reverse"], "origin": edge["origin"], "confidence": edge["confidence"],
                         **({"through": other} if other != tid else {})}
                 path = trail + [step]
-                if tid in visited:
-                    # Reached before, or a seed itself: the new seed's path is kept.
-                    i = by_id[tid] if kind == "chunk" else None
+                if key(tid) in visited:
+                    # Reached before, or a seed itself: the new seed's path is kept, credited to
+                    # the chunk holding that text.
+                    holder = held.get(text_key(chunks[by_id[tid]])) if kind == "chunk" else None
                     seed = trail[0]["node"]
-                    if ((i in found or i in taken) and seed != tid
-                            and seed not in {paths[p]["seed"] for p in found.get(i, [])}):
-                        found.setdefault(i, []).append(record(path, "corroborated"))
+                    if (holder is not None and key(seed) != key(tid)
+                            and seed not in {paths[p]["seed"] for p in found.get(holder, [])}):
+                        found.setdefault(holder, []).append(record(path, "corroborated"))
                     continue
-                visited.add(tid)
+                visited.add(key(tid))
                 if kind == "gone":
                     record(path, "deleted")
                     continue
@@ -499,9 +511,8 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
                 if tid in seen:
                     # Evidence of an earlier round: walked through, not returned again.
                     record(path, "seen")
-                elif i in taken or i in found:
-                    found.setdefault(i, []).append(record(path, "corroborated"))
                 elif text_key(chunks[i]) in held:
+                    # A taken chunk, or a copy of one: it corroborates the holder at no cost.
                     found.setdefault(held[text_key(chunks[i])], []).append(record(path, "corroborated"))
                 elif room <= 0:
                     # The allowance is spent: one refusal says so, and the walk ends.
