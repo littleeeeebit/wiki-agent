@@ -405,9 +405,12 @@ def options() -> dict:
 @router.get("/api/jev")
 def jev_status() -> dict:
     """The Jev settings as this process reads them now: mode, model, whether a
-    key exists and where from. Sends nothing."""
+    key exists and where from — and which of this server's choices Jev
+    controls, by entry point and operation (stage 8). Sends nothing."""
 
-    return decision.config().status()
+    from . import decisions  # `decisions` imports this module
+
+    return {**decision.config().status(), "agent_decisions": decisions.coverage()}
 
 
 @router.post("/api/jev/probe")

@@ -26,7 +26,8 @@ PROVISIONAL_VERSION = "provisional-1"
 ARTIFACT = Path("eval") / "jev" / "policy.json"
 
 NOUL = ("route", "source", "useful", "conflict", "redirect", "coverage")
-CHOICE = ("repair", "relation", "answers", "faithful")
+# `action` is stage 8's: which code-owned operation an owner function runs next (`main.decisions`).
+CHOICE = ("repair", "relation", "answers", "faithful", "action")
 KINDS = NOUL + CHOICE
 
 # ponytail: the prototype's uncalibrated thresholds; `tool/eval/policy.py` replaces them per kind.

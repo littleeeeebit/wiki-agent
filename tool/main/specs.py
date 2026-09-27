@@ -35,6 +35,7 @@ from wiki import slots_for
 from workspace import TASK, create, folder_for
 
 from . import channels, query, work
+from .decisions import extra_check, recommend
 from .query import ROOT, _lock, current_repo, hold, project
 
 SPECS = ROOT / "raw" / "specs"
@@ -400,6 +401,9 @@ def answered(repo: Path, found: list[dict], source: dict, accepted: dict | None 
         if name != "spec":
             try:
                 _shape(name, block["value"])
+                if name == "candidates":
+                    # Jev's pick first, marked; the person still chooses.
+                    block = {**block, "value": recommend(repo, block["value"])}
                 out.append(block)
             except ValueError as exc:
                 out.append({"name": name, "error": str(exc)})
@@ -662,7 +666,8 @@ def start(sid: str, body: Start) -> dict:
             save(moved(spec, "작업 중", worktree=str(path), cell={"model": body.model, "effort": body.effort}))
         # Made: from here it is a turn, and a switch no longer waits for it.
         release.held.kind = "turn"
-        run = work.begin(path, work.session(path, body.model, body.effort), "Start.", release)
+        # The server's own turn: Jev may gather evidence first, or ask the person instead.
+        run = work.begin(path, work.session(path, body.model, body.effort), "Start.", release, decide=True)
     except BaseException:
         release()
         raise
@@ -764,7 +769,10 @@ def body_of(spec: dict) -> str:
     lines += ["## 확인", ""]
     lines += [f"- [x] {i['item']}" + (f" — {i['evidence']}" if i.get("evidence") else "") for i in spec["report"]]
     last = (spec["gate"].get("tail") or "").splitlines()[-1:] or [""]
-    lines += [f"- [x] 서버가 작업트리에서 게이트를 다시 돌림 — `{spec['gate']['cmd']}` · {last[0]}".rstrip(" ·"), ""]
+    lines += [f"- [x] 서버가 작업트리에서 게이트를 다시 돌림 — `{spec['gate']['cmd']}` · {last[0]}".rstrip(" ·")]
+    lines += [f"- [x] Jev 가 고른 추가 확인 — `{c['cmd']}` · 통과" for c in spec.get("checks") or []
+              if c["ok"] and c.get("head") == spec["gate"].get("head")]
+    lines.append("")
     grounds = spec["grounds"]
     cited = ", ".join(f"`{g}`" for g in grounds["pages"] + grounds["files"]) or "없음"
     lines += ["## 명세", "", f"`raw/specs/{spec['repo']}/{spec['id']}.json` · 근거: {cited}", ""]
@@ -784,6 +792,14 @@ def korean(spec: dict) -> dict:
             "report": [{**i, "item": next(done)} for i in spec["report"]]}
 
 
+def base_of(spec: dict, path: Path) -> subprocess.CompletedProcess:
+    """The branch the pull request goes to. A spec sent back by `[다시 PR]`
+    goes to the base it was reviewed for; any other, the repository's default."""
+
+    return subprocess.CompletedProcess([], 0, spec["base"], "") if spec.get("base") else \
+        sh(["gh", "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], path, 30)
+
+
 def opened(repo: Path, path: Path, run, spec: dict):
     """Push, and open the pull request as the person's `gh`. The next turn to
     start, when the spec came from a plan row that now says done.
@@ -799,9 +815,7 @@ def opened(repo: Path, path: Path, run, spec: dict):
     pushed = sh(["git", "push", "-u", "origin", branch], path, 120)
     if pushed.returncode:
         return failed(run, spec, f"push 실패 — {said(pushed)}")
-    # A spec sent back by `[다시 PR]` goes to the base it was reviewed for.
-    base = subprocess.CompletedProcess([], 0, spec["base"], "") if spec.get("base") else \
-        sh(["gh", "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], path, 30)
+    base = base_of(spec, path)
     if base.returncode or not base.stdout.strip():
         return failed(run, spec, f"기본 브랜치를 모른다 — {said(base)}")
     if run.halt.is_set():
@@ -920,4 +934,8 @@ def _check(path: Path, run, final: str):
     if not verdict["ok"]:
         return failed(run, spec, f"판정 실패 — {verdict['reason']}")
     note(run, "게이트 통과")
-    return opened(repo, path, run, spec)
+    # One registered check more, when Jev picks one. The gate already ran: nothing here skips it.
+    go, why = extra_check(repo, path, run, spec)
+    if not go:
+        return failed(run, spec, why)
+    return opened(repo, path, run, load(spec["repo"], spec["id"]) or spec)

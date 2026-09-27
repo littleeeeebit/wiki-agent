@@ -171,7 +171,7 @@ Published benchmark numbers are not forecasts for this repository.
 | 5 | [Graph retrieval](5-retrieval.md) | Chunk candidates, hybrid ranking, and bounded traversal | Done |
 | 6 | [Decision controller](6-decision-controller.md) | Typed routing, grading, sufficiency, and calibrated fallback | Done |
 | 7 | [Grounded answers](7-grounded-answer.md) | Claim structure, citation checks, repair, and abstention | Done |
-| 8 | [Agent decisions](8-agent-decisions.md) | Server-owned choices, preconditions, execution, and outcomes | Not started |
+| 8 | [Agent decisions](8-agent-decisions.md) | Server-owned choices, preconditions, execution, and outcomes | Done |
 | 9 | [Product and observability](9-product-observability.md) | Settings, map paths, evidence, trace, reconnection, and cost | Not started |
 | 10 | [Evaluation and rollout](10-evaluation-rollout.md) | Ablations, live evaluation, window checks, and reversible activation | Not started |
 
