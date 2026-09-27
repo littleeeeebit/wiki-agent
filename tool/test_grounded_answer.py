@@ -94,13 +94,16 @@ def draft(*claims, unresolved=(), status="complete", prose="Here is the answer I
 
 
 class Judge:
-    """A fake Jev for the relation and answers Choices: each claim's relation
-    and confidence, `supports` at 0.95 unless told, and whether it answers a
-    requirement (`c1_r0`), `answers` at 0.95 unless told. Every state it is
-    sent is checked for Korean prose: the decision path reads English only."""
+    """A fake Jev for the relation, answers and faithful Choices: each claim's
+    relation and confidence, `supports` at 0.95 unless told; whether it
+    answers a requirement (`c1_r0`), `answers` at 0.95 unless told; whether a
+    claim citing nothing states only its grounds, `faithful` at 0.95 unless
+    told. Every state it is sent is checked for Korean prose: the decision
+    path reads English only."""
 
-    def __init__(self, verdicts=None, fail=None, answers=None):
+    def __init__(self, verdicts=None, fail=None, answers=None, faithful=None):
         self.verdicts, self.fail, self.answers = verdicts or {}, fail, answers or {}
+        self.faithful = faithful or {}
         self.asked: list[tuple[dict, dict]] = []
 
     def __call__(self, state, questions, trace, budget, stage):
@@ -117,6 +120,9 @@ class Judge:
             if name.startswith("answers_"):
                 pick, confidence = self.answers.get(name.removeprefix("answers_"), ("answers", 0.95))
                 options = decision.claims.ANSWERS
+            elif name.startswith("faithful_"):
+                pick, confidence = self.faithful.get(name.removeprefix("faithful_"), ("faithful", 0.95))
+                options = decision.claims.FAITHFUL
             else:
                 pick, confidence = self.verdicts.get(name.removeprefix("relation_"), ("supports", 0.95))
                 options = decision.claims.RELATIONS
@@ -161,7 +167,8 @@ def test_a_supported_claim_is_published_complete_with_its_citation(tmp_path):
     assert [e.get("progress") for e in events if "progress" in e] == ["draft", "verify"]
     assert len(judge.asked) == 1 and messages[0].count("```answer-draft") == 1
     state, questions = judge.asked[0]
-    assert state["claims"] == [{"id": "c1", "text": "The search daemon listens on port 8791.", "cites": ["e1"]}]
+    assert state["claims"] == [{"id": "c1", "text": "The search daemon listens on port 8791.", "cites": ["e1"],
+                                "premises": []}]
     assert state["requirements"] == [{"id": "r0", "text": "Which port does the search daemon listen on?"}]
     assert list(questions) == ["relation_c1", "answers_c1_r0"], "one request: is it true, and does it answer"
     record = out["record"]["generations"][0]
@@ -217,6 +224,8 @@ def test_a_quote_from_another_source_is_not_a_quote_of_the_cited_one(tmp_path):
     (lambda c: {**c, "kind": "fact"}, "malformed"),
     (lambda c: {k: v for k, v in c.items() if k != "premises"}, "malformed"),
     (lambda c: {**c, "premises": ["c9"]}, "bad_premises"),
+    # Review round 2 (P0): with no premises, `all()` over none passed it, and it was published unjudged.
+    (lambda c: {**c, "kind": "recommendation", "evidence_ids": [], "source_quotes": []}, "bad_premises"),
 ])
 def test_code_rejects_each_broken_citation_before_any_judgment(tmp_path, change, reason):
     ports = item(tmp_path, "docs/ports.md", PORTS)
@@ -423,6 +432,40 @@ def test_a_direct_runs_text_states_no_number_the_conversation_did_not(tmp_path):
     assert "9999" not in out["text"] and "room 4" in out["text"]
 
 
+def test_a_direct_runs_text_states_no_fact_the_conversation_did_not(tmp_path):
+    # Review round 2 (P0): no number, no identifier — code could not see it, and it was published complete.
+    d = dossier([], ["Who owns the ingest pipeline?"], direct=True, calls_left=1)
+    made_up = claim("c1", "Acme owns the ingest pipeline.", kind="direct_text", cites=(), reqs=("r0",))
+    judge = Judge(faithful={"c1": ("adds", 0.95)})
+    out, _events, _ = answer(d, [draft(made_up)], judge)
+    v = out["verified"]
+    assert v["rejected"] == [{"claim_id": "c1", "reason": "unfaithful"}] and v["status"] == "abstained"
+    assert "Acme" not in out["text"]
+    state, questions = judge.asked[0]
+    assert "faithful_c1" in questions and "Who owns the ingest pipeline?" in state["conversation"]
+
+    # Jev unsure is not a yes.
+    out, _events, _ = answer(d, [draft(made_up)], Judge(faithful={"c1": ("faithful", 0.5)}))
+    assert out["verified"]["uncertainty"] == [{"claim_id": "c1", "reason": "uncertain"}] and "Acme" not in out["text"]
+
+
+def test_a_recommendation_states_no_fact_its_premises_do_not(tmp_path):
+    # Review round 2 (P0): "switch clients to 9999" reached an abstained answer with no judgment at all.
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    fact = claim("c1", "The search daemon listens on port 8791.")
+    advice = claim("c2", "Point clients at port 8791.", kind="recommendation", cites=(), reqs=(), premises=["c1"])
+    moved = claim("c3", "The daemon moved to port 9999; switch clients to it.", kind="recommendation", cites=(),
+                  reqs=(), premises=["c1"])
+    judge = Judge(faithful={"c3": ("adds", 0.95)})
+    out, _events, _ = answer(dossier([ports]), [draft(fact, advice, moved)], judge)
+    v = out["verified"]
+    assert v["rejected"] == [{"claim_id": "c3", "reason": "unfaithful"}] and "9999" not in out["text"]
+    assert "Recommendation: Point clients at port 8791." in out["text"] and v["status"] == "complete"
+    state, questions = judge.asked[0]
+    assert {"faithful_c2", "faithful_c3"} <= set(questions) and state["conversation"] == ""
+    assert [c["premises"] for c in state["claims"]] == [[], ["c1"], ["c1"]], "Jev reads what each rests on"
+
+
 @pytest.mark.parametrize("setting", ["", "WIKI_JEV_DEGRADED=baseline\n"])
 def test_an_outage_withholds_unchecked_claims_unless_baseline_is_chosen(tmp_path, isolated, setting):
     isolated.write_text(setting, encoding="utf-8")
@@ -519,9 +562,9 @@ def test_the_relation_rule_is_its_own_prompt_and_policy():
 def test_the_committed_relation_policy_is_fitted_for_the_prompt_in_use():
     path = Path(__file__).resolve().parents[1] / "eval" / "jev" / "relation-policy.json"
     fitted = decision.policy(decision.MODEL, path, prompt_version=decision.claims.VERSION)
-    assert set(fitted.fitted) == {"relation", "answers"}, \
+    assert set(fitted.fitted) == {"relation", "answers", "faithful"}, \
         f"refit with tool/eval/policy.py --relation --collect: {fitted.problem}"
-    for kind in ("relation", "answers"):
+    for kind in ("relation", "answers", "faithful"):
         errors = fitted.provenance["errors"][kind]
         assert errors["counts"]["false_acceptance"] == 0 and "false_rejection" in errors["counts"], kind
 
@@ -556,10 +599,20 @@ def test_the_relation_fit_prices_false_acceptance_above_false_rejection():
     labels = json.loads((root / "answers.json").read_text(encoding="utf-8"))["cases"]
     assert set(labels) == {c["id"] for c in json.loads((root / "relation.json").read_text(encoding="utf-8"))["cases"]}
     state, questions = calibration.relation_request(case, labels[case["id"]])
-    assert state["claims"][0] == {"id": "c1", "text": case["claims"][0]["text"], "cites": ["e1"]}
+    assert state["claims"][0] == {"id": "c1", "text": case["claims"][0]["text"], "cites": ["e1"], "premises": []}
     assert state["requirements"] == labels[case["id"]]["requirements"]
     assert set(questions) == ({f"relation_{c['id']}" for c in case["claims"]}
                               | {f"answers_{c['id']}_r0" for c in case["claims"]})
+    # A faithful case: the relation of what cites a passage, the faithful Choice of what is labelled.
+    case = json.loads((root / "faithful.json").read_text(encoding="utf-8"))["cases"][5]
+    state, questions = calibration.faithful_request(case)
+    assert set(questions) == {"relation_c1", "faithful_c2", "faithful_c3", "faithful_c4"}
+    assert state["claims"][1]["premises"] == ["c1"] and state["conversation"] == ""
+    adding = [({"choice": pick, "confidence": c, "probabilities": {pick: c, "adds": 1 - c}}, label)
+              for pick, c, label in [("faithful", 0.95, "faithful")] * 4 + [("faithful", 0.7, "adds")] * 2
+              + [("adds", 0.9, "adds")] * 2]
+    rule, report = calibration.fit_relation(adding, calibration.faithful_outcome, "faithful")
+    assert report["provisional_counts"]["false_acceptance"] == 2 and report["counts"]["false_acceptance"] == 0
 
 
 # -- presentation ------------------------------------------------------------------------
@@ -583,6 +636,19 @@ def test_a_presentation_may_drop_a_fact_but_never_add_one():
     assert translate.kept("Port 8791 is not open.", "8791 포트는 열려 있지 않다.", keep, words=True)
     assert not translate.kept("Port 8791 is not open.", "8791 포트는 열려 있다.", keep, words=True)
     assert not translate.kept("Port 8791 is open.", "8791 포트는 열려 있지 않다.", keep, words=True)
+
+
+def test_en_ko_is_shown_examples_that_pass_the_overlays_own_check():
+    # Review round 2 (P1): a swapped negation or an antonym passes every check code can make, so the
+    # translator is shown how not to make them; the overlay still says it is an unchecked translation.
+    pairs, version = translate.examples()
+    assert len(pairs) >= 15 and version != "none"
+    keep = translate.glossary()[0]
+    for p in pairs:
+        assert translate.kept(p["en"], p["ko"], keep, words=True), p
+    told = translate.instruction(translate.EN_KO, {})
+    assert all(p["en"] in told and p["ko"] in told for p in pairs)
+    assert "Korean:" not in translate.instruction(translate.KO_EN, {}), "ko->en's prompt and cache stay as they were"
 
 
 def test_a_checked_overlay_refuses_a_rendering_that_changes_a_number(monkeypatch):

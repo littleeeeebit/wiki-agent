@@ -1,7 +1,7 @@
 {
  "schema": "jev-policy/1",
  "model": "jev-1.13.0",
- "prompt_version": "10e838d6121c89fe",
+ "prompt_version": "efb3ad760d7f7180",
  "normalization_version": "original_english",
  "dataset": {
   "path": "eval/jev/relation.json",
@@ -13,6 +13,11 @@
    "path": "eval/jev/answers.json",
    "sha256": "ec4c96c1e167ccff1f7a55c52db2b043ae98d9bf9dd78644920a53231ca7d573",
    "pairs": 42
+  },
+  "faithful": {
+   "path": "eval/jev/faithful.json",
+   "sha256": "0821a8709f8c4e35ca0c19e398b6625a68123536e9b86f477d721ef0dff0bea8",
+   "claims": 30
   }
  },
  "rules": {
@@ -21,6 +26,10 @@
    "margin": 0.2
   },
   "answers": {
+   "confidence": 0.6,
+   "margin": 0.2
+  },
+  "faithful": {
    "confidence": 0.6,
    "margin": 0.2
   }
@@ -63,14 +72,33 @@
     "mislabelled": 4,
     "right": 32
    }
+  },
+  "faithful": {
+   "n": 30,
+   "faithful": 13,
+   "fitted": true,
+   "cost": 3,
+   "counts": {
+    "false_acceptance": 0,
+    "false_rejection": 3,
+    "mislabelled": 0,
+    "right": 27
+   },
+   "provisional_cost": 3.0,
+   "provisional_counts": {
+    "false_acceptance": 0,
+    "false_rejection": 3,
+    "mislabelled": 0,
+    "right": 27
+   }
   }
  },
  "costs": {
-  "requests": 10,
-  "input_tokens": 18779,
-  "output_tokens": 3410,
-  "elapsed_ms": 2258
+  "requests": 20,
+  "input_tokens": 31274,
+  "output_tokens": 5019,
+  "elapsed_ms": 4854
  },
- "fitted_at": "2026-09-27T08:43:48+00:00",
+ "fitted_at": "2026-09-27T09:05:47+00:00",
  "note": "Error rates on the relation calibration split only; not a calibration claim. False acceptance (an unsupported claim accepted as supported) and false rejection are counted apart. Stage 10 holds the held-out evaluation."
 }

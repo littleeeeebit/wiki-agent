@@ -49,3 +49,11 @@ Source: "Three tasks appear open based on filenames; their behavior is undefined
 Explain: "Three tasks appear unfinished, judging only by the names of their records.
 The answer does not explain what those tasks do, and their status is not confirmed."
 Never invent meanings for the task names.
+
+Source: "Access was denied because the token had expired."
+Explain: "The key used to get in had run out, so the request was refused."
+Never say: "Access was granted" or "the token is still valid."
+
+Source: "Port 8791 is not open; port 8787 is open."
+Explain: "Of the two doors the program listens on, 8787 is open and 8791 is closed."
+Never move the "not" to the other port.

@@ -87,6 +87,9 @@ CACHE = Path(
     os.environ.get("TRANSLATE_CACHE") or (ROOT / "raw" / "translate-cache.sqlite3")
 )
 GLOSSARY = HERE / "markers" / "glossary.toml"
+# What en->ko is shown before it translates: sentences whose meaning a careless
+# rendering flips — a negation moved to the other clause, denied read as granted.
+EXAMPLES = HERE / "markers" / "examples.json"
 
 # The key lives beside the repository rather than in the machine's environment.
 # A user-level `GEMINI_API_KEY` is inherited by every process on the box, and
@@ -156,6 +159,18 @@ def glossary() -> tuple[tuple[str, ...], dict[str, str], str]:
     keep = tuple(str(x) for x in (data.get("keep_korean") or ()))
     fixed = {str(k): str(v) for k, v in (data.get("fixed") or {}).items()}
     return keep, fixed, hashlib.sha256(raw).hexdigest()[:12]
+
+
+def examples() -> tuple[list[dict], str]:
+    """`(pairs, version)`: the en->ko examples `{en, ko}`, and a hash of the
+    file for the cache key, as the glossary's. A missing or broken file means none."""
+
+    try:
+        raw = EXAMPLES.read_bytes()
+        pairs = [{"en": str(p["en"]), "ko": str(p["ko"])} for p in json.loads(raw.decode("utf-8"))["pairs"]]
+    except Exception:
+        return [], "none"
+    return pairs, hashlib.sha256(raw).hexdigest()[:12]
 
 
 def _mask(text: str, keep: tuple[str, ...]) -> tuple[str, list[str], list[str]]:
@@ -245,6 +260,13 @@ def instruction(direction: str, fixed: dict[str, str]) -> str:
     ]
     if terms:
         lines += ["", "Translate these terms exactly this way:", "  " + ", ".join(terms)]
+    shown = examples()[0] if direction == EN_KO else []
+    if shown:
+        lines += ["", "- Keep each negation on the statement it negates, and each verb's direction: denied is",
+                  "  never granted, disabled never enabled, before never after. Keep every number, bound,",
+                  "  condition, scope, degree of certainty, and who does what.",
+                  "", "Examples of correct renderings. Match their care, not their wording:"]
+        lines += [f"English: {p['en']}\nKorean: {p['ko']}" for p in shown]
     return "\n".join(lines)
 
 
@@ -524,6 +546,8 @@ def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
 def _translate(texts: list[str], direction: str, deadline: float, accept=None,
                held: dict[str, str] | None = None) -> list[tuple[str, str]]:
     keep, fixed, version = glossary()
+    if direction == EN_KO:
+        version += "/x" + examples()[1]   # the examples are part of en->ko's prompt; ko->en keys stay as they were
     out = [(text, "skipped") for text in texts]
 
     wanted = [i for i, t in enumerate(texts) if worth_translating(t, direction)]
@@ -633,7 +657,8 @@ SPELLED = re.compile(r"\b(" + "|".join(WORDS) + r")\b", re.I)
 # 9 of 50 real paragraphs where presence drifted on 3. A rewrite (the plain
 # explanation) restructures too freely for either to mean anything.
 # ponytail: presence, so a paragraph negating twice can lose one unseen; a model judge if that is ever seen.
-NEGATION = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot)\b|n't\b|않|안 |못|없|아니|아닌", re.I)
+NEGATION = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot|unless)\b|n't\b|않|안 |못|없|아니|아닌",
+                      re.I)
 
 
 def spelled(text: str) -> collections.Counter:

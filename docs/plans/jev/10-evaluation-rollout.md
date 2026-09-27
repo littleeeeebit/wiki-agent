@@ -21,8 +21,12 @@ The 60 calibration intents replace stage 6's 35-case synthetic split
 the repair and relation Choices, before the held-out run. The relation Choice
 has its own split and artifact (`eval/jev/relation.json`,
 `eval/jev/relation-policy.json`, `--relation`): stage 7 fitted it on 39
-synthetic claim–evidence pairs; the calibration intents' drafted claims replace
-them, and false acceptance is reported on held-out claims apart from false rejection.
+synthetic claim–evidence pairs, and beside it the answers Choice on 42 and the
+faithful Choice (recommendations and direct-run text) on 30 of its own
+(`eval/jev/answers.json`, `eval/jev/faithful.json`); the calibration intents'
+drafted claims replace them, and false acceptance is reported on held-out claims
+apart from false rejection. Stage 7's fits only tighten the provisional 0.6/0.2;
+loosening one is this stage's call, on held-out false acceptance.
 
 Cover these categories in both splits: direct transformation/no retrieval,
 explicit factual retrieval, source routing, indirect graph bridges, multi-part

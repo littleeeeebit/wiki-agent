@@ -1,4 +1,6 @@
-"""How a source relates to a claim: the relation Choice (stage 7 of `docs/plans/jev/`).
+"""How a source relates to a claim: the relation Choice (stage 7 of `docs/plans/jev/`),
+and beside it whether a claim answers the question (`answers`) and states only
+what its grounds do (`faithful`).
 
 A drafted answer's factual claims are judged against the passages they cite:
 supports, contradicts, or insufficient. One question a claim, all of them in
@@ -42,16 +44,33 @@ ANSWER_PROMPT = ("Does claim {id}, taken on its own, give what requirement {req}
 ANSWER_OPTIONS = {"answers": "It gives what the requirement asks for.",
                   "partly": "It gives part of what the requirement asks for, not all of it.",
                   "no": "It does not give what the requirement asks for."}
-VERSION = hashlib.sha256(json.dumps([PROMPT, OPTIONS, ANSWER_PROMPT, ANSWER_OPTIONS],
-                                    sort_keys=True).encode()).hexdigest()[:16]
+# Whether a claim no passage is asked about states a fact its grounds do not:
+# a recommendation over the claims it names as premises, a direct run's text
+# over the conversation. Code catches a new number; only a reader catches a
+# new owner.
+FAITHFUL = ("faithful", "adds", "contradicts")
+FAITHFUL_PROMPT = ("Does claim {id} state any fact its grounds do not? Its grounds are the claims listed in its "
+                   "premises; a claim with no premises is grounded only in the conversation. A fact is a number, "
+                   "name, owner, path, place, time, setting, behaviour, condition or outcome. Advice on what to do, "
+                   "wording, greetings and courtesy are not facts, but every number, name, path or setting advice "
+                   "mentions must come from its grounds. A fact the grounds only make plausible is not stated by "
+                   "them.")
+FAITHFUL_OPTIONS = {"faithful": "Every fact it states is stated by its grounds.",
+                    "adds": "It states a fact its grounds do not state.",
+                    "contradicts": "It states something its grounds contradict."}
+VERSION = hashlib.sha256(json.dumps([PROMPT, OPTIONS, ANSWER_PROMPT, ANSWER_OPTIONS, FAITHFUL_PROMPT,
+                                     FAITHFUL_OPTIONS], sort_keys=True).encode()).hexdigest()[:16]
 
 
-def state(question: str, passages: list[dict], claims: list[dict], requirements: list[dict] = ()) -> dict:
+def state(question: str, passages: list[dict], claims: list[dict], requirements: list[dict] = (),
+          conversation: str = "") -> dict:
     """What Jev reads: the English question, the passages `{id, text[, coverage]}`,
-    each claim `{id, text, cites}` naming the passage ids it rests on, and
-    the question's parts `{id, text}`."""
+    each claim `{id, text, cites, premises}` naming the passage ids and the
+    earlier claims it rests on, the question's parts `{id, text}`, and the
+    conversation a direct run's text may restate."""
 
-    return {"question": question, "passages": passages, "claims": claims, "requirements": list(requirements)}
+    return {"question": question, "passages": passages, "claims": claims, "requirements": list(requirements),
+            "conversation": conversation}
 
 
 def questions(claim_ids: list[str]) -> dict:
@@ -68,6 +87,21 @@ def coverage(pairs: list[tuple[str, str]]) -> dict:
     return {f"answers_{cid}_{rid}": {"decision": "answers", "candidate": cid,
                                      "question": choice(ANSWER_PROMPT.format(id=cid, req=rid), dict(ANSWER_OPTIONS))}
             for cid, rid in pairs}
+
+
+def grounds(claim_ids: list[str]) -> dict:
+    """A `faithful` Choice per claim id, for `decision.request`."""
+
+    return {f"faithful_{cid}": {"decision": "faithful", "candidate": cid,
+                                "question": choice(FAITHFUL_PROMPT.format(id=cid), dict(FAITHFUL_OPTIONS))}
+            for cid in claim_ids}
+
+
+def faithful(pol: Policy, answer: dict) -> str:
+    """`faithful`, `adds` or `contradicts` when the policy accepts the choice;
+    `uncertain` when it does not — which publishes nothing."""
+
+    return answer["choice"] if verdict(pol, "faithful", answer) == "yes" else "uncertain"
 
 
 def answered(pol: Policy, answer: dict) -> str:

@@ -972,8 +972,8 @@ MAX_CLAIMS = 24
 MAX_SET = 6
 # One verification's time. The host's drafting before it is the host's own turn.
 VERIFY_SECONDS = 20.0
-# Why a claim was rejected, as the repair is told. Every one but the last two
-# is code's, found before any judgment; a repair may mend these and `contradicted`.
+# Why a claim was rejected, as the repair is told. Every one but the last three
+# is code's, found before any judgment; a repair may mend all but `unsupported`.
 REJECTIONS = {
     "malformed": "the claim does not follow the draft schema",
     "not_english": "text_en is not English",
@@ -988,7 +988,10 @@ REJECTIONS = {
     "direct_mode": "no retrieval was run, so no source_fact may be stated",
     "direct_text": "retrieval ran, so the answer is source_fact claims; direct_text is only for a run without it",
     "new_fact": "direct_text may restate the conversation, but this one states a number or identifier it does not",
-    "bad_premises": "premises must be earlier source_fact or inference claims",
+    "bad_premises": "premises must be earlier source_fact or inference claims, and an inference or a "
+                    "recommendation needs at least one",
+    "unfaithful": "it states a fact its grounds do not — a recommendation's premises, or for direct_text the "
+                  "conversation",
     "contradicted": "the cited passages contradict it",
     "unsupported": "the cited passages do not state it",
 }
@@ -1170,9 +1173,8 @@ class Grounding:
             # Neither cites a passage: a recommendation's facts are its premises.
             if cited or quotes or (kind == "direct_text" and claim["premises"]):
                 return "malformed"
-            # Nothing checks a direct_text against evidence, so it is published only where no evidence was
-            # looked for, and only restating what was said: a fact under that label is caught by its
-            # numbers and identifiers.
+            # A direct_text is published only where no evidence was looked for, and only restating what was
+            # said: a new number or identifier is caught here, any other new fact by Jev's `faithful`.
             if kind == "direct_text" and not self.dossier.get("direct"):
                 return "direct_text"
             if kind == "direct_text" and translate.added(self.said, claim["text_en"]):
@@ -1181,7 +1183,7 @@ class Grounding:
             return "direct_mode"
         if claim["premises"] and not all(earlier.get(p, {}).get("kind") in FACTUAL for p in claim["premises"]):
             return "bad_premises"
-        if kind == "inference" and not claim["premises"]:
+        if kind in ("inference", "recommendation") and not claim["premises"]:
             return "bad_premises"
         if kind not in FACTUAL:
             return None
@@ -1223,8 +1225,7 @@ class Grounding:
         for cid, claim in claims.items():
             earlier = {k: claims[k] for k in list(claims)[:list(claims).index(cid)]}
             reason = self.problem(claim, earlier)
-            state = ("rejected" if reason else "pending" if claim["kind"] in FACTUAL
-                     else "accepted" if claim["kind"] == "direct_text" else "waiting")
+            state = "rejected" if reason else "pending" if claim["kind"] in FACTUAL else "waiting"
             checks[cid] = {"state": state, "reason": reason, "support": None}
         self.judge(claims, checks, gen)
         for cid, claim in claims.items():   # in order: premises come first
@@ -1255,9 +1256,11 @@ class Grounding:
         return seen
 
     def judge(self, claims: dict, checks: dict, gen: dict) -> None:
-        """One Jev request for every factual claim still pending; each
-        claim's outcome written into `checks`. A failure leaves them
-        unresolved and says why — never a rejection."""
+        """One Jev request for every factual claim still pending, every
+        claim that cites nothing (`faithful`) and every part of the question a
+        claim names (`answers`); each outcome written into `checks` and
+        `gen["coverage"]`. A failure leaves them unresolved and says why —
+        never a rejection."""
 
         asked, sets = [], {}
         for cid, claim in claims.items():
@@ -1278,36 +1281,42 @@ class Grounding:
             asked.append(cid)
         # Which part of the question each claim that could count answers: the drafter's `requirement_ids`
         # name the candidates, Jev says whether it answers them. Unasked, it answers nothing.
+        # Every claim code did not reject could count, since a recommendation needs premises and direct_text
+        # a direct run.
         pairs = [(cid, rid) for cid, claim in claims.items() if checks[cid]["state"] != "rejected"
-                 and (claim["kind"] in FACTUAL or claim["kind"] == "direct_text"
-                      or (claim["kind"] == "recommendation" and claim["premises"]))
                  for rid in claim["requirement_ids"]]
         gen["coverage"] = {f"{cid}:{rid}": "unasked" for cid, rid in pairs}
-        if not asked and not pairs:
+        # A recommendation and a direct run's text cite nothing: Jev reads them against their grounds instead.
+        bare = [cid for cid in claims if checks[cid]["state"] == "waiting"]
+        if not asked and not pairs and not bare:
             return
         why = ("normalization_failed" if not self.dossier.get("question_en")
                else "calls" if self.calls < 1 else None)
         if why:
-            for cid in asked:
+            for cid in asked + bare:
                 checks[cid].update(state="unresolved", reason="budget" if why == "calls" else "verification_unavailable")
             gen["coverage"] = dict.fromkeys(gen["coverage"], "budget" if why == "calls" else "unavailable")
             if why != "calls":
                 gen["unavailable"] = why
             return
         shown = list(dict.fromkeys(e for cid in asked for e in sets[cid][0]))
-        named = list(dict.fromkeys([*asked, *(cid for cid, _ in pairs)]))
+        wanted = {*asked, *(cid for cid, _ in pairs), *bare, *(p for cid in bare for p in claims[cid]["premises"])}
+        named = [cid for cid in claims if cid in wanted]
         state = decision.claims.state(
             self.dossier["question_en"],
             [{"id": e, "text": self.ids[e]["text_en"][:MAX_PASSAGE],
               **({"coverage": "truncated"} if len(self.ids[e]["text_en"]) > MAX_PASSAGE else {})} for e in shown],
-            [{"id": cid, "text": claims[cid]["text_en"], "cites": sets[cid][0] if cid in sets else []}
-             for cid in named],
-            [r for r in self.requirements if any(rid == r["id"] for _, rid in pairs)])
+            [{"id": cid, "text": claims[cid]["text_en"], "cites": sets[cid][0] if cid in sets else [],
+              "premises": claims[cid]["premises"]} for cid in named],
+            [r for r in self.requirements if any(rid == r["id"] for _, rid in pairs)],
+            self.said[-MAX_PASSAGE:] if any(claims[cid]["kind"] == "direct_text" for cid in bare) else "")
         versions = {str(self.ids[e]["translation"].get("version") or self.ids[e]["translation"]["status"]) for e in shown}
         budget = Budget(seconds=VERIFY_SECONDS, calls=self.calls, candidates=0, tokens=self.tokens,
                         cancel=self.cancel)
-        req = decision.request("verify", state, {**decision.claims.questions(asked), **decision.claims.coverage(pairs)},
-                               allowed=named + list(decision.claims.RELATIONS) + list(decision.claims.ANSWERS),
+        req = decision.request("verify", state, {**decision.claims.questions(asked), **decision.claims.coverage(pairs),
+                                                 **decision.claims.grounds(bare)},
+                               allowed=named + list(decision.claims.RELATIONS) + list(decision.claims.ANSWERS)
+                               + list(decision.claims.FAITHFUL),
                                model=self.cfg.model, prompt_version=decision.claims.VERSION,
                                policy_version=self.pol.version, normalization_version="|".join(sorted(versions)),
                                budget=budget, trace_id=self.run_id)
@@ -1316,20 +1325,22 @@ class Grounding:
         gen["decision"] = {"request_id": req["request_id"], "policy": self.pol.record(),
                            **{k: res[k] for k in ("status", "reason_code", "answers", "verdicts", "model", "usage",
                                                   "elapsed_ms", "cached")}}
-        for cid, rid in pairs:
-            gen["coverage"][f"{cid}:{rid}"] = (
-                "budget" if res["status"] in ("cancelled", "exhausted") else
-                "unavailable" if res["status"] not in ("decided", "uncertain") else
-                decision.claims.answered(self.pol, res["answers"][f"answers_{cid}_{rid}"]))
-        if pairs and res["status"] not in ("decided", "uncertain", "cancelled", "exhausted"):
+        down = ("budget" if res["status"] in ("cancelled", "exhausted") else
+                None if res["status"] in ("decided", "uncertain") else "verification_unavailable")
+        if down == "verification_unavailable":
             gen["unavailable"] = res["reason_code"] or res["status"]
+        for cid, rid in pairs:
+            gen["coverage"][f"{cid}:{rid}"] = ({"budget": "budget", "verification_unavailable": "unavailable"}.get(down)
+                                               or decision.claims.answered(self.pol, res["answers"][f"answers_{cid}_{rid}"]))
+        for cid in bare:
+            got = down or decision.claims.faithful(self.pol, res["answers"][f"faithful_{cid}"])
+            checks[cid]["support"] = got if got in decision.claims.FAITHFUL else None
+            if got != "faithful":   # a faithful one is settled with its premises, in `check`
+                checks[cid].update(state="rejected" if got in decision.claims.FAITHFUL else "unresolved",
+                                   reason="unfaithful" if got in decision.claims.FAITHFUL else got)
         for cid in asked:
-            if res["status"] in ("cancelled", "exhausted"):
-                checks[cid].update(state="unresolved", reason="budget")
-                continue
-            if res["status"] not in ("decided", "uncertain"):
-                checks[cid].update(state="unresolved", reason="verification_unavailable")
-                gen["unavailable"] = res["reason_code"] or res["status"]
+            if down:
+                checks[cid].update(state="unresolved", reason=down)
                 continue
             outcome = decision.claims.outcome(self.pol, res["answers"][f"relation_{cid}"])
             checks[cid]["support"] = outcome
@@ -1378,18 +1389,9 @@ class Grounding:
         shown = [cid for cid, c in checks.items() if c["state"] == "accepted"
                  or (baseline and c["state"] == "unresolved" and c["reason"] == "verification_unavailable")]
 
-        def counts(cid: str) -> bool:
-            """Whether an accepted claim answers what it names: a fact does, a
-            recommendation on accepted facts does, the question's own words only
-            in a direct run — so a fact passed off as direct_text answers nothing."""
-
-            kind = claims[cid]["kind"]
-            return (kind in FACTUAL or (kind == "recommendation" and bool(claims[cid]["premises"]))
-                    or (kind == "direct_text" and gen["direct"]))
-
         # A part is answered when Jev said a shown claim answers it — not when the claim says so.
         coverage = gen.get("coverage") or {}
-        said = {(cid, r): coverage.get(f"{cid}:{r}") for cid in shown if counts(cid) for r in claims[cid]["requirement_ids"]}
+        said = {(cid, r): coverage.get(f"{cid}:{r}") for cid in shown for r in claims[cid]["requirement_ids"]}
         answered = {r for (_cid, r), got in said.items() if got == "answers"}
         touched = answered | {r for (_cid, r), got in said.items() if got == "partly"}
         missing = [r for r in gen["requirements"] if r["id"] not in answered]
@@ -1406,7 +1408,7 @@ class Grounding:
                         "evidence_ids": [ids[e]["chunk_id"] for e in claims[cid]["evidence_ids"]],
                         "requirement_ids": claims[cid]["requirement_ids"], "premises": claims[cid]["premises"],
                         "support": ("supported" if checks[cid]["state"] == "accepted" and claims[cid]["kind"] in FACTUAL
-                                    else "unverified" if checks[cid]["state"] != "accepted" else "not_required")}
+                                    else "unverified" if checks[cid]["state"] != "accepted" else "faithful")}
                        for cid in shown],
             "uncertainty": [{"claim_id": cid, "reason": c["reason"]} for cid, c in checks.items()
                             if c["state"] == "unresolved" and cid not in shown],
@@ -1486,7 +1488,7 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
     failed turn raises out of it, and nothing is published."""
 
     run = Grounding(dossier, cfg, cancel, cache, evaluate,
-                    said="\n".join(filter(None, (question, dossier.get("question_en"), state))))
+                    said="\n".join(filter(None, (state, question, dossier.get("question_en")))))
     yield {"progress": "draft"}
     text = yield from generate(run.brief())
     yield {"progress": "verify"}
