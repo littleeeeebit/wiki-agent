@@ -2554,6 +2554,23 @@ def runs_root() -> Path:
     return decision.env_file().parent / "raw" / "knowledge"
 
 
+def redact(value, key: str | None):
+    """`value` with the key replaced in every string in it — the strings
+    only, so it never touches the structure around them. A key shorter than
+    `KEY_FLOOR` is no credential and cannot be told from ordinary text (a
+    test's `k` would take every `kind`'s k), so it is left."""
+
+    if len(key or "") < KEY_FLOOR:
+        return value
+    if isinstance(value, str):
+        return value.replace(key, "[redacted]")
+    if isinstance(value, dict):
+        return {k: redact(v, key) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [redact(v, key) for v in value]
+    return value
+
+
 def budget_left(budget: Budget) -> dict:
     used, limits = budget.used, budget.limits
     return {"seconds": round(budget.left(), 1), "calls": limits["calls"] - used["calls"],
@@ -2635,21 +2652,7 @@ class Run:
         return self.put({"kind": "step", "stage": stage, "status": status, **payload})
 
     def redact(self, value):
-        """`value` with the key replaced in every string in it — the strings
-        only, so it never touches the structure around them. A key shorter
-        than `KEY_FLOOR` is no credential and cannot be told from ordinary
-        text (a test's `k` would take every `kind`'s k), so it is left."""
-
-        key = self.cfg.key
-        if len(key or "") < KEY_FLOOR:
-            return value
-        if isinstance(value, str):
-            return value.replace(key, "[redacted]")
-        if isinstance(value, dict):
-            return {k: self.redact(v) for k, v in value.items()}
-        if isinstance(value, list | tuple):
-            return [self.redact(v) for v in value]
-        return value
+        return redact(value, self.cfg.key)
 
     def seal(self) -> bool:
         """The answer's point of no return: False if a stop came first. A

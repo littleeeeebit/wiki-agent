@@ -8,6 +8,7 @@ are fakes. Every trace lands under the test's own `JEV_ENV` folder.
 
 import json
 import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -320,6 +321,30 @@ def test_a_stop_and_the_publication_never_interleave(tmp_path, isolated, active,
         v = run.summary["verification"]
         assert run.summary["outcome"] == (v["status"] if mode == "active" else "answered")
         assert "simple_start" not in kinds, "it only cuts the plain explanation"
+
+
+@pytest.mark.parametrize("mode", ["active", "shadow", "off"])
+def test_no_row_the_record_keeps_carries_the_key(tmp_path, isolated, active, mode):
+    isolated.write_text(f"TYPESAFE_API_KEY={KEY}\nWIKI_JEV_MODE={mode}\n", encoding="utf-8")
+    d, reply = mixed(tmp_path)
+    d = {**d, "trace": [{"fallback": f"401 for {KEY}"}]}
+    session, _sent = session_saying(reply)
+
+    def failing(*_):
+        yield Event("error", f"explanation failed for {KEY}")
+
+    screen = web()
+    with patch.object(chat, "prepare", retrieved(d)), patch.object(chat, "session", return_value=session), \
+         patch.object(chat, "explain", failing):
+        events = events_of(screen.post("/api/say/wiki", json={"text": "데몬 포트는?"}))
+        for _ in range(500):   # a shadow's record lands beside the turn
+            if mode != "shadow" or any(r["role"] == "retrieval" for r in chat.recall("wiki", include_context=True)):
+                break
+            time.sleep(0.01)
+    assert any(e["kind"] == "simple_error" for e in events)
+    stored = "".join(p.read_text(encoding="utf-8") for p in (tmp_path / "chat").rglob("*") if p.is_file())
+    assert KEY not in json.dumps(events) + screen.get("/api/log/wiki").text + stored
+    assert "[redacted]" in stored and ("fallback" in stored or mode == "off")
 
 
 def test_a_run_the_server_went_down_with_ends_interrupted(tmp_path, active):

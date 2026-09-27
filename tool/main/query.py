@@ -520,7 +520,8 @@ def shadow(cid: str, query: str, repo: Path, context: str, cfg: decision.Config)
             dossier = prepare(query, repo, context, cfg=cfg)
         except Exception as exc:  # noqa: BLE001 — a shadow never touches the turn
             dossier = {"status": "fallback", "trace": [{"fallback": type(exc).__name__}]}
-        remember(cid, "retrieval", "Jev shadow decision", repo=repo, dossier=dossier, shadow=True)
+        remember(cid, "retrieval", "Jev shadow decision", repo=repo, dossier=knowledge.redact(dossier, cfg.key),
+                 shadow=True)
 
     threading.Thread(target=record, daemon=True).start()
 
@@ -699,6 +700,13 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
     focus let go, however it ends."""
 
     put = run.put
+
+    def keep(*args, **extra) -> None:
+        """A row of this run's record — `/api/log` serves it — with the key
+        replaced, as in the run's events."""
+
+        remember(*run.redact(args), **run.redact(extra))
+
     reply: list[str] = []
     failed = ""
     code = ""
@@ -724,7 +732,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             sent = "Since your last turn:\n" + "\n".join(f"- {r['text']}" for r in results) + "\n\n" + sent
             flags.setdefault("said", text)
         # The run's repository, not a read of the selection: this thread writes its record whatever happens after.
-        remember(cid, "user", sent, repo=run.repo, run_id=run.id, **flags)
+        keep(cid, "user", sent, repo=run.repo, run_id=run.id, **flags)
         jev = run.cfg
         dossier = None
         if jev.mode != "off":
@@ -734,7 +742,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             context = "\n".join(f"{r['role']}: {r.get('said', r['text'])}" for r in prior)
             if jev.mode == "active":
                 dossier = prepare(text or sent, run.repo, context, cfg=jev, run=run)
-                remember(cid, "retrieval", "Jev retrieval decision", repo=run.repo, dossier=dossier, run_id=run.id)
+                keep(cid, "retrieval", "Jev retrieval decision", repo=run.repo, dossier=dossier, run_id=run.id)
             else:
                 shadow(cid, text or sent, run.repo, context, jev)
         # A display-time match against the relevant rules. Not a check
@@ -772,7 +780,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                 put({"kind": "error", "text": failed, "code": code, **exc.meta})
             else:
                 # The drafts are the run's own record, never the conversation's.
-                remember(cid, "draft", "Jev answer draft", repo=run.repo, record=out["record"], run_id=run.id)
+                keep(cid, "draft", "Jev answer draft", repo=run.repo, record=out["record"], run_id=run.id)
                 if not run.seal():
                     # Stopped while it was checked: nothing of it is published.
                     out = None
@@ -874,7 +882,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
     finally:
         try:
             if reply or failed:
-                remember(cid, "assistant", "".join(reply), run.redact(failed), repo=run.repo,
+                keep(cid, "assistant", "".join(reply), failed, repo=run.repo,
                          simple_text=simple, simple_error=simple_error, simple_meta=simple_meta,
                          provider="codex" if cfg["model"].startswith("codex:") else "claude", run_id=run.id,
                          **({"cancelled": True} if code == "cancelled" else {}),
