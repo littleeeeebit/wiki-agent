@@ -185,10 +185,12 @@ const CHECKED: Record<Verification['status'], string> = {
 }
 
 function Checked({ v }: { v: Verification }) {
-  // A direct run's answer cites nothing: it was checked against the conversation, not a source.
-  const sourced = v.status === 'complete' && Boolean(v.citations?.length)
+  // An answer that cites nothing was checked against the conversation, not a source — whole or in part.
+  const conversational = (v.status === 'complete' || v.status === 'partial') && !v.citations?.length
+  const sourced = v.status === 'complete' && !conversational
   const line = v.degraded ? '미검증 답 · 검증이 안 돼 기본 모드로 싣는다'
-    : v.status === 'complete' && !sourced ? '대화로 답함 · 출처를 찾지 않았고, 대화에 있던 내용만 옮겼다'
+    : conversational
+      ? `${v.status === 'complete' ? '대화로 답함' : '대화로 일부 답함'} · 출처를 찾지 않았고, 대화에 있던 내용만 옮겼다`
       : CHECKED[v.status]
   const missing = v.status === 'complete' ? 0 : v.missing_requirements.length
   return (
