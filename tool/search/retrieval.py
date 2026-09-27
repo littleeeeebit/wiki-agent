@@ -102,6 +102,12 @@ def normal(text: str) -> str:
     return " ".join(str(text).split()).casefold()
 
 
+def text_key(chunk: dict) -> str:
+    """What makes two chunks one candidate: the same text, whitespace and case aside."""
+
+    return evidence.digest(normal(chunk["text"]))
+
+
 # ---- the contracts ----------------------------------------------------------------
 
 def request(repo_id: str, query: str, *, query_en: str | None = None,
@@ -255,17 +261,19 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
     def relevance(i: int) -> float:
         return max([s.get(i, 0.0) for s in lexical], default=0.0)
 
-    # Chunks with the same text are one candidate; the best ranked keeps the others' ids.
-    twins: dict[str, int] = {}
-    duplicates: dict[int, list[str]] = defaultdict(list)
+    # Chunks with the same text are one candidate: whichever a lane returns
+    # carries the ids of every other the request may see, so no later round
+    # returns one of them as new.
+    same: dict[str, list[int]] = defaultdict(list)
+    for i in sorted(open_):
+        same[text_key(chunks[i])].append(i)
+    twins: set[str] = set()
     ranked = []
     for i in sorted(fused, key=lambda i: (-fused[i], i)):
-        key = evidence.digest(normal(chunks[i]["text"]))
-        if key in twins:
-            duplicates[twins[key]].append(chunks[i]["chunk_id"])
-            continue
-        twins[key] = i
-        ranked.append(i)
+        key = text_key(chunks[i])
+        if key not in twins:
+            twins.add(key)
+            ranked.append(i)
     position = {i: n for n, i in enumerate(ranked)}
 
     budget = req["graph_budget"]
@@ -288,8 +296,7 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
     # Earlier rounds spent the allowance this one would have used.
     truncated: list[str] = ["candidates"] if req["limit"] and slots < req["limit"] else []
     taken = set(selected)
-    walk = dict(index=index, req=req, repos=repos, seen=seen, relevance=relevance, paths=paths, cancel=cancel,
-                duplicates=duplicates)
+    walk = dict(index=index, req=req, repos=repos, seen=seen, relevance=relevance, paths=paths, cancel=cancel)
     # The snapshot's graph was built from other chunks than its own: nothing is walked.
     if index.graph is None and (req["context_of"] or budget):
         truncated.append("graph_stale")
@@ -325,7 +332,8 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
     out, scores = [], {}
     for i, lane in lanes_of:
         chunk_id = chunks[i]["chunk_id"]
-        out.append({**hit(chunks[i]), "lane": lane, "duplicates": duplicates.get(i, [])})
+        out.append({**hit(chunks[i]), "lane": lane,
+                    "duplicates": [chunks[j]["chunk_id"] for j in same[text_key(chunks[i])] if j != i]})
         reached = found.get(i, []) + context.get(i, [])
         scores[chunk_id] = {
             "rrf": {"rank": position[i] + 1, "score": round(fused[i], 5)} if i in position else None,
@@ -347,7 +355,7 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
 
 def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: list[dict], cancel,
            starts: list[str], kinds: tuple[str, ...], hops: int, fanout: int, room: int, taken: set[int],
-           lane: str, duplicates: dict[int, list[str]]) -> tuple[dict[int, list[int]], list[str]]:
+           lane: str) -> tuple[dict[int, list[int]], list[str]]:
     """Walk adopted edges of `kinds` from `starts` (chunk or entity ids).
     Returns `{chunk index: [indexes into paths]}` for every chunk reached,
     new or already `taken`, and why the walk stopped short, if it did.
@@ -362,8 +370,8 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
     visited set is chunk ids, which carry their source's revision, and
     entity ids, so a cycle ends. Only `room` chunks not already taken may be
     added; one whose text a taken or reached chunk already holds costs none —
-    its id joins that one's `duplicates` and its path corroborates it. Every
-    path, reached or refused, goes into `paths`.
+    its path corroborates that one, which carries its id. Every path,
+    reached or refused, goes into `paths`.
     """
 
     chunks, graph = index.chunks, index.graph
@@ -374,11 +382,8 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
     found: dict[int, list[int]] = {}
     truncated: list[str] = []
 
-    def text_of(i: int) -> str:
-        return evidence.digest(normal(chunks[i]["text"]))
-
     # Each text a candidate already holds, and which candidate holds it.
-    held = {text_of(i): i for i in taken}
+    held = {text_key(chunks[i]): i for i in taken}
 
     def record(trail: list[dict], status: str) -> int:
         paths.append({"lane": lane, "seed": trail[0]["node"], "to": trail[-1]["node"], "hops": len(trail) - 1,
@@ -477,10 +482,8 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
                     record(path, "seen")
                 elif i in taken or i in found:
                     found.setdefault(i, []).append(record(path, "corroborated"))
-                elif text_of(i) in held:
-                    twin = held[text_of(i)]
-                    duplicates[twin].append(tid)
-                    found.setdefault(twin, []).append(record(path, "corroborated"))
+                elif text_key(chunks[i]) in held:
+                    found.setdefault(held[text_key(chunks[i])], []).append(record(path, "corroborated"))
                 elif room <= 0:
                     # The allowance is spent: one refusal says so, and the walk ends.
                     record(path, "budget")
@@ -489,7 +492,7 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
                 else:
                     room -= 1
                     found[i] = [record(path, "discovered")]
-                    held[text_of(i)] = i
+                    held[text_key(chunks[i])] = i
                 taken_here += 1
                 following.append((tid, path))
         frontier = following

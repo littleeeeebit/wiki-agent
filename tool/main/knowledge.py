@@ -291,12 +291,10 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
                full: bool = False, cfg: decision.Config | None = None, budget: Budget | None = None,
                gate: Gate | None = None) -> dict:
     """arXiv papers into `project`: a search, or identifiers. Inside a run,
-    `budget` is the run's, and grading spends from it; each paper is written
-    through `gate`, which a caller that stops waiting closes (`bounded`), so
-    nothing arrives after it returned.
-
-    ponytail: with `full` the gate is held across a PDF fetch, which would
-    hold the closing caller that long; a repair never reads full text.
+    `budget` is the run's, and grading spends from it; each paper's record
+    is put through `gate`, which a caller that stops waiting closes
+    (`bounded`), so no record arrives after it returned. What is read before
+    the put — content kept by its hash — names no record until then.
 
     Each paper's abstract is read and indexed as `abstract_only`; with `full`,
     its PDF too, and only a successful extraction makes it `full_text`. With
@@ -317,18 +315,20 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
     acting = cfg.mode == "active"
     out = []
 
-    def paper(store, i: int, entry: dict) -> dict:
+    def paper(store, i: int, entry: dict) -> tuple[dict, bool]:
+        """`(record, whether to put it)`."""
+
         origin = f"arxiv:{entry['arxiv_id']}"
         record = store.get(sources.new(root, "paper", origin)["source_id"])
         if unwanted(record):
-            return record
+            return record, False
         record = record or sources.new(root, "paper", origin)
         record.update(title=entry["title"], authors=entry["authors"], published_at=entry["published"],
                       license_note=LICENSE_ARXIV, relevance=grades.get(i, record["relevance"]))
         edition = f"{entry['arxiv_id']}{entry['version']}"
         if acting and grades.get(i) is not None and grades[i] <= NOT_RELEVANT and record["content_hash"] is None:
             record.update(status="discovered", revision=edition)
-            return store.put(record)
+            return record, True
         try:
             # A full text already read of this edition is not traded for its abstract.
             if not (record["revision"] == edition and record["coverage"] in ("full_text", "partial")):
@@ -341,14 +341,15 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
                           form="pages", cite=f"arxiv:{edition}")
         except providers.FetchError as error:
             failed(record, error)
-        return store.put(record)
+        return record, True
 
     with records(project) as store:
         for i, entry in enumerate(entries):
+            record, put = paper(store, i, entry)
             with gate.passing() if gate else contextlib.nullcontext(True) as open_:
                 if not open_:
                     break
-                out.append(paper(store, i, entry))
+                out.append(store.put(record) if put else record)
     return {"query": query, "trace": trace,
             "papers": [sources.brief(r) | {"relevance": r["relevance"], "error": r["error"]} for r in out]}
 
@@ -1032,7 +1033,9 @@ def bounded(work, budget: Budget, gate: Gate | None = None):
     """`work()`'s value, or `None` once the budget is spent or cancelled.
     What is still running then is abandoned in its thread, as `search.prepare`
     abandons a slow run, and `gate`, the one its writes pass through, is
-    closed before this returns.
+    closed before this returns — waiting out at most one write in progress,
+    which is why a write is kept to the put. A value that arrives while
+    closing is past the budget, and is `None` too.
 
     ponytail: an abandoned model session or fetch runs to its own end; bound
     in-flight work per process if that ever piles up (stage 6).
@@ -1052,8 +1055,10 @@ def bounded(work, budget: Budget, gate: Gate | None = None):
     worker.start()
     while worker.is_alive() and budget.left() > 0 and not budget.cancel.is_set():
         worker.join(min(0.05, budget.left()))
-    if gate is not None and worker.is_alive():
-        gate.close()
+    if worker.is_alive():
+        if gate is not None:
+            gate.close()
+        return None
     return got[0] if got else None
 
 

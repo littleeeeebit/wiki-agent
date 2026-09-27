@@ -639,3 +639,41 @@ def test_an_adjacent_section_with_the_text_of_another_costs_no_candidate(world):
     assert shared["heading_path"][-1] == "Shared" and len(shared["duplicates"]) == 1
     assert second["spent"] == 2 and second["truncated"] == []
     index.close()
+
+
+# ---- round 4 review -------------------------------------------------------------------
+
+@pytest.mark.parametrize("stop", ["deadline", "cancel"])
+def test_a_caller_that_stops_waiting_gets_nothing_though_the_write_it_waited_out_finished(stop):
+    from common.budget import Budget
+
+    gate = knowledge.Gate()
+
+    def work():
+        with gate.passing():
+            time.sleep(0.2)
+        return "written"
+
+    budget = Budget(seconds=0.05 if stop == "deadline" else 5, calls=1, candidates=40)
+    if stop == "cancel":
+        threading.Timer(0.05, budget.cancel.set).start()
+    assert knowledge.bounded(work, budget, gate) is None
+
+
+def test_a_twin_another_lane_returns_carries_the_id_of_the_one_ranked_first(world):
+    hub, repo = world
+    (repo / "docs/one.md").write_text("# One\n\n## Shared\n\nSame words here.\n", encoding="utf-8")
+    (repo / "docs/two.md").write_text("# Two\n\n## Anchor\n\nMira anchors this page.\n\n## Shared\n\n"
+                                      "Same words here.\n", encoding="utf-8")
+    index = index_of(hub, repo)
+    shared = {c["chunk_id"] for c in index.chunks if c["heading_path"][-1] == "Shared"}
+    req = retrieval.request(evidence.repo_id(repo), "Mira anchors page words", sources=["documents"], limit=1,
+                            max_candidates=4, graph=None)
+    first = retrieval.run(index.snapshot(), req)
+    assert first["chunks"][0]["heading_path"][-1] == "Anchor"
+    (context,), _ = retrieval.repair(req, first, "context", chunk_ids=[first["chunks"][0]["chunk_id"]])
+    second = retrieval.run(index.snapshot(), context)
+    assert [c["heading_path"][-1] for c in second["chunks"]].count("Shared") == 1
+    # Both ids are seen: no later round returns the same text as new.
+    assert len(shared) == 2 and shared <= set(second["seen_chunk_ids"])
+    index.close()
