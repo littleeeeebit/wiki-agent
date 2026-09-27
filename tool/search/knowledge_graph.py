@@ -651,15 +651,18 @@ EDGE_COLUMNS = "edge_id, repo_id, from_id, to_id, kind, directed, origin, confid
 
 class Graph:
     """Read access to the graph of the generation a `Store` reads — for
-    retrieval (stage 5) and for checking it. Chunk-level: the map's
-    document-level view is `projection`."""
+    retrieval (stage 5, `retrieval.expand`) and for checking it. Chunk-level: the map's
+    document-level view is `projection`. With `gen` it reads that generation
+    only, so a retrieval that holds one set of chunks walks their graph even
+    when another is published meanwhile."""
 
-    def __init__(self, store):
-        self.store = store
+    def __init__(self, store, gen: int | None = None):
+        self.store, self.gen = store, gen
 
     def rows(self, sql: str, args: list) -> list[tuple]:
         with self.store.lock:
-            return self.store.db.execute(sql, [self.store.reading(), *args]).fetchall()
+            gen = self.store.reading() if self.gen is None else self.gen
+            return self.store.db.execute(sql, [gen, *args]).fetchall()
 
     def nodes(self, ids: list[str] | None = None) -> dict[str, dict]:
         """Every node, or those of `ids`, by id."""

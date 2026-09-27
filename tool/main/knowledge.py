@@ -24,10 +24,12 @@ from pathlib import Path
 import decision
 import translate
 from agent import oneshot
+from common import settings
 from common.budget import QUESTION, Budget
 from common.language import language
-from search import HUB, evidence_store, knowledge_graph, local_index, providers, records, resolve, sources
+from search import HUB, evidence_store, knowledge_graph, local_index, providers, records, resolve, retrieval, sources
 from search import prepare as controlled
+from search import retrieve as retrieve_from_daemon
 from workspace import create, folder_for
 from session_state import active_page, decisions, plans
 from session_state import run as git
@@ -616,9 +618,7 @@ def propose(passages: list[dict], model: str = "") -> tuple[dict[str, dict], str
             raise RuntimeError(ev.text)
         if ev.kind == "done":
             answer, used = ev.text, ev.meta.get("model") or used
-    body = answer.strip()
-    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", body, re.S)
-    data = json.loads(fenced.group(1) if fenced else body)
+    data = parsed(answer)
     items = data.get("passages") if isinstance(data, dict) else None
     if not isinstance(items, list):
         raise ValueError("the proposal has no passages")
@@ -859,3 +859,164 @@ def check_graph(project: str | Path | None) -> dict:
         return knowledge_graph.verify(index.graph, index.chunks)
     finally:
         index.close()
+
+
+# ---- retrieval rounds (stage 5 of `docs/plans/jev/`) ------------------------------
+#
+# `search.retrieval` ranks, walks and repairs within one index; here the
+# question gets its English, the settings decide the graph lane, and a repair
+# that needs another pipeline — a model's subqueries, an arXiv search — is
+# done before its round is sent. Every round of one question spends one
+# `Budget`, and every request carries its deadline.
+
+SUBQUERY_PROMPT = "retrieval-subqueries.md"
+# How long one round waits for the daemon, as the controller does (`search.controller.SEARCH_TIMEOUT`).
+ROUND_SECONDS = 3.0
+# Papers one external repair asks arXiv for.
+REPAIR_PAPERS = 3
+
+
+def graph_enabled() -> bool:
+    """The graph lane's switch: `WIKI_GRAPH_RETRIEVAL=off` in the hub's
+    `.env` (or the environment) restores RRF alone. On by default."""
+
+    try:
+        found = settings.entries(decision.env_file())
+    except (OSError, ValueError):
+        found = {}
+    return (settings.pick(found, "WIKI_GRAPH_RETRIEVAL")[0] or "on").strip().lower() != "off"
+
+
+def available(root: Path | None) -> list[str]:
+    """The sources a question in `root` may search: the local three, and each
+    external family holding something enabled and read."""
+
+    if root is None:
+        return ["hub"]
+    with records(root) as store:
+        held = {r["kind"] for r in store.all() if r["enabled"] and r["status"] in sources.SEARCHABLE}
+    return ["hub", "documents", "memory", *(f for f, kind in sources.FAMILIES.items() if kind in held)]
+
+
+def retrieve(query: str, project: str | Path | None, k: int = 8, *, sources_: list[str] | None = None,
+             graph: bool | None = None, budget: Budget | None = None, cfg: decision.Config | None = None) -> dict:
+    """Round 1 for `query`: its RetrievalRequest and RetrievalResult, as
+    `{"request", "result"}`, `result` `None` when nothing could be searched.
+
+    The question's English goes in beside it when Jev is on — normalization
+    sends it to the translator, which mode off never does. `graph` overrides
+    the switch (`graph_enabled`).
+    """
+
+    cfg = cfg or decision.config()
+    budget = budget or Budget(**QUESTION)
+    root = Path(project).resolve() if project else None
+    query_en = None
+    if cfg.mode != "off":
+        asked = english([query], min(ROUND_SECONDS, budget.left()), project=project)[0]
+        query_en = asked["text"] if asked["status"] in ("original_english", "translated") else None
+    on = graph_enabled() if graph is None else graph
+    req = retrieval.request(knowledge_graph.evidence.repo_id(root or HUB), query, query_en=query_en,
+                            sources=sources_ or available(root), limit=k, seconds=budget.left(),
+                            graph=retrieval.GRAPH if on else None)
+    return {"request": req, "result": run_round(req, project, budget)}
+
+
+def run_round(req: dict, project: str | Path | None, budget: Budget) -> dict | None:
+    """One request answered by the daemon, else by a cold index built here;
+    `None` when there is no time left or the generation it names is gone."""
+
+    if budget.cancel.is_set() or budget.left() <= 0:
+        return None
+    found = retrieve_from_daemon(req, project, min(ROUND_SECONDS, budget.left()))
+    if found is not None:
+        return found
+    index = local_index(project)
+    try:
+        return retrieval.run(index, req, budget.cancel)
+    except retrieval.Stale:
+        return None
+    finally:
+        index.close()
+
+
+def repair(req: dict, result: dict, need: str, project: str | Path | None, *, budget: Budget,
+           cfg: decision.Config | None = None, chunk_ids: list[str] = (), entities: list[str] | None = None,
+           external: bool = False, model: str = "") -> dict:
+    """The next round for what `result` is missing (`retrieval.repair`),
+    run: `{"note", "requests", "results"}`. Nothing is asked twice the same
+    way; past three rounds `retrieval.Exhausted`.
+
+    `subqueries` asks a model first, within the budget; `external` searches
+    arXiv first, only when the caller says the provider may be used, since
+    that sends the question outside.
+    """
+
+    root = Path(project).resolve() if project else None
+    note: dict = {}
+    proposals: list = []
+    if need == "subqueries":
+        proposals = subqueries(req["query_en"] or req["query_original"], budget, model)
+        note["proposed"] = len(proposals)
+    if need == "external":
+        if not external:
+            return {"note": {"need": need, "skipped": "external_not_allowed"}, "requests": [], "results": []}
+        note["fetched"] = bounded(lambda: add_papers(project, req["query_en"] or req["query_original"],
+                                                     n=REPAIR_PAPERS, cfg=cfg), budget)
+    requests, made = retrieval.repair(req, result, need, sources=available(root), subqueries=proposals,
+                                      chunk_ids=list(chunk_ids), entities=entities)
+    return {"note": {**made, **note}, "requests": requests,
+            "results": [run_round(r, project, budget) for r in requests]}
+
+
+def bounded(work, budget: Budget):
+    """`work()`'s value, or `None` once the budget is spent or cancelled.
+    What is still running then is abandoned in its thread, as `search.prepare`
+    abandons a slow run.
+
+    ponytail: an abandoned model session or fetch runs to its own end; bound
+    in-flight work per process if that ever piles up (stage 6).
+    """
+
+    if budget.cancel.is_set() or budget.left() <= 0:
+        return None
+    got: list = []
+
+    def call() -> None:
+        try:
+            got.append(work())
+        except Exception as error:  # noqa: BLE001 — a failed repair is no repair, and says why
+            got.append({"error": type(error).__name__})
+
+    worker = threading.Thread(target=call, daemon=True)
+    worker.start()
+    while worker.is_alive() and budget.left() > 0 and not budget.cancel.is_set():
+        worker.join(min(0.05, budget.left()))
+    return got[0] if got else None
+
+
+def subqueries(question: str, budget: Budget, model: str = "") -> list:
+    """Up to three scoped subqueries a model proposes for a question with
+    several requirements, unchecked — `retrieval.checked_subqueries` decides
+    which stand. `[]` when none came within the budget."""
+
+    def ask() -> list:
+        answer = ""
+        for ev in oneshot(SUBQUERY_PROMPT, {"question": question}, model):
+            if ev.kind == "error":
+                raise RuntimeError(ev.text)
+            if ev.kind == "done":
+                answer = ev.text
+        data = parsed(answer)
+        return data.get("subqueries") if isinstance(data, dict) else []
+
+    got = bounded(ask, budget)
+    return got if isinstance(got, list) else []
+
+
+def parsed(answer: str):
+    """A model's JSON answer, a code fence around it allowed."""
+
+    body = answer.strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", body, re.S)
+    return json.loads(fenced.group(1) if fenced else body)

@@ -83,23 +83,30 @@ def placed(scratch: Path, files: dict[str, str]) -> dict[Path, str]:
     return out
 
 
+def materialize(scratch: Path, corpus: dict, project: Path | None) -> tuple[Path, Path]:
+    """`(hub, repo)` of a corpus: a synthetic one written under `scratch`,
+    or this hub and `project` for a live one."""
+
+    if corpus["kind"] != "synthetic":
+        return HUB, (project or HUB).resolve()
+    hub, repo = scratch / "hub", scratch / "repo"
+    pages = placed(scratch, corpus["files"])
+    (hub / "operator").mkdir(parents=True)
+    repo.mkdir()
+    for target, text in pages.items():
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Bytes, so Windows does not turn `\n` into `\r\n` and change every hash.
+        target.write_bytes(text.encode("utf-8"))
+    return hub, repo
+
+
 def run(manifest_path: Path, k: int = 8, project: Path | None = None, method: str = "hybrid") -> dict:
     if method not in METHODS:
         raise ValueError(f"method must be one of {METHODS}")
     manifest = load(manifest_path)
     corpus = manifest["corpus"]
     with tempfile.TemporaryDirectory(prefix="jev-eval-") as scratch:
-        if corpus["kind"] == "synthetic":
-            hub, repo = Path(scratch) / "hub", Path(scratch) / "repo"
-            pages = placed(Path(scratch), corpus["files"])
-            (hub / "operator").mkdir(parents=True)
-            repo.mkdir()
-            for target, text in pages.items():
-                target.parent.mkdir(parents=True, exist_ok=True)
-                # Bytes, so Windows does not turn `\n` into `\r\n` and change every hash.
-                target.write_bytes(text.encode("utf-8"))
-        else:
-            hub, repo = HUB, (project or HUB).resolve()
+        hub, repo = materialize(Path(scratch), corpus, project)
 
         def label(path: Path) -> str:
             # The repository first: this hub is also a repository, and one
