@@ -205,11 +205,22 @@ def inside(repo: Path, ref: str) -> bool:
     return repo.resolve() in target.parents
 
 
-def fields(repo: Path, block, gate: str) -> dict:
+def backed(ref: str, paths: set[str]) -> bool:
+    """`ref` — `docs/x.md:12`, a page `operator/x` — names one of `paths`."""
+
+    return LINE.sub("", ref).removesuffix(".md") in {p.removesuffix(".md") for p in paths}
+
+
+def fields(repo: Path, block, gate: str, accepted: dict | None = None) -> dict:
     """The fields a person settles, checked. `ValueError` says what is wrong.
 
     The gate is always the first done item: checking that the agent put it
-    there would leave a way to miss it, so it cannot be left out at all."""
+    there would leave a way to miss it, so it cannot be left out at all.
+
+    `accepted` is a verified answer's evidence, by the id the draft cited it
+    under (stage 7 of `docs/plans/jev/`): the card's grounds are then only
+    what an accepted claim cited, each with its source revision. Grounds are
+    facts; the goal and the decisions stay proposals a person approves."""
 
     if not isinstance(block, dict):
         raise ValueError("명세는 JSON 객체여야 한다")
@@ -228,6 +239,13 @@ def fields(repo: Path, block, gate: str) -> dict:
     # A path outside the repository grounds nothing here. One inside that
     # does not exist is kept and shown as missing.
     listed["files"] = [f for f in listed["files"] if inside(repo, f)]
+    if accepted is not None:
+        paths = {c["path"] for c in accepted.values() if c.get("path")}
+        listed = {k: [g for g in v if backed(g, paths)] for k, v in listed.items()}
+        listed["evidence"] = [{"id": accepted[e]["evidence_id"], "cite": accepted[e]["cite"],
+                               "revision": accepted[e]["revision"]}
+                              for e in dict.fromkeys(strings(grounds.get("evidence"), "grounds.evidence"))
+                              if e in accepted]
     return {
         "goal": " ".join(goal.split()),
         "out": strings(block.get("out"), "out"),
@@ -340,13 +358,13 @@ def _shape(name: str, value) -> None:
             raise ValueError("`choices` 의 `options` 마다 `label` 이 있어야 한다")
 
 
-def card(repo: Path, block, gate: str, source: dict) -> str:
+def card(repo: Path, block, gate: str, source: dict, accepted: dict | None = None) -> str:
     """One `spec` block as a card on disk; its id.
 
     The same slug from the same conversation replaces its card while that has
     not started. Otherwise the name gets `-2`, `-3`."""
 
-    made = fields(repo, block, gate)
+    made = fields(repo, block, gate, accepted)
     base = slugged(block.get("slug"))
     if not base:
         raise ValueError("`slug` 가 비었거나 쓸 수 있는 글자가 없다")
@@ -366,9 +384,10 @@ def card(repo: Path, block, gate: str, source: dict) -> str:
         return sid
 
 
-def answered(repo: Path, found: list[dict], source: dict) -> list[dict]:
+def answered(repo: Path, found: list[dict], source: dict, accepted: dict | None = None) -> list[dict]:
     """The blocks of a `next` answer as the screen draws them. A `spec` block
-    becomes cards on disk and is sent as their ids, one entry per spec."""
+    becomes cards on disk and is sent as their ids, one entry per spec;
+    `accepted` bounds their grounds when the answer was verified (`fields`)."""
 
     gate = gate_of(repo)
     out = []
@@ -390,7 +409,7 @@ def answered(repo: Path, found: list[dict], source: dict) -> list[dict]:
             try:
                 if not gate:
                     raise ValueError("연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
-                out.append({"name": "spec", "id": card(repo, one, gate, source)})
+                out.append({"name": "spec", "id": card(repo, one, gate, source, accepted)})
             except ValueError as exc:
                 out.append({"name": "spec", "error": str(exc)})
     return out

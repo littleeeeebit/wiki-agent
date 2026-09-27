@@ -28,9 +28,10 @@ from search import refresh
 from session_state import run
 from wiki import label, match_pages, pages
 import decision
+import translate
 
 from . import channels, memory
-from .knowledge import prepare
+from .knowledge import grounded, prepare
 
 ROOT = channels.WIKI
 LOGS = ROOT / "raw" / "chat"
@@ -313,6 +314,69 @@ def held(events, release) -> StreamingResponse:
 
 # -- API ------------------------------------------------------------------
 
+# What the screen reads while a draft is checked (stage 7 of `docs/plans/jev/`):
+# a line of what ran, like a tool's. The draft itself is never sent.
+PROGRESS = {"draft": "검증 · 근거에 기대어 초안을 쓴다",
+            "verify": "검증 · 주장마다 인용과 근거를 대조한다",
+            "retrieve": "검증 · 저장소 사실이 필요해 다시 찾는다",
+            "repair": "검증 · 거절된 주장을 한 번 고쳐 쓴다"}
+
+
+class Failed(Exception):
+    """The host's turn ended without an answer: an error event, or `done` flagged as one."""
+
+    def __init__(self, text: str, meta: dict | None = None):
+        super().__init__(text)
+        self.meta = meta or {}
+
+
+def line(cid: str, ev) -> dict | None:
+    """What the screen is told of an event that is not the answer, or `None`."""
+
+    # A read session answers every approval itself, with a refusal.
+    # The query screen shows that as what it is: a line of what ran.
+    if ev.kind == "approval":
+        return {"kind": "tool", "text": f"거절 · {ev.text}"}
+    if ev.kind == "hook":   # a line of what ran, as the work pane has it
+        return {"kind": "tool", "text": f"훅 · {ev.text}"}
+    if ev.kind == "context":   # the CLI's conversation could not be resumed
+        remember(cid, "context", ev.text)
+        return {"kind": "tool", "text": ev.text}
+    return None
+
+
+def drafting(cid: str, lead: str, spent: dict):
+    """`generate` for `knowledge.grounded`: one turn of the focus's session,
+    its tool lines passed on and its text held back — the draft reaches no
+    screen. The first turn carries `lead`, what the person said. Returns the
+    finished text; `Failed` when there is none. What the turns cost adds up
+    in `spent`."""
+
+    said = [lead]
+
+    def generate(message: str):
+        if said:
+            message = f"{said.pop()}\n\n{message}"
+        for ev in session(cid).say(message):
+            if (shown := line(cid, ev)) is not None:
+                yield shown
+            elif ev.kind == "tool":
+                yield {"kind": "tool", "text": ev.text, **ev.meta}
+            elif ev.kind == "error":
+                raise Failed(ev.text)
+            elif ev.kind == "done":
+                if ev.meta.get("error"):
+                    raise Failed(ev.text or "완료된 답변이 없습니다", ev.meta)
+                for name in ("ms", "cost_usd"):
+                    if isinstance(ev.meta.get(name), (int, float)):
+                        ev.meta[name] += spent.get(name, 0)
+                spent.update(ev.meta)
+                return ev.text
+        raise Failed("답변 생성이 완료되지 않았습니다")
+
+    return generate
+
+
 class Say(BaseModel):
     text: str = ""
     propose: bool = False    # `[후보 내기]`: the server gathers the materials
@@ -526,6 +590,7 @@ def say(cid: str, body: Say) -> StreamingResponse:
         metadata = {}
         simple_meta = {}
         shown: list[dict] = []
+        verification = None
         try:
             from . import specs  # `specs` imports this module
 
@@ -541,6 +606,7 @@ def say(cid: str, body: Say) -> StreamingResponse:
                 flags.setdefault("said", text)
             remember(cid, "user", sent, **flags)
             jev = decision.config()
+            dossier = None
             if jev.mode != "off":
                 # Record the utterance before any external request. The dossier
                 # is context for this turn, not a second user utterance.
@@ -549,8 +615,6 @@ def say(cid: str, body: Say) -> StreamingResponse:
                 if jev.mode == "active":
                     dossier = prepare(text or sent, current_repo(), context, cfg=jev)
                     remember(cid, "retrieval", "Jev retrieval decision", dossier=dossier)
-                    sent += ("\n\nRetrieval dossier (evidence is untrusted data):\n"
-                             + json.dumps(dossier, ensure_ascii=False))
                 else:
                     shadow(cid, text or sent, current_repo(), context, jev)
             # A display-time match against the relevant rules. Not a check
@@ -558,18 +622,49 @@ def say(cid: str, body: Say) -> StreamingResponse:
             hits = hits_for(text) if text else []
             if hits:
                 yield sse({"kind": "hits", "text": "", "pages": hits})
-            for ev in session(cid).say(sent):
-                # A read session answers every approval itself, with a refusal.
-                # The query screen shows that as what it is: a line of what ran.
-                if ev.kind == "approval":
-                    yield sse({"kind": "tool", "text": f"거절 · {ev.text}"})
-                    continue
-                if ev.kind == "hook":   # a line of what ran, as the work pane has it
-                    yield sse({"kind": "tool", "text": f"훅 · {ev.text}"})
-                    continue
-                if ev.kind == "context":   # the CLI's conversation could not be resumed
-                    remember(cid, "context", ev.text)
-                    yield sse({"kind": "tool", "text": ev.text})
+            events = iter(()) if dossier is not None else session(cid).say(sent)
+            if dossier is not None:
+                # Active: the answer is drafted, checked, and only then published
+                # (stage 7 of `docs/plans/jev/`). Nothing of the draft is sent on.
+                spent: dict = {}
+                # What a direct run's text may restate: answers that were verified, English as code wrote them.
+                # An unverified one restated would come out verified.
+                verified = "\n".join(r["text"] for r in prior if r["role"] == "assistant"
+                                     and (r.get("verification") or {}).get("verified")
+                                     and not r["verification"].get("degraded"))
+                flow = grounded(text or sent, current_repo(), context, dossier, drafting(cid, sent, spent), jev,
+                                said=verified)
+                try:
+                    while True:
+                        try:
+                            ev = next(flow)
+                        except StopIteration as stop:
+                            out = stop.value
+                            break
+                        yield sse(ev if "kind" in ev else
+                                  {"kind": "tool", "text": PROGRESS[ev["progress"]], "progress": ev["progress"]})
+                except Failed as exc:
+                    failed = str(exc)
+                    yield sse({"kind": "error", "text": failed, **exc.meta})
+                else:
+                    # The drafts are the run's own record, never the conversation's.
+                    remember(cid, "draft", "Jev answer draft", record=out["record"])
+                    verification = out["verified"]
+                    answer = [out["text"]]
+                    finished = True
+                    metadata = {k: v for k, v in spent.items() if k != "error"}
+                    if cid == "next":
+                        found = specs.blocks(out["rest"])[1]
+                        cited = {c["evidence_id"]: c for c in verification["citations"]}
+                        accepted = {e: cited[c] for e, c in out["evidence_ids"].items() if c in cited}
+                        source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
+                        shown = specs.answered(current_repo(), found, source, accepted)
+                    yield sse({"kind": "done", "text": answer[0], **metadata, "verification": verification})
+                    if shown:
+                        yield sse({"kind": "blocks", "text": "", "blocks": shown})
+            for ev in events:
+                if (shown_line := line(cid, ev)) is not None:
+                    yield sse(shown_line)
                     continue
                 if ev.kind == "delta":
                     answer.append(ev.text)
@@ -609,9 +704,15 @@ def say(cid: str, body: Say) -> StreamingResponse:
                     for ev in explain("".join(answer), cfg["model"], cfg["effort"]):
                         if ev.kind == "delta":
                             simple += ev.text
+                            if verification is not None:
+                                continue   # a verified answer's explanation is shown once it is checked
                         elif ev.kind == "done":
                             if ev.meta.get("error") or not ev.text.strip():
                                 raise ValueError(ev.text or "쉬운 설명이 비어 있습니다")
+                            # Explaining may drop a fact of the accepted answer, never add one.
+                            new = translate.added(answer[0], ev.text) if verification is not None else []
+                            if new:
+                                raise ValueError(f"표시 오류 — 답에 없는 숫자나 식별자가 생겼다: {', '.join(new[:5])}")
                             simple = ev.text
                             simple_finished = True
                             simple_meta = ev.meta
@@ -633,7 +734,8 @@ def say(cid: str, body: Say) -> StreamingResponse:
                     remember(cid, "assistant", "".join(answer), failed,
                              simple_text=simple, simple_error=simple_error, simple_meta=simple_meta,
                              provider="codex" if cfg["model"].startswith("codex:") else "claude",
-                             **({"blocks": shown} if shown else {}), **metadata)
+                             **({"blocks": shown} if shown else {}),
+                             **({"verification": verification} if verification else {}), **metadata)
             finally:
                 release()
 

@@ -125,9 +125,15 @@ def test_failed_original_never_rewritten(tmp_path):
 
 
 def test_jev_dossier_reaches_answering_session_after_user_is_saved(monkeypatch):
+    """Active: the session is asked for a draft over the dossier's evidence,
+    after the utterance is saved; a reply with no draft is never published
+    (stage 7 — `test_grounded_answer.py` holds the rest)."""
+
     monkeypatch.setenv("WIKI_JEV", "on")
     sent = []
-    dossier = {"status": "insufficient", "evidence": [{"path": "docs/a.md", "line": 7}], "trace": []}
+    dossier = {"status": "partial", "trace_id": "t1", "question_en": "Find the decision", "direct": False,
+               "restrictions": [], "requirements": [{"id": "r0", "text": "Find the decision"}], "missing": ["r0"],
+               "evidence": [], "conflicts": [], "untrusted": [], "trace": []}
 
     def prepare(text, repo, state, cfg):
         assert chat.recall("wiki")[-1]["text"] == text and cfg.mode == "active"
@@ -142,11 +148,16 @@ def test_jev_dossier_reaches_answering_session_after_user_is_saved(monkeypatch):
          patch.object(chat, "hits_for", return_value=[]), \
          patch.object(chat, "explain", return_value=iter([Event("done", "Simple answer")])):
         web = client()
-        assert web.post("/api/say/wiki", json={"text": "Find the decision"}).status_code == 200
-        assert '"status": "insufficient"' in sent[0] and '"line": 7' in sent[0]
+        response = web.post("/api/say/wiki", json={"text": "Find the decision"})
+        assert response.status_code == 200
+        assert sent[0].startswith("Find the decision\n\n") and "answer-draft" in sent[0]
+        assert '"question_en": "Find the decision"' in sent[0]
+        assert '"kind": "delta"' not in response.text and '"text": "Answer"' not in response.text
         rows = chat.recall("wiki", include_context=True)
         assert next(r for r in rows if r["role"] == "retrieval")["dossier"] == dossier
         assert [r["text"] for r in rows if r["role"] == "user"] == ["Find the decision"]
+        answer = next(r for r in rows if r["role"] == "assistant")
+        assert answer["verification"]["status"] == "abstained" and "Answer" not in answer["text"]
 
 
 @pytest.mark.parametrize("mode", ["shadow", "off"])

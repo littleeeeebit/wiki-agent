@@ -26,6 +26,7 @@ caller elsewhere breaking over it.
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import json
 import math
@@ -41,7 +42,7 @@ from pathlib import Path
 
 from common import settings
 
-__all__ = ("translate", "english", "parts", "retire", "usage", "glossary", "KO_EN", "EN_KO")
+__all__ = ("translate", "english", "parts", "retire", "usage", "glossary", "KO_EN", "EN_KO", "checked", "added")
 
 HERE = Path(__file__).resolve().parents[1]  # `tool/`
 ROOT = HERE.parent
@@ -86,6 +87,9 @@ CACHE = Path(
     os.environ.get("TRANSLATE_CACHE") or (ROOT / "raw" / "translate-cache.sqlite3")
 )
 GLOSSARY = HERE / "markers" / "glossary.toml"
+# What en->ko is shown before it translates: sentences whose meaning a careless
+# rendering flips — a negation moved to the other clause, denied read as granted.
+EXAMPLES = HERE / "markers" / "examples.json"
 
 # The key lives beside the repository rather than in the machine's environment.
 # A user-level `GEMINI_API_KEY` is inherited by every process on the box, and
@@ -155,6 +159,18 @@ def glossary() -> tuple[tuple[str, ...], dict[str, str], str]:
     keep = tuple(str(x) for x in (data.get("keep_korean") or ()))
     fixed = {str(k): str(v) for k, v in (data.get("fixed") or {}).items()}
     return keep, fixed, hashlib.sha256(raw).hexdigest()[:12]
+
+
+def examples() -> tuple[list[dict], str]:
+    """`(pairs, version)`: the en->ko examples `{en, ko}`, and a hash of the
+    file for the cache key, as the glossary's. A missing or broken file means none."""
+
+    try:
+        raw = EXAMPLES.read_bytes()
+        pairs = [{"en": str(p["en"]), "ko": str(p["ko"])} for p in json.loads(raw.decode("utf-8"))["pairs"]]
+    except Exception:
+        return [], "none"
+    return pairs, hashlib.sha256(raw).hexdigest()[:12]
 
 
 def _mask(text: str, keep: tuple[str, ...]) -> tuple[str, list[str], list[str]]:
@@ -244,6 +260,13 @@ def instruction(direction: str, fixed: dict[str, str]) -> str:
     ]
     if terms:
         lines += ["", "Translate these terms exactly this way:", "  " + ", ".join(terms)]
+    shown = examples()[0] if direction == EN_KO else []
+    if shown:
+        lines += ["", "- Keep each negation on the statement it negates, and each verb's direction: denied is",
+                  "  never granted, disabled never enabled, before never after. Keep every number, bound,",
+                  "  condition, scope, degree of certainty, and who does what.",
+                  "", "Examples of correct renderings. Match their care, not their wording:"]
+        lines += [f"English: {p['en']}\nKorean: {p['ko']}" for p in shown]
     return "\n".join(lines)
 
 
@@ -523,6 +546,8 @@ def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
 def _translate(texts: list[str], direction: str, deadline: float, accept=None,
                held: dict[str, str] | None = None) -> list[tuple[str, str]]:
     keep, fixed, version = glossary()
+    if direction == EN_KO:
+        version += "/x" + examples()[1]   # the examples are part of en->ko's prompt; ko->en keys stay as they were
     out = [(text, "skipped") for text in texts]
 
     wanted = [i for i, t in enumerate(texts) if worth_translating(t, direction)]
@@ -618,24 +643,84 @@ ENGLISH_VERSION = "1"
 # what the model sees and must hand back unchanged.
 NUMBER = re.compile(r"\d+(?:[.,]\d+)*", re.A)
 IDENTIFIER = re.compile(r"[\w/\\:.-]*(?:\w\.[A-Za-z]|[\\_])[\w/\\:.-]*", re.A)
+# English number words, by value. "eight characters" rendered `8자` states the
+# same number; only the side that spells it out may excuse the digit.
+WORDS = {w: str(i) for i, w in enumerate(
+    "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
+    "sixteen seventeen eighteen nineteen twenty".split())} | {
+    w: str(30 + 10 * i) for i, w in enumerate("thirty forty fifty sixty seventy eighty ninety".split())}
+SPELLED = re.compile(r"\b(" + "|".join(WORDS) + r")\b", re.I)
+# Negation, English and Korean. A rendering of a paragraph — a verified
+# answer is one claim a paragraph — that negates where its source does not,
+# or the other way, can have reversed it. Presence, not a count: Korean
+# negates where English says `failed` or `otherwise`, and counts drifted on
+# 9 of 50 real paragraphs where presence drifted on 3. A rewrite (the plain
+# explanation) restructures too freely for either to mean anything.
+# ponytail: presence, so a paragraph negating twice can lose one unseen; a model judge if that is ever seen.
+NEGATION = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot|unless)\b|n't\b|않|안 |못|없|아니|아닌",
+                      re.I)
 
 
-def kept(source: str, english: str, keep: tuple[str, ...]) -> bool:
+def spelled(text: str) -> collections.Counter:
+    """The numbers `text` spells out, as digits."""
+
+    return collections.Counter(WORDS[w.lower()] for w in SPELLED.findall(text))
+
+
+def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False) -> bool:
     """Did every number and bare identifier of `source` come through
-    `english` exactly as often, with none added?
+    `english` exactly as often, with none added? With `words` — a
+    presentation — a number one side spells out and the other writes in
+    digits is the same number, and both negate or neither does; evidence keeps
+    its digits (`3번` as `three` is uncertain).
 
     ponytail: a date written out (`9월` as `September`) reads as a lost
     number and the chunk as `uncertain`; map month names if that turns out
     to cost many chunks.
     """
 
-    def found(text: str) -> list[str]:
+    def found(text: str) -> collections.Counter:
         prose = protect(text, keep)[0]
         names = [n.rstrip(".:-") for n in IDENTIFIER.findall(prose)]
         numbers = [n.replace(",", "") for n in NUMBER.findall(IDENTIFIER.sub(" ", prose))]
-        return sorted(names + numbers)
+        return collections.Counter(names + numbers)
 
-    return found(source) == found(english)
+    ours, theirs = found(source), found(english)
+    if not words:
+        return ours == theirs
+    said, made = protect(source, keep)[0], protect(english, keep)[0]
+    return (not theirs - ours - spelled(said) and not ours - theirs - spelled(made)
+            and bool(NEGATION.search(said)) == bool(NEGATION.search(made)))
+
+
+def facts(text: str, keep: tuple[str, ...] = ()) -> set[str]:
+    """The numbers (by value: `09` is `9`) and identifiers `text` states,
+    code spans included — what a rewrite of it may drop but never add. A
+    list's own numbering (`1. `) is layout, not a fact."""
+
+    text = re.sub(r"(?m)^\s*\d+[.)]\s+", " ", text)
+    names = {n.rstrip(".:-") for n in IDENTIFIER.findall(text)}
+    numbers = {n.replace(",", "").lstrip("0") or "0" for n in NUMBER.findall(IDENTIFIER.sub(" ", text))}
+    return names | numbers
+
+
+def added(source: str, derived: str) -> list[str]:
+    """Numbers and identifiers `derived` states that `source` does not: a
+    presentation of an answer that says one of these made up a fact. A
+    digit for a number `source` spells out is not one."""
+
+    return sorted(facts(derived, glossary()[0]) - facts(source, glossary()[0]) - set(spelled(source)))
+
+
+def checked(texts: list[str], direction: str, deadline: float) -> list[tuple[str, str]]:
+    """`(text, status)` per input, as `translate` renders it, but a
+    translation that changed a number or identifier is refused
+    (`meaning_changed`) and the original comes back: what a verified answer
+    is shown through may reword it, never restate its facts."""
+
+    keep = glossary()[0]
+    return _outcomes(list(texts), direction, deadline,
+                     lambda source, made: None if kept(source, made, keep, words=True) else "meaning_changed")
 
 
 def english(texts: list[str], deadline: float, held: dict[str, dict] | None = None) -> list[dict]:

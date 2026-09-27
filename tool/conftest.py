@@ -23,5 +23,5 @@ os.environ["TRANSLATE_CACHE"] = os.path.join(_scratch, "cache.sqlite3")
 # may export one too. No test reads either; a test that wants a key writes
 # its own file and points `JEV_ENV` at it.
 os.environ["JEV_ENV"] = os.path.join(_scratch, "absent-jev.env")
-for _name in ("TYPESAFE_API_KEY", "WIKI_JEV", "WIKI_JEV_MODE", "WIKI_JEV_MODEL"):
+for _name in ("TYPESAFE_API_KEY", "WIKI_JEV", "WIKI_JEV_MODE", "WIKI_JEV_MODEL", "WIKI_JEV_DEGRADED"):
     os.environ.pop(_name, None)

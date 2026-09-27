@@ -352,11 +352,13 @@ class Flow:
     def __init__(self, query: str, brief: str, k: int, *, omitted: dict | None, available: list[str],
                  repo_id: str, graph: bool, model: str, live: bool, budget: Budget, pol: decision.Policy,
                  evaluate=None, normalize=None, divide=None, first=None, mend=None,
-                 cache: decision.Cache | None = None,
+                 cache: decision.Cache | None = None, required: bool = False,
                  external: bool = False, tape: Tape | None = None, replay: Tape | None = None):
         self.query, self.brief, self.k, self.omitted = query, brief, k, omitted
         self.available, self.repo_id, self.graph, self.model, self.live = available, repo_id, graph, model, live
         self.budget, self.pol, self.cache, self.external = budget, pol, cache, external
+        # Retrieval a caller requires whatever the route says: a direct draft that needed a fact (stage 7).
+        self.required = required
         self.evaluate, self.normalize, self.divide, self.first, self.mend = evaluate, normalize, divide, first, mend
         self.tape, self.replay = tape, replay
         self.state = "normalize"
@@ -375,7 +377,8 @@ class Flow:
         # The English each chunk's heading path was given, for the passages Jev reads.
         self.headings: dict[str, str | None] = {}
         self.dossier = {
-            "schema_version": DOSSIER, "status": None, "reason": None, "direct": False, "restrictions": [],
+            "schema_version": DOSSIER, "status": None, "reason": None, "question_en": None, "direct": False,
+            "restrictions": [],
             "sources": [], "evidence": [], "requirements": [], "split": None, "missing": [], "conflicts": [],
             "untrusted": [],
             "reads": [], "limits": [], "repairs": [], "transitions": [], "decisions": [], "trace": [],
@@ -547,7 +550,7 @@ class Flow:
             # English that did not come about is not passed off as English:
             # no Jev, and the multilingual baseline instead.
             return self.baseline("normalization_failed")
-        self.query_en = asked[0]["text"]
+        self.query_en = self.dossier["question_en"] = asked[0]["text"]
         self.requirements = [{"id": f"r{i}", "text": text, "verdict": "not_judged", "score": None}
                              for i, text in enumerate(requirements(self.query_en))]
         self.context = {"query": self.query_en, "current_state": asked[1]["text"] if len(asked) > 1 else ""}
@@ -558,7 +561,7 @@ class Flow:
         self.route()
 
     def route(self) -> None:
-        required = explicit(self.query, self.query_en)
+        required = self.required or explicit(self.query, self.query_en)
         res = self.ask("route", {**self.context, "available_sources": {s: DESCRIBED[s] for s in self.available}},
                        route_questions(self.available), self.available)
         if res["status"] in ("cancelled", "exhausted"):
@@ -861,7 +864,8 @@ def merged(before: dict, results: list[dict | None]) -> dict:
 
 def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
             cfg: decision.Config | None = None, cancel: threading.Event | None = None, *,
-            external: bool = False, record: bool = False, cache: decision.Cache | None = DECISIONS) -> dict:
+            external: bool = False, record: bool = False, cache: decision.Cache | None = DECISIONS,
+            require: bool = False, budget: Budget | None = None) -> dict:
     """The dossier for one question, with the settings it ran under (never the key).
 
     The app's query path, its shadow mode and `tool/jev_search.py` all run
@@ -869,6 +873,9 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     is baseline retrieval, `unavailable` with the reason `disabled`.
     `external` lets a repair search arXiv, which sends the question outside.
     `record` adds the run's `tape`, for `replay`; it holds source text.
+    `require` makes retrieval required whatever the route says, and `budget`
+    is an allowance carried over from a run before this one (stage 7's
+    return to retrieval) in place of a fresh one.
     """
 
     if not query.strip() or not 1 <= k <= MAX_K:
@@ -877,12 +884,12 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     live = cfg.mode != "off"
     root = Path(project).resolve() if project else None
     brief, omitted = summarized(state, root)
-    budget = Budget(**QUESTION, cancel=cancel)
+    budget = budget or Budget(**QUESTION, cancel=cancel)
     pol = decision.policy(cfg.model, prompt_version=PROMPT_VERSION)
     tape = Tape() if record else None
     inputs = {"query": query, "brief": brief, "k": k, "omitted": omitted, "available": available(root),
               "repo_id": evidence.repo_id(root or HUB), "graph": graph_enabled(), "model": cfg.model,
-              "live": live, "external": external}
+              "live": live, "external": external, "required": require}
     flow = Flow(**inputs, budget=budget, pol=pol, cache=cache if live else None, tape=tape,
                 evaluate=functools.partial(decision.evaluate, cfg),
                 normalize=functools.partial(english, project=project),
@@ -935,6 +942,579 @@ def migrated(dossier: dict) -> dict:
     return {**dossier, "schema_version": DOSSIER, "status": status, "direct": direct,
             "reason": dossier.get("reason") or f"migrated_from_{dossier['status']}",
             "migrated_from": dossier["status"]}
+
+
+# ---- grounded answers (stage 7 of `docs/plans/jev/`) --------------------------------
+#
+# The generator drafts claims over the dossier's evidence, each naming the
+# passages it rests on and quoting them. Code checks every quote against the
+# pinned original and every citation against what the run found; Jev then
+# judges each factual claim against the passages it cites (`decision.claims`).
+# What is published is the accepted claims and their limits, rendered by code:
+# nothing the generator wrote outside an accepted claim reaches the reader.
+# One constrained repair at most, from what is left of the run's allowance.
+
+DRAFT = "answer-draft/1"
+VERIFIED = "verified-answer/1"
+DRAFT_PROMPT = "answer-draft.md"
+CLAIM_KINDS = ("source_fact", "inference", "recommendation", "direct_text")
+FACTUAL = ("source_fact", "inference")
+ANSWER_STATUSES = ("complete", "partial", "abstained", "verification_unavailable")
+VERIFICATION_VERSION = f"grounded-1/{decision.claims.VERSION}"
+DRAFT_BLOCK = re.compile(r"^```answer-draft[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
+CLAIM_ID = re.compile(r"\A[A-Za-z0-9_-]{1,32}\Z")
+DRAFT_FIELDS = {"claims", "unresolved_requirements", "proposed_status"}
+CLAIM_FIELDS = {"claim_id", "text_en", "kind", "evidence_ids", "source_quotes", "requirement_ids", "premises"}
+# The shortest quote, in characters: a word or two occurs almost anywhere.
+MIN_QUOTE = 8
+MAX_CLAIMS = 24
+# The most passages one claim is judged over, its premises' included.
+MAX_SET = 6
+# One verification's time. The host's drafting before it is the host's own turn.
+VERIFY_SECONDS = 20.0
+# Why a claim was rejected, as the repair is told. Every one but the last three
+# is code's, found before any judgment; a repair may mend all but `unsupported`.
+REJECTIONS = {
+    "malformed": "the claim does not follow the draft schema",
+    "not_english": "text_en is not English",
+    "unknown_requirement": "it names a requirement id the question does not have",
+    "unknown_evidence": "it cites an evidence id that is not in the evidence list",
+    "no_quote": "a source_fact needs at least one quote from the evidence it cites",
+    "quote_not_cited": "a quote names evidence the claim does not cite",
+    "short_quote": f"a quote is shorter than {MIN_QUOTE} characters",
+    "fabricated_quote": "a quote does not occur in the original_text of the evidence it names",
+    "stale_revision": "a cited source changed after it was retrieved",
+    "untrusted_evidence": "its only evidence is a passage that addresses the assistant",
+    "direct_mode": "no retrieval was run, so no source_fact may be stated",
+    "direct_text": "retrieval ran, so the answer is source_fact claims; direct_text is only for a run without it",
+    "new_fact": "direct_text may restate the conversation, but this one states a number or identifier it does not",
+    "bad_premises": "premises must be earlier source_fact or inference claims, and an inference or a "
+                    "recommendation needs at least one",
+    "unfaithful": "it states a fact its grounds do not — a recommendation's premises, or for direct_text the "
+                  "conversation",
+    "contradicted": "the cited passages contradict it",
+    "unsupported": "the cited passages do not state it",
+}
+REPAIRABLE = set(REJECTIONS) - {"unsupported"}
+
+
+def degraded() -> str:
+    """What an outage publishes: `withhold` (the default) keeps every claim
+    Jev could not check back; `baseline`, chosen in `.env` with
+    `WIKI_JEV_DEGRADED=baseline`, publishes the draft's checked-by-code
+    claims as an unverified answer."""
+
+    try:
+        found = settings.entries(decision.env_file())
+    except (OSError, ValueError):
+        found = {}
+    return "baseline" if (settings.pick(found, "WIKI_JEV_DEGRADED")[0] or "").strip().lower() == "baseline" \
+        else "withhold"
+
+
+def cite(item: dict) -> str:
+    """Where a piece of evidence is, as a reader opens it."""
+
+    loc = item["locator"]
+    if "path" in loc:
+        end = f"-{loc['end_line']}" if loc["end_line"] != loc["start_line"] else ""
+        return f"{loc['path']}:{loc['start_line']}{end}"
+    return loc.get("url") or f"{loc['document']} p.{loc['page']}"
+
+
+def flat(text: str) -> str:
+    return " ".join(text.split())
+
+
+def fresh(item: dict) -> bool:
+    """A file's evidence still reads, at its lines, as it did when retrieved.
+    A snapshot or a paper's text is pinned by its hash already."""
+
+    if "path" not in item["locator"] or not item.get("path"):
+        return True
+    return resolve(item, Path(item["path"])) == item["original_text"]
+
+
+class Grounding:
+    """One answer's drafts, checks and publication, over one dossier at a time.
+
+    Evidence reaches the generator under short ids (`e1`, ...) the run owns;
+    a claim citing anything else is rejected. The Jev allowance is what the
+    retrieval run left — calls and tokens — and a repair spends from the
+    same; each verification has `VERIFY_SECONDS` of its own, since the
+    host's drafting between them is not Jev's time.
+    """
+
+    def __init__(self, dossier: dict, cfg: decision.Config, cancel: threading.Event | None = None,
+                 cache: decision.Cache | None = DECISIONS, evaluate=None, said: str = ""):
+        self.cfg, self.cache = cfg, cache
+        # What the conversation itself supplied — the question and its context: all a direct_text may restate.
+        self.said = said
+        self.cancel = cancel or threading.Event()
+        self.evaluate = evaluate or functools.partial(decision.evaluate, cfg)
+        self.pol = decision.policy(cfg.model, HUB / decision.claims.ARTIFACT, prompt_version=decision.claims.VERSION)
+        spent = (dossier.get("budget") or {})
+        limits, used = spent.get("limits") or {}, spent.get("used") or {}
+        self.calls = limits.get("calls", RESERVE) - used.get("calls", 0) if limits else RESERVE
+        self.tokens = None if limits.get("tokens") is None else limits["tokens"] - used.get("tokens", 0)
+        self.run_id = dossier.get("trace_id") or uuid.uuid4().hex
+        self.generations: list[dict] = []
+        # Each generation's evidence ids, beside it: a return to retrieval renumbers them.
+        self.idsets: list[dict[str, dict]] = []
+        self.trace: list[dict] = []
+        # Claims Jev supported, by what they say and cite: a repair that keeps one is not asked about again.
+        self.supported: set[tuple] = set()
+        self.rebase(dossier)
+
+    def rebase(self, dossier: dict) -> None:
+        self.dossier = dossier
+        self.ids = {f"e{i + 1}": e for i, e in enumerate(dossier.get("evidence") or [])}
+        back = {e["chunk_id"]: eid for eid, e in self.ids.items()}
+        self.untrusted = {back[u["chunk_id"]] for u in dossier.get("untrusted") or [] if u["chunk_id"] in back}
+        self.conflicting = [back[c["chunk_id"]] for c in dossier.get("conflicts") or [] if c["chunk_id"] in back]
+        self.requirements = [{"id": r["id"], "text": r["text"]} for r in dossier.get("requirements") or []]
+
+    def spent(self, budget: Budget) -> None:
+        self.calls -= budget.used["calls"]
+        if self.tokens is not None:
+            self.tokens -= budget.used["tokens"]
+
+    def carried(self) -> Budget:
+        """What is left of the allowance, for a return to retrieval."""
+
+        return Budget(seconds=QUESTION["seconds"], calls=max(self.calls, 0), candidates=QUESTION["candidates"],
+                      tokens=self.tokens, cancel=self.cancel)
+
+    # -- what the generator is told --------------------------------------------------
+
+    def view(self) -> dict:
+        d = self.dossier
+        return {"question_en": d.get("question_en"), "retrieval_status": d.get("status"),
+                "direct": bool(d.get("direct")), "restrictions": d.get("restrictions") or [],
+                "requirements": self.requirements, "missing_requirements": d.get("missing") or [],
+                "conflicting_evidence": self.conflicting, "untrusted_evidence": sorted(self.untrusted),
+                "evidence": [{"id": eid, "cite": cite(e), "kind": e["kind"], "coverage": e.get("coverage"),
+                              "original_text": e["original_text"], "text_en": e["text_en"]}
+                             for eid, e in self.ids.items()]}
+
+    def brief(self) -> str:
+        prompt = (Path(__file__).resolve().parents[1] / "prompts" / DRAFT_PROMPT).read_text(encoding="utf-8")
+        return f"{prompt}\n\n```json\n{json.dumps(self.view(), ensure_ascii=False, indent=1)}\n```"
+
+    def repair_brief(self, rebased: bool) -> str:
+        """The one repair's instruction: the exact claims rejected and why,
+        and the evidence it may cite — the new evidence when retrieval ran."""
+
+        last = self.generations[-1]
+        lines = ["Your answer-draft was checked against the evidence."]
+        if last["problem"]:
+            lines.append(f"It could not be read: {last['problem']}. Write it again, following the schema exactly.")
+        for cid, check in last["checks"].items():
+            if check["state"] == "rejected" and check["reason"] in REPAIRABLE:
+                lines.append(f"- Claim {cid} was rejected: {REJECTIONS[check['reason']]}.")
+        lines += ["Write one new, complete answer-draft block. Keep every claim not listed above unchanged.",
+                  "Do not state a rejected claim again as fact. For a contradicted claim, state the conflict "
+                  "instead, citing the passage that contradicts it.",
+                  f"Cite only these evidence ids: {', '.join(self.ids) or 'none — there is no evidence'}."]
+        if rebased:
+            lines.append("Retrieval has now run for this question; the evidence below replaces the evidence before.")
+            return "\n".join(lines) + f"\n\n```json\n{json.dumps(self.view(), ensure_ascii=False, indent=1)}\n```"
+        return "\n".join(lines)
+
+    # -- reading a draft ---------------------------------------------------------------
+
+    def parse(self, text: str) -> tuple[dict | None, str]:
+        """The AnswerDraft in `text`, or `None` and why it is not one."""
+
+        found = DRAFT_BLOCK.findall(text)
+        if len(found) != 1:
+            return None, "no answer-draft block" if not found else "more than one answer-draft block"
+        try:
+            data = json.loads(found[0])
+        except ValueError:
+            return None, "the answer-draft block is not JSON"
+        if not isinstance(data, dict) or set(data) != DRAFT_FIELDS:
+            return None, f"the draft must have exactly the fields {sorted(DRAFT_FIELDS)}"
+        claims = data["claims"]
+        if not isinstance(claims, list) or len(claims) > MAX_CLAIMS:
+            return None, f"claims must be a list of at most {MAX_CLAIMS}"
+        if not all(isinstance(c, dict) and isinstance(c.get("claim_id"), str) and CLAIM_ID.match(c["claim_id"])
+                   for c in claims):
+            return None, "every claim needs a claim_id of letters, digits, '_' or '-'"
+        if len({c["claim_id"] for c in claims}) != len(claims):
+            return None, "claim_ids repeat"
+        unresolved = data["unresolved_requirements"]
+        if not isinstance(unresolved, list) or not all(isinstance(r, str) for r in unresolved):
+            return None, "unresolved_requirements must be a list of requirement ids"
+        if data["proposed_status"] not in ANSWER_STATUSES:
+            return None, f"proposed_status must be one of {list(ANSWER_STATUSES)}"
+        return {"schema_version": DRAFT, "run_id": self.run_id, "generation": len(self.generations) + 1,
+                "question_requirements": self.requirements, "claims": claims,
+                "unresolved_requirements": unresolved, "proposed_status": data["proposed_status"]}, ""
+
+    def problem(self, claim: dict, earlier: dict[str, dict]) -> str | None:
+        """Why code rejects `claim` before any judgment, or `None`."""
+
+        strings = lambda v: isinstance(v, list) and all(isinstance(x, str) for x in v)  # noqa: E731
+        quotes = claim.get("source_quotes")
+        if (set(claim) != CLAIM_FIELDS or claim["kind"] not in CLAIM_KINDS
+                or not isinstance(claim["text_en"], str) or not claim["text_en"].strip()
+                or not all(strings(claim[k]) for k in ("evidence_ids", "requirement_ids", "premises"))
+                or not isinstance(quotes, list)
+                or not all(isinstance(q, dict) and set(q) == {"evidence_id", "quote"}
+                           and isinstance(q["evidence_id"], str) and isinstance(q["quote"], str) for q in quotes)):
+            return "malformed"
+        kind, cited = claim["kind"], claim["evidence_ids"]
+        if language(claim["text_en"], translate.glossary()[0]) != "en":
+            return "not_english"
+        if not set(claim["requirement_ids"]) <= {r["id"] for r in self.requirements}:
+            return "unknown_requirement"
+        if kind in ("direct_text", "recommendation"):
+            # Neither cites a passage: a recommendation's facts are its premises.
+            if cited or quotes or (kind == "direct_text" and claim["premises"]):
+                return "malformed"
+            # A direct_text is published only where no evidence was looked for, and only restating what was
+            # said: a new number or identifier is caught here, any other new fact by Jev's `faithful`.
+            if kind == "direct_text" and not self.dossier.get("direct"):
+                return "direct_text"
+            if kind == "direct_text" and translate.added(self.said, claim["text_en"]):
+                return "new_fact"
+        elif kind == "source_fact" and self.dossier.get("direct"):
+            return "direct_mode"
+        if claim["premises"] and not all(earlier.get(p, {}).get("kind") in FACTUAL for p in claim["premises"]):
+            return "bad_premises"
+        if kind in ("inference", "recommendation") and not claim["premises"]:
+            return "bad_premises"
+        if kind not in FACTUAL:
+            return None
+        if not set(cited) <= set(self.ids):
+            return "unknown_evidence"
+        if kind == "source_fact" and not (cited and quotes):
+            return "no_quote"
+        for q in quotes:
+            if q["evidence_id"] not in cited:
+                return "quote_not_cited"
+            if len(flat(q["quote"])) < MIN_QUOTE:
+                return "short_quote"
+            if flat(q["quote"]) not in flat(self.ids[q["evidence_id"]]["original_text"]):
+                return "fabricated_quote"
+        if not all(fresh(self.ids[e]) for e in cited):
+            return "stale_revision"
+        if cited and set(cited) <= self.untrusted:
+            return "untrusted_evidence"
+        return None
+
+    # -- checking a draft ----------------------------------------------------------------
+
+    def check(self, text: str) -> dict:
+        """Read, screen, judge and settle one generation; recorded in `generations`."""
+
+        draft, problem = self.parse(text)
+        rest = DRAFT_BLOCK.sub("", text).strip()
+        gen = {"draft": draft, "problem": problem, "rest": rest, "checks": {}, "decision": None,
+               "unavailable": None, "dossier_trace_id": self.dossier.get("trace_id"),
+               "direct": bool(self.dossier.get("direct")), "requirements": self.requirements,
+               "evidence_ids": {eid: e["chunk_id"] for eid, e in self.ids.items()}}
+        self.idsets.append(self.ids)
+        if draft is None:
+            gen["raw"] = text[:4000]
+            self.generations.append(gen)
+            return gen
+        claims = {c["claim_id"]: c for c in draft["claims"]}
+        checks = gen["checks"]
+        for cid, claim in claims.items():
+            earlier = {k: claims[k] for k in list(claims)[:list(claims).index(cid)]}
+            reason = self.problem(claim, earlier)
+            state = "rejected" if reason else "pending" if claim["kind"] in FACTUAL else "waiting"
+            checks[cid] = {"state": state, "reason": reason, "support": None}
+        self.judge(claims, checks, gen)
+        for cid, claim in claims.items():   # in order: premises come first
+            check = checks[cid]
+            if check["state"] in ("pending", "waiting"):
+                if all(checks.get(p, {}).get("state") == "accepted" for p in claim["premises"]):
+                    check["state"] = "accepted"
+                else:
+                    check.update(state="unresolved", reason="premise_not_accepted")
+            if check["state"] == "accepted" and claim["kind"] in FACTUAL:
+                self.supported.add(self.key(claim))
+        self.generations.append(gen)
+        return gen
+
+    def key(self, claim: dict) -> tuple:
+        return (claim["kind"], claim["text_en"], tuple(sorted(self.ids[e]["chunk_id"] for e in claim["evidence_ids"])),
+                tuple(sorted((self.ids[q["evidence_id"]]["chunk_id"], flat(q["quote"])) for q in claim["source_quotes"])))
+
+    def passages(self, claims: dict, cid: str) -> list[str]:
+        """The evidence a claim is judged over: its own, and its premises'."""
+
+        seen: list[str] = []
+        stack = [cid]
+        while stack:
+            claim = claims[stack.pop()]
+            seen += [e for e in claim["evidence_ids"] if e not in seen]
+            stack += claim["premises"]
+        return seen
+
+    def judge(self, claims: dict, checks: dict, gen: dict) -> None:
+        """One Jev request for every factual claim still pending, every
+        claim that cites nothing (`faithful`) and every part of the question a
+        claim names (`answers`); each outcome written into `checks` and
+        `gen["coverage"]`. A failure leaves them unresolved and says why —
+        never a rejection."""
+
+        asked, sets = [], {}
+        for cid, claim in claims.items():
+            if checks[cid]["state"] != "pending":
+                continue
+            if claim["kind"] == "source_fact" and self.key(claim) in self.supported:
+                checks[cid].update(state="accepted", support="carried")
+                continue
+            ids = self.passages(claims, cid)
+            if len(ids) > MAX_SET:
+                checks[cid].update(state="unresolved", reason="too_many_passages")
+                continue
+            readable = [e for e in ids if self.ids[e]["text_en"] is not None]
+            if not readable:
+                checks[cid].update(state="unresolved", reason="not_normalized")
+                continue
+            sets[cid] = (readable, len(readable) < len(ids))
+            asked.append(cid)
+        # Which part of the question each claim that could count answers: the drafter's `requirement_ids`
+        # name the candidates, Jev says whether it answers them. Unasked, it answers nothing.
+        # Every claim code did not reject could count, since a recommendation needs premises and direct_text
+        # a direct run.
+        pairs = [(cid, rid) for cid, claim in claims.items() if checks[cid]["state"] != "rejected"
+                 for rid in claim["requirement_ids"]]
+        gen["coverage"] = {f"{cid}:{rid}": "unasked" for cid, rid in pairs}
+        # A recommendation and a direct run's text cite nothing: Jev reads them against their grounds instead.
+        bare = [cid for cid in claims if checks[cid]["state"] == "waiting"]
+        if not asked and not pairs and not bare:
+            return
+        why = ("normalization_failed" if not self.dossier.get("question_en")
+               else "calls" if self.calls < 1 else None)
+        if why:
+            for cid in asked + bare:
+                checks[cid].update(state="unresolved", reason="budget" if why == "calls" else "verification_unavailable")
+            gen["coverage"] = dict.fromkeys(gen["coverage"], "budget" if why == "calls" else "unavailable")
+            if why != "calls":
+                gen["unavailable"] = why
+            return
+        shown = list(dict.fromkeys(e for cid in asked for e in sets[cid][0]))
+        wanted = {*asked, *(cid for cid, _ in pairs), *bare, *(p for cid in bare for p in claims[cid]["premises"])}
+        named = [cid for cid in claims if cid in wanted]
+        state = decision.claims.state(
+            self.dossier["question_en"],
+            [{"id": e, "text": self.ids[e]["text_en"][:MAX_PASSAGE],
+              **({"coverage": "truncated"} if len(self.ids[e]["text_en"]) > MAX_PASSAGE else {})} for e in shown],
+            [{"id": cid, "text": claims[cid]["text_en"], "cites": sets[cid][0] if cid in sets else [],
+              "premises": claims[cid]["premises"]} for cid in named],
+            [r for r in self.requirements if any(rid == r["id"] for _, rid in pairs)],
+            self.said[-MAX_PASSAGE:] if any(claims[cid]["kind"] == "direct_text" for cid in bare) else "")
+        versions = {str(self.ids[e]["translation"].get("version") or self.ids[e]["translation"]["status"]) for e in shown}
+        budget = Budget(seconds=VERIFY_SECONDS, calls=self.calls, candidates=0, tokens=self.tokens,
+                        cancel=self.cancel)
+        req = decision.request("verify", state, {**decision.claims.questions(asked), **decision.claims.coverage(pairs),
+                                                 **decision.claims.grounds(bare)},
+                               allowed=named + list(decision.claims.RELATIONS) + list(decision.claims.ANSWERS)
+                               + list(decision.claims.FAITHFUL),
+                               model=self.cfg.model, prompt_version=decision.claims.VERSION,
+                               policy_version=self.pol.version, normalization_version="|".join(sorted(versions)),
+                               budget=budget, trace_id=self.run_id)
+        res = decision.checked(req, decision.decide(req, self.evaluate, budget, self.trace, self.pol, self.cache))
+        self.spent(budget)
+        gen["decision"] = {"request_id": req["request_id"], "policy": self.pol.record(),
+                           **{k: res[k] for k in ("status", "reason_code", "answers", "verdicts", "model", "usage",
+                                                  "elapsed_ms", "cached")}}
+        down = ("budget" if res["status"] in ("cancelled", "exhausted") else
+                None if res["status"] in ("decided", "uncertain") else "verification_unavailable")
+        if down == "verification_unavailable":
+            gen["unavailable"] = res["reason_code"] or res["status"]
+        for cid, rid in pairs:
+            gen["coverage"][f"{cid}:{rid}"] = ({"budget": "budget", "verification_unavailable": "unavailable"}.get(down)
+                                               or decision.claims.answered(self.pol, res["answers"][f"answers_{cid}_{rid}"]))
+        for cid in bare:
+            got = down or decision.claims.faithful(self.pol, res["answers"][f"faithful_{cid}"])
+            checks[cid]["support"] = got if got in decision.claims.FAITHFUL else None
+            if got != "faithful":   # a faithful one is settled with its premises, in `check`
+                checks[cid].update(state="rejected" if got in decision.claims.FAITHFUL else "unresolved",
+                                   reason="unfaithful" if got in decision.claims.FAITHFUL else got)
+        for cid in asked:
+            if down:
+                checks[cid].update(state="unresolved", reason=down)
+                continue
+            outcome = decision.claims.outcome(self.pol, res["answers"][f"relation_{cid}"])
+            checks[cid]["support"] = outcome
+            if outcome == "supported":
+                continue   # settled with its premises, in `check`
+            if outcome == "unsupported" and sets[cid][1]:
+                # Some of what it cites was never read in English: not a no.
+                checks[cid].update(state="unresolved", reason="not_normalized")
+            elif outcome == "uncertain":
+                checks[cid].update(state="unresolved", reason="uncertain")
+            else:
+                checks[cid].update(state="rejected", reason=outcome)
+
+    def repair(self) -> str | None:
+        """`retrieve`, `draft`, or `None`: whether the one repair runs, and how.
+        Only what a repair can mend is a reason, and only while a Jev call is
+        left to check it; a direct run's needed fact returns to retrieval."""
+
+        if len(self.generations) != 1 or self.cancel.is_set() or self.calls < 1:
+            return None
+        last = self.generations[0]
+        if last["unavailable"]:
+            return None
+        reasons = {c["reason"] for c in last["checks"].values() if c["state"] == "rejected"}
+        # A direct run needs a repository fact when its draft stated one — as a source_fact, or as text the
+        # conversation does not hold — or, as it is told to, left it unresolved.
+        needs_fact = last["direct"] and (bool(reasons & {"direct_mode", "new_fact", "unfaithful"})
+                                         or bool((last["draft"] or {}).get("unresolved_requirements")))
+        # Back to retrieval needs a route and a round, and still a call to check the draft after.
+        if needs_fact and self.calls >= 3:
+            return "retrieve"
+        if not last["problem"] and not reasons & REPAIRABLE:
+            return None
+        return "draft"
+
+    # -- what is published --------------------------------------------------------------
+
+    def published(self) -> dict:
+        """The VerifiedAnswer and its text, from the last readable draft."""
+
+        at = next((i for i in range(len(self.generations) - 1, -1, -1) if self.generations[i]["draft"] is not None),
+                  len(self.generations) - 1)
+        gen, ids = self.generations[at], self.idsets[at]
+        claims = {c["claim_id"]: c for c in (gen["draft"] or {}).get("claims", [])}
+        checks, unavailable = gen["checks"], gen["unavailable"]
+        baseline = unavailable is not None and degraded() == "baseline"
+        shown = [cid for cid, c in checks.items() if c["state"] == "accepted"
+                 or (baseline and c["state"] == "unresolved" and c["reason"] == "verification_unavailable")]
+
+        # A part is answered when Jev said a shown claim answers it — not when the claim says so.
+        coverage = gen.get("coverage") or {}
+        said = {(cid, r): coverage.get(f"{cid}:{r}") for cid in shown for r in claims[cid]["requirement_ids"]}
+        answered = {r for (_cid, r), got in said.items() if got == "answers"}
+        touched = answered | {r for (_cid, r), got in said.items() if got == "partly"}
+        missing = [r for r in gen["requirements"] if r["id"] not in answered]
+        status = ("verification_unavailable" if unavailable else
+                  "complete" if shown and answered and not missing else
+                  "partial" if touched else "abstained")
+        used = list(dict.fromkeys(e for cid in shown for e in claims[cid]["evidence_ids"]))
+        reason = (unavailable or next((f"budget:{c['reason']}" for c in checks.values() if c["reason"] == "budget"),
+                                      None) or (f"draft:{gen['problem']}" if gen["problem"] else None))
+        verified = {
+            "schema_version": VERIFIED, "run_id": self.run_id, "status": status, "reason": reason,
+            "verified": not unavailable, "degraded": baseline,
+            "claims": [{"claim_id": cid, "kind": claims[cid]["kind"], "text_en": claims[cid]["text_en"],
+                        "evidence_ids": [ids[e]["chunk_id"] for e in claims[cid]["evidence_ids"]],
+                        "requirement_ids": claims[cid]["requirement_ids"], "premises": claims[cid]["premises"],
+                        "support": ("supported" if checks[cid]["state"] == "accepted" and claims[cid]["kind"] in FACTUAL
+                                    else "unverified" if checks[cid]["state"] != "accepted" else "faithful")}
+                       for cid in shown],
+            "uncertainty": [{"claim_id": cid, "reason": c["reason"]} for cid, c in checks.items()
+                            if c["state"] == "unresolved" and cid not in shown],
+            "rejected": [{"claim_id": cid, "reason": c["reason"]} for cid, c in checks.items()
+                         if c["state"] == "rejected"],
+            "conflicts": [{"claim_id": cid, "evidence": [cite(ids[e]) for e in claims[cid]["evidence_ids"]]}
+                          for cid, c in checks.items() if c["reason"] == "contradicted"],
+            "missing_requirements": missing,
+            "citations": [{"evidence_id": ids[e]["chunk_id"], "cite": cite(ids[e]),
+                           "path": ids[e]["locator"].get("path"), "locator": ids[e]["locator"],
+                           "revision": ids[e]["revision"]} for e in used],
+            "next": None, "verification_version": VERIFICATION_VERSION, "generations": len(self.generations)}
+        if unavailable:
+            verified["next"] = "Check Jev with `python tool/jev_probe.py --live`, then ask again."
+        elif missing:
+            verified["next"] = (f"Search further for: {missing[0]['text']} — or say more precisely what you need.")
+        return {"verified": verified, "text": rendered(verified, {c: claims[c] for c in shown}, ids),
+                "rest": gen["rest"], "evidence_ids": gen["evidence_ids"], "record": self.record()}
+
+    def record(self) -> dict:
+        """The internal run artifact: every draft as written, and its checks."""
+
+        return {"run_id": self.run_id, "verification_version": VERIFICATION_VERSION,
+                "generations": self.generations, "trace": self.trace,
+                "allowance_left": {"calls": self.calls, "tokens": self.tokens}}
+
+
+def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict]) -> str:
+    """The published answer, written by code from accepted claims and the
+    verification's limits. English: the Korean overlay renders it."""
+
+    def cited(claim: dict) -> str:
+        where = [cite(ids[e]) for e in claim["evidence_ids"]]
+        return " ".join(f"[{w}]({w})" if w.startswith(("https://", "http://")) else f"`{w}`" for w in where)
+
+    parts: list[str] = []
+    if v["status"] == "verification_unavailable":
+        parts.append(f"Unverified answer: verification was unavailable ({v['reason']}), and this answer is shown "
+                     "under the baseline setting." if v["degraded"] else
+                     f"Verification unavailable ({v['reason']}): statements whose support could not be checked "
+                     "are withheld.")
+    elif v["status"] == "partial":
+        parts.append(f"Partial answer: {len(v['missing_requirements'])} part(s) of the question are not "
+                     "established by the evidence.")
+    elif v["status"] == "abstained":
+        parts.append("No verified answer: the evidence found does not establish one.")
+    for cid, claim in claims.items():
+        label = {"inference": "Inference: ", "recommendation": "Recommendation: "}.get(claim["kind"], "")
+        tail = cited(claim)
+        parts.append(f"{label}{claim['text_en'].strip()}{' ' + tail if tail else ''}")
+    if v["conflicts"]:
+        parts.append("Conflicts:\n" + "\n".join(
+            f"- A drafted statement is contradicted by {' '.join(f'`{w}`' for w in c['evidence'])}; "
+            "it is not stated here." for c in v["conflicts"]))
+    withheld = len(v["uncertainty"]) + sum(1 for r in v["rejected"] if r["reason"] != "contradicted")
+    if withheld:
+        parts.append(f"Not verified: {withheld} drafted statement(s) are withheld because the evidence did not "
+                     "establish them.")
+    if v["missing_requirements"] and v["status"] != "complete":
+        parts.append("Not established:\n" + "\n".join(f"- {r['text']}" for r in v["missing_requirements"]))
+    if v["next"] or v["status"] == "abstained":
+        parts.append(f"Next: {v['next'] or 'ask again with more detail, or name the document to read.'}")
+    return "\n\n".join(parts)
+
+
+def grounded(question: str, project: str | Path | None, state: str, dossier: dict, generate,
+             cfg: decision.Config, cancel: threading.Event | None = None, cache: decision.Cache | None = DECISIONS,
+             evaluate=None, said: str = ""):
+    """Draft, verify, repair once at most, publish.
+
+    A generator. It yields `{"progress": step}` — draft, verify, retrieve,
+    repair — and whatever `generate` yields, and returns the publication:
+    `verified` (the VerifiedAnswer), `text` (what the reader gets), `rest`
+    (the host's text outside the draft block, where other blocks ride) and
+    `record` (the drafts and checks, an internal artifact). `generate(message)`
+    is itself a generator whose return value is the host's finished text; a
+    failed turn raises out of it, and nothing is published.
+
+    `said` is what of the conversation a direct run's text may restate
+    besides the English question: English only, since Jev reads it, and
+    never an answer that was not verified — restated, it would come out
+    verified (review round 3). `state` routes; it is not a ground.
+
+    ponytail: an earlier user turn is not normalized, so restating one sends
+    the run to retrieval; normalize the turns if that costs many answers."""
+
+    run = Grounding(dossier, cfg, cancel, cache, evaluate,
+                    said="\n".join(filter(None, (said, dossier.get("question_en")))))
+    yield {"progress": "draft"}
+    text = yield from generate(run.brief())
+    yield {"progress": "verify"}
+    run.check(text)
+    how = run.repair()
+    if how:
+        if how == "retrieve":
+            yield {"progress": "retrieve"}
+            budget = run.carried()
+            again = prepare(question, project, state, cfg=cfg, cache=cache, require=True, budget=budget)
+            run.spent(budget)
+            run.rebase(again)
+        yield {"progress": "repair"}
+        text = yield from generate(run.repair_brief(how == "retrieve"))
+        yield {"progress": "verify"}
+        run.check(text)
+    return run.published()
 
 
 def ingest(project: str | Path | None, seconds: float = 600.0, estimate: bool = False) -> dict:

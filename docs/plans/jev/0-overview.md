@@ -170,7 +170,7 @@ Published benchmark numbers are not forecasts for this repository.
 | 4 | [Knowledge graph](4-knowledge-graph.md) | Structural and semantic relationships with provenance | Done |
 | 5 | [Graph retrieval](5-retrieval.md) | Chunk candidates, hybrid ranking, and bounded traversal | Done |
 | 6 | [Decision controller](6-decision-controller.md) | Typed routing, grading, sufficiency, and calibrated fallback | Done |
-| 7 | [Grounded answers](7-grounded-answer.md) | Claim structure, citation checks, repair, and abstention | Not started |
+| 7 | [Grounded answers](7-grounded-answer.md) | Claim structure, citation checks, repair, and abstention | Done |
 | 8 | [Agent decisions](8-agent-decisions.md) | Server-owned choices, preconditions, execution, and outcomes | Not started |
 | 9 | [Product and observability](9-product-observability.md) | Settings, map paths, evidence, trace, reconnection, and cost | Not started |
 | 10 | [Evaluation and rollout](10-evaluation-rollout.md) | Ablations, live evaluation, window checks, and reversible activation | Not started |

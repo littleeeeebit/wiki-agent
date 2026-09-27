@@ -152,6 +152,8 @@ def flip(body: Switch) -> dict:
 class Rendering(BaseModel):
     texts: list[str]
     direction: str = translate.EN_KO
+    # A verified answer: a rendering that changes a number or identifier is refused (`translate.checked`).
+    checked: bool = False
 
 
 @app.post("/api/translate")
@@ -171,6 +173,9 @@ def render(body: Rendering) -> dict:
         raise HTTPException(413, f"한 번에 {TRANSLATE_CHARS} 자까지다")
     if not translating():
         return {"texts": list(body.texts), "off": True}
+    if body.checked:
+        done = translate.checked(list(body.texts), body.direction, time.monotonic() + TRANSLATE_SECONDS)
+        return {"texts": [t for t, _ in done], "statuses": [s for _, s in done]}
     return {"texts": translate.translate(
         list(body.texts), body.direction, time.monotonic() + TRANSLATE_SECONDS
     )}
