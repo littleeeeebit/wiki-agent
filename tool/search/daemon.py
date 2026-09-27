@@ -808,6 +808,8 @@ class Index:
         self.chunks: list[dict] = []
         self.matrix = None
         self.graph = knowledge_graph.Graph(self.store)
+        # The graph as the last snapshot read it (`snapshot`).
+        self.frozen: knowledge_graph.Frozen | None = None
         self.co: tuple[str, list[tuple[str, str]]] = ("", [])
 
     def close(self) -> None:
@@ -906,13 +908,17 @@ class Index:
         """What one search reads from start to end, taken under the daemon's
         lock and read outside it. `refresh` replaces the chunk list, the
         postings and the matrix rather than changing them, so a shallow copy
-        keeps one loaded set of chunks; its graph is pinned to their
-        generation. The matrix is stacked here, once, not per copy."""
+        keeps one loaded set of chunks. The graph is the other half: `update`
+        rewrites rows inside the same generation, so the copy walks a
+        `knowledge_graph.Frozen` read now, kept until the graph changes. The
+        matrix is stacked here, once, not per copy."""
 
         if self.chunks and self.complete():
             self.vectors()
+        if self.frozen is None or self.frozen.key != knowledge_graph.state(self.store):
+            self.frozen = knowledge_graph.Frozen(self.store)
         snap = copy.copy(self)
-        snap.graph = knowledge_graph.Graph(self.store, self.generation())
+        snap.graph = self.frozen
         return snap
 
     def vectors(self) -> tuple[list[int], object]:

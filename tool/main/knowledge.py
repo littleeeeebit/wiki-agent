@@ -931,13 +931,30 @@ def run_round(req: dict, project: str | Path | None, budget: Budget) -> dict | N
     found = retrieve_from_daemon(req, project, min(ROUND_SECONDS, budget.left()))
     if found is not None:
         return found
-    index = local_index(project)
-    try:
-        return retrieval.run(index, req, budget.cancel)
-    except retrieval.Stale:
+    found = bounded(lambda: cold(req, project, budget.cancel), budget)
+    return found if (found or {}).get("schema_version") == retrieval.RESULT else None
+
+
+# Held by the one cold index build allowed at a time, as the controller's (`search.controller.COLD`).
+COLD = threading.Lock()
+
+
+def cold(req: dict, project: str | Path | None, cancel: threading.Event) -> dict | None:
+    """A round answered by an index built in this process. A build already
+    running is not joined by a second: this round then has no answer."""
+
+    if not COLD.acquire(blocking=False):
         return None
+    try:
+        index = local_index(project)
+        try:
+            return retrieval.run(index.snapshot(), req, cancel)
+        except retrieval.Stale:
+            return None
+        finally:
+            index.close()
     finally:
-        index.close()
+        COLD.release()
 
 
 def repair(req: dict, result: dict, need: str, project: str | Path | None, *, budget: Budget,
@@ -945,17 +962,23 @@ def repair(req: dict, result: dict, need: str, project: str | Path | None, *, bu
            external: bool = False, model: str = "") -> dict:
     """The next round for what `result` is missing (`retrieval.repair`),
     run: `{"note", "requests", "results"}`. Nothing is asked twice the same
-    way; past three rounds `retrieval.Exhausted`.
+    way; past three rounds `retrieval.Exhausted`, before anything is done.
 
-    `subqueries` asks a model first, within the budget; `external` searches
+    `subqueries` asks a model first, taking one request of the budget
+    (`common.budget.Exhausted` when none is left); `external` searches
     arXiv first, only when the caller says the provider may be used, since
     that sends the question outside.
     """
 
     root = Path(project).resolve() if project else None
+    # Before any work is spent on a round that cannot be run.
+    if req["round"] >= retrieval.MAX_ROUNDS:
+        raise retrieval.Exhausted("rounds")
     note: dict = {}
     proposals: list = []
     if need == "subqueries":
+        # A model request, out of the question's one allowance: `Exhausted` when none is left.
+        budget.call()
         proposals = subqueries(req["query_en"] or req["query_original"], budget, model)
         note["proposed"] = len(proposals)
     if need == "external":

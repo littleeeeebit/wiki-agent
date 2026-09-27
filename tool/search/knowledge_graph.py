@@ -652,17 +652,14 @@ EDGE_COLUMNS = "edge_id, repo_id, from_id, to_id, kind, directed, origin, confid
 class Graph:
     """Read access to the graph of the generation a `Store` reads — for
     retrieval (stage 5, `retrieval.expand`) and for checking it. Chunk-level: the map's
-    document-level view is `projection`. With `gen` it reads that generation
-    only, so a retrieval that holds one set of chunks walks their graph even
-    when another is published meanwhile."""
+    document-level view is `projection`; a retrieval walks a `Frozen` copy."""
 
-    def __init__(self, store, gen: int | None = None):
-        self.store, self.gen = store, gen
+    def __init__(self, store):
+        self.store = store
 
     def rows(self, sql: str, args: list) -> list[tuple]:
         with self.store.lock:
-            gen = self.store.reading() if self.gen is None else self.gen
-            return self.store.db.execute(sql, [gen, *args]).fetchall()
+            return self.store.db.execute(sql, [self.store.reading(), *args]).fetchall()
 
     def nodes(self, ids: list[str] | None = None) -> dict[str, dict]:
         """Every node, or those of `ids`, by id."""
@@ -750,6 +747,57 @@ class Graph:
                             nodes[a]["type"] in kinds or nodes[b]["type"] in kinds):
                         out.add((a, b, names[entity]))
         return sorted(out)
+
+
+def state(store) -> tuple:
+    """What changes whenever the graph a `Store` reads may have: its
+    generation, the store's version (a deleted source drops its graph rows),
+    the last build (`update`) and the extraction serial (`forget`)."""
+
+    with store.lock:
+        return (store.reading(), meta(store.db, "version"), meta(store.db, "graph"), meta(store.db, "graph_serial"))
+
+
+class Frozen:
+    """The adopted nodes and edges of one generation, read into memory in one
+    read transaction — for a retrieval that must walk the graph as it stood
+    when its chunks were loaded, whatever `update` rewrites in that same
+    generation meanwhile. `nodes` and `edges` answer as `Graph`'s do, without
+    spans, which a walk never reads. `key` is the `state` it was read at."""
+
+    def __init__(self, store):
+        with store.lock:
+            store.db.execute("BEGIN")
+            try:
+                gen = store.reading()
+                self.key = (gen, meta(store.db, "version"), meta(store.db, "graph"), meta(store.db, "graph_serial"))
+                self.gen = gen
+                self._nodes = {row[0]: {"node_id": row[0], "repo_id": row[1], "kind": row[2], "source_id": row[3],
+                                        "label": row[4], "type": row[5]} for row in store.db.execute(
+                    "SELECT node_id, repo_id, kind, source_id, label, type FROM nodes WHERE gen = ?", (gen,))}
+                rows = store.db.execute(f"SELECT {EDGE_COLUMNS} FROM edges WHERE gen = ? AND status = 'adopted'",
+                                        (gen,)).fetchall()
+            finally:
+                store.db.execute("COMMIT")
+        self._ends: dict[str, list[tuple[dict, str]]] = {}
+        for row in rows:
+            edge = contract(row, [])
+            self._ends.setdefault(edge["from_id"], []).append((edge, "from_id"))
+            if edge["to_id"] != edge["from_id"]:
+                self._ends.setdefault(edge["to_id"], []).append((edge, "to_id"))
+
+    def nodes(self, ids: list[str] | None = None) -> dict[str, dict]:
+        return dict(self._nodes) if ids is None else {i: self._nodes[i] for i in ids if i in self._nodes}
+
+    def edges(self, ids: list[str], kinds: list[str] | None = None) -> list[dict]:
+        found: dict[tuple, dict] = {}
+        for node in ids:
+            for edge, end in self._ends.get(node, []):
+                if kinds and edge["kind"] not in kinds:
+                    continue
+                found.setdefault((edge["edge_id"], node), {**edge, "via": node,
+                                                           "reverse": end == "to_id" and edge["directed"]})
+        return list(found.values())
 
 
 def parts(ids: list[str] | None, size: int = 400):

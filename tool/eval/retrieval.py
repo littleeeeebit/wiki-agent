@@ -49,6 +49,7 @@ def run(manifest_path: Path = MANIFEST, k: int = 8, project: Path | None = None,
         raise ValueError(f"method must be one of {baseline.METHODS}")
     manifest = baseline.load(manifest_path)
     budget = manifest.get("graph") or retrieval.GRAPH
+    allowance = manifest.get("max_candidates") or retrieval.MAX_CANDIDATES
     with tempfile.TemporaryDirectory(prefix="jev-eval-") as scratch:
         hub, repo = baseline.materialize(Path(scratch), manifest["corpus"], project)
         hybrid = method == "hybrid"
@@ -67,7 +68,7 @@ def run(manifest_path: Path = MANIFEST, k: int = 8, project: Path | None = None,
 
             names = {c["chunk_id"]: f"{label(Path(c['path']))}#{c['heading_path'][-1]}" for c in index.chunks}
             snapshot = sorted((label(p), baseline.sha(p.read_bytes())) for p in index.files)
-            queries = [one(index, query, k, budget, names) for query in manifest["queries"]]
+            queries = [one(index, query, k, budget, allowance, names) for query in manifest["queries"]]
         finally:
             index.close()
     scored = [q for q in queries if q["expect"]]
@@ -82,7 +83,8 @@ def run(manifest_path: Path = MANIFEST, k: int = 8, project: Path | None = None,
         "run": {"started": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), **baseline.revision()},
         "corpus": {"kind": manifest["corpus"]["kind"], "files": len(snapshot),
                    "sha256": baseline.sha("\n".join(f"{p} {h}" for p, h in snapshot).encode()), "snapshot": snapshot},
-        "retrieval": {"method": method, "k": k, "sources": SOURCES, "graph": budget, "schema": retrieval.RESULT},
+        "retrieval": {"method": method, "k": k, "sources": SOURCES, "graph": budget, "max_candidates": allowance,
+                      "schema": retrieval.RESULT},
         "usage": {"jev_calls": 0, "jev_tokens": 0, "cost_usd": 0.0},
         "queries": queries,
         "summary": {"queries": len(queries), "scored": len(scored),
@@ -96,11 +98,11 @@ def run(manifest_path: Path = MANIFEST, k: int = 8, project: Path | None = None,
     }
 
 
-def one(index, query: dict, k: int, budget: dict, names: dict[str, str]) -> dict:
+def one(index, query: dict, k: int, budget: dict, allowance: int, names: dict[str, str]) -> dict:
     arms = {}
     for arm, graph in (("off", None), ("on", budget)):
         req = retrieval.request(evidence.repo_id(index.project), query["text"], sources=SOURCES, limit=k,
-                                seconds=60.0, graph=graph)
+                                seconds=60.0, graph=graph, max_candidates=allowance)
         arms[arm] = retrieval.run(index.snapshot(), req)
     expect = query.get("expect") or []
 

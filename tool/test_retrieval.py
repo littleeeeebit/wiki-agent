@@ -1,6 +1,7 @@
 """Stage 5 of `docs/plans/jev/`: chunk-level retrieval with a bounded graph
 lane. BM25 only (no model), no credentials, no external calls."""
 
+import os
 import threading
 import time
 from pathlib import Path
@@ -10,7 +11,7 @@ import pytest
 import decision
 import search
 from main import knowledge
-from search import evidence, knowledge_graph, retrieval
+from search import evidence, retrieval
 from search import daemon as searchd
 
 ACTIVE = decision.Config("active", decision.MODEL, "file", key="k")
@@ -144,9 +145,10 @@ def test_fan_out_and_the_candidate_allowance_bound_the_walk(world):
     (repo / "docs/index.md").write_text("# Index of leaves\n\n" + "\n".join(
         f"- [leaf {n}](leaf{n}.md)" for n in range(12)) + "\n", encoding="utf-8")
     index = index_of(hub, repo)
-    wide = ask(index, "index of leaves", graph={"seeds": 1, "hops": 1, "fanout": 5, "candidates": 40}, limit=1)
+    one = {"seeds": 1, "hops": 1, "fanout": 5}
+    wide = ask(index, "index of leaves", graph=one, limit=1)
     assert len(texts(wide, "graph")) == 5 and wide["truncated"] == []
-    tight = ask(index, "index of leaves", graph={"seeds": 1, "hops": 1, "fanout": 5, "candidates": 3}, limit=1)
+    tight = ask(index, "index of leaves", graph=one, limit=1, max_candidates=3)
     assert len(tight["chunks"]) == 3 and tight["truncated"] == ["candidates"]
     # One refusal says the allowance ran out; the walk does not go on counting.
     assert [p["status"] for p in tight["paths"]] == ["discovered", "discovered", "budget"]
@@ -236,7 +238,8 @@ def test_a_request_for_another_generation_is_stale_and_a_bad_one_is_refused(worl
     for bad in ({"source_allowlist": ["web"]}, {"limit": 41}, {"limit": 0},
                 {"graph_budget": {**retrieval.GRAPH, "hops": 9}}, {"seen_chunk_ids": ["x"]},
                 {"filters": {"kinds": ["tweet"]}}, {"graph_budget": None, "graph_seeds": ["a" * 64]},
-                {"round": 4}, {"deadline": float("nan")}, {"query_original": " "}):
+                {"round": 4}, {"deadline": float("nan")}, {"query_original": " "}, {"max_candidates": 0},
+                {"graph_budget": {**retrieval.GRAPH, "candidates": 40}}):
         assert retrieval.problems({**good, **bad}), bad
     index.close()
 
@@ -421,11 +424,93 @@ def test_the_bridge_manifest_gains_only_through_explicit_relationships_and_displ
     assert summary["seed_recall_graph_on"] == summary["recall_graph_off"] < summary["recall_graph_on"]
 
 
-def test_the_graph_is_read_at_the_generation_the_chunks_came_from(world):
+def test_a_snapshot_walks_the_graph_its_chunks_were_loaded_with_after_a_refresh_rewrites_it(world):
     hub, repo = world
     index = index_of(hub, repo)
     snap = index.snapshot()
-    assert snap.graph.gen == index.generation() and snap.chunks is index.chunks
-    edges = knowledge_graph.Graph(index.store, index.generation() + 5).edges()
-    assert edges == []
+    # The same generation, rewritten: the link that makes the bridge is gone.
+    (repo / "docs/owners.md").write_text("# Owners\n\nThe ingest pipeline is owned by the Atlas team.\n",
+                                         encoding="utf-8")
+    stamp = (repo / "docs/owners.md").stat().st_mtime_ns + 10**9
+    os.utime(repo / "docs/owners.md", ns=(stamp, stamp))
+    index.refresh()
+    assert index.generation() == snap.generation()
+    req = retrieval.request(evidence.repo_id(repo), QUESTION, sources=["documents"])
+    assert ANSWER in "".join(texts(retrieval.run(snap, req), "graph"))
+    assert ANSWER not in "".join(texts(retrieval.run(index.snapshot(), req)))
+    # Read once per change of the graph, not per snapshot.
+    assert index.snapshot().graph is index.snapshot().graph
     index.close()
+
+
+# ---- round 1 review -------------------------------------------------------------------
+
+def test_a_seed_the_caller_names_is_checked_before_the_walk_starts_from_it(world):
+    hub, repo = world
+    (repo / ".wiki/memory/2026-09-21-link.md").write_text(
+        "# Link\n\nPrivate note, see [the rota](../../docs/atlas.md).\n", encoding="utf-8")
+    index = index_of(hub, repo)
+    memory = chunk_of(index, ".wiki/memory/2026-09-21-link.md", "Private note")
+    req = retrieval.request(evidence.repo_id(repo), QUESTION, sources=["documents"], limit=0,
+                            graph_seeds=[memory["chunk_id"]])
+    result = retrieval.run(index.snapshot(), req)
+    assert result["chunks"] == []
+    assert [(p["seed"], p["status"]) for p in result["paths"]] == [(memory["chunk_id"], "source_not_allowed")]
+    hidden = retrieval.run(index.snapshot(), {**req, "limit": 0, "graph_seeds": [], "context_of": [memory["chunk_id"]]})
+    assert hidden["chunks"] == [] and hidden["paths"][0]["status"] == "source_not_allowed"
+    index.close()
+
+
+def test_adjacent_sections_spend_the_same_allowance(world):
+    hub, repo = world
+    index = index_of(hub, repo)
+    req = retrieval.request(evidence.repo_id(repo), "Mira", sources=["documents"], limit=1, max_candidates=2)
+    first = retrieval.run(index.snapshot(), req)
+    (context,), _ = retrieval.repair(req, first, "context", chunk_ids=[first["chunks"][0]["chunk_id"]])
+    second = retrieval.run(index.snapshot(), context)
+    assert len(first["chunks"]) + len(second["chunks"]) == 2 and second["truncated"] == ["candidates"]
+    index.close()
+
+
+def test_sibling_subqueries_split_what_is_left_of_the_allowance(world):
+    hub, repo = world
+    index = index_of(hub, repo)
+    req = retrieval.request(evidence.repo_id(repo), "circular alpha", sources=["documents"], limit=1,
+                            max_candidates=3, graph=None)
+    first = retrieval.run(index.snapshot(), req)
+    subs, note = retrieval.repair(req, first, "subqueries", subqueries=["ranker", "ingest", "beta page"])
+    assert len(subs) == 2 and note["rejected"] == [{"subquery": "beta page", "reason": "no_allowance"}]
+    got = [c["chunk_id"] for s in subs for c in retrieval.run(index.snapshot(), s)["chunks"]]
+    assert len(first["chunks"]) + len(set(got)) <= 3 and all(s["max_candidates"] == 2 for s in subs)
+    index.close()
+
+
+def test_a_subquery_repair_takes_a_request_from_the_budget_and_none_past_the_last_round(world, monkeypatch):
+    hub, repo = world
+    from common.budget import Budget, Exhausted
+
+    asked = []
+    monkeypatch.setattr(knowledge, "oneshot", lambda *a: asked.append(a) or iter(()))
+    budget = Budget(seconds=10, calls=0, candidates=40)
+    first = knowledge.retrieve(QUESTION, repo, cfg=OFF, graph=False, budget=budget, k=2)
+    with pytest.raises(Exhausted):
+        knowledge.repair(first["request"], first["result"], "subqueries", repo, budget=budget)
+    last = {**first["request"], "round": retrieval.MAX_ROUNDS}
+    with pytest.raises(retrieval.Exhausted):
+        knowledge.repair(last, first["result"], "subqueries", repo, budget=Budget(seconds=10, calls=6, candidates=40))
+    assert asked == []
+
+
+def test_a_cold_round_is_one_at_a_time_and_ends_with_the_budget(world, monkeypatch):
+    hub, repo = world
+    from common.budget import Budget
+
+    req = retrieval.request(evidence.repo_id(repo), QUESTION)
+    with knowledge.COLD:
+        assert knowledge.run_round(req, repo, Budget(seconds=5, calls=1, candidates=40)) is None
+    release = threading.Event()
+    monkeypatch.setattr(knowledge, "local_index", lambda project: release.wait(10))
+    started = time.monotonic()
+    assert knowledge.run_round(req, repo, Budget(seconds=0.5, calls=1, candidates=40)) is None
+    assert time.monotonic() - started < 2
+    release.set()

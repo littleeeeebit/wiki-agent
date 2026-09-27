@@ -52,8 +52,12 @@ RESULT = "retrieval-result/1"
 RRF_K = 60
 # The plan's initial traversal budget: design defaults, not measurements.
 # Every result records the one it ran under.
-GRAPH = {"seeds": 8, "hops": 2, "fanout": 5, "candidates": 40}
-CEILING = {"seeds": 40, "hops": 3, "fanout": 20, "candidates": 200}
+GRAPH = {"seeds": 8, "hops": 2, "fanout": 5}
+CEILING = {"seeds": 40, "hops": 3, "fanout": 20}
+# Unique candidate chunks one question may be given across all its rounds —
+# seeds, adjacent sections and the graph lane alike, graph on or off.
+MAX_CANDIDATES = 40
+MAX_ALLOWANCE = 200
 MAX_LIMIT = 40
 MAX_ROUNDS = 3
 MAX_SUBQUERIES = 3
@@ -103,14 +107,15 @@ def normal(text: str) -> str:
 def request(repo_id: str, query: str, *, query_en: str | None = None,
             sources: list[str] | tuple[str, ...] = ("hub", "documents", "memory"), filters: dict | None = None,
             generation: int | None = None, limit: int = 8, seconds: float = 15.0, graph: dict | None = GRAPH,
-            seen: list[str] = (), graph_seeds: list[str] = (), context_of: list[str] = ()) -> dict:
+            max_candidates: int = MAX_CANDIDATES, seen: list[str] = (), graph_seeds: list[str] = (),
+            context_of: list[str] = ()) -> dict:
     """A RetrievalRequest for round 1. `graph=None` switches the graph lane off."""
 
     return {"schema_version": REQUEST, "repo_id": repo_id, "query_original": query, "query_en": query_en,
             "source_allowlist": list(sources), "filters": dict(filters or {}), "generation": generation,
             "limit": limit, "deadline": time.time() + seconds, "graph_budget": dict(graph) if graph else None,
-            "seen_chunk_ids": list(seen), "round": 1, "graph_seeds": list(graph_seeds),
-            "context_of": list(context_of)}
+            "max_candidates": max_candidates, "seen_chunk_ids": list(seen), "round": 1,
+            "graph_seeds": list(graph_seeds), "context_of": list(context_of)}
 
 
 def problems(req: object) -> list[str]:
@@ -159,6 +164,8 @@ def problems(req: object) -> list[str]:
         found.append("graph_budget")
     if req.get("graph_seeds") and budget is None:
         found.append("graph_seeds with the graph off")
+    if type(req.get("max_candidates")) is not int or not 1 <= req["max_candidates"] <= MAX_ALLOWANCE:
+        found.append("max_candidates")
     for name in ("seen_chunk_ids", "graph_seeds", "context_of"):
         ids = req.get(name)
         if not isinstance(ids, list) or not all(evidence.ID.match(str(i)) for i in ids):
@@ -256,7 +263,8 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
     position = {i: n for n, i in enumerate(ranked)}
 
     budget = req["graph_budget"]
-    allowance = budget["candidates"] - len(seen) if budget else req["limit"]
+    # What earlier rounds left of the question's allowance; every lane of this one spends from it.
+    allowance = req["max_candidates"] - len(seen)
     slots = max(0, min(req["limit"], allowance))
     names = req["source_allowlist"]
     groups = {name: [i for i in ranked if family(chunks[i]) == name] for name in names}
@@ -278,7 +286,7 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
     context = {}
     if req["context_of"]:
         context, cut = expand(**walk, starts=req["context_of"], kinds=("next_chunk",), hops=1, fanout=CONTEXT,
-                              room=MAX_LIMIT, taken=taken, lane="context")
+                              room=allowance - len(taken), taken=taken, lane="context")
         truncated += cut
         taken |= set(context)
     found = {}
@@ -326,7 +334,8 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
                       "paths": reached} if reached else None}
     returned = [c["chunk_id"] for c in out] + [d for c in out for d in c["duplicates"]]
     return {"schema_version": RESULT, "generation": generation, "round": req["round"], "queries": queries,
-            "vectors": dense is not None, "graph_budget": budget, "chunks": out, "scores": scores, "paths": paths,
+            "vectors": dense is not None, "graph_budget": budget, "max_candidates": req["max_candidates"],
+            "chunks": out, "scores": scores, "paths": paths,
             "coverage": coverage, "missing_sources": [name for name in names if not groups[name]],
             "truncated": sorted(set(truncated)), "seen_chunk_ids": list(dict.fromkeys([*req["seen_chunk_ids"],
                                                                                        *returned])),
@@ -380,10 +389,13 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
     for start in dict.fromkeys(starts):
         node = nodes.get(start)
         trail = [{"node": start, "node_kind": "chunk" if start in by_id else (node or {}).get("kind")}]
+        # A start the caller named is checked as any node is: a walk never
+        # begins in a source or a visibility the request may not see.
+        why = blocked(chunks[by_id[start]], req, repos) if start in by_id else None
         if start not in by_id and (node is None or node["kind"] != "entity"):
             record(trail, "deleted")
-        elif node is not None and node["repo_id"] not in repos:
-            record(trail, "out_of_scope")
+        elif why or (node is not None and node["repo_id"] not in repos):
+            record(trail, why or "out_of_scope")
         else:
             visited.add(start)
             frontier.append((start, trail))
@@ -512,7 +524,7 @@ def repair(req: dict, result: dict, need: str, *, sources: list[str] = (), subqu
     - `bridge`: the entities this round's walk reached (or those of
       `entities` among them) as graph seeds, with no text search.
     - `subqueries`: each checked subquery (`checked_subqueries`), the seed
-      slots shared between them.
+      slots and what is left of the allowance split between them.
     - `context`: the sections next to `chunk_ids`, which must be this
       round's.
     - `external`: the paper and research families, after the caller has
@@ -545,6 +557,13 @@ def repair(req: dict, result: dict, need: str, *, sources: list[str] = (), subqu
         ids = [c for c in dict.fromkeys(chunk_ids) if c in mine]
         return ([{**base, "limit": 0, "context_of": ids}] if ids else []), {**note, "chunks": ids}
     kept, rejected = checked_subqueries(req["query_en"] or req["query_original"], list(subqueries))
+    # Sibling rounds share what is left of the allowance, split between
+    # them: each would otherwise spend all of it, since none sees the others.
+    left = req["max_candidates"] - len(base["seen_chunk_ids"])
+    rejected += [{"subquery": q, "reason": "no_allowance"} for q in kept[max(0, left):]]
+    kept = kept[:max(0, left)]
     note |= {"subqueries": kept, "rejected": rejected}
     share = max(1, req["limit"] // max(1, len(kept)))
-    return [{**base, "query_original": q, "query_en": None, "limit": share} for q in kept], note
+    room = left // max(1, len(kept))
+    return [{**base, "query_original": q, "query_en": None, "limit": min(share, room),
+             "max_candidates": len(base["seen_chunk_ids"]) + room} for q in kept], note

@@ -3,7 +3,8 @@
   "id": "bridge",
   "version": 1,
   "description": "Synthetic set for stage 5: answers one explicit relationship away from what a question matches — a Markdown link, a front-matter `reads`, a decision that supersedes another — whose passages share no word with the question, beside a two-section answer, direct hits, a hub rule, an unanswerable question, and a bridge only prose states, which no structural edge can find. An expectation `file#Heading` names one section; a bare file, any of its sections. Written inline so its pages never enter this wiki's own index or link checks.",
-  "graph": {"seeds": 8, "hops": 2, "fanout": 5, "candidates": 40},
+  "graph": {"seeds": 8, "hops": 2, "fanout": 5},
+  "max_candidates": 40,
   "corpus": {
     "kind": "synthetic",
     "files": {
