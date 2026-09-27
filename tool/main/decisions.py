@@ -590,16 +590,17 @@ def check_offer(repo: Path, gate: str) -> list[dict]:
 
 
 def changed(path: Path, spec: dict) -> list[str]:
-    """The files the pull request will show: the branch against the base it goes
-    to, pushed commits included. Without that ref, what no remote branch but
-    this branch's own has."""
+    """The files the pull request will show: the branch against the base
+    `specs.opened` targets, pushed commits included. Without that base no pull
+    request opens either; what no remote has yet stands in."""
 
-    base = f"origin/{spec['base']}" if spec.get("base") else "origin/HEAD"
-    own = git(path, "rev-parse", "--abbrev-ref", "HEAD")
-    out = git(path, "-c", "core.quotepath=off", "diff", "--name-only", f"{base}...HEAD") \
-        if git(path, "rev-parse", "--verify", "--quiet", base) else \
-        git(path, "-c", "core.quotepath=off", "log", "--name-only", "--format=", "HEAD",
-            "--not", f"--exclude=origin/{own}", "--remotes")
+    from . import specs  # `specs` imports this module
+
+    got = specs.base_of(spec, path)
+    ref = f"origin/{got.stdout.strip()}"
+    out = git(path, "-c", "core.quotepath=off", "diff", "--name-only", f"{ref}...HEAD") \
+        if not got.returncode and got.stdout.strip() and git(path, "rev-parse", "--verify", "--quiet", ref) else \
+        git(path, "-c", "core.quotepath=off", "log", "--name-only", "--format=", "HEAD", "--not", "--remotes")
     return list(dict.fromkeys(line for line in out.splitlines() if line.strip()))[:MAX_FILES]
 
 

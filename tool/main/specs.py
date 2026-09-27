@@ -792,6 +792,14 @@ def korean(spec: dict) -> dict:
             "report": [{**i, "item": next(done)} for i in spec["report"]]}
 
 
+def base_of(spec: dict, path: Path) -> subprocess.CompletedProcess:
+    """The branch the pull request goes to. A spec sent back by `[다시 PR]`
+    goes to the base it was reviewed for; any other, the repository's default."""
+
+    return subprocess.CompletedProcess([], 0, spec["base"], "") if spec.get("base") else \
+        sh(["gh", "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], path, 30)
+
+
 def opened(repo: Path, path: Path, run, spec: dict):
     """Push, and open the pull request as the person's `gh`. The next turn to
     start, when the spec came from a plan row that now says done.
@@ -807,9 +815,7 @@ def opened(repo: Path, path: Path, run, spec: dict):
     pushed = sh(["git", "push", "-u", "origin", branch], path, 120)
     if pushed.returncode:
         return failed(run, spec, f"push 실패 — {said(pushed)}")
-    # A spec sent back by `[다시 PR]` goes to the base it was reviewed for.
-    base = subprocess.CompletedProcess([], 0, spec["base"], "") if spec.get("base") else \
-        sh(["gh", "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], path, 30)
+    base = base_of(spec, path)
     if base.returncode or not base.stdout.strip():
         return failed(run, spec, f"기본 브랜치를 모른다 — {said(base)}")
     if run.halt.is_set():

@@ -397,12 +397,15 @@ def test_a_picked_check_that_commits_holds_the_pr_it_would_have_published(repo, 
     assert spec["checks"][0]["ok"] is False and "Jev 가 고른" not in specs.body_of(spec)
 
 
-def test_the_changed_files_are_the_branch_against_its_base_pushed_commits_included(tmp_path):
+def test_the_changed_files_are_the_branch_against_its_base_pushed_commits_included(tmp_path, monkeypatch):
+    import subprocess
+
     def git(*args, cwd=tmp_path / "w"):
-        import subprocess
         subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *args], cwd=cwd, check=True,
                        capture_output=True)
 
+    # The repository's default branch, as `gh` reports it; no `origin/HEAD` is ever set here.
+    monkeypatch.setattr(specs, "sh", lambda cmd, cwd, timeout: subprocess.CompletedProcess(cmd, 0, "main\n", ""))
     (tmp_path / "w").mkdir()
     git("init", "-b", "main")
     (tmp_path / "w/a.txt").write_text("a")
@@ -417,8 +420,9 @@ def test_the_changed_files_are_the_branch_against_its_base_pushed_commits_includ
     git("add", ".")
     git("commit", "-m", "b")
     git("push", "-u", "origin", "feature")
-    assert decisions.changed(tmp_path / "w", {"base": "main"}) == ["설계.md"]
-    assert decisions.changed(tmp_path / "w", {}) == ["설계.md"], "no origin/HEAD: the branch's own push still counts"
+    git("push", "origin", "feature:staging")
+    assert decisions.changed(tmp_path / "w", {}) == ["설계.md"], "pushed, and on another remote branch too"
+    assert decisions.changed(tmp_path / "w", {"base": "staging"}) == [], "a spec sent back keeps its own base"
 
 
 # -- loop.fix ---------------------------------------------------------------------
