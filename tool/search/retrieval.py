@@ -368,9 +368,10 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
 
     A node of the walk is a text, not a file: the copies of a chunk in
     `twins` are one candidate, so they are one node — walked from all of
-    them at once, their edges pooled, reached when any of them is. A copy
-    reached is recorded as reached (the path names it) and credited to the
-    chunk holding that text, taken or found.
+    them at once, their edges pooled, reached when any of them is. A step
+    names the copy whose edge it followed (`copy`) when that is not the
+    path's own node. A copy reached is recorded as reached (the path names
+    it) and credited to the chunk holding that text, taken or found.
 
     One hop is one edge. A source stands for its chunks, and a decision for
     its record's: reaching either offers their chunks, best BM25 first. From
@@ -443,6 +444,8 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
             truncated.append("deadline")
             break
         # Every copy's own edges: the same words in another file may link elsewhere.
+        # `owner` is the copy each id asked for belongs to, which a step names.
+        owner = {x: m for node, _trail in frontier if node in by_id for m in members(node) for x in own_ids(by_id[m])}
         asks = {node: [x for m in members(node) for x in own_ids(by_id[m])] if node in by_id else [node]
                 for node, _trail in frontier}
         edges = graph.edges(sorted({x for ids in asks.values() for x in ids}), kinds=list(kinds))
@@ -470,10 +473,10 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
                         offered = [("gone", other)]
                     for kind, tid in offered:
                         score = relevance(by_id[tid]) if kind == "chunk" else 0.0
-                        options.append((PRIORITY[edge["kind"]], -score, tid, kind, edge, other))
+                        options.append((PRIORITY[edge["kind"]], -score, tid, kind, edge, other, owner.get(x, node)))
             options.sort(key=lambda o: o[:3])
             taken_here = 0
-            for n, (_p, _s, tid, kind, edge, other) in enumerate(options):
+            for n, (_p, _s, tid, kind, edge, other, copy) in enumerate(options):
                 if taken_here >= fanout:
                     # More than a fan-out of new neighbours: the rest are not walked, and that is said.
                     if any(key(o[2]) not in visited for o in options[n:]):
@@ -481,7 +484,9 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
                     break
                 step = {"node": tid, "node_kind": kind, "edge_id": edge["edge_id"], "kind": edge["kind"],
                         "reverse": edge["reverse"], "origin": edge["origin"], "confidence": edge["confidence"],
-                        **({"through": other} if other != tid else {})}
+                        **({"through": other} if other != tid else {}),
+                        # The copy of this node whose edge it is, when not the node itself.
+                        **({"copy": copy} if copy != node else {})}
                 path = trail + [step]
                 if key(tid) in visited:
                     # Reached before, or a seed itself: the new seed's path is kept, credited to

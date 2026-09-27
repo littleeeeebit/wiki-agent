@@ -732,6 +732,12 @@ def test_the_copies_of_a_seed_are_one_node_whose_links_are_pooled_and_whose_cut_
     # The last copy's link competes with the others', by relevance, not by where the copy stands.
     assert "Mira runs the conveyor on Tuesday." in "".join(texts(result, "graph"))
     assert "fanout" in result["truncated"]
+    # The path names the copy whose link it followed, not only the seed that stands for it.
+    answer = next(c for c in result["chunks"] if "Mira" in c["text"])
+    (path,) = [result["paths"][p] for p in result["scores"][answer["chunk_id"]]["graph"]["paths"]]
+    last = chunk_of(index, "docs/c6/intro.md", "quarry")["chunk_id"]
+    seed = result["chunks"][0]["chunk_id"]
+    assert path["seed"] == seed and path["steps"][1].get("copy", seed) == last
     index.close()
 
 
