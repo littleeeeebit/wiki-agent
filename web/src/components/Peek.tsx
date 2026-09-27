@@ -3,7 +3,8 @@ import * as api from '@/lib/api'
 import type { Peek as PeekData } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
-type Props = { data: PeekData | null; error?: string; onClose: () => void }
+/** `note`: why what is shown is not what was cited — the file changed since. */
+type Props = { data: PeekData | null; error?: string; note?: string; where?: string; onClose: () => void }
 
 /** Read the cited place in a side drawer, leaving the conversation where it is.
  *
@@ -11,7 +12,7 @@ type Props = { data: PeekData | null; error?: string; onClose: () => void }
  *  Korean. The original is never replaced: the source line stays, and the
  *  rendering stands under it. Path and line number are the coordinates the
  *  citation points at, so those are never touched. */
-export function Peek({ data, error, onClose }: Props) {
+export function Peek({ data, error, note, where, onClose }: Props) {
   const blocks = useMemo(() => (data ? chop(data) : []), [data])
   const [korean, setKorean] = useState(false)
   const [said, setSaid] = useState<Record<number, string>>({})
@@ -42,14 +43,14 @@ export function Peek({ data, error, onClose }: Props) {
     }
   }, [korean, blocks])
 
-  if (!data && !error) return null
+  if (!data && !error && !note) return null
   const prose = blocks.length > 0
 
   return (
     <aside className="flex w-[min(34rem,55%)] shrink-0 flex-col border-l border-border bg-card">
       <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
         <div className="min-w-0 truncate font-mono text-[12px]">
-          {data ? `${data.path}:${data.line}` : '…'}
+          {data ? `${data.path}:${data.line}` : where ?? '…'}
           {data && <span className="ml-2 text-faint">{data.total}줄</span>}
         </div>
         <div className="flex shrink-0 items-center gap-1">
@@ -79,6 +80,7 @@ export function Peek({ data, error, onClose }: Props) {
         </div>
       </div>
       <div className="flex-1 overflow-auto">
+        {note && <p role="status" className="border-b border-border px-3 py-2 text-[12.5px] text-muted-foreground">{note}</p>}
         {error && <p className="p-3 text-[12.5px] text-destructive">{error}</p>}
         {fault && <p className="px-3 pt-2 text-[12.5px] text-destructive">{fault}</p>}
         {data && (

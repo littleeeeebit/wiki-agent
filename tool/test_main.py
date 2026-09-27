@@ -59,7 +59,7 @@ def test_explanation_isolated(tmp_path):
         def __init__(self, repo, **kwargs):
             calls.append((Path(repo), kwargs))
 
-        def say(self, text):
+        def say(self, text, halt=None):
             assert json.loads(text) == {"source_answer": source}
             yield Event("done", "설정 검사 13개는 통과했습니다. 자동으로 실행되는지는 아직 모릅니다.")
 
@@ -81,7 +81,7 @@ def test_explanation_isolated(tmp_path):
 
 def test_stream_persists_both_and_keeps_original_on_rewrite_failure(tmp_path):
     class Original:
-        def say(self, text):
+        def say(self, text, halt=None):
             # Codex may send a finished response with no character deltas.
             yield Event("done", "정확한 원문 13건", {"session_id": "answer-session", "error": False})
 
@@ -95,7 +95,9 @@ def test_stream_persists_both_and_keeps_original_on_rewrite_failure(tmp_path):
         web = client()
         response = web.post("/api/say/wiki", json={"text": "검사 결과?"})
         events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
-        assert [e["kind"] for e in events] == ["done", "simple_start", "simple_delta", "simple_done"]
+        assert [e["kind"] for e in events if e["kind"] != "step"] == ["done", "simple_start", "simple_delta",
+                                                                      "simple_done"]
+        assert [e["seq"] for e in events] == list(range(len(events))), "a run's events are numbered in order"
         saved = web.get("/api/log/wiki").json()[-1]
         assert saved["text"] == "정확한 원문 13건" and saved["simple_text"] == "쉬운 설명 13건"
         assert saved["session_id"] == "answer-session"
@@ -112,7 +114,7 @@ def test_stream_persists_both_and_keeps_original_on_rewrite_failure(tmp_path):
 
 def test_failed_original_never_rewritten(tmp_path):
     class Failed:
-        def say(self, text):
+        def say(self, text, halt=None):
             yield Event("delta", "미완성")
             yield Event("done", "모델 오류", {"error": True})
 
@@ -135,12 +137,12 @@ def test_jev_dossier_reaches_answering_session_after_user_is_saved(monkeypatch):
                "restrictions": [], "requirements": [{"id": "r0", "text": "Find the decision"}], "missing": ["r0"],
                "evidence": [], "conflicts": [], "untrusted": [], "trace": []}
 
-    def prepare(text, repo, state, cfg):
+    def prepare(text, repo, state, cfg, run=None):
         assert chat.recall("wiki")[-1]["text"] == text and cfg.mode == "active"
         return dossier
 
     class Original:
-        def say(self, text):
+        def say(self, text, halt=None):
             sent.append(text)
             yield Event("done", "Answer", {"session_id": "jev-test"})
 
@@ -176,7 +178,7 @@ def test_jev_shadow_records_beside_the_turn_and_off_does_nothing(monkeypatch, tm
         return dossier
 
     class Original:
-        def say(self, text):
+        def say(self, text, halt=None):
             sent.append(text)
             yield Event("done", "Answer", {"session_id": "jev-shadow"})
 
@@ -743,6 +745,18 @@ class Slow(Agent):
         self.go.set()
 
 
+class Answering:
+    """A focus's session that answers once `go` is set (at once without one)."""
+
+    def __init__(self, go: threading.Event | None = None):
+        self.go = go
+
+    def say(self, text, halt=None):
+        if self.go is not None:
+            self.go.wait(10)
+        yield Event("done", "답", {"session_id": "answering"})
+
+
 def settled(path: str):
     """The path's run once its turn has ended."""
 
@@ -898,11 +912,14 @@ def test_a_body_that_never_starts_holds_nothing(tmp_path):
     repo = _repo(tmp_path)
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
-         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent):
+         patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Agent), \
+         patch.object(chat, "session", return_value=Answering()), patch.object(chat, "hits_for", return_value=[]), \
+         patch.object(chat, "explain", return_value=iter([Event("done", "쉬운")])):
         path = _made()
         work.say(work.Order(path=path, text="x"))
         chat.say("wiki", chat.Say(text="x"))
         settled(path)   # a work turn runs on without its body, and lets go when it ends
+        until(lambda: not chat._busy)   # so does a question (stage 9 of `docs/plans/jev/`)
         assert not work._busy and not chat._busy
         assert web.post("/api/work/say", json={"path": path, "text": "y"}).status_code == 200
 
@@ -1012,8 +1029,9 @@ def test_a_switch_waits_for_a_short_request_and_not_for_a_turn(tmp_path):
 
 def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_path):
     """Between accepting a request and the first byte of its body, the project
-    switched away and the worktree could be removed. Held from acceptance, and
-    released when the body is dropped unstarted."""
+    switched away and the worktree could be removed. Held from acceptance.
+    Neither a work turn nor a question (stage 9) is its body: each holds
+    until it ends, and a question's hold blocks a switch meanwhile."""
 
     import gc
 
@@ -1021,8 +1039,11 @@ def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_p
         (tmp_path / name).mkdir()
     repos = {name: _repo(tmp_path / name) for name in ("a", "b")}
     web = client()
+    answering = Answering(threading.Event())
     with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
-         patch.object(work, "ChatSession", Slow):
+         patch.object(work, "ChatSession", Slow), patch.object(chat, "session", return_value=answering), \
+         patch.object(chat, "hits_for", return_value=[]), \
+         patch.object(chat, "explain", return_value=iter([Event("done", "쉬운")])):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         path = _made()
         waiting = work.say(work.Order(path=path, text="x"))
@@ -1033,7 +1054,9 @@ def test_an_accepted_instruction_holds_its_worktree_before_its_body_starts(tmp_p
         assert web.post("/api/config/wiki", json={"repo": "b"}).status_code == 409
         del waiting, asking
         gc.collect()
-        assert not chat._busy
+        assert "next" in chat._busy, "a question is not its response: it runs on"
+        answering.go.set()
+        until(lambda: not chat._busy)
         # The work turn is not its body: it holds until it ends.
         assert path in work._busy
         Agent.made[-1].go.set()

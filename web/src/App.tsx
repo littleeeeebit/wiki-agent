@@ -15,7 +15,7 @@ import { TaskRail } from '@/components/TaskRail'
 import type { View } from '@/components/TaskRail'
 import { Terminal, closed } from '@/components/Terminal'
 import * as api from '@/lib/api'
-import type { Channel, LoopRow, LoopSettings, Options, Peek as PeekData, Pr, Spec, Switch, Worktree } from '@/lib/api'
+import type { Channel, LoopRow, LoopSettings, Options, Peek as PeekData, Pr, RunSummary, Spec, Switch, Worktree } from '@/lib/api'
 import { LOOPING, elsewhere, phase, tasks as taskList } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useWork } from '@/lib/work'
@@ -69,6 +69,9 @@ export default function App() {
   // The map is drawn once it is first opened, and kept after.
   const [mapped, setMapped] = useState(false)
   const [seed, setSeed] = useState<Seed | null>(null)
+  // A run's paths on the map, kept with the project it ran in: another
+  // project's map never draws them.
+  const [mapRun, setMapRun] = useState<{ repo: string; run: RunSummary } | null>(null)
   const [setting, setSetting] = useState(false)
   const [queryBusy, setQueryBusy] = useState(false)
   const [choice, setChoice] = useState<Choice>({ model: '', effort: '' })
@@ -497,11 +500,17 @@ export default function App() {
             specs={specs}
             onSpecs={readSpecs}
             onStart={start}
+            onMapRun={(run) => {
+              setMapRun({ repo, run })
+              setMapped(true)
+              setView('map')
+            }}
           />
         </div>
         {mapped && (
           <div className={cn('min-h-0 flex-1', view !== 'map' && 'hidden')}>
-            <RepoMap repo={repo} on={on} onAsk={(file) => {
+            <RepoMap repo={repo} on={on} run={mapRun?.repo === repo ? mapRun.run : null}
+              onRunClose={() => setMapRun(null)} onAsk={(file) => {
               setSeed({ focus: 'wiki', text: `\`${file}\` ` })
               setView('chat')
             }} />

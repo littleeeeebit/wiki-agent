@@ -346,14 +346,16 @@ class Flow:
     transport), `normalize`, `divide` (a question's asks), `first` (a round)
     and `mend` (a repair round) —
     and through `outside`, which records it on `tape` or, replaying, reads
-    it back. So the same code decides a live run and its replay.
+    it back. So the same code decides a live run and its replay. `emit`
+    (a `Run`'s `step`) hears every transition; it decides nothing.
     """
 
     def __init__(self, query: str, brief: str, k: int, *, omitted: dict | None, available: list[str],
                  repo_id: str, graph: bool, model: str, live: bool, budget: Budget, pol: decision.Policy,
                  evaluate=None, normalize=None, divide=None, first=None, mend=None,
                  cache: decision.Cache | None = None, required: bool = False,
-                 external: bool = False, tape: Tape | None = None, replay: Tape | None = None):
+                 external: bool = False, tape: Tape | None = None, replay: Tape | None = None, emit=None):
+        self.emit = emit
         self.query, self.brief, self.k, self.omitted = query, brief, k, omitted
         self.available, self.repo_id, self.graph, self.model, self.live = available, repo_id, graph, model, live
         self.budget, self.pol, self.cache, self.external = budget, pol, cache, external
@@ -474,7 +476,10 @@ class Flow:
 
     # -- transitions -------------------------------------------------------------------
 
-    def go(self, to: str, reason: str, **detail) -> None:
+    def go(self, to: str, reason: str, shown: dict | None = None, **detail) -> None:
+        """Move to `to`. `shown` goes to `emit` only — graph paths, graded ids —
+        never into the dossier, whose transitions a replay compares."""
+
         # The one exit every short ending passes: a run cancelled or out of time
         # ended because of that, whichever path brought it here.
         if to in ("partial", "unavailable"):
@@ -487,6 +492,8 @@ class Flow:
             "from": self.state, "to": to, "reason": reason, **detail,
             "budget": {"calls": used["calls"], "candidates": used["candidates"], "tokens": used["tokens"]},
             "elapsed_ms": round((time.monotonic() - self.started) * 1000)})
+        if self.emit is not None:
+            self.emit(to, reason, **detail, **(shown or {}))
         self.state = to
         if to in TERMINAL:
             self.dossier["status"], self.dossier["reason"] = to, reason
@@ -639,7 +646,9 @@ class Flow:
             if new:
                 self.go("expand", "candidates", round=req["round"], chunks=len(new),
                         graph=sum(h["lane"] == "graph" for h in new),
-                        paths=sum(p["status"] == "discovered" for p in result["paths"]))
+                        paths=sum(p["status"] == "discovered" for p in result["paths"]),
+                        shown={"candidates": [{"chunk_id": h["chunk_id"], "lane": h["lane"]} for h in new],
+                               "walked": result["paths"]})
                 self.go("grade", "expanded")
                 res = self.judge(new, options)
                 if res["status"] in ("cancelled", "exhausted"):
@@ -647,7 +656,11 @@ class Flow:
                 if res["status"] in ("unavailable", "invalid"):
                     return self.unverified(req, result, res["reason_code"] or res["status"])
                 self.go("assess", "graded", kept=sum(h["chunk_id"] in self.pool for h in new),
-                        covered=[r["id"] for r in self.requirements if r["verdict"] == "yes"])
+                        covered=[r["id"] for r in self.requirements if r["verdict"] == "yes"],
+                        shown={"graded": [{"chunk_id": h["chunk_id"], "kept": h["chunk_id"] in self.pool,
+                                           "relevance": (self.pool.get(h["chunk_id"]) or {}).get("relevance"),
+                                           "judgment": (self.pool.get(h["chunk_id"]) or {}).get("judgment")}
+                                          for h in new]})
             else:
                 res = None
                 self.go("assess", "empty_result", round=req["round"])
@@ -865,7 +878,7 @@ def merged(before: dict, results: list[dict | None]) -> dict:
 def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
             cfg: decision.Config | None = None, cancel: threading.Event | None = None, *,
             external: bool = False, record: bool = False, cache: decision.Cache | None = DECISIONS,
-            require: bool = False, budget: Budget | None = None) -> dict:
+            require: bool = False, budget: Budget | None = None, run: Run | None = None) -> dict:
     """The dossier for one question, with the settings it ran under (never the key).
 
     The app's query path, its shadow mode and `tool/jev_search.py` all run
@@ -875,7 +888,8 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     `record` adds the run's `tape`, for `replay`; it holds source text.
     `require` makes retrieval required whatever the route says, and `budget`
     is an allowance carried over from a run before this one (stage 7's
-    return to retrieval) in place of a fresh one.
+    return to retrieval) in place of a fresh one. `run` hears every
+    transition and the evidence found (stage 9); its stop is the run's.
     """
 
     if not query.strip() or not 1 <= k <= MAX_K:
@@ -884,13 +898,16 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     live = cfg.mode != "off"
     root = Path(project).resolve() if project else None
     brief, omitted = summarized(state, root)
-    budget = budget or Budget(**QUESTION, cancel=cancel)
+    budget = budget or Budget(**cfg.limits, cancel=cancel if run is None else run.cancel)
+    if run is not None:
+        run.follow(budget)
     pol = decision.policy(cfg.model, prompt_version=PROMPT_VERSION)
     tape = Tape() if record else None
-    inputs = {"query": query, "brief": brief, "k": k, "omitted": omitted, "available": available(root),
+    inputs = {"query": query, "brief": brief, "k": k, "omitted": omitted, "available": available(root, cfg.disabled),
               "repo_id": evidence.repo_id(root or HUB), "graph": graph_enabled(), "model": cfg.model,
               "live": live, "external": external, "required": require}
     flow = Flow(**inputs, budget=budget, pol=pol, cache=cache if live else None, tape=tape,
+                emit=run.step if run is not None else None,
                 evaluate=functools.partial(decision.evaluate, cfg),
                 normalize=functools.partial(english, project=project),
                 divide=lambda question, seconds: translate.parts(question, time.monotonic() + seconds),
@@ -900,11 +917,17 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
                     chunk_ids=given if need == "context" else (),
                     proposals=given if need == "subqueries" else None))
     dossier = flow.run()
+    if run is not None:
+        run.step("retrieved", dossier["status"], reason=dossier["reason"], direct=dossier["direct"],
+                 evidence=[e["chunk_id"] for e in dossier["evidence"]], missing=dossier["missing"],
+                 dropped=dossier["dropped"])
     out = {**dossier, "budget": budget.record(), "jev": cfg.status(),
            "state": {"characters": len(state), "summarized": omitted is not None, "omitted": omitted}}
     if tape is not None:
         out["tape"] = {**tape.data, "inputs": inputs, "limits": dict(budget.limits), "policy": pol.record(),
                        "prompt_version": PROMPT_VERSION, "transitions": steps(dossier)}
+    if run is not None:
+        run.dossier = out   # the last retrieval of the run is the evidence it answers from
     return out
 
 
@@ -1082,8 +1105,8 @@ class Grounding:
     def carried(self) -> Budget:
         """What is left of the allowance, for a return to retrieval."""
 
-        return Budget(seconds=QUESTION["seconds"], calls=max(self.calls, 0), candidates=QUESTION["candidates"],
-                      tokens=self.tokens, cancel=self.cancel)
+        return Budget(seconds=self.cfg.limits["seconds"], calls=max(self.calls, 0),
+                      candidates=self.cfg.limits["candidates"], tokens=self.tokens, cancel=self.cancel)
 
     # -- what the generator is told --------------------------------------------------
 
@@ -1477,7 +1500,7 @@ def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict]) -> str:
 
 def grounded(question: str, project: str | Path | None, state: str, dossier: dict, generate,
              cfg: decision.Config, cancel: threading.Event | None = None, cache: decision.Cache | None = DECISIONS,
-             evaluate=None, said: str = ""):
+             evaluate=None, said: str = "", run: Run | None = None):
     """Draft, verify, repair once at most, publish.
 
     A generator. It yields `{"progress": step}` — draft, verify, retrieve,
@@ -1494,27 +1517,51 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
     verified (review round 3). `state` routes; it is not a ground.
 
     ponytail: an earlier user turn is not normalized, so restating one sends
-    the run to retrieval; normalize the turns if that costs many answers."""
+    the run to retrieval; normalize the turns if that costs many answers.
 
-    run = Grounding(dossier, cfg, cancel, cache, evaluate,
+    `run` (stage 9) hears each step: the draft, every claim's check, a
+    return to retrieval, the publication — and its stop is the run's."""
+
+    if run is not None:
+        cancel = run.cancel
+    job = Grounding(dossier, cfg, cancel, cache, evaluate,
                     said="\n".join(filter(None, (said, dossier.get("question_en")))))
+    step = run.step if run is not None else (lambda *_a, **_k: None)
+    if run is not None:
+        run.follow(lambda: {"calls": job.calls, "tokens": job.tokens})
     yield {"progress": "draft"}
-    text = yield from generate(run.brief())
+    step("draft", "writing")
+    text = yield from generate(job.brief())
     yield {"progress": "verify"}
-    run.check(text)
-    how = run.repair()
+    step("verify", "checked", claims=checks(job.check(text)))
+    how = job.repair()
     if how:
         if how == "retrieve":
             yield {"progress": "retrieve"}
-            budget = run.carried()
-            again = prepare(question, project, state, cfg=cfg, cache=cache, require=True, budget=budget)
-            run.spent(budget)
-            run.rebase(again)
+            budget = job.carried()
+            again = prepare(question, project, state, cfg=cfg, cache=cache, require=True, budget=budget, run=run)
+            job.spent(budget)
+            job.rebase(again)
+            if run is not None:
+                run.follow(lambda: {"calls": job.calls, "tokens": job.tokens})
         yield {"progress": "repair"}
-        text = yield from generate(run.repair_brief(how == "retrieve"))
+        step("repair", how)
+        text = yield from generate(job.repair_brief(how == "retrieve"))
         yield {"progress": "verify"}
-        run.check(text)
-    return run.published()
+        step("verify", "checked", claims=checks(job.check(text)))
+    out = job.published()
+    v = out["verified"]
+    step("publish", v["status"], reason=v["reason"], citations=[c["evidence_id"] for c in v["citations"]],
+         missing=[r["id"] for r in v["missing_requirements"]])
+    return out
+
+
+def checks(gen: dict) -> list[dict]:
+    """A generation's checks, as a run shows them: each claim's state and why, never its text."""
+
+    kinds = {c["claim_id"]: c["kind"] for c in (gen["draft"] or {}).get("claims", [])}
+    return [{"claim_id": cid, "kind": kinds.get(cid), **c} for cid, c in gen["checks"].items()] \
+        if gen["draft"] is not None else [{"problem": gen["problem"]}]
 
 
 def ingest(project: str | Path | None, seconds: float = 600.0, estimate: bool = False) -> dict:
@@ -2283,15 +2330,18 @@ def graph_enabled() -> bool:
     return (settings.pick(found, "WIKI_GRAPH_RETRIEVAL")[0] or "on").strip().lower() != "off"
 
 
-def available(root: Path | None) -> list[str]:
+def available(root: Path | None, disabled: tuple[str, ...] = ()) -> list[str]:
     """The sources a question in `root` may search: the local three, and each
-    external family holding something enabled and read."""
+    external family holding something enabled and read — less the families
+    the settings switched off (`disabled`). The hub alone when nothing else
+    is left: a question always searches somewhere."""
 
     if root is None:
         return ["hub"]
     with records(root) as store:
         held = {r["kind"] for r in store.all() if r["enabled"] and r["status"] in sources.SEARCHABLE}
-    return ["hub", "documents", "memory", *(f for f, kind in sources.FAMILIES.items() if kind in held)]
+    found = ["hub", "documents", "memory", *(f for f, kind in sources.FAMILIES.items() if kind in held)]
+    return [f for f in found if f not in disabled] or ["hub"]
 
 
 def retrieve(query: str, project: str | Path | None, k: int = 8, *, sources_: list[str] | None = None,
@@ -2313,7 +2363,7 @@ def retrieve(query: str, project: str | Path | None, k: int = 8, *, sources_: li
         query_en = asked["text"] if asked["status"] in ("original_english", "translated") else None
     on = graph_enabled() if graph is None else graph
     req = retrieval.request(knowledge_graph.evidence.repo_id(root or HUB), query, query_en=query_en,
-                            sources=sources_ or available(root), limit=k, seconds=budget.left(),
+                            sources=sources_ or available(root, cfg.disabled), limit=k, seconds=budget.left(),
                             graph=retrieval.GRAPH if on else None)
     return {"request": req, "result": run_round(req, project, budget)}
 
@@ -2387,7 +2437,8 @@ def repair(req: dict, result: dict, need: str, project: str | Path | None, *, bu
         note["fetched"] = bounded(lambda: add_papers(project, req["query_en"] or req["query_original"],
                                                      n=REPAIR_PAPERS, cfg=cfg, budget=budget, gate=gate),
                                   budget, gate)
-    requests, made = retrieval.repair(req, result, need, sources=available(root), subqueries=proposals,
+    requests, made = retrieval.repair(req, result, need, sources=available(root, (cfg or decision.config()).disabled),
+                                      subqueries=proposals,
                                       chunk_ids=list(chunk_ids), entities=entities)
     return {"note": {**made, **note}, "requests": requests,
             "results": [run_round(r, project, budget) for r in requests]}
@@ -2470,3 +2521,427 @@ def parsed(answer: str):
     body = answer.strip()
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", body, re.S)
     return json.loads(fenced.group(1) if fenced else body)
+
+
+# ---- runs (stage 9 of `docs/plans/jev/`) -------------------------------------------
+#
+# A question's run as the product shows it. Its events are numbered in order
+# (`seq`), so a screen that reloads picks up after the last one it saw; each
+# is appended to a trace under the hub's runtime directory as it happens, and
+# the run's summary — what it found, what it published and why it ended as it
+# did — is written once, whole, at its end. The app's screen, the CLI and the
+# map read the same run. Nothing here decides: the events are what the
+# workflow did, and every explanation is a code over observed state.
+
+RUN_SUMMARY = "run-summary/1"
+RUN_ID = re.compile(r"\A[0-9a-f]{32}\Z")
+# Events a trace leaves out: the pieces of a streamed text, which the finished one holds whole.
+UNTRACED = ("delta", "simple_delta")
+# What an export leaves out unless asked: every text a source or a person wrote.
+PRIVATE = ("text", "text_en", "original_text", "quote", "question", "said", "heading_path", "answered", "next")
+# Finished runs kept in memory, and traces kept on disk per repository.
+KEEP_LIVE = 32
+KEEP_TRACES = 200
+KEY_FLOOR = 8   # the shortest key `Run.redact` replaces
+LIVE: dict[str, Run] = {}
+_LIVE = threading.Lock()
+OUTCOMES = ("complete", "partial", "abstained", "verification_unavailable", "answered", "cancelled", "failed")
+
+
+def runs_root() -> Path:
+    """`raw/knowledge/` beside the hub's `.env`: a test's `JEV_ENV` moves it with the settings."""
+
+    return decision.env_file().parent / "raw" / "knowledge"
+
+
+def redact(value, key: str | None):
+    """`value` with the key replaced in every string in it — the strings
+    only, so it never touches the structure around them. A key shorter than
+    `KEY_FLOOR` is no credential and cannot be told from ordinary text (a
+    test's `k` would take every `kind`'s k), so it is left."""
+
+    if len(key or "") < KEY_FLOOR:
+        return value
+    if isinstance(value, str):
+        return value.replace(key, "[redacted]")
+    if isinstance(value, dict):
+        return {k: redact(v, key) for k, v in value.items()}
+    if isinstance(value, list | tuple):
+        return [redact(v, key) for v in value]
+    return value
+
+
+def budget_left(budget: Budget) -> dict:
+    used, limits = budget.used, budget.limits
+    return {"seconds": round(budget.left(), 1), "calls": limits["calls"] - used["calls"],
+            "candidates": limits["candidates"] - used["candidates"],
+            "tokens": None if limits["tokens"] is None else limits["tokens"] - used["tokens"]}
+
+
+class Run:
+    """One question's run: its events, its trace, its stop and its summary.
+
+    Shaped like `work.Run` — `events`, `wake`, `done` — so `work.tail`
+    serves it. Every event carries `run_id`, `seq`, the `stage` it happened
+    in, a `status`, `elapsed_ms` and what the allowance had left
+    (`budget_remaining`); the trace's copy adds `repo_id`. `cancel` is the
+    run's one stop, read by retrieval, verification and the host's turn.
+    `cfg` is the settings snapshot it started with, kept to its end.
+
+    The four questions of `craft/client-lifecycle-in-one-scope`, for the
+    trace file: made by the `started` step, where the run is constructed;
+    not shared — one run appends to its own file; closed after each line
+    (append mode); owned by the repository's folder, and pruned there to the
+    newest `KEEP_TRACES` when a run ends.
+    """
+
+    def __init__(self, repo: str | Path, focus: str, question: str, cfg: decision.Config):
+        self.id = uuid.uuid4().hex
+        self.repo = Path(repo)   # as the caller names it: the conversation's rows are keyed so
+        self.repo_id = evidence.repo_id(self.repo)
+        self.focus, self.question, self.cfg = focus, question, cfg
+        self.events: list[dict] = []
+        self.done = False
+        self.wake = threading.Condition()
+        self.cancel = threading.Event()
+        self.started = time.monotonic()
+        self.at = stamp()
+        self.stage = "start"
+        self.dossier: dict | None = None
+        self.summary: dict | None = None
+        self.sealed = False
+        self._left = None
+        self.folder = runs_root() / self.repo_id / "runs"
+        with _LIVE:
+            LIVE[self.id] = self
+            for old in [r for r in LIVE.values() if r.done][:-KEEP_LIVE or None]:
+                LIVE.pop(old.id, None)
+        # Its trace exists from here: a server that goes down before the
+        # first step still leaves a run to call interrupted, and the screen
+        # has the id to stop it with.
+        self.put({"kind": "step", "status": "started"})
+
+    def follow(self, what) -> None:
+        """What `budget_remaining` reads from now: a `Budget`, or a callable."""
+
+        self._left = what
+
+    def left(self) -> dict | None:
+        what = self._left
+        return None if what is None else budget_left(what) if isinstance(what, Budget) else what()
+
+    def put(self, payload: dict) -> dict:
+        with self.wake:
+            event = {**payload, "run_id": self.id, "seq": len(self.events),
+                     "stage": payload.get("stage", self.stage), "status": payload.get("status", payload["kind"]),
+                     "elapsed_ms": round((time.monotonic() - self.started) * 1000),
+                     "budget_remaining": self.left()}
+            event = self.redact(event)   # every copy the screen tails, not only the trace's
+            self.events.append(event)
+            if event["kind"] not in UNTRACED:
+                self.write(f"{self.id}.jsonl", json.dumps({**event, "repo_id": self.repo_id}, ensure_ascii=False)
+                           + "\n", append=True)
+            self.wake.notify_all()
+        return event
+
+    def step(self, stage: str, status: str, **payload) -> dict:
+        """A step of the workflow: retrieval's transitions, the draft, a
+        claim's check, the publication."""
+
+        self.stage = stage
+        return self.put({"kind": "step", "stage": stage, "status": status, **payload})
+
+    def redact(self, value):
+        return redact(value, self.cfg.key)
+
+    def seal(self) -> bool:
+        """The answer's point of no return: False if a stop came first. A
+        stop after it no longer takes the answer back; it only cuts what
+        follows (the plain explanation)."""
+
+        with self.wake:
+            self.sealed = not self.cancel.is_set()
+            return self.sealed
+
+    def stop(self) -> bool:
+        """Stop the run; True if its answer was not published yet. Taken under
+        the same lock as `seal`, so the two never interleave."""
+
+        with self.wake:
+            if not self.done:
+                self.cancel.set()
+            return not self.sealed
+
+    def write(self, name: str, text: str, append: bool = False) -> None:
+        """A line of the trace, or the summary whole — both redacted before
+        they get here (`put`, `finish`)."""
+
+        try:
+            self.folder.mkdir(parents=True, exist_ok=True)
+            if append:
+                with (self.folder / name).open("a", encoding="utf-8") as fh:
+                    fh.write(text)
+            else:
+                temporary = self.folder / f"{name}.tmp"
+                temporary.write_text(text, encoding="utf-8")
+                temporary.replace(self.folder / name)
+        except OSError as error:
+            # The run goes on without its trace; the screen still has the events.
+            self.events.append({"kind": "trace_failed", "run_id": self.id, "seq": len(self.events),
+                                "stage": self.stage, "status": "trace_failed", "code": type(error).__name__})
+
+    def finish(self, outcome: str, reason: str | None = None, published: dict | None = None,
+               answered: str = "") -> dict:
+        """End the run: its summary written whole, then every tail let go."""
+
+        if self.done:
+            return self.summary
+        self.summary = self.redact(summarize(self, outcome, reason, published, answered))
+        self.write(f"{self.id}.json", json.dumps(self.summary, ensure_ascii=False, indent=1) + "\n")
+        with self.wake:
+            self.done = True
+            self.wake.notify_all()
+        prune(self.folder)
+        return self.summary
+
+    def brief(self) -> dict:
+        """A live run as a screen asks for it: where it is, not what it found yet."""
+
+        return {"schema_version": RUN_SUMMARY, "run_id": self.id, "focus": self.focus, "done": self.done,
+                "stage": self.stage, "seq": len(self.events) - 1, "started_at": self.at,
+                "settings": self.cfg.status()}
+
+
+def prune(folder: Path) -> None:
+    """The newest `KEEP_TRACES` runs stay; older traces and summaries go."""
+
+    try:
+        traces = sorted(folder.glob("*.jsonl"), key=lambda p: p.stat().st_mtime)
+        for old in traces[:-KEEP_TRACES]:
+            old.unlink(missing_ok=True)
+            old.with_suffix(".json").unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def summarize(run: Run, outcome: str, reason: str | None, published: dict | None, answered: str) -> dict:
+    """What the run found and published, and why it ended so — every note a
+    code over what was observed, which the screen words; never a reasoning
+    Jev did not give."""
+
+    d = run.dossier or {}
+    v = (published or {}).get("verified")
+    gens = ((published or {}).get("record") or {}).get("generations") or []
+    cited: dict[str, list[dict]] = {}
+    for claim in (v or {}).get("claims", []):
+        for chunk_id in claim["evidence_ids"]:
+            cited.setdefault(chunk_id, []).append({"claim_id": claim["claim_id"], "support": claim["support"]})
+    conflicts = {c["chunk_id"] for c in d.get("conflicts") or []}
+    untrusted = {c["chunk_id"] for c in d.get("untrusted") or []}
+
+    def support(chunk_id: str) -> str:
+        claims = cited.get(chunk_id, [])
+        return ("supported" if any(c["support"] == "supported" for c in claims) else
+                "unverified" if claims else "conflict" if chunk_id in conflicts else
+                "untrusted" if chunk_id in untrusted else "not_cited")
+
+    evidence_ = [{**{k: e.get(k) for k in ("chunk_id", "source_id", "kind", "revision", "locator", "heading_path",
+                                          "visibility", "completeness", "language", "translation", "text_en",
+                                          "lane", "relevance", "judgment", "coverage", "path")},
+                  "cite": cite(e), "support": support(e["chunk_id"]), "claims": cited.get(e["chunk_id"], [])}
+                 for e in d.get("evidence") or []]
+    walked = [p for ev in run.events if ev["kind"] == "step" and ev["stage"] == "expand" for p in ev.get("walked", [])]
+    found = [c for ev in run.events if ev["kind"] == "step" and ev["stage"] == "expand" for c in ev.get("candidates", [])]
+    notes = observed(run, d, v, outcome, reason)
+    return {"schema_version": RUN_SUMMARY, "run_id": run.id, "repo_id": run.repo_id, "focus": run.focus,
+            "question": run.question, "started_at": run.at, "ended_at": stamp(),
+            "elapsed_ms": round((time.monotonic() - run.started) * 1000), "done": True,
+            "outcome": outcome, "reason": reason, "settings": run.cfg.status(),
+            "retrieval": None if not d else {
+                "status": d.get("status"), "reason": d.get("reason"), "direct": d.get("direct"),
+                "fallback": d.get("status") == "unavailable", "sources": d.get("sources"),
+                "missing": d.get("missing"), "trace_id": d.get("trace_id"),
+                "decisions": [{k: x.get(k) for k in ("request_id", "kind", "status", "reason_code")}
+                              for x in d.get("decisions") or []],
+                "transitions": [{k: t[k] for k in ("from", "to", "reason")} for t in d.get("transitions") or []]},
+            "evidence": evidence_,
+            "graph": {"seeds": list(dict.fromkeys(p["seed"] for p in walked if p["lane"] == "graph")),
+                      "paths": walked, "bridges": [c["chunk_id"] for c in found if c["lane"] == "graph"],
+                      "discarded": (d.get("dropped") or 0) + sum(len(x.get("beyond_k", [])) for x in d.get("limits") or []),
+                      **graph_detail(run.repo, walked)},
+            "verification": v, "claims": checks(gens[-1]) if gens else [],
+            "answered": answered, "notes": notes, "events": len(run.events), "trace": f"{run.id}.jsonl"}
+
+
+def standing(summary: dict) -> dict:
+    """The summary with each file's evidence as it stands now (`now`): `same`
+    while the file still has the revision the run read, `changed` or
+    `missing` once it does not — then only the run's snapshot of it remains.
+    `None` for evidence that is not a file. A copy; the stored one is kept."""
+
+    def now(e: dict) -> str | None:
+        if not e.get("path") or "path" not in (e.get("locator") or {}):
+            return None
+        try:
+            return "same" if hashlib.sha256(Path(e["path"]).read_bytes()).hexdigest() == e["revision"] else "changed"
+        except FileNotFoundError:
+            return "missing"
+        except OSError:
+            return "unreadable"
+
+    if not summary.get("evidence"):
+        return summary
+    return {**summary, "evidence": [{**e, "now": now(e)} for e in summary["evidence"]]}
+
+
+def observed(run: Run, d: dict, v: dict | None, outcome: str, reason: str | None) -> list[dict]:
+    """Why the run looks as it does, as codes: the screen and the CLI word them."""
+
+    notes = []
+    mode = run.cfg.mode
+    if mode != "active":
+        notes.append({"code": f"mode_{mode}"})
+    if run.cfg.problem:
+        notes.append({"code": "settings_problem", "detail": run.cfg.problem})
+    if run.cfg.disabled:
+        notes.append({"code": "sources_disabled", "sources": list(run.cfg.disabled)})
+    if d.get("status") == "unavailable":
+        # A fallback is said even when the baseline found something.
+        notes.append({"code": "fallback", "reason": d.get("reason"), "evidence": len(d.get("evidence") or [])})
+    for limit in d.get("limits") or []:
+        if limit.get("baseline") == "retrieval_unavailable":
+            notes.append({"code": "source_unavailable", "detail": limit["baseline"]})
+        if limit.get("retrieval"):
+            notes.append({"code": "truncated", "limits": limit["retrieval"]})
+        if limit.get("not_normalized"):
+            notes.append({"code": "not_normalized", "chunks": len(limit["not_normalized"])})
+    if d.get("status") in ("ready", "partial") and not d.get("direct") and not d.get("evidence"):
+        notes.append({"code": "no_evidence"})
+    for rid in d.get("missing") or []:
+        text = next((r["text"] for r in d.get("requirements") or [] if r["id"] == rid), "")
+        notes.append({"code": "evidence_missing", "requirement": rid, "text": text})
+    if v:
+        doubtful = [u for u in v["uncertainty"] if u["reason"] == "uncertain"]
+        if doubtful:
+            notes.append({"code": "threshold_not_met", "claims": len(doubtful)})
+        if v["status"] == "verification_unavailable":
+            notes.append({"code": "verification_unavailable", "reason": v["reason"]})
+    if outcome in ("cancelled", "failed"):
+        notes.append({"code": outcome, "reason": reason})
+    return notes
+
+
+def graph_detail(repo: Path, walked: list[dict]) -> dict:
+    """The nodes and edges of the recorded paths as the graph has them now:
+    each node's label and kind, each edge's type, direction, origin and the
+    source spans that establish it. `{}` of both when the store cannot be read."""
+
+    nodes = sorted({s["node"] for p in walked for s in p["steps"]})
+    edges = sorted({s["edge_id"] for p in walked for s in p["steps"] if s.get("edge_id")})
+    if not nodes:
+        return {"nodes": {}, "edges": {}}
+    store = evidence_store(repo)
+    try:
+        g = knowledge_graph.Graph(store)
+        found = g.nodes(nodes)
+        spans = g.spans(edges)
+    except Exception:  # noqa: BLE001 — no detail is no detail; the paths stand as recorded
+        return {"nodes": {}, "edges": {}, "detail": "unavailable"}
+    finally:
+        store.close()
+    kinds = {s["edge_id"]: s for p in walked for s in p["steps"] if s.get("edge_id")}
+    return {"nodes": {n: {"kind": x["kind"], "label": x["label"], "source_id": x["source_id"], "type": x["type"]}
+                      for n, x in found.items()},
+            "edges": {e: {"kind": kinds[e]["kind"], "directed": knowledge_graph.EDGE_KINDS.get(kinds[e]["kind"], True),
+                          "origin": kinds[e]["origin"], "confidence": kinds[e]["confidence"],
+                          "spans": spans.get(e, [])} for e in edges}}
+
+
+def status(repo: str | Path) -> dict:
+    """What a question in `repo` would run with now: the settings, the
+    sources it may search, the index generation it would read, the external
+    records by family and status — and its runs still going. Reads; builds
+    nothing."""
+
+    root = Path(repo).resolve()
+    cfg = decision.config()
+    try:
+        store = evidence_store(root)
+        try:
+            generation = store.reading() if store.persistent else None
+        finally:
+            store.close()
+    except Exception:  # noqa: BLE001 — an unreadable store is no generation, and says so
+        generation = None
+    held: dict[str, Counter] = {}
+    try:
+        with records(root) as store:
+            for record in store.all():
+                family = next(f for f, kind in sources.FAMILIES.items() if kind == record["kind"])
+                held.setdefault(family, Counter())[record["status"] if record["enabled"] else "disabled"] += 1
+    except Exception:  # noqa: BLE001
+        held = {}
+    return {"jev": cfg.status(), "families": list(decision.FAMILIES),
+            "sources": {"held": available(root), "searched": available(root, cfg.disabled)},
+            "records": {f: dict(c) for f, c in held.items()}, "generation": generation,
+            "graph": graph_enabled(), "runs": running(root)}
+
+
+def live(run_id: str, repo: str | Path) -> Run | None:
+    """The run `run_id` of `repo` in this process. Another repository's is
+    `None` as a missing one is: an id alone reads nothing."""
+
+    run = LIVE.get(run_id) if RUN_ID.match(run_id or "") else None
+    return run if run is not None and run.repo_id == evidence.repo_id(Path(repo)) else None
+
+
+def running(repo: str | Path, focus: str | None = None) -> list[dict]:
+    """The runs of `repo` still going in this process, for a screen that reloaded."""
+
+    repo_id = evidence.repo_id(Path(repo))
+    with _LIVE:
+        runs = [r for r in LIVE.values() if r.repo_id == repo_id and not r.done and (focus is None or r.focus == focus)]
+    return [r.brief() for r in runs]
+
+
+def stored(run_id: str, repo: str | Path) -> tuple[dict | None, list[dict]]:
+    """`(summary, events)` of a finished run of `repo`, from its trace; the
+    summary `None` when it never finished (the server went down with it)."""
+
+    if not RUN_ID.match(run_id or ""):
+        return None, []
+    folder = runs_root() / evidence.repo_id(Path(repo).resolve()) / "runs"
+    try:
+        summary = json.loads((folder / f"{run_id}.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        summary = None
+    events = []
+    try:
+        for line in (folder / f"{run_id}.jsonl").read_text(encoding="utf-8").splitlines():
+            try:
+                events.append(json.loads(line))
+            except ValueError:
+                continue   # a line cut by a crash: the rest still read
+    except OSError:
+        pass
+    return summary, events
+
+
+def export(run_id: str, repo: str | Path, text: bool = False) -> dict | None:
+    """A run's summary and events for handing on: without `text`, every text
+    a source or a person wrote is left out, and ids, hashes and locators
+    stay. `None` for no such run of `repo`."""
+
+    summary, events = stored(run_id, repo)
+    if summary is None and not events:
+        return None
+    out = {"summary": summary, "events": events}
+    return out if text else stripped(out)
+
+
+def stripped(value):
+    if isinstance(value, dict):
+        return {k: stripped(v) for k, v in value.items() if k not in PRIVATE}
+    if isinstance(value, list):
+        return [stripped(v) for v in value]
+    return value

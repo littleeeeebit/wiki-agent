@@ -7,7 +7,7 @@ import { Peek } from '@/components/Peek'
 import { Stream } from '@/components/Stream'
 import { Toolbar } from '@/components/Toolbar'
 import * as api from '@/lib/api'
-import type { Block, Channel, Kind, Options, Peek as PeekData, Spec, Tokens, Verification } from '@/lib/api'
+import type { Block, Channel, Ev, Kind, Options, Peek as PeekData, RunSummary, Spec, Tokens, Turn, Verification } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 export type Msg = {
@@ -31,6 +31,47 @@ export type Msg = {
   simplePending?: boolean
   simpleMs?: number
   simpleCost?: number
+  /** The run behind this answer, where it is, and the last event seen. */
+  runId?: string
+  stage?: string
+  seq?: number
+  cancelled?: boolean
+}
+
+/** One event of a run onto the answer it is building. */
+function onto(m: Msg, ev: Ev): Msg {
+  const at = { ...m, runId: ev.run_id ?? m.runId, seq: ev.seq ?? m.seq }
+  switch (ev.kind) {
+    case 'hits': return { ...at, hits: ev.pages ?? [] }
+    case 'delta': return { ...at, text: at.text + ev.text }
+    case 'tool': return { ...at, tools: [...at.tools, ev.text] }
+    case 'step': return { ...at, stage: ev.stage }
+    // The final body is the server's copy. A missed chunk is corrected right here.
+    case 'done': return { ...at, text: ev.text || at.text, ms: ev.ms, cost: ev.cost_usd, tokens: ev.tokens,
+      model: ev.model, sessionId: ev.session_id, verification: ev.verification, pending: false }
+    case 'cancelled': return { ...at, cancelled: true, error: ev.text, pending: false, simplePending: false }
+    case 'error': return { ...at, error: ev.text, pending: false }
+    case 'blocks': return { ...at, blocks: ev.blocks }
+    case 'simple_start': return { ...at, simpleText: '', simplePending: true }
+    case 'simple_delta': return { ...at, simpleText: (at.simpleText ?? '') + ev.text }
+    case 'simple_done': return { ...at, simpleText: ev.text, simplePending: false, simpleMs: ev.ms, simpleCost: ev.cost_usd }
+    case 'simple_error': return { ...at, simpleText: '', simpleError: ev.text, simplePending: false }
+  }
+  return at
+}
+
+/** A recorded row as the screen shows it. */
+const toMsg = (r: Turn): Msg => ({ role: r.role, text: r.said ?? r.text, blocks: r.blocks,
+  tools: [], source: r.source, error: r.error, verification: r.verification,
+  ms: r.ms, cost: r.cost_usd, model: r.model, sessionId: r.session_id, tokens: r.tokens,
+  simpleText: r.simple_text, simpleError: r.simple_error,
+  simpleMs: r.simple_meta?.ms, simpleCost: r.simple_meta?.cost_usd, runId: r.run_id,
+  cancelled: r.cancelled })
+
+const STALE: Record<string, string> = {
+  changed: '이 파일은 답이 근거로 읽은 뒤 바뀌었다 — 지금 파일을 보인다. 답이 본 판은 ‘근거와 판단 보기’의 영어 스냅숏뿐이다',
+  missing: '이 파일은 답이 근거로 읽은 뒤 지워졌다 — 답이 본 판은 ‘근거와 판단 보기’의 영어 스냅숏뿐이다',
+  unreadable: '이 파일을 지금 읽지 못한다 — 답이 본 판은 ‘근거와 판단 보기’의 영어 스냅숏뿐이다',
 }
 
 /** Text put in one focus's box from outside — the map's "ask about this
@@ -47,6 +88,8 @@ type Props = {
   specs: Spec[]
   onSpecs: () => void
   onStart: (id: string) => Promise<void>
+  /** Show a finished run's graph paths on the map. */
+  onMapRun: (run: RunSummary) => void
 }
 
 // What a retro candidate carries into the `next` focus when a person sends
@@ -71,7 +114,7 @@ const MATERIAL: Record<'wiki' | 'claude_md', (candidate: string) => string> = {
 
 /** The middle pane's conversation: ask the wiki under one focus, read the
  *  grounds, and settle the next task into a spec. */
-export function Query({ channels, options, on, seed, onChannels, onBusy, specs, onSpecs, onStart }: Props) {
+export function Query({ channels, options, on, seed, onChannels, onBusy, specs, onSpecs, onStart, onMapRun }: Props) {
   const [active, setActive] = useState('wiki')
   const [typed, setTyped] = useState<{ text: string } | null>(null)
   useEffect(() => {
@@ -85,15 +128,69 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
   const selectedRepo = channels[0]?.repo ?? ''
   // Which focuses are answering. One global boolean would block every other
   // focus while one answers — the `#위키` composer really did lock up that way.
+  // Each is kept by project and focus: a run of the project left behind never
+  // lands in, or blocks, the one selected now.
   const [busyOn, setBusyOn] = useState<string[]>([])
-  const activeRef = useRef('')
   const inFlight = useRef(new Map<string, Msg>())
-  activeRef.current = active
+  const slot = useCallback((cid: string) => `${selectedRepo}\u0000${cid}`, [selectedRepo])
+  // The conversation on screen, for a late event to check against.
+  const slotRef = useRef('')
+  useEffect(() => {
+    slotRef.current = slot(active)
+  }, [slot, active])
   const [fault, setFault] = useState('')
   const [note, setNote] = useState('')
-  const [peek, setPeek] = useState<{ data: PeekData | null; error?: string } | null>(null)
+  const [peek, setPeek] = useState<{ data: PeekData | null; error?: string; note?: string; where?: string } | null>(null)
 
   useEffect(() => onBusy(busyOn.length > 0 || configuring), [busyOn, configuring, onBusy])
+
+  /** Put one run's events onto a new answer at the end of `cid`'s list.
+   *  `attach`: the question is already on screen (a reattach), so no user row. */
+  const follow = useCallback(
+    async (cid: string, stream: (onEvent: (ev: Ev) => void) => Promise<void>, attach = false, said = '') => {
+      const key = slot(cid)
+      const placeholder: Msg = { role: 'assistant', text: '', tools: [], pending: true }
+      inFlight.current.set(key, placeholder)
+      setBusyOn((prev) => [...prev, key])
+      setFault('')
+      setMessages((prev) => attach ? [...prev, placeholder]
+        : [...prev, { role: 'user', text: said, tools: [] }, placeholder])
+
+      // Switching focus or project mid-stream leaves the list on screen
+      // belonging to another conversation, and appending a chunk onto it
+      // corrupts that one. A clear empties the list, so nothing matches
+      // either. The server records it, so coming back restores it.
+      const patch = (fn: (m: Msg) => Msg) => {
+        const previous = inFlight.current.get(key)!
+        const nextMessage = fn(previous)
+        inFlight.current.set(key, nextMessage)
+        setMessages((prev) => {
+          if (slotRef.current !== key || prev.at(-1) !== previous) return prev
+          const next = [...prev]
+          next[next.length - 1] = nextMessage
+          return next
+        })
+      }
+
+      try {
+        await stream((ev) => {
+          patch((m) => onto(m, ev))
+          if (ev.kind === 'blocks' && ev.blocks?.some((b) => b.name === 'spec')) onSpecs()
+        })
+        // A stream that dropped without an end still leaves no spinner.
+        patch((m) => (m.pending ? { ...m, pending: false, error: m.error ?? '연결이 끊겼다. 새로 고치면 이어 본다' } : m))
+      } catch (err) {
+        patch((m) => m.simplePending
+          ? ({ ...m, simpleText: '', simpleError: String(err), simplePending: false })
+          : ({ ...m, error: String(err), pending: false }))
+      } finally {
+        inFlight.current.delete(key)
+        setBusyOn((prev) => prev.filter((id) => id !== key))
+        api.getChannels().then(onChannels).catch(() => {})
+      }
+    },
+    [slot, onChannels, onSpecs],
+  )
 
   // Switching focus restores that focus's record. The server holds the
   // process, so there is nothing for the screen to remember.
@@ -114,14 +211,24 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
       .getLog(active)
       .then((rows) => {
         if (stale || asked !== clears.current) return
-        const restored: Msg[] = rows.map((r) => ({ role: r.role, text: r.said ?? r.text, blocks: r.blocks,
-          tools: [], source: r.source, error: r.error, verification: r.verification,
-          ms: r.ms, cost: r.cost_usd, model: r.model, sessionId: r.session_id, tokens: r.tokens,
-          simpleText: r.simple_text, simpleError: r.simple_error,
-          simpleMs: r.simple_meta?.ms, simpleCost: r.simple_meta?.cost_usd }))
-        const live = inFlight.current.get(active)
+        const restored = rows.map(toMsg)
+        const live = inFlight.current.get(slot(active))
         if (live && restored.at(-1)?.role === 'user') restored.push(live)
         setMessages((prev) => (prev.length ? prev : restored))
+        // A question still running with no screen on it — the page reloaded,
+        // or another window asked: follow it from its first event.
+        if (!live && restored.at(-1)?.role === 'user') {
+          api.getKnowledge().then(({ runs }) => {
+            const run = runs.find((r) => r.focus === active)
+            if (stale || asked !== clears.current || inFlight.current.has(slot(active))) return
+            if (run) return void follow(active, (onEvent) => api.runEvents(run.run_id, -1, onEvent), true)
+            // It ended between the two reads: its answer is in the record now.
+            api.getLog(active).then((again) => {
+              if (stale || asked !== clears.current) return
+              setMessages((prev) => (prev === restored ? again.map(toMsg) : prev))
+            }).catch(() => {})
+          }).catch(() => {})
+        }
       })
       .catch(() => !stale && setFault('기록을 못 읽었다'))
     api.getLog(active, true).then((rows) => !stale && setLegacy(rows))
@@ -129,75 +236,22 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
     return () => {
       stale = true
     }
-  }, [active, selectedRepo])
+  }, [active, selectedRepo, slot, follow])
 
   const send = useCallback(
-    async (text: string, propose = false) => {
+    (text: string, propose = false) => {
       const cid = active
-      const placeholder: Msg = { role: 'assistant', text: '', tools: [], pending: true }
-      inFlight.current.set(cid, placeholder)
-      setBusyOn((prev) => [...prev, cid])
-      setFault('')
-      setMessages((prev) => [...prev, { role: 'user', text: propose ? '(후보 요청)' : text, tools: [] }, placeholder])
-
-      // Switching focus mid-stream leaves the list on screen belonging to
-      // another focus, and appending a chunk onto it corrupts that
-      // conversation. The server records it, so coming back restores it.
-      const patch = (fn: (m: Msg) => Msg) => {
-        const previous = inFlight.current.get(cid)!
-        const nextMessage = fn(previous)
-        inFlight.current.set(cid, nextMessage)
-        setMessages((prev) => {
-          if (activeRef.current !== cid || prev.at(-1) !== previous) return prev
-          const next = [...prev]
-          next[next.length - 1] = nextMessage
-          return next
-        })
-      }
-
-      try {
-        await api.say(cid, text, (ev) => {
-          if (ev.kind === 'hits') {
-            patch((m) => ({ ...m, hits: ev.pages ?? [] }))
-          } else if (ev.kind === 'delta') {
-            patch((m) => ({ ...m, text: m.text + ev.text }))
-          } else if (ev.kind === 'tool') {
-            patch((m) => ({ ...m, tools: [...m.tools, ev.text] }))
-          } else if (ev.kind === 'done') {
-            // The final body is the server's copy. A missed chunk is corrected
-            // right here.
-            patch((m) => ({ ...m, text: ev.text || m.text, ms: ev.ms, cost: ev.cost_usd, tokens: ev.tokens,
-              model: ev.model, sessionId: ev.session_id, verification: ev.verification, pending: false }))
-          } else if (ev.kind === 'error') {
-            patch((m) => ({ ...m, error: ev.text, pending: false }))
-          } else if (ev.kind === 'blocks') {
-            patch((m) => ({ ...m, blocks: ev.blocks }))
-            if (ev.blocks?.some((b) => b.name === 'spec')) onSpecs()
-          } else if (ev.kind === 'simple_start') {
-            patch((m) => ({ ...m, simpleText: '', simplePending: true }))
-          } else if (ev.kind === 'simple_delta') {
-            patch((m) => ({ ...m, simpleText: (m.simpleText ?? '') + ev.text }))
-          } else if (ev.kind === 'simple_done') {
-            patch((m) => ({ ...m, simpleText: ev.text, simplePending: false, simpleMs: ev.ms, simpleCost: ev.cost_usd }))
-          } else if (ev.kind === 'simple_error') {
-            patch((m) => ({ ...m, simpleText: '', simpleError: ev.text, simplePending: false }))
-          }
-        }, propose)
-      } catch (err) {
-        patch((m) => m.simplePending
-          ? ({ ...m, simpleText: '', simpleError: String(err), simplePending: false })
-          : ({ ...m, error: String(err), pending: false }))
-      } finally {
-        inFlight.current.delete(cid)
-        setBusyOn((prev) => prev.filter((id) => id !== cid))
-        api.getChannels().then(onChannels).catch(() => {})
-      }
+      return follow(cid, (onEvent) => api.say(cid, text, onEvent, propose), false, propose ? '(후보 요청)' : text)
     },
-    [active, onChannels, onSpecs],
+    [active, follow],
   )
 
+  const stop = useCallback((runId: string) => {
+    api.cancelRun(runId).catch((err) => setFault(String(err instanceof Error ? err.message : err)))
+  }, [])
+
   const here = channels.find((c) => c.id === active)
-  const busy = busyOn.includes(active) || configuring
+  const busy = busyOn.includes(slot(active)) || configuring
 
   const apply = useCallback(
     async (cfg: { model: string; effort: string }) => {
@@ -260,14 +314,21 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
     [],
   )
 
+  // A citation of a run's answer opens the file as it is now; when that is no
+  // longer the revision the run read, the drawer says so.
   const showPeek = useCallback(
-    async (path: string, line: number) => {
+    async (path: string, line: number, runId?: string) => {
       if (!here) return
       setPeek({ data: null })
+      const run = runId ? api.getRun(runId).catch(() => null) : Promise.resolve(null)
       try {
-        setPeek({ data: await api.peek(here.repo, path, line) })
+        const data = await api.peek(here.repo, path, line)
+        const now = (await run)?.evidence?.find((e) => e.locator.path === path)?.now
+        setPeek({ data, note: now && now !== 'same' ? STALE[now] : undefined })
       } catch (err) {
-        setPeek({ data: null, error: String(err) })
+        const now = (await run)?.evidence?.find((e) => e.locator.path === path)?.now
+        setPeek(now && now !== 'same' ? { data: null, note: STALE[now], where: `${path}:${line}` }
+          : { data: null, error: String(err) })
       }
     },
     [here],
@@ -328,6 +389,8 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
             onPeek={showPeek}
             onDecide={active === 'retro' ? decideOne : undefined}
             onMark={markTurn}
+            onStop={stop}
+            onMapRun={onMapRun}
             blocks={active === 'next' ? (m) => (
               <Blocks blocks={m.blocks ?? []} specs={specs} korean={on} busy={busy}
                 onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={onStart} />
@@ -341,7 +404,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
           />
           <Composer busy={busy} onSend={send} seed={typed} />
         </div>
-        {peek && <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />}
+        {peek && <Peek data={peek.data} error={peek.error} note={peek.note} where={peek.where} onClose={() => setPeek(null)} />}
       </div>
       {asking && <ClearAsk onClear={clear} onClose={(said) => {
         setAsking(false)

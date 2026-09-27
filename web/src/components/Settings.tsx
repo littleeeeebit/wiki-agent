@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Btn, Modal } from '@/components/Modal'
 import * as api from '@/lib/api'
-import type { Hub, LoopSettings, Options, SurveySettings, Switch } from '@/lib/api'
+import { FAMILY } from '@/lib/run'
+import type { Hub, Jev, JevLimits, JevMode, LoopSettings, Options, Probe, SurveySettings, Switch } from '@/lib/api'
 
 type Props = {
   sw: Switch | null
@@ -18,8 +19,8 @@ type Props = {
 
 const field = 'h-7 rounded-md border border-input bg-background px-2 font-mono text-[12px]'
 
-/** Everything the whole window shares, in three parts: general, connection,
- *  review. What a part edits is saved by that part's own button. */
+/** Everything the whole window shares, in four parts: general, connection,
+ *  questions (Jev), review. What a part edits is saved by that part's own button. */
 export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, onClose, onProjects }: Props) {
   const [survey, setSurvey] = useState<SurveySettings | null>(null)
   const [savedSurvey, setSavedSurvey] = useState<SurveySettings | null>(null)
@@ -152,6 +153,8 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
           )}
         </Part>
 
+        <JevPart />
+
         <Part title="리뷰">
           {!loop ? <p className="text-faint">읽는 중…</p> : (<>
           <Row label="라운드 상한" note="넘으면 멈추고 [계속] 을 기다린다">
@@ -212,5 +215,118 @@ function Save({ edited, busy, onSave }: { edited: boolean; busy: boolean; onSave
     <div className="flex justify-end">
       <Btn tone="primary" disabled={!edited || busy} onClick={onSave}>{busy ? '저장하는 중…' : '저장'}</Btn>
     </div>
+  )
+}
+
+// Where each Jev setting came from, as a person reads it.
+const SOURCE: Record<Jev['mode_source'], string> = {
+  app: '이 화면에서 정함', file: '.env 파일', environment: '환경 변수', legacy: '옛 설정 이름', default: '기본값',
+}
+const HEALTH: Record<Jev['health'], string> = { configured: '설정됨', disabled: '꺼짐', unavailable: '쓸 수 없음' }
+const PROBED: Record<Probe['health'], string> = { reachable: '응답함', auth_failed: '키가 거절됨', unavailable: '닿지 않음' }
+const MODES: { id: JevMode | null; label: string; note: string }[] = [
+  { id: null, label: '파일 따름', note: '.env 의 모드를 쓴다' },
+  { id: 'off', label: '끔', note: '기본 검색과 답만' },
+  { id: 'shadow', label: '그림자', note: '뒤에서 판단만 기록하고 답은 기본대로' },
+  { id: 'active', label: '켬', note: '판단이 검색을 이끌고, 검증한 주장만 싣는다' },
+]
+const LIMIT: { id: keyof JevLimits; label: string; min: number; max: number; step: number }[] = [
+  { id: 'seconds', label: '시간 (초)', min: 5, max: 120, step: 5 },
+  { id: 'calls', label: '판단 호출', min: 1, max: 20, step: 1 },
+  { id: 'candidates', label: '후보 수', min: 1, max: 200, step: 10 },
+]
+
+/** Jev: whether it is reachable, how a question uses it, and what a question
+ *  may search. The key is never shown or edited here — only whether one exists. */
+function JevPart() {
+  const [jev, setJev] = useState<Jev | null>(null)
+  const [mode, setMode] = useState<JevMode | null>(null)
+  const [off, setOff] = useState<string[]>([])
+  const [limits, setLimits] = useState<JevLimits | null>(null)
+  const [probe, setProbe] = useState<Probe | null>(null)
+  const [working, setWorking] = useState('')
+  const [fault, setFault] = useState('')
+
+  const seed = (j: Jev) => {
+    setJev(j)
+    setMode(j.mode_source === 'app' ? j.mode : null)
+    setOff(j.disabled_sources)
+    setLimits(j.limits)
+  }
+  useEffect(() => {
+    api.getJev().then(seed).catch((err) => setFault(String(err instanceof Error ? err.message : err)))
+  }, [])
+
+  async function act(key: string, fn: () => Promise<void>) {
+    setFault('')
+    setWorking(key)
+    try {
+      await fn()
+    } catch (err) {
+      setFault(String(err instanceof Error ? err.message : err))
+    } finally {
+      setWorking('')
+    }
+  }
+
+  if (!jev || !limits) {
+    return <Part title="질문 (Jev)"><p className="text-faint">{fault || '읽는 중…'}</p></Part>
+  }
+  const edited = mode !== (jev.mode_source === 'app' ? jev.mode : null)
+    || JSON.stringify([...off].sort()) !== JSON.stringify([...jev.disabled_sources].sort())
+    || JSON.stringify(limits) !== JSON.stringify(jev.limits)
+  return (
+    <Part title="질문 (Jev)">
+      <Row label="상태" note={jev.problem ? `${HEALTH[jev.health]} — ${jev.problem}`
+        : `모델 ${jev.model} · 키 ${jev.key ? `있음 (${jev.key_source})` : '없음'}`}>
+        <span className="flex items-center gap-2">
+          <span role="status" className={`font-mono text-[10.5px] ${jev.health === 'unavailable' ? 'text-destructive' : 'text-faint'}`}>
+            {HEALTH[jev.health]}{probe && ` · ${PROBED[probe.health]}${probe.category ? ` (${probe.category})` : ''}`}
+          </span>
+          <Btn disabled={working === 'probe' || !jev.key} onClick={() => act('probe', async () => setProbe(await api.probeJev()))}>
+            {working === 'probe' ? '시험하는 중…' : '연결 시험'}
+          </Btn>
+        </span>
+      </Row>
+      <fieldset className="space-y-1.5">
+        <legend className="mb-1">모드 <span className="text-[12.5px] text-faint">· 지금 {jev.mode} ({SOURCE[jev.mode_source]})</span></legend>
+        <div role="radiogroup" aria-label="Jev 모드" className="grid grid-cols-2 gap-1.5">
+          {MODES.map((m) => (
+            <label key={m.label} className={`flex min-h-9 cursor-pointer items-start gap-2 rounded-md border px-2 py-1.5 ${
+              mode === m.id ? 'border-primary' : 'border-border'}`}>
+              <input type="radio" name="jev-mode" className="mt-0.5 accent-primary" checked={mode === m.id}
+                onChange={() => setMode(m.id)} />
+              <span className="min-w-0">
+                <span className="block text-[12.5px]">{m.label}{mode === m.id && ' ✓'}</span>
+                <span className="block text-[12.5px] text-faint">{m.note}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <fieldset>
+        <legend className="mb-1">찾는 곳 <span className="text-[12.5px] text-faint">· 끈 곳은 질문이 찾지 않는다</span></legend>
+        <div className="flex flex-wrap gap-x-4 gap-y-1">
+          {Object.keys(FAMILY).map((f) => (
+            <label key={f} className="flex min-h-7 items-center gap-1.5 text-[12.5px]">
+              <input type="checkbox" className="size-4 accent-primary" checked={!off.includes(f)}
+                onChange={(e) => setOff(e.target.checked ? off.filter((x) => x !== f) : [...off, f])} />
+              {FAMILY[f]}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      {LIMIT.map((l) => (
+        <Row key={l.id} label={`한 질문의 ${l.label}`} note={`${l.min}–${l.max}`}>
+          <input type="number" min={l.min} max={l.max} step={l.step} value={limits[l.id]} className={`${field} w-20`}
+            onChange={(e) => setLimits({ ...limits, [l.id]: Number(e.target.value) })} />
+        </Row>
+      ))}
+      <p className="text-[12.5px] text-faint">새 질문부터 적용된다. 도는 질문은 시작할 때의 설정을 끝까지 쓴다. 키는 .env 에서만 바꾼다.</p>
+      {fault && <p role="alert" className="whitespace-pre-wrap text-destructive">{fault}</p>}
+      <Save edited={edited} busy={working === 'save'} onSave={() => act('save', async () => {
+        seed(await api.setJev({ mode, disabled_sources: off, limits }))
+      })} />
+    </Part>
   )
 }
