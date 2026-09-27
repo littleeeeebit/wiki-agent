@@ -26,7 +26,10 @@ evaluates held-out data.
 (`eval/jev/relation-policy.json`): one request a case, shaped as the answer
 path sends it. Accepting `supports` for a claim the passages do not state —
 false acceptance, an unsupported claim published — costs ten times a
-supported claim withheld; the two are counted apart.
+supported claim withheld; the two are counted apart. The same request asks
+the answers Choice — does a claim give what a part of the question asks —
+labelled in `eval/jev/answers.json`; accepting `answers` for a claim that
+does not answer it calls an answer complete that is not, and costs the same.
 """
 
 from __future__ import annotations
@@ -229,12 +232,32 @@ RELATION_ARTIFACT = HUB / decision.claims.ARTIFACT
 RELATION_COSTS = {"false_acceptance": 10, "false_rejection": 1, "mislabelled": 0.2, "right": 0}
 
 
-def relation_request(case: dict) -> tuple[dict, dict]:
-    """`(state, questions)` for a case, as `main.knowledge.Grounding.judge` sends them."""
+ANSWERS_DATASET = HUB / "eval" / "jev" / "answers.json"
 
+
+def relation_request(case: dict, labels: dict | None = None) -> tuple[dict, dict]:
+    """`(state, questions)` for a case, as `main.knowledge.Grounding.judge`
+    sends them: every claim's relation, and the answers Choice for each part
+    of the question `labels` (the case's `answers.json` entry) asks about."""
+
+    labels = labels or {"requirements": [], "claims": {}}
+    pairs = [(cid, rid) for cid, parts in labels["claims"].items() for rid in parts]
     state = decision.claims.state(case["question"], [{"id": p["id"], "text": p["text"]} for p in case["passages"]],
-                                  [{"id": c["id"], "text": c["text"], "cites": c["cites"]} for c in case["claims"]])
-    return state, {n: q["question"] for n, q in decision.claims.questions([c["id"] for c in case["claims"]]).items()}
+                                  [{"id": c["id"], "text": c["text"], "cites": c["cites"]} for c in case["claims"]],
+                                  labels["requirements"])
+    asked = {**decision.claims.questions([c["id"] for c in case["claims"]]), **decision.claims.coverage(pairs)}
+    return state, {n: q["question"] for n, q in asked.items()}
+
+
+def answers_outcome(answer: dict, label: str, confidence: float, margin: float) -> str:
+    rule = decision.Policy("fit", {"answers": {"confidence": confidence, "margin": margin}})
+    got = decision.claims.answered(rule, answer)
+    if got == "answers":
+        return "right" if label == "answers" else "false_acceptance"
+    if label == "answers":
+        return "false_rejection"
+    # Not answered either way; `partly` read as nothing, or back, only moves partial and abstained.
+    return "right" if got == label or (got == "uncertain" and label == "no") else "mislabelled"
 
 
 def relation_outcome(answer: dict, label: str, confidence: float, margin: float) -> str:
@@ -248,18 +271,20 @@ def relation_outcome(answer: dict, label: str, confidence: float, margin: float)
     return "right" if said in (None, label) else "mislabelled"
 
 
-def fit_relation(pairs: list[tuple[dict, str]]) -> tuple[dict | None, dict]:
-    """The lowest-cost confidence and margin for the relation Choice, the
+def fit_relation(pairs: list[tuple[dict, str]], outcome=relation_outcome, accepted: str = "supports"
+                 ) -> tuple[dict | None, dict]:
+    """The lowest-cost confidence and margin for the relation Choice — or,
+    with `answers_outcome` and `answers`, the answers Choice — the
     provisional rule breaking ties by nearness; `None` with too few labels."""
 
-    supported = sum(label == "supports" for _a, label in pairs)
-    report = {"n": len(pairs), "supports": supported}
+    supported = sum(label == accepted for _a, label in pairs)
+    report = {"n": len(pairs), accepted: supported}
     if supported < LEAST or len(pairs) - supported < LEAST:
         return None, {**report, "fitted": False, "why": f"fewer than {LEAST} labels of each side"}
     best = None
     for confidence in GRID_CONFIDENCE:
         for margin in GRID_MARGIN:
-            cost = sum(RELATION_COSTS[relation_outcome(a, label, confidence, margin)] for a, label in pairs)
+            cost = sum(RELATION_COSTS[outcome(a, label, confidence, margin)] for a, label in pairs)
             key = (cost, round(abs(confidence - 0.6) + abs(margin - 0.2), 2))
             if best is None or key < best[0]:
                 best = (key, {"confidence": confidence, "margin": margin})
@@ -268,7 +293,7 @@ def fit_relation(pairs: list[tuple[dict, str]]) -> tuple[dict | None, dict]:
     def tally(confidence: float, margin: float) -> dict:
         counts = dict.fromkeys(RELATION_COSTS, 0)
         for a, label in pairs:
-            counts[relation_outcome(a, label, confidence, margin)] += 1
+            counts[outcome(a, label, confidence, margin)] += 1
         return counts
 
     provisional = tally(0.6, 0.2)
@@ -280,14 +305,26 @@ def fit_relation(pairs: list[tuple[dict, str]]) -> tuple[dict | None, dict]:
 def relation_artifact(dataset_path: Path, dataset: dict, scores: dict) -> dict:
     if scores.get("prompt_version") != decision.claims.VERSION:
         raise ValueError("the scores were asked with another relation prompt; collect again")
+    if scores.get("answers_sha256") != sha(ANSWERS_DATASET.read_bytes()):
+        raise ValueError("the scores are for another version of the answers labels; collect again")
+    labels = json.loads(ANSWERS_DATASET.read_text(encoding="utf-8"))["cases"]
     pairs = [(scores["answers"][case["id"]][f"relation_{c['id']}"], c["label"])
              for case in dataset["cases"] for c in case["claims"]]
-    rule, errors = fit_relation(pairs)
+    covered = [(scores["answers"][cid][f"answers_{c}_{r}"], label)
+               for cid, entry in labels.items() for c, parts in entry["claims"].items() for r, label in parts.items()]
+    rules, errors = {}, {}
+    for kind, got in (("relation", fit_relation(pairs)),
+                      ("answers", fit_relation(covered, answers_outcome, "answers"))):
+        rule, errors[kind] = got
+        if rule:
+            rules[kind] = rule
     return {"schema": SCHEMA, "model": scores["model"], "prompt_version": decision.claims.VERSION,
             "normalization_version": NORMALIZATION,
             "dataset": {"path": dataset_path.relative_to(HUB).as_posix(), "sha256": sha(dataset_path.read_bytes()),
-                        "split": dataset["split"], "cases": len(dataset["cases"]), "claims": len(pairs)},
-            "rules": {"relation": rule} if rule else {}, "errors": {"relation": errors}, "costs": scores["costs"],
+                        "split": dataset["split"], "cases": len(dataset["cases"]), "claims": len(pairs),
+                        "answers": {"path": ANSWERS_DATASET.relative_to(HUB).as_posix(),
+                                    "sha256": sha(ANSWERS_DATASET.read_bytes()), "pairs": len(covered)}},
+            "rules": rules, "errors": errors, "costs": scores["costs"],
             "fitted_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
             "note": "Error rates on the relation calibration split only; not a calibration claim. False acceptance "
                     "(an unsupported claim accepted as supported) and false rejection are counted apart. Stage 10 "
@@ -298,13 +335,14 @@ def collect_relation(dataset: dict, cfg: decision.Config) -> dict:
     budget = Budget(seconds=600.0, calls=len(dataset["cases"]), candidates=0)
     trace: list[dict] = []
     answers: dict[str, dict] = {}
+    labels = json.loads(ANSWERS_DATASET.read_text(encoding="utf-8"))["cases"]
     started = time.monotonic()
     for case in dataset["cases"]:
-        state, questions = relation_request(case)
+        state, questions = relation_request(case, labels.get(case["id"]))
         answers[case["id"]] = decision.evaluate(cfg, state, questions, trace, budget, "calibration:relation")
     usage = [t.get("usage") or {} for t in trace]
     return {"schema": SCORES, "model": trace[-1]["model"] if trace else cfg.model,
-            "prompt_version": decision.claims.VERSION,
+            "prompt_version": decision.claims.VERSION, "answers_sha256": sha(ANSWERS_DATASET.read_bytes()),
             "collected_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), "answers": answers,
             "costs": {"requests": len(trace), "input_tokens": sum(u.get("input_tokens", 0) for u in usage),
                       "output_tokens": sum(u.get("output_tokens", 0) for u in usage),

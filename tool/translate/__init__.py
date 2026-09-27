@@ -626,6 +626,14 @@ WORDS = {w: str(i) for i, w in enumerate(
     "sixteen seventeen eighteen nineteen twenty".split())} | {
     w: str(30 + 10 * i) for i, w in enumerate("thirty forty fifty sixty seventy eighty ninety".split())}
 SPELLED = re.compile(r"\b(" + "|".join(WORDS) + r")\b", re.I)
+# Negation, English and Korean. A rendering of a paragraph — a verified
+# answer is one claim a paragraph — that negates where its source does not,
+# or the other way, can have reversed it. Presence, not a count: Korean
+# negates where English says `failed` or `otherwise`, and counts drifted on
+# 9 of 50 real paragraphs where presence drifted on 3. A rewrite (the plain
+# explanation) restructures too freely for either to mean anything.
+# ponytail: presence, so a paragraph negating twice can lose one unseen; a model judge if that is ever seen.
+NEGATION = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot)\b|n't\b|않|안 |못|없|아니|아닌", re.I)
 
 
 def spelled(text: str) -> collections.Counter:
@@ -636,9 +644,10 @@ def spelled(text: str) -> collections.Counter:
 
 def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False) -> bool:
     """Did every number and bare identifier of `source` come through
-    `english` exactly as often, with none added? With `words`, a number one
-    side spells out and the other writes in digits is the same number — for
-    a presentation; evidence keeps its digits (`3번` as `three` is uncertain).
+    `english` exactly as often, with none added? With `words` — a
+    presentation — a number one side spells out and the other writes in
+    digits is the same number, and both negate or neither does; evidence keeps
+    its digits (`3번` as `three` is uncertain).
 
     ponytail: a date written out (`9월` as `September`) reads as a lost
     number and the chunk as `uncertain`; map month names if that turns out
@@ -654,8 +663,9 @@ def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False) 
     ours, theirs = found(source), found(english)
     if not words:
         return ours == theirs
-    return (not theirs - ours - spelled(protect(source, keep)[0])
-            and not ours - theirs - spelled(protect(english, keep)[0]))
+    said, made = protect(source, keep)[0], protect(english, keep)[0]
+    return (not theirs - ours - spelled(said) and not ours - theirs - spelled(made)
+            and bool(NEGATION.search(said)) == bool(NEGATION.search(made)))
 
 
 def facts(text: str, keep: tuple[str, ...] = ()) -> set[str]:

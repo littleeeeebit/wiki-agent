@@ -31,14 +31,27 @@ PROMPT = ("Do the passages listed in claim {id}'s cites, taken together, state w
 OPTIONS = {"supports": "The cited passages state it.",
            "contradicts": "The cited passages state something incompatible with it.",
            "insufficient": "The cited passages neither state it nor contradict it."}
-VERSION = hashlib.sha256(json.dumps([PROMPT, OPTIONS], sort_keys=True).encode()).hexdigest()[:16]
+# Whether a claim answers a part of the question it names. A claim's own
+# `requirement_ids` are the drafter's say-so: a true fact beside the point
+# must not make an answer complete. Asked in the same request, over the
+# claim's text alone — whether it is true is the relation's question.
+ANSWERS = ("answers", "partly", "no")
+ANSWER_PROMPT = ("Does claim {id}, taken on its own, give what requirement {req} asks for? A claim about the same "
+                 "subject that gives some other fact does not answer it. Judge only whether it answers the "
+                 "requirement, not whether it is true.")
+ANSWER_OPTIONS = {"answers": "It gives what the requirement asks for.",
+                  "partly": "It gives part of what the requirement asks for, not all of it.",
+                  "no": "It does not give what the requirement asks for."}
+VERSION = hashlib.sha256(json.dumps([PROMPT, OPTIONS, ANSWER_PROMPT, ANSWER_OPTIONS],
+                                    sort_keys=True).encode()).hexdigest()[:16]
 
 
-def state(question: str, passages: list[dict], claims: list[dict]) -> dict:
+def state(question: str, passages: list[dict], claims: list[dict], requirements: list[dict] = ()) -> dict:
     """What Jev reads: the English question, the passages `{id, text[, coverage]}`,
-    and each claim `{id, text, cites}` naming the passage ids it rests on."""
+    each claim `{id, text, cites}` naming the passage ids it rests on, and
+    the question's parts `{id, text}`."""
 
-    return {"question": question, "passages": passages, "claims": claims}
+    return {"question": question, "passages": passages, "claims": claims, "requirements": list(requirements)}
 
 
 def questions(claim_ids: list[str]) -> dict:
@@ -47,6 +60,21 @@ def questions(claim_ids: list[str]) -> dict:
     return {f"relation_{cid}": {"decision": "relation", "candidate": cid,
                                 "question": choice(PROMPT.format(id=cid), dict(OPTIONS))}
             for cid in claim_ids}
+
+
+def coverage(pairs: list[tuple[str, str]]) -> dict:
+    """An `answers` Choice per `(claim id, requirement id)`, for `decision.request`."""
+
+    return {f"answers_{cid}_{rid}": {"decision": "answers", "candidate": cid,
+                                     "question": choice(ANSWER_PROMPT.format(id=cid, req=rid), dict(ANSWER_OPTIONS))}
+            for cid, rid in pairs}
+
+
+def answered(pol: Policy, answer: dict) -> str:
+    """`answers`, `partly` or `no` when the policy accepts the choice;
+    `uncertain` when it does not — which answers nothing."""
+
+    return answer["choice"] if verdict(pol, "answers", answer) == "yes" else "uncertain"
 
 
 def outcome(pol: Policy, answer: dict) -> str:

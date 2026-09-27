@@ -986,6 +986,8 @@ REJECTIONS = {
     "stale_revision": "a cited source changed after it was retrieved",
     "untrusted_evidence": "its only evidence is a passage that addresses the assistant",
     "direct_mode": "no retrieval was run, so no source_fact may be stated",
+    "direct_text": "retrieval ran, so the answer is source_fact claims; direct_text is only for a run without it",
+    "new_fact": "direct_text may restate the conversation, but this one states a number or identifier it does not",
     "bad_premises": "premises must be earlier source_fact or inference claims",
     "contradicted": "the cited passages contradict it",
     "unsupported": "the cited passages do not state it",
@@ -1041,8 +1043,10 @@ class Grounding:
     """
 
     def __init__(self, dossier: dict, cfg: decision.Config, cancel: threading.Event | None = None,
-                 cache: decision.Cache | None = DECISIONS, evaluate=None):
+                 cache: decision.Cache | None = DECISIONS, evaluate=None, said: str = ""):
         self.cfg, self.cache = cfg, cache
+        # What the conversation itself supplied — the question and its context: all a direct_text may restate.
+        self.said = said
         self.cancel = cancel or threading.Event()
         self.evaluate = evaluate or functools.partial(decision.evaluate, cfg)
         self.pol = decision.policy(cfg.model, HUB / decision.claims.ARTIFACT, prompt_version=decision.claims.VERSION)
@@ -1166,6 +1170,13 @@ class Grounding:
             # Neither cites a passage: a recommendation's facts are its premises.
             if cited or quotes or (kind == "direct_text" and claim["premises"]):
                 return "malformed"
+            # Nothing checks a direct_text against evidence, so it is published only where no evidence was
+            # looked for, and only restating what was said: a fact under that label is caught by its
+            # numbers and identifiers.
+            if kind == "direct_text" and not self.dossier.get("direct"):
+                return "direct_text"
+            if kind == "direct_text" and translate.added(self.said, claim["text_en"]):
+                return "new_fact"
         elif kind == "source_fact" and self.dossier.get("direct"):
             return "direct_mode"
         if claim["premises"] and not all(earlier.get(p, {}).get("kind") in FACTUAL for p in claim["premises"]):
@@ -1265,34 +1276,53 @@ class Grounding:
                 continue
             sets[cid] = (readable, len(readable) < len(ids))
             asked.append(cid)
-        if not asked:
+        # Which part of the question each claim that could count answers: the drafter's `requirement_ids`
+        # name the candidates, Jev says whether it answers them. Unasked, it answers nothing.
+        pairs = [(cid, rid) for cid, claim in claims.items() if checks[cid]["state"] != "rejected"
+                 and (claim["kind"] in FACTUAL or claim["kind"] == "direct_text"
+                      or (claim["kind"] == "recommendation" and claim["premises"]))
+                 for rid in claim["requirement_ids"]]
+        gen["coverage"] = {f"{cid}:{rid}": "unasked" for cid, rid in pairs}
+        if not asked and not pairs:
             return
         why = ("normalization_failed" if not self.dossier.get("question_en")
                else "calls" if self.calls < 1 else None)
         if why:
             for cid in asked:
                 checks[cid].update(state="unresolved", reason="budget" if why == "calls" else "verification_unavailable")
+            gen["coverage"] = dict.fromkeys(gen["coverage"], "budget" if why == "calls" else "unavailable")
             if why != "calls":
                 gen["unavailable"] = why
             return
         shown = list(dict.fromkeys(e for cid in asked for e in sets[cid][0]))
+        named = list(dict.fromkeys([*asked, *(cid for cid, _ in pairs)]))
         state = decision.claims.state(
             self.dossier["question_en"],
             [{"id": e, "text": self.ids[e]["text_en"][:MAX_PASSAGE],
               **({"coverage": "truncated"} if len(self.ids[e]["text_en"]) > MAX_PASSAGE else {})} for e in shown],
-            [{"id": cid, "text": claims[cid]["text_en"], "cites": sets[cid][0]} for cid in asked])
+            [{"id": cid, "text": claims[cid]["text_en"], "cites": sets[cid][0] if cid in sets else []}
+             for cid in named],
+            [r for r in self.requirements if any(rid == r["id"] for _, rid in pairs)])
         versions = {str(self.ids[e]["translation"].get("version") or self.ids[e]["translation"]["status"]) for e in shown}
         budget = Budget(seconds=VERIFY_SECONDS, calls=self.calls, candidates=0, tokens=self.tokens,
                         cancel=self.cancel)
-        req = decision.request("verify", state, decision.claims.questions(asked),
-                               allowed=asked + list(decision.claims.RELATIONS), model=self.cfg.model,
-                               prompt_version=decision.claims.VERSION, policy_version=self.pol.version,
-                               normalization_version="|".join(sorted(versions)), budget=budget, trace_id=self.run_id)
+        req = decision.request("verify", state, {**decision.claims.questions(asked), **decision.claims.coverage(pairs)},
+                               allowed=named + list(decision.claims.RELATIONS) + list(decision.claims.ANSWERS),
+                               model=self.cfg.model, prompt_version=decision.claims.VERSION,
+                               policy_version=self.pol.version, normalization_version="|".join(sorted(versions)),
+                               budget=budget, trace_id=self.run_id)
         res = decision.checked(req, decision.decide(req, self.evaluate, budget, self.trace, self.pol, self.cache))
         self.spent(budget)
         gen["decision"] = {"request_id": req["request_id"], "policy": self.pol.record(),
                            **{k: res[k] for k in ("status", "reason_code", "answers", "verdicts", "model", "usage",
                                                   "elapsed_ms", "cached")}}
+        for cid, rid in pairs:
+            gen["coverage"][f"{cid}:{rid}"] = (
+                "budget" if res["status"] in ("cancelled", "exhausted") else
+                "unavailable" if res["status"] not in ("decided", "uncertain") else
+                decision.claims.answered(self.pol, res["answers"][f"answers_{cid}_{rid}"]))
+        if pairs and res["status"] not in ("decided", "uncertain", "cancelled", "exhausted"):
+            gen["unavailable"] = res["reason_code"] or res["status"]
         for cid in asked:
             if res["status"] in ("cancelled", "exhausted"):
                 checks[cid].update(state="unresolved", reason="budget")
@@ -1357,11 +1387,15 @@ class Grounding:
             return (kind in FACTUAL or (kind == "recommendation" and bool(claims[cid]["premises"]))
                     or (kind == "direct_text" and gen["direct"]))
 
-        answered = {r for cid in shown if counts(cid) for r in claims[cid]["requirement_ids"]}
+        # A part is answered when Jev said a shown claim answers it — not when the claim says so.
+        coverage = gen.get("coverage") or {}
+        said = {(cid, r): coverage.get(f"{cid}:{r}") for cid in shown if counts(cid) for r in claims[cid]["requirement_ids"]}
+        answered = {r for (_cid, r), got in said.items() if got == "answers"}
+        touched = answered | {r for (_cid, r), got in said.items() if got == "partly"}
         missing = [r for r in gen["requirements"] if r["id"] not in answered]
         status = ("verification_unavailable" if unavailable else
-                  "complete" if shown and not missing and any(counts(cid) for cid in shown) else
-                  "partial" if answered else "abstained")
+                  "complete" if shown and answered and not missing else
+                  "partial" if touched else "abstained")
         used = list(dict.fromkeys(e for cid in shown for e in claims[cid]["evidence_ids"]))
         reason = (unavailable or next((f"budget:{c['reason']}" for c in checks.values() if c["reason"] == "budget"),
                                       None) or (f"draft:{gen['problem']}" if gen["problem"] else None))
@@ -1451,7 +1485,8 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
     is itself a generator whose return value is the host's finished text; a
     failed turn raises out of it, and nothing is published."""
 
-    run = Grounding(dossier, cfg, cancel, cache, evaluate)
+    run = Grounding(dossier, cfg, cancel, cache, evaluate,
+                    said="\n".join(filter(None, (question, dossier.get("question_en"), state))))
     yield {"progress": "draft"}
     text = yield from generate(run.brief())
     yield {"progress": "verify"}

@@ -94,12 +94,13 @@ def draft(*claims, unresolved=(), status="complete", prose="Here is the answer I
 
 
 class Judge:
-    """A fake Jev for the relation Choice: each claim's relation and
-    confidence, `supports` at 0.95 unless told. Every state it is sent is
-    checked for Korean prose: the decision path reads English only."""
+    """A fake Jev for the relation and answers Choices: each claim's relation
+    and confidence, `supports` at 0.95 unless told, and whether it answers a
+    requirement (`c1_r0`), `answers` at 0.95 unless told. Every state it is
+    sent is checked for Korean prose: the decision path reads English only."""
 
-    def __init__(self, verdicts=None, fail=None):
-        self.verdicts, self.fail = verdicts or {}, fail
+    def __init__(self, verdicts=None, fail=None, answers=None):
+        self.verdicts, self.fail, self.answers = verdicts or {}, fail, answers or {}
         self.asked: list[tuple[dict, dict]] = []
 
     def __call__(self, state, questions, trace, budget, stage):
@@ -113,8 +114,13 @@ class Judge:
         trace.append({"stage": stage, "model": MODEL, "usage": {"input_tokens": 10, "output_tokens": 1}})
         out = {}
         for name in questions:
-            pick, confidence = self.verdicts.get(name.removeprefix("relation_"), ("supports", 0.95))
-            rest = [o for o in decision.claims.RELATIONS if o != pick]
+            if name.startswith("answers_"):
+                pick, confidence = self.answers.get(name.removeprefix("answers_"), ("answers", 0.95))
+                options = decision.claims.ANSWERS
+            else:
+                pick, confidence = self.verdicts.get(name.removeprefix("relation_"), ("supports", 0.95))
+                options = decision.claims.RELATIONS
+            rest = [o for o in options if o != pick]
             out[name] = {"choice": pick, "confidence": confidence,
                          "probabilities": {pick: confidence, **{o: (1 - confidence) / 2 for o in rest}}}
         return out
@@ -156,7 +162,8 @@ def test_a_supported_claim_is_published_complete_with_its_citation(tmp_path):
     assert len(judge.asked) == 1 and messages[0].count("```answer-draft") == 1
     state, questions = judge.asked[0]
     assert state["claims"] == [{"id": "c1", "text": "The search daemon listens on port 8791.", "cites": ["e1"]}]
-    assert list(questions) == ["relation_c1"]
+    assert state["requirements"] == [{"id": "r0", "text": "Which port does the search daemon listen on?"}]
+    assert list(questions) == ["relation_c1", "answers_c1_r0"], "one request: is it true, and does it answer"
     record = out["record"]["generations"][0]
     assert record["draft"]["schema_version"] == knowledge.DRAFT and record["draft"]["run_id"] == "run-1"
 
@@ -363,10 +370,11 @@ def test_a_direct_run_states_no_repository_fact_and_goes_back_to_retrieval(tmp_p
                                    judge)
     first = out["record"]["generations"][0]["checks"]
     assert first["c2"]["reason"] == "direct_mode" and first["c1"]["state"] == "accepted"
-    assert asked == [(True, 5)], "retrieval was required, from what was left of the allowance"
+    # The greeting's coverage took one call of five; retrieval ran on what was left.
+    assert asked == [(True, 4)], "retrieval was required, from what was left of the allowance"
     assert "retrieve" in [e.get("progress") for e in events]
     assert "Retrieval has now run" in messages[1] and '"cite": "docs/ports.md:3"' in messages[1]
-    assert out["verified"]["status"] == "complete" and len(judge.asked) == 1
+    assert out["verified"]["status"] == "complete" and len(judge.asked) == 2
 
     # No allowance left for a round: the fact is never published, and nothing is retrieved.
     asked.clear()
@@ -396,10 +404,23 @@ def test_a_direct_run_that_leaves_the_fact_unresolved_also_goes_back_to_retrieva
 
 
 def test_direct_text_answers_nothing_outside_a_direct_run(tmp_path):
+    # Review round 1 (P0): the status was abstained, and the unchecked fact was published under it all the same.
     ports = item(tmp_path, "docs/ports.md", PORTS)
-    smuggled = claim("c1", "The search daemon listens on port 8791.", kind="direct_text", cites=(), reqs=("r0",))
-    out, _events, _ = answer(dossier([ports]), [draft(smuggled)], Judge())
+    smuggled = claim("c1", "The search daemon listens on port 9999.", kind="direct_text", cites=(), reqs=("r0",))
+    out, _events, _ = answer(dossier([ports]), [draft(smuggled), draft(smuggled)], Judge())
     assert out["verified"]["status"] == "abstained", "a fact passed off as direct_text answered the question"
+    assert "9999" not in out["text"] and out["verified"]["claims"] == []
+    assert out["verified"]["rejected"] == [{"claim_id": "c1", "reason": "direct_text"}]
+
+
+def test_a_direct_runs_text_states_no_number_the_conversation_did_not(tmp_path):
+    d = dossier([], ["Hi, and can you shorten my note: the demo moves to room 4?"], direct=True, calls_left=2)
+    shortened = claim("c1", "Demo moves to room 4.", kind="direct_text", cites=(), reqs=("r0",))
+    made_up = claim("c2", "The search daemon listens on port 9999.", kind="direct_text", cites=(), reqs=("r0",))
+    out, _events, _ = answer(d, [draft(shortened, made_up), draft(shortened)], Judge())
+    first = out["record"]["generations"][0]["checks"]
+    assert first["c1"]["state"] == "accepted" and first["c2"]["reason"] == "new_fact"
+    assert "9999" not in out["text"] and "room 4" in out["text"]
 
 
 @pytest.mark.parametrize("setting", ["", "WIKI_JEV_DEGRADED=baseline\n"])
@@ -451,6 +472,26 @@ def test_an_unreadable_draft_is_repaired_once_then_abstains(tmp_path):
     assert "8791" not in out["text"]
 
 
+def test_a_true_claim_beside_the_point_answers_nothing(tmp_path):
+    # Review round 1 (P1): a supported ownership fact tagged r0 made "Which port?" complete.
+    owners = item(tmp_path, "docs/owners.md", OWNERS)
+    off_topic = claim("c1", "The ingest pipeline is owned by the Atlas team.", reqs=("r0",))
+    out, _events, _ = answer(dossier([owners]), [draft(off_topic)], Judge(answers={"c1_r0": ("no", 0.95)}))
+    v = out["verified"]
+    assert v["claims"][0]["support"] == "supported", "true, so shown"
+    assert v["status"] == "abstained" and [r["id"] for r in v["missing_requirements"]] == ["r0"]
+    # Part of what is asked: partial, the part still listed as not established.
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    half = claim("c1", "The chat server listens on port 8787.", reqs=("r0",))
+    out, _events, _ = answer(dossier([ports], ["Which ports do the daemon and the chat server use?"]), [draft(half)],
+                             Judge(answers={"c1_r0": ("partly", 0.95)}))
+    assert out["verified"]["status"] == "partial" and out["verified"]["missing_requirements"]
+    # Jev unsure whether it answers: it answers nothing.
+    out, _events, _ = answer(dossier([ports]), [draft(claim("c1", "The search daemon listens on port 8791."))],
+                             Judge(answers={"c1_r0": ("answers", 0.4)}))
+    assert out["verified"]["status"] == "abstained"
+
+
 def test_a_carried_support_is_not_asked_again_after_a_repair(tmp_path):
     ports = item(tmp_path, "docs/ports.md", PORTS)
     good = claim("c1", "The search daemon listens on port 8791.")
@@ -458,7 +499,9 @@ def test_a_carried_support_is_not_asked_again_after_a_repair(tmp_path):
     judge = Judge()
     out, _events, _ = answer(dossier([ports], calls_left=2), [draft(good, bad), draft(good)], judge)
     assert out["record"]["generations"][1]["checks"]["c1"]["support"] == "carried"
-    assert len(judge.asked) == 1 and out["verified"]["status"] == "complete"
+    # Whether it is true is not asked again; whether it answers is, as every generation's own coverage.
+    assert len(judge.asked) == 2 and list(judge.asked[1][1]) == ["answers_c1_r0"]
+    assert out["verified"]["status"] == "complete"
 
 
 def test_the_relation_rule_is_its_own_prompt_and_policy():
@@ -476,9 +519,11 @@ def test_the_relation_rule_is_its_own_prompt_and_policy():
 def test_the_committed_relation_policy_is_fitted_for_the_prompt_in_use():
     path = Path(__file__).resolve().parents[1] / "eval" / "jev" / "relation-policy.json"
     fitted = decision.policy(decision.MODEL, path, prompt_version=decision.claims.VERSION)
-    assert fitted.fitted == ("relation",), f"refit with tool/eval/policy.py --relation --collect: {fitted.problem}"
-    errors = fitted.provenance["errors"]["relation"]
-    assert errors["counts"]["false_acceptance"] == 0 and "false_rejection" in errors["counts"]
+    assert set(fitted.fitted) == {"relation", "answers"}, \
+        f"refit with tool/eval/policy.py --relation --collect: {fitted.problem}"
+    for kind in ("relation", "answers"):
+        errors = fitted.provenance["errors"][kind]
+        assert errors["counts"]["false_acceptance"] == 0 and "false_rejection" in errors["counts"], kind
 
 
 def test_the_relation_fit_prices_false_acceptance_above_false_rejection():
@@ -498,11 +543,23 @@ def test_the_relation_fit_prices_false_acceptance_above_false_rejection():
     assert rule["confidence"] > 0.7 and report["counts"]["false_acceptance"] == 0
     assert report["counts"]["false_rejection"] == 1 and report["counts"]["mislabelled"] == 1
     assert calibration.fit_relation(pairs[:3])[0] is None, "too few labels to fit"
-    case = json.loads((Path(__file__).resolve().parents[1] / "eval" / "jev" / "relation.json")
-                      .read_text(encoding="utf-8"))["cases"][0]
-    state, questions = calibration.relation_request(case)
+    # The answers Choice is priced the same way: a claim beside the point said to answer, at 0.7, would
+    # call an answer complete.
+    other = {"answers": "no", "no": "answers"}
+    answering = [({"choice": pick, "confidence": c, "probabilities": {pick: c, other[pick]: 1 - c}}, label)
+                 for pick, c, label in [("answers", 0.95, "answers")] * 4 + [("answers", 0.7, "no")] * 2
+                 + [("answers", 0.75, "answers"), ("no", 0.9, "no")]]
+    rule, report = calibration.fit_relation(answering, calibration.answers_outcome, "answers")
+    assert report["provisional_counts"]["false_acceptance"] == 2 and report["counts"]["false_acceptance"] == 0
+    root = Path(__file__).resolve().parents[1] / "eval" / "jev"
+    case = json.loads((root / "relation.json").read_text(encoding="utf-8"))["cases"][0]
+    labels = json.loads((root / "answers.json").read_text(encoding="utf-8"))["cases"]
+    assert set(labels) == {c["id"] for c in json.loads((root / "relation.json").read_text(encoding="utf-8"))["cases"]}
+    state, questions = calibration.relation_request(case, labels[case["id"]])
     assert state["claims"][0] == {"id": "c1", "text": case["claims"][0]["text"], "cites": ["e1"]}
-    assert set(questions) == {f"relation_{c['id']}" for c in case["claims"]}
+    assert state["requirements"] == labels[case["id"]]["requirements"]
+    assert set(questions) == ({f"relation_{c['id']}" for c in case["claims"]}
+                              | {f"answers_{c['id']}_r0" for c in case["claims"]})
 
 
 # -- presentation ------------------------------------------------------------------------
@@ -522,6 +579,10 @@ def test_a_presentation_may_drop_a_fact_but_never_add_one():
                           words=True)
     assert not translate.kept(spelled, "9자보다 짧은 인용문은 거부된다.", keep, words=True)
     assert not translate.kept("One of 3 ports.", "포트 3개 중 8개.", keep, words=True), "a spelled 'one' excuses only a 1"
+    # Review round 1 (P1): a rendering that reversed a negation passed on its numbers.
+    assert translate.kept("Port 8791 is not open.", "8791 포트는 열려 있지 않다.", keep, words=True)
+    assert not translate.kept("Port 8791 is not open.", "8791 포트는 열려 있다.", keep, words=True)
+    assert not translate.kept("Port 8791 is open.", "8791 포트는 열려 있지 않다.", keep, words=True)
 
 
 def test_a_checked_overlay_refuses_a_rendering_that_changes_a_number(monkeypatch):

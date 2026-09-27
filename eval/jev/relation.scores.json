@@ -1,48 +1,251 @@
 {
  "schema": "jev-calibration-scores/1",
  "model": "jev-1.13.0",
- "prompt_version": "811c2017fc46b8b2",
- "collected_at": "2026-09-27T07:31:39+00:00",
+ "prompt_version": "10e838d6121c89fe",
+ "answers_sha256": "ec4c96c1e167ccff1f7a55c52db2b043ae98d9bf9dd78644920a53231ca7d573",
+ "collected_at": "2026-09-27T08:43:48+00:00",
  "answers": {
   "v01": {
    "relation_c1": {
     "choice": "supports",
     "confidence": 1.0,
     "probabilities": {
+     "contradicts": 0.0,
      "insufficient": 0.0,
-     "supports": 1.0,
-     "contradicts": 0.0
+     "supports": 1.0
     }
    },
    "relation_c2": {
     "choice": "supports",
     "confidence": 1.0,
     "probabilities": {
+     "contradicts": 0.0,
      "insufficient": 0.0,
-     "supports": 1.0,
-     "contradicts": 0.0
+     "supports": 1.0
     }
    },
    "relation_c3": {
     "choice": "contradicts",
     "confidence": 1.0,
     "probabilities": {
+     "contradicts": 1.0,
      "insufficient": 0.0,
-     "supports": 0.0,
-     "contradicts": 1.0
+     "supports": 0.0
     }
    },
    "relation_c4": {
     "choice": "contradicts",
     "confidence": 0.99,
     "probabilities": {
+     "contradicts": 1.0,
      "insufficient": 0.0,
-     "supports": 0.0,
-     "contradicts": 1.0
+     "supports": 0.0
+    }
+   },
+   "answers_c1_r0": {
+    "choice": "answers",
+    "confidence": 1.0,
+    "probabilities": {
+     "answers": 1.0,
+     "no": 0.0,
+     "partly": 0.0
+    }
+   },
+   "answers_c2_r0": {
+    "choice": "no",
+    "confidence": 1.0,
+    "probabilities": {
+     "answers": 0.0,
+     "no": 1.0,
+     "partly": 0.0
+    }
+   },
+   "answers_c3_r0": {
+    "choice": "answers",
+    "confidence": 0.92,
+    "probabilities": {
+     "answers": 0.95,
+     "no": 0.05,
+     "partly": 0.0
+    }
+   },
+   "answers_c4_r0": {
+    "choice": "no",
+    "confidence": 1.0,
+    "probabilities": {
+     "answers": 0.0,
+     "no": 1.0,
+     "partly": 0.0
     }
    }
   },
   "v02": {
+   "relation_c1": {
+    "choice": "supports",
+    "confidence": 1.0,
+    "probabilities": {
+     "supports": 1.0,
+     "insufficient": 0.0,
+     "contradicts": 0.0
+    }
+   },
+   "relation_c2": {
+    "choice": "insufficient",
+    "confidence": 0.91,
+    "probabilities": {
+     "supports": 0.06,
+     "insufficient": 0.94,
+     "contradicts": 0.0
+    }
+   },
+   "relation_c3": {
+    "choice": "supports",
+    "confidence": 0.96,
+    "probabilities": {
+     "supports": 0.97,
+     "insufficient": 0.03,
+     "contradicts": 0.0
+    }
+   },
+   "relation_c4": {
+    "choice": "contradicts",
+    "confidence": 0.84,
+    "probabilities": {
+     "supports": 0.0,
+     "insufficient": 0.1,
+     "contradicts": 0.9
+    }
+   },
+   "relation_c5": {
+    "choice": "insufficient",
+    "confidence": 0.45,
+    "probabilities": {
+     "supports": 0.05,
+     "insufficient": 0.63,
+     "contradicts": 0.32
+    }
+   },
+   "answers_c1_r0": {
+    "choice": "no",
+    "confidence": 0.79,
+    "probabilities": {
+     "no": 0.87,
+     "partly": 0.13,
+     "answers": 0.0
+    }
+   },
+   "answers_c2_r0": {
+    "choice": "answers",
+    "confidence": 0.73,
+    "probabilities": {
+     "no": 0.06,
+     "partly": 0.11,
+     "answers": 0.83
+    }
+   },
+   "answers_c3_r0": {
+    "choice": "answers",
+    "confidence": 0.89,
+    "probabilities": {
+     "no": 0.0,
+     "partly": 0.07,
+     "answers": 0.93
+    }
+   },
+   "answers_c4_r0": {
+    "choice": "answers",
+    "confidence": 0.29,
+    "probabilities": {
+     "no": 0.31,
+     "partly": 0.17,
+     "answers": 0.52
+    }
+   },
+   "answers_c5_r0": {
+    "choice": "no",
+    "confidence": 0.96,
+    "probabilities": {
+     "answers": 0.01,
+     "no": 0.98,
+     "partly": 0.01
+    }
+   }
+  },
+  "v03": {
+   "relation_c1": {
+    "choice": "supports",
+    "confidence": 1.0,
+    "probabilities": {
+     "contradicts": 0.0,
+     "insufficient": 0.0,
+     "supports": 1.0
+    }
+   },
+   "relation_c2": {
+    "choice": "contradicts",
+    "confidence": 1.0,
+    "probabilities": {
+     "contradicts": 1.0,
+     "insufficient": 0.0,
+     "supports": 0.0
+    }
+   },
+   "relation_c3": {
+    "choice": "supports",
+    "confidence": 1.0,
+    "probabilities": {
+     "contradicts": 0.0,
+     "insufficient": 0.0,
+     "supports": 1.0
+    }
+   },
+   "relation_c4": {
+    "choice": "contradicts",
+    "confidence": 0.99,
+    "probabilities": {
+     "contradicts": 1.0,
+     "insufficient": 0.0,
+     "supports": 0.0
+    }
+   },
+   "answers_c1_r0": {
+    "choice": "answers",
+    "confidence": 0.99,
+    "probabilities": {
+     "answers": 1.0,
+     "no": 0.0,
+     "partly": 0.0
+    }
+   },
+   "answers_c2_r0": {
+    "choice": "answers",
+    "confidence": 0.89,
+    "probabilities": {
+     "answers": 0.93,
+     "no": 0.07,
+     "partly": 0.0
+    }
+   },
+   "answers_c3_r0": {
+    "choice": "no",
+    "confidence": 0.21,
+    "probabilities": {
+     "answers": 0.35,
+     "no": 0.47,
+     "partly": 0.18
+    }
+   },
+   "answers_c4_r0": {
+    "choice": "no",
+    "confidence": 0.95,
+    "probabilities": {
+     "answers": 0.0,
+     "no": 0.97,
+     "partly": 0.03
+    }
+   }
+  },
+  "v04": {
    "relation_c1": {
     "choice": "supports",
     "confidence": 1.0,
@@ -54,96 +257,11 @@
    },
    "relation_c2": {
     "choice": "insufficient",
-    "confidence": 0.91,
+    "confidence": 0.48,
     "probabilities": {
-     "contradicts": 0.0,
-     "insufficient": 0.94,
-     "supports": 0.06
-    }
-   },
-   "relation_c3": {
-    "choice": "supports",
-    "confidence": 0.93,
-    "probabilities": {
-     "contradicts": 0.0,
-     "insufficient": 0.04,
-     "supports": 0.96
-    }
-   },
-   "relation_c4": {
-    "choice": "contradicts",
-    "confidence": 0.85,
-    "probabilities": {
-     "contradicts": 0.9,
-     "insufficient": 0.1,
-     "supports": 0.0
-    }
-   },
-   "relation_c5": {
-    "choice": "insufficient",
-    "confidence": 0.55,
-    "probabilities": {
-     "contradicts": 0.26,
-     "insufficient": 0.7,
-     "supports": 0.04
-    }
-   }
-  },
-  "v03": {
-   "relation_c1": {
-    "choice": "supports",
-    "confidence": 1.0,
-    "probabilities": {
-     "supports": 1.0,
-     "insufficient": 0.0,
-     "contradicts": 0.0
-    }
-   },
-   "relation_c2": {
-    "choice": "contradicts",
-    "confidence": 1.0,
-    "probabilities": {
-     "supports": 0.0,
-     "insufficient": 0.0,
-     "contradicts": 1.0
-    }
-   },
-   "relation_c3": {
-    "choice": "supports",
-    "confidence": 0.99,
-    "probabilities": {
-     "supports": 1.0,
-     "insufficient": 0.0,
-     "contradicts": 0.0
-    }
-   },
-   "relation_c4": {
-    "choice": "contradicts",
-    "confidence": 0.99,
-    "probabilities": {
-     "supports": 0.0,
-     "insufficient": 0.0,
-     "contradicts": 1.0
-    }
-   }
-  },
-  "v04": {
-   "relation_c1": {
-    "choice": "supports",
-    "confidence": 1.0,
-    "probabilities": {
-     "contradicts": 0.0,
-     "supports": 1.0,
-     "insufficient": 0.0
-    }
-   },
-   "relation_c2": {
-    "choice": "insufficient",
-    "confidence": 0.4,
-    "probabilities": {
-     "contradicts": 0.37,
-     "supports": 0.03,
-     "insufficient": 0.6
+     "contradicts": 0.32,
+     "insufficient": 0.65,
+     "supports": 0.03
     }
    },
    "relation_c3": {
@@ -151,8 +269,8 @@
     "confidence": 1.0,
     "probabilities": {
      "contradicts": 1.0,
-     "supports": 0.0,
-     "insufficient": 0.0
+     "insufficient": 0.0,
+     "supports": 0.0
     }
    },
    "relation_c4": {
@@ -160,8 +278,44 @@
     "confidence": 1.0,
     "probabilities": {
      "contradicts": 0.0,
-     "supports": 0.0,
-     "insufficient": 1.0
+     "insufficient": 1.0,
+     "supports": 0.0
+    }
+   },
+   "answers_c1_r0": {
+    "choice": "answers",
+    "confidence": 1.0,
+    "probabilities": {
+     "answers": 1.0,
+     "partly": 0.0,
+     "no": 0.0
+    }
+   },
+   "answers_c2_r0": {
+    "choice": "partly",
+    "confidence": 0.7,
+    "probabilities": {
+     "answers": 0.02,
+     "partly": 0.8,
+     "no": 0.18
+    }
+   },
+   "answers_c3_r0": {
+    "choice": "partly",
+    "confidence": 0.83,
+    "probabilities": {
+     "answers": 0.03,
+     "no": 0.08,
+     "partly": 0.89
+    }
+   },
+   "answers_c4_r0": {
+    "choice": "no",
+    "confidence": 1.0,
+    "probabilities": {
+     "answers": 0.0,
+     "no": 1.0,
+     "partly": 0.0
     }
    }
   },
@@ -186,7 +340,7 @@
    },
    "relation_c3": {
     "choice": "supports",
-    "confidence": 1.0,
+    "confidence": 0.99,
     "probabilities": {
      "supports": 1.0,
      "contradicts": 0.0,
@@ -204,27 +358,72 @@
    },
    "relation_c5": {
     "choice": "contradicts",
-    "confidence": 0.95,
+    "confidence": 0.94,
     "probabilities": {
      "supports": 0.0,
-     "contradicts": 0.97,
-     "insufficient": 0.03
+     "contradicts": 0.96,
+     "insufficient": 0.04
+    }
+   },
+   "answers_c1_r0": {
+    "choice": "answers",
+    "confidence": 1.0,
+    "probabilities": {
+     "partly": 0.0,
+     "no": 0.0,
+     "answers": 1.0
+    }
+   },
+   "answers_c2_r0": {
+    "choice": "no",
+    "confidence": 0.98,
+    "probabilities": {
+     "partly": 0.01,
+     "no": 0.99,
+     "answers": 0.0
+    }
+   },
+   "answers_c3_r0": {
+    "choice": "no",
+    "confidence": 0.99,
+    "probabilities": {
+     "partly": 0.0,
+     "no": 1.0,
+     "answers": 0.0
+    }
+   },
+   "answers_c4_r0": {
+    "choice": "answers",
+    "confidence": 0.85,
+    "probabilities": {
+     "partly": 0.01,
+     "no": 0.09,
+     "answers": 0.9
+    }
+   },
+   "answers_c5_r0": {
+    "choice": "no",
+    "confidence": 0.98,
+    "probabilities": {
+     "partly": 0.0,
+     "no": 0.99,
+     "answers": 0.01
     }
    }
   },
   "v06": {
    "relation_c1": {
     "choice": "insufficient",
-    "confidence": 0.52,
+    "confidence": 0.35,
     "probabilities": {
-     "supports": 0.28,
-     "insufficient": 0.67,
-     "contradicts": 0.05
+     "supports": 0.37,
+     "insufficient": 0.5599999999999999,
+     "contradicts": 0.07
     }
    },
    "relation_c2": {
     "choice": "supports",
-    "confidence": 0.98,
+    "confidence": 0.99,
     "probabilities": {
      "supports": 0.99,
      "insufficient": 0.01,
@@ -233,11 +432,38 @@
    },
    "relation_c3": {
     "choice": "insufficient",
-    "confidence": 0.64,
+    "confidence": 0.52,
     "probabilities": {
      "supports": 0.0,
-     "insufficient": 0.76,
-     "contradicts": 0.24
+     "insufficient": 0.68,
+     "contradicts": 0.32
+    }
+   },
+   "answers_c1_r0": {
+    "choice": "answers",
+    "confidence": 0.97,
+    "probabilities": {
+     "no": 0.02,
+     "answers": 0.98,
+     "partly": 0.0
+    }
+   },
+   "answers_c2_r0": {
+    "choice": "answers",
+    "confidence": 0.91,
+    "probabilities": {
+     "answers": 0.9299999999999999,
+     "no": 0.02,
+     "partly": 0.05
+    }
+   },
+   "answers_c3_r0": {
+    "choice": "answers",
+    "confidence": 0.77,
+    "probabilities": {
+     "no": 0.13,
+     "answers": 0.85,
+     "partly": 0.02
     }
    }
   },
@@ -247,26 +473,26 @@
     "confidence": 1.0,
     "probabilities": {
      "insufficient": 0.0,
-     "contradicts": 0.0,
-     "supports": 1.0
+     "supports": 1.0,
+     "contradicts": 0.0
     }
    },
    "relation_c2": {
     "choice": "supports",
-    "confidence": 0.96,
+    "confidence": 0.97,
     "probabilities": {
      "insufficient": 0.02,
-     "contradicts": 0.0,
-     "supports": 0.98
+     "supports": 0.98,
+     "contradicts": 0.0
     }
    },
    "relation_c3": {
     "choice": "contradicts",
-    "confidence": 0.98,
+    "confidence": 0.97,
     "probabilities": {
-     "insufficient": 0.01,
-     "contradicts": 0.99,
-     "supports": 0.0
+     "insufficient": 0.02,
+     "supports": 0.0,
+     "contradicts": 0.98
     }
    },
    "relation_c4": {
@@ -274,8 +500,44 @@
     "confidence": 0.98,
     "probabilities": {
      "insufficient": 0.99,
-     "contradicts": 0.01,
-     "supports": 0.0
+     "supports": 0.0,
+     "contradicts": 0.01
+    }
+   },
+   "answers_c1_r0": {
+    "choice": "partly",
+    "confidence": 0.43,
+    "probabilities": {
+     "partly": 0.62,
+     "answers": 0.37,
+     "no": 0.01
+    }
+   },
+   "answers_c2_r0": {
+    "choice": "no",
+    "confidence": 0.53,
+    "probabilities": {
+     "partly": 0.31,
+     "answers": 0.01,
+     "no": 0.6799999999999999
+    }
+   },
+   "answers_c3_r0": {
+    "choice": "no",
+    "confidence": 0.48,
+    "probabilities": {
+     "partly": 0.18,
+     "answers": 0.17,
+     "no": 0.65
+    }
+   },
+   "answers_c4_r0": {
+    "choice": "no",
+    "confidence": 0.78,
+    "probabilities": {
+     "partly": 0.14,
+     "answers": 0.01,
+     "no": 0.85
     }
    }
   },
@@ -284,36 +546,72 @@
     "choice": "supports",
     "confidence": 0.99,
     "probabilities": {
-     "contradicts": 0.0,
-     "insufficient": 0.0,
-     "supports": 1.0
+     "supports": 0.99,
+     "insufficient": 0.01,
+     "contradicts": 0.0
     }
    },
    "relation_c2": {
     "choice": "contradicts",
     "confidence": 1.0,
     "probabilities": {
-     "contradicts": 1.0,
+     "supports": 0.0,
      "insufficient": 0.0,
-     "supports": 0.0
+     "contradicts": 1.0
     }
    },
    "relation_c3": {
     "choice": "insufficient",
-    "confidence": 0.92,
+    "confidence": 0.91,
     "probabilities": {
-     "contradicts": 0.02,
+     "supports": 0.05,
      "insufficient": 0.94,
-     "supports": 0.04
+     "contradicts": 0.01
     }
    },
    "relation_c4": {
     "choice": "contradicts",
     "confidence": 0.99,
     "probabilities": {
-     "contradicts": 1.0,
-     "insufficient": 0.0,
-     "supports": 0.0
+     "supports": 0.0,
+     "insufficient": 0.01,
+     "contradicts": 0.99
+    }
+   },
+   "answers_c1_r0": {
+    "choice": "answers",
+    "confidence": 0.99,
+    "probabilities": {
+     "no": 0.0,
+     "partly": 0.0,
+     "answers": 1.0
+    }
+   },
+   "answers_c2_r0": {
+    "choice": "no",
+    "confidence": 0.81,
+    "probabilities": {
+     "no": 0.88,
+     "partly": 0.07,
+     "answers": 0.05
+    }
+   },
+   "answers_c3_r0": {
+    "choice": "no",
+    "confidence": 0.69,
+    "probabilities": {
+     "no": 0.8,
+     "partly": 0.14,
+     "answers": 0.06
+    }
+   },
+   "answers_c4_r0": {
+    "choice": "answers",
+    "confidence": 0.83,
+    "probabilities": {
+     "no": 0.07,
+     "partly": 0.04,
+     "answers": 0.89
     }
    }
   },
@@ -331,8 +629,8 @@
     "choice": "contradicts",
     "confidence": 0.99,
     "probabilities": {
-     "contradicts": 1.0,
-     "insufficient": 0.0,
+     "contradicts": 0.99,
+     "insufficient": 0.01,
      "supports": 0.0
     }
    },
@@ -344,6 +642,33 @@
      "insufficient": 1.0,
      "supports": 0.0
     }
+   },
+   "answers_c1_r0": {
+    "choice": "answers",
+    "confidence": 0.98,
+    "probabilities": {
+     "partly": 0.01,
+     "no": 0.0,
+     "answers": 0.99
+    }
+   },
+   "answers_c2_r0": {
+    "choice": "no",
+    "confidence": 0.24,
+    "probabilities": {
+     "partly": 0.37,
+     "no": 0.5,
+     "answers": 0.13
+    }
+   },
+   "answers_c3_r0": {
+    "choice": "no",
+    "confidence": 0.92,
+    "probabilities": {
+     "partly": 0.05,
+     "no": 0.95,
+     "answers": 0.0
+    }
    }
   },
   "v10": {
@@ -351,36 +676,90 @@
     "choice": "supports",
     "confidence": 1.0,
     "probabilities": {
-     "supports": 1.0,
      "insufficient": 0.0,
+     "supports": 1.0,
      "contradicts": 0.0
     }
    },
    "relation_c2": {
     "choice": "insufficient",
-    "confidence": 0.98,
+    "confidence": 0.97,
     "probabilities": {
-     "supports": 0.01,
-     "insufficient": 0.99,
+     "insufficient": 0.98,
+     "supports": 0.02,
      "contradicts": 0.0
     }
    },
    "relation_c3": {
     "choice": "insufficient",
-    "confidence": 0.98,
+    "confidence": 0.97,
     "probabilities": {
-     "supports": 0.01,
-     "insufficient": 0.99,
+     "insufficient": 0.98,
+     "supports": 0.02,
      "contradicts": 0.0
+    }
+   },
+   "answers_c1_r0": {
+    "choice": "answers",
+    "confidence": 1.0,
+    "probabilities": {
+     "answers": 1.0,
+     "no": 0.0,
+     "partly": 0.0
+    }
+   },
+   "answers_c1_r1": {
+    "choice": "no",
+    "confidence": 1.0,
+    "probabilities": {
+     "answers": 0.0,
+     "no": 1.0,
+     "partly": 0.0
+    }
+   },
+   "answers_c2_r0": {
+    "choice": "no",
+    "confidence": 0.65,
+    "probabilities": {
+     "answers": 0.17,
+     "no": 0.77,
+     "partly": 0.06
+    }
+   },
+   "answers_c2_r1": {
+    "choice": "answers",
+    "confidence": 0.76,
+    "probabilities": {
+     "answers": 0.84,
+     "no": 0.09,
+     "partly": 0.07
+    }
+   },
+   "answers_c3_r0": {
+    "choice": "no",
+    "confidence": 1.0,
+    "probabilities": {
+     "answers": 0.0,
+     "no": 1.0,
+     "partly": 0.0
+    }
+   },
+   "answers_c3_r1": {
+    "choice": "answers",
+    "confidence": 0.93,
+    "probabilities": {
+     "answers": 0.95,
+     "no": 0.04,
+     "partly": 0.01
     }
    }
   }
  },
  "costs": {
   "requests": 10,
-  "input_tokens": 12384,
-  "output_tokens": 1727,
-  "elapsed_ms": 2294
+  "input_tokens": 18779,
+  "output_tokens": 3410,
+  "elapsed_ms": 2258
  },
  "dataset_sha256": "88944235057c0c7a0d9ac1a0dcfba2ad62c1a8878737970fe2f6aa18c03d2401"
 }
