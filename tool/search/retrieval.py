@@ -274,8 +274,12 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
     twins = {chunk_id: group for group in same.values() if len(group) > 1 for chunk_id in group}
     texts: set[str] = set()
     ranked = []
+    # The source families each matching text stands for: a candidate kept
+    # for one covers every family its copies belong to.
+    covers: dict[str, set[str]] = defaultdict(set)
     for i in sorted(fused, key=lambda i: (-fused[i], i)):
         key = text_key(chunks[i])
+        covers[key].add(family(chunks[i]))
         if key not in texts:
             texts.add(key)
             ranked.append(i)
@@ -286,7 +290,7 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
     allowance = req["max_candidates"] - req["spent"]
     slots = max(0, min(req["limit"], allowance))
     names = req["source_allowlist"]
-    groups = {name: [i for i in ranked if family(chunks[i]) == name] for name in names}
+    groups = {name: [i for i in ranked if name in covers[text_key(chunks[i])]] for name in names}
     floor = max(1, slots // (2 * len(names))) if slots >= len(names) else 0
     picked = {i for name in names for i in groups[name][:floor]}
     for i in ranked:
@@ -295,7 +299,7 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
         picked.add(i)
     selected = sorted(picked, key=position.get)
     coverage = {name: {"candidates": len(groups[name]), "floor": min(floor, len(groups[name])),
-                       "selected": sum(family(chunks[i]) == name for i in selected)} for name in names}
+                       "selected": sum(name in covers[text_key(chunks[i])] for i in selected)} for name in names}
 
     paths: list[dict] = []
     # Earlier rounds spent the allowance this one would have used.

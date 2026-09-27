@@ -741,6 +741,21 @@ def test_the_copies_of_a_seed_are_one_node_whose_links_are_pooled_and_whose_cut_
     index.close()
 
 
+def test_a_family_whose_passage_is_a_copy_of_another_familys_is_covered_not_missing(world):
+    hub, repo = world
+    for path in (hub / "operator/quarry.md", repo / "docs/quarry.md"):
+        path.write_text("# Quarry\n\nThe quarry conveyor requires weekly review.\n", encoding="utf-8")
+    index = index_of(hub, repo)
+    req = retrieval.request(evidence.repo_id(repo), "quarry conveyor", sources=["hub", "documents"], limit=2,
+                            graph=None)
+    result = retrieval.run(index.snapshot(), req)
+    (kept,) = [c for c in result["chunks"] if "weekly review" in c["text"]]
+    assert len(kept["duplicates"]) == 1 and result["missing_sources"] == []
+    assert all(result["coverage"][name]["candidates"] == result["coverage"][name]["selected"] == 1
+               for name in ("hub", "documents"))
+    index.close()
+
+
 def test_a_step_names_as_its_copy_only_a_chunk_of_the_same_text(world):
     hub, repo = world
     (repo / "docs/start.md").write_text(
