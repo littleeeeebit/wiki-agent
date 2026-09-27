@@ -7,7 +7,7 @@ import { Peek } from '@/components/Peek'
 import { Stream } from '@/components/Stream'
 import { Toolbar } from '@/components/Toolbar'
 import * as api from '@/lib/api'
-import type { Block, Channel, Ev, Kind, Options, Peek as PeekData, RunSummary, Spec, Tokens, Verification } from '@/lib/api'
+import type { Block, Channel, Ev, Kind, Options, Peek as PeekData, RunSummary, Spec, Tokens, Turn, Verification } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 export type Msg = {
@@ -59,6 +59,14 @@ function onto(m: Msg, ev: Ev): Msg {
   }
   return at
 }
+
+/** A recorded row as the screen shows it. */
+const toMsg = (r: Turn): Msg => ({ role: r.role, text: r.said ?? r.text, blocks: r.blocks,
+  tools: [], source: r.source, error: r.error, verification: r.verification,
+  ms: r.ms, cost: r.cost_usd, model: r.model, sessionId: r.session_id, tokens: r.tokens,
+  simpleText: r.simple_text, simpleError: r.simple_error,
+  simpleMs: r.simple_meta?.ms, simpleCost: r.simple_meta?.cost_usd, runId: r.run_id,
+  cancelled: r.cancelled })
 
 const STALE: Record<string, string> = {
   changed: '이 파일은 답이 근거로 읽은 뒤 바뀌었다 — 지금 파일을 보인다. 답이 본 판은 ‘근거와 판단 보기’의 영어 스냅숏뿐이다',
@@ -203,12 +211,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
       .getLog(active)
       .then((rows) => {
         if (stale || asked !== clears.current) return
-        const restored: Msg[] = rows.map((r) => ({ role: r.role, text: r.said ?? r.text, blocks: r.blocks,
-          tools: [], source: r.source, error: r.error, verification: r.verification,
-          ms: r.ms, cost: r.cost_usd, model: r.model, sessionId: r.session_id, tokens: r.tokens,
-          simpleText: r.simple_text, simpleError: r.simple_error,
-          simpleMs: r.simple_meta?.ms, simpleCost: r.simple_meta?.cost_usd, runId: r.run_id,
-          cancelled: r.cancelled }))
+        const restored = rows.map(toMsg)
         const live = inFlight.current.get(slot(active))
         if (live && restored.at(-1)?.role === 'user') restored.push(live)
         setMessages((prev) => (prev.length ? prev : restored))
@@ -217,8 +220,13 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         if (!live && restored.at(-1)?.role === 'user') {
           api.getKnowledge().then(({ runs }) => {
             const run = runs.find((r) => r.focus === active)
-            if (stale || asked !== clears.current || !run || inFlight.current.has(slot(active))) return
-            void follow(active, (onEvent) => api.runEvents(run.run_id, -1, onEvent), true)
+            if (stale || asked !== clears.current || inFlight.current.has(slot(active))) return
+            if (run) return void follow(active, (onEvent) => api.runEvents(run.run_id, -1, onEvent), true)
+            // It ended between the two reads: its answer is in the record now.
+            api.getLog(active).then((again) => {
+              if (stale || asked !== clears.current) return
+              setMessages((prev) => (prev === restored ? again.map(toMsg) : prev))
+            }).catch(() => {})
           }).catch(() => {})
         }
       })

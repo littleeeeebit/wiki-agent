@@ -2542,6 +2542,7 @@ PRIVATE = ("text", "text_en", "original_text", "quote", "question", "said", "hea
 # Finished runs kept in memory, and traces kept on disk per repository.
 KEEP_LIVE = 32
 KEEP_TRACES = 200
+KEY_FLOOR = 8   # the shortest key `Run.redact` replaces
 LIVE: dict[str, Run] = {}
 _LIVE = threading.Lock()
 OUTCOMES = ("complete", "partial", "abstained", "verification_unavailable", "answered", "cancelled", "failed")
@@ -2571,7 +2572,7 @@ class Run:
     `cfg` is the settings snapshot it started with, kept to its end.
 
     The four questions of `craft/client-lifecycle-in-one-scope`, for the
-    trace file: made by the first event, by the thread running the run;
+    trace file: made by the `started` step, where the run is constructed;
     not shared — one run appends to its own file; closed after each line
     (append mode); owned by the repository's folder, and pruned there to the
     newest `KEEP_TRACES` when a run ends.
@@ -2591,12 +2592,17 @@ class Run:
         self.stage = "start"
         self.dossier: dict | None = None
         self.summary: dict | None = None
+        self.sealed = False
         self._left = None
         self.folder = runs_root() / self.repo_id / "runs"
         with _LIVE:
             LIVE[self.id] = self
             for old in [r for r in LIVE.values() if r.done][:-KEEP_LIVE or None]:
                 LIVE.pop(old.id, None)
+        # Its trace exists from here: a server that goes down before the
+        # first step still leaves a run to call interrupted, and the screen
+        # has the id to stop it with.
+        self.put({"kind": "step", "status": "started"})
 
     def follow(self, what) -> None:
         """What `budget_remaining` reads from now: a `Budget`, or a callable."""
@@ -2613,6 +2619,7 @@ class Run:
                      "stage": payload.get("stage", self.stage), "status": payload.get("status", payload["kind"]),
                      "elapsed_ms": round((time.monotonic() - self.started) * 1000),
                      "budget_remaining": self.left()}
+            event = self.redact(event)   # every copy the screen tails, not only the trace's
             self.events.append(event)
             if event["kind"] not in UNTRACED:
                 self.write(f"{self.id}.jsonl", json.dumps({**event, "repo_id": self.repo_id}, ensure_ascii=False)
@@ -2627,11 +2634,45 @@ class Run:
         self.stage = stage
         return self.put({"kind": "step", "stage": stage, "status": status, **payload})
 
-    def write(self, name: str, text: str, append: bool = False) -> None:
-        """A line of the trace, or the summary whole. Never the key: a
-        snapshot with one has it replaced before anything is written."""
+    def redact(self, value):
+        """`value` with the key replaced in every string in it — the strings
+        only, so it never touches the structure around them. A key shorter
+        than `KEY_FLOOR` is no credential and cannot be told from ordinary
+        text (a test's `k` would take every `kind`'s k), so it is left."""
 
-        text = text.replace(self.cfg.key, "[redacted]") if self.cfg.key else text
+        key = self.cfg.key
+        if len(key or "") < KEY_FLOOR:
+            return value
+        if isinstance(value, str):
+            return value.replace(key, "[redacted]")
+        if isinstance(value, dict):
+            return {k: self.redact(v) for k, v in value.items()}
+        if isinstance(value, list | tuple):
+            return [self.redact(v) for v in value]
+        return value
+
+    def seal(self) -> bool:
+        """The answer's point of no return: False if a stop came first. A
+        stop after it no longer takes the answer back; it only cuts what
+        follows (the plain explanation)."""
+
+        with self.wake:
+            self.sealed = not self.cancel.is_set()
+            return self.sealed
+
+    def stop(self) -> bool:
+        """Stop the run; True if its answer was not published yet. Taken under
+        the same lock as `seal`, so the two never interleave."""
+
+        with self.wake:
+            if not self.done:
+                self.cancel.set()
+            return not self.sealed
+
+    def write(self, name: str, text: str, append: bool = False) -> None:
+        """A line of the trace, or the summary whole — both redacted before
+        they get here (`put`, `finish`)."""
+
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
             if append:
@@ -2652,7 +2693,7 @@ class Run:
 
         if self.done:
             return self.summary
-        self.summary = summarize(self, outcome, reason, published, answered)
+        self.summary = self.redact(summarize(self, outcome, reason, published, answered))
         self.write(f"{self.id}.json", json.dumps(self.summary, ensure_ascii=False, indent=1) + "\n")
         with self.wake:
             self.done = True

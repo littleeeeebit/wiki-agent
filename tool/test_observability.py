@@ -138,10 +138,11 @@ def test_every_event_is_numbered_and_traced_without_its_pieces_or_the_key(tmp_pa
     run.put({"kind": "delta", "text": "a piece"})
     run.step("retrieve", "retrieval_needed", sources=["documents"])
     run.put({"kind": "error", "code": "host_failed", "text": f"401 for key {KEY}"})
-    assert [e["seq"] for e in run.events] == [0, 1, 2]
+    assert [e["seq"] for e in run.events] == [0, 1, 2, 3] and run.events[0]["status"] == "started"
     for e in run.events:
         assert {"run_id", "seq", "stage", "status", "elapsed_ms", "budget_remaining"} <= set(e)
-    assert run.events[1]["budget_remaining"]["calls"] == 6 and run.events[2]["stage"] == "retrieve"
+    assert run.events[2]["budget_remaining"]["calls"] == 6 and run.events[3]["stage"] == "retrieve"
+    assert KEY not in json.dumps(run.events), "the events a screen tails carry no key either"
     summary = run.finish("failed", "host_failed")
     trace = (run.folder / f"{run.id}.jsonl").read_text(encoding="utf-8")
     assert "a piece" not in trace, "a streamed piece is not traced"
@@ -181,7 +182,7 @@ def test_a_run_records_its_graph_walk_and_the_summary_draws_the_same_paths(tmp_p
     assert expand["walked"] == [walked]
     assert {c["chunk_id"]: c["lane"] for c in expand["candidates"]} == {seed["chunk_id"]: "rrf",
                                                                        bridge["chunk_id"]: "graph"}
-    assert [e["stage"] for e in run.events][:4] == ["route", "retrieve", "expand", "grade"]
+    assert [e["stage"] for e in run.events][:5] == ["start", "route", "retrieve", "expand", "grade"]
     graph = run.finish("answered")["graph"]
     assert graph["paths"] == [walked], "the map draws the traversal the run recorded"
     assert graph["seeds"] == [seed["chunk_id"]] and graph["bridges"] == [bridge["chunk_id"]]
@@ -200,7 +201,8 @@ def test_a_question_is_a_run_whose_steps_evidence_and_summary_the_screen_reads(t
     run_id = events[0]["run_id"]
     assert {e["run_id"] for e in events} == {run_id} and [e["seq"] for e in events] == list(range(len(events)))
     steps = [(e["stage"], e["status"]) for e in events if e["kind"] == "step"]
-    assert steps[:4] == [("retrieved", "ready"), ("draft", "writing"), ("verify", "checked"), ("publish", "complete")]
+    assert steps[:5] == [("start", "started"), ("retrieved", "ready"), ("draft", "writing"), ("verify", "checked"),
+                         ("publish", "complete")]
     verify = next(e for e in events if e["kind"] == "step" and e["stage"] == "verify")
     assert {c["claim_id"]: c["state"] for c in verify["claims"]} == {"c1": "accepted", "c2": "rejected"}
     assert REJECTED not in json.dumps(events, ensure_ascii=False), "a check shows states, never a claim's text"
@@ -288,9 +290,40 @@ def test_a_stop_ends_the_run_cancelled_and_publishes_nothing(tmp_path, active):
     assert "wiki" not in chat._busy
 
 
+@pytest.mark.parametrize("mode", ["active", "off"])
+@pytest.mark.parametrize("stopped_first", [True, False])
+def test_a_stop_and_the_publication_never_interleave(tmp_path, isolated, active, mode, stopped_first):
+    isolated.write_text(f"TYPESAFE_API_KEY={KEY}\nWIKI_JEV_MODE={mode}\n", encoding="utf-8")
+    d, reply = mixed(tmp_path)
+    session, _sent = session_saying(reply)
+    seal, said = knowledge.Run.seal, []
+
+    def racing(run):   # the stop lands right before, or right after, the point of no return
+        if stopped_first:
+            said.append(chat.knowledge_cancel(run.id))
+        sealed = seal(run)
+        if not stopped_first:
+            said.append(chat.knowledge_cancel(run.id))
+        return sealed
+
+    with patch.object(chat, "prepare", retrieved(d)), patch.object(chat, "session", return_value=session), \
+         patch.object(knowledge.Run, "seal", racing):
+        events = events_of(web().post("/api/say/wiki", json={"text": "데몬 포트는?"}))
+    run = knowledge.LIVE[events[0]["run_id"]]
+    kinds = [e["kind"] for e in events]
+    assert said == [{"ok": True, "done": False, "published": not stopped_first}]
+    if stopped_first:
+        assert "cancelled" in kinds and "done" not in kinds and run.summary["outcome"] == "cancelled"
+        assert chat.recall("wiki")[-1]["cancelled"]
+    else:
+        assert "done" in kinds and "cancelled" not in kinds, "a stop after publication does not take it back"
+        v = run.summary["verification"]
+        assert run.summary["outcome"] == (v["status"] if mode == "active" else "answered")
+        assert "simple_start" not in kinds, "it only cuts the plain explanation"
+
+
 def test_a_run_the_server_went_down_with_ends_interrupted(tmp_path, active):
-    run = knowledge.Run(chat.current_repo(), "wiki", "q", decision.config())
-    run.step("retrieve", "retrieval_needed")
+    run = knowledge.Run(chat.current_repo(), "wiki", "q", decision.config())   # down before its first step
     knowledge.LIVE.clear()
     screen = web()
     assert screen.get(f"/api/knowledge/runs/{run.id}").json()["outcome"] == "interrupted"

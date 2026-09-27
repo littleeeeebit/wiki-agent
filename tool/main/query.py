@@ -501,12 +501,14 @@ def knowledge_cancel(run_id: str) -> dict:
     run = knowledge.live(run_id, current_repo())
     if run is None:
         raise HTTPException(404, "이 프로젝트에 도는 그런 실행이 없다")
+    # First: a turn not started yet is stopped by this. After the answer is
+    # published a stop only cuts the plain explanation (`published`).
+    published = not run.stop()
     if not run.done:
-        run.cancel.set()   # first: a turn not started yet is stopped by this
         chat = _sessions.get(session_key(run.focus))
         if chat is not None:
             chat.stop(run.cancel)
-    return {"ok": True, "done": run.done}
+    return {"ok": True, "done": run.done, "published": published}
 
 
 def shadow(cid: str, query: str, repo: Path, context: str, cfg: decision.Config) -> None:
@@ -771,7 +773,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             else:
                 # The drafts are the run's own record, never the conversation's.
                 remember(cid, "draft", "Jev answer draft", repo=run.repo, record=out["record"], run_id=run.id)
-                if run.cancel.is_set():
+                if not run.seal():
                     # Stopped while it was checked: nothing of it is published.
                     out = None
                     raise Stopped()
@@ -807,6 +809,8 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                 break
             if ev.kind == "error":
                 failed, code = ev.text, "host_failed"
+            if ev.kind == "done" and not run.seal():
+                break
             if ev.kind == "done":
                 reply = [ev.text or "".join(reply)]
                 finished = bool(reply[0].strip())
@@ -822,7 +826,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             put({"kind": ev.kind, "text": ev.text, **({"code": code} if ev.kind == "error" else {}), **ev.meta})
             if ev.kind == "done" and shown:
                 put({"kind": "blocks", "text": "", "blocks": shown})
-        if run.cancel.is_set() and not verification:
+        if run.cancel.is_set() and not run.sealed:
             getattr(events, "close", lambda: None)()   # the host's turn lets go of its session now
             raise Stopped()
         if not finished and not failed:
@@ -870,7 +874,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
     finally:
         try:
             if reply or failed:
-                remember(cid, "assistant", "".join(reply), failed, repo=run.repo,
+                remember(cid, "assistant", "".join(reply), run.redact(failed), repo=run.repo,
                          simple_text=simple, simple_error=simple_error, simple_meta=simple_meta,
                          provider="codex" if cfg["model"].startswith("codex:") else "claude", run_id=run.id,
                          **({"cancelled": True} if code == "cancelled" else {}),
