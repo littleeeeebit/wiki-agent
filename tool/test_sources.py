@@ -417,6 +417,15 @@ def test_forgetting_a_source_takes_its_cached_extractions_too(repo, monkeypatch,
                                           " FROM nodes WHERE source_id = ?", (key[0], key[0])).fetchall()
 
     assert ("Zeta uses eta.",) in quoted()
+    # A local source's full id is never taken for a forgotten record: its graph stays.
+    local = next(c["source_id"] for c in index.chunks if not c.get("record"))
+    with index.store.lock:
+        before = index.store.db.execute("SELECT COUNT(*) FROM nodes WHERE source_id = ?", (local,)).fetchone()
+    with pytest.raises(KeyError):
+        knowledge.forget(path, local)
+    with index.store.lock:
+        assert index.store.db.execute("SELECT COUNT(*) FROM nodes WHERE source_id = ?", (local,)).fetchone() == before
+    assert before[0]
     # An evidence store that could not be opened forgets nothing, and says so.
     opened, delete = knowledge.evidence_store, sources.Records.delete
     monkeypatch.setattr(knowledge, "evidence_store", lambda _p: searchd.Store(None))

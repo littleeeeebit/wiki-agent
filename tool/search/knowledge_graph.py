@@ -623,9 +623,12 @@ def forget(db: sqlite3.Connection, source: str) -> bool:
     every generation, and its cached extractions — all of them quote its
     text — in the caller's transaction. The serial moves, so a rebuild that
     read the graph before this does not write it back. Idempotent; says
-    whether anything was there."""
+    whether anything was there. A source this store indexes is local, never
+    an external record, and is refused: its chunks stay, so its graph must."""
 
-    gens = {g for (g,) in db.execute("SELECT gen FROM nodes WHERE source_id = ? UNION"
+    if db.execute("SELECT 1 FROM sources WHERE source_id = ? LIMIT 1", (source,)).fetchone():
+        raise KeyError(f"{source} is a local source, not an external record")
+    gens ={g for (g,) in db.execute("SELECT gen FROM nodes WHERE source_id = ? UNION"
                                      " SELECT gen FROM spans WHERE source_id = ?", (source, source))}
     drop(db, [(g, source) for g in sorted(gens)], False, True)
     cached_ = db.execute("DELETE FROM extractions WHERE source_id = ?", (source,)).rowcount
