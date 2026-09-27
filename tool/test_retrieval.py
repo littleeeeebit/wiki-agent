@@ -712,3 +712,38 @@ def test_every_seed_that_reaches_a_chunk_keeps_its_path_to_it(world):
     assert len(seeds) == 2 and {p["seed"] for p in reached} == seeds
     assert sorted(p["status"] for p in reached) == ["corroborated", "discovered"]
     index.close()
+
+
+# ---- round 6 review -------------------------------------------------------------------
+
+def test_a_seed_with_many_copies_walks_from_a_fanout_of_them_and_names_them_all(world):
+    hub, repo = world
+    for n in range(12):
+        (repo / f"docs/c{n}").mkdir()
+        (repo / f"docs/c{n}/intro.md").write_text("# Intro\n\nThe quarry conveyor points to [details](detail.md).\n",
+                                                  encoding="utf-8")
+        (repo / f"docs/c{n}/detail.md").write_text(f"# Detail\n\nDetail number {n}.\n", encoding="utf-8")
+    index = index_of(hub, repo)
+    req = retrieval.request(evidence.repo_id(repo), "quarry conveyor", sources=["documents"], limit=1)
+    result = retrieval.run(index.snapshot(), req)
+    assert len(result["chunks"][0]["duplicates"]) == 11
+    starts = {p["seed"] for p in result["paths"]}
+    assert len(starts) == 1 + retrieval.GRAPH["fanout"]
+    index.close()
+
+
+def test_a_seed_another_seed_links_to_keeps_that_path(world):
+    hub, repo = world
+    (repo / "docs/sa.md").write_text("# SA\n\nThe quarry conveyor alpha, see [beta](sb.md).\n", encoding="utf-8")
+    (repo / "docs/sb.md").write_text("# SB\n\nThe quarry conveyor beta.\n", encoding="utf-8")
+    index = index_of(hub, repo)
+    req = retrieval.request(evidence.repo_id(repo), "quarry conveyor", sources=["documents"], limit=2)
+    result = retrieval.run(index.snapshot(), req)
+    by_text = {c["text"]: c["chunk_id"] for c in result["chunks"] if c["lane"] == "rrf"}
+    alpha = next(i for t, i in by_text.items() if "alpha" in t)
+    beta = next(i for t, i in by_text.items() if "beta" in t)
+    graph = result["scores"][beta]["graph"]
+    assert graph is not None and graph["rank"] is None
+    assert [(result["paths"][p]["seed"], result["paths"][p]["status"]) for p in graph["paths"]] == [
+        (alpha, "corroborated")]
+    index.close()
