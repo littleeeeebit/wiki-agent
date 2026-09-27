@@ -423,6 +423,8 @@ def test_the_changed_files_are_the_branch_against_its_base_pushed_commits_includ
     git("push", "origin", "feature:staging")
     assert decisions.changed(tmp_path / "w", {}) == ["설계.md"], "pushed, and on another remote branch too"
     assert decisions.changed(tmp_path / "w", {"base": "staging"}) == [], "a spec sent back keeps its own base"
+    git("update-ref", "-d", "refs/remotes/origin/main")
+    assert decisions.changed(tmp_path / "w", {}) == ["설계.md"], "a base with no local ref is fetched"
 
 
 # -- loop.fix ---------------------------------------------------------------------

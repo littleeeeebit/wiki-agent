@@ -33,6 +33,7 @@ import functools
 import hashlib
 import json
 import re
+import subprocess
 import threading
 import time
 import tomllib
@@ -591,15 +592,23 @@ def check_offer(repo: Path, gate: str) -> list[dict]:
 
 def changed(path: Path, spec: dict) -> list[str]:
     """The files the pull request will show: the branch against the base
-    `specs.opened` targets, pushed commits included. Without that base no pull
-    request opens either; what no remote has yet stands in."""
+    `specs.opened` targets, pushed commits included. A base with no local ref
+    (a single-branch clone) is fetched. Without the base, or with no reach to
+    origin, no pull request opens either; what no remote has yet stands in."""
 
     from . import specs  # `specs` imports this module
 
     got = specs.base_of(spec, path)
-    ref = f"origin/{got.stdout.strip()}"
-    out = git(path, "-c", "core.quotepath=off", "diff", "--name-only", f"{ref}...HEAD") \
-        if not got.returncode and got.stdout.strip() and git(path, "rev-parse", "--verify", "--quiet", ref) else \
+    base = "" if got.returncode else got.stdout.strip()
+    ref = f"origin/{base}" if base else ""
+    if ref and not git(path, "rev-parse", "--verify", "--quiet", ref):
+        try:
+            fetched = subprocess.run(["git", "-C", str(path), "fetch", "--quiet", "--no-tags", "origin", base],
+                                     capture_output=True, timeout=30).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            fetched = False
+        ref = "FETCH_HEAD" if fetched else ""
+    out = git(path, "-c", "core.quotepath=off", "diff", "--name-only", f"{ref}...HEAD") if ref else \
         git(path, "-c", "core.quotepath=off", "log", "--name-only", "--format=", "HEAD", "--not", "--remotes")
     return list(dict.fromkeys(line for line in out.splitlines() if line.strip()))[:MAX_FILES]
 
