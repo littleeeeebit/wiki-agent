@@ -156,7 +156,8 @@ def connection(monkeypatch, status=200, payload=None, delay=0.0, fail=None):
         def close(self):
             pass
 
-    monkeypatch.setattr(decision.http.client, "HTTPSConnection", Connection)
+    monkeypatch.setattr(decision, "resolve", lambda end, cancel: "192.0.2.1")
+    monkeypatch.setattr(decision, "connection", lambda address, timeout: Connection(decision.HOST, timeout))
     return sent
 
 

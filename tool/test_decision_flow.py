@@ -306,7 +306,60 @@ def slow_connection(monkeypatch, opened, closed):
             closed.append(self)
             self.gone.set()
 
-    monkeypatch.setattr(decision.http.client, "HTTPSConnection", Connection)
+    monkeypatch.setattr(decision, "resolve", lambda end, cancel: "192.0.2.1")
+    monkeypatch.setattr(decision, "connection", lambda address, timeout: Connection(decision.HOST, timeout))
+
+
+def drained():
+    """Every slot free: another test's fake worker may still be sleeping out its delay."""
+
+    for _ in range(200):
+        if decision.IN_FLIGHT._value == decision.MAX_IN_FLIGHT:
+            return decision.MAX_IN_FLIGHT
+        time.sleep(0.01)
+    pytest.fail("in-flight slots still held before the test started")
+
+
+def test_a_stalled_name_lookup_holds_no_slot_and_runs_once(monkeypatch):
+    stall, calls = threading.Event(), []
+
+    def getaddrinfo(*args, **kwargs):
+        calls.append(args)
+        stall.wait(5)
+        return [(None, None, None, "", ("192.0.2.1", 443))]
+
+    monkeypatch.setattr(decision.socket, "getaddrinfo", getaddrinfo)
+    monkeypatch.setattr(decision, "RESOLVED", {"address": None, "at": 0.0, "lookup": None})
+    free = drained()
+    cfg = decision.Config("active", MODEL, "file", key="k")
+    try:
+        for _ in range(decision.MAX_IN_FLIGHT + 1):
+            started = time.monotonic()
+            with pytest.raises(decision.JevError, match="timeout"):
+                decision.evaluate(cfg, {}, {"q": decision.noul("?")}, [],
+                                  Budget(seconds=5, calls=2, candidates=0, call_seconds=0.05))
+            assert time.monotonic() - started < 0.5
+            assert decision.IN_FLIGHT._value == free, "a slot was taken while the name was looked up"
+        assert len(calls) == 1, "a second lookup started while the first was stalled"
+    finally:
+        stall.set()
+    decision.RESOLVED["lookup"].join(1)
+    assert decision.resolve(time.monotonic() + 1, threading.Event()) == "192.0.2.1"
+
+
+def test_the_connection_dials_the_resolved_address_and_checks_the_host_name(monkeypatch):
+    dialled = []
+
+    def create_connection(address, timeout):
+        dialled.append(address)
+        raise OSError("refused")
+
+    monkeypatch.setattr(decision.socket, "create_connection", create_connection)
+    conn = decision.connection("192.0.2.1", 1.0)
+    assert conn.host == decision.HOST
+    with pytest.raises(OSError):
+        conn.connect()
+    assert dialled == [("192.0.2.1", 443)]
 
 
 def test_a_worker_that_cannot_start_frees_its_slot_and_connection(monkeypatch):
@@ -316,8 +369,7 @@ def test_a_worker_that_cannot_start_frees_its_slot_and_connection(monkeypatch):
     def refuse(self):
         raise RuntimeError("can't start new thread")
 
-    # Another test's fake may still hold a slot while its sleep runs out: count from here.
-    free = decision.IN_FLIGHT._value
+    free = drained()
     monkeypatch.setattr(threading.Thread, "start", refuse)
     cfg = decision.Config("active", MODEL, "file", key="k")
     for _ in range(decision.MAX_IN_FLIGHT + 1):

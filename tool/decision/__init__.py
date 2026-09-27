@@ -22,6 +22,8 @@ import http.client
 import json
 import math
 import os
+import socket
+import ssl
 import threading
 import time
 from dataclasses import dataclass, field
@@ -43,6 +45,10 @@ MAX_RESPONSE = 1_000_000
 # own time and is `busy` when none frees up: backpressure, not a queue.
 MAX_IN_FLIGHT = 4
 IN_FLIGHT = threading.BoundedSemaphore(MAX_IN_FLIGHT)
+# How long HOST's resolved address is reused before it is looked up again.
+RESOLVED_SECONDS = 300.0
+RESOLVED: dict = {"address": None, "at": 0.0, "lookup": None}
+_RESOLVING = threading.Lock()
 
 
 class JevError(Exception):
@@ -245,11 +251,75 @@ def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
         trace.append(entry)
 
 
+class Lookup(threading.Thread):
+    """One name lookup of HOST. The resolver cannot be given a timeout, so it
+    runs here, where callers stop waiting at their own deadline."""
+
+    def __init__(self):
+        super().__init__(daemon=True)
+        self.address: str | None = None
+
+    def run(self) -> None:
+        try:
+            self.address = socket.getaddrinfo(HOST, 443, type=socket.SOCK_STREAM)[0][4][0]
+        except (OSError, UnicodeError, IndexError):
+            pass
+
+
+def resolve(end: float, cancel: threading.Event) -> str:
+    """HOST's address, found outside every in-flight slot: a stalled lookup
+    holds no slot, and at most one lookup runs at a time — a caller that
+    finds one running waits on it rather than starting another."""
+
+    with _RESOLVING:
+        if RESOLVED["address"] and time.monotonic() - RESOLVED["at"] < RESOLVED_SECONDS:
+            return RESOLVED["address"]
+        lookup = RESOLVED["lookup"]
+        if lookup is None or not lookup.is_alive():
+            lookup = RESOLVED["lookup"] = Lookup()
+            try:
+                lookup.start()
+            except RuntimeError as exc:
+                RESOLVED["lookup"] = None
+                raise JevError("network") from exc
+    while lookup.is_alive():
+        if cancel.is_set():
+            raise JevError("cancelled")
+        if time.monotonic() >= end:
+            raise JevError("timeout")
+        lookup.join(min(0.05, max(0.0, end - time.monotonic())))
+    if lookup.address is None:
+        raise JevError("network")
+    with _RESOLVING:
+        RESOLVED.update(address=lookup.address, at=time.monotonic())
+    return lookup.address
+
+
+class Pinned(http.client.HTTPSConnection):
+    """TLS to a resolved address, with SNI and the certificate checked against
+    HOST. No name is looked up inside a slot, so `abort` always meets either
+    a socket it can shut or a connect bounded by this call's own timeout."""
+
+    def __init__(self, address: str, timeout: float):
+        super().__init__(HOST, timeout=timeout, context=ssl.create_default_context())
+        self.address = address
+
+    def connect(self) -> None:
+        # The raw socket is `sock` during the handshake, so `abort` can shut it.
+        self.sock = socket.create_connection((self.address, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(self.sock, server_hostname=self.host)
+
+
+def connection(address: str, timeout: float) -> http.client.HTTPSConnection:
+    return Pinned(address, timeout)
+
+
 def send(key: str, body: bytes, timeout: float, cancel: threading.Event) -> dict:
     """POST in a worker thread, waited on in slices so a cancel is heard.
 
-    This call owns its connection. At most `MAX_IN_FLIGHT` are open in the
-    process; a call that finds none free within its time is `busy`. A cancel
+    This call owns its connection. HOST is resolved before a slot is taken
+    (`resolve`). At most `MAX_IN_FLIGHT` are open in the process; a call that
+    finds none free within its time is `busy`. A cancel
     or a timeout aborts the connection — the socket is shut down, so the
     worker's read fails at once and the worker ends, releasing its slot —
     rather than leaving it to run to its own timeout.
@@ -258,6 +328,7 @@ def send(key: str, body: bytes, timeout: float, cancel: threading.Event) -> dict
     if timeout <= 0:
         raise JevError("timeout")
     end = time.monotonic() + timeout
+    address = resolve(end, cancel)
     while not IN_FLIGHT.acquire(timeout=max(0.0, min(0.05, end - time.monotonic()))):
         if cancel.is_set():
             raise JevError("cancelled")
@@ -266,7 +337,7 @@ def send(key: str, body: bytes, timeout: float, cancel: threading.Event) -> dict
     result: list[dict] = []
     errors: list[JevError] = []
     try:
-        conn = http.client.HTTPSConnection(HOST, timeout=max(end - time.monotonic(), 0.01))
+        conn = connection(address, max(end - time.monotonic(), 0.01))
     except BaseException:
         IN_FLIGHT.release()
         raise
@@ -328,7 +399,8 @@ def send(key: str, body: bytes, timeout: float, cancel: threading.Event) -> dict
 
 def abort(conn) -> None:
     """End `conn`'s exchange from another thread. A connection still opening
-    has no socket yet; its own timeout, never past this call's, ends it."""
+    has no socket yet; it connects to an address already resolved, so its own
+    timeout, never past this call's, ends it."""
 
     sock = getattr(conn, "sock", None)
     try:
