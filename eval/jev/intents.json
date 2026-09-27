@@ -1,14 +1,14 @@
 {
  "schema": "jev-intents/1",
  "id": "intents",
- "version": 1,
- "frozen": "2026-09-27",
+ "version": 2,
+ "frozen": "2026-09-28",
  "description": "Stage 10's evaluation set: 120 intents, each asked in English and in Korean (240 query variants), over one synthetic corpus. Both wordings of an intent share its split. Six intents of each category are calibration and six held out, by the SHA-256 of the intent id. An evidence label is a list of groups, every group required; a group lists alternatives, any one of which satisfies it (`file` any section, `file#Heading` one section; `papers/<file>` a registered paper). `bridged` names the group only a relationship reaches. `parts` are what an answer must give — answering some of them is the acceptable partial answer — and `forbidden` what it must not assert or do. Written inline so its pages never enter this wiki's own index or link checks.",
  "labels": {
   "author": "model-drafted",
-  "reviewed_by": null,
-  "reviewed_at": null,
-  "note": "Not yet reviewed by a person. Stage 10 treats human-reviewed labels as authoritative: until `reviewed_by` is set, every quality result computed on these labels is provisional."
+  "reviewed_by": "claude-opus-5-5 (model review, at the repository owner's direction; not a person)",
+  "reviewed_at": "2026-09-28",
+  "note": "Reviewed against the corpus, with KILT-style alternative evidence sets and the RGB abilities (noise robustness, negative rejection, information integration, counterfactual robustness) as the checklist. Every reference number appears in its evidence, no unlabelled page also answers an intent, no unanswerable intent is answered by any page, every paper reference matches its paper, and every forbidden assertion is false in the corpus. Version 2 changes held-out labels only: bridge-03 and bridge-10 shared words with the page only a relationship should reach ('product names', 'account manager') and are reworded; bridge-01's reference said Mira is on call when the rota names her for Tuesdays only; route-03's Korean '어떤 법으로' read as 'which law' and now says 서법 (grammatical mood). Left as found, because calibration.json and policy.json were derived from version 1's calibration half: bridge-02 ('leads') and bridge-12 ('first', 'shadow') share words with their bridged pages too, so their bridged group can also be reached directly. A model reviewed these labels, as the owner chose; stage 10 names human review as authoritative, so report.py shows who reviewed them."
  },
  "categories": {
   "direct": {
@@ -760,7 +760,7 @@
    "category": "routing",
    "variants": {
     "en": "Per the team rules, in what language and mood are commit messages written?",
-    "ko": "팀 규칙상 커밋 메시지는 어떤 언어와 어떤 법으로 쓰나?"
+    "ko": "팀 규칙상 커밋 메시지는 어떤 언어로, 어떤 서법으로 쓰나?"
    },
    "evidence": [
     [
@@ -1014,10 +1014,12 @@
     {
      "id": "q0",
      "ask": "the person",
-     "reference": "Mira, every Tuesday (the Atlas team)"
+     "reference": "the Atlas team owns it; its rota names Mira for Tuesdays and no one for the other days"
     }
    ],
-   "forbidden": [],
+   "forbidden": [
+    "Mira stated as on call every day"
+   ],
    "abstain": false,
    "direct": false,
    "bridged": 1,
@@ -1055,8 +1057,8 @@
    "id": "bridge-03",
    "category": "bridge",
    "variants": {
-    "en": "How does the translate module treat product names?",
-    "ko": "translate 모듈은 제품 이름을 어떻게 다루나?"
+    "en": "Does the translate module translate the word 'Harbor'?",
+    "ko": "translate 모듈은 'Harbor'라는 단어도 번역하나?"
    },
    "evidence": [
     [
@@ -1069,8 +1071,8 @@
    "parts": [
     {
      "id": "q0",
-     "ask": "the treatment",
-     "reference": "kept verbatim"
+     "ask": "whether it is translated",
+     "reference": "no; Harbor is a product name, and product names stay verbatim"
     }
    ],
    "forbidden": [],
@@ -1251,8 +1253,8 @@
    "id": "bridge-10",
    "category": "bridge",
    "variants": {
-    "en": "Who is the account manager for our static asset provider?",
-    "ko": "정적 자산 제공 업체의 담당 매니저는 누구인가?"
+    "en": "Who is our contact at the company that serves our static assets?",
+    "ko": "정적 자산을 서비스하는 업체에서 우리를 맡은 사람은 누구인가?"
    },
    "evidence": [
     [

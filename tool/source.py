@@ -9,7 +9,9 @@
           [--counter ...] [--condition ...]
     reject <source> --rationale ... [--counter ...]
     enable <source> | disable <source> | remove <source>
-    promote <source> [--task <name>]   commit the adopted source's page in a new worktree
+    promote <source> [--task <name>]   commit the adopted source's page in a new worktree as a
+                                       spec's change: gate, push, pull request; the app's pull
+                                       request list takes it into review
 
 A `<source>` is a record's id, or its first eight characters or more. Stage 3
 of `docs/plans/jev/` (`main.knowledge`). Only what is named here is fetched:

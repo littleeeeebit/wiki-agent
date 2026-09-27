@@ -109,8 +109,8 @@ index; rebuilding never requires altering authoritative documents or memories.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Contract | EvidenceChunk and original locators | Not started |
-| 2 | Chunking | Long sections, protected spans, and hashes | Not started |
-| 3 | Normalization | Structured outcomes, caching, and failure paths | Not started |
-| 4 | Updates | Incremental indexing, deletion, generation publication | Not started |
-| 5 | Verification | Citation identity, meaning, isolation, recovery | Not started |
+| 1 | Contract | EvidenceChunk and original locators | Done — PR #33: `tool/search/evidence.py`. Repo, source and chunk ids are derived from content. File, URL-snapshot and PDF locators, with no invented line 1. Validation refuses English that was never actually produced |
+| 2 | Chunking | Long sections, protected spans, and hashes | Done — PR #33: `search/daemon.py` splits long sections at block boundaries. Fences stay whole and are marked `oversized`; cut tables and lists are marked `partial`. Each chunk keeps its exact original lines. Symlinks that point out of the repository are not evidence |
+| 3 | Normalization | Structured outcomes, caching, and failure paths | Done — PR #33: `translate.english()` returns original_english, translated, unavailable, uncertain or retired, with the reason and the model, prompt and glossary versions. A changed number, identifier or placeholder, or output still in Korean, is `uncertain`. A reply is checked before it is cached. A question with no English is `normalization_failed` and falls back to baseline retrieval. Long state becomes a structured summary that names what it omitted. `translate()` is unchanged |
+| 4 | Updates | Incremental indexing, deletion, generation publication | Done — PR #33: the SQLite `Store` syncs incrementally in one transaction. It keeps a generation per chunker, publishes a generation whole with rollback to the one it replaced, and only the publishing transaction prunes. A deletion journal removes a private memory's text, vectors and English. Private English and vectors never enter a shared cache |
+| 5 | Verification | Citation identity, meaning, isolation, recovery | Done — PR #33: `tool/test_evidence.py` (36 cases): edits, renames and deletions; stale reads; private deletion; generations and rollback; builds interrupted mid-way; protected spans. `eval/jev/meaning.json`, human-labelled: 8 of 8. Live: all 748 chunks of this repository resolve to their original spans, and a Korean question reached Jev as English |

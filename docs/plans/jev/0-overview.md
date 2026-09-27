@@ -164,9 +164,9 @@ Published benchmark numbers are not forecasts for this repository.
 
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | [Runtime and baseline](1-runtime-baseline.md) | Configuration, live connectivity, baseline, and shared budgets | Not started |
-| 2 | [English evidence](2-evidence-language.md) | Chunk contracts, normalization, citations, and incremental indexing | Not started |
-| 3 | [Source ingestion](3-sources.md) | Documents, memories, papers, and adopted research | In progress |
+| 1 | [Runtime and baseline](1-runtime-baseline.md) | Configuration, live connectivity, baseline, and shared budgets | Done |
+| 2 | [English evidence](2-evidence-language.md) | Chunk contracts, normalization, citations, and incremental indexing | Done |
+| 3 | [Source ingestion](3-sources.md) | Documents, memories, papers, and adopted research | Done |
 | 4 | [Knowledge graph](4-knowledge-graph.md) | Structural and semantic relationships with provenance | Done |
 | 5 | [Graph retrieval](5-retrieval.md) | Chunk candidates, hybrid ranking, and bounded traversal | Done |
 | 6 | [Decision controller](6-decision-controller.md) | Typed routing, grading, sufficiency, and calibrated fallback | Done |

@@ -354,12 +354,15 @@ def build(folders: list[Path]) -> dict:
     fixtures = json.loads(compare.ACTIONS.read_text(encoding="utf-8"))
     reviewed = bool(data["labels"]["reviewed_by"] and fixtures["labels"]["reviewed_by"])
     return {"schema": REPORT, "gates_version": gates["version"], "labels_reviewed": reviewed,
+            "reviewers": sorted({data["labels"]["reviewed_by"] or "nobody", fixtures["labels"]["reviewed_by"] or "nobody"}),
             "categories": data["categories"], "exclusions": data["exclusions"], **found,
             "gates": judge(gates, found, reviewed)}
 
 
 def markdown(report: dict) -> str:
-    lines = [f"Labels reviewed by a person: {'yes' if report['labels_reviewed'] else 'no — quality results are provisional'}", ""]
+    who = "; ".join(report.get("reviewers") or [])
+    lines = [f"Labels reviewed: {'yes — by ' + who if report['labels_reviewed'] else 'no — quality results are provisional'}",
+             ""]
     arms = (report.get("arms") or {}).get("arms", {})
     if arms:
         lines += ["| Arm | Rows | Recall@k | Candidate recall | Bridge recall | Coverage | Unsupported | p95 s | Jev tokens | Host USD |",

@@ -24,6 +24,7 @@ import time
 import uuid
 from collections import Counter
 from pathlib import Path
+from types import SimpleNamespace
 
 import decision
 import translate
@@ -1992,7 +1993,8 @@ def page(record: dict) -> str:
 
 def promote(project: str | Path, source: str, task: str | None = None) -> dict:
     """An adopted source's page, committed on a new branch in a new worktree
-    beside `project` — a diff to review and open as a pull request. The
+    beside `project`, as a spec's change: the spec owns the worktree, the gate
+    runs there again, and the pull request goes up (`submitted`). The
     original checkout is not touched."""
 
     repo = Path(project).resolve()
@@ -2015,8 +2017,51 @@ def promote(project: str | Path, source: str, task: str | None = None) -> dict:
                               errors="replace", timeout=60)
         if done.returncode:
             raise RuntimeError(done.stderr.strip() or f"git {args[0]} failed in {tree}")
-    return {"worktree": str(tree), "branch": task, "file": name,
-            "commit": git(tree, "rev-parse", "HEAD"), "stat": git(tree, "show", "--stat", "--format=", "HEAD")}
+    out = {"worktree": str(tree), "branch": task, "file": name,
+           "commit": git(tree, "rev-parse", "HEAD").strip(), "stat": git(tree, "show", "--stat", "--format=", "HEAD")}
+    return {**out, **submitted(repo, tree, record, name, out["commit"])}
+
+
+def submitted(repo: Path, tree: Path, record: dict, name: str, commit: str) -> dict:
+    """The promotion as a spec: the one `[시작]` would have made, already
+    worked, its report the committed page. Then what a work turn's done
+    report gets (`specs.judge`, `specs.opened`): the gate again in the
+    worktree, the push, the pull request. The review loop runs in the app:
+    a pull request opened here waits with a fault that says so, which is
+    what lets the app's pull request list take it into a loop."""
+
+    from . import specs   # `specs` reaches this module through `decisions`
+
+    adoption = record["adoption"]
+    gate, now = specs.gate_of(repo), time.time()
+    spec = {"id": tree.name, "repo": repo.name, "rev": 1,
+            "goal": f"Adopt research into the wiki: {record['title'] or record['origin']}", "out": [],
+            "done": [gate] if gate else [], "grounds": {"pages": [], "files": [], "rules": []},
+            "decisions": [{"what": c, "why": adoption["rationale"], "rejected": ""} for c in adoption["claims"]],
+            "source": {"focus": "research", "source_id": record["source_id"], "turn": now, "plan": None},
+            "state": "작업 중", "stopped": None, "worktree": str(tree), "pr": None,
+            "report": [{"item": f"`{name}` records the adoption of {record['origin']}", "pass": True,
+                        "evidence": commit[:12]}],
+            "gate": None, "fault": None, "history": [{"ts": now, "state": "작업 중"}]}
+    lines: list[str] = []
+    run = SimpleNamespace(halt=threading.Event(), put=lambda payload: lines.append(payload["text"]),
+                          chat=SimpleNamespace(id=None, parent_id=None))
+    with specs._files:
+        specs.save(spec)
+    if not gate:
+        specs.failed(run, spec, "연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
+    else:
+        verdict = specs.judge(tree, gate, run.halt, lambda text: specs.note(run, text))
+        spec = specs.update(repo.name, spec["id"], gate=verdict)
+        if not verdict["ok"]:
+            specs.failed(run, spec, f"판정 실패 — {verdict['reason']}")
+        else:
+            # Its follow-up, starting the review loop, is the app's (`loop.kick`), never this process's.
+            specs.opened(repo, tree, run, spec)
+            if specs.load(repo.name, spec["id"])["state"].startswith("PR #"):
+                specs.update(repo.name, spec["id"], fault="리뷰는 앱에서 시작한다 — PR 목록에서 이 PR 을 고른다")
+    spec = specs.load(repo.name, spec["id"])
+    return {"spec": spec["id"], "state": spec["state"], "pr": spec["pr"], "fault": spec["fault"], "notes": lines}
 
 
 # ---- the knowledge graph (stage 4 of `docs/plans/jev/`) ----------------------------

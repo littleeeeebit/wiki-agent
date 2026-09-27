@@ -159,8 +159,8 @@ Frozen inputs, committed:
 
 | Artifact | What it holds |
 | --- | --- |
-| `eval/jev/intents.json` | `jev-intents/1` v1, frozen 2026-09-27: 120 intents × English and Korean (240 variants), 10 categories × 6 calibration + 6 held-out (split by the SHA-256 of the intent id), exclusions none, the synthetic corpus inline (95 pages and 11 papers). Labels: evidence groups with alternatives, `bridged` group, answer parts with references, forbidden assertions, abstention, direct |
-| `eval/jev/actions.json` | `jev-action-fixtures/1` v1: 30 held-out fixtures, 10 each for `work.start`, `specs.check`, `loop.fix` |
+| `eval/jev/intents.json` | `jev-intents/1` v2, frozen 2026-09-28 after the label review (v1 2026-09-27): 120 intents × English and Korean (240 variants), 10 categories × 6 calibration + 6 held-out (split by the SHA-256 of the intent id), exclusions none, the synthetic corpus inline (95 pages and 11 papers). Labels: evidence groups with alternatives, `bridged` group, answer parts with references, forbidden assertions, abstention, direct |
+| `eval/jev/actions.json` | `jev-action-fixtures/1` v2 (f09 corrected in the label review): 30 held-out fixtures, 10 each for `work.start`, `specs.check`, `loop.fix` |
 | `eval/jev/gates.json` | `jev-gates/1` v1: the release targets above as machine-read rules, frozen before any held-out run |
 | `eval/jev/calibration.json` | Stage 6's split, now v2: 89 cases derived from the calibration intents alone (`tool/eval/dataset.py --calibration`), replacing the 35 synthetic ones |
 | `eval/jev/policy.json` | Refit on it (below); the stage 6 fit stays in git history |
@@ -192,10 +192,22 @@ the policy; a run in flight keeps its settings.
 
 ## Measured so far
 
-Nothing below is a held-out result, and every label is still model-drafted:
-`labels.reviewed_by` is empty in both fixture files. On 2026-09-27 the user
-chose to refit on the calibration intents now and run the held-out comparison
-after reviewing the labels.
+Nothing below is a held-out result. Everything below was measured on version 1
+of both fixture files, whose labels were model-drafted and unreviewed. On
+2026-09-27 the user chose to refit on the calibration intents now and run the
+held-out comparison after reviewing the labels.
+
+Label review, 2026-09-28. At the user's direction, the labels were reviewed by
+a model (`claude-opus-5-5`), not by a person; `labels.reviewed_by` says so and
+`report.py` prints the reviewer. What was checked, and what changed, is in each
+file's `labels.note`. Version 2 of `intents.json` changes held-out labels only:
+bridge-03 and bridge-10 are reworded so they no longer share words with their
+bridged page; bridge-01's reference now names Mira for Tuesdays only; route-03's
+Korean is clearer. Version 2 of `actions.json` corrects f09, whose finding was
+false Python. bridge-02 and bridge-12, in the calibration split, also share
+words with their bridged pages; they are left as found because `calibration.json`
+and `policy.json` were derived from version 1. The free held-out retrieval run
+below is on version 1.
 
 Calibration refit, 2026-09-27. `policy.py --collect` over the 89 derived cases:
 172 Jev requests, 126,572 input and 19,978 output tokens, 40 s, model
@@ -280,9 +292,8 @@ outside "Jev requests only". The stage 7 relation fit is kept, not refit
 
 Left before completion, in order:
 
-1. A person reviews the labels in `eval/jev/intents.json` and
-   `eval/jev/actions.json`, fixes any, and sets `labels.reviewed_by` and
-   `labels.reviewed_at` in both. A label changed after that is a new version.
+1. Label review — done 2026-09-28 by a model at the user's
+   direction (above). A label changed after that is a new version.
 2. The held-out four arms, retrieval and answer level, the repetition subset,
    the fixed and the action experiments (commands above), then
    `report.py` over them. Answer level needs host spend under the ceiling.
@@ -293,7 +304,7 @@ Left before completion, in order:
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | In progress — `eval/jev/intents.json` and `actions.json` frozen with corpus hashes and splits; labels await a person's review |
+| 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | In progress — `eval/jev/intents.json` and `actions.json` frozen with corpus hashes and splits; labels reviewed 2026-09-28 by a model at the user's direction, version 2 of both |
 | 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; calibration-split runs only; held-out waits on step 1 |
 | 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; no held-out numbers yet |
 | 4 | Product | App/CLI parity, window checks, operational failures | In progress — the canary in settings, the API and the window's mode line; window checks not run this stage |

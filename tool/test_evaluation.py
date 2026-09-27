@@ -34,8 +34,8 @@ def test_the_set_is_frozen_as_the_plan_asks(data):
     # A wording is Korean or English as labelled: a translated variant never slipped in untranslated.
     assert all(re.search(r"[가-힣]", i["variants"]["ko"]) for i in intents)
     assert not any(re.search(r"[가-힣]", i["variants"]["en"]) for i in intents)
-    # Unreviewed labels say so; the report reads it.
-    assert data["labels"]["reviewed_by"] is None
+    # Reviewed labels say by whom and when; the report shows the reviewer, a model included.
+    assert data["labels"]["reviewed_by"] and data["labels"]["reviewed_at"]
 
 
 def test_a_broken_label_or_count_is_caught(data):
