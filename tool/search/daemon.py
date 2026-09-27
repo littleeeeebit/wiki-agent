@@ -911,9 +911,9 @@ class Index:
         keeps one loaded set of chunks. The graph is the other half: `update`
         rewrites rows inside the same generation, so the copy walks a
         `knowledge_graph.Frozen` read now, kept until the graph changes. A
-        graph built from other chunks than these — another index of the same
-        store refreshed in between — is not walked: `graph` is `None` until
-        the next refresh. The matrix is stacked here, once, not per copy."""
+        graph that is not exactly what `update` built from these chunks —
+        another index of the same store refreshed in between, a forget — is
+        not walked: `graph` is `None` until the next refresh. The matrix is stacked here, once, not per copy."""
 
         if self.chunks and self.complete():
             self.vectors()

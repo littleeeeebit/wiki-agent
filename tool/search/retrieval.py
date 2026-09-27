@@ -288,7 +288,8 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
     # Earlier rounds spent the allowance this one would have used.
     truncated: list[str] = ["candidates"] if req["limit"] and slots < req["limit"] else []
     taken = set(selected)
-    walk = dict(index=index, req=req, repos=repos, seen=seen, relevance=relevance, paths=paths, cancel=cancel)
+    walk = dict(index=index, req=req, repos=repos, seen=seen, relevance=relevance, paths=paths, cancel=cancel,
+                duplicates=duplicates)
     # The snapshot's graph was built from other chunks than its own: nothing is walked.
     if index.graph is None and (req["context_of"] or budget):
         truncated.append("graph_stale")
@@ -316,17 +317,7 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
         mine = [paths[p] for p in found[i]]
         return (min(p["hops"] for p in mine), min(order.get(p["seed"], len(order)) for p in mine), -closeness(i), i)
 
-    # A reached chunk whose text a kept one already holds adds its paths to that one.
-    graph_lane: list[int] = []
-    for i in sorted(found, key=discovery):
-        if i in taken:
-            continue
-        twin = twins.setdefault(evidence.digest(normal(chunks[i]["text"])), i)
-        if twin != i and (twin in taken or twin in graph_lane):
-            duplicates[twin].append(chunks[i]["chunk_id"])
-            found.setdefault(twin, []).extend(found[i])
-        else:
-            graph_lane.append(i)
+    graph_lane = [i for i in sorted(found, key=discovery) if i not in taken]
     # Adjacent sections in the order they stand in their source.
     lanes_of = [(i, "rrf") for i in selected] + [(i, "context") for i in sorted(context) if i not in picked]
     lanes_of += [(i, "graph") for i in graph_lane]
@@ -356,7 +347,7 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
 
 def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: list[dict], cancel,
            starts: list[str], kinds: tuple[str, ...], hops: int, fanout: int, room: int, taken: set[int],
-           lane: str) -> tuple[dict[int, list[int]], list[str]]:
+           lane: str, duplicates: dict[int, list[str]]) -> tuple[dict[int, list[int]], list[str]]:
     """Walk adopted edges of `kinds` from `starts` (chunk or entity ids).
     Returns `{chunk index: [indexes into paths]}` for every chunk reached,
     new or already `taken`, and why the walk stopped short, if it did.
@@ -370,7 +361,9 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
     (`blocked`); a blocked one is recorded and not walked through. The
     visited set is chunk ids, which carry their source's revision, and
     entity ids, so a cycle ends. Only `room` chunks not already taken may be
-    added. Every path, reached or refused, goes into `paths`.
+    added; one whose text a taken or reached chunk already holds costs none —
+    its id joins that one's `duplicates` and its path corroborates it. Every
+    path, reached or refused, goes into `paths`.
     """
 
     chunks, graph = index.chunks, index.graph
@@ -380,6 +373,12 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
         by_source[c["source_id"]].append(i)
     found: dict[int, list[int]] = {}
     truncated: list[str] = []
+
+    def text_of(i: int) -> str:
+        return evidence.digest(normal(chunks[i]["text"]))
+
+    # Each text a candidate already holds, and which candidate holds it.
+    held = {text_of(i): i for i in taken}
 
     def record(trail: list[dict], status: str) -> int:
         paths.append({"lane": lane, "seed": trail[0]["node"], "to": trail[-1]["node"], "hops": len(trail) - 1,
@@ -478,6 +477,10 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
                     record(path, "seen")
                 elif i in taken or i in found:
                     found.setdefault(i, []).append(record(path, "corroborated"))
+                elif text_of(i) in held:
+                    twin = held[text_of(i)]
+                    duplicates[twin].append(tid)
+                    found.setdefault(twin, []).append(record(path, "corroborated"))
                 elif room <= 0:
                     # The allowance is spent: one refusal says so, and the walk ends.
                     record(path, "budget")
@@ -486,6 +489,7 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
                 else:
                     room -= 1
                     found[i] = [record(path, "discovered")]
+                    held[text_of(i)] = i
                 taken_here += 1
                 following.append((tid, path))
         frontier = following

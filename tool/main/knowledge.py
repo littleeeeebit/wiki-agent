@@ -12,6 +12,7 @@ running on its next turn.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import json
 import re
@@ -287,11 +288,15 @@ def add_url(project: str | Path | None, url: str, seconds: float = providers.SEC
 
 
 def add_papers(project: str | Path | None, query: str | None = None, ids: list[str] | None = None, n: int = 5,
-               full: bool = False, cfg: decision.Config | None = None, budget: Budget | None = None) -> dict:
+               full: bool = False, cfg: decision.Config | None = None, budget: Budget | None = None,
+               gate: Gate | None = None) -> dict:
     """arXiv papers into `project`: a search, or identifiers. Inside a run,
-    `budget` is the run's: grading spends from it, and once it is spent or
-    cancelled no further paper is written — a caller that stopped waiting
-    finds nothing arriving after it.
+    `budget` is the run's, and grading spends from it; each paper is written
+    through `gate`, which a caller that stops waiting closes (`bounded`), so
+    nothing arrives after it returned.
+
+    ponytail: with `full` the gate is held across a PDF fetch, which would
+    hold the closing caller that long; a repair never reads full text.
 
     Each paper's abstract is read and indexed as `abstract_only`; with `full`,
     its PDF too, and only a successful extraction makes it `full_text`. With
@@ -311,36 +316,39 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
     grades, trace = grade_papers(query, entries, cfg, budget) if query else ({}, [])
     acting = cfg.mode == "active"
     out = []
+
+    def paper(store, i: int, entry: dict) -> dict:
+        origin = f"arxiv:{entry['arxiv_id']}"
+        record = store.get(sources.new(root, "paper", origin)["source_id"])
+        if unwanted(record):
+            return record
+        record = record or sources.new(root, "paper", origin)
+        record.update(title=entry["title"], authors=entry["authors"], published_at=entry["published"],
+                      license_note=LICENSE_ARXIV, relevance=grades.get(i, record["relevance"]))
+        edition = f"{entry['arxiv_id']}{entry['version']}"
+        if acting and grades.get(i) is not None and grades[i] <= NOT_RELEVANT and record["content_hash"] is None:
+            record.update(status="discovered", revision=edition)
+            return store.put(record)
+        try:
+            # A full text already read of this edition is not traded for its abstract.
+            if not (record["revision"] == edition and record["coverage"] in ("full_text", "partial")):
+                read_into(store, record, sources.text_of(entry["summary"]).encode("utf-8"), revision=edition,
+                          coverage="abstract_only", form="text", cite=entry["abs_url"])
+            if full and record["coverage"] == "abstract_only":
+                got = providers.fetch(entry["pdf_url"], providers.PDF_BYTES, types=("application/pdf",))
+                text, coverage = pdf_text(got["body"])
+                read_into(store, record, text.encode("utf-8"), revision=edition, coverage=coverage,
+                          form="pages", cite=f"arxiv:{edition}")
+        except providers.FetchError as error:
+            failed(record, error)
+        return store.put(record)
+
     with records(project) as store:
         for i, entry in enumerate(entries):
-            if budget is not None and (budget.cancel.is_set() or budget.left() <= 0):
-                break
-            origin = f"arxiv:{entry['arxiv_id']}"
-            record = store.get(sources.new(root, "paper", origin)["source_id"])
-            if unwanted(record):
-                out.append(record)
-                continue
-            record = record or sources.new(root, "paper", origin)
-            record.update(title=entry["title"], authors=entry["authors"], published_at=entry["published"],
-                          license_note=LICENSE_ARXIV, relevance=grades.get(i, record["relevance"]))
-            edition = f"{entry['arxiv_id']}{entry['version']}"
-            if acting and grades.get(i) is not None and grades[i] <= NOT_RELEVANT and record["content_hash"] is None:
-                record.update(status="discovered", revision=edition)
-                out.append(store.put(record))
-                continue
-            try:
-                # A full text already read of this edition is not traded for its abstract.
-                if not (record["revision"] == edition and record["coverage"] in ("full_text", "partial")):
-                    read_into(store, record, sources.text_of(entry["summary"]).encode("utf-8"), revision=edition,
-                              coverage="abstract_only", form="text", cite=entry["abs_url"])
-                if full and record["coverage"] == "abstract_only":
-                    got = providers.fetch(entry["pdf_url"], providers.PDF_BYTES, types=("application/pdf",))
-                    text, coverage = pdf_text(got["body"])
-                    read_into(store, record, text.encode("utf-8"), revision=edition, coverage=coverage,
-                              form="pages", cite=f"arxiv:{edition}")
-            except providers.FetchError as error:
-                failed(record, error)
-            out.append(store.put(record))
+            with gate.passing() if gate else contextlib.nullcontext(True) as open_:
+                if not open_:
+                    break
+                out.append(paper(store, i, entry))
     return {"query": query, "trace": trace,
             "papers": [sources.brief(r) | {"relevance": r["relevance"], "error": r["error"]} for r in out]}
 
@@ -991,18 +999,40 @@ def repair(req: dict, result: dict, need: str, project: str | Path | None, *, bu
     if need == "external":
         if not external:
             return {"note": {"need": need, "skipped": "external_not_allowed"}, "requests": [], "results": []}
+        gate = Gate()
         note["fetched"] = bounded(lambda: add_papers(project, req["query_en"] or req["query_original"],
-                                                     n=REPAIR_PAPERS, cfg=cfg, budget=budget), budget)
+                                                     n=REPAIR_PAPERS, cfg=cfg, budget=budget, gate=gate),
+                                  budget, gate)
     requests, made = retrieval.repair(req, result, need, sources=available(root), subqueries=proposals,
                                       chunk_ids=list(chunk_ids), entities=entities)
     return {"note": {**made, **note}, "requests": requests,
             "results": [run_round(r, project, budget) for r in requests]}
 
 
-def bounded(work, budget: Budget):
+class Gate:
+    """What an abandonable worker writes passes through here, one write at a
+    time. `close` waits out a write in progress and lets none through after
+    it: a caller that gave up finds nothing written once it has returned."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._open = True
+
+    @contextlib.contextmanager
+    def passing(self):
+        with self._lock:
+            yield self._open
+
+    def close(self) -> None:
+        with self._lock:
+            self._open = False
+
+
+def bounded(work, budget: Budget, gate: Gate | None = None):
     """`work()`'s value, or `None` once the budget is spent or cancelled.
     What is still running then is abandoned in its thread, as `search.prepare`
-    abandons a slow run.
+    abandons a slow run, and `gate`, the one its writes pass through, is
+    closed before this returns.
 
     ponytail: an abandoned model session or fetch runs to its own end; bound
     in-flight work per process if that ever piles up (stage 6).
@@ -1022,6 +1052,8 @@ def bounded(work, budget: Budget):
     worker.start()
     while worker.is_alive() and budget.left() > 0 and not budget.cancel.is_set():
         worker.join(min(0.05, budget.left()))
+    if gate is not None and worker.is_alive():
+        gate.close()
     return got[0] if got else None
 
 

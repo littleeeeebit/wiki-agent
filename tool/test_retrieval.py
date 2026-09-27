@@ -584,3 +584,58 @@ def test_an_external_repair_writes_no_paper_once_the_budget_is_spent(world, monk
     assert graded == [budget]
     with knowledge.records(repo) as store:
         assert store.all() == []
+
+
+# ---- round 3 review -------------------------------------------------------------------
+
+def test_a_snapshot_walks_no_graph_a_forget_changed_after_it_was_built(world):
+    hub, repo = world
+    from search import knowledge_graph
+
+    index = index_of(hub, repo)
+    # A forget drops rows and moves the extraction serial, not the build key.
+    with index.store.transaction() as db:
+        knowledge_graph.forget(db, "0" * 64)
+    req = retrieval.request(evidence.repo_id(repo), QUESTION, sources=["documents"])
+    stale = retrieval.run(index.snapshot(), req)
+    assert texts(stale, "graph") == [] and "graph_stale" in stale["truncated"]
+    index.refresh()
+    fresh = retrieval.run(index.snapshot(), req)
+    assert ANSWER in "".join(texts(fresh, "graph")) and "graph_stale" not in fresh["truncated"]
+    index.close()
+
+
+def test_a_write_in_progress_when_the_caller_gives_up_ends_before_it_returns_and_none_follows():
+    from common.budget import Budget
+
+    gate, written = knowledge.Gate(), []
+
+    def work():
+        for n in range(3):
+            with gate.passing() as open_:
+                if not open_:
+                    return "stopped"
+                time.sleep(0.2)
+                written.append(n)
+
+    assert knowledge.bounded(work, Budget(seconds=0.1, calls=1, candidates=40), gate) is None
+    at_return = list(written)
+    time.sleep(0.8)
+    assert written == at_return == [0]
+
+
+def test_an_adjacent_section_with_the_text_of_another_costs_no_candidate(world):
+    hub, repo = world
+    (repo / "docs/twins.md").write_text("# Twins\n\n## Shared\n\nSame words here.\n\n## Anchor\n\n"
+                                        "Mira anchors this page.\n\n## Shared\n\nSame words here.\n", encoding="utf-8")
+    index = index_of(hub, repo)
+    req = retrieval.request(evidence.repo_id(repo), "Mira anchors page", sources=["documents"], limit=1,
+                            max_candidates=2, graph=None)
+    first = retrieval.run(index.snapshot(), req)
+    assert first["chunks"][0]["heading_path"][-1] == "Anchor"
+    (context,), _ = retrieval.repair(req, first, "context", chunk_ids=[first["chunks"][0]["chunk_id"]])
+    second = retrieval.run(index.snapshot(), context)
+    (shared,) = second["chunks"]
+    assert shared["heading_path"][-1] == "Shared" and len(shared["duplicates"]) == 1
+    assert second["spent"] == 2 and second["truncated"] == []
+    index.close()

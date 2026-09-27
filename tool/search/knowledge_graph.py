@@ -763,9 +763,13 @@ class Frozen:
     read transaction — for a retrieval that must walk the graph as it stood
     when its chunks were loaded, whatever `update` rewrites in that same
     generation meanwhile. `nodes` and `edges` answer as `Graph`'s do, without
-    spans, which a walk never reads. `key` is the `state` it was read at;
-    `built` the store and records versions of the chunks `update` last built
-    it from — another index of the same store may have built it from others."""
+    spans, which a walk never reads. `key` is the `state` it was read at.
+
+    `built` is `"<store version>/<records version>"` of the chunks `update`
+    last built these rows from — when nothing has touched them since: not a
+    `sync` (the store's version), not a `forget` or a `keep` (the extraction
+    serial), not another `activate`. Otherwise `None`: another index of the
+    same store, or a forget, changed them after the build."""
 
     def __init__(self, store):
         with store.lock:
@@ -775,7 +779,9 @@ class Frozen:
                 self.key = (gen, meta(store.db, "version"), meta(store.db, "graph"), meta(store.db, "graph_serial"))
                 self.gen = gen
                 built = json.loads(self.key[2]) if self.key[2] else None
-                self.built = f"{built[1]}/{built[2].split('|')[0]}" if built else None
+                now = [f"{gen}:{self.key[1] or 0}", meta(store.db, "graph_active"), self.key[3]]
+                self.built = (f"{built[1]}/{built[2].split('|')[0]}"
+                              if built and [built[1], built[3], built[4]] == now else None)
                 self._nodes = {row[0]: {"node_id": row[0], "repo_id": row[1], "kind": row[2], "source_id": row[3],
                                         "label": row[4], "type": row[5]} for row in store.db.execute(
                     "SELECT node_id, repo_id, kind, source_id, label, type FROM nodes WHERE gen = ?", (gen,))}
