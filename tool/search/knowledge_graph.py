@@ -617,11 +617,18 @@ def keep(store, rows: list[tuple[str, str, str, dict]], external: set[tuple[str,
 
 
 def forget(store, source: str) -> None:
-    """Remove every cached extraction of an external source that is gone:
-    they quote its text. The graph itself follows at the next refresh."""
+    """Remove an external source that is being forgotten from the graph of
+    every generation, and its cached extractions — all of them quote its
+    text — in one transaction. The serial moves, so a rebuild that read the
+    graph before this does not write it back."""
 
     with store.transaction() as db:
+        gens = {g for (g,) in db.execute("SELECT gen FROM nodes WHERE source_id = ? UNION"
+                                         " SELECT gen FROM spans WHERE source_id = ?", (source, source))}
+        drop(db, [(g, source) for g in sorted(gens)], False, True)
         db.execute("DELETE FROM extractions WHERE source_id = ?", (source,))
+        db.execute("INSERT OR REPLACE INTO meta VALUES ('graph_serial', ?)",
+                   (str(int(meta(db, "graph_serial") or 0) + 1),))
 
 
 def cached(store, versions: str) -> dict[tuple[str, str], dict]:

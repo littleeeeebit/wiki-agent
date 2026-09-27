@@ -402,10 +402,31 @@ def test_forgetting_a_source_takes_its_cached_extractions_too(repo, monkeypatch)
     index = index_of(hub, path)
     chunk = next(c for c in index.chunks if c.get("record"))
     key = (chunk["source_id"], search.knowledge_graph.digest(chunk["text"]))
-    result = {"entities": [{"name": "Zeta", "type": "concept", "quote": "Zeta uses eta."}], "relations": []}
+    result = {"entities": [{"name": "Zeta", "type": "feature", "quote": "Zeta uses eta."}], "relations": []}
     assert search.knowledge_graph.keep(index.store, [(*key, "v", result)], {key}) == 1
+    search.knowledge_graph.activate(index.store, "v")
+    index.close()
+    index = index_of(hub, path)
+
+    def quoted():
+        with index.store.lock:
+            return index.store.db.execute("SELECT quote FROM spans WHERE source_id = ? UNION ALL SELECT label"
+                                          " FROM nodes WHERE source_id = ?", (key[0], key[0])).fetchall()
+
+    assert ("Zeta uses eta.",) in quoted()
+    # A cleanup that fails leaves the record, so forgetting it again is the retry.
+    real = search.knowledge_graph.forget
+
+    def broken(*_a):
+        raise OSError("disk")
+
+    monkeypatch.setattr(search.knowledge_graph, "forget", broken)
+    with pytest.raises(OSError):
+        knowledge.forget(path, record["source_id"])
+    monkeypatch.setattr(search.knowledge_graph, "forget", real)
     assert knowledge.forget(path, record["source_id"])
-    assert search.knowledge_graph.cached(index.store, "v") == {}
+    # Nothing that quotes it is left: no cached extraction, and no node or span in any generation.
+    assert search.knowledge_graph.cached(index.store, "v") == {} and quoted() == []
     index.close()
 
 

@@ -436,19 +436,24 @@ def switch(project: str | Path | None, source: str, enabled: bool) -> dict:
 
 
 def forget(project: str | Path | None, source: str) -> bool:
-    """Remove a source record, the snapshots only it held, and the cached
-    graph extractions that quote it."""
+    """Remove a source record, the snapshots only it held, and its place in
+    the graph with the cached extractions — all of which quote it.
+
+    The graph goes first: if that fails the record is still there, and
+    forgetting it again is the retry.
+    ponytail: a refresh landing between the two steps derives the record's
+    structure once more — with no extraction, so no quote — and the refresh
+    the record's deletion triggers removes it; hold the records lock across
+    both if that window ever matters."""
 
     with records(project) as store:
         source_id = find(store, source)["source_id"]
-        if not store.delete(source_id):
-            return False
-    store = evidence_store(project)
-    try:
-        knowledge_graph.forget(store, source_id)
-    finally:
-        store.close()
-    return True
+        evidence = evidence_store(project)
+        try:
+            knowledge_graph.forget(evidence, source_id)
+        finally:
+            evidence.close()
+        return store.delete(source_id)
 
 
 def catalog(project: str | Path | None) -> dict:
