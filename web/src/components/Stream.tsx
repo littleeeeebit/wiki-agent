@@ -4,24 +4,28 @@ import { Answer } from '@/components/Answer'
 import type { AnswerProps } from '@/components/Answer'
 import { KINDS } from '@/lib/api'
 import type { Kind } from '@/lib/api'
-import { useCheckedOverlay, useOverlay } from '@/lib/overlay'
-import type { Verification } from '@/lib/api'
+import { useCheckedOverlay, useOverlay, useParagraphOverlay } from '@/lib/overlay'
+import type { RunSummary, Verification } from '@/lib/api'
 import type { Msg } from '@/components/Query'
+import { RunDetails, RunProgress } from '@/components/Run'
 
 type Props = {
   messages: Msg[]
   korean: boolean
   remote: string
-  onPeek: AnswerProps['onPeek']
+  /** A citation's click, with the run whose answer cited it. */
+  onPeek: (path: string, line: number, runId?: string) => void
   onDecide: AnswerProps['onDecide']
   onMark: (index: number, kind: Kind) => Promise<void>
+  onStop: (runId: string) => void
+  onMapRun: (run: RunSummary) => void
   /** The `next` focus: what an answer's blocks draw as, and the way to ask
    *  for candidates in an empty conversation. */
   blocks?: (m: Msg) => ReactNode
   empty?: ReactNode
 }
 
-export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, blocks, empty }: Props) {
+export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onStop, onMapRun, blocks, empty }: Props) {
   const end = useRef<HTMLDivElement>(null)
 
   // The answer grows in pieces, so this follows every change in length
@@ -64,15 +68,18 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, blo
                     관련 규칙 · {m.hits.join(' · ')}
                   </div>
                 )}
+                {m.pending && <RunProgress stage={m.stage} runId={m.runId} onStop={onStop} />}
                 {m.tools.length > 0 && <Tools tools={m.tools} korean={korean} />}
                 {m.text ? (
                   <AnswerVersions
-                    m={m} korean={korean} remote={remote} onPeek={onPeek} onDecide={onDecide}
+                    m={m} korean={korean} remote={remote} onPeek={(p, l) => onPeek(p, l, m.runId)} onDecide={onDecide}
                   />
                 ) : (
                   m.pending && <Blink />
                 )}
-                {m.error && <p className="text-[12.5px] text-destructive">{m.error}</p>}
+                {m.cancelled ? <p role="status" className="text-[12.5px] text-muted-foreground">⏹ 멈춤 · 멈춘 질문은 아무것도 싣지 않는다</p>
+                  : m.error && <p role="alert" className="text-[12.5px] text-destructive">{m.error}</p>}
+                {!m.pending && m.runId && <RunDetails runId={m.runId} onPeek={(p, l) => onPeek(p, l, m.runId)} onMapRun={onMapRun} />}
                 {blocks && m.blocks && m.blocks.length > 0 && blocks(m)}
                 {!m.pending && (m.ms != null || m.marked) && (
                   <Foot m={m} onMark={(k) => onMark(i, k)} />
@@ -120,7 +127,7 @@ function AnswerVersions(
   // requests, each for a prefix that was about to be replaced. A cut
   // translation also reads exactly like a whole one, so a half-streamed
   // paragraph is the wrong thing to render Korean.
-  const [plain] = useOverlay([m.text], korean && !m.pending && !m.verification)
+  const plain = useParagraphOverlay(m.text, korean && !m.pending && !m.verification)
   const checked = useCheckedOverlay(m.text, korean && !m.pending && Boolean(m.verification))
   // What was verified is the English. The Korean passed checks on numbers,
   // identifiers and negation, which a swapped or reversed sentence can still

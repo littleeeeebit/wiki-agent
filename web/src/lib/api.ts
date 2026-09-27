@@ -105,6 +105,9 @@ export type Turn = {
   model?: string
   session_id?: string
   tokens?: Tokens
+  /** The `knowledge.Run` this turn belongs to (stage 9). */
+  run_id?: string
+  cancelled?: boolean
 }
 
 export type Tokens = {
@@ -129,9 +132,16 @@ export type Verification = {
 }
 
 export type Ev = {
-  kind: 'hits' | 'delta' | 'tool' | 'done' | 'error' | 'blocks'
+  kind: 'hits' | 'delta' | 'tool' | 'done' | 'error' | 'blocks' | 'step' | 'cancelled'
     | 'simple_start' | 'simple_delta' | 'simple_done' | 'simple_error'
   text: string
+  /** Every event of a run carries its run and its place in it. */
+  run_id?: string
+  seq?: number
+  /** A `step`: where the run is — `retrieve`, `expand`, `verify`, `publish`… */
+  stage?: string
+  status?: string
+  code?: string
   pages?: string[]
   blocks?: Block[]
   verification?: Verification
@@ -321,6 +331,90 @@ async function events<E>(res: Response, onEvent: (ev: E) => void, error: (text: 
  *  `propose`: the server gathers the materials for candidates (`next` only). */
 export async function say(id: string, text: string, onEvent: (ev: Ev) => void, propose = false): Promise<void> {
   await events(await post(`/api/say/${id}`, { text, propose }), onEvent, (t): Ev => ({ kind: 'error', text: t }))
+}
+
+// -- Jev and a question's run (stage 9 of `docs/plans/jev/`) -----------------
+
+export type JevMode = 'off' | 'shadow' | 'active'
+export type JevLimits = { seconds: number; calls: number; candidates: number }
+/** The Jev settings as the server reads them now. `key` is only whether one exists. */
+export type Jev = {
+  mode: JevMode
+  mode_source: 'app' | 'file' | 'environment' | 'legacy' | 'default'
+  model: string
+  key: boolean
+  key_source: string
+  health: 'disabled' | 'configured' | 'unavailable'
+  problem: string | null
+  file: string
+  disabled_sources: string[]
+  limits: JevLimits
+}
+export type Probe = { health: 'reachable' | 'auth_failed' | 'unavailable'; category: string; expected: boolean | null;
+  elapsed_ms?: number | null }
+export type KnowledgeStatus = {
+  jev: Jev
+  families: string[]
+  sources: { held: string[]; searched: string[] }
+  generation: unknown
+  runs: { run_id: string; focus: string; stage: string; seq: number }[]
+}
+
+export type PathStep = { node: string; node_kind: string; edge_id?: string; kind?: string; reverse?: boolean
+  origin?: string; confidence?: number }
+export type GraphPath = { lane: string; seed: string; to: string; hops: number; status: string; steps: PathStep[] }
+export type Support = 'supported' | 'unverified' | 'conflict' | 'untrusted' | 'not_cited'
+export type RunEvidence = {
+  chunk_id: string
+  kind: string
+  revision: string
+  locator: { path?: string; line?: number; start_line?: number } & Record<string, unknown>
+  language?: string
+  text_en?: string
+  lane?: string
+  relevance?: number | null
+  cite: string
+  support: Support
+  /** The file now: still the revision the run read, or no longer — then only
+   *  the run's snapshot of it remains. `null` for evidence that is not a file. */
+  now?: 'same' | 'changed' | 'missing' | 'unreadable' | null
+}
+/** `run-summary/1`: what one question found and published, and why it ended so. */
+export type RunSummary = {
+  run_id: string
+  done: boolean
+  focus: string
+  outcome: string
+  reason: string | null
+  settings?: Jev
+  retrieval?: { status: string; reason: string | null; fallback: boolean; sources: string[] | null } | null
+  evidence?: RunEvidence[]
+  graph?: {
+    seeds: string[]
+    paths: GraphPath[]
+    bridges: string[]
+    discarded: number
+    nodes: Record<string, { kind: string; label: string; type: string }>
+    edges: Record<string, { kind: string; directed: boolean; origin: string; confidence: number
+      spans: { locator?: { path?: string; start_line?: number }; quote?: string | null }[] }>
+    detail?: string
+  }
+  claims?: { claim_id: string; kind: string; state: string; reason: string | null }[]
+  notes?: { code: string; reason?: string; [k: string]: unknown }[]
+}
+
+export const getJev = () => get('/api/jev').then((r) => json<Jev>(r, 'Jev 설정'))
+export const probeJev = () => post('/api/jev/probe').then((r) => json<Probe>(r, 'Jev 연결 시험'))
+export const setJev = (body: { mode: JevMode | null; disabled_sources: string[]; limits: JevLimits }) =>
+  post('/api/jev/settings', body).then((r) => json<Jev>(r, 'Jev 설정'))
+export const getKnowledge = () => get('/api/knowledge/status').then((r) => json<KnowledgeStatus>(r, '질문 상태'))
+export const getRun = (id: string) => get(`/api/knowledge/runs/${id}`).then((r) => json<RunSummary>(r, '실행'))
+export const cancelRun = (id: string) =>
+  post(`/api/knowledge/runs/${id}/cancel`).then((r) => json<{ ok: boolean; done: boolean }>(r, '멈춤'))
+/** Reattach to a run after the last `seq` seen: its rest, tailed while it runs. */
+export async function runEvents(id: string, after: number, onEvent: (ev: Ev) => void): Promise<void> {
+  await events(await get(`/api/knowledge/runs/${id}/events?after=${after}`), onEvent,
+    (t): Ev => ({ kind: 'error', text: t }))
 }
 
 // -- Task specs ---------------------------------------------------------------

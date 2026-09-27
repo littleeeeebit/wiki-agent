@@ -53,6 +53,34 @@ export function useOverlay(texts: string[], on: boolean): string[] {
   return texts.map((t) => done.get(t) ?? memory.get(t) ?? t)
 }
 
+/** An answer's paragraphs: split at blank lines, never inside a ``` or ~~~
+ *  fence — a code block with a blank line in it is one piece, which the
+ *  translator keeps byte for byte. Joined back with one blank line. */
+export function paragraphs(text: string): string[] {
+  const out: string[] = []
+  let fence = ''
+  let piece: string[] = []
+  for (const line of text.split('\n')) {
+    const mark = line.match(/^\s*(`{3,}|~{3,})/)?.[1]
+    if (mark && (!fence || (mark[0] === fence[0] && mark.length >= fence.length))) fence = fence ? '' : mark
+    if (!fence && !mark && line.trim() === '') {
+      if (piece.length) out.push(piece.join('\n'))
+      piece = []
+    } else {
+      piece.push(line)
+    }
+  }
+  if (piece.length) out.push(piece.join('\n'))
+  return out
+}
+
+/** The overlay over a whole answer, a paragraph at a time: one request for
+ *  a long answer came back cut or merged, and a paragraph seen before is
+ *  not asked for again. */
+export function useParagraphOverlay(text: string, on: boolean): string {
+  return useOverlay(paragraphs(text), on).join('\n\n')
+}
+
 /** The overlay over a verified answer. The server refuses a rendering that
  *  changed a number or an identifier (`changed`), and any other failure
  *  (`failed`) leaves the English too: either way the whole accepted original
@@ -60,8 +88,7 @@ export function useOverlay(texts: string[], on: boolean): string[] {
  *
  *  Sent a paragraph at a time: asked for one multi-paragraph string, the
  *  translator has answered with one string per paragraph, and a reply of the
- *  wrong length is no reply. Code renders the answer, blank line between
- *  paragraphs, so the split is its own. */
+ *  wrong length is no reply. Split by `paragraphs`, so a fence stays whole. */
 export type Fault = '' | 'changed' | 'failed'
 const checkedMemory = new Map<string, { text: string; fault: Fault }>()
 const SHOWN = ['translated', 'cached', 'skipped']
@@ -73,7 +100,7 @@ export function useCheckedOverlay(text: string, on: boolean): { text: string; fa
   useEffect(() => {
     if (!wanted) return
     let alive = true
-    const parts = text.split(/\n{2,}/)
+    const parts = paragraphs(text)
     renderChecked(parts)
       .then((r) => {
         const statuses = parts.map((_, i) => r.statuses?.[i] ?? '')

@@ -219,7 +219,7 @@ def test_the_next_focus_sends_blocks_apart_and_records_them(repo):
     answer = "후보는 하나다.\n\n```spec\n" + json.dumps(spec_block(), ensure_ascii=False) + "\n```"
 
     class Next:
-        def say(self, text):
+        def say(self, text, halt=None):
             yield Event("done", answer, {"session_id": "cli-9", "error": False})
 
     def plain(source, model, effort):
@@ -239,7 +239,7 @@ def test_asking_for_candidates_sends_the_materials_and_shows_one_line(repo):
     heard = []
 
     class Next:
-        def say(self, text):
+        def say(self, text, halt=None):
             heard.append(text)
             yield Event("done", "후보", {"session_id": "cli-9", "error": False})
 
@@ -259,7 +259,7 @@ def test_a_result_goes_in_front_of_the_next_thing_said_once(repo):
     heard = []
 
     class Next:
-        def say(self, text):
+        def say(self, text, halt=None):
             heard.append(text)
             yield Event("done", "알았다", {"session_id": "cli-9", "error": False})
 

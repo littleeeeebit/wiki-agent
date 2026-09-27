@@ -6,7 +6,7 @@ import { Btn, ClearAsk } from '@/components/Modal'
 import { Toolbar } from '@/components/Toolbar'
 import type { Choice } from '@/components/Toolbar'
 import type { Keep, Kept, Options, Rule, Worktree } from '@/lib/api'
-import { useOverlay } from '@/lib/overlay'
+import { useParagraphOverlay } from '@/lib/overlay'
 import type { Step, Turn } from '@/lib/work'
 import { cn } from '@/lib/utils'
 
@@ -180,7 +180,7 @@ function Reply({ turn, on, onAnswer, onPeek }: {
 }) {
   // Only once the answer is finished: a half-streamed paragraph translated
   // reads exactly like a whole one.
-  const [text] = useOverlay([turn.text], on && (!turn.pending || turn.answered != null))
+  const text = useParagraphOverlay(turn.text, on && (!turn.pending || turn.answered != null))
   // The steps after the answer — the gate — stand after it, in the order they ran.
   const cut = turn.answered ?? turn.steps.length
   const lastStep = turn.steps.at(-1)

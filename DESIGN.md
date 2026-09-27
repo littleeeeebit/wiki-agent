@@ -78,8 +78,9 @@ components:
   - 레일 — 앱 이름 · 톱니바퀴 · 프로젝트 고르기 · 모든 프로젝트 · 리뷰 루프 (N) · 작업 행 (할 것 → 도는 것 → 정리됨 → 끝난 것 N)
   - 가운데 — 대화 (다음 작업 · 위키 · 회고) · 지도 · 프로젝트 목록
   - 오른쪽 — 작업 머리글 · 명세 요약 (접힘) · 에이전트 · 리뷰 · 터미널 탭
-  - 지도 — 층 토글 · 찾기 · 되돌리기 · 지표 한 줄 · 옆 패널
-  - 모달 — 설정 (일반 · 연결 · 리뷰) · 리뷰 루프 PR 고르기 · 연결 확인
+  - 답 — 진행 (검색 → 그래프 확장 → 검증 → 게시) · 멈춤 · 근거와 판단 보기 (펼침)
+  - 지도 — 층 토글 · 찾기 · 되돌리기 · 지표 한 줄 · 옆 패널 · 이번 질문 경로 층과 경로 목록
+  - 모달 — 설정 (일반 · 연결 · 질문 (Jev) · 리뷰) · 리뷰 루프 PR 고르기 · 연결 확인
   - 빈 상태 (면마다 하나)
 ---
 
@@ -140,6 +141,10 @@ The six `st-*` are used only for task dots on the rail and the status phrase in 
 Contrast is the lower of the background or card. The OKLab distance between the seven including `wait` has the closest pair at 0.109 for light (Done–Waiting for Merge) and 0.102 for dark (Mergeable–Waiting for Merge). The candidate "subtle" was rejected at 0.075 because In Progress, Review, and Done were confusing at small sizes, and the candidate using the app's existing accent colors (`ok`·`add`·`warn`) as is was rejected because In Progress and Waiting for Merge were too close at 0.057 in light mode.
 
 The dot for a task waiting for approval is `wait` instead of the status color. What a person needs to do takes precedence over status.
+
+### A question's run
+
+No new colours (Jev stage 9, 2026-09-27). Every state is also a mark and a word, so none rests on colour: the stepper is `✓` passed, `●` now, `○` to come; evidence support is `✓` supported (`ok`), `?` unverified, `≠` conflict, `!` untrusted, `·` not cited (all `ink-soft`). `warn` stays for failure only — a cancelled run is `⏹ 멈춤` in `ink-soft`, since stopping is a person's choice, not a fault. On the run's map layer a seed is the large dot, a bridge the dashed one, cited evidence the outlined one, said in a legend above the path list.
 
 ### Map
 

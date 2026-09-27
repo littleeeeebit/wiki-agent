@@ -7,6 +7,7 @@ stays Korean.
 
 from __future__ import annotations
 
+import contextvars
 import datetime as dt
 from contextvars import ContextVar
 from urllib.parse import quote
@@ -31,7 +32,8 @@ import decision
 import translate
 
 from . import channels, memory
-from .knowledge import grounded, prepare
+from . import knowledge
+from .knowledge import Run, grounded, prepare
 
 ROOT = channels.WIKI
 LOGS = ROOT / "raw" / "chat"
@@ -345,19 +347,19 @@ def line(cid: str, ev) -> dict | None:
     return None
 
 
-def drafting(cid: str, lead: str, spent: dict):
+def drafting(cid: str, lead: str, spent: dict, halt: threading.Event | None = None):
     """`generate` for `knowledge.grounded`: one turn of the focus's session,
     its tool lines passed on and its text held back — the draft reaches no
     screen. The first turn carries `lead`, what the person said. Returns the
     finished text; `Failed` when there is none. What the turns cost adds up
-    in `spent`."""
+    in `spent`. `halt` is the run's stop, which ends the turn."""
 
     said = [lead]
 
     def generate(message: str):
         if said:
             message = f"{said.pop()}\n\n{message}"
-        for ev in session(cid).say(message):
+        for ev in session(cid).say(message, halt):
             if (shown := line(cid, ev)) is not None:
                 yield shown
             elif ev.kind == "tool":
@@ -419,6 +421,92 @@ def jev_probe() -> dict:
     `python tool/jev_probe.py --live`, from inside the server process."""
 
     return decision.probe(decision.config())
+
+
+class JevSettings(BaseModel):
+    mode: str | None = None          # none: `.env` decides
+    disabled_sources: list[str] = []
+    limits: dict = {}
+
+
+@router.post("/api/jev/settings")
+def jev_settings(body: JevSettings) -> dict:
+    """The app's Jev settings (stage 9): mode, the source families a
+    question may search, and a question's limits. A new run reads them; a
+    run in flight keeps what it started with. The key is not among them."""
+
+    try:
+        decision.save(body.model_dump())
+    except ValueError as exc:
+        raise HTTPException(400, f"설정을 저장하지 않았다 — {exc}") from exc
+    return jev_status()
+
+
+# -- Runs (stage 9 of `docs/plans/jev/`) --------------------------------------
+#
+# A question's run belongs to the repository it ran in: every route reads the
+# selected project and answers only for its runs, so knowing a run id is not
+# enough to read another project's evidence.
+
+@router.get("/api/knowledge/status")
+def knowledge_status() -> dict:
+    return knowledge.status(current_repo())
+
+
+@router.get("/api/knowledge/runs/{run_id}")
+def knowledge_run(run_id: str) -> dict:
+    """A finished run's summary, each file it cited checked against the file
+    now; a live one's stage and last `seq`."""
+
+    repo = current_repo()
+    run = knowledge.live(run_id, repo)
+    if run is not None:
+        return knowledge.standing(run.summary) if run.done else run.brief()
+    summary, events = knowledge.stored(run_id, repo)
+    if summary is not None:
+        return knowledge.standing(summary)
+    if events:
+        return {"schema_version": knowledge.RUN_SUMMARY, "run_id": run_id, "done": True, "outcome": "interrupted",
+                "reason": "server_stopped", "events": len(events)}
+    raise HTTPException(404, "이 프로젝트에 그런 실행이 없다")
+
+
+@router.get("/api/knowledge/runs/{run_id}/events")
+def knowledge_events(run_id: str, after: int = -1) -> StreamingResponse:
+    """The run's events after `seq` `after`: tailed while it runs, read from
+    its trace once it is over. A run the server went down with ends in an
+    `interrupted` error."""
+
+    from .work import tail  # `work` imports this module
+
+    repo = current_repo()
+    run = knowledge.live(run_id, repo)
+    if run is not None:
+        return streaming(tail(run, after))
+    summary, events = knowledge.stored(run_id, repo)
+    if summary is None and not events:
+        raise HTTPException(404, "이 프로젝트에 그런 실행이 없다")
+    rest = [e for e in events if e.get("seq", -1) > after]
+    if summary is None:
+        rest.append({"kind": "error", "code": "interrupted", "run_id": run_id,
+                     "text": "서버가 내려가며 이 실행이 끊겼다. 다시 물어라"})
+    return streaming(iter([sse(e) for e in rest]))
+
+
+@router.post("/api/knowledge/runs/{run_id}/cancel")
+def knowledge_cancel(run_id: str) -> dict:
+    """Stop a run through its owner: the run's stop, which retrieval,
+    verification and the host's turn all read, and the turn's process."""
+
+    run = knowledge.live(run_id, current_repo())
+    if run is None:
+        raise HTTPException(404, "이 프로젝트에 도는 그런 실행이 없다")
+    if not run.done:
+        run.cancel.set()   # first: a turn not started yet is stopped by this
+        chat = _sessions.get(session_key(run.focus))
+        if chat is not None:
+            chat.stop(run.cancel)
+    return {"ok": True, "done": run.done}
 
 
 def shadow(cid: str, query: str, repo: Path, context: str, cfg: decision.Config) -> None:
@@ -571,6 +659,15 @@ def keep(repo: Path, focus: str, rows: list[dict], cfg: dict, body: Clear) -> di
 
 @router.post("/api/say/{cid}")
 def say(cid: str, body: Say) -> StreamingResponse:
+    """One question, run to its end on its own thread as a `knowledge.Run`,
+    whoever is watching; the response is a tail of the run's events. A screen
+    that reloads reattaches after the last `seq` it saw
+    (`/api/knowledge/runs/{id}/events`), and a stop reaches the run through
+    `/api/knowledge/runs/{id}/cancel`. The settings are read once, here: a
+    change reaches the next question, not this one."""
+
+    from .work import tail  # `work` imports this module
+
     known(cid)
     text = body.text.strip()
     if body.propose and cid != "next":
@@ -578,171 +675,218 @@ def say(cid: str, body: Say) -> StreamingResponse:
     if not text and not body.propose:
         raise HTTPException(400, "빈 발화")
     # The settings first: `config` can fail (503 when Codex cannot list its
-    # models), and after the hold nothing may fail before `held` arms the
+    # models), and after the hold nothing may fail before the thread owns the
     # release — a focus stayed busy for good that way.
     with _lock:
         cfg = dict(config(cid))
         release = hold(_busy, _lock, cid, "이 초점의 답변을 생성하고 있습니다")
+    try:
+        run = Run(current_repo(), cid, text or "(후보 요청)", decision.config())
+        # The thread reads the project this request was checked against.
+        threading.Thread(target=contextvars.copy_context().run, args=(ask, cid, body, text, cfg, run, release),
+                         daemon=True).start()
+    except BaseException:
+        release()
+        raise
+    return streaming(tail(run, -1))
 
-    def stream():
-        answer: list[str] = []
-        failed = ""
-        simple = ""
-        simple_error = ""
-        finished = False
-        metadata = {}
-        simple_meta = {}
-        shown: list[dict] = []
-        verification = None
+
+def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
+    """The question's turn, from the utterance to the record. Every payload
+    goes to `run`; the record and the run's summary are written, and the
+    focus let go, however it ends."""
+
+    put = run.put
+    reply: list[str] = []
+    failed = ""
+    code = ""
+    simple = ""
+    simple_error = ""
+    finished = False
+    metadata = {}
+    simple_meta = {}
+    shown: list[dict] = []
+    verification = None
+    out = None
+    try:
+        from . import specs  # `specs` imports this module
+
+        # The row keeps what the CLI was sent, whole, so a resumed CLI
+        # saw the same; `said` is what the screen shows instead.
+        sent, flags = text, {}
+        if body.propose:
+            sent = specs.materials(run.repo) + (f"\n\n{text}" if text else "")
+            flags = {"said": "(후보 요청)" + (f" {text}" if text else ""), "propose": True}
+        results = unseen(cid)
+        if results:
+            sent = "Since your last turn:\n" + "\n".join(f"- {r['text']}" for r in results) + "\n\n" + sent
+            flags.setdefault("said", text)
+        # The run's repository, not a read of the selection: this thread writes its record whatever happens after.
+        remember(cid, "user", sent, repo=run.repo, run_id=run.id, **flags)
+        jev = run.cfg
+        dossier = None
+        if jev.mode != "off":
+            # Record the utterance before any external request. The dossier
+            # is context for this turn, not a second user utterance.
+            prior = recall(cid)[-7:-1]
+            context = "\n".join(f"{r['role']}: {r.get('said', r['text'])}" for r in prior)
+            if jev.mode == "active":
+                dossier = prepare(text or sent, run.repo, context, cfg=jev, run=run)
+                remember(cid, "retrieval", "Jev retrieval decision", repo=run.repo, dossier=dossier, run_id=run.id)
+            else:
+                shadow(cid, text or sent, run.repo, context, jev)
+        # A display-time match against the relevant rules. Not a check
+        # that the host actually injected anything.
+        hits = hits_for(text) if text else []
+        if hits:
+            put({"kind": "hits", "text": "", "pages": hits})
+        if dossier is None:
+            run.step("answer", "baseline")
+        events = iter(()) if dossier is not None else session(cid).say(sent, run.cancel)
+        if dossier is not None:
+            # Active: the answer is drafted, checked, and only then published
+            # (stage 7 of `docs/plans/jev/`). Nothing of the draft is sent on.
+            spent: dict = {}
+            # What a direct run's text may restate: answers that were verified, English as code wrote them.
+            # An unverified one restated would come out verified.
+            verified = "\n".join(r["text"] for r in prior if r["role"] == "assistant"
+                                 and (r.get("verification") or {}).get("verified")
+                                 and not r["verification"].get("degraded"))
+            flow = grounded(text or sent, run.repo, context, dossier,
+                            drafting(cid, sent, spent, run.cancel), jev, said=verified, run=run)
+            try:
+                while True:
+                    try:
+                        ev = next(flow)
+                    except StopIteration as stop:
+                        out = stop.value
+                        break
+                    put(ev if "kind" in ev else
+                        {"kind": "tool", "text": PROGRESS[ev["progress"]], "progress": ev["progress"]})
+            except Failed as exc:
+                if run.cancel.is_set():
+                    raise Stopped() from exc   # the stop killed the draft's turn
+                failed, code = str(exc), "host_failed"
+                put({"kind": "error", "text": failed, "code": code, **exc.meta})
+            else:
+                # The drafts are the run's own record, never the conversation's.
+                remember(cid, "draft", "Jev answer draft", repo=run.repo, record=out["record"], run_id=run.id)
+                if run.cancel.is_set():
+                    # Stopped while it was checked: nothing of it is published.
+                    out = None
+                    raise Stopped()
+                verification = out["verified"]
+                reply = [out["text"]]
+                finished = True
+                metadata = {k: v for k, v in spent.items() if k != "error"}
+                if cid == "next":
+                    found = specs.blocks(out["rest"])[1]
+                    cited = {c["evidence_id"]: c for c in verification["citations"]}
+                    accepted = {e: cited[c] for e, c in out["evidence_ids"].items() if c in cited}
+                    source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
+                    shown = specs.answered(run.repo, found, source, accepted)
+                put({"kind": "done", "text": reply[0], **metadata, "verification": verification})
+                if shown:
+                    put({"kind": "blocks", "text": "", "blocks": shown})
+        for ev in events:
+            if run.cancel.is_set():
+                break   # what the stopped turn says after the stop is not the answer
+            if (shown_line := line(cid, ev)) is not None:
+                put(shown_line)
+                continue
+            if ev.kind == "delta":
+                reply.append(ev.text)
+            # A quota or API error arrives on `done` with `error=True`. It
+            # is an error, not an answer. Held together with the partial
+            # answer instead of separately, the reason for the cut-off is
+            # gone when the conversation is restored — a retro that hit a
+            # session limit survived as the single line `세겠습니다`.
+            if ev.kind == "done" and ev.meta.get("error"):
+                failed, code = ev.text or "완료된 답변이 없습니다", "host_failed"
+                put({"kind": "error", "text": failed, "code": code, **ev.meta})
+                break
+            if ev.kind == "error":
+                failed, code = ev.text, "host_failed"
+            if ev.kind == "done":
+                reply = [ev.text or "".join(reply)]
+                finished = bool(reply[0].strip())
+                metadata = ev.meta
+                metadata.pop("error", None)
+                if cid == "next":
+                    # The blocks leave the answer, so the overlay never
+                    # translates JSON; they go to the screen apart.
+                    reply[0], found = specs.blocks(reply[0])
+                    source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
+                    shown = specs.answered(run.repo, found, source)
+                    ev.text = reply[0]
+            put({"kind": ev.kind, "text": ev.text, **({"code": code} if ev.kind == "error" else {}), **ev.meta})
+            if ev.kind == "done" and shown:
+                put({"kind": "blocks", "text": "", "blocks": shown})
+        if run.cancel.is_set() and not verification:
+            getattr(events, "close", lambda: None)()   # the host's turn lets go of its session now
+            raise Stopped()
+        if not finished and not failed:
+            failed, code = "답변 생성이 완료되지 않았습니다", "incomplete"
+            put({"kind": "error", "text": failed, "code": code})
+        if finished and not failed and reply[0].strip() and not run.cancel.is_set():
+            run.step("explain", "writing")
+            put({"kind": "simple_start", "text": ""})
+            try:
+                simple_finished = False
+                for ev in explain("".join(reply), cfg["model"], cfg["effort"]):
+                    if run.cancel.is_set():
+                        raise ValueError("멈췄다")
+                    if ev.kind == "delta":
+                        simple += ev.text
+                        if verification is not None:
+                            continue   # a verified answer's explanation is shown once it is checked
+                    elif ev.kind == "done":
+                        if ev.meta.get("error") or not ev.text.strip():
+                            raise ValueError(ev.text or "쉬운 설명이 비어 있습니다")
+                        # Explaining may drop a fact of the accepted answer, never add one.
+                        new = translate.added(reply[0], ev.text) if verification is not None else []
+                        if new:
+                            raise ValueError(f"표시 오류 — 답에 없는 숫자나 식별자가 생겼다: {', '.join(new[:5])}")
+                        simple = ev.text
+                        simple_finished = True
+                        simple_meta = ev.meta
+                    elif ev.kind == "error":
+                        raise ValueError(ev.text)
+                    if ev.kind in ("delta", "done"):
+                        put({"kind": "simple_" + ev.kind, "text": ev.text, **ev.meta})
+                if not simple_finished:
+                    raise ValueError("쉬운 설명 생성이 완료되지 않았습니다")
+            except Exception as exc:
+                simple, simple_error = "", f"{type(exc).__name__}: {exc}"
+                put({"kind": "simple_error", "text": simple_error})
+    except Stopped:
+        # A stop is its own outcome: not an error, not an answer. What had
+        # streamed before it stays on record beside the reason.
+        failed, code = "멈췄다", "cancelled"
+        put({"kind": "cancelled", "text": failed, "code": code})
+    except Exception as exc:  # a cut run still owes the screen a reason
+        failed, code = f"{type(exc).__name__}: {exc}", "internal"
+        put({"kind": "error", "text": failed, "code": code})
+    finally:
         try:
-            from . import specs  # `specs` imports this module
-
-            # The row keeps what the CLI was sent, whole, so a resumed CLI
-            # saw the same; `said` is what the screen shows instead.
-            sent, flags = text, {}
-            if body.propose:
-                sent = specs.materials(current_repo()) + (f"\n\n{text}" if text else "")
-                flags = {"said": "(후보 요청)" + (f" {text}" if text else ""), "propose": True}
-            results = unseen(cid)
-            if results:
-                sent = "Since your last turn:\n" + "\n".join(f"- {r['text']}" for r in results) + "\n\n" + sent
-                flags.setdefault("said", text)
-            remember(cid, "user", sent, **flags)
-            jev = decision.config()
-            dossier = None
-            if jev.mode != "off":
-                # Record the utterance before any external request. The dossier
-                # is context for this turn, not a second user utterance.
-                prior = recall(cid)[-7:-1]
-                context = "\n".join(f"{r['role']}: {r.get('said', r['text'])}" for r in prior)
-                if jev.mode == "active":
-                    dossier = prepare(text or sent, current_repo(), context, cfg=jev)
-                    remember(cid, "retrieval", "Jev retrieval decision", dossier=dossier)
-                else:
-                    shadow(cid, text or sent, current_repo(), context, jev)
-            # A display-time match against the relevant rules. Not a check
-            # that the host actually injected anything.
-            hits = hits_for(text) if text else []
-            if hits:
-                yield sse({"kind": "hits", "text": "", "pages": hits})
-            events = iter(()) if dossier is not None else session(cid).say(sent)
-            if dossier is not None:
-                # Active: the answer is drafted, checked, and only then published
-                # (stage 7 of `docs/plans/jev/`). Nothing of the draft is sent on.
-                spent: dict = {}
-                # What a direct run's text may restate: answers that were verified, English as code wrote them.
-                # An unverified one restated would come out verified.
-                verified = "\n".join(r["text"] for r in prior if r["role"] == "assistant"
-                                     and (r.get("verification") or {}).get("verified")
-                                     and not r["verification"].get("degraded"))
-                flow = grounded(text or sent, current_repo(), context, dossier, drafting(cid, sent, spent), jev,
-                                said=verified)
-                try:
-                    while True:
-                        try:
-                            ev = next(flow)
-                        except StopIteration as stop:
-                            out = stop.value
-                            break
-                        yield sse(ev if "kind" in ev else
-                                  {"kind": "tool", "text": PROGRESS[ev["progress"]], "progress": ev["progress"]})
-                except Failed as exc:
-                    failed = str(exc)
-                    yield sse({"kind": "error", "text": failed, **exc.meta})
-                else:
-                    # The drafts are the run's own record, never the conversation's.
-                    remember(cid, "draft", "Jev answer draft", record=out["record"])
-                    verification = out["verified"]
-                    answer = [out["text"]]
-                    finished = True
-                    metadata = {k: v for k, v in spent.items() if k != "error"}
-                    if cid == "next":
-                        found = specs.blocks(out["rest"])[1]
-                        cited = {c["evidence_id"]: c for c in verification["citations"]}
-                        accepted = {e: cited[c] for e, c in out["evidence_ids"].items() if c in cited}
-                        source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
-                        shown = specs.answered(current_repo(), found, source, accepted)
-                    yield sse({"kind": "done", "text": answer[0], **metadata, "verification": verification})
-                    if shown:
-                        yield sse({"kind": "blocks", "text": "", "blocks": shown})
-            for ev in events:
-                if (shown_line := line(cid, ev)) is not None:
-                    yield sse(shown_line)
-                    continue
-                if ev.kind == "delta":
-                    answer.append(ev.text)
-                # A quota or API error arrives on `done` with `error=True`. It
-                # is an error, not an answer. Held together with the partial
-                # answer instead of separately, the reason for the cut-off is
-                # gone when the conversation is restored — a retro that hit a
-                # session limit survived as the single line `세겠습니다`.
-                if ev.kind == "done" and ev.meta.get("error"):
-                    failed = ev.text or "완료된 답변이 없습니다"
-                    yield sse({"kind": "error", "text": failed, **ev.meta})
-                    break
-                if ev.kind == "error":
-                    failed = ev.text
-                if ev.kind == "done":
-                    answer = [ev.text or "".join(answer)]
-                    finished = bool(answer[0].strip())
-                    metadata = ev.meta
-                    metadata.pop("error", None)
-                    if cid == "next":
-                        # The blocks leave the answer, so the overlay never
-                        # translates JSON; they go to the screen apart.
-                        answer[0], found = specs.blocks(answer[0])
-                        source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
-                        shown = specs.answered(current_repo(), found, source)
-                        ev.text = answer[0]
-                yield sse({"kind": ev.kind, "text": ev.text, **ev.meta})
-                if ev.kind == "done" and shown:
-                    yield sse({"kind": "blocks", "text": "", "blocks": shown})
-            if not finished and not failed:
-                failed = "답변 생성이 완료되지 않았습니다"
-                yield sse({"kind": "error", "text": failed})
-            if finished and not failed and answer[0].strip():
-                yield sse({"kind": "simple_start", "text": ""})
-                try:
-                    simple_finished = False
-                    for ev in explain("".join(answer), cfg["model"], cfg["effort"]):
-                        if ev.kind == "delta":
-                            simple += ev.text
-                            if verification is not None:
-                                continue   # a verified answer's explanation is shown once it is checked
-                        elif ev.kind == "done":
-                            if ev.meta.get("error") or not ev.text.strip():
-                                raise ValueError(ev.text or "쉬운 설명이 비어 있습니다")
-                            # Explaining may drop a fact of the accepted answer, never add one.
-                            new = translate.added(answer[0], ev.text) if verification is not None else []
-                            if new:
-                                raise ValueError(f"표시 오류 — 답에 없는 숫자나 식별자가 생겼다: {', '.join(new[:5])}")
-                            simple = ev.text
-                            simple_finished = True
-                            simple_meta = ev.meta
-                        elif ev.kind == "error":
-                            raise ValueError(ev.text)
-                        if ev.kind in ("delta", "done"):
-                            yield sse({"kind": "simple_" + ev.kind, "text": ev.text, **ev.meta})
-                    if not simple_finished:
-                        raise ValueError("쉬운 설명 생성이 완료되지 않았습니다")
-                except Exception as exc:
-                    simple, simple_error = "", f"{type(exc).__name__}: {exc}"
-                    yield sse({"kind": "simple_error", "text": simple_error})
-        except Exception as exc:  # a cut stream still owes the screen a reason
-            failed = f"{type(exc).__name__}: {exc}"
-            yield sse({"kind": "error", "text": failed})
+            if reply or failed:
+                remember(cid, "assistant", "".join(reply), failed, repo=run.repo,
+                         simple_text=simple, simple_error=simple_error, simple_meta=simple_meta,
+                         provider="codex" if cfg["model"].startswith("codex:") else "claude", run_id=run.id,
+                         **({"cancelled": True} if code == "cancelled" else {}),
+                         **({"blocks": shown} if shown else {}),
+                         **({"verification": verification} if verification else {}), **metadata)
         finally:
             try:
-                if answer or failed:
-                    remember(cid, "assistant", "".join(answer), failed,
-                             simple_text=simple, simple_error=simple_error, simple_meta=simple_meta,
-                             provider="codex" if cfg["model"].startswith("codex:") else "claude",
-                             **({"blocks": shown} if shown else {}),
-                             **({"verification": verification} if verification else {}), **metadata)
+                outcome = ("cancelled" if code == "cancelled" else "failed" if failed else
+                           verification["status"] if verification else "answered")
+                run.finish(outcome, code or None, out if verification else None, answered="".join(reply))
             finally:
                 release()
 
-    return held(stream(), release)
+
+class Stopped(Exception):
+    """The run's stop was heard: nothing more is published."""
 
 
 # -- Trigger hits -----------------------------------------------------------

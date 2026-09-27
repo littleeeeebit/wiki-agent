@@ -12,6 +12,10 @@ Configuration is read from the hub's `.env` (or the file `JEV_ENV` names) on
 every call, so a changed key reaches a long-running server on its next
 request, and the key is never copied into the process environment. What
 leaves this module about the key is whether it exists and where it came from.
+The app's settings (`save`, stage 9) sit beside it in `raw/jev/settings.json`:
+a mode over the file's, the source families a question may search, and a
+question's limits. Both are read into one `Config`, which a run keeps to its
+end. The app never writes the key.
 
 `__all__` is the contract, held by `lint.pipeline_surface`.
 """
@@ -30,15 +34,20 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from common import settings
-from common.budget import PROBE, Budget
+from common.budget import PROBE, QUESTION, Budget
 
 __all__ = ("Config", "JevError", "MODES", "choice", "config", "env_file", "evaluate", "noul", "probe", "score",
-           "DEFER", "STATUSES", "Cache", "request", "decide", "checked", "Policy", "policy", "verdict", "claims")
+           "DEFER", "STATUSES", "Cache", "request", "decide", "checked", "Policy", "policy", "verdict", "claims",
+           "FAMILIES", "LIMITS", "save", "settings_file")
 
 HOST = "api.typesafe.ai"
 PATH = "/v1/systemone"
 MODEL = "jev-1.13.0"
 MODES = ("off", "shadow", "active")
+# The source families a question may search, as `main.knowledge.available` names them.
+FAMILIES = ("hub", "documents", "memory", "papers", "research")
+# The question limits the app may set, and each one's range.
+LIMITS = {"seconds": (5.0, 120.0), "calls": (1, 20), "candidates": (1, 200)}
 MAX_BODY = 100_000
 MAX_RESPONSE = 1_000_000
 # Requests open at once in this process. One more waits for a slot within its
@@ -69,6 +78,12 @@ def env_file() -> Path:
     return Path(os.environ.get("JEV_ENV") or (settings.HUB / ".env"))
 
 
+def settings_file() -> Path:
+    """The app's settings, in the runtime directory beside `env_file`."""
+
+    return env_file().parent / "raw" / "jev" / "settings.json"
+
+
 @dataclass(frozen=True)
 class Config:
     """One snapshot of the settings. Taken per request, never cached."""
@@ -76,8 +91,11 @@ class Config:
     mode: str
     model: str
     key_source: str             # file, environment, default (no key), unreadable
-    problem: str = ""           # unreadable_config, invalid_mode
+    problem: str = ""           # unreadable_config, invalid_mode, unreadable_settings
     key: str = field(default="", repr=False)
+    mode_source: str = "default"   # app, file, environment, legacy (`WIKI_JEV=on`), default
+    disabled: tuple[str, ...] = ()
+    limits: dict = field(default_factory=lambda: dict(QUESTION))
 
     def status(self) -> dict:
         """What may be shown or logged: no part of the key."""
@@ -87,16 +105,56 @@ class Config:
                   else "configured")
         return {"mode": self.mode, "model": self.model, "key": bool(self.key),
                 "key_source": self.key_source, "health": health, "problem": self.problem,
-                "file": env_file().name}
+                "file": env_file().name, "mode_source": self.mode_source,
+                "disabled_sources": list(self.disabled), "limits": dict(self.limits)}
+
+
+def checked_settings(data: object) -> dict:
+    """The app's settings, validated; `ValueError` names what is wrong."""
+
+    if not isinstance(data, dict) or not set(data) <= {"mode", "disabled_sources", "limits"}:
+        raise ValueError("settings are mode, disabled_sources and limits")
+    mode, disabled, limits = data.get("mode"), data.get("disabled_sources") or [], data.get("limits") or {}
+    if mode is not None and mode not in MODES:
+        raise ValueError(f"mode is one of {', '.join(MODES)}, or none to follow {env_file().name}")
+    if not isinstance(disabled, list) or not all(f in FAMILIES for f in disabled):
+        raise ValueError(f"disabled_sources are among {', '.join(FAMILIES)}")
+    if not isinstance(limits, dict):
+        raise ValueError("limits is an object")
+    out = {}
+    for name, value in limits.items():
+        low, high = LIMITS.get(name, (None, None))
+        if low is None:
+            raise ValueError(f"no limit is called {name}")
+        if type(value) not in (int, float) or not low <= value <= high or (type(low) is int and value % 1):
+            raise ValueError(f"{name} is between {low} and {high}")
+        out[name] = type(low)(value)
+    return {"mode": mode, "disabled_sources": sorted(set(disabled)), "limits": out}
+
+
+def save(data: dict) -> Config:
+    """Write the app's settings — `mode` none leaves the mode to the file —
+    and return the snapshot they make. A new run reads them; a run in flight
+    keeps the snapshot it started with."""
+
+    checked = checked_settings(data)
+    path = settings_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps(checked, indent=1) + "\n", encoding="utf-8")
+    temporary.replace(path)
+    return config()
 
 
 def config() -> Config:
-    """The current settings. Precedence per name: file entry, environment, default.
+    """The current settings. Precedence per name: file entry, environment, default;
+    the mode the app saved (`save`) over all three.
 
     `WIKI_JEV_MODE` is off, shadow or active. Unset or empty, the older
     `WIKI_JEV=on` still means active; otherwise shadow with a key, off without.
     An unknown mode is off, and says so. A file that exists but cannot be read
     is off too — never shown as configured, and baseline retrieval goes on.
+    So are app settings that cannot be read: nothing of them is guessed.
     """
 
     try:
@@ -106,14 +164,24 @@ def config() -> Config:
     key, source = settings.pick(found, "TYPESAFE_API_KEY")
     key = key or ""
     model = settings.pick(found, "WIKI_JEV_MODEL")[0] or MODEL
-    mode = (settings.pick(found, "WIKI_JEV_MODE")[0] or "").lower()
+    raw, mode_source = settings.pick(found, "WIKI_JEV_MODE")
+    mode = (raw or "").lower()
     problem = ""
     if mode and mode not in MODES:
         mode, problem = "off", "invalid_mode"
     elif not mode:
-        mode = ("active" if settings.pick(found, "WIKI_JEV")[0] == "on"
-                else "shadow" if key else "off")
-    return Config(mode, model, source if key else "default", problem, key)
+        legacy = settings.pick(found, "WIKI_JEV")[0] == "on"
+        mode, mode_source = ("active" if legacy else "shadow" if key else "off"), ("legacy" if legacy else "default")
+    key_source = source if key else "default"
+    try:
+        path = settings_file()
+        saved = checked_settings(json.loads(path.read_text(encoding="utf-8")) if path.exists() else {})
+    except (OSError, ValueError):
+        return Config("off", model, key_source, "unreadable_settings", key, "app")
+    if saved["mode"] and not problem:
+        mode, mode_source = saved["mode"], "app"
+    return Config(mode, model, key_source, problem, key, mode_source, tuple(saved["disabled_sources"]),
+                  {**QUESTION, **saved["limits"]})
 
 
 def noul(text: str) -> dict:

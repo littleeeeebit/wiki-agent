@@ -10,6 +10,7 @@ history, a memory, or a specification's grounds.
 
 import hashlib
 import json
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -365,7 +366,7 @@ def test_a_direct_run_states_no_repository_fact_and_goes_back_to_retrieval(tmp_p
     ports = item(tmp_path, "docs/ports.md", PORTS)
     asked = []
 
-    def prepare(question, project, state, *, cfg, cache, require, budget):
+    def prepare(question, project, state, *, cfg, cache, require, budget, run=None):
         asked.append((require, budget.limits["calls"]))
         budget.used["calls"] += 2
         return dossier([ports], calls_left=0)
@@ -400,7 +401,7 @@ def test_a_direct_run_that_leaves_the_fact_unresolved_also_goes_back_to_retrieva
     ports = item(tmp_path, "docs/ports.md", PORTS)
     asked = []
 
-    def prepare(question, project, state, *, cfg, cache, require, budget):
+    def prepare(question, project, state, *, cfg, cache, require, budget, run=None):
         asked.append(require)
         return dossier([ports], calls_left=0)
 
@@ -454,7 +455,7 @@ def test_a_direct_runs_invented_fact_sends_it_back_to_retrieval(tmp_path, monkey
     owners = item(tmp_path, "docs/owners.md", OWNERS)
     asked = []
 
-    def prepare(question, project, state, *, cfg, cache, require, budget):
+    def prepare(question, project, state, *, cfg, cache, require, budget, run=None):
         asked.append(require)
         return dossier([owners], ["Who owns the ingest pipeline?"], calls_left=0)
 
@@ -709,7 +710,7 @@ def session_saying(*replies, blocks=""):
     sent = []
 
     class Session:
-        def say(self, text):
+        def say(self, text, halt=None):
             sent.append(text)
             reply = replies[min(len(sent), len(replies)) - 1]
             yield Event("tool", "Read docs/ports.md")
@@ -814,21 +815,36 @@ def test_an_explanation_that_adds_a_number_is_a_presentation_error(tmp_path, act
     assert saved["simple_text"] == "" and "8791" in saved["text"]
 
 
-def test_a_closed_stream_discards_the_unpublished_draft_and_releases_the_focus(tmp_path, active):
+def test_a_closed_stream_leaves_the_run_going_and_its_draft_unpublished(tmp_path, active):
+    # Stage 9: a screen that leaves — a reload — no longer ends the run. It is
+    # finished and recorded for the screen that comes back; the draft still
+    # reaches no event and no row but its own.
     d, reply = mixed(tmp_path)
     session, _sent = session_saying(reply)
     with patch.object(chat, "prepare", return_value=d), patch.object(chat, "session", return_value=session), \
-         patch.object(chat, "held", lambda events, release: (events, release)):
+         patch.object(chat, "explain", return_value=iter([Event("done", "쉬운 설명")])), \
+         patch.object(chat, "streaming", lambda events: events):
         chat.claimed.set(None)
-        events, _release = chat.say("wiki", chat.Say(text="데몬 포트는?"))
-        for chunk in events:
+        stream = chat.say("wiki", chat.Say(text="데몬 포트는?"))
+        run_id = None
+        for chunk in stream:
             if '"progress": "draft"' in chunk:
+                run_id = json.loads(chunk[6:])["run_id"]
                 break
-        assert "wiki" in chat._busy
-        events.close()   # the person left before anything was published
-    assert "wiki" not in chat._busy
+        stream.close()   # the person left before anything was published
+        run = knowledge.LIVE[run_id]
+        with run.wake:
+            run.wake.wait_for(lambda: run.done, timeout=10)
+        for _ in range(200):
+            if "wiki" not in chat._busy:
+                break
+            time.sleep(0.01)
+    assert run.done and "wiki" not in chat._busy
     rows = chat.recall("wiki", include_context=True)
-    assert not any(r["role"] in ("assistant", "draft") for r in rows)
+    assert [r["role"] for r in rows if r["role"] != "retrieval"] == ["user", "draft", "assistant"]
+    assert all(r["run_id"] == run_id for r in rows if r["role"] in ("user", "draft", "assistant"))
+    assert REJECTED not in json.dumps([e for e in run.events], ensure_ascii=False)
+    assert run.summary["outcome"] == "complete"
 
 
 def test_a_verified_spec_is_grounded_only_on_accepted_evidence(tmp_path, active):

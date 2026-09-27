@@ -79,7 +79,8 @@ def test_the_file_key_is_used_and_never_enters_the_environment(tmp_path, monkeyp
     assert os.environ["TYPESAFE_API_KEY"] == "env-secret"
     status = cfg.status()
     assert status == {"mode": "shadow", "model": "jev-1.13.0", "key": True, "key_source": "file",
-                      "health": "configured", "problem": "", "file": "jev.env"}
+                      "health": "configured", "problem": "", "file": "jev.env", "mode_source": "default",
+                      "disabled_sources": [], "limits": {"seconds": 15.0, "calls": 6, "candidates": 40}}
     assert "secret" not in json.dumps(status) + repr(cfg)
 
 
