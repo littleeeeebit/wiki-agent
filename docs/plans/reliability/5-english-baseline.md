@@ -69,6 +69,10 @@ grader reads, and whose entries alone form the coverage denominator):
 - `route_expected` on the intent: `false` where the reviewed correct behavior
   ends before route verdicts are applied (the failure/cancel family's cancelled,
   exhausted or unavailable paths); `true` otherwise.
+- `fault` on each failure/cancel intent, so the family is reproduced rather than
+  waited for: `{"kind": "cancelled"|"exhausted"|"unavailable", "phase": "route",
+  "expect": {"status": ..., "reason": ...}}`. A label cannot cause an outage;
+  the runner applies it (below).
 
 Preserve the existing runner's required variant
 shape where compatibility needs it, but execute only English in this stage.
@@ -149,9 +153,26 @@ The following commands use the proposed `--dataset` and `--actions` additions:
 python tool/eval/compare.py raw/eval/jev/reliability-calibration --dataset eval/jev/reliability/intents.json --split calibration --languages en --estimate
 python tool/eval/compare.py raw/eval/jev/reliability-heldout --dataset eval/jev/reliability/intents.json --split held_out --languages en
 python tool/eval/compare.py raw/eval/jev/reliability-answers --dataset eval/jev/reliability/intents.json --split held_out --languages en --arms A D --level answer
-python tool/eval/compare.py raw/eval/jev/reliability-actions --experiment actions --actions eval/jev/reliability/actions.json --split held_out
+python tool/eval/compare.py raw/eval/jev/reliability-actions --experiment actions --dataset eval/jev/reliability/intents.json --actions eval/jev/reliability/actions.json --split held_out
 python tool/eval/report.py raw/eval/jev/reliability-heldout raw/eval/jev/reliability-answers raw/eval/jev/reliability-actions --out raw/eval/jev/reliability-report.json
 ```
+
+Every run, the action run included, passes the reliability `--dataset`:
+`compare.main` loads an intent dataset for every experiment and `compare.opened`
+records its identity in `run.json` (today hard-coded to `eval/jev/intents.json`,
+`compare.py:86–89`). `opened` must record the path and hash actually loaded, and
+`report` refuses runs whose dataset identities differ.
+
+Fault injection (proposed, in `compare.run_arms.one`): for an intent with a
+`fault`, run arms B and D only (A and C never reach Jev), with the decision cache
+off so the route request is not served from cache, and patch `Flow.evaluate` for
+the named phase to raise what `test_decision_flow` already maps to each status —
+`decision.JevError("cancelled")` → `cancelled/cancelled`, `Exhausted("calls")` →
+`exhausted/calls`, `decision.JevError("timeout")` → `unavailable/timeout`. The row
+records `fault` (kind, phase, raised exception) as provenance. The failure/cancel
+operational result passes a row only when its dossier `status` and `reason` equal
+`fault.expect`; a natural provider failure on any other row is an `answer_error`
+or run failure, never evidence for this family.
 
 `report.build` today keys runs by experiment alone (`found["runs"][experiment]`,
 `found["arms"]`), so the answer run, also `experiment: arms`, overwrites the
@@ -162,6 +183,16 @@ only, which must contain both B and D over the whole cohort; score answer gates
 from `arms/answer`, and action gates from `actions`. A gate whose required run is
 missing, or whose run lacks any cohort row, is `not_measured`, which does not
 pass and leaves the stage open.
+
+A row present but unmeasured is the same gap. `run_arms` records `answer_error`
+when answering or grading fails, `report.values` then omits that row's quality
+metrics, and `arms_report.paired` compares only surviving pairs — so five failed
+D answers out of twelve can still pass `answer_support` on seven pairs. The
+answer cohort is preregistered like the routing one: arms A and D × held-out
+intents without a `fault`. Any cohort row with `answer_error`, no `grade`, or a
+`grade` carrying `error` makes every answer-level gate `inconclusive`, with the
+count reported beside it. v3's thresholds and statistics are applied unchanged
+to a complete cohort only.
 
 The implementation must add dataset/gate manifest propagation to report rather
 than letting it load unrelated default labels; this includes the label-review
