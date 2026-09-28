@@ -62,6 +62,7 @@ def answer(question: str, project: str | None, state: str, k: int, model: str) -
             if ev.kind == "error" or (ev.kind == "done" and ev.meta.get("error")):
                 raise RuntimeError(ev.text or "the host turn failed")
             if ev.kind == "done":
+                yield {**ev.meta, "kind": "usage"}   # this turn's model and tokens, for the trace
                 return ev.text
         raise RuntimeError("the host turn ended without an answer")
         yield  # a generator, as `knowledge.grounded` asks
@@ -128,7 +129,9 @@ def main(argv: list[str] | None = None) -> int:
         if status["mode"] != "active":
             parser.error(f"--answer publishes only what was checked, which mode active does; the mode is "
                          f"{status['mode']} (from {status['mode_source']})")
-        print(json.dumps(answer(args.query, project, args.state, args.k, args.model), ensure_ascii=False, indent=2))
+        print(json.dumps(answer(args.query, project, args.state, args.k, args.model), ensure_ascii=False, indent=2),
+              flush=True)
+        knowledge.tracing.flush()   # the answer is out; its trace is sent, for a bounded wait, before the exit
         return 0
     if args.retrieval:
         if not 1 <= args.k <= 40:

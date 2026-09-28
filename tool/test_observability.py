@@ -413,3 +413,135 @@ def test_the_app_and_the_cli_publish_the_same_decisions_and_evidence_for_one_inp
     assert cli["answered"] and cli["answered"] == app["answered"], "both publish the same text"
     assert cli["schema_version"] == app["schema_version"] == knowledge.RUN_SUMMARY
     assert knowledge.stored(cli["run_id"], tmp_path)[0] == cli, "the CLI's run is traced where the app's are"
+
+
+# -- the Langfuse trace ---------------------------------------------------------------------
+
+@pytest.fixture
+def langfuse(monkeypatch):
+    """The SDK's own client, its spans kept in memory rather than sent."""
+
+    from langfuse import Langfuse
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+    exporter = InMemorySpanExporter()
+    # A key of its own: the SDK keeps one exporter per public key, and the last test's is shut down.
+    client = Langfuse(public_key=f"pk-test-{time.monotonic_ns()}", secret_key="sk-test", base_url="http://127.0.0.1:9",
+                      span_exporter=exporter)
+    monkeypatch.setattr(knowledge.tracing, "_client", client)
+    monkeypatch.setattr(knowledge.tracing, "_made", True)
+
+    def spans() -> list[dict]:
+        client.flush()
+        return [{"name": s.name, "trace_id": format(s.context.trace_id, "032x"), **{
+            k.removeprefix("langfuse.observation.").removeprefix("langfuse."): v for k, v in s.attributes.items()}}
+            for s in exporter.get_finished_spans()]
+
+    yield spans
+    client.shutdown()
+
+
+def test_a_run_leaves_langfuse_what_each_request_was_sent_and_gave_back(tmp_path, active, langfuse):
+    d, reply = mixed(tmp_path)
+    host, _heard = session_saying(reply)
+
+    class Host:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def say(self, text, halt=None):
+            for ev in host.say(text):   # a real host's done names its model and tokens
+                yield Event(ev.kind, ev.text, {**ev.meta, "model": "claude-test", "tokens": {"in": 7, "out": 11}}
+                            if ev.kind == "done" else ev.meta)
+
+        def close(self):
+            pass
+
+    with patch.object(jev_search, "prepare", retrieved(d)), patch("agent.ChatSession", Host):
+        summary = jev_search.answer("데몬 포트는?", str(tmp_path), "", 8, "")
+    spans = langfuse()
+    assert {s["trace_id"] for s in spans} == {summary["run_id"]}, "one trace, its id the run's"
+    by = {}
+    for s in spans:
+        by.setdefault(s["name"], []).append(s)
+    root = by["answer-question"][0]
+    assert (root["type"], root["input"], root["trace.name"]) == ("chain", "데몬 포트는?", "answer-question")
+    assert root["output"] == summary["answered"]
+    assert all("cli" in s["trace.tags"] and s["trace.name"] == "answer-question" for s in spans), \
+        "v4 filters rows: each observation, not just the root, carries the trace's name and tags"
+    # The draft as the host wrote it, rejected claim included: the reason a claim fell is kept.
+    draft = by["draft-answer"][0]
+    assert draft["type"] == "generation" and REJECTED in draft["output"] and "evidence" in draft["input"]
+    assert draft["model.name"] == "claude-test" and json.loads(draft["usage_details"]) == {"input": 7, "output": 11}
+    verify = by["verify-claims"][0]
+    assert verify["type"] == "evaluator" and REJECTED in verify["output"] and "checks" in verify["output"]
+    judged = by["judge-claims"][0]
+    assert judged["type"] == "generation" and json.loads(judged["input"])["questions"] and judged["output"]
+    assert KEY not in json.dumps(spans, ensure_ascii=False), "the Jev key never leaves"
+
+
+def test_no_credential_the_process_holds_reaches_a_span(tmp_path, langfuse):
+    # Review round 1 of #43 (P0): only the Jev key was redacted; the translator's and Langfuse's own went out.
+    translator, secret = "tr-" + "t" * 30, "sk-lf-" + "s" * 30
+    with patch.object(knowledge.translate, "api_key", return_value=translator), \
+            patch.object(knowledge.tracing, "secrets", return_value=[secret]):
+        run = knowledge.Run(tmp_path, "wiki", f"q {KEY} {translator} {secret}",
+                            decision.Config("active", MODEL, "file", key=KEY))
+        child = run.open("normalize-to-english", "tool", input=[translator])
+        run.close(child, output=[{"text": secret}])
+        run.finish("abstained")
+    dumped = json.dumps(langfuse(), ensure_ascii=False)
+    assert "[redacted]" in dumped and not [k for k in (KEY, translator, secret) if k in dumped]
+
+
+def test_a_shadow_record_and_a_rotated_langfuse_key_are_redacted_too(monkeypatch):
+    # Review round 2 of #43 (P0): the shadow record redacted only Jev's key, and a Langfuse key edited in `.env`
+    # left out the one the running client was made with.
+    translator, old, new = "tr-" + "t" * 30, "sk-lf-old-" + "o" * 20, "sk-lf-new-" + "n" * 20
+    cfg = decision.Config("shadow", MODEL, "file", key=KEY)
+    monkeypatch.setattr(knowledge.translate, "api_key", lambda: translator)
+    monkeypatch.setattr(knowledge.tracing, "_secret", old)
+    monkeypatch.setattr(knowledge.tracing, "config", lambda: {"base_url": "x", "public_key": "p", "secret_key": new})
+    assert set(knowledge.secrets(cfg)) == {KEY, translator, old, new}
+    rows, wrote = [], threading.Event()
+    monkeypatch.setattr(chat.memory, "append", lambda _path, row: (rows.append(row), wrote.set()))
+    monkeypatch.setattr(chat, "prepare", lambda *a, **k: {"status": "ready", "question_en": f"{KEY} {translator} {old} {new}"})
+    chat.shadow("wiki", "q", Path("."), "", cfg)
+    assert wrote.wait(2)
+    dumped = json.dumps(rows)
+    assert "[redacted]" in dumped and not [k for k in (KEY, translator, old, new) if k in dumped]
+
+
+def test_a_command_lines_flush_waits_a_bounded_time(monkeypatch):
+    # Review round 1 of #43 (P1): the SDK's flush waits on the exporter's timeouts and retries.
+    release = threading.Event()
+
+    class Slow:
+        def flush(self):
+            release.wait(5)
+
+    monkeypatch.setattr(knowledge.tracing, "_client", Slow())
+    start = time.monotonic()
+    knowledge.tracing.flush(seconds=0.1)
+    assert time.monotonic() - start < 1
+    release.set()
+
+
+def test_a_generate_without_usage_and_a_run_without_langfuse_still_answer(tmp_path):
+    run = knowledge.Run(tmp_path, "wiki", "q", decision.Config("active", MODEL, "file", key=KEY))
+    assert run.trace is None and knowledge.tracing.client() is None
+    # Review round 1 of #43 (P1): a count that is not finite raised building telemetry, trace or none.
+    assert knowledge.tracing.usage({"in": float("inf"), "out": float("nan"), "cache_read": 3}) == \
+        {"cache_read_input_tokens": 3}
+
+    def generate(message):
+        yield {"kind": "usage", "model": "m", "tokens": {"in": float("inf")}}
+        yield "shown"
+        return f"text for {message}"
+
+    turn = knowledge.drafted(run, generate)("brief")
+    assert next(turn) == "shown", "the usage item goes no further"
+    with pytest.raises(StopIteration) as done:
+        next(turn)
+    assert done.value.value == "text for brief"
+    run.finish("abstained")

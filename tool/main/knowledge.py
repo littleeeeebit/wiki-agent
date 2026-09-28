@@ -38,6 +38,8 @@ from workspace import create, folder_for
 from session_state import active_page, decisions, plans
 from session_state import run as git
 
+from . import tracing
+
 evidence = knowledge_graph.evidence
 
 # The longest `current_state` Jev is given; a longer one is summarized (`summarized`).
@@ -947,15 +949,26 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
               "live": live, "external": external, "required": require}
     flow = Flow(**inputs, budget=budget, pol=pol, cache=cache if live else None, tape=tape,
                 emit=run.step if run is not None else None,
-                evaluate=functools.partial(decision.evaluate, cfg),
-                normalize=functools.partial(english, project=project),
+                evaluate=watched(run, "jev", functools.partial(decision.evaluate, cfg)),
+                normalize=watched(run, "normalizing", functools.partial(english, project=project)),
                 divide=lambda question, seconds: translate.parts(question, time.monotonic() + seconds),
                 first=lambda req: run_round(req, project, budget),
                 mend=lambda req, result, need, given: repair(
                     req, result, need, project, budget=budget, cfg=cfg, external=external,
                     chunk_ids=given if need == "context" else (),
                     proposals=given if need == "subqueries" else None))
-    dossier = flow.run()
+    with (run.phased("retrieve-evidence", "retriever", input=query,
+                     metadata={"k": k, "state": brief, "required": require, "sources": inputs["available"]})
+          if run is not None else contextlib.nullcontext({})) as ending:
+        dossier = flow.run()
+        ending.update(output={"status": dossier["status"], "reason": dossier["reason"],
+                              "requirements": dossier["requirements"], "material": dossier.get("material"),
+                              "missing": dossier["missing"], "analysis": dossier.get("analysis"),
+                              "evidence": [{"cite": cite(e), "text_en": e.get("text_en"),
+                                            "translation": e.get("translation"), "judgment": e.get("judgment")}
+                                           for e in dossier["evidence"]]},
+                      metadata={"transitions": dossier["transitions"], "limits": dossier["limits"],
+                                "split": dossier["split"]})
     if run is not None:
         run.step("retrieved", dossier["status"], reason=dossier["reason"], direct=dossier["direct"],
                  evidence=[e["chunk_id"] for e in dossier["evidence"]], missing=dossier["missing"],
@@ -968,6 +981,12 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     if run is not None:
         run.dossier = out   # the last retrieval of the run is the evidence it answers from
     return out
+
+
+def watched(run: Run | None, how: str, call):
+    """`call` as `run` observes it for its trace (`Run.jev`, `Run.normalizing`); as it is without a run."""
+
+    return call if run is None else getattr(run, how)(call)
 
 
 def steps(dossier: dict) -> list[dict]:
@@ -1707,6 +1726,8 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
 
     if run is not None:
         cancel = run.cancel
+        evaluate = run.jev(evaluate or functools.partial(decision.evaluate, cfg))
+    generate = drafted(run, generate)
     job = Grounding(dossier, cfg, cancel, cache, evaluate,
                     said="\n".join(filter(None, (said, dossier.get("question_en")))))
     step = run.step if run is not None else (lambda *_a, **_k: None)
@@ -1716,7 +1737,7 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
     step("draft", "writing")
     text = yield from generate(job.brief())
     yield {"progress": "verify"}
-    step("verify", "checked", claims=checks(job.check(text)))
+    step("verify", "checked", claims=checks(verified(run, job, text)))
     how = job.repair()
     if how:
         if how == "retrieve":
@@ -1731,12 +1752,62 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
         step("repair", how)
         text = yield from generate(job.repair_brief(how == "retrieve"))
         yield {"progress": "verify"}
-        step("verify", "checked", claims=checks(job.check(text)))
+        step("verify", "checked", claims=checks(verified(run, job, text)))
     out = job.published()
     v = out["verified"]
     step("publish", v["status"], reason=v["reason"], citations=[c["evidence_id"] for c in v["citations"]],
          missing=[r["id"] for r in v["missing_requirements"]])
     return out
+
+
+def drafted(run: Run | None, generate):
+    """`generate`, each turn a generation of the run's trace: the brief the
+    host was sent and the text it wrote — the draft its claims are read
+    from — with the model and tokens of the `{"kind": "usage"}` item a
+    `generate` yields when its turn is done. That item goes no further."""
+
+    def observed(message: str):
+        call = run.open("draft-answer", "generation", run.trace, input=message) if run is not None else None
+        spent: dict = {}
+        turn = generate(message)
+        try:
+            item = next(turn)
+            while True:
+                if isinstance(item, dict) and item.get("kind") == "usage":
+                    spent = item
+                    item = next(turn)
+                else:
+                    item = turn.send((yield item))
+        except StopIteration as done:
+            text = done.value
+        except BaseException as error:
+            turn.close()   # a stop or a failure outside ends the host's turn too
+            if run is not None:
+                run.close(call, level="ERROR", status_message=type(error).__name__)
+            raise
+        if call is not None:   # no trace, no telemetry to build: nothing in it may cost the answer
+            run.close(call, output=text, model=spent.get("model"), usage_details=tracing.usage(spent.get("tokens")),
+                      cost_details={"total": spent["cost_usd"]} if isinstance(spent.get("cost_usd"), (int, float))
+                      else None)
+        return text
+
+    return observed
+
+
+def verified(run: Run | None, job: Grounding, text: str) -> dict:
+    """`job.check(text)`, as an evaluator of the run's trace when there is
+    one: the draft in, each claim's check and support out — why a claim fell."""
+
+    if run is None:
+        return job.check(text)
+    with run.phased("verify-claims", "evaluator", input=text) as ending:
+        gen = job.check(text)
+        ending.update(output={k: gen.get(k) for k in ("draft", "problem", "checks", "coverage", "sets",
+                                                      "rejoined", "requirements")},
+                      # An analysis is not checked claim by claim: its draft is the document, published unverified.
+                      metadata={"decision": gen.get("decision"), "unavailable": gen.get("unavailable"),
+                                "analysis": bool(gen.get("analysis"))})
+    return gen
 
 
 def checks(gen: dict) -> list[dict]:
@@ -2799,6 +2870,23 @@ def redact(value, key: str | None):
     return value
 
 
+def secrets(cfg: decision.Config) -> list[str]:
+    """Every credential the process holds: Jev's, the translator's, and
+    Langfuse's — the configured one and the one its client was made with.
+    A question, a passage or a draft may quote one, and full text goes to
+    the record and the trace (reviews of #43, rounds 1 and 2)."""
+
+    return [cfg.key, translate.api_key(), *tracing.secrets()]
+
+
+def scrub(value, cfg: decision.Config):
+    """`value` with every credential of `secrets` redacted: what each write of a record or a trace goes through."""
+
+    for key in secrets(cfg):
+        value = redact(value, key)
+    return value
+
+
 def budget_left(budget: Budget) -> dict:
     used, limits = budget.used, budget.limits
     return {"seconds": round(budget.left(), 1), "calls": limits["calls"] - used["calls"],
@@ -2828,6 +2916,7 @@ class Run:
         self.repo = Path(repo)   # as the caller names it: the conversation's rows are keyed so
         self.repo_id = evidence.repo_id(self.repo)
         self.focus, self.question, self.cfg = focus, question, cfg
+        self.secrets = secrets(cfg)   # read once: every event and span of the run is redacted alike
         self.events: list[dict] = []
         self.done = False
         self.wake = threading.Condition()
@@ -2848,6 +2937,11 @@ class Run:
         # first step still leaves a run to call interrupted, and the screen
         # has the id to stop it with.
         self.put({"kind": "step", "status": "started"})
+        # Its Langfuse trace, the run's id its trace id; `phase` is the retrieval or verification open now.
+        self.phase = None
+        self.tags = [focus, cfg.mode]
+        self.trace = tracing.root(self.id, self.redact(question), self.tags,
+                                  {"repo": str(self.repo), "repo_id": self.repo_id, "run_id": self.id})
 
     def follow(self, what) -> None:
         """What `budget_remaining` reads from now: a `Budget`, or a callable."""
@@ -2880,7 +2974,84 @@ class Run:
         return self.put({"kind": "step", "stage": stage, "status": status, **payload})
 
     def redact(self, value):
-        return redact(value, self.cfg.key)
+        for key in self.secrets:
+            value = redact(value, key)
+        return value
+
+    # -- its Langfuse trace (`tracing`): every write fails open --------------------------
+
+    def open(self, name: str, kind: str, parent=None, **fields):
+        """A child observation of `parent` — the open phase, else the root —
+        with every field redacted; `None` when the run is not traced."""
+
+        parent = parent or self.phase or self.trace
+        if parent is None:
+            return None
+        try:
+            return tracing.child(parent, self.tags, name, kind, **self.redact(fields))
+        except Exception:  # noqa: BLE001 — a trace never costs the answer
+            return None
+
+    def close(self, observation, **fields) -> None:
+        if observation is None:
+            return
+        try:
+            observation.update(**self.redact(fields))
+            observation.end()
+        except Exception:  # noqa: BLE001
+            pass
+
+    @contextlib.contextmanager
+    def phased(self, name: str, kind: str, **fields):
+        """A phase — a retrieval, a verification — whose requests nest under
+        it. Yields the dict of fields its observation ends with."""
+
+        self.phase = self.open(name, kind, self.trace, **fields)
+        ending: dict = {}
+        try:
+            yield ending
+        except BaseException as error:
+            ending.update(level="ERROR", status_message=type(error).__name__)
+            raise
+        finally:
+            phase, self.phase = self.phase, None
+            self.close(phase, **ending)
+
+    def jev(self, evaluate):
+        """`evaluate`, each call a generation: the state and questions sent, the answers back."""
+
+        def observed(state, questions, trace, budget, stage):
+            mark = len(trace)
+            call = self.open(tracing.DECISIONS.get(stage, f"decide-{stage}"), "generation",
+                             input={"state": state, "questions": questions}, model=self.cfg.model,
+                             metadata={"decision_kind": stage})
+            try:
+                got = evaluate(state, questions, trace, budget, stage)
+            except BaseException as error:
+                self.close(call, level="ERROR", status_message=type(error).__name__)
+                raise
+            entry = trace[mark] if len(trace) > mark else {}
+            self.close(call, output=got, model=entry.get("model") or self.cfg.model,
+                       usage_details=tracing.usage(entry.get("usage")))
+            return got
+
+        return observed
+
+    def normalizing(self, normalize):
+        """`normalize`, each call a tool: the texts sent to the translator and their outcomes."""
+
+        def observed(texts, seconds, owners=None):
+            call = self.open("normalize-to-english", "tool", input=texts, metadata={"seconds": seconds})
+            try:
+                got = normalize(texts, seconds, owners)
+            except BaseException as error:
+                self.close(call, level="ERROR", status_message=type(error).__name__)
+                raise
+            self.close(call, output=got,
+                       metadata={"seconds": seconds, "statuses": dict(Counter(o.get("status") for o in got))})
+            return got
+
+        return observed
 
     def seal(self) -> bool:
         """The answer's point of no return: False if a stop came first. A
@@ -2930,6 +3101,12 @@ class Run:
             self.done = True
             self.wake.notify_all()
         prune(self.folder)
+        d = self.dossier or {}
+        self.close(self.trace, output=answered or None,
+                   level="ERROR" if outcome == "failed" else None,
+                   metadata={"outcome": outcome, "reason": reason, "notes": self.summary.get("notes"),
+                             "requirements": d.get("requirements"), "material": d.get("material"),
+                             "settings": self.summary.get("settings")})
         return self.summary
 
     def brief(self) -> dict:
