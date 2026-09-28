@@ -1,7 +1,7 @@
 {
  "schema": "jev-policy/1",
  "model": "jev-1.13.0",
- "prompt_version": "a2fe08dd11d10b85",
+ "prompt_version": "b559976f2cda1fde",
  "normalization_version": "original_english",
  "dataset": {
   "path": "eval/jev/relation.json",
@@ -22,7 +22,7 @@
  },
  "rules": {
   "relation": {
-   "confidence": 0.6,
+   "confidence": 0.9,
    "margin": 0.2
   },
   "answers": {
@@ -39,12 +39,12 @@
    "n": 39,
    "supports": 15,
    "fitted": true,
-   "cost": 0.2,
+   "cost": 0,
    "counts": {
     "false_acceptance": 0,
     "false_rejection": 0,
-    "mislabelled": 1,
-    "right": 38
+    "mislabelled": 0,
+    "right": 39
    },
    "provisional_cost": 0.2,
    "provisional_counts": {
@@ -95,10 +95,10 @@
  },
  "costs": {
   "requests": 20,
-  "input_tokens": 33884,
+  "input_tokens": 35504,
   "output_tokens": 5020,
-  "elapsed_ms": 4737
+  "elapsed_ms": 4573
  },
- "fitted_at": "2026-09-28T02:33:50+00:00",
+ "fitted_at": "2026-09-28T04:11:54+00:00",
  "note": "Error rates on the relation calibration split only; not a calibration claim. False acceptance (an unsupported claim accepted as supported) and false rejection are counted apart. Stage 10 holds the held-out evaluation."
 }

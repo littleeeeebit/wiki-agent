@@ -10,6 +10,7 @@ history, a memory, or a specification's grounds.
 
 import hashlib
 import json
+import re
 import time
 from pathlib import Path
 from unittest.mock import patch
@@ -111,7 +112,8 @@ class Judge:
         budget.call()
         assert stage == "verify"
         strings = json.dumps(state, ensure_ascii=False)
-        assert language(strings) == "en", strings
+        # Quoted Korean is what a direct run's translation names; any other Korean is prose.
+        assert language(re.sub(r"'[^'\n]*'", " ", strings)) == "en", strings
         self.asked.append((state, questions))
         if self.fail:
             raise decision.JevError(self.fail)
@@ -448,7 +450,18 @@ def test_a_direct_runs_computed_number_is_published_when_jev_finds_it_derived(tm
     judge = Judge()
     out, _events, _ = answer(d, [draft(claim("c1", "17 plus 34 is 51.", kind="direct_text", cites=()))], judge)
     assert out["verified"]["status"] == "complete" and "51" in out["text"]
-    assert "computed from the grounds" in json.dumps(judge.asked[0][1]["faithful_c1"])
+    assert "working it out" in json.dumps(judge.asked[0][1]["faithful_c1"])
+
+
+def test_a_direct_runs_translation_may_quote_the_korean_it_was_asked_for(tmp_path):
+    d = dossier([], ["Translate 'The build passed' into Korean."], direct=True, calls_left=1)
+    translated = claim("c1", "In Korean, 'The build passed' is '빌드가 통과했습니다'.", kind="direct_text", cites=())
+    out, _events, _ = answer(d, [draft(translated)], Judge())
+    assert out["verified"]["status"] == "complete" and "빌드가 통과했습니다" in out["text"]
+    # Outside the quotes it is still a Korean clause, and still not English.
+    unquoted = claim("c1", "빌드가 통과했습니다 is the Korean for it.", kind="direct_text", cites=())
+    out, _events, _ = answer(d, [draft(unquoted), draft(unquoted)], Judge())
+    assert out["verified"]["rejected"] == [{"claim_id": "c1", "reason": "not_english"}]
 
 
 def test_a_direct_runs_text_states_no_fact_the_conversation_did_not(tmp_path):

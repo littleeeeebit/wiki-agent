@@ -326,7 +326,7 @@ reads.
 | A | 0.998 [0.994, 1.0] | 0.438 [0.401, 0.474] of 900 | 0.896 | 0.583 |
 | D | 0.679 [0.583, 0.771] | 0.0095 [0.0, 0.024] of 210 | 0.995 | 0.958 |
 
-**Answer support fails.** D cuts unsupported claims by 97.8%, but the gate also
+Answer support fails. D cuts unsupported claims by 97.8%, but the gate also
 requires coverage no lower than A's, and D's is 0.32 lower. Every other gate
 still passes on this run. Diagnosis, all in stage 7's publication:
 
@@ -349,19 +349,73 @@ still passes on this run. Diagnosis, all in stage 7's publication:
 Per the rule above, active rollout stays blocked; a fix to stage 7 is a new
 evaluation (answer level again, a new run directory), not an edit of this one.
 
+Stage 7 fixed for all four causes (commit `9f8e718`): no code check on a
+direct run's numbers, with the faithful Choice told that a value computed or
+transformed from the grounds is stated by them (1); no claim rejected for its
+passage's redirect flag, with the relation told that a sentence addressed to
+an assistant states no fact (2, 3); and an `answers` Choice over the claims
+naming one part together, counted only when every one of them is published
+(4). The relation policy was collected again for the new prompt version on
+its calibration split: the same rules (0.6 / 0.2), no false acceptance.
+
+Held-out, answer level, arms A and D again, 2026-09-28
+(`raw/eval/jev/compare-heldout-answers-ad2`, `report-heldout-answers2.json`;
+two batches, the first stopped at the USD 10 ceiling): 240 rows, 492 host
+turns, USD 12.89, 369 Jev requests, 754,963 Jev tokens, 64.9 minutes.
+
+| Arm | Coverage (120) | Unsupported claims | Recall@8 | Bridge recall |
+| --- | --- | --- | --- | --- |
+| A | 0.998 [0.994, 1.0] | 0.431 [0.384, 0.474] of 903 | 0.896 | 0.583 |
+| D | 0.846 [0.775, 0.908] | 0.0044 [0.0, 0.015] of 228 | 1.0 | 1.0 |
+
+D's coverage by category, first run → this one: adversarial 0.0 → 0.88,
+direct 0.0 → 0.5, memory 0.75 → 0.88, routing 0.79 → 0.88, multipart 0.96 →
+1.0, paper 0.96 → 1.0, conflict 0.67 → 0.71, bridge 0.67 → 0.62; factual and
+unanswerable 1.0 both times. Answer support still fails on coverage (0.15
+below A); the other seven gates pass. `report.py` reads the last arms run
+given, so these gates are the answer-level rows'.
+
+Drafts of six failing rows, run again with their records kept (USD 0.34):
+
+1. Direct, still half lost. A translation into Korean is rejected as
+   `not_english`: the Korean it was asked for is in its sentence. And Jev's
+   faithful Choice read `17 multiplied by 3 is 51` as adding a fact (0.58)
+   and the letter count as uncertain, the rule in the prompt
+   notwithstanding.
+2. Bridge. `bridge-03`'s answer is an inference the relation found
+   unsupported; `bridge-08`'s rota claim came back uncertain. Both are the
+   relation's reading of the evidence, not a publication rule; `bridge-01`'s
+   joint answer was judged `partly`, as the grader judged it.
+
+Second fix (1): a direct_text may quote the Korean it was asked for (quoted
+spans are left out of its language check; a Korean clause outside quotes is
+still `not_english`), and the faithful prompt and options say that a claim
+with no premises may answer by working the conversation out, and that working
+it out wrongly contradicts it. Probed on seven cases before the change, Jev
+only: 17 × 3 = 51 faithful at 0.98, the letter count at 0.94, 90 minutes as
+1.5 hours at 0.99; a made-up port, owner and day `adds` at 0.99 or more; 17 ×
+3 = 54 `contradicts` at 0.91; the Korean translation faithful but at 0.51,
+below the rule. Collected again on the calibration split for the new prompt
+version: answers and faithful keep 0.6 / 0.2 with no false acceptance; the
+relation fit moved to confidence 0.9 (at 0.6 one case confused `contradicts`
+with `insufficient`; at 0.9 none, and no supported claim falls below it).
+The relation prompt did not change; the move is this collection's scores.
+The answer level has not been run for this fix.
+
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
 calls are not counted in `host_turns` or USD, and they are the one spend
-outside "Jev requests only". The stage 7 relation fit is kept, not refit
-(host spend). Window checks for this stage were not run.
+outside "Jev requests only". The stage 7 relation fit is collected again only
+when its prompt version changes, on its own calibration split (Jev only). Window checks for this stage were not run.
 
 Left before completion, in order:
 
 1. Label review — done 2026-09-28 by a model at the user's
    direction (above). A label changed after that is a new version.
 2. Held-out retrieval level, fixed and action experiments — done 2026-09-28
-   (above). Answer level for A and D ran 2026-09-28 and answer support
-   failed (above): fix stage 7's publication and run the answer level again.
+   (above). Answer level for A and D ran twice on 2026-09-28 and answer
+   support failed both times (coverage 0.68, then 0.85): run it again for
+   the second fix.
    The 3× repetition subset is not run.
 3. Every gate `pass`, then `rollout.py canary <this checkout>`; `.env` stays
    `WIKI_JEV_MODE=shadow` until the canary has run without a rollback.
@@ -371,8 +425,8 @@ Left before completion, in order:
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | In progress — `eval/jev/intents.json` and `actions.json` frozen with corpus hashes and splits; labels reviewed 2026-09-28 by a model at the user's direction, version 2 of both |
-| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level and the repetition subset not run |
-| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; on the held-out half answer support fails (coverage 0.68 against A's 1.0) and the other seven pass |
+| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level run twice for A and D, not yet for stage 7's second fix; the repetition subset not run |
+| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; on the held-out half answer support fails (coverage 0.85 after the first stage 7 fix, against A's 1.0) and the other seven pass |
 | 4 | Product | App/CLI parity, window checks, operational failures | In progress — the canary in settings, the API and the window's mode line; window checks not run this stage |
 | 5 | Rollout | Shadow, active canary, rollback rehearsal | In progress — canary, off and follow commands; rehearsal passed; active canary waits for the gates |
 | 6 | Completion | Reproduction report, all gates, plan archival | Not started |

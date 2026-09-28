@@ -987,6 +987,8 @@ ANSWER_STATUSES = ("complete", "partial", "abstained", "verification_unavailable
 VERIFICATION_VERSION = f"grounded-1/{decision.claims.VERSION}"
 DRAFT_BLOCK = re.compile(r"^```answer-draft[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 CLAIM_ID = re.compile(r"\A[A-Za-z0-9_-]{1,32}\Z")
+# What a direct_text quotes: the Korean a translation asked for is the answer, named in an English sentence.
+QUOTED = re.compile(r"'[^'\n]*'|\"[^\"\n]*\"|“[^”\n]*”|‘[^’\n]*’")
 DRAFT_FIELDS = {"claims", "unresolved_requirements", "proposed_status"}
 CLAIM_FIELDS = {"claim_id", "text_en", "kind", "evidence_ids", "source_quotes", "requirement_ids", "premises"}
 # The shortest quote, in characters: a word or two occurs almost anywhere.
@@ -1187,7 +1189,8 @@ class Grounding:
                            and isinstance(q["evidence_id"], str) and isinstance(q["quote"], str) for q in quotes)):
             return "malformed"
         kind, cited = claim["kind"], claim["evidence_ids"]
-        if language(claim["text_en"], translate.glossary()[0]) != "en":
+        prose = QUOTED.sub(" ", claim["text_en"]) if kind == "direct_text" else claim["text_en"]
+        if language(prose, translate.glossary()[0]) != "en":
             return "not_english"
         if not set(claim["requirement_ids"]) <= {r["id"] for r in self.requirements}:
             return "unknown_requirement"

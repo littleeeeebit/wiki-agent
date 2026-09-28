@@ -60,16 +60,17 @@ SET_OPTIONS = {"answers": "Together they give what the requirement asks for.",
 # or a sum of the conversation's numbers from a number it never held.
 FAITHFUL = ("faithful", "adds", "contradicts")
 FAITHFUL_PROMPT = ("Does claim {id} state any fact its grounds do not? Its grounds are the claims listed in its "
-                   "premises; a claim with no premises is grounded only in the conversation. A fact is a number, "
-                   "name, owner, path, place, time, setting, behaviour, condition or outcome. Advice on what to do, "
-                   "wording, greetings and courtesy are not facts, but every number, name, path or setting advice "
-                   "mentions must come from its grounds. A value computed from the grounds, or their own words "
-                   "transformed — arithmetic, unit conversion, counting, sorting, reversing, a change of case or "
-                   "spelling, a translation — is stated by them. A fact the grounds only make plausible is not "
-                   "stated by them.")
-FAITHFUL_OPTIONS = {"faithful": "Every fact it states is stated by its grounds.",
-                    "adds": "It states a fact its grounds do not state.",
-                    "contradicts": "It states something its grounds contradict."}
+                   "premises; a claim with no premises is grounded only in the conversation, and it may answer what "
+                   "the conversation asks by working it out: a result computed from what the conversation gives "
+                   "(arithmetic, counting, unit conversion, sorting) or the conversation's own words transformed (a "
+                   "translation, a rewrite, a change of case or spelling) is stated by the grounds, when it is "
+                   "correct. A fact is a number, name, owner, path, place, time, setting, behaviour, condition or "
+                   "outcome that neither the grounds nor such working gives. Advice on what to do, wording, greetings "
+                   "and courtesy are not facts, but every number, name, path or setting advice mentions must come "
+                   "from its grounds. A fact the grounds only make plausible is not stated by them.")
+FAITHFUL_OPTIONS = {"faithful": "Every fact it states is given by its grounds, directly or by working them out.",
+                    "adds": "It states a fact its grounds do not give, directly or by working them out.",
+                    "contradicts": "It states something its grounds contradict, or works them out wrongly."}
 VERSION = hashlib.sha256(json.dumps([PROMPT, OPTIONS, ANSWER_PROMPT, ANSWER_OPTIONS, SET_PROMPT, SET_OPTIONS,
                                      FAITHFUL_PROMPT, FAITHFUL_OPTIONS], sort_keys=True).encode()).hexdigest()[:16]
 
