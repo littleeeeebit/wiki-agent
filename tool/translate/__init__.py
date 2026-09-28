@@ -709,8 +709,11 @@ SPELLED = re.compile(r"\b(" + "|".join(WORDS) + r")(?:s|ed|ing)?\b", re.I)   # "
 ORDINALS = {w: str(i + 1) for i, w in enumerate(
     "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth "
     "fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth twentieth".split())}
-ORDINAL = re.compile(r"\b(" + "|".join(ORDINALS) + r")\b", re.I)
-ORDINAL_DIGIT = re.compile(r"제\s*(\d+)|(\d+)\s*(?:차|번째|위|등)")
+# Not after a count: "one second", "per second" is the unit. Marks that say ordinal and nothing else — a
+# rank (`2위`) or `2등` is also the start of `2등급` (review round 2).
+ORDINAL = re.compile(r"(?<!\bone )(?<!\ba )(?<!\ban )(?<!\bper )(?<!\beach )(?<!\bevery )\b("
+                     + "|".join(ORDINALS) + r")\b", re.I)
+ORDINAL_DIGIT = re.compile(r"제\s*(\d+)|(\d+)\s*(?:차|번째)")
 # Latin abbreviations match IDENTIFIER's dotted name, and a rendering drops them.
 ABBREVIATIONS = {"e.g", "i.e"}
 # Negation, English and Korean. A rendering of a paragraph — a verified

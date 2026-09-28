@@ -285,11 +285,12 @@ def judge(gates: dict, found: dict, reviewed: bool) -> list[dict]:
             lower = (cov.get("low") is not None and cov["low"] < margin if margin is not None else
                      cov.get("value") is not None and cov["value"] < 0)
             detail = {"A": a, "D": d, "coverage_D_minus_A": cov, "coverage_margin": margin}
-            if a == 0:
-                verdict = "pass" if d == 0 and not lower else "fail"
-            else:
+            if a != 0:
                 value = round((a - d) / a, 4)
-                verdict = "fail" if value < g["target"] or lower else "pass"
+            supported = d == 0 if a == 0 else value >= g["target"]
+            # A margin read at an interval's lower end is not met by no interval (review round 2).
+            unknown = margin is not None and cov.get("low") is None
+            verdict = "fail" if not supported or lower else "inconclusive" if unknown else "pass"
         elif g["id"] == "decision_quality" and actions:
             value = actions["selected_right_rate"]
             verdict = "pass" if value >= g["target"] else "fail"

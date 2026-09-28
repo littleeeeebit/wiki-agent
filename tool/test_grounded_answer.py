@@ -834,6 +834,10 @@ def test_a_presentation_may_drop_a_fact_but_never_add_one():
     assert not translate.kept("Wait three seconds.", "2초 기다리세요.", keep, words=True)
     assert not translate.kept("It is the second step.", "2초 걸리는 단계다.", keep, words=True)
     assert translate.kept("It is the second step.", "두 번째 단계다.", keep, words=True)
+    # Review round 2 (P1): a unit `second` and a grade `2등급` made an ordinal of an invented 2.
+    assert translate.added("The timeout is one second.", "제한 시간은 2등급이다.") == ["2"]
+    assert not translate.kept("The timeout is one second.", "제한 시간은 2등급이다.", keep, words=True)
+    assert not translate.kept("It waits a second.", "2차로 기다린다.", keep, words=True)
     assert translate.kept("The server is enabled regardless.", "서버는 어쨌든 활성화되어 있다.", keep, words=True)
     assert not translate.kept("The server is enabled regardless.", "서버가 활성화되어 있지 않다.", keep, words=True)
     assert translate.kept("RFPs, e.g. from 나라장터, and zeroing notices.", "나라장터 등의 RFP, 그리고 공고를 0으로 만들기.",
