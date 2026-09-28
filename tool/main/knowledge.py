@@ -591,9 +591,15 @@ class Flow:
             return self.baseline(res["reason_code"] or res["status"])
         verdicts = res["verdicts"]
         # A part Jev is sure was only supplied — a pasted notice, a quoted
-        # message — is material, not a requirement; an uncertain one stays.
-        # Should every part be judged supplied, none is dropped.
-        asked = [r for r in self.requirements if verdicts.get(f"ask_{r['id']}") != "no"]
+        # message — is material, not a requirement. Beside a part it is sure
+        # was asked, an uncertain one is material too: material is cited like
+        # evidence, so nothing is lost, and a notice line kept as a requirement
+        # no evidence can answer withheld the whole answer. With none sure,
+        # an uncertain part stays; should every part be judged supplied, none
+        # is dropped.
+        sure = any(verdicts.get(f"ask_{r['id']}") == "yes" for r in self.requirements)
+        asked = [r for r in self.requirements
+                 if verdicts.get(f"ask_{r['id']}") == "yes" or (not sure and verdicts.get(f"ask_{r['id']}") != "no")]
         if parts and asked and len(asked) < len(self.requirements):
             self.dossier["material"] = [{"id": r["id"], "text": r["text"]} for r in self.requirements if r not in asked]
             self.requirements = asked

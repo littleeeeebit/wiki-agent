@@ -608,8 +608,11 @@ PASTED = ("How does this notice compare with our project?\n"
 @pytest.mark.parametrize("ask, kept", [
     # Jev sure the notice's lines were only pasted: they are material, not requirements.
     ({"ask_r0": 0.95, "ask_r1": 0.05, "ask_r2": 0.05}, ["r0"]),
-    # Uncertain is never read as no; and a query judged all material keeps every part.
-    ({"ask_r0": 0.95, "ask_r1": 0.5, "ask_r2": 0.05}, ["r0", "r1"]),
+    # Beside a part sure to be asked, an uncertain one is material too — cited, never lost (ai-nara-shop: the
+    # notice's own line, kept as a requirement, withheld the answer one run in three).
+    ({"ask_r0": 0.95, "ask_r1": 0.5, "ask_r2": 0.05}, ["r0"]),
+    # With no part sure, uncertain is never read as no; and a query judged all material keeps every part.
+    ({"ask_r0": 0.5, "ask_r1": 0.5, "ask_r2": 0.05}, ["r0", "r1"]),
     ({"ask_r0": 0.05, "ask_r1": 0.05, "ask_r2": 0.05}, ["r0", "r1", "r2"]),
 ])
 def test_jev_tells_the_parts_asked_from_the_material_pasted_with_them(ask, kept):
