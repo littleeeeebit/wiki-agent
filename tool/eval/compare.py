@@ -129,7 +129,7 @@ def versions() -> dict:
             "policy": decision.policy(cfg.model, prompt_version=knowledge.PROMPT_VERSION).record(),
             "relation": decision.claims.VERSION, "verification": knowledge.VERIFICATION_VERSION,
             "action_prompt": decisions.VERSION, "retrieval": retrieval.RESULT, "graph_budget": retrieval.GRAPH,
-            "question_limits": dict(cfg.limits), "normalization": "translate (Korean) / original_english"}
+            "question_limits": dict(cfg.limits), "normalization": "original_english"}
 
 
 class Ceiling:

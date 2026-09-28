@@ -4,8 +4,8 @@ Stage 10's measurements from recorded rows (`tool/eval/compare.py`), and
 each frozen gate of `eval/jev/gates.json` judged on them. Sends nothing.
 
 Every rate names its denominator. Intervals are 95% percentile intervals from
-resampling intents — an intent's English and Korean wordings and its
-repetitions move together, never counted as independent evidence. A gate
+resampling intents — an intent's repetitions move together, never counted
+as independent evidence. A gate
 reads `pass`, `fail`, `inconclusive` (the interval does not settle it),
 `not_measured` (no rows for it), or `provisional` — a pass on labels no
 person has reviewed. The Markdown summary goes to stdout.
@@ -157,7 +157,7 @@ def arms_report(rows: list[dict], data: dict, opts: dict, cfg: dict) -> dict:
                 cats[intents[r["intent"]]["category"]].append(v["recall"])
         entry["recall_by_category"] = {c: round(statistics.mean(x), 4) for c, x in sorted(cats.items())}
         table[arm] = entry
-    out = {"arms": table, "differences": {}, "language": {}, "repetitions": repetitions(rows)}
+    out = {"arms": table, "differences": {}, "repetitions": repetitions(rows)}
 
     def paired(a: str, b: str, name: str, keep=lambda i: True) -> dict | None:
         """`b − a` on `name`, per intent, resampled by intent."""
@@ -180,19 +180,6 @@ def arms_report(rows: list[dict], data: dict, opts: dict, cfg: dict) -> dict:
             got = paired(a, b, name, keep)
             if got:
                 out["differences"][f"{name}_{b}_minus_{a}"] = got
-    for arm, pairs in per_arm.items():
-        gaps = {}
-        for name in ("recall", "coverage"):
-            en = by_intent([{"intent": r["intent"], "v": v.get(name)} for r, v in pairs if r["language"] == "en"],
-                           lambda x: x["v"])
-            ko = by_intent([{"intent": r["intent"], "v": v.get(name)} for r, v in pairs if r["language"] == "ko"],
-                           lambda x: x["v"])
-            common = sorted(set(en) & set(ko))
-            if common:
-                gaps[name] = boot([(en[i], ko[i]) for i in common],
-                                  lambda g: (ratio([x[0] for x in g]) or 0) - (ratio([x[1] for x in g]) or 0),
-                                  B, seed, conf)
-        out["language"][arm] = gaps
     return out
 
 
@@ -302,11 +289,6 @@ def judge(gates: dict, found: dict, reviewed: bool) -> list[dict]:
         elif g["id"] == "decision_quality" and actions:
             value = actions["selected_right_rate"]
             verdict = "pass" if value >= g["target"] else "fail"
-        elif g["id"] == "language_parity" and arms.get("language", {}).get("D"):
-            gaps = arms["language"]["D"]
-            value = max(abs(x["value"]) for x in gaps.values())
-            detail = gaps
-            verdict = "pass" if value <= g["target"] else "fail"
         elif g["id"] == "added_latency" and all(a in table for a in "AD"):
             key = "answer_seconds" if all("answer_seconds" in table[a] for a in "AD") else "seconds"
             value = round(table["D"][key]["p95"] - table["A"][key]["p95"], 3)

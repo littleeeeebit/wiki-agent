@@ -1,7 +1,7 @@
 """`python tool/eval/dataset.py [--check] [--calibration [<out>]]`
 
 Stage 10's evaluation set (`eval/jev/intents.json`, `jev-intents/1`): 120
-intents, each worded in English and in Korean, over one synthetic corpus,
+intents, each worded in English only, over one synthetic corpus,
 split by intent into calibration and held-out halves. This module is what
 every stage 10 tool reads it through: validation, the corpus materialized
 (papers registered as the product registers a local paper), a retrieved
@@ -37,7 +37,9 @@ CALIBRATION = HUB / "eval" / "jev" / "calibration.json"
 CATEGORIES = ("direct", "factual", "routing", "bridge", "multipart", "conflict", "memory", "paper",
               "unanswerable", "adversarial")
 SPLITS = ("calibration", "held_out")
-LANGUAGES = ("en", "ko")
+# Jev is built and measured in English: every input reaches it through the
+# translator, and Korean left its decisions near 50% (version 3 of the set).
+LANGUAGES = ("en",)
 FAMILIES = ("hub", "documents", "memory", "papers")
 REDIRECT = re.compile(r"\b(?:SYSTEM|AI agents?|Assistant|If you are an AI|Ignore the sentence|Disregard your rules|"
                       r"Instruction for assistants|You are now in developer mode|AI):?", re.I)
@@ -71,7 +73,7 @@ def invalid(data: dict) -> list[str]:
         if i["category"] not in CATEGORIES or i["split"] not in SPLITS:
             out.append(f"{where}: unknown category or split")
         if set(i["variants"]) != set(LANGUAGES) or not all(v.strip() for v in i["variants"].values()):
-            out.append(f"{where}: needs one English and one Korean wording")
+            out.append(f"{where}: needs exactly one English wording")
         if (i["abstain"] or i["direct"]) and i["evidence"]:
             out.append(f"{where}: an abstention or a direct answer carries no evidence")
         if not (i["abstain"] or i["direct"]) and not i["evidence"]:

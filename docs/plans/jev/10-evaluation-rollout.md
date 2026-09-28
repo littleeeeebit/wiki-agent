@@ -98,7 +98,6 @@ the held-out run; changing them after failure requires a new evaluation version.
 | Overall recall | D loses no more than 2 percentage points versus A overall |
 | Answer support | At least 25% relative reduction in unsupported claims, without lower requirement coverage; if A has zero errors, D must also have zero observed errors |
 | Decision quality | At least 90% correct allowed choices on the held-out action fixtures; zero execution authority violations |
-| Language parity | English/Korean supporting-evidence recall and coverage gaps at most 5 percentage points |
 | Added latency | p95 retrieval and verification overhead at most 10 seconds under the defined fixture workload |
 | Operating ceiling | No run exceeds configured deadline, call, or token allowance; unknown price remains explicitly unknown |
 
@@ -106,6 +105,16 @@ Small samples cannot prove tiny failure probabilities. If a confidence interval
 does not support an improvement claim, report inconclusive and gather additional
 predeclared cases. If a gate fails, keep active rollout blocked, diagnose the
 responsible stage, and rerun with a new manifest. Do not silently relax thresholds.
+
+English only, from 2026-09-28 (`intents.json` version 3, `gates.json`
+version 2), at the repository owner's direction. Jev is built and measured
+in English: the translator puts every input into English before it reaches
+Jev, in the wiki and the agent paths alike, and the documents and the wiki
+are English. The owner found Korean input left Jev's decisions near 50%,
+unable to pick. The Korean wordings and the language parity gate that
+compared them are gone; the other seven gates are version 1's. Runs before
+this change used version 2 of the set; their English rows are what carries
+over. Korean-to-English meaning is the translator's to measure.
 
 ## Validation levels
 
@@ -400,7 +409,39 @@ version: answers and faithful keep 0.6 / 0.2 with no false acceptance; the
 relation fit moved to confidence 0.9 (at 0.6 one case confused `contradicts`
 with `insufficient`; at 0.9 none, and no supported claim falls below it).
 The relation prompt did not change; the move is this collection's scores.
-The answer level has not been run for this fix.
+
+Held-out, answer level, arms A and D, third run, 2026-09-28
+(`raw/eval/jev/compare-heldout-answers-ad3`, commit `ddf9826`; two batches,
+the first stopped at the USD 10 ceiling): 240 rows (version 2 of the set,
+both languages), 486 host turns, USD 12.55, 367 Jev requests, 750,577 Jev
+tokens, 66.6 minutes. The owner then made the evaluation English only
+(above), so the gates below read its 120 English rows; `report.py` was run
+over a copy holding only those, beside `fixed-heldout` and `actions-heldout`.
+
+| Arm | Coverage (60) | Unsupported claims | Recall@8 | Bridge recall |
+| --- | --- | --- | --- | --- |
+| A | 1.0 [1.0, 1.0] | 0.380 [0.325, 0.433] of 460 | 0.948 | 0.583 |
+| D | 0.9 [0.833, 0.958] | 0.0085 [0.0, 0.028] of 117 | 1.0 | 1.0 |
+
+D's English coverage over the three runs: 0.66, 0.87, 0.90. Answer support
+fails on coverage alone (D − A −0.10 [−0.17, −0.04]; unsupported claims
+down 97.8%); the other six gates pass. Ten English rows fall short:
+
+1. Joint answers withheld by one extra claim (`route-09`, `bridge-09`, and
+   likely `bridge-08`). The published claims answer the question together
+   (the force-push rule's two sentences; "rotated by the rotation job" and
+   "the job runs every 30 days"), but the set was asked over every drafted
+   claim naming the part, and a drafted inference or restatement was
+   withheld, so the set lends nothing. The set is asked before the relation
+   has settled which claims are shown.
+2. Conflicts resolved by date (`conflict-07`, `conflict-08`, `conflict-09`).
+   D publishes both sides of the conflict, and the grader wants the newer
+   decision. The claim that says which one is newer is withheld: the dates
+   are in the decisions' file names, and the judge reads passage text only.
+3. `bridge-01`, `bridge-03`, `memory-03`, `direct-01`: the relation's or
+   the faithful Choice's reading (a Korean translation at 0.51, as probed).
+
+The answer level has not been run for a fix to these.
 
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
@@ -413,9 +454,9 @@ Left before completion, in order:
 1. Label review — done 2026-09-28 by a model at the user's
    direction (above). A label changed after that is a new version.
 2. Held-out retrieval level, fixed and action experiments — done 2026-09-28
-   (above). Answer level for A and D ran twice on 2026-09-28 and answer
-   support failed both times (coverage 0.68, then 0.85): run it again for
-   the second fix.
+   (above). Answer level for A and D ran three times on 2026-09-28 and
+   answer support failed each time on coverage (English rows 0.66, 0.87,
+   0.90 against A's 1.0).
    The 3× repetition subset is not run.
 3. Every gate `pass`, then `rollout.py canary <this checkout>`; `.env` stays
    `WIKI_JEV_MODE=shadow` until the canary has run without a rollback.
@@ -425,8 +466,8 @@ Left before completion, in order:
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | In progress — `eval/jev/intents.json` and `actions.json` frozen with corpus hashes and splits; labels reviewed 2026-09-28 by a model at the user's direction, version 2 of both |
-| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level run twice for A and D, not yet for stage 7's second fix; the repetition subset not run |
-| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; on the held-out half answer support fails (coverage 0.85 after the first stage 7 fix, against A's 1.0) and the other seven pass |
+| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level run three times for A and D; the repetition subset not run |
+| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; English only from `gates.json` version 2; on the held-out half answer support fails (coverage 0.90 against A's 1.0) and the other six pass |
 | 4 | Product | App/CLI parity, window checks, operational failures | In progress — the canary in settings, the API and the window's mode line; window checks not run this stage |
 | 5 | Rollout | Shadow, active canary, rollback rehearsal | In progress — canary, off and follow commands; rehearsal passed; active canary waits for the gates |
 | 6 | Completion | Reproduction report, all gates, plan archival | Not started |

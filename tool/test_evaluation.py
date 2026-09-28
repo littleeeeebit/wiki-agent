@@ -25,14 +25,14 @@ def data():
 
 def test_the_set_is_frozen_as_the_plan_asks(data):
     intents = data["intents"]
-    assert len(intents) == 120 and len(dataset.variants(data)) == 240
+    assert len(intents) == 120 and len(dataset.variants(data)) == 120
     assert sum(i["split"] == "held_out" for i in intents) == 60
     # Every category in both splits, as declared before any comparison ran.
     assert all(n["calibration"] >= 5 and n["held_out"] >= 5 for n in data["categories"].values())
     assert set(data["categories"]) == set(dataset.CATEGORIES)
     assert dataset.invalid(data) == [] and dataset.unresolved(data) == []
-    # A wording is Korean or English as labelled: a translated variant never slipped in untranslated.
-    assert all(re.search(r"[가-힣]", i["variants"]["ko"]) for i in intents)
+    # English only, as Jev is measured: no Korean wording, and none slipped into an English one.
+    assert all(set(i["variants"]) == {"en"} for i in intents)
     assert not any(re.search(r"[가-힣]", i["variants"]["en"]) for i in intents)
     # Reviewed labels say by whom and when; the report shows the reviewer, a model included.
     assert data["labels"]["reviewed_by"] and data["labels"]["reviewed_at"]

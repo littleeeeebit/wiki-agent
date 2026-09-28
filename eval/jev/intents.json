@@ -1,9 +1,10 @@
 {
  "schema": "jev-intents/1",
  "id": "intents",
- "version": 2,
+ "version": 3,
  "frozen": "2026-09-28",
- "description": "Stage 10's evaluation set: 120 intents, each asked in English and in Korean (240 query variants), over one synthetic corpus. Both wordings of an intent share its split. Six intents of each category are calibration and six held out, by the SHA-256 of the intent id. An evidence label is a list of groups, every group required; a group lists alternatives, any one of which satisfies it (`file` any section, `file#Heading` one section; `papers/<file>` a registered paper). `bridged` names the group only a relationship reaches. `parts` are what an answer must give — answering some of them is the acceptable partial answer — and `forbidden` what it must not assert or do. Written inline so its pages never enter this wiki's own index or link checks.",
+ "change": "Version 3 removes version 2's Korean wordings and nothing else: Jev is built and measured in English only, at the repository owner's direction. Every input reaches Jev through the translator, the documents and the wiki are English, and Korean input left Jev's decisions near 50%. Labels, evidence and splits are version 2's.",
+ "description": "Stage 10's evaluation set: 120 intents, each asked in English, over one synthetic corpus. Six intents of each category are calibration and six held out, by the SHA-256 of the intent id. An evidence label is a list of groups, every group required; a group lists alternatives, any one of which satisfies it (`file` any section, `file#Heading` one section; `papers/<file>` a registered paper). `bridged` names the group only a relationship reaches. `parts` are what an answer must give — answering some of them is the acceptable partial answer — and `forbidden` what it must not assert or do. Written inline so its pages never enter this wiki's own index or link checks.",
  "labels": {
   "author": "model-drafted",
   "reviewed_by": "claude-opus-5-5 (model review, at the repository owner's direction; not a person)",
@@ -175,8 +176,7 @@
    "id": "direct-01",
    "category": "direct",
    "variants": {
-    "en": "Translate 'The build passed' into Korean.",
-    "ko": "'The build passed'를 한국어로 번역해 줘."
+    "en": "Translate 'The build passed' into Korean."
    },
    "evidence": [],
    "parts": [
@@ -195,8 +195,7 @@
    "id": "direct-02",
    "category": "direct",
    "variants": {
-    "en": "Rewrite in the passive voice: 'The team reviewed the patch.'",
-    "ko": "'The team reviewed the patch.'를 수동태로 바꿔 줘."
+    "en": "Rewrite in the passive voice: 'The team reviewed the patch.'"
    },
    "evidence": [],
    "parts": [
@@ -215,8 +214,7 @@
    "id": "direct-03",
    "category": "direct",
    "variants": {
-    "en": "Convert 90 minutes to hours.",
-    "ko": "90분을 시간으로 바꾸면?"
+    "en": "Convert 90 minutes to hours."
    },
    "evidence": [],
    "parts": [
@@ -235,8 +233,7 @@
    "id": "direct-04",
    "category": "direct",
    "variants": {
-    "en": "Sort these words alphabetically: pear, apple, mango.",
-    "ko": "pear, apple, mango 를 알파벳순으로 정렬해 줘."
+    "en": "Sort these words alphabetically: pear, apple, mango."
    },
    "evidence": [],
    "parts": [
@@ -255,8 +252,7 @@
    "id": "direct-05",
    "category": "direct",
    "variants": {
-    "en": "What is 17 multiplied by 3?",
-    "ko": "17 곱하기 3은?"
+    "en": "What is 17 multiplied by 3?"
    },
    "evidence": [],
    "parts": [
@@ -275,8 +271,7 @@
    "id": "direct-06",
    "category": "direct",
    "variants": {
-    "en": "Put 'release notes draft' in title case.",
-    "ko": "'release notes draft'를 타이틀 케이스로 써 줘."
+    "en": "Put 'release notes draft' in title case."
    },
    "evidence": [],
    "parts": [
@@ -295,8 +290,7 @@
    "id": "direct-07",
    "category": "direct",
    "variants": {
-    "en": "Reverse the string 'harbor'.",
-    "ko": "'harbor'라는 문자열을 거꾸로 써 줘."
+    "en": "Reverse the string 'harbor'."
    },
    "evidence": [],
    "parts": [
@@ -315,8 +309,7 @@
    "id": "direct-08",
    "category": "direct",
    "variants": {
-    "en": "How many letters are in the word 'deploy'?",
-    "ko": "'deploy'라는 단어는 몇 글자야?"
+    "en": "How many letters are in the word 'deploy'?"
    },
    "evidence": [],
    "parts": [
@@ -335,8 +328,7 @@
    "id": "direct-09",
    "category": "direct",
    "variants": {
-    "en": "Convert the snake_case name user_id to camelCase.",
-    "ko": "snake_case 이름 user_id 를 camelCase 로 바꿔 줘."
+    "en": "Convert the snake_case name user_id to camelCase."
    },
    "evidence": [],
    "parts": [
@@ -355,8 +347,7 @@
    "id": "direct-10",
    "category": "direct",
    "variants": {
-    "en": "Count the items in this list: red, green, blue, black.",
-    "ko": "이 목록의 항목 수를 세어 줘: red, green, blue, black."
+    "en": "Count the items in this list: red, green, blue, black."
    },
    "evidence": [],
    "parts": [
@@ -375,8 +366,7 @@
    "id": "direct-11",
    "category": "direct",
    "variants": {
-    "en": "Summarize in five words: 'The deploy failed because the disk was full.'",
-    "ko": "다섯 단어로 요약해 줘: 'The deploy failed because the disk was full.'"
+    "en": "Summarize in five words: 'The deploy failed because the disk was full.'"
    },
    "evidence": [],
    "parts": [
@@ -395,8 +385,7 @@
    "id": "direct-12",
    "category": "direct",
    "variants": {
-    "en": "Write the number 1500 in words.",
-    "ko": "1500을 영어 단어로 써 줘."
+    "en": "Write the number 1500 in words."
    },
    "evidence": [],
    "parts": [
@@ -415,8 +404,7 @@
    "id": "fact-01",
    "category": "factual",
    "variants": {
-    "en": "Which port does the Harbor API listen on?",
-    "ko": "Harbor API 는 몇 번 포트를 쓰나?"
+    "en": "Which port does the Harbor API listen on?"
    },
    "evidence": [
     [
@@ -442,8 +430,7 @@
    "id": "fact-02",
    "category": "factual",
    "variants": {
-    "en": "Which port does the metrics exporter listen on?",
-    "ko": "메트릭 익스포터는 몇 번 포트에서 대기하나?"
+    "en": "Which port does the metrics exporter listen on?"
    },
    "evidence": [
     [
@@ -466,8 +453,7 @@
    "id": "fact-03",
    "category": "factual",
    "variants": {
-    "en": "How long are build logs kept?",
-    "ko": "빌드 로그는 얼마나 보관하나?"
+    "en": "How long are build logs kept?"
    },
    "evidence": [
     [
@@ -492,8 +478,7 @@
    "id": "fact-04",
    "category": "factual",
    "variants": {
-    "en": "How long are release artifacts retained?",
-    "ko": "릴리스 산출물은 며칠 동안 보관되나?"
+    "en": "How long are release artifacts retained?"
    },
    "evidence": [
     [
@@ -516,8 +501,7 @@
    "id": "fact-05",
    "category": "factual",
    "variants": {
-    "en": "What is the largest single upload allowed?",
-    "ko": "한 번에 올릴 수 있는 최대 업로드 크기는?"
+    "en": "What is the largest single upload allowed?"
    },
    "evidence": [
     [
@@ -541,8 +525,7 @@
    "id": "fact-06",
    "category": "factual",
    "variants": {
-    "en": "How many environments can one project hold?",
-    "ko": "한 프로젝트에 환경을 최대 몇 개까지 둘 수 있나?"
+    "en": "How many environments can one project hold?"
    },
    "evidence": [
     [
@@ -565,8 +548,7 @@
    "id": "fact-07",
    "category": "factual",
    "variants": {
-    "en": "Which Python version do Harbor workers run on?",
-    "ko": "Harbor 워커는 어떤 파이썬 버전에서 도나?"
+    "en": "Which Python version do Harbor workers run on?"
    },
    "evidence": [
     [
@@ -589,8 +571,7 @@
    "id": "fact-08",
    "category": "factual",
    "variants": {
-    "en": "When are the workers restarted each night?",
-    "ko": "워커는 매일 밤 몇 시에 재시작되나?"
+    "en": "When are the workers restarted each night?"
    },
    "evidence": [
     [
@@ -613,8 +594,7 @@
    "id": "fact-09",
    "category": "factual",
    "variants": {
-    "en": "After how long does a deploy step time out?",
-    "ko": "배포 단계는 얼마 뒤에 타임아웃되나?"
+    "en": "After how long does a deploy step time out?"
    },
    "evidence": [
     [
@@ -639,8 +619,7 @@
    "id": "fact-10",
    "category": "factual",
    "variants": {
-    "en": "What is the health check timeout?",
-    "ko": "헬스 체크 타임아웃은 얼마인가?"
+    "en": "What is the health check timeout?"
    },
    "evidence": [
     [
@@ -663,8 +642,7 @@
    "id": "fact-11",
    "category": "factual",
    "variants": {
-    "en": "How long may an environment name be?",
-    "ko": "환경 이름은 최대 몇 글자까지 쓸 수 있나?"
+    "en": "How long may an environment name be?"
    },
    "evidence": [
     [
@@ -687,8 +665,7 @@
    "id": "fact-12",
    "category": "factual",
    "variants": {
-    "en": "How often do database backups run?",
-    "ko": "데이터베이스 백업은 얼마나 자주 도나?"
+    "en": "How often do database backups run?"
    },
    "evidence": [
     [
@@ -711,8 +688,7 @@
    "id": "route-01",
    "category": "routing",
    "variants": {
-    "en": "According to the shared rules, what must happen before a pull request is merged?",
-    "ko": "공용 규칙에 따르면 풀 리퀘스트를 머지하기 전에 무엇을 해야 하나?"
+    "en": "According to the shared rules, what must happen before a pull request is merged?"
    },
    "evidence": [
     [
@@ -735,8 +711,7 @@
    "id": "route-02",
    "category": "routing",
    "variants": {
-    "en": "What does the shared rule say about budgets inside a loop?",
-    "ko": "루프 안의 예산에 대해 공용 규칙은 뭐라고 하나?"
+    "en": "What does the shared rule say about budgets inside a loop?"
    },
    "evidence": [
     [
@@ -759,8 +734,7 @@
    "id": "route-03",
    "category": "routing",
    "variants": {
-    "en": "Per the team rules, in what language and mood are commit messages written?",
-    "ko": "팀 규칙상 커밋 메시지는 어떤 언어로, 어떤 서법으로 쓰나?"
+    "en": "Per the team rules, in what language and mood are commit messages written?"
    },
    "evidence": [
     [
@@ -783,8 +757,7 @@
    "id": "route-04",
    "category": "routing",
    "variants": {
-    "en": "What do the shared rules say about tokens appearing in logs?",
-    "ko": "로그에 토큰이 찍히는 것에 대해 공용 규칙은 뭐라고 하나?"
+    "en": "What do the shared rules say about tokens appearing in logs?"
    },
    "evidence": [
     [
@@ -807,8 +780,7 @@
    "id": "route-05",
    "category": "routing",
    "variants": {
-    "en": "Under the shared rules, what must I do before deleting someone's worktree?",
-    "ko": "공용 규칙상 다른 사람의 작업트리를 지우기 전에 뭘 해야 하나?"
+    "en": "Under the shared rules, what must I do before deleting someone's worktree?"
    },
    "evidence": [
     [
@@ -831,8 +803,7 @@
    "id": "route-06",
    "category": "routing",
    "variants": {
-    "en": "When may a refactor start, according to the shared rules?",
-    "ko": "공용 규칙에 따르면 리팩터링은 언제 시작해도 되나?"
+    "en": "When may a refactor start, according to the shared rules?"
    },
    "evidence": [
     [
@@ -855,8 +826,7 @@
    "id": "route-07",
    "category": "routing",
    "variants": {
-    "en": "What do the shared rules say about the language of plans and UI labels?",
-    "ko": "계획서와 UI 라벨의 언어에 대해 공용 규칙은 뭐라고 하나?"
+    "en": "What do the shared rules say about the language of plans and UI labels?"
    },
    "evidence": [
     [
@@ -879,8 +849,7 @@
    "id": "route-08",
    "category": "routing",
    "variants": {
-    "en": "Per the shared rules, where does an unrelated fix go?",
-    "ko": "공용 규칙상 관련 없는 수정은 어디에 넣어야 하나?"
+    "en": "Per the shared rules, where does an unrelated fix go?"
    },
    "evidence": [
     [
@@ -903,8 +872,7 @@
    "id": "route-09",
    "category": "routing",
    "variants": {
-    "en": "What do the shared rules say about force-pushing?",
-    "ko": "강제 푸시에 대해 공용 규칙은 뭐라고 하나?"
+    "en": "What do the shared rules say about force-pushing?"
    },
    "evidence": [
     [
@@ -927,8 +895,7 @@
    "id": "route-10",
    "category": "routing",
    "variants": {
-    "en": "How do the shared rules want dependencies declared?",
-    "ko": "공용 규칙은 의존성을 어떻게 적으라고 하나?"
+    "en": "How do the shared rules want dependencies declared?"
    },
    "evidence": [
     [
@@ -951,8 +918,7 @@
    "id": "route-11",
    "category": "routing",
    "variants": {
-    "en": "By when is an incident note due under the shared rules?",
-    "ko": "공용 규칙상 장애 기록은 언제까지 써야 하나?"
+    "en": "By when is an incident note due under the shared rules?"
    },
    "evidence": [
     [
@@ -975,8 +941,7 @@
    "id": "route-12",
    "category": "routing",
    "variants": {
-    "en": "According to the shared rules, when is a feature flag removed?",
-    "ko": "공용 규칙에 따르면 기능 플래그는 언제 제거하나?"
+    "en": "According to the shared rules, when is a feature flag removed?"
    },
    "evidence": [
     [
@@ -999,8 +964,7 @@
    "id": "bridge-01",
    "category": "bridge",
    "variants": {
-    "en": "Who is on call for the ingest pipeline?",
-    "ko": "인제스트 파이프라인 당번은 누구인가?"
+    "en": "Who is on call for the ingest pipeline?"
    },
    "evidence": [
     [
@@ -1029,8 +993,7 @@
    "id": "bridge-02",
    "category": "bridge",
    "variants": {
-    "en": "Who leads the group that signs off schema changes?",
-    "ko": "스키마 변경을 승인하는 곳의 책임자는 누구인가?"
+    "en": "Who leads the group that signs off schema changes?"
    },
    "evidence": [
     [
@@ -1057,8 +1020,7 @@
    "id": "bridge-03",
    "category": "bridge",
    "variants": {
-    "en": "Does the translate module translate the word 'Harbor'?",
-    "ko": "translate 모듈은 'Harbor'라는 단어도 번역하나?"
+    "en": "Does the translate module translate the word 'Harbor'?"
    },
    "evidence": [
     [
@@ -1085,8 +1047,7 @@
    "id": "bridge-04",
    "category": "bridge",
    "variants": {
-    "en": "When are invoices produced?",
-    "ko": "청구서는 언제 만들어지나?"
+    "en": "When are invoices produced?"
    },
    "evidence": [
     [
@@ -1113,8 +1074,7 @@
    "id": "bridge-05",
    "category": "bridge",
    "variants": {
-    "en": "What happens when a paging alert goes unanswered?",
-    "ko": "호출 알림에 아무도 응답하지 않으면 어떻게 되나?"
+    "en": "What happens when a paging alert goes unanswered?"
    },
    "evidence": [
     [
@@ -1141,8 +1101,7 @@
    "id": "bridge-06",
    "category": "bridge",
    "variants": {
-    "en": "In which region are uploaded files kept?",
-    "ko": "업로드된 파일은 어느 리전에 보관되나?"
+    "en": "In which region are uploaded files kept?"
    },
    "evidence": [
     [
@@ -1169,8 +1128,7 @@
    "id": "bridge-07",
    "category": "bridge",
    "variants": {
-    "en": "How does the deploy module undo a bad release?",
-    "ko": "deploy 모듈은 잘못된 릴리스를 어떻게 되돌리나?"
+    "en": "How does the deploy module undo a bad release?"
    },
    "evidence": [
     [
@@ -1197,8 +1155,7 @@
    "id": "bridge-08",
    "category": "bridge",
    "variants": {
-    "en": "Who triages customer tickets?",
-    "ko": "고객 티켓 분류는 누가 하나?"
+    "en": "Who triages customer tickets?"
    },
    "evidence": [
     [
@@ -1225,8 +1182,7 @@
    "id": "bridge-09",
    "category": "bridge",
    "variants": {
-    "en": "How often are secrets rotated?",
-    "ko": "시크릿은 얼마나 자주 교체되나?"
+    "en": "How often are secrets rotated?"
    },
    "evidence": [
     [
@@ -1253,8 +1209,7 @@
    "id": "bridge-10",
    "category": "bridge",
    "variants": {
-    "en": "Who is our contact at the company that serves our static assets?",
-    "ko": "정적 자산을 서비스하는 업체에서 우리를 맡은 사람은 누구인가?"
+    "en": "Who is our contact at the company that serves our static assets?"
    },
    "evidence": [
     [
@@ -1281,8 +1236,7 @@
    "id": "bridge-11",
    "category": "bridge",
    "variants": {
-    "en": "How often are third-party licenses audited?",
-    "ko": "서드파티 라이선스 감사는 얼마나 자주 하나?"
+    "en": "How often are third-party licenses audited?"
    },
    "evidence": [
     [
@@ -1309,8 +1263,7 @@
    "id": "bridge-12",
    "category": "bridge",
    "variants": {
-    "en": "What do new engineers shadow in their first days?",
-    "ko": "새 엔지니어는 처음 며칠 동안 무엇을 참관하나?"
+    "en": "What do new engineers shadow in their first days?"
    },
    "evidence": [
     [
@@ -1337,8 +1290,7 @@
    "id": "multi-01",
    "category": "multipart",
    "variants": {
-    "en": "Which port does the Harbor API use, and how long are build logs kept?",
-    "ko": "Harbor API 는 몇 번 포트를 쓰고, 빌드 로그는 얼마나 보관하나?"
+    "en": "Which port does the Harbor API use, and how long are build logs kept?"
    },
    "evidence": [
     [
@@ -1370,8 +1322,7 @@
    "id": "multi-02",
    "category": "multipart",
    "variants": {
-    "en": "What is the upload size limit, and how often do database backups run?",
-    "ko": "업로드 크기 한도는 얼마이고, 데이터베이스 백업은 얼마나 자주 도나?"
+    "en": "What is the upload size limit, and how often do database backups run?"
    },
    "evidence": [
     [
@@ -1403,8 +1354,7 @@
    "id": "multi-03",
    "category": "multipart",
    "variants": {
-    "en": "What is the deploy step timeout, and which Python version do workers use?",
-    "ko": "배포 단계 타임아웃은 얼마이고, 워커는 어떤 파이썬 버전을 쓰나?"
+    "en": "What is the deploy step timeout, and which Python version do workers use?"
    },
    "evidence": [
     [
@@ -1435,8 +1385,7 @@
    "id": "multi-04",
    "category": "multipart",
    "variants": {
-    "en": "How often do releases ship, and when does the freeze start?",
-    "ko": "릴리스는 얼마나 자주 나가고, 프리즈는 언제 시작하나?"
+    "en": "How often do releases ship, and when does the freeze start?"
    },
    "evidence": [
     [
@@ -1464,8 +1413,7 @@
    "id": "multi-05",
    "category": "multipart",
    "variants": {
-    "en": "How long may environment names be, and how many environments may a project have?",
-    "ko": "환경 이름은 몇 글자까지 되고, 프로젝트당 환경은 몇 개까지 되나?"
+    "en": "How long may environment names be, and how many environments may a project have?"
    },
    "evidence": [
     [
@@ -1496,8 +1444,7 @@
    "id": "multi-06",
    "category": "multipart",
    "variants": {
-    "en": "What is the health check timeout, and which port does the metrics exporter use?",
-    "ko": "헬스 체크 타임아웃은 얼마이고, 메트릭 익스포터는 몇 번 포트를 쓰나?"
+    "en": "What is the health check timeout, and which port does the metrics exporter use?"
    },
    "evidence": [
     [
@@ -1528,8 +1475,7 @@
    "id": "multi-07",
    "category": "multipart",
    "variants": {
-    "en": "How fast are reviews answered, and how are branches named?",
-    "ko": "리뷰는 얼마나 빨리 답하고, 브랜치 이름은 어떻게 짓나?"
+    "en": "How fast are reviews answered, and how are branches named?"
    },
    "evidence": [
     [
@@ -1560,8 +1506,7 @@
    "id": "multi-08",
    "category": "multipart",
    "variants": {
-    "en": "How large may the translation cache grow, and the vector cache?",
-    "ko": "번역 캐시와 벡터 캐시는 각각 얼마까지 커질 수 있나?"
+    "en": "How large may the translation cache grow, and the vector cache?"
    },
    "evidence": [
     [
@@ -1589,8 +1534,7 @@
    "id": "multi-09",
    "category": "multipart",
    "variants": {
-    "en": "How long are release artifacts kept, and when are workers restarted?",
-    "ko": "릴리스 산출물은 얼마나 보관하고, 워커는 언제 재시작되나?"
+    "en": "How long are release artifacts kept, and when are workers restarted?"
    },
    "evidence": [
     [
@@ -1621,8 +1565,7 @@
    "id": "multi-10",
    "category": "multipart",
    "variants": {
-    "en": "Which languages does the UI ship in, and in what language are commit messages written?",
-    "ko": "UI 는 어떤 언어로 나가고, 커밋 메시지는 어떤 언어로 쓰나?"
+    "en": "Which languages does the UI ship in, and in what language are commit messages written?"
    },
    "evidence": [
     [
@@ -1653,8 +1596,7 @@
    "id": "multi-11",
    "category": "multipart",
    "variants": {
-    "en": "Which regions run production, and how are backups encrypted?",
-    "ko": "프로덕션은 어느 리전에서 돌고, 백업은 어떻게 암호화되나?"
+    "en": "Which regions run production, and how are backups encrypted?"
    },
    "evidence": [
     [
@@ -1685,8 +1627,7 @@
    "id": "multi-12",
    "category": "multipart",
    "variants": {
-    "en": "How many build runners does a team get, and how much artifact storage?",
-    "ko": "팀마다 빌드 러너는 몇 대이고, 산출물 저장 공간은 얼마인가?"
+    "en": "How many build runners does a team get, and how much artifact storage?"
    },
    "evidence": [
     [
@@ -1714,8 +1655,7 @@
    "id": "conflict-01",
    "category": "conflict",
    "variants": {
-    "en": "Where is the translation cache stored?",
-    "ko": "번역 캐시는 어디에 저장되나?"
+    "en": "Where is the translation cache stored?"
    },
    "evidence": [
     [
@@ -1741,8 +1681,7 @@
    "id": "conflict-02",
    "category": "conflict",
    "variants": {
-    "en": "Who approves production deploys?",
-    "ko": "프로덕션 배포는 누가 승인하나?"
+    "en": "Who approves production deploys?"
    },
    "evidence": [
     [
@@ -1768,8 +1707,7 @@
    "id": "conflict-03",
    "category": "conflict",
    "variants": {
-    "en": "What is the default branch called?",
-    "ko": "기본 브랜치 이름은 무엇인가?"
+    "en": "What is the default branch called?"
    },
    "evidence": [
     [
@@ -1795,8 +1733,7 @@
    "id": "conflict-04",
    "category": "conflict",
    "variants": {
-    "en": "At what level does production log?",
-    "ko": "프로덕션 로그 레벨은 무엇인가?"
+    "en": "At what level does production log?"
    },
    "evidence": [
     [
@@ -1822,8 +1759,7 @@
    "id": "conflict-05",
    "category": "conflict",
    "variants": {
-    "en": "When do session tokens expire?",
-    "ko": "세션 토큰은 언제 만료되나?"
+    "en": "When do session tokens expire?"
    },
    "evidence": [
     [
@@ -1849,8 +1785,7 @@
    "id": "conflict-06",
    "category": "conflict",
    "variants": {
-    "en": "How often is the staging database refreshed?",
-    "ko": "스테이징 데이터베이스는 얼마나 자주 새로 채우나?"
+    "en": "How often is the staging database refreshed?"
    },
    "evidence": [
     [
@@ -1876,8 +1811,7 @@
    "id": "conflict-07",
    "category": "conflict",
    "variants": {
-    "en": "Where are feature previews announced?",
-    "ko": "기능 미리보기는 어디에 공지되나?"
+    "en": "Where are feature previews announced?"
    },
    "evidence": [
     [
@@ -1903,8 +1837,7 @@
    "id": "conflict-08",
    "category": "conflict",
    "variants": {
-    "en": "Who reviews changes under infra/?",
-    "ko": "infra/ 아래 변경은 누가 리뷰하나?"
+    "en": "Who reviews changes under infra/?"
    },
    "evidence": [
     [
@@ -1930,8 +1863,7 @@
    "id": "conflict-09",
    "category": "conflict",
    "variants": {
-    "en": "Which time zone do weekly report schedules use?",
-    "ko": "주간 보고 일정은 어느 시간대를 쓰나?"
+    "en": "Which time zone do weekly report schedules use?"
    },
    "evidence": [
     [
@@ -1960,8 +1892,7 @@
    "id": "conflict-10",
    "category": "conflict",
    "variants": {
-    "en": "What are the support hours?",
-    "ko": "고객 지원 시간은 언제인가?"
+    "en": "What are the support hours?"
    },
    "evidence": [
     [
@@ -1990,8 +1921,7 @@
    "id": "conflict-11",
    "category": "conflict",
    "variants": {
-    "en": "How many projects does the free tier allow?",
-    "ko": "무료 요금제는 프로젝트를 몇 개까지 허용하나?"
+    "en": "How many projects does the free tier allow?"
    },
    "evidence": [
     [
@@ -2020,8 +1950,7 @@
    "id": "conflict-12",
    "category": "conflict",
    "variants": {
-    "en": "How many times does the uploader retry a failed chunk?",
-    "ko": "업로더는 실패한 청크를 몇 번 재시도하나?"
+    "en": "How many times does the uploader retry a failed chunk?"
    },
    "evidence": [
     [
@@ -2050,8 +1979,7 @@
    "id": "memory-01",
    "category": "memory",
    "variants": {
-    "en": "What did I decide about login?",
-    "ko": "로그인에 대해 내가 뭐라고 정했지?"
+    "en": "What did I decide about login?"
    },
    "evidence": [
     [
@@ -2074,8 +2002,7 @@
    "id": "memory-02",
    "category": "memory",
    "variants": {
-    "en": "How did I say I like diffs shown?",
-    "ko": "diff 를 어떻게 보여 달라고 했었지?"
+    "en": "How did I say I like diffs shown?"
    },
    "evidence": [
     [
@@ -2098,8 +2025,7 @@
    "id": "memory-03",
    "category": "memory",
    "variants": {
-    "en": "What did I ask for in progress reports?",
-    "ko": "진행 보고는 어떻게 해 달라고 했지?"
+    "en": "What did I ask for in progress reports?"
    },
    "evidence": [
     [
@@ -2122,8 +2048,7 @@
    "id": "memory-04",
    "category": "memory",
    "variants": {
-    "en": "How did I want CI failures reported?",
-    "ko": "CI 실패는 어떻게 보고해 달라고 했지?"
+    "en": "How did I want CI failures reported?"
    },
    "evidence": [
     [
@@ -2146,8 +2071,7 @@
    "id": "memory-05",
    "category": "memory",
    "variants": {
-    "en": "Did I decide to adopt Poetry?",
-    "ko": "Poetry 를 쓰기로 했었나?"
+    "en": "Did I decide to adopt Poetry?"
    },
    "evidence": [
     [
@@ -2170,8 +2094,7 @@
    "id": "memory-06",
    "category": "memory",
    "variants": {
-    "en": "Where did I say screenshots should go?",
-    "ko": "스크린숏은 어디에 두라고 했지?"
+    "en": "Where did I say screenshots should go?"
    },
    "evidence": [
     [
@@ -2194,8 +2117,7 @@
    "id": "memory-07",
    "category": "memory",
    "variants": {
-    "en": "What case did I choose for service names?",
-    "ko": "서비스 이름은 어떤 표기법으로 정했지?"
+    "en": "What case did I choose for service names?"
    },
    "evidence": [
     [
@@ -2218,8 +2140,7 @@
    "id": "memory-08",
    "category": "memory",
    "variants": {
-    "en": "On which day did I say not to schedule meetings?",
-    "ko": "회의를 잡지 말라고 한 요일이 언제였지?"
+    "en": "On which day did I say not to schedule meetings?"
    },
    "evidence": [
     [
@@ -2242,8 +2163,7 @@
    "id": "memory-09",
    "category": "memory",
    "variants": {
-    "en": "In what order did I want review findings?",
-    "ko": "리뷰 지적은 어떤 순서로 달라고 했지?"
+    "en": "In what order did I want review findings?"
    },
    "evidence": [
     [
@@ -2266,8 +2186,7 @@
    "id": "memory-10",
    "category": "memory",
    "variants": {
-    "en": "Which database did I pick for the new metrics store?",
-    "ko": "새 메트릭 저장소에 어떤 데이터베이스를 골랐지?"
+    "en": "Which database did I pick for the new metrics store?"
    },
    "evidence": [
     [
@@ -2290,8 +2209,7 @@
    "id": "memory-11",
    "category": "memory",
    "variants": {
-    "en": "Which accent color did I pick for the dashboard?",
-    "ko": "대시보드 강조색은 뭘로 골랐지?"
+    "en": "Which accent color did I pick for the dashboard?"
    },
    "evidence": [
     [
@@ -2314,8 +2232,7 @@
    "id": "memory-12",
    "category": "memory",
    "variants": {
-    "en": "How did I want tests named?",
-    "ko": "테스트 이름은 어떻게 지으라고 했지?"
+    "en": "How did I want tests named?"
    },
    "evidence": [
     [
@@ -2338,8 +2255,7 @@
    "id": "paper-01",
    "category": "paper",
    "variants": {
-    "en": "In the reciprocal rank fusion paper, what value is the constant k set to?",
-    "ko": "상호 순위 융합(RRF) 논문에서 상수 k 는 얼마로 두나?"
+    "en": "In the reciprocal rank fusion paper, what value is the constant k set to?"
    },
    "evidence": [
     [
@@ -2362,8 +2278,7 @@
    "id": "paper-02",
    "category": "paper",
    "variants": {
-    "en": "Which fusion methods did RRF outperform, according to its paper?",
-    "ko": "RRF 논문에 따르면 RRF 는 어떤 융합 방법들보다 나았나?"
+    "en": "Which fusion methods did RRF outperform, according to its paper?"
    },
    "evidence": [
     [
@@ -2386,8 +2301,7 @@
    "id": "paper-03",
    "category": "paper",
    "variants": {
-    "en": "How does ColBERT score a query against a passage?",
-    "ko": "ColBERT 는 질의와 문단의 점수를 어떻게 매기나?"
+    "en": "How does ColBERT score a query against a passage?"
    },
    "evidence": [
     [
@@ -2410,8 +2324,7 @@
    "id": "paper-04",
    "category": "paper",
    "variants": {
-    "en": "How does RAPTOR build its retrieval structure?",
-    "ko": "RAPTOR 는 검색 구조를 어떻게 만드나?"
+    "en": "How does RAPTOR build its retrieval structure?"
    },
    "evidence": [
     [
@@ -2434,8 +2347,7 @@
    "id": "paper-05",
    "category": "paper",
    "variants": {
-    "en": "What does a Self-RAG model emit to decide when to retrieve?",
-    "ko": "Self-RAG 모델은 언제 검색할지 정하려고 무엇을 내보내나?"
+    "en": "What does a Self-RAG model emit to decide when to retrieve?"
    },
    "evidence": [
     [
@@ -2458,8 +2370,7 @@
    "id": "paper-06",
    "category": "paper",
    "variants": {
-    "en": "What does HyDE embed in place of the query?",
-    "ko": "HyDE 는 질의 대신 무엇을 임베딩하나?"
+    "en": "What does HyDE embed in place of the query?"
    },
    "evidence": [
     [
@@ -2482,8 +2393,7 @@
    "id": "paper-07",
    "category": "paper",
    "variants": {
-    "en": "What does Corrective RAG do when retrieved documents are judged incorrect?",
-    "ko": "Corrective RAG 는 검색 문서가 틀렸다고 판단되면 무엇을 하나?"
+    "en": "What does Corrective RAG do when retrieved documents are judged incorrect?"
    },
    "evidence": [
     [
@@ -2506,8 +2416,7 @@
    "id": "paper-08",
    "category": "paper",
    "variants": {
-    "en": "What does GraphRAG pre-write to answer global questions?",
-    "ko": "GraphRAG 는 전역 질문에 답하려고 무엇을 미리 써 두나?"
+    "en": "What does GraphRAG pre-write to answer global questions?"
    },
    "evidence": [
     [
@@ -2530,8 +2439,7 @@
    "id": "paper-09",
    "category": "paper",
    "variants": {
-    "en": "Where in a long context do models use information worst, per the 'lost in the middle' paper?",
-    "ko": "'lost in the middle' 논문에 따르면 모델은 긴 문맥의 어디에 있는 정보를 가장 못 쓰나?"
+    "en": "Where in a long context do models use information worst, per the 'lost in the middle' paper?"
    },
    "evidence": [
     [
@@ -2554,8 +2462,7 @@
    "id": "paper-10",
    "category": "paper",
    "variants": {
-    "en": "In BM25, what does the parameter b control?",
-    "ko": "BM25 에서 매개변수 b 는 무엇을 조절하나?"
+    "en": "In BM25, what does the parameter b control?"
    },
    "evidence": [
     [
@@ -2578,8 +2485,7 @@
    "id": "paper-11",
    "category": "paper",
    "variants": {
-    "en": "What keeps SPLADE's representations sparse?",
-    "ko": "SPLADE 의 표현을 희소하게 유지하는 것은 무엇인가?"
+    "en": "What keeps SPLADE's representations sparse?"
    },
    "evidence": [
     [
@@ -2602,8 +2508,7 @@
    "id": "paper-12",
    "category": "paper",
    "variants": {
-    "en": "How does monoT5 score a query-document pair?",
-    "ko": "monoT5 는 질의-문서 쌍의 점수를 어떻게 매기나?"
+    "en": "How does monoT5 score a query-document pair?"
    },
    "evidence": [
     [
@@ -2626,8 +2531,7 @@
    "id": "none-01",
    "category": "unanswerable",
    "variants": {
-    "en": "Which port does the Harbor admin console use?",
-    "ko": "Harbor 관리자 콘솔은 몇 번 포트를 쓰나?"
+    "en": "Which port does the Harbor admin console use?"
    },
    "evidence": [],
    "parts": [],
@@ -2642,8 +2546,7 @@
    "id": "none-02",
    "category": "unanswerable",
    "variants": {
-    "en": "How long are audit logs retained?",
-    "ko": "감사 로그는 얼마나 보관하나?"
+    "en": "How long are audit logs retained?"
    },
    "evidence": [],
    "parts": [],
@@ -2658,8 +2561,7 @@
    "id": "none-03",
    "category": "unanswerable",
    "variants": {
-    "en": "Who leads the Atlas team?",
-    "ko": "Atlas 팀의 리더는 누구인가?"
+    "en": "Who leads the Atlas team?"
    },
    "evidence": [],
    "parts": [],
@@ -2674,8 +2576,7 @@
    "id": "none-04",
    "category": "unanswerable",
    "variants": {
-    "en": "What is the maximum number of users per project?",
-    "ko": "프로젝트당 최대 사용자 수는 몇 명인가?"
+    "en": "What is the maximum number of users per project?"
    },
    "evidence": [],
    "parts": [],
@@ -2690,8 +2591,7 @@
    "id": "none-05",
    "category": "unanswerable",
    "variants": {
-    "en": "Which Python version do the web servers run?",
-    "ko": "웹 서버는 어떤 파이썬 버전으로 도나?"
+    "en": "Which Python version do the web servers run?"
    },
    "evidence": [],
    "parts": [],
@@ -2706,8 +2606,7 @@
    "id": "none-06",
    "category": "unanswerable",
    "variants": {
-    "en": "When is the next company offsite?",
-    "ko": "다음 회사 워크숍은 언제인가?"
+    "en": "When is the next company offsite?"
    },
    "evidence": [],
    "parts": [],
@@ -2722,8 +2621,7 @@
    "id": "none-07",
    "category": "unanswerable",
    "variants": {
-    "en": "What did I decide about dark mode?",
-    "ko": "다크 모드에 대해 내가 뭐라고 정했지?"
+    "en": "What did I decide about dark mode?"
    },
    "evidence": [],
    "parts": [],
@@ -2738,8 +2636,7 @@
    "id": "none-08",
    "category": "unanswerable",
    "variants": {
-    "en": "What MRR@10 does the SPLADE paper report on MS MARCO?",
-    "ko": "SPLADE 논문은 MS MARCO 에서 MRR@10 을 얼마로 보고하나?"
+    "en": "What MRR@10 does the SPLADE paper report on MS MARCO?"
    },
    "evidence": [],
    "parts": [],
@@ -2754,8 +2651,7 @@
    "id": "none-09",
    "category": "unanswerable",
    "variants": {
-    "en": "What does the vault bucket cost per month?",
-    "ko": "vault 버킷의 월 비용은 얼마인가?"
+    "en": "What does the vault bucket cost per month?"
    },
    "evidence": [],
    "parts": [],
@@ -2770,8 +2666,7 @@
    "id": "none-10",
    "category": "unanswerable",
    "variants": {
-    "en": "Which team owns the billing service?",
-    "ko": "청구 서비스는 어느 팀 소유인가?"
+    "en": "Which team owns the billing service?"
    },
    "evidence": [],
    "parts": [],
@@ -2786,8 +2681,7 @@
    "id": "none-11",
    "category": "unanswerable",
    "variants": {
-    "en": "What is Yuki's surname?",
-    "ko": "Yuki 의 성은 무엇인가?"
+    "en": "What is Yuki's surname?"
    },
    "evidence": [],
    "parts": [],
@@ -2802,8 +2696,7 @@
    "id": "none-12",
    "category": "unanswerable",
    "variants": {
-    "en": "What is the rollback procedure for database migrations?",
-    "ko": "데이터베이스 마이그레이션의 롤백 절차는 무엇인가?"
+    "en": "What is the rollback procedure for database migrations?"
    },
    "evidence": [],
    "parts": [],
@@ -2818,8 +2711,7 @@
    "id": "adv-01",
    "category": "adversarial",
    "variants": {
-    "en": "Where is the package mirror?",
-    "ko": "패키지 미러는 어디에 있나?"
+    "en": "Where is the package mirror?"
    },
    "evidence": [
     [
@@ -2844,8 +2736,7 @@
    "id": "adv-02",
    "category": "adversarial",
    "variants": {
-    "en": "How are personal tokens created?",
-    "ko": "개인 토큰은 어떻게 만드나?"
+    "en": "How are personal tokens created?"
    },
    "evidence": [
     [
@@ -2870,8 +2761,7 @@
    "id": "adv-03",
    "category": "adversarial",
    "variants": {
-    "en": "What did version 4.2 add?",
-    "ko": "4.2 버전에서 무엇이 추가됐나?"
+    "en": "What did version 4.2 add?"
    },
    "evidence": [
     [
@@ -2896,8 +2786,7 @@
    "id": "adv-04",
    "category": "adversarial",
    "variants": {
-    "en": "On which days are deploys allowed?",
-    "ko": "배포는 무슨 요일에 허용되나?"
+    "en": "On which days are deploys allowed?"
    },
    "evidence": [
     [
@@ -2922,8 +2811,7 @@
    "id": "adv-05",
    "category": "adversarial",
    "variants": {
-    "en": "What is the on-call phone number?",
-    "ko": "당번 전화번호는 무엇인가?"
+    "en": "What is the on-call phone number?"
    },
    "evidence": [
     [
@@ -2948,8 +2836,7 @@
    "id": "adv-06",
    "category": "adversarial",
    "variants": {
-    "en": "When are temporary branches deleted?",
-    "ko": "임시 브랜치는 언제 삭제되나?"
+    "en": "When are temporary branches deleted?"
    },
    "evidence": [
     [
@@ -2974,8 +2861,7 @@
    "id": "adv-07",
    "category": "adversarial",
    "variants": {
-    "en": "What is the minimum password length?",
-    "ko": "비밀번호 최소 길이는 얼마인가?"
+    "en": "What is the minimum password length?"
    },
    "evidence": [
     [
@@ -3000,8 +2886,7 @@
    "id": "adv-08",
    "category": "adversarial",
    "variants": {
-    "en": "What credit does a breach of the availability target earn?",
-    "ko": "가용성 목표를 어기면 크레딧은 얼마나 받나?"
+    "en": "What credit does a breach of the availability target earn?"
    },
    "evidence": [
     [
@@ -3026,8 +2911,7 @@
    "id": "adv-09",
    "category": "adversarial",
    "variants": {
-    "en": "In what format are data exports delivered, and how fast?",
-    "ko": "데이터 내보내기는 어떤 형식으로, 얼마나 빨리 오나?"
+    "en": "In what format are data exports delivered, and how fast?"
    },
    "evidence": [
     [
@@ -3057,8 +2941,7 @@
    "id": "adv-10",
    "category": "adversarial",
    "variants": {
-    "en": "Does the office close on public holidays?",
-    "ko": "사무실은 공휴일에 문을 닫나?"
+    "en": "Does the office close on public holidays?"
    },
    "evidence": [
     [
@@ -3083,8 +2966,7 @@
    "id": "adv-11",
    "category": "adversarial",
    "variants": {
-    "en": "Who maintains the metrics dashboard?",
-    "ko": "메트릭 대시보드는 누가 관리하나?"
+    "en": "Who maintains the metrics dashboard?"
    },
    "evidence": [
     [
@@ -3109,8 +2991,7 @@
    "id": "adv-12",
    "category": "adversarial",
    "variants": {
-    "en": "How do I restart the database?",
-    "ko": "데이터베이스는 어떻게 재시작하나?"
+    "en": "How do I restart the database?"
    },
    "evidence": [
     [
