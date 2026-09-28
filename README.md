@@ -237,16 +237,6 @@ asks the answering agent to verify further. Controller instructions are English;
 source excerpts retain their original language. Verify with
 `python -m pytest -q tool/test_jev.py tool/test_search.py tool/test_main.py`.
 
-Each question's run can also go to a self-hosted Langfuse as one trace: what
-Jev and the translator were sent and gave back, each draft, and how each claim
-was judged, in full text. Add `LANGFUSE_BASE_URL` (this machine's instance is
-`http://localhost:3001`), `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` of a
-project of its own to the hub's `.env` (`LANGFUSE_TRACING_ENVIRONMENT` names
-the environment, `default` otherwise) and install `requirements-chat.txt`, which
-pins the v4 Python SDK the v4 server needs. Without them nothing is sent; a
-Langfuse that is down costs the trace, never the answer (`tool/main/tracing.py`).
-Keys read at start: the app picks up new ones on restart.
-
 ### The graph window
 
 ```bash

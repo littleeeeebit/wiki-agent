@@ -62,7 +62,6 @@ def answer(question: str, project: str | None, state: str, k: int, model: str) -
             if ev.kind == "error" or (ev.kind == "done" and ev.meta.get("error")):
                 raise RuntimeError(ev.text or "the host turn failed")
             if ev.kind == "done":
-                yield {**ev.meta, "kind": "usage"}   # this turn's model and tokens, for the trace
                 return ev.text
         raise RuntimeError("the host turn ended without an answer")
         yield  # a generator, as `knowledge.grounded` asks
@@ -82,9 +81,7 @@ def answer(question: str, project: str | None, state: str, k: int, model: str) -
         run.put({"kind": "error", "code": "internal", "text": str(exc)[:300]})
     finally:
         chat.close()
-    summary = run.finish(outcome, reason, out, answered=out["text"] if out else "")
-    knowledge.tracing.flush()   # a command line exits next: its trace is sent first
-    return summary
+    return run.finish(outcome, reason, out, answered=out["text"] if out else "")
 
 
 def main(argv: list[str] | None = None) -> int:

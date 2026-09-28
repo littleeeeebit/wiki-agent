@@ -369,7 +369,6 @@ def drafting(cid: str, lead: str, spent: dict, halt: threading.Event | None = No
             elif ev.kind == "done":
                 if ev.meta.get("error"):
                     raise Failed(ev.text or "완료된 답변이 없습니다", ev.meta)
-                yield {**ev.meta, "kind": "usage"}   # this turn's model and tokens, for the trace (`knowledge.drafted`)
                 for name in ("ms", "cost_usd"):
                     if isinstance(ev.meta.get(name), (int, float)):
                         ev.meta[name] += spent.get(name, 0)
