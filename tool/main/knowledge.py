@@ -963,7 +963,7 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
         dossier = flow.run()
         ending.update(output={"status": dossier["status"], "reason": dossier["reason"],
                               "requirements": dossier["requirements"], "material": dossier.get("material"),
-                              "missing": dossier["missing"],
+                              "missing": dossier["missing"], "analysis": dossier.get("analysis"),
                               "evidence": [{"cite": cite(e), "text_en": e.get("text_en"),
                                             "translation": e.get("translation"), "judgment": e.get("judgment")}
                                            for e in dossier["evidence"]]},
@@ -1804,7 +1804,9 @@ def verified(run: Run | None, job: Grounding, text: str) -> dict:
         gen = job.check(text)
         ending.update(output={k: gen.get(k) for k in ("draft", "problem", "checks", "coverage", "sets",
                                                       "rejoined", "requirements")},
-                      metadata={"decision": gen.get("decision"), "unavailable": gen.get("unavailable")})
+                      # An analysis is not checked claim by claim: its draft is the document, published unverified.
+                      metadata={"decision": gen.get("decision"), "unavailable": gen.get("unavailable"),
+                                "analysis": bool(gen.get("analysis"))})
     return gen
 
 
