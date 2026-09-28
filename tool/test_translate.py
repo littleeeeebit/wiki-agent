@@ -13,8 +13,10 @@ import re
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -61,7 +63,7 @@ FROZEN = (
 
 
 @pytest.fixture(autouse=True)
-def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Never read or write the real cache, and never need a real key.
 
     `ENV` goes too: a limit written in the real `.env` would decide whether
@@ -71,6 +73,12 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(T, "ENV", tmp_path / "absent.env")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.delenv("TRANSLATE_MONTHLY_USD", raising=False)
+    before = set(threading.enumerate())
+    yield
+    # A group the caller stopped waiting for still finishes; it must do so
+    # here, under this test's fakes, not refund into the next test's.
+    for worker in set(threading.enumerate()) - before:
+        worker.join(5)
 
 
 def soon() -> float:
@@ -231,8 +239,11 @@ def test_a_response_that_lands_after_the_deadline_is_not_adopted(
     ]
 
     # It was still cached: the work was done and the next turn should have it.
-    time.sleep(0.5)   # the request lands after the caller stopped waiting
     monkeypatch.setattr(T, "_ask", lambda *_a: None)
+    for _ in range(100):   # the request lands after the caller stopped waiting; a loaded machine lands it later
+        if ko("훅이 조용히 죽는다") == "EN":
+            break
+        time.sleep(0.05)
     assert ko("훅이 조용히 죽는다") == "EN"
 
 

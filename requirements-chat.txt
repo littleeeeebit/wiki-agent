@@ -1,3 +1,5 @@
 -r requirements-hooks.txt
 fastapi==0.137.1
 uvicorn==0.49.0
+# Each question's run as a Langfuse trace (`tool/main/tracing.py`); v4 to match the v4 server.
+langfuse==4.15.6
