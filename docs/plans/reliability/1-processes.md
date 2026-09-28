@@ -122,8 +122,21 @@ parent. After the change, the daemon's `git` carried `CREATE_NO_WINDOW` twice
 in the warm question and no console window appeared. Closing the app left no
 sidecar or agent child behind.
 
-Not verified live: stopping an active question and typing in the embedded
-terminal. Neither code path changed.
+Acceptance run on the changed build, also on 2026-09-29, with the same capture
+(`raw/diagnostics/processes/accept/`):
+
+- Cancellation: a question was stopped through
+  `/api/knowledge/runs/{id}/cancel` while its `claude.exe` was running. That
+  agent and its `git` and `conhost` children exited within 15.4 seconds. The
+  stream ended with the stop (`simple_error`, stage `explain`).
+- PTY: the owner opened the embedded terminal, typed `echo terminal-ok`, and
+  saw the output and a new prompt. Its `pwsh` console was created hidden.
+  No visible console window appeared in the whole run.
+- Closing: closing the window with its X button collected the sidecar, the
+  wiki chat's `claude.exe` and the terminal's `pwsh` at once. Two earlier
+  `taskkill` close requests in this run were delivered but did not close it.
+  In the earlier runs, the same request had closed the app. `main.rs` is
+  unchanged by this stage, so that is recorded here and not pursued.
 
 ## Steps
 
