@@ -165,8 +165,14 @@ records its identity in `run.json` (today hard-coded to `eval/jev/intents.json`,
 
 Fault injection (proposed, in `compare.run_arms.one`): for an intent with a
 `fault`, run arms B and D only (A and C never reach Jev), with the decision cache
-off so the route request is not served from cache, and patch `Flow.evaluate` for
-the named phase to raise what `test_decision_flow` already maps to each status —
+off so the route request is not served from cache. `Flow.evaluate` is an
+instance attribute that `knowledge.prepare` sets to
+`functools.partial(decision.evaluate, cfg)` (`knowledge.py:950–952`), so the
+runner cannot reach it; instead it patches `decision.evaluate` around the
+`prepare` call with a wrapper that raises for the fixture's phase — the `stage`
+argument, which `decision.contract.decide` fills from the request's
+`decision_kind` (`contract.py:129`), `route` here — and delegates every other
+stage to the original. It raises what `test_decision_flow` already maps to each status —
 `decision.JevError("cancelled")` → `cancelled/cancelled`, `Exhausted("calls")` →
 `exhausted/calls`, `decision.JevError("timeout")` → `unavailable/timeout`. The row
 records `fault` (kind, phase, raised exception) as provenance. The failure/cancel
