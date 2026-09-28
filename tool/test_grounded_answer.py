@@ -481,8 +481,11 @@ def test_a_pasted_notice_is_cited_as_material_and_a_comparison_stands_on_it(tmp_
     ours = claim("c2", "The search daemon listens on port 8791.", quotes=["listens on port 8791"])
     compared = claim("c3", "The notice asks for a new system, while this repository runs a search daemon.",
                      kind="inference", cites=(), premises=("c1", "c2"))
-    out, _events, messages = answer(d, [draft(notice, ours, compared)], Judge())
+    judge = Judge()
+    out, _events, messages = answer(d, [draft(notice, ours, compared)], judge)
     assert '"id": "m1"' in messages[0] and '"kind": "material"' in messages[0], "the drafter is shown it"
+    assert {"id": "m1", "text": NOTICE, "origin": "user"} in judge.asked[0][0]["passages"], \
+        "Jev is told the user supplied it: at 0.57-0.8 unlabelled, a notice's own words fell short of the rule"
     assert out["verified"]["status"] == "complete" and out["verified"]["rejected"] == []
     assert "`your message`" in out["text"] and "while this repository runs" in out["text"]
     # Still a passage: a quote it does not hold is caught as in any other.

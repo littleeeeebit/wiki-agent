@@ -1449,6 +1449,7 @@ class Grounding:
         state = decision.claims.state(
             self.dossier["question_en"],
             [{"id": e, "text": self.ids[e]["text_en"][:MAX_PASSAGE], **self.lineage.get(e, {}),
+              **({"origin": "user"} if self.ids[e]["kind"] == "material" else {}),
               **({"coverage": "truncated"} if len(self.ids[e]["text_en"]) > MAX_PASSAGE else {})} for e in shown],
             [{"id": cid, "text": claims[cid]["text_en"], "cites": sets[cid][0] if cid in sets else [],
               "premises": claims[cid]["premises"]} for cid in named],
