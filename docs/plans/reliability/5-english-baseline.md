@@ -54,10 +54,20 @@ as a separately versioned experiment; intervals may remain inconclusive.
 
 Each item stores ID, split, English query, source snapshot hashes, required evidence,
 acceptable transition set, forbidden operations, expected verification category,
-and label-review provenance. Two labels feed the new routing measurements: the
-intent-level `analysis` (`true` when the query asks for the assistant's own
-comparison, judgment or advice) and, on each existing `parts` entry, `ask`
-(`true` for a request, `false` for pasted material). Preserve the existing runner's required variant
+and label-review provenance. Two labels feed the new routing measurements, kept
+apart from the answer-grading `parts` (whose `ask` stays the question text the
+grader reads, and whose entries alone form the coverage denominator):
+
+- `analysis` on the intent: `true` when the query asks for the assistant's own
+  comparison, judgment or advice.
+- `route_segments` on the intent: `[{"text": ..., "ask": true|false}]`, one entry
+  per segment `knowledge.requirements` produces from the stored English query, in
+  order and verbatim, labelled request (`true`) or pasted material (`false`).
+  They are generated from the segmenter at freeze time and then reviewed; the
+  segmenter is part of `behavior_manifest`. Supplied material appears only here,
+  never in `parts`.
+
+Preserve the existing runner's required variant
 shape where compatibility needs it, but execute only English in this stage.
 Review ambiguous labels before reveal; record whether review was human or model
 and preserve the existing provisional-label rule.
@@ -84,16 +94,19 @@ Recording and scoring changes (proposed):
 
 | Location | Change |
 | --- | --- |
-| `compare.dossier_row` | Add the dossier's `analysis` flag and the ids in `material`, so each run row carries both routing outputs |
-| `compare` intent export (`parts` at `compare.py:297`) | Carry each part's reviewed `ask` label and the intent's `analysis` label |
-| `report.py` | Score `analysis_routing` (row flag against intent label) and `part_classification` (part id in `material` against `ask == false`) per case; interval from the existing `report.boot` over intent groups |
+| `knowledge.Flow.route` | Record a proposed dossier field `route_segments`, `[{text, ask}]` in segment order, when the route verdicts are applied: kept segments `ask: true`, `material` `ask: false`. Recorded there because `Flow.split` later replaces a single segment's `requirements` with model-split asks |
+| `compare.dossier_row` | Export the dossier's `analysis`, `question_en` and `route_segments` |
+| `compare` intent export | Carry `analysis` and `route_segments` beside `parts`; `compare.graded` and its `parts` export (`compare.py:297`) stay unchanged |
+| `report.py` | Score `analysis_routing` (row flag against the intent label) per case. Score `segment_classification` by matching row segments to `route_segments` on exact text: a case with no `route_segments` (route not reached), a `question_en` different from the stored query, or different segment texts is counted as `unscorable`, never as right. Interval from the existing `report.boot` over intent groups |
 | `eval.policy.labelled` | Unchanged. ASK/ANALYSIS thresholds are not fitted in this PR; fitting them is a separately versioned policy change |
 
 Each of the two new measurements, and each new action family below, gets its own
 gate with target 0.90. It passes when the interval's lower bound is at least 0.90,
 fails when the upper bound is below 0.90, and is inconclusive otherwise, as is a
-result with no interval. The existing gate v3 `decision_quality` keeps its point
-estimate unchanged; the new gates are added beside it, never substituted.
+result with no interval. `segment_classification` is also inconclusive when any
+held-out case is `unscorable`; the count is reported beside it. The existing
+gate v3 `decision_quality` keeps its point estimate unchanged; the new gates are
+added beside it, never substituted.
 
 Run existing A/B/C/D arms for retrieval as defined in `compare.py`; do not redefine
 their meanings in the new report. Run answer-level A/D comparison and action
