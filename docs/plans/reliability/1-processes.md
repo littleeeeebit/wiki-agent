@@ -93,12 +93,57 @@ Capture -> inventory -> minimal common helper/caller correction -> focused check
 -> real window verification. There is no data migration. Reverting the helper and
 its callers restores the old behavior without changing Jev state.
 
+## Result
+
+The capture ran on 2026-09-29 against the release app. Records are in
+`raw/diagnostics/processes/{before,after}/records.jsonl`.
+
+Confirmed responsible launch: `tool/search/sources.py::listing` running `git`
+from the search daemon. `search.spawn` starts the daemon with
+`DETACHED_PROCESS`, so it has no console, and every console child it starts
+without `CREATE_NO_WINDOW` gets a new console. With "let Windows decide" as the
+default terminal, that console opens as a Windows Terminal window. The daemon
+runs this `git` while indexing on a question, which matches the reported flash.
+The window's `PseudoConsoleWindow` belonged to that `git` PID, whose parent was
+the daemon.
+
+Classified as no change: every child the sidecar starts directly (`git`, `gh`,
+`codex`, `claude`) inherits the sidecar's hidden console, and none opened a
+window across startup, cold and warm questions, translation and terminal
+opening. So the blueprint rows for `session_state`, `chat_local`,
+`chat_session`, `specs` and `knowledge.promote` were not changed. The embedded
+terminal's ConPTY window is created hidden. `search.spawn` and `main.rs` are
+unchanged.
+
+Changed: `common.process.background_options()` is applied at the two launches
+that run inside the daemon, `sources.listing` and `daemon.orca`. `orca` was not
+seen during the capture. It is changed because it has the same console-less
+parent. After the change, the daemon's `git` carried `CREATE_NO_WINDOW` twice
+in the warm question and no console window appeared. Closing the app left no
+sidecar or agent child behind.
+
+Acceptance run on the changed build, also on 2026-09-29, with the same capture
+(`raw/diagnostics/processes/accept/`):
+
+- Cancellation: a question was stopped through
+  `/api/knowledge/runs/{id}/cancel` while its `claude.exe` was running. That
+  agent and its `git` and `conhost` children exited within 15.4 seconds. The
+  stream ended with the stop (`simple_error`, stage `explain`).
+- PTY: the owner opened the embedded terminal, typed `echo terminal-ok`, and
+  saw the output and a new prompt. Its `pwsh` console was created hidden.
+  No visible console window appeared in the whole run.
+- Closing: closing the window with its X button collected the sidecar, the
+  wiki chat's `claude.exe` and the terminal's `pwsh` at once. Two earlier
+  `taskkill` close requests in this run were delivered but did not close it.
+  In the earlier runs, the same request had closed the app. `main.rs` is
+  unchanged by this stage, so that is recorded here and not pursued.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Capture | Capture and identify responsible child | Not started |
-| 2 | Fix | Fix shared launch and verify desktop behavior | Not started |
+| 1 | Capture | Capture and identify responsible child | Done |
+| 2 | Fix | Fix shared launch and verify desktop behavior | Done |
 
 ## Sources
 

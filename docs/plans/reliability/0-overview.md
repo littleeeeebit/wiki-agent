@@ -30,7 +30,7 @@ use a -5 percentage-point lower confidence bound, as selected by the owner.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | [Quiet processes](1-processes.md) | Trace and correct flashing child windows | Not started |
+| 1 | [Quiet processes](1-processes.md) | Trace and correct flashing child windows | Done |
 | 2 | [Test burden](2-tests.md) | Profile/refactor and bind final gates to HEAD | Not started |
 | 3 | [Wiki scopes](3-wiki-scopes.md) | Documentation authorities and retrieval filtering | Not started |
 | 4 | [Jev contract](4-jev-contract.md) | Routing, call accounting, versions and graph health | Not started |

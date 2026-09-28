@@ -112,6 +112,21 @@ def test_ignored_decisions_modules_and_memories_are_listed_but_not_transcripts(r
     index.close()
 
 
+def test_the_listing_git_opens_no_window_and_is_otherwise_unchanged(repo, monkeypatch):
+    # The detached daemon has no console; this `git`, run from it while
+    # indexing, opened a Windows Terminal window (reliability PR 1 capture).
+    hub, path = repo
+    seen, real = [], subprocess.run
+    monkeypatch.setattr(sources.subprocess, "run", lambda args, **kw: seen.append((args, kw)) or real(args, **kw))
+    names = {p.relative_to(path).as_posix() for p in sources.listing(hub, path) if p.is_relative_to(path)}
+    assert "docs/guide.md" in names
+    (args, kw), = seen
+    assert args[:4] == ["git", "-C", str(path), "ls-files"] and kw["capture_output"] and kw["timeout"] == 30
+    assert kw.get("creationflags") == (subprocess.CREATE_NO_WINDOW if os.name == "nt" else None)
+    monkeypatch.setattr("sys.platform", "linux")
+    assert sources.background_options() == {}
+
+
 def test_one_repositorys_memory_never_reaches_another(repo, tmp_path):
     hub, path = repo
     other = tmp_path / "other"

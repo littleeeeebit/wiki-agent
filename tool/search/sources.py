@@ -33,6 +33,7 @@ from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from common.language import language
+from common.process import background_options
 
 from . import cache_dir, evidence
 
@@ -62,7 +63,7 @@ def listing(hub: Path, project: Path | None) -> list[Path]:
     try:
         out = subprocess.run(
             ["git", "-C", str(project), "ls-files", "-co", "--exclude-standard", "-z", "--", "*.md"],
-            capture_output=True, timeout=30, check=True).stdout.decode("utf-8", errors="replace")
+            capture_output=True, timeout=30, check=True, **background_options()).stdout.decode("utf-8", errors="replace")
         mine = [project / name for name in out.split("\0") if name]
     except (OSError, subprocess.SubprocessError):
         # Sorted as git's list is, so equal scores rank the same on every machine.
