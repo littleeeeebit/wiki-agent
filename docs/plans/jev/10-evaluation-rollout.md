@@ -476,7 +476,26 @@ uncertain (0.54). Fixed after this run: a memory is not flagged as a
 redirect, since a memory is the user's own authoritative record and a
 preference on how the assistant answers is its fact. And the grader is now
 given the same `records` (front matter `supersedes`) the drafter and the
-judge see. Both change what the next run measures; neither was run.
+judge see (commit `2830c6f`).
+
+Held-out, answer level, arms A and D, fifth run, English only, 2026-09-28
+(`raw/eval/jev/compare-heldout-answers-en5`, `report-heldout-en5.json`; one
+batch): 120 rows, 245 host turns, USD 6.64, 193 Jev requests, 378,638 Jev
+tokens, 33.3 minutes.
+
+| Arm | Coverage (60) | Unsupported claims | Recall@8 | Bridge recall |
+| --- | --- | --- | --- | --- |
+| A | 0.996 [0.988, 1.0] | 0.370 [0.323, 0.422] of 495 | 0.948 | 0.583 |
+| D | 0.892 [0.817, 0.958] | 0.0 [0.0, 0.0] of 114 | 1.0 | 1.0 |
+
+No unsupported claim in D's published answers. Answer support fails on
+coverage (D − A −0.10); the other six gates pass. D's coverage moved 0.925
+→ 0.892 between two runs, and the fixes between them touched memory flags
+and grading only: most of that is run-to-run variation in the drafts and in
+Jev's choices at the edge of the rule. Short of full coverage: three direct
+questions (`direct-01`, `-08`, `-10`), `route-09`, `bridge-01`, `bridge-03`,
+`bridge-08` and `memory-03`; the last still abstains with the memory no
+longer flagged, and its drafts were not run again.
 
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
@@ -489,9 +508,9 @@ Left before completion, in order:
 1. Label review — done 2026-09-28 by a model at the user's
    direction (above). A label changed after that is a new version.
 2. Held-out retrieval level, fixed and action experiments — done 2026-09-28
-   (above). Answer level for A and D ran four times on 2026-09-28 and
+   (above). Answer level for A and D ran five times on 2026-09-28 and
    answer support failed each time on coverage (English rows 0.66, 0.87,
-   0.90, 0.925 against A's 1.0).
+   0.90, 0.925, 0.892 against A's 1.0 or 0.996).
    The 3× repetition subset is not run.
 3. Every gate `pass`, then `rollout.py canary <this checkout>`; `.env` stays
    `WIKI_JEV_MODE=shadow` until the canary has run without a rollback.
@@ -501,8 +520,8 @@ Left before completion, in order:
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | In progress — `eval/jev/intents.json` and `actions.json` frozen with corpus hashes and splits; labels reviewed 2026-09-28 by a model at the user's direction, version 2 of both |
-| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level run four times for A and D; the repetition subset not run |
-| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; English only from `gates.json` version 2; on the held-out half answer support fails (coverage 0.925 against A's 1.0) and the other six pass |
+| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level run five times for A and D; the repetition subset not run |
+| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; English only from `gates.json` version 2; on the held-out half answer support fails (coverage 0.892 against A's 0.996, with no unsupported claim) and the other six pass |
 | 4 | Product | App/CLI parity, window checks, operational failures | In progress — the canary in settings, the API and the window's mode line; window checks not run this stage |
 | 5 | Rollout | Shadow, active canary, rollback rehearsal | In progress — canary, off and follow commands; rehearsal passed; active canary waits for the gates |
 | 6 | Completion | Reproduction report, all gates, plan archival | Not started |
