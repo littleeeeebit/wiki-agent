@@ -311,9 +311,43 @@ and no unoffered candidate executed.
 
 Gates against v1 of `gates.json`: integrity, graph benefit, overall recall,
 decision quality (0.967), language parity (0.0), added latency (1.57 s) and
-operating ceiling pass. Answer support is not measured: it needs the answer
-level, which spends host turns. The labels were reviewed by a model, not a
-person, and the report says so.
+operating ceiling pass. The labels were reviewed by a model, not a person, and
+the report says so.
+
+Held-out, answer level, arms A and D, 2026-09-28
+(`raw/eval/jev/compare-heldout-answers-ad`, `report-heldout-answers.json`; same
+options otherwise; two batches, the first stopped at the USD 10 ceiling):
+240 rows, 507 host turns, USD 13.63, 357 Jev requests, 695,980 Jev tokens,
+64.8 minutes. The user chose A and D only, the two arms the answer-support gate
+reads.
+
+| Arm | Coverage (120) | Unsupported claims | Recall@8 | Bridge recall |
+| --- | --- | --- | --- | --- |
+| A | 0.998 [0.994, 1.0] | 0.438 [0.401, 0.474] of 900 | 0.896 | 0.583 |
+| D | 0.679 [0.583, 0.771] | 0.0095 [0.0, 0.024] of 210 | 0.995 | 0.958 |
+
+**Answer support fails.** D cuts unsupported claims by 97.8%, but the gate also
+requires coverage no lower than A's, and D's is 0.32 lower. Every other gate
+still passes on this run. Diagnosis, all in stage 7's publication:
+
+1. Direct questions: all 12 abstained. A `direct_text` may not state a number or
+   identifier the question and conversation did not (stage 7 review round 1),
+   so every computation or transformation (`51`, `userId`, `robrah`) is withheld.
+2. Adversarial questions: all 12 abstained. Redirect is judged per passage, and
+   a claim resting only on a flagged passage is rejected, so the page's true
+   fact goes with its injected sentence (`adv-03`: SSO in 4.2).
+3. A false redirect flag: memory-03's memory ("the user wants progress reports
+   in English …") was flagged as addressing the assistant, and failed by 2.
+4. Integration: whether a claim answers a part is judged one claim at a time.
+   A bridge answer that needs two accepted claims together ("Lumen serves the
+   static assets" + "Lumen's account manager is Priya") is judged `partly` twice
+   and the run abstains or ends partial (bridge-08, bridge-10, route-09). The
+   whole question kept as a requirement beside its parts is never answered by
+   one claim, so every multi-part answer ends `partial` and lists the whole
+   question as not established even when the grader counts both parts answered.
+
+Per the rule above, active rollout stays blocked; a fix to stage 7 is a new
+evaluation (answer level again, a new run directory), not an edit of this one.
 
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
@@ -326,9 +360,9 @@ Left before completion, in order:
 1. Label review — done 2026-09-28 by a model at the user's
    direction (above). A label changed after that is a new version.
 2. Held-out retrieval level, fixed and action experiments — done 2026-09-28
-   (above). Still to run: answer level (`--level answer`, host spend under the
-   ceiling), which the answer-support gate needs, and the 3× repetition subset;
-   then `report.py` over all of them.
+   (above). Answer level for A and D ran 2026-09-28 and answer support
+   failed (above): fix stage 7's publication and run the answer level again.
+   The 3× repetition subset is not run.
 3. Every gate `pass`, then `rollout.py canary <this checkout>`; `.env` stays
    `WIKI_JEV_MODE=shadow` until the canary has run without a rollback.
 
@@ -338,7 +372,7 @@ Left before completion, in order:
 | --- | --- | --- | --- |
 | 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | In progress — `eval/jev/intents.json` and `actions.json` frozen with corpus hashes and splits; labels reviewed 2026-09-28 by a model at the user's direction, version 2 of both |
 | 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level and the repetition subset not run |
-| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; seven of eight gates pass on the held-out half, answer support not measured |
+| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; on the held-out half answer support fails (coverage 0.68 against A's 1.0) and the other seven pass |
 | 4 | Product | App/CLI parity, window checks, operational failures | In progress — the canary in settings, the API and the window's mode line; window checks not run this stage |
 | 5 | Rollout | Shadow, active canary, rollback rehearsal | In progress — canary, off and follow commands; rehearsal passed; active canary waits for the gates |
 | 6 | Completion | Reproduction report, all gates, plan archival | Not started |

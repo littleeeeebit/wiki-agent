@@ -173,7 +173,7 @@ Published benchmark numbers are not forecasts for this repository.
 | 7 | [Grounded answers](7-grounded-answer.md) | Claim structure, citation checks, repair, and abstention | Done |
 | 8 | [Agent decisions](8-agent-decisions.md) | Server-owned choices, preconditions, execution, and outcomes | Done |
 | 9 | [Product and observability](9-product-observability.md) | Settings, map paths, evidence, trace, reconnection, and cost | Done |
-| 10 | [Evaluation and rollout](10-evaluation-rollout.md) | Ablations, live evaluation, window checks, and reversible activation | In progress — held-out retrieval, fixed and action runs pass seven of eight gates; answer level (host spend), window checks and the canary remain |
+| 10 | [Evaluation and rollout](10-evaluation-rollout.md) | Ablations, live evaluation, window checks, and reversible activation | In progress — held-out: seven of eight gates pass; answer support fails on stage 7's publication (coverage); window checks and the canary remain |
 
 Implement in order. Evaluation fixtures start in stage 1 and accumulate results
 throughout; measurement does not wait until stage 10. Each stage is a reviewable
