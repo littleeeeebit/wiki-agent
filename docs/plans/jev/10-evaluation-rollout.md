@@ -569,6 +569,35 @@ unnormalized because the translation changed an identifier or a number
 (`dropped_doc_countsType`, `배경.md` as `Background.md`), which stage 2's check
 rightly refuses.
 
+Read from its Langfuse trace (PR #43), the refusal was a chain: the notice was
+material, so nothing could cite it; the drafter restated it as `direct_text`,
+which a retrieval run rejects; every comparison rested on that claim and fell
+as `bad_premises`. Fixed one gate at a time — material cited as evidence,
+quoted Korean names kept, an uncertain part beside a sure one taken as
+material, the relation told a passage is the user's own (`origin: user`,
+`relation.json` version 2, refit Jev only with rules unchanged), the monthly
+translation limit raised to USD 10 after it ran out at 5.04 — the answer came
+out `complete`, but the comparison sentences stayed withheld (0.58–0.72 against
+the relation's 0.9), and a refit to carry them moved the relation rule to 0.6
+on a tie, for every answer. The gates are each right; in series, six of them
+over one comparison withhold it, and they were fitted on lookups.
+
+So the line is drawn by the question (the owner's decision): the route request
+also asks `analysis` — does the query ask for a comparison, a judgment, an
+assessment or advice rather than for facts the sources state — kept out of
+`PROMPTS` like `ask`, provisional 0.2/0.8. Probed before the change: the
+notice comparison 0.93, comparing two of the project's retrievers 0.87,
+advice 0.96, an assessment 0.95; a port, an owner, a rule 0.05–0.07; why a
+limit was set 0.23, uncertain, so checked. Only a sure yes skips the claim
+check: the run still searches and the draft still cites, and the answer is
+published as `unverified`, labelled, `verified: false`, so no later direct
+run restates it (invariant 5 now names this exception). The stage 6 replay
+tape was recorded again for the new question; its bridge question now ends
+partial (coverage 0.61–0.64 in three recordings, under stage 10's fitted 0.65;
+the old tape had been recorded under stage 6's 0.6). Not yet done: `analysis`
+has no labelled cases, so its thresholds are provisional, and no held-out
+run covers the new path.
+
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
 calls are not counted in `host_turns` or USD, and they are the one spend

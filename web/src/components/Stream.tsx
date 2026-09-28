@@ -189,6 +189,7 @@ const CHECKED: Record<Verification['status'], string> = {
   partial: '부분 답 · 근거로 확인된 부분만 싣는다',
   abstained: '답 보류 · 찾은 근거로는 확인되는 답이 없다',
   verification_unavailable: '검증 불가 · 근거 대조를 하지 못했다',
+  unverified: '분석 (미검증) · 비교·판단을 물어서, 근거와 대조하지 않은 에이전트의 해석이다',
 }
 
 function Checked({ v }: { v: Verification }) {

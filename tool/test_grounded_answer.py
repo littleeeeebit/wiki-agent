@@ -494,6 +494,25 @@ def test_a_pasted_notice_is_cited_as_material_and_a_comparison_stands_on_it(tmp_
     assert out["verified"]["rejected"] == [{"claim_id": "c1", "reason": "fabricated_quote"}]
 
 
+def test_an_analysis_asked_for_is_published_whole_and_labelled_unverified(tmp_path):
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    d = {**dossier([ports], ["Is port 8791 a good choice for the search daemon?"]), "analysis": True}
+    fact = claim("c1", "The search daemon listens on port 8791.", quotes=["listens on port 8791"])
+    judged = claim("c2", "Keeping the daemon on 8791, beside the chat server's 8787, is a sensible choice.",
+                   kind="inference", cites=(), premises=("c1",))
+    unknown = claim("c3", "The owners chose it in 2024.", cites=("e9",), quotes=["chose it in 2024"])
+    judge = Judge()
+    out, _events, messages = answer(d, [draft(fact, judged, unknown), draft(fact, judged, unknown)], judge)
+    v = out["verified"]
+    assert len(messages) == 2, "the unknown id is repairable, as in any draft"
+    assert judge.asked == [], "nothing of an analysis is asked of Jev"
+    assert v["status"] == "unverified" and v["verified"] is False and v["missing_requirements"] == []
+    assert [c["claim_id"] for c in v["claims"]] == ["c1", "c2"] and {c["support"] for c in v["claims"]} == {"unverified"}
+    assert v["rejected"] == [{"claim_id": "c3", "reason": "malformed"}], "an id no evidence has cannot be cited"
+    assert out["text"].startswith("Unverified analysis:") and "a sensible choice" in out["text"]
+    assert "`docs/ports.md:3`" in out["text"]
+
+
 def test_a_korean_name_a_quote_holds_may_stand_in_an_english_claim(tmp_path):
     shop = item(tmp_path, "docs/shop.md", "나라장터 자체입찰 공고의 법령 위반 판정",
                 "Judging legal violations in 나라장터 self-bidding notices")

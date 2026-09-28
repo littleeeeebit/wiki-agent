@@ -56,7 +56,7 @@ def english(texts, seconds, owners=None):
 
 
 def answering(route=0.9, sources=None, useful=0.9, conflict=0.0, redirect=0.0, coverage=0.9, repair="defer",
-              confidence=0.9, offered_only=True, ask=0.9):
+              confidence=0.9, offered_only=True, ask=0.9, analysis=0.05):
     """A fake Jev: each question kind answered by a number or a function of its
     name. Its repair is `defer` where `repair` is not offered, unless told to
     name it anyway."""
@@ -69,6 +69,8 @@ def answering(route=0.9, sources=None, useful=0.9, conflict=0.0, redirect=0.0, c
         for name, q in questions.items():
             if name == "retrieve":
                 out[name] = value(route, name)
+            elif name == "analysis":
+                out[name] = value(analysis, name)
             elif name.startswith("source_"):
                 out[name] = (sources or {}).get(name[7:], 0.9)
             elif name == "repair":
@@ -625,6 +627,16 @@ def test_jev_tells_the_parts_asked_from_the_material_pasted_with_them(ask, kept)
     assert [m["id"] for m in out["material"]] == [r for r in ("r0", "r1", "r2") if r not in kept]
 
 
+@pytest.mark.parametrize("score, analysis", [(0.93, True), (0.5, False), (0.05, False)])
+def test_jev_tells_a_request_for_analysis_from_a_question_of_fact(score, analysis):
+    # ai-nara-shop: comparing a pasted notice with the project was checked claim by claim, and withheld step
+    # after step. Only a sure yes skips that check; uncertain keeps it.
+    world = World(answering(analysis=score), [found([chunk("port", "The port is 8791.")])])
+    out = run(world, query=PASTED)
+    assert world.asked[0][0] == "route" and "analysis" in world.asked[0][2]
+    assert out["analysis"] is analysis and out["evidence"], "an analysis still searches"
+
+
 def test_a_single_question_asks_jev_nothing_about_its_parts():
     world = World(answering(), [found([chunk("port", "The port is 8791.")])])
     run(world)
@@ -1121,8 +1133,9 @@ def test_a_live_run_s_committed_tape_replays_exactly():
     tape = json.loads((EVAL / "replay.smoke-03.tape.json").read_text(encoding="utf-8"))
     again = knowledge.replay(tape)
     assert again["matches"] and not again["prompt_changed"], "the prompts changed: record the tape again"
-    # The bridge question: both passages found, covered together under the fitted policy.
-    assert [t["to"] for t in again["transitions"]][-1] == "ready"
+    # The bridge question: both passages found, their coverage 0.61-0.64 in three recordings — ready under the
+    # stage 6 policy's 0.6, a repair round and then partial under stage 10's fitted 0.65.
+    assert [t["to"] for t in again["transitions"]][-2:] == ["assess", "partial"]
 
 
 def test_the_committed_policy_is_fitted_for_the_model_and_prompts_in_use():

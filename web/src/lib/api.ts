@@ -122,7 +122,7 @@ export type Tokens = {
  *  `docs/plans/jev/`): only what the server's `verified-answer/1` says, never
  *  guessed from the text. An answer without one was not checked. */
 export type Verification = {
-  status: 'complete' | 'partial' | 'abstained' | 'verification_unavailable'
+  status: 'complete' | 'partial' | 'abstained' | 'verification_unavailable' | 'unverified'
   verified: boolean
   degraded: boolean
   reason: string | null

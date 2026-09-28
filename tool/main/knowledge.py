@@ -189,6 +189,11 @@ PROMPT_VERSION = hashlib.sha256(json.dumps(PROMPTS, sort_keys=True).encode()).he
 ASK = ("Is query part {id} something the user asks the assistant to answer or do, a question or a request, "
        "rather than material the user supplied for it to work on, such as a pasted notice, document or message, "
        "or instructions written for someone else?")
+# Asked on every route, beside it and for the same reason kept out of PROMPTS: an analysis — a comparison, a
+# judgment, advice — is the assistant's own working-out, which no passage states, so checking it claim by claim
+# withheld it step after step. Only a sure yes skips that check; uncertain keeps it (invariant 2).
+ANALYSIS = ("Does the query ask the assistant for analysis it works out itself, such as a comparison, a judgment, "
+            "an assessment, an opinion or advice, rather than for facts the repository's sources state?")
 REPAIRS = {
     "context": "Read the sections next to a passage that was cut off or read only in part.",
     "sources": "Search the enabled sources not searched yet: {rest}.",
@@ -249,7 +254,8 @@ def route_questions(available: list[str], parts: list[str] = ()) -> dict:
     """The route request's questions: is retrieval needed, could each source
     help, and is each of the query's `parts` asked or only supplied."""
 
-    questions = {"retrieve": {"decision": "route", "candidate": None, "question": decision.noul(PROMPTS["route"])}}
+    questions = {"retrieve": {"decision": "route", "candidate": None, "question": decision.noul(PROMPTS["route"])},
+                 "analysis": {"decision": "analysis", "candidate": None, "question": decision.noul(ANALYSIS)}}
     for s in available:
         questions[f"source_{s}"] = {"decision": "source", "candidate": s, "question": decision.noul(
             PROMPTS["source"].format(source=s, description=DESCRIBED[s]))}
@@ -393,7 +399,8 @@ class Flow:
         self.dossier = {
             "schema_version": DOSSIER, "status": None, "reason": None, "question_en": None, "direct": False,
             "restrictions": [],
-            "sources": [], "evidence": [], "requirements": [], "material": [], "split": None, "missing": [],
+            "sources": [], "evidence": [], "requirements": [], "material": [], "analysis": False, "split": None,
+            "missing": [],
             "conflicts": [], "untrusted": [],
             "reads": [], "limits": [], "repairs": [], "transitions": [], "decisions": [], "trace": [],
             "normalization": None, "policy": pol.record(), "trace_id": self.trace_id,
@@ -603,6 +610,7 @@ class Flow:
         if parts and asked and len(asked) < len(self.requirements):
             self.dossier["material"] = [{"id": r["id"], "text": r["text"]} for r in self.requirements if r not in asked]
             self.requirements = asked
+        self.dossier["analysis"] = verdicts.get("analysis") == "yes"
         if verdicts["retrieve"] == "no" and not required:
             self.dossier.update(direct=True, restrictions=DIRECT)
             return self.go("ready", "direct_eligible", score=res["answers"]["retrieve"])
@@ -1319,6 +1327,18 @@ class Grounding:
             return gen
         claims = {c["claim_id"]: c for c in draft["claims"]}
         checks = gen["checks"]
+        if self.dossier.get("analysis"):
+            # Asked for analysis — a comparison, a judgment, advice — the answer is the host's own working-out
+            # over the evidence, which no passage states: nothing is asked of Jev, and it is published whole,
+            # labelled unverified. Only what cannot be shown at all falls: an unreadable claim, an unknown id.
+            gen["analysis"] = True
+            for cid, claim in claims.items():
+                broken = (self.problem(claim, {}) == "malformed"
+                          or not set(claim["evidence_ids"]) <= set(self.ids))
+                checks[cid] = {"state": "rejected" if broken else "accepted",
+                               "reason": "malformed" if broken else None, "support": None if broken else "unverified"}
+            self.generations.append(gen)
+            return gen
         for cid, claim in claims.items():
             earlier = {k: claims[k] for k in list(claims)[:list(claims).index(cid)]}
             reason = self.problem(claim, earlier)
@@ -1546,8 +1566,9 @@ class Grounding:
         answered = ({r for (_cid, r), got in said.items() if got == "answers"}
                     | {r for r, got in sets.items() if got == "answers"})
         touched = answered | {r for (_cid, r), got in said.items() if got == "partly"}
-        missing = [r for r in gen["requirements"] if r["id"] not in answered]
-        status = ("verification_unavailable" if unavailable else
+        missing = [] if gen.get("analysis") else [r for r in gen["requirements"] if r["id"] not in answered]
+        status = ("unverified" if gen.get("analysis") and shown else
+                  "verification_unavailable" if unavailable else
                   "complete" if shown and answered and not missing else
                   "partial" if touched else "abstained")
         used = list(dict.fromkeys(e for cid in shown for e in claims[cid]["evidence_ids"]))
@@ -1555,11 +1576,12 @@ class Grounding:
                                       None) or (f"draft:{gen['problem']}" if gen["problem"] else None))
         verified = {
             "schema_version": VERIFIED, "run_id": self.run_id, "status": status, "reason": reason,
-            "verified": not unavailable, "degraded": baseline,
+            "verified": not unavailable and not gen.get("analysis"), "degraded": baseline,
             "claims": [{"claim_id": cid, "kind": claims[cid]["kind"], "text_en": claims[cid]["text_en"],
                         "evidence_ids": [ids[e]["chunk_id"] for e in claims[cid]["evidence_ids"]],
                         "requirement_ids": claims[cid]["requirement_ids"], "premises": claims[cid]["premises"],
-                        "support": ("supported" if checks[cid]["state"] == "accepted" and claims[cid]["kind"] in FACTUAL
+                        "support": ("unverified" if gen.get("analysis") else
+                                    "supported" if checks[cid]["state"] == "accepted" and claims[cid]["kind"] in FACTUAL
                                     else "unverified" if checks[cid]["state"] != "accepted" else "faithful")}
                        for cid in shown],
             "uncertainty": [{"claim_id": cid, "reason": c["reason"]} for cid, c in checks.items()
@@ -1597,7 +1619,11 @@ def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict]) -> str:
         return " ".join(f"[{w}]({w})" if w.startswith(("https://", "http://")) else f"`{w}`" for w in where)
 
     parts: list[str] = []
-    if v["status"] == "verification_unavailable":
+    if v["status"] == "unverified":
+        parts.append("Unverified analysis: this asks for a comparison or judgment, which no passage states, so "
+                     "what follows is the assistant's own reading of the cited evidence and was not checked "
+                     "against it.")
+    elif v["status"] == "verification_unavailable":
         parts.append(f"Unverified answer: verification was unavailable ({v['reason']}), and this answer is shown "
                      "under the baseline setting." if v["degraded"] else
                      f"Verification unavailable ({v['reason']}): statements whose support could not be checked "
@@ -2717,7 +2743,8 @@ KEEP_TRACES = 200
 KEY_FLOOR = 8   # the shortest key `Run.redact` replaces
 LIVE: dict[str, Run] = {}
 _LIVE = threading.Lock()
-OUTCOMES = ("complete", "partial", "abstained", "verification_unavailable", "answered", "cancelled", "failed")
+OUTCOMES = ("complete", "partial", "abstained", "verification_unavailable", "unverified", "answered", "cancelled",
+            "failed")
 
 
 def runs_root() -> Path:

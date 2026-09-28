@@ -136,6 +136,10 @@ the versioned state migration.
 4. Graph paths discover candidates. Source evidence and explicit decisions
    establish support, contradiction, and supersession.
 5. Unverified generated claims cannot appear as final answers or durable memory.
+   One exception, at the owner's direction (2026-09-28): an analysis the user
+   asked for — a comparison, a judgment, advice — which no passage states. Jev
+   must be sure the question asks for one; it is still searched and cited,
+   published labelled unverified, and never restated later as verified.
 6. Every loop shares an end-to-end deadline, call count, token budget, and
    candidate limit. Per-stage limits cannot multiply the total allowance.
 7. Models choose from code-owned candidates; they cannot invent sources,
