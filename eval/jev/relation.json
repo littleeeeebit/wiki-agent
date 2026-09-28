@@ -1,9 +1,9 @@
 {
  "schema": "jev-relation-calibration/1",
  "id": "relation",
- "version": 1,
+ "version": 2,
  "split": "calibration",
- "description": "Synthetic claim-evidence pairs for stage 7's relation Choice: each case is one verification request as the answer path sends it — the English question, the passages, and every claim naming the passages it cites — and each claim is labelled supports, contradicts or insufficient. The kinds cover a plain fact, a paraphrase, a changed number, a flipped negation, a dropped condition, a widened scope, a real quote under an unrelated claim, a claim needing a passage it does not cite, a combination stated only across two passages, a superseded decision, and a passage addressing the assistant. English only: the verification path reads normalized English.",
+ "description": "Synthetic claim-evidence pairs for stage 7's relation Choice: each case is one verification request as the answer path sends it — the English question, the passages, and every claim naming the passages it cites — and each claim is labelled supports, contradicts or insufficient. The kinds cover a plain fact, a paraphrase, a changed number, a flipped negation, a dropped condition, a widened scope, a real quote under an unrelated claim, a claim needing a passage it does not cite, a combination stated only across two passages, a superseded decision, and a passage addressing the assistant. Version 2 adds material: text the user supplied (`origin: user`, a pasted notice, a forwarded message), which supports a claim about what it says and never a fact about the world. English only: the verification path reads normalized English.",
  "cases": [
   {
    "id": "v01",
@@ -138,6 +138,36 @@
     {"id": "c1", "text": "The Atlas team owns the ingest pipeline.", "cites": ["e1"], "label": "supports", "kind": "paraphrase"},
     {"id": "c2", "text": "The Atlas team owns the search daemon on port 8791.", "cites": ["e1", "e2"], "label": "insufficient", "kind": "combined_unstated"},
     {"id": "c3", "text": "The search daemon listens on port 8791.", "cites": ["e1"], "label": "insufficient", "kind": "wrong_cite"}
+   ]
+  },
+  {
+   "id": "v11",
+   "question": "This notice was posted for our bootcamp project. How does it compare with what we are doing now?",
+   "passages": [
+    {"id": "m1", "origin": "user", "text": "'Bidwise' is a startup that helps companies bid on public contracts. Its consultants must quickly grasp the key requirements, agencies, budgets and submission methods of each request for proposals. You will be provided with 100 actual RFP documents and their metadata. Experiment with various natural language processing models to build a system that can answer questions about those documents. Each team selects its own evaluation methods or metrics, and every decision must appear in the report and presentation."},
+    {"id": "e1", "text": "Our pipeline judges each bid notice against 24 review items and outputs a 0/1 flag for each item."}
+   ],
+   "claims": [
+    {"id": "c1", "text": "The notice asks teams to try various natural language processing models.", "cites": ["m1"], "label": "supports", "kind": "material_paraphrase"},
+    {"id": "c2", "text": "The notice provides 100 real RFP documents together with their metadata.", "cites": ["m1"], "label": "supports", "kind": "material_plain"},
+    {"id": "c3", "text": "The notice asks for a question-answering system over RFP documents whose evaluation metrics each team chooses.", "cites": ["m1"], "label": "supports", "kind": "material_combined"},
+    {"id": "c4", "text": "The notice provides 200 RFP documents.", "cites": ["m1"], "label": "contradicts", "kind": "material_number"},
+    {"id": "c5", "text": "The notice sets a submission deadline of 30 days.", "cites": ["m1"], "label": "insufficient", "kind": "material_unstated"},
+    {"id": "c6", "text": "Our pipeline outputs a 0/1 flag for each of 24 review items.", "cites": ["m1"], "label": "insufficient", "kind": "wrong_cite"}
+   ]
+  },
+  {
+   "id": "v12",
+   "question": "My teammate sent me this. Does it match what the docs say about the search daemon?",
+   "passages": [
+    {"id": "m1", "origin": "user", "text": "Hey, I think the search daemon moved to port 9000 last week, and the old port 8791 is closed now."},
+    {"id": "e1", "text": "The search daemon listens on port 8791."}
+   ],
+   "claims": [
+    {"id": "c1", "text": "The teammate's message says the search daemon moved to port 9000.", "cites": ["m1"], "label": "supports", "kind": "material_paraphrase"},
+    {"id": "c2", "text": "The search daemon listens on port 9000.", "cites": ["m1"], "label": "insufficient", "kind": "material_as_fact"},
+    {"id": "c3", "text": "The teammate's message says port 8791 is still open.", "cites": ["m1"], "label": "contradicts", "kind": "material_negation"},
+    {"id": "c4", "text": "The search daemon listens on port 8791.", "cites": ["e1"], "label": "supports", "kind": "plain"}
    ]
   }
  ]

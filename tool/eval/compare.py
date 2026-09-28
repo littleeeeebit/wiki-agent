@@ -129,7 +129,7 @@ def versions() -> dict:
             "policy": decision.policy(cfg.model, prompt_version=knowledge.PROMPT_VERSION).record(),
             "relation": decision.claims.VERSION, "verification": knowledge.VERIFICATION_VERSION,
             "action_prompt": decisions.VERSION, "retrieval": retrieval.RESULT, "graph_budget": retrieval.GRAPH,
-            "question_limits": dict(cfg.limits), "normalization": "translate (Korean) / original_english"}
+            "question_limits": dict(cfg.limits), "normalization": "original_english"}
 
 
 class Ceiling:
@@ -281,7 +281,8 @@ def answered(unit: dict, d: dict, repo: Path, jev: bool, cfg: decision.Config, m
                 "host_usd": spent.get("cost_usd", 0.0), "host_turns": spent.get("turns", 0),
                 "elapsed_ms": round((time.monotonic() - started) * 1000),
                 "accepted": len(v["claims"]), "rejected": len(v["rejected"]),
-                "verify_usage": [g["decision"]["usage"] for g in out["record"]["generations"] if g["decision"]],
+                "verify_usage": [g[k]["usage"] for g in out["record"]["generations"]
+                                 for k in ("decision", "rejoined") if g.get(k)],
                 # A published citation must name evidence the run held: anything else was invented.
                 "fabricated": [c["cite"] for c in v["citations"] if c["evidence_id"] not in held]}
     finally:
@@ -296,7 +297,9 @@ def graded(unit: dict, d: dict, text: str, data: dict, model: str) -> dict:
                "parts": [{"id": p["id"], "ask": p["ask"], "reference": p["reference"]} for p in intent["parts"]],
                "forbidden": intent["forbidden"], "abstention_expected": intent["abstain"],
                "reference_passages": [dataset.passage(data, g[0])[1] for g in intent["evidence"]],
-               "retrieved_passages": [" ".join(e["original_text"].split())[:1500] for e in d["evidence"]]}
+               "retrieved_passages": [" ".join(e["original_text"].split())[:1500] for e in d["evidence"]],
+               # Front matter sits above the text a passage holds: which record replaces which.
+               "records": list(knowledge.lineages(dict(enumerate(d["evidence"]))).values())}
     reply, usd = "", 0.0
     for ev in oneshot("eval-grade.md", payload, model):
         if ev.kind == "error":

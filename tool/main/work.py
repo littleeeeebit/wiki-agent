@@ -366,9 +366,10 @@ def reset(body: Clearing) -> dict:
 class Run:
     """One worktree's turn, as a buffer of its events in order.
 
-    Each event is the screen's payload plus `seq`, its place here from 0,
-    `turn`, so a screen that reattaches after `seq` k gets k+1 onwards and
-    can tell this turn's events from the next one's, and `ts`, when it came:
+    Each event is the screen's payload plus three fields.
+    `seq` is its place here from 0: a screen that reattaches after `seq` k
+    gets k+1 onwards. `turn` tells this turn's events from the next one's.
+    `ts` is when it came:
     a screen that reattaches still knows how long the last step has run.
     """
 

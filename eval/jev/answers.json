@@ -29,6 +29,10 @@
   "v10": {"requirements": [{"id": "r0", "text": "Which team owns the ingest pipeline?"},
                            {"id": "r1", "text": "Which port does the daemon use?"}],
           "claims": {"c1": {"r0": "answers", "r1": "no"}, "c2": {"r0": "no", "r1": "answers"},
-                     "c3": {"r0": "no", "r1": "answers"}}}
+                     "c3": {"r0": "no", "r1": "answers"}}},
+  "v11": {"requirements": [{"id": "r0", "text": "How does the pasted notice compare with what we are doing now?"}],
+          "claims": {"c1": {"r0": "partly"}, "c2": {"r0": "partly"}}},
+  "v12": {"requirements": [{"id": "r0", "text": "Does the teammate's message match what the docs say about the search daemon?"}],
+          "claims": {"c1": {"r0": "partly"}, "c4": {"r0": "partly"}}}
  }
 }

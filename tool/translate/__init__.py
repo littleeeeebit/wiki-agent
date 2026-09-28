@@ -35,6 +35,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 import urllib.request
@@ -73,6 +74,19 @@ PRICE_OUT = 1.50
 
 # The monthly limit when neither `.env` nor the environment names one.
 MONTHLY_USD = 5.0
+
+# How much longer than its caller a request that goes to the shared cache may
+# keep reading. The caller stops waiting at its deadline; the answer still lands
+# in the cache, so a passage too long to translate within one turn's seconds is
+# there on the next turn rather than timing out on every one.
+LATE_SECONDS = 60.0
+# Texts per request. A batch of 21 passages came back as 23 strings and was
+# lost whole; ponytail: a fixed count, not a character budget, until a batch
+# this small is seen to split.
+BATCH = 4
+# Set only on the thread that reads such a request (`_translate`), so every
+# other `_ask` keeps its caller's seconds as its read timeout.
+_late = threading.local()
 
 # Part of the cache key. Bump it whenever SYSTEM or the request shape changes.
 # Without it the cache keeps serving text translated under a different contract,
@@ -436,7 +450,7 @@ def _ask(system: str, batch: list[str], seconds: float, same_length: bool = True
         charge(-held, at)
         return None
     try:
-        answer = urllib.request.urlopen(request, timeout=seconds)
+        answer = urllib.request.urlopen(request, timeout=seconds + getattr(_late, "seconds", 0.0))
     except TimeoutError:
         # The server may well have finished and billed it. With no usage to
         # read, the hold stands.
@@ -461,10 +475,11 @@ def _ask(system: str, batch: list[str], seconds: float, same_length: bool = True
     return [str(x) for x in out]
 
 
-def _store() -> sqlite3.Connection | None:
+def _store(path: Path | None = None) -> sqlite3.Connection | None:
+    path = path or CACHE
     try:
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(CACHE, timeout=2.0)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        db = sqlite3.connect(path, timeout=2.0)
         # The UserPromptSubmit hook and the screen's overlay translate at the same time.
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("CREATE TABLE IF NOT EXISTS shots (k TEXT PRIMARY KEY, v TEXT)")
@@ -543,6 +558,10 @@ def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
         return [(text, "request_failed") for text in texts]
 
 
+# Where a text is cut into items for the request: before a list item or a table row.
+LINE_ITEM = re.compile(r"\n(?=[ \t]*(?:[-*+][ \t]|\d+[.)][ \t]|\|))")
+
+
 def _translate(texts: list[str], direction: str, deadline: float, accept=None,
                held: dict[str, str] | None = None) -> list[tuple[str, str]]:
     keep, fixed, version = glossary()
@@ -595,29 +614,62 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
     if wanted:
         masked: list[tuple[str, list[str]]] = [protect(texts[i], keep) for i in wanted]
         seconds = max(0.0, deadline - time.monotonic())
-        answer = _ask(instruction(direction, fixed), [m for m, _ in masked], seconds)
-        for i in wanted:
-            out[i] = (texts[i], "request_failed")
-        if answer is not None:
+        system, cache = instruction(direction, fixed), CACHE
+        got: dict[int, tuple[str, str]] = {}
+
+        def request(group: list[int]) -> None:
+            # A request for the shared cache reads on past the caller's
+            # deadline, on this thread, and caches what lands then. A held
+            # (private) text has no shared cache to land in, so it does not.
+            _late.seconds = LATE_SECONDS if held is None else 0.0
+            # A list item or table row an item: asked for a list as one string, the translator answered an
+            # item per line, and a reply of the wrong length is no reply. Wrapped prose stays whole.
+            split = [LINE_ITEM.split(masked[j][0]) for j in group]
+            answer = _ask(system, [piece for pieces in split for piece in pieces], seconds)
+            if answer is None:
+                return
+            back = iter(answer)
+            answer = ["\n".join(next(back) for _ in pieces) for pieces in split]
             fresh: list[tuple[str, str]] = []
-            for i, reply, (_, spans) in zip(wanted, answer, masked):
+            for i, reply, (_, spans) in zip([wanted[j] for j in group], answer, [masked[j] for j in group]):
                 if not intact(reply, len(spans)):
                     # Keep the original; a mangled span is not a translation.
-                    out[i] = (texts[i], "spans_broken")
+                    got[i] = (texts[i], "spans_broken")
                     continue
                 done = restore(reply, spans)
                 refused = accept(texts[i], done) if accept else None
                 if refused:
-                    out[i] = (texts[i], refused)
+                    got[i] = (texts[i], refused)
                     continue
                 fresh.append((keys[i], done))
-                out[i] = (done, "translated")
+                got[i] = (done, "translated")
             if fresh and held is None:
-                try:
-                    db.executemany("INSERT OR REPLACE INTO shots VALUES (?, ?)", fresh)
-                    db.commit()
-                except Exception:
-                    pass
+                store = _store(cache)
+                if store is not None:
+                    try:
+                        store.executemany("INSERT OR REPLACE INTO shots VALUES (?, ?)", fresh)
+                        store.commit()
+                    except Exception:
+                        pass
+                    finally:
+                        store.close()
+
+        for i in wanted:
+            out[i] = (texts[i], "request_failed")
+        # Small batches, sent at once: an answer whose array is not as long as
+        # its batch is refused whole, so one passage the model split in two
+        # costs its batch, never every passage of the turn.
+        groups = [list(range(n, min(n + BATCH, len(wanted)))) for n in range(0, len(wanted), BATCH)
+                  ] if seconds > 0 else []
+        workers = [threading.Thread(target=request, args=(g,), daemon=True) for g in groups]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(max(0.0, deadline - time.monotonic()))
+        for worker, group in zip(workers, groups):
+            if not worker.is_alive():
+                for i in (wanted[j] for j in group if wanted[j] in got):
+                    out[i] = got[i]
 
     if db is not None:
         try:
@@ -626,13 +678,15 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
             pass
 
     # Checked here, after everything, rather than at the one moment the
-    # response landed. The socket timeout bounds a single read, and restoring
-    # spans and writing the cache take time of their own — measuring at any
-    # earlier point leaves a stretch where the budget can quietly run out and
-    # the caller still gets handed a translation it no longer has room for.
-    # The work is kept: it is cached, so the next turn has it for nothing.
+    # response landed. Restoring spans and writing the cache take time of
+    # their own, so a batch is adopted only once its thread has finished, and
+    # the wait for it ends at the deadline. What was settled by then stands —
+    # a cache hit, a batch that finished — and a text still waiting on its
+    # request ran out. That work is kept: it lands in the cache, so the next
+    # turn has it for nothing.
     if time.monotonic() > deadline:
-        return [(text, status if status == "skipped" else "deadline") for text, (_t, status) in zip(texts, out)]
+        return [(text, "deadline") if status == "request_failed" else (done, status)
+                for text, (done, status) in zip(texts, out)]
     return out
 
 
@@ -649,22 +703,55 @@ WORDS = {w: str(i) for i, w in enumerate(
     "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
     "sixteen seventeen eighteen nineteen twenty".split())} | {
     w: str(30 + 10 * i) for i, w in enumerate("thirty forty fifty sixty seventy eighty ninety".split())}
-SPELLED = re.compile(r"\b(" + "|".join(WORDS) + r")\b", re.I)
+SPELLED = re.compile(r"\b(" + "|".join(WORDS) + r")(?:s|ed|ing)?\b", re.I)   # "zeroing" is `0으로`
+# An ordinal excuses only a digit the other side writes as an ordinal: "the
+# second round" is `2차`, but "three seconds" is never `2초` (review round 1).
+ORDINALS = {w: str(i + 1) for i, w in enumerate(
+    "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth "
+    "fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth twentieth".split())}
+ORDINAL = re.compile(r"\b(" + "|".join(w for w in ORDINALS if w != "second") + r")\b", re.I)
+# `second` is also the unit of time. It is an ordinal after `the`, or before a word it qualifies ("a second
+# pass"); a count before it ("one second", "30-second") or a word that goes with the unit after it ("a second
+# or two", "a second timeout") makes it the unit. Any whitespace between (review rounds 2 and 3).
+SECOND = re.compile(r"(?:\b(\w+)[\s-]+)?\bsecond\b(?:[\s-]+([A-Za-z]+))?", re.I)
+COUNTS = {"per", "each", "every", "half"}
+AFTER_UNIT = {"or", "and", "to", "for", "of", "in", "on", "at", "by", "ago", "later", "before", "after", "per", "now",
+              "then", "until", "while", "when", "is", "was", "are", "were", "be", "timeout", "timeouts", "delay",
+              "delays", "interval", "intervals", "limit", "window", "sleep", "pause", "wait", "timer"}
+# Marks that say ordinal and nothing else: a rank (`2위`) or `2등` is also the start of `2등급` (review round 2).
+ORDINAL_DIGIT = re.compile(r"제\s*(\d+)|(\d+)\s*(?:차|번째)")
+# Latin abbreviations match IDENTIFIER's dotted name, and a rendering drops them.
+ABBREVIATIONS = {"e.g", "i.e"}
 # Negation, English and Korean. A rendering of a paragraph — a verified
 # answer is one claim a paragraph — that negates where its source does not,
 # or the other way, can have reversed it. Presence, not a count: Korean
 # negates where English says `failed` or `otherwise`, and counts drifted on
 # 9 of 50 real paragraphs where presence drifted on 3. A rewrite (the plain
 # explanation) restructures too freely for either to mean anything.
+# A negative word negates too: "unlabeled announcements" is `레이블이 없는 공고`.
 # ponytail: presence, so a paragraph negating twice can lose one unseen; a model judge if that is ever seen.
-NEGATION = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot|unless)\b|n't\b|않|안 |못|없|아니|아닌",
-                      re.I)
+# Not `regardless`, `nevertheless`, `nonetheless`: those negate nothing (review round 1).
+NEGATION = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot|unless|unknown)\b|n't\b"
+                      r"|\bun(?!der|it|if|ion)[a-z]+(?:ed|able|ible)\b|\b(?!regardless|nevertheless|nonetheless)[a-z]+less\b"
+                      r"|않|안 |못|없|아니|아닌", re.I)
 
 
-def spelled(text: str) -> collections.Counter:
-    """The numbers `text` spells out, as digits."""
+def spelled(text: str, other: str = "") -> collections.Counter:
+    """The numbers `text` spells out, as digits: its number words, and its
+    ordinals that `other` writes as an ordinal digit."""
 
-    return collections.Counter(WORDS[w.lower()] for w in SPELLED.findall(text))
+    def ordinal(before: str, after: str) -> bool:
+        before = before.lower()
+        if before == "the":
+            return True
+        if before.isdigit() or before in WORDS or before in COUNTS:
+            return False
+        return bool(after) and after.lower() not in AFTER_UNIT
+
+    marked = {a or b for a, b in ORDINAL_DIGIT.findall(other)}
+    ordinals = [ORDINALS[w.lower()] for w in ORDINAL.findall(text)] + ["2" for before, after in SECOND.findall(text)
+                                                                       if ordinal(before, after)]
+    return collections.Counter([WORDS[w.lower()] for w in SPELLED.findall(text)] + [n for n in ordinals if n in marked])
 
 
 def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False) -> bool:
@@ -681,7 +768,7 @@ def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False) 
 
     def found(text: str) -> collections.Counter:
         prose = protect(text, keep)[0]
-        names = [n.rstrip(".:-") for n in IDENTIFIER.findall(prose)]
+        names = [n.rstrip(".:-") for n in IDENTIFIER.findall(prose) if n.rstrip(".").lower() not in ABBREVIATIONS]
         numbers = [n.replace(",", "") for n in NUMBER.findall(IDENTIFIER.sub(" ", prose))]
         return collections.Counter(names + numbers)
 
@@ -689,7 +776,7 @@ def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False) 
     if not words:
         return ours == theirs
     said, made = protect(source, keep)[0], protect(english, keep)[0]
-    return (not theirs - ours - spelled(said) and not ours - theirs - spelled(made)
+    return (not theirs - ours - spelled(said, made) and not ours - theirs - spelled(made, said)
             and bool(NEGATION.search(said)) == bool(NEGATION.search(made)))
 
 
@@ -699,7 +786,7 @@ def facts(text: str, keep: tuple[str, ...] = ()) -> set[str]:
     list's own numbering (`1. `) is layout, not a fact."""
 
     text = re.sub(r"(?m)^\s*\d+[.)]\s+", " ", text)
-    names = {n.rstrip(".:-") for n in IDENTIFIER.findall(text)}
+    names = {n.rstrip(".:-") for n in IDENTIFIER.findall(text) if n.rstrip(".").lower() not in ABBREVIATIONS}
     numbers = {n.replace(",", "").lstrip("0") or "0" for n in NUMBER.findall(IDENTIFIER.sub(" ", text))}
     return names | numbers
 
@@ -709,7 +796,7 @@ def added(source: str, derived: str) -> list[str]:
     presentation of an answer that says one of these made up a fact. A
     digit for a number `source` spells out is not one."""
 
-    return sorted(facts(derived, glossary()[0]) - facts(source, glossary()[0]) - set(spelled(source)))
+    return sorted(facts(derived, glossary()[0]) - facts(source, glossary()[0]) - set(spelled(source, derived)))
 
 
 def checked(texts: list[str], direction: str, deadline: float) -> list[tuple[str, str]]:

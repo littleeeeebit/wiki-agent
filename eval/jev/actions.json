@@ -1,13 +1,14 @@
 {
  "schema": "jev-action-fixtures/1",
  "id": "actions",
- "version": 1,
- "frozen": "2026-09-27",
+ "version": 2,
+ "frozen": "2026-09-28",
  "description": "Stage 10's held-out fixtures for the three decision points this server owns. Each is what the owner would offer and what Jev would read, built by `main.decisions`' own functions from the fields here (`start_offer`/`start_state` from a spec; the registered checks as `check_offer` describes them; `fix_offer`), and labelled with the candidate a careful operator would pick. None of them is used to fit anything.",
  "labels": {
   "author": "model-drafted",
-  "reviewed_by": null,
-  "reviewed_at": null
+  "reviewed_by": "claude-opus-5-5 (model review, at the repository owner's direction; not a person)",
+  "reviewed_at": "2026-09-28",
+  "note": "Every label names a candidate its point offers (`start_offer`, `check_offer`, `fix_offer`), and `clarify` appears only where the spec has no acceptance criterion beyond the gate, the one case the point offers it. Labels hold as drafted: a spec that names its change is dispatched, one that depends on a recorded decision or shared rule it does not cite gathers evidence first, a vague goal asks; a check is chosen when it examines the touched files; a finding resting on a rule or decision, or disputed the round before, gathers context. Version 2 corrects one fixture: f09 claimed `except Exception` swallows KeyboardInterrupt, which is false in Python (KeyboardInterrupt derives from BaseException); it now names a bare `except:`, which does."
  },
  "gate": "python -m pytest -q",
  "fixtures": [
@@ -514,7 +515,7 @@
    "label": "fix",
    "round": 1,
    "findings": [
-    "[P2] src/retry.py:22 - `except Exception` swallows KeyboardInterrupt; catch `OSError`"
+    "[P2] src/retry.py:22 - a bare `except:` swallows KeyboardInterrupt; catch `OSError`"
    ],
    "disputed": [],
    "split": "held_out"

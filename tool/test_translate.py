@@ -13,8 +13,10 @@ import re
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -61,7 +63,7 @@ FROZEN = (
 
 
 @pytest.fixture(autouse=True)
-def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Never read or write the real cache, and never need a real key.
 
     `ENV` goes too: a limit written in the real `.env` would decide whether
@@ -71,6 +73,12 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(T, "ENV", tmp_path / "absent.env")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.delenv("TRANSLATE_MONTHLY_USD", raising=False)
+    before = set(threading.enumerate())
+    yield
+    # A group the caller stopped waiting for still finishes; it must do so
+    # here, under this test's fakes, not refund into the next test's.
+    for worker in set(threading.enumerate()) - before:
+        worker.join(5)
 
 
 def soon() -> float:
@@ -221,18 +229,85 @@ def test_a_response_that_lands_after_the_deadline_is_not_adopted(
     costs the caller its whole injection, not just the translation.
     """
 
+    gave_up = threading.Event()
+
     def slow(_system: str, batch: list[str], _seconds: float) -> list[str]:
-        time.sleep(0.05)
+        gave_up.wait(10)   # it lands only once the caller has stopped waiting
         return ["EN"] * len(batch)
 
     monkeypatch.setattr(T, "_ask", slow)
-    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, time.monotonic() + 0.01) == [
+    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, time.monotonic() + 0.5) == [
         "훅이 조용히 죽는다"
     ]
+    gave_up.set()
 
     # It was still cached: the work was done and the next turn should have it.
     monkeypatch.setattr(T, "_ask", lambda *_a: None)
+    for _ in range(100):
+        if ko("훅이 조용히 죽는다") == "EN":
+            break
+        time.sleep(0.05)
     assert ko("훅이 조용히 죽는다") == "EN"
+
+
+def test_a_passage_the_model_splits_in_two_costs_only_its_own_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Twenty-one passages came back as twenty-three strings, the length check
+    refused the answer, and every passage of the turn went unread."""
+
+    texts = [f"{'가나다라마바사아자차카타파하'[n]} 문단은 한도를 넘으면 멈춘다" for n in range(T.BATCH * 3)]
+    split = texts[T.BATCH]
+    sizes: list[int] = []
+
+    def answers(_system: str, batch: list[str], _seconds: float) -> list[str] | None:
+        sizes.append(len(batch))
+        return None if split in batch else ["EN"] * len(batch)   # `_ask` refuses a length that does not match
+
+    monkeypatch.setattr(T, "_ask", answers)
+    out = T.translate(texts, T.KO_EN, soon())
+    assert max(sizes) <= T.BATCH
+    lost = [t for t, o in zip(texts, out) if o != "EN"]
+    assert split in lost and len(lost) == T.BATCH
+
+
+def test_a_list_is_asked_a_line_an_item_and_comes_back_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Found in the window: a three-item list sent as one string came back as
+    three strings, and the answer's last two paragraphs stayed English."""
+
+    asked: list[list[str]] = []
+
+    def answers(_system: str, batch: list[str], _seconds: float) -> list[str]:
+        asked.append(batch)
+        return [f"KO {line}" for line in batch]
+
+    monkeypatch.setattr(T, "_ask", answers)
+    out = T.translate(["줄바꿈한\n문단", "- 첫째 줄\n- 둘째 줄\n  이어지는 줄\n| 가 | 나 |"], T.KO_EN, soon())
+    assert asked == [["줄바꿈한\n문단", "- 첫째 줄", "- 둘째 줄\n  이어지는 줄", "| 가 | 나 |"]], "wrapped prose stays whole"
+    assert out == ["KO 줄바꿈한\n문단", "KO - 첫째 줄\nKO - 둘째 줄\n  이어지는 줄\nKO | 가 | 나 |"]
+
+
+def test_a_request_for_the_shared_cache_reads_past_the_callers_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Korean passage Gemini needs more than a turn's seconds for timed out
+    on every turn: the socket was cut at the caller's deadline, so nothing was
+    cached and the next turn asked again. The read now runs on past it, off
+    the caller's thread; a private text, with no shared cache, does not."""
+
+    timeouts: list[float] = []
+
+    def urlopen(_request, timeout):
+        timeouts.append(timeout)
+        raise OSError("not sent")
+
+    monkeypatch.setattr(T.urllib.request, "urlopen", urlopen)
+    T.translate(["훅이 조용히 죽는다"], T.KO_EN, time.monotonic() + 1)
+    T.english(["훅이 조용히 죽는다"], time.monotonic() + 1, held={})
+    shared, private = timeouts
+    assert shared > T.LATE_SECONDS and private <= 1
 
 
 def test_the_deadline_is_checked_after_the_work_not_at_the_response(

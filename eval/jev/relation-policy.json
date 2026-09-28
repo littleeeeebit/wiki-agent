@@ -1,18 +1,18 @@
 {
  "schema": "jev-policy/1",
  "model": "jev-1.13.0",
- "prompt_version": "efb3ad760d7f7180",
+ "prompt_version": "add8f96309a9b603",
  "normalization_version": "original_english",
  "dataset": {
   "path": "eval/jev/relation.json",
-  "sha256": "88944235057c0c7a0d9ac1a0dcfba2ad62c1a8878737970fe2f6aa18c03d2401",
+  "sha256": "a184e348d1f6197716efa4e825acef00093b4aafebc61f5297b85b9cbcb9bd6c",
   "split": "calibration",
-  "cases": 10,
-  "claims": 39,
+  "cases": 12,
+  "claims": 49,
   "answers": {
    "path": "eval/jev/answers.json",
-   "sha256": "ec4c96c1e167ccff1f7a55c52db2b043ae98d9bf9dd78644920a53231ca7d573",
-   "pairs": 42
+   "sha256": "e31ca4121e64ccc41266c372bf75d89198862a9707dcddb6f590286f3cc44ae7",
+   "pairs": 46
   },
   "faithful": {
    "path": "eval/jev/faithful.json",
@@ -22,7 +22,7 @@
  },
  "rules": {
   "relation": {
-   "confidence": 0.6,
+   "confidence": 0.9,
    "margin": 0.2
   },
   "answers": {
@@ -36,69 +36,69 @@
  },
  "errors": {
   "relation": {
-   "n": 39,
-   "supports": 15,
+   "n": 49,
+   "supports": 20,
    "fitted": true,
-   "cost": 0.2,
+   "cost": 0,
    "counts": {
     "false_acceptance": 0,
     "false_rejection": 0,
-    "mislabelled": 1,
-    "right": 38
+    "mislabelled": 0,
+    "right": 49
    },
    "provisional_cost": 0.2,
    "provisional_counts": {
     "false_acceptance": 0,
     "false_rejection": 0,
     "mislabelled": 1,
-    "right": 38
+    "right": 48
    }
   },
   "answers": {
-   "n": 42,
+   "n": 46,
    "answers": 24,
    "fitted": true,
-   "cost": 6.8,
+   "cost": 8.6,
    "counts": {
     "false_acceptance": 0,
-    "false_rejection": 6,
-    "mislabelled": 4,
-    "right": 32
+    "false_rejection": 7,
+    "mislabelled": 8,
+    "right": 31
    },
-   "provisional_cost": 6.8,
+   "provisional_cost": 8.6,
    "provisional_counts": {
     "false_acceptance": 0,
-    "false_rejection": 6,
-    "mislabelled": 4,
-    "right": 32
+    "false_rejection": 7,
+    "mislabelled": 8,
+    "right": 31
    }
   },
   "faithful": {
    "n": 30,
    "faithful": 13,
    "fitted": true,
-   "cost": 3,
+   "cost": 2.2,
    "counts": {
     "false_acceptance": 0,
-    "false_rejection": 3,
-    "mislabelled": 0,
+    "false_rejection": 2,
+    "mislabelled": 1,
     "right": 27
    },
-   "provisional_cost": 3.0,
+   "provisional_cost": 2.2,
    "provisional_counts": {
     "false_acceptance": 0,
-    "false_rejection": 3,
-    "mislabelled": 0,
+    "false_rejection": 2,
+    "mislabelled": 1,
     "right": 27
    }
   }
  },
  "costs": {
-  "requests": 20,
-  "input_tokens": 31274,
-  "output_tokens": 5019,
-  "elapsed_ms": 4854
+  "requests": 22,
+  "input_tokens": 45065,
+  "output_tokens": 5617,
+  "elapsed_ms": 5413
  },
- "fitted_at": "2026-09-27T09:05:47+00:00",
+ "fitted_at": "2026-09-28T10:01:19+00:00",
  "note": "Error rates on the relation calibration split only; not a calibration claim. False acceptance (an unsupported claim accepted as supported) and false rejection are counted apart. Stage 10 holds the held-out evaluation."
 }

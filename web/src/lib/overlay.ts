@@ -83,8 +83,10 @@ export function useParagraphOverlay(text: string, on: boolean): string {
 
 /** The overlay over a verified answer. The server refuses a rendering that
  *  changed a number or an identifier (`changed`), and any other failure
- *  (`failed`) leaves the English too: either way the whole accepted original
- *  is shown. A translation cannot add a fact to an answer that was checked.
+ *  (`failed`) leaves the English too: either way that paragraph's accepted
+ *  original is shown, and the rest in Korean. A translation cannot add a fact
+ *  to an answer that was checked. Found in the window: one refused paragraph
+ *  of 24 once left the whole answer English.
  *
  *  Sent a paragraph at a time: asked for one multi-paragraph string, the
  *  translator has answered with one string per paragraph, and a reply of the
@@ -111,7 +113,8 @@ export function useCheckedOverlay(text: string, on: boolean): { text: string; fa
             : statuses.every((s) => SHOWN.includes(s))
               ? ''
               : 'failed'
-        checkedMemory.set(text, { text: fault ? text : parts.map((p, i) => r.texts[i] ?? p).join('\n\n'), fault })
+        const shown = parts.map((p, i) => (SHOWN.includes(statuses[i]) ? r.texts[i] ?? p : p))
+        checkedMemory.set(text, { text: r.off ? text : shown.join('\n\n'), fault })
       })
       .catch(() => checkedMemory.set(text, { text, fault: 'failed' }))
       .finally(() => alive && setTick((n) => n + 1))

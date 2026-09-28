@@ -32,6 +32,7 @@ export const STAGE: Record<string, string> = {
 /** How a run ended — every outcome in words, never only a colour. */
 export const OUTCOME: Record<string, string> = {
   complete: '검증됨', partial: '부분 답', abstained: '답 보류', verification_unavailable: '검증 불가',
+  unverified: '분석 (미검증)',
   answered: '답함 (검증 없음)', cancelled: '멈춤', failed: '실패', interrupted: '끊김 — 서버가 내려갔다',
 }
 
