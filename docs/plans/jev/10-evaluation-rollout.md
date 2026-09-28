@@ -96,7 +96,7 @@ the held-out run; changing them after failure requires a new evaluation version.
 | Deterministic integrity | Zero cross-repository leaks, fabricated accepted locators, unauthorized executions, or duplicated actions |
 | Graph benefit | At least 10 percentage points higher supporting-evidence recall on labeled bridge cases than A |
 | Overall recall | D loses no more than 2 percentage points versus A overall |
-| Answer support | At least 25% relative reduction in unsupported claims, without lower requirement coverage; if A has zero errors, D must also have zero observed errors |
+| Answer support | At least 25% relative reduction in unsupported claims; if A has zero errors, D must also have zero observed errors. Coverage: from `gates.json` version 3, the 95% interval's lower end of D − A at or above −0.20 (versions 1 and 2: no lower at all) |
 | Decision quality | At least 90% correct allowed choices on the held-out action fixtures; zero execution authority violations |
 | Added latency | p95 retrieval and verification overhead at most 10 seconds under the defined fixture workload |
 | Operating ceiling | No run exceeds configured deadline, call, or token allowance; unknown price remains explicitly unknown |
@@ -497,6 +497,18 @@ questions (`direct-01`, `-08`, `-10`), `route-09`, `bridge-01`, `bridge-03`,
 `bridge-08` and `memory-03`; the last still abstains with the memory no
 longer flagged, and its drafts were not run again.
 
+Gates version 3, 2026-09-28, at the owner's direction after the fifth run:
+answer support lets D's coverage fall short of A's, read as overall recall
+is read, at the 95% interval's lower end — at or above −0.20. A answers every
+question unverified; D withholds what Jev cannot establish, and no D that
+ever withholds could pass "no lower at all". The margin was chosen after
+these results were seen, and `gates.json` says so. The owner chose it over a
+point estimate within −0.10 (the fifth run's −0.104 fails it) and within
+−0.15. Judged on version 3 (`report-heldout-en5-v3.json`), the fifth run
+passes all seven gates: answer support 1.0 (unsupported claims 0.37 → 0.0;
+coverage D − A −0.104 [−0.179, −0.038]). The fourth run passes too (lower
+end −0.133).
+
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
 calls are not counted in `host_turns` or USD, and they are the one spend
@@ -508,9 +520,10 @@ Left before completion, in order:
 1. Label review — done 2026-09-28 by a model at the user's
    direction (above). A label changed after that is a new version.
 2. Held-out retrieval level, fixed and action experiments — done 2026-09-28
-   (above). Answer level for A and D ran five times on 2026-09-28 and
-   answer support failed each time on coverage (English rows 0.66, 0.87,
-   0.90, 0.925, 0.892 against A's 1.0 or 0.996).
+   (above). Answer level for A and D ran five times on 2026-09-28;
+   answer support failed each time on version 1 and 2's coverage rule
+   (English rows 0.66, 0.87, 0.90, 0.925, 0.892 against A's 1.0 or 0.996),
+   and the fifth run passes every gate of version 3.
    The 3× repetition subset is not run.
 3. Every gate `pass`, then `rollout.py canary <this checkout>`; `.env` stays
    `WIKI_JEV_MODE=shadow` until the canary has run without a rollback.
@@ -521,7 +534,7 @@ Left before completion, in order:
 | --- | --- | --- | --- |
 | 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | In progress — `eval/jev/intents.json` and `actions.json` frozen with corpus hashes and splits; labels reviewed 2026-09-28 by a model at the user's direction, version 2 of both |
 | 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level run five times for A and D; the repetition subset not run |
-| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; English only from `gates.json` version 2; on the held-out half answer support fails (coverage 0.892 against A's 0.996, with no unsupported claim) and the other six pass |
+| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; English only from `gates.json` version 2; version 3 allows coverage short of A's to a lower end of −0.20, and on the held-out half all seven gates pass (fifth answer-level run: coverage 0.892 against A's 0.996, no unsupported claim) |
 | 4 | Product | App/CLI parity, window checks, operational failures | In progress — the canary in settings, the API and the window's mode line; window checks not run this stage |
 | 5 | Rollout | Shadow, active canary, rollback rehearsal | In progress — canary, off and follow commands; rehearsal passed; active canary waits for the gates |
 | 6 | Completion | Reproduction report, all gates, plan archival | Not started |

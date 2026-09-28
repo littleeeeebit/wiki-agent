@@ -279,8 +279,12 @@ def judge(gates: dict, found: dict, reviewed: bool) -> list[dict]:
         elif g["id"] == "answer_support" and all("unsupported_claim_rate" in table.get(a, {}) for a in "AD"):
             a, d = table["A"]["unsupported_claim_rate"]["value"], table["D"]["unsupported_claim_rate"]["value"]
             cov = diffs.get("coverage_D_minus_A") or {}
-            lower = cov.get("value") is not None and cov["value"] < 0
-            detail = {"A": a, "D": d, "coverage_D_minus_A": cov}
+            # Coverage may fall short of A's by `coverage_margin`, read at the interval's lower end
+            # (version 3); without one, any shortfall of the point estimate fails (versions 1 and 2).
+            margin = g.get("coverage_margin")
+            lower = (cov.get("low") is not None and cov["low"] < margin if margin is not None else
+                     cov.get("value") is not None and cov["value"] < 0)
+            detail = {"A": a, "D": d, "coverage_D_minus_A": cov, "coverage_margin": margin}
             if a == 0:
                 verdict = "pass" if d == 0 and not lower else "fail"
             else:

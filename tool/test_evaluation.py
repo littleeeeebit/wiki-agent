@@ -149,6 +149,20 @@ def test_a_pass_on_unreviewed_labels_is_provisional_and_zero_errors_must_stay_ze
     assert {g["id"]: g["verdict"] for g in report.judge(gates, found, reviewed=True)}["graph_benefit"] == "pass"
 
 
+@pytest.mark.parametrize("low, verdict", [(-0.179, "pass"), (-0.21, "fail")])
+def test_answer_support_allows_coverage_short_of_a_s_by_its_margin_at_the_interval_s_lower_end(low, verdict):
+    # Version 3: the fifth held-out run (D − A −0.104, lower end −0.179) passes; a lower end past −0.20 fails.
+    gates = json.loads(report.GATES.read_text(encoding="utf-8"))
+    assert next(g for g in gates["gates"] if g["id"] == "answer_support")["coverage_margin"] == -0.20
+    found = {"arms": {"arms": {"A": {"integrity": 0, "breaches": 0, "unsupported_claim_rate": {"value": 0.37},
+                                     "seconds": {"p95": 0.1}},
+                               "D": {"integrity": 0, "breaches": 0, "unsupported_claim_rate": {"value": 0.0},
+                                     "seconds": {"p95": 2.1}}},
+                      "differences": {"coverage_D_minus_A": {"value": -0.104, "low": low, "high": -0.04}}}}
+    got = {g["id"]: g["verdict"] for g in report.judge(gates, found, reviewed=True)}
+    assert got["answer_support"] == verdict
+
+
 def test_held_out_action_fixtures_pass_the_execution_boundary_once(tmp_path, monkeypatch):
     env = tmp_path / "jev.env"
     env.write_text("TYPESAFE_API_KEY=test-key\nWIKI_JEV_MODE=active\n", encoding="utf-8")
