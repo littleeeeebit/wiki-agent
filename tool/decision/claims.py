@@ -79,11 +79,11 @@ VERSION = hashlib.sha256(json.dumps([PROMPT, OPTIONS, ANSWER_PROMPT, ANSWER_OPTI
 
 def state(question: str, passages: list[dict], claims: list[dict], requirements: list[dict] = (),
           conversation: str = "") -> dict:
-    """What Jev reads: the English question, the passages `{id, text[, record,
-    supersedes, superseded_by, coverage]}`,
-    each claim `{id, text, cites, premises}` naming the passage ids and the
-    earlier claims it rests on, the question's parts `{id, text}`, and the
-    conversation a direct run's text may restate."""
+    """What Jev reads: the English question and the passages.
+    A passage is `{id, text[, record, supersedes, superseded_by, coverage]}`.
+    Each claim `{id, text, cites, premises}` names the passage ids and the
+    earlier claims it rests on. Then the question's parts `{id, text}`, and
+    the conversation a direct run's text may restate."""
 
     return {"question": question, "passages": passages, "claims": claims, "requirements": list(requirements),
             "conversation": conversation}
