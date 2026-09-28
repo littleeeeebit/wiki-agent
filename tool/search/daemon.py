@@ -56,6 +56,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from common.language import language  # noqa: E402
+from common.process import background_options  # noqa: E402
 from search import PING, PORT, cache_dir, evidence, knowledge_graph, proof, retrieval, state_path, version  # noqa: E402
 from search.retrieval import family  # noqa: E402
 from search.sources import SOURCE_NAMES, Records, listing, records_folder  # noqa: E402
@@ -1037,7 +1038,8 @@ def orca(*args: str) -> dict | None:
         return None
     try:
         # Short: `send` runs under the keeper's lock, and notices wait on it.
-        done = subprocess.run([exe, *args, "--json"], capture_output=True, timeout=5)
+        # The daemon is detached, so a child of it would get a console window of its own.
+        done = subprocess.run([exe, *args, "--json"], capture_output=True, timeout=5, **background_options())
         answer = json.loads(done.stdout.decode("utf-8", errors="replace"))
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
