@@ -558,6 +558,10 @@ def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
         return [(text, "request_failed") for text in texts]
 
 
+# Where a text is cut into items for the request: before a list item or a table row.
+LINE_ITEM = re.compile(r"\n(?=[ \t]*(?:[-*+][ \t]|\d+[.)][ \t]|\|))")
+
+
 def _translate(texts: list[str], direction: str, deadline: float, accept=None,
                held: dict[str, str] | None = None) -> list[tuple[str, str]]:
     keep, fixed, version = glossary()
@@ -618,9 +622,14 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
             # deadline, on this thread, and caches what lands then. A held
             # (private) text has no shared cache to land in, so it does not.
             _late.seconds = LATE_SECONDS if held is None else 0.0
-            answer = _ask(system, [masked[j][0] for j in group], seconds)
+            # A list item or table row an item: asked for a list as one string, the translator answered an
+            # item per line, and a reply of the wrong length is no reply. Wrapped prose stays whole.
+            split = [LINE_ITEM.split(masked[j][0]) for j in group]
+            answer = _ask(system, [piece for pieces in split for piece in pieces], seconds)
             if answer is None:
                 return
+            back = iter(answer)
+            answer = ["\n".join(next(back) for _ in pieces) for pieces in split]
             fresh: list[tuple[str, str]] = []
             for i, reply, (_, spans) in zip([wanted[j] for j in group], answer, [masked[j] for j in group]):
                 if not intact(reply, len(spans)):
@@ -689,21 +698,28 @@ ENGLISH_VERSION = "1"
 NUMBER = re.compile(r"\d+(?:[.,]\d+)*", re.A)
 IDENTIFIER = re.compile(r"[\w/\\:.-]*(?:\w\.[A-Za-z]|[\\_])[\w/\\:.-]*", re.A)
 # English number words, by value. "eight characters" rendered `8자` states the
-# same number; only the side that spells it out may excuse the digit.
+# same number, and so does "the second round" rendered `2차`; only the side
+# that spells it out may excuse the digit.
 WORDS = {w: str(i) for i, w in enumerate(
     "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
     "sixteen seventeen eighteen nineteen twenty".split())} | {
-    w: str(30 + 10 * i) for i, w in enumerate("thirty forty fifty sixty seventy eighty ninety".split())}
-SPELLED = re.compile(r"\b(" + "|".join(WORDS) + r")\b", re.I)
+    w: str(30 + 10 * i) for i, w in enumerate("thirty forty fifty sixty seventy eighty ninety".split())} | {
+    w: str(i + 1) for i, w in enumerate(
+        "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth "
+        "fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth twentieth".split())}
+SPELLED = re.compile(r"\b(" + "|".join(WORDS) + r")(?:s|ed|ing)?\b", re.I)   # "zeroing" is `0으로`
+# Latin abbreviations match IDENTIFIER's dotted name, and a rendering drops them.
+ABBREVIATIONS = {"e.g", "i.e"}
 # Negation, English and Korean. A rendering of a paragraph — a verified
 # answer is one claim a paragraph — that negates where its source does not,
 # or the other way, can have reversed it. Presence, not a count: Korean
 # negates where English says `failed` or `otherwise`, and counts drifted on
 # 9 of 50 real paragraphs where presence drifted on 3. A rewrite (the plain
 # explanation) restructures too freely for either to mean anything.
+# A negative word negates too: "unlabeled announcements" is `레이블이 없는 공고`.
 # ponytail: presence, so a paragraph negating twice can lose one unseen; a model judge if that is ever seen.
-NEGATION = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot|unless)\b|n't\b|않|안 |못|없|아니|아닌",
-                      re.I)
+NEGATION = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot|unless|unknown)\b|n't\b"
+                      r"|\bun(?!der|it|if|ion)[a-z]+(?:ed|able|ible)\b|\b[a-z]+less\b|않|안 |못|없|아니|아닌", re.I)
 
 
 def spelled(text: str) -> collections.Counter:
@@ -726,7 +742,7 @@ def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False) 
 
     def found(text: str) -> collections.Counter:
         prose = protect(text, keep)[0]
-        names = [n.rstrip(".:-") for n in IDENTIFIER.findall(prose)]
+        names = [n.rstrip(".:-") for n in IDENTIFIER.findall(prose) if n.rstrip(".").lower() not in ABBREVIATIONS]
         numbers = [n.replace(",", "") for n in NUMBER.findall(IDENTIFIER.sub(" ", prose))]
         return collections.Counter(names + numbers)
 
@@ -744,7 +760,7 @@ def facts(text: str, keep: tuple[str, ...] = ()) -> set[str]:
     list's own numbering (`1. `) is layout, not a fact."""
 
     text = re.sub(r"(?m)^\s*\d+[.)]\s+", " ", text)
-    names = {n.rstrip(".:-") for n in IDENTIFIER.findall(text)}
+    names = {n.rstrip(".:-") for n in IDENTIFIER.findall(text) if n.rstrip(".").lower() not in ABBREVIATIONS}
     numbers = {n.replace(",", "").lstrip("0") or "0" for n in NUMBER.findall(IDENTIFIER.sub(" ", text))}
     return names | numbers
 

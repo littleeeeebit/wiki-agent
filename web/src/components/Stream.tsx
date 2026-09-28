@@ -133,7 +133,7 @@ function AnswerVersions(
   // identifiers and negation, which a swapped or reversed sentence can still
   // pass, so it is labelled a translation and the English is one click away.
   const [english, setEnglish] = useState(false)
-  const translated = Boolean(m.verification) && !checked.fault && checked.text !== m.text
+  const translated = Boolean(m.verification) && checked.text !== m.text
   const text = m.verification ? (english ? m.text : checked.text) : plain
   return (
     <div className="space-y-3">
@@ -141,8 +141,8 @@ function AnswerVersions(
       {checked.fault && (
         <p role="status" className="text-[12.5px] text-muted-foreground">
           {checked.fault === 'changed'
-            ? '표시 오류 · 한국어로 옮기며 숫자나 식별자가 바뀌어 검증된 원문을 그대로 보인다.'
-            : '표시 오류 · 한국어 번역을 받지 못해 검증된 원문을 그대로 보인다.'}
+            ? '표시 오류 · 한국어로 옮기며 숫자나 식별자가 바뀐 문단은 검증된 영어 원문 그대로 보인다.'
+            : '표시 오류 · 한국어 번역을 받지 못한 문단은 검증된 영어 원문 그대로 보인다.'}
         </p>
       )}
       {translated && !simple && (

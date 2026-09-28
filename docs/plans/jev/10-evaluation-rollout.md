@@ -598,6 +598,24 @@ the old tape had been recorded under stage 6's 0.6). Not yet done: `analysis`
 has no labelled cases, so its thresholds are provisional, and no held-out
 run covers the new path.
 
+The first analysis in the window still read as a verified answer does: one
+claim a paragraph, `your message` after each, `Inference:` before half. The
+owner asked for a document — a short answer, sections, a comparison table,
+what carries over, the limits. So an analysis is no longer drafted as claims:
+its brief (`tool/prompts/answer-analysis.md`) asks for English Markdown whose
+statements carry `[e3]` marks, code writes each mark out as the passage's
+location (`your message` said once where parts meet), and an unknown id is the
+one repairable fault (`grounded-3`). The same run showed the Korean overlay
+losing whole paragraphs: 3 of 24 refused (`second round` rendered `2차`,
+`unlabeled` rendered with `없는`, a digit and a negation the check did not
+read), and one refused paragraph left the whole answer English. Ordinals,
+number words with a suffix, `un…ed`/`…less` words and `e.g.` now read as they
+mean; a refused paragraph alone stays English; and a list item or table row
+is its own item in the request, since the translator answered a three-item
+list with three strings and the length check dropped the batch (wrapped
+prose stays whole: cut at every line, evidence came back in fragments). The re-run: 15 of 15
+paragraphs rendered.
+
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
 calls are not counted in `host_turns` or USD, and they are the one spend

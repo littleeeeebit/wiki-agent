@@ -1017,12 +1017,15 @@ def migrated(dossier: dict) -> dict:
 DRAFT = "answer-draft/1"
 VERIFIED = "verified-answer/1"
 DRAFT_PROMPT = "answer-draft.md"
+ANALYSIS_PROMPT = "answer-analysis.md"
 CLAIM_KINDS = ("source_fact", "inference", "recommendation", "direct_text")
 FACTUAL = ("source_fact", "inference")
 ANSWER_STATUSES = ("complete", "partial", "abstained", "verification_unavailable")
-VERIFICATION_VERSION = f"grounded-2/{decision.claims.VERSION}"   # 2: material cited; quoted Korean names
+VERIFICATION_VERSION = f"grounded-3/{decision.claims.VERSION}"   # 2: material cited, Korean names; 3: analysis a document
 DRAFT_BLOCK = re.compile(r"^```answer-draft[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 CLAIM_ID = re.compile(r"\A[A-Za-z0-9_-]{1,32}\Z")
+# An analysis's citation mark, `[e3]` or `[e3, m1]`: code writes out where each passage is.
+CITED = re.compile(r"\[([em]\d+(?:\s*,\s*[em]\d+)*)\]")
 # What a direct_text quotes: the Korean a translation asked for is the answer, named in an English sentence.
 QUOTED = re.compile(r"'[^'\n]*'|\"[^\"\n]*\"|“[^”\n]*”|‘[^’\n]*’")
 DRAFT_FIELDS = {"claims", "unresolved_requirements", "proposed_status"}
@@ -1196,7 +1199,8 @@ class Grounding:
                              for eid, e in self.ids.items()]}
 
     def brief(self) -> str:
-        prompt = (Path(__file__).resolve().parents[1] / "prompts" / DRAFT_PROMPT).read_text(encoding="utf-8")
+        name = ANALYSIS_PROMPT if self.dossier.get("analysis") else DRAFT_PROMPT
+        prompt = (Path(__file__).resolve().parents[1] / "prompts" / name).read_text(encoding="utf-8")
         return f"{prompt}\n\n```json\n{json.dumps(self.view(), ensure_ascii=False, indent=1)}\n```"
 
     def repair_brief(self, rebased: bool) -> str:
@@ -1204,6 +1208,9 @@ class Grounding:
         and the evidence it may cite — the new evidence when retrieval ran."""
 
         last = self.generations[-1]
+        if last.get("analysis"):
+            return (f"Your answer could not be published: {last['problem']}. Write the whole answer again. "
+                    f"Cite only these evidence ids: {', '.join(self.ids) or 'none — there is no evidence'}.")
         lines = ["Your answer-draft was checked against the evidence."]
         if last["problem"]:
             lines.append(f"It could not be read: {last['problem']}. Write it again, following the schema exactly.")
@@ -1314,6 +1321,8 @@ class Grounding:
     def check(self, text: str) -> dict:
         """Read, screen, judge and settle one generation; recorded in `generations`."""
 
+        if self.dossier.get("analysis"):
+            return self.analysed(text)
         draft, problem = self.parse(text)
         rest = DRAFT_BLOCK.sub("", text).strip()
         gen = {"draft": draft, "problem": problem, "rest": rest, "checks": {}, "decision": None,
@@ -1327,18 +1336,6 @@ class Grounding:
             return gen
         claims = {c["claim_id"]: c for c in draft["claims"]}
         checks = gen["checks"]
-        if self.dossier.get("analysis"):
-            # Asked for analysis — a comparison, a judgment, advice — the answer is the host's own working-out
-            # over the evidence, which no passage states: nothing is asked of Jev, and it is published whole,
-            # labelled unverified. Only what cannot be shown at all falls: an unreadable claim, an unknown id.
-            gen["analysis"] = True
-            for cid, claim in claims.items():
-                broken = (self.problem(claim, {}) == "malformed"
-                          or not set(claim["evidence_ids"]) <= set(self.ids))
-                checks[cid] = {"state": "rejected" if broken else "accepted",
-                               "reason": "malformed" if broken else None, "support": None if broken else "unverified"}
-            self.generations.append(gen)
-            return gen
         for cid, claim in claims.items():
             earlier = {k: claims[k] for k in list(claims)[:list(claims).index(cid)]}
             reason = self.problem(claim, earlier)
@@ -1522,6 +1519,30 @@ class Grounding:
             else:
                 checks[cid].update(state="rejected", reason=outcome)
 
+    def analysed(self, text: str) -> dict:
+        """An analysis asked for — a comparison, a judgment, advice — is the
+        host's own working-out over the evidence, which no passage states:
+        nothing is asked of Jev, and it is published as written, a document
+        labelled unverified. Only what cannot be shown falls: no answer, or a
+        mark citing an id no evidence has."""
+
+        from . import specs  # `specs` imports this module
+
+        body = specs.blocks(text)[0].strip()
+        marked = {i.strip() for m in CITED.finditer(body) for i in m.group(1).split(",")}
+        unknown = sorted(marked - set(self.ids))
+        problem = ("there is no answer" if not body else
+                   f"it cites evidence ids no evidence has: {', '.join(unknown)}" if unknown else "")
+        gen = {"draft": None if problem else {"body": body}, "problem": problem, "rest": text, "checks": {},
+               "decision": None, "unavailable": None, "analysis": True,
+               "dossier_trace_id": self.dossier.get("trace_id"), "direct": bool(self.dossier.get("direct")),
+               "requirements": self.requirements, "evidence_ids": {eid: e["chunk_id"] for eid, e in self.ids.items()}}
+        if problem:
+            gen["raw"] = text[:4000]
+        self.idsets.append(self.ids)
+        self.generations.append(gen)
+        return gen
+
     def repair(self) -> str | None:
         """`retrieve`, `draft`, or `None`: whether the one repair runs, and how.
         Only what a repair can mend is a reason, and only while a Jev call is
@@ -1567,11 +1588,13 @@ class Grounding:
                     | {r for r, got in sets.items() if got == "answers"})
         touched = answered | {r for (_cid, r), got in said.items() if got == "partly"}
         missing = [] if gen.get("analysis") else [r for r in gen["requirements"] if r["id"] not in answered]
-        status = ("unverified" if gen.get("analysis") and shown else
+        body = (gen["draft"] or {}).get("body") if gen.get("analysis") else None
+        status = ("unverified" if body else
                   "verification_unavailable" if unavailable else
                   "complete" if shown and answered and not missing else
                   "partial" if touched else "abstained")
-        used = list(dict.fromkeys(e for cid in shown for e in claims[cid]["evidence_ids"]))
+        used = list(dict.fromkeys([*(e for cid in shown for e in claims[cid]["evidence_ids"]),
+                                   *(i.strip() for m in CITED.finditer(body or "") for i in m.group(1).split(","))]))
         reason = (unavailable or next((f"budget:{c['reason']}" for c in checks.values() if c["reason"] == "budget"),
                                       None) or (f"draft:{gen['problem']}" if gen["problem"] else None))
         verified = {
@@ -1580,8 +1603,7 @@ class Grounding:
             "claims": [{"claim_id": cid, "kind": claims[cid]["kind"], "text_en": claims[cid]["text_en"],
                         "evidence_ids": [ids[e]["chunk_id"] for e in claims[cid]["evidence_ids"]],
                         "requirement_ids": claims[cid]["requirement_ids"], "premises": claims[cid]["premises"],
-                        "support": ("unverified" if gen.get("analysis") else
-                                    "supported" if checks[cid]["state"] == "accepted" and claims[cid]["kind"] in FACTUAL
+                        "support": ("supported" if checks[cid]["state"] == "accepted" and claims[cid]["kind"] in FACTUAL
                                     else "unverified" if checks[cid]["state"] != "accepted" else "faithful")}
                        for cid in shown],
             "uncertainty": [{"claim_id": cid, "reason": c["reason"]} for cid, c in checks.items()
@@ -1599,7 +1621,7 @@ class Grounding:
             verified["next"] = "Check Jev with `python tool/jev_probe.py --live`, then ask again."
         elif missing:
             verified["next"] = (f"Search further for: {missing[0]['text']} — or say more precisely what you need.")
-        return {"verified": verified, "text": rendered(verified, {c: claims[c] for c in shown}, ids),
+        return {"verified": verified, "text": rendered(verified, {c: claims[c] for c in shown}, ids, body),
                 "rest": gen["rest"], "evidence_ids": gen["evidence_ids"], "record": self.record()}
 
     def record(self) -> dict:
@@ -1610,20 +1632,23 @@ class Grounding:
                 "allowance_left": {"calls": self.calls, "tokens": self.tokens}}
 
 
-def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict]) -> str:
+def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict], body: str | None = None) -> str:
     """The published answer, written by code from accepted claims and the
-    verification's limits. English: the Korean overlay renders it."""
+    verification's limits — or an analysis as its host wrote it, each
+    citation mark written out. English: the Korean overlay renders it."""
 
-    def cited(claim: dict) -> str:
-        where = [cite(ids[e]) for e in claim["evidence_ids"]]
+    def cited(eids: list[str]) -> str:
+        where = [cite(ids[e]) for e in eids]
         return " ".join(f"[{w}]({w})" if w.startswith(("https://", "http://")) else f"`{w}`" for w in where)
 
+    if body:
+        written = CITED.sub(lambda m: cited([i.strip() for i in m.group(1).split(",")]), body)
+        # Each pasted part is its own evidence, and every one is `your message`: said once where they meet.
+        written = re.sub(r"(`[^`\n]+`)(?:\s+\1)+", r"\1", written)
+        return ("Unverified analysis: the assistant's own comparison or judgment over the cited sources, "
+                "not checked against them claim by claim.\n\n" + written)
     parts: list[str] = []
-    if v["status"] == "unverified":
-        parts.append("Unverified analysis: this asks for a comparison or judgment, which no passage states, so "
-                     "what follows is the assistant's own reading of the cited evidence and was not checked "
-                     "against it.")
-    elif v["status"] == "verification_unavailable":
+    if v["status"] == "verification_unavailable":
         parts.append(f"Unverified answer: verification was unavailable ({v['reason']}), and this answer is shown "
                      "under the baseline setting." if v["degraded"] else
                      f"Verification unavailable ({v['reason']}): statements whose support could not be checked "
@@ -1635,7 +1660,7 @@ def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict]) -> str:
         parts.append("No verified answer: the evidence found does not establish one.")
     for cid, claim in claims.items():
         label = {"inference": "Inference: ", "recommendation": "Recommendation: "}.get(claim["kind"], "")
-        tail = cited(claim)
+        tail = cited(claim["evidence_ids"])
         parts.append(f"{label}{claim['text_en'].strip()}{' ' + tail if tail else ''}")
     if v["conflicts"]:
         parts.append("Conflicts:\n" + "\n".join(

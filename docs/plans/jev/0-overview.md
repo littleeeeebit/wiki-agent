@@ -139,7 +139,8 @@ the versioned state migration.
    One exception, at the owner's direction (2026-09-28): an analysis the user
    asked for — a comparison, a judgment, advice — which no passage states. Jev
    must be sure the question asks for one; it is still searched and cited,
-   published labelled unverified, and never restated later as verified.
+   written as a document rather than claims, published labelled unverified,
+   and never restated later as verified.
 6. Every loop shares an end-to-end deadline, call count, token budget, and
    candidate limit. Per-stage limits cannot multiply the total allowance.
 7. Models choose from code-owned candidates; they cannot invent sources,

@@ -497,20 +497,25 @@ def test_a_pasted_notice_is_cited_as_material_and_a_comparison_stands_on_it(tmp_
 def test_an_analysis_asked_for_is_published_whole_and_labelled_unverified(tmp_path):
     ports = item(tmp_path, "docs/ports.md", PORTS)
     d = {**dossier([ports], ["Is port 8791 a good choice for the search daemon?"]), "analysis": True}
-    fact = claim("c1", "The search daemon listens on port 8791.", quotes=["listens on port 8791"])
-    judged = claim("c2", "Keeping the daemon on 8791, beside the chat server's 8787, is a sensible choice.",
-                   kind="inference", cites=(), premises=("c1",))
-    unknown = claim("c3", "The owners chose it in 2024.", cites=("e9",), quotes=["chose it in 2024"])
+    doc = ("Yes: 8791 sits beside the chat server's 8787 without clashing.\n\n"
+           "## Why\n\nThe search daemon listens on port 8791 [e1].\n\n"
+           "| | daemon | chat |\n|---|---|---|\n| port | 8791 | 8787 |\n\n"
+           "```spec\n{\"title\": \"t\"}\n```\n")
     judge = Judge()
-    out, _events, messages = answer(d, [draft(fact, judged, unknown), draft(fact, judged, unknown)], judge)
+    out, _events, messages = answer(d, [doc.replace("[e1]", "[e1, e9]"), doc], judge)
     v = out["verified"]
-    assert len(messages) == 2, "the unknown id is repairable, as in any draft"
+    assert "## Shape" in messages[0] and "answer-draft" not in messages[0], "an analysis is asked as a document"
+    assert len(messages) == 2 and "e9" in messages[1], "an id no evidence has is repaired, as in any draft"
     assert judge.asked == [], "nothing of an analysis is asked of Jev"
     assert v["status"] == "unverified" and v["verified"] is False and v["missing_requirements"] == []
-    assert [c["claim_id"] for c in v["claims"]] == ["c1", "c2"] and {c["support"] for c in v["claims"]} == {"unverified"}
-    assert v["rejected"] == [{"claim_id": "c3", "reason": "malformed"}], "an id no evidence has cannot be cited"
-    assert out["text"].startswith("Unverified analysis:") and "a sensible choice" in out["text"]
-    assert "`docs/ports.md:3`" in out["text"]
+    assert v["claims"] == [] and [c["cite"] for c in v["citations"]] == ["docs/ports.md:3"]
+    assert out["text"].startswith("Unverified analysis:")
+    assert "## Why\n\nThe search daemon listens on port 8791 `docs/ports.md:3`." in out["text"]
+    assert "| port | 8791 | 8787 |" in out["text"] and "```spec" not in out["text"], "a block rides apart"
+    assert "```spec" in out["rest"]
+    twice = {**d, "evidence": d["evidence"] * 2}
+    out, _events, _ = answer(twice, ["Both say 8791 [e1] [e2], and so [e1, e2]."], Judge())
+    assert "Both say 8791 `docs/ports.md:3`, and so `docs/ports.md:3`." in out["text"], "one place, said once"
 
 
 def test_a_korean_name_a_quote_holds_may_stand_in_an_english_claim(tmp_path):
@@ -813,6 +818,16 @@ def test_a_presentation_may_drop_a_fact_but_never_add_one():
     assert translate.kept("Port 8791 is not open.", "8791 포트는 열려 있지 않다.", keep, words=True)
     assert not translate.kept("Port 8791 is not open.", "8791 포트는 열려 있다.", keep, words=True)
     assert not translate.kept("Port 8791 is open.", "8791 포트는 열려 있지 않다.", keep, words=True)
+    # Found in the window: an ordinal came back a digit (`2차`), and a negative word a Korean negation.
+    rounds = "The top 15 teams advance to the second round."
+    assert translate.added(rounds, "상위 15팀이 2차 평가에 올라간다.") == []
+    assert translate.kept(rounds, "상위 15개 팀이 2차 라운드에 진출한다.", keep, words=True)
+    assert not translate.kept(rounds, "상위 15개 팀이 3차 라운드에 진출한다.", keep, words=True)
+    assert translate.kept("It gives 200 unlabeled notices.", "레이블이 없는 공고 200개를 준다.", keep, words=True)
+    assert translate.kept("It uses a stateless server.", "상태가 없는 서버를 쓴다.", keep, words=True)
+    assert not translate.kept("The chunks are united.", "청크가 합쳐지지 않았다.", keep, words=True)
+    assert translate.kept("RFPs, e.g. from 나라장터, and zeroing notices.", "나라장터 등의 RFP, 그리고 공고를 0으로 만들기.",
+                          keep, words=True), "an abbreviation is no identifier; `zeroing` spells a 0"
 
 
 def test_en_ko_is_shown_examples_that_pass_the_overlays_own_check():

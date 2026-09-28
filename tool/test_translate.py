@@ -271,6 +271,24 @@ def test_a_passage_the_model_splits_in_two_costs_only_its_own_batch(
     assert split in lost and len(lost) == T.BATCH
 
 
+def test_a_list_is_asked_a_line_an_item_and_comes_back_whole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Found in the window: a three-item list sent as one string came back as
+    three strings, and the answer's last two paragraphs stayed English."""
+
+    asked: list[list[str]] = []
+
+    def answers(_system: str, batch: list[str], _seconds: float) -> list[str]:
+        asked.append(batch)
+        return [f"KO {line}" for line in batch]
+
+    monkeypatch.setattr(T, "_ask", answers)
+    out = T.translate(["줄바꿈한\n문단", "- 첫째 줄\n- 둘째 줄\n  이어지는 줄\n| 가 | 나 |"], T.KO_EN, soon())
+    assert asked == [["줄바꿈한\n문단", "- 첫째 줄", "- 둘째 줄\n  이어지는 줄", "| 가 | 나 |"]], "wrapped prose stays whole"
+    assert out == ["KO 줄바꿈한\n문단", "KO - 첫째 줄\nKO - 둘째 줄\n  이어지는 줄\nKO | 가 | 나 |"]
+
+
 def test_a_request_for_the_shared_cache_reads_past_the_callers_seconds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
