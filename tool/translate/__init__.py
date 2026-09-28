@@ -709,10 +709,16 @@ SPELLED = re.compile(r"\b(" + "|".join(WORDS) + r")(?:s|ed|ing)?\b", re.I)   # "
 ORDINALS = {w: str(i + 1) for i, w in enumerate(
     "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth "
     "fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth twentieth".split())}
-# Not after a count: "one second", "per second" is the unit. Marks that say ordinal and nothing else — a
-# rank (`2위`) or `2등` is also the start of `2등급` (review round 2).
-ORDINAL = re.compile(r"(?<!\bone )(?<!\ba )(?<!\ban )(?<!\bper )(?<!\beach )(?<!\bevery )\b("
-                     + "|".join(ORDINALS) + r")\b", re.I)
+ORDINAL = re.compile(r"\b(" + "|".join(w for w in ORDINALS if w != "second") + r")\b", re.I)
+# `second` is also the unit of time. It is an ordinal after `the`, or before a word it qualifies ("a second
+# pass"); a count before it ("one second", "30-second") or a word that goes with the unit after it ("a second
+# or two", "a second timeout") makes it the unit. Any whitespace between (review rounds 2 and 3).
+SECOND = re.compile(r"(?:\b(\w+)[\s-]+)?\bsecond\b(?:[\s-]+([A-Za-z]+))?", re.I)
+COUNTS = {"per", "each", "every", "half"}
+AFTER_UNIT = {"or", "and", "to", "for", "of", "in", "on", "at", "by", "ago", "later", "before", "after", "per", "now",
+              "then", "until", "while", "when", "is", "was", "are", "were", "be", "timeout", "timeouts", "delay",
+              "delays", "interval", "intervals", "limit", "window", "sleep", "pause", "wait", "timer"}
+# Marks that say ordinal and nothing else: a rank (`2위`) or `2등` is also the start of `2등급` (review round 2).
 ORDINAL_DIGIT = re.compile(r"제\s*(\d+)|(\d+)\s*(?:차|번째)")
 # Latin abbreviations match IDENTIFIER's dotted name, and a rendering drops them.
 ABBREVIATIONS = {"e.g", "i.e"}
@@ -734,9 +740,18 @@ def spelled(text: str, other: str = "") -> collections.Counter:
     """The numbers `text` spells out, as digits: its number words, and its
     ordinals that `other` writes as an ordinal digit."""
 
+    def ordinal(before: str, after: str) -> bool:
+        before = before.lower()
+        if before == "the":
+            return True
+        if before.isdigit() or before in WORDS or before in COUNTS:
+            return False
+        return bool(after) and after.lower() not in AFTER_UNIT
+
     marked = {a or b for a, b in ORDINAL_DIGIT.findall(other)}
-    return collections.Counter([WORDS[w.lower()] for w in SPELLED.findall(text)]
-                               + [n for w in ORDINAL.findall(text) if (n := ORDINALS[w.lower()]) in marked])
+    ordinals = [ORDINALS[w.lower()] for w in ORDINAL.findall(text)] + ["2" for before, after in SECOND.findall(text)
+                                                                       if ordinal(before, after)]
+    return collections.Counter([WORDS[w.lower()] for w in SPELLED.findall(text)] + [n for n in ordinals if n in marked])
 
 
 def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False) -> bool:

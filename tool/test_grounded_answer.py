@@ -838,6 +838,15 @@ def test_a_presentation_may_drop_a_fact_but_never_add_one():
     assert translate.added("The timeout is one second.", "제한 시간은 2등급이다.") == ["2"]
     assert not translate.kept("The timeout is one second.", "제한 시간은 2등급이다.", keep, words=True)
     assert not translate.kept("It waits a second.", "2차로 기다린다.", keep, words=True)
+    # Review round 3 (P1): an article made every ordinal a unit, and a line break hid the article.
+    passes = "It uses a first pass and a second pass."
+    assert translate.kept(passes, "1차 처리와 2차 처리를 쓴다.", keep, words=True)
+    assert translate.added(passes, "1차 처리와 2차 처리를 쓴다.") == []
+    for gap in ("\n", "\t", "  "):
+        assert not translate.kept(f"It waits a{gap}second.", "2차 단계까지 기다린다.", keep, words=True), repr(gap)
+        assert translate.added(f"It waits a{gap}second.", "2차 단계까지 기다린다.") == ["2"], repr(gap)
+    for unit in ("a second or so", "a 30-second timeout", "a second timeout", "each second"):
+        assert not translate.kept(f"It takes {unit}.", "2차가 걸린다.", keep, words=True), unit
     assert translate.kept("The server is enabled regardless.", "서버는 어쨌든 활성화되어 있다.", keep, words=True)
     assert not translate.kept("The server is enabled regardless.", "서버가 활성화되어 있지 않다.", keep, words=True)
     assert translate.kept("RFPs, e.g. from 나라장터, and zeroing notices.", "나라장터 등의 RFP, 그리고 공고를 0으로 만들기.",
