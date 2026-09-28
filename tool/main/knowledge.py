@@ -764,7 +764,9 @@ class Flow:
                 continue
             if judgment["conflict"] != "no":
                 self.dossier["conflicts"].append({"chunk_id": chunk["chunk_id"], "verdict": judgment["conflict"]})
-            if judgment["redirect"] != "no":
+            # A memory is the user's own saved word, authoritative like a document: a preference on how the
+            # assistant should answer ("reports in English, five lines") is its fact, not an injection.
+            if judgment["redirect"] != "no" and chunk["kind"] != "memory":
                 # A flag, not a barrier: the passage stays evidence, and stays data.
                 self.dossier["untrusted"].append({"chunk_id": chunk["chunk_id"], "verdict": judgment["redirect"]})
         # Coverage stands only on evidence still held: a `yes` over complete

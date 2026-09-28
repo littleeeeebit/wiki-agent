@@ -441,7 +441,42 @@ down 97.8%); the other six gates pass. Ten English rows fall short:
 3. `bridge-01`, `bridge-03`, `memory-03`, `direct-01`: the relation's or
    the faithful Choice's reading (a Korean translation at 0.51, as probed).
 
-The answer level has not been run for a fix to these.
+Fixed for 1 and 2 (commit `2e8f534`): the joint Choice is asked again over
+the claims that stand (`Grounding.rejoin`, one call, only for a part no
+single standing claim answers), and a decision's `record` and `supersedes`
+are read from its front matter at the retrieved revision
+(`knowledge.lineages`) and shown to the drafter and the judge.
+
+Held-out, answer level, arms A and D, fourth run, the first on the English-only
+set, 2026-09-28 (`raw/eval/jev/compare-heldout-answers-en4`,
+`report-heldout-en4.json`; one batch): 120 rows, 241 host turns, USD 6.20,
+189 Jev requests, 368,564 Jev tokens, 32.3 minutes.
+
+| Arm | Coverage (60) | Unsupported claims | Recall@8 | Bridge recall |
+| --- | --- | --- | --- | --- |
+| A | 1.0 [1.0, 1.0] | 0.383 [0.333, 0.431] of 462 | 0.948 | 0.583 |
+| D | 0.925 [0.858, 0.975] | 0.0345 [0.008, 0.068] of 116 | 1.0 | 1.0 |
+
+Conflict 0.75 → 1.0 and bridge 0.67 → 0.83; answer support still fails on
+coverage (D − A −0.075); the other six gates pass. Of D's four unsupported
+claims, three say one decision replaced another (`route-04`, `conflict-07`,
+`conflict-08`). They are true, but the grader was shown passage text only,
+without the front matter that says so. The fourth (`adv-03`) is a hedged
+inference ("may conflict") that Jev let through. Short of full coverage:
+`direct-01` (the Korean translation), `bridge-01`, `bridge-03`, `adv-12` (the
+runbook's first step judged a partial answer, by Jev and the grader alike),
+`memory-02` (answered complete when its drafts were run again) and
+`memory-03`.
+
+`memory-03`'s drafts, run again: the memory ("the user wants progress
+reports in English and at most five lines long") was flagged as addressing
+the assistant, and the drafter, seeing the flag, hedged its claim into "an
+unverified memory note, flagged as untrusted", which the relation held
+uncertain (0.54). Fixed after this run: a memory is not flagged as a
+redirect, since a memory is the user's own authoritative record and a
+preference on how the assistant answers is its fact. And the grader is now
+given the same `records` (front matter `supersedes`) the drafter and the
+judge see. Both change what the next run measures; neither was run.
 
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
@@ -454,9 +489,9 @@ Left before completion, in order:
 1. Label review — done 2026-09-28 by a model at the user's
    direction (above). A label changed after that is a new version.
 2. Held-out retrieval level, fixed and action experiments — done 2026-09-28
-   (above). Answer level for A and D ran three times on 2026-09-28 and
+   (above). Answer level for A and D ran four times on 2026-09-28 and
    answer support failed each time on coverage (English rows 0.66, 0.87,
-   0.90 against A's 1.0).
+   0.90, 0.925 against A's 1.0).
    The 3× repetition subset is not run.
 3. Every gate `pass`, then `rollout.py canary <this checkout>`; `.env` stays
    `WIKI_JEV_MODE=shadow` until the canary has run without a rollback.
@@ -466,8 +501,8 @@ Left before completion, in order:
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | In progress — `eval/jev/intents.json` and `actions.json` frozen with corpus hashes and splits; labels reviewed 2026-09-28 by a model at the user's direction, version 2 of both |
-| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level run three times for A and D; the repetition subset not run |
-| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; English only from `gates.json` version 2; on the held-out half answer support fails (coverage 0.90 against A's 1.0) and the other six pass |
+| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level run four times for A and D; the repetition subset not run |
+| 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; English only from `gates.json` version 2; on the held-out half answer support fails (coverage 0.925 against A's 1.0) and the other six pass |
 | 4 | Product | App/CLI parity, window checks, operational failures | In progress — the canary in settings, the API and the window's mode line; window checks not run this stage |
 | 5 | Rollout | Shadow, active canary, rollback rehearsal | In progress — canary, off and follow commands; rehearsal passed; active canary waits for the gates |
 | 6 | Completion | Reproduction report, all gates, plan archival | Not started |

@@ -297,7 +297,9 @@ def graded(unit: dict, d: dict, text: str, data: dict, model: str) -> dict:
                "parts": [{"id": p["id"], "ask": p["ask"], "reference": p["reference"]} for p in intent["parts"]],
                "forbidden": intent["forbidden"], "abstention_expected": intent["abstain"],
                "reference_passages": [dataset.passage(data, g[0])[1] for g in intent["evidence"]],
-               "retrieved_passages": [" ".join(e["original_text"].split())[:1500] for e in d["evidence"]]}
+               "retrieved_passages": [" ".join(e["original_text"].split())[:1500] for e in d["evidence"]],
+               # Front matter sits above the text a passage holds: which record replaces which.
+               "records": list(knowledge.lineages(dict(enumerate(d["evidence"]))).values())}
     reply, usd = "", 0.0
     for ev in oneshot("eval-grade.md", payload, model):
         if ev.kind == "error":
