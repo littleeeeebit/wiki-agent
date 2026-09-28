@@ -229,18 +229,21 @@ def test_a_response_that_lands_after_the_deadline_is_not_adopted(
     costs the caller its whole injection, not just the translation.
     """
 
+    gave_up = threading.Event()
+
     def slow(_system: str, batch: list[str], _seconds: float) -> list[str]:
-        time.sleep(0.4)
+        gave_up.wait(10)   # it lands only once the caller has stopped waiting
         return ["EN"] * len(batch)
 
     monkeypatch.setattr(T, "_ask", slow)
-    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, time.monotonic() + 0.15) == [
+    assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, time.monotonic() + 0.5) == [
         "훅이 조용히 죽는다"
     ]
+    gave_up.set()
 
     # It was still cached: the work was done and the next turn should have it.
     monkeypatch.setattr(T, "_ask", lambda *_a: None)
-    for _ in range(100):   # the request lands after the caller stopped waiting; a loaded machine lands it later
+    for _ in range(100):
         if ko("훅이 조용히 죽는다") == "EN":
             break
         time.sleep(0.05)
