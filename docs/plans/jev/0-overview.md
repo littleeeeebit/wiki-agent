@@ -136,6 +136,11 @@ the versioned state migration.
 4. Graph paths discover candidates. Source evidence and explicit decisions
    establish support, contradiction, and supersession.
 5. Unverified generated claims cannot appear as final answers or durable memory.
+   One exception, at the owner's direction (2026-09-28): an analysis the user
+   asked for — a comparison, a judgment, advice — which no passage states. Jev
+   must be sure the question asks for one; it is still searched and cited,
+   written as a document rather than claims, published labelled unverified,
+   and never restated later as verified.
 6. Every loop shares an end-to-end deadline, call count, token budget, and
    candidate limit. Per-stage limits cannot multiply the total allowance.
 7. Models choose from code-owned candidates; they cannot invent sources,
@@ -164,16 +169,16 @@ Published benchmark numbers are not forecasts for this repository.
 
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | [Runtime and baseline](1-runtime-baseline.md) | Configuration, live connectivity, baseline, and shared budgets | Not started |
-| 2 | [English evidence](2-evidence-language.md) | Chunk contracts, normalization, citations, and incremental indexing | Not started |
-| 3 | [Source ingestion](3-sources.md) | Documents, memories, papers, and adopted research | In progress |
+| 1 | [Runtime and baseline](1-runtime-baseline.md) | Configuration, live connectivity, baseline, and shared budgets | Done |
+| 2 | [English evidence](2-evidence-language.md) | Chunk contracts, normalization, citations, and incremental indexing | Done |
+| 3 | [Source ingestion](3-sources.md) | Documents, memories, papers, and adopted research | Done |
 | 4 | [Knowledge graph](4-knowledge-graph.md) | Structural and semantic relationships with provenance | Done |
 | 5 | [Graph retrieval](5-retrieval.md) | Chunk candidates, hybrid ranking, and bounded traversal | Done |
 | 6 | [Decision controller](6-decision-controller.md) | Typed routing, grading, sufficiency, and calibrated fallback | Done |
 | 7 | [Grounded answers](7-grounded-answer.md) | Claim structure, citation checks, repair, and abstention | Done |
 | 8 | [Agent decisions](8-agent-decisions.md) | Server-owned choices, preconditions, execution, and outcomes | Done |
 | 9 | [Product and observability](9-product-observability.md) | Settings, map paths, evidence, trace, reconnection, and cost | Done |
-| 10 | [Evaluation and rollout](10-evaluation-rollout.md) | Ablations, live evaluation, window checks, and reversible activation | In progress — calibration runs and rollback rehearsal done; held-out run waits on label review |
+| 10 | [Evaluation and rollout](10-evaluation-rollout.md) | Ablations, live evaluation, window checks, and reversible activation | In progress — held-out, English only: all seven gates of `gates.json` version 3 pass and the repetition subset ran; the app runs active for every project; window checks remain |
 
 Implement in order. Evaluation fixtures start in stage 1 and accumulate results
 throughout; measurement does not wait until stage 10. Each stage is a reviewable

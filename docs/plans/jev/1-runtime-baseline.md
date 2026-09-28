@@ -124,8 +124,8 @@ key does not make old non-secret evaluation results unreadable.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Settings | Shared reader, file configuration, and mode compatibility | Not started |
-| 2 | Transport | Shared decision boundary, live probe, and error categories | Not started |
-| 3 | Baseline | Evaluation manifests and original retrieval results | Not started |
-| 4 | Plan workflow | English completion markers and legacy compatibility | Not started |
-| 5 | Verification | Matching app/CLI behavior and regression checks | Not started |
+| 1 | Settings | Shared reader, file configuration, and mode compatibility | Done — PR #32: `tool/common/settings.py`, the one `.env` reader shared with translate (file entry, then environment, then default; an empty entry wins; first duplicate wins; nothing expanded). `WIKI_JEV_MODE=off\|shadow\|active`, shadow by default with a key; the old `WIKI_JEV=on` still means active |
+| 2 | Transport | Shared decision boundary, live probe, and error categories | Done — PR #32: `tool/decision/`, moved out of the prototype controller and added to pipeline lint. The key is read per request and never copied into the process environment. `tool/jev_probe.py --live`. Missing key, auth, quota, timeout, network, invalid response and cancel are separate categories; a 200 without a model or usage is `invalid_response`. `common/budget.py` holds one shared budget per run |
+| 3 | Baseline | Evaluation manifests and original retrieval results | Done — PR #32: `tool/eval/baseline.py`, `eval/jev/smoke.json` with recorded `smoke.bm25.json` and `smoke.hybrid.json` (both from clean revision `09ab083`, both replaying identically), and `repo-smoke.json` with results under `raw/eval/jev/` |
+| 4 | Plan workflow | English completion markers and legacy compatibility | Done — PR #32: `main/specs.py::row_done` follows the plan's language (`Complete` or `완료`), still accepts `Done`, and binds to the Steps row and PR number |
+| 5 | Verification | Matching app/CLI behavior and regression checks | Done — PR #32: the CLI and a newly started app process both reached `jev-1.13.0` using only the file key; a bogus key returned a real 401 as `auth_failed`; 600 tests passed. The three pre-existing lint findings it reproduced (a Ruff `E731`, an unpinned child-output encoding, a mid-clause line break) were fixed on 2026-09-28 |

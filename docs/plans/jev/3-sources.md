@@ -99,5 +99,5 @@ assuming git lists every permitted knowledge source.
 | --- | --- | --- | --- |
 | 1 | Local sources | Document, memory, decision catalogs and deletion | Done |
 | 2 | External sources | arXiv, explicit URLs, local files, coverage | Done |
-| 3 | Adoption | Rationale, counterevidence, editions, wiki promotion | In progress — promotion commits in a worktree; routing it through a specification and its pull request is deferred to stages 8–9 |
+| 3 | Adoption | Rationale, counterevidence, editions, wiki promotion | Done — `knowledge.promote` commits the page in a new worktree, and `submitted` makes that worktree a spec's change. The spec's goal is the adoption; its decisions are the adopted claims with their rationale; its report is the committed page. The gate runs again there (`specs.judge`), then the push and the pull request go through `specs.opened`, as a work turn's done report would. The review loop lives in the app: the spec waits with a fault saying so, which is what lets the app's pull request list take it into a loop (`loop.stranded`). With no gate, or a failing one, nothing is pushed. `tool/test_sources.py` covers all three outcomes |
 | 4 | Verification | Live paper retrieval, isolation, errors, write boundaries | Done — `tool/test_sources.py`, a live arXiv lookup, and one live Jev grading of five arXiv abstracts (268 ms, 2,039 input tokens) |

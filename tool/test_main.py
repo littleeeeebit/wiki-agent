@@ -802,7 +802,9 @@ def test_a_cite_finds_its_file_the_ways_answers_write_it(tmp_path):
     web = client()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat_channels, "WIKI", hub):
-        got = lambda path: web.get("/api/file", params={"repo": "proj", "path": path})
+        def got(path):
+            return web.get("/api/file", params={"repo": "proj", "path": path})
+
         assert got("a.txt").json()["lines"] == ["a"]
         assert got("craft/rule.md").json()["lines"] == ["rule"]
         found = got("7-verify.md").json()   # not yet committed: a file the agent just wrote

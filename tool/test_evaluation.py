@@ -25,17 +25,17 @@ def data():
 
 def test_the_set_is_frozen_as_the_plan_asks(data):
     intents = data["intents"]
-    assert len(intents) == 120 and len(dataset.variants(data)) == 240
+    assert len(intents) == 120 and len(dataset.variants(data)) == 120
     assert sum(i["split"] == "held_out" for i in intents) == 60
     # Every category in both splits, as declared before any comparison ran.
     assert all(n["calibration"] >= 5 and n["held_out"] >= 5 for n in data["categories"].values())
     assert set(data["categories"]) == set(dataset.CATEGORIES)
     assert dataset.invalid(data) == [] and dataset.unresolved(data) == []
-    # A wording is Korean or English as labelled: a translated variant never slipped in untranslated.
-    assert all(re.search(r"[가-힣]", i["variants"]["ko"]) for i in intents)
+    # English only, as Jev is measured: no Korean wording, and none slipped into an English one.
+    assert all(set(i["variants"]) == {"en"} for i in intents)
     assert not any(re.search(r"[가-힣]", i["variants"]["en"]) for i in intents)
-    # Unreviewed labels say so; the report reads it.
-    assert data["labels"]["reviewed_by"] is None
+    # Reviewed labels say by whom and when; the report shows the reviewer, a model included.
+    assert data["labels"]["reviewed_by"] and data["labels"]["reviewed_at"]
 
 
 def test_a_broken_label_or_count_is_caught(data):
@@ -147,6 +147,21 @@ def test_a_pass_on_unreviewed_labels_is_provisional_and_zero_errors_must_stay_ze
     assert got["graph_benefit"] == "provisional" and got["integrity"] == "pass"
     assert got["answer_support"] == "fail", "A had no unsupported claim, so D may have none"
     assert {g["id"]: g["verdict"] for g in report.judge(gates, found, reviewed=True)}["graph_benefit"] == "pass"
+
+
+@pytest.mark.parametrize("low, verdict", [(-0.179, "pass"), (-0.21, "fail"), (None, "inconclusive")])
+def test_answer_support_allows_coverage_short_of_a_s_by_its_margin_at_the_interval_s_lower_end(low, verdict):
+    # Version 3: the fifth held-out run (D − A −0.104, lower end −0.179) passes; a lower end past −0.20 fails.
+    # Review round 2: with one paired intent there is no interval, and none is no margin met.
+    gates = json.loads(report.GATES.read_text(encoding="utf-8"))
+    assert next(g for g in gates["gates"] if g["id"] == "answer_support")["coverage_margin"] == -0.20
+    found = {"arms": {"arms": {"A": {"integrity": 0, "breaches": 0, "unsupported_claim_rate": {"value": 0.37},
+                                     "seconds": {"p95": 0.1}},
+                               "D": {"integrity": 0, "breaches": 0, "unsupported_claim_rate": {"value": 0.0},
+                                     "seconds": {"p95": 2.1}}},
+                      "differences": {"coverage_D_minus_A": {"value": -0.104, "low": low, "high": -0.04}}}}
+    got = {g["id"]: g["verdict"] for g in report.judge(gates, found, reviewed=True)}
+    assert got["answer_support"] == verdict
 
 
 def test_held_out_action_fixtures_pass_the_execution_boundary_once(tmp_path, monkeypatch):

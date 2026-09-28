@@ -191,7 +191,7 @@ def inside(base: Path, path: str) -> Path | None:
 def git_lines(base: Path, *args: str) -> list[str]:
     try:
         return subprocess.run(["git", *args], cwd=base, capture_output=True, text=True,
-                              encoding="utf-8", timeout=10).stdout.splitlines()
+                              encoding="utf-8", errors="replace", timeout=10).stdout.splitlines()
     except (OSError, subprocess.SubprocessError):
         return []
 

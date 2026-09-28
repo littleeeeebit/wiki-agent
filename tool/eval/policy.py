@@ -248,7 +248,8 @@ def relation_request(case: dict, labels: dict | None = None) -> tuple[dict, dict
 
     labels = labels or {"requirements": [], "claims": {}}
     pairs = [(cid, rid) for cid, parts in labels["claims"].items() for rid in parts]
-    state = decision.claims.state(case["question"], [{"id": p["id"], "text": p["text"]} for p in case["passages"]],
+    state = decision.claims.state(case["question"], [{k: p[k] for k in ("id", "text", "origin") if k in p}
+                                                     for p in case["passages"]],
                                   [{"id": c["id"], "text": c["text"], "cites": c["cites"], "premises": []}
                                    for c in case["claims"]],
                                   labels["requirements"])

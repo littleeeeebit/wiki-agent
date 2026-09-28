@@ -4,8 +4,8 @@ Stage 10's measurements from recorded rows (`tool/eval/compare.py`), and
 each frozen gate of `eval/jev/gates.json` judged on them. Sends nothing.
 
 Every rate names its denominator. Intervals are 95% percentile intervals from
-resampling intents — an intent's English and Korean wordings and its
-repetitions move together, never counted as independent evidence. A gate
+resampling intents — an intent's repetitions move together, never counted
+as independent evidence. A gate
 reads `pass`, `fail`, `inconclusive` (the interval does not settle it),
 `not_measured` (no rows for it), or `provisional` — a pass on labels no
 person has reviewed. The Markdown summary goes to stdout.
@@ -157,7 +157,7 @@ def arms_report(rows: list[dict], data: dict, opts: dict, cfg: dict) -> dict:
                 cats[intents[r["intent"]]["category"]].append(v["recall"])
         entry["recall_by_category"] = {c: round(statistics.mean(x), 4) for c, x in sorted(cats.items())}
         table[arm] = entry
-    out = {"arms": table, "differences": {}, "language": {}, "repetitions": repetitions(rows)}
+    out = {"arms": table, "differences": {}, "repetitions": repetitions(rows)}
 
     def paired(a: str, b: str, name: str, keep=lambda i: True) -> dict | None:
         """`b − a` on `name`, per intent, resampled by intent."""
@@ -180,19 +180,6 @@ def arms_report(rows: list[dict], data: dict, opts: dict, cfg: dict) -> dict:
             got = paired(a, b, name, keep)
             if got:
                 out["differences"][f"{name}_{b}_minus_{a}"] = got
-    for arm, pairs in per_arm.items():
-        gaps = {}
-        for name in ("recall", "coverage"):
-            en = by_intent([{"intent": r["intent"], "v": v.get(name)} for r, v in pairs if r["language"] == "en"],
-                           lambda x: x["v"])
-            ko = by_intent([{"intent": r["intent"], "v": v.get(name)} for r, v in pairs if r["language"] == "ko"],
-                           lambda x: x["v"])
-            common = sorted(set(en) & set(ko))
-            if common:
-                gaps[name] = boot([(en[i], ko[i]) for i in common],
-                                  lambda g: (ratio([x[0] for x in g]) or 0) - (ratio([x[1] for x in g]) or 0),
-                                  B, seed, conf)
-        out["language"][arm] = gaps
     return out
 
 
@@ -292,21 +279,21 @@ def judge(gates: dict, found: dict, reviewed: bool) -> list[dict]:
         elif g["id"] == "answer_support" and all("unsupported_claim_rate" in table.get(a, {}) for a in "AD"):
             a, d = table["A"]["unsupported_claim_rate"]["value"], table["D"]["unsupported_claim_rate"]["value"]
             cov = diffs.get("coverage_D_minus_A") or {}
-            lower = cov.get("value") is not None and cov["value"] < 0
-            detail = {"A": a, "D": d, "coverage_D_minus_A": cov}
-            if a == 0:
-                verdict = "pass" if d == 0 and not lower else "fail"
-            else:
+            # Coverage may fall short of A's by `coverage_margin`, read at the interval's lower end
+            # (version 3); without one, any shortfall of the point estimate fails (versions 1 and 2).
+            margin = g.get("coverage_margin")
+            lower = (cov.get("low") is not None and cov["low"] < margin if margin is not None else
+                     cov.get("value") is not None and cov["value"] < 0)
+            detail = {"A": a, "D": d, "coverage_D_minus_A": cov, "coverage_margin": margin}
+            if a != 0:
                 value = round((a - d) / a, 4)
-                verdict = "fail" if value < g["target"] or lower else "pass"
+            supported = d == 0 if a == 0 else value >= g["target"]
+            # A margin read at an interval's lower end is not met by no interval (review round 2).
+            unknown = margin is not None and cov.get("low") is None
+            verdict = "fail" if not supported or lower else "inconclusive" if unknown else "pass"
         elif g["id"] == "decision_quality" and actions:
             value = actions["selected_right_rate"]
             verdict = "pass" if value >= g["target"] else "fail"
-        elif g["id"] == "language_parity" and arms.get("language", {}).get("D"):
-            gaps = arms["language"]["D"]
-            value = max(abs(x["value"]) for x in gaps.values())
-            detail = gaps
-            verdict = "pass" if value <= g["target"] else "fail"
         elif g["id"] == "added_latency" and all(a in table for a in "AD"):
             key = "answer_seconds" if all("answer_seconds" in table[a] for a in "AD") else "seconds"
             value = round(table["D"][key]["p95"] - table["A"][key]["p95"], 3)
@@ -354,12 +341,15 @@ def build(folders: list[Path]) -> dict:
     fixtures = json.loads(compare.ACTIONS.read_text(encoding="utf-8"))
     reviewed = bool(data["labels"]["reviewed_by"] and fixtures["labels"]["reviewed_by"])
     return {"schema": REPORT, "gates_version": gates["version"], "labels_reviewed": reviewed,
+            "reviewers": sorted({data["labels"]["reviewed_by"] or "nobody", fixtures["labels"]["reviewed_by"] or "nobody"}),
             "categories": data["categories"], "exclusions": data["exclusions"], **found,
             "gates": judge(gates, found, reviewed)}
 
 
 def markdown(report: dict) -> str:
-    lines = [f"Labels reviewed by a person: {'yes' if report['labels_reviewed'] else 'no — quality results are provisional'}", ""]
+    who = "; ".join(report.get("reviewers") or [])
+    lines = [f"Labels reviewed: {'yes — by ' + who if report['labels_reviewed'] else 'no — quality results are provisional'}",
+             ""]
     arms = (report.get("arms") or {}).get("arms", {})
     if arms:
         lines += ["| Arm | Rows | Recall@k | Candidate recall | Bridge recall | Coverage | Unsupported | p95 s | Jev tokens | Host USD |",

@@ -613,7 +613,77 @@ def test_new_content_undoes_a_decision_made_on_the_old(repo, monkeypatch):
     assert record["editions"][0]["adoption"]["decision"] == "adopted"
 
 
-def test_promotion_is_a_worktree_commit_and_the_checkout_is_untouched(repo, monkeypatch):
+@pytest.fixture
+def spec_home(tmp_path, monkeypatch):
+    """Specs, and the conversation a pull request is told to, in scratch rather than the hub's `raw/`."""
+
+    from main import query, specs
+
+    monkeypatch.setattr(specs, "SPECS", tmp_path / "specs")
+    monkeypatch.setattr(query, "LOGS", tmp_path / "logs")
+    return specs
+
+
+def adopted_paper(path, monkeypatch) -> dict:
+    papers_fixture(monkeypatch)
+    paper = knowledge.add_papers(path, ids=["1706.03762"], n=1)["papers"][0]
+    knowledge.decide(path, paper["source_id"], "adopted", rationale="The abstract states the design we use.",
+                     claims=["Attention alone can replace recurrence for sequence transduction."],
+                     scope="Reranking passages in tool/search.", counterevidence=["No retrieval benchmark."],
+                     conditions=["Revisit when stage 10 measures reranking."])
+    return paper
+
+
+def test_a_promotion_goes_up_as_a_spec_s_pull_request_after_the_gate(repo, monkeypatch, spec_home):
+    _hub, path = repo
+    specs = spec_home
+    paper = adopted_paper(path, monkeypatch)
+    calls = []
+
+    def remote(args, cwd, timeout=60):
+        calls.append(args)
+        ok = lambda out="": subprocess.CompletedProcess(args, 0, out, "")  # noqa: E731
+        if args[:2] == ["git", "push"]:
+            return ok()
+        if args[:3] == ["gh", "repo", "view"]:
+            return ok("main\n")
+        if args[:3] == ["gh", "pr", "create"]:
+            calls.append(Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8"))
+            return ok("https://github.com/o/demo/pull/9\n")
+        return subprocess.run(args, cwd=cwd, capture_output=True, text=True, encoding="utf-8", timeout=timeout)
+
+    monkeypatch.setattr(specs, "sh", remote)
+    monkeypatch.setattr(specs, "gate_of", lambda repo: "git --version")
+    monkeypatch.setattr(specs.translate, "translate", lambda texts, direction, deadline: list(texts))
+    out = knowledge.promote(path, paper["source_id"])
+    spec = specs.load(path.name, out["spec"])
+    # The spec owns the worktree, and its pull request is the promotion's, after the gate passed there again.
+    assert specs.owner(Path(out["worktree"]))["id"] == out["spec"] == out["branch"]
+    assert spec["gate"]["ok"] and spec["gate"]["head"] == out["commit"]
+    assert spec["state"] == "PR #9" and spec["pr"]["branch"] == out["branch"]
+    assert ["git", "push", "-u", "origin", out["branch"]] in calls
+    body = calls[-1]
+    assert "Attention alone can replace recurrence" in body and "git --version" in body
+    # No loop starts in this process; the app's pull request list can take it (`loop.stranded`).
+    from main import loop
+
+    assert loop.stranded(spec) and loop.refusal({}, spec) == ""
+
+
+def test_a_promotion_whose_gate_fails_pushes_nothing(repo, monkeypatch, spec_home):
+    _hub, path = repo
+    specs = spec_home
+    paper = adopted_paper(path, monkeypatch)
+    monkeypatch.setattr(specs, "sh", lambda args, cwd, timeout=60: pytest.fail(f"ran {args}")
+                        if args[0] == "gh" or args[:2] == ["git", "push"] else
+                        subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout))
+    monkeypatch.setattr(specs, "gate_of", lambda repo: "git definitely-not-a-command")
+    out = knowledge.promote(path, paper["source_id"])
+    spec = specs.load(path.name, out["spec"])
+    assert spec["state"] == "작업 중" and spec["pr"] is None and spec["fault"].startswith("판정 실패")
+
+
+def test_promotion_is_a_worktree_commit_and_the_checkout_is_untouched(repo, monkeypatch, spec_home):
     _hub, path = repo
     papers_fixture(monkeypatch)
     paper = knowledge.add_papers(path, ids=["1706.03762"], n=1)["papers"][0]
@@ -634,6 +704,8 @@ def test_promotion_is_a_worktree_commit_and_the_checkout_is_untouched(repo, monk
     assert "abstract only — the full text was not read" in page and "<https://arxiv.org/abs/1706.03762v7>" in page
     # A summary with its link, never the source's text.
     assert "We propose the Transformer" not in page
+    # A repository with no gate yet still gets the spec, held with the reason, and nothing is pushed.
+    assert out["state"] == "작업 중" and out["pr"] is None and out["fault"].startswith("연결 먼저")
 
 
 # ---- review round 1 ----------------------------------------------------------------
