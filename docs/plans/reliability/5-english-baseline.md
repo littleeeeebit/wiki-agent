@@ -66,6 +66,9 @@ grader reads, and whose entries alone form the coverage denominator):
   They are generated from the segmenter at freeze time and then reviewed; the
   segmenter is part of `behavior_manifest`. Supplied material appears only here,
   never in `parts`.
+- `route_expected` on the intent: `false` where the reviewed correct behavior
+  ends before route verdicts are applied (the failure/cancel family's cancelled,
+  exhausted or unavailable paths); `true` otherwise.
 
 Preserve the existing runner's required variant
 shape where compatibility needs it, but execute only English in this stage.
@@ -97,14 +100,23 @@ Recording and scoring changes (proposed):
 | `knowledge.Flow.route` | Record a proposed dossier field `route_segments`, `[{text, ask}]` in segment order, when the route verdicts are applied: kept segments `ask: true`, `material` `ask: false`. Recorded there because `Flow.split` later replaces a single segment's `requirements` with model-split asks |
 | `compare.dossier_row` | Export the dossier's `analysis`, `question_en` and `route_segments` |
 | `compare` intent export | Carry `analysis` and `route_segments` beside `parts`; `compare.graded` and its `parts` export (`compare.py:297`) stay unchanged |
-| `report.py` | Score `analysis_routing` (row flag against the intent label) per case. Score `segment_classification` by matching row segments to `route_segments` on exact text: a case with no `route_segments` (route not reached), a `question_en` different from the stored query, or different segment texts is counted as `unscorable`, never as right. Interval from the existing `report.boot` over intent groups |
+| `report.py` | Score `analysis_routing` (row flag against the intent label) per case. Score `segment_classification` by matching row segments to `route_segments` on exact text: within the cohort below, a case with no `route_segments` (route not reached), a `question_en` different from the stored query, or different segment texts is counted as `unscorable`, never as right. Interval from the existing `report.boot` over intent groups |
 | `eval.policy.labelled` | Unchanged. ASK/ANALYSIS thresholds are not fitted in this PR; fitting them is a separately versioned policy change |
 
 Each of the two new measurements, and each new action family below, gets its own
 gate with target 0.90. It passes when the interval's lower bound is at least 0.90,
 fails when the upper bound is below 0.90, and is inconclusive otherwise, as is a
-result with no interval. `segment_classification` is also inconclusive when any
-held-out case is `unscorable`; the count is reported beside it. The existing
+result with no interval.
+
+`analysis_routing` and `segment_classification` apply only to a preregistered
+cohort, frozen in the gates file: arms B and D (A and C run with Jev off,
+`compare.ARMS`, and return to baseline before routing) crossed with held-out
+intents whose `route_expected` is `true`. Rows outside the cohort are not
+applicable to these two gates; the failure/cancel family's rows are judged by
+their expected terminal status and reason code, reported as a separate
+operational result. Within the cohort, a row with no `route_segments` is
+`unscorable`, and any unscorable row makes both gates inconclusive; the count
+is reported beside them. The existing
 gate v3 `decision_quality` keeps its point estimate unchanged; the new gates are
 added beside it, never substituted.
 
