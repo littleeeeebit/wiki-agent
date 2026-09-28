@@ -2870,6 +2870,23 @@ def redact(value, key: str | None):
     return value
 
 
+def secrets(cfg: decision.Config) -> list[str]:
+    """Every credential the process holds: Jev's, the translator's, and
+    Langfuse's — the configured one and the one its client was made with.
+    A question, a passage or a draft may quote one, and full text goes to
+    the record and the trace (reviews of #43, rounds 1 and 2)."""
+
+    return [cfg.key, translate.api_key(), *tracing.secrets()]
+
+
+def scrub(value, cfg: decision.Config):
+    """`value` with every credential of `secrets` redacted: what each write of a record or a trace goes through."""
+
+    for key in secrets(cfg):
+        value = redact(value, key)
+    return value
+
+
 def budget_left(budget: Budget) -> dict:
     used, limits = budget.used, budget.limits
     return {"seconds": round(budget.left(), 1), "calls": limits["calls"] - used["calls"],
@@ -2899,9 +2916,7 @@ class Run:
         self.repo = Path(repo)   # as the caller names it: the conversation's rows are keyed so
         self.repo_id = evidence.repo_id(self.repo)
         self.focus, self.question, self.cfg = focus, question, cfg
-        # Every credential the process holds, kept out of the record and the trace: a question, a passage or
-        # a draft may quote one, and full text goes to Langfuse (review round 1 of #43).
-        self.secrets = [cfg.key, translate.api_key(), *tracing.secrets()]
+        self.secrets = secrets(cfg)   # read once: every event and span of the run is redacted alike
         self.events: list[dict] = []
         self.done = False
         self.wake = threading.Condition()

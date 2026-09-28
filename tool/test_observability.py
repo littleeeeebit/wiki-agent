@@ -494,6 +494,24 @@ def test_no_credential_the_process_holds_reaches_a_span(tmp_path, langfuse):
     assert "[redacted]" in dumped and not [k for k in (KEY, translator, secret) if k in dumped]
 
 
+def test_a_shadow_record_and_a_rotated_langfuse_key_are_redacted_too(monkeypatch):
+    # Review round 2 of #43 (P0): the shadow record redacted only Jev's key, and a Langfuse key edited in `.env`
+    # left out the one the running client was made with.
+    translator, old, new = "tr-" + "t" * 30, "sk-lf-old-" + "o" * 20, "sk-lf-new-" + "n" * 20
+    cfg = decision.Config("shadow", MODEL, "file", key=KEY)
+    monkeypatch.setattr(knowledge.translate, "api_key", lambda: translator)
+    monkeypatch.setattr(knowledge.tracing, "_secret", old)
+    monkeypatch.setattr(knowledge.tracing, "config", lambda: {"base_url": "x", "public_key": "p", "secret_key": new})
+    assert set(knowledge.secrets(cfg)) == {KEY, translator, old, new}
+    rows, wrote = [], threading.Event()
+    monkeypatch.setattr(chat.memory, "append", lambda _path, row: (rows.append(row), wrote.set()))
+    monkeypatch.setattr(chat, "prepare", lambda *a, **k: {"status": "ready", "question_en": f"{KEY} {translator} {old} {new}"})
+    chat.shadow("wiki", "q", Path("."), "", cfg)
+    assert wrote.wait(2)
+    dumped = json.dumps(rows)
+    assert "[redacted]" in dumped and not [k for k in (KEY, translator, old, new) if k in dumped]
+
+
 def test_a_command_lines_flush_waits_a_bounded_time(monkeypatch):
     # Review round 1 of #43 (P1): the SDK's flush waits on the exporter's timeouts and retries.
     release = threading.Event()

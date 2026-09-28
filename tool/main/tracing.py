@@ -52,6 +52,7 @@ DECISIONS = {"route": "route-question", "judge": "grade-evidence", "repair": "ch
 
 FLUSH_SECONDS = 5.0
 _client = None
+_secret = None   # the secret key `_client` was made with
 _made = False
 _lock = threading.Lock()
 
@@ -71,21 +72,24 @@ def config() -> dict | None:
 
 
 def secrets() -> list[str]:
-    """The Langfuse secret key, for a run to keep out of what it records and traces."""
+    """Langfuse's secret keys, for a run to keep out of what it records and
+    traces: the one configured now, and the one the process's client was
+    made with — a key edited in `.env` reaches the client only on restart."""
 
     where = config()
-    return [where["secret_key"]] if where else []
+    return [k for k in {(where or {}).get("secret_key"), _secret} if k]
 
 
 def client():
     """The process's Langfuse client, made on first use; `None` when tracing is off."""
 
-    global _client, _made
+    global _client, _made, _secret
     with _lock:
         if not _made:
             _made = True
             where = config() if Langfuse is not None else None
             if where is not None:
+                _secret = where["secret_key"]
                 try:
                     _client = Langfuse(**where)
                 except Exception:  # noqa: BLE001 — no trace, never no answer

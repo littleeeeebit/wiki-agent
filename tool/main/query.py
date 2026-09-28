@@ -523,7 +523,7 @@ def shadow(cid: str, query: str, repo: Path, context: str, cfg: decision.Config)
             dossier = prepare(query, repo, context, cfg=cfg)
         except Exception as exc:  # noqa: BLE001 — a shadow never touches the turn
             dossier = {"status": "fallback", "trace": [{"fallback": type(exc).__name__}]}
-        remember(cid, "retrieval", "Jev shadow decision", repo=repo, dossier=knowledge.redact(dossier, cfg.key),
+        remember(cid, "retrieval", "Jev shadow decision", repo=repo, dossier=knowledge.scrub(dossier, cfg),
                  shadow=True)
 
     threading.Thread(target=record, daemon=True).start()
