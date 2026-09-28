@@ -134,6 +134,9 @@ function AnswerVersions(
   // pass, so it is labelled a translation and the English is one click away.
   const [english, setEnglish] = useState(false)
   const translated = Boolean(m.verification) && checked.text !== m.text
+  // An analysis, or an answer shown while verification was down, goes through
+  // the same checked overlay but was never verified: its English is only the original.
+  const original = m.verification?.verified ? '검증된 영어 원문' : '영어 원문'
   const text = m.verification ? (english ? m.text : checked.text) : plain
   return (
     <div className="space-y-3">
@@ -141,13 +144,15 @@ function AnswerVersions(
       {checked.fault && (
         <p role="status" className="text-[12.5px] text-muted-foreground">
           {checked.fault === 'changed'
-            ? '표시 오류 · 한국어로 옮기며 숫자나 식별자가 바뀐 문단은 검증된 영어 원문 그대로 보인다.'
-            : '표시 오류 · 한국어 번역을 받지 못한 문단은 검증된 영어 원문 그대로 보인다.'}
+            ? `표시 오류 · 한국어로 옮기며 숫자나 식별자가 바뀐 문단은 ${original} 그대로 보인다.`
+            : `표시 오류 · 한국어 번역을 받지 못한 문단은 ${original} 그대로 보인다.`}
         </p>
       )}
       {translated && !simple && (
         <p role="status" className="flex flex-wrap items-center gap-x-2 text-[12.5px] text-muted-foreground">
-          {english ? '검증된 영어 원문이다.' : '번역 · 검증된 것은 영어 원문이며, 이 번역은 뜻까지 대조하지 않았다.'}
+          {english ? `${original}이다.`
+            : m.verification?.verified ? '번역 · 검증된 것은 영어 원문이며, 이 번역은 뜻까지 대조하지 않았다.'
+              : '번역 · 영어 원문을 옮긴 것이며, 이 번역은 뜻까지 대조하지 않았다.'}
           <button type="button" aria-pressed={english} onClick={() => setEnglish(!english)}
             className="min-h-9 rounded-md px-2 underline underline-offset-2 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
             {english ? '번역 보기' : '영어 원문 보기'}
@@ -167,9 +172,11 @@ function AnswerVersions(
       )}
       {simple ? (
         <div className="space-y-2">
-          <p className="text-[12.5px] text-muted-foreground">{m.verification
+          <p className="text-[12.5px] text-muted-foreground">{m.verification?.verified
             ? '쉽게 풀어 쓴 설명이며, 검증하지 않았다. 검증된 내용은 ‘정확한 답변’의 영어 원문이다.'
-            : '같은 내용을 쉽게 풀었습니다. 근거와 조건은 원문에서 함께 확인할 수 있습니다.'}</p>
+            : m.verification
+              ? '쉽게 풀어 쓴 설명이다. 원문도 검증되지 않았으며, ‘정확한 답변’에 영어 원문이 있다.'
+              : '같은 내용을 쉽게 풀었습니다. 근거와 조건은 원문에서 함께 확인할 수 있습니다.'}</p>
           {m.simpleText && (
             <Answer text={m.simpleText} korean={korean} {...props} onDecide={undefined} />
           )}

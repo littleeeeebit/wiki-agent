@@ -611,13 +611,15 @@ class Flow:
             self.dossier["material"] = [{"id": r["id"], "text": r["text"]} for r in self.requirements if r not in asked]
             self.requirements = asked
         self.dossier["analysis"] = verdicts.get("analysis") == "yes"
-        if verdicts["retrieve"] == "no" and not required:
+        # An analysis is published unchecked, so it is at least searched and cited (invariant 5): never direct.
+        if verdicts["retrieve"] == "no" and not required and not self.dossier["analysis"]:
             self.dossier.update(direct=True, restrictions=DIRECT)
             return self.go("ready", "direct_eligible", score=res["answers"]["retrieve"])
         # Uncertain about a source is a reason to search it: coverage over precision.
         selected = [s for s in self.available if verdicts[f"source_{s}"] != "no"] or list(self.available)
         reason = ("explicit_requirement" if required else
-                  "retrieval_needed" if verdicts["retrieve"] == "yes" else "uncertain_route")
+                  "retrieval_needed" if verdicts["retrieve"] == "yes" else
+                  "analysis" if self.dossier["analysis"] else "uncertain_route")
         self.split()
         self.go("retrieve", reason, sources=selected, score=res["answers"]["retrieve"])
         share = self.share(1, 0)
@@ -1523,8 +1525,9 @@ class Grounding:
         """An analysis asked for — a comparison, a judgment, advice — is the
         host's own working-out over the evidence, which no passage states:
         nothing is asked of Jev, and it is published as written, a document
-        labelled unverified. Only what cannot be shown falls: no answer, or a
-        mark citing an id no evidence has."""
+        labelled unverified. Only what cannot be shown falls: no answer, one
+        that cites nothing — searched and cited is what invariant 5 asks of
+        it — or a mark citing an id no evidence has."""
 
         from . import specs  # `specs` imports this module
 
@@ -1532,7 +1535,8 @@ class Grounding:
         marked = {i.strip() for m in CITED.finditer(body) for i in m.group(1).split(",")}
         unknown = sorted(marked - set(self.ids))
         problem = ("there is no answer" if not body else
-                   f"it cites evidence ids no evidence has: {', '.join(unknown)}" if unknown else "")
+                   f"it cites evidence ids no evidence has: {', '.join(unknown)}" if unknown else
+                   "it cites no evidence: mark each statement with the evidence id it rests on" if not marked else "")
         gen = {"draft": None if problem else {"body": body}, "problem": problem, "rest": text, "checks": {},
                "decision": None, "unavailable": None, "analysis": True,
                "dossier_trace_id": self.dossier.get("trace_id"), "direct": bool(self.dossier.get("direct")),

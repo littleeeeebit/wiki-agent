@@ -637,6 +637,14 @@ def test_jev_tells_a_request_for_analysis_from_a_question_of_fact(score, analysi
     assert out["analysis"] is analysis and out["evidence"], "an analysis still searches"
 
 
+def test_an_analysis_is_searched_even_where_jev_would_answer_directly():
+    # Review round 1 (P0): `retrieve=no` took the direct route, and an analysis went out unsearched and uncited.
+    world = World(answering(route=0.05, analysis=0.95), [found([chunk("port", "The port is 8791.")])])
+    out = run(world, query="Is choosing port 8791 a sensible design?")
+    assert out["analysis"] and not out["direct"] and out["evidence"]
+    assert world.firsts, "it searched"
+
+
 def test_a_single_question_asks_jev_nothing_about_its_parts():
     world = World(answering(), [found([chunk("port", "The port is 8791.")])])
     run(world)

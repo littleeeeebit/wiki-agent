@@ -513,6 +513,9 @@ def test_an_analysis_asked_for_is_published_whole_and_labelled_unverified(tmp_pa
     assert "## Why\n\nThe search daemon listens on port 8791 `docs/ports.md:3`." in out["text"]
     assert "| port | 8791 | 8787 |" in out["text"] and "```spec" not in out["text"], "a block rides apart"
     assert "```spec" in out["rest"]
+    out, _events, messages = answer(d, ["Yes, 8791 is sensible.", "Yes, 8791 is sensible."], Judge())
+    assert "cites no evidence" in messages[1] and out["verified"]["status"] == "abstained", \
+        "review round 1 (P0): an analysis that cites nothing is not published unchecked"
     twice = {**d, "evidence": d["evidence"] * 2}
     out, _events, _ = answer(twice, ["Both say 8791 [e1] [e2], and so [e1, e2]."], Judge())
     assert "Both say 8791 `docs/ports.md:3`, and so `docs/ports.md:3`." in out["text"], "one place, said once"
@@ -826,6 +829,13 @@ def test_a_presentation_may_drop_a_fact_but_never_add_one():
     assert translate.kept("It gives 200 unlabeled notices.", "레이블이 없는 공고 200개를 준다.", keep, words=True)
     assert translate.kept("It uses a stateless server.", "상태가 없는 서버를 쓴다.", keep, words=True)
     assert not translate.kept("The chunks are united.", "청크가 합쳐지지 않았다.", keep, words=True)
+    # Review round 1 (P1): an ordinal excused any digit, `seconds` included, and `regardless` read as a negation.
+    assert translate.added("Wait three seconds.", "2초 기다리세요.") == ["2"]
+    assert not translate.kept("Wait three seconds.", "2초 기다리세요.", keep, words=True)
+    assert not translate.kept("It is the second step.", "2초 걸리는 단계다.", keep, words=True)
+    assert translate.kept("It is the second step.", "두 번째 단계다.", keep, words=True)
+    assert translate.kept("The server is enabled regardless.", "서버는 어쨌든 활성화되어 있다.", keep, words=True)
+    assert not translate.kept("The server is enabled regardless.", "서버가 활성화되어 있지 않다.", keep, words=True)
     assert translate.kept("RFPs, e.g. from 나라장터, and zeroing notices.", "나라장터 등의 RFP, 그리고 공고를 0으로 만들기.",
                           keep, words=True), "an abbreviation is no identifier; `zeroing` spells a 0"
 

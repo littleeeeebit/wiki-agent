@@ -698,16 +698,19 @@ ENGLISH_VERSION = "1"
 NUMBER = re.compile(r"\d+(?:[.,]\d+)*", re.A)
 IDENTIFIER = re.compile(r"[\w/\\:.-]*(?:\w\.[A-Za-z]|[\\_])[\w/\\:.-]*", re.A)
 # English number words, by value. "eight characters" rendered `8자` states the
-# same number, and so does "the second round" rendered `2차`; only the side
-# that spells it out may excuse the digit.
+# same number; only the side that spells it out may excuse the digit.
 WORDS = {w: str(i) for i, w in enumerate(
     "zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen "
     "sixteen seventeen eighteen nineteen twenty".split())} | {
-    w: str(30 + 10 * i) for i, w in enumerate("thirty forty fifty sixty seventy eighty ninety".split())} | {
-    w: str(i + 1) for i, w in enumerate(
-        "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth "
-        "fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth twentieth".split())}
+    w: str(30 + 10 * i) for i, w in enumerate("thirty forty fifty sixty seventy eighty ninety".split())}
 SPELLED = re.compile(r"\b(" + "|".join(WORDS) + r")(?:s|ed|ing)?\b", re.I)   # "zeroing" is `0으로`
+# An ordinal excuses only a digit the other side writes as an ordinal: "the
+# second round" is `2차`, but "three seconds" is never `2초` (review round 1).
+ORDINALS = {w: str(i + 1) for i, w in enumerate(
+    "first second third fourth fifth sixth seventh eighth ninth tenth eleventh twelfth thirteenth "
+    "fourteenth fifteenth sixteenth seventeenth eighteenth nineteenth twentieth".split())}
+ORDINAL = re.compile(r"\b(" + "|".join(ORDINALS) + r")\b", re.I)
+ORDINAL_DIGIT = re.compile(r"제\s*(\d+)|(\d+)\s*(?:차|번째|위|등)")
 # Latin abbreviations match IDENTIFIER's dotted name, and a rendering drops them.
 ABBREVIATIONS = {"e.g", "i.e"}
 # Negation, English and Korean. A rendering of a paragraph — a verified
@@ -718,14 +721,19 @@ ABBREVIATIONS = {"e.g", "i.e"}
 # explanation) restructures too freely for either to mean anything.
 # A negative word negates too: "unlabeled announcements" is `레이블이 없는 공고`.
 # ponytail: presence, so a paragraph negating twice can lose one unseen; a model judge if that is ever seen.
+# Not `regardless`, `nevertheless`, `nonetheless`: those negate nothing (review round 1).
 NEGATION = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot|unless|unknown)\b|n't\b"
-                      r"|\bun(?!der|it|if|ion)[a-z]+(?:ed|able|ible)\b|\b[a-z]+less\b|않|안 |못|없|아니|아닌", re.I)
+                      r"|\bun(?!der|it|if|ion)[a-z]+(?:ed|able|ible)\b|\b(?!regardless|nevertheless|nonetheless)[a-z]+less\b"
+                      r"|않|안 |못|없|아니|아닌", re.I)
 
 
-def spelled(text: str) -> collections.Counter:
-    """The numbers `text` spells out, as digits."""
+def spelled(text: str, other: str = "") -> collections.Counter:
+    """The numbers `text` spells out, as digits: its number words, and its
+    ordinals that `other` writes as an ordinal digit."""
 
-    return collections.Counter(WORDS[w.lower()] for w in SPELLED.findall(text))
+    marked = {a or b for a, b in ORDINAL_DIGIT.findall(other)}
+    return collections.Counter([WORDS[w.lower()] for w in SPELLED.findall(text)]
+                               + [n for w in ORDINAL.findall(text) if (n := ORDINALS[w.lower()]) in marked])
 
 
 def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False) -> bool:
@@ -750,7 +758,7 @@ def kept(source: str, english: str, keep: tuple[str, ...], words: bool = False) 
     if not words:
         return ours == theirs
     said, made = protect(source, keep)[0], protect(english, keep)[0]
-    return (not theirs - ours - spelled(said) and not ours - theirs - spelled(made)
+    return (not theirs - ours - spelled(said, made) and not ours - theirs - spelled(made, said)
             and bool(NEGATION.search(said)) == bool(NEGATION.search(made)))
 
 
@@ -770,7 +778,7 @@ def added(source: str, derived: str) -> list[str]:
     presentation of an answer that says one of these made up a fact. A
     digit for a number `source` spells out is not one."""
 
-    return sorted(facts(derived, glossary()[0]) - facts(source, glossary()[0]) - set(spelled(source)))
+    return sorted(facts(derived, glossary()[0]) - facts(source, glossary()[0]) - set(spelled(source, derived)))
 
 
 def checked(texts: list[str], direction: str, deadline: float) -> list[tuple[str, str]]:
