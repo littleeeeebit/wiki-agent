@@ -171,11 +171,11 @@ Live host capability and role handoff are checked in PR 10.
 
 ## Steps
 
-| # | Step | Status |
-| --- | --- | --- |
-| 1 | Wire explicit entry, roles and persisted run state | Not started |
-| 2 | Implement research and structured document output | Not started |
-| 3 | Publish and hand off to document review | Not started |
+| # | Step | Deliverable | Status |
+| --- | --- | --- | --- |
+| 1 | Entry | Wire explicit entry, roles and persisted run state | Not started |
+| 2 | Research and output | Implement research and structured document output | Not started |
+| 3 | Publish and hand off | Publish and hand off to document review | Not started |
 
 ## Sources
 

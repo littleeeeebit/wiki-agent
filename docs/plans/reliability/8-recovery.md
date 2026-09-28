@@ -34,8 +34,8 @@ database or automatically opening a promotion PR.
 
 At most two research-and-fix cycles per recurring issue. Persist counts across
 refresh/restart; renamed headlines do not reset them. If unresolved, pause with
-evidence and options. Overall time/token/cost and round limits still apply; reaching
-a lower run cap pauses earlier. Failed research never silently falls through to fix.
+evidence and options. The existing round cap still applies and may pause earlier.
+Failed research never silently falls through to fix.
 
 Check repeated issue, oscillation, improving distinct findings, round 7, missing
 search, stale rounds, restart and budget exhaustion. Show ordering evidence that
@@ -54,6 +54,7 @@ by every issue:
   "trigger": {"kind": "repeat", "rounds": [3, 4], "heads": ["...", "..."]},
   "cycles_started": 0, "active_cycle": null,
   "limits": {"seconds": 0, "calls": 0, "tokens": 0},
+  "spent": {"seconds": 0, "calls": 0, "tokens": 0},
   "attempts": []
 }
 ```
@@ -61,8 +62,16 @@ by every issue:
 A cycle attempt records source manifest, research artifact path/hash, hypothesis,
 proposed experiment, fix HEAD, following review outcome and spend. Require positive
 finite limits before research starts, as the owner selected. If absent, stop for
-input; do not select arbitrary defaults. The effective allowance is the minimum
-of submitted research limits and remaining enclosing run limits.
+input; do not select arbitrary defaults.
+
+These limits bound research only. A code loop has no enclosing time/call/token
+budget today — only its round cap (`loop.MORE`, `loops.cap`), and each Jev choice
+builds a fresh `Budget(**ACTION)` — and the owner chose not to add one here.
+Every research turn of the issue, across both cycles, charges `spent` using PR 7's
+usage normalization (missing usage stops with `budget_unknown`, never zero spend).
+`spent` is persisted with the issue, so a restart resumes against
+`limits - spent`, never a fresh allowance. Ordinary fix and review turns are not
+charged; they stay bounded by the round cap alone.
 
 ### Trigger algorithm
 
@@ -100,9 +109,17 @@ session receives the experiment and findings. Do not force one runtime session t
 switch permissions unsafely: role identity can be the same configured implementation
 model while the research phase uses a separate bounded read-only turn.
 
+A spec reviewed under PR 6's plan profile (a PR 7 planning spec) uses the same
+trigger and read-only research, but keeps PR 7's write boundary: no ordinary write
+session is dispatched. The server materializes the research page inside the spec's
+`planning.artifact_root` as `research-<issue>-<cycle>.md`, and the correction goes
+to the reviser's read-only replacement-artifact turn, validated and written by the
+server as in PR 7. Nothing is written under `docs/research/` or outside that folder.
+
 ### Research page and semantic preservation
 
-Write `docs/research/review-<spec>-<issue>-<cycle>.md` in the existing worktree.
+For a code spec, write `docs/research/review-<spec>-<issue>-<cycle>.md` in the
+existing worktree; a plan-profile spec uses the path in its artifact root above.
 Use the existing adoption/page contract for source fields and these sections:
 problem/invariant; failed fixes; sources; core theory; applicability; counterevidence;
 alternatives; experiment; result; unresolved limits. Require claim-to-source IDs and
@@ -136,14 +153,16 @@ the work dispatch to prove no edit-capable turn precedes the persisted research
 artifact. Restart between claim/dispatch, between research/write, and after fix;
 counts and artifacts remain coherent. Simulate two failures and assert a third
 automatic cycle cannot start. Check the PR diff contains both evidence and fix.
+Repeat A-A on a plan-profile spec: no write-capable turn is dispatched, and every
+write lands inside its artifact root.
 
 ## Steps
 
-| # | Step | Status |
-| --- | --- | --- |
-| 1 | Detect recurrence and gate ordinary fix dispatch | Not started |
-| 2 | Research and preserve evidence in the same PR | Not started |
-| 3 | Verify two-cycle escalation and restart behavior | Not started |
+| # | Step | Deliverable | Status |
+| --- | --- | --- | --- |
+| 1 | Barrier | Detect recurrence and gate ordinary fix dispatch | Not started |
+| 2 | Research page | Research and preserve evidence in the same PR | Not started |
+| 3 | Escalation | Verify two-cycle escalation and restart behavior | Not started |
 
 ## Sources
 

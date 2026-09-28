@@ -95,10 +95,10 @@ its callers restores the old behavior without changing Jev state.
 
 ## Steps
 
-| # | Step | Status |
-| --- | --- | --- |
-| 1 | Capture and identify responsible child | Not started |
-| 2 | Fix shared launch and verify desktop behavior | Not started |
+| # | Step | Deliverable | Status |
+| --- | --- | --- | --- |
+| 1 | Capture | Capture and identify responsible child | Not started |
+| 2 | Fix | Fix shared launch and verify desktop behavior | Not started |
 
 ## Sources
 

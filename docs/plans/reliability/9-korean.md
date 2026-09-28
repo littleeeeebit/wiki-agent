@@ -110,8 +110,8 @@ change independently of retained experiment records.
 
 ## Steps
 
-| # | Step | Status |
-| --- | --- | --- |
-| 1 | Freeze reviewed paired questions and sources | Not started |
-| 2 | Run A–D comparisons and isolate causes | Not started |
-| 3 | Fix normalization only where evidence supports it | Not started |
+| # | Step | Deliverable | Status |
+| --- | --- | --- | --- |
+| 1 | Fixtures | Freeze reviewed paired questions and sources | Not started |
+| 2 | Comparison | Run A–D comparisons and isolate causes | Not started |
+| 3 | Fix | Fix normalization only where evidence supports it | Not started |

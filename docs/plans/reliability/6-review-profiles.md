@@ -115,11 +115,11 @@ retains records and disables profile-specific prompts without bypassing final ga
 
 ## Steps
 
-| # | Step | Status |
-| --- | --- | --- |
-| 1 | Define profiles and finding identity | Not started |
-| 2 | Wire instructions and independent roles | Not started |
-| 3 | Verify profile selection and stale results | Not started |
+| # | Step | Deliverable | Status |
+| --- | --- | --- | --- |
+| 1 | Profiles | Define profiles and finding identity | Not started |
+| 2 | Wiring | Wire instructions and independent roles | Not started |
+| 3 | Verify | Verify profile selection and stale results | Not started |
 
 ## Sources
 

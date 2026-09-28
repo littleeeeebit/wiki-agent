@@ -119,11 +119,11 @@ read-only observability. PR 5 must evaluate the corrected current manifest.
 
 ## Steps
 
-| # | Step | Status |
-| --- | --- | --- |
-| 1 | Inventory and trace routing/call ownership | Not started |
-| 2 | Correct redundant routing and behavior versions | Not started |
-| 3 | Surface and verify graph health | Not started |
+| # | Step | Deliverable | Status |
+| --- | --- | --- | --- |
+| 1 | Inventory | Inventory and trace routing/call ownership | Not started |
+| 2 | Correct | Correct redundant routing and behavior versions | Not started |
+| 3 | Graph health | Surface and verify graph health | Not started |
 
 ## Sources
 

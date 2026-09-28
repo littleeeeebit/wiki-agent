@@ -114,8 +114,8 @@ never deletes source documents or failed evidence.
 
 ## Steps
 
-| # | Step | Status |
-| --- | --- | --- |
-| 1 | Run desktop and real host acceptance matrix | Not started |
-| 2 | Fix integration failures and verify affected paths | Not started |
-| 3 | Reconcile original plan statuses with evidence | Not started |
+| # | Step | Deliverable | Status |
+| --- | --- | --- | --- |
+| 1 | Matrix | Run desktop and real host acceptance matrix | Not started |
+| 2 | Fix | Fix integration failures and verify affected paths | Not started |
+| 3 | Reconcile | Reconcile original plan statuses with evidence | Not started |

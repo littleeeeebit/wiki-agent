@@ -54,13 +54,16 @@ as a separately versioned experiment; intervals may remain inconclusive.
 
 Each item stores ID, split, English query, source snapshot hashes, required evidence,
 acceptable transition set, forbidden operations, expected verification category,
-and label-review provenance. Preserve the existing runner's required variant
+and label-review provenance. Two labels feed the new routing measurements: the
+intent-level `analysis` (`true` when the query asks for the assistant's own
+comparison, judgment or advice) and, on each existing `parts` entry, `ask`
+(`true` for a request, `false` for pasted material). Preserve the existing runner's required variant
 shape where compatibility needs it, but execute only English in this stage.
 Review ambiguous labels before reveal; record whether review was human or model
 and preserve the existing provisional-label rule.
 
 Run manifest:
-`{dataset_hash, gates_hash, source_hashes, code_commit, behavior_manifest,
+`{dataset_hash, actions_hash, gates_hash, source_hashes, code_commit, behavior_manifest,
 models, policies, cache_mode, seed, environment, limits, label_review}`.
 Refuse comparison aggregation when these are incompatible.
 
@@ -74,15 +77,42 @@ zero operating-ceiling breaches. Keep their existing statistical definitions.
 
 Add separate current-path measurements. Analysis text remains unverified and is
 never included as verified claims to inflate support. Report correct analysis/fact
-routing and requirement/material classification with intervals. Apply the existing
-0.90 decision-quality target to each new decision family; insufficient precision
-is inconclusive, not automatic pass. Incorrect verified labeling and unauthorized
-actions are integrity failures.
+routing and requirement/material classification with intervals. Incorrect verified
+labeling and unauthorized actions are integrity failures.
+
+Recording and scoring changes (proposed):
+
+| Location | Change |
+| --- | --- |
+| `compare.dossier_row` | Add the dossier's `analysis` flag and the ids in `material`, so each run row carries both routing outputs |
+| `compare` intent export (`parts` at `compare.py:297`) | Carry each part's reviewed `ask` label and the intent's `analysis` label |
+| `report.py` | Score `analysis_routing` (row flag against intent label) and `part_classification` (part id in `material` against `ask == false`) per case; interval from the existing `report.boot` over intent groups |
+| `eval.policy.labelled` | Unchanged. ASK/ANALYSIS thresholds are not fitted in this PR; fitting them is a separately versioned policy change |
+
+Each of the two new measurements, and each new action family below, gets its own
+gate with target 0.90. It passes when the interval's lower bound is at least 0.90,
+fails when the upper bound is below 0.90, and is inconclusive otherwise, as is a
+result with no interval. The existing gate v3 `decision_quality` keeps its point
+estimate unchanged; the new gates are added beside it, never substituted.
 
 Run existing A/B/C/D arms for retrieval as defined in `compare.py`; do not redefine
 their meanings in the new report. Run answer-level A/D comparison and action
 experiments. Run three repetitions of a stratified subset for boundary choices.
 Graph ablation compares source/evidence recall, not node count.
+
+Action experiments do not run from intents. `compare.py` loads its fixtures from the
+fixed `ACTIONS` path (`eval/jev/actions.json`) and `offered_and_state` reads
+point-specific fields, so a `--dataset` option alone would still score the old,
+already-seen action labels. Add a fresh `eval/jev/reliability/actions.json` in the
+existing `jev-action-fixtures/1` schema, written without reference to the old
+fixtures, with the fields `offered_and_state` reads per point: `spec` for
+`work.start`; `goal`, `criteria`, `changed_files` and `checks` for `specs.check`;
+`round`, `findings` and `disputed` for `loop.fix`. Six calibration and six
+held-out fixtures per point, each with `split`, `label` and label-review provenance.
+Replace the `ACTIONS` constant with a proposed `--actions` path (default unchanged);
+its hash already goes into the run's `fixtures` option and must also appear in the
+run manifest, so `report` refuses action results whose fixture hash differs from
+the manifest's.
 
 ### Execution recipe
 
@@ -115,11 +145,11 @@ for PR 9. Rollback restores prior policy references without deleting failed runs
 
 ## Steps
 
-| # | Step | Status |
-| --- | --- | --- |
-| 1 | Freeze new English labels, versions and gates | Not started |
-| 2 | Run calibration, held-out comparison and repetitions | Not started |
-| 3 | Publish current baseline and unresolved limits | Not started |
+| # | Step | Deliverable | Status |
+| --- | --- | --- | --- |
+| 1 | Freeze | Freeze new English labels, versions and gates | Not started |
+| 2 | Run | Run calibration, held-out comparison and repetitions | Not started |
+| 3 | Publish | Publish current baseline and unresolved limits | Not started |
 
 ## Sources
 

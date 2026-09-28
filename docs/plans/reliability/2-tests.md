@@ -142,11 +142,11 @@ Rollback can restore full checks each round without relaxing final merge guards.
 
 ## Steps
 
-| # | Step | Status |
-| --- | --- | --- |
-| 1 | Profile and map redundant/expensive checks | Not started |
-| 2 | Refactor measured hotspots and final-gate scheduling | Not started |
-| 3 | Compare runtime and verify merge binding | Not started |
+| # | Step | Deliverable | Status |
+| --- | --- | --- | --- |
+| 1 | Profile | Profile and map redundant/expensive checks | Not started |
+| 2 | Refactor | Refactor measured hotspots and final-gate scheduling | Not started |
+| 3 | Compare | Compare runtime and verify merge binding | Not started |
 
 ## Sources
 

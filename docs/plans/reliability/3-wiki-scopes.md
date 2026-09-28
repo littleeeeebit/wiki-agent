@@ -110,8 +110,8 @@ Rollback removes optional audience filters without losing indexed text.
 
 ## Steps
 
-| # | Step | Status |
-| --- | --- | --- |
-| 1 | Map authorities and scopes | Not started |
-| 2 | Wire navigation and retrieval applicability | Not started |
-| 3 | Verify isolation, links and rule injection | Not started |
+| # | Step | Deliverable | Status |
+| --- | --- | --- | --- |
+| 1 | Map | Map authorities and scopes | Not started |
+| 2 | Wire | Wire navigation and retrieval applicability | Not started |
+| 3 | Verify | Verify isolation, links and rule injection | Not started |
