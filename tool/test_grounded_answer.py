@@ -467,6 +467,44 @@ def test_a_direct_runs_translation_may_quote_the_korean_it_was_asked_for(tmp_pat
     assert out["verified"]["rejected"] == [{"claim_id": "c1", "reason": "not_english"}]
 
 
+NOTICE = "Build a RAG system that summarizes 100 RFP documents and answers questions about them."
+
+
+def test_a_pasted_notice_is_cited_as_material_and_a_comparison_stands_on_it(tmp_path):
+    # ai-nara-shop, 2026-09-28: the pasted notice was material, not a requirement, so nothing could cite it; the
+    # drafter restated it as direct_text, which a retrieval run rejects, and every comparison fell as bad_premises.
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    d = {**dossier([ports], ["How does this notice compare with the search daemon?"], calls_left=2),
+         "material": [{"id": "r1", "text": NOTICE}]}
+    notice = claim("c1", "The notice asks for a RAG system over 100 RFP documents.", cites=("m1",),
+                   quotes=["summarizes 100 RFP documents"])
+    ours = claim("c2", "The search daemon listens on port 8791.", quotes=["listens on port 8791"])
+    compared = claim("c3", "The notice asks for a new system, while this repository runs a search daemon.",
+                     kind="inference", cites=(), premises=("c1", "c2"))
+    out, _events, messages = answer(d, [draft(notice, ours, compared)], Judge())
+    assert '"id": "m1"' in messages[0] and '"kind": "material"' in messages[0], "the drafter is shown it"
+    assert out["verified"]["status"] == "complete" and out["verified"]["rejected"] == []
+    assert "`your message`" in out["text"] and "while this repository runs" in out["text"]
+    # Still a passage: a quote it does not hold is caught as in any other.
+    made_up = claim("c1", "The notice asks for 200 documents.", cites=("m1",), quotes=["summarizes 200 RFP docs"])
+    out, _events, _ = answer(d, [draft(made_up), draft(made_up)], Judge())
+    assert out["verified"]["rejected"] == [{"claim_id": "c1", "reason": "fabricated_quote"}]
+
+
+def test_a_korean_name_a_quote_holds_may_stand_in_an_english_claim(tmp_path):
+    shop = item(tmp_path, "docs/shop.md", "나라장터 자체입찰 공고의 법령 위반 판정",
+                "Judging legal violations in 나라장터 self-bidding notices")
+    named = claim("c1", "The project judges legal violations in 나라장터 self-bidding notices (자체입찰 공고).",
+                  quotes=["나라장터 자체입찰 공고의"])
+    out, _events, _ = answer(dossier([shop], ["What does the project judge?"]), [draft(named)], Judge())
+    assert out["verified"]["rejected"] == [], "a name kept as the evidence writes it"
+    # A Korean word no quote of the draft holds is still a Korean clause.
+    clause = claim("c1", "The project 법령을 판정한다 for 나라장터 notices.", quotes=["나라장터 자체입찰 공고의"])
+    out, _events, _ = answer(dossier([shop], ["What does the project judge?"]), [draft(clause), draft(clause)],
+                             Judge())
+    assert out["verified"]["rejected"] == [{"claim_id": "c1", "reason": "not_english"}]
+
+
 def test_a_direct_runs_text_states_no_fact_the_conversation_did_not(tmp_path):
     # Review round 2 (P0): no number, no identifier — code could not see it, and it was published complete.
     d = dossier([], ["Who owns the ingest pipeline?"], direct=True, calls_left=1)

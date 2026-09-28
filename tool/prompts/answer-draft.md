@@ -35,6 +35,12 @@ holding one JSON object with exactly these fields:
   a greeting, a restatement, a rewrite of text the user supplied. No evidence,
   no premises, and never a fact about the repository or the world.
 
+Evidence of kind `material` is text the user supplied rather than asked, such
+as a pasted notice. What it says is a `source_fact` about that text ("The
+notice asks for …"), cited and quoted like any passage; an `inference` may
+compare it with the repository's evidence. It is never evidence of a fact
+about the repository or the world.
+
 Every claim is one English sentence stating one fact, and it makes sense
 alone; keep identifiers and numbers exactly as the evidence writes them.
 State the fact itself, not where it is written: no "according to

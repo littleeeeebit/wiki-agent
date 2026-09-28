@@ -1006,7 +1006,7 @@ DRAFT_PROMPT = "answer-draft.md"
 CLAIM_KINDS = ("source_fact", "inference", "recommendation", "direct_text")
 FACTUAL = ("source_fact", "inference")
 ANSWER_STATUSES = ("complete", "partial", "abstained", "verification_unavailable")
-VERIFICATION_VERSION = f"grounded-1/{decision.claims.VERSION}"
+VERIFICATION_VERSION = f"grounded-2/{decision.claims.VERSION}"   # 2: material cited; quoted Korean names
 DRAFT_BLOCK = re.compile(r"^```answer-draft[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 CLAIM_ID = re.compile(r"\A[A-Za-z0-9_-]{1,32}\Z")
 # What a direct_text quotes: the Korean a translation asked for is the answer, named in an English sentence.
@@ -1062,6 +1062,8 @@ def cite(item: dict) -> str:
     """Where a piece of evidence is, as a reader opens it."""
 
     loc = item["locator"]
+    if "message" in loc:
+        return "your message"
     if "path" in loc:
         end = f"-{loc['end_line']}" if loc["end_line"] != loc["start_line"] else ""
         return f"{loc['path']}:{loc['start_line']}{end}"
@@ -1070,6 +1072,19 @@ def cite(item: dict) -> str:
 
 def flat(text: str) -> str:
     return " ".join(text.split())
+
+
+def material(part: dict) -> dict:
+    """A part of the question the user supplied rather than asked — a pasted
+    notice — as evidence a claim may cite: what that text says is a fact about
+    the text, checked like any passage. Its English is the question's own
+    normalization, so it is its original too; it has no file to go stale."""
+
+    text = part["text"]
+    digest = hashlib.sha256(f"material\0{text}".encode()).hexdigest()
+    return {"chunk_id": digest, "revision": digest, "kind": "material", "locator": {"message": part["id"]},
+            "original_text": text, "text_en": text, "coverage": "full_text", "path": None,
+            "translation": {"status": "original_english", "version": "question"}}
 
 
 def lineages(items: dict[str, dict]) -> dict[str, dict]:
@@ -1136,7 +1151,8 @@ class Grounding:
     def rebase(self, dossier: dict) -> None:
         self.dossier = dossier
         self.ids = {f"e{i + 1}": e for i, e in enumerate(dossier.get("evidence") or [])}
-        back = {e["chunk_id"]: eid for eid, e in self.ids.items()}
+        self.ids.update({f"m{i + 1}": material(m) for i, m in enumerate(dossier.get("material") or [])})
+        back ={e["chunk_id"]: eid for eid, e in self.ids.items()}
         self.untrusted = {back[u["chunk_id"]] for u in dossier.get("untrusted") or [] if u["chunk_id"] in back}
         self.conflicting = [back[c["chunk_id"]] for c in dossier.get("conflicts") or [] if c["chunk_id"] in back]
         self.lineage = lineages(self.ids)
@@ -1234,7 +1250,14 @@ class Grounding:
             return "malformed"
         kind, cited = claim["kind"], claim["evidence_ids"]
         prose = QUOTED.sub(" ", claim["text_en"]) if kind == "direct_text" else claim["text_en"]
-        if language(prose, translate.glossary()[0]) != "en":
+        # A Korean name kept as the evidence writes it — `나라장터` — is a name, not a Korean clause: a Hangul word
+        # this draft's quotes hold, so far, may stand in the English. Held within, since a quote's word carries
+        # its particle (`공고의`).
+        # ponytail: word by word, so a Korean clause copied whole from a quote passes too; match phrases if it bites.
+        quoted = " ".join(q["quote"] for c in [*earlier.values(), claim] for q in c.get("source_quotes") or []
+                          if isinstance(q, dict) and isinstance(q.get("quote"), str))
+        names = [w for w in translate.HANGUL_WORD.findall(prose) if w in quoted]
+        if language(prose, (*translate.glossary()[0], *names)) != "en":
             return "not_english"
         if not set(claim["requirement_ids"]) <= {r["id"] for r in self.requirements}:
             return "unknown_requirement"
