@@ -82,9 +82,7 @@ def answer(question: str, project: str | None, state: str, k: int, model: str) -
         run.put({"kind": "error", "code": "internal", "text": str(exc)[:300]})
     finally:
         chat.close()
-    summary = run.finish(outcome, reason, out, answered=out["text"] if out else "")
-    knowledge.tracing.flush()   # a command line exits next: its trace is sent first
-    return summary
+    return run.finish(outcome, reason, out, answered=out["text"] if out else "")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -131,7 +129,9 @@ def main(argv: list[str] | None = None) -> int:
         if status["mode"] != "active":
             parser.error(f"--answer publishes only what was checked, which mode active does; the mode is "
                          f"{status['mode']} (from {status['mode_source']})")
-        print(json.dumps(answer(args.query, project, args.state, args.k, args.model), ensure_ascii=False, indent=2))
+        print(json.dumps(answer(args.query, project, args.state, args.k, args.model), ensure_ascii=False, indent=2),
+              flush=True)
+        knowledge.tracing.flush()   # the answer is out; its trace is sent, for a bounded wait, before the exit
         return 0
     if args.retrieval:
         if not 1 <= args.k <= 40:

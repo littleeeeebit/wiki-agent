@@ -29,12 +29,13 @@ tracing costs the trace, never the answer.
 The four questions of `craft/client-lifecycle-in-one-scope`: one client per
 process, made by the first run that finds the keys (`client`); shared by
 every run of the process; flushed and shut down by the SDK's own exit hook,
-and `flush` for a command line before it exits; owned by the process, so new
-keys take a restart.
+and `flush` — bounded, after the answer is shown — for a command line before
+it exits; owned by the process, so new keys take a restart.
 """
 
 from __future__ import annotations
 
+import math
 import threading
 
 import decision
@@ -49,6 +50,7 @@ except ImportError:   # the hooks' install has no SDK: no trace there
 DECISIONS = {"route": "route-question", "judge": "grade-evidence", "repair": "choose-repair",
              "verify": "judge-claims"}
 
+FLUSH_SECONDS = 5.0
 _client = None
 _made = False
 _lock = threading.Lock()
@@ -68,6 +70,13 @@ def config() -> dict | None:
     return {"base_url": base, "public_key": public, "secret_key": secret, "environment": environment or None}
 
 
+def secrets() -> list[str]:
+    """The Langfuse secret key, for a run to keep out of what it records and traces."""
+
+    where = config()
+    return [where["secret_key"]] if where else []
+
+
 def client():
     """The process's Langfuse client, made on first use; `None` when tracing is off."""
 
@@ -84,14 +93,24 @@ def client():
         return _client
 
 
-def flush() -> None:
-    """Send what is buffered: a command line calls this before it exits."""
+def flush(seconds: float = FLUSH_SECONDS) -> None:
+    """Send what is buffered, waiting `seconds` at most: a command line calls
+    this after it has shown its answer and before it exits. The SDK's flush
+    waits on the exporter's own timeouts and retries, so it runs on a daemon
+    thread the caller stops waiting for (review round 1 of #43)."""
 
-    if _client is not None:
+    if _client is None:
+        return
+
+    def send() -> None:
         try:
             _client.flush()
         except Exception:  # noqa: BLE001
             pass
+
+    worker = threading.Thread(target=send, daemon=True)
+    worker.start()
+    worker.join(seconds)
 
 
 def usage(tokens: dict | None) -> dict | None:
@@ -103,7 +122,8 @@ def usage(tokens: dict | None) -> dict | None:
              "output": tokens.get("output_tokens", tokens.get("out")),
              "cache_read_input_tokens": tokens.get("cache_read"),
              "cache_creation_input_tokens": tokens.get("cache_write")}
-    got = {k: int(v) for k, v in pairs.items() if isinstance(v, (int, float))}
+    # A count that is not finite is no count: `int()` of it raises, and telemetry never costs the answer.
+    got = {k: int(v) for k, v in pairs.items() if isinstance(v, (int, float)) and math.isfinite(v)}
     return got or None
 
 

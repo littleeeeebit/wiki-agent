@@ -1785,7 +1785,7 @@ def drafted(run: Run | None, generate):
             if run is not None:
                 run.close(call, level="ERROR", status_message=type(error).__name__)
             raise
-        if run is not None:
+        if call is not None:   # no trace, no telemetry to build: nothing in it may cost the answer
             run.close(call, output=text, model=spent.get("model"), usage_details=tracing.usage(spent.get("tokens")),
                       cost_details={"total": spent["cost_usd"]} if isinstance(spent.get("cost_usd"), (int, float))
                       else None)
@@ -2899,6 +2899,9 @@ class Run:
         self.repo = Path(repo)   # as the caller names it: the conversation's rows are keyed so
         self.repo_id = evidence.repo_id(self.repo)
         self.focus, self.question, self.cfg = focus, question, cfg
+        # Every credential the process holds, kept out of the record and the trace: a question, a passage or
+        # a draft may quote one, and full text goes to Langfuse (review round 1 of #43).
+        self.secrets = [cfg.key, translate.api_key(), *tracing.secrets()]
         self.events: list[dict] = []
         self.done = False
         self.wake = threading.Condition()
@@ -2956,7 +2959,9 @@ class Run:
         return self.put({"kind": "step", "stage": stage, "status": status, **payload})
 
     def redact(self, value):
-        return redact(value, self.cfg.key)
+        for key in self.secrets:
+            value = redact(value, key)
+        return value
 
     # -- its Langfuse trace (`tracing`): every write fails open --------------------------
 
