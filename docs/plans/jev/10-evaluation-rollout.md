@@ -509,6 +509,19 @@ passes all seven gates: answer support 1.0 (unsupported claims 0.37 → 0.0;
 coverage D − A −0.104 [−0.179, −0.038]). The fourth run passes too (lower
 end −0.133).
 
+Repetition, held-out, 2026-09-28 (`raw/eval/jev/compare-heldout-repeat`,
+`report-heldout-repeat.json`): a stratified subset, the first two held-out
+intents of each category by id (20 intents), arms B and D, three times each,
+retrieval level. Jev requests only: 255 requests, 501,236 Jev tokens, 1.4
+minutes. Recall was the same in all three repetitions (B 0.938, D 1.0 each
+time). Status agreed in 19 of 20 intents in both arms; the one that moved
+was `direct-01` (the Korean translation), routed direct in two repetitions
+and to retrieval in the third, in each arm. D handed over the same set of
+passages in all three repetitions for 13 of 20 intents; for the other seven
+the sets differ by one to six passages at the edge of the grade, with recall
+unchanged. `report.py`'s `same_evidence` (6 of 20) compares the ordered
+list, so a reordering counts as a difference there.
+
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
 calls are not counted in `host_turns` or USD, and they are the one spend
@@ -524,7 +537,7 @@ Left before completion, in order:
    answer support failed each time on version 1 and 2's coverage rule
    (English rows 0.66, 0.87, 0.90, 0.925, 0.892 against A's 1.0 or 0.996),
    and the fifth run passes every gate of version 3.
-   The 3× repetition subset is not run.
+   The 3× repetition subset ran 2026-09-28 (above).
 3. Every gate `pass`, then `rollout.py canary <this checkout>`; `.env` stays
    `WIKI_JEV_MODE=shadow` until the canary has run without a rollback.
 
@@ -533,7 +546,7 @@ Left before completion, in order:
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Dataset | Frozen intent groups, labels, source snapshots, splits | In progress — `eval/jev/intents.json` and `actions.json` frozen with corpus hashes and splits; labels reviewed 2026-09-28 by a model at the user's direction, version 2 of both |
-| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level run five times for A and D; the repetition subset not run |
+| 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level run five times for A and D; the repetition subset (20 intents, B and D, 3×) run 2026-09-28 |
 | 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; English only from `gates.json` version 2; version 3 allows coverage short of A's to a lower end of −0.20, and on the held-out half all seven gates pass (fifth answer-level run: coverage 0.892 against A's 0.996, no unsupported claim) |
 | 4 | Product | App/CLI parity, window checks, operational failures | In progress — the canary in settings, the API and the window's mode line; window checks not run this stage |
 | 5 | Rollout | Shadow, active canary, rollback rehearsal | In progress — canary, off and follow commands; rehearsal passed; active canary waits for the gates |
