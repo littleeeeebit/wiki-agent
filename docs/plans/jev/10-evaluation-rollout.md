@@ -542,6 +542,33 @@ direction the canary list was then cleared: `raw/jev/settings.json` saves mode
 shadow; the app's saved mode overrides it, and `rollout.py follow` returns to
 it.
 
+The first active question there, a Korean one comparing a pasted bootcamp
+notice with the project, abstained with two unrelated claims. The held-out
+set, English over English documents, could not have shown the three causes:
+
+- Code split the query per line, so each line of the pasted notice became a
+  requirement no evidence could meet, and the repair rounds spent the call
+  allowance on them. When code splits a query into parts, the route request
+  now asks Jev per part (`ask`, provisional thresholds, kept out of
+  `PROMPTS` so the fitted `policy.json` stays bound): a part it is sure was
+  only supplied becomes `material`, not a requirement.
+- The project's Korean documents were never normalized. One request carried
+  every passage of a round: 21 passages came back as 23 strings, the length
+  check refused the answer whole, and the socket was cut at the four seconds
+  anyway, so nothing was cached. Requests now carry four texts each, run at
+  once, and a request for the shared cache reads on past the caller's
+  deadline so what lands late is there next turn.
+- Claims with Korean words outside quotes were refused as not English.
+
+Rerun: only the question stayed a requirement, 14 of 20 passage texts were
+English within the four seconds (none before), and eight facts about the
+project were verified and cited. It still abstained: the comparison, the
+inference that answers the question, was refused for its premises in the
+first draft and judged uncertain in the repair. Four passages stay
+unnormalized because the translation changed an identifier or a number
+(`dropped_doc_countsType`, `배경.md` as `Background.md`), which stage 2's check
+rightly refuses.
+
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
 calls are not counted in `host_turns` or USD, and they are the one spend

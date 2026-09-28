@@ -181,6 +181,14 @@ PROMPTS = {
               "evidence? Choose defer when none clearly is.",
 }
 PROMPT_VERSION = hashlib.sha256(json.dumps(PROMPTS, sort_keys=True).encode()).hexdigest()[:16]
+# Asked beside the route when code split the query into several parts: a line
+# pasted for the assistant to work on is not a requirement evidence must meet.
+# Kept out of PROMPTS, whose digest the fitted `eval/jev/policy.json` is bound
+# to: its text is in every question and so in every cache key, and its
+# thresholds stay provisional until it is fitted.
+ASK = ("Is query part {id} something the user asks the assistant to answer or do, a question or a request, "
+       "rather than material the user supplied for it to work on, such as a pasted notice, document or message, "
+       "or instructions written for someone else?")
 REPAIRS = {
     "context": "Read the sections next to a passage that was cut off or read only in part.",
     "sources": "Search the enabled sources not searched yet: {rest}.",
@@ -237,13 +245,16 @@ def requirements(query_en: str) -> list[str]:
     return parts or [query_en]
 
 
-def route_questions(available: list[str]) -> dict:
-    """The route request's questions: is retrieval needed, and could each source help."""
+def route_questions(available: list[str], parts: list[str] = ()) -> dict:
+    """The route request's questions: is retrieval needed, could each source
+    help, and is each of the query's `parts` asked or only supplied."""
 
     questions = {"retrieve": {"decision": "route", "candidate": None, "question": decision.noul(PROMPTS["route"])}}
     for s in available:
         questions[f"source_{s}"] = {"decision": "source", "candidate": s, "question": decision.noul(
             PROMPTS["source"].format(source=s, description=DESCRIBED[s]))}
+    for rid in parts:
+        questions[f"ask_{rid}"] = {"decision": "ask", "candidate": rid, "question": decision.noul(ASK.format(id=rid))}
     return questions
 
 
@@ -382,8 +393,8 @@ class Flow:
         self.dossier = {
             "schema_version": DOSSIER, "status": None, "reason": None, "question_en": None, "direct": False,
             "restrictions": [],
-            "sources": [], "evidence": [], "requirements": [], "split": None, "missing": [], "conflicts": [],
-            "untrusted": [],
+            "sources": [], "evidence": [], "requirements": [], "material": [], "split": None, "missing": [],
+            "conflicts": [], "untrusted": [],
             "reads": [], "limits": [], "repairs": [], "transitions": [], "decisions": [], "trace": [],
             "normalization": None, "policy": pol.record(), "trace_id": self.trace_id,
             "versions": {"prompt": PROMPT_VERSION, "policy": pol.version, "model": model, "normalization": None},
@@ -570,13 +581,22 @@ class Flow:
 
     def route(self) -> None:
         required = self.required or explicit(self.query, self.query_en)
-        res = self.ask("route", {**self.context, "available_sources": {s: DESCRIBED[s] for s in self.available}},
-                       route_questions(self.available), self.available)
+        parts = {r["id"]: r["text"] for r in self.requirements} if len(self.requirements) > 1 else {}
+        state = {**self.context, "available_sources": {s: DESCRIBED[s] for s in self.available}}
+        res = self.ask("route", {**state, "query_parts": parts} if parts else state,
+                       route_questions(self.available, list(parts)), [*self.available, *parts])
         if res["status"] in ("cancelled", "exhausted"):
             return self.go(res["status"], res["reason_code"])
         if res["status"] in ("unavailable", "invalid"):
             return self.baseline(res["reason_code"] or res["status"])
         verdicts = res["verdicts"]
+        # A part Jev is sure was only supplied — a pasted notice, a quoted
+        # message — is material, not a requirement; an uncertain one stays.
+        # Should every part be judged supplied, none is dropped.
+        asked = [r for r in self.requirements if verdicts.get(f"ask_{r['id']}") != "no"]
+        if parts and asked and len(asked) < len(self.requirements):
+            self.dossier["material"] = [{"id": r["id"], "text": r["text"]} for r in self.requirements if r not in asked]
+            self.requirements = asked
         if verdicts["retrieve"] == "no" and not required:
             self.dossier.update(direct=True, restrictions=DIRECT)
             return self.go("ready", "direct_eligible", score=res["answers"]["retrieve"])

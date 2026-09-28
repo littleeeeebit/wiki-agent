@@ -56,7 +56,7 @@ def english(texts, seconds, owners=None):
 
 
 def answering(route=0.9, sources=None, useful=0.9, conflict=0.0, redirect=0.0, coverage=0.9, repair="defer",
-              confidence=0.9, offered_only=True):
+              confidence=0.9, offered_only=True, ask=0.9):
     """A fake Jev: each question kind answered by a number or a function of its
     name. Its repair is `defer` where `repair` is not offered, unless told to
     name it anyway."""
@@ -78,7 +78,7 @@ def answering(route=0.9, sources=None, useful=0.9, conflict=0.0, redirect=0.0, c
             else:
                 kind = name.split("_")[0]
                 out[name] = value({"useful": useful, "conflict": conflict, "redirect": redirect,
-                                   "coverage": coverage}[kind], name)
+                                   "coverage": coverage, "ask": ask}[kind], name)
         return out
 
     return answer
@@ -598,6 +598,34 @@ def test_covered_requirements_end_ready():
     # Round 1 takes its share of the allowance and leaves the repair rounds theirs.
     assert world.firsts[0]["max_candidates"] == 40 // retrieval.MAX_ROUNDS
     assert out["schema_version"] == knowledge.DOSSIER and out["versions"]["prompt"] == knowledge.PROMPT_VERSION
+
+
+PASTED = ("How does this notice compare with our project?\n"
+          "- Build a RAG system that summarizes RFP documents.\n"
+          "- Each team picks its own evaluation metrics.")
+
+
+@pytest.mark.parametrize("ask, kept", [
+    # Jev sure the notice's lines were only pasted: they are material, not requirements.
+    ({"ask_r0": 0.95, "ask_r1": 0.05, "ask_r2": 0.05}, ["r0"]),
+    # Uncertain is never read as no; and a query judged all material keeps every part.
+    ({"ask_r0": 0.95, "ask_r1": 0.5, "ask_r2": 0.05}, ["r0", "r1"]),
+    ({"ask_r0": 0.05, "ask_r1": 0.05, "ask_r2": 0.05}, ["r0", "r1", "r2"]),
+])
+def test_jev_tells_the_parts_asked_from_the_material_pasted_with_them(ask, kept):
+    world = World(answering(ask=ask.get), [found([chunk("port", "The port is 8791.")])])
+    out = run(world, query=PASTED)
+    stage, state, questions = world.asked[0]
+    assert stage == "route" and {n for n in questions if n.startswith("ask_")} == {"ask_r0", "ask_r1", "ask_r2"}
+    assert state["query_parts"]["r1"] == "Build a RAG system that summarizes RFP documents."
+    assert [r["id"] for r in out["requirements"]] == kept
+    assert [m["id"] for m in out["material"]] == [r for r in ("r0", "r1", "r2") if r not in kept]
+
+
+def test_a_single_question_asks_jev_nothing_about_its_parts():
+    world = World(answering(), [found([chunk("port", "The port is 8791.")])])
+    run(world)
+    assert not any(n.startswith("ask_") for n in world.asked[0][2]) and "query_parts" not in world.asked[0][1]
 
 
 def test_a_confident_no_takes_the_direct_path_with_its_restrictions():

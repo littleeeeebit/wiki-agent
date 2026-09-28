@@ -25,7 +25,8 @@ from common import settings
 PROVISIONAL_VERSION = "provisional-1"
 ARTIFACT = Path("eval") / "jev" / "policy.json"
 
-NOUL = ("route", "source", "useful", "conflict", "redirect", "coverage")
+# `ask`: is a part of the query asked of the assistant, or material pasted with it (`main.knowledge.ASK`).
+NOUL = ("route", "source", "useful", "conflict", "redirect", "coverage", "ask")
 # `action` is stage 8's: which code-owned operation an owner function runs next (`main.decisions`).
 CHOICE = ("repair", "relation", "answers", "faithful", "action")
 KINDS = NOUL + CHOICE

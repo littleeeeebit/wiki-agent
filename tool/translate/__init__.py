@@ -35,6 +35,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 import tomllib
 import urllib.request
@@ -73,6 +74,19 @@ PRICE_OUT = 1.50
 
 # The monthly limit when neither `.env` nor the environment names one.
 MONTHLY_USD = 5.0
+
+# How much longer than its caller a request that goes to the shared cache may
+# keep reading. The caller stops waiting at its deadline; the answer still lands
+# in the cache, so a passage too long to translate within one turn's seconds is
+# there on the next turn rather than timing out on every one.
+LATE_SECONDS = 60.0
+# Texts per request. A batch of 21 passages came back as 23 strings and was
+# lost whole; ponytail: a fixed count, not a character budget, until a batch
+# this small is seen to split.
+BATCH = 4
+# Set only on the thread that reads such a request (`_translate`), so every
+# other `_ask` keeps its caller's seconds as its read timeout.
+_late = threading.local()
 
 # Part of the cache key. Bump it whenever SYSTEM or the request shape changes.
 # Without it the cache keeps serving text translated under a different contract,
@@ -436,7 +450,7 @@ def _ask(system: str, batch: list[str], seconds: float, same_length: bool = True
         charge(-held, at)
         return None
     try:
-        answer = urllib.request.urlopen(request, timeout=seconds)
+        answer = urllib.request.urlopen(request, timeout=seconds + getattr(_late, "seconds", 0.0))
     except TimeoutError:
         # The server may well have finished and billed it. With no usage to
         # read, the hold stands.
@@ -461,10 +475,11 @@ def _ask(system: str, batch: list[str], seconds: float, same_length: bool = True
     return [str(x) for x in out]
 
 
-def _store() -> sqlite3.Connection | None:
+def _store(path: Path | None = None) -> sqlite3.Connection | None:
+    path = path or CACHE
     try:
-        CACHE.parent.mkdir(parents=True, exist_ok=True)
-        db = sqlite3.connect(CACHE, timeout=2.0)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        db = sqlite3.connect(path, timeout=2.0)
         # The UserPromptSubmit hook and the screen's overlay translate at the same time.
         db.execute("PRAGMA journal_mode=WAL")
         db.execute("CREATE TABLE IF NOT EXISTS shots (k TEXT PRIMARY KEY, v TEXT)")
@@ -595,29 +610,57 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
     if wanted:
         masked: list[tuple[str, list[str]]] = [protect(texts[i], keep) for i in wanted]
         seconds = max(0.0, deadline - time.monotonic())
-        answer = _ask(instruction(direction, fixed), [m for m, _ in masked], seconds)
-        for i in wanted:
-            out[i] = (texts[i], "request_failed")
-        if answer is not None:
+        system, cache = instruction(direction, fixed), CACHE
+        got: dict[int, tuple[str, str]] = {}
+
+        def request(group: list[int]) -> None:
+            # A request for the shared cache reads on past the caller's
+            # deadline, on this thread, and caches what lands then. A held
+            # (private) text has no shared cache to land in, so it does not.
+            _late.seconds = LATE_SECONDS if held is None else 0.0
+            answer = _ask(system, [masked[j][0] for j in group], seconds)
+            if answer is None:
+                return
             fresh: list[tuple[str, str]] = []
-            for i, reply, (_, spans) in zip(wanted, answer, masked):
+            for i, reply, (_, spans) in zip([wanted[j] for j in group], answer, [masked[j] for j in group]):
                 if not intact(reply, len(spans)):
                     # Keep the original; a mangled span is not a translation.
-                    out[i] = (texts[i], "spans_broken")
+                    got[i] = (texts[i], "spans_broken")
                     continue
                 done = restore(reply, spans)
                 refused = accept(texts[i], done) if accept else None
                 if refused:
-                    out[i] = (texts[i], refused)
+                    got[i] = (texts[i], refused)
                     continue
                 fresh.append((keys[i], done))
-                out[i] = (done, "translated")
+                got[i] = (done, "translated")
             if fresh and held is None:
-                try:
-                    db.executemany("INSERT OR REPLACE INTO shots VALUES (?, ?)", fresh)
-                    db.commit()
-                except Exception:
-                    pass
+                store = _store(cache)
+                if store is not None:
+                    try:
+                        store.executemany("INSERT OR REPLACE INTO shots VALUES (?, ?)", fresh)
+                        store.commit()
+                    except Exception:
+                        pass
+                    finally:
+                        store.close()
+
+        for i in wanted:
+            out[i] = (texts[i], "request_failed")
+        # Small batches, sent at once: an answer whose array is not as long as
+        # its batch is refused whole, so one passage the model split in two
+        # costs its batch, never every passage of the turn.
+        groups = [list(range(n, min(n + BATCH, len(wanted)))) for n in range(0, len(wanted), BATCH)
+                  ] if seconds > 0 else []
+        workers = [threading.Thread(target=request, args=(g,), daemon=True) for g in groups]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(max(0.0, deadline - time.monotonic()))
+        for worker, group in zip(workers, groups):
+            if not worker.is_alive():
+                for i in (wanted[j] for j in group if wanted[j] in got):
+                    out[i] = got[i]
 
     if db is not None:
         try:
@@ -626,13 +669,15 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
             pass
 
     # Checked here, after everything, rather than at the one moment the
-    # response landed. The socket timeout bounds a single read, and restoring
-    # spans and writing the cache take time of their own — measuring at any
-    # earlier point leaves a stretch where the budget can quietly run out and
-    # the caller still gets handed a translation it no longer has room for.
-    # The work is kept: it is cached, so the next turn has it for nothing.
+    # response landed. Restoring spans and writing the cache take time of
+    # their own, so a batch is adopted only once its thread has finished, and
+    # the wait for it ends at the deadline. What was settled by then stands —
+    # a cache hit, a batch that finished — and a text still waiting on its
+    # request ran out. That work is kept: it lands in the cache, so the next
+    # turn has it for nothing.
     if time.monotonic() > deadline:
-        return [(text, status if status == "skipped" else "deadline") for text, (_t, status) in zip(texts, out)]
+        return [(text, "deadline") if status == "request_failed" else (done, status)
+                for text, (done, status) in zip(texts, out)]
     return out
 
 
