@@ -143,17 +143,30 @@ the manifest's.
 
 Before paid execution, use the runner's `--estimate` and require configured
 time/call/token ceilings; cost is additionally capped when pricing is available.
-The following commands use the proposed --dataset addition:
+The following commands use the proposed `--dataset` and `--actions` additions:
 
 ```text
 python tool/eval/compare.py raw/eval/jev/reliability-calibration --dataset eval/jev/reliability/intents.json --split calibration --languages en --estimate
 python tool/eval/compare.py raw/eval/jev/reliability-heldout --dataset eval/jev/reliability/intents.json --split held_out --languages en
 python tool/eval/compare.py raw/eval/jev/reliability-answers --dataset eval/jev/reliability/intents.json --split held_out --languages en --arms A D --level answer
-python tool/eval/report.py raw/eval/jev/reliability-heldout raw/eval/jev/reliability-answers --out raw/eval/jev/reliability-report.json
+python tool/eval/compare.py raw/eval/jev/reliability-actions --experiment actions --actions eval/jev/reliability/actions.json --split held_out
+python tool/eval/report.py raw/eval/jev/reliability-heldout raw/eval/jev/reliability-answers raw/eval/jev/reliability-actions --out raw/eval/jev/reliability-report.json
 ```
 
+`report.build` today keys runs by experiment alone (`found["runs"][experiment]`,
+`found["arms"]`), so the answer run, also `experiment: arms`, overwrites the
+retrieval run. Key both by experiment and level (`arms/retrieval`,
+`arms/answer`, `actions`) and refuse two folders for the same key. Score
+`analysis_routing` and `segment_classification` from the `arms/retrieval` run
+only, which must contain both B and D over the whole cohort; score answer gates
+from `arms/answer`, and action gates from `actions`. A gate whose required run is
+missing, or whose run lacks any cohort row, is `not_measured`, which does not
+pass and leaves the stage open.
+
 The implementation must add dataset/gate manifest propagation to report rather
-than letting it load unrelated default labels. A cancelled run is resumable by
+than letting it load unrelated default labels; this includes the label-review
+check, which reads the action fixtures from the fixed `compare.ACTIONS` today and
+must read the run's own `--actions` file. A cancelled run is resumable by
 immutable case ID and manifest; changed manifests require a new directory.
 
 ### Decision and failure protocol
