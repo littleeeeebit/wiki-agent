@@ -534,6 +534,14 @@ roll back, `rollout.py follow` (back to the `.env`'s shadow) or
 settings modal, the mode line, an answer's evidence and trace), then `.env`
 to active once the canary has run without a rollback.
 
+The same day the owner asked in the app with `ai-nara-shop` selected and got
+"Jev shadow", as the canary intends for any other checkout. At the owner's
+direction the canary list was then cleared: `raw/jev/settings.json` saves mode
+`active` with no `active_projects`, so every project runs active (checked:
+`ai-nara-shop` and this checkout both resolve to active). `.env` still says
+shadow; the app's saved mode overrides it, and `rollout.py follow` returns to
+it.
+
 Limits of what is above. In arms B and D a Korean wording goes through the
 product's translator before Jev sees it, as it does in the app; those short
 calls are not counted in `host_turns` or USD, and they are the one spend
@@ -561,5 +569,5 @@ Left before completion, in order:
 | 2 | Comparisons | Four arms, fixed-candidate grading, action decisions | In progress — `tool/eval/compare.py` runs all three; held-out retrieval level, fixed and actions run 2026-09-28; answer level run five times for A and D; the repetition subset (20 intents, B and D, 3×) run 2026-09-28 |
 | 3 | Measurement | Quality, uncertainty, latency, tokens, and cost | In progress — `tool/eval/report.py`: intent-resampled intervals and the frozen gates; English only from `gates.json` version 2; version 3 allows coverage short of A's to a lower end of −0.20, and on the held-out half all seven gates pass (fifth answer-level run: coverage 0.892 against A's 0.996, no unsupported claim) |
 | 4 | Product | App/CLI parity, window checks, operational failures | In progress — the canary in settings, the API and the window's mode line; window checks not run this stage |
-| 5 | Rollout | Shadow, active canary, rollback rehearsal | In progress — canary, off and follow commands; rehearsal passed; the canary is on for this checkout since 2026-09-28, `.env` still shadow |
+| 5 | Rollout | Shadow, active canary, rollback rehearsal | In progress — canary, off and follow commands; rehearsal passed; since 2026-09-28 the app's saved mode is active for every project (canary list cleared at the owner's direction), `.env` still shadow |
 | 6 | Completion | Reproduction report, all gates, plan archival | Not started |
