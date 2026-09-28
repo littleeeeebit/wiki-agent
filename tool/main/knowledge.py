@@ -1008,10 +1008,8 @@ REJECTIONS = {
     "short_quote": f"a quote is shorter than {MIN_QUOTE} characters",
     "fabricated_quote": "a quote does not occur in the original_text of the evidence it names",
     "stale_revision": "a cited source changed after it was retrieved",
-    "untrusted_evidence": "its only evidence is a passage that addresses the assistant",
     "direct_mode": "no retrieval was run, so no source_fact may be stated",
     "direct_text": "retrieval ran, so the answer is source_fact claims; direct_text is only for a run without it",
-    "new_fact": "direct_text may restate the conversation, but this one states a number or identifier it does not",
     "bad_premises": "premises must be earlier source_fact or inference claims, and an inference or a "
                     "recommendation needs at least one",
     "unfaithful": "it states a fact its grounds do not — a recommendation's premises, or for direct_text the "
@@ -1198,11 +1196,10 @@ class Grounding:
             if cited or quotes or (kind == "direct_text" and claim["premises"]):
                 return "malformed"
             # A direct_text is published only where no evidence was looked for, and only restating what was
-            # said: a new number or identifier is caught here, any other new fact by Jev's `faithful`.
+            # said. Whether it does is Jev's `faithful`: a number the conversation does not hold may be one
+            # computed from it (a sum, a converted unit), which no string check tells from a new fact.
             if kind == "direct_text" and not self.dossier.get("direct"):
                 return "direct_text"
-            if kind == "direct_text" and translate.added(self.said, claim["text_en"]):
-                return "new_fact"
         elif kind == "source_fact" and self.dossier.get("direct"):
             return "direct_mode"
         if claim["premises"] and not all(earlier.get(p, {}).get("kind") in FACTUAL for p in claim["premises"]):
@@ -1224,8 +1221,8 @@ class Grounding:
                 return "fabricated_quote"
         if not all(fresh(self.ids[e]) for e in cited):
             return "stale_revision"
-        if cited and set(cited) <= self.untrusted:
-            return "untrusted_evidence"
+        # A passage that addresses the assistant may still state facts in its other sentences: the relation
+        # judges the claim with that passage marked, and a claim resting on the instruction is insufficient.
         return None
 
     # -- checking a draft ----------------------------------------------------------------
@@ -1309,7 +1306,12 @@ class Grounding:
         # a direct run.
         pairs = [(cid, rid) for cid, claim in claims.items() if checks[cid]["state"] != "rejected"
                  for rid in claim["requirement_ids"]]
-        gen["coverage"] = {f"{cid}:{rid}": "unasked" for cid, rid in pairs}
+        # And whether the claims naming one part answer it together: a part that joins two facts, or the whole
+        # question beside its asks, is answered by no single claim.
+        together = {r["id"]: [cid for cid, rid in pairs if rid == r["id"]] for r in self.requirements}
+        gen["sets"] = {rid: cids for rid, cids in together.items() if len(cids) > 1}
+        gen["coverage"] = {**{f"{cid}:{rid}": "unasked" for cid, rid in pairs},
+                           **{f"set:{rid}": "unasked" for rid in gen["sets"]}}
         # A recommendation and a direct run's text cite nothing: Jev reads them against their grounds instead.
         bare = [cid for cid in claims if checks[cid]["state"] == "waiting"]
         if not asked and not pairs and not bare:
@@ -1338,6 +1340,7 @@ class Grounding:
         budget = Budget(seconds=VERIFY_SECONDS, calls=self.calls, candidates=0, tokens=self.tokens,
                         cancel=self.cancel)
         req = decision.request("verify", state, {**decision.claims.questions(asked), **decision.claims.coverage(pairs),
+                                                 **decision.claims.together(gen["sets"]),
                                                  **decision.claims.grounds(bare)},
                                allowed=named + list(decision.claims.RELATIONS) + list(decision.claims.ANSWERS)
                                + list(decision.claims.FAITHFUL),
@@ -1353,9 +1356,11 @@ class Grounding:
                 None if res["status"] in ("decided", "uncertain") else "verification_unavailable")
         if down == "verification_unavailable":
             gen["unavailable"] = res["reason_code"] or res["status"]
-        for cid, rid in pairs:
-            gen["coverage"][f"{cid}:{rid}"] = ({"budget": "budget", "verification_unavailable": "unavailable"}.get(down)
-                                               or decision.claims.answered(self.pol, res["answers"][f"answers_{cid}_{rid}"]))
+        asked_as = {**{f"{cid}:{rid}": f"answers_{cid}_{rid}" for cid, rid in pairs},
+                    **{f"set:{rid}": f"answers_set_{rid}" for rid in gen["sets"]}}
+        for key, name in asked_as.items():
+            gen["coverage"][key] = ({"budget": "budget", "verification_unavailable": "unavailable"}.get(down)
+                                    or decision.claims.answered(self.pol, res["answers"][name]))
         for cid in bare:
             got = down or decision.claims.faithful(self.pol, res["answers"][f"faithful_{cid}"])
             checks[cid]["support"] = got if got in decision.claims.FAITHFUL else None
@@ -1391,7 +1396,7 @@ class Grounding:
         reasons = {c["reason"] for c in last["checks"].values() if c["state"] == "rejected"}
         # A direct run needs a repository fact when its draft stated one — as a source_fact, or as text the
         # conversation does not hold — or, as it is told to, left it unresolved.
-        needs_fact = last["direct"] and (bool(reasons & {"direct_mode", "new_fact", "unfaithful"})
+        needs_fact = last["direct"] and (bool(reasons & {"direct_mode", "unfaithful"})
                                          or bool((last["draft"] or {}).get("unresolved_requirements")))
         # Back to retrieval needs a route and a round, and still a call to check the draft after.
         if needs_fact and self.calls >= 3:
@@ -1417,7 +1422,10 @@ class Grounding:
         # A part is answered when Jev said a shown claim answers it — not when the claim says so.
         coverage = gen.get("coverage") or {}
         said = {(cid, r): coverage.get(f"{cid}:{r}") for cid in shown for r in claims[cid]["requirement_ids"]}
-        answered = {r for (_cid, r), got in said.items() if got == "answers"}
+        # A set answers only when every claim in it is shown: a rejected one lends nothing.
+        sets = {r: coverage.get(f"set:{r}") for r, cids in (gen.get("sets") or {}).items() if set(cids) <= set(shown)}
+        answered = ({r for (_cid, r), got in said.items() if got == "answers"}
+                    | {r for r, got in sets.items() if got == "answers"})
         touched = answered | {r for (_cid, r), got in said.items() if got == "partly"}
         missing = [r for r in gen["requirements"] if r["id"] not in answered]
         status = ("verification_unavailable" if unavailable else
