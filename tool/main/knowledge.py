@@ -1050,6 +1050,27 @@ def flat(text: str) -> str:
     return " ".join(text.split())
 
 
+def lineages(items: dict[str, dict]) -> dict[str, dict]:
+    """Which records replace which, per evidence id.
+    Each entry is `{"record", "supersedes"?, "superseded_by"?}`.
+    A decision's `supersedes` sits in its front matter,
+    above the section a chunk holds, so neither the drafter nor the judge
+    read it in the text; it is read from the file at the revision retrieved.
+    A record is named only where it replaces one, or another names it."""
+
+    said = {eid: {k: knowledge_graph.listed(v) for k, v, _first, _last in
+                  knowledge_graph.front(e.get("path") or "", e["revision"]) if k in ("supersedes", "superseded_by")}
+            for eid, e in items.items() if "path" in e["locator"]}
+    named = {n for keys in said.values() for names in keys.values() for n in names}
+    out = {}
+    for eid, keys in said.items():
+        stem = Path(items[eid]["locator"]["path"]).stem
+        keys = {k: v for k, v in keys.items() if v}
+        if keys or stem in named:
+            out[eid] = {"record": stem, **keys}
+    return out
+
+
 def fresh(item: dict) -> bool:
     """A file's evidence still reads, at its lines, as it did when retrieved.
     A snapshot or a paper's text is pinned by its hash already."""
@@ -1096,6 +1117,7 @@ class Grounding:
         back = {e["chunk_id"]: eid for eid, e in self.ids.items()}
         self.untrusted = {back[u["chunk_id"]] for u in dossier.get("untrusted") or [] if u["chunk_id"] in back}
         self.conflicting = [back[c["chunk_id"]] for c in dossier.get("conflicts") or [] if c["chunk_id"] in back]
+        self.lineage = lineages(self.ids)
         self.requirements = [{"id": r["id"], "text": r["text"]} for r in dossier.get("requirements") or []]
 
     def spent(self, budget: Budget) -> None:
@@ -1118,7 +1140,7 @@ class Grounding:
                 "requirements": self.requirements, "missing_requirements": d.get("missing") or [],
                 "conflicting_evidence": self.conflicting, "untrusted_evidence": sorted(self.untrusted),
                 "evidence": [{"id": eid, "cite": cite(e), "kind": e["kind"], "coverage": e.get("coverage"),
-                              "original_text": e["original_text"], "text_en": e["text_en"]}
+                              **self.lineage.get(eid, {}), "original_text": e["original_text"], "text_en": e["text_en"]}
                              for eid, e in self.ids.items()]}
 
     def brief(self) -> str:
@@ -1261,8 +1283,50 @@ class Grounding:
                     check.update(state="unresolved", reason="premise_not_accepted")
             if check["state"] == "accepted" and claim["kind"] in FACTUAL:
                 self.supported.add(self.key(claim))
+        self.rejoin(claims, checks, gen)
         self.generations.append(gen)
         return gen
+
+    def rejoin(self, claims: dict, checks: dict, gen: dict) -> None:
+        """The set Choice again, over only the claims that stand. `judge` asks
+        it before the relation settles which do, over every drafted claim
+        naming the part, so a withheld restatement voids a set whose
+        published claims answer the part between them. Asked only for a part
+        no single standing claim answers, and only while a call is left —
+        the call a repair would otherwise have."""
+
+        if gen["unavailable"] or self.calls < 1:
+            return
+        coverage, asked = gen.setdefault("coverage", {}), gen.setdefault("sets", {})
+        standing = [cid for cid in claims if checks[cid]["state"] == "accepted"]
+        again = {}
+        for r in self.requirements:
+            mine = [cid for cid in standing if r["id"] in claims[cid]["requirement_ids"]]
+            if (len(mine) > 1 and set(asked.get(r["id"], ())) != set(mine)
+                    and not any(coverage.get(f"{cid}:{r['id']}") == "answers" for cid in mine)):
+                again[r["id"]] = mine
+        if not again:
+            return
+        named = list(dict.fromkeys(cid for cids in again.values() for cid in cids))
+        state = decision.claims.state(
+            self.dossier["question_en"], [],
+            [{"id": cid, "text": claims[cid]["text_en"], "cites": [], "premises": []} for cid in named],
+            [r for r in self.requirements if r["id"] in again])
+        budget = Budget(seconds=VERIFY_SECONDS, calls=self.calls, candidates=0, tokens=self.tokens,
+                        cancel=self.cancel)
+        req = decision.request("verify", state, decision.claims.together(again),
+                               allowed=named + list(decision.claims.ANSWERS), model=self.cfg.model,
+                               prompt_version=decision.claims.VERSION, policy_version=self.pol.version,
+                               normalization_version="claims", budget=budget, trace_id=self.run_id)
+        res = decision.checked(req, decision.decide(req, self.evaluate, budget, self.trace, self.pol, self.cache))
+        self.spent(budget)
+        gen["rejoined"] = {"request_id": req["request_id"], "status": res["status"], "usage": res["usage"],
+                           "answers": res["answers"]}
+        if res["status"] not in ("decided", "uncertain"):
+            return
+        for rid, cids in again.items():
+            asked[rid] = cids
+            gen["coverage"][f"set:{rid}"] = decision.claims.answered(self.pol, res["answers"][f"answers_set_{rid}"])
 
     def key(self, claim: dict) -> tuple:
         return (claim["kind"], claim["text_en"], tuple(sorted(self.ids[e]["chunk_id"] for e in claim["evidence_ids"])),
@@ -1333,7 +1397,7 @@ class Grounding:
         named = [cid for cid in claims if cid in wanted]
         state = decision.claims.state(
             self.dossier["question_en"],
-            [{"id": e, "text": self.ids[e]["text_en"][:MAX_PASSAGE],
+            [{"id": e, "text": self.ids[e]["text_en"][:MAX_PASSAGE], **self.lineage.get(e, {}),
               **({"coverage": "truncated"} if len(self.ids[e]["text_en"]) > MAX_PASSAGE else {})} for e in shown],
             [{"id": cid, "text": claims[cid]["text_en"], "cites": sets[cid][0] if cid in sets else [],
               "premises": claims[cid]["premises"]} for cid in named],

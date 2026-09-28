@@ -50,17 +50,20 @@ def isolated(tmp_path, monkeypatch):
     yield env
 
 
-def item(root: Path, display: str, text: str, english: str | None = None, *, kind: str = "document") -> dict:
-    """The dossier's evidence for one line of a real file: line 3 of `display`."""
+def item(root: Path, display: str, text: str, english: str | None = None, *, kind: str = "document",
+         front: str = "") -> dict:
+    """The dossier's evidence for one line of a real file: line 3 of `display`,
+    below its front matter when it has `front`."""
 
     path = root / display
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"# {Path(display).stem}\n\n{text}\n", encoding="utf-8", newline="\n")
+    path.write_text(f"{front}# {Path(display).stem}\n\n{text}\n", encoding="utf-8", newline="\n")
+    line = 3 + front.count("\n")
     revision = hashlib.sha256(path.read_bytes()).hexdigest()
     source = evidence.source_id(REPO, display)
     hit = {"repo_id": REPO, "source_id": source, "revision": revision,
-           "chunk_id": evidence.chunk_id(source, revision, 3, 3), "kind": kind,
-           "locator": {"path": display, "start_line": 3, "end_line": 3}, "heading_path": [Path(display).stem],
+           "chunk_id": evidence.chunk_id(source, revision, line, line), "kind": kind,
+           "locator": {"path": display, "start_line": line, "end_line": line}, "heading_path": [Path(display).stem],
            "visibility": "repository", "completeness": "whole", "text": text, "path": str(path),
            "coverage": "full_text", "lane": "rrf"}
     en = english if english is not None else text
@@ -605,6 +608,48 @@ def test_claims_that_answer_a_part_together_complete_it_only_when_all_are_shown(
     out, _events, _ = answer(dossier([owners, rota], question), [draft(c1, c2)],
                              Judge(answers={**halves, "set_r0": ("partly", 0.95)}))
     assert out["verified"]["status"] == "partial"
+
+
+def test_the_joint_question_is_asked_again_over_the_claims_that_stand(tmp_path):
+    # Stage 10's third run (route-09, bridge-09): a withheld restatement voided a set its published claims answered.
+    owners, rota = item(tmp_path, "docs/owners.md", OWNERS), item(tmp_path, "docs/rota.md", ROTA)
+    c1 = claim("c1", "The ingest pipeline is owned by the Atlas team.")
+    c2 = claim("c2", "The Atlas team is on call every Tuesday.", cites=["e2"],
+               quotes=["The Atlas team is on call every Tuesday"])
+    c3 = claim("c3", "The ingest pipeline's owner is paged on Tuesdays only.", kind="inference", cites=(),
+               premises=("c1", "c2"))
+    halves = {"c1_r0": ("partly", 0.95), "c2_r0": ("partly", 0.95), "c3_r0": ("partly", 0.95)}
+    judge = Judge({"c3": ("insufficient", 0.95)}, answers=halves)
+    out, _events, _ = answer(dossier([owners, rota], ["Which day is the ingest pipeline's owner on call?"],
+                                     calls_left=2), [draft(c1, c2, c3)], judge)
+    assert out["verified"]["status"] == "complete"
+    assert [c["id"] for c in judge.asked[1][0]["claims"]] == ["c1", "c2"] and list(judge.asked[1][1]) == ["answers_set_r0"]
+    # No call left for it: the first set stands, voided by c3, and the part is only touched.
+    out, _events, _ = answer(dossier([owners, rota], ["Which day is the ingest pipeline's owner on call?"]),
+                             [draft(c1, c2, c3)], Judge({"c3": ("insufficient", 0.95)}, answers=halves))
+    assert out["verified"]["status"] == "partial"
+
+
+def test_a_decision_that_supersedes_another_says_so_to_the_drafter_and_the_judge(tmp_path):
+    # Stage 10's third run (conflict-07, -08): `supersedes` sat in front matter above the chunk, read by no one.
+    old = item(tmp_path, ".wiki/decisions/2025-04-04-013-previews.md",
+               "Decision. Feature previews are announced in the #product channel.")
+    new = item(tmp_path, ".wiki/decisions/2026-06-06-014-previews.md",
+               "Decision. Feature previews are announced only in the monthly newsletter.",
+               front="---\nsupersedes: [2025-04-04-013-previews]\n---\n\n")
+    d = dossier([old, new], ["Where are feature previews announced?"])
+    brief = json.dumps(knowledge.Grounding(d, CFG, evaluate=Judge()).view())
+    assert '"record": "2026-06-06-014-previews", "supersedes": ["2025-04-04-013-previews"]' in brief
+    assert '"record": "2025-04-04-013-previews", "original_text"' in brief
+    judge = Judge()
+    in_force = claim("c1", "Feature previews are announced only in the monthly newsletter.", cites=["e2"],
+                     quotes=["Feature previews are announced only in the monthly newsletter."])
+    out, _events, _ = answer(d, [draft(in_force)], judge)
+    passages = {p["id"]: p for p in judge.asked[0][0]["passages"]}
+    assert passages["e2"]["supersedes"] == ["2025-04-04-013-previews"] and out["verified"]["status"] == "complete"
+    # A document with no such front matter carries nothing extra.
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    assert knowledge.lineages({"e1": ports}) == {}
 
 
 def test_a_carried_support_is_not_asked_again_after_a_repair(tmp_path):

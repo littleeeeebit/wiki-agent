@@ -281,7 +281,8 @@ def answered(unit: dict, d: dict, repo: Path, jev: bool, cfg: decision.Config, m
                 "host_usd": spent.get("cost_usd", 0.0), "host_turns": spent.get("turns", 0),
                 "elapsed_ms": round((time.monotonic() - started) * 1000),
                 "accepted": len(v["claims"]), "rejected": len(v["rejected"]),
-                "verify_usage": [g["decision"]["usage"] for g in out["record"]["generations"] if g["decision"]],
+                "verify_usage": [g[k]["usage"] for g in out["record"]["generations"]
+                                 for k in ("decision", "rejoined") if g.get(k)],
                 # A published citation must name evidence the run held: anything else was invented.
                 "fabricated": [c["cite"] for c in v["citations"] if c["evidence_id"] not in held]}
     finally:

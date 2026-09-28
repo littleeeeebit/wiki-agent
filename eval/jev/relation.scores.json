@@ -1,18 +1,18 @@
 {
  "schema": "jev-calibration-scores/1",
  "model": "jev-1.13.0",
- "prompt_version": "b559976f2cda1fde",
+ "prompt_version": "5f94d993181a6f33",
  "answers_sha256": "ec4c96c1e167ccff1f7a55c52db2b043ae98d9bf9dd78644920a53231ca7d573",
  "faithful_sha256": "0821a8709f8c4e35ca0c19e398b6625a68123536e9b86f477d721ef0dff0bea8",
- "collected_at": "2026-09-28T04:11:54+00:00",
+ "collected_at": "2026-09-28T05:38:08+00:00",
  "answers": {
   "v01": {
    "relation_c1": {
     "choice": "supports",
     "confidence": 1.0,
     "probabilities": {
-     "insufficient": 0.0,
      "supports": 1.0,
+     "insufficient": 0.0,
      "contradicts": 0.0
     }
    },
@@ -20,17 +20,17 @@
     "choice": "supports",
     "confidence": 1.0,
     "probabilities": {
+     "supports": 1.0,
      "insufficient": 0.0,
-     "contradicts": 0.0,
-     "supports": 1.0
+     "contradicts": 0.0
     }
    },
    "relation_c3": {
     "choice": "contradicts",
     "confidence": 0.99,
     "probabilities": {
-     "insufficient": 0.0,
      "supports": 0.0,
+     "insufficient": 0.0,
      "contradicts": 1.0
     }
    },
@@ -38,8 +38,8 @@
     "choice": "contradicts",
     "confidence": 0.99,
     "probabilities": {
-     "insufficient": 0.0,
      "supports": 0.0,
+     "insufficient": 0.0,
      "contradicts": 1.0
     }
    },
@@ -47,36 +47,36 @@
     "choice": "answers",
     "confidence": 1.0,
     "probabilities": {
+     "partly": 0.0,
      "no": 0.0,
-     "answers": 1.0,
-     "partly": 0.0
+     "answers": 1.0
     }
    },
    "answers_c2_r0": {
     "choice": "no",
     "confidence": 1.0,
     "probabilities": {
+     "partly": 0.0,
      "no": 1.0,
-     "answers": 0.0,
-     "partly": 0.0
+     "answers": 0.0
     }
    },
    "answers_c3_r0": {
     "choice": "answers",
-    "confidence": 0.9,
+    "confidence": 0.91,
     "probabilities": {
-     "no": 0.07,
-     "answers": 0.93,
-     "partly": 0.0
+     "partly": 0.0,
+     "no": 0.06,
+     "answers": 0.94
     }
    },
    "answers_c4_r0": {
     "choice": "no",
     "confidence": 1.0,
     "probabilities": {
+     "partly": 0.0,
      "no": 1.0,
-     "answers": 0.0,
-     "partly": 0.0
+     "answers": 0.0
     }
    }
   },
@@ -92,10 +92,10 @@
    },
    "relation_c2": {
     "choice": "insufficient",
-    "confidence": 0.78,
+    "confidence": 0.77,
     "probabilities": {
-     "insufficient": 0.86,
-     "supports": 0.14,
+     "insufficient": 0.85,
+     "supports": 0.15,
      "contradicts": 0.0
     }
    },
@@ -110,65 +110,65 @@
    },
    "relation_c4": {
     "choice": "contradicts",
-    "confidence": 0.68,
+    "confidence": 0.63,
     "probabilities": {
-     "insufficient": 0.21,
+     "insufficient": 0.25,
      "supports": 0.0,
-     "contradicts": 0.79
+     "contradicts": 0.75
     }
    },
    "relation_c5": {
     "choice": "insufficient",
-    "confidence": 0.64,
+    "confidence": 0.66,
     "probabilities": {
-     "insufficient": 0.76,
+     "insufficient": 0.77,
      "supports": 0.02,
-     "contradicts": 0.22
+     "contradicts": 0.21
     }
    },
    "answers_c1_r0": {
     "choice": "no",
     "confidence": 0.75,
     "probabilities": {
-     "answers": 0.01,
+     "no": 0.84,
      "partly": 0.16,
-     "no": 0.83
+     "answers": 0.0
     }
    },
    "answers_c2_r0": {
     "choice": "answers",
-    "confidence": 0.75,
+    "confidence": 0.71,
     "probabilities": {
-     "answers": 0.83,
-     "partly": 0.12,
-     "no": 0.05
+     "partly": 0.16,
+     "no": 0.04,
+     "answers": 0.8
     }
    },
    "answers_c3_r0": {
     "choice": "answers",
-    "confidence": 0.82,
+    "confidence": 0.81,
     "probabilities": {
      "no": 0.0,
-     "partly": 0.11,
-     "answers": 0.89
+     "partly": 0.12,
+     "answers": 0.88
     }
    },
    "answers_c4_r0": {
     "choice": "answers",
-    "confidence": 0.27,
+    "confidence": 0.3,
     "probabilities": {
-     "answers": 0.51,
-     "partly": 0.32,
-     "no": 0.17
+     "no": 0.22,
+     "partly": 0.25,
+     "answers": 0.53
     }
    },
    "answers_c5_r0": {
     "choice": "no",
     "confidence": 0.95,
     "probabilities": {
-     "answers": 0.03,
+     "no": 0.97,
      "partly": 0.01,
-     "no": 0.96
+     "answers": 0.02
     }
    }
   },
@@ -177,72 +177,72 @@
     "choice": "supports",
     "confidence": 0.99,
     "probabilities": {
-     "insufficient": 0.0,
      "contradicts": 0.0,
-     "supports": 1.0
+     "supports": 1.0,
+     "insufficient": 0.0
     }
    },
    "relation_c2": {
     "choice": "contradicts",
     "confidence": 1.0,
     "probabilities": {
-     "insufficient": 0.0,
      "contradicts": 1.0,
-     "supports": 0.0
+     "supports": 0.0,
+     "insufficient": 0.0
     }
    },
    "relation_c3": {
     "choice": "supports",
-    "confidence": 1.0,
+    "confidence": 0.99,
     "probabilities": {
-     "insufficient": 0.0,
+     "contradicts": 0.0,
      "supports": 1.0,
-     "contradicts": 0.0
+     "insufficient": 0.0
     }
    },
    "relation_c4": {
     "choice": "contradicts",
     "confidence": 0.99,
     "probabilities": {
-     "insufficient": 0.0,
+     "contradicts": 0.99,
      "supports": 0.0,
-     "contradicts": 1.0
+     "insufficient": 0.01
     }
    },
    "answers_c1_r0": {
     "choice": "answers",
     "confidence": 0.99,
     "probabilities": {
-     "answers": 0.99,
+     "partly": 0.01,
      "no": 0.0,
-     "partly": 0.01
+     "answers": 0.99
     }
    },
    "answers_c2_r0": {
     "choice": "answers",
-    "confidence": 0.81,
+    "confidence": 0.8,
     "probabilities": {
-     "answers": 0.87,
-     "no": 0.12,
-     "partly": 0.01
+     "partly": 0.01,
+     "no": 0.13,
+     "answers": 0.86
     }
    },
    "answers_c3_r0": {
     "choice": "no",
-    "confidence": 0.35,
+    "confidence": 0.31,
     "probabilities": {
-     "answers": 0.25,
-     "no": 0.57,
-     "partly": 0.18
+     "partly": 0.16,
+     "answers": 0.3,
+     "no": 0.54
     }
    },
    "answers_c4_r0": {
     "choice": "no",
-    "confidence": 0.96,
+    "confidence": 0.95,
     "probabilities": {
-     "answers": 0.0,
-     "no": 0.98,
-     "partly": 0.02
+     "partly": 0.03,
+     "no": 0.97,
+     "answers": 0.0
     }
    }
   },
@@ -279,8 +279,8 @@
     "confidence": 1.0,
     "probabilities": {
      "supports": 0.0,
-     "insufficient": 1.0,
-     "contradicts": 0.0
+     "contradicts": 0.0,
+     "insufficient": 1.0
     }
    },
    "answers_c1_r0": {
@@ -288,26 +288,26 @@
     "confidence": 1.0,
     "probabilities": {
      "no": 0.0,
-     "partly": 0.0,
-     "answers": 1.0
+     "answers": 1.0,
+     "partly": 0.0
     }
    },
    "answers_c2_r0": {
     "choice": "partly",
-    "confidence": 0.77,
+    "confidence": 0.69,
     "probabilities": {
-     "no": 0.15,
-     "partly": 0.84,
-     "answers": 0.01
+     "no": 0.19,
+     "answers": 0.01,
+     "partly": 0.8
     }
    },
    "answers_c3_r0": {
     "choice": "partly",
-    "confidence": 0.71,
+    "confidence": 0.79,
     "probabilities": {
-     "no": 0.15,
-     "partly": 0.81,
-     "answers": 0.04
+     "no": 0.09,
+     "answers": 0.05,
+     "partly": 0.86
     }
    },
    "answers_c4_r0": {
@@ -315,8 +315,8 @@
     "confidence": 1.0,
     "probabilities": {
      "no": 1.0,
-     "partly": 0.0,
-     "answers": 0.0
+     "answers": 0.0,
+     "partly": 0.0
     }
    }
   },
@@ -325,45 +325,45 @@
     "choice": "supports",
     "confidence": 1.0,
     "probabilities": {
-     "insufficient": 0.0,
+     "contradicts": 0.0,
      "supports": 1.0,
-     "contradicts": 0.0
+     "insufficient": 0.0
     }
    },
    "relation_c2": {
     "choice": "contradicts",
     "confidence": 1.0,
     "probabilities": {
+     "contradicts": 1.0,
      "insufficient": 0.0,
-     "supports": 0.0,
-     "contradicts": 1.0
+     "supports": 0.0
     }
    },
    "relation_c3": {
     "choice": "supports",
     "confidence": 0.99,
     "probabilities": {
-     "insufficient": 0.0,
-     "supports": 1.0,
-     "contradicts": 0.0
+     "contradicts": 0.0,
+     "supports": 0.99,
+     "insufficient": 0.01
     }
    },
    "relation_c4": {
     "choice": "contradicts",
     "confidence": 0.99,
     "probabilities": {
-     "insufficient": 0.0,
+     "contradicts": 1.0,
      "supports": 0.0,
-     "contradicts": 1.0
+     "insufficient": 0.0
     }
    },
    "relation_c5": {
     "choice": "contradicts",
-    "confidence": 0.87,
+    "confidence": 0.88,
     "probabilities": {
-     "insufficient": 0.08,
+     "contradicts": 0.92,
      "supports": 0.0,
-     "contradicts": 0.92
+     "insufficient": 0.08
     }
    },
    "answers_c1_r0": {
@@ -377,16 +377,16 @@
    },
    "answers_c2_r0": {
     "choice": "no",
-    "confidence": 0.99,
+    "confidence": 0.97,
     "probabilities": {
-     "partly": 0.01,
      "answers": 0.0,
-     "no": 0.99
+     "partly": 0.02,
+     "no": 0.98
     }
    },
    "answers_c3_r0": {
     "choice": "no",
-    "confidence": 1.0,
+    "confidence": 0.99,
     "probabilities": {
      "partly": 0.0,
      "answers": 0.0,
@@ -395,7 +395,7 @@
    },
    "answers_c4_r0": {
     "choice": "answers",
-    "confidence": 0.76,
+    "confidence": 0.78,
     "probabilities": {
      "partly": 0.01,
      "answers": 0.85,
@@ -406,8 +406,8 @@
     "choice": "no",
     "confidence": 0.99,
     "probabilities": {
-     "partly": 0.0,
      "answers": 0.01,
+     "partly": 0.0,
      "no": 0.99
     }
    }
@@ -415,11 +415,11 @@
   "v06": {
    "relation_c1": {
     "choice": "insufficient",
-    "confidence": 0.97,
+    "confidence": 0.95,
     "probabilities": {
-     "insufficient": 0.97,
+     "insufficient": 0.96,
      "contradicts": 0.01,
-     "supports": 0.02
+     "supports": 0.03
     }
    },
    "relation_c2": {
@@ -433,38 +433,38 @@
    },
    "relation_c3": {
     "choice": "insufficient",
-    "confidence": 0.57,
+    "confidence": 0.55,
     "probabilities": {
-     "insufficient": 0.71,
-     "contradicts": 0.29,
-     "supports": 0.0
+     "insufficient": 0.7,
+     "supports": 0.0,
+     "contradicts": 0.3
     }
    },
    "answers_c1_r0": {
     "choice": "answers",
-    "confidence": 0.96,
+    "confidence": 0.97,
     "probabilities": {
+     "answers": 0.98,
      "partly": 0.0,
-     "no": 0.02,
-     "answers": 0.98
+     "no": 0.02
     }
    },
    "answers_c2_r0": {
     "choice": "answers",
-    "confidence": 0.92,
+    "confidence": 0.9,
     "probabilities": {
-     "partly": 0.03,
-     "no": 0.03,
-     "answers": 0.94
+     "partly": 0.04,
+     "answers": 0.94,
+     "no": 0.02
     }
    },
    "answers_c3_r0": {
     "choice": "answers",
     "confidence": 0.8,
     "probabilities": {
+     "answers": 0.87,
      "partly": 0.02,
-     "no": 0.11,
-     "answers": 0.87
+     "no": 0.11
     }
    }
   },
@@ -489,11 +489,11 @@
    },
    "relation_c3": {
     "choice": "contradicts",
-    "confidence": 0.96,
+    "confidence": 0.94,
     "probabilities": {
-     "insufficient": 0.03,
+     "insufficient": 0.04,
      "supports": 0.0,
-     "contradicts": 0.97
+     "contradicts": 0.96
     }
    },
    "relation_c4": {
@@ -507,38 +507,38 @@
    },
    "answers_c1_r0": {
     "choice": "partly",
-    "confidence": 0.42,
+    "confidence": 0.44,
     "probabilities": {
      "no": 0.01,
-     "answers": 0.37,
-     "partly": 0.62
+     "partly": 0.63,
+     "answers": 0.36
     }
    },
    "answers_c2_r0": {
     "choice": "no",
-    "confidence": 0.49,
+    "confidence": 0.34,
     "probabilities": {
-     "no": 0.66,
-     "answers": 0.01,
-     "partly": 0.33
+     "partly": 0.43,
+     "no": 0.56,
+     "answers": 0.01
     }
    },
    "answers_c3_r0": {
     "choice": "no",
-    "confidence": 0.58,
+    "confidence": 0.7,
     "probabilities": {
-     "no": 0.72,
-     "answers": 0.14,
-     "partly": 0.14
+     "no": 0.8,
+     "partly": 0.12,
+     "answers": 0.08
     }
    },
    "answers_c4_r0": {
     "choice": "no",
-    "confidence": 0.67,
+    "confidence": 0.68,
     "probabilities": {
-     "no": 0.78,
-     "answers": 0.01,
-     "partly": 0.21
+     "no": 0.79,
+     "partly": 0.2,
+     "answers": 0.01
     }
    }
   },
@@ -563,10 +563,10 @@
    },
    "relation_c3": {
     "choice": "insufficient",
-    "confidence": 0.91,
+    "confidence": 0.93,
     "probabilities": {
-     "supports": 0.05,
-     "insufficient": 0.94,
+     "supports": 0.04,
+     "insufficient": 0.95,
      "contradicts": 0.01
     }
    },
@@ -575,44 +575,44 @@
     "confidence": 0.99,
     "probabilities": {
      "supports": 0.0,
-     "insufficient": 0.01,
-     "contradicts": 0.99
+     "insufficient": 0.0,
+     "contradicts": 1.0
     }
    },
    "answers_c1_r0": {
     "choice": "answers",
     "confidence": 0.99,
     "probabilities": {
-     "answers": 1.0,
+     "partly": 0.0,
      "no": 0.0,
-     "partly": 0.0
+     "answers": 1.0
     }
    },
    "answers_c2_r0": {
     "choice": "no",
-    "confidence": 0.76,
+    "confidence": 0.74,
     "probabilities": {
-     "answers": 0.05,
-     "no": 0.84,
-     "partly": 0.11
+     "partly": 0.11,
+     "no": 0.83,
+     "answers": 0.06
     }
    },
    "answers_c3_r0": {
     "choice": "no",
-    "confidence": 0.59,
+    "confidence": 0.63,
     "probabilities": {
-     "answers": 0.13,
-     "no": 0.72,
-     "partly": 0.15
+     "partly": 0.15,
+     "no": 0.75,
+     "answers": 0.1
     }
    },
    "answers_c4_r0": {
     "choice": "answers",
-    "confidence": 0.84,
+    "confidence": 0.88,
     "probabilities": {
-     "answers": 0.9,
-     "no": 0.07,
-     "partly": 0.03
+     "partly": 0.02,
+     "no": 0.06,
+     "answers": 0.92
     }
    }
   },
@@ -646,299 +646,33 @@
    },
    "answers_c1_r0": {
     "choice": "answers",
-    "confidence": 0.97,
+    "confidence": 0.98,
     "probabilities": {
-     "answers": 0.98,
      "no": 0.0,
-     "partly": 0.02
+     "partly": 0.01,
+     "answers": 0.99
     }
    },
    "answers_c2_r0": {
     "choice": "no",
     "confidence": 0.2,
     "probabilities": {
-     "answers": 0.16,
-     "no": 0.47000000000000003,
-     "partly": 0.37
+     "no": 0.45999999999999996,
+     "partly": 0.38,
+     "answers": 0.16
     }
    },
    "answers_c3_r0": {
     "choice": "no",
-    "confidence": 0.89,
+    "confidence": 0.93,
     "probabilities": {
-     "answers": 0.0,
-     "no": 0.93,
-     "partly": 0.07
+     "no": 0.96,
+     "partly": 0.04,
+     "answers": 0.0
     }
    }
   },
   "v10": {
-   "relation_c1": {
-    "choice": "supports",
-    "confidence": 1.0,
-    "probabilities": {
-     "contradicts": 0.0,
-     "insufficient": 0.0,
-     "supports": 1.0
-    }
-   },
-   "relation_c2": {
-    "choice": "insufficient",
-    "confidence": 0.97,
-    "probabilities": {
-     "contradicts": 0.0,
-     "insufficient": 0.98,
-     "supports": 0.02
-    }
-   },
-   "relation_c3": {
-    "choice": "insufficient",
-    "confidence": 0.95,
-    "probabilities": {
-     "insufficient": 0.97,
-     "contradicts": 0.0,
-     "supports": 0.03
-    }
-   },
-   "answers_c1_r0": {
-    "choice": "answers",
-    "confidence": 1.0,
-    "probabilities": {
-     "answers": 1.0,
-     "partly": 0.0,
-     "no": 0.0
-    }
-   },
-   "answers_c1_r1": {
-    "choice": "no",
-    "confidence": 1.0,
-    "probabilities": {
-     "answers": 0.0,
-     "partly": 0.0,
-     "no": 1.0
-    }
-   },
-   "answers_c2_r0": {
-    "choice": "no",
-    "confidence": 0.34,
-    "probabilities": {
-     "answers": 0.31,
-     "partly": 0.13,
-     "no": 0.56
-    }
-   },
-   "answers_c2_r1": {
-    "choice": "answers",
-    "confidence": 0.61,
-    "probabilities": {
-     "answers": 0.74,
-     "partly": 0.13,
-     "no": 0.13
-    }
-   },
-   "answers_c3_r0": {
-    "choice": "no",
-    "confidence": 1.0,
-    "probabilities": {
-     "answers": 0.0,
-     "partly": 0.0,
-     "no": 1.0
-    }
-   },
-   "answers_c3_r1": {
-    "choice": "answers",
-    "confidence": 0.94,
-    "probabilities": {
-     "answers": 0.96,
-     "partly": 0.01,
-     "no": 0.03
-    }
-   }
-  },
-  "f01": {
-   "faithful_c1": {
-    "choice": "faithful",
-    "confidence": 0.9,
-    "probabilities": {
-     "contradicts": 0.0,
-     "adds": 0.06,
-     "faithful": 0.94
-    }
-   },
-   "faithful_c2": {
-    "choice": "faithful",
-    "confidence": 0.86,
-    "probabilities": {
-     "contradicts": 0.0,
-     "adds": 0.09,
-     "faithful": 0.91
-    }
-   },
-   "faithful_c3": {
-    "choice": "adds",
-    "confidence": 0.99,
-    "probabilities": {
-     "contradicts": 0.0,
-     "adds": 1.0,
-     "faithful": 0.0
-    }
-   },
-   "faithful_c4": {
-    "choice": "contradicts",
-    "confidence": 0.96,
-    "probabilities": {
-     "contradicts": 0.98,
-     "adds": 0.02,
-     "faithful": 0.0
-    }
-   }
-  },
-  "f02": {
-   "faithful_c1": {
-    "choice": "adds",
-    "confidence": 1.0,
-    "probabilities": {
-     "adds": 1.0,
-     "faithful": 0.0,
-     "contradicts": 0.0
-    }
-   },
-   "faithful_c2": {
-    "choice": "faithful",
-    "confidence": 0.64,
-    "probabilities": {
-     "adds": 0.24,
-     "faithful": 0.76,
-     "contradicts": 0.0
-    }
-   },
-   "faithful_c3": {
-    "choice": "faithful",
-    "confidence": 0.99,
-    "probabilities": {
-     "adds": 0.01,
-     "faithful": 0.99,
-     "contradicts": 0.0
-    }
-   }
-  },
-  "f03": {
-   "faithful_c1": {
-    "choice": "faithful",
-    "confidence": 0.89,
-    "probabilities": {
-     "faithful": 0.93,
-     "contradicts": 0.0,
-     "adds": 0.07
-    }
-   },
-   "faithful_c2": {
-    "choice": "contradicts",
-    "confidence": 0.93,
-    "probabilities": {
-     "faithful": 0.01,
-     "contradicts": 0.95,
-     "adds": 0.04
-    }
-   },
-   "faithful_c3": {
-    "choice": "adds",
-    "confidence": 0.99,
-    "probabilities": {
-     "faithful": 0.0,
-     "contradicts": 0.0,
-     "adds": 1.0
-    }
-   }
-  },
-  "f04": {
-   "faithful_c1": {
-    "choice": "faithful",
-    "confidence": 0.81,
-    "probabilities": {
-     "adds": 0.13,
-     "contradicts": 0.0,
-     "faithful": 0.87
-    }
-   },
-   "faithful_c2": {
-    "choice": "adds",
-    "confidence": 1.0,
-    "probabilities": {
-     "adds": 1.0,
-     "faithful": 0.0,
-     "contradicts": 0.0
-    }
-   }
-  },
-  "f05": {
-   "faithful_c1": {
-    "choice": "faithful",
-    "confidence": 0.82,
-    "probabilities": {
-     "adds": 0.11,
-     "faithful": 0.88,
-     "contradicts": 0.01
-    }
-   },
-   "faithful_c2": {
-    "choice": "adds",
-    "confidence": 0.98,
-    "probabilities": {
-     "adds": 0.99,
-     "faithful": 0.01,
-     "contradicts": 0.0
-    }
-   },
-   "faithful_c3": {
-    "choice": "adds",
-    "confidence": 0.44,
-    "probabilities": {
-     "adds": 0.63,
-     "faithful": 0.0,
-     "contradicts": 0.37
-    }
-   }
-  },
-  "f06": {
-   "relation_c1": {
-    "choice": "supports",
-    "confidence": 1.0,
-    "probabilities": {
-     "insufficient": 0.0,
-     "contradicts": 0.0,
-     "supports": 1.0
-    }
-   },
-   "faithful_c2": {
-    "choice": "faithful",
-    "confidence": 0.71,
-    "probabilities": {
-     "adds": 0.19,
-     "contradicts": 0.0,
-     "faithful": 0.81
-    }
-   },
-   "faithful_c3": {
-    "choice": "contradicts",
-    "confidence": 0.5,
-    "probabilities": {
-     "adds": 0.33,
-     "contradicts": 0.67,
-     "faithful": 0.0
-    }
-   },
-   "faithful_c4": {
-    "choice": "adds",
-    "confidence": 0.96,
-    "probabilities": {
-     "adds": 0.97,
-     "contradicts": 0.0,
-     "faithful": 0.03
-    }
-   }
-  },
-  "f07": {
    "relation_c1": {
     "choice": "supports",
     "confidence": 1.0,
@@ -949,24 +683,185 @@
     }
    },
    "relation_c2": {
-    "choice": "supports",
-    "confidence": 0.42,
+    "choice": "insufficient",
+    "confidence": 0.98,
     "probabilities": {
-     "insufficient": 0.37,
-     "supports": 0.61,
-     "contradicts": 0.02
+     "insufficient": 0.99,
+     "supports": 0.01,
+     "contradicts": 0.0
+    }
+   },
+   "relation_c3": {
+    "choice": "insufficient",
+    "confidence": 0.97,
+    "probabilities": {
+     "insufficient": 0.98,
+     "supports": 0.02,
+     "contradicts": 0.0
+    }
+   },
+   "answers_c1_r0": {
+    "choice": "answers",
+    "confidence": 1.0,
+    "probabilities": {
+     "partly": 0.0,
+     "answers": 1.0,
+     "no": 0.0
+    }
+   },
+   "answers_c1_r1": {
+    "choice": "no",
+    "confidence": 1.0,
+    "probabilities": {
+     "partly": 0.0,
+     "answers": 0.0,
+     "no": 1.0
+    }
+   },
+   "answers_c2_r0": {
+    "choice": "no",
+    "confidence": 0.34,
+    "probabilities": {
+     "partly": 0.11,
+     "answers": 0.33,
+     "no": 0.56
+    }
+   },
+   "answers_c2_r1": {
+    "choice": "answers",
+    "confidence": 0.66,
+    "probabilities": {
+     "partly": 0.11,
+     "answers": 0.77,
+     "no": 0.12
+    }
+   },
+   "answers_c3_r0": {
+    "choice": "no",
+    "confidence": 1.0,
+    "probabilities": {
+     "partly": 0.0,
+     "answers": 0.0,
+     "no": 1.0
+    }
+   },
+   "answers_c3_r1": {
+    "choice": "answers",
+    "confidence": 0.93,
+    "probabilities": {
+     "partly": 0.01,
+     "answers": 0.95,
+     "no": 0.04
+    }
+   }
+  },
+  "f01": {
+   "faithful_c1": {
+    "choice": "faithful",
+    "confidence": 0.9,
+    "probabilities": {
+     "contradicts": 0.0,
+     "adds": 0.07,
+     "faithful": 0.93
+    }
+   },
+   "faithful_c2": {
+    "choice": "faithful",
+    "confidence": 0.89,
+    "probabilities": {
+     "contradicts": 0.0,
+     "adds": 0.07,
+     "faithful": 0.93
+    }
+   },
+   "faithful_c3": {
+    "choice": "adds",
+    "confidence": 0.99,
+    "probabilities": {
+     "contradicts": 0.0,
+     "adds": 0.99,
+     "faithful": 0.01
+    }
+   },
+   "faithful_c4": {
+    "choice": "contradicts",
+    "confidence": 0.95,
+    "probabilities": {
+     "contradicts": 0.97,
+     "adds": 0.03,
+     "faithful": 0.0
+    }
+   }
+  },
+  "f02": {
+   "faithful_c1": {
+    "choice": "adds",
+    "confidence": 1.0,
+    "probabilities": {
+     "contradicts": 0.0,
+     "faithful": 0.0,
+     "adds": 1.0
+    }
+   },
+   "faithful_c2": {
+    "choice": "faithful",
+    "confidence": 0.61,
+    "probabilities": {
+     "contradicts": 0.0,
+     "faithful": 0.74,
+     "adds": 0.26
     }
    },
    "faithful_c3": {
     "choice": "faithful",
-    "confidence": 0.64,
+    "confidence": 0.98,
     "probabilities": {
-     "adds": 0.23,
-     "contradicts": 0.01,
-     "faithful": 0.76
+     "contradicts": 0.0,
+     "faithful": 0.99,
+     "adds": 0.01
+    }
+   }
+  },
+  "f03": {
+   "faithful_c1": {
+    "choice": "faithful",
+    "confidence": 0.95,
+    "probabilities": {
+     "adds": 0.03,
+     "contradicts": 0.0,
+     "faithful": 0.97
     }
    },
-   "faithful_c4": {
+   "faithful_c2": {
+    "choice": "contradicts",
+    "confidence": 0.95,
+    "probabilities": {
+     "adds": 0.03,
+     "faithful": 0.0,
+     "contradicts": 0.97
+    }
+   },
+   "faithful_c3": {
+    "choice": "adds",
+    "confidence": 0.99,
+    "probabilities": {
+     "adds": 1.0,
+     "faithful": 0.0,
+     "contradicts": 0.0
+    }
+   }
+  },
+  "f04": {
+   "faithful_c1": {
+    "choice": "faithful",
+    "confidence": 0.81,
+    "probabilities": {
+     "adds": 0.13,
+     "faithful": 0.87,
+     "contradicts": 0.0
+    }
+   },
+   "faithful_c2": {
     "choice": "adds",
     "confidence": 1.0,
     "probabilities": {
@@ -974,14 +869,119 @@
      "contradicts": 0.0,
      "faithful": 0.0
     }
+   }
+  },
+  "f05": {
+   "faithful_c1": {
+    "choice": "faithful",
+    "confidence": 0.82,
+    "probabilities": {
+     "adds": 0.11,
+     "contradicts": 0.0,
+     "faithful": 0.89
+    }
+   },
+   "faithful_c2": {
+    "choice": "adds",
+    "confidence": 0.98,
+    "probabilities": {
+     "adds": 0.99,
+     "contradicts": 0.0,
+     "faithful": 0.01
+    }
+   },
+   "faithful_c3": {
+    "choice": "adds",
+    "confidence": 0.46,
+    "probabilities": {
+     "adds": 0.64,
+     "contradicts": 0.36,
+     "faithful": 0.0
+    }
+   }
+  },
+  "f06": {
+   "relation_c1": {
+    "choice": "supports",
+    "confidence": 1.0,
+    "probabilities": {
+     "contradicts": 0.0,
+     "supports": 1.0,
+     "insufficient": 0.0
+    }
+   },
+   "faithful_c2": {
+    "choice": "faithful",
+    "confidence": 0.67,
+    "probabilities": {
+     "contradicts": 0.0,
+     "faithful": 0.78,
+     "adds": 0.22
+    }
+   },
+   "faithful_c3": {
+    "choice": "contradicts",
+    "confidence": 0.58,
+    "probabilities": {
+     "contradicts": 0.72,
+     "faithful": 0.0,
+     "adds": 0.28
+    }
+   },
+   "faithful_c4": {
+    "choice": "adds",
+    "confidence": 0.95,
+    "probabilities": {
+     "contradicts": 0.0,
+     "faithful": 0.03,
+     "adds": 0.97
+    }
+   }
+  },
+  "f07": {
+   "relation_c1": {
+    "choice": "supports",
+    "confidence": 1.0,
+    "probabilities": {
+     "supports": 1.0,
+     "contradicts": 0.0,
+     "insufficient": 0.0
+    }
+   },
+   "relation_c2": {
+    "choice": "supports",
+    "confidence": 0.44,
+    "probabilities": {
+     "supports": 0.63,
+     "contradicts": 0.02,
+     "insufficient": 0.35
+    }
+   },
+   "faithful_c3": {
+    "choice": "faithful",
+    "confidence": 0.69,
+    "probabilities": {
+     "adds": 0.2,
+     "faithful": 0.79,
+     "contradicts": 0.01
+    }
+   },
+   "faithful_c4": {
+    "choice": "adds",
+    "confidence": 1.0,
+    "probabilities": {
+     "faithful": 0.0,
+     "adds": 1.0,
+     "contradicts": 0.0
+    }
    },
    "faithful_c5": {
     "choice": "adds",
-    "confidence": 0.89,
+    "confidence": 0.88,
     "probabilities": {
-     "adds": 0.93,
-     "contradicts": 0.03,
-     "faithful": 0.04
+     "faithful": 0.04,
+     "adds": 0.92,
+     "contradicts": 0.04
     }
    }
   },
@@ -997,29 +997,29 @@
    },
    "faithful_c2": {
     "choice": "faithful",
-    "confidence": 0.66,
+    "confidence": 0.6,
     "probabilities": {
-     "faithful": 0.77,
-     "adds": 0.23,
-     "contradicts": 0.0
+     "adds": 0.27,
+     "contradicts": 0.0,
+     "faithful": 0.73
     }
    },
    "faithful_c3": {
     "choice": "adds",
     "confidence": 0.99,
     "probabilities": {
-     "faithful": 0.0,
      "adds": 1.0,
-     "contradicts": 0.0
+     "contradicts": 0.0,
+     "faithful": 0.0
     }
    },
    "faithful_c4": {
     "choice": "faithful",
-    "confidence": 0.59,
+    "confidence": 0.62,
     "probabilities": {
-     "faithful": 0.73,
-     "adds": 0.27,
-     "contradicts": 0.0
+     "adds": 0.25,
+     "contradicts": 0.0,
+     "faithful": 0.75
     }
    }
   },
@@ -1035,28 +1035,28 @@
    },
    "faithful_c2": {
     "choice": "faithful",
-    "confidence": 0.59,
+    "confidence": 0.55,
     "probabilities": {
-     "adds": 0.25,
      "contradicts": 0.02,
-     "faithful": 0.73
+     "adds": 0.28,
+     "faithful": 0.7
     }
    },
    "faithful_c3": {
     "choice": "contradicts",
-    "confidence": 0.95,
+    "confidence": 0.97,
     "probabilities": {
-     "adds": 0.03,
-     "contradicts": 0.97,
+     "contradicts": 0.98,
+     "adds": 0.02,
      "faithful": 0.0
     }
    },
    "faithful_c4": {
     "choice": "contradicts",
-    "confidence": 0.83,
+    "confidence": 0.85,
     "probabilities": {
-     "adds": 0.11,
-     "contradicts": 0.89,
+     "contradicts": 0.9,
+     "adds": 0.1,
      "faithful": 0.0
     }
    }
@@ -1064,47 +1064,47 @@
   "f10": {
    "relation_c1": {
     "choice": "supports",
-    "confidence": 0.94,
+    "confidence": 0.92,
     "probabilities": {
-     "insufficient": 0.04,
-     "contradicts": 0.0,
-     "supports": 0.96
+     "supports": 0.95,
+     "insufficient": 0.05,
+     "contradicts": 0.0
     }
    },
    "faithful_c2": {
     "choice": "faithful",
     "confidence": 0.84,
     "probabilities": {
-     "adds": 0.11,
-     "contradicts": 0.0,
-     "faithful": 0.89
+     "faithful": 0.9,
+     "adds": 0.1,
+     "contradicts": 0.0
     }
    },
    "faithful_c3": {
     "choice": "adds",
     "confidence": 0.99,
     "probabilities": {
+     "faithful": 0.0,
      "adds": 1.0,
-     "contradicts": 0.0,
-     "faithful": 0.0
+     "contradicts": 0.0
     }
    },
    "faithful_c4": {
     "choice": "contradicts",
     "confidence": 0.96,
     "probabilities": {
-     "adds": 0.02,
-     "contradicts": 0.98,
-     "faithful": 0.0
+     "faithful": 0.0,
+     "adds": 0.03,
+     "contradicts": 0.97
     }
    }
   }
  },
  "costs": {
   "requests": 20,
-  "input_tokens": 35504,
+  "input_tokens": 36809,
   "output_tokens": 5020,
-  "elapsed_ms": 4573
+  "elapsed_ms": 5413
  },
  "dataset_sha256": "88944235057c0c7a0d9ac1a0dcfba2ad62c1a8878737970fe2f6aa18c03d2401"
 }
