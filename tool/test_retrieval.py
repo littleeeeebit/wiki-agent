@@ -886,6 +886,25 @@ def test_a_wrong_audience_page_does_not_come_in_through_a_link_or_as_a_named_see
     index.close()
 
 
+def test_a_wrong_audience_copy_reached_twice_corroborates_nothing(hub_world):
+    # Review round 2 (P1): the second visit took the revisit branch before the refusal and
+    # credited the excluded copy as corroborating the eligible chunk with its text.
+    hub, _other = hub_world
+    (hub / "docs/plans/jev").mkdir(parents=True)
+    (hub / "docs/plans/jev/copy.md").write_text((hub / "docs/hooks-setup.md").read_text(encoding="utf-8"),
+                                                encoding="utf-8")
+    for name in ("README.md", "GUIDE.md"):
+        (hub / name).write_text(f"# {name[:-3]}\n\nThe wiki in one place, see [hook setup](docs/hooks-setup.md) "
+                                "and [a copy](docs/plans/jev/copy.md).\n", encoding="utf-8")
+    index = index_of(hub, hub)
+    copy = chunk_of(index, "docs/plans/jev/copy.md", "Install")["chunk_id"]
+    result = scoped(index, ["hooks"], "one place", graph=retrieval.GRAPH)
+    assert "docs/hooks-setup.md" in paths_of(result)
+    reached = [p["status"] for p in result["paths"] if any(s["node"] == copy for s in p["steps"])]
+    assert reached and set(reached) == {"audience"}, reached
+    index.close()
+
+
 def test_a_scope_never_widens_repository_isolation_and_hub_maintenance_pages_stay_in_the_hub(hub_world):
     hub, other = hub_world
     index = index_of(hub, hub)

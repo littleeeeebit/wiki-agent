@@ -514,8 +514,9 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
                 path = trail + [step]
                 if key(tid) in visited:
                     # Reached before, or a seed itself: the new seed's path is kept, credited to
-                    # the chunk holding that text.
-                    holder = held.get(text_key(chunks[by_id[tid]])) if kind == "chunk" else None
+                    # the chunk holding that text — never through a chunk the request may not see.
+                    holder = (held.get(text_key(chunks[by_id[tid]]))
+                              if kind == "chunk" and not blocked(chunks[by_id[tid]], req, repos) else None)
                     seed = trail[0]["node"]
                     if (holder is not None and key(seed) != key(tid)
                             and seed not in {paths[p]["seed"] for p in found.get(holder, [])}):
