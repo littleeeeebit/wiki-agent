@@ -43,7 +43,7 @@ import decision  # noqa: E402
 import search  # noqa: E402
 import translate  # noqa: E402
 from eval.baseline import RAW, load, materialize, revision  # noqa: E402
-from eval.decisions import watched  # noqa: E402
+from eval.decisions import ALONE, alone, watched  # noqa: E402
 from main import app as main_app  # noqa: E402
 from main import channels, decisions, knowledge, loop, specs, work  # noqa: E402
 from main import query as chat  # noqa: E402
@@ -153,6 +153,7 @@ def run() -> dict:
     active = decision.Config("active", cfg.model, cfg.key_source, key=cfg.key)
     korean: list[str] = []
     real, decision.evaluate = watched(korean)
+    kept, knowledge.falls_back = knowledge.falls_back, alone
     rows: list[dict] = []
     try:
         with tempfile.TemporaryDirectory(prefix="jev-actions-") as scratch:
@@ -219,7 +220,7 @@ def run() -> dict:
                     running.stop()
                 work.close_all()
     finally:
-        decision.evaluate = real
+        decision.evaluate, knowledge.falls_back = real, kept
     asked = [r for r in rows if r["asked"]]
     usage = [r["usage"] or {} for r in asked]
     points = {}
@@ -232,7 +233,7 @@ def run() -> dict:
                                       **revision()},
             "jev": {"model": cfg.model, "prompt_version": decisions.VERSION,
                     "policy": decisions.policy(active).record()},
-            "points": points, "korean_sent": korean,
+            "points": points, "korean_sent": korean, "fallback": ALONE,
             "usage": {"action_requests": len(usage), "input_tokens": sum(u.get("input_tokens", 0) for u in usage),
                       "output_tokens": sum(u.get("output_tokens", 0) for u in usage)},
             "runs": rows}

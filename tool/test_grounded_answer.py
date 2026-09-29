@@ -8,6 +8,7 @@ tests prove rejected text never reaches an SSE event, the conversation's
 history, a memory, or a specification's grounds.
 """
 
+import dataclasses
 import hashlib
 import json
 import re
@@ -148,7 +149,8 @@ def answer(d: dict, replies: list[str], judge: Judge, **kwargs):
         yield {"kind": "tool", "text": "Read docs/ports.md"}
         return replies.pop(0)
 
-    flow = knowledge.grounded("question", None, "", d, generate, CFG, cache=None, evaluate=judge, **kwargs)
+    cfg = kwargs.pop("cfg", CFG)
+    flow = knowledge.grounded("question", None, "", d, generate, cfg, cache=None, evaluate=judge, **kwargs)
     events = []
     while True:
         try:
@@ -179,6 +181,42 @@ def test_a_supported_claim_is_published_complete_with_its_citation(tmp_path):
     assert list(questions) == ["relation_c1", "answers_c1_r0"], "one request: is it true, and does it answer"
     record = out["record"]["generations"][0]
     assert record["draft"]["schema_version"] == knowledge.DRAFT and record["draft"]["run_id"] == "run-1"
+
+
+@pytest.mark.parametrize("setting, host_says, status", [
+    ("host", "supports", "complete"),   # the host settles it: published, marked host-checked
+    ("host", "unsure", "abstained"),    # the host is unsure too: withheld as before
+    ("off", None, "abstained"),         # the fallback turned off: the host is never asked
+])
+def test_a_claim_jev_is_unsure_of_goes_to_the_host_and_is_never_called_verified(tmp_path, isolated, monkeypatch,
+                                                                                setting, host_says, status):
+    # Reliability PR 5: held-out bridge answers were withheld on a true claim Jev scored uncertain.
+    isolated.write_text(f"WIKI_JEV_FALLBACK={setting}\n", encoding="utf-8")
+    asked = []
+
+    def host(state, questions, stage, cancel=None, model=""):
+        asked.append((stage, list(questions), model))
+        return {"answers": {n: host_says for n in questions}, "model": "host-model", "cost_usd": 0.01,
+                "elapsed_ms": 5}
+
+    monkeypatch.setattr(knowledge, "host_decides", host)
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    out, _events, _messages = answer(dossier([ports]), [draft(claim("c1", "The search daemon listens on port 8791."))],
+                                     Judge(verdicts={"c1": ("supports", 0.5)}),
+                                     cfg=dataclasses.replace(CFG, host="codex:gpt-6-sol"))
+    v, gen = out["verified"], out["record"]["generations"][0]
+    assert asked == ([] if setting == "off" else [("verify", ["relation_c1"], "codex:gpt-6-sol")]), \
+        "only the uncertain question goes, to the model the run answers with"
+    assert v["status"] == status and v["host_checked"] is (host_says == "supports")
+    assert gen["decision"]["answers"]["relation_c1"]["confidence"] == 0.5, "Jev's answer is kept as it came"
+    if host_says == "supports":
+        assert not v["verified"] and v["claims"][0]["checked_by"] == "host"
+        assert "(host-checked)" in out["text"] and out["text"].startswith("Checked by the host model")
+        assert memory.verification({"role": "assistant", "verification": v}) == "host_checked:complete"
+        assert [c["owner"] for c in out["record"]["calls"]] == ["jev", "jev_fallback"]
+        assert out["record"]["calls"][1]["cost_usd"] == 0.01 and out["record"]["calls"][1]["settled"] == 1
+    else:
+        assert "(host-checked)" not in out["text"] and not v["claims"]
 
 
 def test_the_generator_is_told_the_question_its_evidence_ids_conflicts_and_missing_requirements(tmp_path):
@@ -380,10 +418,16 @@ def test_a_direct_run_states_no_repository_fact_and_goes_back_to_retrieval(tmp_p
     ports = item(tmp_path, "docs/ports.md", PORTS)
     asked = []
 
+    # The return to retrieval's own coverage question fell to the host at USD 0.40.
+    repair_decision = {"questions": {"coverage_r0": {"decision": "coverage"}},
+                       "usage": {"input_tokens": 10, "output_tokens": 1},
+                       "fallback": {"by": "host", "asked": ["coverage_r0"], "answers": {"coverage_r0": 1.0},
+                                    "cost_usd": 0.4}}
+
     def prepare(question, project, state, *, cfg, cache, require, budget, run=None, audiences=None):
         asked.append((require, budget.limits["calls"], audiences))
         budget.used["calls"] += 2
-        return dossier([ports], calls_left=0)
+        return {**dossier([ports], calls_left=0), "decisions": [repair_decision]}
 
     monkeypatch.setattr(knowledge, "prepare", prepare)
     hello = claim("c1", "Hello!", kind="direct_text", cites=(), reqs=("r0",))
@@ -401,6 +445,13 @@ def test_a_direct_run_states_no_repository_fact_and_goes_back_to_retrieval(tmp_p
     assert "retrieve" in [e.get("progress") for e in events]
     assert "Retrieval has now run" in messages[1] and '"cite": "docs/ports.md:3"' in messages[1]
     assert out["verified"]["status"] == "complete" and len(judge.asked) == 2
+    # The evaluation's integrity check reads what the answer held after its return to retrieval, not the
+    # dossier it began from, which held nothing (reliability PR 5).
+    from eval import compare
+    assert d["evidence"] == [] and out["verified"]["citations"]
+    assert compare.invented(out["verified"], out["record"]["generations"]) == []
+    # What that return to retrieval decided is the answer's record too, its host fallback included.
+    assert out["record"]["retrievals"] == [{"decisions": [repair_decision]}]
 
     # No allowance left for a round: the fact is never published, and nothing is retrieved.
     asked.clear()
@@ -490,6 +541,13 @@ def test_a_pasted_notice_is_cited_as_material_and_a_comparison_stands_on_it(tmp_
         "Jev is told the user supplied it: at 0.57-0.8 unlabelled, a notice's own words fell short of the rule"
     assert out["verified"]["status"] == "complete" and out["verified"]["rejected"] == []
     assert "`your message`" in out["text"] and "while this repository runs" in out["text"]
+    # Reliability PR 5: judged against the dossier's evidence alone, a citation of the user's pasted text
+    # counted as invented. It was held; a citation of anything no draft was given still is invented.
+    from eval import compare
+    gens = out["record"]["generations"]
+    assert compare.invented(out["verified"], gens) == []
+    assert compare.invented({"citations": [{"evidence_id": "elsewhere", "cite": "docs/x.md:1"}]}, gens) == \
+        ["docs/x.md:1"]
     # Still a passage: a quote it does not hold is caught as in any other.
     made_up = claim("c1", "The notice asks for 200 documents.", cites=("m1",), quotes=["summarizes 200 RFP docs"])
     out, _events, _ = answer(d, [draft(made_up), draft(made_up)], Judge())

@@ -6,11 +6,13 @@ stand-in wherever a choice is asked."""
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 import decision
+from common.budget import Budget
 from eval import compare, dataset, report
 from main import decisions
 from search import sources
@@ -229,3 +231,336 @@ def test_the_outage_and_rollback_rehearsal_leaves_everything_as_it_was():
         got = rollout.rehearse()
     assert got["ok"], [c for c in got["checks"] if not c["ok"]]
     assert len(got["checks"]) >= 20
+
+
+# -- reliability PR 5: the English baseline ----------------------------------------------------
+
+RELIABLE = ROOT / "eval" / "jev" / "reliability"
+
+
+@pytest.fixture(scope="module")
+def fresh():
+    return dataset.load(RELIABLE / "intents.json")
+
+
+def test_the_reliability_set_is_fresh_frozen_and_labelled(fresh, data):
+    intents = fresh["intents"]
+    assert len(intents) == 144 and dataset.invalid(fresh) == [] and dataset.unresolved(fresh) == []
+    assert dataset.frozen(fresh) == [], "a page or the segmenter moved since the freeze"
+    assert all(n == {"calibration": 6, "held_out": 6} for n in fresh["categories"].values())
+    assert set(fresh["categories"]) == set(dataset.FAMILIES_R5)
+    # Fresh: no query and no page text of the old set, which stays as it was (a few page names recur).
+    assert not {i["variants"]["en"] for i in intents} & {i["variants"]["en"] for i in data["intents"]}
+    old = data["corpus"]["files"]
+    assert not any(old.get(n) == t for n, t in fresh["corpus"]["files"].items())
+    # Each held-out fault kind twice, and only the failure family ends before the route.
+    held = [i for i in intents if i["split"] == "held_out" and i.get("fault")]
+    assert sorted(i["fault"]["kind"] for i in held) == ["cancelled"] * 2 + ["exhausted"] * 2 + ["unavailable"] * 2
+    assert {i["category"] for i in intents if not i["route_expected"]} == {"failure"}
+    # Analysis and fact on both sides of the split; material only in route_segments, never in parts.
+    assert {(i["analysis"], i["split"]) for i in intents if i["category"] == "analysis"} == {
+        (a, s) for a in (True, False) for s in dataset.SPLITS}
+    pasted = [i for i in intents if any(not s["ask"] for s in i["route_segments"])]
+    assert len(pasted) == 12 and not any(s["text"] in p["ask"] for i in pasted for s in i["route_segments"]
+                                         if not s["ask"] for p in i["parts"])
+    assert fresh["labels"]["reviews"][intents[0]["review"]]
+
+
+def test_the_reliability_fixtures_and_gates_are_frozen_as_the_plan_asks():
+    fixtures = json.loads((RELIABLE / "actions.json").read_text(encoding="utf-8"))
+    assert fixtures["schema"] == "jev-action-fixtures/1" and len(fixtures["fixtures"]) == 36
+    for point in ("work.start", "specs.check", "loop.fix"):
+        mine = [f for f in fixtures["fixtures"] if f["point"] == point]
+        assert sorted(f["split"] for f in mine) == ["calibration"] * 6 + ["held_out"] * 6
+    old = json.loads(compare.ACTIONS.read_text(encoding="utf-8"))
+    assert not {f["id"] for f in fixtures["fixtures"]} & {f["id"] for f in old["fixtures"]}
+    for f in fixtures["fixtures"]:
+        offered, _state, _baseline = compare.offered_and_state(f)
+        assert f["label"] in [c["id"] for c in offered], f["id"]
+        assert fixtures["labels"]["reviews"][f["review"]]
+    # Version 3's gates copied without a changed threshold; the new ones beside them at 0.90.
+    v3 = json.loads(report.GATES.read_text(encoding="utf-8"))
+    mine = json.loads((RELIABLE / "gates.json").read_text(encoding="utf-8"))
+    assert mine["copied_from"]["sha256"] == dataset.sha(report.GATES.read_bytes())
+    same = ("id", "kind", "target", "metric", "coverage_margin")
+    assert [{k: g.get(k) for k in same} for g in mine["gates"][:len(v3["gates"])]] == \
+        [{k: g.get(k) for k in same} for g in v3["gates"]]
+    assert {k: mine[k] for k in ("confidence", "resamples", "seed")} == {k: v3[k] for k in ("confidence", "resamples",
+                                                                                         "seed")}
+    assert {g["id"]: g["target"] for g in mine["gates"][len(v3["gates"]):]} == dict.fromkeys(
+        ("analysis_routing", "segment_classification", "action_work_start", "action_specs_check", "action_loop_fix"),
+        0.90)
+
+
+def test_the_second_set_keeps_the_first_calibration_and_holds_out_only_unseen_intents(fresh):
+    # The fallback was diagnosed on the first set's held-out half, so measuring it there would be tuning on it.
+    v2 = dataset.load(RELIABLE.parent / "reliability-v2" / "intents.json")
+    assert dataset.invalid(v2) == [] and dataset.unresolved(v2) == [] and dataset.frozen(v2) == []
+    assert all(n == {"calibration": 6, "held_out": 6} for n in v2["categories"].values())
+    first = {s: [i for i in fresh["intents"] if i["split"] == s] for s in dataset.SPLITS}
+    assert [i for i in v2["intents"] if i["split"] == "calibration"] == first["calibration"]
+    held = [i for i in v2["intents"] if i["split"] == "held_out"]
+    assert all(i["review"] == "r2" for i in held) and v2["labels"]["reviews"]["r2"]["by"] == "gpt-6-sol"
+    assert not {i["variants"]["en"] for i in held} & {i["variants"]["en"] for i in fresh["intents"]}
+    assert not {i["id"] for i in held} & {i["id"] for i in fresh["intents"]}
+    # The first corpus whole, papers included, with pages added beside it and none changed.
+    first_pages, second_pages = dataset.pages(fresh), dataset.pages(v2)
+    assert {n: second_pages.get(n) for n in first_pages} == first_pages
+    assert sorted(i["fault"]["kind"] for i in held if i.get("fault")) == \
+        ["cancelled"] * 2 + ["exhausted"] * 2 + ["unavailable"] * 2
+    assert (RELIABLE.parent / "reliability-v2" / "gates.json").read_bytes() == (RELIABLE / "gates.json").read_bytes()
+    actions = {v: json.loads((RELIABLE.parent / d / "actions.json").read_text(encoding="utf-8"))["fixtures"]
+               for v, d in (("v1", "reliability"), ("v2", "reliability-v2"))}
+    assert [f for f in actions["v2"] if f["split"] == "calibration"] == \
+        [f for f in actions["v1"] if f["split"] == "calibration"]
+    new = [f for f in actions["v2"] if f["split"] == "held_out"]
+    assert len(new) == 18 and not {f["id"] for f in new} & {f["id"] for f in actions["v1"]}
+    for f in new:
+        assert f["label"] in [c["id"] for c in compare.offered_and_state(f)[0]], f["id"]
+
+
+HELD_FAULTS = ["fault-02", "fault-03", "fault-05", "fault-06", "fault-10", "fault-11"]
+
+
+@pytest.fixture(scope="module")
+def faulted(tmp_path_factory):
+    """The held-out failure family through B and D, BM25, Jev configured but never reached: every fault is at the route."""
+
+    folder = tmp_path_factory.mktemp("faults") / "run"
+    env = tmp_path_factory.mktemp("env") / "jev.env"
+    env.write_text("TYPESAFE_API_KEY=test-key\nWIKI_JEV_MODE=active\n", encoding="utf-8")
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("JEV_ENV", str(env))
+
+        def args(*extra):
+            return [str(folder), "--dataset", str(RELIABLE / "intents.json"), "--method", "bm25", "--ids",
+                    *HELD_FAULTS, *extra]
+
+        assert compare.main(args()) == 0
+        yield folder, args, mp
+
+
+def test_a_faulted_intent_ends_where_its_fault_says_and_only_where_jev_runs(faulted, fresh):
+    folder, args, _mp = faulted
+    rows = compare.rows(folder, "arms")
+    assert len(rows) == 12 and {r["arm"] for r in rows} == {"B", "D"}, "A and C never reach Jev"
+    assert all(r["fault"]["raised"] and r["cost"]["jev_tokens"] == 0 for r in rows), "the fault, not a request"
+    got = report.failure_report(rows, fresh, {"split": "held_out", "arms": ["B", "D"]})
+    assert got == {"cohort": 12, "missing": 0, "passed": 12, "failed": []}
+    run = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    m = run["manifest"]
+    assert (m["dataset"], m["gates"]) == ("eval/jev/reliability/intents.json", "eval/jev/reliability/gates.json")
+    assert m["behavior_manifest"]["segmenter"] and m["behavior_manifest"]["digest"] == knowledge_digest()
+    assert run["graph_health"]["status"] in ("healthy", "empty")
+    # Another manifest is another measurement: the folder is refused, not resumed.
+    run["manifest"]["code_commit"] = {"commit": "0" * 40, "dirty": False}
+    (folder / "run.json").write_text(json.dumps(run), encoding="utf-8")
+    with pytest.raises(SystemExit, match="changed: manifest"):
+        compare.main(args())
+
+
+def knowledge_digest():
+    from main import knowledge
+
+    return knowledge.behavior()["digest"]
+
+
+def test_the_report_keys_runs_by_kind_and_refuses_mixed_measurements(faulted, tmp_path):
+    import shutil
+
+    folder = faulted[0]
+    run = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    one, two = tmp_path / "one", tmp_path / "two"
+    for target, commit in ((one, "a"), (two, "a")):
+        shutil.copytree(folder, target)
+        (target / "run.json").write_text(json.dumps({**run, "manifest": {**run["manifest"],
+                                                                         "code_commit": commit}}), encoding="utf-8")
+    with pytest.raises(SystemExit, match="two runs of arms/retrieval"):
+        report.build([one, two])
+    answered = {**run, "options": {**run["options"], "level": "answer"}, "manifest": {**run["manifest"],
+                                                                                        "code_commit": "b"}}
+    (two / "run.json").write_text(json.dumps(answered), encoding="utf-8")
+    with pytest.raises(SystemExit, match="code_commit"):
+        report.build([one, two])
+    got = report.build([one])
+    verdicts = {g["id"]: g["verdict"] for g in got["gates"]}
+    # Only the failure family ran: the routing cohort lacks its rows, the answer run is missing.
+    assert verdicts["analysis_routing"] == verdicts["answer_support"] == verdicts["action_loop_fix"] == "not_measured"
+    assert got["failure"]["passed"] == 12 and got["labels_reviewed"] and got["reviewers"] == ["gpt-6-sol"]
+
+
+def cohort_rows(fresh, spoil=None):
+    rows = []
+    for i in fresh["intents"]:
+        if i["split"] != "held_out" or not i["route_expected"]:
+            continue
+        for arm in "BD":
+            r = {"key": f"{i['id']}:en:{arm}:0", "intent": i["id"], "arm": arm, "rep": 0,
+                 "question_en": i["variants"]["en"], "analysis": i["analysis"], "route_segments": i["route_segments"],
+                 "transitions": ["route", i["transitions"][0]]}
+            rows.append(spoil(r) if spoil else r)
+    return rows
+
+
+def test_routing_gates_score_only_a_whole_scorable_cohort(fresh):
+    gates = json.loads((RELIABLE / "gates.json").read_text(encoding="utf-8"))
+    cohort = gates["cohorts"]["routing"]
+
+    def verdicts(rows, reviewed=True):
+        found = {"routing": report.routing_report(rows, fresh, cohort, gates)}
+        return {g["id"]: g["verdict"] for g in report.judge(gates, found, reviewed)}
+
+    right = cohort_rows(fresh)
+    assert len(right) == 2 * 66
+    assert verdicts(right)["analysis_routing"] == verdicts(right)["segment_classification"] == "pass"
+    assert verdicts(right, reviewed=False)["analysis_routing"] == "provisional"
+    # A route never reached is unscorable, never right: both gates wait on it.
+    lost = [{**r, "route_segments": None} if r["intent"] == "pasted-02" and r["arm"] == "D" else r for r in right]
+    assert verdicts(lost)["analysis_routing"] == verdicts(lost)["segment_classification"] == "inconclusive"
+    assert verdicts(right[1:])["analysis_routing"] == "not_measured"
+    # Every request read as material and every pasted line as a request: classification fails, routing passes.
+    def flipped(r):
+        return {**r, "route_segments": [{**s, "ask": not s["ask"]} for s in r["route_segments"]]}
+    wrong = cohort_rows(fresh, flipped)
+    assert verdicts(wrong)["segment_classification"] == "fail" and verdicts(wrong)["analysis_routing"] == "pass"
+
+
+def test_answer_gates_need_the_whole_cohort_and_an_analysis_is_never_verified(fresh):
+    gates = json.loads((RELIABLE / "gates.json").read_text(encoding="utf-8"))
+    cohort = gates["cohorts"]["answer"]
+    rows = [{"key": f"{i['id']}:en:{a}:0", "intent": i["id"], "arm": a, "rep": 0, "grade": {"parts": {}}}
+            for i in fresh["intents"] if i["split"] == "held_out" and not i.get("fault") for a in "AD"]
+    assert report.answer_cohort(rows, fresh, cohort) == {"cohort": 132, "missing": 0, "incomplete": 0,
+                                                         "incomplete_rows": []}
+    rows[0] = {**rows[0], "answer_error": "RuntimeError: the host turn failed"}
+    found = {"answers": {"arms": {"A": {"integrity": 0, "breaches": 0, "unsupported_claim_rate": {"value": 0.4},
+                                        "answer_seconds": {"p95": 1.0}, "seconds": {"p95": 1.0}},
+                                  "D": {"integrity": 0, "breaches": 0, "unsupported_claim_rate": {"value": 0.0},
+                                        "answer_seconds": {"p95": 2.0}, "seconds": {"p95": 2.0}}},
+                         "differences": {"coverage_D_minus_A": {"value": 0.0, "low": -0.05, "high": 0.05}}},
+             "answer_cohort": report.answer_cohort(rows, fresh, cohort)}
+    got = {g["id"]: g["verdict"] for g in report.judge(gates, found, True)}
+    assert got["answer_support"] == got["added_latency"] == "inconclusive", "surviving pairs are not the cohort"
+    found["answer_cohort"] = report.answer_cohort(rows[1:], fresh, cohort)
+    assert {g["id"]: g["verdict"] for g in report.judge(gates, found, True)}["answer_support"] == "not_measured"
+    # An analysis published as verified, or one a memory would keep as verified, breaks integrity.
+    analysis = next(i["id"] for i in fresh["intents"] if i["analysis"])
+    rows = [{"key": "x", "intent": analysis, "arm": "D", "rep": 0, "analysis": True, "direct": False,
+             "answer": {"status": "unverified", "verified": False, "remembered": "verified:unverified"}}]
+    checked = report.verification_report(rows, fresh)
+    assert checked["violations"] == ["x"] and checked["arms"]["D"]["categories"] == {"unverified_analysis": 1}
+    found = {"verification": checked, "answers": {"arms": {"D": {"integrity": 0, "breaches": 0}}}}
+    assert {g["id"]: g["verdict"] for g in report.judge(gates, found, True)}["integrity"] == "fail"
+    rows[0]["answer"]["remembered"] = "unverified"
+    assert report.verification_report(rows, fresh)["violations"] == []
+
+
+def test_a_host_checked_answer_is_its_own_category_and_never_verified(fresh):
+    # Reliability PR 5, v2: what the host settled where Jev was unsure is published, never as Jev-verified.
+    fact = next(i["id"] for i in fresh["intents"] if i["verification"] == "verified")
+    rows = [{"key": "x", "intent": fact, "arm": "D", "rep": 0, "analysis": False, "direct": False,
+             "answer": {"status": "complete", "verified": False, "host_checked": True,
+                        "remembered": "host_checked:complete"}}]
+    checked = report.verification_report(rows, fresh)
+    assert checked["arms"]["D"]["categories"] == {"host_checked": 1} and checked["arms"]["D"]["matches"] == 0
+    assert checked["violations"] == []
+    for spoiled in ({"verified": True}, {"remembered": "verified:complete"}):
+        bad = [{**rows[0], "answer": {**rows[0]["answer"], **spoiled}}]
+        assert report.verification_report(bad, fresh)["violations"] == ["x"], spoiled
+
+
+def test_the_fallback_rate_is_counted_per_arm_and_kind_from_retrieval_and_the_answer():
+    route = {"route": {"asked": 2, "fell": 1, "settled": 1}}
+    rows = [{"arm": "D", "fallback": route, "answer": {"fallback": {"relation": {"asked": 3, "fell": 2,
+                                                                                  "settled": 1}}}},
+            {"arm": "D", "fallback": route},
+            {"arm": "A", "fallback": {}},
+            {"point": "work.start", "fallback": {"action": {"asked": 1, "fell": 1, "settled": 0}}}]
+    assert report.fallback_report(rows) == {
+        "D": {"route": {"asked": 4, "fell": 2, "settled": 2, "rate": 0.5},
+              "relation": {"asked": 3, "fell": 2, "settled": 1, "rate": 0.6667}},
+        "work.start": {"action": {"asked": 1, "fell": 1, "settled": 0, "rate": 1.0}}}
+    decided = [({"retrieve": "route", "analysis": "route"}, {"asked": ["retrieve"], "answers": {"retrieve": 0.0}}),
+               ({"retrieve": "route"}, None)]
+    assert compare.fallbacks(decided) == {"route": {"asked": 3, "fell": 1, "settled": 1}}
+
+
+def test_every_decision_a_row_makes_is_counted_even_when_its_answer_then_fails(monkeypatch, tmp_path):
+    # Rounds 1-3 of the fallback review: a warm row's priming run, an answer's return to retrieval, and
+    # a verification whose repair draft then failed each spent host turns the batch ceiling never saw.
+    import agent
+    from main import knowledge
+    from test_decision_flow import POLICY, req, returning
+
+    def asked(usd):
+        return lambda state, questions, stage: {"answers": {n: "yes" for n in questions}, "cost_usd": usd}
+
+    def grounded(*args, **kwargs):
+        # The code under test calls `decision.decide` by attribute, as `knowledge` does.
+        decision.decide(req(), returning({"x": 0.5}), Budget(seconds=5, calls=2, candidates=0), [], POLICY,
+                        fallback=asked(0.4))
+        raise RuntimeError("the repair draft failed")
+        yield
+
+    monkeypatch.setattr(knowledge, "grounded", grounded)
+    monkeypatch.setattr(agent, "ChatSession", lambda *a, **k: SimpleNamespace(close=lambda: None))
+    real = decision.decide
+    with compare.ledger() as kept:
+        # Priming, then the measured retrieval: Codex reports no price for the second.
+        for usd in (0.6, None):
+            decision.decide(req(), returning({"x": 0.5}), Budget(seconds=5, calls=2, candidates=0), [], POLICY,
+                            fallback=asked(usd))
+        decision.decide(req(), returning({"x": 0.95}), Budget(seconds=5, calls=2, candidates=0), [], POLICY)
+        with pytest.raises(RuntimeError, match="repair draft"):
+            compare.answered({"text": "q"}, {}, tmp_path, True, None, "")
+    assert compare.ledger_cost(kept) == {"jev_requests": 4, "jev_tokens": 8, "host_usd": 1.0, "host_turns": 3,
+                                         "host_unknown": 1}
+    assert compare.fallbacks((k, res["fallback"]) for k, res in kept) == \
+        {"useful": {"asked": 4, "fell": 3, "settled": 3}}
+    assert decision.decide is real, "the ledger's patch ends with its block"
+
+
+def test_the_host_s_own_time_is_not_a_deadline_breach():
+    limits = {"seconds": 15.0, "calls": 6, "candidates": 40, "tokens": None}
+    used = {"calls": 1, "candidates": 0, "tokens": 0}
+    assert compare.breaches({"limits": limits, "used": used, "elapsed_ms": 40_000, "aside_ms": 30_000}) == []
+    assert compare.breaches({"limits": limits, "used": used, "elapsed_ms": 40_000, "aside_ms": 20_000}) == \
+        ["deadline"]
+    assert compare.breaches({"limits": limits, "used": used, "elapsed_ms": 16_000}) == ["deadline"], \
+        "a record from before the fallback keeps its reading"
+
+
+def test_the_reliability_actions_read_their_own_fixtures(tmp_path, monkeypatch):
+    env = tmp_path / "jev.env"
+    env.write_text("TYPESAFE_API_KEY=test-key\nWIKI_JEV_MODE=active\n", encoding="utf-8")
+    monkeypatch.setenv("JEV_ENV", str(env))
+    fixtures = json.loads((RELIABLE / "actions.json").read_text(encoding="utf-8"))
+    labels = {f["id"]: f["label"] for f in fixtures["fixtures"]}
+
+    def transport(cfg):
+        def evaluate(state, questions, trace, budget, stage):
+            budget.call()
+            options = list(questions["action"]["criteria"])
+            pick = options[0]
+            trace.append({"stage": stage, "model": "jev-test", "usage": {"input_tokens": 10, "output_tokens": 1}})
+            return {"action": {"choice": pick, "confidence": 0.9,
+                               "probabilities": {o: 0.9 if o == pick else 0.1 / (len(options) - 1) for o in options}}}
+        return evaluate
+
+    folder = tmp_path / "actions"
+    with patch.object(decisions, "transport", transport):
+        assert compare.main([str(folder), "--experiment", "actions", "--dataset", str(RELIABLE / "intents.json"),
+                             "--actions", str(RELIABLE / "actions.json")]) == 0
+    rows = compare.rows(folder, "actions")
+    assert len(rows) == 18 and {r["key"] for r in rows} <= set(labels)
+    got = report.build([folder])
+    measured = {g["id"]: g for g in got["gates"]}
+    assert all(measured[g]["detail"].get("n") == 6 for g in ("action_work_start", "action_specs_check",
+                                                             "action_loop_fix"))
+    assert measured["decision_quality"]["value"] == got["actions"]["selected_right_rate"]
+    # Fixtures that moved since the run are not the ones measured.
+    run = json.loads((folder / "run.json").read_text(encoding="utf-8"))
+    run["options"]["fixtures"]["sha256"] = "0" * 64
+    (folder / "run.json").write_text(json.dumps(run), encoding="utf-8")
+    with pytest.raises(SystemExit, match="not the ones its manifest names"):
+        report.build([folder])

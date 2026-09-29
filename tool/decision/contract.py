@@ -17,6 +17,13 @@ returns a result whose status keeps failures apart:
 None of the last four is a negative answer, and none carries answers.
 `checked` is what a caller runs before using a result: the request id,
 the schema and the candidates must be the request's.
+
+An answer the policy leaves uncertain may go to a `fallback`: the host model
+answers the same questions over the same state (reliability PR 5, v2).
+Jev's answers stay as they came; what the host settled sits beside them
+under `fallback`, its verdicts replace the uncertain ones, and `final`
+reads a question's settled answer. The host is not Jev: a caller marks
+what the host settled, and nothing it settled is counted as Jev's.
 """
 
 from __future__ import annotations
@@ -44,6 +51,11 @@ INVALID = ("invalid_response", "response_too_large", "unsupported_question")
 
 # `(state, questions, trace, budget, stage) -> {name: answer}`: `decision.evaluate` bound to a config.
 Evaluate = Callable[..., dict]
+# The host model asked what Jev left uncertain (`main.knowledge.host_decides`).
+# Called as `(state, questions, stage)`, it returns `answers` ({name: "yes" | "no" | option | "unsure"}),
+# `model`, `cost_usd` and `elapsed_ms`, and `error` when the turn failed.
+Fallback = Callable[..., dict]
+UNSURE = "unsure"
 
 
 def request(kind: str, state_en: dict, questions: dict[str, dict], *, allowed: list[str], model: str,
@@ -100,21 +112,48 @@ def shaped(question: dict, value: object) -> bool:
 
 
 def result(req: dict, status: str, reason: str = "", answers: dict | None = None, verdicts: dict | None = None,
-           selected: list[str] = (), call: dict | None = None, elapsed: float = 0.0, cached: bool = False) -> dict:
+           selected: list[str] = (), call: dict | None = None, elapsed: float = 0.0, cached: bool = False,
+           fallback: dict | None = None) -> dict:
     call = call or {}
     return {"schema_version": RESULT, "request_id": req["request_id"], "decision_kind": req["decision_kind"],
             "status": status, "answers": answers or {}, "verdicts": verdicts or {},
             "selected_candidate_ids": list(selected), "reason_code": reason,
             "model": call.get("model"), "policy_version": req["policy_version"], "usage": call.get("usage"),
             "elapsed_ms": round(elapsed * 1000), "trace_id": req["trace_id"], "cached": cached,
-            "sent": bool(call.get("sent")) and not cached}
+            "sent": bool(call.get("sent")) and not cached, "fallback": fallback}
+
+
+def settled(question: dict, said: object) -> dict | float | None:
+    """The host's word on `question` as an answer the policy accepts outright,
+    or `None` when it said nothing usable: `unsure`, or an option not offered."""
+
+    if question["type"] == "noul":
+        return {"yes": 1.0, "no": 0.0}.get(said)
+    if said not in question["criteria"] or said == DEFER:
+        return None
+    return {"choice": said, "confidence": 1.0,
+            "probabilities": {c: float(c == said) for c in question["criteria"]}}
+
+
+def final(res: dict, name: str) -> dict | float:
+    """What question `name` came to: the host's settled answer where the
+    fallback settled it, else Jev's."""
+
+    return ((res.get("fallback") or {}).get("answers") or {}).get(name, res["answers"][name])
+
+
+def settled_by(res: dict, name: str) -> str:
+    """`host` when the fallback settled question `name`, else `jev`."""
+
+    return "host" if name in ((res.get("fallback") or {}).get("answers") or {}) else "jev"
 
 
 def decide(req: dict, evaluate: Evaluate, budget: Budget, trace: list[dict], pol: Policy,
-           cache: Cache | None = None) -> dict:
+           cache: Cache | None = None, fallback: Fallback | None = None) -> dict:
     """The DecisionResult for `req`. Never raises for a failed decision: the
     failure is its status and reason. The policy must be the one the request
-    names."""
+    names. With a `fallback`, the questions the policy left uncertain go to
+    it once, together; a fallback returns its failure as a value, never raises."""
 
     if pol.version != req["policy_version"]:
         raise ValueError("the request names another policy")
@@ -151,20 +190,42 @@ def decide(req: dict, evaluate: Evaluate, budget: Budget, trace: list[dict], pol
         return result(req, "invalid", "missing_or_unknown_answer", call=call, elapsed=time.monotonic() - started)
     if not all(shaped(questions[name], answers[name]) for name in questions):
         return result(req, "invalid", "malformed_answer", call=call, elapsed=time.monotonic() - started)
-    verdicts, selected = {}, []
+    verdicts = {name: verdict(pol, q["decision"], answers[name]) for name, q in req["questions"].items()}
+    if hit is None and cache:
+        cache.put(req, answers, call)
+    doubt = [name for name, v in verdicts.items() if v == "uncertain"]
+    host = None
+    if doubt and fallback is not None:
+        began = time.monotonic()
+        host = asked(fallback, req, doubt)
+        # The host's turn has an allowance of its own, as a drafting turn has: Jev's deadline moves past it.
+        budget.aside(time.monotonic() - began)
+    for name, answer in (host or {}).get("answers", {}).items():
+        verdicts[name] = verdict(pol, req["questions"][name]["decision"], answer)
+    selected = []
     for name, q in req["questions"].items():
-        verdicts[name] = verdict(pol, q["decision"], answers[name])
         if verdicts[name] != "yes":
             continue
         if q["decision"] in CHOICE:
-            selected.append(answers[name]["choice"])
+            selected.append(((host or {}).get("answers") or {}).get(name, answers[name])["choice"])
         elif q["candidate"] is not None:
             selected.append(q["candidate"])
-    if hit is None and cache:
-        cache.put(req, answers, call)
     status = "uncertain" if "uncertain" in verdicts.values() else "decided"
     return result(req, status, "", answers, verdicts, list(dict.fromkeys(selected)), call,
-                  time.monotonic() - started, cached=hit is not None)
+                  time.monotonic() - started, cached=hit is not None, fallback=host)
+
+
+def asked(fallback: Fallback, req: dict, doubt: list[str]) -> dict:
+    """What the host settled of the questions in `doubt`: `asked` (their
+    names), `said` (its word on each), `answers` (the ones it settled, as
+    answers the policy accepts), and the call's model, cost and time."""
+
+    questions = {name: req["questions"][name]["question"] for name in doubt}
+    got = fallback(req["state_en"], questions, req["decision_kind"])
+    said = got.get("answers") or {}
+    answers = {name: a for name in doubt if (a := settled(questions[name], said.get(name))) is not None}
+    return {"by": "host", "asked": doubt, "said": {name: said.get(name) for name in doubt}, "answers": answers,
+            **{k: got[k] for k in ("model", "cost_usd", "elapsed_ms", "error") if k in got}}
 
 
 def checked(req: dict, res: dict) -> dict:

@@ -38,7 +38,8 @@ from common import settings
 from common.budget import PROBE, QUESTION, Budget
 
 __all__ = ("Config", "JevError", "MODES", "choice", "config", "env_file", "evaluate", "noul", "probe", "score",
-           "DEFER", "STATUSES", "Cache", "request", "decide", "checked", "Policy", "policy", "verdict", "claims",
+           "DEFER", "STATUSES", "UNSURE", "Cache", "request", "decide", "checked", "final", "settled_by", "Policy",
+           "policy", "verdict", "claims",
            "FAMILIES", "LIMITS", "save", "settings_file")
 
 HOST = "api.typesafe.ai"
@@ -99,6 +100,10 @@ class Config:
     limits: dict = field(default_factory=lambda: dict(QUESTION))
     active_projects: tuple[str, ...] = ()   # empty: active mode is active everywhere
     canary: bool = False   # active where it came from, shadow here: this checkout is not in `active_projects`
+    # The host model the run answers with (`ChatSession`'s `model`, `codex:` for Codex); what Jev leaves
+    # uncertain goes to it (`knowledge.host_decides`). Not a setting: whoever knows the run's model sets it
+    # with `dataclasses.replace`; empty is the default Claude backend.
+    host: str = ""
 
     def status(self) -> dict:
         """What may be shown or logged: no part of the key."""
@@ -624,6 +629,6 @@ def probe(cfg: Config, cancel: threading.Event | None = None) -> dict:
 
 
 # The typed layer over the transport (stage 6). Imported last: both read the names above.
-from .contract import DEFER, STATUSES, Cache, checked, decide, request  # noqa: E402
+from .contract import DEFER, STATUSES, UNSURE, Cache, checked, decide, final, request, settled_by  # noqa: E402
 from .policy import Policy, policy, verdict  # noqa: E402
 from . import claims  # noqa: E402  — the relation Choice (stage 7)

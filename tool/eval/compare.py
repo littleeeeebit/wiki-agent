@@ -30,6 +30,15 @@ and stops. `tool/eval/report.py` computes the metrics and the gates.
              mode, and the execution boundary (`decisions.admit`) tried with
              the proposal, a tampered copy and a second delivery.
 
+`--dataset` and `--actions` name the intents and fixtures read instead
+(reliability PR 5: `eval/jev/reliability/`); the gates are the
+`gates.json` beside the dataset. Every run records a manifest — dataset,
+fixture and gate hashes, the corpus snapshot, commit, behavior manifest,
+models, policies — and a directory whose manifest has changed is refused,
+so a resumed run is the same measurement. An intent with a `fault` runs
+in arms B and D only, cache off, with `decision.evaluate` raising that
+fault at its phase: the failure family is reproduced, not waited for.
+
 `--cache warm` runs each unit once unrecorded first, so the recorded one
 reads the decision cache; `cold` (the default) asks every decision. Vectors
 and the translator's cache are shared on disk and warm after first use in
@@ -41,9 +50,12 @@ suite. `--method bm25` and `--arms A C` send nothing.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as dt
+import inspect
 import json
 import os
+import platform
 import sys
 import tempfile
 import time
@@ -54,11 +66,12 @@ os.environ["WIKI_SEARCH"] = "off"   # the corpus is indexed here, never by the m
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import decision  # noqa: E402
-from common.budget import ACTION, Budget  # noqa: E402
+from common.budget import ACTION, Budget, Exhausted  # noqa: E402
 from eval import dataset  # noqa: E402
-from eval.baseline import RAW, revision, sha  # noqa: E402
-from main import knowledge  # noqa: E402
-from search import HUB, local_index, retrieval  # noqa: E402
+from eval.baseline import RAW, revision  # noqa: E402
+from eval.dataset import sha  # noqa: E402 — line endings normalized, so a checkout's CRLF is the same file
+from main import knowledge, memory  # noqa: E402
+from search import HUB, knowledge_graph, local_index, retrieval  # noqa: E402
 
 RUN = "jev-compare-run/1"
 EXPERIMENTS = ("arms", "fixed", "actions")
@@ -75,23 +88,74 @@ TOKENS_PER_REQUEST = {"arms": 2_000, "fixed": 3_800, "actions": 1_400}
 HOST_USD_PER_TURN = 0.035
 # The candidates the fixed experiment grades: arm C's evidence at the largest k a question may ask for.
 FIXED_K = knowledge.MAX_K
+# What each fault kind raises from `decision.evaluate`, as `test_decision_flow` maps it to its status.
+FAULTS = {"cancelled": lambda: decision.JevError("cancelled"), "exhausted": lambda: Exhausted("calls"),
+          "unavailable": lambda: decision.JevError("timeout")}
+# The manifest parts every run of one comparison shares; `report` refuses runs that differ in any.
+SHARED = ("dataset_hash", "gates_hash", "source_hashes", "code_commit", "behavior_manifest", "models", "policies",
+          "seed", "environment")
 
 
 # -- the run directory ------------------------------------------------------
 
-def opened(folder: Path, experiment: str, opts: dict, data: dict) -> dict:
-    """The run's record, created with its options, or the existing one when
-    they match. Resuming never changes what is measured."""
+def named(path: Path) -> str:
+    """`path` as a run records it: from the hub when it lies there."""
 
+    path = path.resolve()
+    return path.relative_to(HUB.resolve()).as_posix() if HUB.resolve() in path.parents else path.as_posix()
+
+
+def reviewed(labels: dict) -> dict:
+    return {k: labels.get(k) for k in ("reviewed_by", "reviewed_at", "reviews")}
+
+
+def manifest(paths: dict, data: dict, opts: dict, fixtures: dict | None) -> dict:
+    """What a run measures besides its options: the files it read by hash,
+    the corpus, the code and behavior, the models and policies, and the
+    label reviews — reliability PR 5's run manifest."""
+
+    from main import decisions
+
+    cfg = decision.config()
+    gates = json.loads(paths["gates"].read_text(encoding="utf-8"))
+    segmenter = sha(f"{inspect.getsource(knowledge.requirements)}\n{knowledge.MAX_REQUIREMENTS}".encode())
+    return {"dataset": named(paths["dataset"]), "dataset_hash": sha(paths["dataset"].read_bytes()),
+            "gates": named(paths["gates"]), "gates_hash": sha(paths["gates"].read_bytes()),
+            "actions": named(paths["actions"]) if fixtures else None,
+            "actions_hash": sha(paths["actions"].read_bytes()) if fixtures else None,
+            "source_hashes": dataset.snapshot(data)["sha256"], "code_commit": revision(),
+            "behavior_manifest": {**knowledge.manifest(cfg), "segmenter": segmenter},
+            "models": {"jev": cfg.model, "translator": knowledge.translate.MODEL},
+            "policies": {"retrieval": decision.policy(cfg.model, prompt_version=knowledge.PROMPT_VERSION,
+                                                      kind_versions=knowledge.KIND_VERSIONS).record(),
+                         "action_prompt": decisions.VERSION},
+            "cache_mode": opts.get("cache"), "seed": gates["seed"],
+            "environment": {"python": platform.python_version(), "platform": sys.platform,
+                            "search": os.environ.get("WIKI_SEARCH"), "evidence_language": "en"},
+            "limits": {"question": dict(cfg.limits), "ceiling": CEILING},
+            "label_review": {"dataset": reviewed(data["labels"]),
+                             **({"actions": reviewed(fixtures["labels"])} if fixtures else {})}}
+
+
+def opened(folder: Path, experiment: str, opts: dict, data: dict, paths: dict | None = None,
+           fixtures: dict | None = None) -> dict:
+    """The run's record, created with its options, or the existing one when
+    they match. Resuming never changes what is measured: a changed dataset,
+    manifest or option needs another directory."""
+
+    paths = paths or {"dataset": dataset.DATASET, "gates": dataset.DATASET.parent / "gates.json", "actions": ACTIONS}
     ident = {"experiment": experiment, "options": opts,
-             "dataset": {"path": "eval/jev/intents.json", "version": data["version"],
-                         "sha256": sha(dataset.DATASET.read_bytes()), "labels": data["labels"]},
-             "corpus": {k: v for k, v in dataset.snapshot(data).items() if k != "snapshot"}}
+             "dataset": {"path": named(paths["dataset"]), "version": data["version"],
+                         "sha256": sha(paths["dataset"].read_bytes()), "labels": data["labels"]},
+             "corpus": {k: v for k, v in dataset.snapshot(data).items() if k != "snapshot"},
+             "manifest": manifest(paths, data, opts, fixtures)}
     path = folder / "run.json"
     if path.exists():
         run = json.loads(path.read_text(encoding="utf-8"))
-        if {k: run[k] for k in ident} != ident:
-            raise SystemExit(f"{folder} holds another measurement: {json.dumps({k: run[k] for k in ident})[:400]}")
+        if {k: run.get(k) for k in ident} != ident:
+            changed = sorted(k for k in ident if run.get(k) != ident[k])
+            raise SystemExit(f"{folder} holds another measurement (changed: {', '.join(changed)}): "
+                             f"{json.dumps({k: run.get(k) for k in changed})[:400]}")
         return run
     folder.mkdir(parents=True, exist_ok=True)
     run = {"schema": RUN, **ident, "created": now(), "versions": versions(), "batches": []}
@@ -183,15 +247,104 @@ def batch(folder: Path, run: dict, experiment: str, units: list, work, ceiling: 
 # -- arms -------------------------------------------------------------------
 
 def arm_units(data: dict, opts: dict) -> list[dict]:
+    """Each wording through each arm and repetition; a faulted intent only
+    through the arms that reach Jev (A and C never do)."""
+
     return [{**v, "arm": arm, "rep": rep, "key": f"{v['key']}:{arm}:{rep}"}
             for v in dataset.variants(data, opts["split"], opts["languages"], opts["ids"])
-            for arm in opts["arms"] for rep in range(opts["repeat"])]
+            for arm in opts["arms"] if ARMS[arm]["jev"] or not v["intent"].get("fault")
+            for rep in range(opts["repeat"])]
 
 
-def usage_of(d: dict) -> dict:
-    spent = [x["usage"] or {} for x in d.get("decisions", []) if not x.get("cached")]
-    return {"jev_requests": len(spent),
-            "jev_tokens": sum(u.get("input_tokens", 0) + u.get("output_tokens", 0) for u in spent)}
+@contextlib.contextmanager
+def faulted(fault: dict | None):
+    """`decision.evaluate` raising `fault`'s exception for its phase — the
+    request's `decision_kind`, which reaches it as `stage` — and delegating
+    every other stage. `prepare` binds `decision.evaluate` when it is called,
+    so patching the module reaches the flow. Yields what was raised."""
+
+    raised: list[str] = []
+    if not fault:
+        yield raised
+        return
+    real = decision.evaluate
+
+    def evaluate(cfg, state, questions, trace, budget=None, stage=""):
+        if stage == fault["phase"]:
+            error = FAULTS[fault["kind"]]()
+            raised.append(f"{type(error).__name__}: {error}")
+            raise error
+        return real(cfg, state, questions, trace, budget, stage)
+
+    with patch.object(decision, "evaluate", evaluate):
+        yield raised
+
+
+@contextlib.contextmanager
+def ledger():
+    """Every decision made inside, as `(kinds, result)` the moment
+    `decision.decide` returns it — a row's priming run, its retrieval, the
+    answer's verification and returns to retrieval, an action's choice —
+    whether or not an answer is ever published. What a row spent on Jev and
+    on host fallbacks, and how often each kind fell back, is read from here,
+    never from a published record, which a failed answer never reaches.
+    Rows run one at a time (`batch`), as `faulted` also assumes."""
+
+    kept: list[tuple[dict, dict]] = []
+    real = decision.decide
+
+    def decide(req, *args, **kwargs):
+        res = real(req, *args, **kwargs)
+        kept.append(({n: q["decision"] for n, q in req["questions"].items()}, res))
+        return res
+
+    with patch.object(decision, "decide", decide):
+        yield kept
+
+
+def ledger_cost(kept) -> dict:
+    """What the decisions in a `ledger` cost: the Jev requests actually sent
+    and their tokens, and the host fallbacks' turns (`host_spent`)."""
+
+    sent = [res.get("usage") or {} for _kinds, res in kept if res.get("sent")]
+    return {"jev_requests": len(sent),
+            "jev_tokens": sum(u.get("input_tokens", 0) + u.get("output_tokens", 0) for u in sent),
+            **host_spent(res.get("fallback") for _kinds, res in kept)}
+
+
+def kinds_of(decisions) -> list[tuple[dict, dict | None]]:
+    """A dossier's decisions as `fallbacks` reads them: each question's kind by name, and its fallback."""
+
+    return [({n: q["decision"] for n, q in (x.get("questions") or {}).items()}, x.get("fallback"))
+            for x in decisions]
+
+
+def fallbacks(decided) -> dict:
+    """Per decision kind, of the questions Jev was asked: how many were
+    `asked`, how many it left uncertain and `fell` to the host model, and
+    how many the host `settled` — the rate Jev's tuning reads (PR 5, v2).
+    `decided` is `(kinds, fallback)` pairs: each question's kind by name,
+    and the result's `fallback` record."""
+
+    out: dict[str, dict] = {}
+    for kinds, host in decided:
+        host = host or {}
+        for name, kind in kinds.items():
+            n = out.setdefault(kind, {"asked": 0, "fell": 0, "settled": 0})
+            n["asked"] += 1
+            n["fell"] += name in (host.get("asked") or [])
+            n["settled"] += name in (host.get("answers") or {})
+    return out
+
+
+def host_spent(records) -> dict:
+    """What the host fallbacks among `records` (results' `fallback`) cost where
+    the price was reported, how many turns they were, and how many of those
+    reported no price (`host_unknown`): unknown stays apart, never zero."""
+
+    ran = [r for r in records if r]
+    known = [r["cost_usd"] for r in ran if isinstance(r.get("cost_usd"), (int, float))]
+    return {"host_usd": sum(known), "host_turns": len(ran), "host_unknown": len(ran) - len(known)}
 
 
 def breaches(budget: dict) -> list[str]:
@@ -201,7 +354,8 @@ def breaches(budget: dict) -> list[str]:
     out = [n for n in ("calls", "candidates") if used[n] > limits[n]]
     if limits.get("tokens") is not None and used["tokens"] > limits["tokens"]:
         out.append("tokens")
-    if budget["elapsed_ms"] > limits["seconds"] * 1000:
+    # The host fallback's own time is not the run's (`Budget.aside`); latency still counts all of it.
+    if budget["elapsed_ms"] - budget.get("aside_ms", 0) > limits["seconds"] * 1000:
         out.append("deadline")
     return out
 
@@ -217,7 +371,9 @@ def dossier_row(d: dict, names: dict, label, allowed: set[str]) -> dict:
                     and q.get("candidate") not in ids:
                 rejected.append(names.get(q["candidate"], q["candidate"]))
     return {"status": d["status"], "reason": d["reason"], "direct": d["direct"], "sources": d["sources"],
-            "normalization": d.get("normalization"),
+            "normalization": d.get("normalization"), "question_en": d.get("question_en"),
+            # The route's own reading: analysis or fact, and each segment a request or supplied material.
+            "analysis": d.get("analysis"), "route_segments": d.get("route_segments"),
             "evidence": [names.get(e["chunk_id"]) or label(e) for e in d["evidence"]],
             "lanes": [e.get("lane") for e in d["evidence"]],
             # Retrieved but past k: held as candidates, not handed to the answer.
@@ -229,7 +385,8 @@ def dossier_row(d: dict, names: dict, label, allowed: set[str]) -> dict:
             "missing": d.get("missing", []),
             "leaks": [e["chunk_id"] for e in d["evidence"] if e.get("repo_id") not in allowed],
             "breaches": breaches(d["budget"]), "budget": d["budget"],
-            "transitions": [t["to"] for t in d.get("transitions", [])]}
+            "transitions": [t["to"] for t in d.get("transitions", [])],
+            "fallback": fallbacks(kinds_of(d.get("decisions", [])))}
 
 
 def brief(d: dict) -> str:
@@ -266,7 +423,8 @@ def answered(unit: dict, d: dict, repo: Path, jev: bool, cfg: decision.Config, m
         if not jev:
             text, usd = host_turn(chat, f"{unit['text']}\n\n{brief(d)}")
             return {"status": "answered", "text": text, "host_usd": usd, "host_turns": 1,
-                    "elapsed_ms": round((time.monotonic() - started) * 1000), "accepted": None, "fabricated": []}
+                    "elapsed_ms": round((time.monotonic() - started) * 1000), "accepted": None, "fabricated": [],
+                    "verified": None, "remembered": memory.verification({"role": "assistant"})}
         spent: dict = {}
         flow = knowledge.grounded(unit["text"], repo, "", d, drafting(chat, spent), cfg, cache=None)
         while True:
@@ -276,17 +434,30 @@ def answered(unit: dict, d: dict, repo: Path, jev: bool, cfg: decision.Config, m
                 out = stop.value
                 break
         v = out["verified"]
-        held = {e["chunk_id"] for e in d["evidence"]}
+        gens = out["record"]["generations"]
+        judged = [g[k] for g in gens for k in ("decision", "rejoined") if g.get(k)]
         return {"status": v["status"], "reason": v["reason"], "text": out["text"],
+                # As published, and as a memory of this turn would label it (`memory.verification`).
+                "verified": v["verified"], "degraded": v["degraded"], "host_checked": v.get("host_checked"),
+                "remembered": memory.verification({"role": "assistant", "verification": v}),
+                # The drafting turns alone: every decision's spending, fallbacks included, is the row's `ledger`.
                 "host_usd": spent.get("cost_usd", 0.0), "host_turns": spent.get("turns", 0),
                 "elapsed_ms": round((time.monotonic() - started) * 1000),
                 "accepted": len(v["claims"]), "rejected": len(v["rejected"]),
-                "verify_usage": [g[k]["usage"] for g in out["record"]["generations"]
-                                 for k in ("decision", "rejoined") if g.get(k)],
-                # A published citation must name evidence the run held: anything else was invented.
-                "fabricated": [c["cite"] for c in v["citations"] if c["evidence_id"] not in held]}
+                "verify_usage": [j["usage"] for j in judged], "fabricated": invented(v, gens)}
     finally:
         chat.close()
+
+
+def invented(v: dict, gens: list[dict]) -> list[str]:
+    """The published citations naming evidence the answer never held. What
+    it held is what each draft was given (`evidence_ids`): the retrieved
+    passages, the pasted material (`m1`, ...) and whatever a return to
+    retrieval found — not the dossier the answer began from (PR 5: that read
+    two citations of the user's own pasted text as invented)."""
+
+    held = {chunk for g in gens for chunk in (g.get("evidence_ids") or {}).values()}
+    return [c["cite"] for c in v["citations"] if c["evidence_id"] not in held]
 
 
 def graded(unit: dict, d: dict, text: str, data: dict, model: str) -> dict:
@@ -318,7 +489,8 @@ def run_arms(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict) 
     live = any(ARMS[a]["jev"] for a in opts["arms"])
     if live and (cfg.mode == "off" or not cfg.key):
         raise SystemExit(f"Jev is not configured: {cfg.status()}")
-    active = decision.Config("active", cfg.model, cfg.key_source, key=cfg.key)
+    # The fallback asks the model the answers are drafted with, never another provider.
+    active = decision.Config("active", cfg.model, cfg.key_source, key=cfg.key, host=opts["model"])
     off = decision.Config("off", cfg.model, cfg.key_source)
     units = arm_units(data, opts)
     with tempfile.TemporaryDirectory(prefix="jev-compare-") as scratch, dataset.corpus(data, Path(scratch)) as c:
@@ -331,32 +503,44 @@ def run_arms(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict) 
             names = {ch["chunk_id"]: c.label(ch) for ch in index.chunks}
             allowed = {knowledge.evidence.repo_id(c.repo), knowledge.evidence.repo_id(c.hub)}
             cache = decision.Cache() if opts["cache"] == "warm" else None
+            # The graph's structure, apart from whether it helps a question (that is graph_benefit).
+            checked = knowledge_graph.verify(index.graph, index.chunks)
+            run["graph_health"] = {**{k: checked[k] for k in ("nodes", "edges", "adopted")},
+                                   **{k: len(checked[k]) for k in knowledge.FAILURES},
+                                   "status": "failing" if any(checked[k] for k in knowledge.FAILURES)
+                                   else "empty" if not checked["edges"] else "healthy"}
 
             def one(unit: dict) -> dict:
                 arm = ARMS[unit["arm"]]
                 cfg_ = active if arm["jev"] else off
-                with patch.object(knowledge, "graph_enabled", lambda: arm["graph"]):
-                    if opts["cache"] == "warm":
-                        knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache, k=opts["k"])
-                    started = time.monotonic()
-                    d = knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache, k=opts["k"])
-                    elapsed = round((time.monotonic() - started) * 1000)
-                row = {"key": unit["key"], "intent": unit["intent"]["id"], "language": unit["language"],
-                       "arm": unit["arm"], "rep": unit["rep"], "cache": opts["cache"], "at": now(),
-                       "elapsed_ms": elapsed, **dossier_row(d, names, c.label, allowed)}
-                cost = {**usage_of(d), "host_usd": 0.0, "host_turns": 0}
-                if opts["level"] == "answer":
-                    try:
-                        row["answer"] = answered(unit, d, c.repo, arm["jev"], cfg_, opts["model"])
-                        row["grade"] = graded(unit, d, row["answer"]["text"], data, opts["grader"])
-                    except Exception as exc:  # noqa: BLE001 — a failed turn is a recorded failure, not a stop
-                        row["answer_error"] = f"{type(exc).__name__}: {exc}"[:300]
-                    for part in (row.get("answer") or {}, row.get("grade") or {}):
-                        cost["host_usd"] += part.get("host_usd") or 0.0
-                    cost["host_turns"] += (row.get("answer") or {}).get("host_turns", 0) + ("grade" in row)
-                    for u in (row.get("answer") or {}).get("verify_usage") or []:
-                        cost["jev_requests"] += 1
-                        cost["jev_tokens"] += (u or {}).get("input_tokens", 0) + (u or {}).get("output_tokens", 0)
+                fault = unit["intent"].get("fault")
+                # A fault is reproduced on a request actually sent: never served from the cache.
+                cache_ = None if fault else cache
+                # Every decision the row makes — priming, retrieval, the answer's own, failed answer or not.
+                with ledger() as kept:
+                    with patch.object(knowledge, "graph_enabled", lambda: arm["graph"]), faulted(fault) as raised:
+                        if opts["cache"] == "warm" and not fault:
+                            knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache_, k=opts["k"])
+                        started = time.monotonic()
+                        d = knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache_, k=opts["k"])
+                        elapsed = round((time.monotonic() - started) * 1000)
+                    row = {"key": unit["key"], "intent": unit["intent"]["id"], "language": unit["language"],
+                           "arm": unit["arm"], "rep": unit["rep"], "cache": opts["cache"], "at": now(),
+                           "elapsed_ms": elapsed, **dossier_row(d, names, c.label, allowed)}
+                    if fault:
+                        row["fault"] = {"kind": fault["kind"], "phase": fault["phase"], "raised": raised}
+                    # A faulted run is judged by where it ended; it is not answered.
+                    if opts["level"] == "answer" and not fault:
+                        try:
+                            row["answer"] = answered(unit, d, c.repo, arm["jev"], cfg_, opts["model"])
+                            row["grade"] = graded(unit, d, row["answer"]["text"], data, opts["grader"])
+                        except Exception as exc:  # noqa: BLE001 — a failed turn is a recorded failure, not a stop
+                            row["answer_error"] = f"{type(exc).__name__}: {exc}"[:300]
+                cost = ledger_cost(kept)
+                for part in (row.get("answer") or {}, row.get("grade") or {}):
+                    cost["host_usd"] += part.get("host_usd") or 0.0
+                cost["host_turns"] += (row.get("answer") or {}).get("host_turns", 0) + ("grade" in row)
+                row["fallback"] = fallbacks((kinds, res.get("fallback")) for kinds, res in kept)
                 return {**row, "cost": cost}
 
             with patch.object(knowledge, "cold", lambda req, project, cancel: retrieval.run(index.snapshot(), req,
@@ -485,14 +669,16 @@ def run_actions(folder: Path, opts: dict, fixtures: dict, ceiling: Ceiling, run:
                     pass
         jev = record["jev"]
         usage = jev["usage"] or {}
+        host = host_spent([jev.get("fallback")])
         return {"key": unit["key"], "point": f["point"], "label": f["label"], "at": now(),
                 "offered": [c["id"] for c in offered], "status": jev["status"], "basis": record["basis"],
                 "choice": (jev["answer"] or {}).get("choice"), "confidence": (jev["answer"] or {}).get("confidence"),
                 "predicted": record["predicted"], "selected": record["selected"], "baseline": baseline,
                 "admitted": admitted, "violations": violations,
+                "fallback": fallbacks([({"action": "action"} if jev["answer"] else {}, jev.get("fallback"))]),
                 "cost": {"jev_requests": 1 if jev["status"] in ("decided", "uncertain") else 0,
                          "jev_tokens": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
-                         "host_usd": 0.0, "host_turns": 0}}
+                         **host}}
 
     with tempfile.TemporaryDirectory(prefix="jev-actions-") as scratch, \
             patch.object(decisions, "LOGS", Path(scratch) / "actions"):
@@ -535,6 +721,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--minutes", type=float, default=CEILING["minutes"])
     parser.add_argument("--usd", type=float, default=CEILING["usd"])
     parser.add_argument("--jev-tokens", type=int, default=CEILING["jev_tokens"])
+    parser.add_argument("--dataset", type=Path, default=dataset.DATASET,
+                        help="the intents; the gates are the gates.json beside them")
+    parser.add_argument("--actions", type=Path, default=ACTIONS, help="the action fixtures (--experiment actions)")
     parser.add_argument("--estimate", action="store_true", help="print what is left to send, and stop")
     args = parser.parse_args(argv)
     if not 1 <= args.k <= knowledge.MAX_K or args.repeat < 1:
@@ -542,7 +731,8 @@ def main(argv: list[str] | None = None) -> int:
     for name, limit in (("minutes", CEILING["minutes"]), ("usd", CEILING["usd"])):
         if getattr(args, name) > limit:
             parser.error(f"--{name} may not exceed stage 1's ceiling of {limit}")
-    data = dataset.load()
+    data = dataset.load(args.dataset)
+    paths = {"dataset": args.dataset, "gates": args.dataset.parent / "gates.json", "actions": args.actions}
     opts = {"split": args.split, "ids": sorted(args.ids) if args.ids else None}
     if args.experiment == "arms":
         opts |= {"arms": args.arms, "languages": args.languages, "level": args.level, "repeat": args.repeat,
@@ -550,13 +740,14 @@ def main(argv: list[str] | None = None) -> int:
                  "grader": args.grader}
     elif args.experiment == "fixed":
         opts |= {"method": args.method, "k": FIXED_K}
-    fixtures = json.loads(ACTIONS.read_text(encoding="utf-8")) if args.experiment == "actions" else None
+    fixtures = json.loads(args.actions.read_text(encoding="utf-8")) if args.experiment == "actions" else None
     if fixtures:
-        opts["fixtures"] = {"version": fixtures["version"], "sha256": sha(ACTIONS.read_bytes())}
+        opts["fixtures"] = {"path": named(args.actions), "version": fixtures["version"],
+                            "sha256": sha(args.actions.read_bytes())}
     units = (arm_units(data, opts) if args.experiment == "arms" else
              [f for f in fixtures["fixtures"] if f["split"] == args.split] if fixtures else
              [v for v in dataset.variants(data, args.split, ("en",), opts["ids"]) if not v["intent"]["direct"]])
-    run = opened(args.run_dir, args.experiment, opts, data)
+    run = opened(args.run_dir, args.experiment, opts, data, paths, fixtures)
     have = {r["key"] for r in rows(args.run_dir, args.experiment)}
     left = sum((u.get("key") or u.get("id")) not in have for u in units)
     guess = estimate(args.experiment, opts, left)

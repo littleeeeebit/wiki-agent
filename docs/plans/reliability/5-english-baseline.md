@@ -218,13 +218,175 @@ and current analysis-path evidence. Run budget exhaustion, insufficient labels o
 statistically inconclusive results leave the stage open. Store English baseline ID
 for PR 9. Rollback restores prior policy references without deleting failed runs.
 
+## Results
+
+Two frozen sets, both English input over English evidence, both under gates v3
+(`gates.json` byte-identical between them). The runs live under `raw/eval/jev/`,
+which git ignores; the reproduction commands below rebuild them.
+
+### v1 — `eval/jev/reliability/` at 8588d03
+
+144 intents and 36 action fixtures over the synthetic Kestrel corpus, labels
+reviewed by gpt-6-sol (model review, five rounds). Held-out runs:
+`reliability-heldout-clean` (retrieval), `reliability-answers`,
+`reliability-repeat`, `reliability-actions`; report
+`reliability-report.json`.
+
+| Gate | Target | Value | Result |
+| --- | --- | --- | --- |
+| Deterministic integrity | 0 | 2 | fail (scorer defect, below) |
+| Graph benefit | 0.10 | 0.333 [0.167, 0.5] | pass |
+| Overall recall | ≥ -0.02 | 0.036 [0.009, 0.071] | pass |
+| Answer support | 0.25, coverage ≥ -0.20 | 0.749, coverage D−A -0.174 [-0.258, -0.099] | fail |
+| Decision quality | 0.90 | 1.0 | pass |
+| Added latency | ≤ 10 s | -0.73 s | pass |
+| Operating ceiling | 0 | 0 | pass |
+| Analysis/fact routing | 0.90 | 0.955 [0.894, 1.0] | inconclusive |
+| Request/material classification | 0.90 | 1.0 | pass |
+| Work start / check / review fix | 0.90 | 1.0 / 1.0 / 1.0 (n=6 each) | pass |
+
+Answer support failed on coverage: D withheld answers where Jev scored a claim,
+a route or a coverage question uncertain (D coverage 0.826 against A's 1.0).
+That diagnosis came from held-out rows, so its fix could not be judged on them.
+
+### v2 — `eval/jev/reliability-v2/` at 75dd67f
+
+The fix: when Jev leaves a question uncertain, `contract.decide` asks the run's
+own host model once per request; an answer resting on the host's word is
+published and remembered `host_checked`, never verified (252d0f9, code review by
+gpt-6-sol in four rounds). The v2 set keeps v1's 72 calibration intents and 18
+calibration fixtures verbatim and holds out 72 intents and 18 fixtures written
+after v1's reveal, in v1's held-out strata (labels reviewed by gpt-6-sol in three
+rounds; approved hashes: intents `0321f73a`, actions `c0b0f55d`). Runs:
+`reliability-v2-calibration`, `reliability-v2-heldout`, `reliability-v2-answers`,
+`reliability-v2-repeat`, `reliability-v2-actions`; report
+`reliability-v2-report.json`.
+
+| Gate | Target | Value | Result |
+| --- | --- | --- | --- |
+| Deterministic integrity | 0 | 0 | pass |
+| Graph benefit | 0.10 | 0.417 [0.25, 0.5] | pass |
+| Overall recall | ≥ -0.02 | 0.045 [0.009, 0.080] | pass |
+| Answer support | 0.25, coverage ≥ -0.20 | 0.768, coverage D−A -0.106 [-0.189, -0.038] | pass |
+| Decision quality | 0.90 | 1.0 | pass |
+| Added latency | ≤ 10 s | 19.3 s | **fail** |
+| Operating ceiling | 0 | 0 | pass |
+| Analysis/fact routing | 0.90 | 0.947 [0.894, 0.992] | inconclusive |
+| Request/material classification | 0.90 | 1.0 | pass |
+| Work start / check / review fix | 0.90 | 1.0 / 1.0 / 1.0 (n=6 each) | pass |
+
+Retrieval, held out, each arm over its own rows (recall@8 with interval; bridge
+recall n=6; p95 s). B and D also run the six injected-failure intents, so their
+recall has n=62 against A's and C's 56. The overall-recall gate pairs D and A
+over the 56 intents both ran, so it is not the difference of these columns:
+
+| Arm | n | Recall | Candidate recall | Bridge recall | p95 s | Host USD |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 56 | 0.902 [0.830, 0.964] | 0.902 | 0.583 | 0.02 | 0 |
+| B | 62 | 0.839 [0.750, 0.919] | 0.839 | 0.5 | 17.4 | 2.33 |
+| C | 56 | 0.902 [0.830, 0.964] | 0.946 | 0.583 | 0.03 | 0 |
+| D | 62 | 0.887 [0.807, 0.968] | 0.887 | 1.0 | 17.4 | 2.36 |
+
+Answers, held out: coverage A 0.977, D 0.871 [0.788, 0.939]; unsupported claim
+rate A 0.397, D 0.092 [0.008, 0.193]. D's 66 answers: 31 verified, 18
+host-checked, 13 abstained, 4 unverified analysis; none of the analysis or
+host-checked ones was published or remembered as verified. Failure and
+cancellation: 12 of 12 ended with the expected status and reason. Repetition
+(8 boundary intents × 3, B and D): status the same in 8 of 8 groups for both
+arms, evidence the same in 5 (B) and 3 (D) of 8.
+
+Host fallback, questions sent to the host / questions asked, arm D, answer run:
+
+| Kind | Fell | Kind | Fell |
+| --- | --- | --- | --- |
+| repair | 66/66 (settled 5) | answers | 28/172 |
+| source | 154/288 | relation | 18/121 |
+| analysis | 18/72 | coverage | 7/86 |
+| conflict | 192/780 | useful | 36/780 |
+| faithful | 3/10 | route | 2/72 |
+| ask | 1/19 | redirect | 4/780 |
+
+Actions: work start fell to the host 2 of 6 times, check and review fix never.
+
+Time and host spending per batch. The runner stops a batch at 60 min or USD 10
+of host spending, checked after each row: calibration 25.8 min / USD 4.70,
+held-out retrieval 26.4 / 4.69, answers 49.1 / 10.03 (stopped after the row
+that crossed USD 10, 122 of 138 rows) then 4.1 / 0.77, repetition 12.4 / 2.23,
+actions 0.2 / 0.02. Host spending totals USD 22.44. The dollars and the
+threshold count host turns only. Jev's 915 requests and 1,871,323 tokens have
+no dated price, so the total provider cost is unknown.
+
+### Limits
+
+- Latency fails: the fallback moves D's retrieval p95 from 1.3 s (v1) to
+  17.4 s and adds 19.3 s p95 to an answer. Every repair question and about half
+  the source questions go to the host; that is where the time goes and where
+  Jev needs work. As a timing diagnostic, not a fallback-off run on this set:
+  with each row's recorded host time (`aside_ms`) taken out, D's held-out
+  retrieval p95 is 1.44 s, close to v1's 1.25 s. Fixing it is a policy change: a new version and fresh held-out
+  evidence, not an edit to this set.
+- Analysis/fact routing stays inconclusive in both sets: 3–4 route mistakes
+  in 66 cohort rows per arm leave the lower bound at 0.894, just under 0.90.
+  More held-out intents would settle it; these do not.
+- v1's integrity failure was the scorer's: the fabricated-citation check read
+  the dossier the answer began from, not the evidence each draft was given, and
+  counted two citations of the user's pasted text; fixed in 252d0f9, so v1 and v2
+  integrity are not measured the same way.
+- v1 kept a dirty run: `reliability-heldout` ran from a dirty worktree and is
+  kept as a record; the v1 report uses `reliability-heldout-clean`.
+- The action gates rest on six held-out fixtures per point, and the fallback's
+  host is the evaluation's default model; a different chat model shifts both
+  host-checked answers and latency.
+- The report's own statement: no stage exit. Latency fails and routing is
+  inconclusive, so this PR publishes the baseline and leaves the stage's exit
+  gates open, as the decision protocol requires.
+
+### English baseline for PR 9
+
+`reliability-v2` at 75dd67f, report `raw/eval/jev/reliability-v2-report.json`,
+gates v3, English input over English evidence.
+
+### Reproduction
+
+A run's manifest records the code commit, and a folder refuses a run whose
+manifest differs. Re-running a set therefore means a clean checkout of its
+commit and the options recorded in each `run.json`: `cache cold`, `method
+hybrid`, `k 8`, the default model and grader. Running the same commands at a
+later commit measures a different manifest. Rebuilding a report from the
+recorded folders works at any commit.
+
+v2, from a clean checkout of 75dd67f:
+
+```text
+python tool/eval/compare.py raw/eval/jev/reliability-v2-calibration --dataset eval/jev/reliability-v2/intents.json --split calibration --languages en
+python tool/eval/compare.py raw/eval/jev/reliability-v2-heldout --dataset eval/jev/reliability-v2/intents.json --split held_out --languages en
+python tool/eval/compare.py raw/eval/jev/reliability-v2-answers --dataset eval/jev/reliability-v2/intents.json --split held_out --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-v2-repeat --dataset eval/jev/reliability-v2/intents.json --split held_out --languages en --arms B D --repeat 3 --ids analysis-13 analysis-14 analysis-16 pasted-13 pasted-18 route-18 memory-17 conflict-17
+python tool/eval/compare.py raw/eval/jev/reliability-v2-actions --experiment actions --dataset eval/jev/reliability-v2/intents.json --actions eval/jev/reliability-v2/actions.json --split held_out
+python tool/eval/report.py raw/eval/jev/reliability-v2-heldout raw/eval/jev/reliability-v2-answers raw/eval/jev/reliability-v2-repeat raw/eval/jev/reliability-v2-actions --out raw/eval/jev/reliability-v2-report.json
+```
+
+v1, from a clean checkout of 8588d03. That commit predates the fallback, so it
+measures the historical policy:
+
+```text
+python tool/eval/compare.py raw/eval/jev/reliability-calibration --dataset eval/jev/reliability/intents.json --split calibration --languages en
+python tool/eval/compare.py raw/eval/jev/reliability-heldout-clean --dataset eval/jev/reliability/intents.json --split held_out --languages en
+python tool/eval/compare.py raw/eval/jev/reliability-answers --dataset eval/jev/reliability/intents.json --split held_out --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-repeat --dataset eval/jev/reliability/intents.json --split held_out --languages en --arms B D --repeat 3 --ids analysis-01 analysis-04 analysis-07 conflict-09 memory-04 pasted-02 pasted-12 route-12
+python tool/eval/compare.py raw/eval/jev/reliability-actions --experiment actions --dataset eval/jev/reliability/intents.json --actions eval/jev/reliability/actions.json --split held_out
+python tool/eval/report.py raw/eval/jev/reliability-heldout-clean raw/eval/jev/reliability-answers raw/eval/jev/reliability-repeat raw/eval/jev/reliability-actions --out raw/eval/jev/reliability-report.json
+```
+
+A batch that stops at its threshold resumes when the same command runs again.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Freeze | Freeze new English labels, versions and gates | Not started |
-| 2 | Run | Run calibration, held-out comparison and repetitions | Not started |
-| 3 | Publish | Publish current baseline and unresolved limits | Not started |
+| 1 | Freeze | Freeze new English labels, versions and gates | Done |
+| 2 | Run | Run calibration, held-out comparison and repetitions | Done |
+| 3 | Publish | Publish current baseline and unresolved limits | Done — exit gates open: latency fails, analysis routing inconclusive |
 
 ## Sources
 

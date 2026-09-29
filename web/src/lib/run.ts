@@ -66,6 +66,7 @@ export function note(n: Note): string {
     case 'no_evidence': return '근거를 하나도 찾지 못했다'
     case 'evidence_missing': return `근거를 못 찾은 부분: ${String(n.text || n.requirement)}`
     case 'threshold_not_met': return `확신이 기준에 못 미친 주장 ${String(n.claims)}개는 싣지 않았다`
+    case 'host_checked': return `Jev 가 확신하지 못한 판단은 답하는 모델이 대신했다 — 그렇게 실은 주장 ${String(n.claims)}개 (Jev 검증 아님)`
     case 'verification_unavailable': return `근거 대조를 하지 못했다${n.reason ? ` (${n.reason})` : ''}`
     case 'cancelled': return '멈춤을 눌러 멈췄다. 게시한 것이 없다'
     case 'failed': return `실패했다${n.reason ? ` (${n.reason})` : ''}`

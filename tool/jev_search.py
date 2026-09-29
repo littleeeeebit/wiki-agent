@@ -27,6 +27,7 @@ command line never disagrees with the app silently.
 """
 
 import argparse
+import dataclasses
 import json
 import sys
 from pathlib import Path
@@ -47,7 +48,7 @@ def answer(question: str, project: str | None, state: str, k: int, model: str) -
     from main import channels
 
     repo = Path(project) if project else knowledge.HUB
-    cfg = decision.config(repo)
+    cfg = dataclasses.replace(decision.config(repo), host=model)   # the fallback asks the drafting model
     run = knowledge.Run(repo, "cli", question, cfg)
     out, outcome, reason = None, "failed", None
     chat = ChatSession(repo, tools="Read,Glob,Grep", system=channels.ANSWER_PROMPT, model=model or None,

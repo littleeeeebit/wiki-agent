@@ -50,6 +50,15 @@ def strings(value) -> list[str]:
     return []
 
 
+# The live diagnostics here and in `answers.py` and `actions.py` measure Jev's own decisions: what it leaves
+# uncertain stays uncertain, never settled by the host model (`knowledge.falls_back`), and their output says so.
+ALONE = "off: Jev alone; nothing it leaves uncertain goes to the host model"
+
+
+def alone(cfg: decision.Config) -> bool:
+    return False
+
+
 def watched(korean: list[str]):
     """The transport, with every string it sends checked for Korean prose."""
 
@@ -84,6 +93,7 @@ def run(manifest_path: Path, tape_for: str | None = None) -> tuple[dict, dict | 
     active = decision.Config("active", cfg.model, cfg.key_source, key=cfg.key)
     korean: list[str] = []
     real, decision.evaluate = watched(korean)
+    kept, knowledge.falls_back = knowledge.falls_back, alone
     rows, tape = [], None
     try:
         with tempfile.TemporaryDirectory(prefix="jev-decisions-") as scratch:
@@ -112,14 +122,14 @@ def run(manifest_path: Path, tape_for: str | None = None) -> tuple[dict, dict | 
             finally:
                 knowledge.QUESTION = allowance
     finally:
-        decision.evaluate = real
+        decision.evaluate, knowledge.falls_back = real, kept
     outcomes = sorted({f"{r['status']}{' (direct)' if r['direct'] else ''}" for r in rows})
     usage = [d["usage"] or {} for r in rows for d in r["decisions"]]
     return {"schema": RESULT, "manifest": {"id": manifest["id"], "version": manifest["version"]},
             "run": {"started": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), **revision()},
             "jev": {"model": cfg.model, "policy": decision.policy(cfg.model, prompt_version=knowledge.PROMPT_VERSION)
                     .record(), "prompt_version": knowledge.PROMPT_VERSION},
-            "outcomes": outcomes, "korean_sent": korean,
+            "outcomes": outcomes, "korean_sent": korean, "fallback": ALONE,
             "usage": {"requests": len(usage), "input_tokens": sum(u.get("input_tokens", 0) for u in usage),
                       "output_tokens": sum(u.get("output_tokens", 0) for u in usage)},
             "runs": rows}, tape

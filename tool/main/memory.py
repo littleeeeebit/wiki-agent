@@ -112,7 +112,9 @@ def front(meta: dict) -> str:
 
 def verification(row: dict) -> str | None:
     """What an answer's text was checked as (stage 7 of `docs/plans/jev/`):
-    `verified:<status>`, or `unverified` — an answer published without a
+    `verified:<status>`; `host_checked:<status>` when the host model settled
+    part of it where Jev was not confident (reliability PR 5, v2), never
+    counted as verified; or `unverified` — an answer published without a
     check, and every answer older than the check, whose plain text says
     nothing of it. `None` for what is not an answer."""
 
@@ -121,6 +123,8 @@ def verification(row: dict) -> str | None:
     checked = row.get("verification")
     if isinstance(checked, dict) and checked.get("verified") is True and not checked.get("degraded"):
         return f"verified:{checked.get('status')}"
+    if isinstance(checked, dict) and checked.get("host_checked") is True and not checked.get("degraded"):
+        return f"host_checked:{checked.get('status')}"
     return "unverified"
 
 

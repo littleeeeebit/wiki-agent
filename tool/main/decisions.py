@@ -29,6 +29,7 @@ tool choices are the host's: nothing here reaches them (`HOST`).
 
 from __future__ import annotations
 
+import dataclasses
 import functools
 import hashlib
 import json
@@ -302,13 +303,18 @@ def ask(point: str, options: dict[str, str], state: dict, cfg: decision.Config, 
     req = decision.request("action", state_en, question, allowed=list(options), model=cfg.model,
                            prompt_version=VERSION, policy_version=pol.version, normalization_version=version,
                            budget=budget)
-    res = decision.checked(req, decision.decide(req, transport(cfg), budget, [], pol))
+    # A doubt goes to the host model where the run falls back (`knowledge.falls_back`), and says so.
+    host = (lambda s, q, stage: knowledge.host_decides(s, q, stage, budget.cancel, cfg.host)) \
+        if knowledge.falls_back(cfg) else None
+    res = decision.checked(req, decision.decide(req, transport(cfg), budget, [], pol, None, host))
     picked = res["selected_candidate_ids"]
     return {"request_id": req["request_id"], "status": res["status"], "reason": res["reason_code"],
             "answer": res["answers"].get("action"), "verdict": res["verdicts"].get("action"),
             "choice": picked[0] if picked else None, "model": res["model"], "usage": res["usage"],
-            "elapsed_ms": res["elapsed_ms"],
-            "call": tracing.jev_call(req, res, state_revision=revision, retry_of=retry_of)}
+            "elapsed_ms": res["elapsed_ms"], "fallback": res["fallback"],
+            "by": decision.settled_by(res, "action") if "action" in res["answers"] else None,
+            "call": tracing.jev_call(req, res, state_revision=revision, retry_of=retry_of),
+            "fallback_call": tracing.fallback_call(req, res, state_revision=revision)}
 
 
 def propose(point: str, offered: list[dict], state: dict, owner: dict, *, cfg: decision.Config, budget: Budget,
@@ -330,7 +336,7 @@ def propose(point: str, offered: list[dict], state: dict, owner: dict, *, cfg: d
         except Exception as exc:  # noqa: BLE001 — a broken ask is no choice: the baseline runs
             jev = {**jev, "status": "unavailable", "reason": f"error:{type(exc).__name__}"}
     deferred = (jev["answer"] or {}).get("choice") == decision.DEFER
-    basis = ("jev" if jev["choice"] else "cancelled" if jev["status"] == "cancelled"
+    basis = ((jev.get("by") or "jev") if jev["choice"] else "cancelled" if jev["status"] == "cancelled"
              else "deferred" if deferred else jev["status"] if asked else "invalidated")
     predicted = jev["choice"]
     selected = None if basis == "cancelled" else predicted if cfg.mode == "active" and predicted else baseline
@@ -482,9 +488,12 @@ def replay(record: dict) -> dict:
     r, jev = record["policy"], record["jev"]
     pol = decision.Policy(r["version"], r["rules"], tuple(r["fitted"]), r["source"], r["problem"])
     picked = None
-    if jev["status"] in ("decided", "uncertain") and jev["answer"] is not None \
-            and decision.verdict(pol, "action", jev["answer"]) == "yes":
-        picked = jev["answer"]["choice"]
+    # What the host settled, where it did, as the recorded result keeps it.
+    answer = None if jev["answer"] is None else \
+        decision.final({"answers": {"action": jev["answer"]}, "fallback": jev.get("fallback")}, "action")
+    if jev["status"] in ("decided", "uncertain") and answer is not None \
+            and decision.verdict(pol, "action", answer) == "yes":
+        picked = answer["choice"]
     return {"predicted": picked, "matches": picked == record["predicted"]}
 
 
@@ -548,6 +557,14 @@ def said(pick: Pick) -> str:
             "invalidated": "제안이 두 번 낡음 — 원래 순서"}.get(rec["basis"], f"Jev 판정 없음({rec['basis']}) — 원래 순서")
 
 
+def hosted(repo: Path, model: str | None) -> decision.Config:
+    """`repo`'s settings, with `model` as the host the fallback asks
+    (`decision.Config.host`): the model of the turn the choice shapes — the
+    live run's where one runs, since the toolbar can switch it between turns."""
+
+    return dataclasses.replace(decision.config(repo), host=model or "")
+
+
 # -- work.start -------------------------------------------------------------
 
 # Inputs code can see a spec lacks: what Jev reads, and what the person reads.
@@ -601,7 +618,7 @@ def start_turn(path: Path, run, text: str) -> tuple[str | None, str, str]:
         return text, "", "done"
     pick = choose("work.start", lambda: start_offer(specs.owner(path)), lambda: start_state(specs.owner(path)),
                   lambda: facts(repo, path, specs.owner(path), session_of(path)), occasion=f"start:{run.turn}",
-                  baseline="dispatch", log=(spec["repo"], spec["id"]), cancel=run.halt, cfg=decision.config(repo),
+                  baseline="dispatch", log=(spec["repo"], spec["id"]), cancel=run.halt, cfg=hosted(repo, run.chat.model),
                   evidence_ids=[e["id"] for e in spec["grounds"].get("evidence", [])])
     how = said(pick)
     if pick.candidate is None:
@@ -699,7 +716,7 @@ def extra_check(repo: Path, path: Path, run, spec: dict) -> tuple[bool, str]:
                            "goal": spec["goal"], "acceptance_criteria": spec["done"][1:],
                            "gate": {"command": gate, "result": "passed"}, "changed_files": changed(path, spec)},
                   lambda: facts(repo, path, specs.owner(path), session_of(path)), occasion=f"check:{run.turn}",
-                  baseline="none", log=(spec["repo"], spec["id"]), cancel=run.halt, cfg=decision.config(repo))
+                  baseline="none", log=(spec["repo"], spec["id"]), cancel=run.halt, cfg=hosted(repo, run.chat.model))
     if pick.candidate is None:
         return False, "사람이 멈춤" if run.halt.is_set() else f"확인을 이어 가지 않았다 — {pick.record['basis']}"
     if pick.operation != "run_registered_check":
@@ -754,7 +771,8 @@ def fix_turn(loop, spec: dict, repo: Path, path: Path, n: int, head: str, findin
                            "findings": [f["head"] for f in findings], "disputed_before": disputed},
                   lambda: facts(repo, path, specs.load(spec["repo"], spec["id"]), session_of(path)),
                   occasion=f"fix:{n}:{head}", baseline="fix", log=(spec["repo"], spec["id"]), cancel=loop.halt,
-                  cfg=decision.config(repo))
+                  # The fix turn goes out on the cell's model (`loop.told`), so that model settles a doubt.
+                  cfg=hosted(repo, (spec.get("cell") or {}).get("model")))
     if pick.candidate is None:
         return None
     if pick.operation == "retrieve_evidence" and findings:
@@ -784,7 +802,8 @@ def recommend(repo: Path, items: list[dict]) -> list[dict]:
         pol = policy(cfg)
         jev = ask("specs.candidates", {cid: f"Candidate {cid} in the state." for cid in ids}, state, cfg, budget, pol)
         keep(log, {"schema_version": RECORD, "id": uuid.uuid4().hex, "ts": time.time(), "point": "specs.candidates",
-                   "occasion": "", "mode": cfg.mode, "basis": "jev" if jev["choice"] else jev["status"],
+                   "occasion": "", "mode": cfg.mode,
+                   "basis": (jev.get("by") or "jev") if jev["choice"] else jev["status"],
                    "baseline": ids[0], "offered": ids, "predicted": jev["choice"],
                    "selected": jev["choice"] if cfg.mode == "active" else None, "rejected": [], "proposal": None,
                    "jev": jev, "policy": pol.record(), "prompt_version": VERSION, "budget": budget.record()})
@@ -800,5 +819,5 @@ def recommend(repo: Path, items: list[dict]) -> list[dict]:
     if not jev["choice"]:
         return items
     at = ids.index(jev["choice"])
-    best = {**items[at], "recommended": {"confidence": jev["answer"]["confidence"]}}
+    best = {**items[at], "recommended": {"confidence": jev["answer"]["confidence"], "by": jev.get("by") or "jev"}}
     return [best, *items[:at], *items[at + 1:]]

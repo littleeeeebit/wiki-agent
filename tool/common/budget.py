@@ -49,6 +49,8 @@ class Budget:
         self.deadline = self.started + seconds
         self.cancel = cancel or threading.Event()
         self.call_seconds = call_seconds
+        # Time spent in turns with an allowance of their own (the host's fallback): not the run's.
+        self.aside_ms = 0.0
         self._lock = threading.Lock()
 
     def left(self) -> float:
@@ -95,6 +97,15 @@ class Budget:
             self.used["candidates"] += n
         return n
 
+    def aside(self, seconds: float) -> None:
+        """`seconds` a turn with its own allowance took: the deadline moves
+        past them, and the record keeps them apart from what the run spent."""
+
+        with self._lock:
+            self.deadline += seconds
+            self.aside_ms += seconds * 1000
+
     def record(self) -> dict:
+        # `elapsed_ms` is the whole wall time; `aside_ms` the part of it the allowance does not cover.
         return {"policy": POLICY, "limits": dict(self.limits), "used": dict(self.used),
-                "elapsed_ms": round((time.monotonic() - self.started) * 1000)}
+                "elapsed_ms": round((time.monotonic() - self.started) * 1000), "aside_ms": round(self.aside_ms)}

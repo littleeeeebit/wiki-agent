@@ -125,6 +125,8 @@ export type Verification = {
   status: 'complete' | 'partial' | 'abstained' | 'verification_unavailable' | 'unverified'
   verified: boolean
   degraded: boolean
+  /** The host model, not Jev, settled part of it where Jev was not confident: never shown as verified. */
+  host_checked?: boolean
   reason: string | null
   missing_requirements: { id: string; text: string }[]
   conflicts: { claim_id: string; evidence: string[] }[]

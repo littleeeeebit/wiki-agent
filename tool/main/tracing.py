@@ -197,6 +197,23 @@ def jev_call(req: dict, res: dict, *, parent: str | None = None, state_revision:
                 outcome=res["status"], request_id=req["request_id"])
 
 
+def fallback_call(req: dict, res: dict, *, parent: str | None = None,
+                  state_revision: str | None = None) -> dict | None:
+    """The call record of the host turn that settled what one
+    DecisionRequest left uncertain (`decision.contract.asked`), with how many
+    questions it was asked and settled; `None` when no fallback ran."""
+
+    host = res.get("fallback")
+    if not host:
+        return None
+    return call({PURPOSE_OF[req["questions"][n]["decision"]] for n in host["asked"]}, "jev_fallback", "host",
+                model=host.get("model"), parent=parent,
+                sent={"state": req["state_en"], "questions": {n: req["questions"][n] for n in host["asked"]}},
+                state_revision=state_revision, elapsed_ms=host.get("elapsed_ms"), cost_usd=host.get("cost_usd"),
+                outcome="failed" if host.get("error") else "ok", request_id=req["request_id"],
+                asked=len(host["asked"]), settled=len(host["answers"]))
+
+
 def totals(calls: list[dict]) -> dict:
     """What a run's calls add up to: the known cost, and how many calls' cost is unknown.
     A record from before these fields existed counts as unknown."""

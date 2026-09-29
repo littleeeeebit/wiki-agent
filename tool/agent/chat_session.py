@@ -918,17 +918,33 @@ def explain(answer: str, model: str = "", effort: str = ""):
     yield from oneshot("chat-explain.md", {"source_answer": answer}, model, effort)
 
 
-def oneshot(prompt: str, payload: dict, model: str = "", effort: str = ""):
+def oneshot(prompt: str, payload: dict, model: str = "", effort: str = "", halt: threading.Event | None = None):
     """One turn of a fresh session with no tools, in an empty folder: the file
     `tool/prompts/<prompt>` as the system prompt, `payload` as JSON the only
-    thing said to it."""
+    thing said to it. `halt`, set from any thread, stops the turn (`stop`);
+    the session is this call's and is closed on every way out."""
     system = (Path(__file__).resolve().parents[1] / "prompts" / prompt).read_text(encoding="utf-8")
     with tempfile.TemporaryDirectory(prefix="wiki-oneshot-") as folder:
         chat = ChatSession(Path(folder), tools="", system=system, model=model,
                            effort=effort, isolated=True)
+        ended = threading.Event()
+
+        def watch() -> None:
+            # Lives as long as the turn: a halt heard stops this turn's process, and nothing after it ends.
+            while not ended.is_set():
+                if halt.wait(0.1):
+                    chat.stop(halt)
+                    return
+
+        watcher = threading.Thread(target=watch, daemon=True) if halt is not None else None
+        if watcher:
+            watcher.start()
         try:
-            yield from chat.say(json.dumps(payload, ensure_ascii=False))
+            yield from chat.say(json.dumps(payload, ensure_ascii=False), halt)
         finally:
+            ended.set()
+            if watcher:
+                watcher.join()
             chat.close()
 
 
