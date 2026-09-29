@@ -22,7 +22,8 @@ from common.budget import Budget
 from main import decisions, knowledge, tracing
 from search import daemon as searchd
 from search import evidence, knowledge_graph, sources
-from test_decision_flow import MODEL, POLICY, REPO, SOURCES, World, answering, chunk, english, found
+from test_decision_flow import BOTH, MODEL, POLICY, REPO, SOURCES, World, answering, chunk, english, found
+from test_decision_flow import run as run_flow
 from test_decision_flow import world as flow_world  # noqa: F401 — fixture
 from test_knowledge_graph import bump, index_of
 from test_knowledge_graph import world as graph_world  # noqa: F401 — fixture
@@ -200,6 +201,35 @@ def test_an_external_repair_keeps_each_grading_request_sent_even_when_the_fetch_
     assert len(sent) == 1
 
 
+def test_an_external_repair_accounts_the_translation_of_its_query(graph_world, monkeypatch, tmp_path):
+    _hub, repo = graph_world
+    from search import providers
+
+    monkeypatch.setattr(translate, "ENV", tmp_path / "absent.env")
+    monkeypatch.setattr(translate, "CACHE", tmp_path / "cache.sqlite3")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    monkeypatch.delenv("TRANSLATE_MONTHLY_USD", raising=False)
+    monkeypatch.setattr(translate.urllib.request, "urlopen", lambda req, timeout: Reply(req))
+    searched = []
+    monkeypatch.setattr(providers, "arxiv", lambda query=None, ids=None, n=5, seconds=0: searched.append(query) or [])
+
+    class Researching(World):
+        def mend(self, req, result, need, ids):
+            if need != "external":
+                return super().mend(req, result, need, ids)
+            # The question's own normalization failed: the repair sends its Korean to the translator again.
+            out = knowledge.repair({**req, "query_en": None, "query_original": "팀이 포트를 바꾼다"}, result, need, repo,
+                                   budget=Budget(seconds=5, calls=6, candidates=40),
+                                   cfg=decision.Config("active", MODEL, "file", key=KEY), external=True)
+            return {"note": out["note"], "requests": [], "results": []}
+
+    out = flow(Researching(answering(coverage=0.1), [found([chunk("port")])]), available=["documents"],
+               external=True)
+    assert searched == ["The team changes it."]
+    assert [(c["purpose"], c["provider"]) for c in out["calls"] if c["purpose"] in (["research"], ["normalize"])] \
+        == [(["research"], "arxiv"), (["normalize"], "translator")]
+
+
 def test_a_jev_request_is_sent_only_once_the_transport_wrote_it(monkeypatch):
     written = []
 
@@ -259,6 +289,23 @@ def test_a_draft_that_failed_or_was_stopped_is_still_a_call(tmp_path):
     assert [(c["purpose"], c["outcome"], c["host_searches"]) for c in run.calls] == \
         [(["draft"], "failed", 1), (["draft"], "cancelled", 0)]
     assert tracing.totals(run.calls)["cost_unknown"] == 2
+
+
+def test_a_split_is_a_call_only_when_its_request_went_out(monkeypatch, tmp_path):
+    monkeypatch.setattr(translate, "ENV", tmp_path / "absent.env")
+    monkeypatch.setattr(translate, "CACHE", tmp_path / "cache.sqlite3")
+    monkeypatch.delenv("TRANSLATE_MONTHLY_USD", raising=False)
+    monkeypatch.setattr(translate.urllib.request, "urlopen", lambda req, timeout: Reply(req))
+
+    def split_calls():
+        out = run_flow(World(answering(), [found([chunk("a")])]), query=BOTH, available=["documents"],
+                       divide=lambda question, seconds: translate.parts(question, time.monotonic() + seconds))
+        return [(c["provider"], c["outcome"]) for c in out["calls"] if c["purpose"] == ["decompose"]]
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    assert split_calls() == [("translator", "ok")]
+    monkeypatch.delenv("GEMINI_API_KEY")
+    assert split_calls() == [], "no key: nothing was sent"
 
 
 def test_totals_keep_known_cost_apart_from_unknown_and_read_old_records_as_unknown():

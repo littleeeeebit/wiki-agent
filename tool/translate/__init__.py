@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import contextlib
 import hashlib
 import json
 import math
@@ -87,8 +88,24 @@ LATE_SECONDS = 60.0
 BATCH = 4
 # Set only on the thread that reads such a request (`_translate`), so every
 # other `_ask` keeps its caller's seconds as its read timeout. `sending`, set
-# there too, is told the moment a request goes out.
+# there or by `watching`, is told the moment a request goes out.
 _late = threading.local()
+
+
+@contextlib.contextmanager
+def watching():
+    """A list that takes one entry per request `_ask` sends on this thread
+    meanwhile — a question split (`parts`), not `english`, whose batches go
+    out on threads of their own and carry their ids on their outcomes."""
+
+    sent: list[bool] = []
+    before = getattr(_late, "sending", None)
+    _late.sending = lambda: sent.append(True)
+    try:
+        yield sent
+    finally:
+        _late.sending = before
+
 
 # Part of the cache key. Bump it whenever SYSTEM or the request shape changes.
 # Without it the cache keeps serving text translated under a different contract,

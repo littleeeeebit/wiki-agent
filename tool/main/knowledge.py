@@ -735,11 +735,15 @@ class Flow:
 
         def call():
             seconds = min(NORMALIZE_SECONDS, self.budget.call())
-            return self.divide(self.query_en, seconds)
+            with translate.watching() as sent:
+                return {"asks": self.divide(self.query_en, seconds), "sent": len(sent)}
 
-        asked = self.outside("split", call)
-        self.called(tracing.call("decompose", "translator", "translator", sent=self.query_en,
-                                 outcome="failed" if asked is None else "ok"))
+        got = self.outside("split", call)
+        # A tape from before `sent` was kept holds the asks alone; its request is taken as sent.
+        asked, sent = (got["asks"], got["sent"]) if isinstance(got, dict) else (got, 1)
+        if sent:
+            self.called(tracing.call("decompose", "translator", "translator", sent=self.query_en,
+                                     outcome="failed" if asked is None else "ok"))
         kept, rejected = retrieval.checked_subqueries(self.query_en, asked, every_exclusion=True)
         self.dossier["split"] = {"asks": len(kept), "rejected": rejected, "failed": asked is None}
         if len(kept) > 1 and not rejected:
@@ -945,9 +949,13 @@ class Flow:
                 # The arXiv search, then Jev grading what it returned (`grade_papers`): two requests.
                 self.called(tracing.call("research", "code", "arxiv", sent=self.query_en,
                                          outcome="ok" if out["note"]["fetched"] else "failed"))
-                # Each grading request sent, finished or not when the fetch returned or was abandoned.
+                # Each request sent, finished or not when the fetch returned or was abandoned: the
+                # query's translation, then Jev's grading.
                 for entry in out["note"].get("graded") or []:
-                    if entry.get("sent"):
+                    if entry.get("stage") == "normalize":
+                        self.called(tracing.call("normalize", "translator", "translator", model=translate.MODEL,
+                                                 outcome="ok" if entry["status"] in evidence.USABLE else "failed"))
+                    elif entry.get("sent"):
                         self.called(tracing.call("grade", "jev", "jev", model=entry.get("model"),
                                                  elapsed_ms=entry.get("elapsed_ms"), tokens=entry.get("usage"),
                                                  outcome="failed" if "error" in entry else
@@ -2138,6 +2146,9 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
     cfg = cfg or decision.config(root)
     if query:
         asked = english([query], QUERY_SECONDS)[0]
+        if trace is not None and asked.get("request"):   # the translator was asked: a call of the caller's
+            trace.append({"stage": "normalize", "sent": True, "request": asked["request"],
+                          "status": asked["status"]})
         query = asked["text"] if asked["status"] in ("original_english", "translated") else query
     entries = providers.arxiv(query, ids, n)
     grades, trace = grade_papers(query, entries, cfg, budget, trace) if query else ({}, [] if trace is None else trace)

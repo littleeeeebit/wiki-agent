@@ -156,7 +156,12 @@ read-only observability. PR 5 must evaluate the corrected current manifest.
   cancel before that is no request. The arXiv repair's paper
   grading is its own `grade` call, read from a trace the repair owns
   (`note.graded`), so a fetch abandoned after grading keeps it; one never
-  sent is none. A drafting turn is a call however it ends.
+  sent is none. `add_papers` lists its own query translation there too when
+  the translator was asked; one still running when the repair is abandoned
+  is not listed (it ends within `QUERY_SECONDS`). A question split
+  (`translate.parts`) is a call only when `translate.watching` saw its
+  request go out; the tape keeps that count beside the asks. A drafting turn
+  is a call however it ends.
 
 ### Graph snapshot, 2026-09-29
 
