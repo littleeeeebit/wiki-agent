@@ -403,13 +403,15 @@ Host spending per batch: retrieval 4.0 min / USD 0.37, answers 45.9 / 9.34
     - four drafted twice, a repair draft after claims were rejected;
     - four spent 4.0 to 15.7 s of host time in retrieval, from analysis and
       coverage fallbacks;
-    - their other host turns are one or two verification fallbacks, since a
-      row makes at most two verification requests and each falls back at
-      most once.
+    - the five factual rows among them make one or two verification
+      fallback turns; a row makes at most two verification requests, and
+      each falls back at most once;
+    - the two analysis rows among them make none, and their host turns are
+      retrieval coverage fallbacks.
   - The evaluation's grading turn is outside answer time.
   - The calibration answers show the same tail, so a fix can rest on
     calibration. It is a new policy version with fresh held-out evidence,
-    not an edit to v3.
+    not an edit to v3, and it is the next PR (v4).
 - Analysis/fact routing passes, but not perfectly. Its two held-out misses,
   in both arms, are fact lookups phrased as advice: "What should I do if I
   lose my work laptop?" and "Which exit codes should it use?". That is a
