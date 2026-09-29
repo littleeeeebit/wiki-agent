@@ -778,6 +778,17 @@ def test_the_screen_is_told_the_server_s_proof_not_the_saved_pass(world):
     assert shown() is None
 
 
+def test_a_worktree_gone_from_disk_is_unproven_and_the_rest_still_list(world):
+    healthy, gone = allowed_spec(world, "fix-w", 7), allowed_spec(world, "fix-x", 8)
+    for spec in (healthy, gone):
+        specs.validate("proj", spec["id"], final=final_of(world, spec))
+    Path(gone["worktree"]).rename(world.tmp / "moved-away")
+    listed = client().get("/api/specs")
+    assert listed.status_code == 200, listed.text
+    shown = {s["id"]: s["unproven"] for s in listed.json()["specs"]}
+    assert shown["fix-w"] == "" and "작업트리" in shown["fix-x"]
+
+
 def test_a_restart_during_the_final_gate_stays_blocked_and_resume_reruns_only_it(world):
     spec = allowed_spec(world, "fix-y", 7)
     specs.update("proj", "fix-y", state="리뷰 R1")

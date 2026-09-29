@@ -329,14 +329,18 @@ def view(repo: Path, spec: dict) -> dict:
     by itself: empty only while the final gate stands for the current command
     and environment; `None` in every other state, where `[머지]` is not shown.
     The base is read as last fetched — this runs for every spec on every
-    refresh — and `merge` fetches it before acting."""
+    refresh — and `merge` fetches it before acting. A worktree that cannot be
+    read is that spec's reason, not the listing's failure."""
 
     allowed = approved(spec)
     unproven = None
     if spec.get("state") == "머지 가능":
         path = Path(spec.get("worktree") or repo)
-        unproven = proven(spec, allowed["head"], merge_base(path, allowed["base"], allowed["head"]),
-                          digest(repo, path, required(repo, spec))) if allowed else "리뷰가 허용한 라운드가 없다"
+        try:
+            unproven = proven(spec, allowed["head"], merge_base(path, allowed["base"], allowed["head"]),
+                              digest(repo, path, required(repo, spec))) if allowed else "리뷰가 허용한 라운드가 없다"
+        except (OSError, subprocess.SubprocessError) as exc:
+            unproven = f"작업트리를 읽지 못했다 — {exc}"
     return {**spec, "missing": missing(repo, spec), "approved": allowed["head"] if allowed else None,
             "unproven": unproven, "waiting": bool(spec.get("worktree")) and work.waiting(spec["worktree"])}
 
