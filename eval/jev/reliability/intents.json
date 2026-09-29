@@ -1765,7 +1765,7 @@
     }
    ],
    "forbidden": [
-    "weekly or Sunday backups stated as current"
+    "a weekly-only or Sunday-only backup schedule stated as the current one"
    ],
    "abstain": false,
    "direct": false,
