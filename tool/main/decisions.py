@@ -47,7 +47,7 @@ from common.budget import ACTION, Budget
 from session_state import run as git
 from wiki import adapter_path
 
-from . import knowledge, memory
+from . import knowledge, memory, tracing
 from .query import ROOT
 
 PROPOSAL = "action-proposal/1"
@@ -113,6 +113,42 @@ POINTS = {
 }
 HOST = ("Tool selection inside a Claude or Codex session is the host's own planner: not intercepted, and "
         "outside controller coverage.")
+# Who owns each decision the server makes or hands on (reliability PR 4), by point. `kinds` are the
+# Jev question kinds it rests on — a point with none is not Jev's — and `policy` names which policy holds them.
+ADMITTED = "code: `admit` checks repository, spec revision, HEAD, session, expiry, the candidate and idempotency"
+OWNERS = [
+    *({"point": p, "owner": "jev", "allowed_operations": POINTS[p]["operations"], "authority": ADMITTED,
+       "kinds": ("action",), "policy": "action"} for p in ("work.start", "specs.check", "loop.fix")),
+    {"point": "specs.candidates", "owner": "jev", "allowed_operations": [], "kinds": ("action",), "policy": "action",
+     "authority": "a recommendation only: the person chooses the goal"},
+    {"point": "query.route", "owner": "jev", "allowed_operations": ["retrieve_evidence", "summarize_result"],
+     "kinds": ("route", "source", "analysis", "ask"), "policy": "retrieval",
+     "authority": "code: budgets, sources available, the explicit-request rule, direct-answer restrictions"},
+    {"point": "query.retrieval_required", "owner": "code", "allowed_operations": ["retrieve_evidence"],
+     "kinds": ("source", "analysis", "ask"), "policy": "retrieval",
+     "authority": "an admitted action or an answer's return to retrieval requires retrieval; Jev is not asked "
+                  "whether to retrieve, only which sources and what the question asks"},
+    {"point": "query.evidence", "owner": "jev", "allowed_operations": ["retrieve_evidence", "summarize_result"],
+     "kinds": ("useful", "conflict", "redirect", "coverage", "repair"), "policy": "retrieval",
+     "authority": "Jev grades evidence, sufficiency and the next repair among code's offered repairs; it "
+                  "grants no execution permission"},
+    {"point": "answer.support", "owner": "jev", "allowed_operations": ["summarize_result"],
+     "kinds": ("relation", "answers", "faithful"), "policy": "claims",
+     "authority": "code checks every quote and citation first; only accepted claims are published"},
+    {"point": "deterministic", "owner": "code", "allowed_operations": list(OPERATIONS), "kinds": (), "policy": None,
+     "authority": "the next step when only one is offered, an exhausted budget, a stale or duplicate proposal, "
+                  "the round cap and merge conditions"},
+    *({"point": p, "owner": owner, "allowed_operations": [], "kinds": (), "policy": None, "authority": about}
+      for p, owner, about in (
+          ("draft", "generative:host", "writes claims over the dossier; code and Jev decide what is published"),
+          ("explain", "generative:host", "restates the published answer; a new fact in it withholds it"),
+          ("decompose", "generative:translator", "splits a question into asks; code keeps the split only whole"),
+          ("graph_extract", "generative:configured", "proposes entities and relations; code keeps verbatim "
+                                                     "spans, Jev judges support"),
+          ("research", "generative:host", "a promoted research worktree; its pull request is reviewed"))),
+    {"point": "host_tools", "owner": "host", "allowed_operations": [], "kinds": (), "policy": None,
+     "authority": HOST, "covered": False},
+]
 
 # Idempotency keys already admitted in this process.
 # ponytail: in memory only; a restart forgets them, and no loop resumes by itself after one (`loop.recover`).
@@ -150,8 +186,23 @@ class Pick:
             outcome(self.log, self.record, status, **detail)
 
 
-def coverage() -> dict:
-    return {"prompt_version": VERSION, "operations": list(OPERATIONS), "points": POINTS, "outside": HOST}
+def coverage(cfg: decision.Config | None = None) -> dict:
+    """Which decisions the server owns, who owns each, and under what policy
+    — each kind fitted or provisional for the prompts in use — beside the
+    behavior manifest. Names and versions only: no key, no state."""
+
+    cfg = cfg or decision.config()
+    made = knowledge.manifest(cfg)
+    held = {**made["policies"], "action": knowledge.fitted(policy(cfg), ("action",))}
+    items = []
+    for o in OWNERS:
+        pol = held.get(o["policy"]) or {}
+        kinds = {k: pol["kinds"].get(k, "provisional") for k in o["kinds"]} if pol else {}
+        items.append({"point": o["point"], "owner": o["owner"], "allowed_operations": o["allowed_operations"],
+                      "authority": o["authority"], "policy_version": pol.get("version"), "decisions": kinds,
+                      "provisional": "provisional" in kinds.values(), "covered": o.get("covered", True)})
+    return {"prompt_version": VERSION, "operations": list(OPERATIONS), "points": POINTS, "outside": HOST,
+            "items": items, "manifest": {**made, "actions": VERSION}}
 
 
 def candidate(cid: str, operation: str, about: str, **args) -> dict:
@@ -230,16 +281,17 @@ def policy(cfg: decision.Config) -> decision.Policy:
 
 
 def ask(point: str, options: dict[str, str], state: dict, cfg: decision.Config, budget: Budget,
-        pol: decision.Policy) -> dict:
+        pol: decision.Policy, revision: str | None = None, retry_of: str | None = None) -> dict:
     """Jev's answer to the action Choice over `options` (id -> what it does),
     as a record keeps it. `choice` is an offered id only when the policy
-    accepted it; a deferral or a doubt leaves it `None`."""
+    accepted it; a deferral or a doubt leaves it `None`. `call` is the
+    request's call record (`tracing.jev_call`), `None` when none was sent."""
 
     seconds = max(0.0, min(knowledge.NORMALIZE_SECONDS, budget.left() - budget.call_seconds))
     # The options too: a registered check's description is the adapter's prose, in any language.
     both, version = normalized({"state": state, "options": options}, seconds)
     empty = {"request_id": None, "answer": None, "verdict": None, "choice": None, "model": None, "usage": None,
-             "elapsed_ms": 0}
+             "elapsed_ms": 0, "call": None}
     if both is None:
         return {**empty, "status": "unavailable", "reason": "normalization_failed"}
     state_en, options = both["state"], both["options"]
@@ -255,23 +307,26 @@ def ask(point: str, options: dict[str, str], state: dict, cfg: decision.Config, 
     return {"request_id": req["request_id"], "status": res["status"], "reason": res["reason_code"],
             "answer": res["answers"].get("action"), "verdict": res["verdicts"].get("action"),
             "choice": picked[0] if picked else None, "model": res["model"], "usage": res["usage"],
-            "elapsed_ms": res["elapsed_ms"]}
+            "elapsed_ms": res["elapsed_ms"],
+            "call": tracing.jev_call(req, res, state_revision=revision, retry_of=retry_of)}
 
 
 def propose(point: str, offered: list[dict], state: dict, owner: dict, *, cfg: decision.Config, budget: Budget,
-            occasion: str, baseline: str, evidence_ids=(), asked: bool = True) -> dict:
+            occasion: str, baseline: str, evidence_ids=(), asked: bool = True, retry_of: str | None = None) -> dict:
     """The record of one choice: Jev's answer, the candidate selected, and
     its ActionProposal (`None` when nothing may run — a cancel).
 
     `asked=False` proposes the baseline without asking: a pick that went
-    stale twice is not asked a third time."""
+    stale twice is not asked a third time. `retry_of` is the call a stale
+    pick came from, when this asks again."""
 
     pol = policy(cfg)
     jev = {"request_id": None, "status": "not_asked", "reason": "invalidated_twice", "answer": None,
-           "verdict": None, "choice": None, "model": None, "usage": None, "elapsed_ms": 0}
+           "verdict": None, "choice": None, "model": None, "usage": None, "elapsed_ms": 0, "call": None}
     if asked:
         try:
-            jev = ask(point, {c["id"]: c["about"] for c in offered}, state, cfg, budget, pol)
+            jev = ask(point, {c["id"]: c["about"] for c in offered}, state, cfg, budget, pol,
+                      revision=owner["spec_revision"], retry_of=retry_of)
         except Exception as exc:  # noqa: BLE001 — a broken ask is no choice: the baseline runs
             jev = {**jev, "status": "unavailable", "reason": f"error:{type(exc).__name__}"}
     deferred = (jev["answer"] or {}).get("choice") == decision.DEFER
@@ -373,8 +428,10 @@ def choose(point: str, offer: Callable[[], list[dict]], state: Callable[[], dict
             offered = offer()
             if not any(c["id"] == baseline for c in offered):
                 return Pick(None, record, budget, cfg, log)
+        before = (record or {}).get("jev", {}).get("call")
         record = propose(point, offered, state(), now(), cfg=cfg, budget=budget, occasion=occasion,
-                         baseline=baseline, evidence_ids=evidence_ids, asked=asked)
+                         baseline=baseline, evidence_ids=evidence_ids, asked=asked,
+                         retry_of=before["call_id"] if before else None)
         keep(log, record)
         if record["proposal"] is None:
             return Pick(None, record, budget, cfg, log)
@@ -454,15 +511,22 @@ def attached(dossier: dict) -> tuple[str, list[str]]:
 
 def gathered(pick: Pick, query: str, repo: Path, state: str = "") -> tuple[str, list[str]]:
     """Evidence for `query` in `repo` as a turn reads it, and its chunk ids,
-    on what is left of the pick's budget; the outcome goes on the record."""
+    on what is left of the pick's budget; the outcome goes on the record.
 
+    The admitted action is the retrieval's cause (reliability PR 4): Jev
+    chose to retrieve, `admit` let it run, so the route does not ask again
+    whether to — only which sources, and what the question asks."""
+
+    p = (pick.record or {}).get("proposal")
+    cause = {"action_id": p["proposal_id"], "point": pick.record["point"], "operation": p["operation"],
+             "state_revision": p["spec_revision"]} if p else None
     try:
-        dossier = knowledge.prepare(query, repo, state, cfg=pick.cfg, budget=pick.budget)
+        dossier = knowledge.prepare(query, repo, state, cfg=pick.cfg, budget=pick.budget, require=True, cause=cause)
     except Exception as exc:  # noqa: BLE001 — no evidence is no evidence; the turn still goes
         pick.done("failed", reason=f"{type(exc).__name__}: {exc}"[:200])
         return "", []
     text, ids = attached(dossier)
-    pick.done("executed", retrieval=dossier.get("status"), evidence_ids=ids)
+    pick.done("executed", retrieval=dossier.get("status"), evidence_ids=ids, calls=dossier.get("calls") or [])
     return text, ids
 
 

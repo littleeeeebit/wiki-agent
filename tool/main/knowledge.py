@@ -33,6 +33,7 @@ from common import settings
 from common.budget import QUESTION, Budget, Cancelled, Exhausted
 from common.language import language
 from search import HUB, evidence_store, knowledge_graph, local_index, providers, records, resolve, retrieval, sources
+from search import published as search_published
 from search import retrieve as retrieve_from_daemon
 from workspace import create, folder_for
 from session_state import active_page, decisions, plans
@@ -135,6 +136,9 @@ def summarized(state: str, repo: Path | None) -> tuple[str, dict | None]:
 
 DOSSIER = "jev-dossier/2"
 TERMINAL = ("ready", "partial", "unavailable", "cancelled", "exhausted")
+# What an admitted action that requires retrieval names of itself (`prepare`'s `cause`).
+CAUSE = ("action_id", "point", "operation", "state_revision")
+MANIFEST = "behavior-manifest/1"
 # Jev requests no optional repair may spend: stage 7 verifies the answer with them.
 RESERVE = 1
 MAX_K = 12
@@ -193,6 +197,10 @@ ASK = ("Is query part {id} something the user asks the assistant to answer or do
 # withheld it step after step. Only a sure yes skips that check; uncertain keeps it (invariant 2).
 ANALYSIS = ("Does the query ask the assistant for analysis it works out itself, such as a comparison, a judgment, "
             "an assessment, an opinion or advice, rather than for facts the repository's sources state?")
+# Each of the two bound to its own digest: a rule fitted for one text of it is not fitted for another
+# (`decision.policy`'s `kind_versions`, reliability PR 4).
+KIND_VERSIONS = {"ask": hashlib.sha256(ASK.encode()).hexdigest()[:16],
+                 "analysis": hashlib.sha256(ANALYSIS.encode()).hexdigest()[:16]}
 REPAIRS = {
     "context": "Read the sections next to a passage that was cut off or read only in part.",
     "sources": "Search the enabled sources not searched yet: {rest}.",
@@ -249,12 +257,17 @@ def requirements(query_en: str) -> list[str]:
     return parts or [query_en]
 
 
-def route_questions(available: list[str], parts: list[str] = ()) -> dict:
+def route_questions(available: list[str], parts: list[str] = (), retrieve: bool = True) -> dict:
     """The route request's questions: is retrieval needed, could each source
-    help, and is each of the query's `parts` asked or only supplied."""
+    help, and is each of the query's `parts` asked or only supplied.
+
+    `retrieve=False` leaves the first out: retrieval a caller already
+    requires is not Jev's to judge again (reliability PR 4)."""
 
     questions = {"retrieve": {"decision": "route", "candidate": None, "question": decision.noul(PROMPTS["route"])},
                  "analysis": {"decision": "analysis", "candidate": None, "question": decision.noul(ANALYSIS)}}
+    if not retrieve:
+        del questions["retrieve"]
     for s in available:
         questions[f"source_{s}"] = {"decision": "source", "candidate": s, "question": decision.noul(
             PROMPTS["source"].format(source=s, description=DESCRIBED[s]))}
@@ -276,6 +289,42 @@ def judge_questions(passages: dict[str, str], requirement_ids: list[str]) -> dic
         questions[f"coverage_{rid}"] = {"decision": "coverage", "candidate": rid,
                                         "question": decision.noul(PROMPTS["coverage"].format(id=rid))}
     return questions
+
+
+def behavior() -> dict:
+    """What decides a question's behavior besides the models: each
+    instruction set's digest, and one digest over them all — the behavior an
+    evaluation or a cached decision is of. Read now, as a run reads them."""
+
+    def read(name: str) -> str:
+        return (Path(__file__).resolve().parents[1] / "prompts" / name).read_text(encoding="utf-8")
+
+    hashes = {"prompts": PROMPT_VERSION, **KIND_VERSIONS,
+              "grounding": tracing.digest([VERIFICATION_VERSION, read(DRAFT_PROMPT), read(ANALYSIS_PROMPT)]),
+              "normalization": translate.version(),
+              "graph_extraction": tracing.digest([read(GRAPH_PROMPT), knowledge_graph.POLICY,
+                                                  knowledge_graph.STRUCTURE])}
+    return {"hashes": hashes, "digest": tracing.digest(hashes)}
+
+
+def fitted(pol: decision.Policy, kinds: tuple[str, ...]) -> dict:
+    """Which of `kinds` `pol` has fitted for the prompts in use; the rest are
+    provisional, whatever an older artifact covered."""
+
+    return {"version": pol.version, "problem": pol.problem or None,
+            "kinds": {k: "fitted" if k in pol.fitted else "provisional" for k in kinds}}
+
+
+def manifest(cfg: decision.Config) -> dict:
+    """The behavior manifest (reliability PR 4): `behavior()` beside each
+    policy's fitted and provisional decision kinds for `cfg`'s model."""
+
+    retrieval_ = decision.policy(cfg.model, prompt_version=PROMPT_VERSION, kind_versions=KIND_VERSIONS)
+    claims = decision.policy(cfg.model, HUB / decision.claims.ARTIFACT, prompt_version=decision.claims.VERSION)
+    return {"schema_version": MANIFEST, **behavior(), "model": cfg.model,
+            "policies": {"retrieval": fitted(retrieval_, ("route", "source", "useful", "conflict", "redirect",
+                                                          "coverage", "repair", "ask", "analysis")),
+                         "claims": fitted(claims, ("relation", "answers", "faithful"))}}
 
 
 def item(hit: dict, outcome: dict | None = None) -> dict:
@@ -372,8 +421,10 @@ class Flow:
                  evaluate=None, normalize=None, divide=None, first=None, mend=None,
                  cache: decision.Cache | None = None, required: bool = False,
                  external: bool = False, tape: Tape | None = None, replay: Tape | None = None, emit=None,
-                 audiences: list[str] | None = None):
+                 audiences: list[str] | None = None, cause: dict | None = None):
         self.emit = emit
+        # The admitted action that required this retrieval (`prepare`'s `cause`), if one did.
+        self.cause = cause
         # The audience scope a caller chose (reliability PR 3): every round of the run keeps it in `filters`.
         self.filters = {"audiences": list(dict.fromkeys(audiences))} if audiences else None
         self.query, self.brief, self.k, self.omitted = query, brief, k, omitted
@@ -405,8 +456,10 @@ class Flow:
             "missing": [],
             "conflicts": [], "untrusted": [],
             "reads": [], "limits": [], "repairs": [], "transitions": [], "decisions": [], "trace": [],
+            "calls": [], "cause": cause,
             "normalization": None, "policy": pol.record(), "trace_id": self.trace_id,
-            "versions": {"prompt": PROMPT_VERSION, "policy": pol.version, "model": model, "normalization": None},
+            "versions": {"prompt": PROMPT_VERSION, "policy": pol.version, "model": model, "normalization": None,
+                         "behavior": behavior()["digest"]},
             "instruction": INSTRUCTION}
 
     # -- what comes from outside ----------------------------------------------------
@@ -448,7 +501,26 @@ class Flow:
         seconds = max(0.0, min(NORMALIZE_SECONDS, self.budget.left() - self.budget.call_seconds))
         outcomes = self.outside("normalize", lambda: self.normalize(texts, seconds, owners))
         self.versions |= {str(o.get("version") or o["status"]) for o in outcomes if o["status"] in evidence.USABLE}
+        # One call per request the translator sent (its `request` id), one for
+        # the cache hits; English, and Korean no request carried (no key, the
+        # limit), cost nothing and are no call.
+        batches: dict[str, list[tuple[str, dict]]] = {}
+        for text, o in zip(texts, outcomes):
+            if o.get("request") or o.get("cached"):
+                batches.setdefault(o.get("request") or "cache", []).append((text, o))
+        for key, batch in batches.items():
+            usable = sum(o["status"] in evidence.USABLE for _t, o in batch)
+            self.called(tracing.call(
+                "normalize", "translator", "cache" if key == "cache" else "translator",
+                model=translate.MODEL, sent=[t for t, _o in batch],
+                outcome="ok" if usable == len(batch) else "partial" if usable else "failed", texts=len(batch)))
         return outcomes
+
+    def called(self, record: dict) -> None:
+        """A call of this run, under it and at the revision its cause named."""
+
+        record.update(parent_call_id=self.trace_id, state_revision=(self.cause or {}).get("state_revision"))
+        self.dossier["calls"].append(record)
 
     def ask(self, kind: str, state: dict, questions: dict, allowed: list[str]) -> dict:
         """One DecisionRequest out, its checked DecisionResult back, both in the dossier."""
@@ -459,25 +531,44 @@ class Flow:
                                prompt_version=PROMPT_VERSION, policy_version=self.pol.version,
                                normalization_version=version, budget=self.budget, trace_id=self.trace_id)
         trace = self.dossier["trace"]
+        replayed: dict = {}
 
         def evaluate(state_, questions_, trace_, budget, stage):
-            def call():
-                mark = len(trace_)
-                got = self.evaluate(state_, questions_, trace_, budget, stage)
-                entry = trace_[mark] if len(trace_) > mark else {}
-                return {"answers": got, "model": entry.get("model"), "usage": entry.get("usage")}
+            failed: list[BaseException] = []
 
+            def call():
+                # A failure is kept as a value, with what it spent, so a replay records the same call.
+                mark = len(trace_)
+                try:
+                    got = self.evaluate(state_, questions_, trace_, budget, stage)
+                except Exception as error:
+                    failed.append(error)
+                    got = None
+                entry = trace_[mark] if len(trace_) > mark else {}
+                out = {"answers": got, "model": entry.get("model"), "usage": entry.get("usage"),
+                       "sent": entry["sent"] if "sent" in entry else bool(entry.get("usage"))}
+                return {**out, "error": described(failed[0])} if failed else out
+
+            before = self.budget.used["calls"]
             out = self.outside("decisions", call)
             if self.replay is not None:
-                trace_.append({"stage": stage, "model": out["model"], "usage": out["usage"], "replayed": True})
+                # A tape from before `sent` was kept: a decision that spent no call was a cache hit.
+                replayed["cached"] = out.get("cached", "sent" not in out and self.budget.used["calls"] == before)
+                trace_.append({"stage": stage, "model": out["model"], "usage": out["usage"], "replayed": True,
+                               "sent": out.get("sent", not replayed["cached"])})
+            if "error" in out:
+                raise failed[0] if failed else rebuilt(out["error"])
             return out["answers"]
 
         # A replay reads every decision from the tape, the cached ones too.
         res = decision.checked(req, decision.decide(req, evaluate, self.budget, trace, self.pol,
                                                     None if self.replay is not None else self.cache))
+        if record := tracing.jev_call(req, {**res, "cached": True} if replayed.get("cached") else res):
+            self.called(record)
         if res["cached"] and self.tape is not None:
             self.tape.keep("decisions", {"value": {"answers": res["answers"], "model": res["model"],
-                                                   "usage": res["usage"]}, "calls": 0, "tokens": 0})
+                                                   "usage": res["usage"], "sent": False, "cached": True},
+                                         "calls": 0, "tokens": 0})
         self.dossier["decisions"].append({
             "request_id": req["request_id"], "kind": kind,
             "questions": {n: {"decision": q["decision"], "candidate": q["candidate"]}
@@ -589,11 +680,19 @@ class Flow:
         self.route()
 
     def route(self) -> None:
+        """Whether to retrieve, from which sources, and what the question asks.
+
+        Retrieval a caller requires — an admitted action (`cause`), or an
+        answer's return to retrieval — is not asked about again: the request
+        leaves the question out, and the transition says who required it.
+        Sources, analysis and the question's parts are still Jev's."""
+
         required = self.required or explicit(self.query, self.query_en)
         parts = {r["id"]: r["text"] for r in self.requirements} if len(self.requirements) > 1 else {}
         state = {**self.context, "available_sources": {s: DESCRIBED[s] for s in self.available}}
         res = self.ask("route", {**state, "query_parts": parts} if parts else state,
-                       route_questions(self.available, list(parts)), [*self.available, *parts])
+                       route_questions(self.available, list(parts), retrieve=not self.required),
+                       [*self.available, *parts])
         if res["status"] in ("cancelled", "exhausted"):
             return self.go(res["status"], res["reason_code"])
         if res["status"] in ("unavailable", "invalid"):
@@ -614,16 +713,18 @@ class Flow:
             self.requirements = asked
         self.dossier["analysis"] = verdicts.get("analysis") == "yes"
         # An analysis is published unchecked, so it is at least searched and cited (invariant 5): never direct.
-        if verdicts["retrieve"] == "no" and not required and not self.dossier["analysis"]:
+        if not required and verdicts["retrieve"] == "no" and not self.dossier["analysis"]:
             self.dossier.update(direct=True, restrictions=DIRECT)
             return self.go("ready", "direct_eligible", score=res["answers"]["retrieve"])
         # Uncertain about a source is a reason to search it: coverage over precision.
         selected = [s for s in self.available if verdicts[f"source_{s}"] != "no"] or list(self.available)
-        reason = ("explicit_requirement" if required else
+        reason = ("retrieval_required_by_action" if self.cause else
+                  "explicit_requirement" if required else
                   "retrieval_needed" if verdicts["retrieve"] == "yes" else
                   "analysis" if self.dossier["analysis"] else "uncertain_route")
         self.split()
-        self.go("retrieve", reason, sources=selected, score=res["answers"]["retrieve"])
+        self.go("retrieve", reason, sources=selected, score=res["answers"].get("retrieve"),
+                **({"action_id": self.cause["action_id"], "point": self.cause["point"]} if self.cause else {}))
         share = self.share(1, 0)
         req = retrieval.request(self.repo_id, self.query, query_en=self.query_en, sources=selected,
                                 filters=self.filters, limit=min(self.k, share), seconds=self.budget.left(),
@@ -652,9 +753,15 @@ class Flow:
 
         def call():
             seconds = min(NORMALIZE_SECONDS, self.budget.call())
-            return self.divide(self.query_en, seconds)
+            with translate.watching() as sent:
+                return {"asks": self.divide(self.query_en, seconds), "sent": len(sent)}
 
-        asked = self.outside("split", call)
+        got = self.outside("split", call)
+        # A tape from before `sent` was kept holds the asks alone; its request is taken as sent.
+        asked, sent = (got["asks"], got["sent"]) if isinstance(got, dict) else (got, 1)
+        if sent:
+            self.called(tracing.call("decompose", "translator", "translator", sent=self.query_en,
+                                     outcome="failed" if asked is None else "ok"))
         kept, rejected = retrieval.checked_subqueries(self.query_en, asked, every_exclusion=True)
         self.dossier["split"] = {"asks": len(kept), "rejected": rejected, "failed": asked is None}
         if len(kept) > 1 and not rejected:
@@ -856,6 +963,21 @@ class Flow:
                      [r["text"] for r in self.requirements] if need == "subqueries" else [])
             out = self.outside("rounds", lambda: self.mend(base, result, need, given))
             self.dossier["repairs"].append(out["note"])
+            if need == "external" and "fetched" in out["note"]:
+                # The arXiv search, then Jev grading what it returned (`grade_papers`): two requests.
+                self.called(tracing.call("research", "code", "arxiv", sent=self.query_en,
+                                         outcome="ok" if out["note"]["fetched"] else "failed"))
+                # Each request sent, finished or not when the fetch returned or was abandoned: the
+                # query's translation, then Jev's grading.
+                for entry in out["note"].get("graded") or []:
+                    if entry.get("stage") == "normalize":
+                        self.called(tracing.call("normalize", "translator", "translator", model=translate.MODEL,
+                                                 outcome="ok" if entry["status"] in evidence.USABLE else "failed"))
+                    elif entry.get("sent"):
+                        self.called(tracing.call("grade", "jev", "jev", model=entry.get("model"),
+                                                 elapsed_ms=entry.get("elapsed_ms"), tokens=entry.get("usage"),
+                                                 outcome="failed" if "error" in entry else
+                                                 "ok" if "answers" in entry else "in_flight"))
             if not out["requests"]:
                 continue
             if need == "sources":
@@ -924,7 +1046,7 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
             cfg: decision.Config | None = None, cancel: threading.Event | None = None, *,
             external: bool = False, record: bool = False, cache: decision.Cache | None = DECISIONS,
             require: bool = False, budget: Budget | None = None, run: Run | None = None,
-            audiences: list[str] | None = None) -> dict:
+            audiences: list[str] | None = None, cause: dict | None = None) -> dict:
     """The dossier for one question, with the settings it ran under (never the key).
 
     The app's query path, its shadow mode and `tool/jev_search.py` all run
@@ -939,12 +1061,21 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     `audiences` narrows every round to the hub documents written for them
     (`sources.AUDIENCES`); unclassified documents and other repositories'
     stay eligible, and repository isolation is unchanged. `None` searches as before.
+    `cause` is the admitted action that requires this retrieval —
+    `{action_id, point, operation, state_revision}` (`decisions.gathered`):
+    it implies `require`, so Jev is not asked again whether to retrieve,
+    and it is kept on the dossier. The action was admitted at its own
+    boundary (`decisions.admit`) before this runs.
     """
 
     if not query.strip() or not 1 <= k <= MAX_K:
         raise ValueError(f"A query and k between 1 and {MAX_K} are required")
     if audiences is not None and (not audiences or set(audiences) - set(sources.AUDIENCES)):
         raise ValueError(f"audiences are some of {sources.AUDIENCES}")
+    if cause is not None:
+        if set(cause) != set(CAUSE) or cause["operation"] != "retrieve_evidence":
+            raise ValueError(f"a cause is {CAUSE} of a retrieve_evidence action")
+        require = True
     cfg = cfg or decision.config(project or HUB)
     live = cfg.mode != "off"
     root = Path(project).resolve() if project else None
@@ -952,11 +1083,11 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     budget = budget or Budget(**cfg.limits, cancel=cancel if run is None else run.cancel)
     if run is not None:
         run.follow(budget)
-    pol = decision.policy(cfg.model, prompt_version=PROMPT_VERSION)
+    pol = decision.policy(cfg.model, prompt_version=PROMPT_VERSION, kind_versions=KIND_VERSIONS)
     tape = Tape() if record else None
     inputs = {"query": query, "brief": brief, "k": k, "omitted": omitted, "available": available(root, cfg.disabled),
               "repo_id": evidence.repo_id(root or HUB), "graph": graph_enabled(), "model": cfg.model,
-              "live": live, "external": external, "required": require, "audiences": audiences}
+              "live": live, "external": external, "required": require, "audiences": audiences, "cause": cause}
     flow = Flow(**inputs, budget=budget, pol=pol, cache=cache if live else None, tape=tape,
                 emit=run.step if run is not None else None,
                 evaluate=watched(run, "jev", functools.partial(decision.evaluate, cfg)),
@@ -969,7 +1100,7 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
                     proposals=given if need == "subqueries" else None))
     with (run.phased("retrieve-evidence", "retriever", input=query,
                      metadata={"k": k, "state": brief, "required": require, "sources": inputs["available"],
-                               "audiences": audiences})
+                               "audiences": audiences, "cause": cause})
           if run is not None else contextlib.nullcontext({})) as ending:
         dossier = flow.run()
         ending.update(output={"status": dossier["status"], "reason": dossier["reason"],
@@ -981,6 +1112,8 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
                       metadata={"transitions": dossier["transitions"], "limits": dossier["limits"],
                                 "split": dossier["split"]})
     if run is not None:
+        for record in dossier["calls"]:
+            run.called(record)
         run.step("retrieved", dossier["status"], reason=dossier["reason"], direct=dossier["direct"],
                  evidence=[e["chunk_id"] for e in dossier["evidence"]], missing=dossier["missing"],
                  dropped=dossier["dropped"])
@@ -988,7 +1121,8 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
            "state": {"characters": len(state), "summarized": omitted is not None, "omitted": omitted}}
     if tape is not None:
         out["tape"] = {**tape.data, "inputs": inputs, "limits": dict(budget.limits), "policy": pol.record(),
-                       "prompt_version": PROMPT_VERSION, "transitions": steps(dossier)}
+                       "prompt_version": PROMPT_VERSION, "behavior": dossier["versions"]["behavior"],
+                       "transitions": steps(dossier), "calls": tracing.totals(dossier["calls"])}
     if run is not None:
         run.dossier = out   # the last retrieval of the run is the evidence it answers from
     return out
@@ -1019,7 +1153,13 @@ def replay(tape: dict) -> dict:
     # `divide` is never called in a replay; set, it lets the recorded split be read back.
     dossier = Flow(**tape["inputs"], budget=budget, pol=pol, replay=Tape(tape), divide=lambda *_: None).run()
     again = steps(dossier)
+    # A tape from before the manifest names no behavior: whether it changed is unknown, not no.
+    recorded = tape.get("behavior")
+    # And the calls it accounts: as unknown for a tape from before they were kept.
+    calls = tape.get("calls")
     return {"matches": again == tape["transitions"], "prompt_changed": tape["prompt_version"] != PROMPT_VERSION,
+            "behavior_changed": None if recorded is None else recorded != dossier["versions"]["behavior"],
+            "calls_match": None if calls is None else calls == tracing.totals(dossier["calls"]),
             "transitions": again, "recorded": tape["transitions"], "dossier": dossier}
 
 
@@ -1035,6 +1175,8 @@ def replay(tape: dict) -> dict:
 
 DRAFT = "answer-draft/1"
 VERIFIED = "verified-answer/1"
+# A host tool line that ran the search command (`query.SEARCH_NOTE`): retrieval again, by the host.
+HOST_SEARCH = re.compile(r"tool/search\b|jev_search")
 DRAFT_PROMPT = "answer-draft.md"
 ANALYSIS_PROMPT = "answer-analysis.md"
 CLAIM_KINDS = ("source_fact", "inference", "recommendation", "direct_text")
@@ -1180,6 +1322,8 @@ class Grounding:
         # Each generation's evidence ids, beside it: a return to retrieval renumbers them.
         self.idsets: list[dict[str, dict]] = []
         self.trace: list[dict] = []
+        # Every Jev request's call record (`tracing.jev_call`), in order.
+        self.called: list[dict] = []
         # Claims Jev supported, by what they say and cite: a repair that keeps one is not asked about again.
         self.supported: set[tuple] = set()
         self.rebase(dossier)
@@ -1406,6 +1550,8 @@ class Grounding:
                                prompt_version=decision.claims.VERSION, policy_version=self.pol.version,
                                normalization_version="claims", budget=budget, trace_id=self.run_id)
         res = decision.checked(req, decision.decide(req, self.evaluate, budget, self.trace, self.pol, self.cache))
+        if record := tracing.jev_call(req, res, parent=self.run_id):
+            self.called.append(record)
         self.spent(budget)
         gen["rejoined"] = {"request_id": req["request_id"], "status": res["status"], "usage": res["usage"],
                            "answers": res["answers"]}
@@ -1503,6 +1649,8 @@ class Grounding:
                                policy_version=self.pol.version, normalization_version="|".join(sorted(versions)),
                                budget=budget, trace_id=self.run_id)
         res = decision.checked(req, decision.decide(req, self.evaluate, budget, self.trace, self.pol, self.cache))
+        if record := tracing.jev_call(req, res, parent=self.run_id):
+            self.called.append(record)
         self.spent(budget)
         gen["decision"] = {"request_id": req["request_id"], "policy": self.pol.record(),
                            **{k: res[k] for k in ("status", "reason_code", "answers", "verdicts", "model", "usage",
@@ -1649,7 +1797,7 @@ class Grounding:
         """The internal run artifact: every draft as written, and its checks."""
 
         return {"run_id": self.run_id, "verification_version": VERIFICATION_VERSION,
-                "generations": self.generations, "trace": self.trace,
+                "generations": self.generations, "trace": self.trace, "calls": self.called,
                 "allowance_left": {"calls": self.calls, "tokens": self.tokens}}
 
 
@@ -1736,6 +1884,9 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
     text = yield from generate(job.brief())
     yield {"progress": "verify"}
     step("verify", "checked", claims=checks(verified(run, job, text)))
+    sent = len(job.called)
+    for record in job.called if run is not None else ():
+        run.called(record)
     how = job.repair()
     if how:
         if how == "retrieve":
@@ -1753,6 +1904,8 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
         text = yield from generate(job.repair_brief(how == "retrieve"))
         yield {"progress": "verify"}
         step("verify", "checked", claims=checks(verified(run, job, text)))
+        for record in job.called[sent:] if run is not None else ():
+            run.called(record)
     out = job.published()
     v = out["verified"]
     step("publish", v["status"], reason=v["reason"], citations=[c["evidence_id"] for c in v["citations"]],
@@ -1764,11 +1917,31 @@ def drafted(run: Run | None, generate):
     """`generate`, each turn a generation of the run's trace: the brief the
     host was sent and the text it wrote — the draft its claims are read
     from — with the model and tokens of the `{"kind": "usage"}` item a
-    `generate` yields when its turn is done. That item goes no further."""
+    `generate` yields when its turn is done. That item goes no further.
+
+    Each turn is a `draft` call record of the run, with how many of the
+    host's own tool lines ran a search command: the server retrieved already,
+    and the host's tools are its own — counted, not controlled."""
+
+    before: list[str] = []
 
     def observed(message: str):
         call = run.open("draft-answer", "generation", run.trace, input=message) if run is not None else None
         spent: dict = {}
+        searches = 0
+        started = time.monotonic()
+
+        def account(outcome: str) -> None:
+            # Every turn started, however it ended: a failed or stopped one may have cost as much.
+            if run is not None:
+                record = tracing.call("draft", "host", "host", model=spent.get("model"), parent=run.id, sent=message,
+                                      elapsed_ms=round((time.monotonic() - started) * 1000),
+                                      tokens=spent.get("tokens"), cost_usd=spent.get("cost_usd"),
+                                      retry_of=before[-1] if before else None, outcome=outcome,
+                                      host_searches=searches)
+                before.append(record["call_id"])
+                run.called(record)
+
         turn = generate(message)
         try:
             item = next(turn)
@@ -1777,6 +1950,8 @@ def drafted(run: Run | None, generate):
                     spent = item
                     item = next(turn)
                 else:
+                    searches += isinstance(item, dict) and item.get("kind") == "tool" and bool(
+                        HOST_SEARCH.search(str(item.get("text") or "")))
                     item = turn.send((yield item))
         except StopIteration as done:
             text = done.value
@@ -1784,11 +1959,14 @@ def drafted(run: Run | None, generate):
             turn.close()   # a stop or a failure outside ends the host's turn too
             if run is not None:
                 run.close(call, level="ERROR", status_message=type(error).__name__)
+            account("cancelled" if type(error).__name__ in ("Stopped", "GeneratorExit", "KeyboardInterrupt")
+                    else "failed")
             raise
         if call is not None:   # no trace, no telemetry to build: nothing in it may cost the answer
             run.close(call, output=text, model=spent.get("model"), usage_details=tracing.usage(spent.get("tokens")),
                       cost_details={"total": spent["cost_usd"]} if isinstance(spent.get("cost_usd"), (int, float))
                       else None)
+        account("ok")
         return text
 
     return observed
@@ -1970,9 +2148,10 @@ def add_url(project: str | Path | None, url: str, seconds: float = providers.SEC
 
 def add_papers(project: str | Path | None, query: str | None = None, ids: list[str] | None = None, n: int = 5,
                full: bool = False, cfg: decision.Config | None = None, budget: Budget | None = None,
-               gate: Gate | None = None) -> dict:
+               gate: Gate | None = None, trace: list | None = None) -> dict:
     """arXiv papers into `project`: a search, or identifiers. Inside a run,
-    `budget` is the run's, and grading spends from it; each paper's record
+    `budget` is the run's, and grading spends from it, its requests landing
+    in the caller's `trace` as they are sent; each paper's record
     is put through `gate`, which a caller that stops waiting closes
     (`bounded`), so no record arrives after it returned. What is read before
     the put — content kept by its hash — names no record until then.
@@ -1990,9 +2169,12 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
     cfg = cfg or decision.config(root)
     if query:
         asked = english([query], QUERY_SECONDS)[0]
+        if trace is not None and asked.get("request"):   # the translator was asked: a call of the caller's
+            trace.append({"stage": "normalize", "sent": True, "request": asked["request"],
+                          "status": asked["status"]})
         query = asked["text"] if asked["status"] in ("original_english", "translated") else query
     entries = providers.arxiv(query, ids, n)
-    grades, trace = grade_papers(query, entries, cfg, budget) if query else ({}, [])
+    grades, trace = grade_papers(query, entries, cfg, budget, trace) if query else ({}, [] if trace is None else trace)
     acting = cfg.mode == "active"
     # A grade the usefulness policy calls no: kept as discovered, not indexed.
     not_relevant = decision.policy(cfg.model).rules["useful"]["no"]
@@ -2038,12 +2220,13 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
 
 
 def grade_papers(query: str, entries: list[dict], cfg: decision.Config,
-                 budget: Budget | None = None) -> tuple[dict[int, float], list]:
+                 budget: Budget | None = None, trace: list | None = None) -> tuple[dict[int, float], list]:
     """Jev's relevance of each abstract to the query, to decide what to read.
     `{}` when Jev is off or fails: every paper is then read. `budget` is the
-    run's, when there is one; alone, a question's allowance of its own."""
+    run's, when there is one; alone, a question's allowance of its own.
+    `trace`, the caller's, takes the request as it is sent."""
 
-    trace: list[dict] = []
+    trace = [] if trace is None else trace
     if cfg.mode == "off" or not entries:
         return {}, trace
     state = {"query": query, "papers": [{"id": str(i), "title": e["title"], "abstract": e["summary"][:2000]}
@@ -2606,6 +2789,65 @@ def check_graph(project: str | Path | None) -> dict:
         index.close()
 
 
+GRAPH_HEALTH = "graph-health/1"
+FAILURES = ("invalid", "dangling", "out_of_scope", "unresolved_spans")
+# Violations and drifted files listed per kind; the counts are always whole.
+SHOWN = 50
+
+
+def graph_health(project: str | Path | None) -> dict:
+    """The graph `project`'s index holds now, checked (`knowledge_graph.verify`)
+    — structure only: whether edges are valid, in scope and cited, never
+    whether they help a question (`semantic_evaluation`, PR 5).
+
+    Read-only: an index that is not there is `not_indexed`, never built,
+    and nothing is extracted or asked. `stale` when the files or the store
+    moved on from what the graph was built from, before or during the
+    check; `failing` with any violation; `empty` with no edge — no edge is
+    not health; `healthy` otherwise."""
+
+    root = Path(project).resolve() if project else None
+    out = {"schema_version": GRAPH_HEALTH, "repo_id": evidence.repo_id(root or HUB), "generation": None,
+           "checked_at": stamp(), "versions": None, "counts": None, "violations": None, "status": "not_indexed",
+           "reason": None, "semantic_evaluation": None}
+    gen, why = search_published(root)
+    if why is not None:
+        return {**out, "generation": gen, "status": "stale" if why == "other_chunker" else "not_indexed",
+                "reason": why}
+    index = local_index(root, existing=True)
+    try:
+        before = knowledge_graph.state(index.store)
+        built = knowledge_graph.Frozen(index.store).built
+        report = knowledge_graph.verify(index.graph, index.chunks)
+        with index.store.lock:
+            active = knowledge_graph.meta(index.store.db, "graph_active")
+        loaded = index.loaded
+        # Listed again after the checks: a file that came or changed while checking reads stale.
+        drift = index.store.drift([resolved for _p, _r, resolved, _s in index.scan()])
+        # And what was loaded compared last — the store, its graph and the source records: a
+        # sync or a registered source meanwhile reads stale, not the new rows as healthy.
+        # The records read afresh: opened absent, they are an in-memory stand-in that never sees a file appear.
+        with sources.Records(index.records.folder, readonly=True) as now:
+            records = now.version()
+        moved = knowledge_graph.state(index.store) != before or f"{index.store.version()}/{records}" != loaded
+    finally:
+        index.close()
+    reason = ("store_changed" if moved else "graph_not_built_from_these_chunks" if built != loaded else
+              "sources_changed" if drift["changed"] or drift["added"] else None)
+    failing = any(report[k] for k in FAILURES)
+    return {**out, "generation": gen, "reason": reason,
+            "status": "stale" if reason else "failing" if failing else "empty" if not report["edges"] else "healthy",
+            "versions": {"chunker": evidence.CHUNKER, "structure": knowledge_graph.STRUCTURE,
+                         "observed": knowledge_graph.OBSERVED, "support_policy": knowledge_graph.POLICY,
+                         "active_extraction": active, "extractors": report["extractor_versions"]},
+            "counts": {**{k: report[k] for k in ("nodes", "edges", "adopted", "by_kind", "by_origin")},
+                       "candidate": report["edges"] - report["adopted"], "chunks": len(index.chunks),
+                       "violations": {k: len(report[k]) for k in FAILURES},
+                       "sources_changed": len(drift["changed"]), "sources_added": len(drift["added"])},
+            "violations": {**{k: report[k][:SHOWN] for k in FAILURES},
+                           "sources_changed": drift["changed"][:SHOWN], "sources_added": drift["added"][:SHOWN]}}
+
+
 # ---- retrieval rounds (stage 5 of `docs/plans/jev/`) ------------------------------
 #
 # `search.retrieval` ranks, walks and repairs within one index; here the
@@ -2736,9 +2978,13 @@ def repair(req: dict, result: dict, need: str, project: str | Path | None, *, bu
         if not external:
             return {"note": {"need": need, "skipped": "external_not_allowed"}, "requests": [], "results": []}
         gate = Gate()
+        graded: list[dict] = []
         note["fetched"] = bounded(lambda: add_papers(project, req["query_en"] or req["query_original"],
-                                                     n=REPAIR_PAPERS, cfg=cfg, budget=budget, gate=gate),
+                                                     n=REPAIR_PAPERS, cfg=cfg, budget=budget, gate=gate,
+                                                     trace=graded),
                                   budget, gate)
+        # Jev's grading requests as they stand now, whether the fetch finished or was abandoned.
+        note["graded"] = [dict(e) for e in list(graded)]
     requests, made = retrieval.repair(req, result, need, sources=available(root, (cfg or decision.config()).disabled),
                                       subqueries=proposals,
                                       chunk_ids=list(chunk_ids), entities=entities)
@@ -2930,6 +3176,7 @@ class Run:
         self.stage = "start"
         self.dossier: dict | None = None
         self.summary: dict | None = None
+        self.calls: list[dict] = []
         self.sealed = False
         self._left = None
         self.folder = runs_root() / self.repo_id / "runs"
@@ -2976,6 +3223,12 @@ class Run:
 
         self.stage = stage
         return self.put({"kind": "step", "stage": stage, "status": status, **payload})
+
+    def called(self, record: dict) -> dict:
+        """A call of the run (`tracing.call`): an event, and a line of the summary's totals."""
+
+        self.calls.append(record)
+        return self.put({"kind": "call", **record, "status": record["outcome"]})
 
     def redact(self, value):
         for key in self.secrets:
@@ -3179,6 +3432,7 @@ def summarize(run: Run, outcome: str, reason: str | None, published: dict | None
                       "discarded": (d.get("dropped") or 0) + sum(len(x.get("beyond_k", [])) for x in d.get("limits") or []),
                       **graph_detail(run.repo, walked)},
             "verification": v, "claims": checks(gens[-1]) if gens else [],
+            "calls": tracing.totals(run.calls), "versions": d.get("versions"),
             "answered": answered, "notes": notes, "events": len(run.events), "trace": f"{run.id}.jsonl"}
 
 

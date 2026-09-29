@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import contextlib
 import hashlib
 import json
 import math
@@ -44,7 +45,7 @@ from pathlib import Path
 from common import settings
 
 __all__ = ("translate", "english", "parts", "retire", "usage", "glossary", "KO_EN", "EN_KO", "checked", "added",
-           "api_key", "HANGUL_WORD")
+           "api_key", "HANGUL_WORD", "version")
 
 HERE = Path(__file__).resolve().parents[1]  # `tool/`
 ROOT = HERE.parent
@@ -86,8 +87,25 @@ LATE_SECONDS = 60.0
 # this small is seen to split.
 BATCH = 4
 # Set only on the thread that reads such a request (`_translate`), so every
-# other `_ask` keeps its caller's seconds as its read timeout.
+# other `_ask` keeps its caller's seconds as its read timeout. `sending`, set
+# there or by `watching`, is told the moment a request goes out.
 _late = threading.local()
+
+
+@contextlib.contextmanager
+def watching():
+    """A list that takes one entry per request `_ask` sends on this thread
+    meanwhile — a question split (`parts`), not `english`, whose batches go
+    out on threads of their own and carry their ids on their outcomes."""
+
+    sent: list[bool] = []
+    before = getattr(_late, "sending", None)
+    _late.sending = lambda: sent.append(True)
+    try:
+        yield sent
+    finally:
+        _late.sending = before
+
 
 # Part of the cache key. Bump it whenever SYSTEM or the request shape changes.
 # Without it the cache keeps serving text translated under a different contract,
@@ -450,6 +468,8 @@ def _ask(system: str, batch: list[str], seconds: float, same_length: bool = True
     if seconds <= 0:
         charge(-held, at)
         return None
+    if sending := getattr(_late, "sending", None):
+        sending()
     try:
         answer = urllib.request.urlopen(request, timeout=seconds + getattr(_late, "seconds", 0.0))
     except TimeoutError:
@@ -536,7 +556,7 @@ def translate(texts: list[str], direction: str, deadline: float) -> list[str]:
 
 
 def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
-              held: dict[str, str] | None = None) -> list[tuple[str, str]]:
+              held: dict[str, str] | None = None, asked: dict[int, str] | None = None) -> list[tuple[str, str]]:
     """`(text, status)` per input. The status is `skipped` (nothing of the
     source language), `cached`, `translated`, or why the original came back:
     `retired`, `no_key`, `limit`, `request_failed`, `spans_broken`, `deadline`,
@@ -545,12 +565,14 @@ def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
     translation it rejects is asked for again. `held` (source -> English)
     stands in for the cache, which is then neither read nor written: the
     caller keeps what it holds, and what is held is checked as a cache hit is
-    — retired, and `accept`."""
+    — retired, and `accept`. `asked`, when given, is filled with the id of
+    the request each text went out in: one id per request sent, billed or
+    not, and none for a text no request carried."""
 
     if not texts:
         return []
     try:
-        return _translate(list(texts), direction, deadline, accept, held)
+        return _translate(list(texts), direction, deadline, accept, held, asked)
     except Exception:
         # The callers are hooks part-way through assembling an injection. Their
         # own entry-point guard would catch this and pass the turn, which costs
@@ -564,7 +586,7 @@ LINE_ITEM = re.compile(r"\n(?=[ \t]*(?:[-*+][ \t]|\d+[.)][ \t]|\|))")
 
 
 def _translate(texts: list[str], direction: str, deadline: float, accept=None,
-               held: dict[str, str] | None = None) -> list[tuple[str, str]]:
+               held: dict[str, str] | None = None, asked: dict[int, str] | None = None) -> list[tuple[str, str]]:
     keep, fixed, version = glossary()
     if direction == EN_KO:
         version += "/x" + examples()[1]   # the examples are part of en->ko's prompt; ko->en keys stay as they were
@@ -623,6 +645,9 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
             # deadline, on this thread, and caches what lands then. A held
             # (private) text has no shared cache to land in, so it does not.
             _late.seconds = LATE_SECONDS if held is None else 0.0
+            if asked is not None:
+                request_id = os.urandom(6).hex()
+                _late.sending = lambda: asked.update(dict.fromkeys((wanted[j] for j in group), request_id))
             # A list item or table row an item: asked for a list as one string, the translator answered an
             # item per line, and a reply of the wrong length is no reply. Wrapped prose stays whole.
             split = [LINE_ITEM.split(masked[j][0]) for j in group]
@@ -811,6 +836,12 @@ def checked(texts: list[str], direction: str, deadline: float) -> list[tuple[str
                      lambda source, made: None if kept(source, made, keep, words=True) else "meaning_changed")
 
 
+def version() -> str:
+    """The version `english` stamps on a translation made now."""
+
+    return f"{MODEL}/p{PROMPT_VERSION}/g{glossary()[2]}/e{ENGLISH_VERSION}"
+
+
 def english(texts: list[str], deadline: float, held: dict[str, dict] | None = None) -> list[dict]:
     """English normalization with its outcome, one dict per input.
 
@@ -827,6 +858,9 @@ def english(texts: list[str], deadline: float, held: dict[str, dict] | None = No
     - `language`, `model`, `prompt_version`, `glossary_version`, `version`,
       `spans` (`intact`, `broken` or `None` when nothing was translated),
       `cached`.
+    - `request`: the id of the request the text went out in, shared by the
+      texts of one batch; `None` when none carried it — English, a cache
+      hit, no key, the limit.
 
     `held` for a private memory's texts: the outcomes the caller kept beside
     their source (text -> outcome), used in place of this cache, which is
@@ -850,12 +884,14 @@ def english(texts: list[str], deadline: float, held: dict[str, dict] | None = No
     version = f"{MODEL}/p{PROMPT_VERSION}/g{glossary_version}/e{ENGLISH_VERSION}"
     usable = None if held is None else {t: o["text"] for t, o in held.items()
                                         if o.get("status") == "translated" and o.get("version") == version}
-    done = dict(zip(korean, _outcomes([texts[i] for i in korean], KO_EN, deadline, accept, usable)))
+    asked: dict[int, str] = {}
+    done = dict(zip(korean, _outcomes([texts[i] for i in korean], KO_EN, deadline, accept, usable, asked)))
+    at = {i: n for n, i in enumerate(korean)}
     out = []
     for i, text in enumerate(texts):
         result = {"text": None, "status": "unavailable", "reason": None, "language": langs[i],
                   "model": None, "prompt_version": PROMPT_VERSION, "glossary_version": glossary_version,
-                  "version": None, "spans": None, "cached": False}
+                  "version": None, "spans": None, "cached": False, "request": asked.get(at.get(i))}
         if langs[i] == "en":
             result.update(text=text, status="original_english", version=f"e{ENGLISH_VERSION}")
         elif langs[i] == "und":

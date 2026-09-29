@@ -18,8 +18,19 @@ execution. Nothing here changes that.
 | Claim support in an answer | `Grounding` in the same file, `tool/decision/claims.py` | Span checks, what is published |
 | Agent actions (`work.start`, `specs.check`, `loop.fix`, …) | `tool/main/decisions.py` | `OPERATIONS`, authorization, staleness keys |
 
-`GET /api/jev` reports the live settings and `decisions.coverage()`: the
-operations Jev may choose among and the host-internal choices it does not see.
+`GET /api/jev` reports the live settings and `decisions.coverage()`: every
+decision point with its owner (Jev, code, a generative role or the host), the
+operations it may choose among, the authority code keeps, its policy version,
+and whether each Jev decision kind is fitted or still provisional. The host's
+own tool choices are listed as not covered. Its `manifest` is the behavior
+manifest below.
+
+Retrieval an admitted action already chose is not judged again. When
+`work.start` or `loop.fix` runs `retrieve_evidence`, `decisions.gathered`
+passes the proposal as `prepare(cause=...)`: the route request leaves out
+"retrieve or not", still asks sources, analysis and the question's parts, and
+the transition's reason is `retrieval_required_by_action`. An answer's return
+to retrieval (`require=True`) skips the same question.
 
 ## Configuration
 
@@ -43,7 +54,42 @@ A run records what it ran under, so a result can be tied to its inputs:
 - the store generation it read (`generation` on every retrieval result);
 - prompt, policy, model and normalization versions (`dossier.versions`);
 - the audience scope it was narrowed to, if any (`dossier.audiences`);
+- the behavior digest (`dossier.versions.behavior`, `knowledge.behavior()`)
+  over the retrieval prompts, `ASK`, `ANALYSIS`, the grounding prompts, the
+  normalization version and graph extraction — a tape's replay says
+  `behavior_changed`, unknown for a tape from before it;
+- its call totals (`tracing.totals`) — a replay says `calls_match`, unknown
+  for a tape from before them: each decision's tape entry keeps whether it
+  was sent or a cache hit, a failed one included;
+- the admitted action that required it, if any (`dossier.cause`);
 - the evaluation dataset versions in `eval/jev/*.json`.
+
+A fitted policy covers the prompts it was fitted on. `ASK` and `ANALYSIS`
+lie outside `PROMPT_VERSION`, so each is bound to its own digest
+(`knowledge.KIND_VERSIONS`): a rule for either counts as fitted only when the
+artifact's `kind_versions` names the same digest. Neither is fitted today.
+
+### Call records
+
+Every operation that may cost something is a call record
+(`tracing.call`, `call-record/1`): a Jev request, a translation, a question
+split, an arXiv repair, a host drafting turn, an explanation. It names its
+purposes (`tracing.PURPOSES`), owner, provider, model, a digest of what was
+sent, tokens, duration, retry and outcome. A Jev request asking several
+questions is one call with several purposes, counted once the transport has
+written it (a failed one keeps the tokens it spent; one never sent — no key,
+no slot, stopped first — is no call); a translation is one call per
+request the translator actually sent (its outcomes' `request` id), none for a
+text no request carried; an arXiv repair is the search and, apart, Jev's
+grading of the papers; a drafting turn that failed or was stopped is still a
+call. A cache hit has provider `cache` and costs nothing. A cost the provider does not report — Jev and the
+translator today — is `null` with `cost_known: false`, never zero.
+
+A question's records are `call` events of its run; the summary's `calls` adds
+them up, the known cost apart from the count of unknown ones. An action's
+retrieval keeps them on its outcome in `raw/actions/`. A host drafting turn
+counts `host_searches`, its own search commands after the server retrieved:
+the host's tools are traced, not controlled.
 
 ## Diagnostics
 
@@ -51,12 +97,24 @@ A run records what it ran under, so a result can be tied to its inputs:
 | --- | --- | --- |
 | Is Jev configured? | `python tool/jev_probe.py` | Nothing |
 | Does it answer? | `python tool/jev_probe.py --live` | One synthetic request (paid) |
-| Is the knowledge graph sound? | `python tool/relations.py [--project <repo>] check` | Nothing; exit 1 on a problem |
+| Is the knowledge graph sound? | `python tool/relations.py [--project <repo>] check` | Nothing; indexes first; exit 1 on a problem |
+| Is the graph as indexed now sound, without rebuilding it? | `python tool/relations.py [--project <repo>] health`, `GET /api/knowledge/graph/health` | Nothing; exit 1 unless `healthy` |
 | What did one question do? | `python tool/jev_search.py "<question>" --project <repo>` | As the app's mode sends |
 | What did a stored run do? | `python tool/jev_search.py --run <id>`, `--export <id>` | Nothing |
 | Does the code still decide a recorded run the same way? | `python tool/jev_search.py --replay <tape>` | Nothing |
 
 Each app question is also a Langfuse trace with every Jev request under it.
+
+`health` reads the index as it stands, through read-only connections that
+create no file and take no write lock, and reports `{repo_id, generation,
+checked_at, versions, counts, violations, status}`. `not_indexed`: no
+published index, and none is built. `stale`: the files or the store moved on
+from what the graph was built from, before or during the check (the files
+are listed again last) — `reason` says which — and then a span
+of a changed file may not resolve. `failing`: an invalid, dangling or
+out-of-scope edge, or an unresolved span. `empty`: no edge; no edge is not
+health. `healthy` is structural only: whether edges help a question is
+measured by evaluation (`semantic_evaluation`, reliability PR 5).
 
 ## Calibration and evaluation
 

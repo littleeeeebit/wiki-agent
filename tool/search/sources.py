@@ -185,16 +185,23 @@ class Records:
       opened is an in-memory store: nothing persists and nothing is found.
     """
 
-    def __init__(self, folder: Path):
+    def __init__(self, folder: Path, readonly: bool = False):
         self.folder = Path(folder)
         self.lock = threading.Lock()
+        self.cut: dict[str, list[dict]] = {}
+        path = self.folder / "sources.sqlite3"
+        if readonly:
+            # Nothing is created: an absent file reads as no record at all.
+            self.db = (sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5.0,
+                                       check_same_thread=False, isolation_level=None)
+                       if path.exists() else self.connect(":memory:"))
+            return
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
-            self.db = self.connect(str(self.folder / "sources.sqlite3"))
+            self.db = self.connect(str(path))
         except (OSError, sqlite3.Error) as error:
             sys.stderr.write(f"source records in memory: {type(error).__name__}\n")
             self.db = self.connect(":memory:")
-        self.cut: dict[str, list[dict]] = {}
 
     @staticmethod
     def connect(where: str) -> sqlite3.Connection:

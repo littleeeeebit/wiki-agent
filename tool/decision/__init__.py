@@ -316,6 +316,23 @@ def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
 
     started = time.monotonic()
     entry = {"stage": stage, "model_requested": cfg.model}
+    listed = False
+    # The worker's `dispatched` may come after this call gave up: the entry is listed once, whichever is first.
+    guard = threading.Lock()
+
+    def listing() -> None:
+        nonlocal listed
+        with guard:
+            if not listed:
+                trace.append(entry)
+                listed = True
+
+    def dispatched() -> None:
+        # Sent, billed or not: in `trace` from now, so a caller that stops
+        # waiting still sees a request in flight.
+        entry["sent"] = True
+        listing()
+
     try:
         if not questions or any(malformed(q) for q in questions.values()):
             raise JevError("unsupported_question")
@@ -326,7 +343,7 @@ def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
         if len(body) > MAX_BODY:
             raise JevError("state_too_large")
         budget = budget or Budget(**PROBE)
-        payload = send(cfg.key, body, budget.call(), budget.cancel)
+        payload = send(cfg.key, body, budget.call(), budget.cancel, dispatched)
         model, usage, answers = payload.get("model"), payload.get("usage"), payload.get("answers")
         entry.update(model=model, usage=usage)
         # The responding model and the tokens spent are part of the answer:
@@ -347,7 +364,7 @@ def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
         raise
     finally:
         entry["elapsed_ms"] = round((time.monotonic() - started) * 1000)
-        trace.append(entry)
+        listing()
 
 
 class Lookup(threading.Thread):
@@ -458,8 +475,10 @@ def connection(found: Lookup, timeout: float) -> http.client.HTTPSConnection:
     return Pinned(found, timeout)
 
 
-def send(key: str, body: bytes, timeout: float, cancel: threading.Event) -> dict:
+def send(key: str, body: bytes, timeout: float, cancel: threading.Event, dispatched=None) -> dict:
     """POST in a worker thread, waited on in slices so a cancel is heard.
+    `dispatched()` is called, on that thread, once the request is written
+    whole — not for one that was busy, unresolved, refused or cut short.
 
     This call owns its connection. HOST is resolved and the TLS context is
     built before a slot is taken (`resolve`). At most `MAX_IN_FLIGHT` are open in the process; a call that
@@ -501,6 +520,8 @@ def send(key: str, body: bytes, timeout: float, cancel: threading.Event) -> dict
         try:
             conn.request("POST", PATH, body=body,
                          headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+            if dispatched:   # written whole: the server has it, billed whatever comes back
+                dispatched()
             response = conn.getresponse()
             if response.status != 200:
                 raise JevError(category(response.status), response.status)

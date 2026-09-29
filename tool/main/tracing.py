@@ -35,8 +35,13 @@ it exits; owned by the process, so new keys take a restart.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import threading
+import time
+import uuid
+from collections import Counter
 
 import decision
 from common import settings
@@ -121,7 +126,8 @@ def usage(tokens: dict | None) -> dict | None:
     """Token counts as Langfuse reads them, from Jev's `input_tokens`/`output_tokens`
     or a host session's `in`/`out`/`cache_read`/`cache_write`."""
 
-    tokens = tokens or {}
+    # A provider's malformed usage is no count: telemetry never costs the answer.
+    tokens = tokens if isinstance(tokens, dict) else {}
     pairs = {"input": tokens.get("input_tokens", tokens.get("in")),
              "output": tokens.get("output_tokens", tokens.get("out")),
              "cache_read_input_tokens": tokens.get("cache_read"),
@@ -129,6 +135,78 @@ def usage(tokens: dict | None) -> dict | None:
     # A count that is not finite is no count: `int()` of it raises, and telemetry never costs the answer.
     got = {k: int(v) for k, v in pairs.items() if isinstance(v, (int, float)) and math.isfinite(v)}
     return got or None
+
+
+# ---- call records (reliability PR 4) ---------------------------------------------------
+#
+# One record per operation that may cost something: a Jev request, a translation, a
+# host turn. A transport batch asking several questions is one call with several
+# purposes, never several bills; a cache hit is a call record whose provider is
+# `cache`, which costs nothing. A cost the provider does not report is `None` with
+# `cost_known` false — unknown, never zero. Records hold digests, ids and counts,
+# never a prompt or a passage: they go where the run's events go, and an export
+# keeps them whole.
+
+CALL = "call-record/1"
+PURPOSES = ("route", "source_select", "grade", "sufficiency", "support", "normalize", "decompose", "draft",
+            "explain", "graph_extract", "research")
+# The purpose of each Jev question kind (`decision.policy.KINDS`).
+PURPOSE_OF = {"route": "route", "analysis": "route", "ask": "route", "action": "route", "source": "source_select",
+              "useful": "grade", "conflict": "grade", "redirect": "grade", "coverage": "sufficiency",
+              "repair": "sufficiency", "relation": "support", "answers": "support", "faithful": "support"}
+
+
+def digest(value) -> str:
+    """A short fingerprint of what a call was sent, for telling two calls apart without keeping either."""
+
+    body = json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(body.encode("utf-8")).hexdigest()[:16]
+
+
+def call(purposes, owner: str, provider: str | None, *, model: str | None = None, parent: str | None = None,
+         sent=None, state_revision: str | None = None, elapsed_ms: int | None = None, tokens: dict | None = None,
+         cost_usd=None, retry_of: str | None = None, outcome: str = "ok", **extra) -> dict:
+    """One call record. `sent` is fingerprinted, never kept."""
+
+    purposes = sorted(set([purposes] if isinstance(purposes, str) else purposes))
+    if not purposes or set(purposes) - set(PURPOSES):
+        raise ValueError(f"purposes are some of {PURPOSES}")
+    known = provider == "cache" or (isinstance(cost_usd, (int, float)) and math.isfinite(cost_usd))
+    return {"schema_version": CALL, "call_id": uuid.uuid4().hex, "parent_call_id": parent, "purpose": purposes,
+            "owner": owner, "provider": provider, "model": model,
+            "input_digest": None if sent is None else digest(sent), "state_revision": state_revision,
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "duration_ms": elapsed_ms,
+            "token_usage": usage(tokens), "cost_usd": 0.0 if provider == "cache" else cost_usd if known else None,
+            "cost_known": known, "retry_of": retry_of, "outcome": outcome, **extra}
+
+
+def jev_call(req: dict, res: dict, *, parent: str | None = None, state_revision: str | None = None,
+             retry_of: str | None = None) -> dict | None:
+    """The call record of one DecisionRequest and its checked result: one
+    call, whatever number of questions it asked, with the tokens a failed
+    one spent too. Jev reports tokens, not money. `None` for a request
+    that never went out (no key, no slot, stopped first): no call."""
+
+    cached = bool(res.get("cached"))
+    if not cached and not res.get("sent"):
+        return None
+    return call({PURPOSE_OF[q["decision"]] for q in req["questions"].values()}, "jev", "cache" if cached else "jev",
+                model=res.get("model") or req.get("model"), parent=parent,
+                sent={"state": req["state_en"], "questions": req["questions"]}, state_revision=state_revision,
+                elapsed_ms=res.get("elapsed_ms"), tokens=None if cached else res.get("usage"), retry_of=retry_of,
+                outcome=res["status"], request_id=req["request_id"])
+
+
+def totals(calls: list[dict]) -> dict:
+    """What a run's calls add up to: the known cost, and how many calls' cost is unknown.
+    A record from before these fields existed counts as unknown."""
+
+    paid = [c for c in calls if c.get("provider") != "cache"]
+    tokens = {k: sum((c.get("token_usage") or {}).get(k, 0) for c in calls) for k in ("input", "output")}
+    return {"calls": len(calls), "provider_calls": len(paid), "cache_hits": len(calls) - len(paid),
+            "cost_usd_known": round(sum(c["cost_usd"] for c in paid if c.get("cost_known")), 6),
+            "cost_unknown": sum(not c.get("cost_known") for c in paid), "tokens": tokens,
+            "by_purpose": dict(Counter(p for c in calls for p in c.get("purpose") or ["unknown"]))}
 
 
 def root(run_id: str, question: str, tags: list[str], metadata: dict):

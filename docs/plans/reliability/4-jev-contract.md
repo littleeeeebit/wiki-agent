@@ -121,9 +121,64 @@ read-only observability. PR 5 must evaluate the corrected current manifest.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Inventory | Inventory and trace routing/call ownership | Not started |
-| 2 | Correct | Correct redundant routing and behavior versions | Not started |
-| 3 | Graph health | Surface and verify graph health | Not started |
+| 1 | Inventory | Inventory and trace routing/call ownership | Done — `decisions.coverage()` items, `tracing.call` records |
+| 2 | Correct | Correct redundant routing and behavior versions | Done — `prepare(cause=)`, `knowledge.behavior()`, `KIND_VERSIONS` |
+| 3 | Graph health | Surface and verify graph health | Done — `knowledge.graph_health`, `GET /api/knowledge/graph/health` |
+
+## Implementation notes
+
+- Retrieval required by a caller — an admitted action's `cause`, or an
+  answer's return to retrieval — drops only the `retrieve` question from the
+  route request. Ordinary questions, including ones the `EXPLICIT` pattern
+  matches, still ask it. A tape recorded with `required: true` before this
+  change no longer replays: its route answered a question no longer asked.
+  The committed smoke tape was recorded without it and still matches.
+- The draft and analysis prompts now say the server already searched; the
+  host's own search commands during a drafting turn are counted
+  (`host_searches`), not blocked. Host tool autonomy stays uncovered.
+- The routing policy artifact covers `route`, `source`, `useful`, `coverage`,
+  `conflict`, `redirect` and `repair`; `ask`, `analysis` and `action` are
+  provisional and reported so. The fitter does not fit `ask` or `analysis`
+  yet; when it does it must write `kind_versions`.
+- Jev and the translator report no cost, so their calls are `cost_known:
+  false`. A host turn's cost is known when the CLI reports `cost_usd`.
+- `local_index(existing=True)` opens `Index(readonly=True)` — the store and
+  the source records through `mode=ro` connections, an absent records file
+  as an empty in-memory one — and `refresh(sync=False)` reads it without
+  syncing, embedding or rebuilding the graph. `search.published` refuses a
+  missing or unpublished store first. `Store.drift` finds changed and new
+  files the way `sync` would, against a listing taken after the checks.
+- A translation's call is its request: `translate.english` stamps each
+  outcome with the id of the request that carried it (`request`), set the
+  moment `_ask` sends. `decision.send` calls `dispatched()` once the
+  transport has written the request whole; `decision.evaluate` then marks
+  its trace entry `sent` and lists it — a busy slot, a failed lookup or a
+  cancel before that is no request. `decision.decide` carries `sent`, model
+  and usage onto every DecisionResult, failed ones included, and
+  `tracing.jev_call` returns no record for one never sent. The arXiv repair's paper
+  grading is its own `grade` call, read from a trace the repair owns
+  (`note.graded`), so a fetch abandoned after grading keeps it; one never
+  sent is none. `add_papers` lists its own query translation there too when
+  the translator was asked; one still running when the repair is abandoned
+  is not listed (it ends within `QUERY_SECONDS`). A question split
+  (`translate.parts`) is a call only when `translate.watching` saw its
+  request go out; the tape keeps that count beside the asks. A drafting turn
+  is a call however it ends.
+
+### Graph snapshot, 2026-09-29
+
+This repository, hub `wiki-agent`, read by `python tool/relations.py
+--project . health`:
+
+- Before refreshing: `stale` (`sources_changed`) — 9 changed and 22 new files
+  since the last index. All 483 unresolved spans lay in the 9 changed files,
+  so they were staleness, not a graph defect.
+- After `relations.py check` refreshed the index (no model call):
+  `healthy`, generation 1 — 1,263 nodes, 2,429 edges, all adopted; 2,412
+  deterministic (`contains` 1,103, `next_chunk` 907, `links_to` 402) and 17
+  extracted `mentions`; no invalid, dangling, out-of-scope or unresolved
+  edge. No extracted `depends_on` edge is adopted, so the semantic layer is
+  thin: whether traversal helps is PR 5's measurement.
 
 ## Sources
 

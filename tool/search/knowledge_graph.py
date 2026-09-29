@@ -870,11 +870,15 @@ def verify(graph: Graph, chunks: list[dict]) -> dict:
     where = {c["source_id"]: c["path"] for c in chunks}
     nodes = graph.nodes()
     edges = graph.edges(statuses=STATUSES)
-    report = {"nodes": len(nodes), "edges": len(edges), "adopted": 0, "by_kind": {}, "invalid": [],
-              "dangling": [], "out_of_scope": [], "unresolved_spans": []}
+    report = {"nodes": len(nodes), "edges": len(edges), "adopted": 0, "by_kind": {}, "by_origin": {},
+              "extractor_versions": {}, "invalid": [], "dangling": [], "out_of_scope": [], "unresolved_spans": []}
     for edge in edges:
         report["adopted"] += edge["status"] == "adopted"
         report["by_kind"][edge["kind"]] = report["by_kind"].get(edge["kind"], 0) + 1
+        origin = report["by_origin"].setdefault(str(edge["origin"]), {})
+        origin[str(edge["status"])] = origin.get(str(edge["status"]), 0) + 1
+        version = str(edge["extractor_version"])
+        report["extractor_versions"][version] = report["extractor_versions"].get(version, 0) + 1
         if problems(edge):
             report["invalid"].append({"edge_id": edge["edge_id"], "problems": problems(edge)})
         ends = [nodes.get(edge["from_id"]), nodes.get(edge["to_id"])]
