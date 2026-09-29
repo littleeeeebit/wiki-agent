@@ -100,6 +100,13 @@ def load(project: Path) -> dict | None:
         return None
 
 
+def rebuild(repo: Path) -> str:
+    """The command that rewrites `repo`'s listing, as a finding tells it.
+    Kept beside `main` so the hint cannot drift from the arguments again."""
+
+    return f"python tool/corpus.py --project {repo} --write"
+
+
 def main() -> int:
     # Down a pipe the default here is cp949. The encoding is not left to the
     # environment.

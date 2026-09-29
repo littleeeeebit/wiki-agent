@@ -6,6 +6,8 @@ here is given something to find.
 
 import json
 import os
+import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -70,9 +72,15 @@ def test_a_clean_repository_says_nothing():
     assert kinds(repo(docs=["a.md", "b.md"])) == set()
 
 
-def test_a_listing_pointing_at_a_missing_document_is_reported():
+def test_a_listing_pointing_at_a_missing_document_is_reported_and_its_fix_runs():
     root = repo(docs=["a.md"], listed=["a.md", "사라진.md"])
-    assert "낡은 목록" in kinds(root)
+    message = dict(repo_lint.check(root))["낡은 목록"]
+    # The finding names the command; run it as printed. It once lacked a
+    # required argument and failed for whoever followed it.
+    command = re.search(r"`python (tool/corpus\.py [^`]+)`", message)[1].split()
+    subprocess.run([sys.executable, *command], cwd=Path(__file__).resolve().parent.parent, check=True,
+                   capture_output=True)
+    assert kinds(root) == set()
 
 
 def test_a_document_edited_after_the_listing_is_reported():
