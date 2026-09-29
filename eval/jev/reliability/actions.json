@@ -6,14 +6,14 @@
  "description": "Reliability PR 5's action fixtures, written without reference to `eval/jev/actions.json`: twelve per decision point (`work.start`, `specs.check`, `loop.fix`), six calibration and six held out, split by the SHA-256 of the fixture id within each label. Each carries the fields `compare.offered_and_state` reads at its point and the candidate a careful operator would pick: a spec that names its change is dispatched, one that depends on a rule or decision it does not cite gathers evidence first, a goal with no acceptance criterion of its own asks (`clarify`, offered only then); a check is chosen when it examines the changed files; a finding that rests on a rule or decision, or was disputed the round before, gathers context.",
  "labels": {
   "author": "model-drafted (claude-opus-5-5, reliability PR 5)",
-  "reviewed_by": null,
-  "reviewed_at": null,
+  "reviewed_by": "gpt-6-sol",
+  "reviewed_at": "2026-09-29",
   "reviews": {
    "r1": {
-    "kind": null,
-    "by": null,
-    "at": null,
-    "note": "Not reviewed yet; decision results on these labels are provisional."
+    "kind": "model",
+    "by": "gpt-6-sol",
+    "at": "2026-09-29",
+    "note": "A model review at the repository owner's direction; gpt-6-sol's round 3 read every fixture and found nothing to change."
    }
   }
  },

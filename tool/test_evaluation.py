@@ -357,7 +357,7 @@ def test_the_report_keys_runs_by_kind_and_refuses_mixed_measurements(faulted, tm
     verdicts = {g["id"]: g["verdict"] for g in got["gates"]}
     # Only the failure family ran: the routing cohort lacks its rows, the answer run is missing.
     assert verdicts["analysis_routing"] == verdicts["answer_support"] == verdicts["action_loop_fix"] == "not_measured"
-    assert got["failure"]["passed"] == 12 and got["labels_reviewed"] is False
+    assert got["failure"]["passed"] == 12 and got["labels_reviewed"] and got["reviewers"] == ["gpt-6-sol"]
 
 
 def cohort_rows(fresh, spoil=None):
