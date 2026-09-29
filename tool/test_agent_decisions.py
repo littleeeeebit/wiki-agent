@@ -269,6 +269,20 @@ def test_a_replay_decides_again_from_the_record_and_runs_nothing(jev):
     assert len(stand_in.states) == asked, "a replay sends nothing"
 
 
+def test_a_choice_jev_is_unsure_of_is_the_host_s_and_replays_as_recorded(jev, tmp_path, monkeypatch):
+    # Reliability PR 5, v2: an uncertain action goes to the host model, and the record says whose pick it was.
+    stand_in = jev(**{"loop.fix": lambda state, budget: sure("send", stand_in.questions[-1], confidence=0.4)})
+    env = tmp_path / "jev.env"
+    env.write_text(env.read_text(encoding="utf-8") + "WIKI_JEV_FALLBACK=host\n", encoding="utf-8")
+    monkeypatch.setattr(decisions.knowledge, "host_decides", lambda state, questions, stage, cancel=None: {
+        "answers": {"action": "look"}, "model": "host-model", "cost_usd": 0.02, "elapsed_ms": 4})
+    record = chosen(stand_in).record
+    assert record["basis"] == "host" and record["predicted"] == record["selected"] == "look"
+    assert record["jev"]["answer"]["choice"] == "send", "Jev's own answer is kept"
+    assert record["jev"]["fallback_call"]["owner"] == "jev_fallback"
+    assert decisions.replay(record) == {"predicted": "look", "matches": True}
+
+
 def test_the_evidence_a_turn_carries_keeps_both_sides_and_drops_the_redirect():
     text, ids = decisions.attached(DOSSIER)
     assert ids == ["c1", "c2"], "two competing sources both go; the passage addressing the agent does not"

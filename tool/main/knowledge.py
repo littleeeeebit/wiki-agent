@@ -303,7 +303,9 @@ def behavior() -> dict:
               "grounding": tracing.digest([VERIFICATION_VERSION, read(DRAFT_PROMPT), read(ANALYSIS_PROMPT)]),
               "normalization": translate.version(),
               "graph_extraction": tracing.digest([read(GRAPH_PROMPT), knowledge_graph.POLICY,
-                                                  knowledge_graph.STRUCTURE])}
+                                                  knowledge_graph.STRUCTURE]),
+              # Who settles what Jev leaves uncertain, and what it is told (reliability PR 5, v2).
+              "fallback": tracing.digest([fallback_mode(), read(FALLBACK_PROMPT), FALLBACK_SECONDS])}
     return {"hashes": hashes, "digest": tracing.digest(hashes)}
 
 
@@ -367,12 +369,14 @@ class TapeEnd(Exception):
 class Tape:
     """What a run read from outside, lane by lane, in order: the English
     (`normalize`), the question's split (`split`), each decision's answers
-    (`decisions`), each retrieval round (`rounds`) and each look at the
+    (`decisions`), each host turn that settled what Jev left uncertain
+    (`fallback`), each retrieval round (`rounds`) and each look at the
     clock (`clock`). Recorded, it
     lets `replay` run the same code on the same inputs; its chunks hold
-    source text, so it is written only where somebody asks."""
+    source text, so it is written only where somebody asks. Whether a run had
+    a fallback is one of its `inputs`; a tape from before it had none."""
 
-    LANES = ("normalize", "split", "decisions", "rounds", "clock")
+    LANES = ("normalize", "split", "decisions", "fallback", "rounds", "clock")
 
     def __init__(self, data: dict | None = None):
         self.data = {lane: list((data or {}).get(lane, [])) for lane in self.LANES}
@@ -421,8 +425,10 @@ class Flow:
                  evaluate=None, normalize=None, divide=None, first=None, mend=None,
                  cache: decision.Cache | None = None, required: bool = False,
                  external: bool = False, tape: Tape | None = None, replay: Tape | None = None, emit=None,
-                 audiences: list[str] | None = None, cause: dict | None = None):
+                 audiences: list[str] | None = None, cause: dict | None = None, fallback: bool = False):
         self.emit = emit
+        # Whether what Jev leaves uncertain goes to the host model (`host_decides`, through `outside`).
+        self.fallback = fallback
         # The admitted action that required this retrieval (`prepare`'s `cause`), if one did.
         self.cause = cause
         # The audience scope a caller chose (reliability PR 3): every round of the run keeps it in `filters`.
@@ -488,6 +494,12 @@ class Flow:
             self.tape.keep(lane, {"value": value, "calls": used["calls"] - before["calls"],
                                   "tokens": used["tokens"] - before["tokens"]})
         return value
+
+    def host(self, state: dict, questions: dict, stage: str) -> dict:
+        """The host model's word on what Jev left uncertain (`host_decides`),
+        through `outside`: recorded on the tape, read back by a replay."""
+
+        return self.outside("fallback", lambda: host_decides(state, questions, stage, self.budget.cancel))
 
     def time_for(self, seconds: float) -> bool:
         """Whether the run is live and `seconds` more still fit before its deadline."""
@@ -562,8 +574,11 @@ class Flow:
 
         # A replay reads every decision from the tape, the cached ones too.
         res = decision.checked(req, decision.decide(req, evaluate, self.budget, trace, self.pol,
-                                                    None if self.replay is not None else self.cache))
+                                                    None if self.replay is not None else self.cache,
+                                                    self.host if self.fallback else None))
         if record := tracing.jev_call(req, {**res, "cached": True} if replayed.get("cached") else res):
+            self.called(record)
+        if record := tracing.fallback_call(req, res):
             self.called(record)
         if res["cached"] and self.tape is not None:
             self.tape.keep("decisions", {"value": {"answers": res["answers"], "model": res["model"],
@@ -574,7 +589,8 @@ class Flow:
             "questions": {n: {"decision": q["decision"], "candidate": q["candidate"]}
                           for n, q in questions.items()},
             **{name: res[name] for name in ("status", "reason_code", "answers", "verdicts",
-                                            "selected_candidate_ids", "model", "usage", "elapsed_ms", "cached")}})
+                                            "selected_candidate_ids", "model", "usage", "elapsed_ms", "cached",
+                                            "fallback")}})
         # A cancel heard, or the deadline passed, while the answer came back ends
         # the run before anything acts on it. One read of the clock lane, as before.
         if res["status"] in ("decided", "uncertain"):
@@ -948,7 +964,8 @@ class Flow:
         if req["round"] >= retrieval.MAX_ROUNDS:
             self.go("partial", "rounds", missing=missing)
             return None
-        chosen = res["answers"]["repair"]["choice"] if res and res.get("verdicts", {}).get("repair") == "yes" else None
+        chosen = (decision.final(res, "repair")["choice"] if res and res.get("verdicts", {}).get("repair") == "yes"
+                  else None)
         order = ([chosen] if chosen in options else []) + [n for n in REPAIR_ORDER if n in options and n != chosen]
         if not order:
             self.go("partial", "no_repair", missing=missing)
@@ -1090,7 +1107,8 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     tape = Tape() if record else None
     inputs = {"query": query, "brief": brief, "k": k, "omitted": omitted, "available": available(root, cfg.disabled),
               "repo_id": evidence.repo_id(root or HUB), "graph": graph_enabled(), "model": cfg.model,
-              "live": live, "external": external, "required": require, "audiences": audiences, "cause": cause}
+              "live": live, "external": external, "required": require, "audiences": audiences, "cause": cause,
+              "fallback": falls_back(cfg)}
     flow = Flow(**inputs, budget=budget, pol=pol, cache=cache if live else None, tape=tape,
                 emit=run.step if run is not None else None,
                 evaluate=watched(run, "jev", functools.partial(decision.evaluate, cfg)),
@@ -1239,6 +1257,72 @@ def degraded() -> str:
         else "withhold"
 
 
+FALLBACK_PROMPT = "jev-fallback.md"
+# A host turn starts a CLI and answers once: its own allowance, apart from Jev's, as a drafting turn has.
+FALLBACK_SECONDS = 60.0
+
+
+def fallback_mode() -> str:
+    """Who settles what Jev leaves uncertain, in active mode: `host` (the
+    default) asks the host model (`host_decides`); `off`, chosen in `.env`
+    with `WIKI_JEV_FALLBACK=off`, leaves it uncertain as before v2."""
+
+    try:
+        found = settings.entries(decision.env_file())
+    except (OSError, ValueError):
+        found = {}
+    return "off" if (settings.pick(found, "WIKI_JEV_FALLBACK")[0] or "").strip().lower() == "off" else "host"
+
+
+def falls_back(cfg: decision.Config) -> bool:
+    """Whether a run under `cfg` sends what Jev leaves uncertain to the host:
+    only an active run acts on Jev's verdicts, so only one spends a host turn."""
+
+    return cfg.mode == "active" and fallback_mode() == "host"
+
+
+def host_decides(state: dict, questions: dict, stage: str, cancel: threading.Event | None = None,
+                 model: str = "", seconds: float = FALLBACK_SECONDS) -> dict:
+    """The host model's word on the questions Jev left uncertain
+    (`decision.contract.Fallback`): `answers` by question name, and the
+    turn's model, cost and time. Never raises: a turn that fails, is
+    cancelled or runs out of `seconds` is an `error` with no answers."""
+
+    halt = threading.Event()
+    started = time.monotonic()
+
+    def watch() -> None:
+        # Ends once `halt` is set, by the deadline, a cancel, or the turn's end below.
+        while not halt.wait(0.1):
+            if time.monotonic() - started >= seconds or (cancel is not None and cancel.is_set()):
+                halt.set()
+
+    threading.Thread(target=watch, daemon=True).start()
+    payload = {"stage": stage, "state": state,
+               "questions": {name: {"type": q["type"], "question": q["instructions"],
+                                    **({"options": q["criteria"]} if "criteria" in q else {})}
+                             for name, q in questions.items()}}
+    out: dict = {"answers": {}, "model": model or "host", "cost_usd": 0.0}
+    turn = oneshot(FALLBACK_PROMPT, payload, model, halt=halt)
+    try:
+        for ev in turn:
+            if ev.kind == "error" or (ev.kind == "done" and ev.meta.get("error")):
+                raise RuntimeError("stopped" if halt.is_set() else ev.text or "the host turn failed")
+            if ev.kind == "done":
+                out.update(model=ev.meta.get("model") or out["model"], cost_usd=ev.meta.get("cost_usd") or 0.0)
+                got = parsed(ev.text)
+                said = got.get("answers") if isinstance(got, dict) else None
+                if not isinstance(said, dict):
+                    raise ValueError("no answers object")
+                out["answers"] = {n: v for n, v in said.items() if n in questions and isinstance(v, str)}
+    except Exception as error:  # noqa: BLE001 — a failed fallback settles nothing, and says why
+        out.update(answers={}, error=f"{type(error).__name__}: {error}"[:200])
+    finally:
+        turn.close()   # the session is closed here, on every way out, before the watcher ends
+        halt.set()
+    return {**out, "elapsed_ms": round((time.monotonic() - started) * 1000)}
+
+
 def cite(item: dict) -> str:
     """Where a piece of evidence is, as a reader opens it."""
 
@@ -1311,6 +1395,8 @@ class Grounding:
     def __init__(self, dossier: dict, cfg: decision.Config, cancel: threading.Event | None = None,
                  cache: decision.Cache | None = DECISIONS, evaluate=None, said: str = ""):
         self.cfg, self.cache = cfg, cache
+        # Whether what Jev leaves uncertain about a claim goes to the host model (`falls_back`).
+        self.fallback = falls_back(cfg)
         # What the conversation itself supplied — the question and its context: all a direct_text may restate.
         self.said = said
         self.cancel = cancel or threading.Event()
@@ -1327,8 +1413,9 @@ class Grounding:
         self.trace: list[dict] = []
         # Every Jev request's call record (`tracing.jev_call`), in order.
         self.called: list[dict] = []
-        # Claims Jev supported, by what they say and cite: a repair that keeps one is not asked about again.
-        self.supported: set[tuple] = set()
+        # Claims found supported, by what they say and cite, and who settled it (`jev` or `host`):
+        # a repair that keeps one is not asked about again, and keeps who settled it.
+        self.supported: dict[tuple, str] = {}
         self.rebase(dossier)
 
     def rebase(self, dossier: dict) -> None:
@@ -1513,10 +1600,13 @@ class Grounding:
             if check["state"] in ("pending", "waiting"):
                 if all(checks.get(p, {}).get("state") == "accepted" for p in claim["premises"]):
                     check["state"] = "accepted"
+                    # Resting on what the host settled is resting on the host.
+                    if any(checks.get(p, {}).get("by") == "host" for p in claim["premises"]):
+                        check["by"] = "host"
                 else:
                     check.update(state="unresolved", reason="premise_not_accepted")
             if check["state"] == "accepted" and claim["kind"] in FACTUAL:
-                self.supported.add(self.key(claim))
+                self.supported[self.key(claim)] = check.get("by", "jev")
         self.rejoin(claims, checks, gen)
         self.generations.append(gen)
         return gen
@@ -1552,17 +1642,32 @@ class Grounding:
                                allowed=named + list(decision.claims.ANSWERS), model=self.cfg.model,
                                prompt_version=decision.claims.VERSION, policy_version=self.pol.version,
                                normalization_version="claims", budget=budget, trace_id=self.run_id)
-        res = decision.checked(req, decision.decide(req, self.evaluate, budget, self.trace, self.pol, self.cache))
-        if record := tracing.jev_call(req, res, parent=self.run_id):
-            self.called.append(record)
-        self.spent(budget)
+        res = self.decided(req, budget)
         gen["rejoined"] = {"request_id": req["request_id"], "status": res["status"], "usage": res["usage"],
-                           "answers": res["answers"]}
+                           "answers": res["answers"], "fallback": res["fallback"]}
         if res["status"] not in ("decided", "uncertain"):
             return
         for rid, cids in again.items():
             asked[rid] = cids
-            gen["coverage"][f"set:{rid}"] = decision.claims.answered(self.pol, res["answers"][f"answers_set_{rid}"])
+            name = f"answers_set_{rid}"
+            gen["coverage"][f"set:{rid}"] = decision.claims.answered(self.pol, decision.final(res, name))
+            if decision.settled_by(res, name) == "host":
+                gen.setdefault("host", []).append(f"set:{rid}")
+
+    def decided(self, req: dict, budget: Budget) -> dict:
+        """`req`'s checked result, what Jev left uncertain settled by the host
+        model where the run falls back (`falls_back`), with both calls recorded."""
+
+        host = (lambda state, questions, stage: host_decides(state, questions, stage, self.cancel)) \
+            if self.fallback else None
+        res = decision.checked(req, decision.decide(req, self.evaluate, budget, self.trace, self.pol, self.cache,
+                                                    host))
+        for record in (tracing.jev_call(req, res, parent=self.run_id),
+                       tracing.fallback_call(req, res, parent=self.run_id)):
+            if record:
+                self.called.append(record)
+        self.spent(budget)
+        return res
 
     def key(self, claim: dict) -> tuple:
         return (claim["kind"], claim["text_en"], tuple(sorted(self.ids[e]["chunk_id"] for e in claim["evidence_ids"])),
@@ -1591,7 +1696,8 @@ class Grounding:
             if checks[cid]["state"] != "pending":
                 continue
             if claim["kind"] == "source_fact" and self.key(claim) in self.supported:
-                checks[cid].update(state="accepted", support="carried")
+                checks[cid].update(state="accepted", support="carried",
+                                   **({"by": "host"} if self.supported[self.key(claim)] == "host" else {}))
                 continue
             ids = self.passages(claims, cid)
             if len(ids) > MAX_SET:
@@ -1651,24 +1757,27 @@ class Grounding:
                                model=self.cfg.model, prompt_version=decision.claims.VERSION,
                                policy_version=self.pol.version, normalization_version="|".join(sorted(versions)),
                                budget=budget, trace_id=self.run_id)
-        res = decision.checked(req, decision.decide(req, self.evaluate, budget, self.trace, self.pol, self.cache))
-        if record := tracing.jev_call(req, res, parent=self.run_id):
-            self.called.append(record)
-        self.spent(budget)
+        res = self.decided(req, budget)
         gen["decision"] = {"request_id": req["request_id"], "policy": self.pol.record(),
                            **{k: res[k] for k in ("status", "reason_code", "answers", "verdicts", "model", "usage",
-                                                  "elapsed_ms", "cached")}}
+                                                  "elapsed_ms", "cached", "fallback")}}
+        host = [name for name in res["answers"] if decision.settled_by(res, name) == "host"]
         down = ("budget" if res["status"] in ("cancelled", "exhausted") else
                 None if res["status"] in ("decided", "uncertain") else "verification_unavailable")
         if down == "verification_unavailable":
             gen["unavailable"] = res["reason_code"] or res["status"]
         asked_as = {**{f"{cid}:{rid}": f"answers_{cid}_{rid}" for cid, rid in pairs},
                     **{f"set:{rid}": f"answers_set_{rid}" for rid in gen["sets"]}}
+        # What the host settled, not Jev: `published` says so of any answer that rests on it.
+        gen["host"] = [*gen.get("host", []), *(key for key, name in asked_as.items() if name in host)]
+        for cid in {n.removeprefix("relation_").removeprefix("faithful_") for n in host
+                    if n.startswith(("relation_", "faithful_"))}:
+            checks[cid]["by"] = "host"
         for key, name in asked_as.items():
             gen["coverage"][key] = ({"budget": "budget", "verification_unavailable": "unavailable"}.get(down)
-                                    or decision.claims.answered(self.pol, res["answers"][name]))
+                                    or decision.claims.answered(self.pol, decision.final(res, name)))
         for cid in bare:
-            got = down or decision.claims.faithful(self.pol, res["answers"][f"faithful_{cid}"])
+            got = down or decision.claims.faithful(self.pol, decision.final(res, f"faithful_{cid}"))
             checks[cid]["support"] = got if got in decision.claims.FAITHFUL else None
             if got != "faithful":   # a faithful one is settled with its premises, in `check`
                 checks[cid].update(state="rejected" if got in decision.claims.FAITHFUL else "unresolved",
@@ -1677,7 +1786,7 @@ class Grounding:
             if down:
                 checks[cid].update(state="unresolved", reason=down)
                 continue
-            outcome = decision.claims.outcome(self.pol, res["answers"][f"relation_{cid}"])
+            outcome = decision.claims.outcome(self.pol, decision.final(res, f"relation_{cid}"))
             checks[cid]["support"] = outcome
             if outcome == "supported":
                 continue   # settled with its premises, in `check`
@@ -1759,6 +1868,11 @@ class Grounding:
         answered = ({r for (_cid, r), got in said.items() if got == "answers"}
                     | {r for r, got in sets.items() if got == "answers"})
         touched = answered | {r for (_cid, r), got in said.items() if got == "partly"}
+        # The host model, not Jev, settled a shown claim or judged a part it answers: never Jev-verified.
+        settled = set(gen.get("host") or [])
+        host_checked = (any(checks[cid].get("by") == "host" for cid in shown)
+                        or any(f"{cid}:{r}" in settled for (cid, r), got in said.items() if got in ("answers", "partly"))
+                        or any(f"set:{r}" in settled for r in sets))
         missing = [] if gen.get("analysis") else [r for r in gen["requirements"] if r["id"] not in answered]
         body = (gen["draft"] or {}).get("body") if gen.get("analysis") else None
         status = ("unverified" if body else
@@ -1771,8 +1885,10 @@ class Grounding:
                                       None) or (f"draft:{gen['problem']}" if gen["problem"] else None))
         verified = {
             "schema_version": VERIFIED, "run_id": self.run_id, "status": status, "reason": reason,
-            "verified": not unavailable and not gen.get("analysis"), "degraded": baseline,
+            "verified": not unavailable and not gen.get("analysis") and not host_checked, "degraded": baseline,
+            "host_checked": host_checked,
             "claims": [{"claim_id": cid, "kind": claims[cid]["kind"], "text_en": claims[cid]["text_en"],
+                        "checked_by": checks[cid].get("by", "jev"),
                         "evidence_ids": [ids[e]["chunk_id"] for e in claims[cid]["evidence_ids"]],
                         "requirement_ids": claims[cid]["requirement_ids"], "premises": claims[cid]["premises"],
                         "support": ("supported" if checks[cid]["state"] == "accepted" and claims[cid]["kind"] in FACTUAL
@@ -1830,10 +1946,14 @@ def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict], body: str |
                      "established by the evidence.")
     elif v["status"] == "abstained":
         parts.append("No verified answer: the evidence found does not establish one.")
+    if v.get("host_checked"):
+        parts.append("Checked by the host model: where Jev was not confident, the model answering here judged "
+                     "the evidence instead. Statements marked (host-checked) rest on that judgment.")
+    host = {c["claim_id"] for c in v["claims"] if c.get("checked_by") == "host"}
     for cid, claim in claims.items():
         label = {"inference": "Inference: ", "recommendation": "Recommendation: "}.get(claim["kind"], "")
-        tail = cited(claim["evidence_ids"])
-        parts.append(f"{label}{claim['text_en'].strip()}{' ' + tail if tail else ''}")
+        tail = cited(claim["evidence_ids"]) + (" (host-checked)" if cid in host else "")
+        parts.append(f"{label}{claim['text_en'].strip()}{' ' + tail.strip() if tail.strip() else ''}")
     if v["conflicts"]:
         parts.append("Conflicts:\n" + "\n".join(
             f"- A drafted statement is contradicted by {' '.join(f'`{w}`' for w in c['evidence'])}; "
@@ -3490,6 +3610,9 @@ def observed(run: Run, d: dict, v: dict | None, outcome: str, reason: str | None
         doubtful = [u for u in v["uncertainty"] if u["reason"] == "uncertain"]
         if doubtful:
             notes.append({"code": "threshold_not_met", "claims": len(doubtful)})
+        if v.get("host_checked"):
+            notes.append({"code": "host_checked",
+                          "claims": sum(c.get("checked_by") == "host" for c in v["claims"])})
         if v["status"] == "verification_unavailable":
             notes.append({"code": "verification_unavailable", "reason": v["reason"]})
     if outcome in ("cancelled", "failed"):

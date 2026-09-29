@@ -302,13 +302,18 @@ def ask(point: str, options: dict[str, str], state: dict, cfg: decision.Config, 
     req = decision.request("action", state_en, question, allowed=list(options), model=cfg.model,
                            prompt_version=VERSION, policy_version=pol.version, normalization_version=version,
                            budget=budget)
-    res = decision.checked(req, decision.decide(req, transport(cfg), budget, [], pol))
+    # A doubt goes to the host model where the run falls back (`knowledge.falls_back`), and says so.
+    host = (lambda s, q, stage: knowledge.host_decides(s, q, stage, budget.cancel)) \
+        if knowledge.falls_back(cfg) else None
+    res = decision.checked(req, decision.decide(req, transport(cfg), budget, [], pol, None, host))
     picked = res["selected_candidate_ids"]
     return {"request_id": req["request_id"], "status": res["status"], "reason": res["reason_code"],
             "answer": res["answers"].get("action"), "verdict": res["verdicts"].get("action"),
             "choice": picked[0] if picked else None, "model": res["model"], "usage": res["usage"],
-            "elapsed_ms": res["elapsed_ms"],
-            "call": tracing.jev_call(req, res, state_revision=revision, retry_of=retry_of)}
+            "elapsed_ms": res["elapsed_ms"], "fallback": res["fallback"],
+            "by": decision.settled_by(res, "action") if "action" in res["answers"] else None,
+            "call": tracing.jev_call(req, res, state_revision=revision, retry_of=retry_of),
+            "fallback_call": tracing.fallback_call(req, res, state_revision=revision)}
 
 
 def propose(point: str, offered: list[dict], state: dict, owner: dict, *, cfg: decision.Config, budget: Budget,
@@ -330,7 +335,7 @@ def propose(point: str, offered: list[dict], state: dict, owner: dict, *, cfg: d
         except Exception as exc:  # noqa: BLE001 — a broken ask is no choice: the baseline runs
             jev = {**jev, "status": "unavailable", "reason": f"error:{type(exc).__name__}"}
     deferred = (jev["answer"] or {}).get("choice") == decision.DEFER
-    basis = ("jev" if jev["choice"] else "cancelled" if jev["status"] == "cancelled"
+    basis = ((jev.get("by") or "jev") if jev["choice"] else "cancelled" if jev["status"] == "cancelled"
              else "deferred" if deferred else jev["status"] if asked else "invalidated")
     predicted = jev["choice"]
     selected = None if basis == "cancelled" else predicted if cfg.mode == "active" and predicted else baseline
@@ -482,9 +487,12 @@ def replay(record: dict) -> dict:
     r, jev = record["policy"], record["jev"]
     pol = decision.Policy(r["version"], r["rules"], tuple(r["fitted"]), r["source"], r["problem"])
     picked = None
-    if jev["status"] in ("decided", "uncertain") and jev["answer"] is not None \
-            and decision.verdict(pol, "action", jev["answer"]) == "yes":
-        picked = jev["answer"]["choice"]
+    # What the host settled, where it did, as the recorded result keeps it.
+    answer = None if jev["answer"] is None else \
+        decision.final({"answers": {"action": jev["answer"]}, "fallback": jev.get("fallback")}, "action")
+    if jev["status"] in ("decided", "uncertain") and answer is not None \
+            and decision.verdict(pol, "action", answer) == "yes":
+        picked = answer["choice"]
     return {"predicted": picked, "matches": picked == record["predicted"]}
 
 
@@ -784,7 +792,8 @@ def recommend(repo: Path, items: list[dict]) -> list[dict]:
         pol = policy(cfg)
         jev = ask("specs.candidates", {cid: f"Candidate {cid} in the state." for cid in ids}, state, cfg, budget, pol)
         keep(log, {"schema_version": RECORD, "id": uuid.uuid4().hex, "ts": time.time(), "point": "specs.candidates",
-                   "occasion": "", "mode": cfg.mode, "basis": "jev" if jev["choice"] else jev["status"],
+                   "occasion": "", "mode": cfg.mode,
+                   "basis": (jev.get("by") or "jev") if jev["choice"] else jev["status"],
                    "baseline": ids[0], "offered": ids, "predicted": jev["choice"],
                    "selected": jev["choice"] if cfg.mode == "active" else None, "rejected": [], "proposal": None,
                    "jev": jev, "policy": pol.record(), "prompt_version": VERSION, "budget": budget.record()})
@@ -800,5 +809,5 @@ def recommend(repo: Path, items: list[dict]) -> list[dict]:
     if not jev["choice"]:
         return items
     at = ids.index(jev["choice"])
-    best = {**items[at], "recommended": {"confidence": jev["answer"]["confidence"]}}
+    best = {**items[at], "recommended": {"confidence": jev["answer"]["confidence"], "by": jev.get("by") or "jev"}}
     return [best, *items[:at], *items[at + 1:]]

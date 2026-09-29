@@ -426,6 +426,36 @@ def test_answer_gates_need_the_whole_cohort_and_an_analysis_is_never_verified(fr
     assert report.verification_report(rows, fresh)["violations"] == []
 
 
+def test_a_host_checked_answer_is_its_own_category_and_never_verified(fresh):
+    # Reliability PR 5, v2: what the host settled where Jev was unsure is published, never as Jev-verified.
+    fact = next(i["id"] for i in fresh["intents"] if i["verification"] == "verified")
+    rows = [{"key": "x", "intent": fact, "arm": "D", "rep": 0, "analysis": False, "direct": False,
+             "answer": {"status": "complete", "verified": False, "host_checked": True,
+                        "remembered": "host_checked:complete"}}]
+    checked = report.verification_report(rows, fresh)
+    assert checked["arms"]["D"]["categories"] == {"host_checked": 1} and checked["arms"]["D"]["matches"] == 0
+    assert checked["violations"] == []
+    for spoiled in ({"verified": True}, {"remembered": "verified:complete"}):
+        bad = [{**rows[0], "answer": {**rows[0]["answer"], **spoiled}}]
+        assert report.verification_report(bad, fresh)["violations"] == ["x"], spoiled
+
+
+def test_the_fallback_rate_is_counted_per_arm_and_kind_from_retrieval_and_the_answer():
+    route = {"route": {"asked": 2, "fell": 1, "settled": 1}}
+    rows = [{"arm": "D", "fallback": route, "answer": {"fallback": {"relation": {"asked": 3, "fell": 2,
+                                                                                  "settled": 1}}}},
+            {"arm": "D", "fallback": route},
+            {"arm": "A", "fallback": {}},
+            {"point": "work.start", "fallback": {"action": {"asked": 1, "fell": 1, "settled": 0}}}]
+    assert report.fallback_report(rows) == {
+        "D": {"route": {"asked": 4, "fell": 2, "settled": 2, "rate": 0.5},
+              "relation": {"asked": 3, "fell": 2, "settled": 1, "rate": 0.6667}},
+        "work.start": {"action": {"asked": 1, "fell": 1, "settled": 0, "rate": 1.0}}}
+    decided = [({"retrieve": "route", "analysis": "route"}, {"asked": ["retrieve"], "answers": {"retrieve": 0.0}}),
+               ({"retrieve": "route"}, None)]
+    assert compare.fallbacks(decided) == {"route": {"asked": 3, "fell": 1, "settled": 1}}
+
+
 def test_the_reliability_actions_read_their_own_fixtures(tmp_path, monkeypatch):
     env = tmp_path / "jev.env"
     env.write_text("TYPESAFE_API_KEY=test-key\nWIKI_JEV_MODE=active\n", encoding="utf-8")

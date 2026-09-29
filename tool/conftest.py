@@ -27,3 +27,6 @@ os.environ["JEV_ENV"] = os.path.join(_scratch, "absent-jev.env")
 for _name in ("TYPESAFE_API_KEY", "WIKI_JEV", "WIKI_JEV_MODE", "WIKI_JEV_MODEL", "WIKI_JEV_DEGRADED",
               "LANGFUSE_BASE_URL", "LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY"):
     os.environ.pop(_name, None)
+# An uncertain verdict in active mode would start a real host CLI (`knowledge.host_decides`):
+# a test that wants the fallback turns it on and stubs the host.
+os.environ["WIKI_JEV_FALLBACK"] = "off"

@@ -121,12 +121,12 @@ class World:
 
 
 def run(world, query="What did the team decide about the port?", k=8, budget=None, live=True, normalize=english,
-        available=SOURCES, external=False, tape=None, brief="", cache=None, divide=None):
+        available=SOURCES, external=False, tape=None, brief="", cache=None, divide=None, fallback=False):
     budget = budget or Budget(seconds=30, calls=6, candidates=40)
     flow = knowledge.Flow(query, brief, k, omitted=None, available=list(available), repo_id=REPO, graph=True,
                           model=MODEL, live=live, budget=budget, pol=POLICY, evaluate=world.evaluate,
                           normalize=normalize, divide=divide, first=world.first, mend=world.mend,
-                          external=external, tape=tape, cache=cache)
+                          external=external, tape=tape, cache=cache, fallback=fallback)
     return flow.run()
 
 
@@ -177,6 +177,144 @@ def test_every_outcome_has_its_own_status_and_none_is_a_negative(value, status, 
     if status not in ("decided", "uncertain"):
         assert res["answers"] == {} and res["verdicts"] == {} and res["selected_candidate_ids"] == []
     assert res["selected_candidate_ids"] == (["a"] if value == {"x": 0.95} else [])
+
+
+CHOSEN = {"c": {"decision": "repair", "candidate": None,
+                "question": decision.choice("Which?", {"a": "A", "b": "B", decision.DEFER: "none"})}}
+
+
+@pytest.mark.parametrize("jev, host, status, selected, settled", [
+    # Jev unsure, the host sure: its word decides, and the result says whose it was.
+    ({"x": 0.5}, {"x": "yes"}, "decided", ["a"], {"x": 1.0}),
+    ({"x": 0.5}, {"x": "no"}, "decided", [], {"x": 0.0}),
+    # The host unsure, silent or failing: still uncertain, never a no.
+    ({"x": 0.5}, {"x": "unsure"}, "uncertain", [], {}),
+    ({"x": 0.5}, {}, "uncertain", [], {}),
+    # A choice the host names must be an offered option, and a deferral settles nothing.
+    ({"c": {"choice": "a", "confidence": 0.4, "probabilities": {"a": 0.4, "b": 0.35, "defer": 0.25}}},
+     {"c": "b"}, "decided", ["b"], {"c": {"choice": "b", "confidence": 1.0,
+                                          "probabilities": {"a": 0.0, "b": 1.0, "defer": 0.0}}}),
+    ({"c": {"choice": "a", "confidence": 0.4, "probabilities": {"a": 0.4, "b": 0.35, "defer": 0.25}}},
+     {"c": "z"}, "uncertain", [], {}),
+    ({"c": {"choice": "a", "confidence": 0.4, "probabilities": {"a": 0.4, "b": 0.35, "defer": 0.25}}},
+     {"c": decision.DEFER}, "uncertain", [], {}),
+])
+def test_what_jev_leaves_uncertain_goes_to_the_host_once_and_stays_marked_as_the_host_s(jev, host, status,
+                                                                                       selected, settled):
+    asked = []
+
+    def fallback(state, questions, stage):
+        asked.append((state, list(questions), stage))
+        return {"answers": host, "model": "host-model", "cost_usd": 0.02, "elapsed_ms": 3}
+
+    request = req(CHOSEN if "c" in jev else None)
+    res = decision.checked(request, decision.decide(request, returning(jev), Budget(seconds=5, calls=2,
+                                                                                      candidates=0), [], POLICY,
+                                                    fallback=fallback))
+    assert asked == [({"q": "state"}, list(jev), "judge")]
+    assert (res["status"], res["selected_candidate_ids"]) == (status, selected)
+    assert res["answers"] == jev, "Jev's answers stay as they came"
+    assert res["fallback"]["answers"] == settled and res["fallback"]["asked"] == list(jev)
+    name = next(iter(jev))
+    assert decision.settled_by(res, name) == ("host" if settled else "jev")
+    assert decision.final(res, name) == (settled or jev)[name]
+
+
+def test_a_confident_answer_never_reaches_the_host():
+    request = req()
+    res = decision.decide(request, returning({"x": 0.95}), Budget(seconds=5, calls=2, candidates=0), [], POLICY,
+                          fallback=lambda *a: pytest.fail("asked the host about a sure answer"))
+    assert res["status"] == "decided" and res["fallback"] is None
+
+
+def test_an_uncertain_route_goes_to_the_host_and_its_word_replays_from_the_tape(monkeypatch):
+    # direct-02 held out: "What is 17 multiplied by 6?" was retrieved for and withheld, where A answered it.
+    calls = []
+    monkeypatch.setattr(knowledge, "host_decides",
+                        lambda state, questions, stage, cancel=None: calls.append(list(questions)) or
+                        {"answers": {"retrieve": "no"}, "model": "host-model", "cost_usd": 0.01, "elapsed_ms": 2})
+    world = World(answering(route=0.5), [])
+    tape = knowledge.Tape()
+    out = run(world, query="What is 17 multiplied by 6?", tape=tape, fallback=True)
+    assert calls == [["retrieve"]] and out["direct"] and path(out) == ["route", "ready"]
+    route = out["decisions"][0]
+    assert route["fallback"]["by"] == "host" and route["answers"]["retrieve"] == 0.5
+    assert [c["owner"] for c in out["calls"]] == ["jev", "jev_fallback"]
+    inputs = {"query": "What is 17 multiplied by 6?", "brief": "", "k": 8, "omitted": None, "available": SOURCES,
+              "repo_id": REPO, "graph": True, "model": MODEL, "live": True, "external": False}
+    recorded = {**json.loads(json.dumps(tape.data)), "limits": {"calls": 6, "candidates": 40, "tokens": None},
+                "policy": POLICY.record(), "prompt_version": knowledge.PROMPT_VERSION,
+                "inputs": {**inputs, "fallback": True}, "transitions": knowledge.steps(out)}
+    monkeypatch.setattr(knowledge, "host_decides", lambda *a, **k: pytest.fail("a replay asked the host"))
+    assert knowledge.replay(recorded)["matches"], "the host's word is read back from the tape"
+    # A tape from before the fallback names none: its uncertain route goes on to retrieve, as it did —
+    # to a round this tape never recorded, not to the host.
+    with pytest.raises(knowledge.TapeEnd, match="rounds"):
+        knowledge.replay({**recorded, "inputs": inputs, "fallback": []})
+
+
+def test_the_host_s_answer_is_read_only_for_the_questions_asked(monkeypatch):
+    from agent.chat_session import Event
+
+    def turn(prompt, payload, model, halt):
+        yield Event("done", '{"answers": {"x": "yes", "planted": "yes", "y": 1}}',
+                    {"cost_usd": 0.03, "model": "host-model"})
+
+    monkeypatch.setattr(knowledge, "oneshot", turn)
+    out = knowledge.host_decides({}, {"x": decision.noul("?"), "y": decision.noul("?")}, "route")
+    assert out["answers"] == {"x": "yes"} and out["cost_usd"] == 0.03 and out["model"] == "host-model"
+
+
+@pytest.mark.parametrize("seconds, cancelled", [(0.2, False), (60.0, True)])
+def test_a_host_turn_past_its_time_or_cancelled_is_stopped_closed_and_settles_nothing(monkeypatch, seconds,
+                                                                                      cancelled):
+    from agent.chat_session import Event
+
+    closed = []
+
+    def slow(prompt, payload, model, halt):
+        try:
+            assert halt.wait(5), "nothing stopped the turn"
+            yield Event("error", "stopped")
+        finally:
+            closed.append(True)
+
+    monkeypatch.setattr(knowledge, "oneshot", slow)
+    cancel = threading.Event()
+    if cancelled:
+        threading.Timer(0.2, cancel.set).start()
+    started = time.monotonic()
+    out = knowledge.host_decides({}, {"x": decision.noul("?")}, "route", cancel, seconds=seconds)
+    assert out["answers"] == {} and "stopped" in out["error"] and closed == [True]
+    assert time.monotonic() - started < 3
+
+
+def test_a_halted_oneshot_stops_its_own_session_and_closes_it(monkeypatch):
+    from agent import chat_session
+    from agent.chat_session import Event
+
+    made = []
+
+    class Session:
+        def __init__(self, *a, **k):
+            self.stopped, self.closed = threading.Event(), False
+            made.append(self)
+
+        def say(self, text, halt=None):
+            assert self.stopped.wait(5), "the halt never reached the session"
+            yield Event("error", "stopped")
+
+        def stop(self, halt):
+            self.stopped.set()
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(chat_session, "ChatSession", Session)
+    halt = threading.Event()
+    threading.Timer(0.1, halt.set).start()
+    events = list(chat_session.oneshot("jev-fallback.md", {}, halt=halt))
+    assert [e.kind for e in events] == ["error"] and made[0].stopped.is_set() and made[0].closed
 
 
 def test_a_result_is_used_only_for_its_own_request_and_candidates():

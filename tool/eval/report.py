@@ -343,19 +343,42 @@ def failure_report(rows: list[dict], data: dict, cohort: dict) -> dict:
 
 
 def category(row: dict) -> str | None:
-    """How a Jev arm's published answer was labelled: verified, direct, abstain, unverified analysis, unavailable."""
+    """How a Jev arm's published answer was labelled: verified, host-checked (the host model settled part
+    of it where Jev was not confident), direct, abstain, unverified analysis, unavailable."""
 
     status = (row.get("answer") or {}).get("status")
     return (None if status is None else "unavailable" if status == "verification_unavailable" else
             "unverified_analysis" if status == "unverified" else "abstain" if status == "abstained" else
+            "host_checked" if row["answer"].get("host_checked") else
             "direct" if row.get("direct") else "verified")
+
+
+def fallback_report(rows: list[dict]) -> dict:
+    """Per arm (an action's point) and decision kind, of the questions Jev
+    was asked: how many `fell` to the host model because Jev left them
+    uncertain, how many the host `settled`, and the fallback `rate` — what
+    Jev's tuning reads (reliability PR 5, v2)."""
+
+    out: dict = {}
+    for r in rows:
+        for counts in (r.get("fallback") or {}, (r.get("answer") or {}).get("fallback") or {}):
+            for kind, n in counts.items():
+                e = out.setdefault(r.get("arm") or r.get("point"), {}).setdefault(
+                    kind, {"asked": 0, "fell": 0, "settled": 0})
+                for k in e:
+                    e[k] += n.get(k, 0)
+    for kinds in out.values():
+        for e in kinds.values():
+            e["rate"] = round(e["fell"] / e["asked"], 4) if e["asked"] else None
+    return out
 
 
 def verification_report(rows: list[dict], data: dict) -> dict:
     """Per Jev arm, how answers were labelled — abstention and unverified
     analysis apart, so relabelling cannot pass for a quality gain — how often
-    that matches the intent's expected category, and every analysis that was
-    published or would be remembered as verified (an integrity violation)."""
+    that matches the intent's expected category, and every analysis or
+    host-checked answer that was published or would be remembered as
+    verified (an integrity violation)."""
 
     intents = {i["id"]: i for i in data["intents"]}
     out: dict = {"arms": {}, "violations": []}
@@ -371,7 +394,7 @@ def verification_report(rows: list[dict], data: dict) -> dict:
         if expected:
             e["labelled"] += 1
             e["matches"] += kind == expected
-        if (r.get("analysis") or a["status"] == "unverified") and (
+        if (r.get("analysis") or a["status"] == "unverified" or a.get("host_checked")) and (
                 a.get("verified") or str(a.get("remembered") or "").startswith("verified")):
             out["violations"].append(r["key"])
     for e in out["arms"].values():
@@ -548,6 +571,7 @@ def build(folders: list[Path]) -> dict:
             reviews.append(json.loads(path.read_text(encoding="utf-8"))["labels"])
             found["actions"] = actions_report(rows, gates)
             found["actions_split"] = run["options"]["split"]
+        found.setdefault("fallback", {})[name] = fallback_report(rows)
     # A quality result counts only on reviewed labels: the intents', and the fixtures' when decisions were measured.
     reviewed = all(labels["reviewed_by"] for labels in reviews)
     return {"schema": REPORT, "gates_id": gates.get("id", "gates"), "gates_version": gates["version"],
@@ -587,8 +611,14 @@ def markdown(report: dict) -> str:
         lines += [f"Failure and cancellation (operational): {failure['passed']} of {failure['cohort']} ended as "
                   f"expected, {failure['missing']} missing, {len(failure['failed'])} otherwise", ""]
     if verification := report.get("verification"):
-        lines += [f"Answer labels: {json.dumps(verification['arms'])}; analysis published or remembered as "
-                  f"verified: {len(verification['violations'])}", ""]
+        lines += [f"Answer labels: {json.dumps(verification['arms'])}; analysis or host-checked answer published "
+                  f"or remembered as verified: {len(verification['violations'])}", ""]
+    for run, arms in (report.get("fallback") or {}).items():
+        said = "; ".join(f"{arm} " + ", ".join(f"{kind} {e['fell']}/{e['asked']} (settled {e['settled']})"
+                                               for kind, e in sorted(kinds.items()))
+                         for arm, kinds in arms.items())
+        if said:
+            lines += [f"Host fallback ({run}), fell/asked per kind: {said}", ""]
     if fixed := report.get("fixed"):
         lines += [f"Fixed candidates ({fixed['rows']} requests, {fixed['failed']} failed): false rejection "
                   f"{fixed['false_rejection']['rate']} of {fixed['false_rejection']['denominator']}, false acceptance "

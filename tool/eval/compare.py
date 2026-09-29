@@ -286,6 +286,31 @@ def usage_of(d: dict) -> dict:
             "jev_tokens": sum(u.get("input_tokens", 0) + u.get("output_tokens", 0) for u in spent)}
 
 
+def fallbacks(decided) -> dict:
+    """Per decision kind, of the questions Jev was asked: how many were
+    `asked`, how many it left uncertain and `fell` to the host model, and
+    how many the host `settled` — the rate Jev's tuning reads (PR 5, v2).
+    `decided` is `(kinds, fallback)` pairs: each question's kind by name,
+    and the result's `fallback` record."""
+
+    out: dict[str, dict] = {}
+    for kinds, host in decided:
+        host = host or {}
+        for name, kind in kinds.items():
+            n = out.setdefault(kind, {"asked": 0, "fell": 0, "settled": 0})
+            n["asked"] += 1
+            n["fell"] += name in (host.get("asked") or [])
+            n["settled"] += name in (host.get("answers") or {})
+    return out
+
+
+def host_spent(records) -> tuple[float, int]:
+    """What the host fallbacks among `records` (results' `fallback`) cost, and how many turns they were."""
+
+    ran = [r for r in records if r]
+    return sum(r.get("cost_usd") or 0.0 for r in ran), len(ran)
+
+
 def breaches(budget: dict) -> list[str]:
     """Whatever a run spent beyond the allowance it was given."""
 
@@ -323,7 +348,9 @@ def dossier_row(d: dict, names: dict, label, allowed: set[str]) -> dict:
             "missing": d.get("missing", []),
             "leaks": [e["chunk_id"] for e in d["evidence"] if e.get("repo_id") not in allowed],
             "breaches": breaches(d["budget"]), "budget": d["budget"],
-            "transitions": [t["to"] for t in d.get("transitions", [])]}
+            "transitions": [t["to"] for t in d.get("transitions", [])],
+            "fallback": fallbacks(({n: q["decision"] for n, q in (x.get("questions") or {}).items()},
+                                   x.get("fallback")) for x in d.get("decisions", []))}
 
 
 def brief(d: dict) -> str:
@@ -371,20 +398,33 @@ def answered(unit: dict, d: dict, repo: Path, jev: bool, cfg: decision.Config, m
                 out = stop.value
                 break
         v = out["verified"]
-        held = {e["chunk_id"] for e in d["evidence"]}
+        gens = out["record"]["generations"]
+        judged = [g[k] for g in gens for k in ("decision", "rejoined") if g.get(k)]
+        usd, turns = host_spent(j.get("fallback") for j in judged)
         return {"status": v["status"], "reason": v["reason"], "text": out["text"],
                 # As published, and as a memory of this turn would label it (`memory.verification`).
-                "verified": v["verified"], "degraded": v["degraded"],
+                "verified": v["verified"], "degraded": v["degraded"], "host_checked": v.get("host_checked"),
                 "remembered": memory.verification({"role": "assistant", "verification": v}),
-                "host_usd": spent.get("cost_usd", 0.0), "host_turns": spent.get("turns", 0),
+                "host_usd": spent.get("cost_usd", 0.0) + usd, "host_turns": spent.get("turns", 0) + turns,
                 "elapsed_ms": round((time.monotonic() - started) * 1000),
                 "accepted": len(v["claims"]), "rejected": len(v["rejected"]),
-                "verify_usage": [g[k]["usage"] for g in out["record"]["generations"]
-                                 for k in ("decision", "rejoined") if g.get(k)],
-                # A published citation must name evidence the run held: anything else was invented.
-                "fabricated": [c["cite"] for c in v["citations"] if c["evidence_id"] not in held]}
+                "verify_usage": [j["usage"] for j in judged],
+                "fallback": fallbacks(({n: n.split("_", 1)[0] for n in j.get("answers") or {}}, j.get("fallback"))
+                                      for j in judged),
+                "fabricated": invented(v, gens)}
     finally:
         chat.close()
+
+
+def invented(v: dict, gens: list[dict]) -> list[str]:
+    """The published citations naming evidence the answer never held. What
+    it held is what each draft was given (`evidence_ids`): the retrieved
+    passages, the pasted material (`m1`, ...) and whatever a return to
+    retrieval found — not the dossier the answer began from (PR 5: that read
+    two citations of the user's own pasted text as invented)."""
+
+    held = {chunk for g in gens for chunk in (g.get("evidence_ids") or {}).values()}
+    return [c["cite"] for c in v["citations"] if c["evidence_id"] not in held]
 
 
 def graded(unit: dict, d: dict, text: str, data: dict, model: str) -> dict:
@@ -453,7 +493,9 @@ def run_arms(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict) 
                        "elapsed_ms": elapsed, **dossier_row(d, names, c.label, allowed)}
                 if fault:
                     row["fault"] = {"kind": fault["kind"], "phase": fault["phase"], "raised": raised}
-                cost = {**usage_of(d), "host_usd": 0.0, "host_turns": 0}
+                # The host turns retrieval's fallbacks took are host spending like an answer's.
+                usd, turns = host_spent(x.get("fallback") for x in d.get("decisions", []))
+                cost = {**usage_of(d), "host_usd": usd, "host_turns": turns}
                 # A faulted run is judged by where it ended; it is not answered.
                 if opts["level"] == "answer" and not fault:
                     try:
@@ -595,14 +637,16 @@ def run_actions(folder: Path, opts: dict, fixtures: dict, ceiling: Ceiling, run:
                     pass
         jev = record["jev"]
         usage = jev["usage"] or {}
+        usd, turns = host_spent([jev.get("fallback")])
         return {"key": unit["key"], "point": f["point"], "label": f["label"], "at": now(),
                 "offered": [c["id"] for c in offered], "status": jev["status"], "basis": record["basis"],
                 "choice": (jev["answer"] or {}).get("choice"), "confidence": (jev["answer"] or {}).get("confidence"),
                 "predicted": record["predicted"], "selected": record["selected"], "baseline": baseline,
                 "admitted": admitted, "violations": violations,
+                "fallback": fallbacks([({"action": "action"} if jev["answer"] else {}, jev.get("fallback"))]),
                 "cost": {"jev_requests": 1 if jev["status"] in ("decided", "uncertain") else 0,
                          "jev_tokens": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
-                         "host_usd": 0.0, "host_turns": 0}}
+                         "host_usd": usd, "host_turns": turns}}
 
     with tempfile.TemporaryDirectory(prefix="jev-actions-") as scratch, \
             patch.object(decisions, "LOGS", Path(scratch) / "actions"):
