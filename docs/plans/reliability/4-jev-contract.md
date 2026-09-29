@@ -153,7 +153,9 @@ read-only observability. PR 5 must evaluate the corrected current manifest.
   moment `_ask` sends. `decision.send` calls `dispatched()` once the
   transport has written the request whole; `decision.evaluate` then marks
   its trace entry `sent` and lists it — a busy slot, a failed lookup or a
-  cancel before that is no request. The arXiv repair's paper
+  cancel before that is no request. `decision.decide` carries `sent`, model
+  and usage onto every DecisionResult, failed ones included, and
+  `tracing.jev_call` returns no record for one never sent. The arXiv repair's paper
   grading is its own `grade` call, read from a trace the repair owns
   (`note.graded`), so a fetch abandoned after grading keeps it; one never
   sent is none. `add_papers` lists its own query translation there too when

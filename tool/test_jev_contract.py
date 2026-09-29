@@ -263,6 +263,26 @@ def test_a_jev_request_is_sent_only_once_the_transport_wrote_it(monkeypatch):
     assert asked(Budget(seconds=5, calls=2, candidates=0)) == [("invalid_response", True)] and len(written) == 1
 
 
+def test_a_failed_jev_decision_is_a_call_with_its_tokens_only_when_it_went_out(monkeypatch):
+    def send(key, body, seconds, cancel, dispatched):
+        dispatched()
+        return {"model": "jev-x", "usage": {"input_tokens": 20, "output_tokens": 2}, "answers": {}}
+
+    monkeypatch.setattr(decision, "send", send)
+
+    def route_calls(key):
+        cfg = decision.Config("active", MODEL, "file", key=key)
+        out = knowledge.Flow("What did the team decide about the port?", "", 8, omitted=None,
+                             available=["documents"], repo_id=REPO, graph=True, model=MODEL, live=True,
+                             budget=Budget(seconds=30, calls=6, candidates=40), pol=POLICY,
+                             evaluate=lambda *a: decision.evaluate(cfg, *a), normalize=english,
+                             first=World(answering(), [found([chunk("a")])]).first, mend=None).run()
+        return [(c["provider"], c["token_usage"], c["outcome"]) for c in out["calls"] if "route" in c["purpose"]]
+
+    assert route_calls(KEY) == [("jev", {"input": 20, "output": 2}, "invalid")]
+    assert route_calls("") == [], "no key: nothing went out"
+
+
 def test_a_draft_that_failed_or_was_stopped_is_still_a_call(tmp_path):
     run = knowledge.Run(tmp_path, "wiki", "q", decision.Config("active", MODEL, "file", key=KEY))
 
@@ -510,6 +530,23 @@ def test_a_source_record_changed_during_the_check_reads_stale(graph_world, monke
 
     def verify(graph, chunks):
         # Another process registers a source: the records move, the evidence store and the listing do not.
+        with sources.Records(sources.records_folder(repo)) as records, records.transaction() as db:
+            sources.Records.bump(db)
+        return real(graph, chunks)
+
+    monkeypatch.setattr(knowledge_graph, "verify", verify)
+    out = health(repo)
+    assert out["status"] == "stale" and out["reason"] == "store_changed", out
+
+
+def test_a_records_file_created_during_the_check_reads_stale(graph_world, monkeypatch):
+    hub, repo = graph_world
+    index_of(hub, repo).close()
+    for path in sources.records_folder(repo).glob("sources.sqlite3*"):
+        path.unlink()
+    real = knowledge_graph.verify
+
+    def verify(graph, chunks):
         with sources.Records(sources.records_folder(repo)) as records, records.transaction() as db:
             sources.Records.bump(db)
         return real(graph, chunks)

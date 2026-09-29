@@ -547,7 +547,8 @@ class Flow:
         # A replay reads every decision from the tape, the cached ones too.
         res = decision.checked(req, decision.decide(req, evaluate, self.budget, trace, self.pol,
                                                     None if self.replay is not None else self.cache))
-        self.called(tracing.jev_call(req, res))
+        if record := tracing.jev_call(req, res):
+            self.called(record)
         if res["cached"] and self.tape is not None:
             self.tape.keep("decisions", {"value": {"answers": res["answers"], "model": res["model"],
                                                    "usage": res["usage"]}, "calls": 0, "tokens": 0})
@@ -1529,7 +1530,8 @@ class Grounding:
                                prompt_version=decision.claims.VERSION, policy_version=self.pol.version,
                                normalization_version="claims", budget=budget, trace_id=self.run_id)
         res = decision.checked(req, decision.decide(req, self.evaluate, budget, self.trace, self.pol, self.cache))
-        self.called.append(tracing.jev_call(req, res, parent=self.run_id))
+        if record := tracing.jev_call(req, res, parent=self.run_id):
+            self.called.append(record)
         self.spent(budget)
         gen["rejoined"] = {"request_id": req["request_id"], "status": res["status"], "usage": res["usage"],
                            "answers": res["answers"]}
@@ -1627,7 +1629,8 @@ class Grounding:
                                policy_version=self.pol.version, normalization_version="|".join(sorted(versions)),
                                budget=budget, trace_id=self.run_id)
         res = decision.checked(req, decision.decide(req, self.evaluate, budget, self.trace, self.pol, self.cache))
-        self.called.append(tracing.jev_call(req, res, parent=self.run_id))
+        if record := tracing.jev_call(req, res, parent=self.run_id):
+            self.called.append(record)
         self.spent(budget)
         gen["decision"] = {"request_id": req["request_id"], "policy": self.pol.record(),
                            **{k: res[k] for k in ("status", "reason_code", "answers", "verdicts", "model", "usage",
@@ -2803,8 +2806,10 @@ def graph_health(project: str | Path | None) -> dict:
         drift = index.store.drift([resolved for _p, _r, resolved, _s in index.scan()])
         # And what was loaded compared last — the store, its graph and the source records: a
         # sync or a registered source meanwhile reads stale, not the new rows as healthy.
-        moved = (knowledge_graph.state(index.store) != before
-                 or f"{index.store.version()}/{index.records.version()}" != loaded)
+        # The records read afresh: opened absent, they are an in-memory stand-in that never sees a file appear.
+        with sources.Records(index.records.folder, readonly=True) as now:
+            records = now.version()
+        moved = knowledge_graph.state(index.store) != before or f"{index.store.version()}/{records}" != loaded
     finally:
         index.close()
     reason = ("store_changed" if moved else "graph_not_built_from_these_chunks" if built != loaded else

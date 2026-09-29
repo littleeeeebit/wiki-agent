@@ -106,7 +106,8 @@ def result(req: dict, status: str, reason: str = "", answers: dict | None = None
             "status": status, "answers": answers or {}, "verdicts": verdicts or {},
             "selected_candidate_ids": list(selected), "reason_code": reason,
             "model": call.get("model"), "policy_version": req["policy_version"], "usage": call.get("usage"),
-            "elapsed_ms": round(elapsed * 1000), "trace_id": req["trace_id"], "cached": cached}
+            "elapsed_ms": round(elapsed * 1000), "trace_id": req["trace_id"], "cached": cached,
+            "sent": bool(call.get("sent")) and not cached}
 
 
 def decide(req: dict, evaluate: Evaluate, budget: Budget, trace: list[dict], pol: Policy,
@@ -125,6 +126,14 @@ def decide(req: dict, evaluate: Evaluate, budget: Budget, trace: list[dict], pol
         answers, call = hit
     else:
         mark = len(trace)
+
+        def spent() -> dict:
+            # What the request cost, failed or not: sent once the transport wrote it
+            # (`evaluate`'s `sent`), or once a response reported usage.
+            entry = trace[mark] if len(trace) > mark else {}
+            return {"model": entry.get("model"), "usage": entry.get("usage"),
+                    "sent": bool(entry.get("sent") or entry.get("usage"))}
+
         try:
             answers = evaluate(req["state_en"], questions, trace, budget, req["decision_kind"])
         except (Cancelled, Exhausted, JevError) as exc:
@@ -132,12 +141,12 @@ def decide(req: dict, evaluate: Evaluate, budget: Budget, trace: list[dict], pol
             status = ("cancelled" if isinstance(exc, Cancelled) or reason == "cancelled"
                       else "exhausted" if isinstance(exc, Exhausted)
                       else "invalid" if reason in INVALID else "unavailable")
-            return result(req, status, str(exc) if isinstance(exc, Exhausted) else reason,
+            return result(req, status, str(exc) if isinstance(exc, Exhausted) else reason, call=spent(),
                           elapsed=time.monotonic() - started)
         except Exception as exc:  # noqa: BLE001 — a broken transport is no decision, never a negative one
-            return result(req, "unavailable", f"error:{type(exc).__name__}", elapsed=time.monotonic() - started)
-        entry = trace[mark] if len(trace) > mark else {}
-        call = {"model": entry.get("model"), "usage": entry.get("usage")}
+            return result(req, "unavailable", f"error:{type(exc).__name__}", call=spent(),
+                          elapsed=time.monotonic() - started)
+        call = spent()
     if not isinstance(answers, dict) or set(answers) != set(questions):
         return result(req, "invalid", "missing_or_unknown_answer", call=call, elapsed=time.monotonic() - started)
     if not all(shaped(questions[name], answers[name]) for name in questions):

@@ -180,11 +180,15 @@ def call(purposes, owner: str, provider: str | None, *, model: str | None = None
 
 
 def jev_call(req: dict, res: dict, *, parent: str | None = None, state_revision: str | None = None,
-             retry_of: str | None = None) -> dict:
+             retry_of: str | None = None) -> dict | None:
     """The call record of one DecisionRequest and its checked result: one
-    call, whatever number of questions it asked. Jev reports tokens, not money."""
+    call, whatever number of questions it asked, with the tokens a failed
+    one spent too. Jev reports tokens, not money. `None` for a request
+    that never went out (no key, no slot, stopped first): no call."""
 
     cached = bool(res.get("cached"))
+    if not cached and not res.get("sent"):
+        return None
     return call({PURPOSE_OF[q["decision"]] for q in req["questions"].values()}, "jev", "cache" if cached else "jev",
                 model=res.get("model") or req.get("model"), parent=parent,
                 sent={"state": req["state_en"], "questions": req["questions"]}, state_revision=state_revision,
