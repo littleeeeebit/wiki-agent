@@ -286,6 +286,19 @@ def usage_of(d: dict) -> dict:
             "jev_tokens": sum(u.get("input_tokens", 0) + u.get("output_tokens", 0) for u in spent)}
 
 
+def spent(*dossiers) -> dict:
+    """What a row's retrieval runs cost together: Jev's requests and tokens,
+    and the host turns its fallbacks took — host spending like an answer's.
+    A warm row's priming run is one of them: the batch's ceiling counts it."""
+
+    cost = {"jev_requests": 0, "jev_tokens": 0, "host_usd": 0.0, "host_turns": 0}
+    for d in filter(None, dossiers):
+        usd, turns = host_spent(x.get("fallback") for x in d.get("decisions", []))
+        for k, v in {**usage_of(d), "host_usd": usd, "host_turns": turns}.items():
+            cost[k] += v
+    return cost
+
+
 def fallbacks(decided) -> dict:
     """Per decision kind, of the questions Jev was asked: how many were
     `asked`, how many it left uncertain and `fell` to the host model, and
@@ -318,7 +331,8 @@ def breaches(budget: dict) -> list[str]:
     out = [n for n in ("calls", "candidates") if used[n] > limits[n]]
     if limits.get("tokens") is not None and used["tokens"] > limits["tokens"]:
         out.append("tokens")
-    if budget["elapsed_ms"] > limits["seconds"] * 1000:
+    # The host fallback's own time is not the run's (`Budget.aside`); latency still counts all of it.
+    if budget["elapsed_ms"] - budget.get("aside_ms", 0) > limits["seconds"] * 1000:
         out.append("deadline")
     return out
 
@@ -456,7 +470,8 @@ def run_arms(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict) 
     live = any(ARMS[a]["jev"] for a in opts["arms"])
     if live and (cfg.mode == "off" or not cfg.key):
         raise SystemExit(f"Jev is not configured: {cfg.status()}")
-    active = decision.Config("active", cfg.model, cfg.key_source, key=cfg.key)
+    # The fallback asks the model the answers are drafted with, never another provider.
+    active = decision.Config("active", cfg.model, cfg.key_source, key=cfg.key, host=opts["model"])
     off = decision.Config("off", cfg.model, cfg.key_source)
     units = arm_units(data, opts)
     with tempfile.TemporaryDirectory(prefix="jev-compare-") as scratch, dataset.corpus(data, Path(scratch)) as c:
@@ -482,9 +497,10 @@ def run_arms(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict) 
                 fault = unit["intent"].get("fault")
                 # A fault is reproduced on a request actually sent: never served from the cache.
                 cache_ = None if fault else cache
+                primed = None
                 with patch.object(knowledge, "graph_enabled", lambda: arm["graph"]), faulted(fault) as raised:
                     if opts["cache"] == "warm" and not fault:
-                        knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache_, k=opts["k"])
+                        primed = knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache_, k=opts["k"])
                     started = time.monotonic()
                     d = knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache_, k=opts["k"])
                     elapsed = round((time.monotonic() - started) * 1000)
@@ -493,9 +509,7 @@ def run_arms(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict) 
                        "elapsed_ms": elapsed, **dossier_row(d, names, c.label, allowed)}
                 if fault:
                     row["fault"] = {"kind": fault["kind"], "phase": fault["phase"], "raised": raised}
-                # The host turns retrieval's fallbacks took are host spending like an answer's.
-                usd, turns = host_spent(x.get("fallback") for x in d.get("decisions", []))
-                cost = {**usage_of(d), "host_usd": usd, "host_turns": turns}
+                cost = spent(primed, d)
                 # A faulted run is judged by where it ended; it is not answered.
                 if opts["level"] == "answer" and not fault:
                     try:

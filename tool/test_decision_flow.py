@@ -121,12 +121,12 @@ class World:
 
 
 def run(world, query="What did the team decide about the port?", k=8, budget=None, live=True, normalize=english,
-        available=SOURCES, external=False, tape=None, brief="", cache=None, divide=None, fallback=False):
+        available=SOURCES, external=False, tape=None, brief="", cache=None, divide=None, fallback=False, host=""):
     budget = budget or Budget(seconds=30, calls=6, candidates=40)
     flow = knowledge.Flow(query, brief, k, omitted=None, available=list(available), repo_id=REPO, graph=True,
                           model=MODEL, live=live, budget=budget, pol=POLICY, evaluate=world.evaluate,
                           normalize=normalize, divide=divide, first=world.first, mend=world.mend,
-                          external=external, tape=tape, cache=cache, fallback=fallback)
+                          external=external, tape=tape, cache=cache, fallback=fallback, host=host)
     return flow.run()
 
 
@@ -230,6 +230,10 @@ def test_the_host_s_turn_is_not_taken_from_jev_s_deadline():
 
     decision.decide(req(budget=budget), returning({"x": 0.5}), budget, [], POLICY, fallback=slow)
     assert budget.left() > 0.1
+    # The record keeps the host's time apart, so the operating ceiling reads the same allowance.
+    record = budget.record()
+    assert record["aside_ms"] >= 500 and record["elapsed_ms"] >= record["aside_ms"]
+    assert record["elapsed_ms"] - record["aside_ms"] < 300
 
 
 def test_a_confident_answer_never_reaches_the_host():
@@ -243,12 +247,13 @@ def test_an_uncertain_route_goes_to_the_host_and_its_word_replays_from_the_tape(
     # direct-02 held out: "What is 17 multiplied by 6?" was retrieved for and withheld, where A answered it.
     calls = []
     monkeypatch.setattr(knowledge, "host_decides",
-                        lambda state, questions, stage, cancel=None: calls.append(list(questions)) or
-                        {"answers": {"retrieve": "no"}, "model": "host-model", "cost_usd": 0.01, "elapsed_ms": 2})
+                        lambda state, questions, stage, cancel=None, model="": calls.append((list(questions), model))
+                        or {"answers": {"retrieve": "no"}, "model": "host-model", "cost_usd": 0.01, "elapsed_ms": 2})
     world = World(answering(route=0.5), [])
     tape = knowledge.Tape()
-    out = run(world, query="What is 17 multiplied by 6?", tape=tape, fallback=True)
-    assert calls == [["retrieve"]] and out["direct"] and path(out) == ["route", "ready"]
+    out = run(world, query="What is 17 multiplied by 6?", tape=tape, fallback=True, host="codex:gpt-6-sol")
+    # The model the run answers with settles it, not the default backend.
+    assert calls == [(["retrieve"], "codex:gpt-6-sol")] and out["direct"] and path(out) == ["route", "ready"]
     route = out["decisions"][0]
     assert route["fallback"]["by"] == "host" and route["answers"]["retrieve"] == 0.5
     assert [c["owner"] for c in out["calls"]] == ["jev", "jev_fallback"]

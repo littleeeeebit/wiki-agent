@@ -425,10 +425,12 @@ class Flow:
                  evaluate=None, normalize=None, divide=None, first=None, mend=None,
                  cache: decision.Cache | None = None, required: bool = False,
                  external: bool = False, tape: Tape | None = None, replay: Tape | None = None, emit=None,
-                 audiences: list[str] | None = None, cause: dict | None = None, fallback: bool = False):
+                 audiences: list[str] | None = None, cause: dict | None = None, fallback: bool = False,
+                 host: str = ""):
         self.emit = emit
-        # Whether what Jev leaves uncertain goes to the host model (`host_decides`, through `outside`).
-        self.fallback = fallback
+        # Whether what Jev leaves uncertain goes to the host model (`host_decides`, through `outside`),
+        # and which model that is (`decision.Config.host`); a replay reads its word off the tape instead.
+        self.fallback, self.host_model = fallback, host
         # The admitted action that required this retrieval (`prepare`'s `cause`), if one did.
         self.cause = cause
         # The audience scope a caller chose (reliability PR 3): every round of the run keeps it in `filters`.
@@ -499,7 +501,8 @@ class Flow:
         """The host model's word on what Jev left uncertain (`host_decides`),
         through `outside`: recorded on the tape, read back by a replay."""
 
-        return self.outside("fallback", lambda: host_decides(state, questions, stage, self.budget.cancel))
+        return self.outside("fallback", lambda: host_decides(state, questions, stage, self.budget.cancel,
+                                                             self.host_model))
 
     def time_for(self, seconds: float) -> bool:
         """Whether the run is live and `seconds` more still fit before its deadline."""
@@ -1109,7 +1112,7 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
               "repo_id": evidence.repo_id(root or HUB), "graph": graph_enabled(), "model": cfg.model,
               "live": live, "external": external, "required": require, "audiences": audiences, "cause": cause,
               "fallback": falls_back(cfg)}
-    flow = Flow(**inputs, budget=budget, pol=pol, cache=cache if live else None, tape=tape,
+    flow = Flow(**inputs, host=cfg.host, budget=budget, pol=pol, cache=cache if live else None, tape=tape,
                 emit=run.step if run is not None else None,
                 evaluate=watched(run, "jev", functools.partial(decision.evaluate, cfg)),
                 normalize=watched(run, "normalizing", functools.partial(english, project=project)),
@@ -1658,8 +1661,8 @@ class Grounding:
         """`req`'s checked result, what Jev left uncertain settled by the host
         model where the run falls back (`falls_back`), with both calls recorded."""
 
-        host = (lambda state, questions, stage: host_decides(state, questions, stage, self.cancel)) \
-            if self.fallback else None
+        host = (lambda state, questions, stage: host_decides(state, questions, stage, self.cancel,
+                                                             self.cfg.host)) if self.fallback else None
         res = decision.checked(req, decision.decide(req, self.evaluate, budget, self.trace, self.pol, self.cache,
                                                     host))
         for record in (tracing.jev_call(req, res, parent=self.run_id),

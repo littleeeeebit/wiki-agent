@@ -8,6 +8,7 @@ stays Korean.
 from __future__ import annotations
 
 import contextvars
+import dataclasses
 import datetime as dt
 from contextvars import ContextVar
 from urllib.parse import quote
@@ -701,7 +702,8 @@ def say(cid: str, body: Say) -> StreamingResponse:
         release = hold(_busy, _lock, cid, "이 초점의 답변을 생성하고 있습니다")
     try:
         repo = current_repo()
-        run = Run(repo, cid, text or "(후보 요청)", decision.config(repo))
+        # What Jev leaves uncertain goes to the model this conversation answers with.
+        run = Run(repo, cid, text or "(후보 요청)", dataclasses.replace(decision.config(repo), host=cfg["model"] or ""))
         # The thread reads the project this request was checked against.
         threading.Thread(target=contextvars.copy_context().run, args=(ask, cid, body, text, cfg, run, release),
                          daemon=True).start()

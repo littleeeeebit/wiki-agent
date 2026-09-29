@@ -100,6 +100,10 @@ class Config:
     limits: dict = field(default_factory=lambda: dict(QUESTION))
     active_projects: tuple[str, ...] = ()   # empty: active mode is active everywhere
     canary: bool = False   # active where it came from, shadow here: this checkout is not in `active_projects`
+    # The host model the run answers with (`ChatSession`'s `model`, `codex:` for Codex); what Jev leaves
+    # uncertain goes to it (`knowledge.host_decides`). Not a setting: whoever knows the run's model sets it
+    # with `dataclasses.replace`; empty is the default Claude backend.
+    host: str = ""
 
     def status(self) -> dict:
         """What may be shown or logged: no part of the key."""

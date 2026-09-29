@@ -274,9 +274,15 @@ def test_a_choice_jev_is_unsure_of_is_the_host_s_and_replays_as_recorded(jev, tm
     stand_in = jev(**{"loop.fix": lambda state, budget: sure("send", stand_in.questions[-1], confidence=0.4)})
     env = tmp_path / "jev.env"
     env.write_text(env.read_text(encoding="utf-8") + "WIKI_JEV_FALLBACK=host\n", encoding="utf-8")
-    monkeypatch.setattr(decisions.knowledge, "host_decides", lambda state, questions, stage, cancel=None: {
-        "answers": {"action": "look"}, "model": "host-model", "cost_usd": 0.02, "elapsed_ms": 4})
-    record = chosen(stand_in).record
+    models = []
+    monkeypatch.setattr(decisions.knowledge, "host_decides", lambda state, questions, stage, cancel=None, model="":
+                        models.append(model) or {"answers": {"action": "look"}, "model": "host-model",
+                                                 "cost_usd": 0.02, "elapsed_ms": 4})
+    # The worktree's own model settles it: the one the spec's cell runs on.
+    cfg = decisions.hosted(tmp_path, {"cell": {"model": "codex:gpt-6-sol"}})
+    record = decisions.choose("loop.fix", offer, lambda: {"task": "Fix the findings."}, owner, occasion="o1",
+                              baseline="send", log=("proj", "t"), cfg=cfg).record
+    assert models == ["codex:gpt-6-sol"]
     assert record["basis"] == "host" and record["predicted"] == record["selected"] == "look"
     assert record["jev"]["answer"]["choice"] == "send", "Jev's own answer is kept"
     assert record["jev"]["fallback_call"]["owner"] == "jev_fallback"

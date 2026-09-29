@@ -86,7 +86,7 @@ def run(manifest_path: Path, ids: tuple[str, ...], model: str) -> dict:
     cfg = decision.config()
     if cfg.mode == "off" or not cfg.key:
         raise SystemExit(f"Jev is not configured: {cfg.status()}")
-    active = decision.Config("active", cfg.model, cfg.key_source, key=cfg.key)
+    active = decision.Config("active", cfg.model, cfg.key_source, key=cfg.key, host=model)
     korean: list[str] = []
     real, decision.evaluate = watched(korean)
     rows = []

@@ -8,6 +8,7 @@ tests prove rejected text never reaches an SSE event, the conversation's
 history, a memory, or a specification's grounds.
 """
 
+import dataclasses
 import hashlib
 import json
 import re
@@ -148,7 +149,8 @@ def answer(d: dict, replies: list[str], judge: Judge, **kwargs):
         yield {"kind": "tool", "text": "Read docs/ports.md"}
         return replies.pop(0)
 
-    flow = knowledge.grounded("question", None, "", d, generate, CFG, cache=None, evaluate=judge, **kwargs)
+    cfg = kwargs.pop("cfg", CFG)
+    flow = knowledge.grounded("question", None, "", d, generate, cfg, cache=None, evaluate=judge, **kwargs)
     events = []
     while True:
         try:
@@ -192,17 +194,19 @@ def test_a_claim_jev_is_unsure_of_goes_to_the_host_and_is_never_called_verified(
     isolated.write_text(f"WIKI_JEV_FALLBACK={setting}\n", encoding="utf-8")
     asked = []
 
-    def host(state, questions, stage, cancel=None):
-        asked.append((stage, list(questions)))
+    def host(state, questions, stage, cancel=None, model=""):
+        asked.append((stage, list(questions), model))
         return {"answers": {n: host_says for n in questions}, "model": "host-model", "cost_usd": 0.01,
                 "elapsed_ms": 5}
 
     monkeypatch.setattr(knowledge, "host_decides", host)
     ports = item(tmp_path, "docs/ports.md", PORTS)
     out, _events, _messages = answer(dossier([ports]), [draft(claim("c1", "The search daemon listens on port 8791."))],
-                                     Judge(verdicts={"c1": ("supports", 0.5)}))
+                                     Judge(verdicts={"c1": ("supports", 0.5)}),
+                                     cfg=dataclasses.replace(CFG, host="codex:gpt-6-sol"))
     v, gen = out["verified"], out["record"]["generations"][0]
-    assert asked == ([] if setting == "off" else [("verify", ["relation_c1"])]), "only the uncertain question goes"
+    assert asked == ([] if setting == "off" else [("verify", ["relation_c1"], "codex:gpt-6-sol")]), \
+        "only the uncertain question goes, to the model the run answers with"
     assert v["status"] == status and v["host_checked"] is (host_says == "supports")
     assert gen["decision"]["answers"]["relation_c1"]["confidence"] == 0.5, "Jev's answer is kept as it came"
     if host_says == "supports":

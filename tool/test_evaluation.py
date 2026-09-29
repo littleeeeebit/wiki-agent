@@ -456,6 +456,27 @@ def test_the_fallback_rate_is_counted_per_arm_and_kind_from_retrieval_and_the_an
     assert compare.fallbacks(decided) == {"route": {"asked": 3, "fell": 1, "settled": 1}}
 
 
+def test_a_warm_row_s_priming_run_is_counted_toward_the_ceiling():
+    # A warm row asked the host twice at USD 0.60 each; the ceiling saw one, and a USD 1 batch ran on.
+    def ran(usd):
+        return {"decisions": [{"usage": {"input_tokens": 10, "output_tokens": 1},
+                               "fallback": {"by": "host", "cost_usd": usd}}]}
+
+    assert compare.spent(ran(0.6), ran(0.6)) == {"jev_requests": 2, "jev_tokens": 22, "host_usd": 1.2,
+                                                  "host_turns": 2}
+    assert compare.spent(None, ran(0.6))["host_turns"] == 1, "a cold row has no priming run"
+
+
+def test_the_host_s_own_time_is_not_a_deadline_breach():
+    limits = {"seconds": 15.0, "calls": 6, "candidates": 40, "tokens": None}
+    used = {"calls": 1, "candidates": 0, "tokens": 0}
+    assert compare.breaches({"limits": limits, "used": used, "elapsed_ms": 40_000, "aside_ms": 30_000}) == []
+    assert compare.breaches({"limits": limits, "used": used, "elapsed_ms": 40_000, "aside_ms": 20_000}) == \
+        ["deadline"]
+    assert compare.breaches({"limits": limits, "used": used, "elapsed_ms": 16_000}) == ["deadline"], \
+        "a record from before the fallback keeps its reading"
+
+
 def test_the_reliability_actions_read_their_own_fixtures(tmp_path, monkeypatch):
     env = tmp_path / "jev.env"
     env.write_text("TYPESAFE_API_KEY=test-key\nWIKI_JEV_MODE=active\n", encoding="utf-8")

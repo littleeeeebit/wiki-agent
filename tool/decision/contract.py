@@ -198,7 +198,7 @@ def decide(req: dict, evaluate: Evaluate, budget: Budget, trace: list[dict], pol
         began = time.monotonic()
         host = asked(fallback, req, doubt)
         # The host's turn has an allowance of its own, as a drafting turn has: Jev's deadline moves past it.
-        budget.deadline += time.monotonic() - began
+        budget.aside(time.monotonic() - began)
     for name, answer in (host or {}).get("answers", {}).items():
         verdicts[name] = verdict(pol, req["questions"][name]["decision"], answer)
     selected = []
