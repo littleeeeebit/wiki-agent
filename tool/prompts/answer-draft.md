@@ -48,8 +48,10 @@ docs/x.md" or "the 2026 record says". Code attaches each claim's citation
 from its `evidence_ids`, and the judge reads only the passages' text, not
 their file names. What the evidence does not say is not a claim either:
 leave its requirement in `unresolved_requirements`, and code reports it.
-`requirement_ids` names every requirement the claim answers, the whole
-question (`r0`) included.
+`requirement_ids` names every requirement the claim answers, using only the
+ids `requirements` lists below. They need not start at `r0`: a part of the
+question the user supplied rather than asked is material, not a
+requirement, and its id is gone.
 
 ## Rules
 
