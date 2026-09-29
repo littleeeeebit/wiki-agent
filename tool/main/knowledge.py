@@ -913,8 +913,9 @@ def merged(before: dict, results: list[dict | None]) -> dict:
     chunks = list({c["chunk_id"]: c for r in done for c in r["chunks"]}.values())
     return {**done[0], "chunks": chunks, "paths": [p for r in done for p in r["paths"]],
             "truncated": sorted({t for r in done for t in r["truncated"]}),
+            # Counted over the merged chunks: siblings may return the same one.
             "audiences": done[0].get("audiences") and {
-                **done[0]["audiences"], "unclassified": sum(r["audiences"]["unclassified"] for r in done)},
+                **done[0]["audiences"], "unclassified": sum(c.get("audiences") is None for c in chunks)},
             "seen_chunk_ids": list(dict.fromkeys(i for r in done for i in r["seen_chunk_ids"])),
             "spent": before["spent"] + sum(r["spent"] - before["spent"] for r in done)}
 
@@ -1740,7 +1741,9 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
         if how == "retrieve":
             yield {"progress": "retrieve"}
             budget = job.carried()
-            again = prepare(question, project, state, cfg=cfg, cache=cache, require=True, budget=budget, run=run)
+            # The same audience scope as the retrieval this answer was drafted from.
+            again = prepare(question, project, state, cfg=cfg, cache=cache, require=True, budget=budget, run=run,
+                            audiences=dossier.get("audiences"))
             job.spent(budget)
             job.rebase(again)
             if run is not None:

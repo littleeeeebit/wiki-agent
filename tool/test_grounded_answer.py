@@ -380,22 +380,24 @@ def test_a_direct_run_states_no_repository_fact_and_goes_back_to_retrieval(tmp_p
     ports = item(tmp_path, "docs/ports.md", PORTS)
     asked = []
 
-    def prepare(question, project, state, *, cfg, cache, require, budget, run=None):
-        asked.append((require, budget.limits["calls"]))
+    def prepare(question, project, state, *, cfg, cache, require, budget, run=None, audiences=None):
+        asked.append((require, budget.limits["calls"], audiences))
         budget.used["calls"] += 2
         return dossier([ports], calls_left=0)
 
     monkeypatch.setattr(knowledge, "prepare", prepare)
     hello = claim("c1", "Hello!", kind="direct_text", cites=(), reqs=("r0",))
     fact = claim("c2", "The search daemon listens on port 8791.", cites=("e1",), quotes=[])
-    d = {**dossier([], ["Hi, and which port does the daemon use?"], direct=True, calls_left=5)}
+    # Scoped to one audience (reliability PR 3): the return to retrieval keeps the scope.
+    d = {**dossier([], ["Hi, and which port does the daemon use?"], direct=True, calls_left=5),
+         "audiences": ["hooks"]}
     judge = Judge()
     out, events, messages = answer(d, [draft(hello, fact), draft(claim("c1", "The search daemon listens on port 8791."))],
                                    judge)
     first = out["record"]["generations"][0]["checks"]
     assert first["c2"]["reason"] == "direct_mode" and first["c1"]["state"] == "accepted"
     # The greeting's coverage took one call of five; retrieval ran on what was left.
-    assert asked == [(True, 4)], "retrieval was required, from what was left of the allowance"
+    assert asked == [(True, 4, ["hooks"])], "retrieval was required, in scope, from what was left of the allowance"
     assert "retrieve" in [e.get("progress") for e in events]
     assert "Retrieval has now run" in messages[1] and '"cite": "docs/ports.md:3"' in messages[1]
     assert out["verified"]["status"] == "complete" and len(judge.asked) == 2
@@ -415,7 +417,7 @@ def test_a_direct_run_that_leaves_the_fact_unresolved_also_goes_back_to_retrieva
     ports = item(tmp_path, "docs/ports.md", PORTS)
     asked = []
 
-    def prepare(question, project, state, *, cfg, cache, require, budget, run=None):
+    def prepare(question, project, state, *, cfg, cache, require, budget, run=None, audiences=None):
         asked.append(require)
         return dossier([ports], calls_left=0)
 
@@ -557,7 +559,7 @@ def test_a_direct_runs_invented_fact_sends_it_back_to_retrieval(tmp_path, monkey
     owners = item(tmp_path, "docs/owners.md", OWNERS)
     asked = []
 
-    def prepare(question, project, state, *, cfg, cache, require, budget, run=None):
+    def prepare(question, project, state, *, cfg, cache, require, budget, run=None, audiences=None):
         asked.append(require)
         return dossier([owners], ["Who owns the ingest pipeline?"], calls_left=0)
 

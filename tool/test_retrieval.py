@@ -913,6 +913,16 @@ def test_an_audience_filter_is_checked_and_kept_by_every_repair():
         assert requests and all(r["filters"] == {"audiences": ["jev"]} for r in requests), need
 
 
+def test_sibling_rounds_count_an_unclassified_chunk_they_both_returned_once():
+    # Review round 1 (P1): the siblings' counts were added, though their chunks are deduplicated.
+    before = {"spent": 0}
+    chunk = {"chunk_id": "a" * 64, "audiences": None}
+    sibling = {"chunks": [chunk], "paths": [], "truncated": [], "seen_chunk_ids": [chunk["chunk_id"]], "spent": 1,
+               "audiences": {"requested": ["jev"], "unclassified": 1}}
+    merged = knowledge.merged(before, [sibling, dict(sibling)])
+    assert len(merged["chunks"]) == 1 and merged["audiences"] == {"requested": ["jev"], "unclassified": 1}
+
+
 def test_prepare_carries_the_scope_into_its_rounds_and_refuses_an_unknown_one(world, monkeypatch):
     _hub, repo = world
     seen = []
