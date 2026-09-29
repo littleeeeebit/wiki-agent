@@ -943,14 +943,15 @@ class Flow:
             self.dossier["repairs"].append(out["note"])
             if need == "external" and "fetched" in out["note"]:
                 # The arXiv search, then Jev grading what it returned (`grade_papers`): two requests.
-                fetched = out["note"]["fetched"]
                 self.called(tracing.call("research", "code", "arxiv", sent=self.query_en,
-                                         outcome="ok" if fetched else "failed"))
-                for entry in (fetched or {}).get("trace") or []:
-                    if entry.get("stage") == "papers" and ("model" in entry or entry.get("error") not in NOT_SENT):
+                                         outcome="ok" if out["note"]["fetched"] else "failed"))
+                # Each grading request sent, finished or not when the fetch returned or was abandoned.
+                for entry in out["note"].get("graded") or []:
+                    if entry.get("sent"):
                         self.called(tracing.call("grade", "jev", "jev", model=entry.get("model"),
                                                  elapsed_ms=entry.get("elapsed_ms"), tokens=entry.get("usage"),
-                                                 outcome="failed" if "error" in entry else "ok"))
+                                                 outcome="failed" if "error" in entry else
+                                                 "ok" if "answers" in entry else "in_flight"))
             if not out["requests"]:
                 continue
             if need == "sources":
@@ -1147,8 +1148,6 @@ DRAFT = "answer-draft/1"
 VERIFIED = "verified-answer/1"
 # A host tool line that ran the search command (`query.SEARCH_NOTE`): retrieval again, by the host.
 HOST_SEARCH = re.compile(r"tool/search\b|jev_search")
-# Why `decision.evaluate` failed before sending anything: no request, no call.
-NOT_SENT = ("unsupported_question", "missing_api_key", "state_too_large", "budget")
 DRAFT_PROMPT = "answer-draft.md"
 ANALYSIS_PROMPT = "answer-analysis.md"
 CLAIM_KINDS = ("source_fact", "inference", "recommendation", "direct_text")
@@ -2118,9 +2117,10 @@ def add_url(project: str | Path | None, url: str, seconds: float = providers.SEC
 
 def add_papers(project: str | Path | None, query: str | None = None, ids: list[str] | None = None, n: int = 5,
                full: bool = False, cfg: decision.Config | None = None, budget: Budget | None = None,
-               gate: Gate | None = None) -> dict:
+               gate: Gate | None = None, trace: list | None = None) -> dict:
     """arXiv papers into `project`: a search, or identifiers. Inside a run,
-    `budget` is the run's, and grading spends from it; each paper's record
+    `budget` is the run's, and grading spends from it, its requests landing
+    in the caller's `trace` as they are sent; each paper's record
     is put through `gate`, which a caller that stops waiting closes
     (`bounded`), so no record arrives after it returned. What is read before
     the put — content kept by its hash — names no record until then.
@@ -2140,7 +2140,7 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
         asked = english([query], QUERY_SECONDS)[0]
         query = asked["text"] if asked["status"] in ("original_english", "translated") else query
     entries = providers.arxiv(query, ids, n)
-    grades, trace = grade_papers(query, entries, cfg, budget) if query else ({}, [])
+    grades, trace = grade_papers(query, entries, cfg, budget, trace) if query else ({}, [] if trace is None else trace)
     acting = cfg.mode == "active"
     # A grade the usefulness policy calls no: kept as discovered, not indexed.
     not_relevant = decision.policy(cfg.model).rules["useful"]["no"]
@@ -2186,12 +2186,13 @@ def add_papers(project: str | Path | None, query: str | None = None, ids: list[s
 
 
 def grade_papers(query: str, entries: list[dict], cfg: decision.Config,
-                 budget: Budget | None = None) -> tuple[dict[int, float], list]:
+                 budget: Budget | None = None, trace: list | None = None) -> tuple[dict[int, float], list]:
     """Jev's relevance of each abstract to the query, to decide what to read.
     `{}` when Jev is off or fails: every paper is then read. `budget` is the
-    run's, when there is one; alone, a question's allowance of its own."""
+    run's, when there is one; alone, a question's allowance of its own.
+    `trace`, the caller's, takes the request as it is sent."""
 
-    trace: list[dict] = []
+    trace = [] if trace is None else trace
     if cfg.mode == "off" or not entries:
         return {}, trace
     state = {"query": query, "papers": [{"id": str(i), "title": e["title"], "abstract": e["summary"][:2000]}
@@ -2786,10 +2787,11 @@ def graph_health(project: str | Path | None) -> dict:
         report = knowledge_graph.verify(index.graph, index.chunks)
         with index.store.lock:
             active = knowledge_graph.meta(index.store.db, "graph_active")
-        moved = knowledge_graph.state(index.store) != before
         loaded = index.loaded
-        # Listed again, last: a file that came or changed while checking reads stale.
+        # Listed again after the checks: a file that came or changed while checking reads stale.
         drift = index.store.drift([resolved for _p, _r, resolved, _s in index.scan()])
+        # And the store compared last: a sync meanwhile reads stale, not the new rows as healthy.
+        moved = knowledge_graph.state(index.store) != before
     finally:
         index.close()
     reason = ("store_changed" if moved else "graph_not_built_from_these_chunks" if built != loaded else
@@ -2938,9 +2940,13 @@ def repair(req: dict, result: dict, need: str, project: str | Path | None, *, bu
         if not external:
             return {"note": {"need": need, "skipped": "external_not_allowed"}, "requests": [], "results": []}
         gate = Gate()
+        graded: list[dict] = []
         note["fetched"] = bounded(lambda: add_papers(project, req["query_en"] or req["query_original"],
-                                                     n=REPAIR_PAPERS, cfg=cfg, budget=budget, gate=gate),
+                                                     n=REPAIR_PAPERS, cfg=cfg, budget=budget, gate=gate,
+                                                     trace=graded),
                                   budget, gate)
+        # Jev's grading requests as they stand now, whether the fetch finished or was abandoned.
+        note["graded"] = [dict(e) for e in list(graded)]
     requests, made = retrieval.repair(req, result, need, sources=available(root, (cfg or decision.config()).disabled),
                                       subqueries=proposals,
                                       chunk_ids=list(chunk_ids), entities=entities)

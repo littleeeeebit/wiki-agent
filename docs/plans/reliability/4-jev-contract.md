@@ -150,9 +150,11 @@ read-only observability. PR 5 must evaluate the corrected current manifest.
   files the way `sync` would, against a listing taken after the checks.
 - A translation's call is its request: `translate.english` stamps each
   outcome with the id of the request that carried it (`request`), set the
-  moment `_ask` sends. The arXiv repair's paper grading is its own `grade`
-  call from `grade_papers`' trace; a Jev request that failed before sending
-  (`knowledge.NOT_SENT`) is none. A drafting turn is a call however it ends.
+  moment `_ask` sends. `decision.evaluate` marks its trace entry `sent` and
+  lists it the moment its request goes out. The arXiv repair's paper
+  grading is its own `grade` call, read from a trace the repair owns
+  (`note.graded`), so a fetch abandoned after grading keeps it; one never
+  sent is none. A drafting turn is a call however it ends.
 
 ### Graph snapshot, 2026-09-29
 

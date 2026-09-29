@@ -316,6 +316,7 @@ def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
 
     started = time.monotonic()
     entry = {"stage": stage, "model_requested": cfg.model}
+    listed = False
     try:
         if not questions or any(malformed(q) for q in questions.values()):
             raise JevError("unsupported_question")
@@ -326,7 +327,12 @@ def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
         if len(body) > MAX_BODY:
             raise JevError("state_too_large")
         budget = budget or Budget(**PROBE)
-        payload = send(cfg.key, body, budget.call(), budget.cancel)
+        seconds = budget.call()
+        # Sent from here on, billed or not: in `trace` already, so a caller
+        # that stops waiting still sees a request in flight.
+        entry["sent"] = listed = True
+        trace.append(entry)
+        payload = send(cfg.key, body, seconds, budget.cancel)
         model, usage, answers = payload.get("model"), payload.get("usage"), payload.get("answers")
         entry.update(model=model, usage=usage)
         # The responding model and the tokens spent are part of the answer:
@@ -347,7 +353,8 @@ def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
         raise
     finally:
         entry["elapsed_ms"] = round((time.monotonic() - started) * 1000)
-        trace.append(entry)
+        if not listed:
+            trace.append(entry)
 
 
 class Lookup(threading.Thread):

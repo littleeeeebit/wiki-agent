@@ -10,6 +10,7 @@ No credentials and no external calls: Jev and the rounds are the fakes of
 
 import json
 import sqlite3
+import time
 
 import pytest
 
@@ -150,29 +151,47 @@ def test_normalization_is_one_call_per_translator_request_and_none_for_what_was_
     assert len(sent) == 3
 
 
-def test_an_external_repair_is_the_arxiv_search_and_a_separate_grading_call(monkeypatch):
+def test_an_external_repair_keeps_each_grading_request_sent_even_when_the_fetch_is_abandoned(graph_world,
+                                                                                            monkeypatch):
+    _hub, repo = graph_world
+    from search import providers
+
+    paper = {"arxiv_id": "2401.00001", "version": "v1", "title": "Rotas", "authors": ["A"],
+             "published": "2024-01-01", "summary": "On-call rotas.", "abs_url": "https://arxiv.org/abs/2401.00001v1",
+             "pdf_url": "https://arxiv.org/pdf/2401.00001v1"}
+    monkeypatch.setattr(providers, "arxiv", lambda query=None, ids=None, n=5, seconds=0: [paper])
+    sent = []
     # Jev answers the grading with tokens spent and nothing usable: sent, billed, failed.
-    monkeypatch.setattr(decision, "send", lambda key, body, seconds, cancel:
+    monkeypatch.setattr(decision, "send", lambda key, body, seconds, cancel: sent.append(body) or
                         {"model": "jev-grader", "usage": {"input_tokens": 20, "output_tokens": 2}, "answers": {}})
-    papers = [{"title": "Rotas", "summary": "On-call rotas."}]
+    real_policy = decision.policy
+
+    def slow_policy(*a, **k):   # the papers are still being read when the repair's time runs out
+        time.sleep(1.0)
+        return real_policy(*a, **k)
+
+    monkeypatch.setattr(decision, "policy", slow_policy)
+    cfg = decision.Config("active", MODEL, "file", key=KEY)
 
     class Researching(World):
         def mend(self, req, result, need, ids):
             if need != "external":
                 return super().mend(req, result, need, ids)
-            trace = []
-            for key in ("k", ""):   # the second has no key: never sent
-                trace += knowledge.grade_papers("port", papers, decision.Config("active", MODEL, "file", key=key))[1]
-            return {"note": {"need": need, "fetched": {"query": "port", "trace": trace, "papers": []}},
-                    "requests": [], "results": []}
+            out = knowledge.repair(req, result, need, repo, budget=Budget(seconds=0.4, calls=6, candidates=40),
+                                   cfg=cfg, external=True)
+            cancelled = Budget(seconds=5, calls=6, candidates=40)
+            cancelled.cancel.set()
+            # A grading stopped before its request went out: no call.
+            knowledge.grade_papers("port", [paper], cfg, cancelled, out["note"]["graded"])
+            return {"note": out["note"], "requests": [], "results": []}
 
     out = flow(Researching(answering(coverage=0.1), [found([chunk("port")])]), available=["documents"],
                external=True)
     research = [(c["purpose"], c["provider"], c["model"], c["token_usage"], c["outcome"]) for c in out["calls"]
                 if c["purpose"] in (["research"], ["grade"])]
-    assert research == [(["research"], "arxiv", None, None, "ok"),
+    assert research == [(["research"], "arxiv", None, None, "failed"),
                         (["grade"], "jev", "jev-grader", {"input": 20, "output": 2}, "failed")]
-    assert tracing.totals(out["calls"])["tokens"]["input"] >= 20
+    assert len(sent) == 1
 
 
 def test_a_draft_that_failed_or_was_stopped_is_still_a_call(tmp_path):
@@ -379,6 +398,23 @@ def test_a_file_added_during_the_check_reads_stale(graph_world, monkeypatch):
     monkeypatch.setattr(knowledge_graph, "verify", verify)
     out = health(repo)
     assert out["status"] == "stale" and out["counts"]["sources_added"] == 1, out
+
+
+def test_a_sync_during_the_final_listing_reads_stale(graph_world, monkeypatch):
+    hub, repo = graph_world
+    index_of(hub, repo).close()
+    real, scans = searchd.Index.scan, []
+
+    def scan(self):
+        scans.append(self)
+        if len(scans) == 2:   # health's listing after its checks: another process syncs an edit now
+            bump(repo / "docs/ports.md", "# Ports\n\nThe daemon listens on 9000.\n")
+            index_of(hub, repo).close()
+        return real(self)
+
+    monkeypatch.setattr(searchd.Index, "scan", scan)
+    out = health(repo)
+    assert out["status"] == "stale" and out["reason"] == "store_changed", out
 
 
 def test_zero_edges_is_empty_not_healthy(graph_world):
