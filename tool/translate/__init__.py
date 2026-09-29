@@ -45,7 +45,7 @@ from pathlib import Path
 from common import settings
 
 __all__ = ("translate", "english", "parts", "retire", "usage", "glossary", "KO_EN", "EN_KO", "checked", "added",
-           "api_key", "HANGUL_WORD", "version")
+           "api_key", "HANGUL_WORD", "version", "MODEL", "watching")
 
 HERE = Path(__file__).resolve().parents[1]  # `tool/`
 ROOT = HERE.parent
