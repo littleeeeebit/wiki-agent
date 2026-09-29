@@ -135,9 +135,6 @@ def summarized(state: str, repo: Path | None) -> tuple[str, dict | None]:
 
 DOSSIER = "jev-dossier/2"
 TERMINAL = ("ready", "partial", "unavailable", "cancelled", "exhausted")
-# The prototype's statuses, as the stored dossiers of earlier turns have them.
-LEGACY = {"direct": ("ready", True), "supported": ("ready", False), "insufficient": ("partial", False),
-          "fallback": ("unavailable", False)}
 # Jev requests no optional repair may spend: stage 7 verifies the answer with them.
 RESERVE = 1
 MAX_K = 12
@@ -1010,19 +1007,6 @@ def replay(tape: dict) -> dict:
     again = steps(dossier)
     return {"matches": again == tape["transitions"], "prompt_changed": tape["prompt_version"] != PROMPT_VERSION,
             "transitions": again, "recorded": tape["transitions"], "dossier": dossier}
-
-
-def migrated(dossier: dict) -> dict:
-    """A stored dossier in the current shape. The prototype's statuses —
-    direct, supported, insufficient, fallback — become ready (direct),
-    ready, partial and unavailable; nothing else of it is rewritten."""
-
-    if dossier.get("schema_version") == DOSSIER or dossier.get("status") not in LEGACY:
-        return dossier
-    status, direct = LEGACY[dossier["status"]]
-    return {**dossier, "schema_version": DOSSIER, "status": status, "direct": direct,
-            "reason": dossier.get("reason") or f"migrated_from_{dossier['status']}",
-            "migrated_from": dossier["status"]}
 
 
 # ---- grounded answers (stage 7 of `docs/plans/jev/`) --------------------------------
@@ -2278,7 +2262,7 @@ def promote(project: str | Path, source: str, task: str | None = None) -> dict:
 def submitted(repo: Path, tree: Path, record: dict, name: str, commit: str) -> dict:
     """The promotion as a spec: the one `[시작]` would have made, already
     worked, its report the committed page. Then what a work turn's done
-    report gets (`specs.judge`, `specs.opened`): the gate again in the
+    report gets (`specs.rounded`, `specs.opened`): the checks again in the
     worktree, the push, the pull request. The review loop runs in the app:
     a pull request opened here waits with a fault that says so, which is
     what lets the app's pull request list take it into a loop."""
@@ -2304,8 +2288,12 @@ def submitted(repo: Path, tree: Path, record: dict, name: str, commit: str) -> d
     if not gate:
         specs.failed(run, spec, "연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
     else:
-        verdict = specs.judge(tree, gate, run.halt, lambda text: specs.note(run, text))
-        spec = specs.update(repo.name, spec["id"], gate=verdict)
+        # The round checks a new pull request gets (`specs._check`); the whole
+        # gate runs once a review allows its head (`loop.finalized`).
+        verdict, round_ = specs.rounded(repo, tree, spec, specs.local_base(spec, tree), run.halt,
+                                        lambda text: specs.note(run, text))
+        specs.update(repo.name, spec["id"], gate=verdict)
+        spec = specs.validate(repo.name, spec["id"], round=round_)
         if not verdict["ok"]:
             specs.failed(run, spec, f"판정 실패 — {verdict['reason']}")
         else:

@@ -4,12 +4,6 @@
 python -m pip install -r requirements-dev.txt
 python -m ruff check tool
 python -m pytest -q tool
-python tool/test_lint.py
-python tool/test_apply.py
-python tool/test_inject.py
-python tool/test_declared_continuation.py
-python tool/test_repo_lint.py
-python tool/test_trajectory.py
 python tool/lint.py --check
 npm --prefix web ci
 npm --prefix web run lint

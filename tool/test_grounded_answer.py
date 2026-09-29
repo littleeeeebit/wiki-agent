@@ -168,8 +168,8 @@ def test_a_supported_claim_is_published_complete_with_its_citation(tmp_path):
     assert v["schema_version"] == knowledge.VERIFIED and v["status"] == "complete" and v["verified"]
     assert v["claims"][0]["evidence_ids"] == [ports["chunk_id"]] and v["claims"][0]["support"] == "supported"
     assert v["citations"][0]["revision"] == ports["revision"] and v["citations"][0]["cite"] == "docs/ports.md:3"
-    assert out["text"] == "The search daemon listens on port 8791. `docs/ports.md:3`"
-    assert "Here is the answer I drafted" not in out["text"], "prose outside a claim was published"
+    assert out["text"] == "The search daemon listens on port 8791. `docs/ports.md:3`", \
+        "prose outside a claim was published"
     assert [e.get("progress") for e in events if "progress" in e] == ["draft", "verify"]
     assert len(judge.asked) == 1 and messages[0].count("```answer-draft") == 1
     state, questions = judge.asked[0]

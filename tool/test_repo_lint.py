@@ -60,6 +60,13 @@ def kinds(root: Path) -> set[str]:
 
 
 def test_a_clean_repository_says_nothing():
+    # The defaults are part of "clean". A `preference` page is never injected,
+    # so demanding triggers from it manufactures a defect. `project` scope is
+    # exactly what belongs in a repository: the gate command, the launcher and
+    # the port differ per repository. And none of the hub's findings (slot
+    # conflicts, orphans, broken links) may show here: that is why the two
+    # checks were separated — a line this session can do nothing about,
+    # printed every time.
     assert kinds(repo(docs=["a.md", "b.md"])) == set()
 
 
@@ -98,36 +105,8 @@ def test_an_injectable_severity_with_no_triggers_is_reported():
     assert "안 실리는 규칙" in kinds(repo(docs=["a.md"], severity="contract"))
 
 
-def test_a_preference_may_have_no_triggers():
-    # `preference` is never injected. Demanding triggers from it manufactures
-    # a defect that does not exist.
-    assert "안 실리는 규칙" not in kinds(repo(docs=["a.md"], severity="preference"))
-
-
 def test_a_hub_scope_page_inside_a_repository_is_reported():
     # Both places are called "the wiki", and a session wrote a
     # repository-independent rule in here because of it.
     assert "범위가 어긋난 페이지" in kinds(repo(docs=["a.md"], scope="craft"))
     assert "범위가 어긋난 페이지" in kinds(repo(docs=["a.md"], scope="operator"))
-
-
-def test_a_project_scope_page_belongs_in_the_repository():
-    # The gate command, the launcher and the port differ per repository, so
-    # this is exactly where they belong.
-    assert "범위가 어긋난 페이지" not in kinds(repo(docs=["a.md"], scope="project"))
-
-
-def test_the_hubs_findings_are_not_mixed_in():
-    # This is why the two were separated. A hub slot mismatch appearing in a
-    # target repository's health check prints a line this session can do
-    # nothing about, every time.
-    found = {kind for kind, _m in repo_lint.check(repo(docs=["a.md"]))}
-    assert not found & {"모순(슬롯)", "고아 페이지", "끊어진 링크", "끊긴 줄바꿈"}
-
-
-if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print(f"ok  {name}")

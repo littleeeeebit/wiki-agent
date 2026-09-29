@@ -116,11 +116,3 @@ def test_the_drawing_code_is_not_in_here():
     source = (HERE / "graph.py").read_text(encoding="utf-8")
     assert "<svg" not in source and "<div" not in source
     assert not (HERE / "graph_view.py").exists()
-
-
-if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print(f"ok  {name}")

@@ -208,7 +208,7 @@ def test_a_late_answer_never_reaches_the_next_process(tree):
         session._pending[approval_id] = (asker, racing, rule)
         restarted.append(session.answer(approval_id, True))
 
-    with patch.object(chat_session, "BOOT_TIMEOUT", 1), patch.object(chat_session, "TURN_TIMEOUT", 1):
+    with patch.object(chat_session, "BOOT_TIMEOUT", 0.5), patch.object(chat_session, "TURN_TIMEOUT", 0.5):
         run(session, CLAUDE, tree, restart_midway)
     assert restarted[0] is False  # the new process was never told "allow"
 
@@ -321,7 +321,7 @@ sys.stdin.read()
 
 
 # `app-server` that answers `initialize` and then whatever `thread/resume` gets.
-RESUMING = '''import json, sys, time
+RESUMING = '''import json, sys
 read = lambda: json.loads(sys.stdin.readline())
 say = lambda m: print(json.dumps(m), flush=True)
 m = read(); say({"id": m["id"], "result": {}})
@@ -329,7 +329,8 @@ read()
 m = read()
 assert m["method"] == "thread/resume", m
 if sys.argv[1] == "slow":
-    time.sleep(30)
+    sys.stdin.read()   # never answers; leaves once `close` shuts stdin
+    sys.exit()
 else:
     say({"id": m["id"], "error": {"code": -32600, "message": sys.argv[1]}})
 m = read()

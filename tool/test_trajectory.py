@@ -80,13 +80,7 @@ def test_the_utterance_is_cut_and_its_real_length_is_kept():
     assert row["chars"] == trajectory.KEEP + 200
 
 
-def test_the_stream_does_not_go_into_git():
-    root = wiki()
-    say(root, "첫 턴")
-    assert trajectory.FILENAME in (root / ".gitignore").read_text(encoding="utf-8")
-
-
-def test_called_twice_the_ignore_entry_is_still_one_line():
+def test_the_stream_stays_out_of_git_on_one_ignore_line():
     root = wiki()
     say(root, "첫 턴")
     say(root, "둘째 턴")
@@ -113,11 +107,3 @@ def test_an_unwritable_path_neither_kills_it_nor_passes_silently():
     blocked = Path(tempfile.mkdtemp()) / "파일"
     blocked.write_text("나는 폴더가 아니다", encoding="utf-8")
     assert trajectory.record(blocked / ".wiki", "아무 말", [], 0, "s1")
-
-
-if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print(f"ok  {name}")

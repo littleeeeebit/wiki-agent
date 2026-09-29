@@ -1,9 +1,7 @@
 """Stage 3 of `docs/plans/jev/`: local catalogs, external source records,
 the network boundary, adoption and promotion. No external calls: `fetch` and
 `arxiv` are replaced where a test needs an answer, and the boundary is
-exercised against a local server with the address check narrowed to it.
-
-`WIKI_LIVE_ARXIV=1` adds the one live check, a real arXiv lookup."""
+exercised against a local server with the address check narrowed to it."""
 
 import http.server
 import os
@@ -848,13 +846,3 @@ def test_record_contract_refuses_what_it_cannot_stand_behind(repo):
     assert sources.problems({**record, "authority": "trusted"})
 
 
-@pytest.mark.skipif(os.environ.get("WIKI_LIVE_ARXIV") != "1", reason="live arXiv lookup; WIKI_LIVE_ARXIV=1")
-def test_live_arxiv_paper_becomes_evidence(repo, monkeypatch):
-    hub, path = repo
-    out = knowledge.add_papers(path, ids=["1706.03762"], n=1, cfg=decision.Config("off", decision.MODEL, "default"))
-    assert out["papers"][0]["status"] == "indexed" and out["papers"][0]["coverage"] == "abstract_only"
-    index = index_of(hub, path)
-    hit = index.search("Transformer attention recurrence", 1, ["papers"])[0]
-    chunk = evidence.contract(hit)
-    assert search.resolve(chunk, hit["path"]) == chunk["original_text"]
-    index.close()

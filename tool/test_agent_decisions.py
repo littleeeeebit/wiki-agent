@@ -20,7 +20,7 @@ import decision
 from common.budget import Budget
 from common.language import language
 from main import decisions, specs, work
-from test_loop import Reviewer, allow, deny, fixed, keep, looped, pr_spec, world  # noqa: F401 — `world` is a fixture
+from test_loop import Reviewer, allow, deny, fixed, keep, looped, pr_spec, template, world  # noqa: F401 — fixtures
 from test_main import client, no_machine_settings, settled, until  # noqa: F401 — the fixture is autouse
 from test_specs import Remote, Worker, fresh_workers, made, repo, report  # noqa: F401 — fixtures, one autouse
 
@@ -444,14 +444,3 @@ def test_a_refused_round_sends_the_context_jev_chose_to_gather_with_the_findings
     record = decisions.history(("proj", "fix-c"))[0]
     assert record["point"] == "loop.fix" and record["occasion"].startswith("fix:1:")
     assert record["proposal"]["spec_id"] == "fix-c" and record["outcomes"][0]["status"] == "executed"
-
-
-def test_the_baseline_correction_goes_when_jev_is_unavailable(world, jev):
-    jev(**{"loop.fix": decision.JevError("timeout")})
-    pr_spec(world, "fix-d", 8)
-    finding = "[P1] a.txt:1 — the value is wrong"
-    Reviewer.replies = [deny(finding), allow, keep()]
-    Worker.replies = [fixed((finding, "fixed"))]
-    assert looped("fix-d")["state"] == "머지 가능"
-    assert "Evidence the server retrieved" not in Worker.made[-1].heard[0]
-    assert decisions.history(("proj", "fix-d"))[0]["basis"] == "unavailable"

@@ -277,7 +277,8 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
     out += ["", "## Already run", ""]
     if gated.get("head") == head:
         tail = (gated.get("tail") or "").splitlines()[-1:] or [""]
-        out.append(f"- The server ran the gate `{gated['cmd']}` in the worktree at `{head[:7]}`: "
+        what = "the checks this change maps to" if gated.get("selection") == "mapped" else "the gate"
+        out.append(f"- The server ran {what} `{gated['cmd']}` in the worktree at `{head[:7]}`: "
                    f"{'passed' if gated['ok'] else 'failed — ' + gated['reason']}. Last line: `{tail[0]}`")
     else:
         out.append("- Nothing at this head yet.")
@@ -596,17 +597,37 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     return end["text"] if end and end["kind"] == "done" else ""
 
 
-def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str) -> bool:
-    """The head that goes to review passed the gate here, and is up.
+def reusable(spec: dict, head: str, chosen: dict) -> bool:
+    """A passing round result for this very identity — head, merge base and
+    commands. A spec from before `validation` has only `gate`, and that was
+    the whole gate: it stands for its head."""
+
+    last = (spec.get("validation") or {}).get("round")
+    if last:
+        return bool(last.get("ok")) and (last.get("head"), last.get("base_oid"), last.get("commands")) == \
+            (head, chosen["base_oid"], chosen["commands"])
+    gated = spec.get("gate") or {}
+    return gated.get("head") == head and bool(gated.get("ok"))
+
+
+def repair(cmd: str, verdict: dict) -> str:
+    return (f"The server ran the gate `{cmd}` in this worktree and it failed: {verdict['reason']}. The end "
+            f"of its output:\n\n```\n{verdict['tail']}\n```\n\nFix it and commit. Do not push.")
+
+
+def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str) -> bool:
+    """The head that goes to review passed its round checks here, and is up.
 
     A push made elsewhere to the branch is taken in by fast-forward first, so
     the files the review cell reads are the head it reviews. Nothing more to
-    do when the worktree is clean at the pull request's head and the gate
-    already passed there. Otherwise the gate runs; a failure goes to the work
-    cell once with the output's tail, and two failures in a row stop. Commits
-    the pull request lacks are pushed once the gate passes."""
+    do when the worktree is clean at the pull request's head and the same
+    checks already passed there (`reusable`). Otherwise the checks this change
+    maps to run (`specs.selected`) — not the whole gate, which runs once on
+    the allowed head (`finalized`). A failure goes to the work cell once with
+    the output's tail, and two in a row stop. Commits the pull request lacks
+    are pushed once the checks pass."""
 
-    cmd, branch = spec["done"][0], specs.branch_of(spec)
+    branch = specs.branch_of(spec)
     for attempt in (1, 2):
         release = wait_hold(loop, path)
         if release is None:
@@ -618,30 +639,84 @@ def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str) -> bool:
                 specs.sh(["git", "merge", "--ff-only", head], path, 60)
                 local = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
             clean = not specs.sh(["git", "status", "--porcelain"], path).stdout.strip()
-            gated = spec.get("gate") or {}
-            if local == head and clean and gated.get("head") == head and gated.get("ok"):
+            chosen = specs.selected(repo, path, base, specs.required(repo, spec))
+            if local == head and clean and reusable(spec, head, chosen):
                 return True
-            verdict = specs.judge(path, cmd, loop.halt)
+            verdict, record = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
             pushed = None
             if verdict["ok"] and verdict["head"] != head and not loop.halt.is_set():
                 pushed = specs.sh(["git", "push", "origin", branch], path, 120)
         finally:
             release()
-        spec = change(loop, gate=verdict)
-        if spec is None:
+        if change(loop, gate=verdict) is None:
             return False
+        spec = specs.validate(loop.repo, loop.sid, round=record)
         if verdict["ok"]:
             if pushed is not None and pushed.returncode:
                 return stop(loop, loop.repo, loop.sid, Why.GATE, f"push 실패 — {specs.said(pushed)}")
             return True
         if attempt == 2:
             return stop(loop, loop.repo, loop.sid, Why.GATE, f"게이트가 두 번 연속 실패했다 — {verdict['reason']}")
-        text = (f"The server ran the gate `{cmd}` in this worktree and it failed: {verdict['reason']}. The end "
-                f"of its output:\n\n```\n{verdict['tail']}\n```\n\nFix it and commit. Do not push.")
-        if told(loop, spec, path, text) is None:
+        if told(loop, spec, path, repair(verdict["cmd"], verdict)) is None:
             return False
         spec = specs.load(loop.repo, loop.sid) or spec
     return False
+
+
+def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str) -> dict | None:
+    """The full gate, once, on the head the review allowed — before the spec
+    may become mergeable. `None` when the loop was stopped.
+
+    While it runs, `validation.phase` is `final_running` and the final record
+    already stands, failed and unfinished: a stop, a crash or a restart
+    leaves exactly that, never an `ok`. The record is bound to the head, the
+    merge base and `specs.digest`; `merge` checks all three."""
+
+    cmd = specs.required(repo, spec)
+    release = wait_hold(loop, path)
+    if release is None:
+        return None
+    try:
+        record = {"head": head, "base_oid": specs.merge_base(path, base, head), "command": cmd,
+                  "environment_digest": specs.digest(repo, path, cmd), "ok": False, "code": None,
+                  "reason": "끝나지 않았다", "finished_at": None}
+        specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
+        verdict = specs.judge(path, [cmd], loop.halt)
+    finally:
+        release()
+    ok = verdict["ok"] and verdict["head"] == head
+    reason = verdict["reason"] if not verdict["ok"] else "" if ok else "작업트리가 허용된 커밋에 있지 않다"
+    record = {**record, "ok": ok, "code": verdict.get("code"), "reason": reason, "finished_at": time.time()}
+    specs.validate(loop.repo, loop.sid, phase=None, final=record)
+    return None if loop.halt.is_set() else {**record, "tail": verdict["tail"]}
+
+
+def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n: int, head: str, base: str) -> bool:
+    """A round allowed `head`: the final gate runs, and only its pass makes
+    the spec mergeable. A failure goes to the work cell as a repair; its new
+    commit gets its round checks and a new review. No new commit stops. A
+    final result that already stands for this identity is not run again."""
+
+    stands = not specs.proven(spec, head, specs.merge_base(path, base, head),
+                              specs.digest(repo, path, specs.required(repo, spec)))
+    final = spec["validation"]["final"] if stands else finalized(loop, spec, repo, path, head, base)
+    if final is None:
+        return False
+    if final["ok"]:
+        deferred = spec.get("deferred") or []
+        kept_p2 = pick(loop, chat, deferred)
+        # `p2` stays as the cell wrote it — the next candidates read it; the
+        # comment goes up on GitHub, read by a person, in Korean.
+        shown = translate.translate(kept_p2, translate.EN_KO, time.monotonic() + specs.TRANSLATE_SECONDS)
+        comment = ("리뷰에서 남긴 P2 — 따로 할 만한 것\n\n" + "\n".join(f"- {p}" for p in shown)) if kept_p2 else ""
+        change(loop, "머지 가능", p2=kept_p2, p2_comment=comment)
+        return False
+    spec = change(loop, f"고치는 중 R{n}")
+    if spec is None or told(loop, spec, path, repair(final["command"], final)) is None:
+        return False
+    if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == head:
+        return stop(loop, loop.repo, loop.sid, Why.GATE, f"최종 게이트 실패, 고친 커밋이 없다 — {final['reason']}")
+    return True
 
 
 def step(loop: Loop) -> bool:
@@ -662,13 +737,19 @@ def step(loop: Loop) -> bool:
         return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE, f"`{path.name}` 가 `{repo.name}` 의 작업트리 목록에 없다")
     rounds, pr = counted(spec), spec["pr"]["number"]
     n = len(rounds) + 1
-    if n > cap(spec):
-        return stop(loop, loop.repo, loop.sid, Why.CAP, f"{cap(spec)} 라운드를 다 돌았다")
-
     head, base = pr_head(repo, pr)
-    if not shipped(loop, spec, repo, path, head):
+    if not shipped(loop, spec, repo, path, head, base):
         return False
     head, base = pr_head(repo, pr)
+    last = rounds[-1] if rounds else None
+    if last and last["verdict"] == "allow" and (last["head"], last["base"]) == (head, base):
+        # Allowed already, with no final gate that stands: one from before
+        # `validation`, one a restart cut, or one that failed and was resumed.
+        # The review is not asked again; only the final gate runs.
+        spec = change(loop, f"리뷰 R{last['n']}")
+        return spec is not None and allowed(loop, spec, repo, path, cell(spec, path), last["n"], head, base)
+    if n > cap(spec):
+        return stop(loop, loop.repo, loop.sid, Why.CAP, f"{cap(spec)} 라운드를 다 돌았다")
     spec = change(loop, f"리뷰 R{n}")
     if spec is None:
         return False
@@ -719,13 +800,7 @@ def step(loop: Loop) -> bool:
     if spec is None:
         return False
     if parsed["verdict"] == "allow":
-        kept_p2 = pick(loop, chat, deferred)
-        # `p2` stays as the cell wrote it — the next candidates read it; the
-        # comment goes up on GitHub, read by a person, in Korean.
-        shown = translate.translate(kept_p2, translate.EN_KO, time.monotonic() + specs.TRANSLATE_SECONDS)
-        comment = ("리뷰에서 남긴 P2 — 따로 할 만한 것\n\n" + "\n".join(f"- {p}" for p in shown)) if kept_p2 else ""
-        change(loop, "머지 가능", p2=kept_p2, p2_comment=comment)
-        return False
+        return allowed(loop, spec, repo, path, chat, n, head, base)
 
     spec = change(loop, f"고치는 중 R{n}")
     if spec is None:
@@ -757,7 +832,7 @@ def step(loop: Loop) -> bool:
     stuck = disputed(before, disposition)
     if stuck:
         return stop(loop, loop.repo, loop.sid, Why.DISPUTE, f"두 라운드 연속 반대 — {stuck}")
-    return shipped(loop, spec, repo, path, head)
+    return shipped(loop, spec, repo, path, head, base)
 
 
 def pick(loop: Loop, chat: ChatSession, deferred: list[str]) -> list[str]:
@@ -779,11 +854,17 @@ def pick(loop: Loop, chat: ChatSession, deferred: list[str]) -> list[str]:
 def recover() -> None:
     """At start-up: a loop that was running when the server went down stopped
     with it. It does not start again by itself — nobody knows what changed
-    meanwhile — and one `[계속]` takes it on."""
+    meanwhile — and one `[계속]` takes it on.
+
+    A final gate it cut off keeps the failed, unfinished record `finalized`
+    wrote first; only the phase goes. `[계속]` runs the final gate again,
+    after the round checks confirm the head is the one allowed."""
 
     for repo in specs.SPECS.glob("*"):
         if repo.is_dir():
             for spec in specs.listing(repo.name):
+                if (spec.get("validation") or {}).get("phase") == "final_running":
+                    specs.validate(repo.name, spec["id"], phase=None)
                 if LOOPING.fullmatch(spec["state"]):
                     stop(None, repo.name, spec["id"], Why.RESTART)
 
@@ -963,7 +1044,11 @@ def merge(sid: str, body: Merge) -> dict:
     allow and a list read again would otherwise make an unreviewed head the
     screen's. Then `--match-head-commit` lets GitHub refuse atomically a push
     between this check and the merge. The base is only checked; GitHub cannot
-    bind it, and `landed` catches a base that moved in the seconds between."""
+    bind it, and `landed` catches a base that moved in the seconds between.
+
+    The full gate must have passed on that same head, merge base and
+    environment (`specs.proven`); a targeted round result never counts. A
+    spec without one goes back to the loop, which runs only the final gate."""
 
     repo, spec = mine(sid)
     if spec["state"] != "머지 가능":
@@ -975,6 +1060,12 @@ def merge(sid: str, body: Merge) -> dict:
     if body.head != allowed["head"]:
         kick(repo.name, sid)
         raise HTTPException(409, "리뷰 뒤 새 커밋 — 새 라운드를 받는다")
+    path = Path(spec.get("worktree") or repo)
+    unproven = specs.proven(spec, allowed["head"], specs.merge_base(path, allowed["base"], allowed["head"]),
+                            specs.digest(repo, path, specs.required(repo, spec)))
+    if unproven:
+        kick(repo.name, sid)
+        raise HTTPException(409, f"{unproven} — 최종 게이트를 다시 돌린다")
     try:
         _, base = pr_head(repo, n)
     except (RuntimeError, ValueError) as exc:

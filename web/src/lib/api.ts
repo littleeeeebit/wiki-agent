@@ -445,6 +445,21 @@ export type Round = {
   disposition?: { finding: string; action: string; evidence?: string }[] | null
 }
 
+/** What the server ran on a head. `round` is the checks a change maps to,
+ *  run every round; `final` is the full gate, once, on the head a review
+ *  allowed. Only a passing `final` on the approved head lets `[머지]` through. */
+export type Validation = {
+  version: number
+  round: {
+    head: string; base_oid: string; commands: string[]; selection: 'mapped' | 'full'; ok: boolean; finished_at: number
+  } | null
+  final: {
+    head: string; base_oid: string; command: string; environment_digest: string; ok: boolean; code: number | null
+    reason: string; finished_at: number | null
+  } | null
+  phase: 'final_running' | null
+}
+
 export type Spec = {
   id: string
   repo: string
@@ -469,6 +484,7 @@ export type Spec = {
   rounds?: Round[]
   /** The head the last counted round allowed: what `[머지]` is bound to. */
   approved?: string | null
+  validation?: Validation
   /** The work cell waits on a person's approval. Not a state. */
   waiting?: boolean
   p2?: string[]

@@ -512,6 +512,82 @@ def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
         assert result[-1] == f"PR #7 머지됨 — {spec['goal']}" and len(result) == 2
 
 
+# -- which checks a head needs ------------------------------------------------------
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
+
+
+def test_round_checks_follow_the_changed_paths_and_widen_when_unsure(repo):
+    (repo / ".wiki/adapter.toml").write_text(
+        f'[slots]\ngate_cmd = "{PASS}"\n[checks.a]\ncmd = "check a"\npaths = ["src/a/**"]\n'
+        '[checks.b]\ncmd = "check b"\npaths = ["src/b/**", "src/shared.py"]\n'
+        '[checks.c]\ncmd = "check c"\npaths = ["src/shared.py"]\n', encoding="utf-8")
+    (repo / ".git/info/exclude").write_text(".wiki/\n", encoding="utf-8")   # the adapter stays uncommitted
+    for name in ("src/a/x.py", "src/b/z.py", "src/shared.py", "requirements.txt"):
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text("x\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "base")
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+    def after(*changes) -> tuple[str, list[str]]:
+        _git(repo, "reset", "-q", "--hard", "origin/main")
+        for change in changes:
+            change()
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "change", "--allow-empty")
+        got = specs.selected(repo, repo, "main", PASS)
+        assert got["base_oid"] == subprocess.run(["git", "-C", str(repo), "rev-parse", "origin/main"],
+                                                 capture_output=True, text=True).stdout.strip()
+        return got["selection"], got["commands"]
+
+    edit = lambda name: lambda: (repo / name).write_text("y\n", encoding="utf-8")  # noqa: E731
+    assert after(edit("src/a/x.py")) == ("mapped", ["check a"])
+    assert after(edit("src/shared.py")) == ("mapped", ["check b", "check c"]), "every consumer of a shared file"
+    assert after(lambda: _git(repo, "mv", "src/a/x.py", "src/b/y.py")) == ("mapped", ["check a", "check b"]), \
+        "both names of a rename"
+    assert after(lambda: (repo / "src/b/z.py").unlink()) == ("mapped", ["check b"]), "a deletion"
+    assert after(edit("src/a/x.py"), edit("notes.txt")) == ("full", [PASS]), "an unmapped path"
+    assert after(edit("requirements.txt")) == ("full", [PASS]), "shared configuration"
+    assert after() == ("full", [PASS]), "nothing changed is not nothing to check"
+    assert specs.selected(repo, repo, "no-such-base", PASS)["selection"] == "full", "no merge base"
+    adapter = repo / ".wiki/adapter.toml"
+    adapter.write_text(adapter.read_text(encoding="utf-8").replace('["src/a/**"]', '"src/a"'), encoding="utf-8")
+    assert after(edit("src/a/x.py")) == ("full", [PASS]), "a malformed map"
+
+
+def test_only_a_passing_final_gate_on_the_same_identity_stands():
+    head, oid, env = "a" * 40, "b" * 40, "d"
+    final = {"head": head, "base_oid": oid, "environment_digest": env, "ok": True}
+
+    def why(**validation) -> str:
+        return specs.proven({"validation": validation}, head, oid, env)
+
+    assert why(final=final) == ""
+    assert "결과가 없다" in why(round={"head": head, "base_oid": oid, "ok": True}), "a targeted pass is not proof"
+    assert "통과하지 않았다" in why(final={**final, "ok": False})
+    assert "아직 돌고" in why(final=final, phase="final_running")
+    assert "다른 커밋" in why(final={**final, "head": "c" * 40}), "a pass on head A does not merge B"
+    assert "base" in why(final={**final, "base_oid": "c" * 40})
+    assert "환경" in why(final={**final, "environment_digest": "e"})
+    assert "결과가 없다" in specs.proven({}, head, oid, env), "a spec from before `validation`"
+
+
+@pytest.mark.parametrize("cmd, why", [
+    ('python -c "open(\'left.txt\', \'w\').write(\'x\')"', "작업트리를 바꿨다"),
+    ("git -c user.name=c -c user.email=c@c commit -q --allow-empty -m gate", "HEAD 를 바꿨다"),
+])
+def test_a_gate_that_changes_what_it_checked_fails_whatever_it_exits_with(repo, cmd, why):
+    import threading
+
+    (repo / ".git/info/exclude").write_text(".wiki/\n", encoding="utf-8")
+    verdict = specs.judge(repo, [cmd], threading.Event())
+    assert not verdict["ok"] and verdict["code"] == 0 and why in verdict["reason"]
+    assert specs.judge(repo, [PASS, FAIL, PASS], threading.Event())["commands"] == [PASS, FAIL, PASS]
+
+
 def test_the_pr_body_gives_harvest_its_what_and_why():
     spec = {"id": "fix-login", "repo": "proj", "goal": "로그인 뒤 원래 페이지로 돌아간다",
             "decisions": [{"what": "서버에서 돌린다", "why": "화면은 기록을 모른다", "rejected": "history"}],

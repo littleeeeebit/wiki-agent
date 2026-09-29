@@ -140,13 +140,181 @@ collected count alone is not success.
 
 Rollback can restore full checks each round without relaxing final merge guards.
 
+## Result
+
+Measured on 2026-09-29 at `b1de267`: Python 3.13.9 (Anaconda), pytest 8.3.5,
+Windows 11 26200, Intel family 6 model 151 with 8 logical cores. Runs were warm,
+from Git Bash, with `-p no:cacheprovider`.
+
+### Profile
+
+| Measurement | Result |
+| --- | --- |
+| `python -m pytest --collect-only -q tool` | 1,023 tests in 1.62 s |
+| Same, `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1` in the child only | 1.37 s |
+| Same, autoload off plus `-p anyio` | 1.32 s |
+| `python -m pytest -q tool --durations=60` | 1,021 passed, 2 skipped in 551.28 s |
+| `tool/test_loop.py` and `tool/test_specs.py`, `--durations=0` | 52 passed in 95.96 s; `test_loop` setup 20.1 s, call 65.0 s |
+
+`anyio` is the only autoloaded plugin, and no test uses it. At 0.25 s, plugin
+loading is not worth changing, so autoload stays on.
+
+The slowest tests are real Git and process integration. `cProfile` of
+`test_a_head_that_moved_while_it_was_read_throws_the_round_away` shows about 60
+`subprocess.run` calls at 100–150 ms each. Two sources of those spawns were
+test machinery rather than the behavior under test:
+
+- The per-test `world` fixture ran eleven Git commands to build the same
+  project and bare origin.
+- The GitHub stand-in ran `git rev-parse` for every `gh pr view`.
+
+| Kind | Examples | Decision |
+| --- | --- | --- |
+| Real Git/process integration | loop rounds, merge, adopt, prune; `test_worktrees`; `test_connect` | Kept as witnesses |
+| Duplicate setup | `test_loop.world` | Build once per session as an immutable template, copy per test |
+| Stand-in overhead | `Hub.head` | Read the loose ref; `rev-parse` stays the fallback |
+| Waiting | seat wait, `test_agent`, `test_evidence`, `test_hook_diagnostics`, `test_keepalive`, `test_decision_flow` | Reviewed one by one. Sleeps that only synchronized became events; real waits were shortened where the bound under test allows it. Deadline, trickle, bounded-polling and negative-wait sleeps stay |
+| Other hotspots | `test_hook_diagnostics`, `test_markdown_emphasis`, `test_evaluation`, `test_agent`, `test_main`, `test_wiki_health`, `test_codex_hooks`, `test_connect`, `test_translate_check` | Profiled and refactored; see the removal table |
+
+Target, set before refactoring: `test_loop.py` plus `test_specs.py` at 72 s
+or less (−25%), new acceptance tests included.
+
+### Changes
+
+The gate contract is implemented as the blueprint describes:
+
+- `decisions.registered` reads `paths`.
+- `specs.selected` picks round checks.
+- `specs.judge` runs a list of commands and fails on a changed HEAD or worktree.
+- `specs.validate` is the only writer of `validation`.
+- `loop.finalized` runs the full gate on the allowed head.
+- `specs.proven` binds `[머지]` to head, merge base and `specs.digest`.
+- `loop.recover` clears `final_running`, and the Review tab shows targeted
+  and final state.
+
+`specs._check` and `knowledge.submitted` read the base locally (`local_base`),
+so nothing reaches GitHub before the checks pass. A spec that was already
+allowed but has no final result standing goes back to the loop, and only the
+final gate runs; the review is not asked again.
+
+The loop and spec consolidations:
+
+| Change | Surviving witness |
+| --- | --- |
+| `world` builds the repository and origin per test | Session `template`, copied per test; `world` asserts the copy's origin is its own |
+| `Hub.head` spawns `git rev-parse` | Loose ref read, `rev-parse` fallback; product Git calls unchanged |
+| Four end-to-end merge refusals (drafted in this PR) | `test_only_a_passing_final_gate_on_the_same_identity_stands` plus one end-to-end refusal |
+
+### Suite-wide cleanup
+
+Every test file was then read for tests that no longer earn their place:
+obsolete or dead checks, smoke tests, duplicates, asserts that cannot fail,
+and setup repeated per test. An AST scan found no test without an assert and
+no assert on a constant. Every removal below names the check that still covers
+its behavior.
+
+Removed tests:
+
+| Test | Why | Surviving witness |
+| --- | --- | --- |
+| `test_main::test_the_draft_and_the_bare_worktree_are_gone` | Asserted that routes removed in loop stage 6 stay removed; nothing defines them | `test_work_opens_only_its_own_worktrees` |
+| `test_main::test_map_words_go_but_identifiers_stay` | Pass-through smoke test repeating `translate.protect` | the `protect` tests in `test_translate` |
+| `test_decision_flow` test of `knowledge.migrated` | Dead code with no production caller; removed with it | none needed |
+| `test_sources::test_live_arxiv_paper_becomes_evidence` | Live smoke test behind `WIKI_LIVE_ARXIV=1` that asserted only "indexed" | `test_an_arxiv_abstract_is_never_taken_for_the_full_text`, `test_the_arxiv_feed_and_its_error_entries` |
+| `test_markdown_emphasis::test_prose_outside_a_fence_is_still_counted` | Same input and assertion as the density test | `test_density_over_the_limit_is_refused` |
+| `test_markdown_emphasis::test_other_tools_pass` | Merged | `test_only_a_markdown_write_is_judged` |
+| `test_inject::test_with_no_budget_nothing_is_trimmed` | A whole hook subprocess for one assert on the same build | `test_the_knowledge_budget_trims_only_the_decisions` |
+| `test_inject::test_the_rendering_comes_before_the_rules` | Same ordering, asserted with a longer rendering | `test_every_rule_sentence_lands_inside_the_2kb_preview` |
+| `test_inject::test_a_turn_under_the_ceiling_is_not_squeezed` | The first turn going out whole is already asserted | `test_the_second_turn_carries_the_rule_paragraph_whole_instead_of_the_page`, `test_the_rule_index_rides_only_on_a_turn_still_over_the_ceiling` |
+| `test_inject::test_every_rule_already_seen_still_sends_each_rule_paragraph` | Duplicate paragraph assert; its header assert moved | `test_the_second_turn_carries_the_rule_paragraph_whole_instead_of_the_page` |
+| `test_knowledge_graph::test_a_newer_date_alone_supersedes_nothing` | The exact edge set already excludes it | `test_structure_has_exactly_the_expected_endpoints_and_every_span_resolves` |
+| `test_agent_decisions::test_the_baseline_correction_goes_when_jev_is_unavailable` | A full review loop for what three tests cover | `test_a_doubt_or_an_outage_runs_the_baseline_and_says_why[unavailable]`, `test_a_refused_round_sends_the_context_jev_chose_to_gather_with_the_findings`, the refusal tests in `test_loop` |
+| `test_session_state::test_an_english_plan_reads_the_same` | Its statuses overlapped; `Done` and `In progress` moved over | `test_english_plan_statuses_and_discovery` |
+| `test_trajectory::test_the_stream_does_not_go_into_git` | "The entry is there" is implied by "exactly one entry" | `test_the_stream_stays_out_of_git_on_one_ignore_line` |
+| `test_repo_lint`: `test_a_preference_may_have_no_triggers`, `test_a_project_scope_page_belongs_in_the_repository`, `test_the_hubs_findings_are_not_mixed_in` | Each negative is implied by a clean repository having no finding at all; the reasons moved into its comment | `test_a_clean_repository_says_nothing` |
+
+Rewritten tests and asserts:
+
+| Change | Why | Now |
+| --- | --- | --- |
+| `test_inject::test_the_rendering_goes_out_even_when_no_rule_matched` called `rendering()` alone | Could not catch the `if not parts: return 0` bug its docstring names | Runs through `inject.main` with a prompt that matches nothing |
+| `test_hook`: four `if not shutil.which(...): return` | A missing host passed silently as green | `needs()` skips with the reason, before the subprocess |
+| `test_main::test_a_delete_takes_the_rows_by_place_and_an_append_waits_for_it` | Its `keep: memory` reset started the real host CLI for a summary nothing asserted on | `main.memory.oneshot` stubbed as its neighbours do. A suite-wide spy on process starts found no other test reaching a real `claude` or `codex` |
+| `test_decision_flow`: `assert out["budget"] if "budget" in out else True` | Always true | The asserts around it |
+| `test_decision_flow`, `test_grounded_answer`: an assert implied by the exact assert above it | Cannot fail independently | The exact assert |
+| `test_retrieval`: `== [] or all(...)` in the repair test | Vacuous when empty | `test_adjacent_sections_come_back_for_missing_context` |
+| `test_harvest`: six stray Korean string statements after the docstrings | Dead code left by the English-first translation | The one incident only the Korean named moved into its docstring |
+| `if __name__ == "__main__"` runners in seven files; `test_local_adapter`'s exited 1 | Duplicated pytest collection | pytest |
+
+Setup and waiting:
+
+| Change | Why | Now |
+| --- | --- | --- |
+| `test_main._repo`: six Git processes per call, about 40 callers across files | Duplicate setup | Built once per process, copied per call |
+| `test_connect.original`: bare origin, push and a second clone per test | Duplicate setup | Session `remote` template, copied per test; `original` asserts the copies point at their own origin |
+| `test_translate_check`: five Git commands per test for the same committed page | Duplicate setup | Module `committed` repository, copied per test |
+| `test_codex_hooks`: three `apply.py` runs per test for 11 tests that only read hook answers | Duplicate setup | Module fixture `installed`; `connected` stays per test for the two that write |
+| `test_evaluation`: the report test recorded the run the previous test had just recorded | Duplicate setup | Module fixture `ran` |
+| `test_evaluation`: two refused connects at about 2 s each of Windows SYN retries | The outage reason is the contract, not the retries | `Pinned.connect` raises the same `ConnectionRefusedError` at once, 5.4 s → 2.7 s |
+| `test_evidence`, `test_decision_flow`: a sleep before a concurrent delete or an abort | Synchronization only | An event set inside the paused read; the server accepts and reads the first byte |
+| `test_keepalive`: the real 3 s `SPAWN_WAIT` in the stale-state budget test | The wait adds equally to both sides of the bound | `SPAWN_WAIT = 0.3`, 3.3 s → 0.7 s |
+| `test_hook_diagnostics`: the installed pretool waited out the real 8 s watchdog | Only the delay is shortened; the real entry point and threshold are still exercised, and the header must still say 8 | 8.1 s → 0.3 s |
+| `test_agent`: the `slow` resume stand-in slept 30 s, so `close()` spent its 5 s grace | The stand-in blocks on stdin instead and still never answers | 6 s → 1.05 s |
+| `test_markdown_emphasis`: the `--repo` test linted the real hub | An empty throwaway hub isolates the path | 7.5 s → 0.17 s |
+| `apply.declared` re-parsed every page's YAML on every call | A page is re-parsed only when its mtime or size changes | `test_wiki_health::test_wiring` 5.5 s → 2.4 s, and every `apply --check` in the gates |
+
+Gate coverage: `test_apply`, `test_lint` and `test_declared_continuation` were
+script-only `main()` suites, so `python -m pytest tool` collected nothing from
+them. They are pytest cases now, every check kept (16, 53 and 23 cases). The
+six `python tool/test_*.py` lines in `docs/development.md` that ran cases a
+second time are gone.
+
+### Comparison
+
+| Measurement | Before | After the gate work | After the cleanup |
+| --- | --- | --- | --- |
+| Full suite, same command | 1,021 passed, 2 skipped in 551.28 s | 1,029 passed in 434.44 s | 1,105 passed, 1 skipped in 380.93 s |
+| The 44 unchanged loop/spec tests, summed | 94.8 s | 90.4 s in the full run, 84.6 s run alone | — |
+| `test_loop` setup | 20.1 s | 4.8 s | — |
+| Loop/spec files, new tests included | 95.96 s | 105.3 s | 102.74 s |
+
+The loop/spec target was missed. Setup time fell by three quarters. But each
+allow now also runs the final gate, and the new acceptance tests add about
+20 s. The rest is product Git spawns inside the loop thread, which are the
+integration under test. Cutting it further means fewer Git calls in
+`main/loop.py`, not a test change. The loop tests' remaining sleeps are the
+bounded 50 ms polls in `waited` and one negative wait.
+
+The whole suite runs 31% faster while collecting 83 more cases (1,106 against 1,023). The extra
+cases come from the three script-only suites the gate now runs. One run-to-run
+comparison is noisy: an intermediate full run took 487 s. The per-test
+reductions in the tables above were each measured alone.
+
+The burden this PR removes is in the loop, not the suite. A repair round runs
+only the checks its changed paths map to, not the whole `gate_cmd` (about
+seven to nine minutes here). The whole gate runs once, on the allowed head.
+That needs `paths` in the repository's own `.wiki/adapter.toml`, which is not
+committed.
+
+### Acceptance
+
+| Case | Test |
+| --- | --- |
+| Targeted pass cannot merge | `test_a_targeted_pass_cannot_merge_and_the_loop_runs_only_the_final_gate` |
+| Final fail, running, other head, other base or environment cannot merge | `test_only_a_passing_final_gate_on_the_same_identity_stands` |
+| Failed final returns to repair and review | `test_a_failed_final_gate_goes_to_repair_and_a_new_review` |
+| Gate-mutated worktree fails | `test_a_gate_that_changes_what_it_checked_fails_whatever_it_exits_with` |
+| Restart during the final run stays blocked | `test_a_restart_during_the_final_gate_stays_blocked_and_resume_reruns_only_it` |
+| Unknown path, shared file, malformed map or no merge base runs full; a shared source selects every consumer; renames and deletions count | `test_round_checks_follow_the_changed_paths_and_widen_when_unsure` |
+| Same unchanged identity reuses results | `test_a_mapped_round_then_the_full_gate_once_and_the_same_identity_reuses_both` |
+
 ## Steps
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Profile | Profile and map redundant/expensive checks | Not started |
-| 2 | Refactor | Refactor measured hotspots and final-gate scheduling | Not started |
-| 3 | Compare | Compare runtime and verify merge binding | Not started |
+| 1 | Profile | Profile and map redundant/expensive checks | Done |
+| 2 | Refactor | Refactor measured hotspots and final-gate scheduling | Done |
+| 3 | Compare | Compare runtime and verify merge binding | Done — merge binding verified; full suite 551 s → 381 s; the 72 s loop/spec target was missed (102.74 s), see Comparison |
 
 ## Sources
 

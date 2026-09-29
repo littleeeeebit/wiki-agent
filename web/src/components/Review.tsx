@@ -42,6 +42,10 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
 
   const reason = spec.stopped?.reason ?? ''
   const rounds = spec.rounds ?? []
+  const checked = spec.validation?.round
+  const final = spec.validation?.final
+  const running = spec.validation?.phase === 'final_running'
+  const proven = !running && !!final?.ok && final.head === spec.approved
   return (
     <div className="h-full overflow-y-auto px-5 py-4 text-[12.5px]">
       <div className="flex items-center gap-2">
@@ -102,12 +106,39 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
         </div>
       )}
 
+      {(checked || final || running) && (
+        <div className="mt-3 space-y-0.5 text-muted-foreground">
+          {checked && (
+            <div>
+              라운드 확인 · {checked.selection === 'mapped' ? '변경이 닿는 것만' : '전체'} ·{' '}
+              <span className={checked.ok ? 'text-primary' : 'text-destructive'}>{checked.ok ? '통과' : '실패'}</span>
+              <span className="ml-1 font-mono text-[10.5px] text-faint">{checked.head.slice(0, 7)}</span>
+            </div>
+          )}
+          <div>
+            최종 게이트 ·{' '}
+            {running ? '도는 중 — 끝나기 전에는 머지하지 않는다'
+              : !final ? '아직 — 리뷰가 허용한 커밋에서 돈다'
+                : <span className={final.ok ? 'text-primary' : 'text-destructive'}>{final.ok ? '통과' : `실패 — ${final.reason}`}</span>}
+            {final && !running && <span className="ml-1 font-mono text-[10.5px] text-faint">{final.head.slice(0, 7)}</span>}
+          </div>
+        </div>
+      )}
+
       {spec.state === '머지 가능' && spec.approved && (
         <div className="mt-3 rounded-md border border-st-ready/50 p-3">
           <div className="flex items-center gap-2">
-            <Btn tone="primary" disabled={!!working} onClick={() => act('merge', () => api.mergeSpec(spec.id, spec.approved!))}>
-              {working === 'merge' ? '머지하는 중…' : '머지 ▸'}
-            </Btn>
+            {proven ? (
+              <Btn tone="primary" disabled={!!working} onClick={() => act('merge', () => api.mergeSpec(spec.id, spec.approved!))}>
+                {working === 'merge' ? '머지하는 중…' : '머지 ▸'}
+              </Btn>
+            ) : (
+              // The server refuses the merge and sends the spec back to run only the final gate.
+              <Btn disabled={!!working || running}
+                onClick={() => act('final', () => api.mergeSpec(spec.id, spec.approved!).catch(() => undefined))}>
+                {working === 'final' ? '…' : '최종 게이트 돌리기'}
+              </Btn>
+            )}
             <span className="font-mono text-[10.5px] text-faint">squash · {spec.approved.slice(0, 7)} 에 묶인다</span>
           </div>
           {spec.p2_comment && (
