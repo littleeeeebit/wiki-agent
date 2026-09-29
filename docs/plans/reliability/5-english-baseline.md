@@ -398,17 +398,25 @@ Host spending per batch: retrieval 4.0 min / USD 0.37, answers 45.9 / 9.34
 - Latency still fails, narrowly: 10.76 s against 10 s (v2: 19.3 s).
   - The gate compares the p95 of each row's retrieval-plus-answer time: D
     29.95 s against A 19.20 s. Phase percentiles do not add up to it.
-  - A drafts once in every row. Of the seven slowest D rows, about the
-    slowest tenth:
-    - four drafted twice, a repair draft after claims were rejected;
-    - four spent 4.0 to 15.7 s of host time in retrieval, from analysis and
-      coverage fallbacks;
-    - the five factual rows among them make one or two verification
-      fallback turns; a row makes at most two verification requests, and
-      each falls back at most once;
-    - the two analysis rows among them make none, and their host turns are
-      retrieval coverage fallbacks.
-  - The evaluation's grading turn is outside answer time.
+  - A row's host turns are of four kinds: drafting (one per draft, inside
+    answer time), verification fallback (inside), retrieval fallback
+    (inside), and the evaluation's grading turn (one per row, outside).
+    A drafts once in every row.
+  - The seven slowest D rows, about the slowest tenth:
+
+    | Row | Drafting | Verification fallback | Retrieval fallback |
+    | --- | --- | --- | --- |
+    | start-22 | 2 | 2 | 0 s |
+    | pasted-20 | 2 | 2 | 0 s |
+    | analysis-19 | 1 | 0 | 3 turns, 15.7 s |
+    | fix-23 | 2 | 2 | 1 turn, 4.0 s |
+    | analysis-20 | 1 | 0 | 2 turns, 8.5 s |
+    | pasted-22 | 2 | 1 | 0 s |
+    | none-24 | 1 | 1 | 1 turn, 4.4 s |
+
+    A second draft follows rejected claims. The analysis rows' retrieval
+    fallbacks are coverage questions. A row makes at most two verification
+    requests, and each falls back at most once.
   - The calibration answers show the same tail, so a fix can rest on
     calibration. It is a new policy version with fresh held-out evidence,
     not an edit to v3, and it is the next PR (v4).
