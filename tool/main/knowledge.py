@@ -196,7 +196,9 @@ ASK = ("Is query part {id} something the user asks the assistant to answer or do
 # judgment, advice — is the assistant's own working-out, which no passage states, so checking it claim by claim
 # withheld it step after step. Only a sure yes skips that check; uncertain keeps it (invariant 2).
 ANALYSIS = ("Does the query ask the assistant for analysis it works out itself, such as a comparison, a judgment, "
-            "an assessment, an opinion or advice, rather than for facts the repository's sources state?")
+            "an assessment, an opinion or advice, rather than for facts the repository's sources state? "
+            "A calculation, a conversion, a count, a sort or a rewording of text the query itself gives is "
+            "not analysis: it has one right result.")
 # Each of the two bound to its own digest: a rule fitted for one text of it is not fitted for another
 # (`decision.policy`'s `kind_versions`, reliability PR 4).
 KIND_VERSIONS = {"ask": hashlib.sha256(ASK.encode()).hexdigest()[:16],
@@ -305,7 +307,8 @@ def behavior() -> dict:
               "graph_extraction": tracing.digest([read(GRAPH_PROMPT), knowledge_graph.POLICY,
                                                   knowledge_graph.STRUCTURE]),
               # Who settles what Jev leaves uncertain, and what it is told (reliability PR 5, v2).
-              "fallback": tracing.digest([fallback_mode(), read(FALLBACK_PROMPT), FALLBACK_SECONDS])}
+              "fallback": tracing.digest([fallback_mode(), read(FALLBACK_PROMPT), FALLBACK_SECONDS,
+                                          decision.CODE_SETTLES])}
     return {"hashes": hashes, "digest": tracing.digest(hashes)}
 
 

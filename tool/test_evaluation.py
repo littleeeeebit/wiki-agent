@@ -516,7 +516,7 @@ def test_every_decision_a_row_makes_is_counted_even_when_its_answer_then_fails(m
     assert compare.ledger_cost(kept) == {"jev_requests": 4, "jev_tokens": 8, "host_usd": 1.0, "host_turns": 3,
                                          "host_unknown": 1}
     assert compare.fallbacks((k, res["fallback"]) for k, res in kept) == \
-        {"useful": {"asked": 4, "fell": 3, "settled": 3}}
+        {"coverage": {"asked": 4, "fell": 3, "settled": 3}}
     assert decision.decide is real, "the ledger's patch ends with its block"
 
 

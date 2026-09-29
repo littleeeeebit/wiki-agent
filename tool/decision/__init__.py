@@ -630,5 +630,5 @@ def probe(cfg: Config, cancel: threading.Event | None = None) -> dict:
 
 # The typed layer over the transport (stage 6). Imported last: both read the names above.
 from .contract import DEFER, STATUSES, UNSURE, Cache, checked, decide, final, request, settled_by  # noqa: E402
-from .policy import Policy, policy, verdict  # noqa: E402
+from .policy import CODE_SETTLES, Policy, policy, verdict  # noqa: E402
 from . import claims  # noqa: E402  — the relation Choice (stage 7)
