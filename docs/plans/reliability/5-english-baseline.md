@@ -316,18 +316,108 @@ actions 0.2 / 0.02. Host spending totals USD 22.44. The dollars and the
 threshold count host turns only. Jev's 915 requests and 1,871,323 tokens have
 no dated price, so the total provider cost is unknown.
 
+### v3 — `eval/jev/reliability-v3/` at 1e80cf5
+
+The fix for v2's two open gates, ef45fec:
+
+- The host hears only what code cannot settle. `decision.CODE_SETTLES`
+  (source, useful, conflict, redirect, repair) are kinds whose uncertain
+  verdict code already takes a safe way:
+  - an uncertain source is searched;
+  - an uncertain useful or conflict passage stays evidence;
+  - an uncertain redirect is flagged untrusted;
+  - an uncertain repair takes code's order.
+
+  On v2 held-out these kinds cost a typical D row two host turns of about
+  5 s each. The host settled 5 of 66 repairs.
+- The analysis question says that a calculation, a conversion, a count, a
+  sort or a rewording of given text is not analysis. Every v2 analysis/fact
+  miss was such a task, direct-05 in calibration included.
+
+The v3 set keeps the same calibration half and adds 72 held-out intents
+written after v2's reveal (review r3, gpt-6-sol, two rounds; approved input
+intents `cc5c4643`). The action fixtures are v2's, unchanged: the action path
+did not change, so the action gates here are regression evidence, not a fresh
+action sample. On calibration first (v2's split, runs
+`reliability-v3-calibration` and `reliability-v3-calibration-answers`, at
+ef45fec):
+- recall was the same as v2 in every arm;
+- D retrieval p95 fell from 16.0 s to 5.4 s;
+- analysis/fact misses fell from 2 to 0;
+- added latency was 8.1 s, and coverage D−A −0.030.
+
+Held-out runs: `reliability-v3-heldout`, `reliability-v3-answers`,
+`reliability-v3-repeat`, `reliability-v3-actions`. The report is
+`reliability-v3-report.json`.
+
+| Gate | Target | Value | Result |
+| --- | --- | --- | --- |
+| Deterministic integrity | 0 | 0 | pass |
+| Graph benefit | 0.10 | 0.5 [0.5, 0.5] | pass |
+| Overall recall | ≥ -0.02 | 0.054 [0.018, 0.098] | pass |
+| Answer support | 0.25, coverage ≥ -0.20 | 0.720, coverage D−A -0.053 [-0.114, 0.0] | pass |
+| Decision quality | 0.90 | 1.0 | pass |
+| Added latency | ≤ 10 s | 10.76 s | **fail** |
+| Operating ceiling | 0 | 0 | pass |
+| Analysis/fact routing | 0.90 | 0.970 [0.924, 1.0] | pass |
+| Request/material classification | 0.90 | 1.0 | pass |
+| Work start / check / review fix | 0.90 | 1.0 / 1.0 / 1.0 (n=6 each) | pass |
+
+Retrieval, held out. The n column is as in v2: B and D include the six
+injected-failure intents.
+
+| Arm | n | Recall | Candidate recall | Bridge recall | p95 s | Host USD |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 56 | 0.946 [0.902, 0.982] | 0.946 | 0.5 | 0.02 | 0 |
+| B | 62 | 0.879 [0.798, 0.944] | 0.879 | 0.417 | 6.2 | 0.18 |
+| C | 56 | 0.946 [0.902, 0.982] | 1.0 | 0.5 | 0.02 | 0 |
+| D | 62 | 0.935 [0.871, 0.984] | 0.935 | 1.0 | 6.3 | 0.19 |
+
+Answers, held out:
+- Coverage: A 0.992, D 0.939 [0.886, 0.985].
+- Unsupported claim rate: A 0.397, D 0.111 [0.045, 0.175].
+- D's 66 answers: 31 verified, 18 host-checked, 9 abstained, 5 unverified
+  analysis, 3 direct. None of the analysis or host-checked ones was published
+  or remembered as verified.
+- Failure and cancellation: 12 of 12 as expected.
+- Repetition: status the same in 8 of 8 groups, evidence the same in 4 (B)
+  and 3 (D).
+
+Host fallback on D's answer run:
+- No question of a `CODE_SETTLES` kind went to the host.
+- Analysis 9/72, coverage 6/85, route 2/72.
+- Claim checks: answers 40/218, relation 35/157, faithful 2/14.
+- Actions: work start 2/6, review fix 1/6.
+
+Host spending per batch: retrieval 4.0 min / USD 0.37, answers 45.9 / 9.34
+(one batch), repetition 2.9 / 0.56, actions 0.3 / 0.04. Calibration was 3.8 /
+0.38 and 48.2 / 9.77. Jev's cost has no dated price, as in v2.
+
 ### Limits
 
-- Latency fails: the fallback moves D's retrieval p95 from 1.3 s (v1) to
-  17.4 s and adds 19.3 s p95 to an answer. Every repair question and about half
-  the source questions go to the host; that is where the time goes and where
-  Jev needs work. As a timing diagnostic, not a fallback-off run on this set:
-  with each row's recorded host time (`aside_ms`) taken out, D's held-out
-  retrieval p95 is 1.44 s, close to v1's 1.25 s. Fixing it is a policy change: a new version and fresh held-out
-  evidence, not an edit to this set.
-- Analysis/fact routing stays inconclusive in both sets: 3–4 route mistakes
-  in 66 cohort rows per arm leave the lower bound at 0.894, just under 0.90.
-  More held-out intents would settle it; these do not.
+- Latency still fails, narrowly: 10.76 s against 10 s (v2: 19.3 s).
+  - The gate compares the p95 of each row's retrieval-plus-answer time: D
+    29.95 s against A 19.20 s. Phase percentiles do not add up to it.
+  - A drafts once in every row. Of the seven slowest D rows, about the
+    slowest tenth:
+    - four drafted twice, a repair draft after claims were rejected;
+    - four spent 4.0 to 15.7 s of host time in retrieval, from analysis and
+      coverage fallbacks;
+    - their other host turns are one or two verification fallbacks, since a
+      row makes at most two verification requests and each falls back at
+      most once.
+  - The evaluation's grading turn is outside answer time.
+  - The calibration answers show the same tail, so a fix can rest on
+    calibration. It is a new policy version with fresh held-out evidence,
+    not an edit to v3.
+- Analysis/fact routing passes, but not perfectly. Its two held-out misses,
+  in both arms, are fact lookups phrased as advice: "What should I do if I
+  lose my work laptop?" and "Which exit codes should it use?". That is a
+  family the analysis question does not yet separate. It is recorded, not
+  tuned on.
+- v2's figures below keep their own numbers, and v2's own limits stand for
+  v2: it failed latency at 19.3 s and routing was inconclusive, at 3–4
+  mistakes in 66 cohort rows per arm.
 - v1's integrity failure was the scorer's: the fabricated-citation check read
   the dossier the answer began from, not the evidence each draft was given, and
   counted two citations of the user's pasted text; fixed in 252d0f9, so v1 and v2
@@ -337,14 +427,14 @@ no dated price, so the total provider cost is unknown.
 - The action gates rest on six held-out fixtures per point, and the fallback's
   host is the evaluation's default model; a different chat model shifts both
   host-checked answers and latency.
-- The report's own statement: no stage exit. Latency fails and routing is
-  inconclusive, so this PR publishes the baseline and leaves the stage's exit
-  gates open, as the decision protocol requires.
+- The report's own statement: no stage exit. Latency fails, so the stage's
+  exit gates stay open, as the decision protocol requires.
 
 ### English baseline for PR 9
 
-`reliability-v2` at 75dd67f, report `raw/eval/jev/reliability-v2-report.json`,
-gates v3, English input over English evidence.
+`reliability-v3` at 1e80cf5, report `raw/eval/jev/reliability-v3-report.json`,
+gates v3, English input over English evidence. It replaces `reliability-v2` at
+75dd67f.
 
 ### Reproduction
 
@@ -354,6 +444,20 @@ commit and the options recorded in each `run.json`: `cache cold`, `method
 hybrid`, `k 8`, the default model and grader. Running the same commands at a
 later commit measures a different manifest. Rebuilding a report from the
 recorded folders works at any commit.
+
+v3, from a clean checkout of 1e80cf5. Calibration ran at ef45fec, whose
+behavior is the same; a rerun there needs its own checkout. The actions use
+v2's fixtures:
+
+```text
+python tool/eval/compare.py raw/eval/jev/reliability-v3-calibration --dataset eval/jev/reliability-v2/intents.json --split calibration --languages en
+python tool/eval/compare.py raw/eval/jev/reliability-v3-calibration-answers --dataset eval/jev/reliability-v2/intents.json --split calibration --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-v3-heldout --dataset eval/jev/reliability-v3/intents.json --split held_out --languages en
+python tool/eval/compare.py raw/eval/jev/reliability-v3-answers --dataset eval/jev/reliability-v3/intents.json --split held_out --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-v3-repeat --dataset eval/jev/reliability-v3/intents.json --split held_out --languages en --arms B D --repeat 3 --ids analysis-19 analysis-20 analysis-22 pasted-19 pasted-24 route-24 memory-23 conflict-23
+python tool/eval/compare.py raw/eval/jev/reliability-v3-actions --experiment actions --dataset eval/jev/reliability-v3/intents.json --actions eval/jev/reliability-v2/actions.json --split held_out
+python tool/eval/report.py raw/eval/jev/reliability-v3-heldout raw/eval/jev/reliability-v3-answers raw/eval/jev/reliability-v3-repeat raw/eval/jev/reliability-v3-actions --out raw/eval/jev/reliability-v3-report.json
+```
 
 v2, from a clean checkout of 75dd67f:
 
@@ -386,7 +490,7 @@ A batch that stops at its threshold resumes when the same command runs again.
 | --- | --- | --- | --- |
 | 1 | Freeze | Freeze new English labels, versions and gates | Done |
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
-| 3 | Publish | Publish current baseline and unresolved limits | Done — exit gates open: latency fails, analysis routing inconclusive |
+| 3 | Publish | Publish current baseline and unresolved limits | Done — v3 baseline; exit gate open: latency fails (10.76 s) |
 
 ## Sources
 

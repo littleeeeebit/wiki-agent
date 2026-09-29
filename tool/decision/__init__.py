@@ -39,7 +39,7 @@ from common.budget import PROBE, QUESTION, Budget
 
 __all__ = ("Config", "JevError", "MODES", "choice", "config", "env_file", "evaluate", "noul", "probe", "score",
            "DEFER", "STATUSES", "UNSURE", "Cache", "request", "decide", "checked", "final", "settled_by", "Policy",
-           "policy", "verdict", "claims",
+           "policy", "verdict", "claims", "CODE_SETTLES",
            "FAMILIES", "LIMITS", "save", "settings_file")
 
 HOST = "api.typesafe.ai"
