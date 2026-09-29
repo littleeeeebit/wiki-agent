@@ -303,9 +303,9 @@ def test_the_second_set_keeps_the_first_calibration_and_holds_out_only_unseen_in
     assert all(i["review"] == "r2" for i in held) and v2["labels"]["reviews"]["r2"]["by"] == "gpt-6-sol"
     assert not {i["variants"]["en"] for i in held} & {i["variants"]["en"] for i in fresh["intents"]}
     assert not {i["id"] for i in held} & {i["id"] for i in fresh["intents"]}
-    # The first corpus whole, with pages added beside it and none changed.
-    assert {n: t for n, t in v2["corpus"]["files"].items() if n in fresh["corpus"]["files"]} == \
-        fresh["corpus"]["files"]
+    # The first corpus whole, papers included, with pages added beside it and none changed.
+    first_pages, second_pages = dataset.pages(fresh), dataset.pages(v2)
+    assert {n: second_pages.get(n) for n in first_pages} == first_pages
     assert sorted(i["fault"]["kind"] for i in held if i.get("fault")) == \
         ["cancelled"] * 2 + ["exhausted"] * 2 + ["unavailable"] * 2
     assert (RELIABLE.parent / "reliability-v2" / "gates.json").read_bytes() == (RELIABLE / "gates.json").read_bytes()

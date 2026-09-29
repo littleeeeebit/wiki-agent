@@ -275,14 +275,17 @@ rounds; approved hashes: intents `0321f73a`, actions `c0b0f55d`). Runs:
 | Request/material classification | 0.90 | 1.0 | pass |
 | Work start / check / review fix | 0.90 | 1.0 / 1.0 / 1.0 (n=6 each) | pass |
 
-Retrieval, held out (recall@8 with interval, n=56; bridge recall n=6; p95 s):
+Retrieval, held out, each arm over its own rows (recall@8 with interval; bridge
+recall n=6; p95 s). B and D also run the six injected-failure intents, so their
+recall has n=62 against A's and C's 56. The overall-recall gate pairs D and A
+over the 56 intents both ran, so it is not the difference of these columns:
 
-| Arm | Recall | Candidate recall | Bridge recall | p95 s | Host USD |
-| --- | --- | --- | --- | --- | --- |
-| A | 0.902 [0.830, 0.964] | 0.902 | 0.583 | 0.02 | 0 |
-| B | 0.839 [0.750, 0.919] | 0.839 | 0.5 | 17.4 | 2.33 |
-| C | 0.902 [0.830, 0.964] | 0.946 | 0.583 | 0.03 | 0 |
-| D | 0.887 [0.807, 0.968] | 0.887 | 1.0 | 17.4 | 2.36 |
+| Arm | n | Recall | Candidate recall | Bridge recall | p95 s | Host USD |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 56 | 0.902 [0.830, 0.964] | 0.902 | 0.583 | 0.02 | 0 |
+| B | 62 | 0.839 [0.750, 0.919] | 0.839 | 0.5 | 17.4 | 2.33 |
+| C | 56 | 0.902 [0.830, 0.964] | 0.946 | 0.583 | 0.03 | 0 |
+| D | 62 | 0.887 [0.807, 0.968] | 0.887 | 1.0 | 17.4 | 2.36 |
 
 Answers, held out: coverage A 0.977, D 0.871 [0.788, 0.939]; unsupported claim
 rate A 0.397, D 0.092 [0.008, 0.193]. D's 66 answers: 31 verified, 18
@@ -305,17 +308,22 @@ Host fallback, questions sent to the host / questions asked, arm D, answer run:
 
 Actions: work start fell to the host 2 of 6 times, check and review fix never.
 
-Spend per batch (60 min / USD 10 cap): calibration 25.8 min / USD 4.70,
-held-out retrieval 26.4 / 4.69, answers 49.1 / 10.03 (stopped at the cap after
-the row that crossed it, 122 of 138) then 4.1 / 0.77, repetition 12.4 / 2.23,
-actions 0.2 / 0.02.
+Time and host spending per batch. The runner stops a batch at 60 min or USD 10
+of host spending, checked after each row: calibration 25.8 min / USD 4.70,
+held-out retrieval 26.4 / 4.69, answers 49.1 / 10.03 (stopped after the row
+that crossed USD 10, 122 of 138 rows) then 4.1 / 0.77, repetition 12.4 / 2.23,
+actions 0.2 / 0.02. Host spending totals USD 22.44. The dollars and the
+threshold count host turns only. Jev's 915 requests and 1,871,323 tokens have
+no dated price, so the total provider cost is unknown.
 
 ### Limits
 
 - Latency fails: the fallback moves D's retrieval p95 from 1.3 s (v1) to
   17.4 s and adds 19.3 s p95 to an answer. Every repair question and about half
   the source questions go to the host; that is where the time goes and where
-  Jev needs work. Fixing it is a policy change: a new version and fresh held-out
+  Jev needs work. As a timing diagnostic, not a fallback-off run on this set:
+  with each row's recorded host time (`aside_ms`) taken out, D's held-out
+  retrieval p95 is 1.44 s, close to v1's 1.25 s. Fixing it is a policy change: a new version and fresh held-out
   evidence, not an edit to this set.
 - Analysis/fact routing stays inconclusive in both sets: 3–4 route mistakes
   in 66 cohort rows per arm leave the lower bound at 0.894, just under 0.90.
@@ -340,6 +348,15 @@ gates v3, English input over English evidence.
 
 ### Reproduction
 
+A run's manifest records the code commit, and a folder refuses a run whose
+manifest differs. Re-running a set therefore means a clean checkout of its
+commit and the options recorded in each `run.json`: `cache cold`, `method
+hybrid`, `k 8`, the default model and grader. Running the same commands at a
+later commit measures a different manifest. Rebuilding a report from the
+recorded folders works at any commit.
+
+v2, from a clean checkout of 75dd67f:
+
 ```text
 python tool/eval/compare.py raw/eval/jev/reliability-v2-calibration --dataset eval/jev/reliability-v2/intents.json --split calibration --languages en
 python tool/eval/compare.py raw/eval/jev/reliability-v2-heldout --dataset eval/jev/reliability-v2/intents.json --split held_out --languages en
@@ -349,8 +366,19 @@ python tool/eval/compare.py raw/eval/jev/reliability-v2-actions --experiment act
 python tool/eval/report.py raw/eval/jev/reliability-v2-heldout raw/eval/jev/reliability-v2-answers raw/eval/jev/reliability-v2-repeat raw/eval/jev/reliability-v2-actions --out raw/eval/jev/reliability-v2-report.json
 ```
 
-A batch that stops at its cap resumes when the same command runs again. v1 runs
-the same way with `eval/jev/reliability/` and the `reliability-*` folders.
+v1, from a clean checkout of 8588d03. That commit predates the fallback, so it
+measures the historical policy:
+
+```text
+python tool/eval/compare.py raw/eval/jev/reliability-calibration --dataset eval/jev/reliability/intents.json --split calibration --languages en
+python tool/eval/compare.py raw/eval/jev/reliability-heldout-clean --dataset eval/jev/reliability/intents.json --split held_out --languages en
+python tool/eval/compare.py raw/eval/jev/reliability-answers --dataset eval/jev/reliability/intents.json --split held_out --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-repeat --dataset eval/jev/reliability/intents.json --split held_out --languages en --arms B D --repeat 3 --ids analysis-01 analysis-04 analysis-07 conflict-09 memory-04 pasted-02 pasted-12 route-12
+python tool/eval/compare.py raw/eval/jev/reliability-actions --experiment actions --dataset eval/jev/reliability/intents.json --actions eval/jev/reliability/actions.json --split held_out
+python tool/eval/report.py raw/eval/jev/reliability-heldout-clean raw/eval/jev/reliability-answers raw/eval/jev/reliability-repeat raw/eval/jev/reliability-actions --out raw/eval/jev/reliability-report.json
+```
+
+A batch that stops at its threshold resumes when the same command runs again.
 
 ## Steps
 
