@@ -12,6 +12,7 @@ from unittest.mock import patch
 import pytest
 
 import decision
+from common.budget import Budget
 from eval import compare, dataset, report
 from main import decisions
 from search import sources
@@ -457,43 +458,39 @@ def test_the_fallback_rate_is_counted_per_arm_and_kind_from_retrieval_and_the_an
     assert compare.fallbacks(decided) == {"route": {"asked": 3, "fell": 1, "settled": 1}}
 
 
-def test_a_warm_row_s_priming_run_is_counted_toward_the_ceiling():
-    # A warm row asked the host twice at USD 0.60 each; the ceiling saw one, and a USD 1 batch ran on.
-    def ran(usd):
-        return {"decisions": [{"usage": {"input_tokens": 10, "output_tokens": 1},
-                               "fallback": {"by": "host", "cost_usd": usd}}]}
-
-    assert compare.retrieval_cost(ran(0.6), ran(0.6)) == {"jev_requests": 2, "jev_tokens": 22, "host_usd": 1.2,
-                                                           "host_turns": 2, "host_unknown": 0}
-    assert compare.retrieval_cost(None, ran(0.6))["host_turns"] == 1, "a cold row has no priming run"
-    # Codex reports no price: its turn is counted, its cost unknown, never zero.
-    unpriced = compare.retrieval_cost(ran(None))
-    assert (unpriced["host_turns"], unpriced["host_usd"], unpriced["host_unknown"]) == (1, 0, 1)
-
-
-def test_an_answer_s_return_to_retrieval_is_counted_with_its_fallbacks(monkeypatch, tmp_path):
-    # A direct draft needed a repository fact; the retrieval it went back to asked the host at USD 0.40.
+def test_every_decision_a_row_makes_is_counted_even_when_its_answer_then_fails(monkeypatch, tmp_path):
+    # Rounds 1-3 of the fallback review: a warm row's priming run, an answer's return to retrieval, and
+    # a verification whose repair draft then failed each spent host turns the batch ceiling never saw.
     import agent
     from main import knowledge
+    from test_decision_flow import POLICY, req, returning
 
-    repaired = {"questions": {"coverage_r0": {"decision": "coverage"}},
-                "usage": {"input_tokens": 10, "output_tokens": 1},
-                "fallback": {"by": "host", "asked": ["coverage_r0"], "answers": {"coverage_r0": 1.0}, "cost_usd": 0.4}}
-    verified = {"status": "complete", "reason": None, "verified": True, "degraded": False, "host_checked": False,
-                "claims": [], "rejected": [], "citations": []}
-    record = {"generations": [{"evidence_ids": {}, "decision": {"usage": {}, "answers": {}, "fallback": None}}],
-              "retrievals": [{"decisions": [repaired]}]}
+    def asked(usd):
+        return lambda state, questions, stage: {"answers": {n: "yes" for n in questions}, "cost_usd": usd}
 
     def grounded(*args, **kwargs):
-        return {"verified": verified, "text": "t", "record": record}
+        # The code under test calls `decision.decide` by attribute, as `knowledge` does.
+        decision.decide(req(), returning({"x": 0.5}), Budget(seconds=5, calls=2, candidates=0), [], POLICY,
+                        fallback=asked(0.4))
+        raise RuntimeError("the repair draft failed")
         yield
 
     monkeypatch.setattr(knowledge, "grounded", grounded)
     monkeypatch.setattr(agent, "ChatSession", lambda *a, **k: SimpleNamespace(close=lambda: None))
-    got = compare.answered({"text": "q"}, {}, tmp_path, True, None, "")
-    assert (got["host_usd"], got["host_turns"], got["host_unknown"]) == (0.4, 1, 0)
-    assert got["retrieval_usage"] == {"jev_requests": 1, "jev_tokens": 11}
-    assert got["fallback"] == {"coverage": {"asked": 1, "fell": 1, "settled": 1}}
+    real = decision.decide
+    with compare.ledger() as kept:
+        # Priming, then the measured retrieval: Codex reports no price for the second.
+        for usd in (0.6, None):
+            decision.decide(req(), returning({"x": 0.5}), Budget(seconds=5, calls=2, candidates=0), [], POLICY,
+                            fallback=asked(usd))
+        decision.decide(req(), returning({"x": 0.95}), Budget(seconds=5, calls=2, candidates=0), [], POLICY)
+        with pytest.raises(RuntimeError, match="repair draft"):
+            compare.answered({"text": "q"}, {}, tmp_path, True, None, "")
+    assert compare.ledger_cost(kept) == {"jev_requests": 4, "jev_tokens": 8, "host_usd": 1.0, "host_turns": 3,
+                                         "host_unknown": 1}
+    assert compare.fallbacks((k, res["fallback"]) for k, res in kept) == \
+        {"useful": {"asked": 4, "fell": 3, "settled": 3}}
+    assert decision.decide is real, "the ledger's patch ends with its block"
 
 
 def test_the_host_s_own_time_is_not_a_deadline_breach():

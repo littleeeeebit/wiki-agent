@@ -450,10 +450,8 @@ def test_a_direct_run_states_no_repository_fact_and_goes_back_to_retrieval(tmp_p
     from eval import compare
     assert d["evidence"] == [] and out["verified"]["citations"]
     assert compare.invented(out["verified"], out["record"]["generations"]) == []
-    # What that return to retrieval spent reaches the answer's record, its host fallback included.
+    # What that return to retrieval decided is the answer's record too, its host fallback included.
     assert out["record"]["retrievals"] == [{"decisions": [repair_decision]}]
-    assert compare.retrieval_cost(*out["record"]["retrievals"]) == {
-        "jev_requests": 1, "jev_tokens": 11, "host_usd": 0.4, "host_turns": 1, "host_unknown": 0}
 
     # No allowance left for a round: the fact is never published, and nothing is retrieved.
     asked.clear()

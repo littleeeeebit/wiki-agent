@@ -282,6 +282,18 @@ def test_the_host_s_answer_is_read_only_for_the_questions_asked(monkeypatch):
     assert out["answers"] == {"x": "yes"} and out["cost_usd"] == 0.03 and out["model"] == "host-model"
 
 
+def test_a_failed_host_turn_settles_nothing_and_keeps_the_price_it_reported(monkeypatch):
+    from agent.chat_session import Event
+
+    def turn(prompt, payload, model, halt):
+        yield Event("done", "rate limited", {"error": True, "cost_usd": 0.25, "model": "host-model"})
+
+    monkeypatch.setattr(knowledge, "oneshot", turn)
+    out = knowledge.host_decides({}, {"x": decision.noul("?")}, "route")
+    assert out["answers"] == {} and "rate limited" in out["error"]
+    assert out["cost_usd"] == 0.25 and out["model"] == "host-model", "it was paid for"
+
+
 def test_a_host_turn_that_reports_no_price_is_recorded_as_unknown_not_free(monkeypatch):
     # Codex's completion carries its model and tokens, never a price.
     from agent.chat_session import Event

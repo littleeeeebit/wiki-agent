@@ -35,7 +35,7 @@ import decision  # noqa: E402
 import search  # noqa: E402
 from agent import ChatSession  # noqa: E402
 from eval.baseline import RAW, load, materialize, revision  # noqa: E402
-from eval.decisions import watched  # noqa: E402
+from eval.decisions import ALONE, alone, watched  # noqa: E402
 from main import channels, knowledge  # noqa: E402
 
 RESULT = "jev-answers-result/1"
@@ -86,9 +86,10 @@ def run(manifest_path: Path, ids: tuple[str, ...], model: str) -> dict:
     cfg = decision.config()
     if cfg.mode == "off" or not cfg.key:
         raise SystemExit(f"Jev is not configured: {cfg.status()}")
-    active = decision.Config("active", cfg.model, cfg.key_source, key=cfg.key, host=model)
+    active = decision.Config("active", cfg.model, cfg.key_source, key=cfg.key)
     korean: list[str] = []
     real, decision.evaluate = watched(korean)
+    kept, knowledge.falls_back = knowledge.falls_back, alone
     rows = []
     try:
         with tempfile.TemporaryDirectory(prefix="jev-answers-") as scratch:
@@ -112,13 +113,13 @@ def run(manifest_path: Path, ids: tuple[str, ...], model: str) -> dict:
                     chat.close()
                 rows.append(summary(query, dossier, out, spent))
     finally:
-        decision.evaluate = real
+        decision.evaluate, knowledge.falls_back = real, kept
     usage = [u or {} for r in rows for u in r["jev_usage"]]
     return {"schema": RESULT, "manifest": {"id": manifest["id"], "version": manifest["version"]},
             "run": {"started": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), **revision()},
             "jev": {"model": cfg.model, "relation_prompt": decision.claims.VERSION,
                     "verification_version": knowledge.VERIFICATION_VERSION},
-            "host_model": model or "default", "statuses": {r["id"]: r["status"] for r in rows},
+            "host_model": model or "default", "fallback": ALONE, "statuses": {r["id"]: r["status"] for r in rows},
             "korean_sent": korean,
             "verify_usage": {"requests": len(usage), "input_tokens": sum(u.get("input_tokens", 0) for u in usage),
                              "output_tokens": sum(u.get("output_tokens", 0) for u in usage)},

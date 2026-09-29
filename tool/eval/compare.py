@@ -280,23 +280,36 @@ def faulted(fault: dict | None):
         yield raised
 
 
-def usage_of(d: dict) -> dict:
-    spent = [x["usage"] or {} for x in d.get("decisions", []) if not x.get("cached")]
-    return {"jev_requests": len(spent),
-            "jev_tokens": sum(u.get("input_tokens", 0) + u.get("output_tokens", 0) for u in spent)}
+@contextlib.contextmanager
+def ledger():
+    """Every decision made inside, as `(kinds, result)` the moment
+    `decision.decide` returns it — a row's priming run, its retrieval, the
+    answer's verification and returns to retrieval, an action's choice —
+    whether or not an answer is ever published. What a row spent on Jev and
+    on host fallbacks, and how often each kind fell back, is read from here,
+    never from a published record, which a failed answer never reaches.
+    Rows run one at a time (`batch`), as `faulted` also assumes."""
+
+    kept: list[tuple[dict, dict]] = []
+    real = decision.decide
+
+    def decide(req, *args, **kwargs):
+        res = real(req, *args, **kwargs)
+        kept.append(({n: q["decision"] for n, q in req["questions"].items()}, res))
+        return res
+
+    with patch.object(decision, "decide", decide):
+        yield kept
 
 
-def retrieval_cost(*dossiers) -> dict:
-    """What a row's retrieval runs cost together: Jev's requests and tokens,
-    and the host turns its fallbacks took — host spending like an answer's.
-    A warm row's priming run is one of them, and so is an answer's return to
-    retrieval (the record's `retrievals`): the batch's ceiling counts each."""
+def ledger_cost(kept) -> dict:
+    """What the decisions in a `ledger` cost: the Jev requests actually sent
+    and their tokens, and the host fallbacks' turns (`host_spent`)."""
 
-    cost = {"jev_requests": 0, "jev_tokens": 0, "host_usd": 0.0, "host_turns": 0, "host_unknown": 0}
-    for d in filter(None, dossiers):
-        for k, v in {**usage_of(d), **host_spent(x.get("fallback") for x in d.get("decisions", []))}.items():
-            cost[k] += v
-    return cost
+    sent = [res.get("usage") or {} for _kinds, res in kept if res.get("sent")]
+    return {"jev_requests": len(sent),
+            "jev_tokens": sum(u.get("input_tokens", 0) + u.get("output_tokens", 0) for u in sent),
+            **host_spent(res.get("fallback") for _kinds, res in kept)}
 
 
 def kinds_of(decisions) -> list[tuple[dict, dict | None]]:
@@ -423,25 +436,15 @@ def answered(unit: dict, d: dict, repo: Path, jev: bool, cfg: decision.Config, m
         v = out["verified"]
         gens = out["record"]["generations"]
         judged = [g[k] for g in gens for k in ("decision", "rejoined") if g.get(k)]
-        host = host_spent(j.get("fallback") for j in judged)
-        # A return to retrieval ran its own Jev requests and fallbacks (`record.retrievals`).
-        repaired = out["record"].get("retrievals") or []
-        again = retrieval_cost(*repaired)
         return {"status": v["status"], "reason": v["reason"], "text": out["text"],
                 # As published, and as a memory of this turn would label it (`memory.verification`).
                 "verified": v["verified"], "degraded": v["degraded"], "host_checked": v.get("host_checked"),
                 "remembered": memory.verification({"role": "assistant", "verification": v}),
-                "host_usd": spent.get("cost_usd", 0.0) + host["host_usd"] + again["host_usd"],
-                "host_turns": spent.get("turns", 0) + host["host_turns"] + again["host_turns"],
-                "host_unknown": host["host_unknown"] + again["host_unknown"],
-                "retrieval_usage": {k: again[k] for k in ("jev_requests", "jev_tokens")},
+                # The drafting turns alone: every decision's spending, fallbacks included, is the row's `ledger`.
+                "host_usd": spent.get("cost_usd", 0.0), "host_turns": spent.get("turns", 0),
                 "elapsed_ms": round((time.monotonic() - started) * 1000),
                 "accepted": len(v["claims"]), "rejected": len(v["rejected"]),
-                "verify_usage": [j["usage"] for j in judged],
-                "fallback": fallbacks([*(({n: n.split("_", 1)[0] for n in j.get("answers") or {}}, j.get("fallback"))
-                                         for j in judged),
-                                       *(pair for d in repaired for pair in kinds_of(d["decisions"]))]),
-                "fabricated": invented(v, gens)}
+                "verify_usage": [j["usage"] for j in judged], "fabricated": invented(v, gens)}
     finally:
         chat.close()
 
@@ -513,35 +516,31 @@ def run_arms(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict) 
                 fault = unit["intent"].get("fault")
                 # A fault is reproduced on a request actually sent: never served from the cache.
                 cache_ = None if fault else cache
-                primed = None
-                with patch.object(knowledge, "graph_enabled", lambda: arm["graph"]), faulted(fault) as raised:
-                    if opts["cache"] == "warm" and not fault:
-                        primed = knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache_, k=opts["k"])
-                    started = time.monotonic()
-                    d = knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache_, k=opts["k"])
-                    elapsed = round((time.monotonic() - started) * 1000)
-                row = {"key": unit["key"], "intent": unit["intent"]["id"], "language": unit["language"],
-                       "arm": unit["arm"], "rep": unit["rep"], "cache": opts["cache"], "at": now(),
-                       "elapsed_ms": elapsed, **dossier_row(d, names, c.label, allowed)}
-                if fault:
-                    row["fault"] = {"kind": fault["kind"], "phase": fault["phase"], "raised": raised}
-                cost = retrieval_cost(primed, d)
-                # A faulted run is judged by where it ended; it is not answered.
-                if opts["level"] == "answer" and not fault:
-                    try:
-                        row["answer"] = answered(unit, d, c.repo, arm["jev"], cfg_, opts["model"])
-                        row["grade"] = graded(unit, d, row["answer"]["text"], data, opts["grader"])
-                    except Exception as exc:  # noqa: BLE001 — a failed turn is a recorded failure, not a stop
-                        row["answer_error"] = f"{type(exc).__name__}: {exc}"[:300]
-                    for part in (row.get("answer") or {}, row.get("grade") or {}):
-                        cost["host_usd"] += part.get("host_usd") or 0.0
-                    cost["host_turns"] += (row.get("answer") or {}).get("host_turns", 0) + ("grade" in row)
-                    cost["host_unknown"] += (row.get("answer") or {}).get("host_unknown", 0)
-                    for k, v in ((row.get("answer") or {}).get("retrieval_usage") or {}).items():
-                        cost[k] += v
-                    for u in (row.get("answer") or {}).get("verify_usage") or []:
-                        cost["jev_requests"] += 1
-                        cost["jev_tokens"] += (u or {}).get("input_tokens", 0) + (u or {}).get("output_tokens", 0)
+                # Every decision the row makes — priming, retrieval, the answer's own, failed answer or not.
+                with ledger() as kept:
+                    with patch.object(knowledge, "graph_enabled", lambda: arm["graph"]), faulted(fault) as raised:
+                        if opts["cache"] == "warm" and not fault:
+                            knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache_, k=opts["k"])
+                        started = time.monotonic()
+                        d = knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache_, k=opts["k"])
+                        elapsed = round((time.monotonic() - started) * 1000)
+                    row = {"key": unit["key"], "intent": unit["intent"]["id"], "language": unit["language"],
+                           "arm": unit["arm"], "rep": unit["rep"], "cache": opts["cache"], "at": now(),
+                           "elapsed_ms": elapsed, **dossier_row(d, names, c.label, allowed)}
+                    if fault:
+                        row["fault"] = {"kind": fault["kind"], "phase": fault["phase"], "raised": raised}
+                    # A faulted run is judged by where it ended; it is not answered.
+                    if opts["level"] == "answer" and not fault:
+                        try:
+                            row["answer"] = answered(unit, d, c.repo, arm["jev"], cfg_, opts["model"])
+                            row["grade"] = graded(unit, d, row["answer"]["text"], data, opts["grader"])
+                        except Exception as exc:  # noqa: BLE001 — a failed turn is a recorded failure, not a stop
+                            row["answer_error"] = f"{type(exc).__name__}: {exc}"[:300]
+                cost = ledger_cost(kept)
+                for part in (row.get("answer") or {}, row.get("grade") or {}):
+                    cost["host_usd"] += part.get("host_usd") or 0.0
+                cost["host_turns"] += (row.get("answer") or {}).get("host_turns", 0) + ("grade" in row)
+                row["fallback"] = fallbacks((kinds, res.get("fallback")) for kinds, res in kept)
                 return {**row, "cost": cost}
 
             with patch.object(knowledge, "cold", lambda req, project, cancel: retrieval.run(index.snapshot(), req,

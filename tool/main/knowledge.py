@@ -1310,10 +1310,12 @@ def host_decides(state: dict, questions: dict, stage: str, cancel: threading.Eve
     turn = oneshot(FALLBACK_PROMPT, payload, model, halt=halt)
     try:
         for ev in turn:
+            if ev.kind == "done":
+                # What the turn cost is kept first: a failed completion that reports its price was still paid.
+                out.update(model=ev.meta.get("model") or out["model"], cost_usd=ev.meta.get("cost_usd"))
             if ev.kind == "error" or (ev.kind == "done" and ev.meta.get("error")):
                 raise RuntimeError("stopped" if halt.is_set() else ev.text or "the host turn failed")
             if ev.kind == "done":
-                out.update(model=ev.meta.get("model") or out["model"], cost_usd=ev.meta.get("cost_usd"))
                 got = parsed(ev.text)
                 said = got.get("answers") if isinstance(got, dict) else None
                 if not isinstance(said, dict):
