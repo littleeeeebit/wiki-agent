@@ -2790,8 +2790,10 @@ def graph_health(project: str | Path | None) -> dict:
         loaded = index.loaded
         # Listed again after the checks: a file that came or changed while checking reads stale.
         drift = index.store.drift([resolved for _p, _r, resolved, _s in index.scan()])
-        # And the store compared last: a sync meanwhile reads stale, not the new rows as healthy.
-        moved = knowledge_graph.state(index.store) != before
+        # And what was loaded compared last — the store, its graph and the source records: a
+        # sync or a registered source meanwhile reads stale, not the new rows as healthy.
+        moved = (knowledge_graph.state(index.store) != before
+                 or f"{index.store.version()}/{index.records.version()}" != loaded)
     finally:
         index.close()
     reason = ("store_changed" if moved else "graph_not_built_from_these_chunks" if built != loaded else

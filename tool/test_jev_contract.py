@@ -10,6 +10,7 @@ No credentials and no external calls: Jev and the rounds are the fakes of
 
 import json
 import sqlite3
+import threading
 import time
 
 import pytest
@@ -161,9 +162,14 @@ def test_an_external_repair_keeps_each_grading_request_sent_even_when_the_fetch_
              "pdf_url": "https://arxiv.org/pdf/2401.00001v1"}
     monkeypatch.setattr(providers, "arxiv", lambda query=None, ids=None, n=5, seconds=0: [paper])
     sent = []
-    # Jev answers the grading with tokens spent and nothing usable: sent, billed, failed.
-    monkeypatch.setattr(decision, "send", lambda key, body, seconds, cancel: sent.append(body) or
-                        {"model": "jev-grader", "usage": {"input_tokens": 20, "output_tokens": 2}, "answers": {}})
+
+    def send(key, body, seconds, cancel, dispatched):
+        # Jev answers the grading with tokens spent and nothing usable: sent, billed, failed.
+        sent.append(body)
+        dispatched()
+        return {"model": "jev-grader", "usage": {"input_tokens": 20, "output_tokens": 2}, "answers": {}}
+
+    monkeypatch.setattr(decision, "send", send)
     real_policy = decision.policy
 
     def slow_policy(*a, **k):   # the papers are still being read when the repair's time runs out
@@ -192,6 +198,39 @@ def test_an_external_repair_keeps_each_grading_request_sent_even_when_the_fetch_
     assert research == [(["research"], "arxiv", None, None, "failed"),
                         (["grade"], "jev", "jev-grader", {"input": 20, "output": 2}, "failed")]
     assert len(sent) == 1
+
+
+def test_a_jev_request_is_sent_only_once_the_transport_wrote_it(monkeypatch):
+    written = []
+
+    class Connection:
+        def request(self, *a, **kw):
+            written.append(a)
+
+        def getresponse(self):
+            self.status = 200
+            return self
+
+        def read(self, limit):
+            return b'{"answers": {}}'
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(decision, "resolve", lambda end, cancel: "192.0.2.1")
+    monkeypatch.setattr(decision, "connection", lambda found, timeout: Connection())
+    cfg, questions = decision.Config("active", MODEL, "file", key=KEY), {"q": decision.noul("Is it?")}
+
+    def asked(budget):
+        trace = []
+        with pytest.raises(decision.JevError):
+            decision.evaluate(cfg, {"query": "q"}, questions, trace, budget, "papers")
+        return [(e["error"], e.get("sent", False)) for e in trace]
+
+    monkeypatch.setattr(decision, "IN_FLIGHT", threading.Semaphore(0))   # every slot taken
+    assert asked(Budget(seconds=0.3, calls=2, candidates=0)) == [("busy", False)] and written == []
+    monkeypatch.setattr(decision, "IN_FLIGHT", threading.Semaphore(1))
+    assert asked(Budget(seconds=5, calls=2, candidates=0)) == [("invalid_response", True)] and len(written) == 1
 
 
 def test_a_draft_that_failed_or_was_stopped_is_still_a_call(tmp_path):
@@ -413,6 +452,22 @@ def test_a_sync_during_the_final_listing_reads_stale(graph_world, monkeypatch):
         return real(self)
 
     monkeypatch.setattr(searchd.Index, "scan", scan)
+    out = health(repo)
+    assert out["status"] == "stale" and out["reason"] == "store_changed", out
+
+
+def test_a_source_record_changed_during_the_check_reads_stale(graph_world, monkeypatch):
+    hub, repo = graph_world
+    index_of(hub, repo).close()
+    real = knowledge_graph.verify
+
+    def verify(graph, chunks):
+        # Another process registers a source: the records move, the evidence store and the listing do not.
+        with sources.Records(sources.records_folder(repo)) as records, records.transaction() as db:
+            sources.Records.bump(db)
+        return real(graph, chunks)
+
+    monkeypatch.setattr(knowledge_graph, "verify", verify)
     out = health(repo)
     assert out["status"] == "stale" and out["reason"] == "store_changed", out
 
