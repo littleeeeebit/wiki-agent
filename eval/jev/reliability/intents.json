@@ -81,7 +81,7 @@
    "repo/docs/jobs/compaction.md": "# Nightly compaction\n\nThe compaction job starts at 02:30 UTC and runs on [the batch cluster](../clusters/batch.md). It merges small batches into daily segments.\n",
    "repo/docs/clusters/batch.md": "# Batch cluster\n\n## Nodes\n\nTwelve nodes, each with 64 GB of RAM.\n",
    "repo/docs/services/ingest.md": "# Ingest gateway\n\nThe ingest gateway accepts event batches over HTTPS. It is owned by [the Falcon team](../teams/falcon.md).\n",
-   "repo/docs/teams/falcon.md": "# Falcon\n\n## Rota\n\nPriya covers incidents on Mondays and Wednesdays; nobody is named for the other days.\n\n## History\n\nFormed in 2021 from the platform group.\n",
+   "repo/docs/teams/falcon.md": "# Falcon\n\n## Rota\n\nPriya holds the pager on Mondays and Wednesdays; nobody holds it on the other days.\n\n## History\n\nFormed in 2021 from the platform group.\n",
    "repo/docs/vendors.md": "# Vendors\n\nEmail delivery is handled by [Postwick](vendors/postwick.md).\n",
    "repo/docs/vendors/postwick.md": "# Postwick\n\n## Account\n\nAccount manager: Tomas Reyes. The agreement renews every April.\n",
    "repo/docs/runbooks/disk-full.md": "# Disk full\n\nIf an archive node's disk fills up, escalate to [the storage lead](../people/storage-lead.md).\n",
@@ -127,6 +127,7 @@
    "repo/docs/tracing.md": "# Tracing\n\nTraces are sampled at 5% in production.\n",
    "repo/docs/runbooks/restore.md": "# Restore\n\nA batch index restore takes about 40 minutes from the latest backup.\n",
    "repo/docs/export-format.md": "# Export format\n\nData exports are delivered as Parquet files.\n",
+   "repo/docs/glossary.md": "# Glossary\n\n## Segment\n\nA segment is one day's merged batches for one tenant.\n",
    "repo/docs/oncall-handoff.md": "# On-call handoff\n\nThe on-call handoff happens every Monday at 10:00 CET.\n",
    "repo/docs/timeouts.md": "# Timeouts\n\nThe ingest gateway's request timeout is 30 seconds.\n",
    "repo/docs/gateway-config.md": "# Gateway configuration\n\nrequest_timeout: 45s (the ingest gateway's request timeout).\n",
@@ -1142,18 +1143,19 @@
    "category": "routing",
    "split": "held_out",
    "variants": {
-    "en": "What does a 409 response from our API mean?"
+    "en": "What is a segment?"
    },
    "evidence": [
     [
-     "repo/docs/api-errors.md#Status codes"
+     "repo/docs/glossary.md#Segment",
+     "repo/docs/jobs/compaction.md"
     ]
    ],
    "parts": [
     {
      "id": "q0",
      "ask": "the meaning",
-     "reference": "a batch with the same id was already stored"
+     "reference": "one day's merged batches for one tenant (compaction merges small batches into daily segments)"
     }
    ],
    "forbidden": [],
@@ -1162,7 +1164,7 @@
    "analysis": false,
    "route_segments": [
     {
-     "text": "What does a 409 response from our API mean?",
+     "text": "What is a segment?",
      "ask": true
     }
    ],
@@ -1176,7 +1178,8 @@
    ],
    "verification": "verified",
    "sources": {
-    "repo/docs/api-errors.md": "7dc9319f8ffb737d5aa29942707dc0d4a74903118724434489f821a68a1bfbea"
+    "repo/docs/glossary.md": "f09c9abec1863b50c06f95054c7a56317266eedc48e51ee9faab861861dd9061",
+    "repo/docs/jobs/compaction.md": "cced8e24902d9c888af76917afe7765fd618206462270c0e350a705a401afccb"
    },
    "review": "r1"
   },
@@ -1185,19 +1188,19 @@
    "category": "missing",
    "split": "held_out",
    "variants": {
-    "en": "Which port does the Kestrel admin dashboard listen on?"
+    "en": "What is the default timeout for database queries?"
    },
    "evidence": [],
    "parts": [],
    "forbidden": [
-    "any specific port for the admin dashboard, such as 7443 or 9102"
+    "any timeout stated for database queries, such as 30 or 45 seconds"
    ],
    "abstain": true,
    "direct": false,
    "analysis": false,
    "route_segments": [
     {
-     "text": "Which port does the Kestrel admin dashboard listen on?",
+     "text": "What is the default timeout for database queries?",
      "ask": true
     }
    ],
@@ -2139,7 +2142,7 @@
     {
      "id": "q0",
      "ask": "the person",
-     "reference": "the Falcon team owns it; its rota names Priya for Mondays and Wednesdays and nobody for other days"
+     "reference": "the Falcon team owns it; its rota puts Priya on the pager on Mondays and Wednesdays and nobody on the other days"
     }
    ],
    "forbidden": [
@@ -2165,7 +2168,7 @@
    "verification": "verified",
    "sources": {
     "repo/docs/services/ingest.md": "1a1fd5f44531fb2d477e54ba44d6188fd505ad46abe2df712288ff4b64a2bbe8",
-    "repo/docs/teams/falcon.md": "6cb6f97e602d187a2720ad16322d458a9fdabdefea9d4abbe418266b3778adaf"
+    "repo/docs/teams/falcon.md": "5a7f0308f736408ed9b82e7d27e97061066e93222e6119474f419134f82dc4df"
    },
    "review": "r1"
   },
