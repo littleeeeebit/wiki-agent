@@ -11,6 +11,7 @@ nothing exits 0 and reads exactly like a gate that examined everything.
 from __future__ import annotations
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -59,27 +60,31 @@ def _git(repo: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
-@pytest.fixture
-def repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """A throwaway repo with the Korean page committed, and `[[diagnose]]` real."""
+@pytest.fixture(scope="module")
+def committed(tmp_path_factory) -> Path:
+    """The Korean page committed once, with `[[diagnose]]` real; copied per test."""
 
-    _git(tmp_path, "init", "-q")
-    _git(tmp_path, "config", "user.email", "t@example.com")
-    _git(tmp_path, "config", "user.name", "t")
-
-    (tmp_path / "craft").mkdir()
-    (tmp_path / "craft" / "hooks.md").write_text(KOREAN, encoding="utf-8")
+    root = tmp_path_factory.mktemp("committed")
+    _git(root, "init", "-q")
+    (root / "craft").mkdir()
+    (root / "craft" / "hooks.md").write_text(KOREAN, encoding="utf-8")
     # The link target lives outside the directory under test. Inside it, it
     # would itself be a target with no manifest entry and every test would
     # fail on that instead of on what it means to check.
-    (tmp_path / "operator").mkdir()
-    (tmp_path / "operator" / "diagnose.md").write_text("# diagnose\n", encoding="utf-8")
-    _git(tmp_path, "add", "-A")
-    _git(tmp_path, "commit", "-q", "-m", "korean")
+    (root / "operator").mkdir()
+    (root / "operator" / "diagnose.md").write_text("# diagnose\n", encoding="utf-8")
+    _git(root, "add", "-A")
+    _git(root, "-c", "user.email=t@example.com", "-c", "user.name=t", "commit", "-q", "-m", "korean")
+    return root
 
-    monkeypatch.setattr(T, "ROOT", tmp_path)
-    monkeypatch.setattr(T, "REVIEW", tmp_path / "review.md")
-    return tmp_path
+
+@pytest.fixture
+def repo(committed: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    repo = tmp_path / "repo"
+    shutil.copytree(committed, repo)
+    monkeypatch.setattr(T, "ROOT", repo)
+    monkeypatch.setattr(T, "REVIEW", repo / "review.md")
+    return repo
 
 
 def _manifest(repo: Path, *rows: dict) -> Path:

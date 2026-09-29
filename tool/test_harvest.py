@@ -61,12 +61,6 @@ def test_a_markdown_heading_does_not_land_inside_the_what() -> None:
     first block as it stands puts the heading in the record.
     """
 
-    """또 실제로 난 사고다. 폴백이 첫 `\\n\\n` 덩어리를 무엇으로 쓰는데
-    이 저장소들의 PR 본문은 거의 다 마크다운 제목으로 시작한다. 그래서
-    `무엇. ## 결론` 이 그대로 기록이 됐다 -- 2026-09-10 의 131~135 전부.
-
-    없는 것을 없다고 적는 것과 마찬가지로, 제목을 내용이라고 적는 것도
-    다음 세션이 읽고 믿는다."""
     for body in (BODY, BODY.replace("\n", "\r\n")):
         what = _what(body)
         assert not what.startswith("#"), f"제목이 그대로 들어갔다: {what!r}"
@@ -80,7 +74,6 @@ def test_prose_is_found_with_no_blank_line_between_heading_and_body() -> None:
     the block would take the body with it.
     """
 
-    """제목 줄만 걷어내야 한다. 덩어리째 버리면 이 모양에서 본문까지 잃는다."""
     assert _what("## 결론\n붙어 있는 본문입니다.\n\n둘째 문단.") == "붙어 있는 본문입니다."
 
 
@@ -108,15 +101,10 @@ def test_a_short_ascii_marker_does_not_match_inside_a_word() -> None:
 
     A domain brings triggers with it and `inject.py` injects anything with
     triggers like a rule, so a misclassification surfaces that record in every
-    unrelated session.
+    unrelated session. Record 131 of 2026-09-10 came out that way; it was taken
+    down by hand and the markers were left as they were.
     """
 
-    """`ci` 가 `de-ci-sion` 에 걸려 chore 배치 하나가 infra 로 분류됐다.
-
-    도메인이 붙으면 트리거도 같이 붙고, `inject.py` 는 트리거가 있으면 규칙처럼
-    주입한다. 그래서 오분류는 조용하지 않다 -- 상관없는 세션마다 그 기록이 뜬다.
-    실제로 2026-09-10 의 131 이 그렇게 나왔고, 그 PR 의 제목 자체가
-    "infra 오탐 두 건을 고칩니다" 였다. 그때는 기록을 손으로 내렸고 표지는 그대로였다."""
     for branch, title in (("chore/decision-records-126-130", "결정 기록을 캡니다"),
                           ("fix/early-return", "이른 반환을 고칩니다"),
                           ("feat/framework-upgrade", "의존성을 올립니다")):
@@ -133,12 +121,6 @@ def test_a_korean_marker_still_matches_inside_a_compound() -> None:
     that really are standing as words, so containment is kept here.
     """
 
-    """고친 것은 ASCII 쪽뿐이다. `프레임` 은 `프레임워크` 안에서 여전히 걸린다.
-
-    한글에는 낱말 경계가 없어 같은 방법을 못 쓴다. 조사가 붙는 언어라 오른쪽
-    경계를 막으면 `게이트를` 같은 진짜 양성이 통째로 죽는다. 여기 적어 두는
-    이유는, 다음 세션이 오탐을 보고 이 함수가 이미 다 막는다고 믿지 않게
-    하려는 것이다."""
     assert triggers_for("프레임워크를 올립니다", "chore/deps")[0] == "vision"
 
 
@@ -158,10 +140,6 @@ def test_a_handwritten_record_is_seen_with_the_number_only_in_its_name() -> None
     were overwritten through that gap.
     """
 
-    """`pr:` 줄만 보면 손으로 쓴 전문이 안 보이고, 캔 기록이 그 자리를 덮는다.
-
-    2026-09-17 에 013·015·016 이 그렇게 통째로 날아갔다. 파일 이름의 번호도 읽는다.
-    """
     import sync
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -182,7 +160,6 @@ def test_an_existing_decision_file_is_never_overwritten() -> None:
     path may be the full text somebody wrote by hand.
     """
 
-    """번호 판정이 또 틀려도 여기서 멈춘다. 사람이 쓴 전문이 그 자리에 있을 수 있다."""
     import sync
 
     with tempfile.TemporaryDirectory() as tmp:
@@ -198,11 +175,3 @@ def test_an_existing_decision_file_is_never_overwritten() -> None:
             written = sync.new_decisions(repo, 10)
         assert written == [], "있는 파일을 덮으려 했다"
         assert kept.read_text(encoding="utf-8") == "사람이 쓴 전문\n"
-
-
-if __name__ == "__main__":
-    for name, case in sorted(globals().items()):
-        if name.startswith("test_"):
-            case()
-            print(f"ok  {name}")
-    print("\n줄끝이 달라도 기록은 같다. 있는 이유를 없다고 적지 않는다.")

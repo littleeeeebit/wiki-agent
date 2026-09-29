@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import sys
-import tempfile
 from pathlib import Path
+
+import pytest
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -13,7 +14,7 @@ sys.path.insert(0, str(HERE))
 from declared_continuation import verdict  # noqa: E402
 
 
-def _transcript(blocks: list[tuple[str, str]]) -> str:
+def _transcript(where: Path, blocks: list[tuple[str, str]]) -> str:
     lines = [json.dumps({"type": "user", "message": {"content": "가라"}})]
     for kind, value in blocks:
         block = (
@@ -27,7 +28,7 @@ def _transcript(blocks: list[tuple[str, str]]) -> str:
                 ensure_ascii=False,
             )
         )
-    path = Path(tempfile.mkdtemp()) / "transcript.jsonl"
+    path = where / "transcript.jsonl"
     path.write_text("\n".join(lines), encoding="utf-8")
     return str(path)
 
@@ -89,38 +90,13 @@ CASES: list[tuple[str, list[tuple[str, str]], bool, bool]] = [
 ]
 
 
-def main() -> int:
-    # The planted sentences and the finding messages are both Korean. The
-    # encoding is not left to the environment.
-    sys.stdout.reconfigure(encoding="utf-8")
-
-    failed: list[str] = []
-    print("Stop 훅 — 심은 문장에서만 되돌리는가\n")
-    for label, blocks, active, expected in CASES:
-        answer = verdict(
-            {"transcript_path": _transcript(blocks), "stop_hook_active": active}
-        )
-        blocked = answer is not None
-        mark = "통과 " if blocked == expected else "실패 "
-        print(f"  {mark} {'되돌림' if blocked else '그냥 끝'}  {label}")
-        if blocked != expected:
-            failed.append(label)
-
-    missing = [
-        name
-        for name in ("transcript_path", "stop_hook_active")
-        if verdict({name: ""}) is not None
-    ]
-    print(f"\n  {'통과 ' if not missing else '실패 '} 입력이 모자라면 그냥 끝낸다")
-    failed.extend(missing)
-
-    print()
-    if failed:
-        print(f"{len(failed)}건이 기대와 달랐다: {failed}")
-        return 1
-    print("훅이 자기 조건에서만 되돌린다.")
-    return 0
+@pytest.mark.parametrize("blocks, active, expected", [case[1:] for case in CASES],
+                         ids=[case[0] for case in CASES])
+def test_the_hook_reverts_only_a_promise_left_undone(tmp_path, blocks, active, expected):
+    answer = verdict({"transcript_path": _transcript(tmp_path, blocks), "stop_hook_active": active})
+    assert (answer is not None) == expected
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+def test_missing_input_just_ends():
+    for name in ("transcript_path", "stop_hook_active"):
+        assert verdict({name: ""}) is None, name

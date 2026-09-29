@@ -15,14 +15,17 @@ stays Korean.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
+from fnmatch import fnmatchcase
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -31,11 +34,11 @@ from pydantic import BaseModel
 import translate
 from common import worktree_home
 from session_state import active_page, decisions, plans, steps_block
-from wiki import slots_for
+from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
 
 from . import channels, query, work
-from .decisions import extra_check, recommend
+from .decisions import extra_check, recommend, registered
 from .query import ROOT, _lock, current_repo, hold, project
 
 SPECS = ROOT / "raw" / "specs"
@@ -321,9 +324,25 @@ def approved(spec: dict) -> dict | None:
 
 
 def view(repo: Path, spec: dict) -> dict:
+    """The spec as the screen reads it. `unproven` is `proven`'s own answer
+    for the approved head in `머지 가능`, so the screen never judges a result
+    by itself: empty only while the final gate stands for the current command
+    and environment; `None` in every other state, where `[머지]` is not shown.
+    The base is read as last fetched — this runs for every spec on every
+    refresh — and `merge` fetches it before acting. A worktree that cannot be
+    read is that spec's reason, not the listing's failure."""
+
     allowed = approved(spec)
+    unproven = None
+    if spec.get("state") == "머지 가능":
+        path = Path(spec.get("worktree") or repo)
+        try:
+            unproven = proven(spec, allowed["head"], merge_base(path, allowed["base"], allowed["head"]),
+                              digest(repo, path, required(repo, spec))) if allowed else "리뷰가 허용한 라운드가 없다"
+        except (OSError, subprocess.SubprocessError) as exc:
+            unproven = f"작업트리를 읽지 못했다 — {exc}"
     return {**spec, "missing": missing(repo, spec), "approved": allowed["head"] if allowed else None,
-            "waiting": bool(spec.get("worktree")) and work.waiting(spec["worktree"])}
+            "unproven": unproven, "waiting": bool(spec.get("worktree")) and work.waiting(spec["worktree"])}
 
 
 # -- Blocks -----------------------------------------------------------------
@@ -730,23 +749,178 @@ def gate(cmd: str, cwd: Path, halt: threading.Event) -> tuple[int | None, str, s
                 kill(proc)
 
 
-def judge(path: Path, cmd: str, halt: threading.Event, noted=lambda text: None) -> dict:
+def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None) -> dict:
     """The server's own check of a done report: nothing uncommitted, and the
-    gate passes again in the worktree. What the agent said is not evidence.
-    The review loop checks every head it sends for review the same way."""
+    commands pass again in the worktree, in order, stopping at the first
+    failure. What the agent said is not evidence. The review loop checks
+    every head it sends for review the same way.
 
+    HEAD and the status are read before and after: a command that commits or
+    leaves a file behind fails, whatever it exited with — what passed must be
+    what goes up. `cmd` joins the commands for the screens that show one."""
+
+    cmd = " && ".join(cmds)
     status = sh(["git", "status", "--porcelain"], path)
     head = sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     if status.returncode or status.stdout.strip():
         reason = "커밋 안 된 변경" if not status.returncode else f"git status 실패 — {said(status)}"
-        return {"ok": False, "reason": reason, "cmd": cmd, "tail": status.stdout.strip(), "head": head,
-                "ts": time.time()}
-    noted(f"게이트 · {cmd}")
-    code, out, cut = gate(cmd, path, halt)
-    ok = code == 0
-    reason = "" if ok else cut or f"게이트가 {code} 로 끝났다"
-    return {"ok": ok, "reason": reason, "cmd": cmd, "code": code,
+        return {"ok": False, "reason": reason, "cmd": cmd, "commands": cmds, "code": None, "tail": status.stdout.strip(),
+                "head": head, "ts": time.time()}
+    code, out, cut = None, "", ""
+    for one in cmds:
+        noted(f"게이트 · {one}")
+        code, out, cut = gate(one, path, halt)
+        if code != 0:
+            break
+    after = sh(["git", "status", "--porcelain"], path)
+    moved = "게이트가 HEAD 를 바꿨다" if sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head else \
+        "게이트가 작업트리를 바꿨다" if after.returncode or after.stdout.strip() else ""
+    ok = code == 0 and not moved
+    reason = "" if ok else cut or (f"게이트가 {code} 로 끝났다" if code != 0 else moved)
+    return {"ok": ok, "reason": reason, "cmd": cmd, "commands": cmds, "code": code,
             "tail": "\n".join(out.splitlines()[-TAIL:]), "head": head, "ts": time.time()}
+
+
+# -- Which checks a head needs ----------------------------------------------
+# A round runs the registered checks its changed paths map to; the final gate
+# is the adapter's whole `gate_cmd`, once, on the head the review allowed.
+# `docs/plans/reliability/2-tests.md` is the contract.
+
+# A change to any of these can reach every consumer: the full gate.
+SHARED = ("conftest.py", "requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini",
+          "package.json", "package-lock.json", ".wiki/adapter.toml")
+LOCKS = ("requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini", "package-lock.json",
+         "web/package-lock.json", "uv.lock", "poetry.lock")
+
+
+def required(repo: Path, spec: dict) -> str:
+    """The full gate: the adapter's `gate_cmd` as it is now, else the one the
+    spec was settled with."""
+
+    return gate_of(repo) or spec["done"][0]
+
+
+def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event,
+            noted=lambda text: None, chosen: dict | None = None) -> tuple[dict, dict]:
+    """The round checks `selected` picks, run by `judge`: the verdict, kept as
+    the spec's `gate` for the screens, and `validation.round`."""
+
+    chosen = chosen or selected(repo, path, base, required(repo, spec))
+    verdict = {**judge(path, chosen["commands"], halt, noted), "selection": chosen["selection"]}
+    return verdict, {"head": verdict["head"], **chosen, "ok": verdict["ok"], "finished_at": verdict["ts"]}
+
+
+def local_base(spec: dict, path: Path) -> str:
+    """The base a pull request not opened yet goes to, read without GitHub:
+    the spec's own, else `origin/HEAD`. Empty selects the full gate. Nothing
+    leaves this machine before the checks pass."""
+
+    if spec.get("base"):
+        return spec["base"]
+    done = sh(["git", "rev-parse", "--abbrev-ref", "origin/HEAD"], path)
+    return "" if done.returncode else done.stdout.strip().removeprefix("origin/")
+
+
+def merge_base(path: Path, base: str, rev: str = "HEAD") -> str:
+    """`rev`'s merge base with `origin/<base>` as this clone last fetched it, or empty."""
+
+    done = sh(["git", "merge-base", f"origin/{base}", rev], path)
+    return "" if done.returncode else done.stdout.strip()
+
+
+def current_merge_base(path: Path, base: str, rev: str = "HEAD") -> str:
+    """`merge_base` after fetching `base` now: what a final result is bound to
+    and checked against. A base that moved onto the branch's own commits
+    changes it, and the last fetch would not show that. Empty when the fetch
+    fails — a base that cannot be read proves nothing."""
+
+    if sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], path, 120).returncode:
+        return ""
+    return merge_base(path, base, rev)
+
+
+def selected(repo: Path, path: Path, base: str, gate_cmd: str) -> dict:
+    """`{base_oid, commands, selection}` for the worktree's HEAD.
+
+    Every path changed since the merge base, both names of a rename and a
+    deletion's too, must match some registered check's `paths`; the union of
+    the matches runs. No merge base, a malformed map, an unmapped path or a
+    shared file selects the full gate instead: an uncertain impact widens.
+    `*` crosses `/` here (`fnmatch`), which only ever widens a match."""
+
+    oid = merge_base(path, base)
+    full = {"base_oid": oid, "commands": [gate_cmd], "selection": "full"}
+    listed = sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", oid, "HEAD"], path) \
+        if oid else None
+    checks = registered(repo).values()
+    if listed is None or listed.returncode or any(c["paths"] is None for c in checks):
+        return full
+    chosen = []
+    for changed in filter(None, listed.stdout.splitlines()):
+        if any(fnmatchcase(changed, s) or fnmatchcase(changed.rsplit("/", 1)[-1], s) for s in SHARED):
+            return full
+        hits = [c["cmd"] for c in checks if any(fnmatchcase(changed, g) for g in c["paths"])]
+        if not hits:
+            return full
+        chosen += hits
+    return {**full, "commands": list(dict.fromkeys(chosen)), "selection": "mapped"} if chosen else full
+
+
+def digest(repo: Path, path: Path, cmd: str) -> str:
+    """What the final gate's result is bound to beside the commit: the command,
+    the server's Python, the adapter and the lock and config files present in
+    the worktree. Not every property of the machine — only the changes this
+    program can see invalidate a result. No credentials go in."""
+
+    def sha(file: Path) -> str:
+        try:
+            return hashlib.sha256(file.read_bytes()).hexdigest()
+        except OSError:
+            return ""
+
+    found = {f.relative_to(path).as_posix(): sha(f) for pattern in LOCKS for f in sorted(path.glob(pattern))}
+    adapter = adapter_path(repo.name, repo)
+    shown = {"cmd": cmd, "python": sys.version, "adapter": sha(adapter) if adapter else "", "files": found}
+    return hashlib.sha256(json.dumps(shown, sort_keys=True).encode()).hexdigest()
+
+
+def validate(repo: str, sid: str, **parts) -> dict | None:
+    """The spec's `validation`, the only place it is written: `round` (the
+    last targeted result), `final` (the full gate on an allowed head) and
+    `phase` (`final_running` while that runs)."""
+
+    with _files:
+        spec = load(repo, sid)
+        if spec is None:
+            return None
+        spec["validation"] = {"version": 1, "round": None, "final": None, "phase": None,
+                              **(spec.get("validation") or {}), **parts}
+        save(spec)
+        return spec
+
+
+def proven(spec: dict, head: str, base_oid: str, digested: str) -> str:
+    """Why the final gate does not stand for `head`, or empty. A targeted
+    round result is never proof; a missing, failed, running or elsewhere
+    bound final is not either."""
+
+    v = spec.get("validation") or {}
+    final = v.get("final") or {}
+    if v.get("phase") == "final_running":
+        return "최종 게이트가 아직 돌고 있다"
+    if not final:
+        return "최종 게이트 결과가 없다"
+    if not final.get("ok"):
+        return f"최종 게이트가 통과하지 않았다 — {final.get('reason') or '끝나지 않았다'}"
+    if final.get("head") != head:
+        return "최종 게이트가 다른 커밋에서 돌았다"
+    if not base_oid:
+        return "base 를 지금 읽지 못했다"
+    if final.get("base_oid") != base_oid:
+        return "최종 게이트 뒤 base 가 바뀌었다"
+    if final.get("environment_digest") != digested:
+        return "최종 게이트 뒤 명령이나 환경이 바뀌었다"
+    return ""
 
 
 def valid(items) -> bool:
@@ -769,7 +943,10 @@ def body_of(spec: dict) -> str:
     lines += ["## 확인", ""]
     lines += [f"- [x] {i['item']}" + (f" — {i['evidence']}" if i.get("evidence") else "") for i in spec["report"]]
     last = (spec["gate"].get("tail") or "").splitlines()[-1:] or [""]
-    lines += [f"- [x] 서버가 작업트리에서 게이트를 다시 돌림 — `{spec['gate']['cmd']}` · {last[0]}".rstrip(" ·")]
+    what = "이 변경이 닿는 확인을" if spec["gate"].get("selection") == "mapped" else "게이트를"
+    lines += [f"- [x] 서버가 작업트리에서 {what} 다시 돌림 — `{spec['gate']['cmd']}` · {last[0]}".rstrip(" ·")]
+    if spec["gate"].get("selection") == "mapped":
+        lines += ["- [ ] 전체 게이트 — 리뷰가 허용한 커밋에서 머지 전에 돈다"]
     lines += [f"- [x] Jev 가 고른 추가 확인 — `{c['cmd']}` · 통과" for c in spec.get("checks") or []
               if c["ok"] and c.get("head") == spec["gate"].get("head")]
     lines.append("")
@@ -929,8 +1106,11 @@ def _check(path: Path, run, final: str):
     spec = update(spec["repo"], spec["id"], report=items)
     if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
         return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
-    verdict = judge(path, spec["done"][0], run.halt, lambda text: note(run, text))
-    spec = update(spec["repo"], spec["id"], gate=verdict)
+    # The checks this change maps to, not the whole gate: that runs once the
+    # review allows the exact head (`loop.finalized`).
+    verdict, record = rounded(repo, path, spec, local_base(spec, path), run.halt, lambda text: note(run, text))
+    update(spec["repo"], spec["id"], gate=verdict)
+    spec = validate(spec["repo"], spec["id"], round=record)
     if not verdict["ok"]:
         return failed(run, spec, f"판정 실패 — {verdict['reason']}")
     note(run, "게이트 통과")

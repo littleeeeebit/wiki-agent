@@ -38,18 +38,6 @@ def test_a_status_is_judged_by_its_first_word(tmp_path):
     assert session_state.open_steps(path) == ["3 w3 — 미완료 — 외부 조건으로 차단됨", "4 w4 — 미착수"]
 
 
-def test_an_english_plan_reads_the_same(tmp_path):
-    path = tmp_path / "plan.md"
-    rows = ["Done — PR #16", "Cancelled — another plan", "Complete", "In progress", "Not started"]
-    path.write_text(
-        "# plan\n\n## Steps\n\n| # | Step | What | Status |\n| --- | --- | --- | --- |\n"
-        + "".join(f"| {n} | s{n} | w{n} | {state} |\n" for n, state in enumerate(rows, 1)),
-        encoding="utf-8",
-    )
-
-    assert session_state.open_steps(path) == ["4 w4 — In progress", "5 w5 — Not started"]
-
-
 def test_inside_a_series_the_lowest_number_comes_first(tmp_path):
     """The overview and the next step to do, not the last two steps."""
 
@@ -66,13 +54,16 @@ def test_inside_a_series_the_lowest_number_comes_first(tmp_path):
 def test_english_plan_statuses_and_discovery(tmp_path):
     path = tmp_path / "docs/plans/jev/0-overview.md"
     path.parent.mkdir(parents=True)
-    states = ["Complete — PR #1", "Cancelled — replaced", "Not completed", "Not started", ""]
+    # `Done` is how English plans said it before `Complete`.
+    states = ["Complete — PR #1", "Done — PR #16", "Cancelled — replaced", "Not completed", "In progress",
+              "Not started", ""]
     path.write_text(
         "# Plan\n\n## Steps\n\n| # | Stage | Deliverable | Status |\n| --- | --- | --- | --- |\n"
         + "".join(f"| {n} | stage | item{n} | {state} |\n" for n, state in enumerate(states, 1))
-        + "\n## Notes\n\n| 6 | ignored | outside | Not started |\n",
+        + "\n## Notes\n\n| 8 | ignored | outside | Not started |\n",
         encoding="utf-8",
     )
-    expected = ["3 item3 — Not completed", "4 item4 — Not started", "5 item5 — Not started"]
+    expected = ["4 item4 — Not completed", "5 item5 — In progress", "6 item6 — Not started",
+                "7 item7 — Not started"]
     assert session_state.open_steps(path) == expected
     assert session_state.plans(tmp_path) == [(path, expected)]

@@ -215,16 +215,17 @@ def test_a_stale_read_cannot_bring_back_a_memory_another_process_deleted(corpus,
 
     first.sync(listed())
     bump(memory, "# Login\n\nKeep password login, edited.\n")
-    real, paused = searchd.chunks, threading.Event()
+    real, reading, paused = searchd.chunks, threading.Event(), threading.Event()
 
     def slow(*args):
+        reading.set()
         paused.wait(5)
         return real(*args)
 
     monkeypatch.setattr(searchd, "chunks", slow)
     worker = threading.Thread(target=first.sync, args=(listed(),))
     worker.start()
-    time.sleep(0.3)
+    assert reading.wait(5)
     memory.unlink()
     monkeypatch.setattr(searchd, "chunks", real)
     second.sync([])
@@ -486,12 +487,11 @@ def test_a_file_edited_while_a_new_generation_reads_it_is_read_again_before_publ
     second.close()
 
 
-def test_a_new_generation_missing_a_file_is_not_published(corpus, monkeypatch):
-    hub, repo = corpus
-    first = index_of(hub, repo)
-    gen = first.store.gen
-    first.close()
-    monkeypatch.setattr(evidence, "CHUNKER", "chunks/next")
+def unfinished(repo: Path, monkeypatch, chunker: str = "chunks/next"):
+    """A new chunker whose build never finishes: `ports.md` changes on every
+    read. Returns the real chunker, to finish it with."""
+
+    monkeypatch.setattr(evidence, "CHUNKER", chunker)
     ports, real = repo / "docs/ports.md", searchd.chunks
 
     def always_edited(text, path):
@@ -500,6 +500,15 @@ def test_a_new_generation_missing_a_file_is_not_published(corpus, monkeypatch):
         return real(text, path)
 
     monkeypatch.setattr(searchd, "chunks", always_edited)
+    return real
+
+
+def test_a_new_generation_missing_a_file_is_not_published(corpus, monkeypatch):
+    hub, repo = corpus
+    first = index_of(hub, repo)
+    gen = first.store.gen
+    first.close()
+    unfinished(repo, monkeypatch)
     second = index_of(hub, repo)
     with sqlite3.connect(searchd.store_path(hub, repo)) as db:
         assert db.execute("SELECT v FROM meta WHERE k = 'current'").fetchone() == (str(gen),)
@@ -508,18 +517,6 @@ def test_a_new_generation_missing_a_file_is_not_published(corpus, monkeypatch):
     second.close()
 
 
-def unfinished(repo: Path, monkeypatch) -> None:
-    """A new chunker whose build never finishes: `ports.md` changes on every read."""
-
-    monkeypatch.setattr(evidence, "CHUNKER", "chunks/next")
-    ports, real = repo / "docs/ports.md", searchd.chunks
-
-    def always_edited(text, path):
-        if path == ports:
-            bump(ports, text + "x")
-        return real(text, path)
-
-    monkeypatch.setattr(searchd, "chunks", always_edited)
 
 
 def test_an_unfinished_build_serves_neither_a_deleted_document_nor_loses_a_memory(corpus, monkeypatch):
@@ -556,16 +553,8 @@ def test_an_unfinished_build_prunes_nothing_and_publishing_keeps_the_rollback(co
             return sorted(g for (g,) in db.execute("SELECT gen FROM generations"))
 
     assert gens() == [1, 2]
-    # A third build that never finishes: a file changes on every read.
-    monkeypatch.setattr(evidence, "CHUNKER", "chunks/3")
-    ports, real = repo / "docs/ports.md", searchd.chunks
-
-    def always_edited(text, path):
-        if path == ports:
-            bump(ports, text + "x")
-        return real(text, path)
-
-    monkeypatch.setattr(searchd, "chunks", always_edited)
+    # A third build that never finishes.
+    real = unfinished(repo, monkeypatch, "chunks/3")
     (repo / "docs/new.md").write_text("# New\n\nA change in the same pass.\n", encoding="utf-8")
     index_of(hub, repo).close()
     assert gens() == [1, 2, 3], "an unfinished build pruned the rollback generation"

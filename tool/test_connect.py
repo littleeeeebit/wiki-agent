@@ -10,6 +10,7 @@ GitHub address the pull request names.
 import ast
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -515,23 +516,40 @@ class Merged:
         return self.real(args, cwd, timeout)
 
 
+@pytest.fixture(scope="session")
+def remote(tmp_path_factory):
+    """The checkout, its bare origin behind GitHub's address, and a second
+    clone, built once. Never used in place: `original` copies it."""
+
+    top = tmp_path_factory.mktemp("handover")
+    bare = top / "origin.git"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
+    repo = _repo(top)
+    git(repo, "config", f"url.{bare.as_posix()}.insteadOf", URL)
+    git(repo, "remote", "add", "origin", URL)
+    git(repo, "push", "-q", "-u", "origin", "main")
+    # As written, so `original` can rewrite it: a Windows path is stored escaped.
+    subprocess.run(["git", "clone", "-q", bare.as_posix(), str(top / "other")], check=True)
+    git(top / "other", "config", "user.email", "o@o")
+    git(top / "other", "config", "user.name", "o")
+    return top
+
+
 @pytest.fixture
-def original(tmp_path):
+def original(tmp_path, remote):
     """The original checkout, on `main`, tracking an `origin` that is GitHub's
     address in its config and a bare repository underneath; `[연결]` wrote
     its adapter. `merge(text)` lands the survey's squash on the remote."""
 
-    bare = tmp_path / "origin.git"
-    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(bare)], check=True)
-    repo = _repo(tmp_path)
-    git(repo, "config", f"url.{bare.as_posix()}.insteadOf", URL)
-    git(repo, "remote", "add", "origin", URL)
-    git(repo, "push", "-q", "-u", "origin", "main")
+    bare, repo, other = tmp_path / "origin.git", tmp_path / "proj", tmp_path / "other"
+    for name in ("origin.git", "proj", "other"):
+        shutil.copytree(remote / name, tmp_path / name)
+    for config in (repo / ".git/config", other / ".git/config"):
+        text = config.read_text(encoding="utf-8")
+        moved = text.replace((remote / "origin.git").as_posix(), bare.as_posix())
+        assert moved != text, "a push must never reach the template's origin"
+        config.write_text(moved, encoding="utf-8")
     connect.write_adapter(repo)
-    other = tmp_path / "other"
-    subprocess.run(["git", "clone", "-q", str(bare), str(other)], check=True)
-    git(other, "config", "user.email", "o@o")
-    git(other, "config", "user.name", "o")
 
     def merge(text: str | None = None, push: bool = True) -> str:
         (other / ".wiki").mkdir(exist_ok=True)

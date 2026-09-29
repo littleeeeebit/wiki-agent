@@ -19,6 +19,10 @@ from markdown_emphasis import findings, verdict  # noqa: E402
 
 HOOK = HERE / "markdown_emphasis.py"
 
+
+def git(where: Path, *args: str) -> None:
+    subprocess.run(["git", "-C", str(where), *args], check=True, capture_output=True)
+
 CLEAN = """# 제목
 
 규칙. 훅은 세션을 멈추지 않는다. `sys.stdout.reconfigure` 로 인코딩을 고정한다.
@@ -355,14 +359,17 @@ def test_the_check_reaches_a_target_repository(tmp_path: Path) -> None:
     import lint
     import repo_lint
 
-    (tmp_path / ".wiki").mkdir()
-    (tmp_path / "x.md").write_text(
+    target, hub = tmp_path / "target", tmp_path / "hub"
+    (target / ".wiki").mkdir(parents=True)
+    hub.mkdir()
+    (target / "x.md").write_text(
         "# 제목\n\n" + "\n\n".join(f"{n} 번째 **강조**." for n in range(9)) + "\n",
         encoding="utf-8",
     )
 
-    assert [k for k, _ in repo_lint.check(tmp_path) if k == "강조 과다"]
-    assert [k for k, _ in lint.check(lint.WIKI, None, [tmp_path])[2] if k == "강조 과다"]
+    assert [k for k, _ in repo_lint.check(target) if k == "강조 과다"]
+    # An empty hub: whatever it finds is the target's.
+    assert [k for k, _ in lint.check(hub, None, [target])[2] if k == "강조 과다"]
 
 
 def test_the_scan_follows_git_rather_than_a_hand_written_exclusion_list(
@@ -379,10 +386,7 @@ def test_the_scan_follows_git_rather_than_a_hand_written_exclusion_list(
 
     import lint
 
-    for args in (["init", "-q"], ["config", "user.email", "t@e.com"],
-                 ["config", "user.name", "t"]):
-        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
-                       capture_output=True)
+    git(tmp_path, "init", "-q")
     (tmp_path / ".gitignore").write_text("vendor/\n", encoding="utf-8")
 
     noisy = "# 제목\n\n" + "\n\n".join(f"{n} 번째 **강조**." for n in range(9)) + "\n"
@@ -391,8 +395,7 @@ def test_the_scan_follows_git_rather_than_a_hand_written_exclusion_list(
         path = tmp_path / rel
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(noisy, encoding="utf-8")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True,
-                   capture_output=True)
+    git(tmp_path, "add", "-A")
 
     seen = {where.split("`")[1] for _kind, where in lint.loud_emphasis(tmp_path)}
     assert "web/docs/x.md" in seen and "node_modules-guide.md" in seen
@@ -417,10 +420,7 @@ def test_a_byte_pinned_original_is_not_judged_on_style(tmp_path: Path) -> None:
 
     import lint
 
-    for args in (["init", "-q"], ["config", "user.email", "t@e.com"],
-                 ["config", "user.name", "t"]):
-        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
-                       capture_output=True)
+    git(tmp_path, "init", "-q")
 
     verbatim = ('# 원문\r\n\r\n'
                 'A. 실행 코드를 if __name__ == "__main__": 아래에 둡니다.\r\n')
@@ -434,8 +434,7 @@ def test_a_byte_pinned_original_is_not_judged_on_style(tmp_path: Path) -> None:
     index = tmp_path / "archive" / "README.md"
     index.write_text(f"# 보관\n\n| 파일 | 동일한 SHA-256 |\n| --- | --- |\n"
                      f"| 원문.md | `{digest}` |\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "-A"], check=True,
-                   capture_output=True)
+    git(tmp_path, "add", "-A")
 
     seen = {where.split("`")[1] for _kind, where in lint.loud_emphasis(tmp_path)}
     assert "archive/원문.md" not in seen, "못 박은 원문에 고칠 수 없는 발견을 냈다"
@@ -457,10 +456,7 @@ def test_a_new_file_is_seen_before_it_is_staged(tmp_path: Path) -> None:
 
     import lint
 
-    for args in (["init", "-q"], ["config", "user.email", "t@e.com"],
-                 ["config", "user.name", "t"]):
-        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
-                       capture_output=True)
+    git(tmp_path, "init", "-q")
     noisy = "# 제목\n\n" + "\n\n".join(f"{n} 번째 **강조**." for n in range(9)) + "\n"
     (tmp_path / "new.md").write_text(noisy, encoding="utf-8")
     (tmp_path / "UPPER.MD").write_text(noisy, encoding="utf-8")
@@ -474,13 +470,9 @@ def test_a_file_deleted_from_the_worktree_is_not_a_finding(tmp_path: Path) -> No
 
     import lint
 
-    for args in (["init", "-q"], ["config", "user.email", "t@e.com"],
-                 ["config", "user.name", "t"]):
-        subprocess.run(["git", "-C", str(tmp_path), *args], check=True,
-                       capture_output=True)
+    git(tmp_path, "init", "-q")
     (tmp_path / "gone.md").write_text("# t\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(tmp_path), "add", "gone.md"], check=True,
-                   capture_output=True)
+    git(tmp_path, "add", "gone.md")
     (tmp_path / "gone.md").unlink()
 
     assert lint.tracked_markdown(tmp_path) == []
@@ -571,21 +563,10 @@ def test_only_a_real_closing_fence_closes_a_fence() -> None:
         assert findings(text) == [], name
 
 
-def test_prose_outside_a_fence_is_still_counted() -> None:
-    """The fence rule must not become a way to stop counting anything."""
-
-    loud = "# t\n\n" + "\n\n".join(f"{n} 번째 **강조**." for n in range(9)) + "\n"
-    assert findings(loud), "펜스 밖이 안 세어졌다"
-
-
-def test_files_that_are_not_markdown_pass() -> None:
+def test_only_a_markdown_write_is_judged() -> None:
     noisy = CLEAN.replace("규칙. 훅은", "**규칙.** 훅은")
     assert blocked(noisy, path="tool/x.py") is None
     assert blocked(noisy, path="README") is None
-
-
-def test_other_tools_pass() -> None:
-    noisy = CLEAN.replace("규칙. 훅은", "**규칙.** 훅은")
     assert blocked(noisy, tool="Read") is None
     assert blocked(noisy, tool="Bash") is None
 

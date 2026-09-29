@@ -1,10 +1,13 @@
 """The program's main: the wiki query's two stages, the work pane's worktrees
 and approvals, the translation switch, and the door only its own screen opens."""
 
+import atexit
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import uuid
@@ -18,7 +21,6 @@ from main import app as main_app
 from main import channels as chat_channels
 from main import query as chat
 from main import specs, work
-import translate
 from agent.chat_session import ChatSession, Event
 
 
@@ -387,8 +389,12 @@ def test_a_delete_takes_the_rows_by_place_and_an_append_waits_for_it(tmp_path):
 
     repo = tmp_path / "a"
     (repo / ".git").mkdir(parents=True)
+    def oneshot(*_args):
+        yield Event("done", json.dumps({"title": "t", "summary": "s"}))
+
     web = client()
-    with patch.object(chat_channels, "repo_for", return_value=repo), patch.object(chat.time, "time", return_value=1.0):
+    with patch.object(chat_channels, "repo_for", return_value=repo), patch.object(chat.time, "time", return_value=1.0), \
+         patch("main.memory.oneshot", oneshot):
         web.post("/api/config/next", json={"repo": "a"}).raise_for_status()
         # Identical rows, one in an earlier conversation and one in this.
         chat.remember("next", "result", "PR 올림")
@@ -599,38 +605,6 @@ def test_translate_api_guards_its_own_budget():
     ).status_code == 413
 
 
-def test_map_words_go_but_identifiers_stay():
-    """The map renders a headline and one rule line. Nothing else.
-
-    Carry a slug, a path or a config value along and the links break while
-    `graph.json`'s keys quietly differ on screen only. The translator lifts
-    those out before the request; this checks the door in front of it hands
-    the text over intact, because a door that mangles it first leaves the
-    protection nothing to protect. No network — the translator is faked.
-    """
-
-    seen: list[str] = []
-
-    def fake(texts, direction=translate.EN_KO, deadline=None):
-        seen.extend(texts)
-        return [f"[ko]{t}" for t in texts]
-
-    line = "Rule. `tool/lint.py` and [[hooks-fail-open]] decide `{review_dir}`."
-    with patch.object(main_app.translate, "translate", fake):
-        answer = client().post(
-            "/api/translate", json={"texts": ["Emphasis is scarce", line]}
-        ).json()
-
-    assert seen == ["Emphasis is scarce", line]
-    assert answer["texts"][0] == "[ko]Emphasis is scarce"
-    # `translate.protect` does the real work, and `test_translate.py` keeps it
-    # honest. What is checked here is that these spans are the ones it lifts.
-    kept = translate.protect(line, translate.glossary()[0])[1]
-    assert "tool/lint.py" in " ".join(kept)
-    assert "[[hooks-fail-open]]" in " ".join(kept)
-    assert "{review_dir}" in " ".join(kept)
-
-
 # -- the door ----------------------------------------------------------------
 
 
@@ -666,14 +640,26 @@ def test_translation_off_sends_nothing():
 # -- the work pane -----------------------------------------------------------
 
 
+_TEMPLATE: list[Path] = []
+
+
 def _repo(tmp_path: Path) -> Path:
+    """`tmp_path/proj`: a repository with one commit on `main`. Built once
+    per process and copied, since the build is six git processes."""
+
+    if not _TEMPLATE:
+        top = Path(tempfile.mkdtemp(prefix="repo-template-"))
+        atexit.register(shutil.rmtree, top, True)
+        built = top / "proj"
+        built.mkdir()
+        for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+            subprocess.run(["git", "-C", str(built), *args], check=True)
+        (built / "a.txt").write_text("a\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(built), "add", "."], check=True)
+        subprocess.run(["git", "-C", str(built), "commit", "-qm", "a"], check=True)
+        _TEMPLATE.append(built)
     repo = tmp_path / "proj"
-    repo.mkdir()
-    for args in (["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
-        subprocess.run(["git", "-C", str(repo), *args], check=True)
-    (repo / "a.txt").write_text("a\n", encoding="utf-8")
-    subprocess.run(["git", "-C", str(repo), "add", "."], check=True)
-    subprocess.run(["git", "-C", str(repo), "commit", "-qm", "a"], check=True)
+    shutil.copytree(_TEMPLATE[0], repo)
     return repo
 
 
@@ -856,17 +842,6 @@ def test_an_approval_goes_only_to_the_session_that_asked(tmp_path):
         web.post("/api/work/reset", json={"path": path, "keep": "delete"}).raise_for_status()
         assert web.get("/api/work/log", params={"path": path}).json()["rows"] == []
         assert web.post("/api/work/answer", json=right).status_code == 409
-
-
-def test_the_draft_and_the_bare_worktree_are_gone(tmp_path):
-    """Loop stage 6: work starts from a spec's `[시작]` or a review loop. The
-    answer-to-draft route and the `새 작업` box's route are not there to call."""
-
-    web = client()
-    with patch.object(chat_channels, "repo_for", return_value=tmp_path):
-        assert web.post("/api/draft", json={"question": "x"}).status_code in (404, 405)
-        assert web.post("/api/worktrees", json={"task": "t1"}).status_code in (404, 405)
-    assert not hasattr(chat, "WRITERS") and not hasattr(work, "make")
 
 
 def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it():

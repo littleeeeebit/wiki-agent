@@ -167,6 +167,7 @@ def test_a_tight_rule_budget_trims_only_the_rules():
 
 def test_the_knowledge_budget_trims_only_the_decisions():
     wide = build(decisions=10, rule_budget=None, repo_budget=None)
+    assert "shortened" not in wide, "with no budget nothing is trimmed"
     tight = build(decisions=10, rule_budget=None, repo_budget=300)
     assert rule_half(wide) == rule_half(tight)
     assert len(tight.split(MARK)[1]) < len(wide.split(MARK)[1])
@@ -218,11 +219,6 @@ def test_under_one_budget_knowledge_would_have_pushed_the_rules_out():
     assert untouched == 0 and new == rule_parts, "갈라 놓으면 규칙은 안 줄어든다"
     assert squeezed and old[0] != rule_parts[0], "한 예산이면 규칙이 줄어든다"
     assert old[1] == repo_parts[0], "그런데 지식은 한 글자도 안 줄었다"
-
-
-def test_with_no_budget_nothing_is_trimmed():
-    text = build(decisions=10, rule_budget=None, repo_budget=None)
-    assert "shortened" not in text
 
 
 # ---- The English rendering of the utterance --------------------------------
@@ -348,26 +344,6 @@ def test_the_budget_and_the_record_measure_the_translated_length():
     assert len(parts[0]) > 100, "렌더링이 번역된 본문을 안 썼다"
 
 
-def test_the_rendering_comes_before_the_rules():
-    """A host persists a large injection and hands the session a preview.
-
-    The rules alone reach 12,205 characters on an ordinary turn, past the
-    roughly 12 KB where that happens, so whatever sits after them is cut.
-    Measured on 2026-09-22 in a web chat session on both hosts: the rules
-    arrived, the rendering did not, and nothing reported it. Position is the
-    fix — this block is a few hundred characters and it is the one the person
-    reads to check what was understood.
-    """
-
-    context = build(decisions=1, rule_budget=None, repo_budget=None,
-                    rendered="writes the budget test word")
-
-    assert "wiki:english-rendering" in context, context[:200]
-    assert context.index("wiki:english-rendering") < context.index("Below is what the wiki"), (
-        "the rendering has to precede the rules, or a preview drops it"
-    )
-
-
 def test_every_rule_sentence_lands_inside_the_2kb_preview():
     """A host that receives more than about 12 KB keeps only the first 2 KB.
 
@@ -390,6 +366,8 @@ def test_every_rule_sentence_lands_inside_the_2kb_preview():
     context = build(decisions=0, rule_budget=None, repo_budget=None,
                     rendered="long rendering " * 200)
     assert "`craft/big` — " in context[:2000], context[:2000]
+    # Measured on 2026-09-22 on both hosts: what sat after the rules was cut
+    # from the preview, so the rendering goes before them.
     assert context.index("wiki:english-rendering") < context.index("Below is what the wiki")
 
     page = "# T\n\nRule. First sentence here. Second one\nwraps here.\n\nWhy. x\n"
@@ -407,7 +385,10 @@ def test_the_rendering_goes_out_even_when_no_rule_matched():
     — the turns where the wiki has nothing else to offer.
     """
 
-    assert _rendering("규칙을 지켜라", "EN").endswith("EN")
+    context = turn(stage(), prompt="아무 규칙도 안 걸리는 말",
+                   translator=lambda texts, direction=None, deadline=None: ["EN:" + t for t in texts])
+    assert "wiki:english-rendering" in context and "EN:" in context, context
+    assert "Below is what the wiki" not in context, "a rule matched: the test measures nothing"
 
 
 def test_a_page_that_eats_the_deadline_does_not_starve_the_rendering():
@@ -542,8 +523,10 @@ def stage(why: str = "short") -> Path:
 
 
 def turn(root: Path, session: str = "s1", transcript: str | None = "t1.jsonl",
-         project: bool = True, stdout=None, prompt: str = f"{WORD} 를 쓴다") -> str:
-    """One hook call on Claude. Returns the injection, `""` when nothing went out."""
+         project: bool = True, stdout=None, prompt: str = f"{WORD} 를 쓴다",
+         translator=lambda texts, direction=None, deadline=None: list(texts)) -> str:
+    """One hook call on Claude. Returns the injection, `""` when nothing went out.
+    The default translator hands the original back: the translation-off path."""
 
     import io
 
@@ -556,7 +539,7 @@ def turn(root: Path, session: str = "s1", transcript: str | None = "t1.jsonl",
         payload["transcript_path"] = str(root / transcript)
     was = match.WIKI, translate.translate, sys.stdin, sys.stdout, sys.argv
     match.WIKI = root / "wiki"
-    translate.translate = lambda texts, direction=None, deadline=None: list(texts)
+    translate.translate = translator
     sys.stdin = io.TextIOWrapper(io.BytesIO(json.dumps(payload, ensure_ascii=False).encode("utf-8")))
     sys.stdout = stdout or io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
     sys.argv = ["inject.py", "--host", "claude"] + (
@@ -581,6 +564,7 @@ def test_the_second_turn_carries_the_rule_paragraph_whole_instead_of_the_page():
     assert is_repeated(second), second
     assert PARAGRAPH in second, "the repeated form lost part of the rule paragraph"
     assert "What goes wrong. short" not in second
+    assert "Below is what the wiki loaded" in second, "the header must not go with the pages"
     assert "Loaded in full earlier this session: `operator/rep.md`" in second
 
 
@@ -590,14 +574,6 @@ def test_a_page_without_the_declaration_goes_out_in_full_every_turn():
         context = turn(root)
     assert "Declares nothing, so it goes out in full every time." in context
     assert "craft/plain (contract, repeated)" not in context
-
-
-def test_every_rule_already_seen_still_sends_each_rule_paragraph():
-    root = stage()
-    turn(root)
-    context = turn(root)
-    assert PARAGRAPH in context
-    assert "Below is what the wiki loaded" in context, "the header must not go with the pages"
 
 
 def test_a_turn_over_the_host_ceiling_sends_rule_paragraphs_and_sees_nothing():
@@ -619,11 +595,6 @@ def test_a_turn_over_the_host_ceiling_sends_rule_paragraphs_and_sees_nothing():
 
     assert remembered([{"sent": 20000, "full": [["operator/rep", "t"]]}], 9800) == set()
     assert remembered([{"sent": 9000, "full": [["operator/rep", "t"]]}], 9800) == {("operator/rep", "t")}
-
-
-def test_a_turn_under_the_ceiling_is_not_squeezed():
-    root = stage()
-    assert "rule only" not in turn(root)
 
 
 def test_the_rule_index_rides_only_on_a_turn_still_over_the_ceiling():
@@ -830,11 +801,3 @@ def test_a_repeat_declaration_owes_a_short_rule_paragraph():
     assert repeat_errors({"repeat": "all"}, "Rule. x\n")
     assert repeat_errors({"repeat": "rule"}, "# T\n\nWhy. no rule here\n")
     assert repeat_errors({"repeat": "rule"}, "Rule. " + "x" * REPEAT_MAX + "\n")
-
-
-if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print(f"ok  {name}")

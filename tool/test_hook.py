@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+import pytest
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -151,11 +154,14 @@ def test_a_path_named_as_data_is_not_an_old_install():
         assert not apply.unwire(settings), "남의 훅은 걷지 않는다"
 
 
-def test_check_fails_when_a_named_project_gets_nothing():
-    import shutil
+def needs(*hosts: str) -> None:
+    missing = [h for h in hosts if not shutil.which(h)]
+    if missing:
+        pytest.skip(f"not installed here: {', '.join(missing)}")
 
-    if not shutil.which("claude"):
-        return
+
+def test_check_fails_when_a_named_project_gets_nothing():
+    needs("claude")
     with tempfile.TemporaryDirectory() as raw:
         # An attached clone still carrying its old per-project hooks: the
         # dispatcher steps aside for them, so the global SessionStart says nothing.
@@ -191,21 +197,18 @@ def test_a_mistyped_project_is_refused_before_anything_is_written():
 
 
 def test_a_missing_second_host_leaves_the_first_unwritten():
-    import shutil
-
-    if not shutil.which("claude"):
-        return
+    needs("claude")
     with tempfile.TemporaryDirectory() as raw:
         # Git and Python stay findable; `codex` does not.
         bin_dir = Path(raw)
         env = {**os.environ, "PATH": os.pathsep.join(
             str(Path(shutil.which(name)).parent) for name in ("claude", "git"))}
+        if shutil.which("codex", path=env["PATH"]):
+            pytest.skip("codex shares a folder with claude or git here")
         done = subprocess.run(
             [sys.executable, str(HERE / "setup_agents.py"), "--global", "--agent", "both"],
             capture_output=True, text=True, encoding="utf-8", timeout=120, env=env, cwd=bin_dir,
         )
-        if shutil.which("codex", path=env["PATH"]):
-            return
         assert done.returncode == 2 and "codex" in done.stderr, done.stdout + done.stderr
         assert not any(Path(os.environ["WIKI_USER_HOME"]).glob(".claude/settings.json")), \
             "한 호스트만 설치된 채로 끝나지 않는다"
@@ -252,10 +255,7 @@ def global_install(*extra: str) -> subprocess.CompletedProcess:
 
 
 def test_settings_that_install_cannot_repair_are_refused_before_writing():
-    import shutil
-
-    if not shutil.which("claude"):
-        return
+    needs("claude")
     home = Path(os.environ["WIKI_USER_HOME"])
     user = home / ".claude/settings.json"
     user.parent.mkdir(parents=True, exist_ok=True)
@@ -277,10 +277,7 @@ def test_settings_that_install_cannot_repair_are_refused_before_writing():
 
 
 def test_a_broken_later_file_leaves_the_earlier_ones_unwritten():
-    import shutil
-
-    if not (shutil.which("claude") and shutil.which("codex")):
-        return
+    needs("claude", "codex")
     home = Path(os.environ["WIKI_USER_HOME"])
     codex = home / ".codex/hooks.json"
     codex.parent.mkdir(parents=True, exist_ok=True)

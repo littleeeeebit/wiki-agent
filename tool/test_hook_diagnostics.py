@@ -78,7 +78,7 @@ def test_orca_stalled_endpoint_leaves_process_evidence_without_payload(tmp_path)
     )
     observer = subprocess.Popen([
         "pwsh", "-NoProfile", "-File", str(TOOL / "watch_hook_timeouts.ps1"),
-        "-ThresholdSeconds", "0.2", "-DurationSeconds", "3", "-LogDirectory", str(tmp_path),
+        "-ThresholdSeconds", "0.2", "-DurationSeconds", "2", "-LogDirectory", str(tmp_path),
     ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     try:
         process.stdin.write(b'{"prompt":"PRIVATE_SENTINEL"}')
@@ -110,15 +110,25 @@ def test_orca_stalled_endpoint_leaves_process_evidence_without_payload(tmp_path)
 
 
 def test_installed_pretool_records_blocked_stdin_without_content(tmp_path):
+    # The real entry point, with only the watchdog's 8 s delay shortened; the
+    # header below still has to name the 8 s the threshold table gives it.
+    runner = tmp_path / "run.py"
+    runner.write_text(f"""import faulthandler, runpy, sys
+real = faulthandler.dump_traceback_later
+faulthandler.dump_traceback_later = lambda after, **kw: real(0.2, **kw)
+sys.path.insert(0, {str(TOOL)!r})
+sys.argv = [{str(TOOL / "codex_pretool.py")!r}]
+runpy.run_path(sys.argv[0], run_name="__main__")
+""", encoding="utf-8")
     env = {**os.environ, "LOCALAPPDATA": str(tmp_path)}
     process = subprocess.Popen(
-        [sys.executable, str(TOOL / "codex_pretool.py")],
+        [sys.executable, str(runner)],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
     )
     try:
         process.stdin.write(b'{"prompt":"PRIVATE_SENTINEL"')
         process.stdin.flush()
-        deadline = time.monotonic() + 12
+        deadline = time.monotonic() + 5
         evidence = ""
         while time.monotonic() < deadline:
             logs = list(tmp_path.rglob("*.log"))
@@ -126,7 +136,8 @@ def test_installed_pretool_records_blocked_stdin_without_content(tmp_path):
             if "Timeout" in evidence:
                 break
             time.sleep(0.1)
-        assert "Timeout" in evidence and "codex_pretool.py" in evidence
+        assert "Timeout" in evidence and '"hook": "codex_pretool.py"' in evidence
+        assert '"stack_after_seconds": 8' in evidence
         assert "PRIVATE_SENTINEL" not in evidence
         assert process.poll() is None
     finally:

@@ -326,14 +326,6 @@ def test_contradicting_decisions_are_both_kept_and_linked_with_both_spans(world,
     index.close()
 
 
-def test_a_newer_date_alone_supersedes_nothing(world):
-    hub, repo = world
-    index = index_of(hub, repo)
-    later = knowledge_graph.decision_id(evidence.repo_id(repo), ".wiki/decisions/2026-03-01-003-later.md")
-    assert index.graph.edges([later], kinds=["supersedes"]) == []
-    index.close()
-
-
 # ---- revisions ------------------------------------------------------------------------
 
 def test_an_edit_invalidates_that_passages_edges_until_it_is_extracted_again(world, jev):

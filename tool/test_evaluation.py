@@ -80,11 +80,19 @@ def arms(folder: Path, *extra: str) -> int:
                          "--ids", "bridge-01", "paper-03", "memory-02", *extra])
 
 
-def test_the_free_arms_record_resume_and_refuse_other_options(tmp_path, data):
-    folder = tmp_path / "run"
+@pytest.fixture(scope="module")
+def ran(tmp_path_factory):
+    """One recorded run of the free arms, shared: recording is the slow part."""
+
+    folder = tmp_path_factory.mktemp("arms") / "run"
     cache = sources.records_folder(ROOT).parent
     before = set(cache.iterdir()) if cache.exists() else set()
     assert arms(folder) == 0
+    return folder, cache, before
+
+
+def test_the_free_arms_record_resume_and_refuse_other_options(ran):
+    folder, cache, before = ran
     rows = compare.rows(folder, "arms")
     assert len(rows) == 6 and {r["arm"] for r in rows} == {"A", "C"}
     assert all(r["leaks"] == [] and r["breaches"] == [] and r["cost"]["jev_requests"] == 0 for r in rows)
@@ -111,10 +119,8 @@ def test_a_batch_stops_at_its_ceiling_and_says_why(tmp_path):
         compare.main([str(tmp_path / "x"), "--usd", "11"])
 
 
-def test_the_report_resamples_intents_and_judges_the_frozen_gates(tmp_path):
-    folder = tmp_path / "run"
-    arms(folder)
-    got = report.build([folder])
+def test_the_report_resamples_intents_and_judges_the_frozen_gates(ran):
+    got = report.build([ran[0]])
     table = got["arms"]["arms"]
     assert table["A"]["recall"]["denominator"] == 3 and table["C"]["candidate_recall"]["value"] >= \
         table["A"]["candidate_recall"]["value"]
@@ -214,6 +220,12 @@ def test_active_mode_can_be_limited_to_named_checkouts(tmp_path, monkeypatch):
 def test_the_outage_and_rollback_rehearsal_leaves_everything_as_it_was():
     from eval import rollout
 
-    got = rollout.rehearse()
+    # The rehearsal's closed port answers with this error after Windows spends
+    # about 2 s retrying; the same error at once takes the same path.
+    def refused(self):
+        raise ConnectionRefusedError(10061, "refused")
+
+    with patch.object(decision.Pinned, "connect", refused):
+        got = rollout.rehearse()
     assert got["ok"], [c for c in got["checks"] if not c["ok"]]
     assert len(got["checks"]) >= 20

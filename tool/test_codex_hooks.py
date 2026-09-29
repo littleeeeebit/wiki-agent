@@ -21,9 +21,8 @@ def install(project, *extra):
     )
 
 
-@pytest.fixture
-def connected(tmp_path):
-    project = tmp_path / "한글 project"
+def connect(root: Path):
+    project = root / "한글 project"
     project.mkdir()
     subprocess.run(["git", "init", "-q", str(project)], check=True)
     (project / "README.md").write_text("# 시험 문서\n", encoding="utf-8")
@@ -49,6 +48,18 @@ def connected(tmp_path):
     settings = json.loads(before)
     assert settings["hooks"]["SessionEnd"] == other["hooks"]["SessionEnd"]
     return project, settings
+
+
+@pytest.fixture
+def connected(tmp_path):
+    return connect(tmp_path)
+
+
+@pytest.fixture(scope="module")
+def installed(tmp_path_factory):
+    """One install shared by the hooks that only answer and write nothing."""
+
+    return connect(tmp_path_factory.mktemp("installed"))
 
 
 def run_hook(connected, event, payload, script=""):
@@ -127,19 +138,19 @@ def test_question_policy_before_agent_decides_to_ask(connected):
     ("git status", "Check status", False),
     ("git status", "상태 확인", True),
 ])
-def test_installed_pretool(connected, command, description, blocked):
-    answer = run_hook(connected, "PreToolUse", {
+def test_installed_pretool(installed, command, description, blocked):
+    answer = run_hook(installed, "PreToolUse", {
         "tool_name": "Bash", "tool_input": {"command": command, "description": description},
     })
     assert (answer.get("hookSpecificOutput", {}).get("permissionDecision") == "deny") == blocked
-    assert (connected[0] / "README.md").read_text(encoding="utf-8") == "# 시험 문서\n"
+    assert (installed[0] / "README.md").read_text(encoding="utf-8") == "# 시험 문서\n"
 
 
-def test_installed_pretool_denies_the_async_tool_itself(connected):
+def test_installed_pretool_denies_the_async_tool_itself(installed):
     for tool in ("request_user_input_async", "functions.request_user_input_async"):
         for given in ({"questions": [{"title": "위치?"}]},
                       {"questions": [{"title": "위치?", "options": ["현재", "다른 곳"]}]}):
-            answer = run_hook(connected, "PreToolUse", {
+            answer = run_hook(installed, "PreToolUse", {
                 "tool_name": tool, "tool_input": given,
             })
             output = answer.get("hookSpecificOutput", {})
@@ -149,7 +160,7 @@ def test_installed_pretool_denies_the_async_tool_itself(connected):
         ("request_user_input", {"questions": []}),
         ("Bash", {"command": "rg request_user_input_async tool"}),
     ):
-        assert run_hook(connected, "PreToolUse", {
+        assert run_hook(installed, "PreToolUse", {
             "tool_name": tool, "tool_input": given,
         }) == {}
 
@@ -161,8 +172,8 @@ def test_installed_pretool_denies_the_async_tool_itself(connected):
     ("결과가 나오면 이어서 하겠습니다.", False, False),
     (None, False, False),
 ])
-def test_installed_stop(connected, message, active, blocked):
-    answer = run_hook(connected, "Stop", {
+def test_installed_stop(installed, message, active, blocked):
+    answer = run_hook(installed, "Stop", {
         "last_assistant_message": message, "stop_hook_active": active,
         "transcript_path": None,
     }, "declared_continuation.py")

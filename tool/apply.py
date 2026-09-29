@@ -164,8 +164,7 @@ def declared() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
         if not directory.is_dir():
             continue
         for path in sorted(directory.glob("*.md")):
-            meta, _body = front_matter(path.read_text(encoding="utf-8"))
-            enforce = meta.get("enforce")
+            enforce = _meta(path).get("enforce")
             if not isinstance(enforce, dict):
                 continue
             page = f"{scope}/{path.stem}"
@@ -175,6 +174,20 @@ def declared() -> tuple[dict[str, list[str]], dict[str, list[str]]]:
             if script:
                 scripts.setdefault(str(script), []).append(page)
     return denies, scripts
+
+
+# One `apply` pass asks `declared` dozens of times; parsing every page's YAML
+# each time was most of `--check`. A page is parsed again once it changes.
+_parsed: dict[Path, tuple[int, int, dict]] = {}
+
+
+def _meta(path: Path) -> dict:
+    stat = path.stat()
+    seen = _parsed.get(path)
+    if seen is None or seen[:2] != (stat.st_mtime_ns, stat.st_size):
+        seen = (stat.st_mtime_ns, stat.st_size, front_matter(path.read_text(encoding="utf-8"))[0])
+        _parsed[path] = seen
+    return seen[2]
 
 
 def unfilled(adapter: str | None, project: Path | None = None) -> dict[str, list[str]]:

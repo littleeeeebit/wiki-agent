@@ -9,6 +9,7 @@ the remote branch all run through git itself.
 
 import json
 import re
+import shutil
 import subprocess
 import threading
 import time
@@ -70,7 +71,11 @@ class Hub:
                        "cross": False, "auto": None, "queue": False, "merged": None, **extra}
 
     def head(self, n: int) -> str:
-        return git(self.origin, "rev-parse", f"refs/heads/{self.prs[n]['branch']}")
+        # A push leaves a loose ref: read it rather than start a git per `gh`
+        # read. `rev-parse` still answers for one that was packed.
+        loose = self.origin / "refs/heads" / self.prs[n]["branch"]
+        return loose.read_text(encoding="utf-8").strip() if loose.is_file() else \
+            git(self.origin, "rev-parse", f"refs/heads/{self.prs[n]['branch']}")
 
     def elsewhere(self) -> Path:
         """Another clone of the origin: someone else's machine, or GitHub's."""
@@ -206,18 +211,34 @@ def unbroken(path, halt):
     return "게이트를 고쳤다"
 
 
-@pytest.fixture
-def world(tmp_path):
-    origin = tmp_path / "origin.git"
+@pytest.fixture(scope="session")
+def template(tmp_path_factory):
+    """The project and its bare origin, built once. Never used in place:
+    every test copies it (`world`), so nothing a test does reaches another."""
+
+    top = tmp_path_factory.mktemp("template")
+    origin = top / "origin.git"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
-    repo = _repo(tmp_path)
+    repo = _repo(top)
     (repo / "gate.py").write_text("import os, sys\nsys.exit(1 if os.path.exists('broken') else 0)\n", encoding="utf-8")
     (repo / ".wiki").mkdir()
     (repo / ".wiki/adapter.toml").write_text(f'[slots]\ngate_cmd = "{GATE}"\n', encoding="utf-8")
     git(repo, "add", "-A")
     git(repo, "commit", "-qm", "gate")
-    git(repo, "remote", "add", "origin", str(origin))
+    git(repo, "remote", "add", "origin", origin.as_posix())   # as written: `world` rewrites it
     git(repo, "push", "-q", "-u", "origin", "main")
+    return top
+
+
+@pytest.fixture
+def world(tmp_path, template):
+    origin, repo = tmp_path / "origin.git", tmp_path / "proj"
+    shutil.copytree(template / "origin.git", origin)
+    shutil.copytree(template / "proj", repo)
+    config = repo / ".git/config"
+    text = config.read_text(encoding="utf-8").replace((template / "origin.git").as_posix(), origin.as_posix())
+    assert origin.as_posix() in text, "a push must never reach the template's origin"
+    config.write_text(text, encoding="utf-8")
     hub = Hub(origin, tmp_path / "elsewhere")
     Reviewer.replies, Reviewer.made, Worker.replies, Worker.made = [], [], [], []
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
@@ -446,7 +467,8 @@ def test_four_loops_with_three_seats_leave_the_fourth_waiting(world):
     Reviewer.replies = [held] * 4
     for i in range(4):
         loop.kick("proj", f"seat-{i}")
-    waited(lambda: sorted(specs.load("proj", f"seat-{i}")["state"] for i in range(4))
+    # A read that meets a save on Windows is `None`: read again.
+    waited(lambda: sorted(str((specs.load("proj", f"seat-{i}") or {}).get("state")) for i in range(4))
            == ["리뷰 R1", "리뷰 R1", "리뷰 R1", "리뷰 대기"])
     time.sleep(0.3)
     assert sum(specs.load("proj", f"seat-{i}")["state"] == "리뷰 대기" for i in range(4)) == 1
@@ -611,6 +633,36 @@ def test_merge_refuses_a_head_the_review_did_not_allow(world):
     assert spec["state"] == "머지 가능" and len(spec["rounds"]) == 2, "새 라운드를 받았다"
 
 
+def base_onto_first(w, name: str, n: int) -> tuple[str, dict]:
+    """A two-commit pull request made mergeable; then the base fast-forwards
+    onto its first commit, which moves the merge base. Only a fetch shows it."""
+
+    first = pr_spec(w, name, n)["pr"]["head"]
+    path = Path(specs.load("proj", name)["worktree"])
+    commit(path, "second.txt")
+    git(path, "push", "-q", "origin", name)
+    spec = looped(name)
+    assert spec["state"] == "머지 가능"
+    git(w.hub.elsewhere(), "push", "-q", "origin", f"{first}:refs/heads/main")
+    return first, spec
+
+
+def test_merge_reads_the_base_as_it_stands_now_not_as_last_fetched(world):
+    first, spec = base_onto_first(world, "fix-mb", 7)
+    answer = client().post("/api/specs/fix-mb/merge", json={"head": spec["rounds"][0]["head"]})
+    assert answer.status_code == 409 and "base" in answer.json()["detail"]
+    assert not any(c[1:3] == ["pr", "merge"] for c in world.hub.calls)
+    waited(lambda: ("proj", "fix-mb") not in loop._loops)
+    assert specs.load("proj", "fix-mb")["validation"]["final"]["base_oid"] == first, "the final gate ran again"
+
+
+def test_a_standing_final_result_is_reused_only_for_the_base_as_it_stands_now(world):
+    first, _ = base_onto_first(world, "fix-mc", 7)
+    with judged(calls := []):
+        spec = looped("fix-mc")   # the screen asks again
+    assert calls == [[GATE]] and spec["validation"]["final"]["base_oid"] == first
+
+
 def test_a_merge_that_only_queued_cleans_nothing_until_it_lands(world):
     pr_spec(world, "fix-m", 7)
     spec = looped("fix-m")
@@ -651,6 +703,146 @@ def test_every_row_of_the_after_merge_table(world):
     world.hub.broken = True
     loop.landed(world.repo, spec)
     assert specs.load("proj", "row-broken")["state"] == "머지 대기" and Path(spec["worktree"]).exists()
+
+
+# -- the gate contract: targeted rounds, one final gate on the allowed head ------------------------
+
+
+def judged(calls: list):
+    """`specs.judge` as it is, noting the commands of every run."""
+
+    real = specs.judge
+
+    def run(path, cmds, halt, noted=lambda text: None):
+        calls.append(list(cmds))
+        return real(path, cmds, halt, noted)
+    return patch.object(specs, "judge", run)
+
+
+def allowed_spec(w, name: str, n: int, **validation) -> dict:
+    """A spec whose one round allowed its head, in `머지 가능`."""
+
+    spec = pr_spec(w, name, n)
+    specs.update("proj", name, state="머지 가능", rounds=[{"n": 1, "head": spec["pr"]["head"], "base": "main",
+                                                         "verdict": "allow", "findings": {"P0": 0, "P1": 0, "P2": 0}}])
+    if validation:
+        specs.validate("proj", name, **validation)
+    return specs.load("proj", name)
+
+
+def final_of(w, spec: dict, **extra) -> dict:
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    return {"head": head, "base_oid": specs.merge_base(path, "main", head), "command": GATE,
+            "environment_digest": specs.digest(w.repo, path, GATE), "ok": True, "code": 0, "reason": "",
+            "finished_at": 1.0, **extra}
+
+
+def round_of(spec: dict) -> dict:
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    return {"head": head, "base_oid": specs.merge_base(path, "main", head), "commands": [GATE],
+            "selection": "full", "ok": True, "finished_at": 1.0}
+
+
+def test_a_targeted_pass_cannot_merge_and_the_loop_runs_only_the_final_gate(world):
+    """Every other reason `specs.proven` refuses is its own unit test
+    (`test_specs.py`); `merge` asks it, and each refusal takes this path."""
+
+    web = client()
+    spec = allowed_spec(world, "fix-u", 7)
+    specs.validate("proj", "fix-u", round=round_of(spec))
+    with judged(calls := []):
+        answer = web.post("/api/specs/fix-u/merge", json={"head": spec["pr"]["head"]})
+        assert answer.status_code == 409 and "최종 게이트" in answer.json()["detail"]
+        assert not any(c[1:3] == ["pr", "merge"] for c in world.hub.calls)
+        waited(lambda: ("proj", "fix-u") not in loop._loops)
+    assert calls == [[GATE]], "the round result is reused; only the final gate runs"
+    spec = specs.load("proj", "fix-u")
+    assert spec["state"] == "머지 가능" and spec["validation"]["final"]["ok"] and len(spec["rounds"]) == 1
+    assert not any(r.heard for r in Reviewer.made), "the review was not asked again"
+    web.post("/api/specs/fix-u/merge", json={"head": spec["pr"]["head"]}).raise_for_status()
+    assert specs.load("proj", "fix-u")["state"] == "머지됨"
+
+
+def test_the_screen_is_told_the_server_s_proof_not_the_saved_pass(world):
+    spec = allowed_spec(world, "fix-v", 7)
+    specs.validate("proj", "fix-v", final=final_of(world, spec))
+
+    def shown() -> str | None:
+        return next(s for s in client().get("/api/specs").json()["specs"] if s["id"] == "fix-v")["unproven"]
+
+    assert shown() == ""
+    adapter = world.repo / ".wiki/adapter.toml"
+    adapter.write_text(adapter.read_text(encoding="utf-8").replace(GATE, GATE + " && git --version"), encoding="utf-8")
+    assert "환경" in shown(), "a changed gate_cmd leaves the saved pass standing for nothing"
+    specs.update("proj", "fix-v", state="리뷰 R2")
+    assert shown() is None
+
+
+def test_a_worktree_gone_from_disk_is_unproven_and_the_rest_still_list(world):
+    healthy, gone = allowed_spec(world, "fix-w", 7), allowed_spec(world, "fix-x", 8)
+    for spec in (healthy, gone):
+        specs.validate("proj", spec["id"], final=final_of(world, spec))
+    Path(gone["worktree"]).rename(world.tmp / "moved-away")
+    listed = client().get("/api/specs")
+    assert listed.status_code == 200, listed.text
+    shown = {s["id"]: s["unproven"] for s in listed.json()["specs"]}
+    assert shown["fix-w"] == "" and "작업트리" in shown["fix-x"]
+
+
+def test_a_restart_during_the_final_gate_stays_blocked_and_resume_reruns_only_it(world):
+    spec = allowed_spec(world, "fix-y", 7)
+    specs.update("proj", "fix-y", state="리뷰 R1")
+    specs.validate("proj", "fix-y", round=round_of(spec), phase="final_running",
+                   final=final_of(world, spec, ok=False, code=None, reason="끝나지 않았다", finished_at=None))
+    loop.recover()
+    spec = specs.load("proj", "fix-y")
+    assert spec["stopped"]["reason"] == "서버 재시작" and spec["validation"]["phase"] is None
+    assert not spec["validation"]["final"]["ok"]
+    assert client().post("/api/specs/fix-y/merge", json={"head": spec["pr"]["head"]}).status_code == 409
+    with judged(calls := []):
+        client().post("/api/specs/fix-y/resume", json={}).raise_for_status()
+        waited(lambda: ("proj", "fix-y") not in loop._loops)
+    assert calls == [[GATE]], "the unchanged round result is reused; the final gate runs again"
+    spec = specs.load("proj", "fix-y")
+    assert spec["state"] == "머지 가능" and spec["validation"]["final"]["finished_at"]
+
+
+def mapped(w, *globs: str) -> None:
+    """Register `git --version` as the check for `globs` in the adapter."""
+
+    adapter = w.repo / ".wiki/adapter.toml"
+    adapter.write_text(adapter.read_text(encoding="utf-8") + '\n[checks.text]\ncmd = "git --version"\npaths = '
+                       + json.dumps(list(globs)) + "\n", encoding="utf-8")
+
+
+def test_a_mapped_round_then_the_full_gate_once_and_the_same_identity_reuses_both(world):
+    mapped(world, "*.txt")
+    pr_spec(world, "fix-z", 7, gate=None)
+    with judged(calls := []):
+        spec = looped("fix-z")
+        assert calls == [["git --version"], [GATE]] and spec["state"] == "머지 가능"
+        v = spec["validation"]
+        assert v["round"]["selection"] == "mapped" and v["final"]["ok"] and v["final"]["head"] == spec["pr"]["head"]
+        assert "the checks this change maps to" in order(world, 7, 1)
+        # The screen asks again: nothing changed, so nothing runs.
+        spec = looped("fix-z")
+    assert calls == [["git --version"], [GATE]] and spec["state"] == "머지 가능" and len(spec["rounds"]) == 1
+
+
+def test_a_failed_final_gate_goes_to_repair_and_a_new_review(world):
+    """The round's mapped check passes; the full gate on the allowed head
+    does not. The repair's commit gets its own round checks and review."""
+
+    mapped(world, "*")
+    path = Path(pr_spec(world, "fix-f2", 7, gate=None)["worktree"])
+    broken = commit(path, "broken")
+    git(path, "push", "-q", "origin", "fix-f2")
+    Reviewer.replies = [allow, allow]
+    Worker.replies = [unbroken]
+    spec = looped("fix-f2")
+    assert "python gate.py" in Worker.made[-1].heard[0] and "failed" in Worker.made[-1].heard[0]
+    assert spec["state"] == "머지 가능" and spec["rounds"][0]["head"] == broken and len(spec["rounds"]) == 2
+    assert spec["validation"]["final"]["ok"] and spec["validation"]["final"]["head"] == world.hub.head(7) != broken
 
 
 def test_the_original_moves_only_when_clean_on_the_base(world):

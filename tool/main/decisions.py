@@ -565,8 +565,12 @@ def start_turn(path: Path, run, text: str) -> tuple[str | None, str, str]:
 
 def registered(repo: Path) -> dict[str, dict]:
     """The checks the repository's adapter registers under `[checks]`:
-    `name = "command"` or `name = {cmd = "...", about = "..."}`. Only these
-    run; a model names one by its id and never writes a command."""
+    `name = "command"` or `name = {cmd = "...", about = "...", paths = [...]}`.
+    Only these run; a model names one by its id and never writes a command.
+
+    `paths` are the globs a round's selection maps changed files to
+    (`specs.selected`). Absent is `[]`, mapping nothing; anything but a list
+    of strings is `None`, a malformed map that selects the full gate."""
 
     try:
         path = adapter_path(repo.name, repo)
@@ -577,8 +581,11 @@ def registered(repo: Path) -> dict[str, dict]:
     for name, value in (data.get("checks") or {}).items():
         cmd, about = (value, "") if isinstance(value, str) else \
             ((value.get("cmd"), value.get("about", "")) if isinstance(value, dict) else (None, ""))
+        globs = value.get("paths", []) if isinstance(value, dict) else []
         if CHECK_NAME.fullmatch(name) and isinstance(cmd, str) and cmd.strip() and isinstance(about, str):
-            out[name] = {"cmd": cmd.strip(), "about": about.strip()}
+            out[name] = {"cmd": cmd.strip(), "about": about.strip(),
+                         "paths": globs if isinstance(globs, list) and all(isinstance(g, str) for g in globs)
+                         else None}
     return dict(list(out.items())[:MAX_CHECKS])
 
 

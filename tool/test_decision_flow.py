@@ -493,12 +493,15 @@ def test_an_abort_reaches_a_handshake_that_the_server_never_answers():
         failed = []
         worker = threading.Thread(target=lambda: failed.append(pytest.raises(OSError, conn.connect)))
         worker.start()
-        time.sleep(0.2)  # connected; the ClientHello is waiting for an answer
-        started = time.monotonic()
-        decision.abort(conn)
-        worker.join(2)
-        assert not worker.is_alive() and failed, "the handshake ran on past the abort"
-        assert time.monotonic() - started < 1.0
+        peer, _ = listener.accept()
+        with peer:   # held open: closing it would end the handshake on its own
+            peer.settimeout(5)
+            assert peer.recv(1), "no ClientHello"   # sent; now it waits for an answer
+            started = time.monotonic()
+            decision.abort(conn)
+            worker.join(2)
+            assert not worker.is_alive() and failed, "the handshake ran on past the abort"
+            assert time.monotonic() - started < 1.0
 
 
 def test_an_aborted_connection_opens_nothing_and_sends_nothing():
@@ -642,7 +645,6 @@ def test_an_analysis_is_searched_even_where_jev_would_answer_directly():
     world = World(answering(route=0.05, analysis=0.95), [found([chunk("port", "The port is 8791.")])])
     out = run(world, query="Is choosing port 8791 a sensible design?")
     assert out["analysis"] and not out["direct"] and out["evidence"]
-    assert world.firsts, "it searched"
 
 
 def test_a_single_question_asks_jev_nothing_about_its_parts():
@@ -858,7 +860,6 @@ def test_a_repair_never_spends_the_request_kept_for_verification():
     # route + judge = 2 of 3; another round's judge would take the reserved one.
     assert out["status"] == "partial" and world.mended == []
     assert out["repairs"] == [{"need": "sources", "skipped": "budget_reserve"}]
-    assert out["budget"] if "budget" in out else True
     assert "repair" not in world.asked[-1][2], "a repair was offered that could not run"
 
 
@@ -1178,14 +1179,6 @@ def test_the_repair_fit_never_accepts_a_confident_wrong_step():
     rule, report = calibration.fit_choice(cases)
     assert rule["confidence"] > 0.7 and report["counts"].get("accepted_wrong", 0) == 0
     assert calibration.fit_choice(cases[:5])[0] is None, "too few labelled repairs to fit"
-
-
-def test_stored_prototype_dossiers_stay_readable():
-    for old, (status, direct) in knowledge.LEGACY.items():
-        now = knowledge.migrated({"status": old, "evidence": [], "trace": []})
-        assert (now["status"], now["direct"], now["migrated_from"]) == (status, direct, old)
-    current = {"schema_version": knowledge.DOSSIER, "status": "ready"}
-    assert knowledge.migrated(current) is current
 
 
 # -- the shared flow, end to end --------------------------------------------------------

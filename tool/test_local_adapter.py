@@ -47,7 +47,3 @@ def test_local_adapter():
             assert apply.wiring_drift(moved), "이동 후 이전 절대 경로는 드리프트다"
             (moved / ".wiki/adapter.toml").unlink()
             assert inject.slots_for(None, moved) == {}, "로컬 원본 누락을 허브의 동명 adapter로 숨기지 않는다"
-
-
-if __name__ == "__main__":
-    test_local_adapter()

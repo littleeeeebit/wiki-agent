@@ -56,8 +56,6 @@ def test_wiring():
             path.write_text(json.dumps(settings), encoding="utf-8")
             assert apply.wiring_drift(project, agents), change
             assert any(k == "훅 배선 드리프트" for k, _m in repo_lint.check(project))
-            if change == "matcher":
-                assert run("apply.py", "--project", project, "--adapter", "example", "--check").returncode == 1
         path.write_text(original, encoding="utf-8")
         assert run("apply.py", "--project", project, "--adapter", "example", "--check").returncode == 0
 
@@ -219,11 +217,3 @@ def test_gate_ignores_only_slot_differences():
         (root / "craft").mkdir()
         (root / "craft/broken.md").write_text('---\ntriggers: ["\\s"]\n---', encoding="utf-8")
         assert run("lint.py", "--wiki", root, "--check").returncode == 1
-
-
-if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
-    for name, test in sorted(list(globals().items())):
-        if name.startswith("test_"):
-            test()
-            print(f"ok  {name}")

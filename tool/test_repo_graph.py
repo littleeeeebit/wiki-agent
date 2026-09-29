@@ -133,11 +133,3 @@ def test_a_line_reference_counts():
 def test_the_root_readme_is_the_way_in_not_an_orphan():
     data = repo_graph.build(repo({"README.md": "", "docs/README.md": ""}))
     assert data["orphans"] == ["docs/README.md"], "루트 README 만 입구다"
-
-
-if __name__ == "__main__":
-    sys.stdout.reconfigure(encoding="utf-8")
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_"):
-            fn()
-            print(f"ok  {name}")

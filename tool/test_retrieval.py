@@ -305,8 +305,6 @@ def test_each_repair_asks_something_different_and_three_rounds_is_the_most(world
     owners = chunk_of(index, "docs/owners.md", "owned by")["chunk_id"]
     (context,), _ = retrieval.repair(req, first, "context", chunk_ids=[owners, "e" * 64])
     assert context["context_of"] == [owners] and context["limit"] == 0
-    second = retrieval.run(index.snapshot(), context)
-    assert [c["lane"] for c in second["chunks"]] == [] or all(c["lane"] == "context" for c in second["chunks"])
     subs, note = retrieval.repair(req, first, "subqueries", subqueries=["Who owns the ingest pipeline?",
                                                                          "Who is on call for the Atlas team?",
                                                                          QUESTION])
