@@ -30,6 +30,12 @@ NOUL = ("route", "source", "useful", "conflict", "redirect", "coverage", "ask", 
 # `action` is stage 8's: which code-owned operation an owner function runs next (`main.decisions`).
 CHOICE = ("repair", "relation", "answers", "faithful", "action")
 KINDS = NOUL + CHOICE
+# Kinds whose uncertain verdict code already takes a safe way, so the host fallback never hears them
+# (`decision.contract.decide`; reliability PR 5, v3): an uncertain source is searched, an uncertain useful or
+# conflict passage stays evidence (a conflict to weigh), an uncertain redirect is flagged untrusted, and an
+# uncertain repair takes code's order. The host could only narrow or reorder these, never unblock an answer,
+# and asking it cost a turn of about five seconds on most runs.
+CODE_SETTLES = ("source", "useful", "conflict", "redirect", "repair")
 
 # ponytail: the prototype's uncalibrated thresholds; `tool/eval/policy.py` replaces them per kind.
 PROVISIONAL: dict[str, dict] = {

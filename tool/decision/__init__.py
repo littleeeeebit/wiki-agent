@@ -39,7 +39,7 @@ from common.budget import PROBE, QUESTION, Budget
 
 __all__ = ("Config", "JevError", "MODES", "choice", "config", "env_file", "evaluate", "noul", "probe", "score",
            "DEFER", "STATUSES", "UNSURE", "Cache", "request", "decide", "checked", "final", "settled_by", "Policy",
-           "policy", "verdict", "claims",
+           "policy", "verdict", "claims", "CODE_SETTLES",
            "FAMILIES", "LIMITS", "save", "settings_file")
 
 HOST = "api.typesafe.ai"
@@ -630,5 +630,5 @@ def probe(cfg: Config, cancel: threading.Event | None = None) -> dict:
 
 # The typed layer over the transport (stage 6). Imported last: both read the names above.
 from .contract import DEFER, STATUSES, UNSURE, Cache, checked, decide, final, request, settled_by  # noqa: E402
-from .policy import Policy, policy, verdict  # noqa: E402
+from .policy import CODE_SETTLES, Policy, policy, verdict  # noqa: E402
 from . import claims  # noqa: E402  — the relation Choice (stage 7)

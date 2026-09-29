@@ -137,7 +137,7 @@ def path(out):
 # -- the contract -----------------------------------------------------------------------
 
 def req(questions=None, allowed=("a", "b"), budget=None):
-    questions = questions or {"x": {"decision": "useful", "candidate": "a", "question": decision.noul("Useful?")}}
+    questions = questions or {"x": {"decision": "coverage", "candidate": "a", "question": decision.noul("Covered?")}}
     return decision.request("judge", {"q": "state"}, questions, allowed=list(allowed), model=MODEL,
                             prompt_version="p", policy_version=POLICY.version, normalization_version="n",
                             budget=budget or Budget(seconds=5, calls=2, candidates=0))
@@ -179,7 +179,7 @@ def test_every_outcome_has_its_own_status_and_none_is_a_negative(value, status, 
     assert res["selected_candidate_ids"] == (["a"] if value == {"x": 0.95} else [])
 
 
-CHOSEN = {"c": {"decision": "repair", "candidate": None,
+CHOSEN = {"c": {"decision": "action", "candidate": None,
                 "question": decision.choice("Which?", {"a": "A", "b": "B", decision.DEFER: "none"})}}
 
 
@@ -234,6 +234,37 @@ def test_the_host_s_turn_is_not_taken_from_jev_s_deadline():
     record = budget.record()
     assert record["aside_ms"] >= 500 and record["elapsed_ms"] >= record["aside_ms"]
     assert record["elapsed_ms"] - record["aside_ms"] < 300
+
+
+def test_an_uncertain_kind_code_settles_never_reaches_the_host():
+    # v2 held out: every run asked the host its repair and most its sources, whose uncertain verdict code
+    # already settles (search it, keep it, code's order); two turns of about five seconds each, for nothing.
+    noul = decision.noul("?")
+    questions = {"source_hub": {"decision": "source", "candidate": "hub", "question": noul},
+                 "useful_p1": {"decision": "useful", "candidate": "p1", "question": noul},
+                 "conflict_p1": {"decision": "conflict", "candidate": "p1", "question": noul},
+                 "redirect_p1": {"decision": "redirect", "candidate": "p1", "question": noul},
+                 "coverage_r0": {"decision": "coverage", "candidate": "r0", "question": noul},
+                 "repair": {"decision": "repair", "candidate": None, "question": CHOSEN["c"]["question"]}}
+    unsure = {name: 0.5 for name in questions} | {
+        "repair": {"choice": "a", "confidence": 0.4, "probabilities": {"a": 0.4, "b": 0.35, "defer": 0.25}}}
+    asked = []
+
+    def fallback(state, qs, stage):
+        asked.append(list(qs))
+        return {"answers": {"coverage_r0": "yes"}}
+
+    request = req(questions, allowed=("hub", "p1", "r0", "a", "b"))
+    res = decision.decide(request, returning(unsure), Budget(seconds=5, calls=2, candidates=0), [], POLICY,
+                          fallback=fallback)
+    assert asked == [["coverage_r0"]]
+    assert res["verdicts"]["coverage_r0"] == "yes"
+    assert all(res["verdicts"][n] == "uncertain" for n in questions if n != "coverage_r0")
+    # Nothing but code-settled kinds left uncertain: no turn at all.
+    only = {n: q for n, q in questions.items() if n != "coverage_r0"}
+    decision.decide(req(only, allowed=("hub", "p1", "a", "b")), returning({n: unsure[n] for n in only}),
+                    Budget(seconds=5, calls=2, candidates=0), [], POLICY,
+                    fallback=lambda *a: pytest.fail("asked the host what code settles"))
 
 
 def test_a_confident_answer_never_reaches_the_host():

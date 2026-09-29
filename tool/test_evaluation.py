@@ -319,6 +319,27 @@ def test_the_second_set_keeps_the_first_calibration_and_holds_out_only_unseen_in
         assert f["label"] in [c["id"] for c in compare.offered_and_state(f)[0]], f["id"]
 
 
+def test_the_third_set_keeps_the_calibration_and_holds_out_only_intents_neither_earlier_set_showed(fresh):
+    # The fallback was narrowed and the analysis question sharpened after v2's held-out reveal.
+    v2 = dataset.load(RELIABLE.parent / "reliability-v2" / "intents.json")
+    v3 = dataset.load(RELIABLE.parent / "reliability-v3" / "intents.json")
+    assert dataset.invalid(v3) == [] and dataset.unresolved(v3) == [] and dataset.frozen(v3) == []
+    assert all(n == {"calibration": 6, "held_out": 6} for n in v3["categories"].values())
+    assert [i for i in v3["intents"] if i["split"] == "calibration"] == \
+        [i for i in fresh["intents"] if i["split"] == "calibration"]
+    held = [i for i in v3["intents"] if i["split"] == "held_out"]
+    assert all(i["review"] == "r3" for i in held)
+    earlier = fresh["intents"] + v2["intents"]
+    assert not {i["variants"]["en"] for i in held} & {i["variants"]["en"] for i in earlier}
+    assert not {i["id"] for i in held} & {i["id"] for i in earlier}
+    # Every earlier page whole, papers included, with pages added beside them.
+    earlier_pages, third_pages = dataset.pages(v2), dataset.pages(v3)
+    assert {n: third_pages.get(n) for n in earlier_pages} == earlier_pages
+    assert sorted(i["fault"]["kind"] for i in held if i.get("fault")) == \
+        ["cancelled"] * 2 + ["exhausted"] * 2 + ["unavailable"] * 2
+    assert (RELIABLE.parent / "reliability-v3" / "gates.json").read_bytes() == (RELIABLE / "gates.json").read_bytes()
+
+
 HELD_FAULTS = ["fault-02", "fault-03", "fault-05", "fault-06", "fault-10", "fault-11"]
 
 
@@ -516,7 +537,7 @@ def test_every_decision_a_row_makes_is_counted_even_when_its_answer_then_fails(m
     assert compare.ledger_cost(kept) == {"jev_requests": 4, "jev_tokens": 8, "host_usd": 1.0, "host_turns": 3,
                                          "host_unknown": 1}
     assert compare.fallbacks((k, res["fallback"]) for k, res in kept) == \
-        {"useful": {"asked": 4, "fell": 3, "settled": 3}}
+        {"coverage": {"asked": 4, "fell": 3, "settled": 3}}
     assert decision.decide is real, "the ledger's patch ends with its block"
 
 

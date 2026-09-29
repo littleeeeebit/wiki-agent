@@ -19,7 +19,8 @@ None of the last four is a negative answer, and none carries answers.
 the schema and the candidates must be the request's.
 
 An answer the policy leaves uncertain may go to a `fallback`: the host model
-answers the same questions over the same state (reliability PR 5, v2).
+answers the same questions over the same state (reliability PR 5, v2). A kind
+whose uncertain verdict code settles safely (`policy.CODE_SETTLES`) never goes.
 Jev's answers stay as they came; what the host settled sits beside them
 under `fallback`, its verdicts replace the uncertain ones, and `final`
 reads a question's settled answer. The host is not Jev: a caller marks
@@ -40,7 +41,7 @@ from typing import Callable
 from common.budget import Budget, Cancelled, Exhausted
 
 from . import JevError, distribution, malformed, unit
-from .policy import CHOICE, KINDS, NOUL, Policy, verdict
+from .policy import CHOICE, CODE_SETTLES, KINDS, NOUL, Policy, verdict
 
 REQUEST = "decision-request/1"
 RESULT = "decision-result/1"
@@ -193,7 +194,8 @@ def decide(req: dict, evaluate: Evaluate, budget: Budget, trace: list[dict], pol
     verdicts = {name: verdict(pol, q["decision"], answers[name]) for name, q in req["questions"].items()}
     if hit is None and cache:
         cache.put(req, answers, call)
-    doubt = [name for name, v in verdicts.items() if v == "uncertain"]
+    doubt = [name for name, v in verdicts.items()
+             if v == "uncertain" and req["questions"][name]["decision"] not in CODE_SETTLES]
     host = None
     if doubt and fallback is not None:
         began = time.monotonic()

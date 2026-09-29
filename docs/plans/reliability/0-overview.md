@@ -34,7 +34,7 @@ use a -5 percentage-point lower confidence bound, as selected by the owner.
 | 2 | [Test burden](2-tests.md) | Profile/refactor and bind final gates to HEAD | Done — loop/spec runtime target missed |
 | 3 | [Wiki scopes](3-wiki-scopes.md) | Documentation authorities and retrieval filtering | Done |
 | 4 | [Jev contract](4-jev-contract.md) | Routing, call accounting, versions and graph health | Done |
-| 5 | [English reliability](5-english-baseline.md) | Frozen current-path evaluation and baseline | Baseline published; exit open (latency fails, routing inconclusive) |
+| 5 | [English reliability](5-english-baseline.md) | Frozen current-path evaluation and baseline | v3 baseline published; exit open (latency 10.76 s against 10 s) |
 | 6 | [Review profiles](6-review-profiles.md) | Rubrics, stable findings and independent roles | Not started |
 | 7 | [Planner](7-planner.md) | Bounded artifacts, persisted workflow, PR and handoff | Not started |
 | 8 | [Recovery](8-recovery.md) | Recurrence barrier, research and two-cycle escalation | Not started |
