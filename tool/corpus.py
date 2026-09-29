@@ -102,9 +102,10 @@ def load(project: Path) -> dict | None:
 
 def rebuild(repo: Path) -> str:
     """The command that rewrites `repo`'s listing, as a finding tells it.
-    Kept beside `main` so the hint cannot drift from the arguments again."""
+    Kept beside `main` so the hint cannot drift from the arguments again. The
+    path is quoted: a folder with a space in it is an ordinary project."""
 
-    return f"python tool/corpus.py --project {repo} --write"
+    return f'python tool/corpus.py --project "{repo}" --write'
 
 
 def main() -> int:
