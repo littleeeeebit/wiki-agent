@@ -283,7 +283,9 @@ def test_a_stale_state_file_and_no_daemon_stays_inside_the_hooks_budget(home, mo
     search.state_path().parent.mkdir(parents=True, exist_ok=True)
     search.state_path().write_text(json.dumps({"port": port, "token": "t"}), encoding="utf-8")
     monkeypatch.setattr(search, "spawn", lambda: None)
-    # A short wait keeps a 2 s refused connect visible; the real 3 s wait only adds to both sides.
+    # The real constants hold the budget; then a short wait keeps a 2 s
+    # refused connect visible, since the real 3 s only adds to both sides.
+    assert search.SPAWN_WAIT + 2 * 2 * search.NOTIFY_TIMEOUT + 0.5 < 5
     monkeypatch.setattr(search, "SPAWN_WAIT", 0.3)
     began = time.perf_counter()
     assert not search.notify("/idle", {"session": "s1", "handle": HANDLE}, retry=keepalive.RETRY)

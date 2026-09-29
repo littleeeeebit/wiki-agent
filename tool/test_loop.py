@@ -633,6 +633,36 @@ def test_merge_refuses_a_head_the_review_did_not_allow(world):
     assert spec["state"] == "머지 가능" and len(spec["rounds"]) == 2, "새 라운드를 받았다"
 
 
+def base_onto_first(w, name: str, n: int) -> tuple[str, dict]:
+    """A two-commit pull request made mergeable; then the base fast-forwards
+    onto its first commit, which moves the merge base. Only a fetch shows it."""
+
+    first = pr_spec(w, name, n)["pr"]["head"]
+    path = Path(specs.load("proj", name)["worktree"])
+    commit(path, "second.txt")
+    git(path, "push", "-q", "origin", name)
+    spec = looped(name)
+    assert spec["state"] == "머지 가능"
+    git(w.hub.elsewhere(), "push", "-q", "origin", f"{first}:refs/heads/main")
+    return first, spec
+
+
+def test_merge_reads_the_base_as_it_stands_now_not_as_last_fetched(world):
+    first, spec = base_onto_first(world, "fix-mb", 7)
+    answer = client().post("/api/specs/fix-mb/merge", json={"head": spec["rounds"][0]["head"]})
+    assert answer.status_code == 409 and "base" in answer.json()["detail"]
+    assert not any(c[1:3] == ["pr", "merge"] for c in world.hub.calls)
+    waited(lambda: ("proj", "fix-mb") not in loop._loops)
+    assert specs.load("proj", "fix-mb")["validation"]["final"]["base_oid"] == first, "the final gate ran again"
+
+
+def test_a_standing_final_result_is_reused_only_for_the_base_as_it_stands_now(world):
+    first, _ = base_onto_first(world, "fix-mc", 7)
+    with judged(calls := []):
+        spec = looped("fix-mc")   # the screen asks again
+    assert calls == [[GATE]] and spec["validation"]["final"]["base_oid"] == first
+
+
 def test_a_merge_that_only_queued_cleans_nothing_until_it_lands(world):
     pr_spec(world, "fix-m", 7)
     spec = looped("fix-m")
@@ -731,6 +761,21 @@ def test_a_targeted_pass_cannot_merge_and_the_loop_runs_only_the_final_gate(worl
     assert not any(r.heard for r in Reviewer.made), "the review was not asked again"
     web.post("/api/specs/fix-u/merge", json={"head": spec["pr"]["head"]}).raise_for_status()
     assert specs.load("proj", "fix-u")["state"] == "머지됨"
+
+
+def test_the_screen_is_told_the_server_s_proof_not_the_saved_pass(world):
+    spec = allowed_spec(world, "fix-v", 7)
+    specs.validate("proj", "fix-v", final=final_of(world, spec))
+
+    def shown() -> str | None:
+        return next(s for s in client().get("/api/specs").json()["specs"] if s["id"] == "fix-v")["unproven"]
+
+    assert shown() == ""
+    adapter = world.repo / ".wiki/adapter.toml"
+    adapter.write_text(adapter.read_text(encoding="utf-8").replace(GATE, GATE + " && git --version"), encoding="utf-8")
+    assert "환경" in shown(), "a changed gate_cmd leaves the saved pass standing for nothing"
+    specs.update("proj", "fix-v", state="리뷰 R2")
+    assert shown() is None
 
 
 def test_a_restart_during_the_final_gate_stays_blocked_and_resume_reruns_only_it(world):

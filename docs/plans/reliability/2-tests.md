@@ -189,8 +189,12 @@ The gate contract is implemented as the blueprint describes:
 - `specs.validate` is the only writer of `validation`.
 - `loop.finalized` runs the full gate on the allowed head.
 - `specs.proven` binds `[머지]` to head, merge base and `specs.digest`.
+  Every proof reads the merge base after fetching the base
+  (`specs.current_merge_base`), so a base that moved onto the branch's own
+  commits is seen; a base that cannot be fetched proves nothing.
 - `loop.recover` clears `final_running`, and the Review tab shows targeted
-  and final state.
+  and final state. The tab takes merge eligibility from the server's
+  `proven` (`unproven` in `specs.view`), never from the saved result alone.
 
 `specs._check` and `knowledge.submitted` read the base locally (`local_base`),
 so nothing reaches GitHub before the checks pass. A spec that was already
@@ -257,7 +261,7 @@ Setup and waiting:
 | `test_evaluation`: the report test recorded the run the previous test had just recorded | Duplicate setup | Module fixture `ran` |
 | `test_evaluation`: two refused connects at about 2 s each of Windows SYN retries | The outage reason is the contract, not the retries | `Pinned.connect` raises the same `ConnectionRefusedError` at once, 5.4 s → 2.7 s |
 | `test_evidence`, `test_decision_flow`: a sleep before a concurrent delete or an abort | Synchronization only | An event set inside the paused read; the server accepts and reads the first byte |
-| `test_keepalive`: the real 3 s `SPAWN_WAIT` in the stale-state budget test | The wait adds equally to both sides of the bound | `SPAWN_WAIT = 0.3`, 3.3 s → 0.7 s |
+| `test_keepalive`: the real 3 s `SPAWN_WAIT` in the stale-state budget test | The wait adds equally to both sides of the bound | The real constants are asserted against the 5 s bound first, then `SPAWN_WAIT = 0.3`, 3.3 s → 0.7 s |
 | `test_hook_diagnostics`: the installed pretool waited out the real 8 s watchdog | Only the delay is shortened; the real entry point and threshold are still exercised, and the header must still say 8 | 8.1 s → 0.3 s |
 | `test_agent`: the `slow` resume stand-in slept 30 s, so `close()` spent its 5 s grace | The stand-in blocks on stdin instead and still never answers | 6 s → 1.05 s |
 | `test_markdown_emphasis`: the `--repo` test linted the real hub | An empty throwaway hub isolates the path | 7.5 s → 0.17 s |

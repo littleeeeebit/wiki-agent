@@ -324,9 +324,21 @@ def approved(spec: dict) -> dict | None:
 
 
 def view(repo: Path, spec: dict) -> dict:
+    """The spec as the screen reads it. `unproven` is `proven`'s own answer
+    for the approved head in `머지 가능`, so the screen never judges a result
+    by itself: empty only while the final gate stands for the current command
+    and environment; `None` in every other state, where `[머지]` is not shown.
+    The base is read as last fetched — this runs for every spec on every
+    refresh — and `merge` fetches it before acting."""
+
     allowed = approved(spec)
+    unproven = None
+    if spec.get("state") == "머지 가능":
+        path = Path(spec.get("worktree") or repo)
+        unproven = proven(spec, allowed["head"], merge_base(path, allowed["base"], allowed["head"]),
+                          digest(repo, path, required(repo, spec))) if allowed else "리뷰가 허용한 라운드가 없다"
     return {**spec, "missing": missing(repo, spec), "approved": allowed["head"] if allowed else None,
-            "waiting": bool(spec.get("worktree")) and work.waiting(spec["worktree"])}
+            "unproven": unproven, "waiting": bool(spec.get("worktree")) and work.waiting(spec["worktree"])}
 
 
 # -- Blocks -----------------------------------------------------------------
@@ -812,6 +824,17 @@ def merge_base(path: Path, base: str, rev: str = "HEAD") -> str:
     return "" if done.returncode else done.stdout.strip()
 
 
+def current_merge_base(path: Path, base: str, rev: str = "HEAD") -> str:
+    """`merge_base` after fetching `base` now: what a final result is bound to
+    and checked against. A base that moved onto the branch's own commits
+    changes it, and the last fetch would not show that. Empty when the fetch
+    fails — a base that cannot be read proves nothing."""
+
+    if sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], path, 120).returncode:
+        return ""
+    return merge_base(path, base, rev)
+
+
 def selected(repo: Path, path: Path, base: str, gate_cmd: str) -> dict:
     """`{base_oid, commands, selection}` for the worktree's HEAD.
 
@@ -887,6 +910,8 @@ def proven(spec: dict, head: str, base_oid: str, digested: str) -> str:
         return f"최종 게이트가 통과하지 않았다 — {final.get('reason') or '끝나지 않았다'}"
     if final.get("head") != head:
         return "최종 게이트가 다른 커밋에서 돌았다"
+    if not base_oid:
+        return "base 를 지금 읽지 못했다"
     if final.get("base_oid") != base_oid:
         return "최종 게이트 뒤 base 가 바뀌었다"
     if final.get("environment_digest") != digested:

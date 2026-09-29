@@ -573,6 +573,8 @@ def test_only_a_passing_final_gate_on_the_same_identity_stands():
     assert "base" in why(final={**final, "base_oid": "c" * 40})
     assert "환경" in why(final={**final, "environment_digest": "e"})
     assert "결과가 없다" in specs.proven({}, head, oid, env), "a spec from before `validation`"
+    unread = {**final, "base_oid": ""}
+    assert "base" in specs.proven({"validation": {"final": unread}}, head, "", env), "an unread base proves nothing"
 
 
 @pytest.mark.parametrize("cmd, why", [

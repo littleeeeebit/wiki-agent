@@ -45,7 +45,7 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
   const checked = spec.validation?.round
   const final = spec.validation?.final
   const running = spec.validation?.phase === 'final_running'
-  const proven = !running && !!final?.ok && final.head === spec.approved
+  const proven = !running && spec.unproven === ''
   return (
     <div className="h-full overflow-y-auto px-5 py-4 text-[12.5px]">
       <div className="flex items-center gap-2">
@@ -119,7 +119,9 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
             최종 게이트 ·{' '}
             {running ? '도는 중 — 끝나기 전에는 머지하지 않는다'
               : !final ? '아직 — 리뷰가 허용한 커밋에서 돈다'
-                : <span className={final.ok ? 'text-primary' : 'text-destructive'}>{final.ok ? '통과' : `실패 — ${final.reason}`}</span>}
+                : !final.ok ? <span className="text-destructive">실패 — {final.reason}</span>
+                  : spec.unproven ? `지난 통과는 이제 안 선다 — ${spec.unproven}`
+                    : <span className="text-primary">통과</span>}
             {final && !running && <span className="ml-1 font-mono text-[10.5px] text-faint">{final.head.slice(0, 7)}</span>}
           </div>
         </div>

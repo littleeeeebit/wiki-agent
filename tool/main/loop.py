@@ -677,7 +677,7 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     if release is None:
         return None
     try:
-        record = {"head": head, "base_oid": specs.merge_base(path, base, head), "command": cmd,
+        record = {"head": head, "base_oid": specs.current_merge_base(path, base, head), "command": cmd,
                   "environment_digest": specs.digest(repo, path, cmd), "ok": False, "code": None,
                   "reason": "끝나지 않았다", "finished_at": None}
         specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
@@ -697,7 +697,7 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
     commit gets its round checks and a new review. No new commit stops. A
     final result that already stands for this identity is not run again."""
 
-    stands = not specs.proven(spec, head, specs.merge_base(path, base, head),
+    stands = not specs.proven(spec, head, specs.current_merge_base(path, base, head),
                               specs.digest(repo, path, specs.required(repo, spec)))
     final = spec["validation"]["final"] if stands else finalized(loop, spec, repo, path, head, base)
     if final is None:
@@ -1061,7 +1061,7 @@ def merge(sid: str, body: Merge) -> dict:
         kick(repo.name, sid)
         raise HTTPException(409, "리뷰 뒤 새 커밋 — 새 라운드를 받는다")
     path = Path(spec.get("worktree") or repo)
-    unproven = specs.proven(spec, allowed["head"], specs.merge_base(path, allowed["base"], allowed["head"]),
+    unproven = specs.proven(spec, allowed["head"], specs.current_merge_base(path, allowed["base"], allowed["head"]),
                             specs.digest(repo, path, specs.required(repo, spec)))
     if unproven:
         kick(repo.name, sid)

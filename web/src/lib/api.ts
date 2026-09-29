@@ -485,6 +485,10 @@ export type Spec = {
   /** The head the last counted round allowed: what `[머지]` is bound to. */
   approved?: string | null
   validation?: Validation
+  /** In `머지 가능`, why the final gate does not stand for `approved` now —
+   *  the server's `specs.proven`, never judged here. Empty only when `[머지]`
+   *  may go; `null` in every other state. */
+  unproven?: string | null
   /** The work cell waits on a person's approval. Not a state. */
   waiting?: boolean
   p2?: string[]
