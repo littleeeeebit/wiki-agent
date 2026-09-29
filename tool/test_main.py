@@ -139,8 +139,10 @@ def test_jev_dossier_reaches_answering_session_after_user_is_saved(monkeypatch):
                "restrictions": [], "requirements": [{"id": "r0", "text": "Find the decision"}], "missing": ["r0"],
                "evidence": [], "conflicts": [], "untrusted": [], "trace": []}
 
-    def prepare(text, repo, state, cfg, run=None):
+    def prepare(text, repo, state, cfg, run=None, audiences=None):
         assert chat.recall("wiki")[-1]["text"] == text and cfg.mode == "active"
+        # The scope the screen chose reaches retrieval (reliability PR 3).
+        assert audiences == ["jev"]
         return dossier
 
     class Original:
@@ -152,7 +154,9 @@ def test_jev_dossier_reaches_answering_session_after_user_is_saved(monkeypatch):
          patch.object(chat, "hits_for", return_value=[]), \
          patch.object(chat, "explain", return_value=iter([Event("done", "Simple answer")])):
         web = client()
-        response = web.post("/api/say/wiki", json={"text": "Find the decision"})
+        assert web.post("/api/say/wiki", json={"text": "Find the decision", "audiences": ["ops"]}).status_code == 422
+        assert web.post("/api/say/wiki", json={"text": "Find the decision", "audiences": []}).status_code == 422
+        response = web.post("/api/say/wiki", json={"text": "Find the decision", "audiences": ["jev"]})
         assert response.status_code == 200
         assert sent[0].startswith("Find the decision\n\n") and "answer-draft" in sent[0]
         assert '"question_en": "Find the decision"' in sent[0]
@@ -175,7 +179,7 @@ def test_jev_shadow_records_beside_the_turn_and_off_does_nothing(monkeypatch, tm
     sent, asked = [], []
     dossier = {"status": "supported", "evidence": [{"path": "docs/a.md", "line": 7}], "trace": []}
 
-    def prepare(text, repo, state, cfg):
+    def prepare(text, repo, state, cfg, audiences=None):
         asked.append(cfg.mode)
         return dossier
 

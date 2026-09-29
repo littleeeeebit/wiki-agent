@@ -327,10 +327,16 @@ async function events<E>(res: Response, onEvent: (ev: E) => void, error: (text: 
   }
 }
 
+/** Who a hub document is written for (`search.sources.AUDIENCES`). */
+export type Audience = 'product' | 'hooks' | 'jev'
+
 /** Ask the wiki under one focus and hand back the events in order.
- *  `propose`: the server gathers the materials for candidates (`next` only). */
-export async function say(id: string, text: string, onEvent: (ev: Ev) => void, propose = false): Promise<void> {
-  await events(await post(`/api/say/${id}`, { text, propose }), onEvent, (t): Ev => ({ kind: 'error', text: t }))
+ *  `propose`: the server gathers the materials for candidates (`next` only).
+ *  `audiences`: narrow retrieval to those documents; null searches every audience. */
+export async function say(id: string, text: string, onEvent: (ev: Ev) => void, propose = false,
+  audiences: Audience[] | null = null): Promise<void> {
+  await events(await post(`/api/say/${id}`, { text, propose, audiences }), onEvent,
+    (t): Ev => ({ kind: 'error', text: t }))
 }
 
 // -- Jev and a question's run (stage 9 of `docs/plans/jev/`) -----------------

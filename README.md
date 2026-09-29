@@ -1,8 +1,19 @@
 # ai-coding-agent-wiki
 
-This private copy is becoming a coding agent program with asking the wiki as
-its main feature. The plan is
+This private copy is a coding agent program with asking the wiki as its main
+feature, built by the finished plan
 [`docs/plans/done/wiki-agent/0-overview.md`](docs/plans/done/wiki-agent/0-overview.md).
+
+## Where to read
+
+| You are | Start at |
+| --- | --- |
+| Maintaining this program | [`docs/architecture.md`](docs/architecture.md), then [`docs/development.md`](docs/development.md) |
+| Connecting a repository to the rules | [`docs/hooks-setup.md`](docs/hooks-setup.md), [`docs/chat-setup.md`](docs/chat-setup.md) |
+| Maintaining Jev | [`docs/jev-maintenance.md`](docs/jev-maintenance.md) |
+| Looking for a shared rule | [`index.md`](index.md) |
+
+A connected repository's own knowledge stays in its `.wiki/` and `docs/`.
 
 A wiki that stops a coding agent making the same mistake again as it moves
 between projects, and the adapters that attach it to a project.

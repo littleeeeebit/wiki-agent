@@ -59,7 +59,7 @@ from common.language import language  # noqa: E402
 from common.process import background_options  # noqa: E402
 from search import PING, PORT, cache_dir, evidence, knowledge_graph, proof, retrieval, state_path, version  # noqa: E402
 from search.retrieval import family  # noqa: E402
-from search.sources import SOURCE_NAMES, Records, listing, records_folder  # noqa: E402
+from search.sources import SOURCE_NAMES, Records, audiences, listing, records_folder  # noqa: E402
 
 # The version this process runs, read once. Read per request it would follow
 # the files on disk and a pulled daemon would never be told it is stale.
@@ -850,8 +850,12 @@ class Index:
         found.sort(key=lambda c: (order.get(c["path"], len(order)), c["path"], c["line"]))
         self.chunks = found + self.records.hits()
         self.files = {Path(c["path"]): c["revision"] for c in found}
+        hub = evidence.repo_id(self.hub)
         for chunk in self.chunks:
             chunk["key"] = key_of(chunk["indexed"])
+            # Derived on load, never stored: a changed map needs no rebuild and changes no id.
+            chunk["audiences"] = (audiences(chunk["locator"]["path"])
+                                  if chunk["repo_id"] == hub and not chunk["record"] else None)
         self.postings: dict[str, list[tuple[int, int]]] = defaultdict(list)
         self.lengths = []
         for i, chunk in enumerate(self.chunks):

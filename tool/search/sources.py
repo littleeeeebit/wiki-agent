@@ -51,6 +51,25 @@ SEARCHABLE = ("indexed", "adopted", "rejected")
 FAMILIES = {"papers": "paper", "research": "research"}
 SOURCE_NAMES = ("hub", "documents", "memory", *FAMILIES)
 
+# Who a hub document is written for (reliability PR 3). Relevance, not access:
+# `repo_id` and `visibility` decide what a request may see. The first prefix
+# that matches wins. The shared rules answer every audience. A hub path not
+# named here, and every other repository's document, is unclassified: eligible
+# under any audience, and counted as such (`retrieval.run`).
+AUDIENCES = ("product", "hooks", "jev")
+HUB_AUDIENCES = (
+    (("operator/", "craft/"), AUDIENCES),
+    (("docs/jev-maintenance.md", "docs/plans/jev/", "docs/research/jev-"), ("jev", "product")),
+    (("docs/hooks-setup.md", "docs/chat-setup.md"), ("hooks",)),
+    (("docs/", ".wiki/"), ("product",)),
+)
+
+
+def audiences(display: str) -> list[str] | None:
+    """The audiences of the hub file at `display` (relative, `/`-separated); `None` for unclassified."""
+
+    return next((list(names) for prefixes, names in HUB_AUDIENCES if display.startswith(prefixes)), None)
+
 
 def listing(hub: Path, project: Path | None) -> list[Path]:
     """The hub's rules, every Markdown file the repository keeps as git sees

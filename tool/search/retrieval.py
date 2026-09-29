@@ -45,7 +45,7 @@ import time
 from collections import defaultdict
 
 from . import evidence, knowledge_graph
-from .sources import FAMILIES, SOURCE_NAMES
+from .sources import AUDIENCES, FAMILIES, SOURCE_NAMES
 
 REQUEST = "retrieval-request/1"
 RESULT = "retrieval-result/1"
@@ -70,7 +70,7 @@ CONTEXT = 2
 # Candidates — `co_injected` among them — are never walked.
 PRIORITY = {"links_to": 0, "reads": 0, "supersedes": 0, "contradicts": 0, "depends_on": 0, "mentions": 1,
             "next_chunk": 2}
-FILTERS = ("kinds", "visibility", "fetched_after")
+FILTERS = ("kinds", "visibility", "fetched_after", "audiences")
 NEEDS = ("sources", "bridge", "subqueries", "context", "external")
 
 # A version or a year a question is scoped to, and what it excludes.
@@ -156,6 +156,10 @@ def problems(req: object) -> list[str]:
                 found.append(f"filters.{name}")
         if filters.get("fetched_after") is not None and not isinstance(filters["fetched_after"], str):
             found.append("filters.fetched_after")
+        wanted = filters.get("audiences")
+        if wanted is not None and (not isinstance(wanted, list) or not wanted
+                                   or len(set(map(str, wanted))) != len(wanted) or any(a not in AUDIENCES for a in wanted)):
+            found.append("filters.audiences")
     if req.get("generation") is not None and type(req["generation"]) is not int:
         found.append("generation")
     limit = req.get("limit")
@@ -205,6 +209,10 @@ def blocked(chunk: dict, req: dict, repos: set[str]) -> str | None:
     after = filters.get("fetched_after")
     if after and chunk.get("record") and (chunk["record"].get("fetched_at") or "") < after:
         return "filtered"
+    # Relevance, not access: a chunk no audience claims is unclassified and stays.
+    wanted = filters.get("audiences")
+    if wanted and chunk.get("audiences") is not None and not set(wanted) & set(chunk["audiences"]):
+        return "audience"
     return None
 
 
@@ -351,6 +359,7 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
             "graph": {"rank": rank_in_graph.get(i), "hops": min(paths[p]["hops"] for p in reached),
                       "paths": reached} if reached else None}
     returned = [c["chunk_id"] for c in out] + [d for c in out for d in c["duplicates"]]
+    wanted = req["filters"].get("audiences")
     return {"schema_version": RESULT, "generation": generation, "round": req["round"], "queries": queries,
             "vectors": dense is not None, "graph_budget": budget, "max_candidates": req["max_candidates"],
             "chunks": out, "scores": scores, "paths": paths,
@@ -358,6 +367,9 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
             "truncated": sorted(set(truncated)), "seen_chunk_ids": list(dict.fromkeys([*req["seen_chunk_ids"],
                                                                                        *returned])),
             "spent": req["spent"] + len(out),
+            # What an audience filter let through only because no audience claims it.
+            "audiences": {"requested": wanted, "unclassified": sum(c.get("audiences") is None for c in out)}
+            if wanted else None,
             "elapsed_ms": round((time.monotonic() - started) * 1000, 2)}
 
 
@@ -502,8 +514,9 @@ def expand(index, req: dict, repos: set[str], seen: set[str], relevance, paths: 
                 path = trail + [step]
                 if key(tid) in visited:
                     # Reached before, or a seed itself: the new seed's path is kept, credited to
-                    # the chunk holding that text.
-                    holder = held.get(text_key(chunks[by_id[tid]])) if kind == "chunk" else None
+                    # the chunk holding that text — never through a chunk the request may not see.
+                    holder = (held.get(text_key(chunks[by_id[tid]]))
+                              if kind == "chunk" and not blocked(chunks[by_id[tid]], req, repos) else None)
                     seed = trail[0]["node"]
                     if (holder is not None and key(seed) != key(tid)
                             and seed not in {paths[p]["seed"] for p in found.get(holder, [])}):

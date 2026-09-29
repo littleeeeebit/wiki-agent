@@ -32,7 +32,7 @@ use a -5 percentage-point lower confidence bound, as selected by the owner.
 | --- | --- | --- | --- |
 | 1 | [Quiet processes](1-processes.md) | Trace and correct flashing child windows | Done |
 | 2 | [Test burden](2-tests.md) | Profile/refactor and bind final gates to HEAD | Done — loop/spec runtime target missed |
-| 3 | [Wiki scopes](3-wiki-scopes.md) | Documentation authorities and retrieval filtering | Not started |
+| 3 | [Wiki scopes](3-wiki-scopes.md) | Documentation authorities and retrieval filtering | Done |
 | 4 | [Jev contract](4-jev-contract.md) | Routing, call accounting, versions and graph health | Not started |
 | 5 | [English reliability](5-english-baseline.md) | Frozen current-path evaluation and baseline | Not started |
 | 6 | [Review profiles](6-review-profiles.md) | Rubrics, stable findings and independent roles | Not started |
@@ -56,7 +56,9 @@ merge follows plan approval. Existing active-mode settings remain unchanged.
 | R6 | Retrieve connected source evidence | PRs 4–5; graph size is not a quality measure |
 
 Unfinished [loop](../loop/0-overview.md) and [Jev](../jev/0-overview.md) criteria
-remain open until PR 10 verifies them.
+remain open until PR 10 verifies them. SessionStart shows two open plans at
+most, and these two series sit behind this one; missing from that list does
+not mean finished.
 
 ## Sources
 
