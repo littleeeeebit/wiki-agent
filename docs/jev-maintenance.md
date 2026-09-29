@@ -73,8 +73,11 @@ Every operation that may cost something is a call record
 split, an arXiv repair, a host drafting turn, an explanation. It names its
 purposes (`tracing.PURPOSES`), owner, provider, model, a digest of what was
 sent, tokens, duration, retry and outcome. A Jev request asking several
-questions is one call with several purposes. A cache hit has provider `cache`
-and costs nothing. A cost the provider does not report — Jev and the
+questions is one call with several purposes; a translation is one call per
+request the translator actually sent (its outcomes' `request` id), none for a
+text no request carried; an arXiv repair is the search and, apart, Jev's
+grading of the papers; a drafting turn that failed or was stopped is still a
+call. A cache hit has provider `cache` and costs nothing. A cost the provider does not report — Jev and the
 translator today — is `null` with `cost_known: false`, never zero.
 
 A question's records are `call` events of its run; the summary's `calls` adds
@@ -97,10 +100,12 @@ the host's tools are traced, not controlled.
 
 Each app question is also a Langfuse trace with every Jev request under it.
 
-`health` reads the index as it stands and reports `{repo_id, generation,
+`health` reads the index as it stands, through read-only connections that
+create no file and take no write lock, and reports `{repo_id, generation,
 checked_at, versions, counts, violations, status}`. `not_indexed`: no
 published index, and none is built. `stale`: the files or the store moved on
-from what the graph was built from — `reason` says which — and then a span
+from what the graph was built from, before or during the check (the files
+are listed again last) — `reason` says which — and then a span
 of a changed file may not resolve. `failing`: an invalid, dangling or
 out-of-scope edge, or an unresolved span. `empty`: no edge; no edge is not
 health. `healthy` is structural only: whether edges help a question is

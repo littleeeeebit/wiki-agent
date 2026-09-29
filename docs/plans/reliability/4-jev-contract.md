@@ -142,10 +142,17 @@ read-only observability. PR 5 must evaluate the corrected current manifest.
   yet; when it does it must write `kind_versions`.
 - Jev and the translator report no cost, so their calls are `cost_known:
   false`. A host turn's cost is known when the CLI reports `cost_usd`.
-- `Index.refresh(sync=False)` / `local_index(existing=True)` read a store
-  without syncing, embedding or rebuilding the graph; `search.published`
-  refuses a missing or unpublished store before one is opened, since opening
-  creates it. `Store.drift` finds changed and new files the way `sync` would.
+- `local_index(existing=True)` opens `Index(readonly=True)` — the store and
+  the source records through `mode=ro` connections, an absent records file
+  as an empty in-memory one — and `refresh(sync=False)` reads it without
+  syncing, embedding or rebuilding the graph. `search.published` refuses a
+  missing or unpublished store first. `Store.drift` finds changed and new
+  files the way `sync` would, against a listing taken after the checks.
+- A translation's call is its request: `translate.english` stamps each
+  outcome with the id of the request that carried it (`request`), set the
+  moment `_ask` sends. The arXiv repair's paper grading is its own `grade`
+  call from `grade_papers`' trace; a Jev request that failed before sending
+  (`knowledge.NOT_SENT`) is none. A drafting turn is a call however it ends.
 
 ### Graph snapshot, 2026-09-29
 

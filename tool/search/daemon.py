@@ -481,8 +481,17 @@ class Store:
     finish the job.
     """
 
-    def __init__(self, path: Path | None):
+    def __init__(self, path: Path | None, readonly: bool = False):
         self.lock = threading.Lock()
+        self.readonly = readonly
+        if readonly:
+            # An existing store, opened so that nothing can be written: no
+            # schema, no pragma, no write lock. The caller checked it exists.
+            self.db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5.0,
+                                      check_same_thread=False, isolation_level=None)
+            self.persistent = True
+            self.gen = self.generation()
+            return
         try:
             if path is None:
                 raise OSError("no path")
@@ -527,8 +536,12 @@ class Store:
     def generation(self) -> int:
         """The generation this code reads: the current one when its chunker is
         this code's, else a kept one that is, else a new, empty one — which
-        becomes current only when `sync` has filled it."""
+        becomes current only when `sync` has filled it. Read-only, the
+        current one, whoever cut it: nothing new can be made."""
 
+        if self.readonly:
+            current = self.meta("current")
+            return int(current) if current is not None else 0
         with self.transaction() as db:
             current = self.meta("current")
             gens = dict(db.execute("SELECT gen, chunker FROM generations"))
@@ -743,7 +756,7 @@ class Store:
         """What `sync` would change in the generation read, found without
         writing: `changed`, files whose bytes differ or that are gone, and
         `added`, listed files it would index but has not. `listed` are the
-        resolved paths the listing names (`Index.listed`)."""
+        resolved paths the listing names (`Index.scan`)."""
 
         with self.lock:
             held = {row[0]: row[1:] for row in self.db.execute(
@@ -829,14 +842,13 @@ class Index:
     search reads one loaded set of chunks, so one answer never mixes two
     states of the store."""
 
-    def __init__(self, hub: Path, project: Path | None, embedder: Embedder):
+    def __init__(self, hub: Path, project: Path | None, embedder: Embedder, readonly: bool = False):
         self.hub, self.project, self.embedder = hub, project, embedder
-        self.store = Store(store_path(hub, project))
-        self.records = Records(records_folder(project or hub))
+        self.store = Store(store_path(hub, project), readonly)
+        self.records = Records(records_folder(project or hub), readonly)
         self.loaded: str | None = None
         # Every file the loaded chunks came from, and its revision.
         self.files: dict[Path, str] = {}
-        self.listed: list[Path] = []
         self.chunks: list[dict] = []
         self.matrix = None
         self.graph = knowledge_graph.Graph(self.store)
@@ -852,22 +864,10 @@ class Index:
         """Bring the store in line with the files, load its chunks and the
         graph. `sync=False` loads the store as it stands: no file is cut
         again, no vector queued, no graph rebuilt, nothing written — what a
-        read-only check reads (`knowledge.graph_health`). `listed` is every
-        file the listing names now, whichever way."""
+        read-only check reads (`knowledge.graph_health`), on an index
+        opened `readonly`."""
 
-        listed = []
-        hub_root = self.hub.resolve()
-        for path in listing(self.hub, self.project):
-            shared = path.parent.parent == self.hub and path.parent.name in ("operator", "craft")
-            root = self.hub if shared else self.project
-            try:
-                resolved = path.resolve()
-            except OSError:
-                continue
-            # A link that leads out of its repository is not that repository's evidence.
-            if resolved.is_relative_to(hub_root if shared else root.resolve()):
-                listed.append((path, root, resolved, shared))
-        self.listed = [resolved for _path, _root, resolved, _shared in listed]
+        listed = self.scan()
         if sync:
             try:
                 self.store.sync(listed)
@@ -909,6 +909,23 @@ class Index:
             self.embedder.want([(c["key"], c["indexed"]) for c in self.chunks],
                                {c["key"] for c in self.chunks if c["visibility"] == "private"})
             self.link()
+
+    def scan(self) -> list[tuple[Path, Path, Path, bool]]:
+        """Every file the listing names now, as `(path, root, resolved, shared)`."""
+
+        listed = []
+        hub_root = self.hub.resolve()
+        for path in listing(self.hub, self.project):
+            shared = path.parent.parent == self.hub and path.parent.name in ("operator", "craft")
+            root = self.hub if shared else self.project
+            try:
+                resolved = path.resolve()
+            except OSError:
+                continue
+            # A link that leads out of its repository is not that repository's evidence.
+            if resolved.is_relative_to(hub_root if shared else root.resolve()):
+                listed.append((path, root, resolved, shared))
+        return listed
 
     def link(self) -> None:
         """Bring the knowledge graph in line with the loaded chunks. A no-op

@@ -237,16 +237,16 @@ def local_index(project: str | Path | None, hub: Path | None = None, vectors: bo
     whether it got there — an incomplete index ranks with BM25 alone, which
     the caller must not report as hybrid.
 
-    `existing` opens the store as it stands (`Index.refresh(sync=False)`):
-    nothing is cut, embedded or rebuilt. The caller checks first that the
-    store exists — opening one creates it.
+    `existing` opens the store as it stands, read-only (`Index(readonly=True)`,
+    `refresh(sync=False)`): nothing is created, cut, embedded or rebuilt.
+    The caller checks first that the store exists (`published`).
     """
 
     from .daemon import Embedder, Index
 
     embedder = Embedder(cache_dir() if vectors else None)
     embedder.start()
-    index = Index(Path(hub or HUB), Path(project) if project else None, embedder)
+    index = Index(Path(hub or HUB), Path(project) if project else None, embedder, readonly=existing)
     index.refresh(sync=not existing)
     end = time.monotonic() + wait
     while vectors and not index.complete() and embedder.state != "off" and time.monotonic() < end:

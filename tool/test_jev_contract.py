@@ -15,10 +15,11 @@ import pytest
 
 import decision
 import search
+import translate
 from common.budget import Budget
 from main import decisions, knowledge, tracing
 from search import daemon as searchd
-from search import evidence, knowledge_graph
+from search import evidence, knowledge_graph, sources
 from test_decision_flow import MODEL, POLICY, REPO, SOURCES, World, answering, chunk, english, found
 from test_decision_flow import world as flow_world  # noqa: F401 — fixture
 from test_knowledge_graph import bump, index_of
@@ -28,12 +29,12 @@ KEY = "contract-secret-key-4711"
 CAUSE = {"action_id": "p" * 32, "point": "loop.fix", "operation": "retrieve_evidence", "state_revision": "3.7"}
 
 
-def flow(world, *, required=False, cause=None, cache=None, available=SOURCES):
+def flow(world, *, required=False, cause=None, cache=None, available=SOURCES, external=False):
     budget = Budget(seconds=30, calls=6, candidates=40)
     return knowledge.Flow("What did the team decide about the port?", "", 8, omitted=None, available=list(available),
                           repo_id=REPO, graph=True, model=MODEL, live=True, budget=budget, pol=POLICY,
                           evaluate=world.evaluate, normalize=english, first=world.first, mend=world.mend,
-                          cache=cache, required=required, cause=cause).run()
+                          cache=cache, required=required, cause=cause, external=external).run()
 
 
 def route_of(world) -> dict:
@@ -102,6 +103,104 @@ def test_a_cached_decision_is_a_call_that_costs_nothing():
     totals = tracing.totals(again["calls"])
     assert totals["provider_calls"] == 0 and totals["cache_hits"] == 2
     assert totals["cost_usd_known"] == 0 and totals["cost_unknown"] == 0
+
+
+class Reply:
+    """The translator's HTTP answer: one English sentence for each text of the batch."""
+
+    def __init__(self, request):
+        batch = json.loads(json.loads(request.data)["contents"][0]["parts"][0]["text"])
+        text = json.dumps(["The team changes it." for _ in batch])
+        self.body = json.dumps({"candidates": [{"content": {"parts": [{"text": text}]}}],
+                                "usageMetadata": {"promptTokenCount": 9, "candidatesTokenCount": 4}}).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return None
+
+    def read(self):
+        return self.body
+
+
+def test_normalization_is_one_call_per_translator_request_and_none_for_what_was_never_sent(monkeypatch, tmp_path):
+    monkeypatch.setattr(translate, "CACHE", tmp_path / "cache.sqlite3")
+    monkeypatch.setattr(translate, "ENV", tmp_path / "absent.env")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
+    monkeypatch.delenv("TRANSLATE_MONTHLY_USD", raising=False)
+    sent = []
+    monkeypatch.setattr(translate.urllib.request, "urlopen", lambda req, timeout: sent.append(req) or Reply(req))
+
+    def normalized(texts):
+        run = knowledge.Flow("q", "", 8, omitted=None, available=["documents"], repo_id=REPO, graph=True, model=MODEL,
+                             live=True, budget=Budget(seconds=30, calls=6, candidates=40), pol=POLICY,
+                             evaluate=None, normalize=lambda t, s, o: knowledge.english(t, s, o), first=None,
+                             mend=None)
+        run.english(texts)
+        return [(c["provider"], c["texts"], c["outcome"]) for c in run.dossier["calls"]]
+
+    korean = ["팀이 포트를 바꾼다", "팀이 데몬을 바꾼다", "팀이 검색을 바꾼다", "팀이 색인을 바꾼다", "팀이 그래프를 바꾼다"]
+    assert normalized(korean + ["An English line."]) == [("translator", 4, "ok"), ("translator", 1, "ok")]
+    assert len(sent) == 2, "five texts go out in two batches"
+    assert normalized(korean) == [("cache", 5, "ok")]
+    assert normalized(["팀이 문서를 바꾼다", *korean]) == [("translator", 1, "ok"), ("cache", 5, "ok")]
+    monkeypatch.delenv("GEMINI_API_KEY")
+    assert normalized(["팀이 규칙을 바꾼다"]) == [], "no key: nothing was sent, so nothing was called"
+    assert len(sent) == 3
+
+
+def test_an_external_repair_is_the_arxiv_search_and_a_separate_grading_call(monkeypatch):
+    # Jev answers the grading with tokens spent and nothing usable: sent, billed, failed.
+    monkeypatch.setattr(decision, "send", lambda key, body, seconds, cancel:
+                        {"model": "jev-grader", "usage": {"input_tokens": 20, "output_tokens": 2}, "answers": {}})
+    papers = [{"title": "Rotas", "summary": "On-call rotas."}]
+
+    class Researching(World):
+        def mend(self, req, result, need, ids):
+            if need != "external":
+                return super().mend(req, result, need, ids)
+            trace = []
+            for key in ("k", ""):   # the second has no key: never sent
+                trace += knowledge.grade_papers("port", papers, decision.Config("active", MODEL, "file", key=key))[1]
+            return {"note": {"need": need, "fetched": {"query": "port", "trace": trace, "papers": []}},
+                    "requests": [], "results": []}
+
+    out = flow(Researching(answering(coverage=0.1), [found([chunk("port")])]), available=["documents"],
+               external=True)
+    research = [(c["purpose"], c["provider"], c["model"], c["token_usage"], c["outcome"]) for c in out["calls"]
+                if c["purpose"] in (["research"], ["grade"])]
+    assert research == [(["research"], "arxiv", None, None, "ok"),
+                        (["grade"], "jev", "jev-grader", {"input": 20, "output": 2}, "failed")]
+    assert tracing.totals(out["calls"])["tokens"]["input"] >= 20
+
+
+def test_a_draft_that_failed_or_was_stopped_is_still_a_call(tmp_path):
+    run = knowledge.Run(tmp_path, "wiki", "q", decision.Config("active", MODEL, "file", key=KEY))
+
+    class Failed(Exception):
+        pass
+
+    def failing(message):
+        yield {"kind": "tool", "text": "python tool/jev_search.py port"}
+        raise Failed("host exited")
+
+    turn = knowledge.drafted(run, failing)("brief")
+    next(turn)
+    with pytest.raises(Failed):
+        next(turn)
+
+    def endless(message):
+        while True:
+            yield "text"
+
+    turn = knowledge.drafted(run, endless)("brief")
+    next(turn)
+    turn.close()   # the reader stopped the run
+    run.finish("abstained")
+    assert [(c["purpose"], c["outcome"], c["host_searches"]) for c in run.calls] == \
+        [(["draft"], "failed", 1), (["draft"], "cancelled", 0)]
+    assert tracing.totals(run.calls)["cost_unknown"] == 2
 
 
 def test_totals_keep_known_cost_apart_from_unknown_and_read_old_records_as_unknown():
@@ -250,6 +349,36 @@ def test_a_source_changed_since_the_snapshot_is_stale_and_left_as_it_was(graph_w
     assert out["status"] == "stale" and out["reason"] == "sources_changed"
     assert out["counts"]["sources_changed"] == 1 and out["counts"]["sources_added"] == 1
     assert health(repo)["status"] == "stale", "the check re-indexed what it found changed"
+
+
+def test_a_health_check_creates_no_database_and_takes_no_write_lock(graph_world):
+    hub, repo = graph_world
+    index_of(hub, repo).close()
+    records = sources.records_folder(repo) / "sources.sqlite3"
+    for path in records.parent.glob("sources.sqlite3*"):
+        path.unlink()
+    writer = sqlite3.connect(searchd.store_path(search.HUB, repo), timeout=0.1)
+    writer.execute("BEGIN IMMEDIATE")   # another process mid-write: a writer here would wait, then fail
+    try:
+        assert health(repo)["status"] == "healthy"
+    finally:
+        writer.rollback()
+        writer.close()
+    assert not records.exists(), "a health check created the records database"
+
+
+def test_a_file_added_during_the_check_reads_stale(graph_world, monkeypatch):
+    hub, repo = graph_world
+    index_of(hub, repo).close()
+    real = knowledge_graph.verify
+
+    def verify(graph, chunks):
+        (repo / "docs/created-during-health.md").write_text("# Late\n\nWritten mid-check.\n", encoding="utf-8")
+        return real(graph, chunks)
+
+    monkeypatch.setattr(knowledge_graph, "verify", verify)
+    out = health(repo)
+    assert out["status"] == "stale" and out["counts"]["sources_added"] == 1, out
 
 
 def test_zero_edges_is_empty_not_healthy(graph_world):

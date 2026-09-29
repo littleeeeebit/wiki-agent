@@ -501,13 +501,19 @@ class Flow:
         seconds = max(0.0, min(NORMALIZE_SECONDS, self.budget.left() - self.budget.call_seconds))
         outcomes = self.outside("normalize", lambda: self.normalize(texts, seconds, owners))
         self.versions |= {str(o.get("version") or o["status"]) for o in outcomes if o["status"] in evidence.USABLE}
-        if korean := [o for o in outcomes if o.get("language") == "ko"]:
-            # English text needs no translator; Korean went to it, or was found in its cache.
-            usable = sum(o["status"] in evidence.USABLE for o in korean)
+        # One call per request the translator sent (its `request` id), one for
+        # the cache hits; English, and Korean no request carried (no key, the
+        # limit), cost nothing and are no call.
+        batches: dict[str, list[tuple[str, dict]]] = {}
+        for text, o in zip(texts, outcomes):
+            if o.get("request") or o.get("cached"):
+                batches.setdefault(o.get("request") or "cache", []).append((text, o))
+        for key, batch in batches.items():
+            usable = sum(o["status"] in evidence.USABLE for _t, o in batch)
             self.called(tracing.call(
-                "normalize", "translator", "cache" if all(o.get("cached") for o in korean) else "translator",
-                model=next((o["model"] for o in korean if o.get("model")), None), sent=texts,
-                outcome="ok" if usable == len(korean) else "partial" if usable else "failed", texts=len(korean)))
+                "normalize", "translator", "cache" if key == "cache" else "translator",
+                model=translate.MODEL, sent=[t for t, _o in batch],
+                outcome="ok" if usable == len(batch) else "partial" if usable else "failed", texts=len(batch)))
         return outcomes
 
     def called(self, record: dict) -> None:
@@ -936,9 +942,15 @@ class Flow:
             out = self.outside("rounds", lambda: self.mend(base, result, need, given))
             self.dossier["repairs"].append(out["note"])
             if need == "external" and "fetched" in out["note"]:
-                # arXiv, and Jev grading what it returned (`grade_papers`): one operation, its cost not reported.
+                # The arXiv search, then Jev grading what it returned (`grade_papers`): two requests.
+                fetched = out["note"]["fetched"]
                 self.called(tracing.call("research", "code", "arxiv", sent=self.query_en,
-                                         outcome="ok" if out["note"]["fetched"] else "failed"))
+                                         outcome="ok" if fetched else "failed"))
+                for entry in (fetched or {}).get("trace") or []:
+                    if entry.get("stage") == "papers" and ("model" in entry or entry.get("error") not in NOT_SENT):
+                        self.called(tracing.call("grade", "jev", "jev", model=entry.get("model"),
+                                                 elapsed_ms=entry.get("elapsed_ms"), tokens=entry.get("usage"),
+                                                 outcome="failed" if "error" in entry else "ok"))
             if not out["requests"]:
                 continue
             if need == "sources":
@@ -1135,6 +1147,8 @@ DRAFT = "answer-draft/1"
 VERIFIED = "verified-answer/1"
 # A host tool line that ran the search command (`query.SEARCH_NOTE`): retrieval again, by the host.
 HOST_SEARCH = re.compile(r"tool/search\b|jev_search")
+# Why `decision.evaluate` failed before sending anything: no request, no call.
+NOT_SENT = ("unsupported_question", "missing_api_key", "state_too_large", "budget")
 DRAFT_PROMPT = "answer-draft.md"
 ANALYSIS_PROMPT = "answer-analysis.md"
 CLAIM_KINDS = ("source_fact", "inference", "recommendation", "direct_text")
@@ -1886,6 +1900,18 @@ def drafted(run: Run | None, generate):
         spent: dict = {}
         searches = 0
         started = time.monotonic()
+
+        def account(outcome: str) -> None:
+            # Every turn started, however it ended: a failed or stopped one may have cost as much.
+            if run is not None:
+                record = tracing.call("draft", "host", "host", model=spent.get("model"), parent=run.id, sent=message,
+                                      elapsed_ms=round((time.monotonic() - started) * 1000),
+                                      tokens=spent.get("tokens"), cost_usd=spent.get("cost_usd"),
+                                      retry_of=before[-1] if before else None, outcome=outcome,
+                                      host_searches=searches)
+                before.append(record["call_id"])
+                run.called(record)
+
         turn = generate(message)
         try:
             item = next(turn)
@@ -1903,18 +1929,14 @@ def drafted(run: Run | None, generate):
             turn.close()   # a stop or a failure outside ends the host's turn too
             if run is not None:
                 run.close(call, level="ERROR", status_message=type(error).__name__)
+            account("cancelled" if type(error).__name__ in ("Stopped", "GeneratorExit", "KeyboardInterrupt")
+                    else "failed")
             raise
         if call is not None:   # no trace, no telemetry to build: nothing in it may cost the answer
             run.close(call, output=text, model=spent.get("model"), usage_details=tracing.usage(spent.get("tokens")),
                       cost_details={"total": spent["cost_usd"]} if isinstance(spent.get("cost_usd"), (int, float))
                       else None)
-        if run is not None:
-            record = tracing.call("draft", "host", "host", model=spent.get("model"), parent=run.id, sent=message,
-                                  elapsed_ms=round((time.monotonic() - started) * 1000), tokens=spent.get("tokens"),
-                                  cost_usd=spent.get("cost_usd"), retry_of=before[-1] if before else None,
-                                  host_searches=searches)
-            before.append(record["call_id"])
-            run.called(record)
+        account("ok")
         return text
 
     return observed
@@ -2762,11 +2784,12 @@ def graph_health(project: str | Path | None) -> dict:
         before = knowledge_graph.state(index.store)
         built = knowledge_graph.Frozen(index.store).built
         report = knowledge_graph.verify(index.graph, index.chunks)
-        drift = index.store.drift(index.listed)
         with index.store.lock:
             active = knowledge_graph.meta(index.store.db, "graph_active")
         moved = knowledge_graph.state(index.store) != before
         loaded = index.loaded
+        # Listed again, last: a file that came or changed while checking reads stale.
+        drift = index.store.drift([resolved for _p, _r, resolved, _s in index.scan()])
     finally:
         index.close()
     reason = ("store_changed" if moved else "graph_not_built_from_these_chunks" if built != loaded else
