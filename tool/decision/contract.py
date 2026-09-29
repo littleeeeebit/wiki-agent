@@ -193,7 +193,12 @@ def decide(req: dict, evaluate: Evaluate, budget: Budget, trace: list[dict], pol
     if hit is None and cache:
         cache.put(req, answers, call)
     doubt = [name for name, v in verdicts.items() if v == "uncertain"]
-    host = asked(fallback, req, doubt) if doubt and fallback is not None else None
+    host = None
+    if doubt and fallback is not None:
+        began = time.monotonic()
+        host = asked(fallback, req, doubt)
+        # The host's turn has an allowance of its own, as a drafting turn has: Jev's deadline moves past it.
+        budget.deadline += time.monotonic() - began
     for name, answer in (host or {}).get("answers", {}).items():
         verdicts[name] = verdict(pol, req["questions"][name]["decision"], answer)
     selected = []

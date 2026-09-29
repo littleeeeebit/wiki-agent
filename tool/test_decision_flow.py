@@ -220,6 +220,18 @@ def test_what_jev_leaves_uncertain_goes_to_the_host_once_and_stays_marked_as_the
     assert decision.final(res, name) == (settled or jev)[name]
 
 
+def test_the_host_s_turn_is_not_taken_from_jev_s_deadline():
+    # A run of 15 s whose host turn took most of it ended `exhausted` at the next look at the clock.
+    budget = Budget(seconds=0.3, calls=2, candidates=0)
+
+    def slow(state, questions, stage):
+        time.sleep(0.5)
+        return {"answers": {"x": "yes"}}
+
+    decision.decide(req(budget=budget), returning({"x": 0.5}), budget, [], POLICY, fallback=slow)
+    assert budget.left() > 0.1
+
+
 def test_a_confident_answer_never_reaches_the_host():
     request = req()
     res = decision.decide(request, returning({"x": 0.95}), Budget(seconds=5, calls=2, candidates=0), [], POLICY,
