@@ -1147,15 +1147,14 @@
    },
    "evidence": [
     [
-     "repo/docs/glossary.md#Segment",
-     "repo/docs/jobs/compaction.md"
+     "repo/docs/glossary.md#Segment"
     ]
    ],
    "parts": [
     {
      "id": "q0",
      "ask": "the meaning",
-     "reference": "one day's merged batches for one tenant (compaction merges small batches into daily segments)"
+     "reference": "one day's merged batches for one tenant"
     }
    ],
    "forbidden": [],
@@ -1178,8 +1177,7 @@
    ],
    "verification": "verified",
    "sources": {
-    "repo/docs/glossary.md": "f09c9abec1863b50c06f95054c7a56317266eedc48e51ee9faab861861dd9061",
-    "repo/docs/jobs/compaction.md": "cced8e24902d9c888af76917afe7765fd618206462270c0e350a705a401afccb"
+    "repo/docs/glossary.md": "f09c9abec1863b50c06f95054c7a56317266eedc48e51ee9faab861861dd9061"
    },
    "review": "r1"
   },
