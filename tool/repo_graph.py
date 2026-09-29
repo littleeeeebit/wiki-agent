@@ -186,7 +186,7 @@ def main() -> int:
     repo = args.repo.expanduser().resolve()
     data = write(repo)
     if data is None:
-        print("`.wiki/corpus.json` 이 없다. `tool/corpus.py --write` 를 먼저 돌려라.")
+        print(f"`.wiki/corpus.json` 이 없다. `{corpus.rebuild(repo)}` 를 먼저 돌려라.")
         return 2
 
     counts = data["counts"]

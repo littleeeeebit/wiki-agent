@@ -13,6 +13,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
+import corpus  # noqa: E402
 from wiki import metadata_errors, project_pages  # noqa: E402
 
 NEWER_ALLOWED = 3   # A listing this far behind is not worth saying anything about
@@ -49,13 +50,13 @@ def stale_index(repo: Path) -> list[tuple[str, str]]:
         return [(
             "낡은 목록",
             f"목록이 없는 문서 {len(gone)}개를 가리킨다 (예: `{gone[0]}`). "
-            "`tool/corpus.py --write` 로 다시 만들어라",
+            f"`{corpus.rebuild(repo)}` 로 다시 만들어라",
         )]
     if len(newer) > NEWER_ALLOWED:
         return [(
             "낡은 목록",
             f"문서 {len(newer)}개가 목록보다 나중에 고쳐졌다. "
-            "`tool/corpus.py --write` 로 다시 만들어라",
+            f"`{corpus.rebuild(repo)}` 로 다시 만들어라",
         )]
     return []
 

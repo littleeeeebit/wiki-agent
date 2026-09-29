@@ -6,6 +6,8 @@ here is given something to find.
 
 import json
 import os
+import re
+import subprocess
 import sys
 import tempfile
 import time
@@ -30,10 +32,10 @@ reads: {reads}
 
 def repo(docs: list[str] | None = None, listed: list[str] | None = None,
          severity: str = "preference", triggers: str = "[]",
-         reads: str = "[]", scope: str = "project") -> Path:
+         reads: str = "[]", scope: str = "project", prefix: str | None = None) -> Path:
     """One throwaway repository, with `.wiki/` and `docs/` shaped as needed."""
 
-    root = Path(tempfile.mkdtemp())
+    root = Path(tempfile.mkdtemp(prefix=prefix))
     (root / ".wiki").mkdir()
     (root / "docs").mkdir()
     for name in docs or []:
@@ -70,9 +72,15 @@ def test_a_clean_repository_says_nothing():
     assert kinds(repo(docs=["a.md", "b.md"])) == set()
 
 
-def test_a_listing_pointing_at_a_missing_document_is_reported():
-    root = repo(docs=["a.md"], listed=["a.md", "사라진.md"])
-    assert "낡은 목록" in kinds(root)
+def test_a_listing_pointing_at_a_missing_document_is_reported_and_its_fix_runs():
+    root = repo(docs=["a.md"], listed=["a.md", "사라진.md"], prefix="a project ")
+    message = dict(repo_lint.check(root))["낡은 목록"]
+    # The finding names the command; a shell runs it as printed. It once
+    # lacked a required argument, then split a path with a space in it.
+    printed = re.search(r"`python (tool/corpus\.py [^`]+)`", message)[1]
+    subprocess.run(f'"{sys.executable}" {printed}', shell=True, cwd=Path(__file__).resolve().parent.parent,
+                   check=True, capture_output=True)
+    assert kinds(root) == set()
 
 
 def test_a_document_edited_after_the_listing_is_reported():
