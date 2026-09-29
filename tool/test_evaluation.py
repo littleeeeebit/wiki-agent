@@ -6,6 +6,7 @@ stand-in wherever a choice is asked."""
 import json
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -462,9 +463,37 @@ def test_a_warm_row_s_priming_run_is_counted_toward_the_ceiling():
         return {"decisions": [{"usage": {"input_tokens": 10, "output_tokens": 1},
                                "fallback": {"by": "host", "cost_usd": usd}}]}
 
-    assert compare.spent(ran(0.6), ran(0.6)) == {"jev_requests": 2, "jev_tokens": 22, "host_usd": 1.2,
-                                                  "host_turns": 2}
-    assert compare.spent(None, ran(0.6))["host_turns"] == 1, "a cold row has no priming run"
+    assert compare.retrieval_cost(ran(0.6), ran(0.6)) == {"jev_requests": 2, "jev_tokens": 22, "host_usd": 1.2,
+                                                           "host_turns": 2, "host_unknown": 0}
+    assert compare.retrieval_cost(None, ran(0.6))["host_turns"] == 1, "a cold row has no priming run"
+    # Codex reports no price: its turn is counted, its cost unknown, never zero.
+    unpriced = compare.retrieval_cost(ran(None))
+    assert (unpriced["host_turns"], unpriced["host_usd"], unpriced["host_unknown"]) == (1, 0, 1)
+
+
+def test_an_answer_s_return_to_retrieval_is_counted_with_its_fallbacks(monkeypatch, tmp_path):
+    # A direct draft needed a repository fact; the retrieval it went back to asked the host at USD 0.40.
+    import agent
+    from main import knowledge
+
+    repaired = {"questions": {"coverage_r0": {"decision": "coverage"}},
+                "usage": {"input_tokens": 10, "output_tokens": 1},
+                "fallback": {"by": "host", "asked": ["coverage_r0"], "answers": {"coverage_r0": 1.0}, "cost_usd": 0.4}}
+    verified = {"status": "complete", "reason": None, "verified": True, "degraded": False, "host_checked": False,
+                "claims": [], "rejected": [], "citations": []}
+    record = {"generations": [{"evidence_ids": {}, "decision": {"usage": {}, "answers": {}, "fallback": None}}],
+              "retrievals": [{"decisions": [repaired]}]}
+
+    def grounded(*args, **kwargs):
+        return {"verified": verified, "text": "t", "record": record}
+        yield
+
+    monkeypatch.setattr(knowledge, "grounded", grounded)
+    monkeypatch.setattr(agent, "ChatSession", lambda *a, **k: SimpleNamespace(close=lambda: None))
+    got = compare.answered({"text": "q"}, {}, tmp_path, True, None, "")
+    assert (got["host_usd"], got["host_turns"], got["host_unknown"]) == (0.4, 1, 0)
+    assert got["retrieval_usage"] == {"jev_requests": 1, "jev_tokens": 11}
+    assert got["fallback"] == {"coverage": {"asked": 1, "fell": 1, "settled": 1}}
 
 
 def test_the_host_s_own_time_is_not_a_deadline_breach():

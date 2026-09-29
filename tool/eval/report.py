@@ -157,7 +157,7 @@ def arms_report(rows: list[dict], data: dict, opts: dict, cfg: dict) -> dict:
         entry["breaches"] = sum(v["breaches"] for _r, v in pairs)
         entry["failed_answers"] = sum("answer_error" in r or "error" in (r.get("grade") or {}) for r, _v in pairs)
         entry["cost"] = {k: round(sum((r.get("cost") or {}).get(k) or 0 for r, _v in pairs), 4)
-                         for k in ("jev_requests", "jev_tokens", "host_turns", "host_usd")}
+                         for k in ("jev_requests", "jev_tokens", "host_turns", "host_usd", "host_unknown")}
         cats = defaultdict(list)
         for r, v in pairs:
             if v["recall"] is not None:
@@ -601,7 +601,8 @@ def markdown(report: dict) -> str:
             lines.append(f"| {arm} | {e['rows']} | {cell(e.get('recall'))} | {cell(e.get('candidate_recall'))} | "
                          f"{cell(e.get('bridge_recall'))} | {cell(e.get('coverage'))} | "
                          f"{cell(e.get('unsupported_claim_rate'))} | {e['seconds']['p95']} | "
-                         f"{e['cost']['jev_tokens']} | {e['cost']['host_usd']} |")
+                         f"{e['cost']['jev_tokens']} | {e['cost']['host_usd']}"
+                         f"{f' + {u} turns unpriced' if (u := e['cost'].get('host_unknown')) else ''} |")
         lines.append("")
     if routing := report.get("routing"):
         lines += [f"Routing cohort: {routing['cohort']} rows, {routing['missing']} missing, {routing['unscorable']} "

@@ -418,10 +418,16 @@ def test_a_direct_run_states_no_repository_fact_and_goes_back_to_retrieval(tmp_p
     ports = item(tmp_path, "docs/ports.md", PORTS)
     asked = []
 
+    # The return to retrieval's own coverage question fell to the host at USD 0.40.
+    repair_decision = {"questions": {"coverage_r0": {"decision": "coverage"}},
+                       "usage": {"input_tokens": 10, "output_tokens": 1},
+                       "fallback": {"by": "host", "asked": ["coverage_r0"], "answers": {"coverage_r0": 1.0},
+                                    "cost_usd": 0.4}}
+
     def prepare(question, project, state, *, cfg, cache, require, budget, run=None, audiences=None):
         asked.append((require, budget.limits["calls"], audiences))
         budget.used["calls"] += 2
-        return dossier([ports], calls_left=0)
+        return {**dossier([ports], calls_left=0), "decisions": [repair_decision]}
 
     monkeypatch.setattr(knowledge, "prepare", prepare)
     hello = claim("c1", "Hello!", kind="direct_text", cites=(), reqs=("r0",))
@@ -444,6 +450,10 @@ def test_a_direct_run_states_no_repository_fact_and_goes_back_to_retrieval(tmp_p
     from eval import compare
     assert d["evidence"] == [] and out["verified"]["citations"]
     assert compare.invented(out["verified"], out["record"]["generations"]) == []
+    # What that return to retrieval spent reaches the answer's record, its host fallback included.
+    assert out["record"]["retrievals"] == [{"decisions": [repair_decision]}]
+    assert compare.retrieval_cost(*out["record"]["retrievals"]) == {
+        "jev_requests": 1, "jev_tokens": 11, "host_usd": 0.4, "host_turns": 1, "host_unknown": 0}
 
     # No allowance left for a round: the fact is never published, and nothing is retrieved.
     asked.clear()

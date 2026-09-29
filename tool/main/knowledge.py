@@ -1305,14 +1305,15 @@ def host_decides(state: dict, questions: dict, stage: str, cancel: threading.Eve
                "questions": {name: {"type": q["type"], "question": q["instructions"],
                                     **({"options": q["criteria"]} if "criteria" in q else {})}
                              for name, q in questions.items()}}
-    out: dict = {"answers": {}, "model": model or "host", "cost_usd": 0.0}
+    # A price the turn does not report (Codex reports none) stays unknown, never zero (`tracing.call`).
+    out: dict = {"answers": {}, "model": model or "host", "cost_usd": None}
     turn = oneshot(FALLBACK_PROMPT, payload, model, halt=halt)
     try:
         for ev in turn:
             if ev.kind == "error" or (ev.kind == "done" and ev.meta.get("error")):
                 raise RuntimeError("stopped" if halt.is_set() else ev.text or "the host turn failed")
             if ev.kind == "done":
-                out.update(model=ev.meta.get("model") or out["model"], cost_usd=ev.meta.get("cost_usd") or 0.0)
+                out.update(model=ev.meta.get("model") or out["model"], cost_usd=ev.meta.get("cost_usd"))
                 got = parsed(ev.text)
                 said = got.get("answers") if isinstance(got, dict) else None
                 if not isinstance(said, dict):
@@ -1419,6 +1420,8 @@ class Grounding:
         # Claims found supported, by what they say and cite, and who settled it (`jev` or `host`):
         # a repair that keeps one is not asked about again, and keeps who settled it.
         self.supported: dict[tuple, str] = {}
+        # The dossiers of this answer's returns to retrieval (`grounded`), in order.
+        self.retrievals: list[dict] = []
         self.rebase(dossier)
 
     def rebase(self, dossier: dict) -> None:
@@ -1920,6 +1923,8 @@ class Grounding:
 
         return {"run_id": self.run_id, "verification_version": VERIFICATION_VERSION,
                 "generations": self.generations, "trace": self.trace, "calls": self.called,
+                # Each return to retrieval's decisions: what it spent, host fallbacks included.
+                "retrievals": [{"decisions": d.get("decisions") or []} for d in self.retrievals],
                 "allowance_left": {"calls": self.calls, "tokens": self.tokens}}
 
 
@@ -2022,6 +2027,7 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
             again = prepare(question, project, state, cfg=cfg, cache=cache, require=True, budget=budget, run=run,
                             audiences=dossier.get("audiences"))
             job.spent(budget)
+            job.retrievals.append(again)
             job.rebase(again)
             if run is not None:
                 run.follow(lambda: {"calls": job.calls, "tokens": job.tokens})

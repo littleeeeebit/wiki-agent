@@ -557,11 +557,12 @@ def said(pick: Pick) -> str:
             "invalidated": "제안이 두 번 낡음 — 원래 순서"}.get(rec["basis"], f"Jev 판정 없음({rec['basis']}) — 원래 순서")
 
 
-def hosted(repo: Path, spec: dict) -> decision.Config:
-    """`repo`'s settings, with the model the spec's worktree runs on as the
-    host the fallback asks (`decision.Config.host`)."""
+def hosted(repo: Path, model: str | None) -> decision.Config:
+    """`repo`'s settings, with `model` as the host the fallback asks
+    (`decision.Config.host`): the model of the turn the choice shapes — the
+    live run's where one runs, since the toolbar can switch it between turns."""
 
-    return dataclasses.replace(decision.config(repo), host=(spec.get("cell") or {}).get("model") or "")
+    return dataclasses.replace(decision.config(repo), host=model or "")
 
 
 # -- work.start -------------------------------------------------------------
@@ -617,7 +618,7 @@ def start_turn(path: Path, run, text: str) -> tuple[str | None, str, str]:
         return text, "", "done"
     pick = choose("work.start", lambda: start_offer(specs.owner(path)), lambda: start_state(specs.owner(path)),
                   lambda: facts(repo, path, specs.owner(path), session_of(path)), occasion=f"start:{run.turn}",
-                  baseline="dispatch", log=(spec["repo"], spec["id"]), cancel=run.halt, cfg=hosted(repo, spec),
+                  baseline="dispatch", log=(spec["repo"], spec["id"]), cancel=run.halt, cfg=hosted(repo, run.chat.model),
                   evidence_ids=[e["id"] for e in spec["grounds"].get("evidence", [])])
     how = said(pick)
     if pick.candidate is None:
@@ -715,7 +716,7 @@ def extra_check(repo: Path, path: Path, run, spec: dict) -> tuple[bool, str]:
                            "goal": spec["goal"], "acceptance_criteria": spec["done"][1:],
                            "gate": {"command": gate, "result": "passed"}, "changed_files": changed(path, spec)},
                   lambda: facts(repo, path, specs.owner(path), session_of(path)), occasion=f"check:{run.turn}",
-                  baseline="none", log=(spec["repo"], spec["id"]), cancel=run.halt, cfg=hosted(repo, spec))
+                  baseline="none", log=(spec["repo"], spec["id"]), cancel=run.halt, cfg=hosted(repo, run.chat.model))
     if pick.candidate is None:
         return False, "사람이 멈춤" if run.halt.is_set() else f"확인을 이어 가지 않았다 — {pick.record['basis']}"
     if pick.operation != "run_registered_check":
@@ -770,7 +771,8 @@ def fix_turn(loop, spec: dict, repo: Path, path: Path, n: int, head: str, findin
                            "findings": [f["head"] for f in findings], "disputed_before": disputed},
                   lambda: facts(repo, path, specs.load(spec["repo"], spec["id"]), session_of(path)),
                   occasion=f"fix:{n}:{head}", baseline="fix", log=(spec["repo"], spec["id"]), cancel=loop.halt,
-                  cfg=hosted(repo, spec))
+                  # The fix turn goes out on the cell's model (`loop.told`), so that model settles a doubt.
+                  cfg=hosted(repo, (spec.get("cell") or {}).get("model")))
     if pick.candidate is None:
         return None
     if pick.operation == "retrieve_evidence" and findings:

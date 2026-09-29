@@ -286,17 +286,24 @@ def usage_of(d: dict) -> dict:
             "jev_tokens": sum(u.get("input_tokens", 0) + u.get("output_tokens", 0) for u in spent)}
 
 
-def spent(*dossiers) -> dict:
+def retrieval_cost(*dossiers) -> dict:
     """What a row's retrieval runs cost together: Jev's requests and tokens,
     and the host turns its fallbacks took — host spending like an answer's.
-    A warm row's priming run is one of them: the batch's ceiling counts it."""
+    A warm row's priming run is one of them, and so is an answer's return to
+    retrieval (the record's `retrievals`): the batch's ceiling counts each."""
 
-    cost = {"jev_requests": 0, "jev_tokens": 0, "host_usd": 0.0, "host_turns": 0}
+    cost = {"jev_requests": 0, "jev_tokens": 0, "host_usd": 0.0, "host_turns": 0, "host_unknown": 0}
     for d in filter(None, dossiers):
-        usd, turns = host_spent(x.get("fallback") for x in d.get("decisions", []))
-        for k, v in {**usage_of(d), "host_usd": usd, "host_turns": turns}.items():
+        for k, v in {**usage_of(d), **host_spent(x.get("fallback") for x in d.get("decisions", []))}.items():
             cost[k] += v
     return cost
+
+
+def kinds_of(decisions) -> list[tuple[dict, dict | None]]:
+    """A dossier's decisions as `fallbacks` reads them: each question's kind by name, and its fallback."""
+
+    return [({n: q["decision"] for n, q in (x.get("questions") or {}).items()}, x.get("fallback"))
+            for x in decisions]
 
 
 def fallbacks(decided) -> dict:
@@ -317,11 +324,14 @@ def fallbacks(decided) -> dict:
     return out
 
 
-def host_spent(records) -> tuple[float, int]:
-    """What the host fallbacks among `records` (results' `fallback`) cost, and how many turns they were."""
+def host_spent(records) -> dict:
+    """What the host fallbacks among `records` (results' `fallback`) cost where
+    the price was reported, how many turns they were, and how many of those
+    reported no price (`host_unknown`): unknown stays apart, never zero."""
 
     ran = [r for r in records if r]
-    return sum(r.get("cost_usd") or 0.0 for r in ran), len(ran)
+    known = [r["cost_usd"] for r in ran if isinstance(r.get("cost_usd"), (int, float))]
+    return {"host_usd": sum(known), "host_turns": len(ran), "host_unknown": len(ran) - len(known)}
 
 
 def breaches(budget: dict) -> list[str]:
@@ -363,8 +373,7 @@ def dossier_row(d: dict, names: dict, label, allowed: set[str]) -> dict:
             "leaks": [e["chunk_id"] for e in d["evidence"] if e.get("repo_id") not in allowed],
             "breaches": breaches(d["budget"]), "budget": d["budget"],
             "transitions": [t["to"] for t in d.get("transitions", [])],
-            "fallback": fallbacks(({n: q["decision"] for n, q in (x.get("questions") or {}).items()},
-                                   x.get("fallback")) for x in d.get("decisions", []))}
+            "fallback": fallbacks(kinds_of(d.get("decisions", [])))}
 
 
 def brief(d: dict) -> str:
@@ -414,17 +423,24 @@ def answered(unit: dict, d: dict, repo: Path, jev: bool, cfg: decision.Config, m
         v = out["verified"]
         gens = out["record"]["generations"]
         judged = [g[k] for g in gens for k in ("decision", "rejoined") if g.get(k)]
-        usd, turns = host_spent(j.get("fallback") for j in judged)
+        host = host_spent(j.get("fallback") for j in judged)
+        # A return to retrieval ran its own Jev requests and fallbacks (`record.retrievals`).
+        repaired = out["record"].get("retrievals") or []
+        again = retrieval_cost(*repaired)
         return {"status": v["status"], "reason": v["reason"], "text": out["text"],
                 # As published, and as a memory of this turn would label it (`memory.verification`).
                 "verified": v["verified"], "degraded": v["degraded"], "host_checked": v.get("host_checked"),
                 "remembered": memory.verification({"role": "assistant", "verification": v}),
-                "host_usd": spent.get("cost_usd", 0.0) + usd, "host_turns": spent.get("turns", 0) + turns,
+                "host_usd": spent.get("cost_usd", 0.0) + host["host_usd"] + again["host_usd"],
+                "host_turns": spent.get("turns", 0) + host["host_turns"] + again["host_turns"],
+                "host_unknown": host["host_unknown"] + again["host_unknown"],
+                "retrieval_usage": {k: again[k] for k in ("jev_requests", "jev_tokens")},
                 "elapsed_ms": round((time.monotonic() - started) * 1000),
                 "accepted": len(v["claims"]), "rejected": len(v["rejected"]),
                 "verify_usage": [j["usage"] for j in judged],
-                "fallback": fallbacks(({n: n.split("_", 1)[0] for n in j.get("answers") or {}}, j.get("fallback"))
-                                      for j in judged),
+                "fallback": fallbacks([*(({n: n.split("_", 1)[0] for n in j.get("answers") or {}}, j.get("fallback"))
+                                         for j in judged),
+                                       *(pair for d in repaired for pair in kinds_of(d["decisions"]))]),
                 "fabricated": invented(v, gens)}
     finally:
         chat.close()
@@ -509,7 +525,7 @@ def run_arms(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict) 
                        "elapsed_ms": elapsed, **dossier_row(d, names, c.label, allowed)}
                 if fault:
                     row["fault"] = {"kind": fault["kind"], "phase": fault["phase"], "raised": raised}
-                cost = spent(primed, d)
+                cost = retrieval_cost(primed, d)
                 # A faulted run is judged by where it ended; it is not answered.
                 if opts["level"] == "answer" and not fault:
                     try:
@@ -520,6 +536,9 @@ def run_arms(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict) 
                     for part in (row.get("answer") or {}, row.get("grade") or {}):
                         cost["host_usd"] += part.get("host_usd") or 0.0
                     cost["host_turns"] += (row.get("answer") or {}).get("host_turns", 0) + ("grade" in row)
+                    cost["host_unknown"] += (row.get("answer") or {}).get("host_unknown", 0)
+                    for k, v in ((row.get("answer") or {}).get("retrieval_usage") or {}).items():
+                        cost[k] += v
                     for u in (row.get("answer") or {}).get("verify_usage") or []:
                         cost["jev_requests"] += 1
                         cost["jev_tokens"] += (u or {}).get("input_tokens", 0) + (u or {}).get("output_tokens", 0)
@@ -651,7 +670,7 @@ def run_actions(folder: Path, opts: dict, fixtures: dict, ceiling: Ceiling, run:
                     pass
         jev = record["jev"]
         usage = jev["usage"] or {}
-        usd, turns = host_spent([jev.get("fallback")])
+        host = host_spent([jev.get("fallback")])
         return {"key": unit["key"], "point": f["point"], "label": f["label"], "at": now(),
                 "offered": [c["id"] for c in offered], "status": jev["status"], "basis": record["basis"],
                 "choice": (jev["answer"] or {}).get("choice"), "confidence": (jev["answer"] or {}).get("confidence"),
@@ -660,7 +679,7 @@ def run_actions(folder: Path, opts: dict, fixtures: dict, ceiling: Ceiling, run:
                 "fallback": fallbacks([({"action": "action"} if jev["answer"] else {}, jev.get("fallback"))]),
                 "cost": {"jev_requests": 1 if jev["status"] in ("decided", "uncertain") else 0,
                          "jev_tokens": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
-                         "host_usd": usd, "host_turns": turns}}
+                         **host}}
 
     with tempfile.TemporaryDirectory(prefix="jev-actions-") as scratch, \
             patch.object(decisions, "LOGS", Path(scratch) / "actions"):

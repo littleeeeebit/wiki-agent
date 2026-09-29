@@ -12,6 +12,7 @@ import json
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -278,8 +279,8 @@ def test_a_choice_jev_is_unsure_of_is_the_host_s_and_replays_as_recorded(jev, tm
     monkeypatch.setattr(decisions.knowledge, "host_decides", lambda state, questions, stage, cancel=None, model="":
                         models.append(model) or {"answers": {"action": "look"}, "model": "host-model",
                                                  "cost_usd": 0.02, "elapsed_ms": 4})
-    # The worktree's own model settles it: the one the spec's cell runs on.
-    cfg = decisions.hosted(tmp_path, {"cell": {"model": "codex:gpt-6-sol"}})
+    # The model of the turn the choice shapes settles it.
+    cfg = decisions.hosted(tmp_path, "codex:gpt-6-sol")
     record = decisions.choose("loop.fix", offer, lambda: {"task": "Fix the findings."}, owner, occasion="o1",
                               baseline="send", log=("proj", "t"), cfg=cfg).record
     assert models == ["codex:gpt-6-sol"]
@@ -287,6 +288,26 @@ def test_a_choice_jev_is_unsure_of_is_the_host_s_and_replays_as_recorded(jev, tm
     assert record["jev"]["answer"]["choice"] == "send", "Jev's own answer is kept"
     assert record["jev"]["fallback_call"]["owner"] == "jev_fallback"
     assert decisions.replay(record) == {"predicted": "look", "matches": True}
+
+
+def test_the_extra_check_asks_the_model_of_the_live_run_not_the_one_saved_at_start(tmp_path, monkeypatch):
+    # The toolbar switched the worktree to Codex after the spec started on Claude; the check runs in that turn.
+    seen = {}
+
+    class Asked(Exception):
+        pass
+
+    def choose(point, *args, cfg, **kwargs):
+        seen["host"] = cfg.host
+        raise Asked
+
+    monkeypatch.setattr(decisions, "choose", choose)
+    run = SimpleNamespace(turn="t1", halt=threading.Event(), chat=SimpleNamespace(model="codex:gpt-6-sol"))
+    spec = {"repo": "proj", "id": "t", "goal": "g", "done": ["python -m pytest -q"],
+            "cell": {"model": "claude-opus-5-5"}}
+    with pytest.raises(Asked):
+        decisions.extra_check(tmp_path, tmp_path, run, spec)
+    assert seen["host"] == "codex:gpt-6-sol"
 
 
 def test_the_evidence_a_turn_carries_keeps_both_sides_and_drops_the_redirect():

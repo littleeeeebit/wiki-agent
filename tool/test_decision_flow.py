@@ -16,7 +16,7 @@ import decision
 import search
 from common.budget import Budget, Cancelled, Exhausted
 from common.language import language
-from main import knowledge
+from main import knowledge, tracing
 from search import evidence, retrieval
 
 MODEL = "jev-1.13.0"
@@ -280,6 +280,24 @@ def test_the_host_s_answer_is_read_only_for_the_questions_asked(monkeypatch):
     monkeypatch.setattr(knowledge, "oneshot", turn)
     out = knowledge.host_decides({}, {"x": decision.noul("?"), "y": decision.noul("?")}, "route")
     assert out["answers"] == {"x": "yes"} and out["cost_usd"] == 0.03 and out["model"] == "host-model"
+
+
+def test_a_host_turn_that_reports_no_price_is_recorded_as_unknown_not_free(monkeypatch):
+    # Codex's completion carries its model and tokens, never a price.
+    from agent.chat_session import Event
+
+    def turn(prompt, payload, model, halt):
+        yield Event("done", '{"answers": {"x": "yes"}}', {"model": "gpt-6-sol"})
+
+    monkeypatch.setattr(knowledge, "oneshot", turn)
+    said = knowledge.host_decides({}, {"x": decision.noul("?")}, "route", model="codex:gpt-6-sol")
+    assert said["cost_usd"] is None
+    request = req()
+    res = decision.decide(request, returning({"x": 0.5}), Budget(seconds=5, calls=2, candidates=0), [], POLICY,
+                          fallback=lambda *a: said)
+    record = tracing.fallback_call(request, res)
+    assert record["cost_usd"] is None and not record["cost_known"]
+    assert tracing.totals([record])["cost_unknown"] == 1
 
 
 @pytest.mark.parametrize("seconds, cancelled", [(0.2, False), (60.0, True)])
