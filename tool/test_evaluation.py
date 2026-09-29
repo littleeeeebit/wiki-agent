@@ -292,6 +292,33 @@ def test_the_reliability_fixtures_and_gates_are_frozen_as_the_plan_asks():
         0.90)
 
 
+def test_the_second_set_keeps_the_first_calibration_and_holds_out_only_unseen_intents(fresh):
+    # The fallback was diagnosed on the first set's held-out half, so measuring it there would be tuning on it.
+    v2 = dataset.load(RELIABLE.parent / "reliability-v2" / "intents.json")
+    assert dataset.invalid(v2) == [] and dataset.unresolved(v2) == [] and dataset.frozen(v2) == []
+    assert all(n == {"calibration": 6, "held_out": 6} for n in v2["categories"].values())
+    first = {s: [i for i in fresh["intents"] if i["split"] == s] for s in dataset.SPLITS}
+    assert [i for i in v2["intents"] if i["split"] == "calibration"] == first["calibration"]
+    held = [i for i in v2["intents"] if i["split"] == "held_out"]
+    assert all(i["review"] == "r2" for i in held) and v2["labels"]["reviews"]["r2"]["by"] == "gpt-6-sol"
+    assert not {i["variants"]["en"] for i in held} & {i["variants"]["en"] for i in fresh["intents"]}
+    assert not {i["id"] for i in held} & {i["id"] for i in fresh["intents"]}
+    # The first corpus whole, with pages added beside it and none changed.
+    assert {n: t for n, t in v2["corpus"]["files"].items() if n in fresh["corpus"]["files"]} == \
+        fresh["corpus"]["files"]
+    assert sorted(i["fault"]["kind"] for i in held if i.get("fault")) == \
+        ["cancelled"] * 2 + ["exhausted"] * 2 + ["unavailable"] * 2
+    assert (RELIABLE.parent / "reliability-v2" / "gates.json").read_bytes() == (RELIABLE / "gates.json").read_bytes()
+    actions = {v: json.loads((RELIABLE.parent / d / "actions.json").read_text(encoding="utf-8"))["fixtures"]
+               for v, d in (("v1", "reliability"), ("v2", "reliability-v2"))}
+    assert [f for f in actions["v2"] if f["split"] == "calibration"] == \
+        [f for f in actions["v1"] if f["split"] == "calibration"]
+    new = [f for f in actions["v2"] if f["split"] == "held_out"]
+    assert len(new) == 18 and not {f["id"] for f in new} & {f["id"] for f in actions["v1"]}
+    for f in new:
+        assert f["label"] in [c["id"] for c in compare.offered_and_state(f)[0]], f["id"]
+
+
 HELD_FAULTS = ["fault-02", "fault-03", "fault-05", "fault-06", "fault-10", "fault-11"]
 
 
