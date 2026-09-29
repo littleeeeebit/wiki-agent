@@ -58,6 +58,9 @@ A run records what it ran under, so a result can be tied to its inputs:
   over the retrieval prompts, `ASK`, `ANALYSIS`, the grounding prompts, the
   normalization version and graph extraction — a tape's replay says
   `behavior_changed`, unknown for a tape from before it;
+- its call totals (`tracing.totals`) — a replay says `calls_match`, unknown
+  for a tape from before them: each decision's tape entry keeps whether it
+  was sent or a cache hit, a failed one included;
 - the admitted action that required it, if any (`dossier.cause`);
 - the evaluation dataset versions in `eval/jev/*.json`.
 

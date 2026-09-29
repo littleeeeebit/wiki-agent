@@ -283,6 +283,54 @@ def test_a_failed_jev_decision_is_a_call_with_its_tokens_only_when_it_went_out(m
     assert route_calls("") == [], "no key: nothing went out"
 
 
+def test_malformed_usage_is_no_count_and_never_stops_retrieval(monkeypatch):
+    def send(key, body, seconds, cancel, dispatched):
+        dispatched()
+        return {"model": "jev-x", "usage": "not-an-object", "answers": {}}
+
+    monkeypatch.setattr(decision, "send", send)
+    cfg = decision.Config("active", MODEL, "file", key=KEY)
+    world = World(answering(), [found([chunk("a")])])
+    out = knowledge.Flow("What did the team decide about the port?", "", 8, omitted=None, available=["documents"],
+                         repo_id=REPO, graph=True, model=MODEL, live=True,
+                         budget=Budget(seconds=30, calls=6, candidates=40), pol=POLICY,
+                         evaluate=lambda *a: decision.evaluate(cfg, *a), normalize=english, first=world.first,
+                         mend=None).run()
+    assert not str(out["reason"]).startswith("error:"), out["reason"]
+    assert world.firsts, "the failed route still searched"
+    assert [(c["provider"], c["token_usage"]) for c in out["calls"] if "route" in c["purpose"]] == [("jev", None)]
+
+
+def replayed(out, tape, query="What did the team decide about the port?"):
+    recorded = {**json.loads(json.dumps(tape.data)), "limits": {"calls": 6, "candidates": 40, "tokens": None},
+                "policy": POLICY.record(), "prompt_version": knowledge.PROMPT_VERSION,
+                "inputs": {"query": query, "brief": "", "k": 8, "omitted": None, "available": ["documents"],
+                           "repo_id": REPO, "graph": True, "model": MODEL, "live": True, "external": False},
+                "transitions": knowledge.steps(out), "calls": tracing.totals(out["calls"])}
+    return knowledge.replay(recorded)
+
+
+def test_a_replay_accounts_cached_and_failed_decisions_as_the_run_did():
+    cache = decision.Cache()
+    run_flow(World(answering(), [found([chunk("a")])]), available=["documents"], cache=cache)
+    tape = knowledge.Tape()
+    out = run_flow(World(lambda *a: pytest.fail("a cached decision was sent"), [found([chunk("a")])]),
+                   available=["documents"], cache=cache, tape=tape)
+    assert tracing.totals(out["calls"])["cache_hits"] == 2
+    again = replayed(out, tape)
+    assert again["matches"] and again["calls_match"], tracing.totals(again["dossier"]["calls"])
+
+    # A route that went out and came back unusable: its call and tokens replay too.
+    def answer(stage, state, questions):
+        return decision.JevError("invalid_response") if stage == "route" else answering()(stage, state, questions)
+
+    tape = knowledge.Tape()
+    out = run_flow(World(answer, [found([chunk("a")])]), available=["documents"], tape=tape)
+    assert tracing.totals(out["calls"])["tokens"]["input"] > 0
+    again = replayed(out, tape)
+    assert again["matches"] and again["calls_match"], tracing.totals(again["dossier"]["calls"])
+
+
 def test_a_draft_that_failed_or_was_stopped_is_still_a_call(tmp_path):
     run = knowledge.Run(tmp_path, "wiki", "q", decision.Config("active", MODEL, "file", key=KEY))
 

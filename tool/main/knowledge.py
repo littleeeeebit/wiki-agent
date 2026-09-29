@@ -531,27 +531,44 @@ class Flow:
                                prompt_version=PROMPT_VERSION, policy_version=self.pol.version,
                                normalization_version=version, budget=self.budget, trace_id=self.trace_id)
         trace = self.dossier["trace"]
+        replayed: dict = {}
 
         def evaluate(state_, questions_, trace_, budget, stage):
-            def call():
-                mark = len(trace_)
-                got = self.evaluate(state_, questions_, trace_, budget, stage)
-                entry = trace_[mark] if len(trace_) > mark else {}
-                return {"answers": got, "model": entry.get("model"), "usage": entry.get("usage")}
+            failed: list[BaseException] = []
 
+            def call():
+                # A failure is kept as a value, with what it spent, so a replay records the same call.
+                mark = len(trace_)
+                try:
+                    got = self.evaluate(state_, questions_, trace_, budget, stage)
+                except Exception as error:
+                    failed.append(error)
+                    got = None
+                entry = trace_[mark] if len(trace_) > mark else {}
+                out = {"answers": got, "model": entry.get("model"), "usage": entry.get("usage"),
+                       "sent": entry["sent"] if "sent" in entry else bool(entry.get("usage"))}
+                return {**out, "error": described(failed[0])} if failed else out
+
+            before = self.budget.used["calls"]
             out = self.outside("decisions", call)
             if self.replay is not None:
-                trace_.append({"stage": stage, "model": out["model"], "usage": out["usage"], "replayed": True})
+                # A tape from before `sent` was kept: a decision that spent no call was a cache hit.
+                replayed["cached"] = out.get("cached", "sent" not in out and self.budget.used["calls"] == before)
+                trace_.append({"stage": stage, "model": out["model"], "usage": out["usage"], "replayed": True,
+                               "sent": out.get("sent", not replayed["cached"])})
+            if "error" in out:
+                raise failed[0] if failed else rebuilt(out["error"])
             return out["answers"]
 
         # A replay reads every decision from the tape, the cached ones too.
         res = decision.checked(req, decision.decide(req, evaluate, self.budget, trace, self.pol,
                                                     None if self.replay is not None else self.cache))
-        if record := tracing.jev_call(req, res):
+        if record := tracing.jev_call(req, {**res, "cached": True} if replayed.get("cached") else res):
             self.called(record)
         if res["cached"] and self.tape is not None:
             self.tape.keep("decisions", {"value": {"answers": res["answers"], "model": res["model"],
-                                                   "usage": res["usage"]}, "calls": 0, "tokens": 0})
+                                                   "usage": res["usage"], "sent": False, "cached": True},
+                                         "calls": 0, "tokens": 0})
         self.dossier["decisions"].append({
             "request_id": req["request_id"], "kind": kind,
             "questions": {n: {"decision": q["decision"], "candidate": q["candidate"]}
@@ -1105,7 +1122,7 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     if tape is not None:
         out["tape"] = {**tape.data, "inputs": inputs, "limits": dict(budget.limits), "policy": pol.record(),
                        "prompt_version": PROMPT_VERSION, "behavior": dossier["versions"]["behavior"],
-                       "transitions": steps(dossier)}
+                       "transitions": steps(dossier), "calls": tracing.totals(dossier["calls"])}
     if run is not None:
         run.dossier = out   # the last retrieval of the run is the evidence it answers from
     return out
@@ -1138,8 +1155,11 @@ def replay(tape: dict) -> dict:
     again = steps(dossier)
     # A tape from before the manifest names no behavior: whether it changed is unknown, not no.
     recorded = tape.get("behavior")
+    # And the calls it accounts: as unknown for a tape from before they were kept.
+    calls = tape.get("calls")
     return {"matches": again == tape["transitions"], "prompt_changed": tape["prompt_version"] != PROMPT_VERSION,
             "behavior_changed": None if recorded is None else recorded != dossier["versions"]["behavior"],
+            "calls_match": None if calls is None else calls == tracing.totals(dossier["calls"]),
             "transitions": again, "recorded": tape["transitions"], "dossier": dossier}
 
 

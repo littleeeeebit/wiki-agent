@@ -128,11 +128,11 @@ def decide(req: dict, evaluate: Evaluate, budget: Budget, trace: list[dict], pol
         mark = len(trace)
 
         def spent() -> dict:
-            # What the request cost, failed or not: sent once the transport wrote it
-            # (`evaluate`'s `sent`), or once a response reported usage.
+            # What the request cost, failed or not: sent as its entry says (`evaluate`
+            # marks the transport's dispatch), else — a stand-in evaluator — once it reported usage.
             entry = trace[mark] if len(trace) > mark else {}
             return {"model": entry.get("model"), "usage": entry.get("usage"),
-                    "sent": bool(entry.get("sent") or entry.get("usage"))}
+                    "sent": bool(entry["sent"] if "sent" in entry else entry.get("usage"))}
 
         try:
             answers = evaluate(req["state_en"], questions, trace, budget, req["decision_kind"])

@@ -126,7 +126,8 @@ def usage(tokens: dict | None) -> dict | None:
     """Token counts as Langfuse reads them, from Jev's `input_tokens`/`output_tokens`
     or a host session's `in`/`out`/`cache_read`/`cache_write`."""
 
-    tokens = tokens or {}
+    # A provider's malformed usage is no count: telemetry never costs the answer.
+    tokens = tokens if isinstance(tokens, dict) else {}
     pairs = {"input": tokens.get("input_tokens", tokens.get("in")),
              "output": tokens.get("output_tokens", tokens.get("out")),
              "cache_read_input_tokens": tokens.get("cache_read"),
