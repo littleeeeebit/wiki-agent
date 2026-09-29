@@ -628,6 +628,9 @@ def test_jev_tells_the_parts_asked_from_the_material_pasted_with_them(ask, kept)
     assert state["query_parts"]["r1"] == "Build a RAG system that summarizes RFP documents."
     assert [r["id"] for r in out["requirements"]] == kept
     assert [m["id"] for m in out["material"]] == [r for r in ("r0", "r1", "r2") if r not in kept]
+    # Every segment in order, as the verdicts left it (reliability PR 5 scores these against labels).
+    assert out["route_segments"] == [{"text": t, "ask": f"r{n}" in kept}
+                                     for n, t in enumerate(knowledge.requirements(PASTED))]
 
 
 @pytest.mark.parametrize("score, analysis", [(0.93, True), (0.5, False), (0.05, False)])

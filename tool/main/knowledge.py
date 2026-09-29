@@ -453,7 +453,7 @@ class Flow:
             "schema_version": DOSSIER, "status": None, "reason": None, "question_en": None, "direct": False,
             "restrictions": [], "audiences": audiences or None,
             "sources": [], "evidence": [], "requirements": [], "material": [], "analysis": False, "split": None,
-            "missing": [],
+            "route_segments": None, "missing": [],
             "conflicts": [], "untrusted": [],
             "reads": [], "limits": [], "repairs": [], "transitions": [], "decisions": [], "trace": [],
             "calls": [], "cause": cause,
@@ -708,9 +708,12 @@ class Flow:
         sure = any(verdicts.get(f"ask_{r['id']}") == "yes" for r in self.requirements)
         asked = [r for r in self.requirements
                  if verdicts.get(f"ask_{r['id']}") == "yes" or (not sure and verdicts.get(f"ask_{r['id']}") != "no")]
-        if parts and asked and len(asked) < len(self.requirements):
-            self.dossier["material"] = [{"id": r["id"], "text": r["text"]} for r in self.requirements if r not in asked]
-            self.requirements = asked
+        kept = asked if parts and asked and len(asked) < len(self.requirements) else self.requirements
+        # Each segment as the verdicts left it, in order: `split` may later replace a single one's asks.
+        self.dossier["route_segments"] = [{"text": r["text"], "ask": r in kept} for r in self.requirements]
+        if kept is not self.requirements:
+            self.dossier["material"] = [{"id": r["id"], "text": r["text"]} for r in self.requirements if r not in kept]
+            self.requirements = kept
         self.dossier["analysis"] = verdicts.get("analysis") == "yes"
         # An analysis is published unchecked, so it is at least searched and cited (invariant 5): never direct.
         if not required and verdicts["retrieve"] == "no" and not self.dossier["analysis"]:

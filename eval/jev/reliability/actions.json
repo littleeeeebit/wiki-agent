@@ -1,0 +1,700 @@
+{
+ "schema": "jev-action-fixtures/1",
+ "id": "reliability-actions",
+ "version": 1,
+ "frozen": "2026-09-29",
+ "description": "Reliability PR 5's action fixtures, written without reference to `eval/jev/actions.json`: twelve per decision point (`work.start`, `specs.check`, `loop.fix`), six calibration and six held out, split by the SHA-256 of the fixture id within each label. Each carries the fields `compare.offered_and_state` reads at its point and the candidate a careful operator would pick: a spec that names its change is dispatched, one that depends on a rule or decision it does not cite gathers evidence first, a goal with no acceptance criterion of its own asks (`clarify`, offered only then); a check is chosen when it examines the changed files; a finding that rests on a rule or decision, or was disputed the round before, gathers context.",
+ "labels": {
+  "author": "model-drafted (claude-opus-5-5, reliability PR 5)",
+  "reviewed_by": null,
+  "reviewed_at": null,
+  "reviews": {
+   "r1": {
+    "kind": null,
+    "by": null,
+    "at": null,
+    "note": "Not reviewed yet; decision results on these labels are provisional."
+   }
+  }
+ },
+ "gate": "python -m pytest -q",
+ "fixtures": [
+  {
+   "id": "ws01",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "ws01",
+    "goal": "Fix the typo 'recieve' in docs/replay.md",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "docs/replay.md contains no 'recieve'"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "docs/replay.md:3"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "ws02",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "ws02",
+    "goal": "Add a unit test for parse_window() covering an empty string",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "tests/test_window.py has a test that passes '' to parse_window() and expects ValueError"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/window.py:12",
+      "tests/test_window.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "ws03",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "ws03",
+    "goal": "Raise the log level of the 'segment skipped' message from info to warning in src/compactor.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the 'segment skipped' line in src/compactor.py logs at warning"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/compactor.py:88"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "ws04",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "ws04",
+    "goal": "Rename the helper fmt_bytes() to format_bytes() and update its three callers",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "no reference to fmt_bytes remains under src/"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/units.py:5",
+      "src/report.py:40",
+      "src/cli.py:17",
+      "src/export.py:62"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "ws05",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "ws05",
+    "goal": "Change how the archive writer stores timestamps in batch headers",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "batch headers written by src/writer.py carry the new timestamp field"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/writer.py:120"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "ws06",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "ws06",
+    "goal": "Add a retry to the upload client's network calls",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/upload.py retries a failed call",
+     "tests/test_upload.py covers a retried call"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/upload.py:30"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "ws07",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "ws07",
+    "goal": "Store user sessions for the new admin console",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the admin console keeps a session across two requests"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/admin/app.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "ws08",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "ws08",
+    "goal": "Add pagination to the GET /batches endpoint",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /batches returns a next-page marker when more batches exist"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/batches.py:14"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "ws09",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "ws09",
+    "goal": "Make the dashboard better",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "ws10",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "ws10",
+    "goal": "Improve replay performance",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/replay.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "ws11",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "ws11",
+    "goal": "Clean up the storage code",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "ws12",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "ws12",
+    "goal": "Handle errors properly in the export job",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/export.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "sc01",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Link the restore runbook from docs/runbooks/disk-full.md",
+   "criteria": [
+    "Link the restore runbook from docs/runbooks/disk-full.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/runbooks/disk-full.md"
+   ],
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "sc02",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Move the FAQ's upload section into docs/uploads.md",
+   "criteria": [
+    "Move the FAQ's upload section into docs/uploads.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/faq.md",
+    "docs/uploads.md"
+   ],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "sc03",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Rename docs/tools/beacon.md to docs/tools/paging.md",
+   "criteria": [
+    "Rename docs/tools/beacon.md to docs/tools/paging.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/tools/beacon.md",
+    "docs/tools/paging.md",
+    "docs/alerts.md"
+   ],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "sc04",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Handle an empty batch in src/compactor.py",
+   "criteria": [
+    "Handle an empty batch in src/compactor.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/compactor.py"
+   ],
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "sc05",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Fix the off-by-one in src/window.py's end bound",
+   "criteria": [
+    "Fix the off-by-one in src/window.py's end bound is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/window.py"
+   ],
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "sc06",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Add a --dry-run flag to src/cli.py",
+   "criteria": [
+    "Add a --dry-run flag to src/cli.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/cli.py"
+   ],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "sc07",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Show the batch size column on the dashboard table",
+   "criteria": [
+    "Show the batch size column on the dashboard table is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/BatchTable.tsx"
+   ],
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "sc08",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Add a dark theme toggle to the settings page",
+   "criteria": [
+    "Add a dark theme toggle to the settings page is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/Settings.tsx",
+    "web/src/theme.ts"
+   ],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "sc09",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Add an optional 'region' field to the event schema",
+   "criteria": [
+    "Add an optional 'region' field to the event schema is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/event.json"
+   ],
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "sc10",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Allow 'priority' on the alert schema's examples",
+   "criteria": [
+    "Allow 'priority' on the alert schema's examples is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/alert.json"
+   ],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "sc11",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Update the team photo in the README",
+   "criteria": [
+    "Update the team photo in the README is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "README.md"
+   ],
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "sc12",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Bump the Dockerfile's base image tag",
+   "criteria": [
+    "Bump the Dockerfile's base image tag is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "Dockerfile"
+   ],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "lf01",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/window.py:18 - the end bound uses `<` so the last minute is dropped; use `<=`"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "lf02",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/units.py:9 - format_bytes(1024) returns '1024 B'; the KiB branch needs `>=`"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "lf03",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P1] src/export.py:51 - the file handle is never closed on the error path; use a `with` block"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "lf04",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] tests/test_cli.py:22 - the assertion compares the exit code to '0' (a string); compare to 0"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "lf05",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P1] src/replay.py:77 - `range(start, end)` skips the batch at `end`, which the docstring says is included"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "lf06",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/report.py:33 - a variable named `l` shadows nothing but reads as `1`; rename it"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "lf07",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/upload.py:40 - this retries until it succeeds; our rule caps network retries"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "lf08",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/logging_setup.py:12 - lines are written as plain text, which is not the log format we decided on"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "lf09",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/errors.py:20 - the error body is a bare string; our API errors have a documented format"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r1"
+  },
+  {
+   "id": "lf10",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 3,
+   "findings": [
+    "[P2] src/writer.py:130 - timestamps are stored in local time"
+   ],
+   "disputed": [
+    "[P2] src/writer.py:130 - timestamps are stored in local time"
+   ],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "lf11",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/handlers/events.py:61 - a redelivered event is applied twice"
+   ],
+   "disputed": [
+    "[P1] src/handlers/events.py:61 - a redelivered event is applied twice"
+   ],
+   "split": "calibration",
+   "review": "r1"
+  },
+  {
+   "id": "lf12",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/api/batches.py:14 - paginates with page numbers, against our pagination rule"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r1"
+  }
+ ]
+}

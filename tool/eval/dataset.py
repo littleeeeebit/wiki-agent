@@ -7,7 +7,12 @@ every stage 10 tool reads it through: validation, the corpus materialized
 (papers registered as the product registers a local paper), a retrieved
 chunk named as a label names it, and scoring against the labels.
 
-`--check` validates the file and every label against its corpus.
+`--dataset` reads another set of the same shape: reliability PR 5's
+(`eval/jev/reliability/intents.json`, `jev-reliability-intents/1`) adds
+twelve families and per-intent routing, verification and fault labels.
+
+`--check` validates the file and every label against its corpus — for the
+reliability set also each page's hash and each segment the segmenter makes.
 `--calibration` derives stage 6's calibration split from the calibration
 intents alone — route, source, passage, coverage and repair labels, in
 `eval/jev/calibration.json`'s shape — for `tool/eval/policy.py --collect`.
@@ -36,7 +41,20 @@ DATASET = HUB / "eval" / "jev" / "intents.json"
 CALIBRATION = HUB / "eval" / "jev" / "calibration.json"
 CATEGORIES = ("direct", "factual", "routing", "bridge", "multipart", "conflict", "memory", "paper",
               "unanswerable", "adversarial")
+# Reliability PR 5's families, twelve intents each.
+FAMILIES_R5 = ("direct", "routing", "missing", "conflict", "bridge", "memory", "adversarial", "analysis", "pasted",
+               "work_start", "review_fix", "failure")
+RELIABILITY = "jev-reliability-intents/1"
+SCHEMAS = {SCHEMA: CATEGORIES, RELIABILITY: FAMILIES_R5}
 SPLITS = ("calibration", "held_out")
+# The fault a failure-family intent is reproduced with, and the terminal state and reason it must end in:
+# the exception the runner raises for each is the one `test_decision_flow` maps to that status.
+FAULTS = {"cancelled": {"status": "cancelled", "reason": "cancelled"},
+          "exhausted": {"status": "exhausted", "reason": "calls"},
+          "unavailable": {"status": "unavailable", "reason": "timeout"}}
+TRANSITIONS = ("ready", "retrieve", "cancelled", "exhausted", "unavailable")
+VERIFICATION = ("verified", "direct", "abstain", "unverified_analysis", "none")
+OPERATIONS = ("direct_answer", "publish_as_verified")
 # Jev is built and measured in English: every input reaches it through the
 # translator, and Korean left its decisions near 50% (version 3 of the set).
 LANGUAGES = ("en",)
@@ -60,8 +78,9 @@ def load(path: Path = DATASET) -> dict:
 def invalid(data: dict) -> list[str]:
     """What makes a dataset unusable, as sentences; empty when it is not."""
 
-    if data.get("schema") != SCHEMA:
-        return [f"schema is not {SCHEMA}"]
+    if data.get("schema") not in SCHEMAS:
+        return [f"schema is not one of {sorted(SCHEMAS)}"]
+    categories = SCHEMAS[data["schema"]]
     out = []
     intents = data["intents"]
     ids = [i["id"] for i in intents]
@@ -70,7 +89,7 @@ def invalid(data: dict) -> list[str]:
     counts: dict[tuple[str, str], int] = {}
     for i in intents:
         where = i["id"]
-        if i["category"] not in CATEGORIES or i["split"] not in SPLITS:
+        if i["category"] not in categories or i["split"] not in SPLITS:
             out.append(f"{where}: unknown category or split")
         if set(i["variants"]) != set(LANGUAGES) or not all(v.strip() for v in i["variants"].values()):
             out.append(f"{where}: needs exactly one English wording")
@@ -82,10 +101,55 @@ def invalid(data: dict) -> list[str]:
             out.append(f"{where}: an evidence group is a non-empty list of locators")
         if "bridged" in i and not 0 <= i["bridged"] < len(i["evidence"]):
             out.append(f"{where}: bridged names no group")
+        if data["schema"] == RELIABILITY:
+            out += [f"{where}: {p}" for p in routed(i, data["labels"])]
         counts[(i["category"], i["split"])] = counts.get((i["category"], i["split"]), 0) + 1
     declared = {(c, s): n for c, splits in data["categories"].items() for s, n in splits.items()}
     if declared != counts:
         out.append("the declared category counts are not the intents' counts")
+    return out
+
+
+def routed(i: dict, labels: dict) -> list[str]:
+    """What is wrong with a reliability intent's own labels, beside the shared ones."""
+
+    out = []
+    if not isinstance(i.get("analysis"), bool) or not isinstance(i.get("route_expected"), bool):
+        out.append("analysis and route_expected are booleans")
+    segments = i.get("route_segments")
+    if not segments or not all(isinstance(s.get("text"), str) and isinstance(s.get("ask"), bool) for s in segments):
+        out.append("route_segments are [{text, ask}]")
+    fault = i.get("fault")
+    if (fault is not None) != (i["category"] == "failure") or (fault is not None) == i.get("route_expected"):
+        out.append("a fault is the failure family's, and only a fault ends before route verdicts")
+    if fault and (fault.get("phase") != "route" or FAULTS.get(fault.get("kind")) != fault.get("expect")):
+        out.append("a fault is one of FAULTS, at the route, expecting its status and reason")
+    if not i.get("transitions") or set(i["transitions"]) - set(TRANSITIONS):
+        out.append(f"transitions are some of {TRANSITIONS}")
+    if i.get("verification") not in VERIFICATION or set(i.get("forbidden_operations", [None])) - set(OPERATIONS):
+        out.append("unknown verification category or forbidden operation")
+    if set(i.get("sources") or {}) != {a.split("#")[0] for g in i["evidence"] for a in g}:
+        out.append("sources name exactly the pages the evidence names")
+    if i.get("review") not in (labels.get("reviews") or {}):
+        out.append("no recorded label review")
+    return out
+
+
+def frozen(data: dict) -> list[str]:
+    """Where a reliability set no longer matches what it was frozen on: a
+    page whose hash moved, or a query the segmenter now cuts differently."""
+
+    if data["schema"] != RELIABILITY:
+        return []
+    from main import knowledge
+
+    known = pages(data)
+    out = []
+    for i in data["intents"]:
+        out += [f"{i['id']}: {name} changed" for name, h in i["sources"].items()
+                if name not in known or sha(known[name].encode("utf-8")) != h]
+        if knowledge.requirements(i["variants"]["en"]) != [s["text"] for s in i["route_segments"]]:
+            out.append(f"{i['id']}: the segmenter no longer produces route_segments")
     return out
 
 
@@ -338,7 +402,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     data = load(args.dataset)
     if args.check:
-        missing = unresolved(data)
+        missing = unresolved(data) + frozen(data)
         print("\n".join(missing) or f"{len(data['intents'])} intents, labels resolve; "
                                     f"reviewed by {data['labels']['reviewed_by'] or 'nobody yet'}")
         if missing:
