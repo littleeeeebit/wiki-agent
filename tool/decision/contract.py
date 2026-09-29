@@ -51,8 +51,9 @@ INVALID = ("invalid_response", "response_too_large", "unsupported_question")
 
 # `(state, questions, trace, budget, stage) -> {name: answer}`: `decision.evaluate` bound to a config.
 Evaluate = Callable[..., dict]
-# `(state, questions, stage) -> {"answers": {name: "yes" | "no" | option | "unsure"}, "model", "cost_usd",
-# "elapsed_ms"[, "error"]}`: the host model asked what Jev left uncertain (`main.knowledge.host_decides`).
+# The host model asked what Jev left uncertain (`main.knowledge.host_decides`).
+# Called as `(state, questions, stage)`, it returns `answers` ({name: "yes" | "no" | option | "unsure"}),
+# `model`, `cost_usd` and `elapsed_ms`, and `error` when the turn failed.
 Fallback = Callable[..., dict]
 UNSURE = "unsure"
 
