@@ -371,8 +371,11 @@ class Flow:
                  repo_id: str, graph: bool, model: str, live: bool, budget: Budget, pol: decision.Policy,
                  evaluate=None, normalize=None, divide=None, first=None, mend=None,
                  cache: decision.Cache | None = None, required: bool = False,
-                 external: bool = False, tape: Tape | None = None, replay: Tape | None = None, emit=None):
+                 external: bool = False, tape: Tape | None = None, replay: Tape | None = None, emit=None,
+                 audiences: list[str] | None = None):
         self.emit = emit
+        # The audience scope a caller chose (reliability PR 3): every round of the run keeps it in `filters`.
+        self.filters = {"audiences": list(dict.fromkeys(audiences))} if audiences else None
         self.query, self.brief, self.k, self.omitted = query, brief, k, omitted
         self.available, self.repo_id, self.graph, self.model, self.live = available, repo_id, graph, model, live
         self.budget, self.pol, self.cache, self.external = budget, pol, cache, external
@@ -397,7 +400,7 @@ class Flow:
         self.headings: dict[str, str | None] = {}
         self.dossier = {
             "schema_version": DOSSIER, "status": None, "reason": None, "question_en": None, "direct": False,
-            "restrictions": [],
+            "restrictions": [], "audiences": audiences or None,
             "sources": [], "evidence": [], "requirements": [], "material": [], "analysis": False, "split": None,
             "missing": [],
             "conflicts": [], "untrusted": [],
@@ -623,7 +626,7 @@ class Flow:
         self.go("retrieve", reason, sources=selected, score=res["answers"]["retrieve"])
         share = self.share(1, 0)
         req = retrieval.request(self.repo_id, self.query, query_en=self.query_en, sources=selected,
-                                limit=min(self.k, share), seconds=self.budget.left(),
+                                filters=self.filters, limit=min(self.k, share), seconds=self.budget.left(),
                                 graph=retrieval.GRAPH if self.graph else None, max_candidates=share)
         self.searched = list(selected)
         self.rounds(req, self.outside("rounds", lambda: self.first(req)))
@@ -683,6 +686,7 @@ class Flow:
                 self.go("expand", "candidates", round=req["round"], chunks=len(new),
                         graph=sum(h["lane"] == "graph" for h in new),
                         paths=sum(p["status"] == "discovered" for p in result["paths"]),
+                        **({"unclassified": result["audiences"]["unclassified"]} if result.get("audiences") else {}),
                         shown={"candidates": [{"chunk_id": h["chunk_id"], "lane": h["lane"]} for h in new],
                                "walked": result["paths"]})
                 self.go("grade", "expanded")
@@ -888,7 +892,7 @@ class Flow:
         if self.time_for(0.0):
             total = self.budget.limits["candidates"]
             req = retrieval.request(self.repo_id, self.query[:retrieval.MAX_QUERY], sources=self.available,
-                                    limit=min(self.k, total), seconds=self.budget.left(),
+                                    filters=self.filters, limit=min(self.k, total), seconds=self.budget.left(),
                                     graph=retrieval.GRAPH if self.graph else None, max_candidates=total)
             found = self.outside("rounds", lambda: self.first(req))
             self.searched = list(self.available)
@@ -909,6 +913,8 @@ def merged(before: dict, results: list[dict | None]) -> dict:
     chunks = list({c["chunk_id"]: c for r in done for c in r["chunks"]}.values())
     return {**done[0], "chunks": chunks, "paths": [p for r in done for p in r["paths"]],
             "truncated": sorted({t for r in done for t in r["truncated"]}),
+            "audiences": done[0].get("audiences") and {
+                **done[0]["audiences"], "unclassified": sum(r["audiences"]["unclassified"] for r in done)},
             "seen_chunk_ids": list(dict.fromkeys(i for r in done for i in r["seen_chunk_ids"])),
             "spent": before["spent"] + sum(r["spent"] - before["spent"] for r in done)}
 
@@ -916,7 +922,8 @@ def merged(before: dict, results: list[dict | None]) -> dict:
 def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
             cfg: decision.Config | None = None, cancel: threading.Event | None = None, *,
             external: bool = False, record: bool = False, cache: decision.Cache | None = DECISIONS,
-            require: bool = False, budget: Budget | None = None, run: Run | None = None) -> dict:
+            require: bool = False, budget: Budget | None = None, run: Run | None = None,
+            audiences: list[str] | None = None) -> dict:
     """The dossier for one question, with the settings it ran under (never the key).
 
     The app's query path, its shadow mode and `tool/jev_search.py` all run
@@ -928,10 +935,15 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     is an allowance carried over from a run before this one (stage 7's
     return to retrieval) in place of a fresh one. `run` hears every
     transition and the evidence found (stage 9); its stop is the run's.
+    `audiences` narrows every round to the hub documents written for them
+    (`sources.AUDIENCES`); unclassified documents and other repositories'
+    stay eligible, and repository isolation is unchanged. `None` searches as before.
     """
 
     if not query.strip() or not 1 <= k <= MAX_K:
         raise ValueError(f"A query and k between 1 and {MAX_K} are required")
+    if audiences is not None and (not audiences or set(audiences) - set(sources.AUDIENCES)):
+        raise ValueError(f"audiences are some of {sources.AUDIENCES}")
     cfg = cfg or decision.config(project or HUB)
     live = cfg.mode != "off"
     root = Path(project).resolve() if project else None
@@ -943,7 +955,7 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     tape = Tape() if record else None
     inputs = {"query": query, "brief": brief, "k": k, "omitted": omitted, "available": available(root, cfg.disabled),
               "repo_id": evidence.repo_id(root or HUB), "graph": graph_enabled(), "model": cfg.model,
-              "live": live, "external": external, "required": require}
+              "live": live, "external": external, "required": require, "audiences": audiences}
     flow = Flow(**inputs, budget=budget, pol=pol, cache=cache if live else None, tape=tape,
                 emit=run.step if run is not None else None,
                 evaluate=watched(run, "jev", functools.partial(decision.evaluate, cfg)),
@@ -955,7 +967,8 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
                     chunk_ids=given if need == "context" else (),
                     proposals=given if need == "subqueries" else None))
     with (run.phased("retrieve-evidence", "retriever", input=query,
-                     metadata={"k": k, "state": brief, "required": require, "sources": inputs["available"]})
+                     metadata={"k": k, "state": brief, "required": require, "sources": inputs["available"],
+                               "audiences": audiences})
           if run is not None else contextlib.nullcontext({})) as ending:
         dossier = flow.run()
         ending.update(output={"status": dossier["status"], "reason": dossier["reason"],

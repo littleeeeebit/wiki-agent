@@ -5,7 +5,7 @@ import { Composer } from '@/components/Composer'
 import { Btn, ClearAsk } from '@/components/Modal'
 import { Peek } from '@/components/Peek'
 import { Stream } from '@/components/Stream'
-import { Toolbar } from '@/components/Toolbar'
+import { Picker, Toolbar } from '@/components/Toolbar'
 import * as api from '@/lib/api'
 import type { Block, Channel, Ev, Kind, Options, Peek as PeekData, RunSummary, Spec, Tokens, Turn, Verification } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -112,10 +112,20 @@ const MATERIAL: Record<'wiki' | 'claude_md', (candidate: string) => string> = {
   ].join('\n'),
 }
 
+/** The documentation a question searches (reliability PR 3). `all` sends no
+ *  scope: every audience, as before. Shared rules answer every scope. */
+const SCOPES = [
+  { value: 'all', label: '모든 문서', note: '범위를 좁히지 않는다' },
+  { value: 'product', label: '제품 유지보수', note: '개발·구조 문서' },
+  { value: 'hooks', label: '훅 연결', note: '설치·연결 문서' },
+  { value: 'jev', label: 'Jev 유지보수', note: 'Jev 안내와 계획' },
+]
+
 /** The middle pane's conversation: ask the wiki under one focus, read the
  *  grounds, and settle the next task into a spec. */
 export function Query({ channels, options, on, seed, onChannels, onBusy, specs, onSpecs, onStart, onMapRun }: Props) {
   const [active, setActive] = useState('wiki')
+  const [scope, setScope] = useState('all')
   const [typed, setTyped] = useState<{ text: string } | null>(null)
   useEffect(() => {
     if (!seed) return
@@ -241,9 +251,11 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
   const send = useCallback(
     (text: string, propose = false) => {
       const cid = active
-      return follow(cid, (onEvent) => api.say(cid, text, onEvent, propose), false, propose ? '(후보 요청)' : text)
+      const audiences = scope === 'all' ? null : [scope as api.Audience]
+      return follow(cid, (onEvent) => api.say(cid, text, onEvent, propose, audiences), false,
+        propose ? '(후보 요청)' : text)
     },
-    [active, follow],
+    [active, follow, scope],
   )
 
   const stop = useCallback((runId: string) => {
@@ -356,6 +368,8 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
           ))}
         </nav>
         <div className="flex shrink-0 items-center gap-1.5">
+          <Picker label="문서 범위" hideLabel width="w-32" items={SCOPES} value={scope} disabled={busy}
+            onPick={(v) => setScope(v ?? 'all')} />
           {here && <Toolbar value={here} options={options} busy={busy} onChange={apply} />}
           <Btn tone="ghost" className="px-1.5" onClick={wipe} disabled={busy} aria-label="문맥 비우기"
             title="문맥 비우기 — 이 초점의 대화를 새로 시작한다. 지금 대화는 메모리로 남기거나 지운다">

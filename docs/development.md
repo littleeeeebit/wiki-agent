@@ -1,5 +1,8 @@
 # Development and checks
 
+How the parts fit and which document answers what is in
+[architecture](architecture.md).
+
 ```powershell
 python -m pip install -r requirements-dev.txt
 python -m ruff check tool

@@ -9,6 +9,11 @@ directly ([`ENFORCEMENT.md`](ENFORCEMENT.md)).
 The schema is [`SCHEMA.md`](SCHEMA.md); diagnosis and updating are
 [`MAINTENANCE.md`](MAINTENANCE.md). Read them before writing or changing a page.
 
+The pages below are the shared rules. The program's own documents have one
+authority each: [architecture](docs/architecture.md) for product maintenance,
+[hooks setup](docs/hooks-setup.md) for connecting a repository, and
+[Jev maintenance](docs/jev-maintenance.md) for Jev.
+
 ```
 python tool/census.py --project <path> --out raw/census-<name>.jsonl
 python tool/intersect.py raw/census-*.jsonl

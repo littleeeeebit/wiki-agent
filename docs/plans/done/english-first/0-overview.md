@@ -67,3 +67,8 @@ Even while on hold, complete implementations/verifications that do not depend on
 ## How Plans in This Folder Are Loaded into SessionStart
 
 `session_state.plans()` scans `docs/plans/*.md` and loads incomplete rows from the `## 단계` table. Up to 2 files in reverse alphabetical order — if all three are incomplete, only 3 and 2 are loaded, and 1 is not. When a step is finished, change the status cell of that file to `완료`. Files without incomplete rows are omitted.
+
+Historical, as this plan ran. `session_state.plans()` now scans `docs/plans/`
+recursively, skips `done/`, reads plan folders in reverse name order and the
+lowest number first within one, and still shows two plans at most. A plan hidden by
+that cap is still open; the newest overview links to it.

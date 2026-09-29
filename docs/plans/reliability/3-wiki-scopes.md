@@ -112,6 +112,17 @@ Rollback removes optional audience filters without losing indexed text.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Map | Map authorities and scopes | Not started |
-| 2 | Wire | Wire navigation and retrieval applicability | Not started |
-| 3 | Verify | Verify isolation, links and rule injection | Not started |
+| 1 | Map | Map authorities and scopes | Done — `docs/architecture.md`, `docs/jev-maintenance.md` |
+| 2 | Wire | Wire navigation and retrieval applicability | Done — `filters.audiences`, screen scope selector |
+| 3 | Verify | Verify isolation, links and rule injection | Done — fixture tests in `tool/test_retrieval.py` |
+
+## Implementation notes
+
+- Audiences are derived from the path when the index loads (`sources.audiences`),
+  not persisted: no index version, no rebuild, no chunk id change.
+- A blocked chunk's walk status is `audience`, apart from `filtered`, so a
+  diagnostic tells relevance from access.
+- Explicit broader lookup is a request without `audiences`; Jev is offered no
+  audience choice in this PR.
+- SessionStart's document list reads `.wiki/corpus.json`, a per-checkout file:
+  a checkout lists new documents after `python tool/corpus.py --project <repo> --write`.

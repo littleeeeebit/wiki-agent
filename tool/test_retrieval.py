@@ -807,3 +807,118 @@ def test_a_seed_another_seed_links_to_keeps_that_path(world):
     assert [(result["paths"][p]["seed"], result["paths"][p]["status"]) for p in graph["paths"]] == [
         (alpha, "corroborated")]
     index.close()
+
+
+# ---- audience scope (reliability PR 3) ---------------------------------------------------
+
+SCOPE = "wiki pipeline hooks jev install calibrate review"
+
+
+@pytest.fixture
+def hub_world(tmp_path, monkeypatch):
+    """The hub as its own project — shared rules, hook setup, Jev maintenance,
+    product architecture and an unclassified page — beside another repository
+    holding a private memory."""
+
+    hub, other = tmp_path / "hub", tmp_path / "other"
+    monkeypatch.setattr(search, "HUB", hub)
+    monkeypatch.setattr(knowledge, "HUB", hub)
+    files = {
+        hub / "operator/review.md": "# Review\n\nReview every wiki change before merge.\n",
+        hub / "docs/hooks-setup.md": "# Hooks setup\n\nInstall the injection hooks with setup_agents.\n",
+        hub / "docs/jev-maintenance.md": "# Jev maintenance\n\nCalibrate the jev thresholds; roll back with rollout.\n",
+        hub / "docs/architecture.md": "# Architecture\n\nThe pipeline owns its state and its gate.\n",
+        hub / "README.md": "# Readme\n\nThe wiki in one place, see [hook setup](docs/hooks-setup.md) and "
+                           "[Jev upkeep](docs/jev-maintenance.md).\n",
+        other / ".wiki/memory/2026-09-20-secret.md": "# Secret\n\nThe wiki pipeline hooks jev token is hunter2.\n",
+        other / "docs/notes.md": "# Notes\n\nOur wiki pipeline notes.\n",
+    }
+    for path, text in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+    return hub, other
+
+
+def scoped(index, audiences, query=SCOPE, **fields) -> dict:
+    return ask(index, query, **{"graph": None, "filters": {"audiences": audiences} if audiences else {}, **fields})
+
+
+def paths_of(result: dict) -> set[str]:
+    return {c["locator"]["path"] for c in result["chunks"]}
+
+
+def test_each_audience_gets_its_authority_and_the_shared_rules_and_the_unclassified_page_says_so(hub_world):
+    hub, _other = hub_world
+    index = index_of(hub, hub)
+    everything = {"operator/review.md", "docs/hooks-setup.md", "docs/jev-maintenance.md", "docs/architecture.md",
+                  "README.md"}
+    # No scope, the rollback: every page as before, nothing counted.
+    unfiltered = scoped(index, None)
+    assert paths_of(unfiltered) == everything and unfiltered["audiences"] is None
+    expected = {"hooks": {"docs/hooks-setup.md"},
+                "jev": {"docs/jev-maintenance.md"},
+                "product": {"docs/architecture.md", "docs/jev-maintenance.md"}}
+    for audience, authority in expected.items():
+        result = scoped(index, [audience])
+        assert paths_of(result) == authority | {"operator/review.md", "README.md"}, audience
+        assert result["audiences"] == {"requested": [audience], "unclassified": 1}
+    # The classification rides on the chunk, as provenance; its id and text are what they were.
+    jev = chunk_of(index, "docs/jev-maintenance.md", "Calibrate")
+    assert jev["audiences"] == ["jev", "product"] and chunk_of(index, "README.md", "wiki")["audiences"] is None
+    assert jev["chunk_id"] in {c["chunk_id"] for c in unfiltered["chunks"]}
+    index.close()
+
+
+def test_a_wrong_audience_page_does_not_come_in_through_a_link_or_as_a_named_seed(hub_world):
+    hub, _other = hub_world
+    index = index_of(hub, hub)
+    # README is the only match; it links to both setup pages.
+    result = scoped(index, ["hooks"], "one place", graph=retrieval.GRAPH)
+    assert "docs/hooks-setup.md" in paths_of(result) and "docs/jev-maintenance.md" not in paths_of(result)
+    refused = [p for p in result["paths"] if p["status"] == "audience"]
+    assert refused and all(p["to"] != p["seed"] for p in refused)
+    jev = chunk_of(index, "docs/jev-maintenance.md", "Calibrate")["chunk_id"]
+    for named in ({"graph_seeds": [jev]}, {"context_of": [jev]}):
+        req = retrieval.request(evidence.repo_id(hub), "one place", filters={"audiences": ["hooks"]}, limit=0,
+                                **named)
+        seeded = retrieval.run(index.snapshot(), req)
+        assert seeded["chunks"] == [] and seeded["paths"][0]["status"] == "audience"
+    index.close()
+
+
+def test_a_scope_never_widens_repository_isolation_and_hub_maintenance_pages_stay_in_the_hub(hub_world):
+    hub, other = hub_world
+    index = index_of(hub, hub)
+    for audiences in (None, ["product"], ["hooks", "jev"]):
+        assert not any("hunter2" in c["text"] for c in scoped(index, audiences)["chunks"])
+    index.close()
+    # From the other repository: its own documents are unclassified and stay,
+    # the hub gives its shared rules only, never its maintenance pages.
+    theirs = index_of(hub, other)
+    result = scoped(theirs, ["jev"])
+    assert "docs/notes.md" in paths_of(result) and "operator/review.md" in paths_of(result)
+    assert not paths_of(result) & {"docs/jev-maintenance.md", "docs/hooks-setup.md", "docs/architecture.md"}
+    theirs.close()
+
+
+def test_an_audience_filter_is_checked_and_kept_by_every_repair():
+    repo = evidence.repo_id(Path.cwd())
+    for bad in ([], ["ops"], ["jev", "jev"], "jev"):
+        assert "filters.audiences" in retrieval.problems(retrieval.request(repo, "q", filters={"audiences": bad}))
+    req = retrieval.request(repo, "q", filters={"audiences": ["jev"]})
+    result = {"seen_chunk_ids": [], "spent": 0, "generation": 1, "paths": [], "chunks": []}
+    for need, extra in (("sources", {"sources": ["papers"]}), ("external", {}),
+                        ("subqueries", {"subqueries": ["another question"]})):
+        requests, _note = retrieval.repair(req, result, need, **extra)
+        assert requests and all(r["filters"] == {"audiences": ["jev"]} for r in requests), need
+
+
+def test_prepare_carries_the_scope_into_its_rounds_and_refuses_an_unknown_one(world, monkeypatch):
+    _hub, repo = world
+    seen = []
+    monkeypatch.setattr(knowledge, "run_round", lambda req, project, budget: seen.append(req) or None)
+    dossier = knowledge.prepare(QUESTION, repo, cfg=OFF, cache=None, audiences=["hooks"])
+    assert seen and all(r["filters"] == {"audiences": ["hooks"]} for r in seen)
+    assert dossier["audiences"] == ["hooks"]
+    with pytest.raises(ValueError, match="audiences"):
+        knowledge.prepare(QUESTION, repo, cfg=OFF, cache=None, audiences=["ops"])

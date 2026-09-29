@@ -22,7 +22,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from agent import ChatSession, explain
 from search import refresh
@@ -383,6 +383,8 @@ def drafting(cid: str, lead: str, spent: dict, halt: threading.Event | None = No
 class Say(BaseModel):
     text: str = ""
     propose: bool = False    # `[후보 내기]`: the server gathers the materials
+    # The documentation scope retrieval is narrowed to (reliability PR 3). None: every audience, as before.
+    audiences: list[Literal["product", "hooks", "jev"]] | None = Field(None, min_length=1)
 
 
 class Config(BaseModel):
@@ -514,13 +516,14 @@ def knowledge_cancel(run_id: str) -> dict:
     return {"ok": True, "done": run.done, "published": published}
 
 
-def shadow(cid: str, query: str, repo: Path, context: str, cfg: decision.Config) -> None:
+def shadow(cid: str, query: str, repo: Path, context: str, cfg: decision.Config,
+           audiences: list[str] | None = None) -> None:
     """Shadow mode: Jev decides beside the turn and its dossier is recorded,
     while the turn runs on baseline behaviour and waits for none of it."""
 
     def record():
         try:
-            dossier = prepare(query, repo, context, cfg=cfg)
+            dossier = prepare(query, repo, context, cfg=cfg, audiences=audiences)
         except Exception as exc:  # noqa: BLE001 — a shadow never touches the turn
             dossier = {"status": "fallback", "trace": [{"fallback": type(exc).__name__}]}
         remember(cid, "retrieval", "Jev shadow decision", repo=repo, dossier=knowledge.scrub(dossier, cfg),
@@ -745,10 +748,10 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             prior = recall(cid)[-7:-1]
             context = "\n".join(f"{r['role']}: {r.get('said', r['text'])}" for r in prior)
             if jev.mode == "active":
-                dossier = prepare(text or sent, run.repo, context, cfg=jev, run=run)
+                dossier = prepare(text or sent, run.repo, context, cfg=jev, run=run, audiences=body.audiences)
                 keep(cid, "retrieval", "Jev retrieval decision", repo=run.repo, dossier=dossier, run_id=run.id)
             else:
-                shadow(cid, text or sent, run.repo, context, jev)
+                shadow(cid, text or sent, run.repo, context, jev, body.audiences)
         # A display-time match against the relevant rules. Not a check
         # that the host actually injected anything.
         hits = hits_for(text) if text else []
