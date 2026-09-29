@@ -24,6 +24,8 @@ against the evidence, so getting it right is up to you.
   right after it: `[e3]`, or `[e3, m1]` for several. Code writes out where
   each passage is. Cite only the evidence ids listed below, and write no file
   path or line number of your own.
+- The server already searched for this answer. Do not run the search command
+  or search the repository yourself: nothing found that way can be cited.
 - Evidence of kind `material` is text the user supplied, such as a pasted
   notice. Cite it for what that text says; it is never evidence of a fact
   about the repository or the world.

@@ -97,8 +97,12 @@ def test_stream_persists_both_and_keeps_original_on_rewrite_failure(tmp_path):
         web = client()
         response = web.post("/api/say/wiki", json={"text": "검사 결과?"})
         events = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
-        assert [e["kind"] for e in events if e["kind"] != "step"] == ["done", "simple_start", "simple_delta",
-                                                                      "simple_done"]
+        assert [e["kind"] for e in events if e["kind"] != "step"] == ["done", "call", "simple_start",
+                                                                      "simple_delta", "simple_done", "call"]
+        # The host's answer turn and its explanation, each one call; the CLI reported no cost, so unknown.
+        calls = [e for e in events if e["kind"] == "call"]
+        assert [c["purpose"] for c in calls] == [["draft"], ["explain"]]
+        assert all(c["cost_known"] is False and c["cost_usd"] is None for c in calls)
         assert [e["seq"] for e in events] == list(range(len(events))), "a run's events are numbered in order"
         saved = web.get("/api/log/wiki").json()[-1]
         assert saved["text"] == "정확한 원문 13건" and saved["simple_text"] == "쉬운 설명 13건"

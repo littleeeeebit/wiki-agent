@@ -44,7 +44,7 @@ from pathlib import Path
 from common import settings
 
 __all__ = ("translate", "english", "parts", "retire", "usage", "glossary", "KO_EN", "EN_KO", "checked", "added",
-           "api_key", "HANGUL_WORD")
+           "api_key", "HANGUL_WORD", "version")
 
 HERE = Path(__file__).resolve().parents[1]  # `tool/`
 ROOT = HERE.parent
@@ -809,6 +809,12 @@ def checked(texts: list[str], direction: str, deadline: float) -> list[tuple[str
     keep = glossary()[0]
     return _outcomes(list(texts), direction, deadline,
                      lambda source, made: None if kept(source, made, keep, words=True) else "meaning_changed")
+
+
+def version() -> str:
+    """The version `english` stamps on a translation made now."""
+
+    return f"{MODEL}/p{PROMPT_VERSION}/g{glossary()[2]}/e{ENGLISH_VERSION}"
 
 
 def english(texts: list[str], deadline: float, held: dict[str, dict] | None = None) -> list[dict]:

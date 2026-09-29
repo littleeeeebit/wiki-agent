@@ -11,8 +11,10 @@ The knowledge graph of stage 4 of `docs/plans/jev/` (`main.knowledge`).
   bounded contradictions. `--estimate` counts and sends nothing. Proposals
   run the chat's CLI (`agent`); judgments spend the TypeSafe key.
 - `retire`: stop using every extracted relationship; structure stays.
+- `health`: the graph as the index holds it now, read-only — nothing is
+  indexed or extracted (`GET /api/knowledge/graph/health` answers the same).
 
-Exit 1 when the check finds a problem.
+Exit 1 when the check finds a problem; `health` exits 1 unless the graph is `healthy`.
 """
 
 import argparse
@@ -22,9 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from main.knowledge import check_graph, extract_graph, retire_graph  # noqa: E402
-
-FAILURES = ("invalid", "dangling", "out_of_scope", "unresolved_spans")
+from main.knowledge import FAILURES, check_graph, extract_graph, graph_health, retire_graph  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -39,8 +39,13 @@ def main(argv: list[str] | None = None) -> int:
     extract.add_argument("--model", default="", help="the proposing model; the CLI's default without one")
     extract.add_argument("--estimate", action="store_true", help="count what would be sent; send nothing")
     commands.add_parser("retire")
+    commands.add_parser("health")
     args = parser.parse_args(argv)
     project = str(Path(args.project).expanduser().resolve()) if args.project else None
+    if args.command == "health":
+        out = graph_health(project)
+        print(json.dumps(out, ensure_ascii=False, indent=2))
+        return 0 if out["status"] == "healthy" else 1
     if args.command == "extract":
         if args.limit < 1:
             parser.error("--limit must be at least 1")

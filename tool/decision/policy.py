@@ -71,12 +71,17 @@ def provisional() -> Policy:
     return Policy(PROVISIONAL_VERSION, {k: dict(v) for k, v in PROVISIONAL.items()})
 
 
-def policy(model: str, path: Path | None = None, prompt_version: str | None = None) -> Policy:
+def policy(model: str, path: Path | None = None, prompt_version: str | None = None,
+           kind_versions: dict[str, str] | None = None) -> Policy:
     """The policy for `model` asked with `prompt_version`: fitted kinds from
     the artifact when it was fitted on that model and those prompts,
     provisional for the rest. An artifact that cannot be read, or is for
     another model or other prompts, leaves every kind provisional — and a
-    rule that is not well formed leaves its kind provisional — each saying why."""
+    rule that is not well formed leaves its kind provisional — each saying why.
+
+    `kind_versions` binds a kind whose question lies outside `prompt_version`
+    to its own prompt digest: its rule counts as fitted only when the
+    artifact's `kind_versions` names the same digest (reliability PR 4)."""
 
     path = path or settings.HUB / ARTIFACT
     try:
@@ -90,7 +95,9 @@ def policy(model: str, path: Path | None = None, prompt_version: str | None = No
     if prompt_version is not None and data.get("prompt_version") != prompt_version:
         return Policy(PROVISIONAL_VERSION, provisional().rules, problem="artifact_for_other_prompts")
     rules = provisional().rules
-    fitted = tuple(k for k, rule in (data.get("rules") or {}).items() if k in KINDS and valid(k, rule))
+    bound = data.get("kind_versions") if isinstance(data.get("kind_versions"), dict) else {}
+    fitted = tuple(k for k, rule in (data.get("rules") or {}).items() if k in KINDS and valid(k, rule)
+                   and (k not in (kind_versions or {}) or bound.get(k) == kind_versions[k]))
     for kind in fitted:
         rules[kind] = {n: data["rules"][kind][n] for n in PROVISIONAL[kind]}
     if not fitted:

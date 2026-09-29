@@ -31,7 +31,7 @@ from wiki import label, match_pages, pages
 import decision
 import translate
 
-from . import channels, memory
+from . import channels, memory, tracing
 from . import knowledge
 from .knowledge import Run, grounded, prepare
 
@@ -415,7 +415,8 @@ def jev_status() -> dict:
 
     from . import decisions  # `decisions` imports this module
 
-    return {**decision.config(current_repo()).status(), "agent_decisions": decisions.coverage()}
+    cfg = decision.config(current_repo())
+    return {**cfg.status(), "agent_decisions": decisions.coverage(cfg)}
 
 
 @router.post("/api/jev/probe")
@@ -456,6 +457,15 @@ def jev_settings(body: JevSettings) -> dict:
 @router.get("/api/knowledge/status")
 def knowledge_status() -> dict:
     return knowledge.status(current_repo())
+
+
+@router.get("/api/knowledge/graph/health")
+def knowledge_graph_health() -> dict:
+    """The selected repository's knowledge graph, checked as its index holds
+    it now (reliability PR 4). Reads: no index is built, nothing extracted,
+    no model asked."""
+
+    return knowledge.graph_health(current_repo())
 
 
 @router.get("/api/knowledge/runs/{run_id}")
@@ -760,6 +770,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
         if dossier is None:
             run.step("answer", "baseline")
         events = iter(()) if dossier is not None else session(cid).say(sent, run.cancel)
+        started, searches = time.monotonic(), 0
         if dossier is not None:
             # Active: the answer is drafted, checked, and only then published
             # (stage 7 of `docs/plans/jev/`). Nothing of the draft is sent on.
@@ -811,6 +822,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             if (shown_line := line(cid, ev)) is not None:
                 put(shown_line)
                 continue
+            searches += ev.kind == "tool" and bool(knowledge.HOST_SEARCH.search(ev.text or ""))
             if ev.kind == "delta":
                 reply.append(ev.text)
             # A quota or API error arrives on `done` with `error=True`. It
@@ -841,6 +853,12 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             put({"kind": ev.kind, "text": ev.text, **({"code": code} if ev.kind == "error" else {}), **ev.meta})
             if ev.kind == "done" and shown:
                 put({"kind": "blocks", "text": "", "blocks": shown})
+        if dossier is None:
+            # The host answered on its own, searching as it chose: one call, its searches counted.
+            run.called(tracing.call("draft", "host", "host", model=metadata.get("model"), parent=run.id, sent=sent,
+                                    elapsed_ms=round((time.monotonic() - started) * 1000),
+                                    tokens=metadata.get("tokens"), cost_usd=metadata.get("cost_usd"),
+                                    outcome="ok" if finished else "failed", host_searches=searches))
         if run.cancel.is_set() and not run.sealed:
             getattr(events, "close", lambda: None)()   # the host's turn lets go of its session now
             raise Stopped()
@@ -850,6 +868,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
         if finished and not failed and reply[0].strip() and not run.cancel.is_set():
             run.step("explain", "writing")
             put({"kind": "simple_start", "text": ""})
+            started = time.monotonic()
             try:
                 simple_finished = False
                 for ev in explain("".join(reply), cfg["model"], cfg["effort"]):
@@ -878,6 +897,10 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             except Exception as exc:
                 simple, simple_error = "", f"{type(exc).__name__}: {exc}"
                 put({"kind": "simple_error", "text": simple_error})
+            run.called(tracing.call("explain", "host", "host", model=simple_meta.get("model"), parent=run.id,
+                                    sent=reply, elapsed_ms=round((time.monotonic() - started) * 1000),
+                                    tokens=simple_meta.get("tokens"), cost_usd=simple_meta.get("cost_usd"),
+                                    outcome="failed" if simple_error else "ok"))
     except Stopped:
         # A stop is its own outcome: not an error, not an answer. What had
         # streamed before it stays on record beside the reason.

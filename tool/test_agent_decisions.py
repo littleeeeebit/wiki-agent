@@ -85,7 +85,8 @@ def jev(tmp_path, monkeypatch):
     retrieved = []
 
     def prepare(query, project, state="", **kw):
-        retrieved.append({"query": query, "budget": kw.get("budget"), "calls": kw["budget"].used["calls"]})
+        retrieved.append({"query": query, "budget": kw.get("budget"), "calls": kw["budget"].used["calls"],
+                          "require": kw.get("require"), "cause": kw.get("cause")})
         return DOSSIER
 
     monkeypatch.setattr(decisions.knowledge, "prepare", prepare)
@@ -297,7 +298,14 @@ def test_the_first_turn_carries_evidence_jev_chose_to_gather_first(repo, jev):
     assert jev.retrieved[0]["calls"] == 1, "retrieval spends the choice's budget, not a new one"
     record = decisions.history(("proj", sid))[0]
     assert record["point"] == "work.start" and record["selected"] == "evidence" and record["rejected"] == ["dispatch"]
-    assert record["outcomes"] == [{"status": "executed", "retrieval": "partial", "evidence_ids": ["c1", "c2"]}]
+    assert record["outcomes"] == [{"status": "executed", "retrieval": "partial", "evidence_ids": ["c1", "c2"],
+                                   "calls": []}]
+    # The admitted pick is the retrieval's cause: the route is not asked again whether to retrieve (PR 4).
+    assert jev.retrieved[0]["require"] is True
+    assert jev.retrieved[0]["cause"] == {"action_id": record["proposal"]["proposal_id"], "point": "work.start",
+                                         "operation": "retrieve_evidence",
+                                         "state_revision": record["proposal"]["spec_revision"]}
+    assert record["jev"]["call"]["purpose"] == ["route"] and record["jev"]["call"]["cost_known"] is False
     rows = work.recall(Path(path))
     assert rows[0]["role"] == "user" and rows[0]["text"] == sent, "the record keeps what was sent"
 

@@ -739,6 +739,36 @@ class Store:
                         "coverage": "full_text", "record": None})
         return out
 
+    def drift(self, listed: list[Path]) -> dict[str, list[str]]:
+        """What `sync` would change in the generation read, found without
+        writing: `changed`, files whose bytes differ or that are gone, and
+        `added`, listed files it would index but has not. `listed` are the
+        resolved paths the listing names (`Index.listed`)."""
+
+        with self.lock:
+            held = {row[0]: row[1:] for row in self.db.execute(
+                "SELECT canonical, stamp, size, revision FROM sources WHERE gen = ?", (self.reading(),))}
+        changed, added, seen = [], [], set()
+        for path in listed:
+            canonical = os.path.normcase(str(path))
+            seen.add(canonical)
+            old = held.get(canonical)
+            try:
+                stat = path.stat()
+                if old and (stat.st_mtime_ns, stat.st_size) == tuple(old[:2]):
+                    continue
+                data = path.read_bytes()
+                data.decode("utf-8")
+            except (OSError, UnicodeDecodeError):   # what `sync` skips it would not index either
+                if old:
+                    changed.append(canonical)
+                continue
+            if old is None:
+                added.append(canonical)
+            elif hashlib.sha256(data).hexdigest() != old[2]:
+                changed.append(canonical)
+        return {"changed": changed + [c for c in held if c not in seen], "added": added}
+
     def english(self, source: str, texts: list[str]) -> dict[str, dict]:
         """The English kept for these texts of a private source: `{text: outcome}`."""
 
@@ -806,6 +836,7 @@ class Index:
         self.loaded: str | None = None
         # Every file the loaded chunks came from, and its revision.
         self.files: dict[Path, str] = {}
+        self.listed: list[Path] = []
         self.chunks: list[dict] = []
         self.matrix = None
         self.graph = knowledge_graph.Graph(self.store)
@@ -817,7 +848,13 @@ class Index:
         self.store.close()
         self.records.close()
 
-    def refresh(self) -> None:
+    def refresh(self, sync: bool = True) -> None:
+        """Bring the store in line with the files, load its chunks and the
+        graph. `sync=False` loads the store as it stands: no file is cut
+        again, no vector queued, no graph rebuilt, nothing written — what a
+        read-only check reads (`knowledge.graph_health`). `listed` is every
+        file the listing names now, whichever way."""
+
         listed = []
         hub_root = self.hub.resolve()
         for path in listing(self.hub, self.project):
@@ -830,15 +867,18 @@ class Index:
             # A link that leads out of its repository is not that repository's evidence.
             if resolved.is_relative_to(hub_root if shared else root.resolve()):
                 listed.append((path, root, resolved, shared))
-        try:
-            self.store.sync(listed)
-        except sqlite3.Error as error:
-            # What was loaded stays; the next refresh tries again.
-            print(f"evidence store not updated: {type(error).__name__}", file=sys.stderr)
-        self.forget()
+        self.listed = [resolved for _path, _root, resolved, _shared in listed]
+        if sync:
+            try:
+                self.store.sync(listed)
+            except sqlite3.Error as error:
+                # What was loaded stays; the next refresh tries again.
+                print(f"evidence store not updated: {type(error).__name__}", file=sys.stderr)
+            self.forget()
         version = f"{self.store.version()}/{self.records.version()}"
         if self.chunks and version == self.loaded:
-            self.link()
+            if sync:
+                self.link()
             return
         self.loaded = version
         roots = {evidence.repo_id(self.hub): self.hub}
@@ -865,9 +905,10 @@ class Index:
                 self.postings[term].append((i, n))
         self.average = sum(self.lengths) / max(1, len(self.lengths))
         self.matrix = None
-        self.embedder.want([(c["key"], c["indexed"]) for c in self.chunks],
-                           {c["key"] for c in self.chunks if c["visibility"] == "private"})
-        self.link()
+        if sync:
+            self.embedder.want([(c["key"], c["indexed"]) for c in self.chunks],
+                               {c["key"] for c in self.chunks if c["visibility"] == "private"})
+            self.link()
 
     def link(self) -> None:
         """Bring the knowledge graph in line with the loaded chunks. A no-op

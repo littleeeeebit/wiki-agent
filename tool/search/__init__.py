@@ -23,6 +23,7 @@ import http.client
 import json
 import os
 import secrets
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -31,7 +32,7 @@ from pathlib import Path
 
 __all__ = ("ask", "local_index", "evidence_store", "resolve", "notify", "PING", "spawn", "PORT", "HUB",
            "cache_dir", "state_path", "version", "records", "refresh", "sources", "providers",
-           "knowledge_graph", "projection", "retrieval", "retrieve")
+           "knowledge_graph", "projection", "retrieval", "retrieve", "published")
 
 HERE = Path(__file__).resolve().parent
 # The hub whose `operator/` and `craft/` every search covers. `WIKI_ROOT` as in `wiki`.
@@ -197,7 +198,35 @@ def projection(project: str | Path) -> list[dict]:
     return knowledge_graph.projection(store_path(HUB, root), repo_id(root))
 
 
-def local_index(project: str | Path | None, hub: Path | None = None, vectors: bool = False, wait: float = 600.0):
+def published(project: str | Path | None) -> tuple[int | None, str | None]:
+    """`(generation, why not)` of `project`'s evidence store, read-only:
+    the published generation this code reads, or `None` and why there is
+    none this code can read — `no_store`, `not_published`, `other_chunker`
+    (its generation, then) or `unreadable`. Nothing is created."""
+
+    from .daemon import store_path
+    from .evidence import CHUNKER
+
+    path = store_path(HUB, Path(project).resolve() if project else None)
+    if not path.exists():
+        return None, "no_store"
+    try:
+        db = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, timeout=5.0)
+        try:
+            current = knowledge_graph.meta(db, "current")
+            row = db.execute("SELECT chunker FROM generations WHERE gen = ?", (int(current),)).fetchone() \
+                if current is not None else None
+        finally:
+            db.close()
+    except (sqlite3.Error, ValueError):
+        return None, "unreadable"
+    if current is None:
+        return None, "not_published"
+    return int(current), None if row and row[0] == CHUNKER else "other_chunker"
+
+
+def local_index(project: str | Path | None, hub: Path | None = None, vectors: bool = False, wait: float = 600.0,
+                existing: bool = False):
     """An index built in this process, not the daemon's.
     `.search(query, k, sources)` asks it; `.files` holds every file it read;
     `.graph` is its knowledge graph (`knowledge_graph.Graph`).
@@ -207,6 +236,10 @@ def local_index(project: str | Path | None, hub: Path | None = None, vectors: bo
     `wait` seconds until every chunk has been tried. `.complete()` says
     whether it got there — an incomplete index ranks with BM25 alone, which
     the caller must not report as hybrid.
+
+    `existing` opens the store as it stands (`Index.refresh(sync=False)`):
+    nothing is cut, embedded or rebuilt. The caller checks first that the
+    store exists — opening one creates it.
     """
 
     from .daemon import Embedder, Index
@@ -214,7 +247,7 @@ def local_index(project: str | Path | None, hub: Path | None = None, vectors: bo
     embedder = Embedder(cache_dir() if vectors else None)
     embedder.start()
     index = Index(Path(hub or HUB), Path(project) if project else None, embedder)
-    index.refresh()
+    index.refresh(sync=not existing)
     end = time.monotonic() + wait
     while vectors and not index.complete() and embedder.state != "off" and time.monotonic() < end:
         time.sleep(0.2)
