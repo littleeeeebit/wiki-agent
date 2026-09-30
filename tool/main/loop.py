@@ -132,6 +132,9 @@ def parse(text: str, n: int, pr: int, head: str, known: set[str] = frozenset()) 
 
     metas = re.findall(FENCE.format(META), text, re.M | re.S)
     text = re.sub(FENCE.format(META) + r"[ \t]*\r?\n?", "", text, flags=re.M | re.S)
+    if re.search(rf"^\s*```{META}", text, re.M):
+        # Opened and never closed: an attempt at identity, not an answer without one.
+        raise ValueError("`finding-meta` 블록이 닫히지 않았다")
     lines = [line.rstrip() for line in text.strip().splitlines()]
     if not lines:
         raise ValueError("빈 답이다")
@@ -304,6 +307,23 @@ def identified(spec: dict, findings: list[dict]) -> list[dict]:
                 "trigger": str(m.get("trigger") or ""), "evidence": str(m.get("evidence") or ""), "possible": possible}
         known[fid] = item
         out.append(item)
+    return out
+
+
+def vouched(disposition: list[dict] | None, items: list[dict]) -> list[dict] | None:
+    """The fixing side's disposition with each `id` kept only when this round
+    gave it — to the finding the entry's text names, when the text names one.
+    A made-up or misplaced id is dropped, and `same` decides instead: an id
+    never makes two findings one."""
+
+    if disposition is None:
+        return None
+    given = {f["id"] for f in items if f.get("id")}
+    out = []
+    for d in disposition:
+        named = next((f.get("id") for f in items if same(d["finding"], f["head"])), None)
+        ok = d.get("id") in given and named in (None, d.get("id"))
+        out.append({**d, "id": d.get("id") if ok else None})
     return out
 
 
@@ -1031,8 +1051,8 @@ def step(loop: Loop) -> bool:
     answer = told(loop, spec, path, text)
     if answer is None:
         return False
-    disposition = disposed(answer)
     latest = spec["rounds"][-1]
+    disposition = vouched(disposed(answer), latest.get("items") or [])
     spec = change(loop, rounds=[*spec["rounds"][:-1], {**latest, "disposition": disposition,
                                                        "items": settled(latest.get("items") or [], disposition)}])
     if spec is None:

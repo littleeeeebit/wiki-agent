@@ -346,7 +346,8 @@ def test_finding_meta_is_checked_against_the_ids_the_spec_has():
     assert parsed["findings"][1]["body"] == "", "블록은 발견의 본문이 아니다"
     for block, why in ((meta(("a", "b"), ("c", "d", "F2")), "F2"), (meta(("a", "b"), ("c", "d", 1)), "existing_id"),
                        (meta(("a", "b")), "ordinal"), ("```finding-meta\n{not json\n```", "JSON"),
-                       (meta(("a", " "), ("c", "d")), "invariant")):
+                       (meta(("a", " "), ("c", "d")), "invariant"),
+                       ("```finding-meta\n{not json", "닫히지 않았다")):
         with pytest.raises(ValueError, match=why):
             loop.parse(text(block), 1, 12, head, {"F1"})
     legacy = loop.parse(text(""), 1, 12, head)
@@ -372,6 +373,26 @@ def test_ids_follow_the_validated_id_then_the_invariant_and_flag_a_near_miss():
     assert loop.seen(spec) == {"F1": [1, 2], "F2": [2]}
     unnamed = loop.identified(spec, [{**found(m("a", "b"))[0], "meta": None}])
     assert unnamed[0]["id"] is None, "meta 없는 발견은 id 를 지어내지 않는다"
+
+
+def test_a_disposition_id_counts_only_when_this_round_gave_it_to_that_finding():
+    """PR #56 round 1: an id the fixing side made up, repeated over two
+    rounds, stopped the loop for a dispute between unrelated findings."""
+
+    def said(finding, fid):
+        return loop.disposed("```disposition\n" + json.dumps(
+            [{"finding": finding, "id": fid, "action": "disagree"}]) + "\n```")
+
+    items = [{"id": "F1", "grade": "P1", "head": "[P1] a.py:1 — issue A"},
+             {"id": "F2", "grade": "P1", "head": "[P1] b.py:70 — issue B"}]
+    before = loop.vouched(said("[P1] a.py:1 — issue A", "F999"), items[:1])
+    now = loop.vouched(said("[P1] b.py:70 — unrelated issue B", "F999"), items[1:])
+    assert before[0]["id"] is None and now[0]["id"] is None, "준 적 없는 id 는 버린다"
+    assert loop.disputed(before, now) == "", "다른 발견은 반론 반복이 아니다"
+    assert loop.vouched(said("[P1] b.py:70 — issue B", "F1"), items)[0]["id"] is None, "다른 발견의 id"
+    kept = loop.vouched(said("[P1] a.py:1 — reworded", "F1"), items)
+    assert kept[0]["id"] == "F1" and loop.vouched(None, items) is None
+    assert loop.disputed(kept, loop.vouched(said("[P1] a.py:9 — moved", "F1"), items)) == "[P1] a.py:9 — moved"
 
 
 def test_the_same_change_reviewed_as_plan_or_code_gets_its_own_criteria(world):
