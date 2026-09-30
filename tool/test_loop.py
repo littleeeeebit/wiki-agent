@@ -393,6 +393,13 @@ def test_a_disposition_id_counts_only_when_this_round_gave_it_to_that_finding():
     kept = loop.vouched(said("[P1] a.py:1 — reworded", "F1"), items)
     assert kept[0]["id"] == "F1" and loop.vouched(None, items) is None
     assert loop.disputed(kept, loop.vouched(said("[P1] a.py:9 — moved", "F1"), items)) == "[P1] a.py:9 — moved"
+    # Round 2: two findings at one place. F2's own id stands, and a first
+    # disagreement with F2 is not a repeat of the one with F1.
+    shared = [{"id": "F1", "grade": "P1", "head": "[P1] a.py:1 — validate input"},
+              {"id": "F2", "grade": "P1", "head": "[P1] a.py:1 — close connection"}]
+    again = loop.vouched(said("[P1] a.py:1 — close connection", "F2"), shared)
+    assert again[0]["id"] == "F2"
+    assert loop.disputed(loop.vouched(said("[P1] a.py:1 — validate input", "F1"), shared), again) == ""
 
 
 def test_the_same_change_reviewed_as_plan_or_code_gets_its_own_criteria(world):

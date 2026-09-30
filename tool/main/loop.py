@@ -312,17 +312,18 @@ def identified(spec: dict, findings: list[dict]) -> list[dict]:
 
 def vouched(disposition: list[dict] | None, items: list[dict]) -> list[dict] | None:
     """The fixing side's disposition with each `id` kept only when this round
-    gave it — to the finding the entry's text names, when the text names one.
-    A made-up or misplaced id is dropped, and `same` decides instead: an id
-    never makes two findings one."""
+    gave it — to one of the findings the entry's text names, when it names
+    any. `same` is loose (a shared file and line is enough), so two findings
+    at one place are both named. A made-up or misplaced id is dropped, and
+    `same` decides instead: an id never makes two findings one."""
 
     if disposition is None:
         return None
     given = {f["id"] for f in items if f.get("id")}
     out = []
     for d in disposition:
-        named = next((f.get("id") for f in items if same(d["finding"], f["head"])), None)
-        ok = d.get("id") in given and named in (None, d.get("id"))
+        named = {f.get("id") for f in items if same(d["finding"], f["head"])}
+        ok = d.get("id") in given and (not named or d.get("id") in named)
         out.append({**d, "id": d.get("id") if ok else None})
     return out
 
