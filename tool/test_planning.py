@@ -555,6 +555,57 @@ def test_a_restart_mid_turn_keeps_the_call_and_marks_its_spend_unknown(checkout)
     assert p["spent"]["calls"] == 1 and p["spent"]["unknown"] and not p["inflight"]
 
 
+def test_a_lost_transcript_row_keeps_the_turn_s_usage(checkout):
+    real, lost = work.remember, []
+
+    def flaky(path, role, text, **extra):
+        if role == "assistant" and not lost:
+            lost.append(text)
+            raise PermissionError("the record is held open")
+        real(path, role, text, **extra)
+
+    Host.replies = [sources, outline, stage(1), stage(2)]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", GitHub()), \
+            patch.object(work, "remember", flaky):
+        sid = client().post("/api/plans", json=request()).json()["id"]
+        p = settled(sid, "handoff")["planning"]
+    assert lost and (p["spent"]["calls"], p["spent"]["tokens"], p["spent"]["unknown"], p["inflight"]) == (4, 60, False, False)
+
+
+def test_a_turn_that_breaks_after_it_was_sent_is_unknown_spend(checkout):
+    real = planning.consume
+
+    def breaks(path, run, text):
+        if "Phase: outline" in text:
+            raise RuntimeError("broke after the send")
+        return real(path, run, text)
+
+    Host.replies = [sources, outline]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", GitHub()), \
+            patch.object(planning, "consume", breaks):
+        sid = client().post("/api/plans", json=request()).json()["id"]
+        p = settled(sid, "stopped")["planning"]
+    assert p["stopped"]["reason"] == "broken" and p["spent"]["calls"] == 2
+    assert p["spent"]["unknown"] and not p["inflight"], "기록 전에 깨진 턴은 0 이 아니라 모름이다"
+
+
+def test_a_crlf_document_keeps_its_own_hash(checkout):
+    def crlf(n):
+        make = stage(n)
+        return lambda text, halt: make(text, halt).replace("\\n", "\\r\\n")   # inside the JSON string
+
+    Host.replies = [sources, outline, crlf(1), crlf(2)]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", GitHub()):
+        sid = client().post("/api/plans", json=request()).json()["id"]
+        spec = settled(sid, "handoff")
+    p = spec["planning"]
+    assert not p.get("repaired") and p["spent"]["calls"] == 4, "고치는 턴 없이 지난다"
+    path = Path(spec["worktree"])
+    for e in p["artifact_manifest"]:
+        data = (path / e["path"]).read_bytes()
+        assert b"\r\n" not in data and planning.sha(data.decode("utf-8")) == e["sha256"]
+
+
 def test_cancel_keeps_the_research_and_resume_goes_on_from_there(checkout):
     web = client()
     entered = threading.Event()

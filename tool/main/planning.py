@@ -347,6 +347,8 @@ def filed(value, allowed: set[str]) -> dict:
     content = value.get("content")
     if not isinstance(content, str) or not content.strip() or len(content) > MAX_FILE:
         raise ValueError(f"`{rel}` 의 내용이 비었거나 {MAX_FILE}자를 넘는다")
+    # The text `atomic` writes, so every hash taken of it is the file's own.
+    content = content.replace("\r\n", "\n")
     return {"path": rel, "content": content if content.endswith("\n") else content + "\n",
             "requirement_ids": ids(value.get("requirement_ids") or [], "requirement_ids"),
             "source_ids": ids(value.get("source_ids") or [], "source_ids")}
@@ -538,9 +540,12 @@ def consume(path: Path, run: work.Run, text: str) -> tuple[str, str, dict, int, 
     finally:
         with run.wake:
             made = work.steps(run.events)
-        work.remember(path, "assistant", final, error=failed, steps=made,
-                      provider="codex" if run.chat.is_codex else "claude",
-                      **{k: v for k, v in meta.items() if k != "session_id"})
+        try:
+            work.remember(path, "assistant", final, error=failed, steps=made,
+                          provider="codex" if run.chat.is_codex else "claude",
+                          **{k: v for k, v in meta.items() if k != "session_id"})
+        except OSError as exc:  # a lost transcript row must not take the turn's usage with it
+            note(run, f"대화 기록을 남기지 못했다 — {exc}")
     return final, failed, meta, tools, web
 
 
@@ -629,6 +634,11 @@ class Worker:
         timer.start()
         try:
             final, failed, meta, tools, web = consume(path, run, text)
+        except BaseException:
+            # Sent, and whatever broke after it, its usage was never charged: unknown, never zero.
+            self.unknown = True
+            planned(self.repo, self.sid, spent=self.spent(), inflight=False)
+            raise
         finally:
             timer.cancel()
             run.finish()
