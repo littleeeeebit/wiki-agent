@@ -404,25 +404,31 @@ Most second drafts came from one prompt sentence:
 - The drafter still named `r0`, so every claim of the first draft was
   rejected as `unknown_requirement`, and the answer drafted again.
 
-Rerunning the eight calibration rows that drafted twice under v3 showed that
-6 of the 8 second drafts had this cause: pasted-01, 04, 06, 07, 08 and 09. The
-prompt now says to name only the ids `requirements` lists, which need not
-start at `r0`. The same six rows then drafted once, with no `unknown_requirement`.
+The rejection reasons behind this came from a targeted diagnostic: the eight
+calibration rows that drafted twice under v3 were rerun with
+`knowledge.grounded` wrapped to log each draft's rejected claims. Its records
+were scratch and are not retained; the runs below record only how many drafts
+each answer took. The prompt now says to name only the ids `requirements`
+lists, which need not start at `r0`.
 
-On the whole calibration half (`reliability-v4-calibration-answers`, at
-02fab78), against v3's calibration run:
+What the retained calibration runs show, D arm (`reliability-v3-calibration-answers`
+at ef45fec against `reliability-v4-calibration-answers` at 02fab78, the same
+calibration half):
+- rows that drafted twice fell from 8 to 3. v3: pasted-01, 04, 06, 07, 08
+  and 09, adv-09, bridge-07. v4: pasted-06, direct-01, fix-03;
 - added latency fell from 8.10 s to 6.25 s (D p95 29.15 s to 26.86 s);
 - answer support rose from 0.687 to 0.736.
 
-The bound with no second draft at all was 5.72 s, so nothing else was changed.
-A cap on host coverage for analysis rows, or one host verification turn per
-answer, would have cut about 0.4 s each on calibration. Neither is in v4.
+Nothing else was changed for v4.
 
 The v4 set keeps the same calibration half and adds 72 held-out intents
-written after v3's reveal (review r4, gpt-6.1-sol, two full-set rounds;
-approved input intents `b96ad318`). Two earlier rounds were answered by
-gpt-6-luna and are not counted: the reviewer cell had been launched with a
-pinned model. The action fixtures are v2's, unchanged.
+written after v3's reveal (review r4, gpt-6.1-sol; approved input intents
+`b96ad318`). The review was one round over all 72 intents, which found five
+to fix, then a round over those five revisions, which found nothing. The
+frozen r4 note says "two full-set rounds", which overstates the second round;
+it stays as frozen because the runs record the dataset's hash. Two earlier
+rounds were answered by gpt-6-luna and are not counted: the reviewer cell had
+been launched with a pinned model. The action fixtures are v2's, unchanged.
 
 Held-out runs: `reliability-v4-heldout`, `reliability-v4-answers`,
 `reliability-v4-repeat`, `reliability-v4-actions`. The report is
