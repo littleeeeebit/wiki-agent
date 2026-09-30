@@ -220,8 +220,8 @@ for PR 9. Rollback restores prior policy references without deleting failed runs
 
 ## Results
 
-Two frozen sets, both English input over English evidence, both under gates v3
-(`gates.json` byte-identical between them). The runs live under `raw/eval/jev/`,
+Four frozen sets, all English input over English evidence, all under gates v3
+(`gates.json` byte-identical across them). The runs live under `raw/eval/jev/`,
 which git ignores; the reproduction commands below rebuild them.
 
 ### v1 — `eval/jev/reliability/` at 8588d03
@@ -393,9 +393,97 @@ Host spending per batch: retrieval 4.0 min / USD 0.37, answers 45.9 / 9.34
 (one batch), repetition 2.9 / 0.56, actions 0.3 / 0.04. Calibration was 3.8 /
 0.38 and 48.2 / 9.77. Jev's cost has no dated price, as in v2.
 
+### v4 — `eval/jev/reliability-v4/` at a0e88d3
+
+The fix for v3's latency, 02fab78, was diagnosed on the calibration half only.
+Most second drafts came from one prompt sentence:
+- The draft prompt said every claim names the whole question as `r0`.
+- `requirements()` numbers a question's parts from `r0`. When routing keeps a
+  pasted first part as material, `r0` leaves the requirements, and the kept
+  part stays `r1` or later.
+- The drafter still named `r0`, so every claim of the first draft was
+  rejected as `unknown_requirement`, and the answer drafted again.
+
+The rejection reasons behind this came from a targeted diagnostic: the eight
+calibration rows that drafted twice under v3 were rerun with
+`knowledge.grounded` wrapped to log each draft's rejected claims. Its records
+were scratch and are not retained; the runs below record only how many drafts
+each answer took. The prompt now says to name only the ids `requirements`
+lists, which need not start at `r0`.
+
+What the retained calibration runs show, D arm (`reliability-v3-calibration-answers`
+at ef45fec against `reliability-v4-calibration-answers` at 02fab78, the same
+calibration half):
+- rows that drafted twice fell from 8 to 3. v3: pasted-01, 04, 06, 07, 08
+  and 09, adv-09, bridge-07. v4: pasted-06, direct-01, fix-03;
+- added latency fell from 8.10 s to 6.25 s (D p95 29.15 s to 26.86 s);
+- answer support rose from 0.687 to 0.736.
+
+Nothing else was changed for v4.
+
+The v4 set keeps the same calibration half and adds 72 held-out intents
+written after v3's reveal (review r4, gpt-6.1-sol; approved input intents
+`b96ad318`). The review was one round over all 72 intents, which found five
+to fix, then a round over those five revisions, which found nothing. The
+frozen r4 note says "two full-set rounds", which overstates the second round;
+it stays as frozen because the runs record the dataset's hash. Two earlier
+rounds were answered by gpt-6-luna and are not counted: the reviewer cell had
+been launched with a pinned model. The action fixtures are v2's, unchanged.
+
+Held-out runs: `reliability-v4-heldout`, `reliability-v4-answers`,
+`reliability-v4-repeat`, `reliability-v4-actions`. The report is
+`reliability-v4-report.json`.
+
+| Gate | Target | Value | Result |
+| --- | --- | --- | --- |
+| Deterministic integrity | 0 | 0 | pass |
+| Graph benefit | 0.10 | 0.25 [0.083, 0.417] | pass |
+| Overall recall | ≥ -0.02 | 0.027 [0.0, 0.063] | pass |
+| Answer support | 0.25, coverage ≥ -0.20 | 0.822, coverage D−A -0.038 [-0.076, -0.008] | pass |
+| Decision quality | 0.90 | 1.0 | pass |
+| Added latency | ≤ 10 s | 5.48 s | pass |
+| Operating ceiling | 0 | 0 | pass |
+| Analysis/fact routing | 0.90 | 0.970 [0.924, 1.0] | pass |
+| Request/material classification | 0.90 | 1.0 | pass |
+| Work start / check / review fix | 0.90 | 1.0 / 1.0 / 1.0 (n=6 each) | pass |
+
+Retrieval, held out. The n column is as in v2: B and D include the six
+injected-failure intents.
+
+| Arm | n | Recall | Candidate recall | Bridge recall | p95 s | Host USD |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 56 | 0.973 [0.946, 1.0] | 0.973 | 0.75 | 0.02 | 0 |
+| B | 62 | 0.911 [0.839, 0.968] | 0.911 | 0.75 | 5.3 | 0.22 |
+| C | 56 | 0.973 [0.946, 1.0] | 1.0 | 0.75 | 0.02 | 0 |
+| D | 62 | 0.935 [0.871, 0.984] | 0.935 | 1.0 | 5.1 | 0.22 |
+
+Answers, held out:
+- Added latency: row p95 D 25.01 s against A 19.53 s.
+- Second drafts in D: 2 rows (start-30, fix-28), against 9 in v3's held-out
+  half.
+- Coverage: A 1.0, D 0.962 [0.924, 0.992].
+- Unsupported claim rate: A 0.403, D 0.072 [0.033, 0.114].
+- D's 66 answers: 29 verified, 21 host-checked, 7 abstained, 5 unverified
+  analysis, 4 direct. None of the analysis or host-checked ones was published
+  or remembered as verified.
+- Failure and cancellation: 12 of 12 as expected.
+- Repetition: status the same in 8 of 8 groups, evidence the same in 5 (B)
+  and 3 (D).
+
+Host fallback on D's answer run:
+- No question of a `CODE_SETTLES` kind went to the host.
+- Analysis 9/72, coverage 6/75, route 1/72.
+- Claim checks: answers 32/188, relation 34/149, faithful 3/14.
+- Actions: work start 2/6.
+
+Host spending per batch: retrieval 3.7 min / USD 0.44, answers 42.9 / 8.85
+(one batch), repetition 1.6 / 0.22, actions 0.2 / 0.02. The calibration
+answers were 45.0 / 9.30. Jev's cost has no dated price, as in v2.
+
 ### Limits
 
-- Latency still fails, narrowly: 10.76 s against 10 s (v2: 19.3 s).
+- Latency passes on v4 at 5.48 s. It failed on v3, narrowly, at 10.76 s
+  against 10 s (v2: 19.3 s); v3's diagnosis, kept as the record behind v4:
   - The gate compares the p95 of each row's retrieval-plus-answer time: D
     29.95 s against A 19.20 s. Phase percentiles do not add up to it.
   - A row's host turns are of four kinds: drafting (one per draft, inside
@@ -417,14 +505,14 @@ Host spending per batch: retrieval 4.0 min / USD 0.37, answers 45.9 / 9.34
     A second draft follows rejected claims. The analysis rows' retrieval
     fallbacks are coverage questions. A row makes at most two verification
     requests, and each falls back at most once.
-  - The calibration answers show the same tail, so a fix can rest on
-    calibration. It is a new policy version with fresh held-out evidence,
-    not an edit to v3, and it is the next PR (v4).
-- Analysis/fact routing passes, but not perfectly. Its two held-out misses,
-  in both arms, are fact lookups phrased as advice: "What should I do if I
-  lose my work laptop?" and "Which exit codes should it use?". That is a
-  family the analysis question does not yet separate. It is recorded, not
-  tuned on.
+  - The calibration answers showed the same tail, so the fix rested on
+    calibration: v4, above, with fresh held-out evidence.
+- Analysis/fact routing passes, but not perfectly, and its misses are one
+  family in both sets: fact lookups phrased as advice, missed in both arms.
+  v3: "What should I do if I lose my work laptop?" and "Which exit codes
+  should it use?". v4: "What should I do with a suspected phishing email?"
+  and "I'm creating a new service. What do I start from?". The analysis
+  question does not yet separate this family. It is recorded, not tuned on.
 - v2's figures below keep their own numbers, and v2's own limits stand for
   v2: it failed latency at 19.3 s and routing was inconclusive, at 3–4
   mistakes in 66 cohort rows per arm.
@@ -437,14 +525,16 @@ Host spending per batch: retrieval 4.0 min / USD 0.37, answers 45.9 / 9.34
 - The action gates rest on six held-out fixtures per point, and the fallback's
   host is the evaluation's default model; a different chat model shifts both
   host-checked answers and latency.
-- The report's own statement: no stage exit. Latency fails, so the stage's
-  exit gates stay open, as the decision protocol requires.
+- Exit: on v4 every mandatory gate passes, on labels reviewed before the
+  held-out run and with the analysis path measured, which is what the
+  decision protocol requires. The v4 labels were reviewed by a model
+  (gpt-6.1-sol), not a human, at the repository owner's direction.
 
 ### English baseline for PR 9
 
-`reliability-v3` at 1e80cf5, report `raw/eval/jev/reliability-v3-report.json`,
-gates v3, English input over English evidence. It replaces `reliability-v2` at
-75dd67f.
+`reliability-v4` at a0e88d3, report `raw/eval/jev/reliability-v4-report.json`,
+gates v3, English input over English evidence. It replaces `reliability-v3` at
+1e80cf5.
 
 ### Reproduction
 
@@ -454,6 +544,19 @@ commit and the options recorded in each `run.json`: `cache cold`, `method
 hybrid`, `k 8`, the default model and grader. Running the same commands at a
 later commit measures a different manifest. Rebuilding a report from the
 recorded folders works at any commit.
+
+v4, from a clean checkout of a0e88d3. The calibration answers ran at 02fab78,
+whose behavior manifest is the same; a rerun there needs its own checkout. The
+actions use v2's fixtures:
+
+```text
+python tool/eval/compare.py raw/eval/jev/reliability-v4-calibration-answers --dataset eval/jev/reliability-v2/intents.json --split calibration --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-v4-heldout --dataset eval/jev/reliability-v4/intents.json --split held_out --languages en
+python tool/eval/compare.py raw/eval/jev/reliability-v4-answers --dataset eval/jev/reliability-v4/intents.json --split held_out --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-v4-repeat --dataset eval/jev/reliability-v4/intents.json --split held_out --languages en --arms B D --repeat 3 --ids analysis-25 analysis-26 analysis-28 pasted-25 pasted-30 route-30 memory-29 conflict-29
+python tool/eval/compare.py raw/eval/jev/reliability-v4-actions --experiment actions --dataset eval/jev/reliability-v4/intents.json --actions eval/jev/reliability-v2/actions.json --split held_out
+python tool/eval/report.py raw/eval/jev/reliability-v4-heldout raw/eval/jev/reliability-v4-answers raw/eval/jev/reliability-v4-repeat raw/eval/jev/reliability-v4-actions --out raw/eval/jev/reliability-v4-report.json
+```
 
 v3, from a clean checkout of 1e80cf5. Calibration ran at ef45fec, whose
 behavior is the same; a rerun there needs its own checkout. The actions use
@@ -500,7 +603,7 @@ A batch that stops at its threshold resumes when the same command runs again.
 | --- | --- | --- | --- |
 | 1 | Freeze | Freeze new English labels, versions and gates | Done |
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
-| 3 | Publish | Publish current baseline and unresolved limits | Done — v3 baseline; exit gate open: latency fails (10.76 s) |
+| 3 | Publish | Publish current baseline and unresolved limits | Done — v4 baseline; every mandatory gate passes (latency 5.48 s) |
 
 ## Sources
 

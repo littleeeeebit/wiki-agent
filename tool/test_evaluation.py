@@ -340,6 +340,25 @@ def test_the_third_set_keeps_the_calibration_and_holds_out_only_intents_neither_
     assert (RELIABLE.parent / "reliability-v3" / "gates.json").read_bytes() == (RELIABLE / "gates.json").read_bytes()
 
 
+def test_the_fourth_set_keeps_the_calibration_and_holds_out_only_intents_no_earlier_set_showed(fresh):
+    # The draft prompt stopped naming r0 as every question's requirement after v3's held-out reveal.
+    v2, v3, v4 = (dataset.load(RELIABLE.parent / f"reliability-{v}" / "intents.json") for v in ("v2", "v3", "v4"))
+    assert dataset.invalid(v4) == [] and dataset.unresolved(v4) == [] and dataset.frozen(v4) == []
+    assert all(n == {"calibration": 6, "held_out": 6} for n in v4["categories"].values())
+    assert [i for i in v4["intents"] if i["split"] == "calibration"] == \
+        [i for i in fresh["intents"] if i["split"] == "calibration"]
+    held = [i for i in v4["intents"] if i["split"] == "held_out"]
+    assert all(i["review"] == "r4" for i in held)
+    earlier = fresh["intents"] + v2["intents"] + v3["intents"]
+    assert not {i["variants"]["en"] for i in held} & {i["variants"]["en"] for i in earlier}
+    assert not {i["id"] for i in held} & {i["id"] for i in earlier}
+    earlier_pages, fourth_pages = dataset.pages(v3), dataset.pages(v4)
+    assert {n: fourth_pages.get(n) for n in earlier_pages} == earlier_pages
+    assert sorted(i["fault"]["kind"] for i in held if i.get("fault")) == \
+        ["cancelled"] * 2 + ["exhausted"] * 2 + ["unavailable"] * 2
+    assert (RELIABLE.parent / "reliability-v4" / "gates.json").read_bytes() == (RELIABLE / "gates.json").read_bytes()
+
+
 HELD_FAULTS = ["fault-02", "fault-03", "fault-05", "fault-06", "fault-10", "fault-11"]
 
 
