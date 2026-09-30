@@ -18,6 +18,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 from agent.chat_session import Event
 from main import loop, planning, specs, work
@@ -455,7 +456,8 @@ def test_a_commit_cut_before_it_was_recorded_is_resumed(checkout):
     assert remote.creates() == 1 and git(path, "rev-list", "--count", f"{spec['planning']['base_head']}..HEAD") == "1"
 
 
-def test_a_write_cut_halfway_is_finished_on_resume(checkout):
+@pytest.mark.parametrize("left", ["nothing", "a killed swap", "a person's document", "a person's other file"])
+def test_a_write_cut_halfway_is_finished_on_resume_only_if_every_file_is_ours(checkout, left):
     web = client()
     remote = GitHub()
     real, writes = planning.atomic, []
@@ -473,13 +475,25 @@ def test_a_write_cut_halfway_is_finished_on_resume(checkout):
         sid = web.post("/api/plans", json=request()).json()["id"]
         spec = settled(sid, "stopped")
     path, root = Path(spec["worktree"]), spec["artifact_root"]
+    folder = path / root
     assert spec["planning"]["stopped"]["reason"] == "publish_failed"
-    assert sorted(f.name for f in (path / root).iterdir()) == ["0-overview.md"], "반만 쓴 폴더, 임시 파일 없이"
+    assert sorted(f.name for f in folder.iterdir()) == ["0-overview.md"], "반만 쓴 폴더, 임시 파일 없이"
+    if left == "a killed swap":   # the process died between the write and the swap
+        (folder / f".1-entry.md.{'a' * 32}.tmp").write_text("# Sta")
+    elif left == "a person's document":
+        (folder / "1-entry.md").write_text("# Mine\n\nA person's notes.\n", encoding="utf-8")
+    elif left == "a person's other file":
+        (folder / "notes.md").write_text("mine\n", encoding="utf-8")
     with patch.object(specs, "sh", remote):
         assert web.post(f"/api/plans/{sid}/resume").status_code == 200
-        spec = settled(sid, "handoff")
+        spec = settled(sid, "handoff", "stopped")
+    if left.startswith("a person"):
+        assert spec["planning"]["stopped"]["reason"] == "worktree_moved" and remote.creates() == 0
+        mine = folder / ("1-entry.md" if left == "a person's document" else "notes.md")
+        assert "mine" in mine.read_text(encoding="utf-8").lower(), "사람이 쓴 파일은 덮어쓰지 않는다"
+        return
     assert planned_folder(spec) == {f"{root}/0-overview.md", f"{root}/1-entry.md", f"{root}/2-publish.md"}
-    assert remote.creates() == 1 and not git(path, "status", "--porcelain")
+    assert remote.creates() == 1 and not git(path, "status", "--porcelain", "--ignored")
 
 
 def test_a_hand_off_cut_by_a_restart_is_resumed(checkout):
@@ -497,6 +511,48 @@ def test_a_hand_off_cut_by_a_restart_is_resumed(checkout):
         assert web.post(f"/api/plans/{sid}/resume").status_code == 200
         spec = settled(sid, "handoff")
     assert spec["planning"]["handed"] and len(KICKED) == kicked + 1
+
+
+def test_a_hand_off_is_marked_only_once_the_loop_took_it(checkout):
+    web = client()
+    Host.replies = [sources, outline, stage(1), stage(2)]
+    busy = HTTPException(409, "앞 루프가 아직 멈추는 중이다")
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", GitHub()):
+        with patch.object(loop, "kick", side_effect=busy):
+            sid = web.post("/api/plans", json=request()).json()["id"]
+            p = settled(sid, "stopped")["planning"]
+        assert (p["stopped"]["reason"], p["stopped"]["phase"]) == ("broken", "handoff") and not p.get("handed")
+        kicked = len(KICKED)
+        assert web.post(f"/api/plans/{sid}/resume").status_code == 200
+        assert settled(sid, "handoff")["planning"]["handed"] and len(KICKED) == kicked + 1
+
+        # The loop took it — `kick` moved the state — and the server went down before the mark.
+        planning.planned("proj", sid, handed=None)
+        specs.update("proj", sid, state="리뷰 대기")
+        planning.recover()
+        p = specs.load("proj", sid)["planning"]
+    assert p["phase"] == "handoff" and p["handed"] and len(KICKED) == kicked + 1, "두 번 넘기지 않는다"
+
+
+def test_a_restart_mid_turn_keeps_the_call_and_marks_its_spend_unknown(checkout):
+    seen = []
+
+    def watched(text, halt):
+        seen.append(specs.load("proj", "planner-x"))   # what a restart right now would find on disk
+        return sources(text, halt)
+
+    Host.replies = [watched, outline, stage(1), stage(2)]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", GitHub()):
+        sid = client().post("/api/plans", json=request()).json()["id"]
+        settled(sid, "handoff")
+    cut = seen[0]
+    assert cut["planning"]["inflight"] and cut["planning"]["spent"]["calls"] == 1
+    with specs._files:
+        specs.save(cut)
+    planning.recover()
+    p = specs.load("proj", sid)["planning"]
+    assert (p["phase"], p["stopped"]["reason"]) == ("stopped", "restart")
+    assert p["spent"]["calls"] == 1 and p["spent"]["unknown"] and not p["inflight"]
 
 
 def test_cancel_keeps_the_research_and_resume_goes_on_from_there(checkout):

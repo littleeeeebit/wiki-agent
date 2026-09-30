@@ -64,6 +64,7 @@ EFFORT = re.compile(r"[a-z]{1,16}")
 BLOCK = re.compile(r"^```(plan-questions|plan-sources|plan-outline|plan-file)[ \t]*\r?\n(.*?)^```[ \t]*$",
                    re.M | re.S)
 LINK = re.compile(r"\]\(([^)\s]+)\)")
+TEMPORARY = re.compile(r"\.(.+)\.[0-9a-f]{32}\.tmp")   # what `atomic` swaps in from
 OVERVIEW = ("Problem", "Constraints", "Decisions", "Stages", "Sources")
 STAGE = ("Requirements", "Entry points", "Contracts", "Errors", "Edits", "Tests", "Rollback")
 SOURCE = ("id", "title", "url", "retrieved", "locator", "fragment", "applicability", "counterevidence",
@@ -406,15 +407,37 @@ def clean(path: Path) -> bool:
     return not done.returncode and not done.stdout.strip()
 
 
-def leftover(path: Path, root: str, paths: list[str]) -> bool:
-    """Whether what is uncommitted is only an interrupted write of these
-    documents: every change one of `paths`, the folder holding nothing else."""
+def leftover(path: Path, root: str, manifest: list[dict]) -> list[Path] | None:
+    """When what is uncommitted is only an interrupted write of these
+    documents, the temporary files it left; otherwise `None`. A file there is
+    ours only if it is a finished document whose content is its draft's, or a
+    temporary file `atomic` names — a swap is whole, so a document with other
+    content was not written by us, and it is never overwritten."""
 
+    folder = path / root
+    if linked(folder) or not folder.is_dir():
+        return None
+    hashes = {Path(e["path"]).name: e["sha256"] for e in manifest}
+    temporary: list[Path] = []
+    for f in folder.iterdir():
+        if linked(f) or not f.is_file():
+            return None
+        if f.name in hashes:
+            try:
+                if sha(f.read_text(encoding="utf-8")) == hashes[f.name]:
+                    continue
+            except (OSError, UnicodeDecodeError):
+                pass
+            return None
+        swap = TEMPORARY.fullmatch(f.name)
+        if not swap or swap[1] not in hashes:
+            return None
+        temporary.append(f)
     done = specs.sh(["git", "-c", "core.quotepath=off", "status", "--porcelain", "-uall"], path)
     changed = {line[3:].strip('"') for line in done.stdout.splitlines() if line.strip()}
-    folder = path / root
-    return not done.returncode and changed <= set(paths) and not linked(folder) and folder.is_dir() \
-        and {f.name for f in folder.iterdir()} <= {Path(r).name for r in paths}
+    if done.returncode or not changed <= {f"{root}/{f.name}" for f in folder.iterdir()}:
+        return None
+    return temporary
 
 
 # -- Mechanical checks -----------------------------------------------------------------
@@ -588,6 +611,8 @@ class Worker:
         except Cancelled:
             self.stop(self.reason)
             return None
+        # On disk before it is sent: a restart mid-turn keeps the call and marks its spend unknown (`recover`).
+        planned(self.repo, self.sid, spent=self.spent(), inflight=True)
         chat = self.planner(spec, path)
         run = self.run = opened(path, chat)
         if self.halt.is_set():
@@ -617,7 +642,7 @@ class Worker:
             # A failed or stopped turn may have spent tokens too: never zero. This worker sends
             # nothing more; a person's `[재개]` goes on, with the spend shown as a lower bound.
             self.unknown = True
-        fields = {"spent": self.spent()}
+        fields = {"spent": self.spent(), "inflight": False}
         if self.budget.used["tokens"] > self.budget.limits["tokens"]:
             # Usage comes after the answer: the ceiling was crossed, not kept.
             fields["overrun"] = {"tokens": fields["spent"]["tokens"], "limit": spec["planning"]["limits"]["tokens"]}
@@ -866,12 +891,14 @@ def publish(worker: Worker, spec: dict, path: Path) -> None:
                 return worker.stop("worktree_moved", f"작업트리의 HEAD 가 {p['base_head'][:7]} 에서 움직였다")
         else:
             # An earlier attempt may have written some of the files before it was cut; they are written again.
-            partial = leftover(path, root, paths)
-            if not clean(path) and not partial:
+            partial = leftover(path, root, p["artifact_manifest"])
+            if not clean(path) and partial is None:
                 return worker.stop("worktree_moved", "작업트리에 커밋 안 된 변경이 있다")
-            if (folder.exists() or linked(folder)) and not partial:
+            if (folder.exists() or linked(folder)) and partial is None:
                 return worker.stop("root_exists", f"`{root}` 가 이미 있다 — 새 폴더만 쓴다")
             try:
+                for swap in partial or []:   # left by a process killed mid-write
+                    swap.unlink()
                 for e in p["artifact_manifest"]:
                     text = draft(worker.repo, worker.sid, e["path"])
                     if text is None or sha(text) != e["sha256"]:
@@ -941,11 +968,12 @@ def handoff(repo: str, sid: str, path: Path) -> None:
     request; its reviser and review cell are the roles the plan named."""
 
     work.remember(path, "context", "계획자 인계 — 이 뒤의 세션은 계획자의 대화를 잇지 않는다")
-    planned(repo, sid, handed={"ts": time.time()})
     try:
         loop.kick(repo, sid)
     except HTTPException as exc:
-        specs.update(repo, sid, fault=str(exc.detail))
+        return halted(repo, sid, "broken", f"리뷰로 넘기지 못했다 — {exc.detail}")
+    # Only once the loop took it: `kick` moved the state on first, which `recover` reads.
+    planned(repo, sid, handed={"ts": time.time()})
 
 
 def drive(worker: Worker, path: Path, repo: Path, release) -> None:
@@ -1018,10 +1046,17 @@ def recover() -> None:
             for spec in specs.listing(folder.name):
                 p = spec.get("planning") or {}
                 if p.get("phase") in RUNNING:
-                    halted(folder.name, spec["id"], "restart", "서버가 다시 켜졌다")
+                    # A turn cut in flight was sent and never charged: its spend is unknown, not zero.
+                    unknown = {"spent": {**p["spent"], "unknown": True}} if p.get("inflight") else {}
+                    halted(folder.name, spec["id"], "restart", "서버가 다시 켜졌다", inflight=False, **unknown)
                 elif p.get("phase") == "handoff" and not p.get("handed"):
-                    # Published, and the server went down before the review was handed the pull request.
-                    halted(folder.name, spec["id"], "restart", "PR 은 올렸고 리뷰로 넘기기 전에 서버가 다시 켜졌다")
+                    pr = ((p.get("publication") or {}).get("pr") or {}).get("number")
+                    if spec["state"] == f"PR #{pr}":
+                        # Published, and the server went down before the loop took the pull request.
+                        halted(folder.name, spec["id"], "restart", "PR 은 올렸고 리뷰로 넘기기 전에 서버가 다시 켜졌다")
+                    else:
+                        # The loop took it (`kick` moved the state); only the mark was cut.
+                        planned(folder.name, spec["id"], handed={"ts": time.time()})
 
 
 # -- The document revision -----------------------------------------------------------------

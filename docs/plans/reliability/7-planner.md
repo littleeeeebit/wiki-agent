@@ -214,6 +214,11 @@ Live host capability and role handoff are checked in PR 10.
   before the push and the pull request right after. `specs.pull_request`
   looks up the open pull request for the same head and base before creating
   and again after a failed or timed-out create; `specs.opened` uses it too.
+  A resume pushes only the recorded commit, and finishes a cut write only
+  when every file in the folder is a finished draft (by hash) or a swap
+  `atomic` left. A turn is marked in flight on disk before it is sent, so a
+  restart mid-turn keeps the call and marks the spend unknown. The hand-off
+  is marked only after `loop.kick` took the pull request.
 - The reviser is a read-only session per fix turn (`revise`, called from
   `loop.told`); the server checks every returned path before writing any and
   commits them. A path outside the folder writes nothing.
