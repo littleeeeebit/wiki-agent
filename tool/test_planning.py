@@ -306,12 +306,15 @@ def test_an_answer_it_cannot_read_gets_one_retry_then_stops(checkout):
     assert remote.creates() == 0 and remote.pushes() == 0
 
 
-def test_sources_without_a_web_search_behind_them_stop_visibly(checkout):
-    Host.replies = [lambda text, halt: ("Looked locally.\n\n" + block("plan-sources", [SOURCE]), False, USAGE)]
+@pytest.mark.parametrize("said", ["Looked locally.\n\n" + block("plan-sources", [SOURCE]),
+                                  "This host has no web tools, so there are no sources."])
+def test_sources_without_a_web_search_behind_them_stop_visibly(checkout, said):
+    Host.replies = [lambda text, halt: (said, False, USAGE)]
     with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", GitHub()):
         sid = client().post("/api/plans", json=request()).json()["id"]
         spec = settled(sid, "stopped")
-    assert spec["planning"]["stopped"]["reason"] == "web_unavailable"
+    assert spec["planning"]["stopped"]["reason"] == "web_unavailable" and len(Host.made[0].heard) == 1, \
+        "웹 도구가 없다고 답한 호스트도 형식 오류가 아니라 웹 없음으로 멈춘다"
     assert spec["planning"]["source_manifest"] is None, "로컬 조회를 웹 조사로 적지 않는다"
 
 
@@ -346,6 +349,22 @@ def test_missing_usage_is_not_zero_spent(checkout):
         spec = settled(sid, "stopped")
     p = spec["planning"]
     assert p["stopped"]["reason"] == "budget_unknown" and p["spent"]["unknown"] and len(Host.made[0].heard) == 1
+
+
+def test_a_failed_turn_without_usage_is_not_zero_and_a_person_may_go_on(checkout):
+    def lost(text, halt):
+        raise ConnectionError("the host went away mid-turn")
+
+    Host.replies = [sources, lost, outline, stage(1), stage(2)]
+    web = client()
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", GitHub()):
+        sid = web.post("/api/plans", json=request()).json()["id"]
+        spec = settled(sid, "stopped")
+        p = spec["planning"]
+        assert p["stopped"]["reason"] == "host" and p["spent"]["unknown"] and p["spent"]["calls"] == 2
+        assert web.post(f"/api/plans/{sid}/resume").status_code == 200
+        spec = settled(sid, "handoff")
+    assert spec["planning"]["spent"]["unknown"], "재개한 뒤에도 쓴 양은 하한으로 남는다"
 
 
 def test_the_wall_deadline_cuts_the_turn(checkout):
@@ -398,6 +417,86 @@ def test_a_restart_stops_the_run_and_a_resume_never_publishes_twice(checkout):
         assert web.post(f"/api/plans/{sid}/resume").status_code == 200
         settled(sid, "handoff")
     assert remote.creates() == 1
+
+
+def test_a_resumed_publication_pushes_only_its_own_commit(checkout):
+    web = client()
+    remote = GitHub()
+    remote.push_fails = True
+    Host.replies = [sources, outline, stage(1), stage(2)]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", remote):
+        sid = web.post("/api/plans", json=request()).json()["id"]
+        spec = settled(sid, "stopped")
+        path, recorded = Path(spec["worktree"]), spec["planning"]["publication"]["head"]
+        # The worktree was let go: someone else's commit lands on top of the recorded one.
+        (path / "a.txt").write_text("code\n")
+        git(path, "commit", "-qam", "code outside the plan")
+        remote.push_fails, pushes = False, remote.pushes()
+        assert web.post(f"/api/plans/{sid}/resume").status_code == 200
+        spec = settled(sid, "stopped")
+    assert spec["planning"]["stopped"]["reason"] == "worktree_moved" and recorded[:7] in spec["planning"]["stopped"]["detail"]
+    assert remote.pushes() == pushes and remote.creates() == 0, "기록한 커밋이 아니면 올리지 않는다"
+
+
+def test_a_commit_cut_before_it_was_recorded_is_resumed(checkout):
+    web = client()
+    remote = GitHub()
+    remote.push_fails = True
+    Host.replies = [sources, outline, stage(1), stage(2)]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", remote):
+        sid = web.post("/api/plans", json=request()).json()["id"]
+        spec = settled(sid, "stopped")
+        # Committed, then the server went down before `publication.head` was saved.
+        planning.planned("proj", sid, publication={"head": None, "pr": None})
+        remote.push_fails = False
+        assert web.post(f"/api/plans/{sid}/resume").status_code == 200
+        spec = settled(sid, "handoff")
+    path = Path(spec["worktree"])
+    assert remote.creates() == 1 and git(path, "rev-list", "--count", f"{spec['planning']['base_head']}..HEAD") == "1"
+
+
+def test_a_write_cut_halfway_is_finished_on_resume(checkout):
+    web = client()
+    remote = GitHub()
+    real, writes = planning.atomic, []
+
+    def flaky(file, content):
+        if "proj-worktrees" in str(file):
+            writes.append(file)
+            if len(writes) == 2:
+                raise OSError("disk went away")
+        real(file, content)
+
+    Host.replies = [sources, outline, stage(1), stage(2)]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", remote), \
+            patch.object(planning, "atomic", flaky):
+        sid = web.post("/api/plans", json=request()).json()["id"]
+        spec = settled(sid, "stopped")
+    path, root = Path(spec["worktree"]), spec["artifact_root"]
+    assert spec["planning"]["stopped"]["reason"] == "publish_failed"
+    assert sorted(f.name for f in (path / root).iterdir()) == ["0-overview.md"], "반만 쓴 폴더, 임시 파일 없이"
+    with patch.object(specs, "sh", remote):
+        assert web.post(f"/api/plans/{sid}/resume").status_code == 200
+        spec = settled(sid, "handoff")
+    assert planned_folder(spec) == {f"{root}/0-overview.md", f"{root}/1-entry.md", f"{root}/2-publish.md"}
+    assert remote.creates() == 1 and not git(path, "status", "--porcelain")
+
+
+def test_a_hand_off_cut_by_a_restart_is_resumed(checkout):
+    web = client()
+    Host.replies = [sources, outline, stage(1), stage(2)]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", GitHub()):
+        sid = web.post("/api/plans", json=request()).json()["id"]
+        settled(sid, "handoff")
+        kicked = len(KICKED)
+        # Published, and the server went down before the hand-off.
+        planning.planned("proj", sid, handed=None)
+        planning.recover()
+        p = specs.load("proj", sid)["planning"]
+        assert (p["phase"], p["stopped"]["reason"], p["stopped"]["phase"]) == ("stopped", "restart", "handoff")
+        assert web.post(f"/api/plans/{sid}/resume").status_code == 200
+        spec = settled(sid, "handoff")
+    assert spec["planning"]["handed"] and len(KICKED) == kicked + 1
 
 
 def test_cancel_keeps_the_research_and_resume_goes_on_from_there(checkout):
@@ -473,6 +572,23 @@ def test_the_reviser_writes_only_inside_the_plan_and_commits_exactly_that(checko
     assert git(path, "diff", "--name-only", head, "HEAD") == f"{root}/1-entry.md"
     assert "now with the entry route" in (path / root / "1-entry.md").read_text(encoding="utf-8")
     assert not git(path, "status", "--porcelain") and str(path) not in work._busy
+
+
+def test_a_reviser_turn_stopped_on_its_own_writes_nothing(checkout):
+    remote = GitHub()
+    Host.replies = [sources, outline, stage(1), stage(2)]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", remote):
+        sid = client().post("/api/plans", json=request()).json()["id"]
+        spec = settled(sid, "handoff")
+    path, root = Path(spec["worktree"]), spec["artifact_root"]
+    head, before = git(path, "rev-parse", "HEAD"), (path / root / "1-entry.md").read_bytes()
+    lp = SimpleNamespace(halt=threading.Event(), run=None)
+    fixed = file_block(f"{root}/1-entry.md", stage_md("R1").replace("Proposed.", "Changed."), ["R1"], ["S1"])
+    # `/api/work/stop` sets the turn's own stop, not the loop's.
+    Host.replies = [lambda text, halt: (halt.set(), fixed)[1]]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", remote):
+        assert planning.revise(lp, spec, path, "Fix F1.") == ""
+    assert git(path, "rev-parse", "HEAD") == head and (path / root / "1-entry.md").read_bytes() == before
 
 
 def test_a_pr_that_is_already_open_is_used_not_made_again(checkout):

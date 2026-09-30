@@ -549,7 +549,7 @@ export type Planning = {
   artifact_root: string
   roles: { planner: PlanRole; reviser: PlanRole; reviewer: PlanRole }
   limits: PlanLimits
-  /** `calls` counts turns sent to the planner; `unknown`: a turn came back without usage. */
+  /** `calls` counts turns sent to the planner; `unknown`: a turn came back without usage, so the spend is a lower bound. */
   spent: PlanLimits & { tools: number; unknown: boolean }
   /** Usage reported after an answer crossed the token ceiling: a failed ceiling check. */
   overrun?: { tokens: number; limit: number } | null

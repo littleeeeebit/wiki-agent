@@ -153,7 +153,7 @@ export function PlanStatus({ spec, onChanged }: { spec: Spec; onChanged: () => v
         시간 {Math.round(p.spent.seconds)}/{p.limits.seconds}초 · 턴 {p.spent.calls}/{p.limits.calls}
         · 토큰 {p.spent.tokens.toLocaleString()}/{p.limits.tokens.toLocaleString()} · 도구 {p.spent.tools}
         {p.overrun && <span className="text-destructive"> · 토큰 한도를 넘었다 ({p.overrun.tokens.toLocaleString()})</span>}
-        {p.spent.unknown && <span className="text-destructive"> · 사용량을 모르는 턴이 있다</span>}
+        {p.spent.unknown && <span className="text-destructive"> · 사용량을 모르는 턴이 있다 — 쓴 양은 적어도 이만큼이다</span>}
       </div>
       <div className="text-[11.5px] text-muted-foreground">
         계획자 {role(p.roles.planner)} · 수정자 {role(p.roles.reviser)} · 리뷰어 {role(p.roles.reviewer)}

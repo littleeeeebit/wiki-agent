@@ -214,8 +214,12 @@ def atomic(file: Path, content: str) -> None:
     """UTF-8 without a BOM, `\\n` line ends, swapped in whole."""
 
     temporary = file.with_name(f".{file.name}.{uuid.uuid4().hex}.tmp")
-    temporary.write_bytes(content.replace("\r\n", "\n").encode("utf-8"))
-    os.replace(temporary, file)
+    try:
+        temporary.write_bytes(content.replace("\r\n", "\n").encode("utf-8"))
+        os.replace(temporary, file)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 # -- What the planner returns --------------------------------------------------------
@@ -400,6 +404,17 @@ def head_of(path: Path) -> str:
 def clean(path: Path) -> bool:
     done = specs.sh(["git", "status", "--porcelain"], path)
     return not done.returncode and not done.stdout.strip()
+
+
+def leftover(path: Path, root: str, paths: list[str]) -> bool:
+    """Whether what is uncommitted is only an interrupted write of these
+    documents: every change one of `paths`, the folder holding nothing else."""
+
+    done = specs.sh(["git", "-c", "core.quotepath=off", "status", "--porcelain", "-uall"], path)
+    changed = {line[3:].strip('"') for line in done.stdout.splitlines() if line.strip()}
+    folder = path / root
+    return not done.returncode and changed <= set(paths) and not linked(folder) and folder.is_dir() \
+        and {f.name for f in folder.iterdir()} <= {Path(r).name for r in paths}
 
 
 # -- Mechanical checks -----------------------------------------------------------------
@@ -598,7 +613,9 @@ class Worker:
         tokens = meta.get("tokens") or {}
         if type(tokens.get("in")) is int and type(tokens.get("out")) is int:
             self.budget.charge({"input_tokens": tokens["in"], "output_tokens": tokens["out"]})
-        elif not failed:
+        else:
+            # A failed or stopped turn may have spent tokens too: never zero. This worker sends
+            # nothing more; a person's `[재개]` goes on, with the spend shown as a lower bound.
             self.unknown = True
         fields = {"spent": self.spent()}
         if self.budget.used["tokens"] > self.budget.limits["tokens"]:
@@ -696,6 +713,9 @@ def research(worker: Worker, spec: dict, path: Path) -> None:
         blocks = found(final)
         if may_ask and blocks.get("plan-questions"):
             return ("ask", questioned(blocks["plan-questions"][-1]))
+        if not worker.web:
+            # No search ran, so whatever sources it lists or leaves out, the web research did not happen.
+            return ("sources", None)
         if not blocks.get("plan-sources"):
             raise ValueError("`plan-sources` 블록이 없다")
         return ("sources", sourced(blocks["plan-sources"][-1], path))
@@ -829,8 +849,12 @@ def publish(worker: Worker, spec: dict, path: Path) -> None:
     root = p["artifact_root"]
     paths = [e["path"] for e in p["artifact_manifest"]]
     publication = dict(p.get("publication") or {})
-    if not publication.get("head"):
-        head = head_of(path)
+    head = head_of(path)
+    if publication.get("head"):
+        # Recorded, then stopped before the pull request: push only that very commit.
+        if head != publication["head"] or not clean(path):
+            return worker.stop("worktree_moved", f"작업트리가 기록한 커밋 {publication['head'][:7]} 에서 움직였다")
+    else:
         folder = path / root
         ours = all(kept(worker.repo, worker.sid, e) and (path / e["path"]).is_file()
                    and sha((path / e["path"]).read_text(encoding="utf-8")) == e["sha256"] for e in p["artifact_manifest"]) \
@@ -841,9 +865,11 @@ def publish(worker: Worker, spec: dict, path: Path) -> None:
             if listed.returncode or set(listed.stdout.split()) != set(paths) or not ours or not clean(path):
                 return worker.stop("worktree_moved", f"작업트리의 HEAD 가 {p['base_head'][:7]} 에서 움직였다")
         else:
-            if not clean(path) and not ours:
+            # An earlier attempt may have written some of the files before it was cut; they are written again.
+            partial = leftover(path, root, paths)
+            if not clean(path) and not partial:
                 return worker.stop("worktree_moved", "작업트리에 커밋 안 된 변경이 있다")
-            if folder.exists() and not ours:
+            if (folder.exists() or linked(folder)) and not partial:
                 return worker.stop("root_exists", f"`{root}` 가 이미 있다 — 새 폴더만 쓴다")
             try:
                 for e in p["artifact_manifest"]:
@@ -901,7 +927,7 @@ def walk(worker: Worker, path: Path, repo: Path) -> None:
             return
         if worker.halt.is_set():
             return worker.stop(worker.reason)
-        if spec["planning"]["spent"].get("unknown") or worker.unknown:
+        if worker.unknown:
             return worker.stop("budget_unknown", "호스트가 사용량을 알려 주지 않았다 — 0 으로 치지 않고 멈춘다")
         if phase == "collect":
             collect(worker, spec, path, repo)
@@ -990,8 +1016,12 @@ def recover() -> None:
     for folder in specs.SPECS.glob("*"):
         if folder.is_dir():
             for spec in specs.listing(folder.name):
-                if (spec.get("planning") or {}).get("phase") in RUNNING:
+                p = spec.get("planning") or {}
+                if p.get("phase") in RUNNING:
                     halted(folder.name, spec["id"], "restart", "서버가 다시 켜졌다")
+                elif p.get("phase") == "handoff" and not p.get("handed"):
+                    # Published, and the server went down before the review was handed the pull request.
+                    halted(folder.name, spec["id"], "restart", "PR 은 올렸고 리뷰로 넘기기 전에 서버가 다시 켜졌다")
 
 
 # -- The document revision -----------------------------------------------------------------
@@ -1015,7 +1045,8 @@ def revise(lp, spec: dict, path: Path, text: str) -> str | None:
         final, failed, _, _, _ = consume(path, run, f"{text}\n\nThe plan's documents are under `{root}/`.")
         if lp.halt.is_set():
             return None
-        if failed:
+        if failed or run.halt.is_set():
+            # A turn stopped on its own (`/api/work/stop`) writes nothing, as a failed one.
             return ""
         try:
             # Any path is let through the shape check; `target` judges it before the write.
@@ -1177,6 +1208,9 @@ def resumed(repo: Path, spec: dict, path: Path) -> tuple[str, list[dict]]:
     if publication.get("head"):
         return "publish", manifest
     if p.get("base_head") and head_of(path) != p["base_head"]:
+        if back == "publish":
+            # Perhaps our own commit, cut before it was recorded; `publish` tells it from anyone else's.
+            return "publish", manifest
         raise HTTPException(409, "작업트리의 HEAD 가 계획을 시작한 뒤 움직였다 — 새 계획으로")
     if back in ("collect", "clarify", "research", "outline"):
         return back, manifest

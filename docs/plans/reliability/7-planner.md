@@ -198,8 +198,11 @@ Live host capability and role handoff are checked in PR 10.
 - Budget: `common.budget.Budget` built from what is left. `calls` counts turns
   sent to A, tool calls are counted apart; tokens are `in + out` charged after
   each answer; a crossing is kept as `overrun`, and the next request is
-  refused. Missing usage stops `budget_unknown` and a resume stops again —
-  never zero. The wall deadline stops the running turn. Reviser turns are
+  refused. A turn without usage — answered, failed or stopped — is never
+  zero: `spent.unknown` stays set and the worker sends nothing more
+  (`budget_unknown` when it would). A person's resume goes on, and the
+  screen shows the spend as a lower bound; the token limit is then no
+  strict ceiling. The wall deadline stops the running turn. Reviser turns are
   bounded by the loop's round cap, not by these limits.
 - Drafts wait in the hub's `raw/planning/<repo>/<id>/` with their SHA-256 in
   `artifact_manifest`; a resume drops a changed draft and what builds on it.
