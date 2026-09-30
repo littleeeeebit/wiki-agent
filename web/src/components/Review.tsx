@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Btn } from '@/components/Modal'
 import * as api from '@/lib/api'
-import type { Spec } from '@/lib/api'
+import { PROFILE_LABEL, type Spec } from '@/lib/api'
 import { LOOPING } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 
@@ -166,17 +166,30 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
 
       <table className="mt-4 w-full border-collapse text-left">
         <thead className="font-heading text-[11px] font-semibold text-faint">
-          <tr><th className="py-1">라운드</th><th>판정</th><th>P0·P1·P2</th><th>게이트</th><th /></tr>
+          <tr><th className="py-1">라운드</th><th>판정</th><th>P0·P1·P2</th><th>기준 · 리뷰어</th><th>게이트</th><th /></tr>
         </thead>
         <tbody>
-          {rounds.length === 0 && <tr><td colSpan={5} className="py-1 text-faint">아직 라운드가 없다</td></tr>}
+          {rounds.length === 0 && <tr><td colSpan={6} className="py-1 text-faint">아직 라운드가 없다</td></tr>}
           {rounds.map((r, i) => (
             <tr key={i} className={cn('border-t border-border', r.stale && 'text-faint line-through')}>
               <td className="py-1 font-mono">R{r.n}{r.stale && ' (버림)'}</td>
               <td className={r.verdict === 'allow' ? 'text-primary' : 'text-destructive'}>
                 {r.verdict === 'allow' ? '머지 허용' : '머지 불가'}
               </td>
-              <td className="font-mono">{r.findings.P0}·{r.findings.P1}·{r.findings.P2}</td>
+              <td className="font-mono">
+                {r.findings.P0}·{r.findings.P1}·{r.findings.P2}
+                {r.identity !== 'full' && r.findings.P0 + r.findings.P1 + r.findings.P2 > 0 && (
+                  <span className="ml-1 font-sans text-faint" title="finding-meta 가 없어 발견에 id 가 없다 — 반복으로 세지 않는다">id 없음</span>
+                )}
+              </td>
+              <td title={r.reviewer?.session_id ? `리뷰 세션 ${r.reviewer.session_id}` : undefined}>
+                {r.profile ? PROFILE_LABEL[r.profile] : '—'}
+                {r.reviewer?.model && (
+                  <span className="ml-1 font-mono text-[10.5px] text-faint">
+                    {r.reviewer.model.replace(/^codex:/, '')}{r.reviewer.effort ? ` · ${r.reviewer.effort}` : ''}
+                  </span>
+                )}
+              </td>
               <td>{r.gate?.ok == null ? '—' : r.gate.ok ? '통과' : '실패'}</td>
               <td className="text-right">
                 {!r.stale && (

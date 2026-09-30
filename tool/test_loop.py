@@ -160,10 +160,14 @@ class Reviewer:
     replies: list = []
     made: list = []
 
-    def __init__(self, path, tools="", system="", model="", effort="", **_):
-        self.path, self.tools, self.model, self.effort = Path(path), tools, model, effort
+    def __init__(self, path, tools="", system="", model="", effort="", **rest):
+        self.path, self.tools, self.model, self.effort, self.rest = Path(path), tools, model, effort, rest
         self.is_codex, self.session_id, self.alive, self.heard = model.startswith("codex:"), None, True, []
+        self.id = uuid.uuid4().hex
         Reviewer.made.append(self)
+
+    def reconfigure(self, model, effort):
+        self.model, self.effort = model, effort
 
     def say(self, text, halt=None):
         self.heard.append(text)
@@ -172,7 +176,8 @@ class Reviewer:
         reply = Reviewer.replies.pop(0) if Reviewer.replies else allow
         if callable(reply):
             reply = reply(first, text)
-        yield Event("done", reply, {"session_id": f"review-{id(self)}", "error": False})
+        self.session_id = f"review-{id(self)}"
+        yield Event("done", reply, {"session_id": self.session_id, "error": False})
 
     def stop(self, halt):
         pass
@@ -253,11 +258,13 @@ def world(tmp_path, template):
         work.close_all()
 
 
-def pr_spec(w, name: str, n: int, **extra) -> dict:
-    """A spec as stage 3 leaves it: the pull request up, its gate passed."""
+def pr_spec(w, name: str, n: int, file: str = "", **extra) -> dict:
+    """A spec as stage 3 leaves it: the pull request up, its gate passed.
+    Its one commit adds `file`, by default `<name>.txt`."""
 
     path = create(w.repo, name)
-    head = commit(path, f"{name}.txt")
+    (path / (file or name)).parent.mkdir(parents=True, exist_ok=True)
+    head = commit(path, file or f"{name}.txt")
     git(path, "push", "-q", "-u", "origin", name)
     w.hub.open(n, name)
     spec = {"id": name, "repo": "proj", "rev": 1, "goal": f"{name} 의 목표", "out": [], "done": [GATE],
@@ -311,6 +318,174 @@ def test_the_stop_reasons_are_the_plan_s_table_and_nothing_else():
     assert listed == [w.value for w in loop.Why]
     with pytest.raises(ValueError, match="표에 없는"):
         loop.stop(None, "proj", "x", "승인 대기")
+
+
+# -- review profiles and finding identity (`docs/plans/reliability/6-review-profiles.md`) ---------
+
+
+def meta(*entries) -> str:
+    """A `finding-meta` block, one `(component, invariant[, existing_id])` per finding."""
+
+    return "```finding-meta\n" + json.dumps(
+        [{"ordinal": i, "existing_id": e[2] if len(e) > 2 else None, "component": e[0], "invariant": e[1],
+          "trigger": "t", "evidence": "e"} for i, e in enumerate(entries, 1)]) + "\n```"
+
+
+def denied(findings: list[str], block: str):
+    return lambda first, _text: f"{first}\n" + "\n".join(findings) + f"\n{block}\n머지 불가 — 고칠 것이 있다"
+
+
+def test_finding_meta_is_checked_against_the_ids_the_spec_has():
+    head = "abcdef0123456789abcdef0123456789abcdef01"
+
+    def text(block):
+        return f"Round 1 · PR #12 · abcdef0\n[P1] a.py:1 — x\n[P2] b.py:2 — y\n{block}\n머지 불가 — P1"
+
+    parsed = loop.parse(text(meta(("loop.merge", "gate on head"), ("ui", "label", "F1"))), 1, 12, head, {"F1"})
+    assert parsed["identity"] == "full" and parsed["findings"][1]["meta"]["existing_id"] == "F1"
+    assert parsed["findings"][1]["body"] == "", "블록은 발견의 본문이 아니다"
+    for block, why in ((meta(("a", "b"), ("c", "d", "F2")), "F2"), (meta(("a", "b"), ("c", "d", 1)), "existing_id"),
+                       (meta(("a", "b")), "ordinal"), ("```finding-meta\n{not json\n```", "JSON"),
+                       (meta(("a", " "), ("c", "d")), "invariant")):
+        with pytest.raises(ValueError, match=why):
+            loop.parse(text(block), 1, 12, head, {"F1"})
+    legacy = loop.parse(text(""), 1, 12, head)
+    assert legacy["identity"] == "limited" and "meta" not in legacy["findings"][0], "블록 없는 답도 읽는다"
+    assert loop.parse("Round 1 · PR #12 · abcdef0\n새 발견 없음\n머지 허용", 1, 12, head)["identity"] == "full"
+
+
+def test_ids_follow_the_validated_id_then_the_invariant_and_flag_a_near_miss():
+    def found(*metas):
+        return [{"grade": "P1", "file": "a.py", "line": i, "head": f"[P1] a.py:{i} — x", "body": "", "meta": m}
+                for i, m in enumerate(metas)]
+
+    def m(component, invariant, existing=None):
+        return {"component": component, "invariant": invariant, "existing_id": existing}
+
+    spec = {"rounds": []}
+    spec["rounds"].append({"n": 1, "items": loop.identified(spec, found(m("loop.merge", "Final gate matches HEAD")))})
+    again = loop.identified(spec, found(m("Loop.merge", " final gate  matches head"), m("loop.merge", "base read now"),
+                                        m("ui", "other words", "F1")))
+    assert [f["id"] for f in again] == ["F1", "F2", "F1"], "같은 불변식은 같은 id, 검증된 existing_id 가 먼저"
+    assert again[1]["possible"] == "F1" and again[0]["possible"] is None
+    spec["rounds"].append({"n": 2, "items": again})
+    assert loop.seen(spec) == {"F1": [1, 2], "F2": [2]}
+    unnamed = loop.identified(spec, [{**found(m("a", "b"))[0], "meta": None}])
+    assert unnamed[0]["id"] is None, "meta 없는 발견은 id 를 지어내지 않는다"
+
+
+def test_the_same_change_reviewed_as_plan_or_code_gets_its_own_criteria(world):
+    spec = pr_spec(world, "plan-a", 7, file="docs/plans/a/1-x.md", review_profile="plan", artifact_root="docs/plans/a")
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    oid = specs.current_merge_base(path, "main", head)
+    paths = loop.changed(path, oid, head)
+    assert paths == ["docs/plans/a/1-x.md"] and loop.effective(spec, paths) == "plan"
+    assert loop.effective({**spec, "review_profile": None}, paths) == "code", "`.md` 만으로 plan 이 되지 않는다"
+    for other in (["docs/plans/a/x.py"], ["docs/plans/b/1.md"], None):
+        assert loop.effective(spec, other) == "mixed", other
+    plan = loop.instruction(spec, path, 1, head, "main", True, "plan", oid)
+    assert "## Plan criteria" in plan and "## Code criteria" not in plan
+    assert "planned code is not written yet" in " ".join(plan.split())
+    assert f"- R1: {GATE}" in plan and "## Source manifest" in plan and f"merge base `{oid}`" in plan
+    code = loop.instruction({**spec, "review_profile": "code"}, path, 1, head, "main", True)
+    assert "## Code criteria" in code and "## Plan criteria" not in code and "## Requirements" not in code
+    mixed = loop.instruction(spec, path, 1, head, "main", True, "mixed", oid)
+    assert mixed.count("## Plan criteria") == mixed.count("## Code criteria") == 1
+    assert "the change reaches past it" in mixed
+
+
+def test_a_plan_round_refuses_a_missing_acceptance_under_the_plan_criteria(world):
+    pr_spec(world, "plan-b", 7, file="docs/plans/b/1-x.md", review_profile="plan", artifact_root="docs/plans/b")
+    finding = "[P1] docs/plans/b/1-x.md:3 — R1 has no observable acceptance"
+    Reviewer.replies = [denied([finding], meta(("plan.acceptance", "every requirement has observable acceptance"))),
+                        allow, keep()]
+    Worker.replies = [fixed((finding, "fixed"), name="docs/plans/b/2-acceptance.md")]
+    spec = looped("plan-b")
+    assert spec["state"] == "머지 가능"
+    assert [(r["profile"], r["verdict"]) for r in spec["rounds"]] == [("plan", "deny"), ("plan", "allow")]
+    first = spec["rounds"][0]
+    assert first["identity"] == "full" and first["items"][0]["id"] == "F1"
+    assert first["items"][0]["disposition"] == "fixed" and first["items"][0]["component"] == "plan.acceptance"
+    assert "id: `F1`" in Worker.made[-1].heard[0]
+    second = order(world, 7, 2)
+    assert "## Code criteria" not in second and "`F1` · P1 · plan.acceptance" in second
+    assert "last disposition `fixed`" in second
+
+
+def test_code_outside_the_plan_root_cannot_skip_the_code_criteria(world):
+    spec = pr_spec(world, "plan-c", 7, file="docs/plans/c/1-x.md", review_profile="plan", artifact_root="docs/plans/c")
+    path = Path(spec["worktree"])
+    commit(path, "tool.py")
+    git(path, "push", "-q", "origin", "plan-c")
+    Reviewer.replies = [allow, keep()]
+    spec = looped("plan-c")
+    assert spec["state"] == "머지 가능" and spec["rounds"][0]["profile"] == "mixed"
+    text = order(world, 7, 1)
+    assert "## Code criteria" in text and "## Plan criteria" in text
+
+
+def test_an_id_the_server_never_gave_is_sent_back_once_then_stops(world):
+    pr_spec(world, "fix-u", 7)
+    made_up = denied(["[P1] a.txt:1 — 틀렸다"], meta(("a.txt", "value is right", "F9")))
+    Reviewer.replies = [made_up, made_up]
+    spec = looped("fix-u")
+    assert spec["state"] == "멈춤" and spec["stopped"]["reason"] == "라운드 형식" and "F9" in spec["stopped"]["detail"]
+    assert "F9" in Reviewer.made[0].heard[1] and "Known findings" in Reviewer.made[0].heard[1]
+    assert not spec.get("rounds"), "형식이 틀린 라운드는 남지 않는다"
+
+
+def test_a_stale_round_neither_raises_nor_repeats_a_finding(world):
+    pr_spec(world, "fix-s", 7)
+    finding = "[P1] a.txt:1 — 틀렸다"
+
+    def pushed_meanwhile(first, text):
+        world.hub.push_elsewhere(7)
+        return denied([finding], meta(("a.txt", "value is right")))(first, text)
+
+    Reviewer.replies = [pushed_meanwhile, denied([finding], meta(("a.txt", "value is right"))),
+                        denied([finding], meta(("a.txt", "value is right", "F1"))), allow, keep()]
+    Worker.replies = [fixed((finding, "fixed")), fixed((finding, "fixed"))]
+    spec = looped("fix-s")
+    assert spec["state"] == "머지 가능"
+    assert [r.get("stale", False) for r in spec["rounds"]] == [True, False, False, False]
+    assert "items" not in spec["rounds"][0]
+    assert loop.seen(spec) == {"F1": [1, 2]}, "버린 라운드는 반복으로 세지 않는다"
+
+
+def test_a_round_from_before_profiles_still_reads_and_carries_no_identity(world):
+    spec = pr_spec(world, "fix-l", 7)
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    legacy = {"n": 1, "head": head, "base": "main", "verdict": "deny", "findings": {"P0": 0, "P1": 1, "P2": 0},
+              "gate": {"ok": True, "cmd": GATE, "head": head}, "ts": 1.0,
+              "disposition": [{"finding": "[P1] a.txt:1 — x", "action": "fixed", "evidence": ""}]}
+    spec = specs.update("proj", "fix-l", rounds=[legacy])
+    assert loop.issues(spec) == {} and loop.seen(spec) == {}
+    text = loop.instruction(spec, path, 2, head, "main", True)
+    assert "Profile `code`" in text and "(none with an id yet)" in text and '"action": "fixed"' in text
+    assert specs.view(world.repo, spec)["review_profile"] == "code"
+    Reviewer.replies = [allow, keep()]
+    spec = looped("fix-l")
+    assert spec["state"] == "머지 가능" and spec["rounds"][0] == legacy, "옛 라운드는 고쳐 쓰지 않는다"
+    assert spec["rounds"][1]["profile"] == "code"
+
+
+def test_the_reviewer_is_its_own_read_only_session_and_a_setting_applies_next_round(world):
+    pr_spec(world, "fix-w", 7)
+    finding, current = "[P1] a.txt:1 — 틀렸다", ["codex:first"]
+
+    def fix_and_change(path, halt):
+        current[0] = "codex:second"   # changed while the round's fix runs
+        return fixed((finding, "fixed"))(path, halt)
+
+    Reviewer.replies = [deny(finding), allow, keep()]
+    Worker.replies = [fix_and_change]
+    with patch.object(loop, "review_model", lambda: current[0]):
+        spec = looped("fix-w")
+    one, two = (r["reviewer"] for r in spec["rounds"])
+    assert (one["model"], two["model"]) == ("codex:first", "codex:second"), "판정마다 그때의 모델"
+    assert len(Reviewer.made) == 1 and one["cell"] == two["cell"] and one["session_id"]
+    assert one["tools"] == loop.REVIEW_TOOLS and not Reviewer.made[0].rest, "리뷰 셀은 쓰기 권한을 받지 않는다"
+    assert one["cell"] not in {w.id for w in Worker.made} and one["session_id"] != "cli-1", "작업 셀과 다른 세션"
 
 
 # -- rounds --------------------------------------------------------------------------------

@@ -450,8 +450,20 @@ export type Round = {
   verdict: 'allow' | 'deny'
   stale?: boolean
   gate?: { ok: boolean | null; cmd: string | null; head: string | null }
-  disposition?: { finding: string; action: string; evidence?: string }[] | null
+  disposition?: { finding: string; id?: string | null; action: string; evidence?: string }[] | null
+  /** The criteria this round was judged by — a plan reaching past its root is `mixed`. Absent before PR 6. */
+  profile?: ReviewProfile
+  profile_version?: number
+  /** `limited`: findings without a `finding-meta` block, so without ids. */
+  identity?: 'full' | 'limited'
+  /** The review cell that gave this verdict, as it ran then. */
+  reviewer?: { model: string | null; effort: string | null; session_id: string | null; cell: string; tools: string }
+  /** The findings with the server's ids; absent on a stale round and before PR 6. */
+  items?: { id: string | null; grade: string; head: string; component?: string; possible?: string | null;
+    disposition?: string | null }[]
 }
+
+export type ReviewProfile = 'plan' | 'code' | 'mixed'
 
 /** What the server ran on a head. `round` is the checks a change maps to,
  *  run every round; `final` is the full gate, once, on the head a review
@@ -468,6 +480,9 @@ export type Validation = {
   phase: 'final_running' | null
 }
 
+/** How a person reads a review profile. */
+export const PROFILE_LABEL: Record<ReviewProfile, string> = { plan: '계획', code: '코드', mixed: '계획+코드' }
+
 export type Spec = {
   id: string
   repo: string
@@ -477,6 +492,10 @@ export type Spec = {
   done: string[]
   grounds: { pages: string[]; files: string[]; rules: string[] }
   decisions: { what: string; why: string; rejected: string }[]
+  /** The review criteria the spec asked for; the server reads an old spec as `code`. */
+  review_profile: ReviewProfile
+  review_profile_version: number
+  artifact_root: string | null
   source: { focus: string; turn: number; plan: { path: string; row: string } | null }
   state: string
   /** Why a `멈춤` stopped: one of the stage 4 plan's table. */

@@ -64,7 +64,8 @@ repeat their content in the prose.
   "done": ["a check specific to this task, runnable or observable"],
   "grounds": {"pages": ["craft/some-page"], "files": ["path/in/repo.py:12"], "rules": ["rules that apply"]},
   "decisions": [{"what": "the approach taken", "why": "why", "rejected": "the alternative dropped"}],
-  "plan": {"path": "docs/plans/loop/3-spec.md", "row": "2"}
+  "plan": {"path": "docs/plans/loop/3-spec.md", "row": "2"},
+  "review_profile": "code"
 }
 ```
 
@@ -80,6 +81,11 @@ repeat their content in the prose.
 - `plan`: only when the task is exactly one row of a plan's step table or of
   `.wiki/plan-active.md`. `row` is that row's first cell. Leave it out
   otherwise; the server marks that row done when the pull request is up.
+- `review_profile`: the criteria the review judges by. `code` by default.
+  `plan` only when the task writes a plan's documents and nothing else, with
+  `artifact_root` naming the one folder it writes, such as `docs/plans/foo`;
+  `mixed` when it changes both. A plan whose change reaches past its root is
+  reviewed as mixed.
 
 The same `slug` emitted again in this conversation replaces the earlier
 version while it has not started. A block that fails the server's check comes
