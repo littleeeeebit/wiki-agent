@@ -159,6 +159,24 @@ def test_the_checks_refuse_an_empty_goal_keep_the_gate_first_and_want_an_adapter
     assert "연결 먼저" in made(repo, spec_block(slug="other"))[0]["error"]
 
 
+def test_a_spec_names_its_review_profile_and_an_old_one_is_code(repo):
+    """`docs/plans/reliability/6-review-profiles.md`: the spec names the
+    profile, the code checks it, and nothing infers a plan from a suffix."""
+
+    spec = specs.load("proj", made(repo, spec_block(grounds={"files": ["docs/x.md"]}))[0]["id"])
+    assert (spec["review_profile"], spec["review_profile_version"], spec["artifact_root"]) == ("code", 1, None), \
+        "`.md` 근거만 있어도 plan 으로 짐작하지 않는다"
+    plan = specs.load("proj", made(repo, spec_block(slug="plan-a", review_profile="plan",
+                                                    artifact_root="docs\\plans\\a/"))[0]["id"])
+    assert (plan["review_profile"], plan["artifact_root"]) == ("plan", "docs/plans/a")
+    for extra, why in (({"review_profile": "plan"}, "artifact_root"), ({"review_profile": "docs"}, "plan · code"),
+                       ({"review_profile": "plan", "artifact_root": "../elsewhere"}, "저장소 안"),
+                       ({"review_profile": "mixed", "artifact_root": 3}, "저장소 안")):
+        assert why in made(repo, spec_block(slug="bad", **extra))[0]["error"]
+    old = {k: v for k, v in spec.items() if not k.startswith(("review_profile", "artifact_root"))}
+    assert specs.view(repo, old)["review_profile"] == "code", "필드가 없던 명세는 code 로 읽는다"
+
+
 def test_a_slug_is_tidied_and_a_taken_one_gets_a_number(repo):
     first = made(repo, spec_block())[0]["id"]
     assert first == "fix-login"

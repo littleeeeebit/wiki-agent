@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { Btn } from '@/components/Modal'
-import type { Spec } from '@/lib/api'
+import { PROFILE_LABEL, type Spec } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 /** The selected task's spec, folded to its goal. Open, it shows what the
@@ -35,6 +35,13 @@ export function SpecSummary({ spec, onStart }: { spec: Spec | null; onStart: (id
           {list('완료 조건', spec.done)}
           {list('근거', [...spec.grounds.pages, ...spec.grounds.files, ...spec.grounds.rules])}
           {list('결정', spec.decisions.map((d) => `${d.what}${d.why ? ` — ${d.why}` : ''}`))}
+          <div>
+            <div className="font-heading text-[11px] font-semibold text-faint">리뷰 기준</div>
+            <div className="mt-0.5">
+              {PROFILE_LABEL[spec.review_profile ?? 'code']}
+              {spec.artifact_root && <span className="ml-1 font-mono text-[10.5px] text-faint">{spec.artifact_root}/</span>}
+            </div>
+          </div>
           {spec.report && list('작업 셀의 보고', spec.report.map((r) => `${r.pass ? '통과' : '실패'} · ${r.item}`))}
           {spec.gate && !spec.gate.ok && (
             <div className="text-destructive">

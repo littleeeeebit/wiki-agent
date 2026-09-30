@@ -117,9 +117,32 @@ retains records and disables profile-specific prompts without bypassing final ga
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Profiles | Define profiles and finding identity | Not started |
-| 2 | Wiring | Wire instructions and independent roles | Not started |
-| 3 | Verify | Verify profile selection and stale results | Not started |
+| 1 | Profiles | Define profiles and finding identity | Done — `specs.profiled`/`profile_of`, `loop.parse` + `described`, `loop.identified` |
+| 2 | Wiring | Wire instructions and independent roles | Done — `review-plan.md`/`review-code.md`, `loop.effective`, `loop.cell` + `reviewer` |
+| 3 | Verify | Verify profile selection and stale results | Done — `test_loop.py`, `test_specs.py`; live plan review left to PR 10 |
+
+## Implementation notes
+
+- A spec block may carry `review_profile` and `artifact_root`; `specs.fields`
+  checks them and a spec without them, old or adopted from GitHub, reads as
+  `code`. `loop.effective` widens a `plan` to `mixed` when a changed path is
+  outside the root, is not Markdown, or the changed set cannot be read. It
+  widens; it never stops for a scope correction.
+- The instruction carries the effective profile and version, the head, base
+  name and merge base, and for a plan or mixed change the requirements (`R0`
+  the goal, `R1…` the done items) and the source manifest (the spec's
+  grounds). `review-round.md` keeps only transport and the `finding-meta`
+  protocol; the grade tables moved to the two criteria files.
+- Ids are `F1…` per spec, derived from the counted rounds' `items`; there is
+  no separate registry. A stale round keeps counts only, so it neither makes
+  nor repeats an id. A round without `finding-meta` is `identity: limited`
+  and its findings carry `id: null`; the dispute check falls back to `same`.
+- A review model or effort changed in the settings applies from the next
+  round (`ChatSession.reconfigure`); a change of CLI makes a new cell. Each
+  round keeps `reviewer`: session, cell, model, effort and tools.
+- Not here: the planner session and its hand-off (PR 7), recurrence used as
+  a barrier (PR 8). No setting switches the profile prompts off; rollback is
+  reverting this change, which leaves the saved rounds readable.
 
 ## Sources
 

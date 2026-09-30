@@ -37,11 +37,26 @@ Then one block per finding. A finding starts on its own line:
 followed by as many lines as it needs: the trigger, the defect, the impact,
 and evidence someone else can reproduce.
 
-| Grade | Criterion |
-| --- | --- |
-| P0 | Data corruption or loss, security, crash, contract violation |
-| P1 | A correctness defect, a regression, wrong behaviour this PR introduced |
-| P2 | A suggestion, style, a follow-up candidate |
+The grades come from the criteria the round instruction carries under
+`Review profile`: plan criteria, code criteria, or both for a mixed change.
+Judge by those criteria only.
+
+After the last finding and before the last line, one fenced block whose info
+string is `finding-meta` names what each finding is about, one entry per
+finding, `ordinal` counting the findings from 1 in the order written:
+
+```finding-meta
+[{"ordinal": 1, "existing_id": null, "component": "loop.merge",
+  "invariant": "final gate matches reviewed HEAD",
+  "trigger": "push after review", "evidence": "path:line"}]
+```
+
+- `component` and `invariant` name the rule broken, in words that stay the
+  same when the same problem comes back, whatever line it moves to.
+- `existing_id` is an id listed under `Known findings` when this is that
+  finding again, else `null`. Never make an id up: the program assigns ids,
+  and an answer naming one it did not list is sent back.
+- With no finding, leave the block out.
 
 - Do not invent findings without grounds. With nothing wrong, write the one
   line `새 발견 없음`.

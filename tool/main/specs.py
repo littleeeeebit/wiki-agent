@@ -52,6 +52,9 @@ MAX_ROWS = 10
 MAX_PRS = 10
 MAX_WARNINGS = 10
 SLOTS = ("gate_cmd", "review_dir", "scratch_dirs", "live_cmd", "server_stop")   # what `[연결]` writes
+# The review criteria a spec asks for (`docs/plans/reliability/6-review-profiles.md`).
+PROFILES = ("plan", "code", "mixed")
+PROFILE_VERSION = 1
 
 # Every state a spec can be in. The list is the stage 3 plan's table; this
 # stage moves through the first three, `머지됨` and `멈춤`, and the review loop
@@ -215,6 +218,33 @@ def backed(ref: str, paths: set[str]) -> bool:
     return LINE.sub("", ref).removesuffix(".md") in {p.removesuffix(".md") for p in paths}
 
 
+def profile_of(spec: dict) -> dict:
+    """The review profile a spec asked for. A spec from before profiles, or
+    one made for a pull request that came without one, is reviewed as code:
+    a plan is never inferred, least of all from a `.md` suffix."""
+
+    return {"review_profile": spec.get("review_profile") or "code",
+            "review_profile_version": spec.get("review_profile_version") or PROFILE_VERSION,
+            "artifact_root": spec.get("artifact_root")}
+
+
+def profiled(repo: Path, block: dict) -> dict:
+    """`review_profile` and `artifact_root` as a spec block names them, checked.
+    A plan names the one folder it writes; the loop reviews a change that
+    reaches past it as mixed (`loop.effective`)."""
+
+    profile = block.get("review_profile") or "code"
+    if profile not in PROFILES:
+        raise ValueError("`review_profile` 은 plan · code · mixed 중 하나여야 한다")
+    root = block.get("artifact_root")
+    if root is not None and (not isinstance(root, str) or not inside(repo, root.strip())):
+        raise ValueError("`artifact_root` 는 저장소 안의 폴더여야 한다")
+    if profile == "plan" and not root:
+        raise ValueError("plan 명세는 `artifact_root` 를 적어야 한다")
+    root = root.strip().replace("\\", "/").strip("/") if root else None
+    return {"review_profile": profile, "review_profile_version": PROFILE_VERSION, "artifact_root": root}
+
+
 def fields(repo: Path, block, gate: str, accepted: dict | None = None) -> dict:
     """The fields a person settles, checked. `ValueError` says what is wrong.
 
@@ -256,6 +286,7 @@ def fields(repo: Path, block, gate: str, accepted: dict | None = None) -> dict:
         "done": [gate] + [d for d in strings(block.get("done"), "done") if d != gate],
         "grounds": listed,
         "decisions": decided,
+        **profiled(repo, block),
     }
 
 
@@ -341,7 +372,7 @@ def view(repo: Path, spec: dict) -> dict:
                               digest(repo, path, required(repo, spec))) if allowed else "리뷰가 허용한 라운드가 없다"
         except (OSError, subprocess.SubprocessError) as exc:
             unproven = f"작업트리를 읽지 못했다 — {exc}"
-    return {**spec, "missing": missing(repo, spec), "approved": allowed["head"] if allowed else None,
+    return {**spec, **profile_of(spec), "missing": missing(repo, spec), "approved": allowed["head"] if allowed else None,
             "unproven": unproven, "waiting": bool(spec.get("worktree")) and work.waiting(spec["worktree"])}
 
 
@@ -703,7 +734,7 @@ def system(path: Path) -> str:
     spec = owner(path)
     if spec is None:
         return ""
-    shown = {k: spec[k] for k in ("id", "goal", "out", "done", "grounds", "decisions")}
+    shown = {**{k: spec[k] for k in ("id", "goal", "out", "done", "grounds", "decisions")}, **profile_of(spec)}
     return SPEC_PROMPT.rstrip() + "\n\n```json\n" + json.dumps(shown, ensure_ascii=False, indent=2) + "\n```\n"
 
 

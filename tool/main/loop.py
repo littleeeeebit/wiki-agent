@@ -41,6 +41,9 @@ from .query import ROOT, _lock, current_repo, hold, project, streaming
 
 REVIEW = ROOT / "raw" / "review"
 PROMPT = (ROOT / "tool/prompts/review-round.md").read_text(encoding="utf-8")
+# The criteria a round is judged by, per profile; a mixed change gets both, once each.
+RUBRIC = {name: (ROOT / f"tool/prompts/review-{name}.md").read_text(encoding="utf-8").strip()
+          for name in ("plan", "code")}
 
 DEFAULTS = {"rounds": 12, "concurrent": 3, "review_model": "", "review_effort": "high"}
 MORE = 4        # rounds a `[계속]` past the cap adds, to that spec only
@@ -109,6 +112,7 @@ def store(**changes) -> None:
 FIRST = re.compile(r"Round (\d+)\s*[·|—-]\s*PR #(\d+)\s*[·|—-]\s*([0-9a-f]{7,40})\b")
 FINDING = re.compile(r"^\[(P0|P1|P2)\] (\S+):(\d+)")
 FENCE = r"^```{}[ \t]*\r?\n(.*?)^```"
+META = "finding-meta"
 
 
 def bare(line: str) -> str:
@@ -117,13 +121,20 @@ def bare(line: str) -> str:
     return line.strip().strip("*`#> ").strip()
 
 
-def parse(text: str, n: int, pr: int, head: str) -> dict:
-    """`{verdict, findings, counts}`, or `ValueError` saying what is off.
+def parse(text: str, n: int, pr: int, head: str, known: set[str] = frozenset()) -> dict:
+    """`{verdict, findings, counts, identity}`, or `ValueError` saying what is off.
 
     The first line names the round, the pull request and the head it read; the
     last is the verdict. A finding is a line opening `[P0|P1|P2] path:line`,
-    and the lines under it are its body."""
+    and the lines under it are its body. A `finding-meta` block gives each
+    finding its `meta`, checked against `known`, the ids this spec has; an
+    answer without one is `identity: limited` and recurs by nothing."""
 
+    metas = re.findall(FENCE.format(META), text, re.M | re.S)
+    text = re.sub(FENCE.format(META) + r"[ \t]*\r?\n?", "", text, flags=re.M | re.S)
+    if re.search(rf"^\s*```{META}", text, re.M):
+        # Opened and never closed: an attempt at identity, not an answer without one.
+        raise ValueError("`finding-meta` 블록이 닫히지 않았다")
     lines = [line.rstrip() for line in text.strip().splitlines()]
     if not lines:
         raise ValueError("빈 답이다")
@@ -153,8 +164,35 @@ def parse(text: str, n: int, pr: int, head: str) -> dict:
             findings[-1]["body"].append(line)
     for f in findings:
         f["body"] = "\n".join(f["body"]).strip()
+    if metas:
+        try:
+            meta = json.loads(metas[-1])
+        except ValueError as exc:
+            raise ValueError(f"`finding-meta` 가 JSON 이 아니다 — {exc}") from exc
+        for f, m in zip(findings, described(meta, len(findings), known)):
+            f["meta"] = m
     counts = {g: sum(f["grade"] == g for f in findings) for g in ("P0", "P1", "P2")}
-    return {"verdict": verdict, "findings": findings, "counts": counts, "said": last}
+    identity = "limited" if findings and not metas else "full"
+    return {"verdict": verdict, "findings": findings, "counts": counts, "said": last, "identity": identity}
+
+
+def described(meta, count: int, known: set[str]) -> list[dict]:
+    """The `finding-meta` entries in finding order, or `ValueError`: one per
+    finding by ordinal, each naming its component and invariant, and an
+    `existing_id` only ever one the server gave this spec."""
+
+    if not isinstance(meta, list) or not all(isinstance(m, dict) for m in meta):
+        raise ValueError("`finding-meta` 는 객체의 목록이어야 한다")
+    ordinals = [m.get("ordinal") for m in meta]
+    if not all(type(o) is int for o in ordinals) or sorted(ordinals) != list(range(1, count + 1)):
+        raise ValueError(f"`finding-meta` 의 ordinal 이 발견 1–{count} 과 하나씩 맞지 않는다")
+    for m in meta:
+        if not all(isinstance(m.get(k), str) and m[k].strip() for k in ("component", "invariant")):
+            raise ValueError("`finding-meta` 항목마다 `component` 와 `invariant` 가 있어야 한다")
+        if m.get("existing_id") is not None and (not isinstance(m["existing_id"], str)
+                                                 or m["existing_id"] not in known):
+            raise ValueError(f"`finding-meta` 의 `existing_id` {m['existing_id']!r} 는 이 명세가 준 id 가 아니다")
+    return sorted(meta, key=lambda m: m["ordinal"])
 
 
 def block(name: str, text: str):
@@ -174,7 +212,8 @@ def disposed(text: str) -> list[dict] | None:
     if not isinstance(items, list):
         return None
     return [i for i in items if isinstance(i, dict) and isinstance(i.get("finding"), str)
-            and i.get("action") in ("fixed", "not-reproduced", "disagree")]
+            and i.get("action") in ("fixed", "not-reproduced", "disagree")
+            and isinstance(i.get("id"), (str, type(None)))]
 
 
 def _key(text: str) -> tuple[str, str, str]:
@@ -194,18 +233,133 @@ def same(a: str, b: str) -> bool:
 
     ponytail: a reviewer that rewords a finding and moves its line gets past
     this, and the loop goes on to its cap instead of stopping at the dispute.
-    Match on a finding id if the round format ever carries one."""
+    Only the fallback now: a finding with a server id is matched by it (`one`)."""
 
     ka, kb = _key(a), _key(b)
     return ka[0] == kb[0] and (ka[1] == kb[1] or (bool(ka[2]) and ka[2] == kb[2]))
 
 
+def one(a: dict, b: dict) -> bool:
+    """Two dispositions of one finding: by id when both carry one — two ids
+    are two findings, whatever their words — else by `same`."""
+
+    if a.get("id") and b.get("id"):
+        return a["id"] == b["id"]
+    return same(a["finding"], b["finding"])
+
+
 def disputed(before: list[dict] | None, now: list[dict] | None) -> str:
     """A finding the fixing side disagreed with two rounds in a row, or ``""``."""
 
-    old = [d["finding"] for d in before or [] if d["action"] == "disagree"]
+    old = [d for d in before or [] if d["action"] == "disagree"]
     return next((d["finding"] for d in now or [] if d["action"] == "disagree"
-                 and any(same(d["finding"], o) for o in old)), "")
+                 and any(one(d, o) for o in old)), "")
+
+
+# -- Finding identity ------------------------------------------------------------
+# The server owns a finding's id. A reviewer names an existing one or none;
+# `described` refused anything else before a round is kept.
+
+def issues(spec: dict) -> dict[str, dict]:
+    """Every id this spec's counted rounds carry, with its latest item. A
+    stale round has no items: it neither makes nor repeats a finding."""
+
+    return {f["id"]: f for r in counted(spec) for f in r.get("items") or [] if f.get("id")}
+
+
+def seen(spec: dict) -> dict[str, list[int]]:
+    """The counted rounds each id was raised in — what recurrence is read from."""
+
+    out: dict[str, list[int]] = {}
+    for r in counted(spec):
+        for fid in dict.fromkeys(f["id"] for f in r.get("items") or [] if f.get("id")):
+            out.setdefault(fid, []).append(r["n"])
+    return out
+
+
+def _norm(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
+def identified(spec: dict, findings: list[dict]) -> list[dict]:
+    """The round's findings as it keeps them, each with its id: the validated
+    `existing_id` first, then an exact component and invariant, else a new
+    id — with `possible` naming a known finding of the same component, to be
+    settled by the reviewer next round. Equal counts never make two one. A
+    finding without meta has no id."""
+
+    known = issues(spec)
+    out = []
+    for f in findings:
+        item = {k: f[k] for k in ("grade", "file", "line", "head", "body")}
+        m = f.get("meta")
+        if m is None:
+            out.append({**item, "id": None})
+            continue
+        key = (_norm(m["component"]), _norm(m["invariant"]))
+        fid = m.get("existing_id") or next(
+            (i for i, k in known.items() if (_norm(k["component"]), _norm(k["invariant"])) == key), None)
+        possible = None
+        if fid is None:
+            fid = f"F{len(known) + 1}"
+            possible = next((i for i, k in known.items() if _norm(k["component"]) == key[0]), None)
+        item = {**item, "id": fid, "component": m["component"].strip(), "invariant": m["invariant"].strip(),
+                "trigger": str(m.get("trigger") or ""), "evidence": str(m.get("evidence") or ""), "possible": possible}
+        known[fid] = item
+        out.append(item)
+    return out
+
+
+def vouched(disposition: list[dict] | None, items: list[dict]) -> list[dict] | None:
+    """The fixing side's disposition with each `id` kept only when this round
+    gave it — to one of the findings the entry's text names, when it names
+    any. `same` is loose (a shared file and line is enough), so two findings
+    at one place are both named. A made-up or misplaced id is dropped, and
+    `same` decides instead: an id never makes two findings one."""
+
+    if disposition is None:
+        return None
+    given = {f["id"] for f in items if f.get("id")}
+    out = []
+    for d in disposition:
+        named = {f.get("id") for f in items if same(d["finding"], f["head"])}
+        ok = d.get("id") in given and (not named or d.get("id") in named)
+        out.append({**d, "id": d.get("id") if ok else None})
+    return out
+
+
+def settled(items: list[dict], disposition: list[dict] | None) -> list[dict]:
+    """Each kept finding with the action the fixing side gave it, or `None`."""
+
+    def action(f: dict):
+        mine = {"id": f.get("id"), "finding": f["head"]}
+        return next((d["action"] for d in disposition or [] if one(d, mine)), None)
+
+    return [{**f, "disposition": action(f)} if f["grade"] != "P2" else f for f in items]
+
+
+# -- The profile a round is reviewed under -------------------------------------------
+
+def changed(path: Path, base_oid: str, head: str) -> list[str] | None:
+    """Every path the pull request changes, both names of a rename; `None`
+    when it cannot be read."""
+
+    if not base_oid:
+        return None
+    done = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", base_oid, head], path)
+    return None if done.returncode else [f for f in done.stdout.splitlines() if f]
+
+
+def effective(spec: dict, paths: list[str] | None) -> str:
+    """The profile this round is reviewed under. A plan whose change leaves its
+    artifact root, holds anything but Markdown, or cannot be read is mixed:
+    code never passes on the plan criteria alone."""
+
+    asked = specs.profile_of(spec)
+    if asked["review_profile"] != "plan":
+        return asked["review_profile"]
+    root = (asked["artifact_root"] or "").rstrip("/") + "/"   # no root: nothing is inside, so mixed
+    return "plan" if paths and all(p.startswith(root) and p.endswith(".md") for p in paths) else "mixed"
 
 
 # -- The instruction ----------------------------------------------------------
@@ -241,10 +395,54 @@ def shortstat(path: Path, base: str, head: str) -> str:
     return (done.stdout.strip() or "(no change)") if not done.returncode else f"(failed: {specs.said(done)})"
 
 
-def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: bool) -> str:
-    """What `codex-review-loop` says an instruction must carry, with the
-    result going to the final answer instead of a file."""
+def profiled(spec: dict, profile: str, head: str, base: str, base_oid: str) -> list[str]:
+    """The instruction's part that says what the round is judged by: the
+    profile and its version, the immutable head and base, and for a plan its
+    requirements and sources, then the criteria — both, once each, when mixed."""
 
+    asked = specs.profile_of(spec)
+    out = ["", "## Review profile", "",
+           f"- Profile `{profile}`, version {asked['review_profile_version']}. Reviewed head `{head}`, base `{base}`"
+           + (f" at merge base `{base_oid}`." if base_oid else ".")]
+    if asked["review_profile"] != profile:
+        out.append(f"- The spec asked for `{asked['review_profile']}` with artifact root `{asked['artifact_root']}`; "
+                   "the change reaches past it, so the code criteria apply too.")
+    if profile != "code":
+        out += ["", "## Requirements", "", f"- R0: {spec['goal']}"]
+        out += [f"- R{i}: {d}" for i, d in enumerate(spec["done"], 1)]
+        grounds = spec.get("grounds") or {}
+        cited = [*grounds.get("pages", []), *grounds.get("files", []),
+                 *(e["cite"] for e in grounds.get("evidence", []))]
+        out += ["", "## Source manifest", "", *(f"- `{c}`" for c in cited or ["(none cited)"])]
+        if asked["artifact_root"]:
+            out.append(f"- The plan's documents: `{asked['artifact_root']}/`")
+    for name in ("plan", "code"):
+        if profile in (name, "mixed"):
+            out += ["", RUBRIC[name]]
+    return out
+
+
+def known_findings(spec: dict) -> list[str]:
+    rounds = seen(spec)
+    out = ["", "## Known findings", ""]
+    for fid, f in issues(spec).items():
+        out.append(f"- `{fid}` · {f['grade']} · {f['component']} — {f['invariant']} · raised in rounds "
+                   + ", ".join(map(str, rounds.get(fid, []))) + (f" · last disposition `{f['disposition']}`"
+                                                                   if f.get("disposition") else ""))
+        if f.get("possible"):
+            out.append(f"  - possibly `{f['possible']}` again: if it is, name that id as `existing_id` this round")
+    if len(out) == 3:
+        out.append("(none with an id yet)")
+    return out
+
+
+def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: bool,
+                profile: str | None = None, base_oid: str = "") -> str:
+    """What `codex-review-loop` says an instruction must carry, with the
+    result going to the final answer instead of a file. `profile` is the one
+    `effective` gave this round; by default the spec's own."""
+
+    profile = profile or specs.profile_of(spec)["review_profile"]
     pr = spec["pr"]["number"]
     rounds = counted(spec)
     last = rounds[-1] if rounds else None
@@ -264,6 +462,8 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
     ]
     if last:
         out.append(f"- Since round {last['n']}: `{last['head'][:7]}..{head[:7]}`")
+    out += profiled(spec, profile, head, base, base_oid)
+    out += known_findings(spec)
     out += ["", "## What became of the last round's findings", ""]
     if last is None:
         out.append("(first round)")
@@ -299,23 +499,27 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
                 diff.stdout.rstrip() if not diff.returncode else f"(failed: {specs.said(diff)})", "```"]
     out += ["", "## Report", "",
             "First line as above. Then one block per finding, opening `[P0|P1|P2] path:line — what / when / "
-            "why`, with trigger, defect, impact and reproducible evidence under it. With nothing wrong, the "
-            "one line `새 발견 없음`. The last line is exactly `머지 허용`, or `머지 불가 — <reason>`."]
+            "why`, with trigger, defect, impact and reproducible evidence under it, graded by the criteria "
+            "under `Review profile`. Then the `finding-meta` block, one entry per finding; `existing_id` only "
+            "from `Known findings`. With nothing wrong, the one line `새 발견 없음` and no block. The last line is "
+            "exactly `머지 허용`, or `머지 불가 — <reason>`."]
     return "\n".join(out) + "\n"
 
 
 def fixing(n: int, findings: list[dict], said: str) -> str:
     """The work cell's turn: what `codex-review-loop` says the receiving side holds."""
 
-    listed = "\n\n".join(f["head"] + (f"\n{f['body']}" if f["body"] else "") for f in findings)
+    listed = "\n\n".join(f["head"] + (f"\nid: `{f['id']}`" if f.get("id") else "")
+                         + (f"\n{f['body']}" if f["body"] else "") for f in findings)
     return (
         f"Review round {n} refused the merge (`{said}`) and found the following. For each finding: "
         "reproduce it first. Fix it where it "
         "points, and count separately the other places the same rule applies to. If you do not agree, "
         "say why with evidence rather than changing the code. Commit what you change; do not push.\n\n"
         "End the answer with a fenced block whose info string is `disposition`, holding a JSON list with "
-        "one entry per finding, in order: `{\"finding\": \"<its first line, copied>\", \"action\": "
-        "\"fixed\" | \"not-reproduced\" | \"disagree\", \"evidence\": \"<what you ran and saw>\"}`.\n\n"
+        "one entry per finding, in order: `{\"finding\": \"<its first line, copied>\", \"id\": \"<its id, "
+        "when it has one, else null>\", \"action\": \"fixed\" | \"not-reproduced\" | \"disagree\", "
+        "\"evidence\": \"<what you ran and saw>\"}`.\n\n"
         + (listed or "(no P0 or P1 — the verdict above is the whole of it)"))
 
 
@@ -341,16 +545,24 @@ def folder(repo: str, pr: int) -> Path:
 def cell(spec: dict, path: Path) -> ChatSession:
     """The pull request's review cell, made once and kept while the pull
     request lives. Its CLI session id is kept beside the rounds, so a server
-    started again goes on in the same conversation."""
+    started again goes on in the same conversation.
+
+    Read once per round: a model or effort changed in the settings applies
+    from the next round, never inside one, and each round keeps the one its
+    verdict ran on (`reviewer`). A change of CLI is a new cell — the old
+    session id is the other CLI's. Never a write session: read tools only."""
 
     key = (spec["repo"], spec["pr"]["number"])
+    # Outside the lock: listing Codex's models starts Codex.
+    model, effort = review_model(), settings()["review_effort"]
     with _lock:
         chat = _cells.get(key)
-    if chat is not None:
+    if chat is not None and chat.is_codex == model.startswith("codex:"):
+        chat.reconfigure(model, effort)
         return chat
-    # Outside the lock: listing Codex's models starts Codex.
-    chat = ChatSession(path, tools=REVIEW_TOOLS, system=PROMPT, model=review_model(),
-                       effort=settings()["review_effort"])
+    if chat is not None:
+        close_cell(*key)
+    chat = ChatSession(path, tools=REVIEW_TOOLS, system=PROMPT, model=model, effort=effort)
     try:
         saved = json.loads((folder(*key) / "session.json").read_text(encoding="utf-8"))
         if saved.get("provider") == ("codex" if chat.is_codex else "claude"):
@@ -360,6 +572,13 @@ def cell(spec: dict, path: Path) -> ChatSession:
     with _lock:
         _cells[key] = chat
     return chat
+
+
+def reviewer(chat: ChatSession) -> dict:
+    """Who gave a verdict: the review cell's own session, model and effort."""
+
+    return {"session_id": chat.session_id, "cell": chat.id, "model": chat.model, "effort": chat.effort,
+            "tools": chat.tools}
 
 
 def close_cell(repo: str, pr: int) -> None:
@@ -757,7 +976,10 @@ def step(loop: Loop) -> bool:
     kept = folder(spec["repo"], pr)
     kept.mkdir(parents=True, exist_ok=True)
     order = kept / f"round-{n}.md"
-    order.write_text(instruction(spec, path, n, head, base, chat.is_codex), encoding="utf-8")
+    # The changed paths decide the criteria before the review, never after.
+    base_oid = specs.current_merge_base(path, base, head)
+    profile = effective(spec, changed(path, base_oid, head))
+    order.write_text(instruction(spec, path, n, head, base, chat.is_codex, profile, base_oid), encoding="utf-8")
 
     parsed, why, ask_for = None, "", f"Read `{order}` and review."
     for _ in range(2):
@@ -770,23 +992,28 @@ def step(loop: Loop) -> bool:
             continue
         (kept / f"round-{n}-result.md").write_text(answer, encoding="utf-8")
         try:
-            parsed = parse(answer, n, pr, head)
+            parsed = parse(answer, n, pr, head, set(issues(spec)))
             break
         except ValueError as exc:
             why = str(exc)
             ask_for = (f"Your answer to round {n} could not be read: {why}. Answer round {n} again, in the "
                        f"shape the instruction `{order}` gives: first line `Round {n} · PR #{pr} · {head[:7]}`, "
-                       "last line `머지 허용` or `머지 불가 — <reason>`.")
+                       "a `finding-meta` block naming only ids listed under `Known findings`, last line "
+                       "`머지 허용` or `머지 불가 — <reason>`.")
     if parsed is None:
         return stop(loop, loop.repo, loop.sid, Why.FORMAT, why)
 
-    record = {"n": n, "head": head, "base": base, "findings": parsed["counts"], "verdict": parsed["verdict"],
+    record = {"n": n, "head": head, "base": base, "base_oid": base_oid, "findings": parsed["counts"],
+              "verdict": parsed["verdict"], "profile": profile,
+              "profile_version": specs.profile_of(spec)["review_profile_version"], "identity": parsed["identity"],
+              "reviewer": reviewer(chat),
               "gate": {k: (spec.get("gate") or {}).get(k) for k in ("ok", "cmd", "head")},
               "disposition": None, "ts": time.time()}
     moved = pr_head(repo, pr)
     if moved != (head, base):
         # Someone pushed or changed the base while it was read: the verdict
-        # is about code that is no longer the pull request. Kept, not counted.
+        # is about code that is no longer the pull request. Kept, not counted,
+        # and without items: it neither raises nor resolves a finding.
         for name in (f"round-{n}.md", f"round-{n}-result.md"):
             if (kept / name).exists():
                 (kept / name).replace(kept / name.replace(f"round-{n}", f"round-{n}-stale-{head[:7]}"))
@@ -796,6 +1023,7 @@ def step(loop: Loop) -> bool:
     for f in parsed["findings"]:
         if f["grade"] == "P2" and not any(same(f["head"], d) for d in deferred):
             deferred.append(f["head"])
+    record["items"] = identified(spec, parsed["findings"])
     spec = change(loop, rounds=[*kept_rounds(spec), record], deferred=deferred)
     if spec is None:
         return False
@@ -805,7 +1033,7 @@ def step(loop: Loop) -> bool:
     spec = change(loop, f"고치는 중 R{n}")
     if spec is None:
         return False
-    serious = [f for f in parsed["findings"] if f["grade"] != "P2"]
+    serious = [f for f in record["items"] if f["grade"] != "P2"]
     # Jev may gather the context the findings touch first. The verdict, the
     # cap and the merge conditions above are settled; this only shapes the turn.
     against = [d["finding"] for d in (rounds[-1].get("disposition") or [] if rounds else [])
@@ -824,8 +1052,10 @@ def step(loop: Loop) -> bool:
     answer = told(loop, spec, path, text)
     if answer is None:
         return False
-    disposition = disposed(answer)
-    spec = change(loop, rounds=[*spec["rounds"][:-1], {**spec["rounds"][-1], "disposition": disposition}])
+    latest = spec["rounds"][-1]
+    disposition = vouched(disposed(answer), latest.get("items") or [])
+    spec = change(loop, rounds=[*spec["rounds"][:-1], {**latest, "disposition": disposition,
+                                                       "items": settled(latest.get("items") or [], disposition)}])
     if spec is None:
         return False
     before = rounds[-1].get("disposition") if rounds else None
@@ -1295,6 +1525,8 @@ def minimal(repo: Path, view: dict, path: Path, gate: str) -> dict:
                                           "base": view["baseRefName"], "head": view["headRefOid"],
                                           "branch": view["headRefName"]},
             "report": None, "gate": None, "fault": None, "rounds": [],
+            # Adopted from GitHub, nobody named a profile: code, never guessed from the files.
+            "review_profile": "code", "review_profile_version": specs.PROFILE_VERSION, "artifact_root": None,
             "history": [{"ts": now, "state": "리뷰 대기"}]}
 
 
