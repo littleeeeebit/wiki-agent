@@ -525,6 +525,8 @@ export type Spec = {
   cleanup?: string[]
   /** Who holds a `머지 대기`: "대기열" or "자동 머지 — 검사 대기". */
   queued?: string | null
+  /** A plan the Plan action drafts: its phase, budget and hand-off (reliability PR 7). */
+  planning?: Planning | null
 }
 
 export const getSpecs = () =>
@@ -534,6 +536,59 @@ export const saveSpec = (id: string, body: { rev: number; goal: string; out: str
 export const startSpec = (id: string, choice: { model: string; effort: string }) =>
   post(`/api/specs/${id}/start`, choice).then((r) => json<{ path: string; turn: string }>(r, '시작'))
 export const dropSpec = (id: string) => post(`/api/specs/${id}/drop`).then((r) => json(r, '버리기'))
+
+// -- The Plan action -----------------------------------------------------------
+
+export type PlanRole = { model: string; effort: string }
+export type PlanLimits = { seconds: number; calls: number; tokens: number }
+export type PlanPhase = 'collect' | 'clarify' | 'research' | 'outline' | 'stages' | 'validate' | 'publish'
+  | 'handoff' | 'stopped'
+export type Planning = {
+  version: number
+  phase: PlanPhase
+  artifact_root: string
+  roles: { planner: PlanRole; reviser: PlanRole; reviewer: PlanRole }
+  limits: PlanLimits
+  /** `calls` counts turns sent to the planner; `unknown`: a turn came back without usage, so the spend is a lower bound. */
+  spent: PlanLimits & { tools: number; unknown: boolean }
+  /** Usage reported after an answer crossed the token ceiling: a failed ceiling check. */
+  overrun?: { tokens: number; limit: number } | null
+  questions: { id: string; question: string; options: { label: string; note: string }[] }[]
+  questions_rev: number
+  answers: { id: string; question: string; choice: string }[] | null
+  source_manifest: { id: string; title: string; url: string; kind: 'web' | 'local' }[] | null
+  artifact_manifest: { path: string }[] | null
+  publication: { head: string | null; pr: { number: number; url: string } | null }
+  stopped: { reason: string; detail: string; phase: PlanPhase } | null
+}
+
+export const PLAN_PHASE: Record<PlanPhase, string> = {
+  collect: '자료 모으는 중', clarify: '답 기다림', research: '조사 중', outline: '개요 쓰는 중', stages: '단계 쓰는 중',
+  validate: '검사 중', publish: '올리는 중', handoff: '리뷰로 넘김', stopped: '멈춤',
+}
+export const PLAN_STOP: Record<string, string> = {
+  cancelled: '취소', restart: '서버 재시작', deadline: '시간 한도', calls: '호출 한도', tokens: '토큰 한도',
+  budget_unknown: '사용량을 모름', web_unavailable: '웹 검색 없음', format: '답 형식', invalid: '검사 실패',
+  root_exists: '폴더가 이미 있음', worktree_moved: '작업트리가 움직임', publish_failed: '올리기 실패',
+  host: '호스트 오류', broken: '내부 오류',
+}
+
+export type PlanRequest = {
+  /** Made once per form: a second press of the same form is the same plan. */
+  request_id: string
+  goal: string
+  context: string
+  slug: string
+  stages: number | null
+  roles: { planner: PlanRole; reviser: PlanRole; reviewer: PlanRole }
+  limits: PlanLimits
+}
+
+export const startPlan = (body: PlanRequest) => post('/api/plans', body).then((r) => json<Spec>(r, '계획'))
+export const answerPlan = (id: string, revision: number, answers: { id: string; choice: string }[]) =>
+  post(`/api/plans/${id}/answers`, { revision, answers }).then((r) => json<Spec>(r, '답'))
+export const resumePlan = (id: string) => post(`/api/plans/${id}/resume`).then((r) => json<Spec>(r, '재개'))
+export const cancelPlan = (id: string) => post(`/api/plans/${id}/cancel`).then((r) => json<Spec>(r, '취소'))
 
 // -- The review loop -----------------------------------------------------------
 

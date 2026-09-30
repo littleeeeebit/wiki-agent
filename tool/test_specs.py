@@ -79,6 +79,8 @@ class Remote:
             return ok("https://github.com/o/proj/pull/7\n")
         if args[:3] == ["gh", "pr", "view"]:
             return ok(json.dumps({"state": "MERGED" if self.merged else "OPEN", "mergedAt": None}))
+        if args[:3] == ["gh", "pr", "list"] and "--head" in args:
+            return ok("[]")
         if args[0] == "gh":
             return subprocess.CompletedProcess(args, 1, "", "gh 가 로그인되어 있지 않다\n")
         return self.real(args, cwd, timeout)

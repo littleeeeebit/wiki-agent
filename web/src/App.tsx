@@ -360,6 +360,15 @@ export default function App() {
     setTab('agent')
   }, [choice, readSpecs, refresh])
 
+  // `[계획]`: the server made the plan's worktree and runs its planner there;
+  // selecting it attaches to the planner's turn like any other.
+  const planned = useCallback((spec: api.Spec) => {
+    readSpecs()
+    refresh()
+    if (spec.worktree) setSelected(spec.worktree)
+    setTab('agent')
+  }, [readSpecs, refresh])
+
   const showPeek = useCallback(async (file: string, line: number) => {
     if (!path) return
     setPeek({ data: null })
@@ -500,6 +509,7 @@ export default function App() {
             specs={specs}
             onSpecs={readSpecs}
             onStart={start}
+            onPlanned={planned}
             onMapRun={(run) => {
               setMapRun({ repo, run })
               setMapped(true)
@@ -539,7 +549,7 @@ export default function App() {
             </Btn>
           )}
         </header>
-        {task && <SpecSummary key={spec?.id ?? task.key} spec={spec} onStart={start} />}
+        {task && <SpecSummary key={spec?.id ?? task.key} spec={spec} onStart={start} onChanged={readSpecs} />}
         <div role="tablist" aria-label="작업 면" className="flex h-9 shrink-0 items-end gap-1 border-b border-border px-3">
           {TABS.map((t) => (
             <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => pick(t.id)}

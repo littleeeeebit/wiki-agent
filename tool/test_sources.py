@@ -660,6 +660,8 @@ def test_a_promotion_goes_up_as_a_spec_s_pull_request_after_the_gate(repo, monke
             return ok()
         if args[:3] == ["gh", "repo", "view"]:
             return ok("main\n")
+        if args[:3] == ["gh", "pr", "list"] and "--head" in args:
+            return ok("[]")
         if args[:3] == ["gh", "pr", "create"]:
             calls.append(Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8"))
             return ok("https://github.com/o/demo/pull/9\n")

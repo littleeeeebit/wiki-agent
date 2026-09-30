@@ -173,9 +173,58 @@ Live host capability and role handoff are checked in PR 10.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Entry | Wire explicit entry, roles and persisted run state | Not started |
-| 2 | Research and output | Implement research and structured document output | Not started |
-| 3 | Publish and hand off | Publish and hand off to document review | Not started |
+| 1 | Entry | Wire explicit entry, roles and persisted run state | Done — `planning.start`/`status`/`answer`/`resume`/`cancel`, `recover`, `[계획]` in `Query.tsx` |
+| 2 | Research and output | Implement research and structured document output | Done — phases `research`…`validate`, `plan-planner.md`, `problems`, `target` |
+| 3 | Publish and hand off | Publish and hand off to document review | Done — `publish`, `specs.pull_request`, `handoff`, `revise`; live check left to PR 10 |
+
+## Implementation notes
+
+- `tool/main/planning.py` holds the routes and the worker. The plan spec is an
+  ordinary spec in `작업 중` with `review_profile: plan`, `artifact_root:
+  docs/plans/<id>`, `source.plan: null`, and the additive `planning` field;
+  `cell` is the reviser's model and `reviewer` the review cell's
+  (`loop.cell` reads it before the settings). A done report in that worktree
+  publishes nothing (`specs._check`).
+- The worker holds the worktree for its whole run, so a person's turn, a
+  reset or a removal waits. Each planner turn is a `work.Run` registered for
+  the worktree: the rail and the agent tab tail it through `/api/work/events`,
+  and `/api/work/stop` cancels it like `/api/plans/{sid}/cancel`. The record
+  keeps no CLI session id and gets a context row at hand-off, so no later
+  session resumes A.
+- Planner A runs with `Read,Glob,Grep,WebSearch,WebFetch` and no shell. Web
+  research counts only when a tool event named a web tool (`meta.tool`, now
+  set on every host tool event); otherwise research stops `web_unavailable`.
+  Codex hosts without web search enabled stop there.
+- Budget: `common.budget.Budget` built from what is left. `calls` counts turns
+  sent to A, tool calls are counted apart; tokens are `in + out` charged after
+  each answer; a crossing is kept as `overrun`, and the next request is
+  refused. A turn without usage — answered, failed or stopped — is never
+  zero: `spent.unknown` stays set and the worker sends nothing more
+  (`budget_unknown` when it would). A person's resume goes on, and the
+  screen shows the spend as a lower bound; the token limit is then no
+  strict ceiling. The wall deadline stops the running turn. Reviser turns are
+  bounded by the loop's round cap, not by these limits.
+- Drafts wait in the hub's `raw/planning/<repo>/<id>/` with their SHA-256 in
+  `artifact_manifest`; a resume drops a changed draft and what builds on it.
+  Validation is one repair turn, then `invalid`. A stage may depend only on
+  earlier stages, which rules out cycles.
+- Publication writes through `target` (flat files directly in the new
+  folder, no `..`, no link or junction on the way, resolved right before the
+  write), commits exactly those paths, checks the diff, records the head
+  before the push and the pull request right after. `specs.pull_request`
+  looks up the open pull request for the same head and base before creating
+  and again after a failed or timed-out create; `specs.opened` uses it too.
+  A resume pushes only the recorded commit, and finishes a cut write only
+  when every file in the folder is a finished draft (by hash) or a swap
+  `atomic` left. A turn is marked in flight on disk before it is sent, so a
+  restart mid-turn keeps the call and marks the spend unknown. The hand-off
+  is marked only after `loop.kick` took the pull request.
+- The reviser is a read-only session per fix turn (`revise`, called from
+  `loop.told`); the server checks every returned path before writing any and
+  commits them. A path outside the folder writes nothing.
+- Not here: a switch that hides `[계획]` (rollback is reverting the router
+  and the button; drafts, worktrees and pull requests stay), raising limits
+  on resume (a new plan), and live host checks (PR 10).
 
 ## Sources
 
