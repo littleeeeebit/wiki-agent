@@ -4,6 +4,7 @@ import { Blocks } from '@/components/Blocks'
 import { Composer } from '@/components/Composer'
 import { Btn, ClearAsk } from '@/components/Modal'
 import { Peek } from '@/components/Peek'
+import { PlanStart } from '@/components/Plan'
 import { Stream } from '@/components/Stream'
 import { Picker, Toolbar } from '@/components/Toolbar'
 import * as api from '@/lib/api'
@@ -88,6 +89,8 @@ type Props = {
   specs: Spec[]
   onSpecs: () => void
   onStart: (id: string) => Promise<void>
+  /** A plan the Plan action started: select its worktree. */
+  onPlanned: (spec: Spec) => void
   /** Show a finished run's graph paths on the map. */
   onMapRun: (run: RunSummary) => void
 }
@@ -123,8 +126,10 @@ const SCOPES = [
 
 /** The middle pane's conversation: ask the wiki under one focus, read the
  *  grounds, and settle the next task into a spec. */
-export function Query({ channels, options, on, seed, onChannels, onBusy, specs, onSpecs, onStart, onMapRun }: Props) {
+export function Query({ channels, options, on, seed, onChannels, onBusy, specs, onSpecs, onStart, onPlanned,
+  onMapRun }: Props) {
   const [active, setActive] = useState('wiki')
+  const [planning, setPlanning] = useState(false)
   const [scope, setScope] = useState('all')
   const [typed, setTyped] = useState<{ text: string } | null>(null)
   useEffect(() => {
@@ -371,6 +376,10 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
           <Picker label="문서 범위" hideLabel width="w-32" items={SCOPES} value={scope} disabled={busy}
             onPick={(v) => setScope(v ?? 'all')} />
           {here && <Toolbar value={here} options={options} busy={busy} onChange={apply} />}
+          <Btn onClick={() => setPlanning(true)}
+            title="계획 세우기 — 계획자가 조사해 새 계획 폴더를 쓰고 PR 을 올린 뒤, 수정자와 리뷰어에게 넘긴다">
+            계획
+          </Btn>
           <Btn tone="ghost" className="px-1.5" onClick={wipe} disabled={busy} aria-label="문맥 비우기"
             title="문맥 비우기 — 이 초점의 대화를 새로 시작한다. 지금 대화는 메모리로 남기거나 지운다">
             <Eraser className="size-4" />
@@ -420,6 +429,10 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         </div>
         {peek && <Peek data={peek.data} error={peek.error} note={peek.note} where={peek.where} onClose={() => setPeek(null)} />}
       </div>
+      {planning && <PlanStart options={options} onClose={() => setPlanning(false)} onStarted={(spec) => {
+        setPlanning(false)
+        onPlanned(spec)
+      }} />}
       {asking && <ClearAsk onClear={clear} onClose={(said) => {
         setAsking(false)
         if (said) setNote(said)

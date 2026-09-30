@@ -725,7 +725,7 @@ class ChatSession:
                         yield Event("tool", ("파일 변경 · " + ", ".join(paths))[:120])
                     else:
                         yield Event("tool", str(item.get("command") or item.get("tool")
-                                                or item.get("query") or item["type"])[:120])
+                                                or item.get("query") or item["type"])[:120], {"tool": item["type"]})
                 elif method == "item/completed" and item.get("type") == "agentMessage":
                     final = str(item.get("text") or "")
                 elif method == "thread/tokenUsage/updated":
@@ -758,7 +758,8 @@ class ChatSession:
                     "command_execution", "mcp_tool_call", "web_search",
                 ):
                     item = ev["item"]
-                    yield Event("tool", str(item.get("command") or item.get("tool") or item["type"])[:120])
+                    yield Event("tool", str(item.get("command") or item.get("tool") or item["type"])[:120],
+                                {"tool": item["type"]})
                 elif kind == "turn.completed":
                     usage = ev.get("usage") or {}
                     yield Event("done", final, {
@@ -813,7 +814,8 @@ class ChatSession:
             elif kind == "assistant":
                 for block in _blocks(ev.get("message") or {}):
                     if block.get("type") == "tool_use":
-                        yield Event("tool", _tool_brief(block))
+                        # `tool` names it: whether a web search ran is read from here (`planning`).
+                        yield Event("tool", _tool_brief(block), {"tool": str(block.get("name") or "")})
 
             elif kind == "system" and ev.get("subtype") == "hook_response":
                 event = _hook(str(ev.get("hook_event") or ""), *_claude_hook(ev))

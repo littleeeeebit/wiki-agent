@@ -36,7 +36,7 @@ use a -5 percentage-point lower confidence bound, as selected by the owner.
 | 4 | [Jev contract](4-jev-contract.md) | Routing, call accounting, versions and graph health | Done |
 | 5 | [English reliability](5-english-baseline.md) | Frozen current-path evaluation and baseline | Done — v4 baseline; every mandatory gate passes (latency 5.48 s against 10 s) |
 | 6 | [Review profiles](6-review-profiles.md) | Rubrics, stable findings and independent roles | Done — live plan review left to PR 10 |
-| 7 | [Planner](7-planner.md) | Bounded artifacts, persisted workflow, PR and handoff | Not started |
+| 7 | [Planner](7-planner.md) | Bounded artifacts, persisted workflow, PR and handoff | Done — live host capability and hand-off left to PR 10 |
 | 8 | [Recovery](8-recovery.md) | Recurrence barrier, research and two-cycle escalation | Not started |
 | 9 | [Korean comparison](9-korean.md) | Isolate input/evidence translation effects | Not started |
 | 10 | [Live acceptance](10-acceptance.md) | Desktop/host scenarios and original-plan evidence | Not started |

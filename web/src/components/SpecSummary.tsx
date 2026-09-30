@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { Btn } from '@/components/Modal'
+import { PlanStatus } from '@/components/Plan'
 import { PROFILE_LABEL, type Spec } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
@@ -8,8 +9,13 @@ import { cn } from '@/lib/utils'
  *  work session was given — what stays out, the done conditions, the grounds
  *  and the decisions — and what the server made of the result. Editing is the
  *  card's, in the `next` conversation; a spec not started yet starts here too. */
-export function SpecSummary({ spec, onStart }: { spec: Spec | null; onStart: (id: string) => Promise<void> }) {
-  const [open, setOpen] = useState(false)
+export function SpecSummary({ spec, onStart, onChanged }: {
+  spec: Spec | null
+  onStart: (id: string) => Promise<void>
+  onChanged: () => void
+}) {
+  // A plan still being drafted opens on its status: its questions wait on the person.
+  const [open, setOpen] = useState(Boolean(spec?.planning && spec.state === '작업 중'))
   const [working, setWorking] = useState(false)
   const [fault, setFault] = useState('')
   if (!spec) return <p className="flex h-11 items-center px-5 text-[12.5px] text-faint">명세 없음 — 이 작업트리는 명세 없이 만들어졌다</p>
@@ -31,6 +37,7 @@ export function SpecSummary({ spec, onStart }: { spec: Spec | null; onStart: (id
       </button>
       {open && (
         <div className="max-h-72 space-y-3 overflow-y-auto px-5 pb-4 text-[12.5px]">
+          {spec.planning && <PlanStatus spec={spec} onChanged={onChanged} />}
           {list('빼는 것', spec.out)}
           {list('완료 조건', spec.done)}
           {list('근거', [...spec.grounds.pages, ...spec.grounds.files, ...spec.grounds.rules])}

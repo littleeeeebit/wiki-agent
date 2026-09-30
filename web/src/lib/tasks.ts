@@ -1,3 +1,4 @@
+import { PLAN_PHASE, PLAN_STOP } from '@/lib/api'
 import type { LoopRow, Spec, Worktree } from '@/lib/api'
 
 /** The review loop's own states: while in one of these, the server runs it. */
@@ -61,7 +62,11 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
     const asks = s.worktree ? approvals(s.worktree) : 0
     const waiting = asks > 0 || Boolean(s.waiting)
     const running = s.worktree ? busy(s.worktree) : false
-    const parts = [word(s.state)]
+    // A plan still being drafted says its phase; its questions and its stop wait on the person.
+    const plan = s.state === '작업 중' ? s.planning : null
+    const planAct = plan?.phase === 'clarify' || plan?.phase === 'stopped'
+    const parts = [plan ? `계획 · ${PLAN_PHASE[plan.phase]}` : word(s.state)]
+    if (plan?.stopped) parts.push(PLAN_STOP[plan.stopped.reason] ?? plan.stopped.reason)
     if (waiting) parts.push(asks ? `승인 ${asks}` : '승인 대기')
     if (p === 'ready') parts.push('머지를 누른다')
     if (p === 'stop' && s.stopped) parts.push(s.stopped.reason)
@@ -70,7 +75,7 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
       key: s.worktree ?? `spec:${s.id}`, path: s.worktree, spec: s, name: s.id,
       pr: s.pr?.number ?? null, round: (s.rounds ?? []).filter((r) => !r.stale).length,
       phase: p,
-      group: waiting || p === 'ready' || p === 'stop' ? 'act'
+      group: waiting || planAct || p === 'ready' || p === 'stop' ? 'act'
         : p === 'done' ? 'done' : p === 'draft' && !running ? 'idle' : 'run',
       line: parts.join(' · '), waiting, busy: running, live: row?.live ?? false, row,
     })

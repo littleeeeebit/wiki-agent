@@ -101,7 +101,16 @@ def save(spec: dict) -> None:
     file.parent.mkdir(parents=True, exist_ok=True)
     temporary = file.with_suffix(".tmp")
     temporary.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
-    temporary.replace(file)
+    # On Windows the swap is refused while a reader has the file open — a
+    # screen's listing, another thread's `load` — so it is tried again briefly.
+    for attempt in range(40):
+        try:
+            temporary.replace(file)
+            break
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.025)
     publish(spec)
 
 
@@ -1008,6 +1017,51 @@ def base_of(spec: dict, path: Path) -> subprocess.CompletedProcess:
         sh(["gh", "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], path, 30)
 
 
+def existing_pr(path: Path, branch: str, base: str) -> tuple[int, str] | None:
+    """The open pull request of this repository from `branch` into `base`, or
+    `None`. Every field is checked here, not left to `gh`'s filters: a fork's
+    branch of the same name is someone else's. `RuntimeError` when GitHub
+    cannot be read — nobody can say then whether one exists."""
+
+    done = sh(["gh", "pr", "list", "--head", branch, "--base", base, "--state", "open",
+               "--json", "number,url,headRefName,baseRefName,isCrossRepository"], path, 60)
+    if done.returncode:
+        raise RuntimeError(f"열린 PR 을 확인하지 못했다 — {said(done)}")
+    rows = [r for r in json.loads(done.stdout)
+            if r.get("headRefName") == branch and r.get("baseRefName") == base and not r.get("isCrossRepository")]
+    if len(rows) > 1:
+        raise RuntimeError(f"`{branch}` → `{base}` 로 열린 PR 이 {len(rows)}개다")
+    return (int(rows[0]["number"]), rows[0]["url"]) if rows else None
+
+
+def pull_request(path: Path, branch: str, base: str, title: str, body: str) -> tuple[int, str]:
+    """`(number, url)` of the pull request from `branch` into `base`: the one
+    already open, else a new one. A create that failed or timed out is not
+    tried again — the list is read once more, since GitHub may have made it
+    before the answer was lost. `RuntimeError` says why there is none."""
+
+    found = existing_pr(path, branch, base)
+    if found:
+        return found
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
+        fh.write(body)
+    try:
+        made = sh(["gh", "pr", "create", "--base", base, "--head", branch, "--title", title, "--body-file", fh.name],
+                  path, 120)
+        why = said(made)
+    except subprocess.TimeoutExpired:
+        made, why = None, "시간 초과"
+    finally:
+        os.unlink(fh.name)
+    number = re.search(r"/pull/(\d+)", made.stdout) if made is not None and not made.returncode else None
+    if number:
+        return int(number.group(1)), made.stdout.strip().splitlines()[-1]
+    found = existing_pr(path, branch, base)
+    if found:
+        return found
+    raise RuntimeError(f"PR 을 만들지 못했다 — {why}")
+
+
 def opened(repo: Path, path: Path, run, spec: dict):
     """Push, and open the pull request as the person's `gh`. The next turn to
     start, when the spec came from a plan row that now says done.
@@ -1030,17 +1084,10 @@ def opened(repo: Path, path: Path, run, spec: dict):
         return failed(run, spec, "사람이 멈춤 — push 는 했고 PR 은 만들지 않았다")
     note(run, "PR 을 한국어로 옮기는 중")
     shown = korean(spec)
-    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
-        fh.write(body_of(shown))
     try:
-        made = sh(["gh", "pr", "create", "--base", base.stdout.strip(), "--head", branch,
-                   "--title", shown["goal"], "--body-file", fh.name], path, 120)
-    finally:
-        os.unlink(fh.name)
-    number = re.search(r"/pull/(\d+)", made.stdout)
-    if made.returncode or not number:
-        return failed(run, spec, f"PR 을 만들지 못했다 — {said(made)}")
-    n, url = int(number.group(1)), made.stdout.strip().splitlines()[-1]
+        n, url = pull_request(path, branch, base.stdout.strip(), shown["goal"], body_of(shown))
+    except RuntimeError as exc:
+        return failed(run, spec, str(exc))
     plan = spec["source"].get("plan")
     with _files:
         spec = load(spec["repo"], sid)
@@ -1109,6 +1156,9 @@ def _check(path: Path, run, final: str):
     spec = owner(path)
     repo = channels.repo_for(spec["repo"]) if spec else None
     if spec is None or repo is None:
+        return None
+    if spec.get("planning") and spec["state"] == "작업 중":
+        # A plan goes up through `planning` only; a done report here publishes nothing.
         return None
     if spec["state"].startswith("PR #") and spec.get("plan_commit") == "asked":
         # Any turn that ends here is not the row's commit: a person's turn may

@@ -28,7 +28,7 @@ from pydantic import BaseModel
 
 import translate
 
-from . import channels, connect, loop, query, specs, work
+from . import channels, connect, loop, planning, query, specs, work
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
 # `text/plain`. The browser then refuses `<script type="module">` silently:
@@ -54,9 +54,12 @@ async def lifespan(_: FastAPI):
     # A loop that ran when the server last went down stopped with it; it
     # says so, and waits for a person's `[계속]`.
     loop.recover()
+    # A plan's worker too: stopped with its phase, never replayed by itself.
+    planning.recover()
     threading.Thread(target=loop.poll, daemon=True).start()
     yield
     loop.close_all()
+    planning.close_all()
     query.close_all()
     work.close_all()
 
@@ -66,6 +69,7 @@ app.include_router(query.router)
 app.include_router(work.router)
 app.include_router(specs.router)
 app.include_router(loop.router)
+app.include_router(planning.router)
 app.include_router(connect.router)
 
 # The names this server answers to. Anything else in `Host` is another site's

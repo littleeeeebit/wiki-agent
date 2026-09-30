@@ -407,15 +407,23 @@ def profiled(spec: dict, profile: str, head: str, base: str, base_oid: str) -> l
     if asked["review_profile"] != profile:
         out.append(f"- The spec asked for `{asked['review_profile']}` with artifact root `{asked['artifact_root']}`; "
                    "the change reaches past it, so the code criteria apply too.")
-    if profile != "code":
+    planned = spec.get("planning") or {}
+    if profile != "code" and planned.get("outline"):
+        # A planner's plan: its own requirement ids and the sources its research kept.
+        out += ["", "## Requirements", "", f"- R0: {spec['goal']}"]
+        out += [f"- {r['id']}: {r['text']}" for r in planned["outline"]["requirements"]]
+        out += ["", "## Source manifest", ""]
+        out += [f"- {s['id']}: {s['title']} · {s['url']} · retrieved {s['retrieved']} · {s['locator']}"
+                for s in planned.get("source_manifest") or []] or ["(none kept)"]
+    elif profile != "code":
         out += ["", "## Requirements", "", f"- R0: {spec['goal']}"]
         out += [f"- R{i}: {d}" for i, d in enumerate(spec["done"], 1)]
         grounds = spec.get("grounds") or {}
         cited = [*grounds.get("pages", []), *grounds.get("files", []),
                  *(e["cite"] for e in grounds.get("evidence", []))]
         out += ["", "## Source manifest", "", *(f"- `{c}`" for c in cited or ["(none cited)"])]
-        if asked["artifact_root"]:
-            out.append(f"- The plan's documents: `{asked['artifact_root']}/`")
+    if profile != "code" and asked["artifact_root"]:
+        out.append(f"- The plan's documents: `{asked['artifact_root']}/`")
     for name in ("plan", "code"):
         if profile in (name, "mixed"):
             out += ["", RUBRIC[name]]
@@ -550,11 +558,15 @@ def cell(spec: dict, path: Path) -> ChatSession:
     Read once per round: a model or effort changed in the settings applies
     from the next round, never inside one, and each round keeps the one its
     verdict ran on (`reviewer`). A change of CLI is a new cell — the old
-    session id is the other CLI's. Never a write session: read tools only."""
+    session id is the other CLI's. Never a write session: read tools only.
+    A spec that names its own `reviewer` — a plan's — is reviewed by that
+    model instead of the settings'."""
 
     key = (spec["repo"], spec["pr"]["number"])
+    named = spec.get("reviewer") or {}
     # Outside the lock: listing Codex's models starts Codex.
-    model, effort = review_model(), settings()["review_effort"]
+    model = review_model(named["model"]) if named.get("model") else review_model()
+    effort = named.get("effort") or settings()["review_effort"]
     with _lock:
         chat = _cells.get(key)
     if chat is not None and chat.is_codex == model.startswith("codex:"):
@@ -777,8 +789,13 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     asks for waits on a person. Its final answer; `None` when stopped.
 
     While it waits on an approval the spec says so to the screens, once each
-    time that changes."""
+    time that changes. A plan's documents are revised by a read-only session
+    whose files the server writes (`planning.revise`), never by a write session."""
 
+    if spec.get("planning"):
+        from . import planning  # `planning` imports this module
+
+        return planning.revise(loop, spec, path, text)
     release = wait_hold(loop, path)
     if release is None:
         return None

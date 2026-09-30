@@ -35,7 +35,7 @@ The packages under `tool/` are pipelines whose imports `tool/lint.py` checks
 | `tool/search/` | Sources, chunks, the evidence store, the knowledge graph and retrieval |
 | `tool/decision/` | Jev transport, typed decisions, policy and claims; no retrieval or execution |
 | `tool/agent/` | Generative models and host sessions |
-| `tool/main/` | The program: composes the others into the query, work, specification and loop workflows |
+| `tool/main/` | The program: composes the others into the query, work, specification, planning and loop workflows |
 | `web/src/` | The screen; `web/src-tauri/` is the window around it |
 
 The hooks (`tool/inject.py`, `tool/hook.py` and the other `PreToolUse` checks)
