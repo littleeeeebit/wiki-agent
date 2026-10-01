@@ -182,9 +182,10 @@ export const claim = (name: string) => {
   if (name) known()
 }
 
-async function scoped(url: string): Promise<Record<string, string>> {
+async function scoped(url: string, owner?: string): Promise<Record<string, string>> {
   if (!url.startsWith('/api/channels')) await claimedOnce
-  return claimed ? { 'X-Project': encodeURIComponent(claimed) } : {}
+  const repo = owner ?? claimed
+  return repo ? { 'X-Project': encodeURIComponent(repo) } : {}
 }
 
 /** The project the server is on, when it refused this screen's. Announced as
@@ -194,7 +195,7 @@ function moved(res: Response) {
   if (to) window.dispatchEvent(new CustomEvent('project-moved', { detail: decodeURIComponent(to) }))
 }
 
-const get = async (url: string) => fetch(url, { headers: await scoped(url) })
+const get = async (url: string, owner?: string) => fetch(url, { headers: await scoped(url, owner) })
 
 async function json<T>(res: Response, what: string): Promise<T> {
   if (!res.ok) {
@@ -210,10 +211,10 @@ async function json<T>(res: Response, what: string): Promise<T> {
   return res.json()
 }
 
-const post = async (url: string, body?: unknown, method = 'POST') =>
+const post = async (url: string, body?: unknown, method = 'POST', owner?: string) =>
   fetch(url, {
     method,
-    headers: { 'Content-Type': 'application/json', ...(await scoped(url)) },
+    headers: { 'Content-Type': 'application/json', ...(await scoped(url, owner)) },
     body: body === undefined ? undefined : JSON.stringify(body),
   })
 
@@ -525,6 +526,8 @@ export type Spec = {
   cleanup?: string[]
   /** Who holds a `머지 대기`: "대기열" or "자동 머지 — 검사 대기". */
   queued?: string | null
+  implementation_environment?: 'local' | 'claude-cloud'
+  local_verification?: LocalVerification
   /** A plan the Plan action drafts: its phase, budget and hand-off (reliability PR 7). */
   planning?: Planning | null
 }
@@ -623,23 +626,54 @@ export type LoopSettings = { rounds: number; concurrent: number; review_model: s
 
 export const getPrs = () =>
   get('/api/prs').then((r) => json<{ project: string; rows: Pr[]; error?: string }>(r, 'PR 목록'))
-export const startLoops = (prs: number[]) =>
-  post('/api/loops', { prs }).then((r) =>
+export const startLoops = (prs: number[], implementation_environment: 'local' | 'claude-cloud' = 'local', owner?: string) =>
+  post('/api/loops', { prs, implementation_environment }, 'POST', owner).then((r) =>
     json<{ results: { number: number; id?: string; error?: string }[] }>(r, '리뷰 루프'))
 export const getLoops = () =>
   get('/api/loops').then((r) => json<{ loops: LoopRow[]; turns: { path: string; repo: string }[] }>(r, '루프'))
-export const mergeSpec = (id: string, head: string) =>
-  post(`/api/specs/${id}/merge`, { head }).then((r) => json<Spec>(r, '머지'))
-export const settleSpec = (id: string, choice: 'accept' | 'reopen') =>
-  post(`/api/specs/${id}/settle`, { choice }).then((r) => json<Spec>(r, '끝내기'))
-export const resumeSpec = (id: string, note = '') =>
-  post(`/api/specs/${id}/resume`, { note }).then((r) => json<Spec>(r, '계속'))
-export const haltSpec = (id: string) => post(`/api/specs/${id}/halt`).then((r) => json<Spec>(r, '멈춤'))
-export const roundFile = (id: string, n: number, what: 'order' | 'result') =>
-  get(`/api/specs/${id}/rounds/${n}?what=${what}`).then((r) => json<{ path: string; text: string }>(r, '라운드 파일'))
+export const mergeSpec = (id: string, head: string, owner?: string) =>
+  post(`/api/specs/${id}/merge`, { head }, 'POST', owner).then((r) => json<Spec>(r, '머지'))
+export const settleSpec = (id: string, choice: 'accept' | 'reopen', owner?: string) =>
+  post(`/api/specs/${id}/settle`, { choice }, 'POST', owner).then((r) => json<Spec>(r, '끝내기'))
+export const resumeSpec = (id: string, note = '', owner?: string) =>
+  post(`/api/specs/${id}/resume`, { note }, 'POST', owner).then((r) => json<Spec>(r, '계속'))
+export const haltSpec = (id: string, owner?: string) => post(`/api/specs/${id}/halt`, undefined, 'POST', owner).then((r) => json<Spec>(r, '멈춤'))
+export const roundFile = (id: string, n: number, what: 'order' | 'result', owner?: string) =>
+  get(`/api/specs/${id}/rounds/${n}?what=${what}`, owner).then((r) => json<{ path: string; text: string }>(r, '라운드 파일'))
 export const getLoopSettings = () => get('/api/loop/settings').then((r) => json<LoopSettings>(r, '루프 설정'))
 export const setLoopSettings = (body: LoopSettings) =>
   post('/api/loop/settings', body).then((r) => json<LoopSettings>(r, '루프 설정'))
+
+export type LocalVerification = {
+  version: number
+  state: 'waiting_environment' | 'waiting_review' | 'running' | 'runtime_passed' | 'verified'
+    | 'waiting_cloud' | 'reanalysis' | 'unstable' | 'interrupted'
+  head: string
+  reason: string
+  document_only?: boolean
+  needs_research?: boolean
+  flows?: { id: string; title: string; kind: string; ok: boolean; reason: string; command: string;
+    executed_head: string; reuse_reason: string; log?: string; evidence: unknown; finished_at: number | null; attempts?: unknown[] }[]
+  failures?: Record<string, string[]>
+  published?: { head: string; state: string; id: number | null } | null
+}
+
+export type VerificationConfig = {
+  repo: string
+  settings: Record<string, unknown>
+  manifest: { version: number; contracts: string[]; flows: { id: string; title: string; command: string; kind: string;
+    environments: string[] }[] } | null
+  manifest_digest: string
+  problem: string
+}
+
+export const getVerificationConfig = (repo: string, sid: string) =>
+  get(`/api/verification/config?sid=${encodeURIComponent(sid)}`, repo).then((r) => json<VerificationConfig>(r, '로컬 검증 설정'))
+export const saveVerificationConfig = (repo: string, sid: string, body: unknown) =>
+  post(`/api/verification/config?sid=${encodeURIComponent(sid)}`, body, 'PUT', repo)
+    .then((r) => json<VerificationConfig>(r, '로컬 검증 설정 저장'))
+export const configureVerificationProtection = (repo: string, base: string) =>
+  post('/api/verification/protection', { base }, 'POST', repo).then((r) => json(r, 'GitHub 필수 검사 설정'))
 
 // -- Connecting a repository --------------------------------------------------
 

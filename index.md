@@ -24,6 +24,7 @@ python tool/intersect.py raw/census-*.jsonl
 | Page | Severity |
 | --- | --- |
 | [The Codex review loop](operator/codex-review-loop.md) | `landmine` |
+| [Cloud implements, local verifies](operator/cloud-local-review.md) | `contract` |
 | [The agent writes English, the person reads the mirror](operator/english-progress.md) | `landmine` |
 | [Edit files as diffs](operator/edit-files-as-diffs.md) | `contract` |
 | [Cleanup after a merge](operator/after-merge-cleanup.md) | `contract` |

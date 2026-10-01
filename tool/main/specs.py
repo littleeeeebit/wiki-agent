@@ -379,6 +379,11 @@ def view(repo: Path, spec: dict) -> dict:
         try:
             unproven = proven(spec, allowed["head"], merge_base(path, allowed["base"], allowed["head"]),
                               digest(repo, path, required(repo, spec))) if allowed else "리뷰가 허용한 라운드가 없다"
+            if not unproven and spec.get("implementation_environment") == "claude-cloud":
+                from . import verification
+
+                unproven = verification.merge_proven(repo, path, spec, allowed["head"],
+                                                merge_base(path, allowed["base"], allowed["head"]))
         except (OSError, subprocess.SubprocessError) as exc:
             unproven = f"작업트리를 읽지 못했다 — {exc}"
     return {**spec, **profile_of(spec), "missing": missing(repo, spec), "approved": allowed["head"] if allowed else None,
@@ -763,13 +768,13 @@ def kill(proc: subprocess.Popen) -> None:
         os.killpg(proc.pid, signal.SIGKILL)
 
 
-def gate(cmd: str, cwd: Path, halt: threading.Event) -> tuple[int | None, str, str]:
+def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None) -> tuple[int | None, str, str]:
     """Run the gate in `cwd`, a shell string as the adapter wrote it:
     `(exit code, output, why it was cut)`. A stop of the turn stops it too,
     and a stop that came while a fast gate ran still cuts it: the stop is
     read after the gate ends, not only while it waits."""
 
-    proc = subprocess.Popen(cmd, shell=True, cwd=cwd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
                             start_new_session=os.name != "nt")
     deadline, cut = time.monotonic() + GATE_SECONDS, ""
@@ -789,7 +794,7 @@ def gate(cmd: str, cwd: Path, halt: threading.Event) -> tuple[int | None, str, s
                 kill(proc)
 
 
-def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None) -> dict:
+def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None, env: dict | None = None) -> dict:
     """The server's own check of a done report: nothing uncommitted, and the
     commands pass again in the worktree, in order, stopping at the first
     failure. What the agent said is not evidence. The review loop checks
@@ -809,7 +814,7 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
     code, out, cut = None, "", ""
     for one in cmds:
         noted(f"게이트 · {one}")
-        code, out, cut = gate(one, path, halt)
+        code, out, cut = gate(one, path, halt, env=env) if env is not None else gate(one, path, halt)
         if code != 0:
             break
     after = sh(["git", "status", "--porcelain"], path)

@@ -1,7 +1,7 @@
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Btn } from '@/components/Modal'
 import * as api from '@/lib/api'
-import { PROFILE_LABEL, type Spec } from '@/lib/api'
+import { PROFILE_LABEL, type LocalVerification, type Spec, type VerificationConfig } from '@/lib/api'
 import { LOOPING } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 
@@ -13,34 +13,42 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
   const [fault, setFault] = useState('')
   const [note, setNote] = useState('')
   const [file, setFile] = useState<{ title: string; text: string } | null>(null)
+  const generation = useRef(0)
+  useEffect(() => () => { generation.current++ }, [])
 
   if (!spec) return <p className="p-5 text-[13.5px] text-faint">명세가 없는 작업이다. 리뷰 루프는 명세의 PR 에서 돈다.</p>
   if (!spec.pr) return <p className="p-5 text-[13.5px] text-faint">아직 PR 이 없다. 작업이 끝나 PR 이 서면 여기서 라운드가 돈다.</p>
 
   async function act(what: string, fn: () => Promise<unknown>) {
+    const ticket = generation.current
     setFault('')
     setWorking(what)
     try {
       await fn()
-      setNote('')
+      if (generation.current === ticket) setNote('')
     } catch (err) {
-      setFault(String(err instanceof Error ? err.message : err))
+      if (generation.current === ticket) setFault(String(err instanceof Error ? err.message : err))
     } finally {
-      setWorking('')
-      onChanged()
+      if (generation.current === ticket) {
+        setWorking('')
+        onChanged()
+      }
     }
   }
 
   async function open(n: number, what: 'order' | 'result') {
+    const ticket = generation.current
     try {
-      const { path, text } = await api.roundFile(spec!.id, n, what)
-      setFile({ title: path, text })
+      const { path, text } = await api.roundFile(spec!.id, n, what, spec!.repo)
+      if (generation.current === ticket) setFile({ title: path, text })
     } catch (err) {
-      setFault(String(err instanceof Error ? err.message : err))
+      if (generation.current === ticket) setFault(String(err instanceof Error ? err.message : err))
     }
   }
 
   const reason = spec.stopped?.reason ?? ''
+  const cloud = spec.implementation_environment === 'claude-cloud'
+  const analysis = cloud && (spec.local_verification?.needs_research || ['reanalysis', 'unstable'].includes(spec.local_verification?.state ?? ''))
   const rounds = spec.rounds ?? []
   const checked = spec.validation?.round
   const final = spec.validation?.final
@@ -53,12 +61,14 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
           GitHub 에서 PR #{spec.pr.number} 열기
         </a>
         {LOOPING.test(spec.state) && (
-          <Btn tone="danger" className="ml-auto" disabled={!!working} onClick={() => act('halt', () => api.haltSpec(spec.id))}
+          <Btn tone="danger" className="ml-auto" disabled={!!working} onClick={() => act('halt', () => api.haltSpec(spec.id, spec.repo))}
             title="이 루프를 멈춘다. [계속] 으로 잇는다">
             멈춤
           </Btn>
         )}
       </div>
+
+      {cloud && <VerificationPanel spec={spec} />}
 
       {spec.state === '멈춤' && spec.stopped && (
         <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 p-3">
@@ -67,8 +77,8 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
           {reason === '검토하지 않은 base 에 머지됨' ? (
             <div className="mt-2 space-y-1.5">
               <div className="flex gap-1.5">
-                <Btn disabled={!!working} onClick={() => act('accept', () => api.settleSpec(spec.id, 'accept'))}>받아들임</Btn>
-                <Btn disabled={!!working} onClick={() => act('reopen', () => api.settleSpec(spec.id, 'reopen'))}>다시 PR</Btn>
+                <Btn disabled={!!working} onClick={() => act('accept', () => api.settleSpec(spec.id, 'accept', spec.repo))}>받아들임</Btn>
+                <Btn disabled={!!working} onClick={() => act('reopen', () => api.settleSpec(spec.id, 'reopen', spec.repo))}>다시 PR</Btn>
               </div>
               <p className="text-faint">
                 `{spec.merge?.base}` 의 머지는 그대로다. 되돌리려면 GitHub 에서. [다시 PR] 은 원래 base 로 새 PR 을 올린다.
@@ -76,14 +86,15 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
             </div>
           ) : (
             <div className="mt-2 space-y-1.5">
-              {reason === '반론' && (
+              {(reason === '반론' || analysis) && (
                 <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
-                  placeholder="그 발견에 정한 것 — 다음 라운드 지시에 들어간다"
+                  aria-label={analysis ? '재분석 근거' : '발견에 대한 판단'}
+                  placeholder={analysis ? '원인 · 근거 · 다음 실험 — 재분석 후 재개한다' : '그 발견에 정한 것 — 다음 라운드 지시에 들어간다'}
                   className="w-full rounded-md border border-border bg-background px-2 py-1 text-[13.5px]" />
               )}
-              <Btn tone="primary" disabled={!!working || (reason === '반론' && !note.trim())}
-                onClick={() => act('resume', () => api.resumeSpec(spec.id, note.trim()))}>
-                {working === 'resume' ? '…' : reason === '라운드 상한' ? '계속 (+4 라운드)' : '계속'}
+              <Btn tone="primary" disabled={!!working || ((reason === '반론' || analysis) && !note.trim())}
+                onClick={() => act('resume', () => api.resumeSpec(spec.id, note.trim(), spec.repo))}>
+                {working === 'resume' ? '…' : cloud ? '로컬 검증 재개' : reason === '라운드 상한' ? '계속 (+4 라운드)' : '계속'}
               </Btn>
             </div>
           )}
@@ -97,7 +108,7 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
             <div className="mt-2">계획 행 커밋이 아직이다 — 에이전트 탭에서 행을 고쳐 커밋하게 하면 리뷰로 간다</div>
           ) : (
             <Btn tone="primary" className="mt-2" disabled={!!working}
-              onClick={() => act('review', () => api.startLoops([spec.pr!.number]).then(({ results }) => {
+              onClick={() => act('review', () => api.startLoops([spec.pr!.number], cloud ? 'claude-cloud' : 'local', spec.repo).then(({ results }) => {
                 if (results[0]?.error) throw new Error(results[0].error)
               }))}>
               {working === 'review' ? '…' : '리뷰 시작'}
@@ -131,14 +142,17 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
         <div className="mt-3 rounded-md border border-st-ready/50 p-3">
           <div className="flex items-center gap-2">
             {proven ? (
-              <Btn tone="primary" disabled={!!working} onClick={() => act('merge', () => api.mergeSpec(spec.id, spec.approved!))}>
+              <Btn tone="primary" disabled={!!working} onClick={() => act('merge', () => api.mergeSpec(spec.id, spec.approved!, spec.repo))}>
                 {working === 'merge' ? '머지하는 중…' : '머지 ▸'}
               </Btn>
             ) : (
               // The server refuses the merge and sends the spec back to run only the final gate.
               <Btn disabled={!!working || running}
-                onClick={() => act('final', () => api.mergeSpec(spec.id, spec.approved!).catch(() => undefined))}>
-                {working === 'final' ? '…' : '최종 게이트 돌리기'}
+                onClick={() => act('final', () => cloud
+                  ? api.startLoops([spec.pr!.number], 'claude-cloud', spec.repo).then(({ results }) => {
+                    if (results[0]?.error) throw new Error(results[0].error)
+                  }) : api.mergeSpec(spec.id, spec.approved!, spec.repo).catch(() => undefined))}>
+                {working === 'final' ? '…' : cloud ? '로컬 검증 다시 시작' : '최종 게이트 돌리기'}
               </Btn>
             )}
             <span className="font-mono text-[10.5px] text-faint">squash · {spec.approved.slice(0, 7)} 에 묶인다</span>
@@ -216,4 +230,140 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
       )}
     </div>
   )
+}
+
+const VERIFICATION_STATE: Record<LocalVerification['state'], string> = {
+  waiting_environment: '환경 준비 대기', waiting_review: '로컬 리뷰 대기', running: '주요 흐름 검증 중',
+  runtime_passed: '실행 검증 통과 · 리뷰 대기', verified: '로컬 검증·리뷰 통과', waiting_cloud: '클라우드 수정 대기',
+  reanalysis: '두 수정 주기 실패 · 재분석 필요', unstable: '간헐적 실패 · 원인 확인 필요', interrupted: '중단 · 재개 대기',
+}
+
+/** Repository-specific setup and receipts stay in the existing review tab.
+ * Requests retain the repository captured on mount; retired results are dropped. */
+function VerificationPanel({ spec }: { spec: Spec }) {
+  const [config, setConfig] = useState<VerificationConfig | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [fault, setFault] = useState('')
+  const [working, setWorking] = useState(false)
+  const generation = useRef(0)
+  const [owner] = useState(() => ({ repo: spec.repo, id: spec.id }))
+  const retire = useCallback(() => { generation.current++ }, [])
+
+  useEffect(() => {
+    const ticket = ++generation.current
+    api.getVerificationConfig(owner.repo, owner.id).then((found) => {
+      if (generation.current === ticket) setConfig(found)
+    }).catch((err) => {
+      if (generation.current === ticket) setFault(String(err instanceof Error ? err.message : err))
+    })
+    return retire
+  }, [owner, retire])
+
+  async function configure() {
+    const ticket = ++generation.current
+    setFault('')
+    setWorking(true)
+    try {
+      const found = await api.getVerificationConfig(owner.repo, owner.id)
+      if (generation.current !== ticket) return
+      setConfig(found)
+      const saved = found.settings
+      const revisions = saved.revisions as Record<string, string> | undefined
+      const fields: Record<string, string> = {}
+      for (const key of ['environment_id', 'test_scope', 'env_file', 'browser_tool', 'setup', 'cleanup']) {
+        fields[key] = String(saved[key] ?? '')
+      }
+      fields.allowed_origins = (saved.allowed_origins as string[] | undefined)?.join('\n') ?? ''
+      for (const key of new Set(found.manifest?.flows.flatMap((f) => f.environments) ?? [])) fields[`revision:${key}`] = revisions?.[key] ?? ''
+      setValues(fields)
+      setEditing(true)
+    } catch (err) {
+      if (generation.current === ticket) setFault(String(err instanceof Error ? err.message : err))
+    } finally {
+      if (generation.current === ticket) setWorking(false)
+    }
+  }
+
+  async function save() {
+    const ticket = ++generation.current
+    setWorking(true)
+    setFault('')
+    try {
+      const revisions = Object.fromEntries(Object.entries(values).filter(([k]) => k.startsWith('revision:'))
+        .map(([k, v]) => [k.slice(9), v]))
+      const body = { ...config?.settings, ...Object.fromEntries(Object.entries(values).filter(([k]) => !k.startsWith('revision:'))),
+        revisions, allowed_origins: values.allowed_origins.split('\n').map((v) => v.trim()).filter(Boolean),
+        manifest_digest: config!.manifest_digest }
+      const found = await api.saveVerificationConfig(owner.repo, owner.id, body)
+      if (generation.current === ticket) { setConfig(found); setEditing(false) }
+    } catch (err) {
+      if (generation.current === ticket) setFault(String(err instanceof Error ? err.message : err))
+    } finally {
+      if (generation.current === ticket) setWorking(false)
+    }
+  }
+
+  async function protect() {
+    const ticket = ++generation.current
+    setWorking(true)
+    setFault('')
+    try {
+      await api.configureVerificationProtection(owner.repo, spec.pr?.base ?? 'main')
+    } catch (err) {
+      if (generation.current === ticket) setFault(String(err instanceof Error ? err.message : err))
+    } finally {
+      if (generation.current === ticket) setWorking(false)
+    }
+  }
+
+  const record = spec.local_verification
+  const labels: Record<string, string> = { environment_id: '테스트 환경 이름', test_scope: '테스트 계정·데이터 범위',
+    env_file: '로컬 .env 파일의 절대 경로', browser_tool: '브라우저 검증 도구', setup: '환경 준비 명령 (선택)',
+    cleanup: '테스트 데이터·서버 정리 명령 (선택)' }
+  return <section aria-label="클라우드 구현의 로컬 검증" className="mt-3 rounded-md border border-border p-3">
+    <div className="font-heading text-[11px] font-semibold">Claude Code Cloud → 로컬 검증</div>
+    <p className="mt-1">{record ? VERIFICATION_STATE[record.state] : '로컬 검증 대기'}</p>
+    {record?.reason && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p>}
+    <div className="mt-2 flex flex-wrap gap-2">
+      <Btn disabled={working || LOOPING.test(spec.state)} onClick={() => void configure()}>프로젝트 검증 설정</Btn>
+      <Btn disabled={working || LOOPING.test(spec.state)} onClick={() => void protect()}>GitHub 필수 검사 설정</Btn>
+    </div>
+    <p className="mt-1 text-faint">.env 는 로컬에 유지한다. GitHub 의 기존 보호 규칙에 필수 검사를 추가한다.</p>
+    {config?.problem && <p className="mt-2 text-muted-foreground">검증 준비 필요 — {config.problem}</p>}
+    {editing && config?.manifest && <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); void save() }}>
+      {Object.entries(labels).map(([key, label]) => <label key={key} className="block">
+        <span className="block text-faint">{label}</span>
+        <input required={!['setup', 'cleanup'].includes(key)} disabled={working} value={values[key] ?? ''}
+          onChange={(e) => setValues((was) => ({ ...was, [key]: e.target.value }))}
+          className="h-7 w-full min-w-0 rounded-md border border-border bg-background px-2" />
+      </label>)}
+      <label className="block"><span className="block text-faint">허용 테스트 API origin · 한 줄에 하나</span>
+        <textarea required disabled={working} rows={2} value={values.allowed_origins ?? ''}
+          onChange={(e) => setValues((was) => ({ ...was, allowed_origins: e.target.value }))}
+          className="w-full rounded-md border border-border bg-background px-2 py-1" /></label>
+      {Object.keys(values).filter((k) => k.startsWith('revision:')).map((key) => <label key={key} className="block">
+        <span className="block text-faint">{key.slice(9)} 버전 · 환경이 바뀌면 갱신</span>
+        <input required disabled={working} value={values[key]} onChange={(e) => setValues((was) => ({ ...was, [key]: e.target.value }))}
+          className="h-7 w-full rounded-md border border-border bg-background px-2" /></label>)}
+      <details><summary className="cursor-pointer text-primary">승인할 주요 흐름과 실행 명령</summary>
+        <ul className="mt-1 space-y-1">{config.manifest.flows.map((f) => <li key={f.id}>
+          {f.title} · {f.kind}<code className="block break-all font-mono text-[12px]">{f.command}</code>
+        </li>)}</ul></details>
+      <div className="flex gap-2"><Btn type="submit" tone="primary" disabled={working}>명령 확인 후 설정 저장</Btn>
+        <Btn disabled={working} onClick={() => setEditing(false)}>닫기</Btn></div>
+    </form>}
+    {record?.flows?.map((flow) => <details key={flow.id} className="mt-2">
+      <summary className="cursor-pointer">{flow.title} · {flow.finished_at == null ? '미완료' : flow.ok ? '통과' : '실패'}</summary>
+      {flow.reason && <p className="mt-1 text-muted-foreground">{flow.reason}</p>}
+      {flow.reuse_reason && <p className="mt-1 text-faint">재사용 근거 · {flow.reuse_reason}</p>}
+      <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all rounded bg-secondary p-2 font-mono text-[12px]">
+        {JSON.stringify(flow.evidence, null, 2)}{flow.log ? `\n\n${flow.log}` : ''}
+      </pre>
+      {!!flow.attempts?.length && <details className="mt-1"><summary className="cursor-pointer text-faint">이전 실행 증거 · {flow.attempts.length}회</summary>
+        <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-all font-mono text-[12px]">{JSON.stringify(flow.attempts, null, 2)}</pre>
+      </details>}
+    </details>)}
+    {fault && <p role="alert" className="mt-2 whitespace-pre-wrap text-destructive">{fault}</p>}
+  </section>
 }

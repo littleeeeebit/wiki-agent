@@ -6,7 +6,7 @@ triggers: ["리뷰\\s*루프", "review\\s*loop", "codex.{0,12}(리뷰|보내|돌
 slots: [review_dir, gate_cmd, live_cmd]
 sources: []
 sources_withheld: true
-links: [pick-up-async-results, ask-with-arrow-key-options, agent-delegation, gate-the-exit-not-the-callers, measure-after-the-last-change, verify-narrow-then-wide]
+links: [pick-up-async-results, ask-with-arrow-key-options, agent-delegation, gate-the-exit-not-the-callers, measure-after-the-last-change, verify-narrow-then-wide, cloud-local-review]
 ---
 
 # The Codex review loop — files carry it, the terminal is a doorbell
@@ -25,6 +25,10 @@ committed and pushed; the offline gate `{gate_cmd}` runs once, after the
 result says `머지 허용`, before the merge — [[verify-narrow-then-wide]].
 Where the skill is not installed, its steps are in the hub wiki's
 `skills/review-loop/SKILL.md`.
+
+Cloud implementations additionally follow [[cloud-local-review]]: a separate
+local reviewer checks actual API/browser evidence, and failures return to
+cloud. The ordinary local implementation workflow stays as above.
 
 What goes wrong. The round disappears quietly. Worse is
 **a review that looks like it happened and did not** — a session that never

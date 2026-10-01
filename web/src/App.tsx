@@ -457,10 +457,10 @@ export default function App() {
           setView('chat')
           setSeed({ focus: 'next', text: NEW_TASK })
         }}
-        onLoop={async (numbers) => {
+        onLoop={async (numbers, environment, owner) => {
           // Asked here, on a click: a browser grants it only to a gesture.
           if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission()
-          const { results } = await api.startLoops(numbers)
+          const { results } = await api.startLoops(numbers, environment, owner)
           readPrs()
           readSpecs()
           refresh()
@@ -587,7 +587,7 @@ export default function App() {
               />
             )}
             {tab === 'review' && (
-              <Review key={spec?.id} spec={spec} onChanged={() => {
+              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} onChanged={() => {
                 readSpecs()
                 readPrs()
                 readLoops()

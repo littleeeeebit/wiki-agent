@@ -278,11 +278,11 @@ def pr_spec(w, name: str, n: int, file: str = "", **extra) -> dict:
     return spec
 
 
-def looped(name: str) -> dict:
+def looped(name: str, seconds: float = 30) -> dict:
     """Start the spec's loop and wait until it has stopped driving."""
 
     loop.kick("proj", name)
-    waited(lambda: ("proj", name) not in loop._loops)
+    waited(lambda: ("proj", name) not in loop._loops, seconds)
     return specs.load("proj", name)
 
 
@@ -352,6 +352,15 @@ def test_finding_meta_is_checked_against_the_ids_the_spec_has():
             loop.parse(text(block), 1, 12, head, {"F1"})
     legacy = loop.parse(text(""), 1, 12, head)
     assert legacy["identity"] == "limited" and "meta" not in legacy["findings"][0], "블록 없는 답도 읽는다"
+    entries = [{"ordinal": 1, "component": "loop.merge", "invariant": "gate on head", "existing_id": "F1"},
+               {"ordinal": 2, "limited": True}]
+    partial = loop.parse(text("```finding-meta\n" + json.dumps(entries) + "\n```"), 1, 12, head, {"F1"})
+    assert partial["identity"] == "limited" and partial["findings"][0]["meta"]["existing_id"] == "F1"
+    assert "meta" not in partial["findings"][1]
+    for entry in ({"ordinal": 2, "limited": False}, {"ordinal": 2, "limited": 1},
+                  {"ordinal": 2, "limited": True, "existing_id": "F1"}):
+        with pytest.raises(ValueError, match="limited"):
+            loop.parse(text("```finding-meta\n" + json.dumps([entries[0], entry]) + "\n```"), 1, 12, head, {"F1"})
     assert loop.parse("Round 1 · PR #12 · abcdef0\n새 발견 없음\n머지 허용", 1, 12, head)["identity"] == "full"
 
 
@@ -473,7 +482,9 @@ def test_a_stale_round_neither_raises_nor_repeats_a_finding(world):
     Reviewer.replies = [pushed_meanwhile, denied([finding], meta(("a.txt", "value is right"))),
                         denied([finding], meta(("a.txt", "value is right", "F1"))), allow, keep()]
     Worker.replies = [fixed((finding, "fixed")), fixed((finding, "fixed"))]
-    spec = looped("fix-s")
+    # Several reviews and two real Git repair/push cycles take almost 30s
+    # on this Windows host; leave startup margin without weakening assertions.
+    spec = looped("fix-s", seconds=60)
     assert spec["state"] == "머지 가능"
     assert [r.get("stale", False) for r in spec["rounds"]] == [True, False, False, False]
     assert "items" not in spec["rounds"][0]
