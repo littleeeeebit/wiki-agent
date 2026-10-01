@@ -1007,6 +1007,9 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
             synced = specs.sh(["git", "merge", "--ff-only", head], path, 60)
             if synced.returncode:
                 raise ValueError("검증 폴더를 클라우드 커밋으로 옮기지 못했다")
+        spec = verification.deliver(repo, spec, head)
+        if (spec.get("local_verification") or {}).get("delivery"):
+            return stop(loop, loop.repo, loop.sid, Why.GATE, spec["local_verification"]["reason"])
         view = gh_json(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "body,headRefOid,baseRefName"])
         if (view["headRefOid"], view["baseRefName"]) != (head, base):
             raise ValueError("인계를 읽는 동안 PR 이 바뀌었다 — 다시 시작한다")

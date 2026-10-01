@@ -381,15 +381,26 @@ def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: li
     body = redact("\n".join(text), local(repo))
     returned = sha({"head": head, "environment_digest": attempts[-1]["environment_digest"], "body": body})
     if record.get("returned_failure") != returned:
-        with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as file:
-            file.write(body)
-        try:
-            done = specs.sh(["gh", "pr", "comment", str(spec["pr"]["number"]), "--body-file", file.name], repo)
-        finally:
-            os.unlink(file.name)
-        if not done.returncode:
-            spec = keep(spec, returned_failure=returned)
+        spec = keep(spec, delivery={"head": head, "body": body, "fingerprint": returned})
+        return deliver(repo, spec, head)
     return spec
+
+
+def deliver(repo: Path, spec: dict, head: str) -> dict:
+    delivery = (spec.get("local_verification") or {}).get("delivery")
+    if not delivery:
+        return spec
+    with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as file:
+        file.write(delivery["body"])
+    try:
+        done = specs.sh(["gh", "pr", "comment", str(spec["pr"]["number"]), "--body-file", file.name], repo)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return pending(repo, spec, head, "GitHub 실패 근거 전달 대기: " + str(exc))
+    finally:
+        os.unlink(file.name)
+    if done.returncode:
+        return pending(repo, spec, head, "GitHub 실패 근거 전달 대기: " + specs.said(done))
+    return keep(spec, returned_failure=delivery["fingerprint"], delivery=None)
 
 
 def private_file(path: Path, relative: str) -> Path:

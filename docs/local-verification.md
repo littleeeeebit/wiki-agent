@@ -207,6 +207,10 @@ Failed flows, offline gates and serious review outcomes retain sanitized
 attempt evidence bound to the commit and local environment. A later pass
 at that same identity cannot publish success until recorded investigation
 covers those failed attempts. A later failure requires new investigation.
+GitHub read outages preserve unconfirmed attempts without consuming repair
+cycles. Failed comment writes remain preparation pending with the exact
+sanitized handoff saved locally. Explicit resume retries that report before
+executing further verification; delivery failure never claims cloud received it.
 
 Before merging, the app rechecks commit, base, current environment evidence,
 final gate and GitHub protection. Its background poll also invalidates

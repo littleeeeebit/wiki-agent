@@ -449,6 +449,53 @@ def test_final_failure_survives_github_read_outage_and_same_head_retry(cloud_wor
     assert any("Recorded first failure" in body for _, body in world.hub.comments)
 
 
+@pytest.mark.parametrize("failure_mode", ["exit", "timeout"])
+def test_failed_cloud_comment_is_pending_and_retried_before_verification(cloud_world, monkeypatch, failure_mode):
+    world = cloud_world
+    cloud_spec(world)
+    judge, sh = specs.judge, specs.sh
+    failed = False
+    outage = True
+
+    def fail_final(path, commands, *args, **kwargs):
+        nonlocal failed
+        verdict = judge(path, commands, *args, **kwargs)
+        if commands != ["python verify.py health"] and not failed:
+            failed = True
+            return {**verdict, "ok": False, "code": 1, "reason": "First final failure", "tail": "Exact preserved handoff"}
+        return verdict
+
+    def unavailable(args, cwd, *rest, **kwargs):
+        if outage and args[:3] == ["gh", "pr", "comment"]:
+            if failure_mode == "timeout":
+                raise subprocess.TimeoutExpired(args[:4], 60)
+            return subprocess.CompletedProcess(args, 1, "", "GitHub write unavailable")
+        return sh(args, cwd, *rest, **kwargs)
+
+    monkeypatch.setattr(specs, "judge", fail_final)
+    monkeypatch.setattr(specs, "sh", unavailable)
+    first = looped("cloud")
+    record = first["local_verification"]
+    assert record["state"] == "waiting_environment" and record["delivery"]["body"]
+    assert not world.hub.comments and not record.get("returned_failure")
+    saved_body = record["delivery"]["body"]
+    calls = []
+
+    def observed(path, commands, *args, **kwargs):
+        calls.append(commands)
+        assert world.hub.comments and world.hub.comments[0][1] == saved_body
+        return judge(path, commands, *args, **kwargs)
+
+    monkeypatch.setattr(specs, "judge", observed)
+    assert looped("cloud")["local_verification"]["state"] == "waiting_environment"
+    assert not calls and not world.hub.comments
+    outage = False
+    resumed = looped("cloud")
+    assert world.hub.comments[0][1] == saved_body and calls
+    assert resumed["local_verification"]["state"] == "unstable"
+    assert not resumed["local_verification"].get("delivery")
+
+
 def test_local_configuration_cannot_be_saved_as_a_tracked_file(cloud_world):
     world = cloud_world
     git(world.repo, "add", "-f", verification.LOCAL)
