@@ -278,11 +278,11 @@ def pr_spec(w, name: str, n: int, file: str = "", **extra) -> dict:
     return spec
 
 
-def looped(name: str) -> dict:
+def looped(name: str, seconds: float = 30) -> dict:
     """Start the spec's loop and wait until it has stopped driving."""
 
     loop.kick("proj", name)
-    waited(lambda: ("proj", name) not in loop._loops)
+    waited(lambda: ("proj", name) not in loop._loops, seconds)
     return specs.load("proj", name)
 
 
@@ -473,7 +473,9 @@ def test_a_stale_round_neither_raises_nor_repeats_a_finding(world):
     Reviewer.replies = [pushed_meanwhile, denied([finding], meta(("a.txt", "value is right"))),
                         denied([finding], meta(("a.txt", "value is right", "F1"))), allow, keep()]
     Worker.replies = [fixed((finding, "fixed")), fixed((finding, "fixed"))]
-    spec = looped("fix-s")
+    # Several reviews and two real Git repair/push cycles take almost 30s
+    # on this Windows host; leave startup margin without weakening assertions.
+    spec = looped("fix-s", seconds=60)
     assert spec["state"] == "머지 가능"
     assert [r.get("stale", False) for r in spec["rounds"]] == [True, False, False, False]
     assert "items" not in spec["rounds"][0]

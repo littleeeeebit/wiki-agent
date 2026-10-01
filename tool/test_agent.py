@@ -132,7 +132,7 @@ def test_claude_write_asks_and_the_answer_reaches_it(tree):
     answered = []
 
     def later(approval_id):
-        # From another thread, as the screen does, and after both deadlines:
+        # From another thread, as the screen does, and after the turn deadline:
         # the turn is waiting on a person, not hanging.
         time.sleep(0.5)
         answered.append(session.answer(approval_id, True))
@@ -141,7 +141,9 @@ def test_claude_write_asks_and_the_answer_reaches_it(tree):
     def answer(event):
         threading.Thread(target=later, args=(event.meta["id"],)).start()
 
-    with patch.object(chat_session, "BOOT_TIMEOUT", 0.2), patch.object(chat_session, "TURN_TIMEOUT", 0.2):
+    # Starting Python on Windows can exceed 200ms; the short turn deadline
+    # still proves that waiting for a person's answer does not time out.
+    with patch.object(chat_session, "BOOT_TIMEOUT", 2.0), patch.object(chat_session, "TURN_TIMEOUT", 0.2):
         command, events = run(session, CLAUDE, tree, answer)
     assert command[command.index("--allowedTools") + 1] == "Read,Glob,Grep"
     assert "Write" in command[command.index("--tools") + 1]

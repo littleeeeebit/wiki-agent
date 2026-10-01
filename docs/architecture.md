@@ -99,3 +99,10 @@ A repair round runs the checks its changed paths map to; the whole gate runs
 once, on the commit review allowed, and merge is bound to that head. The flow
 and its commands are in [development](development.md) and the
 [reliability plan](plans/reliability/2-tests.md).
+
+For Claude Code Cloud implementations, `tool/main/verification.py` adds
+repository-specific local execution evidence before the independent review.
+Failures return to cloud instead of opening a local implementation turn.
+Configuration, receipts and the GitHub required status are described in
+[local verification](local-verification.md). The local implementation path
+keeps its existing review and final gate.
