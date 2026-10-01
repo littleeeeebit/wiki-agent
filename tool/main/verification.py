@@ -374,7 +374,8 @@ def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: li
         if not row.get("ok"):
             text += ["", f"Flow `{row['id']}`", "```json", json.dumps(row.get("evidence", {}), ensure_ascii=False), "```"]
     body = redact("\n".join(text), local(repo))
-    if record.get("returned_head") != head:
+    returned = sha({"head": head, "environment_digest": attempts[-1]["environment_digest"], "body": body})
+    if record.get("returned_failure") != returned:
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as file:
             file.write(body)
         try:
@@ -382,7 +383,7 @@ def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: li
         finally:
             os.unlink(file.name)
         if not done.returncode:
-            spec = keep(spec, returned_head=head)
+            spec = keep(spec, returned_failure=returned)
     return spec
 
 

@@ -400,6 +400,20 @@ def test_missing_test_dataset_waits_without_a_cloud_failure_cycle(cloud_world):
     assert looped("cloud")["state"] == "머지 가능"
 
 
+def test_distinct_same_head_failures_return_to_cloud_without_duplicate_retries(cloud_world):
+    world = cloud_world
+    spec = cloud_spec(world)
+    head = spec["pr"]["head"]
+    spec = verification.return_to_cloud(world.repo, spec, head, "Round gate failed", ["offline/round"])
+    spec = verification.return_to_cloud(world.repo, spec, head, "Review found an API defect: private-api-key", ["review/F2"])
+    assert len(world.hub.comments) == 2
+    assert "Round gate failed" in world.hub.comments[0][1]
+    assert "API defect" in world.hub.comments[1][1] and "review/F2" in world.hub.comments[1][1]
+    assert "private-api-key" not in world.hub.comments[1][1]
+    spec = verification.return_to_cloud(world.repo, spec, head, "Review found an API defect: private-api-key", ["review/F2"])
+    assert len(world.hub.comments) == 2 and len(spec["local_verification"]["failure_attempts"]) == 3
+
+
 def test_local_configuration_cannot_be_saved_as_a_tracked_file(cloud_world):
     world = cloud_world
     git(world.repo, "add", "-f", verification.LOCAL)
