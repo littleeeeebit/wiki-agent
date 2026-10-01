@@ -41,7 +41,7 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onS
         {messages.length === 0 && empty}
         {messages.length === 0 && !empty && (
           <p className="text-[13.5px] text-faint">
-            위키에 물어라. 답의 근거 파일:줄 을 눌러 원문을 본다. 할 일이 정해지면
+            위키에 물어라. ‘근거와 판단 보기’에서 원문을 본다. 할 일이 정해지면
             다음 작업 초점에서 명세로 만든다.
           </p>
         )}
@@ -196,7 +196,7 @@ const CHECKED: Record<Verification['status'], string> = {
   partial: '부분 답 · 근거로 확인된 부분만 싣는다',
   abstained: '답 보류 · 찾은 근거로는 확인되는 답이 없다',
   verification_unavailable: '검증 불가 · 근거 대조를 하지 못했다',
-  unverified: '분석 (미검증) · 비교·판단을 물어서, 근거와 대조하지 않은 에이전트의 해석이다',
+  unverified: '답변 · 에이전트가 근거를 종합해 답했다 (문장별 검증 없음)',
 }
 
 function Checked({ v }: { v: Verification }) {

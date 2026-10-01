@@ -133,9 +133,7 @@ def test_failed_original_never_rewritten(tmp_path):
 
 
 def test_jev_dossier_reaches_answering_session_after_user_is_saved(monkeypatch):
-    """Active: the session is asked for a draft over the dossier's evidence,
-    after the utterance is saved; a reply with no draft is never published
-    (stage 7 — `test_grounded_answer.py` holds the rest)."""
+    """Active retrieval informs an ordinary answer, even with missing evidence."""
 
     monkeypatch.setenv("WIKI_JEV", "on")
     sent = []
@@ -162,14 +160,14 @@ def test_jev_dossier_reaches_answering_session_after_user_is_saved(monkeypatch):
         assert web.post("/api/say/wiki", json={"text": "Find the decision", "audiences": []}).status_code == 422
         response = web.post("/api/say/wiki", json={"text": "Find the decision", "audiences": ["jev"]})
         assert response.status_code == 200
-        assert sent[0].startswith("Find the decision\n\n") and "answer-draft" in sent[0]
+        assert sent[0].startswith("Find the decision\n\n") and "## Judgment" in sent[0]
         assert '"question_en": "Find the decision"' in sent[0]
-        assert '"kind": "delta"' not in response.text and '"text": "Answer"' not in response.text
+        assert '"kind": "delta"' not in response.text and '"text": "Answer"' in response.text
         rows = chat.recall("wiki", include_context=True)
         assert next(r for r in rows if r["role"] == "retrieval")["dossier"] == dossier
         assert [r["text"] for r in rows if r["role"] == "user"] == ["Find the decision"]
         answer = next(r for r in rows if r["role"] == "assistant")
-        assert answer["verification"]["status"] == "abstained" and "Answer" not in answer["text"]
+        assert answer["verification"]["status"] == "unverified" and answer["text"] == "Answer"
 
 
 @pytest.mark.parametrize("mode", ["shadow", "off"])

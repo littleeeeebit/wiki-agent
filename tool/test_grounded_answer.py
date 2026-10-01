@@ -150,7 +150,9 @@ def answer(d: dict, replies: list[str], judge: Judge, **kwargs):
         return replies.pop(0)
 
     cfg = kwargs.pop("cfg", CFG)
-    flow = knowledge.grounded("question", None, "", d, generate, cfg, cache=None, evaluate=judge, **kwargs)
+    verify_claims = kwargs.pop("verify_claims", True)
+    flow = knowledge.grounded("question", None, "", d, generate, cfg, cache=None, evaluate=judge,
+                              verify_claims=verify_claims, **kwargs)
     events = []
     while True:
         try:
@@ -160,6 +162,32 @@ def answer(d: dict, replies: list[str], judge: Judge, **kwargs):
 
 
 # -- the draft contract ---------------------------------------------------------------
+
+@pytest.mark.parametrize("status", ["ready", "partial", "unavailable", "exhausted"])
+@pytest.mark.parametrize("has_evidence", [True, False])
+def test_synthesis_answers_without_semantic_approval_or_a_citation_quota(tmp_path, status, has_evidence):
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    d = {**dossier([ports] if has_evidence else [], calls_left=0), "status": status,
+         "analysis": False, "missing": ["r0"]}
+    text = ("The daemon is configured to use port 8791 [e1]. Runtime availability is not recorded."
+            if has_evidence else "Check the deployment record to distinguish configured behavior from a running service.")
+    judge = Judge(fail="unavailable")
+    out, _events, messages = answer(d, [text], judge, verify_claims=False)
+    assert out["verified"]["status"] == "unverified" and out["verified"]["verified"] is False
+    assert len(messages) == 1 and judge.asked == []
+    assert out["text"] and "[e1]" not in out["text"] and "docs/ports.md" not in out["text"]
+    assert len(out["verified"]["citations"]) == int(has_evidence)
+
+
+def test_an_old_format_is_repaired_without_jev_budget_and_empty_output_is_a_failure():
+    d = dossier([], direct=True, calls_left=0)
+    old = draft(claim("c1", "Hello.", kind="direct_text", cites=()))
+    out, _, messages = answer(d, [old, "Hello."], Judge(), verify_claims=False)
+    assert out["text"] == "Hello." and len(messages) == 2
+    assert json.loads(messages[0].split("```json\n", 1)[1].split("\n```", 1)[0])["restrictions"] == []
+    with pytest.raises(RuntimeError, match="no usable answer"):
+        answer(d, ["", ""], Judge(), verify_claims=False)
+
 
 def test_a_supported_claim_is_published_complete_with_its_citation(tmp_path):
     ports = item(tmp_path, "docs/ports.md", PORTS)
@@ -562,23 +590,23 @@ def test_an_analysis_asked_for_is_published_whole_and_labelled_unverified(tmp_pa
            "| | daemon | chat |\n|---|---|---|\n| port | 8791 | 8787 |\n\n"
            "```spec\n{\"title\": \"t\"}\n```\n")
     judge = Judge()
-    out, _events, messages = answer(d, [doc.replace("[e1]", "[e1, e9]"), doc], judge)
+    out, _events, messages = answer(d, [doc.replace("[e1]", "[e1, e9]")], judge)
     v = out["verified"]
-    assert "## Shape" in messages[0] and "answer-draft" not in messages[0], "an analysis is asked as a document"
-    assert len(messages) == 2 and "e9" in messages[1], "an id no evidence has is repaired, as in any draft"
+    assert "## Judgment" in messages[0], "an answer is asked as a document"
+    assert len(messages) == 1 and v["unknown_citations"] == ["e9"]
     assert judge.asked == [], "nothing of an analysis is asked of Jev"
     assert v["status"] == "unverified" and v["verified"] is False and v["missing_requirements"] == []
     assert v["claims"] == [] and [c["cite"] for c in v["citations"]] == ["docs/ports.md:3"]
-    assert out["text"].startswith("Unverified analysis:")
-    assert "## Why\n\nThe search daemon listens on port 8791 `docs/ports.md:3`." in out["text"]
+    assert out["text"].startswith("Yes:")
+    assert "## Why\n\nThe search daemon listens on port 8791." in out["text"]
+    assert "docs/ports.md" not in out["text"] and "[e" not in out["text"]
     assert "| port | 8791 | 8787 |" in out["text"] and "```spec" not in out["text"], "a block rides apart"
     assert "```spec" in out["rest"]
     out, _events, messages = answer(d, ["Yes, 8791 is sensible.", "Yes, 8791 is sensible."], Judge())
-    assert "cites no evidence" in messages[1] and out["verified"]["status"] == "abstained", \
-        "review round 1 (P0): an analysis that cites nothing is not published unchecked"
+    assert len(messages) == 1 and out["verified"]["status"] == "unverified"
     twice = {**d, "evidence": d["evidence"] * 2}
     out, _events, _ = answer(twice, ["Both say 8791 [e1] [e2], and so [e1, e2]."], Judge())
-    assert "Both say 8791 `docs/ports.md:3`, and so `docs/ports.md:3`." in out["text"], "one place, said once"
+    assert out["text"] == "Both say 8791, and so."
 
 
 def test_a_korean_name_a_quote_holds_may_stand_in_an_english_claim(tmp_path):
@@ -988,13 +1016,39 @@ def mixed(tmp_path) -> tuple[dict, str]:
     ports = item(tmp_path, "docs/ports.md", PORTS)
     owners = item(tmp_path, "docs/owners.md", OWNERS)
     d = dossier([ports, owners], calls_left=1)
-    reply = draft(claim("c1", "The search daemon listens on port 8791."),
-                  claim("c2", REJECTED, cites=["e2"], quotes=["The chat server listens on port 9000."]),
-                  prose="Draft prose: the chat server listens on port 9000.")
+    reply = "The search daemon listens on port 8791 [e1]."
     return d, reply
 
 
-def test_rejected_content_never_reaches_the_stream_the_history_or_the_explanation(tmp_path, active):
+@pytest.mark.parametrize("focus, text, reply", [
+    ("wiki", "Where are we with the migration?",
+     "The configuration is documented; deployment still needs confirmation [e1]."),
+    ("next", "Which step should I tackle next?",
+     '```choices\n{"question":"Which scope?","options":[{"label":"Configuration"}]}\n```'),
+    ("retro", "What repeatedly went wrong today?",
+     "The same reporting gap recurred.\n\n```retro-candidates\n반복 2회 · Record deployment results · new\n```"),
+])
+def test_each_focus_preserves_its_answer_or_interaction_with_uncertain_retrieval(tmp_path, active,
+                                                                              focus, text, reply):
+    d, _ = mixed(tmp_path)
+    d.update(status="partial", analysis=False, missing=["r0"])
+    session, _ = session_saying(reply)
+    with patch.object(chat, "prepare", return_value=d), patch.object(chat, "session", return_value=session), \
+         patch.object(chat, "explain", return_value=iter([Event("done", "Simple explanation")])), \
+         patch.object(specs, "gate_of", return_value="python -m pytest"):
+        response = Screen(main_app.app, base_url="http://127.0.0.1:8787").post(f"/api/say/{focus}", json={"text": text})
+    events = events_of(response)
+    done = next(e for e in events if e["kind"] == "done")
+    assert done["verification"]["status"] == "unverified" and active.asked == []
+    assert "docs/ports.md" not in done["text"] and "Partial answer" not in done["text"]
+    if focus == "next":
+        assert done["text"] == "" and next(e for e in events if e["kind"] == "blocks")["blocks"][0]["name"] == "choices"
+    else:
+        assert done["text"] and (focus != "retro" or "```retro-candidates" in done["text"])
+    assert chat.recall(focus)[-1]["verification"]["verified"] is False
+
+
+def test_provenance_stays_out_of_the_answer_history_and_explanation(tmp_path, active):
     d, reply = mixed(tmp_path)
     session, sent = session_saying(reply)
     explained = []
@@ -1002,7 +1056,7 @@ def test_rejected_content_never_reaches_the_stream_the_history_or_the_explanatio
     def explain(source, model, effort):
         explained.append(source)
         yield Event("delta", "검색 데몬은 ")
-        yield Event("done", "검색 데몬은 8791 포트를 쓴다. `docs/ports.md:3`")
+        yield Event("done", "검색 데몬은 8791 포트를 쓴다.")
 
     with patch.object(chat, "prepare", return_value=d), patch.object(chat, "session", return_value=session), \
          patch.object(chat, "explain", explain):
@@ -1012,9 +1066,11 @@ def test_rejected_content_never_reaches_the_stream_the_history_or_the_explanatio
     assert "9000" not in response.text, "rejected text reached an SSE event"
     assert not any(e["kind"] == "delta" for e in events), "a draft delta was streamed"
     done = next(e for e in events if e["kind"] == "done")
-    assert done["verification"]["status"] == "complete" and done["text"].startswith("The search daemon")
+    assert done["verification"]["status"] == "unverified" and done["text"].startswith("The search daemon")
+    assert done["verification"]["citations"][0]["cite"] == "docs/ports.md:3"
+    assert "docs/ports.md" not in done["text"] and "[e1]" not in done["text"]
     kinds = [e["kind"] for e in events]
-    assert kinds.index("done") > max(i for i, e in enumerate(events) if e.get("progress") == "verify")
+    assert kinds.index("done") > max(i for i, e in enumerate(events) if e.get("progress") == "attribute")
     assert [e["kind"] for e in events if e["kind"].startswith("simple")] == ["simple_start", "simple_done"], \
         "a verified answer's explanation is sent once it is checked"
     assert explained == [done["text"]]
@@ -1025,19 +1081,16 @@ def test_rejected_content_never_reaches_the_stream_the_history_or_the_explanatio
     assert assistant["verification"]["run_id"] == "run-1" and assistant["session_id"] == "grounded"
     assert assistant["ms"] == 100 and assistant["simple_text"].startswith("검색 데몬은 8791")
     record = next(r for r in rows if r["role"] == "draft")
-    assert record["record"]["generations"][0]["checks"]["c2"]["reason"] == "fabricated_quote"
+    assert record["record"]["generations"][0]["checks"] == {} and active.asked == []
     assert "chat" not in chat._busy and "wiki" not in chat._busy
 
 
-def test_a_direct_run_restates_only_answers_that_were_verified(tmp_path, active):
-    # Review round 3 (P0): an old unverified answer, restated in a direct run, came out verified.
-    active.faithful["c2"] = ("adds", 0.95)
+def test_a_conversation_answer_never_promotes_old_answers_to_verified(tmp_path, active):
     chat.remember("wiki", "assistant", "The search daemon listens on port 9999.")
     chat.remember("wiki", "assistant", "The search daemon listens on port 8791. `docs/ports.md:3`",
                   verification={"status": "complete", "verified": True, "degraded": False})
     d = dossier([], direct=True, calls_left=1)
-    reply = draft(claim("c1", "The search daemon listens on port 8791.", kind="direct_text", cites=()),
-                  claim("c2", "The search daemon listens on port 9999.", kind="direct_text", cites=(), reqs=()))
+    reply = "The confirmed earlier answer used port 8791."
     session, _sent = session_saying(reply)
 
     def explain(source, model, effort):
@@ -1048,10 +1101,9 @@ def test_a_direct_run_restates_only_answers_that_were_verified(tmp_path, active)
         response = Screen(main_app.app, base_url="http://127.0.0.1:8787").post("/api/say/wiki",
                                                                                json={"text": "그 포트가 뭐였지?"})
     done = next(e for e in events_of(response) if e["kind"] == "done")
-    assert done["verification"]["rejected"] == [{"claim_id": "c2", "reason": "unfaithful"}]
+    assert done["verification"]["verified"] is False and done["verification"]["status"] == "unverified"
     assert "9999" not in done["text"] and done["verification"]["citations"] == []
-    conversation = active.asked[0][0]["conversation"]
-    assert "8791" in conversation and "9999" not in conversation and "포트" not in conversation
+    assert active.asked == []
 
 
 def test_an_explanation_that_adds_a_number_is_a_presentation_error(tmp_path, active):
@@ -1101,14 +1153,14 @@ def test_a_closed_stream_leaves_the_run_going_and_its_draft_unpublished(tmp_path
     assert [r["role"] for r in rows if r["role"] != "retrieval"] == ["user", "draft", "assistant"]
     assert all(r["run_id"] == run_id for r in rows if r["role"] in ("user", "draft", "assistant"))
     assert REJECTED not in json.dumps([e for e in run.events], ensure_ascii=False)
-    assert run.summary["outcome"] == "complete"
+    assert run.summary["outcome"] == "unverified"
 
 
-def test_a_verified_spec_is_grounded_only_on_accepted_evidence(tmp_path, active):
+def test_a_spec_keeps_known_provenance_without_approving_the_proposal(tmp_path, active):
     d, reply = mixed(tmp_path)
     spec = {"slug": "port-note", "goal": "Document the daemon port.",
             "grounds": {"files": ["docs/ports.md:3", "docs/owners.md:3"], "pages": [], "rules": [],
-                        "evidence": ["e1", "e2", "e9"]}}
+                        "evidence": ["e1", "e9"]}}
     session, _sent = session_saying(reply, blocks=f"\n```spec\n{json.dumps(spec)}\n```\n")
     with patch.object(chat, "prepare", return_value=d), patch.object(chat, "session", return_value=session), \
          patch.object(chat, "explain", return_value=iter([Event("done", "쉬운 설명")])), \

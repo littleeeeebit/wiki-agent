@@ -202,21 +202,21 @@ def test_a_question_is_a_run_whose_steps_evidence_and_summary_the_screen_reads(t
     run_id = events[0]["run_id"]
     assert {e["run_id"] for e in events} == {run_id} and [e["seq"] for e in events] == list(range(len(events)))
     steps = [(e["stage"], e["status"]) for e in events if e["kind"] == "step"]
-    assert steps[:5] == [("start", "started"), ("retrieved", "ready"), ("draft", "writing"), ("verify", "checked"),
-                         ("publish", "complete")]
-    verify = next(e for e in events if e["kind"] == "step" and e["stage"] == "verify")
-    assert {c["claim_id"]: c["state"] for c in verify["claims"]} == {"c1": "accepted", "c2": "rejected"}
+    assert steps[:5] == [("start", "started"), ("retrieved", "ready"), ("draft", "writing"),
+                         ("attribute", "recorded"), ("publish", "unverified")]
+    attributed = next(e for e in events if e["kind"] == "step" and e["stage"] == "attribute")
+    assert attributed["claims"] == [] and active.asked == []
     assert REJECTED not in json.dumps(events, ensure_ascii=False), "a check shows states, never a claim's text"
     rows = chat.recall("wiki", include_context=True)
     assert {r["run_id"] for r in rows if r["role"] in ("user", "assistant")} == {run_id}
 
     summary = screen.get(f"/api/knowledge/runs/{run_id}").json()
-    assert summary["outcome"] == "complete" and summary["settings"]["mode"] == "active"
+    assert summary["outcome"] == "unverified" and summary["settings"]["mode"] == "active"
     support = {e["cite"]: e["support"] for e in summary["evidence"]}
-    assert support == {"docs/ports.md:3": "supported", "docs/owners.md:3": "not_cited"}
+    assert support == {"docs/ports.md:3": "unverified", "docs/owners.md:3": "not_cited"}
     ports = summary["evidence"][0]
     assert ports["revision"] == d["evidence"][0]["revision"] and ports["text_en"] and ports["kind"] == "document"
-    assert {c["claim_id"]: c["reason"] for c in summary["claims"]} == {"c1": None, "c2": "fabricated_quote"}
+    assert summary["claims"] == [] and summary["verification"]["verified"] is False
     assert KEY not in json.dumps(summary) and KEY not in (knowledge.runs_root() / summary["repo_id"] / "runs"
                                                           / f"{run_id}.jsonl").read_text(encoding="utf-8")
 
@@ -469,14 +469,13 @@ def test_a_run_leaves_langfuse_what_each_request_was_sent_and_gave_back(tmp_path
     assert root["output"] == summary["answered"]
     assert all("cli" in s["trace.tags"] and s["trace.name"] == "answer-question" for s in spans), \
         "v4 filters rows: each observation, not just the root, carries the trace's name and tags"
-    # The draft as the host wrote it, rejected claim included: the reason a claim fell is kept.
+    # The host's answer and its attribution are separate observations.
     draft = by["draft-answer"][0]
-    assert draft["type"] == "generation" and REJECTED in draft["output"] and "evidence" in draft["input"]
+    assert draft["type"] == "generation" and "[e1]" in draft["output"] and "evidence" in draft["input"]
     assert draft["model.name"] == "claude-test" and json.loads(draft["usage_details"]) == {"input": 7, "output": 11}
-    verify = by["verify-claims"][0]
-    assert verify["type"] == "evaluator" and REJECTED in verify["output"] and "checks" in verify["output"]
-    judged = by["judge-claims"][0]
-    assert judged["type"] == "generation" and json.loads(judged["input"])["questions"] and judged["output"]
+    attribution = by["record-provenance"][0]
+    assert attribution["type"] == "evaluator" and "body" in attribution["output"]
+    assert "judge-claims" not in by
     assert KEY not in json.dumps(spans, ensure_ascii=False), "the Jev key never leaves"
 
 

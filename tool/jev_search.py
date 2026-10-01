@@ -18,7 +18,7 @@ paths included, unless `WIKI_GRAPH_RETRIEVAL=off`.
 
 Stage 9 — the app's runs, from here. `--answer` runs the whole question as
 the app's active mode does: retrieval, a draft by a read-only host session
-in the project, verification and publication, in one `knowledge.Run` whose
+in the project, provenance recording and publication, in one `knowledge.Run` whose
 trace lands where the app's do; prints its `run-summary/1`. `--run <id>`
 prints a stored run's summary, and `--export <id>` its summary and events
 with every text a source or a person wrote left out (`--with-text` keeps
@@ -51,7 +51,7 @@ def answer(question: str, project: str | None, state: str, k: int, model: str) -
     cfg = dataclasses.replace(decision.config(repo), host=model)   # the fallback asks the drafting model
     run = knowledge.Run(repo, "cli", question, cfg)
     out, outcome, reason = None, "failed", None
-    chat = ChatSession(repo, tools="Read,Glob,Grep", system=channels.ANSWER_PROMPT, model=model or None,
+    chat = ChatSession(repo, system=channels.ANSWER_PROMPT, model=model or None,
                        isolated=True)
 
     lead = [question]   # the first turn carries the question, as the app's `drafting` sends it
@@ -98,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--replay", type=Path, help="decide a recorded tape again; nothing is sent")
     parser.add_argument("--retrieval", action="store_true",
                         help="print one round of chunk-level retrieval with the graph lane instead of the dossier")
-    parser.add_argument("--answer", action="store_true", help="draft, verify and publish, as the app's active mode")
+    parser.add_argument("--answer", action="store_true", help="answer with retrieved evidence, as the app's active mode")
     parser.add_argument("--model", default="", help="the host model drafting an --answer")
     parser.add_argument("--run", metavar="ID", help="print a stored run's summary")
     parser.add_argument("--export", metavar="ID", help="print a stored run's summary and events, texts left out")
@@ -128,7 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         if not 1 <= args.k <= MAX_K:
             parser.error(f"--k must be between 1 and {MAX_K}")
         if status["mode"] != "active":
-            parser.error(f"--answer publishes only what was checked, which mode active does; the mode is "
+            parser.error(f"--answer uses the active retrieval workflow; the mode is "
                          f"{status['mode']} (from {status['mode_source']})")
         print(json.dumps(answer(args.query, project, args.state, args.k, args.model), ensure_ascii=False, indent=2),
               flush=True)

@@ -319,7 +319,8 @@ def held(events, release) -> StreamingResponse:
 
 # What the screen reads while a draft is checked (stage 7 of `docs/plans/jev/`):
 # a line of what ran, like a tool's. The draft itself is never sent.
-PROGRESS = {"draft": "검증 · 근거에 기대어 초안을 쓴다",
+PROGRESS = {"draft": "답변 · 근거를 종합해 답을 쓴다",
+            "attribute": "근거 · 출처를 실행 기록에 남긴다",
             "verify": "검증 · 주장마다 인용과 근거를 대조한다",
             "retrieve": "검증 · 저장소 사실이 필요해 다시 찾는다",
             "repair": "검증 · 거절된 주장을 한 번 고쳐 쓴다"}
@@ -774,8 +775,8 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
         events = iter(()) if dossier is not None else session(cid).say(sent, run.cancel)
         started, searches = time.monotonic(), 0
         if dossier is not None:
-            # Active: the answer is drafted, checked, and only then published
-            # (stage 7 of `docs/plans/jev/`). Nothing of the draft is sent on.
+            # Retrieval informs the host's synthesis. Provenance is recorded
+            # separately; uncertain coverage never gates an ordinary answer.
             spent: dict = {}
             # What a direct run's text may restate: answers that were verified, English as code wrote them.
             # An unverified one restated would come out verified.

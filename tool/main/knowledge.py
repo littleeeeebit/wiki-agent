@@ -1192,13 +1192,9 @@ def replay(tape: dict) -> dict:
 
 # ---- grounded answers (stage 7 of `docs/plans/jev/`) --------------------------------
 #
-# The generator drafts claims over the dossier's evidence, each naming the
-# passages it rests on and quoting them. Code checks every quote against the
-# pinned original and every citation against what the run found; Jev then
-# judges each factual claim against the passages it cites (`decision.claims`).
-# What is published is the accepted claims and their limits, rendered by code:
-# nothing the generator wrote outside an accepted claim reaches the reader.
-# One constrained repair at most, from what is left of the run's allowance.
+# Normal conversation synthesizes a document over the dossier and records
+# citations separately. Explicit claim checks still use original-span and
+# semantic verification; their stricter publication policy is opt-in.
 
 DRAFT = "answer-draft/1"
 VERIFIED = "verified-answer/1"
@@ -1209,10 +1205,10 @@ ANALYSIS_PROMPT = "answer-analysis.md"
 CLAIM_KINDS = ("source_fact", "inference", "recommendation", "direct_text")
 FACTUAL = ("source_fact", "inference")
 ANSWER_STATUSES = ("complete", "partial", "abstained", "verification_unavailable")
-VERIFICATION_VERSION = f"grounded-3/{decision.claims.VERSION}"   # 2: material cited, Korean names; 3: analysis a document
+VERIFICATION_VERSION = f"grounded-4/{decision.claims.VERSION}"   # 4: synthesis by default, citations in metadata
 DRAFT_BLOCK = re.compile(r"^```answer-draft[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 CLAIM_ID = re.compile(r"\A[A-Za-z0-9_-]{1,32}\Z")
-# An analysis's citation mark, `[e3]` or `[e3, m1]`: code writes out where each passage is.
+# Internal citation marks, `[e3]` or `[e3, m1]`: their sources stay in metadata.
 CITED = re.compile(r"\[([em]\d+(?:\s*,\s*[em]\d+)*)\]")
 # What a direct_text quotes: the Korean a translation asked for is the answer, named in an English sentence.
 QUOTED = re.compile(r"'[^'\n]*'|\"[^\"\n]*\"|“[^”\n]*”|‘[^’\n]*’")
@@ -1402,8 +1398,10 @@ class Grounding:
     """
 
     def __init__(self, dossier: dict, cfg: decision.Config, cancel: threading.Event | None = None,
-                 cache: decision.Cache | None = DECISIONS, evaluate=None, said: str = ""):
+                 cache: decision.Cache | None = DECISIONS, evaluate=None, said: str = "", *,
+                 verify_claims: bool = False):
         self.cfg, self.cache = cfg, cache
+        self.verify_claims = verify_claims
         # Whether what Jev leaves uncertain about a claim goes to the host model (`falls_back`).
         self.fallback = falls_back(cfg)
         # What the conversation itself supplied — the question and its context: all a direct_text may restate.
@@ -1431,6 +1429,7 @@ class Grounding:
 
     def rebase(self, dossier: dict) -> None:
         self.dossier = dossier
+        self.analysis = not self.verify_claims or bool(dossier.get("analysis"))
         self.ids = {f"e{i + 1}": e for i, e in enumerate(dossier.get("evidence") or [])}
         self.ids.update({f"m{i + 1}": material(m) for i, m in enumerate(dossier.get("material") or [])})
         back ={e["chunk_id"]: eid for eid, e in self.ids.items()}
@@ -1455,7 +1454,7 @@ class Grounding:
     def view(self) -> dict:
         d = self.dossier
         return {"question_en": d.get("question_en"), "retrieval_status": d.get("status"),
-                "direct": bool(d.get("direct")), "restrictions": d.get("restrictions") or [],
+                "direct": bool(d.get("direct")), "restrictions": [] if self.analysis else d.get("restrictions") or [],
                 "requirements": self.requirements, "missing_requirements": d.get("missing") or [],
                 "conflicting_evidence": self.conflicting, "untrusted_evidence": sorted(self.untrusted),
                 "evidence": [{"id": eid, "cite": cite(e), "kind": e["kind"], "coverage": e.get("coverage"),
@@ -1463,7 +1462,7 @@ class Grounding:
                              for eid, e in self.ids.items()]}
 
     def brief(self) -> str:
-        name = ANALYSIS_PROMPT if self.dossier.get("analysis") else DRAFT_PROMPT
+        name = ANALYSIS_PROMPT if self.analysis else DRAFT_PROMPT
         prompt = (Path(__file__).resolve().parents[1] / "prompts" / name).read_text(encoding="utf-8")
         return f"{prompt}\n\n```json\n{json.dumps(self.view(), ensure_ascii=False, indent=1)}\n```"
 
@@ -1585,7 +1584,7 @@ class Grounding:
     def check(self, text: str) -> dict:
         """Read, screen, judge and settle one generation; recorded in `generations`."""
 
-        if self.dossier.get("analysis"):
+        if self.analysis:
             return self.analysed(text)
         draft, problem = self.parse(text)
         rest = DRAFT_BLOCK.sub("", text).strip()
@@ -1810,23 +1809,34 @@ class Grounding:
                 checks[cid].update(state="rejected", reason=outcome)
 
     def analysed(self, text: str) -> dict:
-        """An analysis asked for — a comparison, a judgment, advice — is the
-        host's own working-out over the evidence, which no passage states:
-        nothing is asked of Jev, and it is published as written, a document
-        labelled unverified. Only what cannot be shown falls: no answer, one
-        that cites nothing — searched and cited is what invariant 5 asks of
-        it — or a mark citing an id no evidence has."""
+        """Record the host's answer and known citations without a semantic gate.
+
+        Missing evidence and unknown citation marks do not suppress the answer.
+        Unknown ids are recorded, never turned into source references. An empty
+        host response or the old draft format may be repaired once.
+        """
 
         from . import specs  # `specs` imports this module
 
-        body = specs.blocks(text)[0].strip()
+        body, blocks = specs.blocks(text)
+        body = body.strip()
         marked = {i.strip() for m in CITED.finditer(body) for i in m.group(1).split(",")}
+        for block in blocks:
+            if block["name"] != "spec" or "error" in block:
+                continue
+            value = block["value"]
+            for spec in value if isinstance(value, list) else [value]:
+                if not isinstance(spec, dict) or not isinstance(spec.get("grounds"), dict):
+                    continue
+                refs = spec["grounds"].get("evidence")
+                if isinstance(refs, list):
+                    marked.update(e for e in refs if isinstance(e, str))
         unknown = sorted(marked - set(self.ids))
-        problem = ("there is no answer" if not body else
-                   f"it cites evidence ids no evidence has: {', '.join(unknown)}" if unknown else
-                   "it cites no evidence: mark each statement with the evidence id it rests on" if not marked else "")
+        problem = ("write an ordinary answer, not an answer-draft block" if DRAFT_BLOCK.search(body) else
+                   "there is no answer" if not body and not blocks else "")
         gen = {"draft": None if problem else {"body": body}, "problem": problem, "rest": text, "checks": {},
-               "decision": None, "unavailable": None, "analysis": True,
+               "decision": None, "unavailable": None, "analysis": True, "unknown_citations": unknown,
+               "citations": sorted(marked & set(self.ids)),
                "dossier_trace_id": self.dossier.get("trace_id"), "direct": bool(self.dossier.get("direct")),
                "requirements": self.requirements, "evidence_ids": {eid: e["chunk_id"] for eid, e in self.ids.items()}}
         if problem:
@@ -1840,9 +1850,13 @@ class Grounding:
         Only what a repair can mend is a reason, and only while a Jev call is
         left to check it; a direct run's needed fact returns to retrieval."""
 
-        if len(self.generations) != 1 or self.cancel.is_set() or self.calls < 1:
+        if len(self.generations) != 1 or self.cancel.is_set():
             return None
         last = self.generations[0]
+        if last.get("analysis"):
+            return "draft" if last["problem"] else None
+        if self.calls < 1:
+            return None
         if last["unavailable"]:
             return None
         reasons = {c["reason"] for c in last["checks"].values() if c["state"] == "rejected"}
@@ -1860,7 +1874,7 @@ class Grounding:
     # -- what is published --------------------------------------------------------------
 
     def published(self) -> dict:
-        """The VerifiedAnswer and its text, from the last readable draft."""
+        """The publication metadata and text from the last readable answer."""
 
         at = next((i for i in range(len(self.generations) - 1, -1, -1) if self.generations[i]["draft"] is not None),
                   len(self.generations) - 1)
@@ -1886,18 +1900,19 @@ class Grounding:
                         or any(f"set:{r}" in settled for r in sets))
         missing = [] if gen.get("analysis") else [r for r in gen["requirements"] if r["id"] not in answered]
         body = (gen["draft"] or {}).get("body") if gen.get("analysis") else None
-        status = ("unverified" if body else
+        status = ("unverified" if gen.get("analysis") and gen["draft"] is not None else
                   "verification_unavailable" if unavailable else
                   "complete" if shown and answered and not missing else
                   "partial" if touched else "abstained")
         used = list(dict.fromkeys([*(e for cid in shown for e in claims[cid]["evidence_ids"]),
-                                   *(i.strip() for m in CITED.finditer(body or "") for i in m.group(1).split(","))]))
+                                   *gen.get("citations", [])]))
         reason = (unavailable or next((f"budget:{c['reason']}" for c in checks.values() if c["reason"] == "budget"),
                                       None) or (f"draft:{gen['problem']}" if gen["problem"] else None))
         verified = {
             "schema_version": VERIFIED, "run_id": self.run_id, "status": status, "reason": reason,
             "verified": not unavailable and not gen.get("analysis") and not host_checked, "degraded": baseline,
             "host_checked": host_checked,
+            "unknown_citations": gen.get("unknown_citations") or [],
             "claims": [{"claim_id": cid, "kind": claims[cid]["kind"], "text_en": claims[cid]["text_en"],
                         "checked_by": checks[cid].get("by", "jev"),
                         "evidence_ids": [ids[e]["chunk_id"] for e in claims[cid]["evidence_ids"]],
@@ -1942,12 +1957,9 @@ def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict], body: str |
         where = [cite(ids[e]) for e in eids]
         return " ".join(f"[{w}]({w})" if w.startswith(("https://", "http://")) else f"`{w}`" for w in where)
 
-    if body:
-        written = CITED.sub(lambda m: cited([i.strip() for i in m.group(1).split(",")]), body)
-        # Each pasted part is its own evidence, and every one is `your message`: said once where they meet.
-        written = re.sub(r"(`[^`\n]+`)(?:\s+\1)+", r"\1", written)
-        return ("Unverified analysis: the assistant's own comparison or judgment over the cited sources, "
-                "not checked against them claim by claim.\n\n" + written)
+    if body is not None:
+        # Provenance and verification belong to the run details, not the answer's prose.
+        return re.sub(r"[ \t]*" + CITED.pattern, "", body).strip()
     parts: list[str] = []
     if v["status"] == "verification_unavailable":
         parts.append(f"Unverified answer: verification was unavailable ({v['reason']}), and this answer is shown "
@@ -1984,18 +1996,22 @@ def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict], body: str |
 
 def grounded(question: str, project: str | Path | None, state: str, dossier: dict, generate,
              cfg: decision.Config, cancel: threading.Event | None = None, cache: decision.Cache | None = DECISIONS,
-             evaluate=None, said: str = "", run: Run | None = None):
-    """Draft, verify, repair once at most, publish.
+             evaluate=None, said: str = "", run: Run | None = None, *, verify_claims: bool = False):
+    """Synthesize an answer over retrieved evidence and publish its provenance.
 
-    A generator. It yields `{"progress": step}` — draft, verify, retrieve,
-    repair — and whatever `generate` yields, and returns the publication:
+    Ordinary answers use the host's judgment, even when retrieval coverage is
+    uncertain. Explicit claim-verification checks opt in with `verify_claims`;
+    a synthesized answer is never labelled independently verified.
+
+    A generator. It yields `{"progress": step}` — draft, attribute, repair,
+    or explicit verification/retrieval — and returns the publication:
     `verified` (the VerifiedAnswer), `text` (what the reader gets), `rest`
     (the host's text outside the draft block, where other blocks ride) and
     `record` (the drafts and checks, an internal artifact). `generate(message)`
     is itself a generator whose return value is the host's finished text; a
     failed turn raises out of it, and nothing is published.
 
-    `said` is what of the conversation a direct run's text may restate
+    With explicit verification, `said` is what a direct run's text may restate
     besides the English question: English only, since Jev reads it, and
     never an answer that was not verified — restated, it would come out
     verified (review round 3). `state` routes; it is not a ground.
@@ -2011,15 +2027,17 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
         evaluate = run.jev(evaluate or functools.partial(decision.evaluate, cfg))
     generate = drafted(run, generate)
     job = Grounding(dossier, cfg, cancel, cache, evaluate,
-                    said="\n".join(filter(None, (said, dossier.get("question_en")))))
+                    said="\n".join(filter(None, (said, dossier.get("question_en")))),
+                    verify_claims=verify_claims)
     step = run.step if run is not None else (lambda *_a, **_k: None)
     if run is not None:
         run.follow(lambda: {"calls": job.calls, "tokens": job.tokens})
     yield {"progress": "draft"}
     step("draft", "writing")
     text = yield from generate(job.brief())
-    yield {"progress": "verify"}
-    step("verify", "checked", claims=checks(verified(run, job, text)))
+    stage = "attribute" if job.analysis else "verify"
+    yield {"progress": stage}
+    step(stage, "recorded" if job.analysis else "checked", claims=checks(verified(run, job, text)))
     sent = len(job.called)
     for record in job.called if run is not None else ():
         run.called(record)
@@ -2039,10 +2057,12 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
         yield {"progress": "repair"}
         step("repair", how)
         text = yield from generate(job.repair_brief(how == "retrieve"))
-        yield {"progress": "verify"}
-        step("verify", "checked", claims=checks(verified(run, job, text)))
+        yield {"progress": stage}
+        step(stage, "recorded" if job.analysis else "checked", claims=checks(verified(run, job, text)))
         for record in job.called[sent:] if run is not None else ():
             run.called(record)
+    if job.analysis and all(g["draft"] is None for g in job.generations):
+        raise RuntimeError("The host returned no usable answer")
     out = job.published()
     v = out["verified"]
     step("publish", v["status"], reason=v["reason"], citations=[c["evidence_id"] for c in v["citations"]],
@@ -2115,7 +2135,7 @@ def verified(run: Run | None, job: Grounding, text: str) -> dict:
 
     if run is None:
         return job.check(text)
-    with run.phased("verify-claims", "evaluator", input=text) as ending:
+    with run.phased("record-provenance" if job.analysis else "verify-claims", "evaluator", input=text) as ending:
         gen = job.check(text)
         ending.update(output={k: gen.get(k) for k in ("draft", "problem", "checks", "coverage", "sets",
                                                       "rejoined", "requirements")},
@@ -3541,7 +3561,8 @@ def summarize(run: Run, outcome: str, reason: str | None, published: dict | None
     def support(chunk_id: str) -> str:
         claims = cited.get(chunk_id, [])
         return ("supported" if any(c["support"] == "supported" for c in claims) else
-                "unverified" if claims else "conflict" if chunk_id in conflicts else
+                "unverified" if claims or any(c["evidence_id"] == chunk_id for c in (v or {}).get("citations", []))
+                else "conflict" if chunk_id in conflicts else
                 "untrusted" if chunk_id in untrusted else "not_cited")
 
     evidence_ = [{**{k: e.get(k) for k in ("chunk_id", "source_id", "kind", "revision", "locator", "heading_path",
@@ -3621,6 +3642,8 @@ def observed(run: Run, d: dict, v: dict | None, outcome: str, reason: str | None
         text = next((r["text"] for r in d.get("requirements") or [] if r["id"] == rid), "")
         notes.append({"code": "evidence_missing", "requirement": rid, "text": text})
     if v:
+        if v.get("unknown_citations"):
+            notes.append({"code": "unknown_citations", "ids": v["unknown_citations"]})
         doubtful = [u for u in v["uncertainty"] if u["reason"] == "uncertain"]
         if doubtful:
             notes.append({"code": "threshold_not_met", "claims": len(doubtful)})
