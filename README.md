@@ -249,8 +249,10 @@ source excerpts retain their original language. Verify with
 `python -m pytest -q tool/test_jev.py tool/test_search.py tool/test_main.py`.
 
 Each question's run can also go to a self-hosted Langfuse as one trace: what
-Jev and the translator were sent and gave back, each draft, and how each claim
-was judged, in full text. Add `LANGFUSE_BASE_URL` (this machine's instance is
+Jev and the translator were sent and gave back, each draft, and its provenance
+recording, in full text. Ordinary conversation synthesizes an `unverified`
+answer; explicit claim checks also record how each claim was judged.
+Add `LANGFUSE_BASE_URL` (this machine's instance is
 `http://localhost:3001`), `LANGFUSE_PUBLIC_KEY` and `LANGFUSE_SECRET_KEY` of a
 project of its own to the hub's `.env` (`LANGFUSE_TRACING_ENVIRONMENT` names
 the environment, `default` otherwise) and install `requirements-chat.txt`, which
@@ -341,7 +343,11 @@ declarations. They draw on the
 and the
 [reasoning model guide](https://developers.openai.com/api/docs/guides/reasoning-best-practices).
 The plain explanation is not a separate fact-check of the original. The
-`file:line` in each answer opens the evidence directly.
+"View evidence and judgment" opens the sources and their recorded snapshots.
+Source locators and verification notices stay there, separate from the answer
+body. Next task, wiki and retrospect use the same synthesis path: the agent
+may interpret incomplete evidence, and its answer is recorded as `unverified`,
+not independently checked sentence by sentence.
 
 The project is shared by all three focuses of the query — next task, wiki and
 retrospect — and by the worktree list. The next-task focus gathers

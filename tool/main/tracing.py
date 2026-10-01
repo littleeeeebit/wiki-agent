@@ -1,8 +1,9 @@
 """Each question's run as a Langfuse trace, through the Python SDK (v4, OpenTelemetry).
 
-Why an answer was withheld lies in what Jev was sent, what the drafting
-session wrote and how each claim was judged — and a run reproduced later may
-not reproduce it. So a run (`knowledge.Run`) opens one trace when it starts,
+What an answer rests on lies in what Jev was sent, what the drafting session
+wrote and its recorded provenance. Explicit claim checks also record why a
+claim was withheld. A later run may not reproduce it, so `knowledge.Run`
+opens one trace when it starts,
 its id the run's own, and records each step under it as it happens:
 
     answer-question (chain)           the question in, the published answer out
@@ -10,8 +11,9 @@ its id the run's own, and records each step under it as it happens:
         normalize-to-english (tool)   the texts sent to the translator, the outcomes
         route-question, grade-evidence, choose-repair (generation)   each Jev request
       draft-answer (generation)       the brief the host was sent, the text it wrote
-      verify-claims (evaluator)       the draft, and each claim's check and support
-        judge-claims (generation)     Jev's requests while verifying
+      record-provenance (evaluator)  ordinary synthesis and its attribution
+      verify-claims (evaluator)      explicit claim checks only
+        judge-claims (generation)    Jev's requests during explicit verification
 
 Observations are made from their parent object, never from the active
 OpenTelemetry context: a run's work crosses threads (`Flow.outside`, the

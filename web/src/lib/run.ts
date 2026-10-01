@@ -8,13 +8,13 @@ export const FAMILY: Record<string, string> = {
 }
 
 /** The four phases a person follows, and which server stages each covers. */
-export const PHASES = ['검색', '그래프 확장', '검증', '게시'] as const
+export const PHASES = ['검색', '그래프 확장', '답변', '게시'] as const
 export type Phase = (typeof PHASES)[number]
 const PHASE_OF: Record<string, Phase> = {
   route: '검색', retrieve: '검색', grade: '검색', assess: '검색', repair_retrieval: '검색', retrieved: '검색',
   ready: '검색', partial: '검색', exhausted: '검색', unavailable: '검색',
   expand: '그래프 확장',
-  draft: '검증', verify: '검증', repair: '검증',
+  draft: '답변', verify: '답변', attribute: '게시', repair: '답변',
   publish: '게시', answer: '게시', explain: '게시',
 }
 export const phaseOf = (stage?: string): Phase | null => (stage ? PHASE_OF[stage] ?? null : null)
@@ -26,13 +26,14 @@ export const STAGE: Record<string, string> = {
   retrieved: '근거를 모았다', ready: '근거를 모았다', partial: '근거를 일부만 모았다',
   exhausted: '한도 안에서 더 찾지 못했다', unavailable: '판단을 못 해 기본 검색으로 간다',
   draft: '근거로 답을 쓰는 중', verify: '주장마다 근거와 대조하는 중', repair: '어긋난 주장을 고쳐 쓰는 중',
-  publish: '확인된 것만 싣는 중', answer: '기본 모드로 답하는 중', explain: '쉬운 설명을 쓰는 중',
+  attribute: '출처를 실행 기록에 남기는 중',
+  publish: '답변을 싣는 중', answer: '기본 모드로 답하는 중', explain: '쉬운 설명을 쓰는 중',
 }
 
 /** How a run ended — every outcome in words, never only a colour. */
 export const OUTCOME: Record<string, string> = {
   complete: '검증됨', partial: '부분 답', abstained: '답 보류', verification_unavailable: '검증 불가',
-  unverified: '분석 (미검증)',
+  unverified: '답함 (문장별 검증 없음)',
   answered: '답함 (검증 없음)', cancelled: '멈춤', failed: '실패', interrupted: '끊김 — 서버가 내려갔다',
 }
 
@@ -68,6 +69,7 @@ export function note(n: Note): string {
     case 'threshold_not_met': return `확신이 기준에 못 미친 주장 ${String(n.claims)}개는 싣지 않았다`
     case 'host_checked': return `Jev 가 확신하지 못한 판단은 답하는 모델이 대신했다 — 그렇게 실은 주장 ${String(n.claims)}개 (Jev 검증 아님)`
     case 'verification_unavailable': return `근거 대조를 하지 못했다${n.reason ? ` (${n.reason})` : ''}`
+    case 'unknown_citations': return `존재하지 않는 근거 표시는 출처에서 제외했다: ${((n.ids as string[]) ?? []).join(', ')}`
     case 'cancelled': return '멈춤을 눌러 멈췄다. 게시한 것이 없다'
     case 'failed': return `실패했다${n.reason ? ` (${n.reason})` : ''}`
     default: return n.code

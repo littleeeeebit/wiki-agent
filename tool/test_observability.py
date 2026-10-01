@@ -7,6 +7,7 @@ are fakes. Every trace lands under the test's own `JEV_ENV` folder.
 """
 
 import json
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -16,6 +17,7 @@ import pytest
 
 import decision
 import jev_search
+from agent import chat_session
 from agent.chat_session import Event
 from common.budget import Budget
 from main import app as main_app
@@ -202,21 +204,21 @@ def test_a_question_is_a_run_whose_steps_evidence_and_summary_the_screen_reads(t
     run_id = events[0]["run_id"]
     assert {e["run_id"] for e in events} == {run_id} and [e["seq"] for e in events] == list(range(len(events)))
     steps = [(e["stage"], e["status"]) for e in events if e["kind"] == "step"]
-    assert steps[:5] == [("start", "started"), ("retrieved", "ready"), ("draft", "writing"), ("verify", "checked"),
-                         ("publish", "complete")]
-    verify = next(e for e in events if e["kind"] == "step" and e["stage"] == "verify")
-    assert {c["claim_id"]: c["state"] for c in verify["claims"]} == {"c1": "accepted", "c2": "rejected"}
+    assert steps[:5] == [("start", "started"), ("retrieved", "ready"), ("draft", "writing"),
+                         ("attribute", "recorded"), ("publish", "unverified")]
+    attributed = next(e for e in events if e["kind"] == "step" and e["stage"] == "attribute")
+    assert attributed["claims"] == [] and active.asked == []
     assert REJECTED not in json.dumps(events, ensure_ascii=False), "a check shows states, never a claim's text"
     rows = chat.recall("wiki", include_context=True)
     assert {r["run_id"] for r in rows if r["role"] in ("user", "assistant")} == {run_id}
 
     summary = screen.get(f"/api/knowledge/runs/{run_id}").json()
-    assert summary["outcome"] == "complete" and summary["settings"]["mode"] == "active"
+    assert summary["outcome"] == "unverified" and summary["settings"]["mode"] == "active"
     support = {e["cite"]: e["support"] for e in summary["evidence"]}
-    assert support == {"docs/ports.md:3": "supported", "docs/owners.md:3": "not_cited"}
+    assert support == {"docs/ports.md:3": "unverified", "docs/owners.md:3": "not_cited"}
     ports = summary["evidence"][0]
     assert ports["revision"] == d["evidence"][0]["revision"] and ports["text_en"] and ports["kind"] == "document"
-    assert {c["claim_id"]: c["reason"] for c in summary["claims"]} == {"c1": None, "c2": "fabricated_quote"}
+    assert summary["claims"] == [] and summary["verification"]["verified"] is False
     assert KEY not in json.dumps(summary) and KEY not in (knowledge.runs_root() / summary["repo_id"] / "runs"
                                                           / f"{run_id}.jsonl").read_text(encoding="utf-8")
 
@@ -380,6 +382,33 @@ def test_an_export_leaves_out_every_text_unless_asked(tmp_path, active):
 
 # -- the app and the command line -------------------------------------------------------------
 
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_repository_observations_are_bounded_fixed_reads_and_survive_missing_tools(tmp_path, unavailable):
+    calls = []
+
+    def read(args, cwd, timeout):
+        calls.append((args, cwd, timeout))
+        if unavailable:
+            if args[0] == "gh":
+                raise FileNotFoundError("gh is not installed")
+            return subprocess.CompletedProcess(args, 1, "", "unavailable")
+        return subprocess.CompletedProcess(args, 0, "CURRENT-STATE " + "x" * 20000, "")
+
+    with patch.object(specs, "sh", side_effect=read):
+        state = jev_search.repository_state(tmp_path)
+    assert state["observed_at"] and len(state["text"]) < 37000
+    assert [args[0] for args, _, _ in calls] == ["git", "git", "gh"]
+    assert all(cwd == tmp_path and timeout == 10 for _, cwd, timeout in calls)
+    assert "--no-optional-locks" in calls[0][0] and "core.fsmonitor=false" in calls[0][0]
+    assert "--no-pager" in calls[1][0] and "--all" in calls[1][0] and "-20" in calls[1][0]
+    assert "--no-show-signature" in calls[1][0]
+    assert calls[2][0][1:7] == ["pr", "list", "--state", "all", "--limit", "20"]
+    if unavailable:
+        assert "could not read" in state["text"] and "gh is not installed" in state["text"]
+    else:
+        assert state["text"].count("CURRENT-STATE") == 3 and state["text"].count("[truncated]") == 3
+
+
 def test_the_app_and_the_cli_publish_the_same_decisions_and_evidence_for_one_input(tmp_path, active):
     d, reply = mixed(tmp_path)
     session, _sent = session_saying(reply)
@@ -388,10 +417,16 @@ def test_the_app_and_the_cli_publish_the_same_decisions_and_evidence_for_one_inp
     app = knowledge.LIVE[run_id].summary
 
     host, _heard = session_saying(reply)
+    commands = []
 
     class Host:
         def __init__(self, *args, **kwargs):
-            pass
+            session = chat_session.ChatSession(*args, **kwargs)
+            with patch.object(chat_session, "cli_command", return_value=["claude"]), \
+                 patch.object(chat_session.subprocess, "Popen") as spawned, \
+                 patch.object(chat_session.threading, "Thread"):
+                session._spawn()
+                commands.append(spawned.call_args.args[0])
 
         def say(self, text, halt=None):
             return host.say(text)
@@ -399,8 +434,16 @@ def test_the_app_and_the_cli_publish_the_same_decisions_and_evidence_for_one_inp
         def close(self):
             pass
 
-    with patch.object(jev_search, "prepare", retrieved(d)), patch("agent.ChatSession", Host):
+    snapshot = {"text": "Recent PR #7: OPEN; merged PR #6 supersedes the old plan."}
+    with patch.object(jev_search, "prepare", retrieved(d)), patch("agent.ChatSession", Host), \
+         patch.object(jev_search, "repository_state", return_value=snapshot):
         cli = jev_search.answer("데몬 포트는?", str(tmp_path), "", 8, "")
+
+    assert snapshot["text"] in _heard[0], "current repository observations must reach the answering host"
+    command = commands[0]
+    for flag in ("--tools", "--allowedTools"):
+        assert set(command[command.index(flag) + 1].split(",")) == {"Read", "Glob", "Grep"}
+    assert command[command.index("--setting-sources") + 1] == ""
 
     def identity(s):
         v = s["verification"]
@@ -412,7 +455,15 @@ def test_the_app_and_the_cli_publish_the_same_decisions_and_evidence_for_one_inp
     assert identity(cli) == identity(app)
     assert cli["answered"] and cli["answered"] == app["answered"], "both publish the same text"
     assert cli["schema_version"] == app["schema_version"] == knowledge.RUN_SUMMARY
+    assert cli["repository_state"] == snapshot
     assert knowledge.stored(cli["run_id"], tmp_path)[0] == cli, "the CLI's run is traced where the app's are"
+
+    knowledge.LIVE.clear()
+    with patch.object(chat, "current_repo", return_value=tmp_path):
+        reloaded = web().get(f"/api/knowledge/runs/{cli['run_id']}").json()
+    assert reloaded["repository_state"] == snapshot, "the evidence drawer can read it after process restart"
+    assert snapshot["text"] not in json.dumps(knowledge.export(cli["run_id"], tmp_path))
+    assert snapshot["text"] in json.dumps(knowledge.export(cli["run_id"], tmp_path, text=True))
 
 
 # -- the Langfuse trace ---------------------------------------------------------------------
@@ -457,7 +508,8 @@ def test_a_run_leaves_langfuse_what_each_request_was_sent_and_gave_back(tmp_path
         def close(self):
             pass
 
-    with patch.object(jev_search, "prepare", retrieved(d)), patch("agent.ChatSession", Host):
+    with patch.object(jev_search, "prepare", retrieved(d)), patch("agent.ChatSession", Host), \
+         patch.object(jev_search, "repository_state", return_value={"text": "Recent repository observations"}):
         summary = jev_search.answer("데몬 포트는?", str(tmp_path), "", 8, "")
     spans = langfuse()
     assert {s["trace_id"] for s in spans} == {summary["run_id"]}, "one trace, its id the run's"
@@ -469,14 +521,13 @@ def test_a_run_leaves_langfuse_what_each_request_was_sent_and_gave_back(tmp_path
     assert root["output"] == summary["answered"]
     assert all("cli" in s["trace.tags"] and s["trace.name"] == "answer-question" for s in spans), \
         "v4 filters rows: each observation, not just the root, carries the trace's name and tags"
-    # The draft as the host wrote it, rejected claim included: the reason a claim fell is kept.
+    # The host's answer and its attribution are separate observations.
     draft = by["draft-answer"][0]
-    assert draft["type"] == "generation" and REJECTED in draft["output"] and "evidence" in draft["input"]
+    assert draft["type"] == "generation" and "[e1]" in draft["output"] and "evidence" in draft["input"]
     assert draft["model.name"] == "claude-test" and json.loads(draft["usage_details"]) == {"input": 7, "output": 11}
-    verify = by["verify-claims"][0]
-    assert verify["type"] == "evaluator" and REJECTED in verify["output"] and "checks" in verify["output"]
-    judged = by["judge-claims"][0]
-    assert judged["type"] == "generation" and json.loads(judged["input"])["questions"] and judged["output"]
+    attribution = by["record-provenance"][0]
+    assert attribution["type"] == "evaluator" and "body" in attribution["output"]
+    assert "judge-claims" not in by
     assert KEY not in json.dumps(spans, ensure_ascii=False), "the Jev key never leaves"
 
 

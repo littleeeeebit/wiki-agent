@@ -110,7 +110,7 @@ POINTS = {
                          "note": "a recommendation among proposed tasks; the person chooses the goal"},
     "query": {"entry": "main.query.say -> main.knowledge.prepare, main.knowledge.grounded",
               "operations": ["retrieve_evidence", "summarize_result"], "baseline": "baseline retrieval",
-              "note": "stages 6 and 7: route and repair retrieval, publish a checked or partial answer"},
+              "note": "stages 6 and 7: route and repair retrieval, synthesize an answer with recorded provenance"},
 }
 HOST = ("Tool selection inside a Claude or Codex session is the host's own planner: not intercepted, and "
         "outside controller coverage.")
@@ -135,13 +135,14 @@ OWNERS = [
                   "grants no execution permission"},
     {"point": "answer.support", "owner": "jev", "allowed_operations": ["summarize_result"],
      "kinds": ("relation", "answers", "faithful"), "policy": "claims",
-     "authority": "code checks every quote and citation first; only accepted claims are published"},
+     "authority": "explicit verify_claims checks only; ordinary answers use host synthesis without this gate"},
     {"point": "deterministic", "owner": "code", "allowed_operations": list(OPERATIONS), "kinds": (), "policy": None,
      "authority": "the next step when only one is offered, an exhausted budget, a stale or duplicate proposal, "
                   "the round cap and merge conditions"},
     *({"point": p, "owner": owner, "allowed_operations": [], "kinds": (), "policy": None, "authority": about}
       for p, owner, about in (
-          ("draft", "generative:host", "writes claims over the dossier; code and Jev decide what is published"),
+          ("draft", "generative:host", "synthesizes an answer over the dossier; code records provenance "
+                                       "without granting independently verified status"),
           ("explain", "generative:host", "restates the published answer; a new fact in it withholds it"),
           ("decompose", "generative:translator", "splits a question into asks; code keeps the split only whole"),
           ("graph_extract", "generative:configured", "proposes entities and relations; code keeps verbatim "

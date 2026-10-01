@@ -154,8 +154,10 @@ CHANNELS: list[Channel] = [
         label="위키",
         blurb="위키와 도구를 본다 — 왜 안 되나는 기록부터",
         preamble=(
-            "Focus: the wiki and its tools. Read the contracts in `SCHEMA.md` and "
-            "the five enforcement levels in `ENFORCEMENT.md`. Before proposing a "
+            "Focus: answer questions about the selected repository using its "
+            "documents, plans, decisions and implementation. Interpret them to "
+            "answer the user's intent. For changes to shared wiki rules, read "
+            "the hub's `SCHEMA.md` and `ENFORCEMENT.md`. Before proposing a "
             "new page, establish that the documented admission threshold is met; "
             "additional pages have a context cost.\n\n"
             "When the question is why something does not work, look at what ran "

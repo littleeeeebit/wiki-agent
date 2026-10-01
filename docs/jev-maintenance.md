@@ -15,7 +15,7 @@ execution. Nothing here changes that.
 | Retrieve or answer directly; which source families | `Flow.route` in `tool/main/knowledge.py` | The families offered, the direct-answer restrictions |
 | Relevance and conflicts of found evidence | `Flow.judge` | The candidate ids, the allowance |
 | Enough evidence, or which repair | `Flow.repaired` | `REPAIR_ORDER`, rounds (`retrieval.MAX_ROUNDS`), the call reserve |
-| Claim support in an answer | `Grounding` in the same file, `tool/decision/claims.py` | Span checks, what is published |
+| Explicit claim-verification checks | `Grounding` in the same file, `tool/decision/claims.py` | Span checks, accepted claims; callers opt in with `verify_claims=True` |
 | Agent actions (`work.start`, `specs.check`, `loop.fix`, …) | `tool/main/decisions.py` | `OPERATIONS`, authorization, staleness keys |
 
 `GET /api/jev` reports the live settings and `decisions.coverage()`: every
@@ -31,6 +31,33 @@ passes the proposal as `prepare(cause=...)`: the route request leaves out
 "retrieve or not", still asks sources, analysis and the question's parts, and
 the transition's reason is `retrieval_required_by_action`. An answer's return
 to retrieval (`require=True`) skips the same question.
+
+## Answer publication
+
+The three conversation focuses and `jev_search.py --answer` use the host's
+ordinary synthesis over retrieved evidence. Retrieval coverage and the
+analysis/fact classification are diagnostics, not publication permission.
+The host may interpret plans, combine observations, recommend work, and read
+additional repository records. Missing evidence requires a specific limit on
+the conclusion; it does not require refusing the whole question.
+
+The isolated CLI host exposes only Read, Glob and Grep. Before answering,
+the server supplies bounded read-only observations of the checkout, the latest
+20 commits across local refs, and up to 20 recent pull requests with merge state.
+Each fixed command has a ten-second timeout and a 12,000-character output cap.
+Git refs are not fetched; missing tools or unavailable GitHub leave a specific
+observation gap without suppressing the answer. The snapshot is included in
+the host brief and durable run summary, and is shown in the existing evidence
+drawer. A bare export keeps its timestamp and removes its text using the same
+redaction as other source snapshots. It grants no shell or write access.
+
+`grounded` records this answer as `unverified`, never as independently checked.
+Internal evidence marks are removed from the body; locators, revisions,
+snapshots and unknown citation ids stay in "View evidence and judgment".
+Spec blocks keep known evidence references and remain proposals. Choices and
+retrospective candidates retain their interaction format. Empty host responses
+and transport errors are failures, not successful answers. The explicit claim
+validator remains available for checks; it does not gate normal conversation.
 
 ## Configuration
 

@@ -400,6 +400,7 @@ export type RunSummary = {
   outcome: string
   reason: string | null
   settings?: Jev
+  repository_state?: { observed_at?: string; text?: string } | null
   retrieval?: { status: string; reason: string | null; fallback: boolean; sources: string[] | null } | null
   evidence?: RunEvidence[]
   graph?: {
