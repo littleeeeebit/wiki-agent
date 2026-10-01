@@ -56,6 +56,7 @@ class Manifest(Contract):
     version: Literal[1]
     contracts: list[str] = Field(min_length=1)
     flows: list[Flow] = Field(min_length=1)
+    prose_paths: list[str] = Field(default_factory=list)
 
 
 class LocalSettings(Contract):
@@ -106,6 +107,8 @@ def manifest(path: Path) -> tuple[Manifest, str]:
         raise ValueError("verification.json 을 저장소에 커밋해야 한다")
     data = file.read_bytes()
     parsed = Manifest.model_validate_json(data)
+    if any(not p for p in parsed.prose_paths):
+        raise ValueError("문서 전용 영향 경로는 비어 있을 수 없다")
     if len({f.id for f in parsed.flows}) != len(parsed.flows):
         raise ValueError("주요 흐름의 id 가 중복되었다")
     for flow in parsed.flows:
@@ -145,10 +148,17 @@ def documents(path: Path, base_oid: str, head: str) -> bool:
         return False
     done = specs.sh(["git", "diff", "--name-only", "--no-renames", base_oid, head], path)
     paths = done.stdout.splitlines()
-    # Only prose documents are exempt. Configuration, prompts and executable
-    # Markdown remain code even when their suffix happens to be `.md`.
+    try:
+        contract, _ = manifest(path)
+    except (OSError, ValueError):
+        return False
+    # Prose is an explicit repository-owned designation. Unclassified Markdown,
+    # API/data contracts and mapped runtime inputs always require local checks.
     return not done.returncode and bool(paths) and all(
-        p.endswith(".md") and not p.startswith(("tool/", "web/", ".github/", ".wiki/", ".agents/",
+        any(fnmatchcase(p, g) for g in contract.prose_paths)
+        and p not in contract.contracts
+        and not any(fnmatchcase(p, g) for f in contract.flows for g in f.paths)
+        and p.endswith(".md") and not p.startswith(("tool/", "web/", ".github/", ".wiki/", ".agents/",
                                                ".claude/", ".codex/", ".gemini/", "operator/", "prompts/"))
         and p.rsplit("/", 1)[-1] not in ("AGENTS.md", "CLAUDE.md", "SKILL.md") for p in paths)
 
@@ -348,7 +358,13 @@ def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: li
     if kind == "unstable":
         state = "unstable"
     spec = pending(repo, spec, head, reason, state)
-    spec = keep(spec, failures=seen, needs_research=state in ("reanalysis", "unstable"))
+    record = spec["local_verification"]
+    attempts = [*record.get("failure_attempts", []), {
+        "head": head, "environment_digest": failure_environment(repo, Path(spec["worktree"]), spec),
+        "failures": failures, "reason": redact(reason, local(repo)), "ts": time.time(),
+        "evidence": sanitize([r.get("evidence", {}) for r in record.get("flows", [])], local(repo))}]
+    spec = keep(spec, failures=seen, failure_attempts=attempts,
+                needs_research=bool(record.get("needs_research")) or state in ("reanalysis", "unstable"))
     record = spec["local_verification"]
     text = ["Cloud implementation: local verification requires changes", "", f"Commit: `{head}`",
             f"State: `{state}`", "", redact(reason, local(repo)), "", "Affected invariants:",
@@ -527,11 +543,40 @@ def evidence_identity(spec: dict) -> str:
                           for r in record.get("flows", [])]})
 
 
+def failure_environment(repo: Path, path: Path, spec: dict) -> str:
+    settings = local(repo)
+    return sha({"settings": {k: v for k, v in settings.items() if k != "redact_values"},
+                "env": sha(Path(settings["env_file"]).read_bytes()) if settings else "",
+                "runtime": specs.digest(repo, path, specs.required(repo, spec))})
+
+
+def uninvestigated(repo: Path, path: Path, spec: dict, head: str) -> str:
+    record = spec.get("local_verification") or {}
+    attempts = record.get("failure_attempts", [])
+    investigated = {i for note in record.get("research", []) for i in note.get("failure_attempts", [])}
+    environment = failure_environment(repo, path, spec)
+    if any(i not in investigated and row["head"] == head and row["environment_digest"] == environment
+           for i, row in enumerate(attempts)):
+        return "같은 커밋·환경에서 실패 후 통과 — 원인 확인 필요"
+    # Records made before attempt fingerprints existed are not proof that a
+    # failing identity changed; require investigation rather than assume it did.
+    if not attempts and any(head in heads for heads in record.get("failures", {}).values()) \
+            and not any(note.get("head") == head for note in record.get("research", [])):
+        return "이전 실패의 환경 근거가 없다 — 원인 확인 필요"
+    return ""
+
+
 def merge_proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str) -> str:
     problem = proven(repo, path, spec, head, base_oid)
     record = spec.get("local_verification") or {}
     allowed = specs.approved(spec) or {}
     published = record.get("published") or {}
+    if problem:
+        return problem
+    try:
+        problem = uninvestigated(repo, path, spec, head)
+    except (OSError, ValueError, KeyError, TypeError):
+        return "이전 실패의 환경 근거를 확인하지 못했다"
     if problem:
         return problem
     if record.get("state") != "verified" or (published.get("head"), published.get("state")) != (head, "success"):
@@ -542,6 +587,12 @@ def merge_proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str) -
 
 
 def publish(repo: Path, spec: dict, head: str, base: str) -> dict:
+    if cloud(spec):
+        problem = uninvestigated(repo, Path(spec["worktree"]), spec, head)
+        if problem:
+            spec = pending(repo, spec, head, problem, "unstable")
+            keep(spec, needs_research=True)
+            raise ValueError(problem)
     protection(repo, base)
     if not cloud(spec):
         status(repo, head, "success", "Local implementation: existing review and final gate passed")

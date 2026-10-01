@@ -981,6 +981,7 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
 
 
 def cloud_stop(loop: Loop, repo: Path, spec: dict, head: str, reason: str) -> bool:
+    spec = specs.load(loop.repo, loop.sid) or spec
     state = (spec.get("local_verification") or {}).get("state")
     verification.pending(repo, spec, head, reason, state if state in ("reanalysis", "unstable") else "waiting_environment")
     return stop(loop, loop.repo, loop.sid, Why.GATE, "로컬 검증 준비 대기 — " + verification.redact(reason, verification.local(repo)))
@@ -1532,7 +1533,8 @@ def proceed(repo: Path, spec: dict, note: str) -> dict:
                 raise HTTPException(400, "재분석 원인·근거·다음 실험을 적어야 재개한다")
             note = verification.redact(note, verification.local(repo))
             spec = verification.keep(spec, research_note=note, needs_research=False, research=[*record.get("research", []),
-                                     {"head": record.get("head"), "note": note, "ts": time.time()}])
+                                     {"head": record.get("head"), "note": note, "ts": time.time(),
+                                      "failure_attempts": list(range(len(record.get("failure_attempts", []))))}])
     if why is Why.DISPUTE:
         if not note:
             raise HTTPException(400, "그 발견에 정한 것을 적어야 잇는다")

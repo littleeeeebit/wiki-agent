@@ -17,6 +17,7 @@ global default list and no automatic claim that an incomplete list is complete.
 {
   "version": 1,
   "contracts": ["docs/api.md", "docs/test-data.md"],
+  "prose_paths": ["docs/guides/*", "README.md"],
   "flows": [
     {
       "id": "save-record",
@@ -195,8 +196,17 @@ dispatches a local implementation session, commits fixes or pushes changes
 back to cloud. A user starts and resumes it explicitly.
 
 Pure prose documentation changes retain their independent review and final
-gate but are exempt from API/browser execution. Markdown under executable
-tool, web, workflow or project-rule paths is not automatically exempt.
+gate but are exempt from API/browser execution only when the unchanged
+repository manifest explicitly designates them in `prose_paths`. Unclassified
+Markdown, referenced API/data contracts, flow impact paths and executable
+tool, web, workflow or project-rule paths always require local execution.
+Changing the designation itself changes `verification.json`, so that PR
+requires runtime verification and local approval of the new manifest.
+
+Failed flows, offline gates and serious review outcomes retain sanitized
+attempt evidence bound to the commit and local environment. A later pass
+at that same identity cannot publish success until recorded investigation
+covers those failed attempts. A later failure requires new investigation.
 
 Before merging, the app rechecks commit, base, current environment evidence,
 final gate and GitHub protection. Its background poll also invalidates

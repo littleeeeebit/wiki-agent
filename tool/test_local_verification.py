@@ -19,7 +19,7 @@ from main import loop, specs, verification
 from main import app as main_app
 from test_loop import (  # noqa: F401 — shared temporary Git/GitHub fixtures
     Reviewer, Worker, client, commit, git, looped, no_machine_settings,
-    pr_spec, template, waited, world as git_world,
+    deny, pr_spec, template, waited, world as git_world,
 )
 
 
@@ -310,6 +310,10 @@ def test_github_requirement_is_enforced_and_setup_preserves_existing_rules(cloud
 
 def test_doc_only_cloud_change_keeps_review_but_exempts_runtime_setup(cloud_world):
     world = cloud_world
+    manifest = {**world.contract, "prose_paths": ["docs/*"]}
+    (world.repo / "verification.json").write_text(json.dumps(manifest), encoding="utf-8")
+    commit(world.repo, "prose-policy.txt")
+    git(world.repo, "push", "origin", "main")
     cloud_spec(world, file="docs/guide.md", review_profile="plan", artifact_root="docs")
     (world.repo / verification.LOCAL).unlink()
     spec = looped("cloud")
@@ -318,6 +322,48 @@ def test_doc_only_cloud_change_keeps_review_but_exempts_runtime_setup(cloud_worl
     rule = looped("instructions")
     assert rule["state"] == "멈춤" and rule["local_verification"]["state"] == "waiting_environment"
     assert spec["rounds"][0]["profile"] == "plan" and not Worker.made
+
+
+def test_unclassified_runtime_markdown_cannot_skip_local_flows(cloud_world):
+    world = cloud_world
+    spec = cloud_spec(world, file="scripts/runtime-prompt.md")
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    base = specs.current_merge_base(path, "main", head)
+    assert not verification.documents(path, base, head)
+    (world.repo / verification.LOCAL).unlink()
+    assert looped("cloud")["local_verification"]["state"] == "waiting_environment"
+
+
+@pytest.mark.parametrize("failure", ["final", "round", "review"])
+def test_offline_and_review_same_head_recovery_requires_investigation(cloud_world, monkeypatch, failure):
+    world = cloud_world
+    cloud_spec(world, gate={})
+    calls = []
+    judge = specs.judge
+
+    def fail_once(path, commands, *args, **kwargs):
+        verdict = judge(path, commands, *args, **kwargs)
+        if commands != ["python verify.py health"]:
+            calls.append(commands)
+            if len(calls) == (2 if failure == "final" else 1):
+                return {**verdict, "ok": False, "code": 1, "reason": "Intermittent gate", "tail": "First failed result"}
+        return verdict
+
+    if failure == "review":
+        Reviewer.replies = [deny("[P1] change.py:1 — Intermittent independent finding")]
+    else:
+        monkeypatch.setattr(specs, "judge", fail_once)
+    first = looped("cloud")
+    assert first["local_verification"]["state"] == "waiting_cloud"
+    retried = looped("cloud")
+    record = retried["local_verification"]
+    assert record["state"] == "unstable" and record["needs_research"]
+    assert retried["state"] == "멈춤" and world.github.statuses[-1][1] == "pending"
+    assert record["failure_attempts"][0]["reason"]
+    assert client().post("/api/specs/cloud/resume", json={}).status_code == 400
+    assert client().post("/api/specs/cloud/resume", json={"note": "Investigated nondeterminism; isolated and measured fixture"}).status_code == 200
+    waited(lambda: ("proj", "cloud") not in loop._loops)
+    assert specs.load("proj", "cloud")["state"] == "머지 가능"
 
 
 def test_setup_rejects_stale_manifest_and_requests_from_another_project(cloud_world):
