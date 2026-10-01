@@ -183,7 +183,10 @@
 
 /* 답 본문. 산문이 대부분이고 표와 코드가 섞인다. */
 .prose-answer {
-    @apply text-[13.5px] leading-[1.72];
+    @apply text-[13.5px] leading-[1.72] break-words;
+}
+.prose-answer p {
+    @apply whitespace-pre-wrap;
 }
 .prose-answer > * + * {
     @apply mt-3;

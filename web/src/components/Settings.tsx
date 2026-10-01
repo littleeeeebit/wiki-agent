@@ -28,8 +28,6 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   const [bypass, setBypass] = useState<boolean | null>(null)
   const [rounds, setRounds] = useState(0)
   const [seats, setSeats] = useState(0)
-  const [model, setModel] = useState('')
-  const [effort, setEffort] = useState('')
   const [working, setWorking] = useState('')
   const [fault, setFault] = useState('')
 
@@ -52,8 +50,6 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
     if (!loop) return
     setRounds(loop.rounds)
     setSeats(loop.concurrent)
-    setModel(loop.review_model)
-    setEffort(loop.review_effort)
   }, [loop])
 
   async function act(key: string, fn: () => Promise<void>) {
@@ -68,16 +64,13 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
     }
   }
 
-  const loopEdited = !!loop && (rounds !== loop.rounds || seats !== loop.concurrent || model !== loop.review_model
-    || effort !== loop.review_effort)
+  const loopEdited = !!loop && (rounds !== loop.rounds || seats !== loop.concurrent)
   const surveyEdited = JSON.stringify(survey) !== JSON.stringify(savedSurvey)
   const usage = sw?.usage
   const models = options?.models.filter((m) => m.id) ?? []
   // A model's own efforts, as the toolbar reads them; a model without a list
   // takes the CLI's five.
   const efforts = (id: string) => options?.models.find((m) => m.id === id)?.efforts ?? options?.efforts ?? []
-  // The review's empty model is Codex's default, not the Claude CLI's.
-  const reviewing = (id: string) => id || options?.models.find((m) => m.is_default)?.id || ''
   const effortPicker =(id: string, value: string, set: (v: string) => void) => (
     <select value={value} aria-label="추론 강도" onChange={(e) => set(e.target.value)} className={`${field} w-24 font-sans`}>
       {!efforts(id).some((e) => e.id === value) && <option value={value}>{value}</option>}
@@ -165,21 +158,9 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
             <input type="number" min={1} max={10} value={seats} className={`${field} w-20`}
               onChange={(e) => setSeats(Number(e.target.value))} />
           </Row>
-          <Row label="리뷰 모델">
-            <span className="flex gap-1.5">
-              <select value={model} className={`${field} w-32 font-sans`} onChange={(e) => {
-                // The effort goes with the model: one the new model does not take is dropped.
-                setModel(e.target.value)
-                if (!efforts(reviewing(e.target.value)).some((x) => x.id === effort)) setEffort('')
-              }}>
-                <option value="">Codex 기본</option>
-                {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
-              {effortPicker(reviewing(model), effort, setEffort)}
-            </span>
-          </Row>
+          <p className="text-faint">리뷰 모델과 추론 강도는 리뷰 탭에서 고른다.</p>
           <Save edited={loopEdited} busy={working === 'loop'}
-            onSave={() => act('loop', () => onLoop({ rounds, concurrent: seats, review_model: model, review_effort: effort }))} />
+            onSave={() => act('loop', () => onLoop({ ...loop, rounds, concurrent: seats }))} />
           </>)}
         </Part>
 

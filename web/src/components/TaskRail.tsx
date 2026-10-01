@@ -23,7 +23,7 @@ type Props = {
   onProject: (repo: string) => void
   onView: (view: View) => void
   onSelect: (key: string) => void
-  onLoop: (prs: number[], environment: 'local' | 'claude-cloud', repo: string) => Promise<void>
+  onLoop: (prs: number[], environment: 'local' | 'claude-cloud' | 'external', repo: string) => Promise<void>
   onSettings: () => void
   onNew: () => void
   /** Delete a worktree even while it runs: what runs is stopped first. */
@@ -51,7 +51,7 @@ export function TaskRail(props: Props) {
   const { repo, options, view, tasks, selected, prs } = props
   const [fault, setFault] = useState('')
   const [looping, setLooping] = useState(false)
-  const [environment, setEnvironment] = useState<'local' | 'claude-cloud'>('local')
+  const [environment, setEnvironment] = useState<'local' | 'claude-cloud' | 'external'>('local')
   // A choice belongs to the project it was made in. When the window follows
   // another project the modal is gone with it: the same numbers there are
   // other pull requests, and [시작] would loop them.
@@ -258,10 +258,11 @@ export function TaskRail(props: Props) {
           <label className="mb-3 flex flex-wrap items-center gap-2 text-[12.5px]">
             구현 환경
             <select aria-label="구현 환경" value={environment}
-              onChange={(e) => setEnvironment(e.target.value as 'local' | 'claude-cloud')}
+              onChange={(e) => setEnvironment(e.target.value as 'local' | 'claude-cloud' | 'external')}
               className="h-7 min-w-0 rounded-md border border-border bg-background px-2">
               <option value="local">로컬 구현 · 기존 리뷰</option>
               <option value="claude-cloud">Claude Code Cloud · 로컬 검증 후 리뷰</option>
+              <option value="external">다른 환경 · 리뷰만, 수정은 외부에서</option>
             </select>
           </label>
           <ul className="space-y-2">

@@ -459,7 +459,7 @@ export type Round = {
   /** `limited`: findings without a `finding-meta` block, so without ids. */
   identity?: 'full' | 'limited'
   /** The review cell that gave this verdict, as it ran then. */
-  reviewer?: { model: string | null; effort: string | null; session_id: string | null; cell: string; tools: string }
+  reviewer?: { model: string | null; effort: string | null; session_id: string | null; cell: string; tools: string; mode?: 'read-only' | 'cloud-verification' }
   /** The findings with the server's ids; absent on a stale round and before PR 6. */
   items?: { id: string | null; grade: string; head: string; component?: string; possible?: string | null;
     disposition?: string | null }[]
@@ -527,7 +527,8 @@ export type Spec = {
   cleanup?: string[]
   /** Who holds a `머지 대기`: "대기열" or "자동 머지 — 검사 대기". */
   queued?: string | null
-  implementation_environment?: 'local' | 'claude-cloud'
+  implementation_environment?: 'local' | 'claude-cloud' | 'external'
+  reviewer?: { model: string; effort: string }
   local_verification?: LocalVerification
   /** A plan the Plan action drafts: its phase, budget and hand-off (reliability PR 7). */
   planning?: Planning | null
@@ -627,7 +628,7 @@ export type LoopSettings = { rounds: number; concurrent: number; review_model: s
 
 export const getPrs = () =>
   get('/api/prs').then((r) => json<{ project: string; rows: Pr[]; error?: string }>(r, 'PR 목록'))
-export const startLoops = (prs: number[], implementation_environment: 'local' | 'claude-cloud' = 'local', owner?: string) =>
+export const startLoops = (prs: number[], implementation_environment: 'local' | 'claude-cloud' | 'external' = 'local', owner?: string) =>
   post('/api/loops', { prs, implementation_environment }, 'POST', owner).then((r) =>
     json<{ results: { number: number; id?: string; error?: string }[] }>(r, '리뷰 루프'))
 export const getLoops = () =>
@@ -639,6 +640,17 @@ export const settleSpec = (id: string, choice: 'accept' | 'reopen', owner?: stri
 export const resumeSpec = (id: string, note = '', owner?: string) =>
   post(`/api/specs/${id}/resume`, { note }, 'POST', owner).then((r) => json<Spec>(r, '계속'))
 export const haltSpec = (id: string, owner?: string) => post(`/api/specs/${id}/halt`, undefined, 'POST', owner).then((r) => json<Spec>(r, '멈춤'))
+export const reviewSpec = (id: string, owner: string) => post(`/api/specs/${id}/review`, undefined, 'POST', owner).then((r) => json<Spec>(r, '다음 리뷰 라운드'))
+export const cloudInstructions = (id: string, owner: string) => get(`/api/specs/${id}/cloud-instructions`, owner).then((r) => json<{ text: string }>(r, '클라우드 인계'))
+export const reviewLog = (id: string, owner: string) => get(`/api/specs/${id}/review/log`, owner).then((r) =>
+  json<{ rows: WorkTurn[]; running: Running | null }>(r, '리뷰 기록'))
+export async function reviewEvents(id: string, owner: string, turn: string, after: number,
+  signal: AbortSignal, onEvent: (ev: WorkEv) => void): Promise<'gone' | void> {
+  const url = `/api/specs/${id}/review/events?${new URLSearchParams({ turn, after: String(after) })}`
+  const res = await fetch(url, { headers: await scoped(url, owner), signal })
+  if (res.status === 410) return 'gone'
+  await events(res, onEvent, workError)
+}
 export const roundFile = (id: string, n: number, what: 'order' | 'result', owner?: string) =>
   get(`/api/specs/${id}/rounds/${n}?what=${what}`, owner).then((r) => json<{ path: string; text: string }>(r, '라운드 파일'))
 export const getLoopSettings = () => get('/api/loop/settings').then((r) => json<LoopSettings>(r, '루프 설정'))
@@ -724,6 +736,7 @@ export type FeedEv =
   | ({ kind: 'spec'; seq: number } & LoopRow)
   | { kind: 'turn'; seq: number; path: string; turn: string; session_id: string }
   | { kind: 'connect'; seq: number; repo: string }
+  | { kind: 'review'; seq: number; repo: string; id: string; turn: string }
 
 /** Tail the server's own changes until `signal` aborts or the stream drops. */
 export async function loopEvents(onEvent: (ev: FeedEv) => void, signal: AbortSignal): Promise<void> {
@@ -768,7 +781,7 @@ export type AnsweredBy = 'person' | 'session' | 'outside' | 'read'
  *  one, and what an approval answer has to name. `turn` and `seq` place it in
  *  the server's buffer of that turn, which a reattaching screen reads from. */
 export type WorkEv = {
-  kind: 'delta' | 'tool' | 'said' | 'hook' | 'approval' | 'answered' | 'done' | 'error'
+  kind: 'delta' | 'progress' | 'tool' | 'said' | 'hook' | 'approval' | 'answered' | 'done' | 'error'
   text: string
   meta: {
     /** A hook's: which event, and what it put into context. */
@@ -798,7 +811,7 @@ export type WorkEv = {
 }
 
 export type WorkStep =
-  | { kind: 'tool' | 'said' | 'hook'; text: string }
+  | { kind: 'tool' | 'progress' | 'said' | 'hook'; text: string; command?: boolean }
   | { kind: 'approval'; tool: string; text: string; answer: 'allow' | 'deny' | 'none'; by: AnsweredBy;
       answers?: string[] }
 

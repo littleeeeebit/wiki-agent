@@ -254,6 +254,10 @@ export default function App() {
         window.dispatchEvent(new Event('connect-changed'))
         return
       }
+      if (ev.kind === 'review') {
+        window.dispatchEvent(new CustomEvent('review-turn', { detail: ev }))
+        return
+      }
       const key = `${ev.repo}/${ev.id}`
       const before = seen.get(key)
       seen.set(key, ev)
@@ -587,7 +591,9 @@ export default function App() {
               />
             )}
             {tab === 'review' && (
-              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} onChanged={() => {
+              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} on={on} options={options}
+                settings={loopSettings} onSettings={async (s) => setLoopSettings(await api.setLoopSettings(s))}
+                onPeek={showPeek} onChanged={() => {
                 readSpecs()
                 readPrs()
                 readLoops()
@@ -596,7 +602,7 @@ export default function App() {
             )}
             {/* Kept mounted: leaving the tab must not end the shell. */}
             <div className={cn('h-full', tab !== 'terminal' && 'hidden')}>
-              <Terminal cwd={path} theme={theme} />
+              <Terminal cwd={path} theme={theme} on={on} />
             </div>
           </div>
           {peek && <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />}

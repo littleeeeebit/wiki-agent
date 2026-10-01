@@ -15,6 +15,7 @@ import pytest
 
 from agent import ChatSession, chat_session
 from workspace import create
+from agent import read_tools
 
 CLAUDE = '''import json, sys
 tree, out = sys.argv[1], sys.argv[2]
@@ -441,6 +442,123 @@ def test_bypass_opens_both_hosts_without_asking(tree):
     assert not ChatSession(tree, bypass=True).bypass   # a read session never bypasses
 
 
+CODEX_SOURCE = '''import json, sys
+read = lambda: json.loads(sys.stdin.readline())
+say = lambda m: print(json.dumps(m), flush=True)
+m = read(); assert m["params"]["capabilities"]["experimentalApi"]
+say({"id": m["id"], "result": {}}); read()
+m = read(); assert m["method"] == "config/read"
+say({"id": m["id"], "result": {"config": {"mcp_servers": {"private": {"enabled": True}}}}})
+m = read(); p = m["params"]
+assert p["approvalPolicy"] == "never" and p["sandbox"] == "read-only"
+assert p["config"]['mcp_servers.private.enabled'] is False
+assert {t["name"] for t in p["dynamicTools"]} == {"repo_read", "repo_glob", "repo_grep"}
+assert all(t["type"] == "function" for t in p["dynamicTools"])
+say({"id": m["id"], "result": {"thread": {"id": "source-1"}}})
+m = read(); assert m["params"]["approvalPolicy"] == "never"
+assert m["params"]["sandboxPolicy"]["type"] == "readOnly"
+say({"id": m["id"], "result": {"turn": {}}})
+say({"id": 100, "method": "item/tool/call", "params": {"tool": "repo_read", "arguments": {"path": "source.py"}}})
+assert read()["result"] == {"contentItems": [{"type": "inputText", "text": "1: safe"}], "success": True}
+say({"id": 101, "method": "item/tool/call", "params": {"tool": "shell", "arguments": {}}})
+assert read()["result"]["success"] is False
+say({"id": 102, "method": "item/permissions/requestApproval", "params": {}})
+assert read()["result"] == {"permissions": {}, "scope": "turn"}
+say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "read safely"}}})
+say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+sys.stdin.read()
+'''
+
+
+def test_codex_source_profile_has_no_shell_connectors_or_permission_dialog(tree):
+    def bounded_call(repo, tool, args):
+        if tool == "repo_read" and args == {"path": "source.py"}:
+            return "1: safe"
+        raise ValueError("not a read tool")
+
+    session = ChatSession(tree, model="codex:m", tools="Read,Glob,Grep", bypass=True)
+    with patch.object(read_tools, "call", side_effect=bounded_call):
+        command, events = run(session, CODEX_SOURCE, tree)
+    for feature in ("shell_tool", "unified_exec", "apps", "plugins", "computer_use", "request_permissions_tool"):
+        assert command[command.index(feature) - 1] == "--disable"
+    assert not session.bypass and not session._pending
+    assert not any(e.kind in {"approval", "error"} for e in events)
+    assert events[-1].kind == "done" and events[-1].text == "read safely"
+
+
+def test_source_tools_read_tracked_text_but_not_private_ignored_or_outside_files(tree, tmp_path):
+    (tree / "source.py").write_text("first\nneedle\nlast\n", encoding="utf-8")
+    (tree / ".env").write_text("private", encoding="utf-8")
+    (tree / "private.txt").write_text("private", encoding="utf-8")
+    subprocess.run(["git", "-C", str(tree), "add", "source.py", ".env"], check=True)
+    assert "2: needle" in read_tools.call(tree, "repo_read", {"path": "source.py", "offset": 2, "limit": 1})
+    assert read_tools.call(tree, "repo_glob", {"pattern": "*"}) == "source.py"
+    assert read_tools.call(tree, "repo_grep", {"text": "needle"}) == "source.py:2: needle"
+    for path in (".env", "private.txt", "../elsewhere.txt", str(tmp_path / "private.txt")):
+        with pytest.raises(ValueError):
+            read_tools.call(tree, "repo_read", {"path": path})
+    for tool, args in (("shell", {}), ("repo_read", {"path": "source.py", "limit": 501}),
+                       ("repo_grep", {"text": ""}), ("repo_read", {"path": "source.py", "offset": True})):
+        with pytest.raises(ValueError):
+            read_tools.call(tree, tool, args)
+    with patch.object(read_tools.Path, "resolve", side_effect=[tree.resolve(), tmp_path / "private.txt"]):
+        # A tracked symlink/junction cannot escape the worktree.
+        with pytest.raises(ValueError):
+            read_tools.call(tree, "repo_read", {"path": "source.py"})
+
+
+CODEX_VERIFICATION = '''import json, sys
+read = lambda: json.loads(sys.stdin.readline())
+say = lambda m: print(json.dumps(m), flush=True)
+m = read(); say({"id": m["id"], "result": {}}); read()
+m = read(); assert m["method"] == "config/read"
+say({"id": m["id"], "result": {"config": {"mcp_servers": {"private": {"enabled": True}}}}})
+m = read(); p = m["params"]
+assert p["approvalPolicy"] == "never" and p["sandbox"] == "workspace-write"
+assert p["config"]["mcp_servers.private.enabled"] is False
+assert p["config"]["sandbox_workspace_write.network_access"] is True
+assert len(p["config"]["sandbox_workspace_write.writable_roots"]) == 1
+assert "dynamicTools" not in p
+say({"id": m["id"], "result": {"thread": {"id": "verification-1"}}})
+m = read(); p = m["params"]
+assert p["approvalPolicy"] == "never"
+assert p["sandboxPolicy"]["type"] == "workspaceWrite"
+assert p["sandboxPolicy"]["networkAccess"] is True
+assert len(p["sandboxPolicy"]["writableRoots"]) == 2
+say({"id": m["id"], "result": {"turn": {}}})
+for rid, method in ((100, "item/commandExecution/requestApproval"), (101, "item/fileChange/requestApproval")):
+    say({"id": rid, "method": method, "params": {"command": "unsafe escalation", "cwd": sys.argv[2]}})
+    assert read()["result"]["decision"] == "decline"
+say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "execution enabled"}}})
+say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+sys.stdin.read()
+'''
+
+
+def test_cloud_verification_enables_execution_and_files_without_unrestricted_access(tree, tmp_path):
+    artifacts = tmp_path / "verification"
+    chat = ChatSession(tree, model="codex:m", verification=artifacts)
+    command, events = run(chat, CODEX_VERIFICATION, tree)
+    assert not chat.write and not chat.bypass and not chat.source_only
+    assert "Bash" in chat.tools and "Write" in chat.tools and "Edit" in chat.tools
+    for feature in ("shell_tool", "unified_exec"):
+        assert command[command.index(feature) - 1] == "--enable"
+    assert chat._env["WIKI_VERIFICATION_ARTIFACTS"] == str(artifacts.resolve())
+    assert chat._env["TEMP"] == str(artifacts.resolve() / "tmp")
+    assert (artifacts / "tmp").is_dir()
+    assert chat._outside(artifacts / "check.py") == ""
+    assert chat._outside(tmp_path / "outside.py")
+    assert not any(e.kind == "approval" for e in events) and not chat._pending
+    assert events[-1].kind == "done" and events[-1].text == "execution enabled"
+    with pytest.raises(ValueError):
+        ChatSession(tmp_path, model="codex:m", verification=artifacts)
+    claude = ChatSession(tree, verification=artifacts)
+    command, events = run(claude, CLAUDE, tree)
+    assert command[command.index("--allowedTools") + 1] == ChatSession.VERIFICATION_TOOLS
+    assert command[command.index("--permission-mode") + 1] == "default"
+    assert events[-1].text == "allow,deny"
+
+
 # The turn's result comes before the steered message was taken in: the CLI
 # answers it as one more turn, and that is still this turn.
 CLAUDE_STEER = '''import json, sys
@@ -583,6 +701,30 @@ def test_a_tool_line_shows_the_command_beside_what_it_is_for():
     brief = chat_session._tool_brief
     assert brief({"name": "Bash", "input": {"description": "Run the tests", "command": "python -m pytest -q tool"}}) \
         == "Bash · Run the tests · $ python -m pytest -q tool"
-    assert brief({"name": "Bash", "input": {"command": "git  status\n"}}) == "Bash · $ git status"
+    assert brief({"name": "Bash", "input": {"command": "git  status\n"}}) == "Bash · $ git  status"
+    assert brief({"name": "Bash", "input": {"description": "Read files\nThen check", "command": "git status\ngit diff"}}) \
+        == "Bash · Read files\nThen check · $ git status\ngit diff"
     assert brief({"name": "Read", "input": {"file_path": "a.py"}}) == "Read · a.py"
     assert brief({"name": "TodoWrite", "input": {}}) == "TodoWrite"
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex", "codex-legacy"])
+def test_completed_progress_is_separate_from_the_final_answer(tree, provider):
+    text = "First progress.\nSecond line."
+    if provider.startswith("codex"):
+        fixture = CODEX_BYPASS.replace(
+            'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})',
+            'say({"method": "item/agentMessage/delta", "params": {"delta": "First progress."}})\n'
+            'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "phase": "commentary", '
+            '"text": "First progress.\\nSecond line."}}})\n'
+            'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "phase": "final_answer", "text": "ran"}}})')
+        if provider == "codex-legacy":
+            fixture = fixture.replace('"phase": "commentary", ', '')
+    else:
+        fixture = CLAUDE_ANSWERS.replace(
+            'print(json.dumps({"type": "result"',
+            'print(json.dumps({"type": "assistant", "message": {"content": [{"type": "text", '
+            '"text": "First progress.\\nSecond line."}]}}), flush=True)\nprint(json.dumps({"type": "result"')
+    _, events = run(ChatSession(tree, model="codex:m" if provider.startswith("codex") else "", write=True, bypass=True), fixture, tree)
+    assert [e.text for e in events if e.kind == "progress"] == [text]
+    assert events[-1].kind == "done" and events[-1].text == "ran"

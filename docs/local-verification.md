@@ -6,6 +6,20 @@ configuration. Cloud does not receive `.env`, credentials or private datasets.
 The existing `plan`, `code` and `mixed` profiles still determine review criteria.
 Locally implemented tasks keep their existing review and final gate.
 
+The Cloud review cell also executes verification commands and creates test
+scripts, fixtures and receipts. Codex uses `workspace-write` with
+`approvalPolicy: never`, not the ordinary read-only review profile or
+unrestricted access. Writable roots are the dedicated review checkout and
+`raw/review/<repo>/<pr>/verification/<head>/`; put generated files in that
+artifact directory so they persist without dirtying source or blocking the
+next round. The cell receives the configured test scope and environment id.
+On Windows it uses the session-local `unelevated` sandbox fallback; global
+account settings and sandbox security files are not manually modified.
+Inherited MCP/apps/plugins/computer-use and escalation tools are disabled.
+Tracked implementation changes stop completion for user inspection. The
+server's configured execution receipts and final gate remain mandatory;
+reviewer output alone cannot certify product behavior.
+
 ## Repository contract
 
 Commit `verification.json`, the API/data contracts it references, and the
@@ -60,6 +74,9 @@ unaffected results forward. Renames include the removed and added paths.
    source path, browser tool, test API origins and environment revisions.
    Inspect the flow commands, then save. Optional setup and cleanup commands
    prepare dependencies and remove this review's test data/servers.
+   The cloud handoff instruction button shows what the cloud implementer must
+   put in the repository and PR body, bound to the current remote head. Missing
+   prerequisites show `로컬 검증 준비`; review failures show `외부 수정 대기`.
 4. Set the GitHub required check using the Review tab's button. It adds
    `wiki-agent/local-verification`, requires an up-to-date base and enables
    protection for administrators. It preserves existing required checks,
@@ -67,7 +84,7 @@ unaffected results forward. Renames include the removed and added paths.
    receives a new rule. API/auth/plan limitations remain a visible setup
    failure, never a silently weakened gate.
 5. Resume local verification. The server runs configured commands in the
-   PR's dedicated local worktree; the independent read-only reviewer checks
+   PR's dedicated local worktree; the independent verification reviewer checks
    their receipts, the code diff and the applicable review profile.
 
 Local settings are saved in `.wiki/verification.local.json`, excluded from
@@ -195,6 +212,13 @@ commit does not consume a cloud repair cycle. Local verification never
 dispatches a local implementation session, commits fixes or pushes changes
 back to cloud. A user starts and resumes it explicitly.
 
+The Review tab owns the reviewer model and effort, displays the independent
+reviewer's live progress, and offers the next review round after a correction
+or an allowed review. Selecting `다른 환경` in the PR picker runs
+independent review without dispatching a local fixer. Claude Code Cloud keeps
+its additional handoff and execution-evidence requirements. External/cloud PRs
+use a detached review checkout, leaving existing implementation branches alone.
+
 Pure prose documentation changes retain their independent review and final
 gate but are exempt from API/browser execution only when the unchanged
 repository manifest explicitly designates them in `prose_paths`. Unclassified
@@ -238,3 +262,52 @@ Playwright Chromium installation and a built `web/dist`, the same test file
 also drives the real app's settings, GitHub-setup and resume controls through
 the actual local API endpoints. Real project browser
 scenarios require the repository-specific tools and test configuration above.
+
+On 2026-10-01, an isolated build of the same Tauri source was driven through
+WebView2's debugging connection, without Orca computer use. The real Windows
+PTY translated two output lines into Korean, preserved the blank line between
+them, and excluded the wrapped PowerShell prompt and entered command. A real
+Claude work session read fixture files and executed their check. Both Claude
+and Codex produced translated, multiline progress in independent read-only
+review cells through the real app API and installed Chrome. The reviewer
+model was selected in the Review tab; its events did not enter the Agent log.
+The live run exposed and verified fixes for wrapped prompt leakage and final
+answer duplication when a stop hook arrives after the final text block.
+
+This verifies transport and presentation, not a complete Cloud review cycle.
+PR #5 of `project-codeit-mid` had a valid handoff at
+`3b9e0a72e17d2aa5550b40186db93e8d21f2543c` and declared 14 verification flows,
+but no approved local verification settings were present. No Cloud execution,
+correction-to-next-round cycle, GitHub status write or merge was performed.
+The Codex work session also executed the fixture successfully in the app's
+normal bypass mode. Its approval-enabled mode produced real progress and
+approval events but could not start the Windows shell: sandbox initialization
+rejected access to the account's `sandbox_users.json`. That mode remains
+failed; account and security files were not modified to bypass the failure.
+Local receipts and screenshots are under `artifacts/live-review-*.json`,
+`artifacts/native-live-*` and `artifacts/chrome-live-review-*`; these generated
+artifacts are not committed. Test-owned desktop and agent processes were closed.
+
+A subsequent live Chrome/app-API check used the actual Codex `gpt-6-sol`
+review cell to call all three shell-free source tools. It read the real PR's
+`verification.json` and counted its 14 flows without approval events. Closing
+the Codex process and resuming the same thread also successfully read that
+file without approval events. The receipt is
+`artifacts/live-codex-readonly-receipt.json`. This closes the reviewer's file
+access gap, not the missing project runtime verification configuration. It
+does not repair the separate Windows sandbox failure in approval-enabled
+write sessions or grant reviewers unrestricted access.
+
+The read-only profile above applies only to ordinary review. After the Cloud
+execution requirement was clarified, a separate live Chrome/app-API check
+used the actual Codex `gpt-6-sol` Cloud review cell to create a UTF-8 Python
+verification script and execute it. The script asserted the real PR manifest's
+14 flows and unique ids, wrote a JSON receipt, and emitted `CLOUD-EXEC-PASS`
+with exit 0. Reopening the same thread executed the script successfully again.
+Both turns had zero approval events; tracked source stayed clean. The record
+is `artifacts/live-cloud-execution-receipt.json`. This proves real reviewer
+file creation and command execution, not completion of the 14 product flows
+or the still-unconfigured full Cloud verification cycle.
+The final rerun also created, wrote and read a temporary file under the
+configured verification artifact root, so ordinary temporary-file use stays
+within the execution permissions rather than requiring another approval.

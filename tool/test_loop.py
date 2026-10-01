@@ -27,7 +27,7 @@ from main import loop, specs, work
 from main import query as chat
 from test_main import _repo, client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_specs import Worker
-from workspace import adopt, create
+from workspace import adopt, create, remove
 
 GATE = "python gate.py"
 
@@ -162,6 +162,7 @@ class Reviewer:
 
     def __init__(self, path, tools="", system="", model="", effort="", **rest):
         self.path, self.tools, self.model, self.effort, self.rest = Path(path), tools, model, effort, rest
+        self.verification = rest.get("verification")
         self.is_codex, self.session_id, self.alive, self.heard = model.startswith("codex:"), None, True, []
         self.id = uuid.uuid4().hex
         Reviewer.made.append(self)
@@ -250,7 +251,8 @@ def world(tmp_path, template):
          patch.object(chat, "_project", "proj"), patch.object(work, "ChatSession", Worker), \
          patch.object(loop, "ChatSession", Reviewer), patch.object(loop, "review_model", lambda: "codex:test"), \
          patch.object(specs, "sh", hub), patch.object(loop, "REVIEW", tmp_path / "review"), \
-         patch.object(loop, "_cells", {}), patch.object(loop, "_loops", {}), patch.object(loop, "_seated", 0):
+         patch.object(loop, "_cells", {}), patch.object(loop, "_loops", {}), patch.object(loop, "_review_runs", {}), \
+         patch.object(loop, "_seated", 0):
         yield SimpleNamespace(repo=repo, hub=hub, origin=origin, tmp=tmp_path)
         for running in list(loop._loops.values()):
             running.stop()
@@ -664,7 +666,7 @@ def test_findings_that_do_not_shrink_bring_the_grouping_section(world):
     assert "Sort the findings by family" in loop.instruction({**spec, "rounds": rounds(2, 2, 3)}, path, 4, head,
                                                               "main", True)
     assert "Sort the findings" not in loop.instruction({**spec, "rounds": rounds(3, 2, 2)}, path, 4, head, "main", True)
-    assert "## `gh pr diff" not in loop.instruction(spec, path, 1, head, "main", True)
+    assert "## `gh pr diff 7`" in loop.instruction(spec, path, 1, head, "main", True)
     claude = loop.instruction(spec, path, 1, head, "main", False)
     assert "## `gh pr diff 7`" in claude and "+the diff of #7" in claude
 
@@ -777,7 +779,7 @@ def test_a_fork_cannot_be_picked_and_a_pr_without_a_spec_gets_a_minimal_one(worl
     assert spec["decisions"] == [{"what": "서버에서 한다 — 화면은 모른다", "why": "", "rejected": ""}]
     assert spec["state"] == "머지 가능" and git(Path(spec["worktree"]), "rev-parse", "HEAD") == world.hub.head(21)
     assert spec["pr"]["branch"] == "feat/login"
-    assert web.get("/api/prs").json()["rows"][0]["pickable"] is False
+    assert web.get("/api/prs").json()["rows"][0]["pickable"] is True, "An allowed PR can request another review round"
 
 
 def test_adopt_takes_the_branch_as_it_is_and_refuses_what_it_would_have_to_move(world):
@@ -1146,6 +1148,28 @@ def test_a_claude_review_cell_has_no_shell(world):
     assert commands[0][commands[0].index("--effort") + 1] == "high"
 
 
+def test_codex_review_migrates_old_tools_but_resumes_the_readonly_profile(world):
+    spec = pr_spec(world, "read-profile", 7)
+    kept = loop.folder("proj", 7) / "session.json"
+    kept.parent.mkdir(parents=True, exist_ok=True)
+    with patch.object(loop, "review_model", return_value="codex:test"):
+        kept.write_text(json.dumps({"provider": "codex", "session_id": "old-shell-thread"}), encoding="utf-8")
+        assert loop.cell(spec, Path(spec["worktree"])).session_id is None
+        loop.close_cell("proj", 7)
+        kept.write_text(json.dumps({"provider": "codex", "session_id": "safe-thread",
+                                    "tools_profile": loop.READ_PROFILE}), encoding="utf-8")
+        assert loop.cell(spec, Path(spec["worktree"])).session_id == "safe-thread"
+        cloud_spec = {**spec, "implementation_environment": "claude-cloud"}
+        cloud = loop.cell(cloud_spec, Path(spec["worktree"]))
+        assert cloud.session_id is None and cloud.verification and cloud.tools == loop.CLOUD_TOOLS
+        loop.close_cell("proj", 7)
+        kept.write_text(json.dumps({"provider": "codex", "session_id": "cloud-thread",
+                                    "tools_profile": loop.CLOUD_PROFILE}), encoding="utf-8")
+        assert loop.cell(cloud_spec, Path(spec["worktree"])).session_id == "cloud-thread"
+        ordinary = loop.cell(spec, Path(spec["worktree"]))
+        assert ordinary.session_id is None and ordinary.verification is None and ordinary.tools == loop.REVIEW_TOOLS
+
+
 # -- the loop carries its repository ------------------------------------------------------------------
 
 
@@ -1247,3 +1271,68 @@ def test_a_stopped_loop_sends_no_turn(tmp_path, where):
     with patch.object(work, "session", session), patch.object(work, "begin", begin):
         assert loop.told(spot, {}, path, "x") is None
     assert cell.sent == [] and str(path) not in work._busy
+
+
+def test_review_progress_has_its_own_reconnectable_stream_and_record(world):
+    original = pr_spec(world, "visible-review", 1)
+    started, finish = threading.Event(), threading.Event()
+
+    def say(chat, text, halt=None):
+        named = re.search(r"`([^`]+round-\d+\.md)`", text)
+        first = Path(named[1]).read_text(encoding="utf-8").splitlines()[0]
+        yield Event("delta", "Reading the diff.")
+        yield Event("progress", "Reading the diff.\nChecking the behavior.")
+        yield Event("tool", "git diff", {"tool": "commandExecution"})
+        started.set()
+        assert finish.wait(15)
+        yield Event("done", allow(first), {"session_id": "independent-review", "model": "codex:test"})
+
+    with patch.object(Reviewer, "say", say):
+        loop.kick("proj", original["id"])
+        try:
+            assert started.wait(15)
+            found = client().get("/api/specs/visible-review/review/log").json()
+            assert found["running"] and not found["rows"]
+            assert specs.load("proj", original["id"])["state"] == "리뷰 R1"
+            assert work.recall(Path(original["worktree"])) == []
+            assert client().post("/api/work/say", json={"path": original["worktree"], "text": "change it"}).status_code == 409
+        finally:
+            finish.set()
+        waited(lambda: ("proj", original["id"]) not in loop._loops)
+    response = client().get("/api/specs/visible-review/review/events", params={"turn": found["running"]["turn"]})
+    assert response.status_code == 200 and '"kind": "progress"' in response.text
+    assert 'Checking the behavior.' in response.text
+    record = client().get("/api/specs/visible-review/review/log").json()
+    assert record["running"] is None and record["rows"][0]["steps"][0]["kind"] == "progress"
+    assert record["rows"][0]["steps"][1]["command"] is True
+    assert client().get("/api/specs/visible-review/review/log", headers={"X-Project": "other"}).status_code == 409
+
+
+def test_external_implementer_keeps_its_branch_and_can_add_remote_review_rounds(world):
+    original = pr_spec(world, "remote-review", 1)
+    remove(world.repo, Path(original["worktree"]))
+    specs.file_of("proj", original["id"]).unlink()
+    git(world.repo, "checkout", "remote-review")
+    local_head = git(world.repo, "rev-parse", "HEAD")
+    remote_head = world.hub.push_elsewhere(1)
+    Reviewer.replies = [deny("[P1] remote-review.txt:1 — Missing behavior")]
+    response = client().post("/api/loops", json={"prs": [1], "implementation_environment": "external"})
+    assert response.status_code == 200 and "error" not in response.json()["results"][0]
+    waited(lambda: ("proj", original["id"]) not in loop._loops)
+    first = specs.load("proj", original["id"])
+    assert first["stopped"]["reason"] == "외부 수정 대기" and not Worker.made
+    assert git(Path(first["worktree"]), "rev-parse", "HEAD") == remote_head
+    assert not git(Path(first["worktree"]), "branch", "--show-current")
+    assert git(world.repo, "rev-parse", "HEAD") == local_head
+    corrected = world.hub.push_elsewhere(1)
+    client().post(f"/api/specs/{original['id']}/resume", json={}).raise_for_status()
+    waited(lambda: ("proj", original["id"]) not in loop._loops)
+    second = specs.load("proj", original["id"])
+    assert second["state"] == "머지 가능" and second["rounds"][-1]["head"] == corrected
+    assert not Worker.made and git(world.repo, "rev-parse", "HEAD") == local_head
+    assert loop.refusal({}, second) == ""
+    client().post(f"/api/specs/{original['id']}/review").raise_for_status()
+    waited(lambda: ("proj", original["id"]) not in loop._loops)
+    third = specs.load("proj", original["id"])
+    assert len(third["rounds"]) == 3 and third["rounds"][-1]["head"] == corrected
+    assert third["state"] == "머지 가능" and not Worker.made

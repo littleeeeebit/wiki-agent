@@ -1,19 +1,60 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Btn } from '@/components/Modal'
+import { Reply } from '@/components/Agent'
+import { Toolbar } from '@/components/Toolbar'
+import { useReview } from '@/lib/work'
+import { useParagraphOverlay } from '@/lib/overlay'
 import * as api from '@/lib/api'
-import { PROFILE_LABEL, type LocalVerification, type Spec, type VerificationConfig } from '@/lib/api'
+import { PROFILE_LABEL, type LocalVerification, type Spec, type VerificationConfig, type LoopSettings, type Options } from '@/lib/api'
 import { LOOPING } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 
 /** The review tab: the loop of the selected task's spec — its rounds, why it
  *  stopped, and the buttons that act on it. Which spec and PR it is, the
  *  pane's header says. */
-export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () => void }) {
+type Props = { spec: Spec | null; onChanged: () => void; on: boolean; options: Options | null;
+  settings: LoopSettings | null; onSettings: (s: LoopSettings) => Promise<void>; onPeek: (path: string, line: number) => void }
+
+export function Review(props: Props) {
+  const { spec, options, settings, onSettings } = props
+  const [saving, setSaving] = useState(false)
+  const [fault, setFault] = useState('')
+  const defaultModel = options?.models.find((m) => m.id.startsWith('codex:') && m.is_default)
+  const reviewOptions = options ? { ...options, models: [
+    { id: '', label: 'Codex 기본', note: '', efforts: defaultModel?.efforts ?? [] },
+    ...options.models.filter((m) => m.id),
+  ] } : null
+  const named = spec?.reviewer
+  const model = named?.model ?? settings?.review_model ?? ''
+  const effort = named?.effort ?? settings?.review_effort ?? ''
+  const missing = model.startsWith('codex:') && options && !options.codex_error && !options.models.some((m) => m.id === model)
+  return <section aria-label="리뷰 세션" className="flex h-full min-h-0 flex-col">
+    <header className="flex min-h-11 flex-wrap items-center justify-end gap-1.5 border-b border-border px-5 py-1">
+      <span className="mr-auto font-heading text-[11px] font-semibold text-faint">리뷰 모델{named && ' · 계획에서 지정'}</span>
+      <Toolbar options={reviewOptions} value={{ model, effort }} busy={saving || !settings || !!named}
+        onChange={async (choice) => {
+          if (!settings) return
+          setSaving(true)
+          setFault('')
+          try { await onSettings({ ...settings, review_model: choice.model, review_effort: choice.effort }) }
+          catch (err) { setFault(String(err instanceof Error ? err.message : err)) }
+          finally { setSaving(false) }
+        }} />
+      {missing && <p role="alert" className="w-full text-[12.5px] text-destructive">저장된 모델을 사용할 수 없다. 사용 가능한 리뷰 모델을 다시 골라라.</p>}
+      {fault && <p role="alert" className="w-full text-[12.5px] text-destructive">{fault}</p>}
+    </header>
+    <div className="min-h-0 flex-1"><ReviewBody {...props} /></div>
+  </section>
+}
+
+function ReviewBody({ spec, onChanged, on, onPeek }: Props) {
   const [working, setWorking] = useState('')
   const [fault, setFault] = useState('')
   const [note, setNote] = useState('')
   const [file, setFile] = useState<{ title: string; text: string } | null>(null)
   const generation = useRef(0)
+  const turns = useReview(spec?.repo ?? '', spec?.id ?? '')
+  const shownFile = useParagraphOverlay(file?.text ?? '', on)
   useEffect(() => () => { generation.current++ }, [])
 
   if (!spec) return <p className="p-5 text-[13.5px] text-faint">명세가 없는 작업이다. 리뷰 루프는 명세의 PR 에서 돈다.</p>
@@ -60,6 +101,12 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
         <a href={spec.pr.url} target="_blank" rel="noreferrer" className="font-mono text-[10.5px] text-primary hover:underline">
           GitHub 에서 PR #{spec.pr.number} 열기
         </a>
+        {(spec.state === '머지 가능' || /^PR #\d+$/.test(spec.state)) && spec.plan_commit !== 'asked' && (
+          <Btn className="ml-auto" disabled={!!working}
+            onClick={() => act('review', () => api.reviewSpec(spec.id, spec.repo))}>
+            {working === 'review' ? '…' : rounds.length ? '다음 리뷰 라운드' : '리뷰 시작'}
+          </Btn>
+        )}
         {LOOPING.test(spec.state) && (
           <Btn tone="danger" className="ml-auto" disabled={!!working} onClick={() => act('halt', () => api.haltSpec(spec.id, spec.repo))}
             title="이 루프를 멈춘다. [계속] 으로 잇는다">
@@ -73,7 +120,7 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
       {spec.state === '멈춤' && spec.stopped && (
         <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 p-3">
           <div className="text-destructive">멈춤 — {spec.stopped.reason}</div>
-          {spec.stopped.detail && <div className="mt-0.5 text-muted-foreground">{spec.stopped.detail}</div>}
+          {spec.stopped.detail && <Detail text={spec.stopped.detail} on={on} />}
           {reason === '검토하지 않은 base 에 머지됨' ? (
             <div className="mt-2 space-y-1.5">
               <div className="flex gap-1.5">
@@ -94,26 +141,24 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
               )}
               <Btn tone="primary" disabled={!!working || ((reason === '반론' || analysis) && !note.trim())}
                 onClick={() => act('resume', () => api.resumeSpec(spec.id, note.trim(), spec.repo))}>
-                {working === 'resume' ? '…' : cloud ? '로컬 검증 재개' : reason === '라운드 상한' ? '계속 (+4 라운드)' : '계속'}
+                {working === 'resume' ? '…' : reason === '라운드 상한' ? '계속 (+4 라운드)' : cloud ? '로컬 검증 재개' : reason === '외부 수정 대기' ? '수정된 PR 로 다음 라운드' : '계속'}
               </Btn>
             </div>
           )}
         </div>
       )}
 
+      {turns.length > 0 && <section aria-label="리뷰 진행상황" className="mt-4 space-y-4 border-t border-border pt-3">
+        <div className="font-heading text-[11px] font-semibold text-faint">독립 리뷰 진행상황</div>
+        {turns.map((turn) => <Reply key={turn.key} turn={turn} on={on} onPeek={onPeek} onAnswer={() => {}} />)}
+      </section>}
+
       {/^PR #\d+$/.test(spec.state) && spec.fault && (
         <div className="mt-3 rounded-md border border-border p-3">
           <div className="text-muted-foreground">PR 은 올라갔는데 리뷰에 들어가지 못했다 — {spec.fault}</div>
           {spec.plan_commit === 'asked' ? (
             <div className="mt-2">계획 행 커밋이 아직이다 — 에이전트 탭에서 행을 고쳐 커밋하게 하면 리뷰로 간다</div>
-          ) : (
-            <Btn tone="primary" className="mt-2" disabled={!!working}
-              onClick={() => act('review', () => api.startLoops([spec.pr!.number], cloud ? 'claude-cloud' : 'local', spec.repo).then(({ results }) => {
-                if (results[0]?.error) throw new Error(results[0].error)
-              }))}>
-              {working === 'review' ? '…' : '리뷰 시작'}
-            </Btn>
-          )}
+          ) : null}
         </div>
       )}
 
@@ -225,11 +270,16 @@ export function Review({ spec, onChanged }: { spec: Spec | null; onChanged: () =
             <span className="truncate">{file.title}</span>
             <button type="button" className="ml-auto" onClick={() => setFile(null)}>닫기</button>
           </div>
-          <pre className="mt-1 max-h-96 overflow-auto whitespace-pre-wrap rounded bg-secondary p-2 text-[12px]">{file.text}</pre>
+          <pre className="mt-1 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-secondary p-2 text-[12px]">{shownFile}</pre>
         </div>
       )}
     </div>
   )
+}
+
+function Detail({ text, on }: { text: string; on: boolean }) {
+  const shown = useParagraphOverlay(text, on)
+  return <div className="mt-0.5 whitespace-pre-wrap break-words text-muted-foreground">{shown}</div>
 }
 
 const VERIFICATION_STATE: Record<LocalVerification['state'], string> = {
@@ -246,6 +296,7 @@ function VerificationPanel({ spec }: { spec: Spec }) {
   const [values, setValues] = useState<Record<string, string>>({})
   const [fault, setFault] = useState('')
   const [working, setWorking] = useState(false)
+  const [handoff, setHandoff] = useState('')
   const generation = useRef(0)
   const [owner] = useState(() => ({ repo: spec.repo, id: spec.id }))
   const retire = useCallback(() => { generation.current++ }, [])
@@ -324,11 +375,20 @@ function VerificationPanel({ spec }: { spec: Spec }) {
   return <section aria-label="클라우드 구현의 로컬 검증" className="mt-3 rounded-md border border-border p-3">
     <div className="font-heading text-[11px] font-semibold">Claude Code Cloud → 로컬 검증</div>
     <p className="mt-1">{record ? VERIFICATION_STATE[record.state] : '로컬 검증 대기'}</p>
+    <p className="mt-1 text-faint">클라우드에서 PR 인계·주요 흐름 명세 준비 → 이 기계의 테스트 환경 설정 → 로컬 실행 검증 → 독립 리뷰. 실패하면 클라우드에서 고친 뒤 재개한다.</p>
     {record?.reason && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p>}
     <div className="mt-2 flex flex-wrap gap-2">
+      <Btn disabled={working} onClick={async () => {
+        try { setHandoff((await api.cloudInstructions(spec.id, spec.repo)).text) }
+        catch (err) { setFault(String(err instanceof Error ? err.message : err)) }
+      }}>클라우드 인계 지시 보기</Btn>
       <Btn disabled={working || LOOPING.test(spec.state)} onClick={() => void configure()}>프로젝트 검증 설정</Btn>
       <Btn disabled={working || LOOPING.test(spec.state)} onClick={() => void protect()}>GitHub 필수 검사 설정</Btn>
     </div>
+    {handoff && <label className="mt-2 block">클라우드 구현자에게 전달할 지시
+      <textarea readOnly value={handoff} rows={7} onFocus={(e) => e.target.select()}
+        className="mt-1 w-full rounded-md border border-border bg-background p-2 font-mono text-[12px]" />
+    </label>}
     <p className="mt-1 text-faint">.env 는 로컬에 유지한다. GitHub 의 기존 보호 규칙에 필수 검사를 추가한다.</p>
     {config?.problem && <p className="mt-2 text-muted-foreground">검증 준비 필요 — {config.problem}</p>}
     {editing && config?.manifest && <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); void save() }}>
