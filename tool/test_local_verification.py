@@ -783,6 +783,39 @@ def test_private_reviewer_identity_is_rejected_without_losing_the_failure(cloud_
     assert resumed["local_verification"]["state"] == "unstable" and resumed["local_verification"]["needs_research"]
 
 
+def test_mixed_identity_report_preserves_known_recurrence_through_two_repairs(cloud_world):
+    world = cloud_world
+    cloud_spec(world, gate={})
+    clean = {"ordinal": 1, "component": "api route", "invariant": "route stays healthy"}
+    Reviewer.replies = [deny("[P1] change.py:1 — Same known failure\n"
+                             "```finding-meta\n" + json.dumps([clean]) + "\n```")]
+    spec = looped("cloud", seconds=60)
+    heads = [spec["rounds"][-1]["head"]]
+    results = []
+    for name in ("repair-one.py", "repair-two.py"):
+        repair_cloud(world, spec, name)
+        meta = [{**clean, "existing_id": "F1"},
+                {"ordinal": 2, "component": "new private-api-key", "invariant": "another failure"}]
+        Reviewer.replies = [deny("[P1] change.py:1 — Same known failure\n"
+                                 "[P1] extra.py:2 — Another independent failure\n"
+                                 "```finding-meta\n" + json.dumps(meta) + "\n```")]
+        spec = looped("cloud", seconds=60)
+        row = spec["rounds"][-1]
+        heads.append(row["head"])
+        report = (loop.folder("proj", spec["pr"]["number"]) / f"round-{row['n']}-result.md").read_text(encoding="utf-8")
+        results.append((row, report, loop.instruction(spec, Path(spec["worktree"]), row["n"] + 1, row["head"], "main", True)))
+    assert spec["local_verification"]["state"] == "reanalysis"
+    assert spec["local_verification"]["failures"]["F1"] == heads and spec["local_verification"]["needs_research"]
+    assert "review/change.py:1" not in spec["local_verification"]["failures"]
+    assert "private-api-key" not in json.dumps(spec) and "private-api-key" not in str(world.hub.comments)
+    for row, report, prompt in results:
+        assert row["identity"] == "limited" and [i["id"] for i in row["items"]] == ["F1", None]
+        parsed = loop.parse(report, row["n"], spec["pr"]["number"], row["head"], {"F1"})
+        assert parsed["identity"] == "limited" and parsed["findings"][0]["meta"]["existing_id"] == "F1"
+        assert "meta" not in parsed["findings"][1]
+        assert "private-api-key" not in report and "private-api-key" not in prompt and "`F1`" in prompt
+
+
 def test_passing_round_gate_source_loss_never_reaches_review_prompt(cloud_world, monkeypatch):
     world = cloud_world
     cloud_spec(world, gate={})

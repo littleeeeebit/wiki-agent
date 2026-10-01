@@ -128,7 +128,8 @@ def parse(text: str, n: int, pr: int, head: str, known: set[str] = frozenset()) 
     last is the verdict. A finding is a line opening `[P0|P1|P2] path:line`,
     and the lines under it are its body. A `finding-meta` block gives each
     finding its `meta`, checked against `known`, the ids this spec has; an
-    answer without one is `identity: limited` and recurs by nothing."""
+    A finding without metadata or with a limited entry has no identity;
+    validated sibling identities remain usable."""
 
     metas = re.findall(FENCE.format(META), text, re.M | re.S)
     text = re.sub(FENCE.format(META) + r"[ \t]*\r?\n?", "", text, flags=re.M | re.S)
@@ -170,16 +171,18 @@ def parse(text: str, n: int, pr: int, head: str, known: set[str] = frozenset()) 
         except ValueError as exc:
             raise ValueError(f"`finding-meta` 가 JSON 이 아니다 — {exc}") from exc
         for f, m in zip(findings, described(meta, len(findings), known)):
-            f["meta"] = m
+            if not m.get("limited"):
+                f["meta"] = m
     counts = {g: sum(f["grade"] == g for f in findings) for g in ("P0", "P1", "P2")}
-    identity = "limited" if findings and not metas else "full"
+    identity = "limited" if any("meta" not in f for f in findings) else "full"
     return {"verdict": verdict, "findings": findings, "counts": counts, "said": last, "identity": identity}
 
 
 def described(meta, count: int, known: set[str]) -> list[dict]:
     """The `finding-meta` entries in finding order, or `ValueError`: one per
-    finding by ordinal, each naming its component and invariant, and an
-    `existing_id` only ever one the server gave this spec."""
+    finding by ordinal. Full entries name a component/invariant and an
+    `existing_id` only ever given by the server; limited entries carry only
+    the ordinal and their flag."""
 
     if not isinstance(meta, list) or not all(isinstance(m, dict) for m in meta):
         raise ValueError("`finding-meta` 는 객체의 목록이어야 한다")
@@ -187,6 +190,10 @@ def described(meta, count: int, known: set[str]) -> list[dict]:
     if not all(type(o) is int for o in ordinals) or sorted(ordinals) != list(range(1, count + 1)):
         raise ValueError(f"`finding-meta` 의 ordinal 이 발견 1–{count} 과 하나씩 맞지 않는다")
     for m in meta:
+        if "limited" in m:
+            if m["limited"] is not True or set(m) != {"ordinal", "limited"}:
+                raise ValueError("limited 항목은 ordinal 과 limited: true 만 받는다")
+            continue
         if not all(isinstance(m.get(k), str) and m[k].strip() for k in ("component", "invariant")):
             raise ValueError("`finding-meta` 항목마다 `component` 와 `invariant` 가 있어야 한다")
         if m.get("existing_id") is not None and (not isinstance(m["existing_id"], str)
@@ -1117,7 +1124,6 @@ def step(loop: Loop) -> bool:
             parsed = parse(answer, n, pr, head, set(issues(spec)))
             if verification.cloud(spec):
                 parsed["said"] = verification.redact(parsed["said"], settings)
-                limited = False
                 for finding in parsed["findings"]:
                     # Only grade/line, ordinal and a validated existing id
                     # are protocol metadata; model-authored names are free text.
@@ -1127,6 +1133,7 @@ def step(loop: Loop) -> bool:
                                        + verification.redact(finding["head"][start:], settings))
                     finding["body"] = verification.redact(finding["body"], settings)
                     if "meta" in finding:
+                        limited = False
                         meta = {k: v for k, v in finding["meta"].items()
                                 if k in ("ordinal", "existing_id", "component", "invariant", "trigger", "evidence")}
                         for key in ("component", "invariant", "trigger", "evidence"):
@@ -1134,18 +1141,20 @@ def step(loop: Loop) -> bool:
                             meta[key] = verification.redact(value, settings)
                             if key in ("component", "invariant") and meta[key] != value and not meta.get("existing_id"):
                                 limited = True
-                        finding["meta"] = meta
-                if limited:
-                    # Reject unsafe new identities without dropping the failure
-                    # or treating two redacted names as the same invariant.
-                    parsed["identity"] = "limited"
-                    for finding in parsed["findings"]:
-                        finding.pop("meta", None)
+                        if limited:
+                            # Reject only this unsafe new identity; safe sibling
+                            # ids must still count toward recurrence escalation.
+                            parsed["identity"] = "limited"
+                            finding.pop("meta")
+                        else:
+                            finding["meta"] = meta
                 lines = [f"Round {n} · PR #{pr} · {head[:7]}"]
                 for finding in parsed["findings"]:
                     lines += [finding["head"], finding["body"]]
-                if parsed["findings"] and "meta" in parsed["findings"][0]:
-                    lines += ["```finding-meta", json.dumps([f["meta"] for f in parsed["findings"]], ensure_ascii=False), "```"]
+                if any("meta" in f for f in parsed["findings"]):
+                    metadata = [f.get("meta", {"ordinal": i, "limited": True})
+                                for i, f in enumerate(parsed["findings"], 1)]
+                    lines += ["```finding-meta", json.dumps(metadata, ensure_ascii=False), "```"]
                 if not parsed["findings"]:
                     lines.append("새 발견 없음")
                 answer = "\n".join([*lines, parsed["said"]])

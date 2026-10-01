@@ -352,6 +352,15 @@ def test_finding_meta_is_checked_against_the_ids_the_spec_has():
             loop.parse(text(block), 1, 12, head, {"F1"})
     legacy = loop.parse(text(""), 1, 12, head)
     assert legacy["identity"] == "limited" and "meta" not in legacy["findings"][0], "블록 없는 답도 읽는다"
+    entries = [{"ordinal": 1, "component": "loop.merge", "invariant": "gate on head", "existing_id": "F1"},
+               {"ordinal": 2, "limited": True}]
+    partial = loop.parse(text("```finding-meta\n" + json.dumps(entries) + "\n```"), 1, 12, head, {"F1"})
+    assert partial["identity"] == "limited" and partial["findings"][0]["meta"]["existing_id"] == "F1"
+    assert "meta" not in partial["findings"][1]
+    for entry in ({"ordinal": 2, "limited": False}, {"ordinal": 2, "limited": 1},
+                  {"ordinal": 2, "limited": True, "existing_id": "F1"}):
+        with pytest.raises(ValueError, match="limited"):
+            loop.parse(text("```finding-meta\n" + json.dumps([entries[0], entry]) + "\n```"), 1, 12, head, {"F1"})
     assert loop.parse("Round 1 · PR #12 · abcdef0\n새 발견 없음\n머지 허용", 1, 12, head)["identity"] == "full"
 
 
