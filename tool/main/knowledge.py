@@ -1454,6 +1454,7 @@ class Grounding:
     def view(self) -> dict:
         d = self.dossier
         return {"question_en": d.get("question_en"), "retrieval_status": d.get("status"),
+                "repository_state": d.get("repository_state"),
                 "direct": bool(d.get("direct")), "restrictions": [] if self.analysis else d.get("restrictions") or [],
                 "requirements": self.requirements, "missing_requirements": d.get("missing") or [],
                 "conflicting_evidence": self.conflicting, "untrusted_evidence": sorted(self.untrusted),

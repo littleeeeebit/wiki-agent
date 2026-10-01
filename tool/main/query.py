@@ -317,13 +317,13 @@ def held(events, release) -> StreamingResponse:
 
 # -- API ------------------------------------------------------------------
 
-# What the screen reads while a draft is checked (stage 7 of `docs/plans/jev/`):
+# What the screen reads while an answer is prepared (stage 7 of `docs/plans/jev/`):
 # a line of what ran, like a tool's. The draft itself is never sent.
 PROGRESS = {"draft": "답변 · 근거를 종합해 답을 쓴다",
             "attribute": "근거 · 출처를 실행 기록에 남긴다",
             "verify": "검증 · 주장마다 인용과 근거를 대조한다",
             "retrieve": "검증 · 저장소 사실이 필요해 다시 찾는다",
-            "repair": "검증 · 거절된 주장을 한 번 고쳐 쓴다"}
+            "repair": "답변 · 초안을 한 번 고쳐 쓴다"}
 
 
 class Failed(Exception):

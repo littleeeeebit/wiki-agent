@@ -41,6 +41,14 @@ The host may interpret plans, combine observations, recommend work, and read
 additional repository records. Missing evidence requires a specific limit on
 the conclusion; it does not require refusing the whole question.
 
+The isolated CLI host exposes only Read, Glob and Grep. Before answering,
+the server supplies bounded read-only observations of the checkout, the latest
+20 commits across local refs, and up to 20 recent pull requests with merge state.
+Each fixed command has a ten-second timeout and a 12,000-character output cap.
+Git refs are not fetched; missing tools or unavailable GitHub leave a specific
+observation gap without suppressing the answer. The snapshot is included in
+the recorded host brief and does not grant shell or write access.
+
 `grounded` records this answer as `unverified`, never as independently checked.
 Internal evidence marks are removed from the body; locators, revisions,
 snapshots and unknown citation ids stay in "View evidence and judgment".

@@ -7,6 +7,7 @@ are fakes. Every trace lands under the test's own `JEV_ENV` folder.
 """
 
 import json
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -381,6 +382,32 @@ def test_an_export_leaves_out_every_text_unless_asked(tmp_path, active):
 
 # -- the app and the command line -------------------------------------------------------------
 
+@pytest.mark.parametrize("unavailable", [False, True])
+def test_repository_observations_are_bounded_fixed_reads_and_survive_missing_tools(tmp_path, unavailable):
+    calls = []
+
+    def read(args, cwd, timeout):
+        calls.append((args, cwd, timeout))
+        if unavailable:
+            if args[0] == "gh":
+                raise FileNotFoundError("gh is not installed")
+            return subprocess.CompletedProcess(args, 1, "", "unavailable")
+        return subprocess.CompletedProcess(args, 0, "CURRENT-STATE " + "x" * 20000, "")
+
+    with patch.object(specs, "sh", side_effect=read):
+        state = jev_search.repository_state(tmp_path)
+    assert state["observed_at"] and len(state["text"]) < 37000
+    assert [args[0] for args, _, _ in calls] == ["git", "git", "gh"]
+    assert all(cwd == tmp_path and timeout == 10 for _, cwd, timeout in calls)
+    assert "--no-optional-locks" in calls[0][0] and "core.fsmonitor=false" in calls[0][0]
+    assert "--no-pager" in calls[1][0] and "--all" in calls[1][0] and "-20" in calls[1][0]
+    assert calls[2][0][1:7] == ["pr", "list", "--state", "all", "--limit", "20"]
+    if unavailable:
+        assert "could not read" in state["text"] and "gh is not installed" in state["text"]
+    else:
+        assert state["text"].count("CURRENT-STATE") == 3 and state["text"].count("[truncated]") == 3
+
+
 def test_the_app_and_the_cli_publish_the_same_decisions_and_evidence_for_one_input(tmp_path, active):
     d, reply = mixed(tmp_path)
     session, _sent = session_saying(reply)
@@ -406,9 +433,12 @@ def test_the_app_and_the_cli_publish_the_same_decisions_and_evidence_for_one_inp
         def close(self):
             pass
 
-    with patch.object(jev_search, "prepare", retrieved(d)), patch("agent.ChatSession", Host):
+    snapshot = {"text": "Recent PR #7: OPEN; merged PR #6 supersedes the old plan."}
+    with patch.object(jev_search, "prepare", retrieved(d)), patch("agent.ChatSession", Host), \
+         patch.object(jev_search, "repository_state", return_value=snapshot):
         cli = jev_search.answer("데몬 포트는?", str(tmp_path), "", 8, "")
 
+    assert snapshot["text"] in _heard[0], "current repository observations must reach the answering host"
     command = commands[0]
     for flag in ("--tools", "--allowedTools"):
         assert set(command[command.index(flag) + 1].split(",")) == {"Read", "Glob", "Grep"}
@@ -469,7 +499,8 @@ def test_a_run_leaves_langfuse_what_each_request_was_sent_and_gave_back(tmp_path
         def close(self):
             pass
 
-    with patch.object(jev_search, "prepare", retrieved(d)), patch("agent.ChatSession", Host):
+    with patch.object(jev_search, "prepare", retrieved(d)), patch("agent.ChatSession", Host), \
+         patch.object(jev_search, "repository_state", return_value={"text": "Recent repository observations"}):
         summary = jev_search.answer("데몬 포트는?", str(tmp_path), "", 8, "")
     spans = langfuse()
     assert {s["trace_id"] for s in spans} == {summary["run_id"]}, "one trace, its id the run's"
