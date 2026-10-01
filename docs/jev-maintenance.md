@@ -47,7 +47,9 @@ the server supplies bounded read-only observations of the checkout, the latest
 Each fixed command has a ten-second timeout and a 12,000-character output cap.
 Git refs are not fetched; missing tools or unavailable GitHub leave a specific
 observation gap without suppressing the answer. The snapshot is included in
-the recorded host brief and does not grant shell or write access.
+the host brief and durable run summary, and is shown in the existing evidence
+drawer. A bare export keeps its timestamp and removes its text using the same
+redaction as other source snapshots. It grants no shell or write access.
 
 `grounded` records this answer as `unverified`, never as independently checked.
 Internal evidence marks are removed from the body; locators, revisions,

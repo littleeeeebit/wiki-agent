@@ -455,7 +455,15 @@ def test_the_app_and_the_cli_publish_the_same_decisions_and_evidence_for_one_inp
     assert identity(cli) == identity(app)
     assert cli["answered"] and cli["answered"] == app["answered"], "both publish the same text"
     assert cli["schema_version"] == app["schema_version"] == knowledge.RUN_SUMMARY
+    assert cli["repository_state"] == snapshot
     assert knowledge.stored(cli["run_id"], tmp_path)[0] == cli, "the CLI's run is traced where the app's are"
+
+    knowledge.LIVE.clear()
+    with patch.object(chat, "current_repo", return_value=tmp_path):
+        reloaded = web().get(f"/api/knowledge/runs/{cli['run_id']}").json()
+    assert reloaded["repository_state"] == snapshot, "the evidence drawer can read it after process restart"
+    assert snapshot["text"] not in json.dumps(knowledge.export(cli["run_id"], tmp_path))
+    assert snapshot["text"] in json.dumps(knowledge.export(cli["run_id"], tmp_path, text=True))
 
 
 # -- the Langfuse trace ---------------------------------------------------------------------

@@ -3578,6 +3578,7 @@ def summarize(run: Run, outcome: str, reason: str | None, published: dict | None
             "question": run.question, "started_at": run.at, "ended_at": stamp(),
             "elapsed_ms": round((time.monotonic() - run.started) * 1000), "done": True,
             "outcome": outcome, "reason": reason, "settings": run.cfg.status(),
+            "repository_state": d.get("repository_state"),
             "retrieval": None if not d else {
                 "status": d.get("status"), "reason": d.get("reason"), "direct": d.get("direct"),
                 "fallback": d.get("status") == "unavailable", "sources": d.get("sources"),

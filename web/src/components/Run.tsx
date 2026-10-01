@@ -8,7 +8,7 @@ import * as api from '@/lib/api'
 import type { RunEvidence, RunSummary } from '@/lib/api'
 import { LANE, OUTCOME, PHASES, STAGE, SUPPORT, note, phaseOf } from '@/lib/run'
 
-/** 검색 → 그래프 확장 → 검증 → 게시, with the stage in words and the stop. */
+/** Search → graph expansion → answer → publish, with the stage and stop. */
 export function RunProgress({ stage, runId, onStop }: {
   stage?: string; runId?: string; onStop: (runId: string) => void
 }) {
@@ -86,6 +86,22 @@ export function RunDetails({ runId, onPeek, onMapRun }: {
                   {run.evidence!.map((e) => <Evidence key={e.chunk_id} e={e} onPeek={onPeek} />)}
                 </ul>
               </div>
+            )}
+            {run.repository_state?.text && (
+              <details>
+                <summary className="min-h-7 cursor-pointer text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary">
+                  저장소 관찰 스냅숏
+                  {run.repository_state.observed_at && (
+                    <time dateTime={run.repository_state.observed_at} className="ml-2 font-mono text-[10.5px] text-faint">
+                      {new Date(run.repository_state.observed_at).toLocaleString()}
+                    </time>
+                  )}
+                </summary>
+                <pre tabIndex={0} aria-label="저장소 관찰 스냅숏"
+                  className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[12px] text-muted-foreground">
+                  {run.repository_state.text}
+                </pre>
+              </details>
             )}
             {(run.claims?.length ?? 0) > 0 && (
               <p className="text-muted-foreground">
