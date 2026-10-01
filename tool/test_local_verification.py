@@ -708,8 +708,9 @@ def test_failure_text_stays_private_after_both_env_files_disappear(cloud_world, 
 
     def fail_review(first, text):
         disappear()
-        meta = [{"ordinal": 1, "component": "api 1", "invariant": "route 0 stays healthy",
-                 "trigger": "Retain this observation; private-api-key", "evidence": "private-api-key"}]
+        meta = [{"ordinal": 1, "component": "api route", "invariant": "route stays healthy",
+                 "trigger": "Retain this observation; private-api-key", "evidence": "private-api-key",
+                 "unknown": {"private-api-key": "private-api-key"}}]
         return deny("[P1] change.py:1 — Retain this observation; private-api-key\n"
                     "```finding-meta\n" + json.dumps(meta) + "\n```")(first, text)
 
@@ -724,14 +725,62 @@ def test_failure_text_stays_private_after_both_env_files_disappear(cloud_world, 
     if failure == "review":
         item = first["rounds"][0]["items"][0]
         assert item["head"].startswith("[P1] change.py:1")
-        assert (item["id"], item["component"], item["invariant"]) == ("F1", "api 1", "route 0 stays healthy")
+        assert (item["id"], item["component"], item["invariant"]) == ("F1", "api route", "route stays healthy")
         report = (loop.folder("proj", first["pr"]["number"]) / "round-1-result.md").read_text(encoding="utf-8")
         assert "private-api-key" not in report
-        assert loop.parse(report, 1, first["pr"]["number"], first["pr"]["head"])["findings"][0]["meta"]["component"] == "api 1"
+        assert loop.parse(report, 1, first["pr"]["number"], first["pr"]["head"])["findings"][0]["meta"]["component"] == "api route"
     world.env.write_bytes(original)
     retried = looped("cloud", seconds=60)
     assert retried["local_verification"]["state"] == "unstable"
     assert "private-api-key" not in json.dumps(retried) and "private-api-key" not in str(world.hub.comments)
+
+
+@pytest.mark.parametrize("field", ["component", "invariant", "existing_id"])
+def test_private_reviewer_identity_is_rejected_without_losing_the_failure(cloud_world, field):
+    world = cloud_world
+    world.env.write_text(world.env.read_text(encoding="utf-8") + "FLAG=1\nZERO=0\n", encoding="utf-8")
+    spec = cloud_spec(world, gate={})
+    if field == "existing_id":
+        meta = [{"ordinal": 1, "component": "api route", "invariant": "route stays healthy"}]
+        Reviewer.replies = [deny("[P1] change.py:1 — Retain the actual failure\n"
+                                 "```finding-meta\n" + json.dumps(meta) + "\n```")]
+        spec = looped("cloud", seconds=60)
+        assert spec["rounds"][0]["items"][0]["id"] == "F1"
+        repair_cloud(world, spec)
+    path = Path(spec["worktree"])
+    original = world.env.read_bytes()
+
+    def respond(first, text):
+        meta = {"ordinal": 1, "component": "api route", "invariant": "route stays healthy",
+                "trigger": "private-api-key", "evidence": "private-api-key",
+                "unknown": {"private-api-key": "private-api-key"}}
+        if field == "existing_id":
+            meta.update(existing_id="F1", component="api route private-api-key", invariant="private-api-key")
+        else:
+            meta[field] += " private-api-key"
+        world.env.unlink()
+        (path / ".env").unlink()
+        file = "private-api-key.py" if field == "component" else "change.py"
+        return deny(f"[P1] {file}:1 — Retain the actual failure\n"
+                    "```finding-meta\n" + json.dumps([meta]) + "\n```")(first + " — private-api-key", text)
+
+    Reviewer.replies = [respond]
+    first = looped("cloud", seconds=60)
+    number = 2 if field == "existing_id" else 1
+    report = (loop.folder("proj", first["pr"]["number"]) / f"round-{number}-result.md").read_text(encoding="utf-8")
+    assert "private-api-key" not in json.dumps(first) and "private-api-key" not in report
+    row = first["rounds"][-1]
+    identity = "full" if field == "existing_id" else "limited"
+    assert report.splitlines()[0] == f"Round {number} · PR #{first['pr']['number']} · {row['head'][:7]}"
+    assert row["verdict"] == "deny" and row["findings"]["P1"] == 1
+    assert row["items"][0]["grade"] == "P1" and row["items"][0]["line"] == 1
+    assert row["identity"] == identity and row["items"][0]["id"] == ("F1" if field == "existing_id" else None)
+    assert loop.parse(report, number, first["pr"]["number"], row["head"], {"F1"})["identity"] == identity
+    world.env.write_bytes(original)
+    prompt = loop.instruction(first, path, number + 1, row["head"], "main", True)
+    assert "private-api-key" not in prompt
+    resumed = looped("cloud", seconds=60)
+    assert resumed["local_verification"]["state"] == "unstable" and resumed["local_verification"]["needs_research"]
 
 
 def test_passing_round_gate_source_loss_never_reaches_review_prompt(cloud_world, monkeypatch):

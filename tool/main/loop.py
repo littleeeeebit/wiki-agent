@@ -1117,16 +1117,31 @@ def step(loop: Loop) -> bool:
             parsed = parse(answer, n, pr, head, set(issues(spec)))
             if verification.cloud(spec):
                 parsed["said"] = verification.redact(parsed["said"], settings)
+                limited = False
                 for finding in parsed["findings"]:
-                    # Preserve validated grade/path/line and identity metadata, while
-                    # cleaning the free text the local reviewer can observe.
+                    # Only grade/line, ordinal and a validated existing id
+                    # are protocol metadata; model-authored names are free text.
                     start = FINDING.match(finding["head"]).end()
-                    finding["head"] = finding["head"][:start] + verification.redact(finding["head"][start:], settings)
+                    finding["file"] = verification.redact(finding["file"], settings)
+                    finding["head"] = (f"[{finding['grade']}] {finding['file']}:{finding['line']}"
+                                       + verification.redact(finding["head"][start:], settings))
                     finding["body"] = verification.redact(finding["body"], settings)
-                    for key in ("trigger", "evidence"):
-                        if "meta" in finding:
-                            finding["meta"][key] = verification.redact(str(finding["meta"].get(key) or ""), settings)
-                lines = [answer.strip().splitlines()[0]]
+                    if "meta" in finding:
+                        meta = {k: v for k, v in finding["meta"].items()
+                                if k in ("ordinal", "existing_id", "component", "invariant", "trigger", "evidence")}
+                        for key in ("component", "invariant", "trigger", "evidence"):
+                            value = str(meta.get(key) or "")
+                            meta[key] = verification.redact(value, settings)
+                            if key in ("component", "invariant") and meta[key] != value and not meta.get("existing_id"):
+                                limited = True
+                        finding["meta"] = meta
+                if limited:
+                    # Reject unsafe new identities without dropping the failure
+                    # or treating two redacted names as the same invariant.
+                    parsed["identity"] = "limited"
+                    for finding in parsed["findings"]:
+                        finding.pop("meta", None)
+                lines = [f"Round {n} · PR #{pr} · {head[:7]}"]
                 for finding in parsed["findings"]:
                     lines += [finding["head"], finding["body"]]
                 if parsed["findings"] and "meta" in parsed["findings"][0]:
