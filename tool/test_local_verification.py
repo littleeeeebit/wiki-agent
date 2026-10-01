@@ -681,6 +681,86 @@ def test_common_env_values_do_not_change_public_protocol_metadata(cloud_world):
     assert f"`{head}`" in body and "`review/F1`" in body and "private-api-key" not in body
 
 
+@pytest.mark.parametrize("failure", ["flow", "round", "final", "review"])
+def test_failure_text_stays_private_after_both_env_files_disappear(cloud_world, monkeypatch, failure):
+    world = cloud_world
+    world.env.write_text(world.env.read_text(encoding="utf-8") + "FLAG=1\nZERO=0\n", encoding="utf-8")
+    spec = cloud_spec(world, gate={})
+    path = Path(spec["worktree"])
+    original = world.env.read_bytes()
+    judge = specs.judge
+    calls = 0
+
+    def disappear():
+        world.env.unlink()
+        (path / ".env").unlink()
+
+    def fail_gate(*args, **kwargs):
+        nonlocal calls
+        verdict = judge(*args, **kwargs)
+        if args[1] != ["python verify.py health"] or failure == "flow":
+            calls += 1
+            if calls == (2 if failure == "final" else 1):
+                disappear()
+                return {**verdict, "ok": False, "code": 1, "reason": "Retain this observation; private-api-key",
+                        "tail": "Retain this observation; private-api-key\n" + verdict["tail"]}
+        return verdict
+
+    def fail_review(first, text):
+        disappear()
+        meta = [{"ordinal": 1, "component": "api 1", "invariant": "route 0 stays healthy",
+                 "trigger": "Retain this observation; private-api-key", "evidence": "private-api-key"}]
+        return deny("[P1] change.py:1 — Retain this observation; private-api-key\n"
+                    "```finding-meta\n" + json.dumps(meta) + "\n```")(first, text)
+
+    if failure == "review":
+        Reviewer.replies = [fail_review]
+    else:
+        monkeypatch.setattr(specs, "judge", fail_gate)
+    first = looped("cloud", seconds=60)
+    assert first["local_verification"]["state"] == "waiting_environment"
+    assert "private-api-key" not in json.dumps(first)
+    assert "Retain this observation" in json.dumps(first["local_verification"]["failure_attempts"])
+    if failure == "review":
+        item = first["rounds"][0]["items"][0]
+        assert item["head"].startswith("[P1] change.py:1")
+        assert (item["id"], item["component"], item["invariant"]) == ("F1", "api 1", "route 0 stays healthy")
+        report = (loop.folder("proj", first["pr"]["number"]) / "round-1-result.md").read_text(encoding="utf-8")
+        assert "private-api-key" not in report
+        assert loop.parse(report, 1, first["pr"]["number"], first["pr"]["head"])["findings"][0]["meta"]["component"] == "api 1"
+    world.env.write_bytes(original)
+    retried = looped("cloud", seconds=60)
+    assert retried["local_verification"]["state"] == "unstable"
+    assert "private-api-key" not in json.dumps(retried) and "private-api-key" not in str(world.hub.comments)
+
+
+def test_passing_round_gate_source_loss_never_reaches_review_prompt(cloud_world, monkeypatch):
+    world = cloud_world
+    cloud_spec(world, gate={})
+    original = world.env.read_bytes()
+    judge = specs.judge
+    first = True
+
+    def lose_source(path, commands, *args, **kwargs):
+        nonlocal first
+        verdict = judge(path, commands, *args, **kwargs)
+        if first and commands != ["python verify.py health"]:
+            first = False
+            world.env.unlink()
+            return {**verdict, "tail": "Passing gate printed private-api-key"}
+        return verdict
+
+    monkeypatch.setattr(specs, "judge", lose_source)
+    interrupted = looped("cloud", seconds=60)
+    assert interrupted["local_verification"]["state"] == "waiting_environment" and not Reviewer.made
+    assert "private-api-key" not in json.dumps(interrupted)
+    world.env.write_bytes(original)
+    resumed = looped("cloud", seconds=60)
+    assert resumed["state"] == "머지 가능"
+    order = loop.folder("proj", resumed["pr"]["number"]) / "round-1.md"
+    assert "private-api-key" not in order.read_text(encoding="utf-8")
+
+
 def test_saving_changed_environment_revisions_revokes_the_published_pass_immediately(cloud_world):
     world = cloud_world
     cloud_spec(world)

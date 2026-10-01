@@ -190,6 +190,12 @@ def redact(text: str, settings: dict) -> str:
     return text
 
 
+def redaction(settings: dict, path: Path) -> dict:
+    """Freeze known values before a command or reviewer can remove their files."""
+    return {**settings, "redact_values": [*hidden_values(settings),
+            *hidden_values({**settings, "env_file": str(path / ".env")})]}
+
+
 def sanitize(value, settings: dict):
     """Redact strings without damaging JSON types or escaped content."""
     if isinstance(value, str):
@@ -478,8 +484,7 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
     if any(not settings["revisions"].get(k) for f in contract.flows for k in f.environments):
         raise ValueError("각 흐름이 사용하는 API·데이터·설정 버전을 기록해야 한다")
     prepare(repo, path, settings)
-    settings = {**settings, "redact_values": [*hidden_values(settings),
-                *hidden_values({**settings, "env_file": str(path / ".env")})]}
+    settings = redaction(settings, path)
     previous = (spec.get("local_verification") or {}).get("flows", [])
     researched = bool((spec.get("local_verification") or {}).get("research_note"))
     old = {f["id"]: f for f in previous}
@@ -530,7 +535,8 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
                 evidence, failed, ok, reason = {}, [f"{flow.id}/evidence"], False, str(exc)
             # Retain the observed result before re-reading fallible prerequisites.
             # Until environment confirmation, a successful observation is not a pass.
-            row.update(observed_ok=ok, blocked=ok, reason=redact(reason, settings), evidence=evidence, failures=failed,
+            reason = redact(reason, settings)
+            row.update(observed_ok=ok, blocked=ok, reason=reason, evidence=evidence, failures=failed,
                        code=verdict.get("code"), log=redact(verdict["tail"], settings), finished_at=time.time())
             rows.append(row)
             spec = keep(spec, flows=rows)

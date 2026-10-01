@@ -925,9 +925,10 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
                   "environment_digest": specs.digest(repo, path, cmd), "ok": False, "code": None,
                   "reason": "끝나지 않았다", "finished_at": None}
         specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
+        settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
         verdict = specs.judge(path, [cmd], loop.halt)
         if verification.cloud(spec):
-            verdict = {**verdict, "tail": verification.redact(verdict["tail"], verification.local(repo))}
+            verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
     finally:
         release()
     ok = verdict["ok"] and verdict["head"] == head
@@ -1032,8 +1033,9 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
             return stop(loop, loop.repo, loop.sid, Why.GATE, spec["local_verification"]["reason"])
         chosen = specs.selected(repo, path, base, specs.required(repo, spec))
         if not reusable(spec, head, chosen):
+            settings = verification.redaction(verification.local(repo), path)
             verdict, check = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
-            verdict = {**verdict, "tail": verification.redact(verdict["tail"], verification.local(repo))}
+            verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
             specs.validate(loop.repo, loop.sid, round=check)
             spec = change(loop, gate=verdict)
             if spec is None:
@@ -1100,6 +1102,7 @@ def step(loop: Loop) -> bool:
     profile = effective(spec, changed(path, base_oid, head))
     order.write_text(instruction(spec, path, n, head, base, chat.is_codex, profile, base_oid), encoding="utf-8")
 
+    settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
     parsed, why, ask_for = None, "", f"Read `{order}` and review."
     for _ in range(2):
         try:
@@ -1107,14 +1110,36 @@ def step(loop: Loop) -> bool:
         except RuntimeError as exc:
             if loop.halt.is_set():
                 return False
-            why = f"리뷰 셀이 답하지 못했다 — {exc}"
+            detail = verification.redact(str(exc), settings) if verification.cloud(spec) else str(exc)
+            why = f"리뷰 셀이 답하지 못했다 — {detail}"
             continue
-        (kept / f"round-{n}-result.md").write_text(answer, encoding="utf-8")
         try:
             parsed = parse(answer, n, pr, head, set(issues(spec)))
+            if verification.cloud(spec):
+                parsed["said"] = verification.redact(parsed["said"], settings)
+                for finding in parsed["findings"]:
+                    # Preserve validated grade/path/line and identity metadata, while
+                    # cleaning the free text the local reviewer can observe.
+                    start = FINDING.match(finding["head"]).end()
+                    finding["head"] = finding["head"][:start] + verification.redact(finding["head"][start:], settings)
+                    finding["body"] = verification.redact(finding["body"], settings)
+                    for key in ("trigger", "evidence"):
+                        if "meta" in finding:
+                            finding["meta"][key] = verification.redact(str(finding["meta"].get(key) or ""), settings)
+                lines = [answer.strip().splitlines()[0]]
+                for finding in parsed["findings"]:
+                    lines += [finding["head"], finding["body"]]
+                if parsed["findings"] and "meta" in parsed["findings"][0]:
+                    lines += ["```finding-meta", json.dumps([f["meta"] for f in parsed["findings"]], ensure_ascii=False), "```"]
+                if not parsed["findings"]:
+                    lines.append("새 발견 없음")
+                answer = "\n".join([*lines, parsed["said"]])
+            (kept / f"round-{n}-result.md").write_text(answer, encoding="utf-8")
             break
         except ValueError as exc:
-            why = str(exc)
+            (kept / f"round-{n}-result.md").write_text(
+                verification.redact(answer, settings) if verification.cloud(spec) else answer, encoding="utf-8")
+            why = verification.redact(str(exc), settings) if verification.cloud(spec) else str(exc)
             ask_for = (f"Your answer to round {n} could not be read: {why}. Answer round {n} again, in the "
                        f"shape the instruction `{order}` gives: first line `Round {n} · PR #{pr} · {head[:7]}`, "
                        "a `finding-meta` block naming only ids listed under `Known findings`, last line "
