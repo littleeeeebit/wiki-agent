@@ -343,10 +343,23 @@ def pending(repo: Path, spec: dict, head: str, reason: str, state: str = "waitin
 
 def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: list[str], kind: str = "failed") -> dict:
     record = (specs.load(spec["repo"], spec["id"]) or spec).get("local_verification") or {}
+    settings = local(repo)
+    # The managed copy is what the check loaded. Keep its values redacted even
+    # if the external source disappears between the observation and retention.
+    copied = {**settings, "env_file": str(Path(spec["worktree"]) / ".env")}
+    reason = redact(redact(reason, settings), copied)
     attempts = [*record.get("failure_attempts", []), {
-        "head": head, "environment_digest": failure_environment(repo, Path(spec["worktree"]), spec),
-        "failures": failures, "reason": redact(reason, local(repo)), "ts": time.time(), "confirmed": False,
-        "evidence": sanitize([r.get("evidence", {}) for r in record.get("flows", [])], local(repo))}]
+        "head": head, "environment_digest": None,
+        "failures": failures, "reason": reason, "ts": time.time(), "confirmed": False,
+        "evidence": sanitize(sanitize([r.get("evidence", {}) for r in record.get("flows", [])], settings), copied)}]
+    spec = keep(spec, failure_attempts=attempts)
+    try:
+        measured = failure_environment(repo, Path(spec["worktree"]), spec)
+        if record.get("execution_environment_digest") not in (None, measured):
+            raise ValueError("검사 뒤 로컬 환경이 바뀌었다 — 실패 환경을 확인해야 한다")
+        attempts[-1]["environment_digest"] = measured
+    except (OSError, ValueError, KeyError, TypeError, RuntimeError, subprocess.SubprocessError) as exc:
+        return pending(repo, spec, head, "실패 근거 보존; 로컬 환경 확인 대기: " + str(exc))
     spec = keep(spec, failure_attempts=attempts)
     try:
         current = github(repo, f"repos/{{owner}}/{{repo}}/pulls/{spec['pr']['number']}")
@@ -439,7 +452,8 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
 
     if documents(path, base_oid, head):
         return keep(spec, state="runtime_passed", head=head, base_oid=base_oid, document_only=True,
-                    flows=[], reason="문서 변경 — 실행 검증 제외", finished_at=time.time())
+                    flows=[], execution_environment_digest=None,
+                    reason="문서 변경 — 실행 검증 제외", finished_at=time.time())
     settings = local(repo)
     if not settings:
         raise ValueError("프로젝트별 로컬 검증 설정이 없다")
@@ -455,6 +469,7 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
     rows = []
     spec = keep(spec, state="running", head=head, base_oid=base_oid, document_only=False,
                 reason="", finished_at=None, research_note="")
+    spec = keep(spec, execution_environment_digest=failure_environment(repo, path, spec))
     env = {**os.environ, "WIKI_VERIFICATION_HEAD": head, "WIKI_VERIFICATION_ENVIRONMENT": settings["environment_id"],
            "WIKI_VERIFICATION_SCOPE": settings["test_scope"], "WIKI_VERIFICATION_BROWSER": settings["browser_tool"]}
     setup_ok = False
@@ -561,10 +576,15 @@ def evidence_identity(spec: dict) -> str:
 
 
 def failure_environment(repo: Path, path: Path, spec: dict) -> str:
+    runtime = specs.digest(repo, path, specs.required(repo, spec))
+    if (spec.get("local_verification") or {}).get("document_only"):
+        return sha({"runtime": runtime})
     settings = local(repo)
+    if not settings:
+        raise ValueError("프로젝트별 로컬 검증 설정을 읽지 못했다")
     return sha({"settings": {k: v for k, v in settings.items() if k != "redact_values"},
                 "env": sha(Path(settings["env_file"]).read_bytes()) if settings else "",
-                "runtime": specs.digest(repo, path, specs.required(repo, spec))})
+                "runtime": runtime})
 
 
 def uninvestigated(repo: Path, path: Path, spec: dict, head: str) -> list[dict]:
@@ -573,7 +593,7 @@ def uninvestigated(repo: Path, path: Path, spec: dict, head: str) -> list[dict]:
     investigated = {i for note in record.get("research", []) for i in note.get("failure_attempts", [])}
     environment = failure_environment(repo, path, spec)
     unresolved = [row for i, row in enumerate(attempts)
-                  if i not in investigated and row["head"] == head and row["environment_digest"] == environment]
+                  if i not in investigated and row["head"] == head and row["environment_digest"] in (None, environment)]
     if unresolved:
         return unresolved
     # Records made before attempt fingerprints existed are not proof that a

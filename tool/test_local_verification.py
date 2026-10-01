@@ -308,14 +308,18 @@ def test_github_requirement_is_enforced_and_setup_preserves_existing_rules(cloud
     assert looped("cloud")["state"] == "머지 가능"
 
 
-def test_doc_only_cloud_change_keeps_review_but_exempts_runtime_setup(cloud_world):
+@pytest.mark.parametrize("configuration", ["none", "missing_env"])
+def test_doc_only_cloud_change_keeps_review_but_exempts_runtime_setup(cloud_world, configuration):
     world = cloud_world
     manifest = {**world.contract, "prose_paths": ["docs/*"]}
     (world.repo / "verification.json").write_text(json.dumps(manifest), encoding="utf-8")
     commit(world.repo, "prose-policy.txt")
     git(world.repo, "push", "origin", "main")
     cloud_spec(world, file="docs/guide.md", review_profile="plan", artifact_root="docs")
-    (world.repo / verification.LOCAL).unlink()
+    if configuration == "none":
+        (world.repo / verification.LOCAL).unlink()
+    else:
+        world.env.unlink()
     spec = looped("cloud")
     assert spec["state"] == "머지 가능" and spec["local_verification"]["document_only"]
     cloud_spec(world, name="instructions", n=2, file=".claude/rules/api.md")
@@ -496,6 +500,48 @@ def test_failed_cloud_comment_is_pending_and_retried_before_verification(cloud_w
     assert not resumed["local_verification"].get("delivery")
 
 
+@pytest.mark.parametrize("missing", ["env", "settings", "env_changed", "settings_changed"])
+def test_final_failure_survives_missing_environment_until_same_head_investigation(cloud_world, monkeypatch, missing):
+    world = cloud_world
+    cloud_spec(world)
+    judge = specs.judge
+    removed = world.env if missing.startswith("env") else world.repo / verification.LOCAL
+    original = removed.read_bytes()
+    failed = False
+
+    def fail_final(path, commands, *args, **kwargs):
+        nonlocal failed
+        verdict = judge(path, commands, *args, **kwargs)
+        if commands != ["python verify.py health"] and not failed:
+            failed = True
+            if missing == "env_changed":
+                removed.write_bytes(original.replace(b"private-api-key", b"rotated-api-key"))
+            elif missing == "settings_changed":
+                changed = json.loads(original)
+                changed["revisions"]["dataset"] = "changed-after-observation"
+                removed.write_text(json.dumps(changed), encoding="utf-8")
+            else:
+                removed.unlink()
+            return {**verdict, "ok": False, "code": 1, "reason": "First final failure",
+                    "tail": "Retain this observation; private-api-key"}
+        return verdict
+
+    monkeypatch.setattr(specs, "judge", fail_final)
+    first = looped("cloud", seconds=60)
+    record = first["local_verification"]
+    assert record["state"] == "waiting_environment" and not record.get("failures")
+    assert record["failure_attempts"][0]["environment_digest"] is None
+    assert "Retain this observation" in record["failure_attempts"][0]["reason"]
+    assert "private-api-key" not in json.dumps(record)
+    removed.write_bytes(original)
+    retried = looped("cloud", seconds=60)
+    assert retried["local_verification"]["state"] == "unstable"
+    assert retried["local_verification"]["needs_research"]
+    assert world.github.statuses[-1][1] == "pending"
+    assert any("Retain this observation" in body for _, body in world.hub.comments)
+    assert "private-api-key" not in str(world.hub.comments)
+
+
 def test_local_configuration_cannot_be_saved_as_a_tracked_file(cloud_world):
     world = cloud_world
     git(world.repo, "add", "-f", verification.LOCAL)
@@ -531,7 +577,7 @@ def test_a_cloud_push_during_execution_cannot_create_a_review_or_failure_cycle(c
         return verdict
 
     monkeypatch.setattr(specs, "judge", moved)
-    record = looped("cloud")["local_verification"]
+    record = looped("cloud", seconds=60)["local_verification"]
     assert record["state"] == "waiting_environment" and "바뀌었다" in record["reason"]
     assert not record.get("failures") and not Reviewer.made and world.github.statuses[-1][1] == "pending"
 
