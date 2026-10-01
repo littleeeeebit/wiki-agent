@@ -1,8 +1,9 @@
 """loop — a pull request's review rounds, from the first to `[머지]`.
 
 `operator/codex-review-loop`, run between two sessions of this program instead
-of two terminals. The review cell is a read-only session in the pull request's
-worktree; the work cell is that worktree's write session from `work`. A round:
+of two terminals. The review cell is independent of the work cell: ordinary
+review is read-only, while Cloud review can execute and create verification
+artifacts. The work cell is the implementation session from `work`. A round:
 the server writes the instruction into the hub, the review cell answers, the
 server parses the answer, and a refusal goes to the work cell as one turn,
 then through the gate and up. It ends at `머지 가능`; a person presses
@@ -51,6 +52,9 @@ POLL = 60.0     # seconds between reads of a pull request waiting to merge
 # Never `READ_TOOLS`: its `Bash` is on `--allowedTools`, runs unasked, and one
 # `python -c` writes anywhere. A prompt does not stop a write; the tool list does.
 REVIEW_TOOLS = "Read,Glob,Grep"
+READ_PROFILE = ChatSession.READ_PROFILE
+CLOUD_PROFILE = ChatSession.VERIFICATION_PROFILE
+CLOUD_TOOLS = ChatSession.VERIFICATION_TOOLS
 
 LOOPING = re.compile(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+")
 
@@ -69,6 +73,8 @@ class Why(str, enum.Enum):
     NO_WORKTREE = "작업트리 없음"
     WRONG_BASE = "검토하지 않은 base 에 머지됨"
     LEFT_QUEUE = "머지 대기에서 빠짐"
+    PREPARATION = "로컬 검증 준비"
+    EXTERNAL = "외부 수정 대기"
 
 
 router = APIRouter()
@@ -467,11 +473,15 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
         f"Review pull request #{pr} as it stands at head `{head}` against base `{base}`. Your final "
         "answer is the result, and its first line is the line above, exactly. Write no file.", "",
         "## Allowed", "",
-        "- reading files · `git log`, `git show`, `git diff` · `gh pr view`, `gh pr diff` · running the tests, "
-        "when your tools let you", "",
+        ("- reading and searching source; executing verification commands and creating test scripts, "
+         "fixtures and receipts in the verification artifact directory. Use the dedicated test environment."
+         if verification.cloud(spec) else
+         "- reading and searching source files with your read-only tools. The server supplies the PR diff "
+         "and check receipts; shell commands and tests are not reviewer tools."), "",
         "## Forbidden", "",
         "- `checkout`, `switch`, `stash`, `merge`, `rebase`, `reset`, `cherry-pick`, `commit`, `push` · "
-        "installing packages · editing any file", "",
+        + ("changing tracked implementation files · accessing production data · reading or printing `.env`/secrets"
+         if verification.cloud(spec) else "installing packages · editing any file"), "",
         "## What changed", "",
         f"- `git diff --shortstat {base}...{head[:7]}`: {shortstat(path, base, head)}",
     ]
@@ -504,8 +514,12 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
         out += ["", "## Cloud implementation: local verification", "",
                 "The server executed the repository's configured checks locally. Review their receipts "
                 "against the major flows and API contracts. A command exit alone is not behavior evidence. "
-                "Do not edit code or read `.env`. A refusal returns to the cloud implementer, never to a "
-                "local write session. Check carried-over results' impact reasons.", "", "```json",
+                "You must also execute verification commands and may create test scripts, fixtures, browser "
+                "checks and receipts. Write them under the artifact directory below, not the tracked source. "
+                "Execution permissions are preconfigured; do not request escalations. Do not commit or push. "
+                "Do not edit implementation code or read/print `.env` secrets. A refusal returns to the cloud "
+                "implementer, never to a local implementation session. Check carried-over results' impact reasons.",
+                "", f"Artifact directory: `{folder(spec['repo'], pr) / 'verification' / head}`", "", "```json",
                 json.dumps({"handoff": spec.get("cloud_handoff"), "verification": spec.get("local_verification")},
                            ensure_ascii=False, indent=2), "```"]
     if not shrinking(rounds):
@@ -515,11 +529,10 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
                 "round. Sort them into the families `operator/codex-review-loop` names — the wrong model, "
                 "where it measures, the claim is wrong, knew and skipped — and report by family, the cause "
                 "first."]
-    if not codex:
-        # A Claude cell has no shell to run `gh pr diff` with.
-        diff = specs.sh(["gh", "pr", "diff", str(pr)], path, 120)
-        out += ["", f"## `gh pr diff {pr}`", "", "```diff",
-                diff.stdout.rstrip() if not diff.returncode else f"(failed: {specs.said(diff)})", "```"]
+    # Both reviewers have read/search tools, not a shell or GitHub connector.
+    diff = specs.sh(["gh", "pr", "diff", str(pr)], path, 120)
+    out += ["", f"## `gh pr diff {pr}`", "", "```diff",
+            diff.stdout.rstrip() if not diff.returncode else f"(failed: {specs.said(diff)})", "```"]
     out += ["", "## Report", "",
             "First line as above. Then one block per finding, opening `[P0|P1|P2] path:line — what / when / "
             "why`, with trigger, defect, impact and reproducible evidence under it, graded by the criteria "
@@ -549,6 +562,7 @@ def fixing(n: int, findings: list[dict], said: str) -> str:
 # -- The review cell -----------------------------------------------------------
 
 _cells: dict[tuple[str, int], ChatSession] = {}   # (repo, pr) -> its review cell
+_review_runs: dict[tuple[str, str], work.Run] = {}
 
 
 def review_model(chosen: str | None = None) -> str:
@@ -573,26 +587,46 @@ def cell(spec: dict, path: Path) -> ChatSession:
     Read once per round: a model or effort changed in the settings applies
     from the next round, never inside one, and each round keeps the one its
     verdict ran on (`reviewer`). A change of CLI is a new cell — the old
-    session id is the other CLI's. Never a write session: read tools only.
+    session id is the other CLI's. Never an implementation session: ordinary
+    review has read tools; Cloud verification has execution and artifact tools.
     A spec that names its own `reviewer` — a plan's — is reviewed by that
     model instead of the settings'."""
 
     key = (spec["repo"], spec["pr"]["number"])
+    verify_dir = folder(*key) / "verification" / spec["pr"]["head"] if verification.cloud(spec) else None
+    tools_profile = CLOUD_PROFILE if verify_dir is not None else READ_PROFILE
     named = spec.get("reviewer") or {}
     # Outside the lock: listing Codex's models starts Codex.
     model = review_model(named["model"]) if named.get("model") else review_model()
     effort = named.get("effort") or settings()["review_effort"]
+    repo = channels.repo_for(spec["repo"]) if verify_dir is not None else None
+    local = verification.local(repo) if repo is not None else {}
+    env = {"WIKI_VERIFICATION_HEAD": spec["pr"]["head"],
+           "WIKI_VERIFICATION_ENVIRONMENT": local.get("environment_id", ""),
+           "WIKI_VERIFICATION_SCOPE": local.get("test_scope", ""),
+           "WIKI_VERIFICATION_BROWSER": local.get("browser_tool", "")} if verify_dir is not None else {}
     with _lock:
         chat = _cells.get(key)
-    if chat is not None and chat.is_codex == model.startswith("codex:"):
+    if (chat is not None and chat.is_codex == model.startswith("codex:")
+            and getattr(chat, "verification", None) == verify_dir
+            and all(chat._env.get(k) == v for k, v in env.items())):
         chat.reconfigure(model, effort)
         return chat
     if chat is not None:
         close_cell(*key)
-    chat = ChatSession(path, tools=REVIEW_TOOLS, system=PROMPT, model=model, effort=effort)
+    context = (f"\nCloud verification mode: execute checks and create verification files under "
+               f"`{folder(*key) / 'verification'}` using the per-head artifact directory in each round's instructions. "
+               "This mode never authorizes editing tracked "
+               "implementation, committing, pushing, or accessing production. Return the verdict as the final "
+               "answer. Do not read or print .env or secrets; tests may load the prepared environment."
+               if verify_dir is not None else "")
+    chat = ChatSession(path, tools=CLOUD_TOOLS if verify_dir is not None else REVIEW_TOOLS,
+                       system=context + "\n" + PROMPT, model=model, effort=effort,
+                       **({"verification": verify_dir, "env": env} if verify_dir is not None else {}))
     try:
         saved = json.loads((folder(*key) / "session.json").read_text(encoding="utf-8"))
-        if saved.get("provider") == ("codex" if chat.is_codex else "claude"):
+        if (saved.get("provider") == ("codex" if chat.is_codex else "claude")
+                and (saved.get("tools_profile") == tools_profile if verify_dir is not None or chat.is_codex else True)):
             chat.session_id = saved.get("session_id")
     except (OSError, ValueError, AttributeError):
         pass
@@ -605,7 +639,7 @@ def reviewer(chat: ChatSession) -> dict:
     """Who gave a verdict: the review cell's own session, model and effort."""
 
     return {"session_id": chat.session_id, "cell": chat.id, "model": chat.model, "effort": chat.effort,
-            "tools": chat.tools}
+            "tools": chat.tools, "mode": "cloud-verification" if getattr(chat, "verification", None) else "read-only"}
 
 
 def close_cell(repo: str, pr: int) -> None:
@@ -619,6 +653,7 @@ def close_all() -> None:
     with _lock:
         alive = list(_cells.values())
         _cells.clear()
+        _review_runs.clear()
         loops = list(_loops.values())
     for loop in loops:
         loop.stop()
@@ -662,7 +697,9 @@ def kick(repo: str, sid: str) -> None:
     with _lock:
         old = _loops.get(key)
     if old is not None and not old.halt.is_set():
-        return
+        spec = specs.load(repo, sid)
+        if spec is not None and LOOPING.fullmatch(spec["state"]):
+            return
     if old is not None and old.thread is not None:
         old.thread.join(30)
         if old.thread.is_alive():
@@ -778,9 +815,26 @@ def ask(loop: Loop, chat: ChatSession, text: str) -> str:
     """One turn of the review cell: its final answer, or `RuntimeError`."""
 
     final, failed = "", ""
+    spec = specs.load(loop.repo, loop.sid)
+    path = Path(spec["worktree"])
+    repo = channels.repo_for(loop.repo)
+    redaction = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
+    release = wait_hold(loop, path)
+    if release is None:
+        raise RuntimeError("사람이 멈춤")
+    run = work.Run(chat)
+    run.halt = loop.halt
+    with _lock:
+        _review_runs[(loop.repo, loop.sid)] = run
+    work.feed.put({"kind": "review", "repo": loop.repo, "id": loop.sid, "turn": run.turn})
     loop.chat = chat
     try:
         for ev in chat.say(text, loop.halt):
+            payload = {"kind": "tool" if ev.kind == "context" else ev.kind, "text": ev.text, "meta": ev.meta,
+                       "session_id": chat.id, "parent_id": None}
+            if verification.cloud(spec):
+                payload = verification.sanitize(payload, redaction)
+            run.put(payload)
             if ev.kind == "done":
                 final = ev.text
                 failed = (final or "완료된 답이 없다") if ev.meta.get("error") else ""
@@ -788,12 +842,23 @@ def ask(loop: Loop, chat: ChatSession, text: str) -> str:
                     kept = folder(loop.repo, specs.load(loop.repo, loop.sid)["pr"]["number"]) / "session.json"
                     kept.parent.mkdir(parents=True, exist_ok=True)
                     kept.write_text(json.dumps({"session_id": ev.meta["session_id"],
+                                                "tools_profile": CLOUD_PROFILE if verification.cloud(spec) else READ_PROFILE,
                                                 "provider": "codex" if chat.is_codex else "claude"}) + "\n",
                                     encoding="utf-8")
             elif ev.kind == "error":
                 failed = ev.text
     finally:
         loop.chat = None
+        try:
+            kept = folder(loop.repo, spec["pr"]["number"])
+            kept.mkdir(parents=True, exist_ok=True)
+            row = {"role": "assistant", "turn": run.turn, "text": verification.redact(final, redaction) if redaction else final,
+                   "steps": work.steps(run.events), "error": verification.redact(failed, redaction) if redaction else failed}
+            with (kept / "progress.jsonl").open("a", encoding="utf-8", newline="\n") as fh:
+                fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        finally:
+            release()
+            run.finish()
     if failed or not final.strip():
         raise RuntimeError(failed or "빈 답이다")
     return final
@@ -957,6 +1022,8 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
     if final is None:
         return False
     if final["ok"]:
+        deferred = spec.get("deferred") or []
+        kept_p2 = pick(loop, chat, deferred)
         if verification.cloud(spec):
             fresh = specs.load(loop.repo, loop.sid)
             problem = verification.proven(repo, path, fresh, head, specs.current_merge_base(path, base, head))
@@ -969,8 +1036,6 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
                 if verification.cloud(spec):
                     return cloud_stop(loop, repo, spec, head, str(exc))
                 return stop(loop, loop.repo, loop.sid, Why.GATE, str(exc))
-        deferred = spec.get("deferred") or []
-        kept_p2 = pick(loop, chat, deferred)
         # `p2` stays as the cell wrote it — the next candidates read it; the
         # comment goes up on GitHub, read by a person, in Korean.
         shown = translate.translate(kept_p2, translate.EN_KO, time.monotonic() + specs.TRANSLATE_SECONDS)
@@ -979,7 +1044,9 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
         return False
     if verification.cloud(spec):
         verification.return_to_cloud(repo, spec, head, final["reason"] + "\n" + final["tail"], ["offline/final"])
-        return stop(loop, loop.repo, loop.sid, Why.GATE, "최종 게이트 실패 — 클라우드 수정 대기")
+        return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, "최종 게이트 실패 — 클라우드 수정 대기")
+    if spec.get("implementation_environment") == "external":
+        return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, "최종 게이트 실패 — 외부에서 수정 후 다음 라운드를 시작한다")
     spec = change(loop, f"고치는 중 R{n}")
     if spec is None or told(loop, spec, path, repair(final["command"], final)) is None:
         return False
@@ -992,7 +1059,53 @@ def cloud_stop(loop: Loop, repo: Path, spec: dict, head: str, reason: str) -> bo
     spec = specs.load(loop.repo, loop.sid) or spec
     state = (spec.get("local_verification") or {}).get("state")
     verification.pending(repo, spec, head, reason, state if state in ("reanalysis", "unstable") else "waiting_environment")
-    return stop(loop, loop.repo, loop.sid, Why.GATE, "로컬 검증 준비 대기 — " + verification.redact(reason, verification.local(repo)))
+    return stop(loop, loop.repo, loop.sid, Why.PREPARATION, "로컬 검증 준비 대기 — " + verification.redact(reason, verification.local(repo)))
+
+
+def sync_review(spec: dict, path: Path, head: str) -> None:
+    """Move a clean review checkout to the remote head, preserving local branches."""
+
+    branch = specs.branch_of(spec)
+    fetched = specs.sh(["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"], path, 120)
+    if fetched.returncode:
+        raise ValueError("PR 커밋을 가져오지 못했다")
+    dirty = specs.sh(["git", "status", "--porcelain"], path)
+    if dirty.returncode or dirty.stdout.strip():
+        raise ValueError("로컬 리뷰 폴더에 커밋 안 된 변경이 있다")
+    local = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+    if local == head:
+        return
+    detached = specs.sh(["git", "symbolic-ref", "-q", "HEAD"], path).returncode == 1
+    if detached or spec.get("implementation_environment", "local") != "local":
+        synced = specs.sh(["git", "checkout", "--detach", head], path, 60)
+    else:
+        if specs.sh(["git", "merge-base", "--is-ancestor", local, head], path).returncode:
+            raise ValueError("리뷰 폴더와 PR 커밋이 갈라졌다 — 사용자 확인 필요")
+        synced = specs.sh(["git", "merge", "--ff-only", head], path, 60)
+    if synced.returncode or specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head:
+        raise ValueError("리뷰 폴더를 PR 커밋으로 옮기지 못했다")
+
+
+def external_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str) -> bool:
+    release = wait_hold(loop, path)
+    if release is None:
+        return False
+    try:
+        sync_review(spec, path, head)
+        chosen = specs.selected(repo, path, base, specs.required(repo, spec))
+        if reusable(spec, head, chosen):
+            return True
+        verdict, record = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
+        specs.validate(loop.repo, loop.sid, round=record)
+        if change(loop, gate=verdict) is None:
+            return False
+        if not verdict["ok"]:
+            return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, verdict["reason"] + "\n" + verdict["tail"])
+        return True
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        return stop(loop, loop.repo, loop.sid, Why.GATE, str(exc))
+    finally:
+        release()
 
 
 def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str) -> bool:
@@ -1002,19 +1115,7 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
     if release is None:
         return False
     try:
-        branch = specs.branch_of(spec)
-        fetched = specs.sh(["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"], path, 120)
-        if fetched.returncode:
-            raise ValueError("클라우드 커밋을 가져오지 못했다")
-        if specs.sh(["git", "status", "--porcelain"], path).stdout.strip():
-            raise ValueError("로컬 검증 폴더에 커밋 안 된 변경이 있다")
-        local = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
-        if local != head:
-            if specs.sh(["git", "merge-base", "--is-ancestor", local, head], path).returncode:
-                raise ValueError("검증 폴더와 클라우드 커밋이 갈라졌다 — 사용자 확인 필요")
-            synced = specs.sh(["git", "merge", "--ff-only", head], path, 60)
-            if synced.returncode:
-                raise ValueError("검증 폴더를 클라우드 커밋으로 옮기지 못했다")
+        sync_review(spec, path, head)
         spec = verification.deliver(repo, spec, head)
         if (spec.get("local_verification") or {}).get("delivery"):
             return stop(loop, loop.repo, loop.sid, Why.GATE, spec["local_verification"]["reason"])
@@ -1024,7 +1125,8 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
         transfer = verification.handoff(view["body"], head)
         # The handoff already comes from the PR cloud can read. Preserve its
         # public commit and commands; runtime observation payloads are redacted.
-        spec = specs.update(loop.repo, loop.sid, cloud_handoff=transfer)
+        spec = specs.update(loop.repo, loop.sid, cloud_handoff=transfer,
+                            pr={**spec["pr"], "head": head, "base": base})
         record = spec.get("local_verification") or {}
         if record.get("needs_research") and not record.get("research_note"):
             raise ValueError("재분석 원인·근거·다음 실험을 적고 로컬 검증을 재개한다")
@@ -1037,7 +1139,8 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
         if loop.halt.is_set():
             return False
         if spec["local_verification"]["state"] != "runtime_passed":
-            return stop(loop, loop.repo, loop.sid, Why.GATE, spec["local_verification"]["reason"])
+            why = Why.EXTERNAL if spec["local_verification"]["state"] == "waiting_cloud" else Why.PREPARATION
+            return stop(loop, loop.repo, loop.sid, why, spec["local_verification"]["reason"])
         chosen = specs.selected(repo, path, base, specs.required(repo, spec))
         if not reusable(spec, head, chosen):
             settings = verification.redaction(verification.local(repo), path)
@@ -1049,7 +1152,7 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
                 return False
             if not verdict["ok"]:
                 verification.return_to_cloud(repo, spec, head, verdict["reason"] + "\n" + verdict["tail"], ["offline/round"])
-                return stop(loop, loop.repo, loop.sid, Why.GATE, "게이트 실패 — 클라우드 수정 대기")
+                return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, "게이트 실패 — 클라우드 수정 대기")
         if pr_head(repo, spec["pr"]["number"]) != (head, base):
             raise ValueError("로컬 검증 중 PR 커밋·base 가 바뀌었다")
         return True
@@ -1078,17 +1181,21 @@ def step(loop: Loop) -> bool:
     rounds, pr = counted(spec), spec["pr"]["number"]
     n = len(rounds) + 1
     head, base = pr_head(repo, pr)
-    ship = cloud_shipped if verification.cloud(spec) else shipped
+    ship = cloud_shipped if verification.cloud(spec) else external_shipped if spec.get("implementation_environment") == "external" else shipped
     if not ship(loop, spec, repo, path, head, base):
         return False
     spec = specs.load(loop.repo, loop.sid)
     head, base = pr_head(repo, pr)
+    if (spec.get("gate") or {}).get("head") != head:
+        # A remote push after synchronization needs its own checks before review.
+        return True
     if verification.cloud(spec):
         problem = verification.proven(repo, path, spec, head, specs.current_merge_base(path, base, head))
         if problem:
             return cloud_stop(loop, repo, spec, head, problem)
     last = rounds[-1] if rounds else None
-    if (last and last["verdict"] == "allow" and (last["head"], last["base"]) == (head, base)
+    again = spec.get("review_again", False)
+    if (not again and last and last["verdict"] == "allow" and (last["head"], last["base"]) == (head, base)
             and (not verification.cloud(spec) or last.get("local_verification_digest") == verification.evidence_identity(spec))):
         # Allowed already, with no final gate that stands: one from before
         # `validation`, one a restart cut, or one that failed and was resumed.
@@ -1097,7 +1204,7 @@ def step(loop: Loop) -> bool:
         return spec is not None and allowed(loop, spec, repo, path, cell(spec, path), last["n"], head, base)
     if n > cap(spec):
         return stop(loop, loop.repo, loop.sid, Why.CAP, f"{cap(spec)} 라운드를 다 돌았다")
-    spec = change(loop, f"리뷰 R{n}")
+    spec = change(loop, f"리뷰 R{n}", review_again=False)
     if spec is None:
         return False
     chat = cell(spec, path)
@@ -1107,10 +1214,13 @@ def step(loop: Loop) -> bool:
     # The changed paths decide the criteria before the review, never after.
     base_oid = specs.current_merge_base(path, base, head)
     profile = effective(spec, changed(path, base_oid, head))
-    order.write_text(instruction(spec, path, n, head, base, chat.is_codex, profile, base_oid), encoding="utf-8")
+    review_instruction = instruction(spec, path, n, head, base, chat.is_codex, profile, base_oid)
+    order.write_text(review_instruction, encoding="utf-8")
 
     settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
-    parsed, why, ask_for = None, "", f"Read `{order}` and review."
+    # The round record lives outside the worktree. Supply it directly rather
+    # than widening the reviewer's filesystem access to raw session storage.
+    parsed, why, ask_for = None, "", f"Review the instruction below (recorded at `{order}`):\n\n{review_instruction}"
     for _ in range(2):
         try:
             answer = ask(loop, chat, ask_for)
@@ -1120,6 +1230,10 @@ def step(loop: Loop) -> bool:
             detail = verification.redact(str(exc), settings) if verification.cloud(spec) else str(exc)
             why = f"리뷰 셀이 답하지 못했다 — {detail}"
             continue
+        if verification.cloud(spec):
+            integrity = verification.checkout_proven(path, head)
+            if integrity:
+                return cloud_stop(loop, repo, spec, head, integrity)
         try:
             parsed = parse(answer, n, pr, head, set(issues(spec)))
             if verification.cloud(spec):
@@ -1205,7 +1319,11 @@ def step(loop: Loop) -> bool:
         names = [f["id"] or f"review/{f['file']}:{f['line']}" for f in serious] or ["review/verdict"]
         details = "\n\n".join(f"[{f['grade']}] {f['file']}:{f['line']} — {f['head']}\n{f['body']}" for f in serious)
         verification.return_to_cloud(repo, spec, head, parsed["said"] + "\n\n" + details, names)
-        return stop(loop, loop.repo, loop.sid, Why.GATE, "로컬 리뷰 거절 — 클라우드 수정 대기")
+        return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, "로컬 리뷰 거절 — 클라우드 수정 대기")
+
+    if spec.get("implementation_environment") == "external":
+        details = "\n\n".join(f["head"] + "\n" + f["body"] for f in record["items"])
+        return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, parsed["said"] + "\n\n" + details)
 
     spec = change(loop, f"고치는 중 R{n}")
     if spec is None:
@@ -1598,7 +1716,8 @@ def proceed(repo: Path, spec: dict, note: str) -> dict:
         raise HTTPException(409, f"`{spec['repo']}` 가 아직 작업 공간에 없다")
     elif why is Why.NO_WORKTREE:
         view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "headRefName,headRefOid"])
-        path = adopted(repo, view["headRefName"], view["headRefOid"])
+        path = adopted(repo, view["headRefName"], view["headRefOid"],
+                       detached=spec.get("implementation_environment", "local") != "local")
         specs.update(repo.name, sid, worktree=str(path), pr={**spec["pr"], "branch": view["headRefName"]})
     elif why is Why.LEFT_QUEUE:
         view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "state,headRefOid,baseRefName"])
@@ -1626,12 +1745,12 @@ def gh_or_502(repo: Path, args: list[str]) -> dict:
         raise HTTPException(502, str(exc)) from exc
 
 
-def adopted(repo: Path, branch: str, oid: str) -> Path:
+def adopted(repo: Path, branch: str, oid: str, detached: bool = False) -> Path:
     """`workspace.adopt`, held like making a worktree: the switch waits."""
 
     release = hold(work._busy, _lock, str(worktree_home(repo) / folder_for(branch)), "그 작업트리를 다른 요청이 쓰고 있다")
     try:
-        return adopt(repo, branch, oid)
+        return adopt(repo, branch, oid, detached=detached)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
@@ -1646,6 +1765,26 @@ def resume(sid: str, body: Resume) -> dict:
     if spec["state"] != "멈춤":
         raise HTTPException(409, "멈춘 명세만 잇는다")
     return proceed(repo, spec, body.note.strip())
+
+
+@router.post("/api/specs/{sid}/review")
+def review_again(sid: str) -> dict:
+    """Explicitly request another independent round, including a remote PR head."""
+
+    repo, spec = mine(sid)
+    if LOOPING.fullmatch(spec["state"]):
+        raise HTTPException(409, "리뷰가 이미 돌고 있다")
+    if not spec.get("pr") or spec["state"] != "머지 가능" and not spec["state"].startswith("PR #"):
+        raise HTTPException(409, "이 상태에서는 새 리뷰를 시작하지 않는다")
+    if spec.get("plan_commit") == "asked":
+        raise HTTPException(409, "계획 행 커밋이 아직이다")
+    with specs._files:
+        extra = spec.get("extra", 0)
+        if len(counted(spec)) >= cap(spec):
+            extra += MORE
+        specs.update(repo.name, sid, review_again=True, extra=extra)
+    kick(repo.name, sid)
+    return specs.view(repo, specs.load(repo.name, sid))
 
 
 @router.post("/api/specs/{sid}/halt")
@@ -1695,7 +1834,7 @@ def refusal(row: dict, spec: dict | None) -> str:
     reason = (spec.get("stopped") or {}).get("reason")
     if stranded(spec):
         return ""
-    if verification.cloud(spec) and spec["state"] == "머지 가능":
+    if spec["state"] == "머지 가능":
         return ""
     if spec["state"].startswith("PR #") and spec.get("plan_commit") == "asked":
         return "계획 행 커밋이 아직이다 — 에이전트 탭에서 행을 고쳐 커밋하게 하면 리뷰로 간다"
@@ -1763,14 +1902,19 @@ def take(repo: Path, n: int, environment: str = "local") -> str:
         why = refusal({}, spec)
         if why:
             raise HTTPException(409, why)
-        if environment == "claude-cloud" and not verification.cloud(spec):
+        view = gh_or_502(repo, ["pr", "view", str(n), "--json", "body"])
+        if verification.cloud(spec) or "```cloud-handoff" in (view.get("body") or ""):
+            environment = "claude-cloud"
+        if environment != "local" and environment != spec.get("implementation_environment", "local"):
             if counted(spec):
-                raise HTTPException(409, "이미 시작한 로컬 리뷰를 클라우드 구현으로 바꾸지 않는다")
-            spec = specs.update(repo.name, spec["id"], implementation_environment="claude-cloud")
-        if stranded(spec):
+                raise HTTPException(409, "이미 시작한 리뷰의 구현 환경을 바꾸지 않는다")
+            spec = specs.update(repo.name, spec["id"], implementation_environment=environment)
+        if spec["state"].startswith("PR #"):
             kick(repo.name, spec["id"])
             return spec["id"]
-        if verification.cloud(spec) and spec["state"] == "머지 가능":
+        if spec["state"] == "머지 가능":
+            specs.update(repo.name, spec["id"], review_again=True,
+                         extra=spec.get("extra", 0) + (MORE if len(counted(spec)) >= cap(spec) else 0))
             kick(repo.name, spec["id"])
             return spec["id"]
         return proceed(repo, spec, "")["id"]
@@ -1786,7 +1930,7 @@ def take(repo: Path, n: int, environment: str = "local") -> str:
     sid = folder_for(view["headRefName"])
     if sid and specs.file_of(repo.name, sid).exists():
         raise HTTPException(409, f"같은 이름의 명세 `{sid}` 가 이미 있다")
-    path = adopted(repo, view["headRefName"], view["headRefOid"])
+    path = adopted(repo, view["headRefName"], view["headRefOid"], detached=environment != "local")
     with specs._files:
         specs.save({**minimal(repo, view, path, gate), "implementation_environment": environment})
     kick(repo.name, path.name)
@@ -1795,7 +1939,7 @@ def take(repo: Path, n: int, environment: str = "local") -> str:
 
 class Pick(BaseModel):
     prs: list[int]
-    implementation_environment: Literal["local", "claude-cloud"] = "local"
+    implementation_environment: Literal["local", "claude-cloud", "external"] = "local"
 
 
 @router.post("/api/loops")
@@ -1844,6 +1988,59 @@ def round_file(sid: str, n: int, what: Literal["order", "result"] = "result") ->
     if not file.is_file():
         raise HTTPException(404, "그 라운드 파일이 없다")
     return {"path": str(file), "text": file.read_text(encoding="utf-8")}
+
+
+@router.get("/api/specs/{sid}/review/log")
+def review_log(sid: str) -> dict:
+    repo, spec = mine(sid)
+    if not spec.get("pr"):
+        return {"rows": [], "running": None}
+    with _lock:
+        run = _review_runs.get((repo.name, sid))
+    active = run is not None and not run.done
+    try:
+        lines = (folder(repo.name, spec["pr"]["number"]) / "progress.jsonl").read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    rows = []
+    for line in lines:
+        try:
+            row = json.loads(line)
+            if not active or row.get("turn") != run.turn:
+                rows.append(row)
+        except ValueError:
+            continue
+    return {"rows": rows, "running": {"turn": run.turn, "session_id": run.session_id} if active else None}
+
+
+@router.get("/api/specs/{sid}/review/events")
+def review_events(sid: str, turn: str, after: int = -1) -> StreamingResponse:
+    repo, _spec = mine(sid)
+    with _lock:
+        run = _review_runs.get((repo.name, sid))
+    if run is None or run.turn != turn:
+        raise HTTPException(410, "그 리뷰 턴은 이제 없다")
+    return streaming(work.tail(run, after))
+
+
+@router.get("/api/specs/{sid}/cloud-instructions")
+def cloud_instructions(sid: str) -> dict:
+    repo, spec = mine(sid)
+    if not verification.cloud(spec) or not spec.get("pr"):
+        raise HTTPException(409, "클라우드 구현의 PR 만 인계한다")
+    head, _base = pr_head(repo, spec["pr"]["number"])
+    return {"text": (
+        f"Prepare PR #{spec['pr']['number']} for local review. Current remote head: {head}.\n\n"
+        "Commit verification.json with this repository's complete major-flow checklist, API/data contracts, "
+        "and runnable verification commands as described in docs/local-verification.md of wiki-agent. "
+        "Do not commit .env, credentials, or private datasets.\n\n"
+        "Add exactly one fenced cloud-handoff JSON block to the PR body, with version: 1, "
+        "implementation: claude-code-cloud, head: the full current commit, summary, run (instructions), "
+        "checks (only checks actually completed), and unverified (behavior requiring local execution). "
+        "Refresh head after every correction. Do not invent completed checks.\n\n"
+        "Read the local review's failure evidence, fix it in cloud, push the correction and update the "
+        "handoff. The person then starts the next local review round."
+    )}
 
 
 class Settings(BaseModel):

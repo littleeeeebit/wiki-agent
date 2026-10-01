@@ -9,6 +9,11 @@ write the CLI wants to make arrives as an `approval` event and waits for
 `answer`. Codex sessions run `app-server`, which keeps one process across
 turns and is the only way Codex asks; `exec` is left to the isolated plain
 explanation.
+
+`verification=<artifact directory>` is an independent Cloud review cell, not
+an implementation session: it executes and creates verification files with
+workspace-write permissions and no interactive approvals. Its artifacts and
+temporary files are kept outside the reviewed source.
 """
 
 from __future__ import annotations
@@ -28,6 +33,7 @@ from pathlib import Path
 from common import worktree_home
 
 from .chat_local import cli_command
+from . import read_tools
 
 # Something opened in a browser that edits files is not a chat, it is a remote
 # shell. So `Edit` and `Write` are not on the list.
@@ -82,7 +88,7 @@ class Event:
     one — room for a coordinator, `None` until there is one.
     """
 
-    kind: str          # "delta" | "tool" | "hook" | "approval" | "done" | "error" | "context"
+    kind: str          # "delta" | "progress" | "tool" | "hook" | "approval" | "done" | "error" | "context"
     text: str = ""
     meta: dict = field(default_factory=dict)
     session_id: str = ""
@@ -117,28 +123,45 @@ def _blocks(message: dict) -> list[dict]:
 class ChatSession:
     """One channel's live conversation. One turn runs at a time."""
 
+    READ_PROFILE = read_tools.PROFILE
+    VERIFICATION_PROFILE = "cloud-verification-v1"
+    VERIFICATION_TOOLS = "Bash,Read,Glob,Grep,Edit,Write"
+
     def __init__(self, repo: Path, tools: str = READ_TOOLS,
                  system: str = "", model: str | None = None,
                  effort: str | None = None, resume: str | None = None,
                  isolated: bool = False, write: bool = False,
-                 parent_id: str | None = None, bypass: bool = False) -> None:
+                 parent_id: str | None = None, bypass: bool = False,
+                 verification: Path | None = None, env: dict | None = None) -> None:
         self.repo = Path(repo)
         # Writes go to a worktree, never to the checkout a person works in.
-        if write and not our_worktree(self.repo):
+        if (write or verification is not None) and not our_worktree(self.repo):
             raise ValueError(f"쓰기 세션은 workspace 가 만든 작업트리에서만 연다: {self.repo}")
+        if verification is not None and (write or isolated):
+            raise ValueError("클라우드 검증 셀은 구현·격리 응답 세션과 별개다")
+        self.verification = Path(verification).resolve() if verification is not None else None
+        if self.verification is not None:
+            self.verification.mkdir(parents=True, exist_ok=True)
         self.write = write
         # A write session that asks nobody: Claude's `bypassPermissions`, Codex
         # `danger-full-access` with `never`. The CLI then never asks, so the
         # outside-the-worktree refusal in `_approval` does not run either;
         # Claude's `permissions.deny` still does. Fixed at start-up, like the model.
         self.bypass = bypass and write
-        self.tools = WRITE_TOOLS if write else tools
+        self.tools = self.VERIFICATION_TOOLS if self.verification is not None else WRITE_TOOLS if write else tools
         self.id = uuid.uuid4().hex
         self.parent_id = parent_id
         # The CLI's login is whatever its environment points at (`CODEX_HOME`,
         # Claude's config). Held from here, so a restart or a `--resume` goes
         # on as the same account even if the server's environment changed.
-        self._env = dict(os.environ)
+        self._env = {**os.environ, **(env or {})}
+        if self.verification is not None:
+            # Keep routine tool caches and transient output out of the reviewed source.
+            temporary = self.verification / "tmp"
+            temporary.mkdir(exist_ok=True)
+            self._env.update(WIKI_VERIFICATION_ARTIFACTS=str(self.verification),
+                             PYTHONDONTWRITEBYTECODE="1", PIP_CACHE_DIR=str(self.verification / "pip-cache"),
+                             TEMP=str(temporary), TMP=str(temporary), TMPDIR=str(temporary))
         # A channel's character goes in as a system prompt. The first version
         # sent it as the opening turn and that one turn took two minutes — the
         # model reads the introduction and starts going through files. A
@@ -205,6 +228,11 @@ class ChatSession:
         `app-server` has no `--ignore-user-config`."""
         return self.is_codex and not self.isolated
 
+    @property
+    def source_only(self) -> bool:
+        return (self.app and not self.write and self.verification is None
+                and set(self.tools.split(",")) == {"Read", "Glob", "Grep"})
+
     # -- Lifetime -----------------------------------------------------------
 
     def _spawn(self) -> None:
@@ -227,7 +255,7 @@ class ChatSession:
             # The prompt tool stays: without it the CLI drops `AskUserQuestion`,
             # which is the one thing a bypass session still asks.
             cmd += ["--permission-mode", "bypassPermissions", "--permission-prompt-tool", "stdio"]
-        elif self.write:
+        elif self.write or self.verification is not None:
             # Named, so a `defaultMode` of `acceptEdits` in someone's settings
             # cannot skip the question.
             cmd += ["--permission-mode", "default", "--permission-prompt-tool", "stdio"]
@@ -248,6 +276,22 @@ class ChatSession:
             # `request_user_input` is Plan mode's only, unless this is on (CLI 0.156.0).
             cmd = ["codex", "app-server"] + (["--enable", "default_mode_request_user_input"] if self.write
                                              else ["--disable", "multi_agent"])
+            if self.source_only or self.verification is not None:
+                for feature in ("apps", "plugins", "computer_use", "request_permissions_tool",
+                                "default_mode_request_user_input", "memories"):
+                    cmd += ["--disable", feature]
+                if self.source_only:
+                    cmd += ["--disable", "shell_tool", "--disable", "unified_exec", "--disable", "browser_use",
+                            "-c", 'web_search="disabled"', "-c", "tools.view_image=false"]
+                else:
+                    cmd += ["--enable", "shell_tool", "--enable", "unified_exec"]
+                    if os.name == "nt":
+                        # Session-local documented fallback; no account config
+                        # edits or dedicated sandbox-user setup for verification.
+                        cmd += ["-c", 'windows.sandbox="unelevated"']
+                # Dynamic function calls use this host in current Codex. It
+                # exposes only the tools above, not a native shell or filesystem.
+                cmd += ["--enable", "code_mode_host"]
             self.model_name = self.model.removeprefix("codex:")
         elif self.is_codex:
             cmd = ["codex", "exec", "--model", self.model.removeprefix("codex:"),
@@ -324,8 +368,9 @@ class ChatSession:
         """`app-server` holds no conversation until asked to start or resume one.
 
         `read-only` with `untrusted` is what makes a write session ask:
-        anything but a known read-only command becomes an approval request. A
-        read session never asks — `_approval` would refuse it anyway.
+        anything but a known read-only command becomes an approval request.
+        An ordinary read session never asks — `_approval` would refuse it
+        anyway. Cloud verification uses workspace-write with `never`.
 
         A thread Codex says is not there is not dropped in silence: a new one
         starts, and the next turn says so. Anything else — a slow answer, a
@@ -333,13 +378,32 @@ class ChatSession:
         the next try: a slow resume must not cost the conversation.
         """
 
-        self._call("initialize", {"clientInfo": {"name": "wiki-agent", "version": "0.1.0"}})
+        self._call("initialize", {"clientInfo": {"name": "wiki-agent", "version": "0.1.0"},
+                                  **({"capabilities": {"experimentalApi": True}} if self.source_only else {})})
         self._send({"method": "initialized"})
-        params = {"cwd": str(self.repo), "sandbox": "danger-full-access" if self.bypass else "read-only",
+        params = {"cwd": str(self.repo), "sandbox": "workspace-write" if self.verification is not None
+                  else "danger-full-access" if self.bypass else "read-only",
                   "approvalPolicy": "untrusted" if self.write and not self.bypass else "never",
                   "model": self.model_name}
         if self.system:
             params["developerInstructions"] = self.system
+        if self.source_only or self.verification is not None:
+            # Do not inherit connector tools from global or project settings.
+            # Read the effective names only; never expose config/credentials to the model.
+            config = self._call("config/read", {"cwd": str(self.repo), "includeLayers": False})["config"]
+            if any(not name or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+                                   for c in name) for name in config.get("mcp_servers", {})):
+                raise ValueError("리뷰 셀에서 차단할 MCP 서버 이름을 확인할 수 없다")
+            params["config"] = {f"mcp_servers.{name}.enabled": False
+                                for name in config.get("mcp_servers", {})}
+            if self.source_only:
+                params["developerInstructions"] = self.system + (
+                    "\nUse repo_read, repo_glob and repo_grep for source inspection. Shell, connectors and "
+                    "permission requests are unavailable. The server supplies the diff and executes checks; "
+                    "never request escalated permissions or claim unexecuted tests passed.")
+            else:
+                params["config"].update({"sandbox_workspace_write.writable_roots": [str(self.verification)],
+                                         "sandbox_workspace_write.network_access": True})
         result = None
         if self._resume:
             try:
@@ -350,6 +414,8 @@ class ChatSession:
                     raise
                 self._lost = self._resume
         if result is None:
+            if self.source_only:
+                params["dynamicTools"] = read_tools.SPECS
             result = self._call("thread/start", params)
         self.session_id = result["thread"]["id"]
 
@@ -477,7 +543,8 @@ class ChatSession:
         target = Path(path)
         target = (target if target.is_absolute() else self.repo / target).resolve()
         root = self.repo.resolve()
-        return "" if target == root or root in target.parents else str(target)
+        roots = [root, *([self.verification] if self.verification is not None else [])]
+        return "" if any(target == r or r in target.parents for r in roots) else str(target)
 
     def _approval(self, key: str, reply, tool: str, args: dict, text: str, outside: str) -> Event:
         """An approval event for the person, or a refusal nobody is asked about.
@@ -490,10 +557,14 @@ class ChatSession:
         who answered it, so the record keeps it with the rest.
         """
 
-        if outside or not self.write:
+        if outside or (not self.write and self.verification is None):
             self._send(reply(False))
             return Event("approval", text, {"id": key, "tool": tool, "input": args, "answer": "deny",
                                             "by": "outside" if outside else "read"})
+        if self.verification is not None and tool not in QUESTIONS:
+            self._send(reply(True))
+            return Event("approval", text, {"id": key, "tool": tool, "input": args,
+                                            "answer": "allow", "by": "verification"})
         rule = self._rule(tool, args)
         if rule is not None and rule in self._rules:
             self._send(reply(True))
@@ -512,6 +583,27 @@ class ChatSession:
             return {"id": rid, "result": {"decision": "accept" if allow else "decline"}}
 
         reason = params.get("reason")
+        if self.verification is not None and method in {
+                "item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
+            # Normal workspace execution never asks. An unexpected request is
+            # an escalation, not permission to bypass the configured sandbox.
+            self._send(reply(False))
+            return Event("tool", "검증 범위를 벗어난 권한 요청은 허용하지 않는다.",
+                         {"tool": method, "answer": "deny", "by": "verification"})
+        if method == "item/tool/call" and self.source_only:
+            tool = params.get("tool", "")
+            try:
+                output = read_tools.call(self.repo, tool, params.get("arguments"))
+                success = True
+            except (OSError, ValueError, subprocess.SubprocessError):
+                # Exception text can contain private paths or file bytes.
+                output, success = "읽기 실패: 추적된 소스 경로와 검색 인수를 확인해라.", False
+            self._send({"id": rid, "result": {"contentItems": [{"type": "inputText", "text": output}],
+                                              "success": success}})
+            return Event("tool", f"소스 읽기 · {tool}"[:120], {"tool": tool, "success": success})
+        if method == "item/permissions/requestApproval" and not self.write:
+            self._send({"id": rid, "result": {"permissions": {}, "scope": "turn"}})
+            return Event("tool", "리뷰 셀은 설정된 범위 밖의 추가 권한을 요청하지 않는다.")
         if method == "item/tool/requestUserInput":
             questions = params.get("questions") or []
 
@@ -625,6 +717,12 @@ class ChatSession:
             if self.app:
                 start = self._request("turn/start", {
                     "threadId": self.session_id, "input": [{"type": "text", "text": text}],
+                    **({"approvalPolicy": "never", "sandboxPolicy": {
+                        "type": "workspaceWrite", "writableRoots": [str(self.repo.resolve()), str(self.verification)],
+                        "networkAccess": True, "excludeTmpdirEnvVar": True, "excludeSlashTmp": True}}
+                       if self.verification is not None else
+                       {"approvalPolicy": "never", "sandboxPolicy": {"type": "readOnly"}}
+                       if not self.write else {}),
                     **({"effort": self.effort} if self.effort else {})})
                 self._start_rpc = start["id"]
                 sent = self._send(start)
@@ -727,7 +825,13 @@ class ChatSession:
                         yield Event("tool", str(item.get("command") or item.get("tool")
                                                 or item.get("query") or item["type"])[:120], {"tool": item["type"]})
                 elif method == "item/completed" and item.get("type") == "agentMessage":
-                    final = str(item.get("text") or "")
+                    message = str(item.get("text") or "")
+                    # Older app-server versions omit phase. Keep each completed
+                    # message; consumers remove the final answer's duplicate.
+                    if item.get("phase") in (None, "commentary"):
+                        yield Event("progress", message)
+                    if item.get("phase") != "commentary":
+                        final = message
                 elif method == "thread/tokenUsage/updated":
                     last = (params.get("tokenUsage") or {}).get("last") or {}
                     for mine, theirs in (("in", "inputTokens"), ("out", "outputTokens"),
@@ -812,7 +916,11 @@ class ChatSession:
                 yield self._approval(rid, reply, name, args, _tool_brief({"name": name, "input": args}), outside)
 
             elif kind == "assistant":
-                for block in _blocks(ev.get("message") or {}):
+                blocks = list(_blocks(ev.get("message") or {}))
+                progress = "\n\n".join(b.get("text", "") for b in blocks if b.get("type") == "text")
+                if progress.strip():
+                    yield Event("progress", progress)
+                for block in blocks:
                     if block.get("type") == "tool_use":
                         # `tool` names it: whether a web search ran is read from here (`planning`).
                         yield Event("tool", _tool_brief(block), {"tool": str(block.get("name") or "")})
@@ -903,11 +1011,11 @@ def _tool_brief(block: dict) -> str:
     name = str(block.get("name") or "?")
     args = block.get("input") or {}
     command = args.get("command")
-    ran = f" · $ {' '.join(command.split())[:160]}" if isinstance(command, str) and command.strip() else ""
+    ran = f" · $ {command.strip()[:160]}" if isinstance(command, str) and command.strip() else ""
     for key in ("description", "file_path", "pattern", "path"):
         value = args.get(key)
         if isinstance(value, str) and value.strip():
-            return f"{name} · {' '.join(value.split())[:90]}{ran}"
+            return f"{name} · {value.strip()[:90]}{ran}"
     return f"{name}{ran}"
 
 

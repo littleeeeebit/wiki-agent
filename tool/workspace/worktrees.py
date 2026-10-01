@@ -56,7 +56,7 @@ def folder_for(branch: str) -> str:
     return name if TASK.fullmatch(name) else ""
 
 
-def adopt(repo: Path, branch: str, oid: str) -> Path:
+def adopt(repo: Path, branch: str, oid: str, detached: bool = False) -> Path:
     """A worktree on a pull request's existing branch, standing on `oid`.
 
     `create` starts a new branch from HEAD, and a review cell there would read
@@ -67,6 +67,7 @@ def adopt(repo: Path, branch: str, oid: str) -> Path:
     leaves one behind. At `oid` it is used; anywhere else it is refused, not
     moved: it may hold commits that exist nowhere else. A branch made here
     that does not land on `oid` is taken away again, worktree and all.
+    A detached external review uses `oid` without touching a local branch.
     """
 
     repo = _main(repo)
@@ -78,18 +79,20 @@ def adopt(repo: Path, branch: str, oid: str) -> Path:
         raise RuntimeError(fetched.stderr.strip() or f"git fetch 실패: {branch}")
     path = worktree_home(repo) / task
     local = _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").stdout.strip()
-    if local and local != oid:
+    if local and local != oid and not detached:
         raise RuntimeError(f"로컬 `{branch}` 가 PR 머리와 다르다 — 로컬 {local[:12]}, PR {oid[:12]}")
-    args = ["worktree", "add", str(path), branch] if local else \
+    args = ["worktree", "add", "--detach", str(path), oid] if detached else \
+        ["worktree", "add", str(path), branch] if local else \
         ["worktree", "add", "--track", "-b", branch, str(path), f"origin/{branch}"]
     done = _git(repo, *args)
     if done.returncode:
         raise RuntimeError(done.stderr.strip() or f"git worktree add 실패: {branch}")
     head = _git(path, "rev-parse", "HEAD").stdout.strip()
     if head != oid:
-        if not local:
+        if detached or not local:
             _git(repo, "worktree", "remove", "--force", str(path))
-            _git(repo, "branch", "-D", branch)
+            if not detached:
+                _git(repo, "branch", "-D", branch)
         raise RuntimeError(f"받은 작업트리가 PR 머리에 서지 않았다 — {head[:12]}, PR {oid[:12]}")
     return path
 

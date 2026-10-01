@@ -452,8 +452,9 @@ def steps(events: list[dict]) -> list[dict]:
     for ev in events:
         meta = ev["meta"]
         # A hook's `context` is left out too: it is the wiki's, and the wiki has it.
-        if ev["kind"] in ("tool", "said", "hook"):
-            out.append({"kind": ev["kind"], "text": ev["text"]})
+        if ev["kind"] in ("tool", "progress", "said", "hook"):
+            out.append({"kind": ev["kind"], "text": ev["text"],
+                        **({"command": True} if meta.get("tool") in ("commandExecution", "command_execution") else {})})
         elif ev["kind"] == "approval":
             # `none`: the turn ended before anyone answered.
             step = asked[str(meta.get("id"))] = {
@@ -463,6 +464,11 @@ def steps(events: list[dict]) -> list[dict]:
         elif ev["kind"] == "answered" and str(meta.get("id")) in asked:
             asked[str(meta["id"])].update(answer="allow" if meta["allow"] else "deny", by=meta["by"],
                                           **({"answers": meta["answers"]} if meta.get("answers") else {}))
+        elif ev["kind"] == "done":
+            # Stop hooks can arrive between the final text block and its result.
+            last = next((i for i in range(len(out) - 1, -1, -1) if out[i]["kind"] != "hook"), None)
+            if last is not None and out[last]["kind"] == "progress" and out[last]["text"] == ev["text"]:
+                del out[last]
     return out
 
 
@@ -531,7 +537,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> 
                 # Where the answer stood among the steps: what came after it —
                 # the gate — is shown after it, in the record too.
                 at = next((i for i, e in enumerate(run.events) if e["kind"] == "done"), None)
-                answered = {} if at is None else {"answered": len(steps(run.events[:at]))}
+                answered = {} if at is None else {"answered": len(steps(run.events[:at + 1]))}
             remember(path, "assistant", final, error=failed, steps=made,
                      provider="codex" if chat.is_codex else "claude", **answered, **meta)
         finally:

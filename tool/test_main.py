@@ -41,6 +41,22 @@ def client() -> TestClient:
     return Screen(main_app.app, base_url="http://127.0.0.1:8787")
 
 
+@pytest.mark.parametrize("hooks", [[], [{"kind": "hook", "text": "Stop hook", "meta": {}}]])
+def test_progress_record_preserves_lines_without_duplicating_the_final_answer(hooks):
+    events = [{"kind": kind, "text": text, "meta": meta} for kind, text, meta in [
+        ("progress", "Checking.\nSecond line.", {}),
+        ("tool", "git status\ngit diff", {"tool": "commandExecution"}),
+        ("progress", "Finished.", {}), ("done", "Finished.", {}),
+        ("tool", "Final gate", {})]]
+    events[3:3] = hooks
+    assert work.steps(events) == [
+        {"kind": "progress", "text": "Checking.\nSecond line."},
+        {"kind": "tool", "text": "git status\ngit diff", "command": True},
+        *[{"kind": row["kind"], "text": row["text"]} for row in hooks],
+        {"kind": "tool", "text": "Final gate"}]
+    assert len(work.steps(events[:-1])) == 2 + len(hooks)
+
+
 @pytest.fixture(autouse=True)
 def no_machine_settings(tmp_path):
     with patch.object(chat_channels, "LOCAL", {}), patch.object(chat, "LOGS", tmp_path), \

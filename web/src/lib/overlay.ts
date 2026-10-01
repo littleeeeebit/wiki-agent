@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { renderAll, renderChecked } from '@/lib/api'
 
 /** The Korean overlay over an English answer.
@@ -19,38 +19,34 @@ import { renderAll, renderChecked } from '@/lib/api'
  *
  *  Off means no request at all, not a request whose answer is discarded. */
 const memory = new Map<string, string>()
+const pending = new Map<string, Promise<void>>()
 
 export function useOverlay(texts: string[], on: boolean): string[] {
-  const [done, setDone] = useState<Map<string, string>>(memory)
-  // What this component is currently showing. A translation is a network call,
-  // so a late answer routinely lands after the answer it was for has been
-  // replaced or the toggle has been turned off. Without this the old reply
-  // overwrites the new state and looks exactly like a real one.
-  const showing = useRef(0)
-
-  const wanted = on ? texts.filter((t) => t.trim() && !memory.has(t)) : []
+  const [, setTick] = useState(0)
+  const wanted = on ? [...new Set(texts.filter((t) => t.trim() && !memory.has(t)))] : []
   const key = wanted.join('\u0000')
 
   useEffect(() => {
     if (!on || !key) return
-    const mine = ++showing.current
     let alive = true
-    renderAll(key.split('\u0000'))
-      .then((out) => {
-        if (!alive || mine !== showing.current) return
-        key.split('\u0000').forEach((text, i) => memory.set(text, out[i] ?? text))
-        setDone(new Map(memory))
-      })
-      // A failed translation shows the English. An empty pane is worse than an
-      // English one: the person can read English, they would rather not.
-      .catch(() => undefined)
+    const parts = key.split('\u0000')
+    const fresh = parts.filter((t) => !pending.has(t))
+    if (fresh.length) {
+      const request = renderAll(fresh).then((out) => {
+        fresh.forEach((text, i) => memory.set(text, out[i] ?? text))
+      }).catch(() => undefined).finally(() => fresh.forEach((t) => pending.delete(t)))
+      fresh.forEach((t) => pending.set(t, request))
+    }
+    // Keep completed translations when new progress arrives, and share requests
+    // across panes. Only the currently mounted view receives a state update.
+    parts.forEach((t) => pending.get(t)?.then(() => alive && setTick((n) => n + 1)))
     return () => {
       alive = false
     }
   }, [key, on])
 
   if (!on) return texts
-  return texts.map((t) => done.get(t) ?? memory.get(t) ?? t)
+  return texts.map((t) => memory.get(t) ?? t)
 }
 
 /** An answer's paragraphs: split at blank lines, never inside a ``` or ~~~

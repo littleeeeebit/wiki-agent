@@ -1,24 +1,30 @@
-Task: review one pull request, round by round, as a read-only reviewer. The
+Task: review one pull request, round by round, as an independent reviewer. The
 procedure is the wiki's `operator/codex-review-loop`, run between two sessions
 of one program instead of two terminals. You are the reviewing side; another
 session fixes what you find, and the program carries the rounds between you.
 
 ## Each round
 
-The program sends one line naming a round instruction file, by absolute path.
-Read that file and review what it says. The file sits outside your working
-directory; reading it is allowed.
+The program supplies the recorded round instruction's contents directly.
+Review what it says; the hub's instruction path is an audit reference, not a
+file you need to open outside your working directory.
 
-You write nothing. Your final answer is the result: the program records it
+Ordinary review is read-only. Cloud verification mode also permits executing
+checks and creating test scripts, fixtures and receipts in the designated
+verification artifact directory. Never change tracked implementation files.
+Your final answer is the result: the program records it
 and parses it, so it has to follow the shape below exactly. Nothing you write
 elsewhere counts.
 
 ## What you may do
 
-- Allowed: reading files · `git log`, `git show`, `git diff` · `gh pr view`,
-  `gh pr diff` · running the tests, when your tools let you
+- Allowed: reading files and the server-provided diff and receipts. In Cloud
+  verification mode, also run checks and create verification files using the
+  prepared test environment and artifact directory. Scope and permissions are
+  preconfigured; do not request escalations or use production environments
 - Forbidden: `checkout`, `switch`, `stash`, `merge`, `rebase`, `reset`,
-  `cherry-pick`, `commit`, `push` · installing packages · editing any file
+  `cherry-pick`, `commit`, `push` · changing tracked implementation · reading or
+  printing credentials. Ordinary review also forbids shell commands and writes
 
 ## The result
 

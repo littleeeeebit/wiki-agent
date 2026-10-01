@@ -27,12 +27,13 @@ Two points differ from the overview. The round file is placed in the hub, not `r
 
 ## Review Cell
 
-One per worktree. `ChatSession(worktree, system=<리뷰 프롬프트>, model=<설정>)`. Not a write session. After step 2, the Codex read session runs as `app-server` with `sandbox: read-only`, `approvalPolicy: never`. Everything it tries to write is rejected without asking (`_approval` of `chat_session.py`).
+One per worktree. `ChatSession(worktree, system=<리뷰 프롬프트>, model=<설정>)`. This is independent of the implementation cell. Ordinary review is read-only; Cloud verification review also executes checks and creates verification files.
 
-- The read-only nature of Codex is protected by the sandbox. Commands run but cannot write files. Tests can be run
-- If the Claude model is selected in settings, the tool is only `Read,Glob,Grep`. It does not use `READ_TOOLS` — its `Bash` runs in `--allowedTools` without approval (`tool/agent/chat_session.py:39`, `:163`), and writes inside and outside the worktree with one `python -c`. The prompt cannot block writing (review round 1). Therefore, since the Claude review cell cannot run `gh pr diff`, the server loads the output of `gh pr diff <n>` into the instruction file. Tests cannot be run, and it reads the server's gate results
+- Ordinary review exposes only reading, file discovery and source search. Claude uses `Read,Glob,Grep`; Codex uses `repo_read`, `repo_glob`, `repo_grep`, bounded to tracked source without private files or symlink escapes. Codex's shell and inherited MCP/apps/plugins/browser/computer-use tools are disabled for this profile. Its thread and every turn use read-only sandboxing and `approvalPolicy: never`
+- Cloud verification review has `Bash,Read,Glob,Grep,Edit,Write`, independently of the implementation cell. Codex enables shell execution with `workspace-write` and `approvalPolicy: never` on its thread and every turn. Writable roots are the dedicated review checkout and `raw/review/<repo>/<pr>/verification/<head>/`. It never uses unrestricted access; inherited MCP/apps/plugins/computer-use and permission-escalation tools are disabled. On Windows, this cell alone uses the documented `unelevated` sandbox fallback, without editing global account configuration. Claude preapproves these tools in default permission mode, retaining CLI deny rules
+- The Cloud reviewer must execute verification checks and may create test scripts, fixtures and receipts in that artifact directory. It does not edit tracked implementation, commit or push. Generated artifacts remain outside source so later rounds and gates stay clean. The server checks the source checkout after review and before publishing success; an altered checkout stops for user inspection instead of being accepted as the reviewed commit. Configured server execution and final gates remain required
 - The review cell's conversation continues while the PR is alive. The next round goes to the same session that remembers the previous round
-- Write the CLI session id in `raw/review/<repo>/<pr>/session.json`. It continues even if the server is restarted
+- Write the CLI session id and tools profile in `raw/review/<repo>/<pr>/session.json`. It continues even if the server is restarted. A session saved under another permissions/tools profile starts a new conversation once; existing rounds and findings remain recorded
 
 The prompt is `tool/prompts/review-round.md`. It translates "what the instructions should contain" of `operator/codex-review-loop` as is, but tells it to write the final answer instead of a result file. The first line is `Round <n> · PR #<pr> · <머리 커밋 7자>`.
 
@@ -40,13 +41,13 @@ The prompt is `tool/prompts/review-round.md`. It translates "what the instructio
 
 1. The server writes instructions — `raw/review/<repo>/<pr>/round-<n>.md`
    - Round number, PR number, head commit, base branch
-   - Allow list. Read, `git log`·`show`·`diff`, `gh pr view`·`diff`, running tests. Deny list is after that
+   - Allow list. Source reading and search; server-provided PR diff and check receipts. Cloud verification also permits command execution and verification files. Deny list is after that
    - Actual number of `git diff --shortstat <base>...<head>`
    - Handling of previous round discoveries. The `disposition` block of the work cell as is
    - Already run. Server's gate results
    - `Deferred P2`. Instruction not to report again without new evidence or grade change
    - If the number of discoveries has not decreased for two consecutive rounds, insert a "Discovery grouping" clause
-2. One turn to the review cell. "Read `<지시 경로>` and review." Since the instruction file is in the hub, provide the path as an absolute path. It is outside the review cell's working directory but is a read
+2. One turn to the review cell, carrying the recorded instruction's contents directly. The hub's round file remains the audit record; the reviewer does not need filesystem access outside its worktree to read it
 3. The server writes the answer to `round-<n>-result.md` and parses it
    - The first line must be `Round <n>` and the head commit must match
    - Discoveries are lines starting with `^\[(P0|P1|P2)\] (\S+):(\d+)`. The lines below are the body
@@ -78,6 +79,8 @@ The reasons for stopping are all in the table below. The overview and other step
 | `작업트리 없음` | `worktree` of the specification is not in the list of that repository. [Continue] receives it again from the PR as `adopt` and continues |
 | `검토하지 않은 base 에 머지됨` | No [Continue]. End with one of the two buttons under "End of merge with mismatched base" below |
 | `머지 대기에서 빠짐` | [Continue] reads the PR again. If `OPEN` and head and base are the same as the allowed round, `머지 가능`, if `OPEN` but different, `리뷰 대기`, if `CLOSED`, leave it stopped with 409 "Must reopen PR on GitHub" |
+| `로컬 검증 준비` | Prepare the cloud handoff, local environment or required evidence, then resume local verification |
+| `외부 수정 대기` | Fix in the external implementation environment, push the new head, then start the next local review round |
 
 `rounds` of the specification is `[{n, head, base, findings: {P0, P1, P2}, verdict, gate, disposition}]`. `base` is the base branch name (`baseRefName`) of the PR that the round saw.
 
@@ -247,6 +250,16 @@ Temporary. Step 6 rebuilds it.
 ## Agreements in implementation
 
 Filled the spots left empty by the plan like this.
+
+The Review tab now shows its independent session's live progress and owns the
+review model and effort controls. Settings retains round limits and concurrency.
+Completed progress messages are kept separately from the final answer and use
+the Korean overlay. The Agent tab continues to show implementation turns only.
+An explicit next-round action can review a new remote head or request another
+review after permission. External implementation mode never dispatches a local
+fixer; cloud implementation additionally requires its local execution evidence.
+New external/cloud reviews use detached checkouts so an implementer's existing
+branch can remain checked out elsewhere without blocking adoption.
 
 | What | Agreement |
 | --- | --- |

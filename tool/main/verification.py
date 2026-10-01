@@ -1,7 +1,8 @@
 """Local execution evidence for cloud implementations, beside the existing review loop.
 
-The server executes repository-specific checks; the independent, read-only review
-cell evaluates their receipts. A cloud failure never opens a local write session.
+The server executes repository-specific checks; the independent review cell can
+also execute checks and create verification artifacts. A cloud failure never
+opens a local implementation session.
 """
 
 from __future__ import annotations
@@ -577,9 +578,23 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
     return keep(spec, state="runtime_passed", flows=rows, finished_at=time.time())
 
 
+def checkout_proven(path: Path, head: str) -> str:
+    """Execution artifacts are outside source; never accept a locally altered implementation."""
+    status = specs.sh(["git", "status", "--porcelain"], path)
+    current = specs.sh(["git", "rev-parse", "HEAD"], path)
+    if current.returncode or current.stdout.strip() != head:
+        return "리뷰 실행이 검증 대상 커밋을 바꿨다 — 사용자 확인 필요"
+    if status.returncode or status.stdout.strip():
+        return "리뷰 실행 뒤 소스 폴더에 변경이 있다 — 검증 파일은 지정된 아티팩트 폴더에 저장해야 한다"
+    return ""
+
+
 def proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str) -> str:
     if not cloud(spec):
         return ""
+    problem = checkout_proven(path, head)
+    if problem:
+        return problem
     record = spec.get("local_verification") or {}
     if record.get("needs_research"):
         return "재분석 근거를 확인해야 한다"

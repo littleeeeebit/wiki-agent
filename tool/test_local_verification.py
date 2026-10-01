@@ -9,12 +9,14 @@ import re
 import socket
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
+from agent.chat_session import Event
 from main import loop, specs, verification
 from main import app as main_app
 from test_loop import (  # noqa: F401 — shared temporary Git/GitHub fixtures
@@ -148,18 +150,77 @@ def repair_cloud(world, spec, name="repair.py"):
 def test_cloud_runs_real_api_and_independent_review_without_a_local_writer(cloud_world):
     world = cloud_world
     cloud_spec(world)
-    spec = looped("cloud")
+    say = Reviewer.say
+
+    def private_progress(chat, text, halt=None):
+        yield Event("progress", "Checking with private-api-key")
+        yield from say(chat, text, halt)
+
+    with patch.object(Reviewer, "say", private_progress):
+        spec = looped("cloud")
     assert spec["state"] == "머지 가능"
     record = spec["local_verification"]
     assert record["state"] == "verified" and record["flows"][0]["ok"]
     assert record["flows"][0]["evidence"]["requests"][0]["status"] == 200
     assert record["published"]["state"] == "success"
-    assert not Worker.made and Reviewer.made[0].tools == loop.REVIEW_TOOLS
+    assert not Worker.made and Reviewer.made[0].tools == loop.CLOUD_TOOLS
+    assert Reviewer.made[0].verification and Reviewer.made[0].rest["env"]["WIKI_VERIFICATION_SCOPE"] == world.settings["test_scope"]
     instruction = (world.tmp / "review/proj/1/round-1.md").read_text(encoding="utf-8")
     assert "local verification" in instruction and "private-api-key" not in instruction
     assert "private-api-key" not in json.dumps(spec) and "private-api-key" not in str(world.hub.comments)
+    progress = client().get("/api/specs/cloud/review/log").json()
+    assert progress["rows"][0]["steps"] and "private-api-key" not in json.dumps(progress)
     assert world.github.statuses[-1][1] == "success"
     assert specs.view(world.repo, spec)["unproven"] == ""
+
+
+@pytest.mark.parametrize("change_source", [False, True])
+def test_cloud_reviewer_artifacts_survive_next_round_but_source_edits_block_completion(cloud_world, change_source):
+    world = cloud_world
+    cloud_spec(world)
+    say, artifacts = Reviewer.say, []
+
+    def execute(chat, text, halt=None):
+        fixture = chat.verification / "fixture.py"
+        fixture.parent.mkdir(parents=True, exist_ok=True)
+        fixture.write_text("print('CLOUD-FIXTURE-PASS')\n", encoding="utf-8")
+        checked = subprocess.run(["python", str(fixture)], cwd=chat.path, capture_output=True, text=True, check=True)
+        assert "CLOUD-FIXTURE-PASS" in checked.stdout
+        artifacts.append(fixture)
+        if change_source:
+            (chat.path / "change.py").write_text("unreviewed local implementation\n", encoding="utf-8")
+        yield from say(chat, text, halt)
+
+    with patch.object(Reviewer, "say", execute):
+        spec = looped("cloud")
+        assert artifacts[0].is_file() and not Worker.made
+        if change_source:
+            assert spec["state"] == "멈춤" and spec["stopped"]["reason"] == loop.Why.PREPARATION
+            assert "소스 폴더" in spec["stopped"]["detail"]
+            assert not any(row[1] == "success" for row in world.github.statuses)
+            assert git(Path(spec["worktree"]), "status", "--porcelain")
+        else:
+            assert spec["state"] == "머지 가능"
+            repair_cloud(world, spec)
+            again = looped("cloud")
+            assert again["state"] == "머지 가능" and len(again["rounds"]) == 2
+            assert len(artifacts) == 2 and artifacts[0] != artifacts[1]
+            assert all(file.is_file() for file in artifacts)
+
+
+def test_cloud_source_changes_during_final_selection_cannot_publish_success(cloud_world):
+    world = cloud_world
+    original = cloud_spec(world)
+
+    def altered(_loop, _chat, _deferred):
+        (Path(original["worktree"]) / "change.py").write_text("unverified change\n", encoding="utf-8")
+        return []
+
+    with patch.object(loop, "pick", altered):
+        spec = looped("cloud")
+    assert spec["state"] == "멈춤" and spec["stopped"]["reason"] == loop.Why.PREPARATION
+    assert not any(row[1] == "success" for row in world.github.statuses)
+    assert not Worker.made
 
 
 def test_environment_and_missing_handoff_block_before_dispatch(cloud_world):
@@ -172,6 +233,15 @@ def test_environment_and_missing_handoff_block_before_dispatch(cloud_world):
     world.hub.prs[1]["body"] = "no handoff"
     spec = looped("cloud")
     assert "cloud-handoff" in spec["local_verification"]["reason"]
+    assert spec["stopped"]["reason"] == "로컬 검증 준비"
+    response = client().post("/api/loops", json={"prs": [1], "implementation_environment": "external"})
+    assert response.status_code == 200 and "error" not in response.json()["results"][0]
+    waited(lambda: ("proj", "cloud") not in loop._loops)
+    assert specs.load("proj", "cloud")["implementation_environment"] == "claude-cloud"
+    assert not Worker.made and not Reviewer.made
+    instructions = client().get("/api/specs/cloud/cloud-instructions").json()["text"]
+    assert world.hub.head(1) in instructions and "cloud-handoff" in instructions
+    assert "private-api-key" not in instructions
     assert all(s[1] != "success" for s in world.github.statuses)
 
 
@@ -854,7 +924,7 @@ def test_saving_changed_environment_revisions_revokes_the_published_pass_immedia
     assert world.github.statuses[-1][1] == "pending" and len(Reviewer.made) == 1 and not loop._loops
 
 
-def test_review_controls_in_real_browser(cloud_world):
+def test_review_controls_in_real_browser(cloud_world, monkeypatch):
     """Built UI drives real setup/resume endpoints and the local HTTP check.
 
     Optional developer check: use installed Playwright and a built web/dist.
@@ -866,6 +936,31 @@ def test_review_controls_in_real_browser(cloud_world):
     if not (main_app.DIST / "index.html").is_file():
         pytest.skip("Build web before the browser check")
     world = cloud_world
+    monkeypatch.setattr(loop, "review_model", lambda chosen=None: chosen or loop.settings()["review_model"] or "codex:test")
+    monkeypatch.setattr(loop.channels, "codex_models", lambda: [
+        {"id": "codex:test", "efforts": [{"id": ""}, {"id": "high"}]},
+        {"id": "codex:review", "efforts": [{"id": ""}, {"id": "high"}]}])
+    release_review = threading.Event()
+    say = Reviewer.say
+    make_cell = loop.cell
+
+    def delayed_cell(spec, path):
+        # Valid preparation may take longer than Playwright's default five seconds.
+        time.sleep(6)
+        return make_cell(spec, path)
+
+    monkeypatch.setattr(loop, "cell", delayed_cell)
+
+    def visible_review(chat, text, halt=None):
+        yield Event("progress", "Reviewer progress.\nChecking the remote head.")
+        assert release_review.wait(15)
+        for event in say(chat, text, halt):
+            if event.kind == "done":
+                yield Event("progress", event.text)
+                yield Event("hook", "Stop hook after the final text block")
+            yield event
+
+    monkeypatch.setattr(Reviewer, "say", visible_review)
     original = cloud_spec(world)
     (world.repo / verification.LOCAL).unlink()
     assert looped("cloud")["state"] == "멈춤"
@@ -888,6 +983,40 @@ def test_review_controls_in_real_browser(cloud_world):
             page = browser.new_page(viewport={"width": 1440, "height": 1100})
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
+            page.add_init_script("""(() => {
+              const callbacks = new Map(), listeners = new Map(); let sequence = 0;
+              window.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener: () => {} };
+              window.__TAURI_INTERNALS__ = {
+                metadata: { currentWindow: { label: 'main' }, currentWebview: { label: 'main', windowLabel: 'main' } },
+                transformCallback: callback => { callbacks.set(++sequence, callback); return sequence; },
+                unregisterCallback: id => callbacks.delete(id),
+                invoke: async (command, args) => {
+                  if (command === 'plugin:event|listen') { listeners.set(args.event, args.handler); return args.handler; }
+                  if (command === 'pty_open') return 1;
+                  if (command === 'pty_write') {
+                    window.terminalInput = args.data;
+                    window.terminalOutput(args.data.includes('\\r')
+                      ? '\\r\\nTerminal progress.\\n\\nSecond output line.\\n' : args.data);
+                  }
+                  return null;
+                },
+              };
+              window.terminalOutput = text => callbacks.get(listeners.get('pty-out'))?.({
+                payload: [1, Array.from(new TextEncoder().encode(text))],
+              });
+            })();""")
+            translations = []
+
+            def translate_output(route):
+                texts = route.request.post_data_json["texts"]
+                translations.extend(texts)
+                replacements = {"Agent progress.\nSecond progress line.": "진행상황.\n두 번째 진행 줄.",
+                                "Reviewer progress.\nChecking the remote head.": "리뷰 진행상황.\n원격 커밋 확인 중.",
+                                "Bash · Checking behavior": "Bash · 동작 확인 중",
+                                "Terminal progress.": "터미널 진행상황.", "Second output line.": "두 번째 출력 줄."}
+                route.fulfill(json={"texts": [replacements.get(text, text) for text in texts]})
+
+            page.route("**/api/translate", translate_output)
 
             def stub(pattern, value):
                 page.route(pattern, lambda route: route.fulfill(json=value))
@@ -896,12 +1025,19 @@ def test_review_controls_in_real_browser(cloud_world):
                                        "model": "codex:test", "model_name": "test", "effort": "high", "remote": ""}
                                       for name in ("wiki", "next", "retro")])
             stub("**/api/options", {"projects": [{"id": "proj", "path": str(world.repo), "state": "연결 완료"}],
-                                     "models": [], "efforts": [], "codex_error": ""})
+                                     "models": [
+                                         {"id": "codex:test", "label": "Work test", "note": "", "is_default": True},
+                                         {"id": "codex:review", "label": "Review test", "note": ""}],
+                                     "efforts": [{"id": "", "label": "기본", "note": ""},
+                                                 {"id": "high", "label": "high", "note": ""}], "codex_error": ""})
             stub("**/api/log/**", [])
             stub("**/api/worktrees", {"project": "proj", "repo": str(world.repo), "rows": [
                 {"path": original["worktree"], "name": "cloud", "branch": "cloud", "dirty": False,
                  "merged": False, "live": False, "busy": False}]})
-            stub("**/api/work/log?*", {"rows": [], "session_id": "", "busy": False, "running": None,
+            stub("**/api/work/log?*", {"rows": [{"role": "assistant", "text": "Finished.", "steps": [
+                {"kind": "progress", "text": "Agent progress.\nSecond progress line."},
+                {"kind": "tool", "text": "Bash · Checking behavior · $ git status\ngit diff"}]}],
+                                       "session_id": "", "busy": False, "running": None,
                                        "rules": [], "queued": None})
             page.goto(address)
             page.get_by_role("button", name=re.compile(r"리뷰 루프 \(1\)")).click()
@@ -909,7 +1045,47 @@ def test_review_controls_in_real_browser(cloud_world):
             assert page.get_by_role("combobox", name="구현 환경", exact=True).input_value() == "claude-cloud"
             page.get_by_role("button", name="닫기", exact=True).last.click()
             page.get_by_role("button", name=re.compile(r"cloud.*#1")).click()
+            agent = page.get_by_role("region", name="에이전트 세션")
+            playwright.expect(agent.get_by_text("진행상황.\n두 번째 진행 줄.", exact=True)).to_be_visible()
+            progress = agent.get_by_text("진행상황.\n두 번째 진행 줄.", exact=True)
+            assert progress.evaluate("element => getComputedStyle(element).whiteSpace") == "pre-wrap"
+            playwright.expect(agent.get_by_text("· Bash · 동작 확인 중 · $ git status\ngit diff", exact=True)).to_be_visible()
+            assert not any("git status" in text for text in translations)
+            page.get_by_role("tab", name="터미널", exact=True).click()
+            page.locator(".xterm-helper-textarea").focus()
+            page.keyboard.insert_text("user-command")
+            page.keyboard.press("Enter")
+            terminal = page.get_by_role("region", name="터미널 출력 번역")
+            page.wait_for_timeout(800)
+            assert not any("Terminal progress." in text for text in translations)
+            screen = page.locator(".xterm-screen").bounding_box()
+            page.mouse.move(screen["x"] + 2, screen["y"] + 2)
+            page.mouse.down()
+            page.mouse.move(screen["x"] + screen["width"] - 2, screen["y"] + screen["height"] - 2, steps=10)
+            page.mouse.up()
+            terminal.get_by_role("button", name="선택한 출력 가져오기", exact=True).click()
+            preview = terminal.get_by_role("textbox", name="외부 번역 서비스로 보낼 내용")
+            assert "Terminal progress." in preview.input_value()
+            assert not any("Terminal progress." in text for text in translations)
+            preview.fill("Terminal progress.\n\nSecond output line.")
+            terminal.get_by_role("button", name="확인한 내용 번역", exact=True).click()
+            rendered = terminal.get_by_text("터미널 진행상황.\n\n두 번째 출력 줄.", exact=True)
+            playwright.expect(rendered).to_be_visible()
+            assert rendered.evaluate("element => getComputedStyle(element).whiteSpace") == "pre-wrap"
+            assert not any("user-command" in text for text in translations)
+            assert page.evaluate("window.terminalInput") == "\r"
+            # A Windows prompt can wrap before its closing `>` or echoed command.
+            page.evaluate("window.terminalOutput('PS C:\\\\' + 'long-worktree-'.repeat(12) + '> hidden-command\\r\\n')")
+            page.wait_for_timeout(800)
+            playwright.expect(rendered).to_be_visible()
+            assert not any("hidden-command" in text or "long-worktree" in text for text in translations)
             page.get_by_role("tab", name="리뷰", exact=True).click()
+            page.get_by_role("region", name="리뷰 세션").get_by_role("combobox", name="모델", exact=True).click()
+            with page.expect_response(lambda r: "/api/loop/settings" in r.url and r.request.method == "POST") as reply:
+                page.get_by_role("option", name="Review test", exact=True).click()
+            assert reply.value.status == 200 and loop.settings()["review_model"] == "codex:review"
+            page.get_by_role("button", name="클라우드 인계 지시 보기", exact=True).click()
+            playwright.expect(page.get_by_role("textbox", name="클라우드 구현자에게 전달할 지시")).to_have_value(re.compile("cloud-handoff"))
             page.get_by_role("button", name="프로젝트 검증 설정", exact=True).click()
             panel = page.get_by_role("region", name="클라우드 구현의 로컬 검증")
             for label, value in [("테스트 환경 이름", "test-api"), ("테스트 계정·데이터 범위", "dedicated-fixture"),
@@ -930,7 +1106,14 @@ def test_review_controls_in_real_browser(cloud_world):
             with page.expect_response(lambda r: "/api/specs/cloud/resume" in r.url) as reply:
                 page.get_by_role("button", name="로컬 검증 재개", exact=True).click()
             assert reply.value.status == 200
+            review_progress = page.get_by_role("region", name="리뷰 진행상황")
+            playwright.expect(review_progress.get_by_text("리뷰 진행상황.\n원격 커밋 확인 중.", exact=True)).to_be_visible(timeout=30000)
+            assert specs.load("proj", "cloud")["state"] == "리뷰 R1"
+            release_review.set()
             playwright.expect(panel.get_by_text("로컬 검증·리뷰 통과", exact=True)).to_be_visible(timeout=30000)
+            playwright.expect(page.get_by_role("region", name="리뷰 진행상황")).to_be_visible()
+            playwright.expect(page.get_by_role("button", name="다음 리뷰 라운드", exact=True)).to_be_visible()
+            assert Reviewer.made[-1].model == "codex:review" and not Worker.made
             panel.get_by_text("Service health · 통과", exact=True).click()
             assert panel.get_by_text(re.compile('"status": 200')).count() > 0
             assert not errors and specs.load("proj", "cloud")["state"] == "머지 가능"
@@ -943,6 +1126,7 @@ def test_review_controls_in_real_browser(cloud_world):
             browser.close()
             browser = None
     finally:
+        release_review.set()
         # Close before the fixture unpatches any temporary repository state.
         server.should_exit = True
         thread.join(10)

@@ -6,7 +6,7 @@ import { Btn, ClearAsk } from '@/components/Modal'
 import { Toolbar } from '@/components/Toolbar'
 import type { Choice } from '@/components/Toolbar'
 import type { Keep, Kept, Options, Rule, Worktree } from '@/lib/api'
-import { useParagraphOverlay } from '@/lib/overlay'
+import { useOverlay, useParagraphOverlay } from '@/lib/overlay'
 import type { Step, Turn } from '@/lib/work'
 import { cn } from '@/lib/utils'
 
@@ -172,7 +172,7 @@ export function Agent({
   )
 }
 
-function Reply({ turn, on, onAnswer, onPeek }: {
+export function Reply({ turn, on, onAnswer, onPeek }: {
   turn: Turn
   on: boolean
   onAnswer: Props['onAnswer']
@@ -195,7 +195,8 @@ function Reply({ turn, on, onAnswer, onPeek }: {
     <ul className="space-y-1.5">
       {turn.steps.slice(from, to).map((s, j) => (
         <li key={from + j}>
-          {s.kind === 'tool' ? <Tool text={s.text} />
+          {s.kind === 'progress' ? <Progress text={s.text} on={on} onPeek={onPeek} />
+            : s.kind === 'tool' ? <Tool text={s.text} on={on && !s.command} />
             : s.kind === 'said' ? <Said text={s.text} />
               : s.kind === 'hook' ? <Hook text={s.text} context={s.context} />
                 : QUESTIONS.has(s.tool) ? <Question step={s} turn={turn} onAnswer={onAnswer} />
@@ -248,8 +249,16 @@ function Running({ since, label }: { since?: number; label: string }) {
   )
 }
 
-function Tool({ text }: { text: string }) {
-  return <p className="font-mono text-[12px] leading-snug text-faint">· {text}</p>
+function Progress({ text, on, onPeek }: { text: string; on: boolean; onPeek: Props['onPeek'] }) {
+  const shown = useParagraphOverlay(text, on)
+  return <Answer text={shown} korean={on} remote="" onPeek={onPeek} />
+}
+
+function Tool({ text, on }: { text: string; on: boolean }) {
+  // Claude supplies a description before the command. Only that prose is mirrored.
+  const at = text.indexOf(' · $ ')
+  const [shown] = useOverlay([at < 0 ? text : text.slice(0, at)], on)
+  return <p className="whitespace-pre-wrap break-words font-mono text-[12px] leading-snug text-faint">· {shown}{at < 0 ? '' : text.slice(at)}</p>
 }
 
 /** A hook that spoke — the wiki's injection, its auto-update. What it put into

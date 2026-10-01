@@ -1,11 +1,12 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from '@/lib/api'
 import type { AnsweredBy, Rule, Tokens, WorkEv, WorkStep } from '@/lib/api'
 
-/** What happened inside one agent turn, in order. Tool lines and approvals are
- *  never translated: they are what ran, not the agent describing itself. */
+/** What happened inside one agent turn, in order. Commands and approvals
+ *  retain their originals; completed progress gets the Korean overlay. */
 export type Step =
-  | { kind: 'tool'; text: string }
+  | { kind: 'tool'; text: string; command?: boolean }
+  | { kind: 'progress'; text: string }
   /** What the person said into the turn while it ran. */
   | { kind: 'said'; text: string }
   /** A hook that said something; `context` is what it put in, live turns only. */
@@ -55,6 +56,71 @@ export type Rules = { session: string; list: Rule[] }
 
 let seq = 0
 
+/** Independent review events share the work event format, but never its session. */
+export function useReview(repo: string, id: string) {
+  const [turns, setTurns] = useState<Turn[]>([])
+  useEffect(() => {
+    if (!repo || !id) return
+    let alive = true
+    let stream: AbortController | undefined
+    let generation = 0
+    async function load() {
+      const ticket = ++generation
+      stream?.abort()
+      try {
+        const found = await api.reviewLog(id, repo)
+        if (!alive || ticket !== generation) return
+        const past = found.rows.map((r) => ({ ...r, key: ++seq, steps: (r.steps ?? []).map(restored) }))
+        const run = found.running
+        const live: Turn | null = run ? { key: ++seq, role: 'assistant', text: '', steps: [], pending: true,
+          turn: run.turn, sessionId: run.session_id } : null
+        setTurns([...past, ...(live ? [live] : [])])
+        if (!run || !live) return
+        const control = new AbortController()
+        stream = control
+        let after = -1
+        let ended = false
+        const receive = (ev: WorkEv) => {
+          if (!alive || ticket !== generation || (ev.turn && ev.turn !== run.turn)
+            || (ev.seq !== undefined && ev.seq <= after)) return
+          after = ev.seq ?? after
+          if (ev.kind === 'done' || ev.kind === 'error') ended = true
+          setTurns((all) => all.map((t) => t.key === live.key ? apply(t, ev) : t))
+        }
+        // A cut connection gets one reattach from the last accepted event.
+        let gone = false
+        let cut = false
+        try {
+          gone = (await api.reviewEvents(id, repo, run.turn, after, control.signal, receive)) === 'gone'
+        } catch {
+          if (control.signal.aborted) return
+          cut = true
+        }
+        if ((cut || !ended) && !gone) {
+          gone = (await api.reviewEvents(id, repo, run.turn, after, control.signal, receive)) === 'gone'
+        }
+        if (gone && alive && ticket === generation) {
+          void load()
+          return
+        }
+        if (alive && ticket === generation) setTurns((all) => all.map((t) => ({ ...t, pending: false,
+          error: t.error || (!ended && t.key === live.key ? '리뷰 스트림이 끊겼다' : undefined) })))
+      } catch (err) {
+        if (alive && ticket === generation) setTurns((all) => [...all.map((t) => ({ ...t, pending: false })), { key: ++seq, role: 'assistant', text: '',
+          steps: [], error: String(err) }])
+      }
+    }
+    const changed = (event: Event) => {
+      const owner = (event as CustomEvent<{ repo: string; id: string }>).detail
+      if (owner.repo === repo && owner.id === id) void load()
+    }
+    window.addEventListener('review-turn', changed)
+    void load()
+    return () => { alive = false; stream?.abort(); window.removeEventListener('review-turn', changed) }
+  }, [repo, id])
+  return turns
+}
+
 function restored(s: WorkStep): Step {
   if (s.kind !== 'approval') return s
   return { kind: 'approval', text: s.text, id: '', tool: s.tool, input: {}, by: s.by, answers: s.answers,
@@ -68,8 +134,12 @@ function apply(t: Turn, ev: WorkEv): Turn {
   // counts from when the step started, not from the reread.
   t = { ...t, since: ev.ts ? ev.ts * 1000 : Date.now() }
   if (ev.kind === 'delta') return { ...t, text: t.text + ev.text, latest: 'text' }
+  if (ev.kind === 'progress') {
+    return { ...t, text: '', steps: [...t.steps, { kind: 'progress', text: ev.text }], latest: 'step' }
+  }
   if (ev.kind === 'tool' || ev.kind === 'said') {
-    return { ...t, steps: [...t.steps, { kind: ev.kind, text: ev.text }], latest: 'step' }
+    return { ...t, steps: [...t.steps, { kind: ev.kind, text: ev.text,
+      ...(['commandExecution', 'command_execution'].includes(m.tool ?? '') ? { command: true } : {}) }], latest: 'step' }
   }
   if (ev.kind === 'hook') {
     return { ...t, steps: [...t.steps, { kind: 'hook', text: ev.text, context: m.context }], latest: 'step' }
@@ -84,7 +154,10 @@ function apply(t: Turn, ev: WorkEv): Turn {
       ? { ...s, answer: m.allow, by: m.by, answers: m.answers, sending: false, error: undefined } : s)) }
   }
   if (ev.kind === 'done') {
-    return { ...t, text: ev.text || t.text, answered: t.steps.length, latest: 'text', ms: m.ms, cost: m.cost_usd,
+    const last = t.steps.findLastIndex((s) => s.kind !== 'hook')
+    const steps = t.steps[last]?.kind === 'progress' && t.steps[last]?.text === ev.text
+      ? t.steps.filter((_, i) => i !== last) : t.steps
+    return { ...t, steps, text: ev.text || t.text, answered: steps.length, latest: 'text', ms: m.ms, cost: m.cost_usd,
       model: m.model, tokens: m.tokens }
   }
   return { ...t, error: ev.text, pending: false }
