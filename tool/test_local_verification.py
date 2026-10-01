@@ -582,6 +582,105 @@ def test_a_cloud_push_during_execution_cannot_create_a_review_or_failure_cycle(c
     assert not record.get("failures") and not Reviewer.made and world.github.statuses[-1][1] == "pending"
 
 
+@pytest.mark.parametrize("passed", [False, True])
+def test_flow_observation_survives_missing_post_command_environment(cloud_world, monkeypatch, passed):
+    world = cloud_world
+    cloud_spec(world)
+    original = world.env.read_bytes()
+    judge = specs.judge
+    first = True
+    if not passed:
+        world.failed.touch()
+
+    def disappear(path, commands, *args, **kwargs):
+        nonlocal first
+        verdict = judge(path, commands, *args, **kwargs)
+        if first and commands == ["python verify.py health"]:
+            first = False
+            world.env.unlink()
+        return verdict
+
+    monkeypatch.setattr(specs, "judge", disappear)
+    interrupted = looped("cloud", seconds=60)["local_verification"]
+    row = interrupted["flows"][0]
+    assert interrupted["state"] == "waiting_environment" and not interrupted.get("failures")
+    assert row["finished_at"] is not None and row["observed_ok"] is passed
+    assert row["evidence"]["observations"][0]["pass"] is passed
+    assert "private-api-key" not in json.dumps(interrupted)
+    world.env.write_bytes(original)
+    world.failed.unlink(missing_ok=True)
+    resumed = looped("cloud", seconds=60)["local_verification"]
+    assert resumed["state"] == ("verified" if passed else "unstable")
+    assert bool(resumed.get("needs_research")) is not passed
+
+
+@pytest.mark.parametrize("passed", [False, True])
+def test_restart_after_observation_preserves_failure_without_inventing_one(cloud_world, monkeypatch, passed):
+    world = cloud_world
+    spec = cloud_spec(world)
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    base = specs.current_merge_base(path, "main", head)
+    if not passed:
+        world.failed.touch()
+    signature = verification.signature
+    calls = 0
+
+    def crash_after_observation(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise SystemExit("simulated process interruption")
+        return signature(*args, **kwargs)
+
+    monkeypatch.setattr(verification, "signature", crash_after_observation)
+    with pytest.raises(SystemExit):
+        verification.execute(world.repo, spec, path, head, base, threading.Event())
+    saved = specs.load("proj", "cloud")
+    row = saved["local_verification"]["flows"][0]
+    assert row["observed_ok"] is passed and row["blocked"] is passed and not row["ok"]
+    assert row["finished_at"] is not None
+    monkeypatch.setattr(verification, "signature", signature)
+    world.failed.unlink(missing_ok=True)
+    resumed = verification.execute(world.repo, saved, path, head, base, threading.Event())
+    assert resumed["local_verification"]["state"] == ("runtime_passed" if passed else "unstable")
+
+
+@pytest.mark.parametrize("kind", ["api", "command"])
+def test_preserved_request_metadata_is_validated_for_every_flow(cloud_world, kind):
+    world = cloud_world
+    flow = verification.manifest(world.repo)[0].flows[0].model_copy(update={"kind": kind})
+    head = "a" * 40
+    evidence = {"head": head, "flow": flow.id, "environment_id": world.settings["environment_id"],
+                "test_scope": world.settings["test_scope"],
+                "observations": [{"id": "healthy", "expected": "API reports healthy", "actual": "healthy", "pass": True}],
+                "requests": [{"method": "private-api-key", "url": world.settings["allowed_origins"][0] + "/health", "status": 200}]}
+    with pytest.raises(ValueError, match="메서드"):
+        verification.receipt("```local-evidence\n" + json.dumps(evidence) + "\n```", flow, head, world.settings)
+    evidence["requests"] = []
+    if kind == "command":
+        assert verification.receipt("```local-evidence\n" + json.dumps(evidence) + "\n```", flow, head, world.settings)
+
+
+def test_common_env_values_do_not_change_public_protocol_metadata(cloud_world):
+    world = cloud_world
+    world.env.write_text(world.env.read_text(encoding="utf-8") +
+                         "FLAG=1\nZERO=0\nDEBUG=true\nCODE=200\nHTTP_METHOD=GET\n", encoding="utf-8")
+    cloud_spec(world)
+    spec = looped("cloud", seconds=60)
+    head = spec["pr"]["head"]
+    assert spec["state"] == "머지 가능" and spec["cloud_handoff"]["head"] == head
+    evidence = spec["local_verification"]["flows"][0]["evidence"]
+    assert evidence["requests"][0]["method"] == "GET" and evidence["requests"][0]["status"] == 200
+    assert evidence["observations"][0]["id"] == "healthy" and evidence["observations"][0]["pass"] is True
+    body = world.hub.comments[-1][1]
+    assert f"`{head}`" in body
+    for block in re.findall(r"```json\n(.*?)\n```", body, re.S):
+        assert json.loads(block)["observations"][0]["pass"] is True
+    verification.return_to_cloud(world.repo, spec, head, "Review failed; private-api-key", ["review/F1"])
+    body = world.hub.comments[-1][1]
+    assert f"`{head}`" in body and "`review/F1`" in body and "private-api-key" not in body
+
+
 def test_saving_changed_environment_revisions_revokes_the_published_pass_immediately(cloud_world):
     world = cloud_world
     cloud_spec(world)

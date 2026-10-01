@@ -1014,8 +1014,9 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
         if (view["headRefOid"], view["baseRefName"]) != (head, base):
             raise ValueError("인계를 읽는 동안 PR 이 바뀌었다 — 다시 시작한다")
         transfer = verification.handoff(view["body"], head)
-        spec = specs.update(loop.repo, loop.sid,
-                            cloud_handoff=verification.sanitize(transfer, verification.local(repo)))
+        # The handoff already comes from the PR cloud can read. Preserve its
+        # public commit and commands; runtime observation payloads are redacted.
+        spec = specs.update(loop.repo, loop.sid, cloud_handoff=transfer)
         record = spec.get("local_verification") or {}
         if record.get("needs_research") and not record.get("research_note"):
             raise ValueError("재분석 원인·근거·다음 실험을 적고 로컬 검증을 재개한다")

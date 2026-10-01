@@ -201,6 +201,21 @@ def sanitize(value, settings: dict):
     return value
 
 
+def clean_evidence(data: dict, settings: dict) -> dict:
+    """Public assertion ids/expectations and HTTP metadata keep their types.
+
+    Only observation text, URLs and browser descriptions can contain private
+    runtime values; redacting serialized JSON would corrupt booleans and ids.
+    """
+    if not data:
+        return {}
+    return {"observations": [{**{k: r[k] for k in ("id", "expected", "pass")},
+                              "actual": redact(r["actual"], settings)} for r in data.get("observations", [])],
+            "requests": [{**{k: r[k] for k in ("method", "status")}, "url": redact(r["url"], settings)}
+                         for r in data.get("requests", [])],
+            "actions": sanitize(data.get("actions", []), settings)}
+
+
 def signature(repo: Path, path: Path, flow: Flow, settings: dict) -> str:
     source = Path(settings["env_file"])
     identity = {"flow": flow.model_dump(), "environment_id": settings["environment_id"],
@@ -238,18 +253,17 @@ def receipt(output: str, flow: Flow, head: str, settings: dict) -> dict:
                 or not isinstance(row.get("actual"), str) or not row["actual"].strip():
             raise ValueError("기대 결과와 실제 관찰, 판정을 모두 기록한다")
     requests, actions = data.get("requests", []), data.get("actions", [])
-    if flow.kind in ("api", "browser"):
-        if not isinstance(requests, list) or not requests:
-            raise ValueError("실제 API 요청의 증거가 없다")
-        for request in requests:
-            if not isinstance(request, dict) or not isinstance(request.get("url"), str):
-                raise ValueError("API 요청의 URL 이 없다")
-            url = urlsplit(request["url"])
-            if url.username or url.password or f"{url.scheme}://{url.netloc}" not in settings["allowed_origins"]:
-                raise ValueError("설정된 테스트 API 범위 밖의 요청이다")
-            if request.get("method") not in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS") \
-                    or type(request.get("status")) is not int or not 100 <= request["status"] <= 599:
-                raise ValueError("실제 API 요청의 메서드·응답 코드가 없다")
+    if not isinstance(requests, list) or (flow.kind in ("api", "browser") and not requests):
+        raise ValueError("실제 API 요청의 증거가 없다")
+    for request in requests:
+        if not isinstance(request, dict) or not isinstance(request.get("url"), str):
+            raise ValueError("API 요청의 URL 이 없다")
+        url = urlsplit(request["url"])
+        if url.username or url.password or f"{url.scheme}://{url.netloc}" not in settings["allowed_origins"]:
+            raise ValueError("설정된 테스트 API 범위 밖의 요청이다")
+        if request.get("method") not in ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS") \
+                or type(request.get("status")) is not int or not 100 <= request["status"] <= 599:
+            raise ValueError("실제 API 요청의 메서드·응답 코드가 없다")
     if flow.kind == "browser":
         if data.get("build_head") != head or data.get("browser_tool") != settings["browser_tool"]:
             raise ValueError("화면 빌드의 커밋 또는 브라우저 도구가 다르다")
@@ -262,7 +276,7 @@ def receipt(output: str, flow: Flow, head: str, settings: dict) -> dict:
     kept = {"observations": [{k: r[k] for k in ("id", "expected", "actual", "pass")} for r in rows],
             "requests": [{k: r[k] for k in ("method", "url", "status")} for r in requests],
             "actions": [{k: a[k] for k in ("action", "expected", "actual")} for a in actions]}
-    return sanitize(kept, settings)
+    return clean_evidence(kept, settings)
 
 
 def reusable(record: dict, flow: Flow, head: str, fingerprint: str, path: Path) -> str:
@@ -351,7 +365,8 @@ def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: li
     attempts = [*record.get("failure_attempts", []), {
         "head": head, "environment_digest": None,
         "failures": failures, "reason": reason, "ts": time.time(), "confirmed": False,
-        "evidence": sanitize(sanitize([r.get("evidence", {}) for r in record.get("flows", [])], settings), copied)}]
+        "evidence": [clean_evidence(clean_evidence(r.get("evidence", {}), settings), copied)
+                     for r in record.get("flows", [])]}]
     spec = keep(spec, failure_attempts=attempts)
     try:
         measured = failure_environment(repo, Path(spec["worktree"]), spec)
@@ -388,10 +403,10 @@ def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: li
             f"State: `{state}`", "", redact(reason, local(repo)), "", "Affected invariants:",
             *(f"- `{issue}`" for issue in failures), "", "Reproduce with the repository's `verification.json` "
             "and the PR handoff. Keep secrets and private data local. Update the handoff to the repaired commit."]
-    for row in record.get("flows", []):
+    for row, evidence in zip(record.get("flows", []), attempts[-1]["evidence"]):
         if not row.get("ok"):
-            text += ["", f"Flow `{row['id']}`", "```json", json.dumps(row.get("evidence", {}), ensure_ascii=False), "```"]
-    body = redact("\n".join(text), local(repo))
+            text += ["", f"Flow `{row['id']}`", "```json", json.dumps(evidence, ensure_ascii=False), "```"]
+    body = "\n".join(text)
     returned = sha({"head": head, "environment_digest": attempts[-1]["environment_digest"], "body": body})
     if record.get("returned_failure") != returned:
         spec = keep(spec, delivery={"head": head, "body": body, "fingerprint": returned})
@@ -463,6 +478,8 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
     if any(not settings["revisions"].get(k) for f in contract.flows for k in f.environments):
         raise ValueError("각 흐름이 사용하는 API·데이터·설정 버전을 기록해야 한다")
     prepare(repo, path, settings)
+    settings = {**settings, "redact_values": [*hidden_values(settings),
+                *hidden_values({**settings, "env_file": str(path / ".env")})]}
     previous = (spec.get("local_verification") or {}).get("flows", [])
     researched = bool((spec.get("local_verification") or {}).get("research_note"))
     old = {f["id"]: f for f in previous}
@@ -511,16 +528,30 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
                 return pending(repo, spec, head, str(exc))
             except (ValueError, KeyError, TypeError) as exc:
                 evidence, failed, ok, reason = {}, [f"{flow.id}/evidence"], False, str(exc)
-            if fingerprint != signature(repo, path, flow, local(repo)):
-                ok, reason = False, "검사 중 로컬 환경이 바뀌었다"
+            # Retain the observed result before re-reading fallible prerequisites.
+            # Until environment confirmation, a successful observation is not a pass.
+            row.update(observed_ok=ok, blocked=ok, reason=redact(reason, settings), evidence=evidence, failures=failed,
+                       code=verdict.get("code"), log=redact(verdict["tail"], settings), finished_at=time.time())
+            rows.append(row)
+            spec = keep(spec, flows=rows)
+            try:
+                if fingerprint != signature(repo, path, flow, local(repo)):
+                    raise ValueError("검사 중 로컬 환경이 바뀌었다")
+            except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
+                row.update(blocked=ok, reason=str(exc))
+                spec = keep(spec, flows=rows)
+                if not ok:
+                    return return_to_cloud(repo, spec, head, reason + "\n" + str(exc),
+                                           failed or [f"{flow.id}/runtime"])
+                return pending(repo, spec, head, str(exc))
             comparable = [r for r in [*before.get("attempts", []), before]
                           if r.get("finished_at") is not None and not r.get("blocked")
                           and r.get("head") == head and r.get("signature") == fingerprint]
             unstable = bool(ok and comparable and not comparable[-1].get("ok") and not researched)
-            row.update(ok=ok and not unstable, reason="같은 커밋·환경에서 실패 후 통과 — 원인 확인 필요" if unstable else reason,
+            row.update(ok=ok and not unstable, blocked=False,
+                       reason="같은 커밋·환경에서 실패 후 통과 — 원인 확인 필요" if unstable else redact(reason, settings),
                        evidence=evidence, failures=failed, code=verdict.get("code"),
                        log=redact(verdict["tail"], settings), finished_at=time.time())
-            rows.append(row)
             spec = keep(spec, flows=rows)
             if unstable:
                 return return_to_cloud(repo, spec, head, row["reason"], [f"{flow.id}/intermittent"], "unstable")
@@ -643,9 +674,10 @@ def publish(repo: Path, spec: dict, head: str, base: str) -> dict:
     if not rows:
         body += "Documentation-only change; runtime checks exempt."
     for row in rows:
-        body += "\n\n" + f"Flow `{row['id']}` evidence\n```json\n" + json.dumps(row.get("evidence", {}), ensure_ascii=False) + "\n```"
+        body += "\n\n" + f"Flow `{row['id']}` evidence\n```json\n" + json.dumps(
+            clean_evidence(row.get("evidence", {}), local(repo)), ensure_ascii=False) + "\n```"
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as file:
-        file.write(redact(body, local(repo)))
+        file.write(body)
     try:
         done = specs.sh(["gh", "pr", "comment", str(spec["pr"]["number"]), "--body-file", file.name], repo)
     finally:
