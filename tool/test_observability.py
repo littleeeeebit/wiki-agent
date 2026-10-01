@@ -16,6 +16,7 @@ import pytest
 
 import decision
 import jev_search
+from agent import chat_session
 from agent.chat_session import Event
 from common.budget import Budget
 from main import app as main_app
@@ -388,10 +389,16 @@ def test_the_app_and_the_cli_publish_the_same_decisions_and_evidence_for_one_inp
     app = knowledge.LIVE[run_id].summary
 
     host, _heard = session_saying(reply)
+    commands = []
 
     class Host:
         def __init__(self, *args, **kwargs):
-            pass
+            session = chat_session.ChatSession(*args, **kwargs)
+            with patch.object(chat_session, "cli_command", return_value=["claude"]), \
+                 patch.object(chat_session.subprocess, "Popen") as spawned, \
+                 patch.object(chat_session.threading, "Thread"):
+                session._spawn()
+                commands.append(spawned.call_args.args[0])
 
         def say(self, text, halt=None):
             return host.say(text)
@@ -401,6 +408,11 @@ def test_the_app_and_the_cli_publish_the_same_decisions_and_evidence_for_one_inp
 
     with patch.object(jev_search, "prepare", retrieved(d)), patch("agent.ChatSession", Host):
         cli = jev_search.answer("데몬 포트는?", str(tmp_path), "", 8, "")
+
+    command = commands[0]
+    for flag in ("--tools", "--allowedTools"):
+        assert set(command[command.index(flag) + 1].split(",")) == {"Read", "Glob", "Grep"}
+    assert command[command.index("--setting-sources") + 1] == ""
 
     def identity(s):
         v = s["verification"]

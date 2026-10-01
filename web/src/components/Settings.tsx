@@ -231,7 +231,7 @@ const MODES: { id: JevMode | null; label: string; note: string }[] = [
   { id: null, label: '파일 따름', note: '.env 의 모드를 쓴다' },
   { id: 'off', label: '끔', note: '기본 검색과 답만' },
   { id: 'shadow', label: '그림자', note: '뒤에서 판단만 기록하고 답은 기본대로' },
-  { id: 'active', label: '켬', note: '판단이 검색을 이끌고, 검증한 주장만 싣는다' },
+  { id: 'active', label: '켬', note: '판단이 검색을 이끌고, 에이전트가 근거를 종합해 답한다 (문장별 검증 없음)' },
 ]
 const LIMIT: { id: keyof JevLimits; label: string; min: number; max: number; step: number }[] = [
   { id: 'seconds', label: '시간 (초)', min: 5, max: 120, step: 5 },

@@ -110,7 +110,7 @@ POINTS = {
                          "note": "a recommendation among proposed tasks; the person chooses the goal"},
     "query": {"entry": "main.query.say -> main.knowledge.prepare, main.knowledge.grounded",
               "operations": ["retrieve_evidence", "summarize_result"], "baseline": "baseline retrieval",
-              "note": "stages 6 and 7: route and repair retrieval, publish a checked or partial answer"},
+              "note": "stages 6 and 7: route and repair retrieval, synthesize an answer with recorded provenance"},
 }
 HOST = ("Tool selection inside a Claude or Codex session is the host's own planner: not intercepted, and "
         "outside controller coverage.")

@@ -51,7 +51,7 @@ def answer(question: str, project: str | None, state: str, k: int, model: str) -
     cfg = dataclasses.replace(decision.config(repo), host=model)   # the fallback asks the drafting model
     run = knowledge.Run(repo, "cli", question, cfg)
     out, outcome, reason = None, "failed", None
-    chat = ChatSession(repo, system=channels.ANSWER_PROMPT, model=model or None,
+    chat = ChatSession(repo, tools="Read,Glob,Grep", system=channels.ANSWER_PROMPT, model=model or None,
                        isolated=True)
 
     lead = [question]   # the first turn carries the question, as the app's `drafting` sends it
