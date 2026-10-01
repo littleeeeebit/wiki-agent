@@ -342,7 +342,16 @@ def pending(repo: Path, spec: dict, head: str, reason: str, state: str = "waitin
 
 
 def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: list[str], kind: str = "failed") -> dict:
-    current = github(repo, f"repos/{{owner}}/{{repo}}/pulls/{spec['pr']['number']}")
+    record = (specs.load(spec["repo"], spec["id"]) or spec).get("local_verification") or {}
+    attempts = [*record.get("failure_attempts", []), {
+        "head": head, "environment_digest": failure_environment(repo, Path(spec["worktree"]), spec),
+        "failures": failures, "reason": redact(reason, local(repo)), "ts": time.time(), "confirmed": False,
+        "evidence": sanitize([r.get("evidence", {}) for r in record.get("flows", [])], local(repo))}]
+    spec = keep(spec, failure_attempts=attempts)
+    try:
+        current = github(repo, f"repos/{{owner}}/{{repo}}/pulls/{spec['pr']['number']}")
+    except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
+        return pending(repo, spec, head, "실패 근거 보존; GitHub 확인 대기: " + str(exc))
     if current.get("head", {}).get("sha") != head:
         return pending(repo, spec, current.get("head", {}).get("sha") or head,
                        "검증 중 PR 커밋이 바뀌었다 — 지난 실패는 반복으로 세지 않는다", "waiting_review")
@@ -358,11 +367,7 @@ def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: li
     if kind == "unstable":
         state = "unstable"
     spec = pending(repo, spec, head, reason, state)
-    record = spec["local_verification"]
-    attempts = [*record.get("failure_attempts", []), {
-        "head": head, "environment_digest": failure_environment(repo, Path(spec["worktree"]), spec),
-        "failures": failures, "reason": redact(reason, local(repo)), "ts": time.time(),
-        "evidence": sanitize([r.get("evidence", {}) for r in record.get("flows", [])], local(repo))}]
+    attempts[-1]["confirmed"] = True
     spec = keep(spec, failures=seen, failure_attempts=attempts,
                 needs_research=bool(record.get("needs_research")) or state in ("reanalysis", "unstable"))
     record = spec["local_verification"]
@@ -551,20 +556,22 @@ def failure_environment(repo: Path, path: Path, spec: dict) -> str:
                 "runtime": specs.digest(repo, path, specs.required(repo, spec))})
 
 
-def uninvestigated(repo: Path, path: Path, spec: dict, head: str) -> str:
+def uninvestigated(repo: Path, path: Path, spec: dict, head: str) -> list[dict]:
     record = spec.get("local_verification") or {}
     attempts = record.get("failure_attempts", [])
     investigated = {i for note in record.get("research", []) for i in note.get("failure_attempts", [])}
     environment = failure_environment(repo, path, spec)
-    if any(i not in investigated and row["head"] == head and row["environment_digest"] == environment
-           for i, row in enumerate(attempts)):
-        return "같은 커밋·환경에서 실패 후 통과 — 원인 확인 필요"
+    unresolved = [row for i, row in enumerate(attempts)
+                  if i not in investigated and row["head"] == head and row["environment_digest"] == environment]
+    if unresolved:
+        return unresolved
     # Records made before attempt fingerprints existed are not proof that a
     # failing identity changed; require investigation rather than assume it did.
     if not attempts and any(head in heads for heads in record.get("failures", {}).values()) \
             and not any(note.get("head") == head for note in record.get("research", [])):
-        return "이전 실패의 환경 근거가 없다 — 원인 확인 필요"
-    return ""
+        return [{"failures": [issue for issue, heads in record["failures"].items() if head in heads],
+                 "reason": "이전 실패의 환경 근거가 없다 — 원인 확인 필요"}]
+    return []
 
 
 def merge_proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str) -> str:
@@ -579,7 +586,7 @@ def merge_proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str) -
     except (OSError, ValueError, KeyError, TypeError):
         return "이전 실패의 환경 근거를 확인하지 못했다"
     if problem:
-        return problem
+        return "같은 커밋·환경에서 실패 후 통과 — 원인 확인 필요"
     if record.get("state") != "verified" or (published.get("head"), published.get("state")) != (head, "success"):
         return "현재 로컬 검증은 리뷰·게시 대기다"
     if allowed.get("local_verification_digest") != evidence_identity(spec):
@@ -589,11 +596,12 @@ def merge_proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str) -
 
 def publish(repo: Path, spec: dict, head: str, base: str) -> dict:
     if cloud(spec):
-        problem = uninvestigated(repo, Path(spec["worktree"]), spec, head)
-        if problem:
-            spec = pending(repo, spec, head, problem, "unstable")
-            keep(spec, needs_research=True)
-            raise ValueError(problem)
+        unresolved = uninvestigated(repo, Path(spec["worktree"]), spec, head)
+        if unresolved:
+            reason = "같은 커밋·환경에서 실패 후 통과 — 원인 확인 필요"
+            return_to_cloud(repo, spec, head, reason + "\n\n" + "\n\n".join(r["reason"] for r in unresolved),
+                            sorted({issue for r in unresolved for issue in r["failures"]}), "unstable")
+            raise ValueError(reason)
     protection(repo, base)
     if not cloud(spec):
         status(repo, head, "success", "Local implementation: existing review and final gate passed")

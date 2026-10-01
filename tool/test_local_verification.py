@@ -414,6 +414,41 @@ def test_distinct_same_head_failures_return_to_cloud_without_duplicate_retries(c
     assert len(world.hub.comments) == 2 and len(spec["local_verification"]["failure_attempts"]) == 3
 
 
+def test_final_failure_survives_github_read_outage_and_same_head_retry(cloud_world, monkeypatch):
+    world = cloud_world
+    cloud_spec(world)
+    judge, github = specs.judge, verification.github
+    failed = False
+    outage = False
+
+    def fail_final(path, commands, *args, **kwargs):
+        nonlocal failed, outage
+        verdict = judge(path, commands, *args, **kwargs)
+        if commands != ["python verify.py health"] and not failed:
+            failed, outage = True, True
+            return {**verdict, "ok": False, "code": 1, "reason": "Intermittent final failure", "tail": "Recorded first failure"}
+        return verdict
+
+    def unavailable(repo, endpoint, *args, **kwargs):
+        if outage and "/pulls/" in endpoint:
+            raise RuntimeError("network down")
+        return github(repo, endpoint, *args, **kwargs)
+
+    monkeypatch.setattr(specs, "judge", fail_final)
+    monkeypatch.setattr(verification, "github", unavailable)
+    first = looped("cloud")
+    record = first["local_verification"]
+    assert record["failure_attempts"][0]["reason"].endswith("Recorded first failure")
+    assert record["state"] == "waiting_environment" and not record.get("failures")
+    outage = False
+    retried = looped("cloud")
+    record = retried["local_verification"]
+    assert record["state"] == "unstable" and record["needs_research"]
+    assert retried["state"] == "멈춤" and world.github.statuses[-1][1] == "pending"
+    assert len(record["failures"]["offline/final"]) == 1
+    assert any("Recorded first failure" in body for _, body in world.hub.comments)
+
+
 def test_local_configuration_cannot_be_saved_as_a_tracked_file(cloud_world):
     world = cloud_world
     git(world.repo, "add", "-f", verification.LOCAL)
