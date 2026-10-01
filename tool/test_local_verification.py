@@ -9,6 +9,7 @@ import re
 import socket
 import subprocess
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest.mock import patch
@@ -941,6 +942,14 @@ def test_review_controls_in_real_browser(cloud_world, monkeypatch):
         {"id": "codex:review", "efforts": [{"id": ""}, {"id": "high"}]}])
     release_review = threading.Event()
     say = Reviewer.say
+    make_cell = loop.cell
+
+    def delayed_cell(spec, path):
+        # Valid preparation may take longer than Playwright's default five seconds.
+        time.sleep(6)
+        return make_cell(spec, path)
+
+    monkeypatch.setattr(loop, "cell", delayed_cell)
 
     def visible_review(chat, text, halt=None):
         yield Event("progress", "Reviewer progress.\nChecking the remote head.")
@@ -1098,7 +1107,7 @@ def test_review_controls_in_real_browser(cloud_world, monkeypatch):
                 page.get_by_role("button", name="로컬 검증 재개", exact=True).click()
             assert reply.value.status == 200
             review_progress = page.get_by_role("region", name="리뷰 진행상황")
-            playwright.expect(review_progress.get_by_text("리뷰 진행상황.\n원격 커밋 확인 중.", exact=True)).to_be_visible()
+            playwright.expect(review_progress.get_by_text("리뷰 진행상황.\n원격 커밋 확인 중.", exact=True)).to_be_visible(timeout=30000)
             assert specs.load("proj", "cloud")["state"] == "리뷰 R1"
             release_review.set()
             playwright.expect(panel.get_by_text("로컬 검증·리뷰 통과", exact=True)).to_be_visible(timeout=30000)
