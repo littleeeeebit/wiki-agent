@@ -401,6 +401,7 @@ def test_repository_observations_are_bounded_fixed_reads_and_survive_missing_too
     assert all(cwd == tmp_path and timeout == 10 for _, cwd, timeout in calls)
     assert "--no-optional-locks" in calls[0][0] and "core.fsmonitor=false" in calls[0][0]
     assert "--no-pager" in calls[1][0] and "--all" in calls[1][0] and "-20" in calls[1][0]
+    assert "--no-show-signature" in calls[1][0]
     assert calls[2][0][1:7] == ["pr", "list", "--state", "all", "--limit", "20"]
     if unavailable:
         assert "could not read" in state["text"] and "gh is not installed" in state["text"]
