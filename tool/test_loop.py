@@ -163,6 +163,7 @@ class Reviewer:
     def __init__(self, path, tools="", system="", model="", effort="", **rest):
         self.path, self.tools, self.model, self.effort, self.rest = Path(path), tools, model, effort, rest
         self.verification = rest.get("verification")
+        self._env = rest.get("env", {})
         self.is_codex, self.session_id, self.alive, self.heard = model.startswith("codex:"), None, True, []
         self.id = uuid.uuid4().hex
         Reviewer.made.append(self)
@@ -1168,6 +1169,31 @@ def test_codex_review_migrates_old_tools_but_resumes_the_readonly_profile(world)
         assert loop.cell(cloud_spec, Path(spec["worktree"])).session_id == "cloud-thread"
         ordinary = loop.cell(spec, Path(spec["worktree"]))
         assert ordinary.session_id is None and ordinary.verification is None and ordinary.tools == loop.REVIEW_TOOLS
+
+
+@pytest.mark.parametrize("model", ["codex:test", "sonnet"])
+@pytest.mark.parametrize("field", ["environment_id", "test_scope", "browser_tool"])
+def test_cloud_review_refreshes_changed_environment_but_keeps_the_conversation(world, model, field):
+    spec = pr_spec(world, "review-context", 7, implementation_environment="claude-cloud")
+    context = {"environment_id": "test-api", "test_scope": "fixture-a", "browser_tool": "browser-a"}
+    marker = {"environment_id": "WIKI_VERIFICATION_ENVIRONMENT", "test_scope": "WIKI_VERIFICATION_SCOPE",
+              "browser_tool": "WIKI_VERIFICATION_BROWSER"}[field]
+    with patch.object(loop, "ChatSession", chat_session.ChatSession), \
+         patch.object(loop, "review_model", return_value=model), \
+         patch.object(loop.verification, "local", side_effect=lambda repo: dict(context)):
+        first = loop.cell(spec, Path(spec["worktree"]))
+        assert loop.cell(spec, Path(spec["worktree"])) is first
+        saved = loop.folder("proj", 7) / "session.json"
+        saved.write_text(json.dumps({"provider": "codex" if first.is_codex else "claude",
+                                     "session_id": "same-review-thread", "tools_profile": loop.CLOUD_PROFILE}),
+                         encoding="utf-8")
+        context[field] = "updated-context"
+        with patch.object(first, "close", wraps=first.close) as closed:
+            fresh = loop.cell(spec, Path(spec["worktree"]))
+            closed.assert_called_once()
+        assert fresh is not first and fresh._env[marker] == "updated-context"
+        assert fresh.session_id == "same-review-thread" and fresh.verification == first.verification
+        assert loop.cell(spec, Path(spec["worktree"])) is fresh
 
 
 # -- the loop carries its repository ------------------------------------------------------------------

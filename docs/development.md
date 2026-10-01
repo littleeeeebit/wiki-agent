@@ -31,6 +31,19 @@ Having changed a hook implementation, follow the
 the [public-copy update procedure](publishing.md) over the files and the git
 history.
 
+Terminal translation is manual: select output, remove private values in the
+preview, then confirm sending it to the external translator. Merely enabling
+the Korean overlay never uploads terminal output. Agent and Review progress
+continue to use the automatic overlay.
+
+The native privacy regression uses Playwright/CDP and a separate fixture app,
+not desktop control. With Playwright already available, run
+`python web/tests/terminal_privacy.py --app <isolated test exe> --project <fixture project> --task <fixture task>`.
+The executable must be built against the isolated checkout containing that
+fixture; do not point it at a user's running app. The check starts and closes
+its own app, refuses an occupied CDP port, and intercepts translation requests
+locally so no test output goes to an external provider.
+
 ## Attaching this repository to the rules
 
 This wiki is maintained too, so the same hooks hang on itself. The method is

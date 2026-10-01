@@ -1047,20 +1047,28 @@ def test_review_controls_in_real_browser(cloud_world, monkeypatch):
             page.keyboard.insert_text("user-command")
             page.keyboard.press("Enter")
             terminal = page.get_by_role("region", name="터미널 출력 번역")
-            # Continuous CLI redraws must not postpone every translation until exit.
-            page.evaluate("window.progressTimer = setInterval(() => window.terminalOutput('\\x1b[0m'), 80)")
-            try:
-                playwright.expect(terminal.get_by_text("터미널 진행상황.", exact=True)).to_be_visible()
-            finally:
-                page.evaluate("clearInterval(window.progressTimer)")
-            playwright.expect(terminal.get_by_text("두 번째 출력 줄.", exact=True)).to_be_visible()
-            assert terminal.locator("p").all_text_contents()[1:] == ["터미널 진행상황.", "\u00a0", "두 번째 출력 줄."]
+            page.wait_for_timeout(800)
+            assert not any("Terminal progress." in text for text in translations)
+            screen = page.locator(".xterm-screen").bounding_box()
+            page.mouse.move(screen["x"] + 2, screen["y"] + 2)
+            page.mouse.down()
+            page.mouse.move(screen["x"] + screen["width"] - 2, screen["y"] + screen["height"] - 2, steps=10)
+            page.mouse.up()
+            terminal.get_by_role("button", name="선택한 출력 가져오기", exact=True).click()
+            preview = terminal.get_by_role("textbox", name="외부 번역 서비스로 보낼 내용")
+            assert "Terminal progress." in preview.input_value()
+            assert not any("Terminal progress." in text for text in translations)
+            preview.fill("Terminal progress.\n\nSecond output line.")
+            terminal.get_by_role("button", name="확인한 내용 번역", exact=True).click()
+            rendered = terminal.get_by_text("터미널 진행상황.\n\n두 번째 출력 줄.", exact=True)
+            playwright.expect(rendered).to_be_visible()
+            assert rendered.evaluate("element => getComputedStyle(element).whiteSpace") == "pre-wrap"
             assert not any("user-command" in text for text in translations)
             assert page.evaluate("window.terminalInput") == "\r"
             # A Windows prompt can wrap before its closing `>` or echoed command.
             page.evaluate("window.terminalOutput('PS C:\\\\' + 'long-worktree-'.repeat(12) + '> hidden-command\\r\\n')")
             page.wait_for_timeout(800)
-            assert terminal.locator("p").all_text_contents()[1:] == ["터미널 진행상황.", "\u00a0", "두 번째 출력 줄."]
+            playwright.expect(rendered).to_be_visible()
             assert not any("hidden-command" in text or "long-worktree" in text for text in translations)
             page.get_by_role("tab", name="리뷰", exact=True).click()
             page.get_by_role("region", name="리뷰 세션").get_by_role("combobox", name="모델", exact=True).click()

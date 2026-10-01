@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Terminal as XTerm } from '@xterm/xterm'
-import type { IMarker } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import '@xterm/xterm/css/xterm.css'
-import { useOverlay } from '@/lib/overlay'
+import { useParagraphOverlay } from '@/lib/overlay'
 
 /** The Tauri shell holds the terminals; a browser tab has none to offer. */
 const shell = '__TAURI_INTERNALS__' in window
@@ -32,16 +31,21 @@ function colors() {
  *  arrives until it knows its id, or the first prompt is lost. */
 export function Terminal({ cwd, theme, on }: { cwd: string; theme: string; on: boolean }) {
   const box = useRef<HTMLDivElement>(null)
+  const terminal = useRef<XTerm | null>(null)
   const [fault, setFault] = useState('')
-  const [output, setOutput] = useState<string[]>([])
-  const shown = useOverlay(output, on)
+  const [selection, setSelection] = useState('')
+  const [approved, setApproved] = useState<{ cwd: string; theme: string; text: string } | null>(null)
+  const confirmed = approved?.cwd === cwd && approved.theme === theme ? approved.text : ''
+  const shown = useParagraphOverlay(confirmed, on)
 
   useEffect(() => {
     if (!shell || !cwd || !box.current) return
     setFault('')
-    setOutput([])
+    setSelection('')
+    setApproved(null)
     const term = new XTerm({ fontFamily: '"IBM Plex Mono", ui-monospace, monospace', fontSize: 12.5,
       cursorBlink: true, theme: colors(), scrollback: 5000, convertEol: true })
+    terminal.current = term
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(box.current)
@@ -51,33 +55,6 @@ export function Terminal({ cwd, theme, on }: { cwd: string; theme: string; on: b
     let alive = true
     const early = new Map<number, Uint8Array[]>()
     const stops: (() => void)[] = []
-    const inputs = new Set<IMarker>()
-    let timer: number | undefined
-    // Read xterm's parsed screen: ANSI cursor moves and split UTF-8 bytes have
-    // already been handled. The mirror never changes the interactive terminal.
-    const parsed = term.onWriteParsed(() => {
-      if (timer !== undefined) return
-      timer = window.setTimeout(() => {
-        timer = undefined
-        if (!alive) return
-        const buffer = term.buffer.active
-        const inputRows = new Set([...inputs].map((marker) => marker.line))
-        const lines: string[] = []
-        let input = false
-        // ponytail: last 80 parsed rows, not a transcript; persist PTY output if full history is needed.
-        for (let i = Math.max(0, buffer.length - 80); i < buffer.length; i++) {
-          const line = buffer.getLine(i)
-          const text = line?.translateToString(true) ?? ''
-          input = inputRows.has(i) || /^(?:PS\s+|[^\s]+@[^\s]+.*[$#]|[$>]\s)/.test(text)
-            || (!!line?.isWrapped && input)
-          if (input) continue
-          if (line?.isWrapped && lines.length) lines[lines.length - 1] += text
-          else if (text.trim() || lines.length) lines.push(text)
-        }
-        while (lines.length && !lines.at(-1)?.trim()) lines.pop()
-        setOutput(lines)
-      }, 600)
-    })
     const ready = Promise.all([
       listen<[number, number[]]>('pty-out', ({ payload: [from, bytes] }) => {
         const chunk = new Uint8Array(bytes)
@@ -99,18 +76,7 @@ export function Terminal({ cwd, theme, on }: { cwd: string; theme: string; on: b
       })
       .catch((err) => alive && setFault(String(err)))
 
-    const typed = term.onData((data) => {
-      if (!id) return
-      const pieces = data.split(/\r\n|\r|\n/)
-      const count = Math.max(1, pieces.length - (pieces.at(-1) === '' ? 1 : 0))
-      for (let i = 0; i < count; i++) {
-        const row = term.buffer.active.baseY + term.buffer.active.cursorY + i
-        if ([...inputs].some((marker) => marker.line === row)) continue
-        const marker = term.registerMarker(i)
-        if (marker) { inputs.add(marker); marker.onDispose(() => inputs.delete(marker)) }
-      }
-      void invoke('pty_write', { id, data })
-    })
+    const typed = term.onData((data) => id && void invoke('pty_write', { id, data }))
     const resized = new ResizeObserver(() => {
       if (!box.current?.clientWidth || !box.current.clientHeight) return
       fit.fit()
@@ -120,8 +86,7 @@ export function Terminal({ cwd, theme, on }: { cwd: string; theme: string; on: b
 
     return () => {
       alive = false
-      window.clearTimeout(timer)
-      parsed.dispose()
+      terminal.current = null
       resized.disconnect()
       typed.dispose()
       stops.forEach((stop) => stop())
@@ -147,10 +112,22 @@ export function Terminal({ cwd, theme, on }: { cwd: string; theme: string; on: b
         <p className="p-5 text-[13.5px] text-faint">작업트리가 있는 작업을 고르면 그 안에서 셸이 열린다.</p>
       ) : (
         <>
-          <div ref={box} className="min-h-0 flex-1 px-2 py-1" />
-          {on && output.length > 0 && <section aria-label="터미널 출력 번역" className="max-h-[40%] shrink-0 overflow-y-auto border-t border-border px-4 py-2">
-            <p className="mb-1 text-[11px] text-faint">출력 번역 · 입력과 명령은 위 터미널에서 확인한다</p>
-            {shown.map((text, i) => <p key={i} title={output[i]} className="whitespace-pre-wrap break-words text-[12.5px] leading-relaxed">{text || '\u00a0'}</p>)}
+          <div ref={box} className="min-h-0 flex-1 overflow-hidden px-2 py-1" />
+          {on && <section aria-label="터미널 출력 번역" className="max-h-[40%] shrink-0 overflow-y-auto border-t border-border px-4 py-2">
+            <p className="mb-1 text-[11px] text-faint">터미널 출력은 자동 전송하지 않는다. 번역할 출력을 선택한 뒤 비밀값·개인정보를 지우고 확인한다.</p>
+            <button type="button" className="text-[12px] text-primary" onClick={() => {
+              setSelection(terminal.current?.getSelection() ?? '')
+              setApproved(null)
+            }}>선택한 출력 가져오기</button>
+            {selection && <>
+              <label className="mt-2 block text-[12px]">외부 번역 서비스로 보낼 내용
+                <textarea value={selection} rows={3} onChange={(e) => setSelection(e.target.value)}
+                  className="mt-1 w-full rounded border border-border bg-background p-2 font-mono text-[12px]" />
+              </label>
+              <button type="button" className="text-[12px] text-primary" onClick={() => setApproved({ cwd, theme, text: selection })}>
+                확인한 내용 번역</button>
+            </>}
+            {confirmed && <p className="mt-2 whitespace-pre-wrap break-words text-[12.5px] leading-relaxed">{shown}</p>}
           </section>}
         </>
       )}

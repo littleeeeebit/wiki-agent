@@ -599,16 +599,21 @@ def cell(spec: dict, path: Path) -> ChatSession:
     # Outside the lock: listing Codex's models starts Codex.
     model = review_model(named["model"]) if named.get("model") else review_model()
     effort = named.get("effort") or settings()["review_effort"]
+    repo = channels.repo_for(spec["repo"]) if verify_dir is not None else None
+    local = verification.local(repo) if repo is not None else {}
+    env = {"WIKI_VERIFICATION_HEAD": spec["pr"]["head"],
+           "WIKI_VERIFICATION_ENVIRONMENT": local.get("environment_id", ""),
+           "WIKI_VERIFICATION_SCOPE": local.get("test_scope", ""),
+           "WIKI_VERIFICATION_BROWSER": local.get("browser_tool", "")} if verify_dir is not None else {}
     with _lock:
         chat = _cells.get(key)
     if (chat is not None and chat.is_codex == model.startswith("codex:")
-            and getattr(chat, "verification", None) == verify_dir):
+            and getattr(chat, "verification", None) == verify_dir
+            and all(chat._env.get(k) == v for k, v in env.items())):
         chat.reconfigure(model, effort)
         return chat
     if chat is not None:
         close_cell(*key)
-    repo = channels.repo_for(spec["repo"]) if verify_dir is not None else None
-    local = verification.local(repo) if repo is not None else {}
     context = (f"\nCloud verification mode: execute checks and create verification files under "
                f"`{folder(*key) / 'verification'}` using the per-head artifact directory in each round's instructions. "
                "This mode never authorizes editing tracked "
@@ -617,11 +622,7 @@ def cell(spec: dict, path: Path) -> ChatSession:
                if verify_dir is not None else "")
     chat = ChatSession(path, tools=CLOUD_TOOLS if verify_dir is not None else REVIEW_TOOLS,
                        system=context + "\n" + PROMPT, model=model, effort=effort,
-                       **({"verification": verify_dir, "env": {
-                           "WIKI_VERIFICATION_HEAD": spec["pr"]["head"],
-                           "WIKI_VERIFICATION_ENVIRONMENT": local.get("environment_id", ""),
-                           "WIKI_VERIFICATION_SCOPE": local.get("test_scope", ""),
-                           "WIKI_VERIFICATION_BROWSER": local.get("browser_tool", "")}} if verify_dir is not None else {}))
+                       **({"verification": verify_dir, "env": env} if verify_dir is not None else {}))
     try:
         saved = json.loads((folder(*key) / "session.json").read_text(encoding="utf-8"))
         if (saved.get("provider") == ("codex" if chat.is_codex else "claude")
