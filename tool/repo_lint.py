@@ -120,18 +120,23 @@ def check(repo: Path, wiring: bool = True) -> list[tuple[str, str]]:
     would report every deny rule as drift."""
 
     from apply import wiring_drift
-    malformed = [
-        ("페이지 형식 오류", f"`{path.relative_to(repo).as_posix()}`: {error}")
-        for path in sorted((repo / ".wiki").glob("**/*.md"))
-        for error in metadata_errors(path)
-    ]
     # The emphasis check belongs here so that its contract also holds in a
     # target repository. A hook is called before the write, so it never sees
     # the document an `Edit` or a patch is about to produce. This check reads
     # the file on disk and closes that gap. Left only on the hub, a fragment
     # passes in every installed repository and nobody looks again — which is
     # enforcement that is written down as attached and is not.
-    from lint import loud_emphasis
+    from lint import loud_emphasis, tracked_markdown
+
+    # Pages are the `.md` git calls ours, the same set the emphasis check
+    # reads. A glob also read ignored folders such as `.wiki/review/`, where
+    # review rounds and archived receipts live without front matter, and
+    # reported each of them as a broken page: 313 at once in one repository.
+    malformed = [
+        ("페이지 형식 오류", f"`{name}`: {error}")
+        for name in tracked_markdown(repo) if name.startswith(".wiki/")
+        for error in metadata_errors(repo / name)
+    ]
 
     return (stale_index(repo) + dangling_pointers(repo) + misplaced_scope(repo)
             + malformed + (wiring_drift(repo) if wiring else []) + loud_emphasis(repo))
