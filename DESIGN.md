@@ -61,6 +61,8 @@ typography:
     control: "sans 12.5px / 400"
     code: "mono 12px / 400"
     meta: "mono 10.5px / 400"
+    question-title: "sans 16px / 600"
+    question-detail: "sans 14px / 400"
 spacing:
   unit: "0.25rem"
   steps: [2, 4, 6, 8, 12, 16, 20, 24, 32]
@@ -152,7 +154,10 @@ The map follows the app tokens (`web/src/graph/map.css`). Repository documents a
 
 ## Typography
 
-There are seven stages, and their uses do not overlap. When measured on 2026-09-24, there were 19 types. When rebuilt and measured at loop stage 6, mono 11·11.5·12.5, sans 12·13, and 10px were included, so all were moved to the seven below.
+The compact chrome uses seven stages. Question cards add two reading stages
+for longer decisions. When measured on 2026-09-24, there were 19 types. When
+rebuilt and measured at loop stage 6, mono 11·11.5·12.5, sans 12·13, and 10px
+were included, so those were moved to the seven chrome stages below.
 
 | Stage | Value | Use |
 | --- | --- | --- |
@@ -163,9 +168,23 @@ There are seven stages, and their uses do not overlap. When measured on 2026-09-
 | control | sans 12.5 / 400 | Clickable or selectable items, single-line descriptions, status sentences |
 | code | mono 12 / 400 | Paths, task · repository names, tool lines, approval content, code within answers |
 | meta | mono 10.5 / 400 | Numbers, time, cost, branches, node names and metrics on the map. The status phrase of a task and PR · round are also this stage |
+| question-title | sans 16 / 600 | Questions and option titles |
+| question-detail | sans 14 / 400 | Descriptions, chapter navigation and question actions |
 
 sr-only labels (project, model, inference intensity) are measured at the browser default of 16px, but since they are not visible on screen, they are not counted in the stages.
 
 ## Spacing
 
-Only multiples of 2px are used. The height of clickable items is one `28px` (`h-7`).
+Question cards use a reading scale separate from compact tool chrome:
+16px questions and option titles, 14px descriptions, line height 1.5 or more,
+16px card padding and 24px between chapters. Native radio and checkbox
+controls retain keyboard navigation. Examples use Markdown and fenced text
+sketches. The existing user-selected palette remains the reference.
+
+The agent pane shows actual Git changes with additions and deletions, refreshed
+every second while running. The preview scrolls within the pane. Provider
+status shows reported quota windows, reset times, tokens and connection setup
+duration; an unavailable value stays explicitly unavailable.
+
+Only multiples of 2px are used. Chrome controls are `28px` (`h-7`). Question
+actions are at least `44px`, and option cards grow with their descriptions.

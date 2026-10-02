@@ -229,6 +229,25 @@
 }
 
 /* 누를 수 있는 인용 — 경로:줄 이나 SHA. 코드 모양은 지키고 밑줄로 구별한다. */
+.question-preview > * + * {
+    @apply mt-2;
+}
+.question-preview ul, .question-preview ol {
+    @apply pl-5;
+}
+.question-preview ul {
+    @apply list-disc;
+}
+.question-preview ol {
+    @apply list-decimal;
+}
+.question-preview table {
+    @apply block max-w-full overflow-x-auto border-collapse;
+}
+.question-preview th, .question-preview td {
+    @apply border border-border px-2 py-1 text-left;
+}
+
 .prose-answer .cite {
     @apply font-mono text-[12px] bg-secondary px-1 py-[1px] rounded-sm cursor-pointer
            underline decoration-dotted decoration-primary/60 underline-offset-2 hover:bg-accent;

@@ -13,6 +13,8 @@ reloaded window reattaches and a closed tab stops nothing.
 from __future__ import annotations
 
 import json
+import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -24,7 +26,8 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agent import ChatSession
+from agent import ChatSession, codex_usage
+from common.process import background_options
 from workspace import remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
@@ -43,6 +46,8 @@ _sessions: dict[str, ChatSession] = {}    # worktree path -> its session
 _busy: dict[str, object] = {}   # worktree path -> the hold of its running turn
 _runs: dict[str, "Run"] = {}    # worktree path -> its last turn, kept until the next one starts
 _queued: dict[str, "Order"] = {}   # worktree path -> the instruction waiting for it to be let go
+_provider_usage: dict = {}
+_provider_usage_lock = threading.Lock()
 
 
 def close_all() -> None:
@@ -70,6 +75,91 @@ def known(path: str) -> Path:
     keeps its worktree readable after a switch."""
 
     return Path(path) if path in _sessions else ours(path)
+
+
+@router.get("/api/providers/{provider}/usage")
+def provider_usage(provider: Literal["claude", "codex"], path: str = "") -> dict:
+    if path:
+        known(path)
+        chat = _sessions.get(path)
+        if chat:
+            return {"provider": "codex" if chat.is_codex else "claude", **chat.status()}
+    if provider == "claude":
+        return {"provider": provider, "live": False, "quota": [], "usage": {}, "connection_ms": None, "error": ""}
+    with _provider_usage_lock:
+        if not _provider_usage or time.monotonic() - _provider_usage["at"] >= 60:
+            try:
+                data = {"quota": codex_usage(), "error": ""}
+            except Exception:
+                data = {"quota": [], "error": "계정 사용량을 받지 못했다"}
+            _provider_usage.update(at=time.monotonic(), data=data)
+        return {"provider": provider, "live": False, "usage": {}, "connection_ms": None, **_provider_usage["data"]}
+
+
+def diff_git(path: Path, *args: str, codes=(0,)) -> str:
+    command = ["git", "-c", "core.quotepath=false", "-C", str(path), *args]
+    expired = threading.Event()
+    with tempfile.TemporaryFile() as errors, subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=errors, text=True,
+            encoding="utf-8", errors="replace", **background_options()) as proc:
+        def timeout():
+            expired.set()
+            proc.kill()
+
+        timer = threading.Timer(10, timeout)
+        timer.daemon = True
+        timer.start()
+        try:
+            # One extra character carries truncation; never capture the full patch.
+            output = proc.stdout.read(200_001 if args[0] == "diff" else -1)
+            truncated = args[0] == "diff" and len(output) > 200_000
+            if truncated:
+                proc.kill()
+            proc.wait()
+            if expired.is_set():
+                raise subprocess.TimeoutExpired(command, 10)
+            if not truncated and proc.returncode not in codes:
+                errors.seek(0)
+                raise RuntimeError(errors.read(2000).decode("utf-8", "replace").strip() or "Git 변경 현황을 읽지 못했다")
+            return output
+        finally:
+            timer.cancel()
+            if proc.poll() is None:
+                proc.kill()
+
+
+@router.get("/api/work/diff")
+def changes(path: str) -> dict:
+    """Read actual files, including shell edits, the index and new files.
+
+    A running turn pins HEAD before the host starts, so committing does not
+    erase its changes from the screen. No index mutation or external diff driver.
+    """
+    root = known(path)
+    run = _runs.get(path)
+    base = getattr(run, "diff_base", None) or "HEAD"
+    flags = ("--no-ext-diff", "--no-textconv", "--no-color")
+    try:
+        patch = diff_git(root, "diff", *flags, base, "--")
+        untracked = diff_git(root, "ls-files", "--others", "--exclude-standard", "-z")
+        omitted = []
+        for name in untracked.split("\0"):
+            if len(patch) > 200_000:
+                break
+            if not name:
+                continue
+            file = root / name
+            # A symlink may target a private file outside this worktree.
+            if file.is_symlink() or not file.resolve().is_relative_to(root.resolve()) or file.stat().st_size > 1_000_000:
+                omitted.append(name)
+                continue
+            patch += diff_git(root, "diff", "--no-index", *flags, "--", "/dev/null", name, codes=(0, 1))
+            if len(patch) > 200_000:
+                break
+        # ponytail: cap the preview at 200k characters; paginate if large patches become common.
+        return {"diff": patch[:200_000], "base": base, "truncated": len(patch) > 200_000, "omitted": omitted}
+    except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
+        raise HTTPException(503, f"변경 현황을 읽지 못했다 — {exc}") from exc
 
 
 def record(path: Path) -> Path:
@@ -381,6 +471,7 @@ class Run:
         self.done = False
         self.halt = threading.Event()   # set by a stop; the session reads it too
         self.wake = threading.Condition()
+        self.diff_base: str | None = None
 
     def put(self, payload: dict) -> None:
         with self.wake:
@@ -459,7 +550,8 @@ def steps(events: list[dict]) -> list[dict]:
             # `none`: the turn ended before anyone answered.
             step = asked[str(meta.get("id"))] = {
                 "kind": "approval", "tool": meta.get("tool", ""), "text": ev["text"],
-                "answer": meta.get("answer", "none"), "by": meta.get("by", "person")}
+                "answer": meta.get("answer", "none"), "by": meta.get("by", "person"),
+                **({"input": meta["input"]} if meta.get("tool") in ("AskUserQuestion", "requestUserInput") else {})}
             out.append(step)
         elif ev["kind"] == "answered" and str(meta.get("id")) in asked:
             asked[str(meta["id"])].update(answer="allow" if meta["allow"] else "deny", by=meta["by"],
@@ -632,6 +724,10 @@ def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = N
     turn's thread decides what is sent, and records it (`run_turn`)."""
 
     run = run or Run(chat)
+    try:
+        run.diff_base = diff_git(path, "rev-parse", "HEAD").strip()
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        pass  # The diff endpoint reports its failure; the agent still runs.
     if not decide:
         remember(path, "user", text)
     with _lock:

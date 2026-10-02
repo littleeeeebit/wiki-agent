@@ -435,9 +435,10 @@ export async function runEvents(id: string, after: number, onEvent: (ev: Ev) => 
 
 /** A named block the `next` focus ends an answer with, as the server checked
  *  it. A `spec` block arrives as the id of the card it made, one per spec. */
+export type ChoiceQuestion = { header?: string; question: string; options: { label: string; note?: string; preview?: string }[]; multi?: boolean }
 export type Block =
   | { name: 'candidates'; value: { title: string; why?: string; source?: string }[]; error?: undefined }
-  | { name: 'choices'; value: { question: string; options: { label: string; note?: string }[]; multi?: boolean };
+  | { name: 'choices'; value: ChoiceQuestion | { questions: ChoiceQuestion[] };
       error?: undefined }
   | { name: 'spec'; id: string; error?: undefined }
   | { name: string; error: string }
@@ -768,6 +769,19 @@ export type Worktree = {
 
 export const getWorktrees = () =>
   get('/api/worktrees').then((r) => json<{ project: string; repo: string; rows: Worktree[] }>(r, '작업트리'))
+
+export type Changes = { diff: string; base: string; truncated: boolean; omitted: string[] }
+export const workDiff = (path: string) => get(`/api/work/diff?${new URLSearchParams({ path })}`)
+  .then((r) => json<Changes>(r, '코드 변경 현황'))
+
+export type ProviderStatus = {
+  provider: 'claude' | 'codex'
+  live: boolean; connection_ms: number | null; error: string
+  quota: { name: string; used_percent: number | null; window_minutes?: number; resets_at: number | null; status?: string }[]
+  usage: { input_tokens?: number; output_tokens?: number; cost_usd?: number; scope?: 'turn' | 'thread' }
+}
+export const providerUsage = (provider: 'claude' | 'codex', path = '') =>
+  get(`/api/providers/${provider}/usage?${new URLSearchParams({ path })}`).then((r) => json<ProviderStatus>(r, '사용량'))
 /** `force`: stop what runs there and drop uncommitted changes — a person's delete. */
 export const removeWorktree = (path: string, force = false) =>
   post('/api/worktrees/remove', { path, force }).then((r) => json<{ text: string }>(r, '작업트리 정리'))
@@ -813,7 +827,7 @@ export type WorkEv = {
 export type WorkStep =
   | { kind: 'tool' | 'progress' | 'said' | 'hook'; text: string; command?: boolean }
   | { kind: 'approval'; tool: string; text: string; answer: 'allow' | 'deny' | 'none'; by: AnsweredBy;
-      answers?: string[] }
+      answers?: string[]; input?: Record<string, unknown> }
 
 export type WorkTurn = {
   role: 'user' | 'assistant'

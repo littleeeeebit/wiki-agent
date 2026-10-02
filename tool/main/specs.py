@@ -415,12 +415,30 @@ def _shape(name: str, value) -> None:
             if not isinstance(c, dict) or not isinstance(c.get("title"), str) or not c["title"].strip():
                 raise ValueError("후보마다 `title` 이 있어야 한다")
     elif name == "choices":
-        if not isinstance(value, dict) or not isinstance(value.get("question"), str):
+        if not isinstance(value, dict):
+            raise ValueError("`choices` 는 질문 또는 질문 목록이어야 한다")
+        if "questions" in value:
+            if not isinstance(value["questions"], list) or not value["questions"]:
+                raise ValueError("`choices.questions` 는 비지 않은 목록이어야 한다")
+            for question in value["questions"]:
+                if not isinstance(question, dict) or "questions" in question:
+                    raise ValueError("챕터마다 하나의 질문이 있어야 한다")
+                _shape("choices", question)
+            return
+        if not isinstance(value.get("question"), str) or not value["question"].strip():
             raise ValueError("`choices` 에 `question` 이 없다")
         options = value.get("options")
         if not isinstance(options, list) or not options or not all(
                 isinstance(o, dict) and isinstance(o.get("label"), str) and o["label"].strip() for o in options):
             raise ValueError("`choices` 의 `options` 마다 `label` 이 있어야 한다")
+        for option in options:
+            for key in ("note", "preview"):
+                if key in option and not isinstance(option[key], str):
+                    raise ValueError(f"`choices.options.{key}` 는 문자열이어야 한다")
+        if "header" in value and not isinstance(value["header"], str):
+            raise ValueError("`choices.header` 는 문자열이어야 한다")
+        if "multi" in value and not isinstance(value["multi"], bool):
+            raise ValueError("`choices.multi` 는 참·거짓이어야 한다")
 
 
 def card(repo: Path, block, gate: str, source: dict, accepted: dict | None = None) -> str:

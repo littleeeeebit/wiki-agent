@@ -553,7 +553,7 @@ export default function App() {
             </Btn>
           )}
         </header>
-        {task && <SpecSummary key={spec?.id ?? task.key} spec={spec} onStart={start} onChanged={readSpecs} />}
+        {task && <SpecSummary key={spec?.id ?? task.key} spec={spec} onStart={start} onChanged={readSpecs} korean={on} />}
         <div role="tablist" aria-label="작업 면" className="flex h-9 shrink-0 items-end gap-1 border-b border-border px-3">
           {TABS.map((t) => (
             <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => pick(t.id)}

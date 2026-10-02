@@ -1,7 +1,8 @@
 import { useState } from 'react'
+import { Questions } from '@/components/Questions'
 import { Btn } from '@/components/Modal'
 import * as api from '@/lib/api'
-import type { Block, Spec } from '@/lib/api'
+import type { Block, ChoiceQuestion, Spec } from '@/lib/api'
 import { useOverlay } from '@/lib/overlay'
 
 export type BlockProps = {
@@ -22,7 +23,7 @@ export function Blocks({ blocks, ...props }: BlockProps & { blocks: Block[] }) {
       {blocks.map((b, i) => {
         if (b.error !== undefined) return <Broken key={i} name={b.name} error={b.error} {...props} />
         if (b.name === 'candidates' && 'value' in b) return <Candidates key={i} list={b.value} {...props} />
-        if (b.name === 'choices' && 'value' in b) return <Choices key={i} {...b.value} {...props} />
+        if (b.name === 'choices' && 'value' in b) return <Choices key={i} value={b.value} {...props} />
         if (b.name === 'spec' && 'id' in b) return <SpecCard key={i} id={b.id} {...props} />
         return null
       })}
@@ -67,36 +68,16 @@ function Candidates({ list, korean, busy, onSay }: { list: { title: string; why?
   )
 }
 
-function Choices({ question, options, multi, korean, busy, onSay }:
-  { question: string; options: { label: string; note?: string }[]; multi?: boolean } & BlockProps) {
-  const shown = useOverlay([question, ...options.flatMap((o) => [o.label, o.note ?? ''])], korean)
-  const [picked, setPicked] = useState<number[]>([])
-  return (
-    <fieldset className={box}>
-      <legend className="px-1 text-[13.5px]">{shown[0]}</legend>
-      <div className="space-y-1.5">
-        {options.map((o, i) => multi ? (
-          <label key={i} className="flex items-start gap-2 text-[12.5px]">
-            <input type="checkbox" className="mt-1 accent-primary" checked={picked.includes(i)}
-              onChange={(e) => setPicked((p) => (e.target.checked ? [...p, i] : p.filter((j) => j !== i)))} />
-            <span>{shown[1 + i * 2]}{o.note && <span className="ml-1.5 text-[12.5px] text-muted-foreground">{shown[2 + i * 2]}</span>}</span>
-          </label>
-        ) : (
-          <button key={i} type="button" disabled={busy} onClick={() => onSay(o.label)}
-            className="block w-full rounded-md border border-border px-2.5 py-1 text-left text-[12.5px] hover:bg-secondary disabled:opacity-40">
-            {shown[1 + i * 2]}
-            {o.note && <span className="ml-1.5 text-[12.5px] text-muted-foreground">{shown[2 + i * 2]}</span>}
-          </button>
-        ))}
-      </div>
-      {multi && (
-        <Btn disabled={busy || picked.length === 0} className="mt-2"
-          onClick={() => onSay([...picked].sort((a, b) => a - b).map((i) => options[i].label).join('; '))}>
-          보내기
-        </Btn>
-      )}
-    </fieldset>
-  )
+function Choices({ value, korean, busy, onSay }:
+  { value: ChoiceQuestion | { questions: ChoiceQuestion[] } } & BlockProps) {
+  const questions = 'questions' in value ? value.questions : [value]
+  return <div className={box}>
+    <Questions questions={questions.map((q) => ({ question: q.question, header: q.header,
+      multiSelect: q.multi, options: q.options.map((o) => ({ label: o.label, description: o.note, preview: o.preview })) }))}
+      korean={korean} disabled={busy}
+      onSubmit={(answers) => onSay(questions.length === 1 ? answers[0]
+        : questions.map((q, i) => `${q.header || q.question}: ${answers[i]}`).join('\n'))} />
+  </div>
 }
 
 const lines = (text: string) => text.split('\n').map((l) => l.trim()).filter(Boolean)
