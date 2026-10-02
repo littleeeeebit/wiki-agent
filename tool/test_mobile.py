@@ -167,3 +167,44 @@ def test_pairing_waits_for_the_public_path(companion):
     assert desktop.get("/api/mobile/status").json()["enabled"]
     assert desktop.post("/api/mobile/link").status_code == 200
     companion.process = None
+
+
+def test_fixed_origin_cli_normalizes_browser_origins_and_rejects_invalid_urls(companion, tmp_path):
+    import uvicorn
+
+    def launch(value):
+        return patch.object(app.sys, "argv", ["wiki-agent", "--workspace", str(tmp_path), "--mobile-origin", value])
+
+    valid = {
+        "https://EXAMPLE.com": "https://example.com",
+        "https://example.com:443": "https://example.com",
+        "https://example.com:0443/": "https://example.com",
+        "https://example.com:8443": "https://example.com:8443",
+        "https://[0:0:0:0:0:0:0:1]:443": "https://[::1]",
+        "https://bücher.example": "https://xn--bcher-kva.example",
+    }
+    with patch.object(app.sys, "stdout"), patch.object(app.sys, "stderr"), \
+         patch.object(app.channels, "WORKSPACE", tmp_path), patch.object(app, "taken", return_value=False), \
+         patch.object(uvicorn, "Server") as server:
+        for raw, expected in valid.items():
+            with launch(raw):
+                assert app.main() == 0
+            assert companion.origin == expected
+            desktop = TestClient(app.app, base_url="http://127.0.0.1:8787", headers={"X-Project": "fixture"})
+            # This TestClient version cannot parse IPv6 base URLs; the actual
+            # tunnel Host is overridden, and the browser Origin is what matters.
+            phone = TestClient(app.app, base_url="https://fixture.trycloudflare.com",
+                               headers={"Host": mobile.HOST, "Origin": expected})
+            pair(desktop, phone)
+            assert phone.get("/api/switch").status_code == 200
+        assert server.return_value.run.call_count == len(valid)
+        server.reset_mock()
+        for raw in ("https://example.com:bad", "https://example.com:65536", "https://example.com:0",
+                    "https://[broken]", "http://example.com", "https://example.com/path",
+                    "https://user:pass@example.com", "https://example.com?x=1", "https://example.com#x"):
+            before = companion.origin
+            with launch(raw), patch.object(companion, "key") as key, pytest.raises(SystemExit) as error:
+                app.main()
+            assert error.value.code == 2 and companion.origin == before
+            key.assert_not_called()
+        server.assert_not_called()

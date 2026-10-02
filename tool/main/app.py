@@ -19,12 +19,12 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import AnyHttpUrl, BaseModel
 
 import translate
 
@@ -393,12 +393,17 @@ def main() -> int:
     args = ap.parse_args()
     mobile.companion.port = args.port
     if args.mobile_origin:
-        origin = urlsplit(args.mobile_origin)
-        if origin.scheme != "https" or not origin.hostname or origin.username or origin.password \
-                or origin.path or origin.query or origin.fragment or origin.netloc.endswith(":"):
+        try:
+            origin = AnyHttpUrl(args.mobile_origin)
+            if origin.scheme != "https" or not origin.host or origin.username is not None or origin.password is not None \
+                    or origin.path not in (None, "/") or origin.query is not None or origin.fragment is not None \
+                    or origin.port == 0:
+                raise ValueError
+        except ValueError:
             ap.error("--mobile-origin은 경로 없는 HTTPS 주소여야 합니다")
         mobile.companion.key()
-        mobile.companion.origin = args.mobile_origin
+        # Use the browser's canonical host and port at every exact-origin guard.
+        mobile.companion.origin = str(origin).removesuffix("/")
 
     if args.workspace:
         channels.WORKSPACE = args.workspace.expanduser().resolve()
