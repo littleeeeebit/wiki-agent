@@ -47,6 +47,9 @@ Korean overlay; submissions retain original option labels.
 time, tokens and quota/reset fields supplied by the provider. Codex reads its
 public account quota through app-server, cached for one minute; Claude uses
 its rate-limit stream events. Missing account fields are shown as unavailable.
+The response's `provider` names the attached session even if the next-turn
+model selector differs. Diff stdout is read to 200,001 characters and the Git
+child is stopped at the limit; a ten-second watchdog reaps stalled children.
 `python -m pytest -q tool/test_agent_panel.py` checks real Git changes, question
 replay and both providers' event fields. Restart the app after rebuilding the
 screen so its Python server loads the updated routes too.

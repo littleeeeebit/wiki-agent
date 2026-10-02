@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -81,10 +82,10 @@ def provider_usage(provider: Literal["claude", "codex"], path: str = "") -> dict
     if path:
         known(path)
         chat = _sessions.get(path)
-        if chat and chat.is_codex == (provider == "codex"):
-            return chat.status()
+        if chat:
+            return {"provider": "codex" if chat.is_codex else "claude", **chat.status()}
     if provider == "claude":
-        return {"live": False, "quota": [], "usage": {}, "connection_ms": None, "error": ""}
+        return {"provider": provider, "live": False, "quota": [], "usage": {}, "connection_ms": None, "error": ""}
     with _provider_usage_lock:
         if not _provider_usage or time.monotonic() - _provider_usage["at"] >= 60:
             try:
@@ -92,15 +93,39 @@ def provider_usage(provider: Literal["claude", "codex"], path: str = "") -> dict
             except Exception:
                 data = {"quota": [], "error": "계정 사용량을 받지 못했다"}
             _provider_usage.update(at=time.monotonic(), data=data)
-        return {"live": False, "usage": {}, "connection_ms": None, **_provider_usage["data"]}
+        return {"provider": provider, "live": False, "usage": {}, "connection_ms": None, **_provider_usage["data"]}
 
 
 def diff_git(path: Path, *args: str, codes=(0,)) -> str:
-    result = subprocess.run(["git", "-c", "core.quotepath=false", "-C", str(path), *args], capture_output=True, text=True,
-                            encoding="utf-8", errors="replace", timeout=10, **background_options())
-    if result.returncode not in codes:
-        raise RuntimeError(result.stderr.strip() or "Git 변경 현황을 읽지 못했다")
-    return result.stdout
+    command = ["git", "-c", "core.quotepath=false", "-C", str(path), *args]
+    expired = threading.Event()
+    with tempfile.TemporaryFile() as errors, subprocess.Popen(
+            command, stdout=subprocess.PIPE, stderr=errors, text=True,
+            encoding="utf-8", errors="replace", **background_options()) as proc:
+        def timeout():
+            expired.set()
+            proc.kill()
+
+        timer = threading.Timer(10, timeout)
+        timer.daemon = True
+        timer.start()
+        try:
+            # One extra character carries truncation; never capture the full patch.
+            output = proc.stdout.read(200_001 if args[0] == "diff" else -1)
+            truncated = args[0] == "diff" and len(output) > 200_000
+            if truncated:
+                proc.kill()
+            proc.wait()
+            if expired.is_set():
+                raise subprocess.TimeoutExpired(command, 10)
+            if not truncated and proc.returncode not in codes:
+                errors.seek(0)
+                raise RuntimeError(errors.read(2000).decode("utf-8", "replace").strip() or "Git 변경 현황을 읽지 못했다")
+            return output
+        finally:
+            timer.cancel()
+            if proc.poll() is None:
+                proc.kill()
 
 
 @router.get("/api/work/diff")
@@ -119,6 +144,8 @@ def changes(path: str) -> dict:
         untracked = diff_git(root, "ls-files", "--others", "--exclude-standard", "-z")
         omitted = []
         for name in untracked.split("\0"):
+            if len(patch) > 200_000:
+                break
             if not name:
                 continue
             file = root / name

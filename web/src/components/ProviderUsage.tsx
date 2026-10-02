@@ -7,7 +7,7 @@ const NAMES: Record<string, string> = {
 const STATES: Record<string, string> = { allowed: '사용 가능', allowed_warning: '한도에 가까움', rejected: '한도 도달' }
 
 export function ProviderUsage({ model, path }: { model: string; path?: string }) {
-  const provider = model.startsWith('codex:') ? 'codex' : 'claude'
+  const selected = model.startsWith('codex:') ? 'codex' : 'claude'
   const [data, setData] = useState<api.ProviderStatus | null>(null)
   const [error, setError] = useState('')
   const [now, setNow] = useState(() => Date.now())
@@ -16,7 +16,7 @@ export function ProviderUsage({ model, path }: { model: string; path?: string })
     let timer: ReturnType<typeof setTimeout>
     const load = async () => {
       try {
-        const result = await api.providerUsage(provider, path)
+        const result = await api.providerUsage(selected, path)
         if (alive) { setData(result); setError(result.error); setNow(Date.now()) }
       } catch (err) {
         if (alive) setError(String(err instanceof Error ? err.message : err))
@@ -26,7 +26,8 @@ export function ProviderUsage({ model, path }: { model: string; path?: string })
     }
     void load()
     return () => { alive = false; clearTimeout(timer) }
-  }, [provider, path])
+  }, [selected, path])
+  const provider = data?.provider ?? selected
   const reset = (seconds: number) => {
     const minutes = Math.max(0, Math.ceil((seconds * 1000 - now) / 60000))
     return minutes > 0 ? `${Math.floor(minutes / 60)}시간 ${minutes % 60}분 후 초기화` : '초기화 예정 · 사용량 갱신 대기'

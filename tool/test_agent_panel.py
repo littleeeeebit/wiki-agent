@@ -2,12 +2,14 @@
 
 import json
 import subprocess
+import sys
 import time
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
+from agent import chat_local
 from agent.chat_local import quota_windows
 from agent.chat_session import ChatSession
 from main import specs, work
@@ -103,3 +105,71 @@ def test_provider_events_capture_usage_and_reset_without_ending_turn(tmp_path):
     assert list(codex._drain())[-1].kind == "done"
     assert codex.status()["quota"] == windows
     assert codex.usage["scope"] == "thread" and codex.usage["input_tokens"] == 100
+
+
+def test_codex_failed_initialization_reaps_process(tmp_path, monkeypatch):
+    monkeypatch.setattr(chat_local, "cli_command", lambda _: [sys.executable, "-c", "import time; time.sleep(30)"])
+    server = chat_local.CodexServer(cwd=tmp_path, timeout=0.1)
+    monkeypatch.setattr(chat_local, "CodexServer", lambda **_: server)
+    try:
+        with pytest.raises(RuntimeError, match="initialize"):
+            chat_local.codex_usage()
+        assert server.proc.poll() is not None
+        assert not server.reader.is_alive()
+    finally:
+        if server.proc.poll() is None:
+            server.__exit__()
+
+
+def test_provider_usage_uses_attached_session_not_toolbar(tmp_path, monkeypatch):
+    path = str(tmp_path)
+    chat = SimpleNamespace(is_codex=True, status=lambda: {
+        "live": True, "quota": [], "usage": {"input_tokens": 123}, "connection_ms": 42, "error": ""})
+    monkeypatch.setattr(work, "_sessions", {path: chat})
+    result = work.provider_usage("claude", path)
+    assert result["live"] is True and result["usage"]["input_tokens"] == 123
+    assert result["provider"] == "codex"
+
+
+def test_diff_git_stops_reading_at_preview_limit(tmp_path, monkeypatch):
+    captured = []
+    run = work.subprocess.run
+
+    def track(*args, **kwargs):
+        result = run(*args, **kwargs)
+        captured.append(len(result.stdout))
+        return result
+
+    # The helper must not capture a huge patch first and slice it afterward.
+    def git(*args):
+        return subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    git("-c", "user.name=Panel", "-c", "user.email=panel@example.test", "commit", "--allow-empty", "-qm", "baseline")
+    (tmp_path / "generated.txt").write_text("generated content\n" * 150_000, encoding="utf-8")
+    git("add", ".")
+    monkeypatch.setattr(work.subprocess, "run", track)
+    output = work.diff_git(tmp_path, "diff", "HEAD", "--")
+    assert len(output) <= 200_001
+    assert not captured or max(captured) <= 200_001
+    monkeypatch.setattr(work, "known", lambda _: tmp_path)
+    monkeypatch.setattr(work, "_runs", {})
+    result = work.changes(str(tmp_path))
+    assert result["truncated"] and len(result["diff"]) == 200_000
+
+
+def test_diff_git_timeout_reaps_process(tmp_path, monkeypatch):
+    children = []
+    spawn = work.subprocess.Popen
+    timer = work.threading.Timer
+
+    def slow(*args, **kwargs):
+        proc = spawn([sys.executable, "-c", "import time; time.sleep(30)"], **kwargs)
+        children.append(proc)
+        return proc
+
+    monkeypatch.setattr(work.subprocess, "Popen", slow)
+    monkeypatch.setattr(work.threading, "Timer", lambda _, fn: timer(0.1, fn))
+    with pytest.raises(subprocess.TimeoutExpired):
+        work.diff_git(tmp_path, "diff", "HEAD", "--")
+    assert children[0].poll() is not None

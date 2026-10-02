@@ -84,9 +84,13 @@ class CodexServer:
         self.reader.start()
 
     def __enter__(self):
-        self.request("initialize", {"clientInfo": {"name": "wiki", "version": "0.1.0"}})
-        self.proc.stdin.write('{"method":"initialized"}\n')
-        self.proc.stdin.flush()
+        try:
+            self.request("initialize", {"clientInfo": {"name": "wiki", "version": "0.1.0"}})
+            self.proc.stdin.write('{"method":"initialized"}\n')
+            self.proc.stdin.flush()
+        except BaseException:
+            self.__exit__()
+            raise
         return self
 
     def request(self, method, params):
@@ -106,7 +110,10 @@ class CodexServer:
                 return message["result"]
 
     def __exit__(self, *_exc):
-        self.proc.stdin.close()
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass  # A failed startup may already have closed the peer's pipe.
         self.proc.terminate()
         try:
             self.proc.wait(timeout=5)
