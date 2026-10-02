@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Btn, Modal } from '@/components/Modal'
+import { MobileSettings } from '@/components/MobileAccess'
 import * as api from '@/lib/api'
 import { FAMILY } from '@/lib/run'
 import type { Hub, Jev, JevLimits, JevMode, LoopSettings, Options, Probe, SurveySettings, Switch } from '@/lib/api'
@@ -100,6 +101,8 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
               onChange={(e) => onTheme(e.target.checked ? 'dark' : 'light')} />
           </Row>
         </Part>
+
+        <MobileSettings />
 
         <Part title="연결">
           <Row label="허브" note={hub ? (hub.refused ? `옮길 수 없다 — ${hub.refused}`

@@ -192,7 +192,7 @@ export function RepoMap({ repo, on, run, onRunClose, onAsk }: {
 
   return (
     <section aria-label="지도" className="flex h-full min-h-0 flex-col">
-      <div className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-5">
+      <div className="map-toolbar flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-5">
         <div role="radiogroup" aria-label="층" className="flex h-7 shrink-0 rounded-md border border-border p-0.5">
           {[...LAYERS, ...(path ? [{ id: 'run' as Layer, label: '이번 질문 경로' }] : [])].map((l) => (
             <button key={l.id} type="button" role="radio" aria-checked={layer === l.id} onClick={() => setLayer(l.id)}

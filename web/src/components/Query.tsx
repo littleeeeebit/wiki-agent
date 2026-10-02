@@ -130,6 +130,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
   onMapRun }: Props) {
   const [active, setActive] = useState('wiki')
   const [planning, setPlanning] = useState(false)
+  const [mobileOptions, setMobileOptions] = useState(false)
   const [scope, setScope] = useState('all')
   const [typed, setTyped] = useState<{ text: string } | null>(null)
   useEffect(() => {
@@ -353,7 +354,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
 
   return (
     <section aria-label="대화" className="flex h-full min-w-0 flex-col">
-      <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-5">
+      <header className="query-toolbar flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-5">
         <nav aria-label="초점" className="flex min-w-0 gap-1">
           {channels.map((c) => (
             <button
@@ -372,7 +373,9 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
             </button>
           ))}
         </nav>
-        <div className="flex shrink-0 items-center gap-1.5">
+        <Btn className="query-options-toggle hidden" aria-expanded={mobileOptions} aria-controls="query-options"
+          onClick={() => setMobileOptions((shown) => !shown)}>옵션</Btn>
+        <div id="query-options" data-open={mobileOptions} className="query-options flex shrink-0 items-center gap-1.5">
           <Picker label="문서 범위" hideLabel width="w-32" items={SCOPES} value={scope} disabled={busy}
             onPick={(v) => setScope(v ?? 'all')} />
           {here && <Toolbar value={here} options={options} busy={busy} onChange={apply} />}

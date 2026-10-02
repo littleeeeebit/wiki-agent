@@ -64,7 +64,7 @@ export function Agent({
       <header className="border-b border-border px-5">
         {/* The model and effort stand here before there is a worktree too:
             a spec's [시작] runs its first turn on them. */}
-        <div className="flex h-11 items-center justify-end gap-1.5">
+        <div className="agent-toolbar flex h-11 items-center justify-end gap-1.5">
           <span className="mr-auto truncate font-heading text-[11px] font-semibold text-faint">작업 모델</span>
           {row && busy && last?.turn && (
             <Btn tone="danger" onClick={() => onStop(last)} title="도는 턴을 멈춘다. 대화는 남아 다음 지시가 이어진다">

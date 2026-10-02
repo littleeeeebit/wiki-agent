@@ -2,6 +2,7 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import './index.css'
 import App from './App.tsx'
+import { MobileAccess } from '@/components/MobileAccess'
 
 // In the window, the WebView's own menu — save as, print — is a web page's,
 // not this program's. It stays where it does something: a text box, selected
@@ -16,6 +17,6 @@ if ('__TAURI_INTERNALS__' in window) {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <MobileAccess><App /></MobileAccess>
   </StrictMode>,
 )

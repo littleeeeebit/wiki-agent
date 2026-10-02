@@ -2,11 +2,19 @@
 <html lang="ko">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
+    <meta name="theme-color" content="#1c1f25" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="manifest" href="/manifest.webmanifest" />
     <title>wiki-agent</title>
     <!-- The theme before the first paint: dark unless this machine chose light. -->
     <script>
-      try { document.documentElement.classList.add(localStorage.getItem('theme') === 'light' ? 'light' : 'dark') }
+      try {
+        const light = localStorage.getItem('theme') === 'light'
+        document.documentElement.classList.add(light ? 'light' : 'dark')
+        document.querySelector('meta[name="theme-color"]').content = light ? '#ffffff' : '#1c1f25'
+      }
       catch { document.documentElement.classList.add('dark') }
     </script>
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

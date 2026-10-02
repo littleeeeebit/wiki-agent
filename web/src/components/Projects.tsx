@@ -83,7 +83,7 @@ export function Projects({ current }: { current: string }) {
           {fault}
         </div>
       )}
-      <ul className="min-h-0 flex-1 divide-y divide-border overflow-y-auto">
+      <ul className="projects-list min-h-0 flex-1 divide-y divide-border overflow-y-auto">
         {rows.map((r) => (
           <li key={r.id} className={cn('px-5 py-3 text-[12.5px]', r.id === current && 'bg-secondary/40')}>
             <div className="flex items-center gap-2">

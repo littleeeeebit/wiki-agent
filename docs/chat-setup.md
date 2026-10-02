@@ -1,7 +1,7 @@
 # Starting wiki-agent on team member PCs
 
 Each person downloads it to their own PC and runs it with their own Codex CLI or Claude Code account.
-It is not a method of connecting to the author's PC, CLI, or account. The server can only be accessed from the PC where it is running.
+It is not a method of connecting to the author's PC, CLI, or account. The server runs locally by default. To connect your own phone to your PC over mobile data or another Wi-Fi network, use the [mobile companion setup](mobile.md).
 
 ## 1. Preparation first
 

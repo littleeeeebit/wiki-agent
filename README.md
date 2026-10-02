@@ -10,6 +10,7 @@ feature, built by the finished plan
 | --- | --- |
 | Maintaining this program | [`docs/architecture.md`](docs/architecture.md), then [`docs/development.md`](docs/development.md) |
 | Connecting a repository to the rules | [`docs/hooks-setup.md`](docs/hooks-setup.md), [`docs/chat-setup.md`](docs/chat-setup.md) |
+| Connecting a phone over mobile data or another Wi-Fi network | [`docs/mobile.md`](docs/mobile.md) |
 | Maintaining Jev | [`docs/jev-maintenance.md`](docs/jev-maintenance.md) |
 | Looking for a shared rule | [`index.md`](index.md) |
 

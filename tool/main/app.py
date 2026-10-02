@@ -19,16 +19,16 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
+from urllib.parse import unquote
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import AnyHttpUrl, BaseModel
 
 import translate
 
-from . import channels, connect, loop, planning, query, specs, verification, work
+from . import channels, connect, loop, mobile, planning, query, specs, verification, work
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
 # `text/plain`. The browser then refuses `<script type="module">` silently:
@@ -58,6 +58,7 @@ async def lifespan(_: FastAPI):
     planning.recover()
     threading.Thread(target=loop.poll, daemon=True).start()
     yield
+    mobile.companion.stop()
     loop.close_all()
     planning.close_all()
     query.close_all()
@@ -72,26 +73,22 @@ app.include_router(loop.router)
 app.include_router(planning.router)
 app.include_router(connect.router)
 app.include_router(verification.router)
-
-# The names this server answers to. Anything else in `Host` is another site's
-# domain resolved to 127.0.0.1 — DNS rebinding — and gets nothing.
-LOCAL = {"127.0.0.1", "localhost"}
-
+app.include_router(mobile.router)
 
 @app.middleware("http")
 async def only_this_screen(request: Request, call_next):
-    """Refuse a request another site's page sent.
+    """Keep the local origin guard and require pairing on the explicit tunnel."""
 
-    This server approves writes now. Binding to 127.0.0.1 keeps the network
-    out but not the browser: any open tab can `fetch` it. A page of ours sends
-    `Origin` equal to this server, or none on a plain GET; another site's page
-    cannot forge either.
-    """
-
-    host = request.headers.get("host", "")
-    origin = request.headers.get("origin")
-    if urlsplit(f"//{host}").hostname not in LOCAL or (origin is not None and origin != f"http://{host}"):
+    if not mobile.companion.allowed(request):
         return JSONResponse({"detail": "이 화면의 요청이 아니다"}, status_code=403)
+    remote = not mobile.local(request)
+    pairing = request.url.path == "/api/mobile/pair"
+    if remote:
+        if request.method != "GET" and request.headers.get("origin") != mobile.companion.origin:
+            return JSONResponse({"detail": "이 화면의 요청이 아니다"}, status_code=403)
+        if request.url.path.startswith("/api/") and request.url.path != "/api/mobile/status" and not pairing \
+                and not mobile.companion.authenticated(request):
+            return JSONResponse({"detail": "PC에서 연결 링크를 만들어 휴대폰을 연결하세요"}, status_code=401)
     # Which project the screen shows. `query.project()` refuses a request from
     # a screen that shows another — a switch included: a screen that shows the
     # current project switches as before, and a stale one must not act at all.
@@ -102,11 +99,15 @@ async def only_this_screen(request: Request, call_next):
     # check above — it would land in whichever project the server is on. The
     # screen holds everything but `/api/channels` until it knows its project;
     # this is the check behind that promise.
-    if not screen and request.method != "GET":
+    if not screen and request.method != "GET" and not pairing:
         return JSONResponse({"detail": "어느 프로젝트의 화면인지 모르는 쓰기는 받지 않는다"}, status_code=400)
     token = query.claimed.set(unquote(screen) if screen else None)
     try:
-        return await call_next(request)
+        response = await call_next(request)
+        if remote:
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["Referrer-Policy"] = "no-referrer"
+        return response
     finally:
         query.claimed.reset(token)
 
@@ -310,6 +311,14 @@ if DIST.is_dir():
         # This file is the only thing that says which hash is current, so a
         # cached copy of it pins the window to a build that no longer exists.
         return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-store"})
+
+    @app.get("/manifest.webmanifest")
+    def manifest() -> FileResponse:
+        return FileResponse(DIST / "manifest.webmanifest", media_type="application/manifest+json")
+
+    @app.get("/mobile-icon.svg")
+    def mobile_icon() -> FileResponse:
+        return FileResponse(DIST / "mobile-icon.svg", media_type="image/svg+xml")
 else:
     @app.get("/")
     def index() -> dict:
@@ -372,15 +381,29 @@ def main() -> int:
     ap = argparse.ArgumentParser(prog="python tool/main")
     ap.add_argument("--port", type=int, default=8787)
     ap.add_argument("--workspace", type=Path, help="프로젝트들이 들어 있는 폴더")
-    # Bound to 127.0.0.1. This server has no authentication, and opening it to
-    # the LAN is handing someone a shell.
+    # Local requests have no login. Remote access uses the paired tunnel,
+    # never a listener exposed to the LAN.
     ap.add_argument("--host", choices=("127.0.0.1", "localhost"), default="127.0.0.1")
+    ap.add_argument("--mobile-origin", default="", help="고정 HTTPS 터널 주소 (Host는 mobile.wiki-agent.invalid)")
     ap.add_argument("--check", action="store_true", help="자체 점검만 하고 끝낸다")
     # The Tauri shell holds our stdin. When it closes — the window shut, or
     # the shell died — the pipe closes too, and this goes down properly,
     # taking the agent processes with it.
     ap.add_argument("--exit-with-stdin", action="store_true", help=argparse.SUPPRESS)
     args = ap.parse_args()
+    mobile.companion.port = args.port
+    if args.mobile_origin:
+        try:
+            origin = AnyHttpUrl(args.mobile_origin)
+            if origin.scheme != "https" or not origin.host or origin.username is not None or origin.password is not None \
+                    or origin.path not in (None, "/") or origin.query is not None or origin.fragment is not None \
+                    or origin.port == 0:
+                raise ValueError
+        except ValueError:
+            ap.error("--mobile-origin은 경로 없는 HTTPS 주소여야 합니다")
+        mobile.companion.key()
+        # Use the browser's canonical host and port at every exact-origin guard.
+        mobile.companion.origin = str(origin).removesuffix("/")
 
     if args.workspace:
         channels.WORKSPACE = args.workspace.expanduser().resolve()
@@ -407,7 +430,8 @@ def main() -> int:
         )
         return 1
 
-    server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning"))
+    server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning",
+                                        proxy_headers=False, ws="wsproto", ws_max_size=100_000))
     if args.exit_with_stdin:
         # The pipe is read through a private copy, and fd 0 becomes devnull.
         # On Windows a synchronous read pending on the handle a child would

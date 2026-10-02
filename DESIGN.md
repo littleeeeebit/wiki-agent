@@ -106,7 +106,17 @@ It is a 3-column layout centered on tasks (loop stage 6, 2026-09-26). There is n
 | Center | `1.1fr` | [Conversation · Map]. The focus of the conversation is the next task · wiki · retrospective. "All Projects" swaps into this position |
 | Right | `1fr` | Selected task. [Agent · Review · Terminal] tabs below the specification summary (collapsed). If waiting for approval, a `wait` dot appears on the agent tab |
 
-1280px or wider is the 3-column layout. Below that, the rail collapses to the width of a `3.25rem` icon — gear, all projects, review loop, and one dot per task. There is no horizontal scroll at any width.
+Local windows use the 3-column layout at 1280px or wider. From 1101px through
+1279px, the rail collapses to `3.25rem` of icons and task dots. At 1100px or
+narrower, a local window shows one full-width pane and bottom navigation.
+
+Paired phones choose Portrait or Landscape in Settings, independently of
+viewport width or physical rotation. Portrait is the default single-pane
+layout, with full task names and Tasks, Conversation and Selected task in the
+bottom navigation. Landscape reuses all three desktop panes with a `12rem`
+named task rail and wrapping toolbars. Mode selection is immediate and stored
+per browser origin; panes stay mounted across switches. At the tested 844px
+and 932px landscape widths there is no horizontal page scroll.
 
 The center is slightly wider than the right because at 1280px, the conversation header (three focuses, two models, clear context) must fit on one line. If they were the same width, it would be `520px` and the header would need `574px`. Clear context is therefore an icon on both sides, and the names are in `aria-label` and `title`.
 
@@ -188,3 +198,13 @@ duration; an unavailable value stays explicitly unavailable.
 
 Only multiples of 2px are used. Chrome controls are `28px` (`h-7`). Question
 actions are at least `44px`, and option cards grow with their descriptions.
+
+The mobile companion reuses the established palette and type families. Reading
+text and inputs are 16px on phones; touch controls have at least 44px hit areas.
+The shell uses the dynamic viewport and safe-area insets. Pane navigation keeps
+conversations mounted so switching views does not stop their streams. Settings
+includes desktop-owned pairing controls and a locally rendered 232px QR code
+with four modules of quiet margin. The QR stays black on white in both themes
+for scanning, and encodes the same single-use pairing link. The phone sees
+connection guidance and native radio cards for Portrait/Landscape. The active
+card reuses the existing blue outline and neutral surface; no new palette.
