@@ -1,4 +1,5 @@
 // Every point of contact with the backend. Nothing else calls fetch.
+import { request as fetch } from '@/lib/mobile'
 
 export type Channel = {
   id: string
@@ -754,6 +755,10 @@ export type Switch = { translate: boolean; usage: Usage }
 export const getSwitch = () => get('/api/switch').then((r) => json<Switch>(r, '번역 스위치'))
 export const setSwitch = (on: boolean) =>
   post('/api/switch', { translate: on }).then((r) => json<Switch>(r, '번역 스위치'))
+
+export const startMobile = () => post('/api/mobile/start').then((r) => json<import('./mobile').MobileStatus>(r, '휴대폰 연결'))
+export const mobileLink = () => post('/api/mobile/link').then((r) => json<{ link: string; seconds: number }>(r, '휴대폰 연결 링크'))
+export const stopMobile = () => post('/api/mobile/stop').then((r) => json<import('./mobile').MobileStatus>(r, '휴대폰 연결 해제'))
 
 // -- Worktrees and their agents ----------------------------------------------
 

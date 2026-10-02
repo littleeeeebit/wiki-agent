@@ -26,7 +26,8 @@ type Tab = 'agent' | 'review' | 'terminal'
 // made by its [시작]. The person writes the task after it.
 const NEW_TASK = '이것 하나를 바로 명세로 만들어라. 되묻지 말고 완료 조건은 네가 정해라. 할 일을 줄이지 말고 전부 담아라.\n할 일: '
 
-const TABS: { id: Tab; label: string }[] = [{ id: 'agent', label: '에이전트' }, { id: 'review', label: '리뷰' }, { id: 'terminal', label: '터미널' }]
+const TABS: { id: Tab; label: string }[] = [{ id: 'agent', label: '에이전트' }, { id: 'review', label: '리뷰' },
+  ...('__TAURI_INTERNALS__' in window ? [{ id: 'terminal' as const, label: '터미널' }] : [])]
 
 // The state word's colour on the right pane's header: the rail's dot, in text.
 const TONE: Record<string, string> = {
@@ -85,6 +86,7 @@ export default function App() {
   const [turnsElsewhere, setTurnsElsewhere] = useState<{ path: string; repo: string }[]>([])
   const [loopSettings, setLoopSettings] = useState<LoopSettings | null>(null)
   const [tab, setTab] = useState<Tab>('agent')
+  const [mobilePane, setMobilePane] = useState<'tasks' | 'chat' | 'task'>('tasks')
   const work = useWork()
   const { attach } = work
   const repo = channels[0]?.repo ?? ''
@@ -92,6 +94,7 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle('dark', theme === 'dark')
     document.documentElement.classList.toggle('light', theme === 'light')
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme === 'dark' ? '#1c1f25' : '#ffffff')
     try {
       localStorage.setItem('theme', theme)
     } catch {
@@ -362,6 +365,7 @@ export default function App() {
     refresh()
     setSelected(path)
     setTab('agent')
+    setMobilePane('task')
   }, [choice, readSpecs, refresh])
 
   // `[계획]`: the server made the plan's worktree and runs its planner there;
@@ -371,6 +375,7 @@ export default function App() {
     refresh()
     if (spec.worktree) setSelected(spec.worktree)
     setTab('agent')
+    setMobilePane('task')
   }, [readSpecs, refresh])
 
   const showPeek = useCallback(async (file: string, line: number) => {
@@ -437,7 +442,7 @@ export default function App() {
 
   const middle = view === 'projects' ? '프로젝트 · 연결' : repo
   return (
-    <div className="grid h-screen grid-cols-[15rem_minmax(0,1.1fr)_minmax(0,1fr)] overflow-hidden max-[1280px]:grid-cols-[3.25rem_minmax(0,1.1fr)_minmax(0,1fr)]">
+    <div data-mobile-pane={mobilePane} className="app-shell grid h-dvh grid-cols-[15rem_minmax(0,1.1fr)_minmax(0,1fr)] overflow-hidden max-[1280px]:grid-cols-[3.25rem_minmax(0,1.1fr)_minmax(0,1fr)]">
       <TaskRail
         repo={repo}
         options={options}
@@ -453,13 +458,15 @@ export default function App() {
         onView={(v) => {
           if (v === 'map') setMapped(true)
           setView(v)
+          setMobilePane('chat')
         }}
-        onSelect={setSelected}
+        onSelect={(key) => { setSelected(key); setMobilePane('task') }}
         onRemove={(target) => void remove(target, true)}
         onSettings={() => setSetting(true)}
         onNew={() => {
           setView('chat')
           setSeed({ focus: 'next', text: NEW_TASK })
+          setMobilePane('chat')
         }}
         onLoop={async (numbers, environment, owner) => {
           // Asked here, on a click: a browser grants it only to a gesture.
@@ -473,7 +480,7 @@ export default function App() {
         }}
       />
 
-      <main className="flex min-h-0 min-w-0 flex-col border-r border-border">
+      <main className="conversation-pane flex min-h-0 min-w-0 flex-col border-r border-border">
         <header className="flex h-11 shrink-0 items-center justify-between gap-3 border-b border-border bg-card px-5">
           <h1 className="min-w-0 truncate font-mono text-[12px] text-muted-foreground">{middle}</h1>
           {view === 'projects' ? (
@@ -533,7 +540,7 @@ export default function App() {
         {view === 'projects' && <div className="min-h-0 flex-1"><Projects current={repo} /></div>}
       </main>
 
-      <section aria-label="작업" className="flex min-h-0 min-w-0 flex-col">
+      <section aria-label="작업" className="task-pane flex min-h-0 min-w-0 flex-col">
         <header className="flex h-11 shrink-0 items-center gap-3 border-b border-border bg-card px-5">
           <h2 className="min-w-0 truncate font-heading text-[14px] font-semibold">
             {task?.name ?? other?.name ?? '작업'}
@@ -609,12 +616,22 @@ export default function App() {
         </div>
       </section>
 
+      <nav aria-label="화면" className="mobile-navigation hidden border-t border-border bg-card">
+        {([{ id: 'tasks', label: '작업 목록' }, { id: 'chat', label: '대화' }, { id: 'task', label: '선택한 작업' }] as const).map((pane) => (
+          <button key={pane.id} type="button" aria-pressed={mobilePane === pane.id} onClick={() => setMobilePane(pane.id)}
+            className={cn('min-h-12 flex-1 px-2 text-[14px]', mobilePane === pane.id ? 'text-primary' : 'text-muted-foreground')}>
+            {pane.label}{pane.id === 'task' && waiting && ' · 승인 대기'}
+          </button>
+        ))}
+      </nav>
+
       {setting && (
         <Settings sw={sw} theme={theme} options={options} loop={loopSettings} onSwitch={flip} onTheme={setTheme}
           onLoop={async (s) => setLoopSettings(await api.setLoopSettings(s))} onClose={() => setSetting(false)}
           onProjects={() => {
             setSetting(false)
             setView('projects')
+            setMobilePane('chat')
           }} />
       )}
     </div>

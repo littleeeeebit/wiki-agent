@@ -47,6 +47,8 @@ export function Composer({ busy, onSend, seed, placeholder, disabled, max = 200 
         <Textarea
           ref={box}
           rows={1}
+          aria-label="질문 또는 지시"
+          enterKeyHint="send"
           value={text}
           disabled={busy || disabled}
           placeholder={busy ? '답하는 중…' : (placeholder ?? '물어라. Enter 로 보내고 Shift+Enter 로 줄바꿈.')}

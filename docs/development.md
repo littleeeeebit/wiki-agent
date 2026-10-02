@@ -36,6 +36,13 @@ preview, then confirm sending it to the external translator. Merely enabling
 the Korean overlay never uploads terminal output. Agent and Review progress
 continue to use the automatic overlay.
 
+The [mobile companion](mobile.md) shares the desktop server. Paired phones
+choose single-pane Portrait or three-pane Landscape in Settings; only local
+windows switch to one pane through 1100px. `python -m pytest -q tool/test_mobile.py`
+checks pairing and the WebSocket bridge. With Playwright available,
+`python web/tests/mobile_browser.py --live-tunnel` verifies phone layouts and
+real HTTPS transport against a synthetic fixture, then stops its own tunnel.
+
 The agent pane reads `GET /api/work/diff?path=…` every second during a turn
 and every five seconds while idle. It includes staged, unstaged and untracked
 files without changing the index; the turn's initial commit remains its diff

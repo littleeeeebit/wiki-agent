@@ -50,10 +50,16 @@ whatever retrieval or its audience scope does.
 | The app server (`tool/main`) | `tool/app.cmd` or the Tauri window | Chat records in `raw/chat/`, runs, specifications, worktrees |
 | The search daemon (`tool/search/daemon.py`) | The first search that needs it; replaced when its code hash differs | The evidence store and vectors in the user cache, per hub and project |
 | Host sessions (Claude, Codex) | The app's work and review cells | Their own transcripts; the program reads their events |
+| Mobile tunnel (`cloudflared`) | Explicitly enabled in desktop Settings | Temporary HTTPS hostname; paired browser requests reach the same app server |
 | Hooks | The host, per event | The target's `.wiki/trajectory.jsonl` and hook diagnostics |
 
 Indexes are derived data: a changed source makes a new store generation, and
 one answer reads one generation. Documents and memories stay authoritative.
+
+The [mobile companion](mobile.md) keeps execution on the desktop. Its paired
+browser uses the same HTTP routes through a WebSocket bridge; project and
+approval guards remain at those routes. The Python listener stays on localhost,
+and only the desktop can create pairing links or revoke devices.
 
 ## The four graphs
 

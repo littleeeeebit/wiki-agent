@@ -32,10 +32,10 @@ export function Modal({ title, onClose, children, foot, wide, locked }: {
       // and its request's answer landed on a screen that had moved on.
       onCancel={(e) => locked && e.preventDefault()}
       onClick={(e) => e.target === box.current && !locked && onClose()}
-      className={cn('m-auto max-h-[85vh] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card p-0 text-foreground',
+      className={cn('m-auto max-h-[85dvh] max-w-[calc(100vw-2rem)] rounded-lg border border-border bg-card p-0 text-foreground',
         'backdrop:bg-black/50', wide ? 'w-[40rem]' : 'w-[28rem]')}
     >
-      <div className="flex max-h-[85vh] flex-col">
+      <div className="flex max-h-[85dvh] flex-col">
         <div className="flex h-12 shrink-0 items-center justify-between border-b border-border px-4">
           <h2 className="font-heading text-[14px] font-semibold">{title}</h2>
           <button type="button" onClick={onClose} aria-label="닫기" disabled={locked}

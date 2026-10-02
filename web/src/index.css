@@ -175,10 +175,83 @@
     }
     html {
         @apply font-sans;
+        -webkit-tap-highlight-color: transparent;
+        -webkit-text-size-adjust: 100%;
+        overscroll-behavior: none;
     }
     body {
         @apply bg-background text-foreground;
+        overscroll-behavior: none;
     }
+    button, a, [role="button"] { touch-action: manipulation; }
+    button { -webkit-user-select: none; user-select: none; }
+    button:active:not(:disabled) { filter: brightness(0.9); }
+}
+
+/* Paired phones choose a layout in Settings; only local windows follow width. */
+html[data-mobile-layout="portrait"] {
+    .app-shell {
+        grid-template-columns: minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr) auto;
+        padding-top: env(safe-area-inset-top, 0px);
+        padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
+    }
+    .app-shell > aside, .conversation-pane, .task-pane { grid-column: 1; grid-row: 1; }
+    .app-shell[data-mobile-pane="tasks"] > .conversation-pane,
+    .app-shell[data-mobile-pane="tasks"] > .task-pane,
+    .app-shell[data-mobile-pane="chat"] > aside,
+    .app-shell[data-mobile-pane="chat"] > .task-pane,
+    .app-shell[data-mobile-pane="task"] > aside,
+    .app-shell[data-mobile-pane="task"] > .conversation-pane { display: none; }
+    .app-shell > aside .rail-expanded { display: revert; }
+    .app-shell > aside .rail-folded { display: none; }
+    .app-shell > aside > div:first-child { justify-content: space-between; padding-inline: 12px; }
+    .app-shell > aside nav button { display: block; height: auto; min-height: 56px; padding: 12px; }
+    .mobile-navigation { display: flex; grid-row: 2; padding-bottom: env(safe-area-inset-bottom, 0px); }
+    .file-peek { position: fixed; inset: 0; z-index: 40; width: 100%; padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px); }
+}
+
+html[data-mobile-layout="landscape"] {
+    .app-shell {
+        grid-template-columns: 12rem minmax(0, 1.1fr) minmax(0, 1fr);
+        grid-template-rows: minmax(0, 1fr);
+    }
+    .app-shell > aside .rail-expanded { display: revert; }
+    .app-shell > aside .rail-folded { display: none; }
+    .app-shell > aside > div:first-child { justify-content: space-between; padding-inline: 12px; }
+    .app-shell > aside nav { padding-inline: 8px; }
+    .app-shell > aside .rail-expanded button { height: auto; min-height: 44px; }
+    .conversation-pane > header, .task-pane > header { padding-inline: 12px; flex-wrap: wrap; }
+}
+
+html:is([data-mobile-layout="portrait"], [data-mobile-layout="landscape"]) {
+    .app-shell {
+        padding-top: env(safe-area-inset-top, 0px);
+        padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
+    }
+    .query-toolbar, .agent-toolbar { height: auto; min-height: 44px; flex-wrap: wrap; padding-block: 8px; }
+    .query-toolbar > div { min-width: 0; flex-wrap: wrap; gap: 8px; }
+    .query-toolbar .query-options-toggle { display: inline-flex; }
+    .query-toolbar .query-options { display: none; width: 100%; max-width: 100%; flex-basis: 100%; flex-shrink: 1; }
+    .query-toolbar .query-options[data-open="true"] { display: flex; }
+    .query-toolbar > div > div, .agent-toolbar > div { flex-wrap: wrap; }
+    .conversation-pane > header, .task-pane > header { height: auto; min-height: 46px; }
+    [role="tablist"] { height: auto; min-height: 46px; }
+    .map-toolbar { height: auto; flex-wrap: wrap; padding-block: 8px; }
+    .map-toolbar > [role="radiogroup"] { height: auto; flex-wrap: wrap; max-width: 100%; }
+    .projects-list > li > div:first-child { flex-wrap: wrap; }
+    .prose-answer { font-size: 16px; }
+    .prose-answer table { display: block; max-width: 100%; overflow-x: auto; }
+    .task-pane table { display: block; max-width: 100%; overflow-x: auto; }
+    dialog > div > div:last-child { flex-wrap: wrap; }
+}
+
+@media (pointer: coarse), (max-width: 1100px) {
+    input:not([type="checkbox"]):not([type="radio"]), textarea, select { font-size: 16px !important; }
+    button, [role="combobox"], summary { min-height: 44px; min-width: 44px; }
+    button[aria-label="닫기"] { min-width: 44px; }
+    input[type="checkbox"], input[type="radio"] { min-width: 20px; min-height: 20px; }
+    [class*="overflow-y-auto"], [class*="overflow-auto"] { overscroll-behavior: contain; }
 }
 
 /* 답 본문. 산문이 대부분이고 표와 코드가 섞인다. */

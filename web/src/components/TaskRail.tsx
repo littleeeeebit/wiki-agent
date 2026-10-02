@@ -41,8 +41,8 @@ const GROUPS: { id: Exclude<Group, 'done'>; label: string }[] = [
 ]
 
 // Below 1280px the rail folds to its icons and dots (`max-[1280px]:`).
-const WIDE = 'max-[1280px]:hidden'
-const NARROW = 'min-[1280px]:hidden'
+const WIDE = 'rail-expanded max-[1280px]:hidden'
+const NARROW = 'rail-folded min-[1280px]:hidden'
 
 /** The project, the window's settings and review loop, and the project's
  *  tasks in the order a person reads them: what they have to do, what runs,
