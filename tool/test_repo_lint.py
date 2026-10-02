@@ -118,3 +118,17 @@ def test_a_hub_scope_page_inside_a_repository_is_reported():
     # repository-independent rule in here because of it.
     assert "범위가 어긋난 페이지" in kinds(repo(docs=["a.md"], scope="craft"))
     assert "범위가 어긋난 페이지" in kinds(repo(docs=["a.md"], scope="operator"))
+
+
+def test_a_page_without_front_matter_is_reported_unless_git_ignores_it():
+    # Review rounds and archived receipts under an ignored `.wiki/review/`
+    # are not pages; a page someone just wrote, not yet added, still is.
+    root = repo(docs=["a.md"])
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    (root / ".gitignore").write_text(".wiki/review/\n", encoding="utf-8")
+    (root / ".wiki" / "review").mkdir()
+    (root / ".wiki" / "review" / "round-1-result.md").write_text("# 결과\n", encoding="utf-8")
+    assert "페이지 형식 오류" not in kinds(root)
+    (root / ".wiki" / "new.md").write_text("# 새 페이지\n", encoding="utf-8")
+    found = [m for k, m in repo_lint.check(root) if k == "페이지 형식 오류"]
+    assert len(found) == 1 and found[0].startswith("`.wiki/new.md`")
