@@ -13,6 +13,8 @@ import subprocess
 import threading
 import time
 
+from common.process import background_options
+
 ROOT = Path(__file__).resolve().parents[2]
 SETTINGS = ROOT / ".chat-local.json"
 
@@ -64,7 +66,7 @@ class CodexServer:
         self.proc = subprocess.Popen(
             [*cli_command("codex"), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace",
-            env={**os.environ, **(env or {})}, cwd=cwd,
+            env={**os.environ, **(env or {})}, cwd=cwd, **background_options(),
         )
         self.replies = queue.Queue()
         self.deadline = time.monotonic() + timeout
@@ -113,3 +115,18 @@ class CodexServer:
             self.proc.wait(timeout=5)
         self.reader.join(timeout=1)
         self.proc.stdout.close()
+
+
+def codex_usage(env=None, cwd=None) -> list[dict]:
+    """Public account quota fields only, using the CLI's own login."""
+    with CodexServer(env=env, cwd=cwd, timeout=12) as server:
+        data = server.request("account/rateLimits/read", {})
+    return quota_windows(data)
+
+
+def quota_windows(data: dict) -> list[dict]:
+    buckets = data.get("rateLimitsByLimitId") or {"codex": data.get("rateLimits") or {}}
+    return [{"name": f"{name} · {key}", "used_percent": value.get("usedPercent"),
+             "window_minutes": value.get("windowDurationMins"), "resets_at": value.get("resetsAt")}
+            for name, bucket in buckets.items() for key in ("primary", "secondary")
+            if isinstance(value := bucket.get(key), dict)]

@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Eraser } from 'lucide-react'
 import { Answer } from '@/components/Answer'
+import { Questions } from '@/components/Questions'
+import type { Asked } from '@/components/Questions'
+import { LiveChanges } from '@/components/LiveChanges'
+import { ProviderUsage } from '@/components/ProviderUsage'
 import { Composer } from '@/components/Composer'
 import { Btn, ClearAsk } from '@/components/Modal'
 import { Toolbar } from '@/components/Toolbar'
@@ -50,7 +54,9 @@ export function Agent({
   const last = turns.at(-1)
   const grown = turns.length + (last?.text.length ?? 0) + (last?.steps.length ?? 0)
   useEffect(() => {
-    end.current?.scrollIntoView({ block: 'end' })
+    const question = [...(end.current?.parentElement?.querySelectorAll('[data-question-pending="true"]') ?? [])].at(-1)
+    if (question) question.scrollIntoView({ block: 'start' })
+    else end.current?.scrollIntoView({ block: 'end' })
   }, [grown])
 
   return (
@@ -96,6 +102,7 @@ export function Agent({
         )}
       </header>
 
+      <ProviderUsage key={`${choice.model.startsWith('codex:')}:${row?.path ?? ''}`} model={choice.model} path={row?.path} />
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="space-y-5 px-4 py-4">
           {!row && (
@@ -107,6 +114,7 @@ export function Agent({
             <p className="text-[13.5px] text-faint">지시를 보내라. 도는 동안에도 보내면 그 턴에 끼어든다.</p>
           )}
           {note && turns.length === 0 && <p className="text-[12.5px] text-muted-foreground">{note}</p>}
+          {row && <LiveChanges key={row.path} path={row.path} busy={busy} turn={last?.turn} />}
           {turns.map((t) =>
             t.role === 'user' ? (
               <div key={t.key} className="flex justify-end">
@@ -199,7 +207,7 @@ export function Reply({ turn, on, onAnswer, onPeek }: {
             : s.kind === 'tool' ? <Tool text={s.text} on={on && !s.command} />
             : s.kind === 'said' ? <Said text={s.text} />
               : s.kind === 'hook' ? <Hook text={s.text} context={s.context} />
-                : QUESTIONS.has(s.tool) ? <Question step={s} turn={turn} onAnswer={onAnswer} />
+                : QUESTIONS.has(s.tool) ? <Question step={s} turn={turn} korean={on} onAnswer={onAnswer} />
                   : <Ask step={s} turn={turn} onAnswer={onAnswer} />}
           {turn.latest === 'step' && from + j === turn.steps.length - 1 && marker}
         </li>
@@ -280,77 +288,36 @@ function Hook({ text, context }: { text: string; context?: string }) {
 /** The two hosts' question tools: Claude's `AskUserQuestion`, Codex's `request_user_input`. */
 const QUESTIONS = new Set(['AskUserQuestion', 'requestUserInput'])
 
-type Asked = {
-  question?: string
-  header?: string
-  multiSelect?: boolean
-  options?: { label: string; description?: string }[] | null
-}
-
-/** The agent asking with options. One answer per question: the options
- *  picked, or what the person typed instead. */
-function Question({ step, turn, onAnswer }: {
+/** Keep the question input for replay; submit original option labels. */
+function Question({ step, turn, korean, onAnswer }: {
   step: Extract<Step, { kind: 'approval' }>
   turn: Turn
+  korean: boolean
   onAnswer: Props['onAnswer']
 }) {
   const asked = (Array.isArray(step.input.questions) ? step.input.questions : []) as Asked[]
-  const [picked, setPicked] = useState<string[][]>(() => asked.map(() => []))
-  const [typed, setTyped] = useState<string[]>(() => asked.map(() => ''))
   const open = step.answer === undefined
-  const live = open && !!turn.pending && !step.sending
-  const answers = asked.map((_, i) => typed[i].trim() || picked[i].join(', '))
-  const ready = answers.length > 0 && answers.every(Boolean)
-  const toggle = (i: number, label: string, many: boolean) =>
-    setPicked((all) => all.map((now, j) => (j !== i ? now
-      : many ? (now.includes(label) ? now.filter((l) => l !== label) : [...now, label]) : [label])))
   return (
-    <div className={cn('rounded-md border p-2.5', open ? 'border-wait bg-wait/10' : 'border-border bg-secondary/40')}>
-      <span className="font-heading text-[11px] font-semibold">
-        {open ? '에이전트가 묻는다' : step.answer ? '답함' : '답하지 않음'}
-      </span>
-      {!open && (
-        <p className="mt-1 text-[13px] whitespace-pre-wrap">
-          {step.text}
-          {step.answers?.length ? <span className="block text-muted-foreground">→ {step.answers.join(' · ')}</span> : null}
-        </p>
-      )}
-      {open && asked.map((q, i) => (
-        <fieldset key={i} className="mt-2 space-y-1.5">
-          <legend className="text-[13px]">
-            {q.header && <span className="mr-1.5 font-mono text-[10.5px] text-muted-foreground">{q.header}</span>}
-            {q.question}
-          </legend>
-          {(q.options ?? []).map((o) => (
-            <button key={o.label} type="button" disabled={!live} aria-pressed={picked[i].includes(o.label)}
-              onClick={() => toggle(i, o.label, !!q.multiSelect)}
-              className={cn('block w-full rounded-md border px-2.5 py-1.5 text-left text-[12.5px] disabled:opacity-40',
-                picked[i].includes(o.label) ? 'border-wait bg-wait/20' : 'border-border hover:bg-secondary')}>
-              {o.label}
-              {o.description && <span className="block text-[12px] text-muted-foreground">{o.description}</span>}
-            </button>
-          ))}
-          <input value={typed[i]} disabled={!live} aria-label="직접 적기" placeholder="직접 적기"
-            onChange={(e) => setTyped((all) => all.map((t, j) => (j === i ? e.target.value : t)))}
-            className="h-7 w-full rounded-md border border-input bg-background px-2 text-[12.5px]" />
-        </fieldset>
-      ))}
-      {open && (
-        <div className="mt-2 flex justify-end gap-1.5">
-          <button type="button" disabled={!live || !ready} onClick={() => onAnswer(turn, step.id, true, 'once', answers)}
-            className="rounded-md bg-wait px-2.5 py-1 text-[12.5px] text-wait-foreground hover:opacity-90 disabled:opacity-40">
-            답하기
-          </button>
-          <button type="button" disabled={!live} onClick={() => onAnswer(turn, step.id, false)}
-            className="rounded-md border border-border px-2.5 py-1 text-[12.5px] hover:bg-secondary disabled:opacity-40">
-            답하지 않기
-          </button>
-        </div>
-      )}
-      {step.error && <p role="alert" className="mt-1 text-[12.5px] text-destructive">{step.error}</p>}
-      {open && !turn.pending && <p className="mt-1 text-[12.5px] text-faint">이 턴은 끝났다. 물은 프로세스가 없어 답할 수 없다.</p>}
+    <div data-question-pending={open && turn.pending ? 'true' : undefined}
+      className={cn('rounded-lg border p-4', open ? 'border-wait bg-wait/10' : 'border-border bg-secondary/40')}>
+      <p className="mb-4 text-[14px] font-semibold">{open ? '에이전트 질문' : step.answer ? '답함' : '답하지 않음'}</p>
+      {open ? <Questions questions={asked} korean={korean} disabled={!turn.pending || !!step.sending}
+        onSubmit={(answers) => onAnswer(turn, step.id, true, 'once', answers)}
+        onDecline={() => onAnswer(turn, step.id, false)} />
+        : <div className="space-y-2 text-[14px] leading-relaxed">
+          {asked.map((q, i) => <AnsweredQuestion key={i} question={q.question} answer={step.answers?.[i]} korean={korean} />)}
+          {!asked.length && <p className="whitespace-pre-wrap">{step.text}</p>}
+        </div>}
+      {step.error && <p role="alert" className="mt-3 text-[14px] text-destructive">{step.error}</p>}
+      {open && !turn.pending && <p className="mt-3 text-[14px] text-faint">이 턴은 끝났다. 물은 프로세스가 없어 답할 수 없다.</p>}
     </div>
   )
+}
+
+function AnsweredQuestion({ question, answer, korean }: { question: string; answer?: string; korean: boolean }) {
+  const [shown] = useOverlay([question], korean)
+  // The submitted answer may be the person's own prose, so it is not translated.
+  return <p>{shown}{answer && <span className="block text-muted-foreground">→ {answer}</span>}</p>
 }
 
 /** What the person said while the turn ran, where in the turn it landed. */

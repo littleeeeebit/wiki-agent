@@ -36,6 +36,21 @@ preview, then confirm sending it to the external translator. Merely enabling
 the Korean overlay never uploads terminal output. Agent and Review progress
 continue to use the automatic overlay.
 
+The agent pane reads `GET /api/work/diff?path=…` every second during a turn
+and every five seconds while idle. It includes staged, unstaged and untracked
+files without changing the index; the turn's initial commit remains its diff
+base after a commit. Large previews are explicitly truncated. Questions in
+Agent, Next Task and Planner share chapter cards, Markdown examples and the
+Korean overlay; submissions retain original option labels.
+
+`GET /api/providers/{claude|codex}/usage?path=…` reports connection preparation
+time, tokens and quota/reset fields supplied by the provider. Codex reads its
+public account quota through app-server, cached for one minute; Claude uses
+its rate-limit stream events. Missing account fields are shown as unavailable.
+`python -m pytest -q tool/test_agent_panel.py` checks real Git changes, question
+replay and both providers' event fields. Restart the app after rebuilding the
+screen so its Python server loads the updated routes too.
+
 The native privacy regression uses Playwright/CDP and a separate fixture app,
 not desktop control. With Playwright already available, run
 `python web/tests/terminal_privacy.py --app <isolated test exe> --project <fixture project> --task <fixture task>`.

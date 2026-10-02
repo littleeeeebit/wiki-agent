@@ -32,7 +32,7 @@ from pathlib import Path
 
 from common import worktree_home
 
-from .chat_local import cli_command
+from .chat_local import cli_command, codex_usage, quota_windows
 from . import read_tools
 
 # Something opened in a browser that edits files is not a chat, it is a remote
@@ -167,6 +167,15 @@ class ChatSession:
         # model reads the introduction and starts going through files. A
         # system prompt costs no turn and applies from the first utterance.
         self.system = system.strip()
+        if write:
+            self.system += (
+                "\nWhen asking the person, use AskUserQuestion (Claude) or request_user_input (Codex). "
+                "Group independent decisions in one call with chapter headers, within the host's limits. "
+                "Offer three or four meaningful alternatives when available, recommendation first, with "
+                "detailed consequences, costs and concrete examples. Include Markdown or fenced text sketches "
+                "in descriptions when comparing layouts. Write question prose in English for the Korean overlay; "
+                "preserve code and paths. Ask dependent follow-ups after the batch is answered. "
+                "Never invent alternatives just to fill the list.")
         # The model and the effort are fixed when the process starts. Changing
         # either means `reconfigure` starting it again, and it reconnects with
         # `--resume` so the conversation is not lost.
@@ -216,6 +225,29 @@ class ChatSession:
         self._asks: dict[str, int] = {}
         self._turn_id = ""       # Codex's id for the running turn, for `turn/steer`
         self._start_rpc = None   # the `turn/start` request, whose error ends the turn
+        self.connection_ms: int | None = None
+        self._boot_at = 0.0
+        self.usage: dict = {}
+        self.quota: list[dict] = []
+        self._quota_at = 0.0
+        self._quota_error = ""
+        self._quota_lock = threading.Lock()
+
+    def status(self) -> dict:
+        """Connection timing and provider usage, without login identifiers."""
+        if self.is_codex and self._quota_lock.acquire(blocking=False):
+            try:
+                if time.monotonic() - self._quota_at >= 60:
+                    self._quota_at = time.monotonic()
+                    try:
+                        self.quota = codex_usage(env=self._env, cwd=self.repo)
+                        self._quota_error = ""
+                    except Exception:
+                        self._quota_error = "계정 사용량을 받지 못했다 · 마지막 사용량은 오래되었을 수 있다"
+            finally:
+                self._quota_lock.release()
+        return {"live": self.alive, "connection_ms": self.connection_ms,
+                "quota": self.quota, "usage": self.usage, "error": self._quota_error}
 
     @property
     def is_codex(self) -> bool:
@@ -356,10 +388,13 @@ class ChatSession:
                 # Without one, this is a new conversation.
                 self._resume = self.session_id
                 self._events = queue.Queue()
+                self._boot_at = time.monotonic()
+                self.connection_ms = None
                 self._spawn()
                 if self.app:
                     try:
                         self._open_thread()
+                        self.connection_ms = round((time.monotonic() - self._boot_at) * 1000)
                     except Exception:
                         self.close()
                         raise
@@ -837,6 +872,13 @@ class ChatSession:
                     for mine, theirs in (("in", "inputTokens"), ("out", "outputTokens"),
                                          ("cache_read", "cachedInputTokens"), ("reasoning", "reasoningOutputTokens")):
                         used[mine] += int(last.get(theirs) or 0)
+                    total = (params.get("tokenUsage") or {}).get("total") or {}
+                    self.usage = {"input_tokens": total.get("inputTokens"), "output_tokens": total.get("outputTokens")}
+                    self.usage["scope"] = "thread"
+                elif method == "account/rateLimits/updated":
+                    self.quota = quota_windows(params)
+                    self._quota_at = time.monotonic()
+                    self._quota_error = ""
                 elif method == "turn/completed":
                     self._closing()   # Codex holds no queue: a late steer is refused by the CLI
                     turn = params.get("turn") or {}
@@ -886,6 +928,15 @@ class ChatSession:
                 # When "default" was chosen, this is the only place that knows
                 # what actually got attached.
                 self.model_name = str(ev.get("model") or "")
+                self.connection_ms = round((time.monotonic() - self._boot_at) * 1000)
+
+            elif kind == "rate_limit_event":
+                info = ev.get("rate_limit_info") or ev.get("rateLimitInfo") or {}
+                name = info.get("rateLimitType") or info.get("rate_limit_type") or "현재 한도"
+                utilization = info.get("utilization")
+                window = {"name": name, "used_percent": utilization * 100 if isinstance(utilization, (float, int)) else None,
+                          "resets_at": info.get("resetsAt", info.get("resets_at")), "status": info.get("status")}
+                self.quota = [q for q in self.quota if q["name"] != name] + [window]
 
             elif kind == "stream_event":
                 inner = ev.get("event") or {}
@@ -944,6 +995,8 @@ class ChatSession:
 
             elif kind == "result":
                 usage = ev.get("usage") or {}
+                self.usage = {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
+                              "cost_usd": ev.get("total_cost_usd"), "scope": "turn"}
                 yield Event(
                     "done",
                     str(ev.get("result") or ""),

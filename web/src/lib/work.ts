@@ -123,7 +123,7 @@ export function useReview(repo: string, id: string) {
 
 function restored(s: WorkStep): Step {
   if (s.kind !== 'approval') return s
-  return { kind: 'approval', text: s.text, id: '', tool: s.tool, input: {}, by: s.by, answers: s.answers,
+  return { kind: 'approval', text: s.text, id: '', tool: s.tool, input: s.input ?? {}, by: s.by, answers: s.answers,
     answer: s.answer === 'none' ? undefined : s.answer === 'allow' }
 }
 

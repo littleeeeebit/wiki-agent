@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Btn, Modal } from '@/components/Modal'
 import { Toolbar } from '@/components/Toolbar'
+import { Questions } from '@/components/Questions'
 import * as api from '@/lib/api'
 import type { Options, PlanRole, Spec } from '@/lib/api'
 
@@ -120,9 +121,8 @@ const RUNNING = ['collect', 'research', 'outline', 'stages', 'validate', 'publis
 
 /** A plan spec's run: where it is, what it spent against what was allowed,
  *  the questions waiting on the person, and resume or cancel. */
-export function PlanStatus({ spec, onChanged }: { spec: Spec; onChanged: () => void }) {
+export function PlanStatus({ spec, onChanged, korean = true }: { spec: Spec; onChanged: () => void; korean?: boolean }) {
   const p = spec.planning!
-  const [chosen, setChosen] = useState<Record<string, string>>({})
   const [working, setWorking] = useState(false)
   const [fault, setFault] = useState('')
 
@@ -139,7 +139,6 @@ export function PlanStatus({ spec, onChanged }: { spec: Spec; onChanged: () => v
     }
   }
   const role = (r: PlanRole) => `${r.model || '기본'}${r.effort ? ` · ${r.effort}` : ''}`
-  const answered = p.questions.every((q) => chosen[q.id]?.trim())
 
   return (
     <div className="space-y-2">
@@ -159,23 +158,12 @@ export function PlanStatus({ spec, onChanged }: { spec: Spec; onChanged: () => v
         계획자 {role(p.roles.planner)} · 수정자 {role(p.roles.reviser)} · 리뷰어 {role(p.roles.reviewer)}
       </div>
       {p.phase === 'clarify' && (
-        <div className="space-y-2 rounded-md border border-border p-2">
-          {p.questions.map((q) => (
-            <fieldset key={q.id} className="space-y-1">
-              <legend className="font-semibold">{q.question}</legend>
-              {q.options.map((o) => (
-                <label key={o.label} className="flex items-baseline gap-1.5">
-                  <input type="radio" name={`${spec.id}-${q.id}`} checked={chosen[q.id] === o.label}
-                    onChange={() => setChosen((prev) => ({ ...prev, [q.id]: o.label }))} />
-                  <span>{o.label}{o.note && <span className="ml-1 text-faint">— {o.note}</span>}</span>
-                </label>
-              ))}
-            </fieldset>
-          ))}
-          <Btn tone="primary" disabled={working || !answered} onClick={() => void act(() => api.answerPlan(
-            spec.id, p.questions_rev, p.questions.map((q) => ({ id: q.id, choice: chosen[q.id] }))))}>
-            답하고 이어 가기
-          </Btn>
+        <div className="rounded-lg border border-border p-4">
+          <Questions key={p.questions_rev} korean={korean} disabled={working} allowCustom={false}
+            questions={p.questions.map((q) => ({ id: q.id, question: q.question,
+              options: q.options.map((o) => ({ label: o.label, description: o.note })) }))}
+            onSubmit={(answers) => void act(() => api.answerPlan(spec.id, p.questions_rev,
+              p.questions.map((q, i) => ({ id: q.id, choice: answers[i] }))))} />
         </div>
       )}
       {p.source_manifest && (
