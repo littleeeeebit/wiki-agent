@@ -449,6 +449,7 @@ def reset(body: Clearing) -> dict:
         release()
     # The memory goes in the original checkout's `.wiki/`: the worktree's
     # goes with the worktree.
+    feed.put({"kind": "work-record", "path": str(path)})
     cfg = {"model": chat.model or "", "effort": chat.effort or ""} if chat and body.keep == "memory" else {}
     return {"ok": True, **keep(repo, f"work-{path.name}", rows, cfg, body)}
 
@@ -637,6 +638,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> 
             # can send the next instruction at once.
             release()
             run.finish()
+            feed.put({"kind": "work-record", "path": str(path)})
     try:
         if then:
             then()
@@ -835,6 +837,7 @@ def queue(body: Queued) -> dict:
             if body.path in _queued:
                 raise HTTPException(409, "기다리는 지시가 이미 있다. 그것을 취소하고 다시 보내라")
             _queued[body.path] = Order(path=body.path, text=text, model=body.model, effort=body.effort)
+    feed.put({"kind": "work-state", "path": body.path})
     return {"ok": True}
 
 
@@ -846,6 +849,7 @@ def unqueue(body: Where) -> dict:
     with _lock:
         if _queued.pop(body.path, None) is None:
             raise HTTPException(409, "기다리는 지시가 없다 — 이미 보냈거나 멈춤으로 버려졌다")
+    feed.put({"kind": "work-state", "path": body.path})
     return {"ok": True}
 
 
@@ -879,6 +883,8 @@ def answer(body: Answer) -> dict:
             run.put({"kind": "answered", "text": "", "meta": {"id": body.id, "allow": body.allow, "by": "person",
                                                               **({"answers": body.answers} if body.answers else {})},
                      "session_id": chat.id, "parent_id": chat.parent_id})
+    if body.scope == "session":
+        feed.put({"kind": "work-state", "path": body.path})
     return {"ok": True}
 
 
@@ -890,4 +896,5 @@ def forget_rules(body: Rules) -> dict:
     if chat is None or chat.id != body.session_id:
         raise HTTPException(409, "그 세션이 이제 없다")
     chat.clear_rules()
+    feed.put({"kind": "work-state", "path": body.path})
     return {"ok": True}

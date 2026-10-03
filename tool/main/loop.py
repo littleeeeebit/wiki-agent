@@ -1975,8 +1975,13 @@ def events(after: int | None = None) -> StreamingResponse:
     """The server's own changes, as they come. From now, unless `after` says."""
 
     with work.feed.wake:
-        start_at = len(work.feed.events) - 1 if after is None else after
-    return streaming(work.tail(work.feed, start_at))
+        latest = len(work.feed.events) - 1
+        # A restarted server has a new buffer. Never wait for a cursor from
+        # the old process to catch up; clients also refresh their snapshot.
+        start_at = latest if after is None else max(-1, min(after, latest))
+    response = streaming(work.tail(work.feed, start_at))
+    response.headers["X-Feed-Cursor"] = str(start_at)
+    return response
 
 
 @router.get("/api/specs/{sid}/rounds/{n}")

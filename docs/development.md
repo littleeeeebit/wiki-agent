@@ -11,6 +11,7 @@ python tool/lint.py --check
 npm --prefix web ci
 npm --prefix web run lint
 npm --prefix web run build
+powershell -ExecutionPolicy Bypass -File tool/build_android.ps1
 python tool/graph.py
 ```
 
@@ -37,11 +38,23 @@ the Korean overlay never uploads terminal output. Agent and Review progress
 continue to use the automatic overlay.
 
 The [mobile companion](mobile.md) shares the desktop server. Paired phones
-choose single-pane Portrait or three-pane Landscape in Settings; only local
-windows switch to one pane through 1100px. `python -m pytest -q tool/test_mobile.py`
+keep a focused portrait pane and a compact PC-style landscape workspace. APK 0.1.3 selects screen orientation and
+layout together from its native menu without orientation detection. Portrait
+uses bottom navigation; landscape shows a foldable task rail plus conversation
+and selected task, with optional full-width focused panes. These styles are remote-only; local PC windows retain their
+existing breakpoints, including a single pane through 1100px. Secondary task settings and diff contents are disclosed
+on demand. `python -m pytest -q tool/test_mobile.py`
 checks pairing and the WebSocket bridge. With Playwright available,
 `python web/tests/mobile_browser.py --live-tunnel` verifies phone layouts and
 real HTTPS transport against a synthetic fixture, then stops its own tunnel.
+`python web/tests/mobile_sync.py` checks two-client live conversation and
+reconnect against real record/feed producers over a loopback-only TLS relay;
+its model is stubbed and it never publishes user data. `tool/test_sync.py`
+checks identifier-only invalidations and feed replay/restart cursors.
+The Android build runs release pairing-link tests and lint, then verifies
+signing, alignment and permissions before writing `artifacts/wiki-agent.apk`
+and `artifacts/wiki-agent.aab`. Signing-key ownership, Galaxy installation
+protection, prerequisites and device acceptance are in the same mobile guide.
 
 The agent pane reads `GET /api/work/diff?path=…` every second during a turn
 and every five seconds while idle. It includes staged, unstaged and untracked

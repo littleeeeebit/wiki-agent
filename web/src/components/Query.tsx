@@ -165,6 +165,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
   const follow = useCallback(
     async (cid: string, stream: (onEvent: (ev: Ev) => void) => Promise<void>, attach = false, said = '') => {
       const key = slot(cid)
+      if (inFlight.current.has(key)) return
       const placeholder: Msg = { role: 'assistant', text: '', tools: [], pending: true }
       inFlight.current.set(key, placeholder)
       setBusyOn((prev) => [...prev, key])
@@ -203,6 +204,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         inFlight.current.delete(key)
         setBusyOn((prev) => prev.filter((id) => id !== key))
         api.getChannels().then(onChannels).catch(() => {})
+        window.dispatchEvent(new CustomEvent('conversation-changed', { detail: cid }))
       }
     },
     [slot, onChannels, onSpecs],
@@ -215,22 +217,41 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
   // since it was asked discards it too (`clears`), and a record arriving
   // after the person has typed something does not overwrite it.
   const clears = useRef(0)
+  const [revision, setRevision] = useState(0)
   useEffect(() => {
-    if (!active || !selectedRepo) return
-    let stale = false
-    const asked = clears.current
+    const changed = (event: Event) => {
+      if (event instanceof CustomEvent && event.detail !== active) return
+      setRevision((n) => n + 1)
+    }
+    window.addEventListener('conversation-changed', changed)
+    window.addEventListener('server-resync', changed)
+    window.addEventListener('focus', changed)
+    return () => {
+      window.removeEventListener('conversation-changed', changed)
+      window.removeEventListener('server-resync', changed)
+      window.removeEventListener('focus', changed)
+    }
+  }, [active])
+  useEffect(() => {
     setMessages([])
     setLegacy([])
     setNote('')
     setPeek(null)
+  }, [active, selectedRepo])
+  useEffect(() => {
+    if (!active || !selectedRepo) return
+    let stale = false
+    const asked = clears.current
     api
       .getLog(active)
       .then((rows) => {
         if (stale || asked !== clears.current) return
         const restored = rows.map(toMsg)
         const live = inFlight.current.get(slot(active))
-        if (live && restored.at(-1)?.role === 'user') restored.push(live)
-        setMessages((prev) => (prev.length ? prev : restored))
+        if (live && (!live.runId || restored.at(-1)?.runId !== live.runId)) restored.push(live)
+        // Never replace an answer this client is streaming. Its completion
+        // invalidates the record again, so updates received meanwhile land.
+        setMessages((prev) => live && prev.at(-1) === live ? prev : restored)
         // A question still running with no screen on it — the page reloaded,
         // or another window asked: follow it from its first event.
         if (!live && restored.at(-1)?.role === 'user') {
@@ -252,7 +273,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
     return () => {
       stale = true
     }
-  }, [active, selectedRepo, slot, follow])
+  }, [active, selectedRepo, slot, follow, revision])
 
   const send = useCallback(
     (text: string, propose = false) => {

@@ -42,7 +42,7 @@ export function Composer({ busy, onSend, seed, placeholder, disabled, max = 200 
   }
 
   return (
-    <div className="border-t border-border bg-card">
+    <div className="composer shrink-0 border-t border-border bg-card">
       <div className="mx-auto flex max-w-3xl items-end gap-2 px-5 py-3">
         <Textarea
           ref={box}
@@ -51,7 +51,8 @@ export function Composer({ busy, onSend, seed, placeholder, disabled, max = 200 
           enterKeyHint="send"
           value={text}
           disabled={busy || disabled}
-          placeholder={busy ? '답하는 중…' : (placeholder ?? '물어라. Enter 로 보내고 Shift+Enter 로 줄바꿈.')}
+          placeholder={busy ? '답하는 중…' : (placeholder ?? '질문이나 지시를 입력하세요')}
+          title="Enter로 보내기 · Shift+Enter로 줄바꿈"
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {

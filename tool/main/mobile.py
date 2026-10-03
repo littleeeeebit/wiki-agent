@@ -21,12 +21,13 @@ from pydantic import BaseModel, Field
 
 from common.process import background_options
 
-from . import query
+from . import channels, query
 
 HOST = "mobile.wiki-agent.invalid"
 COOKIE = "__Host-wiki-mobile"
 LOCAL = {"127.0.0.1", "localhost"}
 LIFETIME = 30 * 24 * 60 * 60
+APK = channels.WIKI / "artifacts" / "wiki-agent.apk"
 router = APIRouter(prefix="/api/mobile")
 
 
@@ -81,7 +82,7 @@ class Companion:
     def status(self) -> dict:
         with self.lock:
             return {"local": True, "enabled": bool(self.origin) and not self.starting, "starting": self.starting,
-                    "origin": self.origin, "error": self.error}
+                    "origin": self.origin, "error": self.error, "apk_available": APK.is_file()}
 
     def wait_ready(self, process, origin):
         # Printing an address precedes DNS propagation and connector readiness.

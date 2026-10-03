@@ -115,8 +115,15 @@ export function useReview(repo: string, id: string) {
       if (owner.repo === repo && owner.id === id) void load()
     }
     window.addEventListener('review-turn', changed)
+    const resync = () => { void load() }
+    window.addEventListener('server-resync', resync)
     void load()
-    return () => { alive = false; stream?.abort(); window.removeEventListener('review-turn', changed) }
+    return () => {
+      alive = false
+      stream?.abort()
+      window.removeEventListener('review-turn', changed)
+      window.removeEventListener('server-resync', resync)
+    }
   }, [repo, id])
   return turns
 }
@@ -454,6 +461,22 @@ export function useWork() {
     forget(path)
     load(path)
   }, [forget, load])
+
+  useEffect(() => {
+    const resync = () => {
+      for (const path of [...loading.current]) attach(path)
+    }
+    const state = (event: Event) => {
+      const path = (event as CustomEvent<string>).detail
+      if (loading.current.has(path)) readRules(path)
+    }
+    window.addEventListener('server-resync', resync)
+    window.addEventListener('work-state', state)
+    return () => {
+      window.removeEventListener('server-resync', resync)
+      window.removeEventListener('work-state', state)
+    }
+  }, [attach, readRules])
 
   return { turns, rules, queued, refused, load, send, queue, unqueue, dismiss, answer, stop, steer, clearRules, reset,
     forget, attach }
