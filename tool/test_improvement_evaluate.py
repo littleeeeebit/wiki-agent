@@ -52,6 +52,23 @@ def test_inference_usage_is_not_assumed_zero(tmp_path, monkeypatch):
         evaluate(request(tmp_path), manifest, tmp_path)
 
 
+@pytest.mark.parametrize("split", ["evolve", "held_out"])
+@pytest.mark.parametrize("ids", [[], ["unknown-task"]])
+def test_invalid_guard_checks_are_refused_before_any_task(tmp_path, monkeypatch, split, ids):
+    import improvement_evaluate
+
+    def unexpected_execution(*args):
+        pytest.fail("An invalid mandatory guard must be refused before spending any budget")
+
+    monkeypatch.setattr(improvement_evaluate, "execute", unexpected_execution)
+    data = {**request(tmp_path), "split": split}
+    task = {"argv": [sys.executable, "-c", "raise SystemExit(0)"], "inference": False, "seconds": 5}
+    manifest = {"schema": "wiki-improvement-tasks/1", "tasks": {"a": task, "b": task},
+                "guards": {split: {"integrity": [], "safety": ids}}}
+    with pytest.raises(ValueError, match="require real task checks|belong to the evaluated split"):
+        evaluate(data, manifest, tmp_path)
+
+
 def test_command_timeout_and_output_limit_are_enforced(tmp_path):
     with pytest.raises(subprocess.TimeoutExpired):
         execute([sys.executable, "-c", "import time; time.sleep(10)"], tmp_path, None, .05, dict(os.environ))

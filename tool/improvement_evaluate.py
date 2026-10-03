@@ -26,6 +26,14 @@ def evaluate(request: dict, manifest: dict, directory: Path) -> dict:
     started = time.monotonic()
     usage = {"calls": 0, "tokens": 0}
     rows = []
+    guard_tasks = manifest["guards"][request["split"]]
+    if not isinstance(guard_tasks, dict):
+        raise ValueError("Guard tasks must be a mapping")
+    for name, ids in guard_tasks.items():
+        if not isinstance(ids, list) or any(task not in request["ids"] for task in ids):
+            raise ValueError("Guard tasks must belong to the evaluated split")
+        if not ids and name != "integrity":
+            raise ValueError("Non-integrity guards require real task checks")
     for task_id in request["ids"]:
         task = manifest["tasks"][task_id]
         if type(task.get("inference")) is not bool:
@@ -76,9 +84,7 @@ def evaluate(request: dict, manifest: dict, directory: Path) -> dict:
             if any(usage[key] > request["limits"][key] for key in usage):
                 return {"error": "Evaluation allowance exceeded", "usage": usage, "trials": rows}
     guards = {}
-    for name, ids in manifest["guards"][request["split"]].items():
-        if not isinstance(ids, list) or any(task not in request["ids"] for task in ids):
-            raise ValueError("Guard tasks must belong to the evaluated split")
+    for name, ids in guard_tasks.items():
         guards[name] = all(r["reward"] == 1 for r in rows if r["id"] in ids)
     return {"trials": rows, "guards": guards, "usage": usage}
 
