@@ -335,6 +335,7 @@ class Spender:
 @pytest.fixture
 def surveyed(tmp_path):
     repo = _repo(tmp_path)
+    (repo / ".git/info/exclude").write_text(".wiki/adapter.toml\n", encoding="utf-8")
     for name in ("src/a/x.py", "src/b/y.py", "README.md"):
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_text("print(1)\n", encoding="utf-8")

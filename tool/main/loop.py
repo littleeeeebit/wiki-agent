@@ -551,7 +551,8 @@ def fixing(n: int, findings: list[dict], said: str) -> str:
         f"Review round {n} refused the merge (`{said}`) and found the following. For each finding: "
         "reproduce it first. Fix it where it "
         "points, and count separately the other places the same rule applies to. If you do not agree, "
-        "say why with evidence rather than changing the code. Commit what you change; do not push.\n\n"
+        "say why with evidence rather than changing the code. Commit and push the task branch. "
+        "The server also synchronizes the branch before the next review.\n\n"
         "End the answer with a fenced block whose info string is `disposition`, holding a JSON list with "
         "one entry per finding, in order: `{\"finding\": \"<its first line, copied>\", \"id\": \"<its id, "
         "when it has one, else null>\", \"action\": \"fixed\" | \"not-reproduced\" | \"disagree\", "
@@ -928,7 +929,7 @@ def reusable(spec: dict, head: str, chosen: dict) -> bool:
 
 def repair(cmd: str, verdict: dict) -> str:
     return (f"The server ran the gate `{cmd}` in this worktree and it failed: {verdict['reason']}. The end "
-            f"of its output:\n\n```\n{verdict['tail']}\n```\n\nFix it and commit. Do not push.")
+            f"of its output:\n\n```\n{verdict['tail']}\n```\n\nFix it, commit, and push the task branch.")
 
 
 def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str) -> bool:
@@ -1178,6 +1179,9 @@ def step(loop: Loop) -> bool:
         return stop(loop, loop.repo, loop.sid, Why.NO_REPO, str(exc))
     if not spec.get("worktree") or path.resolve() not in listed:
         return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE, f"`{path.name}` 가 `{repo.name}` 의 작업트리 목록에 없다")
+    if spec.get("workspace_mode") == "branch" and \
+            specs.sh(["git", "branch", "--show-current"], path).stdout.strip() != specs.branch_of(spec):
+        return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE, "작업 브랜치를 다시 연 뒤 리뷰를 계속해라")
     rounds, pr = counted(spec), spec["pr"]["number"]
     n = len(rounds) + 1
     head, base = pr_head(repo, pr)
@@ -1347,6 +1351,8 @@ def step(loop: Loop) -> bool:
     answer = told(loop, spec, path, text)
     if answer is None:
         return False
+    # The implementation turn may revise the requirements and invalidate prior rounds.
+    spec = specs.load(loop.repo, loop.sid) or spec
     latest = spec["rounds"][-1]
     disposition = vouched(disposed(answer), latest.get("items") or [])
     spec = change(loop, rounds=[*spec["rounds"][:-1], {**latest, "disposition": disposition,
@@ -1525,7 +1531,9 @@ def finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
         notes.append(handed["reason"] if handed["ok"] else f"adapter 넘기기 대기 — {handed['reason']}")
     else:
         notes.append(forward(repo, base))
-    if spec.get("worktree"):
+    if spec.get("workspace_mode") == "branch":
+        notes.append("원본 저장소와 작업 브랜치를 남겼다")
+    elif spec.get("worktree"):
         notes.append(cleared(repo, Path(spec["worktree"])))
     notes.append(pruned(repo, specs.branch_of(spec), allowed["head"] if allowed else spec["pr"].get("head", "")))
     close_cell(spec["repo"], n)
@@ -1715,10 +1723,13 @@ def proceed(repo: Path, spec: dict, note: str) -> dict:
     elif why is Why.NO_REPO and channels.repo_for(spec["repo"]) is None:
         raise HTTPException(409, f"`{spec['repo']}` 가 아직 작업 공간에 없다")
     elif why is Why.NO_WORKTREE:
-        view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "headRefName,headRefOid"])
-        path = adopted(repo, view["headRefName"], view["headRefOid"],
-                       detached=spec.get("implementation_environment", "local") != "local")
-        specs.update(repo.name, sid, worktree=str(path), pr={**spec["pr"], "branch": view["headRefName"]})
+        if spec.get("workspace_mode") == "branch":
+            specs.activate(sid)
+        else:
+            view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "headRefName,headRefOid"])
+            path = adopted(repo, view["headRefName"], view["headRefOid"],
+                           detached=spec.get("implementation_environment", "local") != "local")
+            specs.update(repo.name, sid, worktree=str(path), pr={**spec["pr"], "branch": view["headRefName"]})
     elif why is Why.LEFT_QUEUE:
         view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "state,headRefOid,baseRefName"])
         allowed = specs.approved(spec)

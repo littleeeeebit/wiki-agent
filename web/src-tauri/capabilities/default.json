@@ -11,6 +11,7 @@
     "allow-pty-open",
     "allow-pty-write",
     "allow-pty-resize",
-    "allow-pty-close"
+    "allow-pty-close",
+    "allow-open-url"
   ]
 }

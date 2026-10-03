@@ -35,9 +35,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agent import ChatSession
-from common import worktree_home
 from common.budget import Budget, Cancelled, Exhausted
-from workspace import create
 
 from . import channels, loop, specs, work
 from .query import ROOT, _lock, current_repo, hold
@@ -1158,21 +1156,25 @@ def start(body: Plan) -> dict:
         sid = specs.unique(repo, given["slug"] or f"plan-{revision[:8]}")
         root = f"docs/plans/{sid}"
         with _lock:
-            release = held(worktree_home(repo) / sid)
+            specs.checkout_idle(repo)
+            release = held(repo)
         try:
             try:
-                path = create(repo, sid)
+                path, before, previous = specs.fork(repo, sid)
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
             except RuntimeError as exc:
                 raise HTTPException(409, str(exc)) from exc
             now = time.time()
+            work.forget(path)
             roles = given["roles"]
             spec = {"id": sid, "repo": repo.name, "rev": 1, "goal": given["goal"], "out": [], "done": [gate],
                     "grounds": {"pages": [], "files": [], "rules": []}, "decisions": [],
                     "review_profile": "plan", "review_profile_version": specs.PROFILE_VERSION, "artifact_root": root,
                     "source": {"focus": "plan", "turn": now, "plan": None}, "state": "작업 중", "stopped": None,
-                    "worktree": str(path), "pr": None, "report": None, "gate": None, "fault": None,
+                    "worktree": str(path), "workspace_mode": "branch", "branch": sid,
+                    "start_head": before, "return_branch": previous,
+                    "pr": None, "report": None, "gate": None, "fault": None,
                     # The reviser works the pull request, the reviewer checks it: never A.
                     "cell": roles["reviser"], "reviewer": roles["reviewer"],
                     "history": [{"ts": now, "state": "정리됨"}, {"ts": now, "state": "작업 중"}],

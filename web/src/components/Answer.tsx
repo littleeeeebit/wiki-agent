@@ -1,6 +1,7 @@
-import Markdown from 'react-markdown'
+import Markdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Candidates } from '@/components/Candidates'
+import { fileLink } from '@/lib/links'
 
 // Inline code that looks like a citation: `tool/main/app.py:118`, `docs/x.md`, a
 // git commit identifier.
@@ -53,12 +54,14 @@ export function Answer({ text, korean, remote, onPeek, onDecide }: AnswerProps) 
     <div className="prose-answer">
       <Markdown
         remarkPlugins={[remarkGfm, remarkCitations]}
+        urlTransform={(href) => fileLink(href) ? href : defaultUrlTransform(href)}
         components={{
-          a: ({ href, children }) => (
-            <a href={href} target="_blank" rel="noreferrer">
+          a: ({ href, children }) => {
+            const file = fileLink(href ?? '')
+            return file ? <button type="button" className="cite" onClick={() => onPeek(file.path, file.line)}>
               {children}
-            </a>
-          ),
+            </button> : <a href={href} target="_blank" rel="noreferrer">{children}</a>
+          },
           table: ({ children }) => (
             <div className="overflow-x-auto">
               <table>{children}</table>
@@ -81,7 +84,10 @@ export function Answer({ text, korean, remote, onPeek, onDecide }: AnswerProps) 
             // Every other fence stands as it is.
             if (className) return <code className={className}>{children}</code>
 
+            const linked = fileLink(raw)
             const file = raw.match(FILE)
+            if (linked && !file) return <button type="button" className="cite"
+              onClick={() => onPeek(linked.path, linked.line)}>{raw}</button>
             if (file) {
               const line = file[2] ? Number(file[2]) : 1
               return (

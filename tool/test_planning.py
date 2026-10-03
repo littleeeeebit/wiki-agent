@@ -212,8 +212,10 @@ def test_one_run_publishes_a_two_stage_plan_once_and_hands_off(checkout):
         assert planned_folder(spec) == {f"{root}/0-overview.md", f"{root}/1-entry.md", f"{root}/2-publish.md"}, \
             "새 계획 폴더 밖은 한 줄도 쓰지 않는다"
         assert not git(path, "status", "--porcelain")
-        assert not (checkout / "docs").exists() and git(checkout, "status", "--porcelain") == before, \
-            "원본 체크아웃은 그대로다"
+        assert path == checkout and (checkout / root).is_dir(), "선택한 체크아웃에 계획을 만든다"
+        assert git(checkout, "status", "--porcelain") == before
+        assert git(checkout, "branch", "--show-current") == sid
+        assert not (checkout.parent / "proj-worktrees").exists()
         assert (path / root / "1-entry.md").read_bytes().startswith(b"# Stage"), "BOM 없는 UTF-8"
         assert p["source_manifest"][0]["kind"] == "web" and p["web"]["observed"] == 1
         assert [s["n"] for s in p["outline"]["stages"]] == [1, 2]
@@ -463,7 +465,7 @@ def test_a_write_cut_halfway_is_finished_on_resume_only_if_every_file_is_ours(ch
     real, writes = planning.atomic, []
 
     def flaky(file, content):
-        if "proj-worktrees" in str(file):
+        if file.is_relative_to(checkout / "docs/plans"):
             writes.append(file)
             if len(writes) == 2:
                 raise OSError("disk went away")
@@ -493,7 +495,7 @@ def test_a_write_cut_halfway_is_finished_on_resume_only_if_every_file_is_ours(ch
         assert "mine" in mine.read_text(encoding="utf-8").lower(), "사람이 쓴 파일은 덮어쓰지 않는다"
         return
     assert planned_folder(spec) == {f"{root}/0-overview.md", f"{root}/1-entry.md", f"{root}/2-publish.md"}
-    assert remote.creates() == 1 and not git(path, "status", "--porcelain", "--ignored")
+    assert remote.creates() == 1 and not git(path, "status", "--porcelain", "--ignored", "--", root)
 
 
 def test_a_hand_off_cut_by_a_restart_is_resumed(checkout):

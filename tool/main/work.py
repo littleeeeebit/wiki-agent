@@ -1,9 +1,9 @@
-"""work — the selected project's worktrees, and one write session in each.
+"""work — the selected checkout and isolated trees, with task-specific sessions.
 
 The screen names a worktree by path, and a path from the screen is never
 opened as it is: it has to be on `workspace`'s own list for the selected
-project. Every write the agent wants arrives as an `approval` event and waits
-for a person.
+project. Implementation agents have full access; product questions still arrive
+as interactive events. Task branches share a directory, not a conversation.
 
 A turn runs in its own thread, not in the response that started it. Its
 events pile up in a `Run`, and every response only tails that buffer, so a
@@ -137,7 +137,12 @@ def changes(path: str) -> dict:
     """
     root = known(path)
     run = _runs.get(path)
-    base = getattr(run, "diff_base", None) or "HEAD"
+    from . import specs
+
+    spec = specs.owner(root)
+    base = (spec or {}).get("start_head") or getattr(run, "diff_base", None)
+    if not base:
+        base = next((r.get("diff_base") for r in reversed(recall(root)) if r.get("diff_base")), None) or "HEAD"
     flags = ("--no-ext-diff", "--no-textconv", "--no-color")
     try:
         patch = diff_git(root, "diff", *flags, base, "--")
@@ -167,6 +172,11 @@ def record(path: Path) -> Path:
     task name is only unique within its repository, and the project selection
     can change while a turn is still being written."""
 
+    from . import specs
+
+    spec = specs.owner(path)
+    if spec and spec.get("workspace_mode") == "branch":
+        return LOGS / spec["repo"] / f"{spec['id']}.jsonl"
     return LOGS / path.parent.name / f"{path.name}.jsonl"
 
 
@@ -211,7 +221,8 @@ def listing() -> dict:
     out = []
     for row in rows:
         chat = _sessions.get(str(row["path"]))
-        out.append({**row, "path": str(row["path"]), "name": row["path"].name,
+        out.append({**row, "path": str(row["path"]), "name": row["branch"] or row["path"].name,
+                    "primary": row["path"].resolve() == repo.resolve(),
                     "live": bool(chat and chat.alive), "busy": str(row["path"]) in _busy})
     return {"project": name, "repo": str(repo), "rows": out}
 
@@ -250,6 +261,8 @@ def clear(body: Removal) -> dict:
     # handed it another repository, and a stop aimed at another project.
     with _lock:
         repo = current_repo()
+    if Path(body.path).resolve() == repo.resolve():
+        raise HTTPException(409, "원본 저장소는 삭제하지 않는다. 작업 브랜치는 Git에서 관리해라")
     if body.force:
         # Only that project's worktree is stopped: a path from anywhere else
         # is a 404 before anything halts.
@@ -362,6 +375,7 @@ def session(path: Path, model: str, effort: str) -> ChatSession:
 
     key = str(path)
     bypass = settings()["bypass"]
+    prompt = specs.system(path)
     with _lock:
         chat = _sessions.get(key)
         if chat is not None and chat.is_codex != model.startswith("codex:"):
@@ -369,9 +383,14 @@ def session(path: Path, model: str, effort: str) -> ChatSession:
             chat.close()
             remember(path, "context", "CLI 변경")
             chat = None
+        if chat is not None and getattr(chat, "_spec_system", prompt) != prompt:
+            chat.close()
+            _sessions.pop(key)
+            chat = None
         if chat is None:
-            chat = ChatSession(path, model=model, effort=effort, write=True, system=specs.system(path),
+            chat = ChatSession(path, model=model, effort=effort, write=True, system=prompt,
                                bypass=bypass)
+            chat._spec_system = prompt
             chat.session_id = resumable(recall(path), chat.is_codex)
             _sessions[key] = chat
         else:
@@ -389,9 +408,7 @@ WORK_DEFAULTS = {"bypass": True}
 
 
 def settings() -> dict:
-    from . import loop  # `loop` imports this module
-
-    return loop.settings(WORK_DEFAULTS)
+    return dict(WORK_DEFAULTS)
 
 
 class WorkSettings(BaseModel):
@@ -407,7 +424,7 @@ def get_settings() -> dict:
 def set_settings(body: WorkSettings) -> dict:
     from . import loop
 
-    loop.store(bypass=body.bypass)
+    loop.store(bypass=True)
     return settings()
 
 
@@ -631,7 +648,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> 
                 at = next((i for i, e in enumerate(run.events) if e["kind"] == "done"), None)
                 answered = {} if at is None else {"answered": len(steps(run.events[:at + 1]))}
             remember(path, "assistant", final, error=failed, steps=made,
-                     provider="codex" if chat.is_codex else "claude", **answered, **meta)
+                     provider="codex" if chat.is_codex else "claude", diff_base=run.diff_base, **answered, **meta)
         finally:
             # Released before the end is told, so a screen that sees the end
             # can send the next instruction at once.

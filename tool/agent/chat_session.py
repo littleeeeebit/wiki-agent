@@ -4,10 +4,11 @@ The two hosts keep a conversation in different ways and the screen must not
 have to know which. What reaches the screen is read by a person, so those
 strings stay Korean.
 
-A session reads by default. `write=True` opens one in a worktree, where every
-write the CLI wants to make arrives as an `approval` event and waits for
-`answer`. Codex sessions run `app-server`, which keeps one process across
-turns and is the only way Codex asks; `exec` is left to the isolated plain
+A session reads by default. `write=True` opens one in a repository checkout;
+implementation sessions use full access, while explicitly non-bypass callers
+can still route writes through `approval` and `answer`. Codex runs `app-server`,
+which keeps one process across turns and is the only way Codex asks;
+`exec` is left to the isolated plain
 explanation.
 
 `verification=<artifact directory>` is an independent Cloud review cell, not
@@ -134,9 +135,13 @@ class ChatSession:
                  parent_id: str | None = None, bypass: bool = False,
                  verification: Path | None = None, env: dict | None = None) -> None:
         self.repo = Path(repo)
-        # Writes go to a worktree, never to the checkout a person works in.
-        if (write or verification is not None) and not our_worktree(self.repo):
+        if verification is not None and not our_worktree(self.repo):
             raise ValueError(f"쓰기 세션은 workspace 가 만든 작업트리에서만 연다: {self.repo}")
+        if write:
+            root = subprocess.run(["git", "-C", str(self.repo), "rev-parse", "--show-toplevel"],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10)
+            if root.returncode or Path(root.stdout.strip()).resolve() != self.repo.resolve():
+                raise ValueError(f"쓰기 세션은 선택한 저장소 루트에서 연다: {self.repo}")
         if verification is not None and (write or isolated):
             raise ValueError("클라우드 검증 셀은 구현·격리 응답 세션과 별개다")
         self.verification = Path(verification).resolve() if verification is not None else None
@@ -286,7 +291,7 @@ class ChatSession:
         if self.bypass:
             # The prompt tool stays: without it the CLI drops `AskUserQuestion`,
             # which is the one thing a bypass session still asks.
-            cmd += ["--permission-mode", "bypassPermissions", "--permission-prompt-tool", "stdio"]
+            cmd += ["--dangerously-skip-permissions", "--permission-prompt-tool", "stdio"]
         elif self.write or self.verification is not None:
             # Named, so a `defaultMode` of `acceptEdits` in someone's settings
             # cannot skip the question.
@@ -308,6 +313,8 @@ class ChatSession:
             # `request_user_input` is Plan mode's only, unless this is on (CLI 0.156.0).
             cmd = ["codex", "app-server"] + (["--enable", "default_mode_request_user_input"] if self.write
                                              else ["--disable", "multi_agent"])
+            if self.bypass:
+                cmd += ["-c", 'approval_policy="never"', "-c", 'sandbox_mode="danger-full-access"']
             if self.source_only or self.verification is not None:
                 for feature in ("apps", "plugins", "computer_use", "request_permissions_tool",
                                 "default_mode_request_user_input", "memories"):
@@ -402,8 +409,8 @@ class ChatSession:
     def _open_thread(self) -> None:
         """`app-server` holds no conversation until asked to start or resume one.
 
-        `read-only` with `untrusted` is what makes a write session ask:
-        anything but a known read-only command becomes an approval request.
+        Full-access implementation uses `danger-full-access` with `never`.
+        Explicitly non-bypass write callers use `read-only` with `on-request`.
         An ordinary read session never asks — `_approval` would refuse it
         anyway. Cloud verification uses workspace-write with `never`.
 
@@ -418,7 +425,7 @@ class ChatSession:
         self._send({"method": "initialized"})
         params = {"cwd": str(self.repo), "sandbox": "workspace-write" if self.verification is not None
                   else "danger-full-access" if self.bypass else "read-only",
-                  "approvalPolicy": "untrusted" if self.write and not self.bypass else "never",
+                  "approvalPolicy": "on-request" if self.write and not self.bypass else "never",
                   "model": self.model_name}
         if self.system:
             params["developerInstructions"] = self.system
@@ -584,15 +591,14 @@ class ChatSession:
     def _approval(self, key: str, reply, tool: str, args: dict, text: str, outside: str) -> Event:
         """An approval event for the person, or a refusal nobody is asked about.
 
-        Refused without asking: a write outside the worktree, and anything a
-        read session is asked — it has no one to answer and would sit out the
-        turn's deadline. Allowed without asking: what a session rule covers.
-        The outside check comes first, so no rule reaches past the worktree.
+        Full-access writes are allowed without asking. Explicitly non-bypass
+        callers refuse writes outside their checkout; read sessions refuse
+        writes entirely. Session rules never extend a restricted caller's root.
         Either way it is an approval too, already answered, with `by` saying
         who answered it, so the record keeps it with the rest.
         """
 
-        if outside or (not self.write and self.verification is None):
+        if (outside and not self.bypass) or (not self.write and self.verification is None):
             self._send(reply(False))
             return Event("approval", text, {"id": key, "tool": tool, "input": args, "answer": "deny",
                                             "by": "outside" if outside else "read"})
@@ -600,6 +606,10 @@ class ChatSession:
             self._send(reply(True))
             return Event("approval", text, {"id": key, "tool": tool, "input": args,
                                             "answer": "allow", "by": "verification"})
+        if self.bypass and tool not in QUESTIONS:
+            self._send(reply(True))
+            return Event("approval", text, {"id": key, "tool": tool, "input": args,
+                                            "answer": "allow", "by": "session"})
         rule = self._rule(tool, args)
         if rule is not None and rule in self._rules:
             self._send(reply(True))
@@ -618,6 +628,9 @@ class ChatSession:
             return {"id": rid, "result": {"decision": "accept" if allow else "decline"}}
 
         reason = params.get("reason")
+        if method == "item/permissions/requestApproval" and self.bypass:
+            self._send({"id": rid, "result": {"permissions": params.get("permissions") or {}, "scope": "session"}})
+            return Event("tool", "작업 세션의 전체 접근 권한을 적용했다.")
         if self.verification is not None and method in {
                 "item/commandExecution/requestApproval", "item/fileChange/requestApproval"}:
             # Normal workspace execution never asks. An unexpected request is
@@ -757,7 +770,9 @@ class ChatSession:
                         "networkAccess": True, "excludeTmpdirEnvVar": True, "excludeSlashTmp": True}}
                        if self.verification is not None else
                        {"approvalPolicy": "never", "sandboxPolicy": {"type": "readOnly"}}
-                       if not self.write else {}),
+                       if not self.write else
+                       {"approvalPolicy": "never", "sandboxPolicy": {"type": "dangerFullAccess"}}
+                       if self.bypass else {}),
                     **({"effort": self.effort} if self.effort else {})})
                 self._start_rpc = start["id"]
                 sent = self._send(start)

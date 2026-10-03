@@ -53,15 +53,17 @@ function word(state: string): string {
 export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string) => number,
   busy: (path: string) => boolean): Task[] {
   const byPath = new Map(rows.map((r) => [r.path, r]))
-  const owned = new Set(specs.map((s) => s.worktree).filter(Boolean))
+  const owned = new Set<string>()
   const out: Task[] = []
   for (const s of specs) {
-    const row = s.worktree ? byPath.get(s.worktree) ?? null : null
+    const found = s.worktree ? byPath.get(s.worktree) ?? null : null
+    const row = found && (s.workspace_mode !== 'branch' || found.branch === (s.branch ?? s.id)) ? found : null
+    if (row) owned.add(row.path)
     const p = phase(s.state)
     if (p === 'done' && !row) continue
-    const asks = s.worktree ? approvals(s.worktree) : 0
-    const waiting = asks > 0 || Boolean(s.waiting)
-    const running = s.worktree ? busy(s.worktree) : false
+    const asks = row ? approvals(row.path) : 0
+    const waiting = asks > 0 || Boolean(row && s.waiting)
+    const running = row ? busy(row.path) : false
     // A plan still being drafted says its phase; its questions and its stop wait on the person.
     const plan = s.state === '작업 중' ? s.planning : null
     const planAct = plan?.phase === 'clarify' || plan?.phase === 'stopped'
@@ -72,7 +74,7 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
     if (p === 'stop' && s.stopped) parts.push(s.stopped.reason)
     if (p === 'queued') parts.push(s.queued || '대기열')
     out.push({
-      key: s.worktree ?? `spec:${s.id}`, path: s.worktree, spec: s, name: s.id,
+      key: row?.path ?? `spec:${s.id}`, path: row?.path ?? null, spec: s, name: s.id,
       pr: s.pr?.number ?? null, round: (s.rounds ?? []).filter((r) => !r.stale).length,
       phase: p,
       group: waiting || planAct || p === 'ready' || p === 'stop' ? 'act'

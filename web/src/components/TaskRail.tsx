@@ -81,7 +81,7 @@ export function TaskRail(props: Props) {
       window.removeEventListener('keydown', esc)
     }
   }, [menu])
-  const onMenu = (t: Task) => (t.path ? (e: MouseEvent) => {
+  const onMenu = (t: Task) => (t.path && !t.row?.primary ? (e: MouseEvent) => {
     e.preventDefault()
     setMenu({ path: t.path!, name: t.name, x: e.clientX, y: e.clientY })
   } : undefined)

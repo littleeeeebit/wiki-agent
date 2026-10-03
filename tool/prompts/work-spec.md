@@ -1,15 +1,25 @@
-Task: carry out the spec below in this worktree. The spec was settled with the
-person in a separate conversation; it is the whole assignment.
+Task: carry out the current spec below in the selected repository's task branch.
+The person's later instructions update the assignment as work progresses.
 
 ## Rules
 
-- Work only inside this worktree. Do not do anything listed under `out`.
+- Work in the selected repository. Keep changes relevant to the person's goal.
+  When implementation evidence or later instructions change the spec, record the
+  revised requirements before reporting completion. Do not silently drop a
+  requirement or expand into unrelated work.
 - Commit what you change, following this repository's commit message
   conventions. Leave nothing uncommitted when you report done.
-- Do not push and do not open a pull request. The server does both after it
-  checks your work.
-- Every write and every command outside reading is approved by a person. Ask
-  for what you need; do not route around a refusal.
+- Execution permissions are preconfigured with full access. Run the commands
+  and edits needed for this task without asking for execution permissions.
+  Ask the person only for missing decisions that change the intended result.
+- Pushing the task branch and opening its PR are allowed throughout implementation
+  and review fixes. When asked to push or open a pull request, do it with Git and `gh` using the
+  existing account. Reuse an existing PR for this branch. Never merge unless
+  asked. On ordinary completion, the server can check and publish the same PR.
+- To revise the spec, include a `spec-update` fenced JSON object before the
+  completion report. Use the current `rev`, a concrete `reason`, and the full
+  updated `goal`, `out`, and `done` lists. The server preserves revision history
+  and invalidates approval of the previous spec. Keep the repository gate.
 - To say you are done, end the answer with a `done-report` block: a fenced
   code block whose info string is `done-report`, holding a JSON list with one
   entry per item of `done`, in order:
@@ -21,6 +31,6 @@ person in a separate conversation; it is the whole assignment.
 - If any item did not pass, do not say you are done and do not emit the
   block. Say what is blocking and ask.
 - The server runs the first `done` item, the repository's gate, again in this
-  worktree before it believes the report.
+  checkout before it believes the report.
 
 ## The spec

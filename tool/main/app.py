@@ -12,6 +12,7 @@ import argparse
 import json
 import mimetypes
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -28,7 +29,7 @@ from pydantic import AnyHttpUrl, BaseModel
 
 import translate
 
-from . import channels, connect, loop, mobile, planning, query, specs, verification, work
+from . import channels, connect, loop, mobile, planning, query, specs, survey, verification, work
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
 # `text/plain`. The browser then refuses `<script type="module">` silently:
@@ -56,6 +57,7 @@ async def lifespan(_: FastAPI):
     loop.recover()
     # A plan's worker too: stopped with its phase, never replayed by itself.
     planning.recover()
+    survey.recover()
     threading.Thread(target=loop.poll, daemon=True).start()
     yield
     mobile.companion.stop()
@@ -214,8 +216,11 @@ def locate(base: Path, path: str) -> tuple[Path, str]:
     the refusal instead of a guess.
     """
 
+    path = unquote(path).replace("\\", "/")
+    if re.match(r"^/[A-Za-z]:/", path):
+        path = path[1:]
     if found := inside(base, path):
-        return found, path
+        return found, found.relative_to(base.resolve()).as_posix()
     if found := inside(channels.WIKI, path):
         return found, path
     tail = "/" + path.removeprefix("./")

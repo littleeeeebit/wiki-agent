@@ -2,23 +2,27 @@ import { useState } from 'react'
 import { ChevronRight } from 'lucide-react'
 import { Btn } from '@/components/Modal'
 import { PlanStatus } from '@/components/Plan'
+import { SpecForm } from '@/components/Blocks'
 import { PROFILE_LABEL, type Spec } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
 /** The selected task's spec, folded to its goal. Open, it shows what the
  *  work session was given — what stays out, the done conditions, the grounds
- *  and the decisions — and what the server made of the result. Editing is the
- *  card's, in the `next` conversation; a spec not started yet starts here too. */
-export function SpecSummary({ spec, onStart, onChanged, korean }: {
+ *  and the decisions — and what the server made of the result. An idle task
+ *  can revise its requirements here; a draft can start or a saved branch reopen. */
+export function SpecSummary({ spec, onStart, onChanged, korean, active = true, busy = false }: {
   spec: Spec | null
   onStart: (id: string) => Promise<void>
   onChanged: () => void
   korean: boolean
+  active?: boolean
+  busy?: boolean
 }) {
   // A plan still being drafted opens on its status: its questions wait on the person.
   const [open, setOpen] = useState(Boolean(spec?.planning && spec.state === '작업 중'))
   const [working, setWorking] = useState(false)
   const [fault, setFault] = useState('')
+  const [editing, setEditing] = useState(false)
   if (!spec) return <p className="flex h-11 items-center px-5 text-[12.5px] text-faint">명세 없음 — 이 작업트리는 명세 없이 만들어졌다</p>
 
   const list = (label: string, items: string[]) => items.length > 0 && (
@@ -38,6 +42,19 @@ export function SpecSummary({ spec, onStart, onChanged, korean }: {
       </button>
       {open && (
         <div className="max-h-72 space-y-3 overflow-y-auto px-5 pb-4 text-[12.5px]">
+          {(!spec.planning || spec.planning.phase === 'handoff') && !busy &&
+            !/^(머지됨|머지 대기|리뷰 대기|리뷰 R\d+|고치는 중 R\d+)$/.test(spec.state) &&
+            <Btn onClick={() => setEditing((value) => !value)}>{editing ? '편집 닫기' : '명세 수정'}</Btn>}
+          {editing && <SpecForm key={`${spec.id}:${spec.rev}`} spec={spec} busy={busy} onSpecs={onChanged}
+            onStart={onStart} onRenamed={() => setEditing(false)} />}
+          {!!spec.revisions?.length && <details><summary className="cursor-pointer">변경 이력 · 현재 판 {spec.rev}</summary>
+            {spec.revisions.map((revision) => <p key={revision.rev}>판 {revision.rev} → {revision.rev + 1} · {revision.reason}</p>)}
+          </details>}
+          {!active && spec.workspace_mode === 'branch' && <Btn disabled={working} onClick={async () => {
+            setWorking(true)
+            setFault('')
+            try { await onStart(spec.id) } catch (err) { setFault(String(err)) } finally { setWorking(false) }
+          }}>브랜치 열기</Btn>}
           {spec.planning && <PlanStatus spec={spec} onChanged={onChanged} korean={korean} />}
           {list('빼는 것', spec.out)}
           {list('완료 조건', spec.done)}

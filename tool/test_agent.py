@@ -38,7 +38,7 @@ m = read(); say({"id": m["id"], "result": {}})
 assert read()["method"] == "initialized"
 m = read()
 assert m["method"] == "thread/start", m
-assert (m["params"]["sandbox"], m["params"]["approvalPolicy"]) == ("read-only", "untrusted"), m
+assert (m["params"]["sandbox"], m["params"]["approvalPolicy"]) == ("read-only", "on-request"), m
 say({"id": m["id"], "result": {"thread": {"id": "th-1"}}})
 m = read(); assert m["params"]["threadId"] == "th-1"; say({"id": m["id"], "result": {"turn": {}}})
 say({"method": "item/started", "params": {"item": {"type": "fileChange", "id": "f1",
@@ -101,7 +101,7 @@ def tree(tmp_path, monkeypatch):
     repo.mkdir()
     subprocess.run(["git", "-C", str(repo), "init", "-q"], check=True)
     subprocess.run(["git", "-C", str(repo), "commit", "-q", "--allow-empty", "-m", "s"], check=True)
-    return create(repo, "task")
+    return create(repo, "task", linked=True)
 
 
 def run(session, fixture, tree, answer=None, halt=None, each=None):
@@ -178,14 +178,15 @@ def test_codex_write_runs_app_server_and_answers_by_id(tree):
     assert events[-1].meta["session_id"] == "th-1"
 
 
-def test_writes_open_only_in_a_worktree_workspace_made(tree):
+def test_writes_open_in_repository_roots_and_refuse_non_repositories(tree, tmp_path):
     repo = tree.parent.parent / "demo"
     elsewhere = tree.parent.parent / "orca" / "task"   # someone else's worktree
     subprocess.run(["git", "-C", str(repo), "worktree", "add", "-q", "-b", "other", str(elsewhere)], check=True)
     for path in (repo, elsewhere):
-        with pytest.raises(ValueError):
-            ChatSession(path, write=True)
+        ChatSession(path, write=True)
         ChatSession(path)  # reading there is fine
+    with pytest.raises(ValueError):
+        ChatSession(tmp_path, write=True)
 
 
 def test_a_late_answer_never_reaches_the_next_process(tree):
@@ -420,7 +421,10 @@ read()
 m = read()
 assert (m["params"]["sandbox"], m["params"]["approvalPolicy"]) == ("danger-full-access", "never"), m
 say({"id": m["id"], "result": {"thread": {"id": "th-1"}}})
-m = read(); say({"id": m["id"], "result": {"turn": {}}})
+m = read()
+assert m["params"]["approvalPolicy"] == "never", m
+assert m["params"]["sandboxPolicy"] == {"type": "dangerFullAccess"}, m
+say({"id": m["id"], "result": {"turn": {}}})
 say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})
 say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
 sys.stdin.read()
@@ -436,7 +440,7 @@ sys.stdin.read()
 
 def test_bypass_opens_both_hosts_without_asking(tree):
     command, _ = run(ChatSession(tree, write=True, bypass=True), CLAUDE_ANSWERS, tree)
-    assert command[command.index("--permission-mode") + 1] == "bypassPermissions"
+    assert "--dangerously-skip-permissions" in command
     _, events = run(ChatSession(tree, model="codex:m", write=True, bypass=True), CODEX_BYPASS, tree)
     assert events[-1].kind == "done" and events[-1].text == "ran"
     assert not ChatSession(tree, bypass=True).bypass   # a read session never bypasses

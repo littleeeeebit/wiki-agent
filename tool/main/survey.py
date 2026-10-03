@@ -28,7 +28,6 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from workspace import create
 
 from . import channels, loop, query, specs, work
 from .connect import ADAPTER, RECORDS, digest, git, keep, record, tracked
@@ -57,7 +56,8 @@ LEAD = (
     "of `{schema}` gives, with `scope: project`. Write the pages in English whatever language the repository "
     "is written in: agents read them, and what they are asked reaches them in English. Only `triggers` match "
     "what a person types, so write those in the person's language, and keep a Korean word that names a Korean "
-    "thing (a UI label, a state name) as written. Commit what you wrote as one commit, then stop. Do not push.\n\n"
+    "thing (a UI label, a state name) as written. Commit what you wrote as one commit, then stop. "
+    "You may push this task branch; the server also synchronizes it before review.\n\n"
 )
 REPORT = ("The survey's writing is over{why}. Run each item of `done` in this worktree and end with the "
           "`done-report` block, as your instructions say. Change nothing.")
@@ -203,8 +203,39 @@ def progress(name: str, **fields) -> None:
     keep(name, survey={**(record(name).get("survey") or {}), **fields})
 
 
+def recover() -> None:
+    """Release survey reservations left by a server restart; never replay writes."""
+    with specs._files:
+        for folder in specs.SPECS.glob("*"):
+            if not folder.is_dir():
+                continue
+            for spec in specs.listing(folder.name):
+                state = spec.get("survey") or {}
+                if not state.get("running"):
+                    continue
+                fields = {"fault": "서버 재시작 — 조사 작업을 확인하고 에이전트에서 계속해라"} \
+                    if spec["state"] == "작업 중" else {}
+                specs.update(folder.name, spec["id"], survey={**state, "running": False}, **fields)
+                progress(folder.name, state="멈춤", reason="서버가 다시 켜졌다")
+
+
 def start(repo: Path) -> str | None:
-    """The survey spec, its worktree with the original's uncommitted adapter
+    """Reserve the checkout before creating the survey branch and its first turn."""
+    try:
+        with query._lock:
+            specs.checkout_idle(repo)
+            release = query.hold(work._busy, query._lock, str(repo), "이 저장소에서 다른 작업이 돌고 있다")
+    except HTTPException as exc:
+        progress(repo.name, state="실패", reason=exc.detail)
+        return None
+    try:
+        return prepare(repo)
+    finally:
+        release()
+
+
+def prepare(repo: Path) -> str | None:
+    """The survey spec, its task branch with the original's uncommitted adapter
     as the first commit, and its turns on their own thread. Its id, or `None`
     when it could not start — the record says why."""
 
@@ -212,14 +243,16 @@ def start(repo: Path) -> str | None:
     try:
         with specs._files:
             sid = specs.unique(repo, BOOTSTRAP)
-            path = create(repo, sid)
+            path, baseline, previous = specs.fork(repo, sid)
     except (ValueError, RuntimeError, OSError) as exc:
         progress(name, state="실패", reason=f"작업트리를 만들지 못했다 — {exc}")
         return None
+    work.forget(path)
     handover = (repo / ADAPTER).is_file() and not tracked(repo)
     if handover:
         (path / ".wiki").mkdir(exist_ok=True)
-        shutil.copyfile(repo / ADAPTER, path / ADAPTER)
+        if path.resolve() != repo.resolve():
+            shutil.copyfile(repo / ADAPTER, path / ADAPTER)
         # The handover tells a person's change by this hash; an adapter that
         # was there before `[연결]` has none until now.
         text = (path / ADAPTER).read_bytes()
@@ -239,9 +272,11 @@ def start(repo: Path) -> str | None:
         "decisions": [{"what": "첫 위키를 전수조사로 채운다",
                        "why": "[연결] 에서 조사를 켰다. 이미 있는 파일은 건드리지 않았다", "rejected": ""}],
         "source": {"focus": "connect", "plan": None}, "state": "작업 중", "stopped": None,
-        "worktree": str(path), "pr": None, "report": None, "gate": None, "fault": None,
+        "worktree": str(path), "workspace_mode": "branch", "branch": sid, "start_head": baseline,
+        "return_branch": previous,
+        "pr": None, "report": None, "gate": None, "fault": None,
         "cell": {"model": limits["survey_model"], "effort": limits["survey_effort"]},
-        "survey": {"handover": handover, "first": first},
+        "survey": {"handover": handover, "first": first, "running": True},
         "history": [{"ts": now, "state": "정리됨"}, {"ts": now, "state": "작업 중"}],
     })
     progress(name, sid=sid, state="도는 중", turn=0, turns=guessed["turns"], label="", tokens=0,
@@ -264,8 +299,8 @@ def turn(path: Path, spec: dict, text: str, deadline: float | None) -> tuple[str
     """One turn of the worktree's write session, waited out.
 
     `(end, tokens, why)`: `end` is `done`, `cut` (the deadline stopped it) or
-    `halted` (a person stopped it, or it failed). Writes still wait on a
-    person."""
+    `halted` (a person stopped it, or it failed). Product questions still wait
+    for the person's answer."""
 
     while True:
         # Checked before every try: a turn begun past the limit may end before
@@ -372,3 +407,8 @@ def drive(repo: Path, sid: str, first: str, raw: float, limits: dict) -> None:
         progress(name, state="끝" if end == "done" else "멈춤", reason=said, tokens=used)
     except Exception as exc:  # a survey that broke still owes the row a reason
         progress(name, state="실패", reason=f"{type(exc).__name__}: {exc}", tokens=used)
+    finally:
+        with specs._files:
+            current = specs.load(name, sid)
+            if current:
+                specs.update(name, sid, survey={**current.get("survey", {}), "running": False})

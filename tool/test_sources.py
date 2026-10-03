@@ -677,7 +677,7 @@ def test_a_promotion_goes_up_as_a_spec_s_pull_request_after_the_gate(repo, monke
     assert spec["gate"]["ok"] and spec["gate"]["head"] == out["commit"]
     assert spec["state"] == "PR #9" and spec["pr"]["branch"] == out["branch"]
     assert ["git", "push", "-u", "origin", out["branch"]] in calls
-    body = calls[-1]
+    body = next(call for call in calls if isinstance(call, str))
     assert "Attention alone can replace recurrence" in body and "git --version" in body
     # No loop starts in this process; the app's pull request list can take it (`loop.stranded`).
     from main import loop
@@ -698,7 +698,7 @@ def test_a_promotion_whose_gate_fails_pushes_nothing(repo, monkeypatch, spec_hom
     assert spec["state"] == "작업 중" and spec["pr"] is None and spec["fault"].startswith("판정 실패")
 
 
-def test_promotion_is_a_worktree_commit_and_the_checkout_is_untouched(repo, monkeypatch, spec_home):
+def test_promotion_commits_on_a_task_branch_in_the_selected_checkout(repo, monkeypatch, spec_home):
     _hub, path = repo
     papers_fixture(monkeypatch)
     paper = knowledge.add_papers(path, ids=["1706.03762"], n=1)["papers"][0]
@@ -708,11 +708,13 @@ def test_promotion_is_a_worktree_commit_and_the_checkout_is_untouched(repo, monk
                      claims=["Attention alone can replace recurrence for sequence transduction."],
                      scope="Reranking passages in tool/search.", counterevidence=["No retrieval benchmark."],
                      conditions=["Revisit when stage 10 measures reranking."])
-    before = git(path, "status", "--porcelain"), git(path, "rev-parse", "HEAD")
+    before = git(path, "rev-parse", "HEAD")
     out = knowledge.promote(path, paper["source_id"])
-    assert (git(path, "status", "--porcelain"), git(path, "rev-parse", "HEAD")) == before
-    assert not (path / out["file"]).exists()
+    assert not git(path, "status", "--porcelain").strip()
+    assert git(path, "rev-parse", "HEAD") != before
+    assert (path / out["file"]).exists()
     tree = Path(out["worktree"])
+    assert tree == path.resolve() and not (path.parent / f"{path.name}-worktrees").exists()
     assert git(tree, "branch", "--show-current").strip() == out["branch"] == "research-attention-is-all-you-need"
     assert git(tree, "diff", "--name-only", "main", "HEAD").split() == [out["file"]]
     page = (tree / out["file"]).read_text(encoding="utf-8")
@@ -846,5 +848,3 @@ def test_record_contract_refuses_what_it_cannot_stand_behind(repo):
     assert sources.problems({**record, "status": "unavailable"})
     assert sources.problems({**record, "status": "adopted"})
     assert sources.problems({**record, "authority": "trusted"})
-
-

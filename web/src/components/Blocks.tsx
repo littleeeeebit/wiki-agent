@@ -92,7 +92,7 @@ function SpecCard({ id, specs, ...props }: { id: string } & BlockProps) {
   if (!spec) return <p className="text-[12.5px] text-faint">명세 `{current}` 는 이제 없다 — 버렸거나 이름을 바꿨다.</p>
   if (spec.state !== '정리됨') return <Started spec={spec} />
   // A new version of the spec starts what is typed over.
-  return <SpecForm key={`${spec.id}:${spec.rev}`} spec={spec} specs={specs} onRenamed={setCurrent} {...props} />
+  return <SpecForm key={`${spec.id}:${spec.rev}`} spec={spec} onRenamed={setCurrent} {...props} />
 }
 
 function Head({ spec }: { spec: Spec }) {
@@ -112,7 +112,8 @@ function Started({ spec }: { spec: Spec }) {
       <Head spec={spec} />
       <div className="text-[13.5px]">{spec.goal}</div>
       <div className="mt-1 flex flex-wrap gap-x-3 font-mono text-[10.5px] text-muted-foreground">
-        {spec.worktree && <span>작업트리 {spec.worktree.split(/[\\/]/).pop()}</span>}
+        {spec.worktree && <span>{spec.workspace_mode === 'branch'
+          ? `브랜치 ${spec.branch ?? spec.id}` : `작업트리 ${spec.worktree.split(/[\\/]/).pop()}`}</span>}
         {spec.pr && <a href={spec.pr.url} target="_blank" rel="noreferrer" className="text-primary">PR #{spec.pr.number}</a>}
       </div>
       {spec.gate && !spec.gate.ok && (
@@ -126,8 +127,8 @@ function Started({ spec }: { spec: Spec }) {
   )
 }
 
-function SpecForm({ spec, busy, onSpecs, onStart, onRenamed }:
-  { spec: Spec; onRenamed: (id: string) => void } & BlockProps) {
+export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed }:
+  { spec: Spec; onRenamed: (id: string) => void } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart'>) {
   const [goal, setGoal] = useState(spec.goal)
   const [out, setOut] = useState(spec.out.join('\n'))
   const [done, setDone] = useState(spec.done.slice(1).join('\n'))
@@ -159,6 +160,7 @@ function SpecForm({ spec, busy, onSpecs, onStart, onRenamed }:
         <label className="block">
           <span className="text-faint">이름</span>
           <input value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} spellCheck={false}
+            disabled={spec.state !== '정리됨'}
             className={`${field} font-mono`} />
         </label>
         <label className="block">
@@ -215,14 +217,14 @@ function SpecForm({ spec, busy, onSpecs, onStart, onRenamed }:
           })}>
           {working === 'save' ? '…' : '저장'}
         </Btn>
-        <Btn tone="primary" disabled={edited || busy || !!working}
-          title={edited ? '고친 것을 먼저 저장한다' : '작업트리를 만들고 이 명세로 첫 턴을 보낸다'}
+        {spec.state === '정리됨' && <Btn tone="primary" disabled={edited || busy || !!working}
+          title={edited ? '고친 것을 먼저 저장한다' : '저장소에 작업 브랜치를 만들고 첫 턴을 보낸다'}
           onClick={() => act('start', () => onStart(spec.id))}>
           {working === 'start' ? '시작하는 중…' : '시작 ▸'}
-        </Btn>
-        <Btn tone="ghost" disabled={!!working} className="ml-auto" onClick={() => act('drop', () => api.dropSpec(spec.id))}>
+        </Btn>}
+        {spec.state === '정리됨' && <Btn tone="ghost" disabled={!!working} className="ml-auto" onClick={() => act('drop', () => api.dropSpec(spec.id))}>
           버리기
-        </Btn>
+        </Btn>}
       </div>
       {fault && <p role="alert" className="mt-1.5 text-[12.5px] text-destructive">{fault}</p>}
     </div>

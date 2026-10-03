@@ -36,7 +36,7 @@ export function LiveChanges({ path, busy, turn }: {
       </summary>
       {error && <p role="status" className="px-4 pb-3 text-[14px] text-destructive">{error}{changes && ' · 마지막으로 읽은 변경을 표시한다'}</p>}
       {!changes?.diff && !error && <p className="px-4 pb-3 text-[14px] text-muted-foreground">{changes ? '코드 변경 없음' : '변경 읽는 중…'}</p>}
-      {changes?.diff && <pre tabIndex={0} aria-label="실시간 코드 diff" className="max-h-96 overflow-auto border-t border-border p-3 font-mono text-[12px] leading-relaxed">
+      {changes?.diff && <pre tabIndex={0} aria-label="실시간 코드 diff" className="max-h-[35dvh] overflow-auto border-t border-border p-3 font-mono text-[12px] leading-relaxed">
         {lines.map((line, i) => <div key={i} className={cn('min-w-max', line.startsWith('+') ? 'bg-add/10 text-add'
           : line.startsWith('-') ? 'bg-del/10 text-del' : line.startsWith('@@') ? 'text-primary' : 'text-muted-foreground')}>
           {line || ' '}

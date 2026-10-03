@@ -35,7 +35,7 @@ from common.language import language
 from search import HUB, evidence_store, knowledge_graph, local_index, providers, records, resolve, retrieval, sources
 from search import published as search_published
 from search import retrieve as retrieve_from_daemon
-from workspace import create, folder_for
+from workspace import folder_for
 from session_state import active_page, decisions, plans
 from session_state import run as git
 
@@ -2586,12 +2586,26 @@ def page(record: dict) -> str:
 
 
 def promote(project: str | Path, source: str, task: str | None = None) -> dict:
-    """An adopted source's page, committed on a new branch in a new worktree
-    beside `project`, as a spec's change: the spec owns the worktree, the gate
-    runs there again, and the pull request goes up (`submitted`). The
-    original checkout is not touched."""
+    """Commit adopted research on a task branch in the selected checkout.
+
+    The spec owns the branch; its gate and PR use the usual submission path.
+    Reserve the checkout so another agent cannot switch it during promotion.
+    """
+
+    from . import query, specs, work
 
     repo = Path(project).resolve()
+    with query._lock:
+        specs.checkout_idle(repo)
+        release = query.hold(work._busy, query._lock, str(repo), "이 저장소에서 다른 작업이 돌고 있다")
+    try:
+        return _promote(repo, source, task)
+    finally:
+        release()
+
+
+def _promote(repo: Path, source: str, task: str | None) -> dict:
+
     with records(repo) as store:
         record = find(store, source)
     if record["status"] != "adopted":
@@ -2599,10 +2613,13 @@ def promote(project: str | Path, source: str, task: str | None = None) -> dict:
     slug = folder_for(record["title"] or "")[:48].rstrip("-") or record["source_id"][:12]
     task = task or f"research-{slug}"
     name = f"docs/research/{slug}.md"
-    tree = create(repo, task)
+    from . import specs, work
+
+    if (repo / name).exists():
+        raise FileExistsError(f"{name} already exists in {repo}")
+    tree, before, previous = specs.fork(repo, task)
+    work.forget(tree)
     target = tree / name
-    if target.exists():
-        raise FileExistsError(f"{name} already exists in {tree}")
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(page(record), encoding="utf-8", newline="\n")
     title = record["title"] or record["origin"]
@@ -2613,10 +2630,12 @@ def promote(project: str | Path, source: str, task: str | None = None) -> dict:
             raise RuntimeError(done.stderr.strip() or f"git {args[0]} failed in {tree}")
     out = {"worktree": str(tree), "branch": task, "file": name,
            "commit": git(tree, "rev-parse", "HEAD").strip(), "stat": git(tree, "show", "--stat", "--format=", "HEAD")}
-    return {**out, **submitted(repo, tree, record, name, out["commit"])}
+    return {**out, **submitted(repo, tree, record, name, out["commit"], task=task, start_head=before,
+                               return_branch=previous)}
 
 
-def submitted(repo: Path, tree: Path, record: dict, name: str, commit: str) -> dict:
+def submitted(repo: Path, tree: Path, record: dict, name: str, commit: str,
+              task: str | None = None, start_head: str | None = None, return_branch: str | None = None) -> dict:
     """The promotion as a spec: the one `[시작]` would have made, already
     worked, its report the committed page. Then what a work turn's done
     report gets (`specs.rounded`, `specs.opened`): the checks again in the
@@ -2628,7 +2647,9 @@ def submitted(repo: Path, tree: Path, record: dict, name: str, commit: str) -> d
 
     adoption = record["adoption"]
     gate, now = specs.gate_of(repo), time.time()
-    spec = {"id": tree.name, "repo": repo.name, "rev": 1,
+    spec = {"id": task or tree.name, "repo": repo.name, "rev": 1,
+            **({"workspace_mode": "branch", "branch": task, "start_head": start_head,
+                "return_branch": return_branch} if task else {}),
             "goal": f"Adopt research into the wiki: {record['title'] or record['origin']}", "out": [],
             "done": [gate] if gate else [], "grounds": {"pages": [], "files": [], "rules": []},
             "decisions": [{"what": c, "why": adoption["rationale"], "rejected": ""} for c in adoption["claims"]],
