@@ -39,6 +39,7 @@ from pydantic import BaseModel
 import apply
 import setup_agents
 from agent import cli_command
+from workspace import base_branch
 
 from . import channels, specs, work
 from .query import ROOT
@@ -454,12 +455,12 @@ def handover(repo: Path, n: int) -> dict:
         return wait("PR 을 읽지 못했다")
     # 1. Where the original stands.
     on = git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
-    if on != base:
+    if on not in {base, base_branch(repo, base)}:
         return wait(f"원본이 `{base}` 가 아니라 `{on}` 에 있다")
-    upstream = git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{base}@{{upstream}}").stdout.strip()
+    upstream = git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", f"{on}@{{upstream}}").stdout.strip()
     remote = upstream.split("/", 1)[0] if "/" in upstream else ""
     address = git(repo, "config", "--get", f"remote.{remote}.url").stdout.strip() if remote else ""
-    if not same_repository(address, url):
+    if upstream.removeprefix(remote + "/") != base or not same_repository(address, url):
         return wait(f"`{base}` 의 upstream 이 PR 이 머지된 저장소가 아니다")
     dirty = git(repo, "status", "--porcelain", "--untracked-files=all")
     others = [line for line in dirty.stdout.splitlines() if line[3:].strip('"') not in {ADAPTER, *GENERATED}]

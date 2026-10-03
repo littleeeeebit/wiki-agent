@@ -203,14 +203,21 @@ def test_task_diff_excludes_base_updates_merged_after_task_start(repo, stale_rem
     assert data["base"] == upstream
 
 
-def test_shared_checkout_after_merge_updates_base_for_the_next_task(repo, tmp_path):
+@pytest.mark.parametrize("linked", [False, True])
+def test_shared_checkout_after_merge_updates_base_for_the_next_task(repo, tmp_path, linked):
     origin = tmp_path / "origin.git"
     git(repo, "init", "--bare", "-q", str(origin))
     git(repo, "remote", "add", "origin", str(origin))
     git(repo, "push", "-qu", "origin", "main")
+    original = repo
+    if linked:
+        repo = tmp_path / "selected" / original.name
+        git(original, "worktree", "add", "-qb", "selected", str(repo))
+        (repo / ".wiki").mkdir()
+        (repo / ".wiki/adapter.toml").write_bytes((original / ".wiki/adapter.toml").read_bytes())
     web = client()
     Worker.replies = ["Working"]
-    with patch.object(work, "ChatSession", Worker):
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "current_repo", return_value=repo):
         sid = made(repo, spec_block())[0]["id"]
         started(web, sid)
         (repo / "merged.txt").write_text("merged task\n", encoding="utf-8")
@@ -222,11 +229,35 @@ def test_shared_checkout_after_merge_updates_base_for_the_next_task(repo, tmp_pa
         with patch.object(loop, "pruned", return_value="Remote task branch retained for fixture"), \
              patch.object(loop, "close_cell"):
             loop.finish(repo, saved, "main", head, "Merged fixture task")
-        assert git(repo, "rev-parse", "main") == head
+        if linked:
+            assert git(original, "branch", "--show-current") == "main"
+            assert git(original, "rev-parse", "HEAD") != head  # Never move the sibling's ref or files.
+            assert not (original / "merged.txt").exists()
+            local_base = git(repo, "branch", "--show-current")
+            assert local_base.startswith("wiki-base/")
+            assert git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}") == "origin/main"
+            assert web.post(f"/api/specs/{sid}/checkout").status_code == 200  # Reopening an old merged task is safe too.
+        else:
+            assert git(repo, "rev-parse", "main") == head
         assert git(repo, "rev-parse", sid) == head  # Never delete the local task branch.
         second = made(repo, spec_block(slug="second"))[0]["id"]
         assert started(web, second) == str(repo)
         assert git(repo, "rev-parse", "HEAD") == head and (repo / "merged.txt").exists()
+        if linked:
+            (repo / "second.txt").write_text("second merged task\n", encoding="utf-8")
+            git(repo, "add", "second.txt")
+            git(repo, "commit", "-qm", "second task")
+            next_head = git(repo, "rev-parse", "HEAD")
+            git(repo, "push", "-q", "origin", "HEAD:main")
+            saved = specs.update(repo.name, second, pr={"number": 8, "head": next_head, "branch": second, "base": "main"})
+            with patch.object(loop, "pruned", return_value="Remote task branch retained for fixture"), \
+                 patch.object(loop, "close_cell"):
+                loop.finish(repo, saved, "main", next_head, "Merged second fixture task")
+            assert git(repo, "branch", "--show-current") == local_base
+            assert git(repo, "rev-parse", "HEAD") == next_head
+            assert len(git(repo, "for-each-ref", "--format=%(refname)", "refs/heads/wiki-base").splitlines()) == 1
+            assert len(git(repo, "worktree", "list", "--porcelain").split("worktree ")) == 3
+            assert not (original / "second.txt").exists()
 
 
 @pytest.mark.parametrize("blocked", ["dirty", "busy", "unrelated"])

@@ -201,7 +201,16 @@ def fork(repo: Path, sid: str) -> tuple[Path, str, str]:
     branch = sh(["git", "branch", "--show-current"], repo).stdout.strip()
     base = (parent.get("return_branch") or (parent.get("pr") or {}).get("base")) \
         if parent and parent.get("workspace_mode") == "branch" else branch
-    path = create(repo, sid, base=base or "")
+    if parent and parent.get("workspace_mode") == "branch" and parent.get("merge"):
+        base = parent["merge"]["base"]
+    source = base or ""
+    if source:
+        upstream = sh(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name",
+                       f"{source}@{{upstream}}"], repo)
+        if not upstream.returncode and not sh(["git", "merge-base", "--is-ancestor",
+                                              f"refs/heads/{source}", upstream.stdout.strip()], repo).returncode:
+            source = upstream.stdout.strip()  # A fast-forward, without moving a sibling's checked-out ref.
+    path = create(repo, sid, base=source)
     return path, sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), base or branch
 
 

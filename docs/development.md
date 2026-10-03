@@ -98,6 +98,12 @@ Implementation and repair agents may commit, push and open their task PR.
 Reused PRs receive the current title, requirements and completion evidence.
 After merge, a clean shared task checkout returns to and fast-forwards its
 base; busy or dirty checkouts and unrelated branches remain untouched.
+If that base is already open in a sibling worktree, the selected checkout uses
+one reusable `wiki-base/<checkout-id>/<base>` branch tracking the remote base.
+This creates only a Git ref, not a checkout. It never moves the sibling's base
+ref or files. Survey handover validates this branch's actual upstream base and
+repository too. New tasks may use a fetched fast-forward of their saved base
+without changing an occupied branch.
 The server retains gate execution, PR recovery and independent review.
 An idle task's requirements can be edited in its spec panel. During a turn,
 later instructions can be recorded through a `spec-update` block before the

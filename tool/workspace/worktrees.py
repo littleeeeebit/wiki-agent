@@ -6,6 +6,7 @@ available for independent reviewers and for tasks created by older versions.
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 from pathlib import Path
@@ -17,6 +18,12 @@ from .sessions import checkout
 # A task name is both a branch and a directory. Lowercase ASCII only: a Korean
 # directory name in a path has broken `subprocess` decoding on this machine.
 TASK = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+
+
+def base_branch(repo: Path, base: str) -> str:
+    """A checkout-local base ref when the real base is open in a sibling."""
+    key = hashlib.sha256(str(repo.resolve()).encode("utf-8")).hexdigest()[:12]
+    return f"wiki-base/{key}/{base}"
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:

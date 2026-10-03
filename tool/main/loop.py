@@ -35,7 +35,7 @@ from pydantic import BaseModel
 import translate
 from agent import ChatSession
 from common import worktree_home
-from workspace import adopt, folder_for, remove, worktrees
+from workspace import adopt, base_branch, folder_for, remove, worktrees
 
 from . import channels, connect, decisions, query, specs, verification, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
@@ -1488,7 +1488,23 @@ def forward(repo: Path, base: str, *, task_branch: str = "") -> str:
         if fetched.returncode:
             return f"원본이 뒤처짐 — {specs.said(fetched)}"
         if on != base:
-            switched = specs.sh(["git", "switch", base], repo)
+            trees = specs.sh(["git", "worktree", "list", "--porcelain"], repo)
+            if trees.returncode:
+                return f"원본이 뒤처짐 — {specs.said(trees)}"
+            target = base_branch(repo, base) if f"branch refs/heads/{base}" in trees.stdout.splitlines() else base
+            args = ["git", "switch", target]
+            if target != base:
+                exists = specs.sh(["git", "show-ref", "--verify", "--quiet", f"refs/heads/{target}"], repo)
+                if exists.returncode == 1:
+                    args = ["git", "switch", "--track", "-c", target, f"origin/{base}"]
+                elif exists.returncode:
+                    return f"원본이 뒤처짐 — {specs.said(exists)}"
+                else:
+                    upstream = specs.sh(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name",
+                                         f"{target}@{{upstream}}"], repo)
+                    if upstream.returncode or upstream.stdout.strip() != f"origin/{base}":
+                        return f"원본이 뒤처짐 — `{target}` 의 upstream 을 확인해라"
+            switched = specs.sh(args, repo)
             if switched.returncode:
                 return f"원본이 뒤처짐 — {specs.said(switched)}"
             work.forget(repo)
