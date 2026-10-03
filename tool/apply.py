@@ -52,14 +52,21 @@ def transport(command: str) -> bool:
     """Recognize an invoked transport, rather than transport words in arguments."""
     command = re.sub(r"^\s*(?:cmd(?:\.exe)?\s+/c|(?:pwsh|powershell)(?:\.exe)?\s+-Command)\s+",
                      "", command, flags=re.I)
-    first = re.match(r'''\s*&?\s*(?:"([^"]+)"|'([^']+)'|([^\s"']+))''', command)
+    token = r'''\s*&?\s*(?:"([^"]+)"|'([^']+)'|([^\s"']+))'''
+    first = re.match(token, command)
     if not first:
         return False
     executable = next(value for value in first.groups() if value is not None)
-    script = script_arg(command)
-    return bool(BRIDGE.search(executable) or (script and BRIDGE.search(script))
-                or Path(executable.replace("\\", "/")).name.lower() in
-                {"orca", "orca.exe", "orca.cmd", "orca.ps1"})
+    name = Path(executable.replace("\\", "/")).name.lower()
+    if BRIDGE.search(executable) or name in {"orca", "orca.exe", "orca.cmd", "orca.ps1"}:
+        return True
+    if not re.fullmatch(r"(?:python[\d.]*|py|node|bash|sh)(?:\.exe)?", name):
+        return False
+    # Only the immediate positional argument of a script launcher is a script.
+    # A quoted executable's --watch value, or Python's -c body, is data.
+    second = re.match(token, command[first.end():])
+    script = next((value for value in second.groups() if value is not None), "") if second else ""
+    return bool(not script.startswith("-") and BRIDGE.search(script))
 
 # The quoted arguments of a hook command. Our own writer emits
 # `"<python>" "<wiki>/tool/<script>"`, optionally behind `& ` for PowerShell

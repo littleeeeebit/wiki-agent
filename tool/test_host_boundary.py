@@ -100,10 +100,21 @@ def test_project_install_preserves_transport_words_used_as_hook_data(tmp_path, a
         {"type": "command", "command": '\"python\" \"C:/hooks/audit.py\" --label orca'},
         {"type": "command", "command": '\"python\" \"C:/hooks/audit.py\" --watch \"C:/user/.orca/agent-hooks/a.cmd\"'},
         {"type": "command", "command": '\"python\" \"C:/hooks/audit.py\" --label ORCA_AGENT_HOOK_PORT'},
+        {"type": "command", "command": '\"C:/hooks/audit.exe\" --watch \"C:/user/.orca/agent-hooks/a.cmd\"'},
+        {"type": "command", "command": '\"C:/hooks/audit.exe\" \"C:/user/.orca/agent-hooks/a.cmd\"'},
+        {"type": "command", "command": '\"python\" -c \"print(\'C:/user/.orca/agent-hooks/a.cmd\')\"'},
+        {"type": "command", "command": '\"python\" \"-cprint(\'C:/user/.orca/agent-hooks/a.cmd\')\"'},
     ]
     settings = {"hooks": {"PreToolUse": [{"hooks": list(foreign)}]}}
     apply.configure(settings, tmp_path, None, sys.executable, agent)
     assert all(any(hook in group["hooks"] for group in settings["hooks"]["PreToolUse"]) for hook in foreign)
+
+
+def test_project_install_still_retires_a_positional_bridge_script(tmp_path):
+    bridge = {"type": "command", "command": '\"python\" \"C:/user/.orca/agent-hooks/bridge.py\"'}
+    settings = {"hooks": {"PreToolUse": [{"hooks": [bridge]}]}}
+    apply.configure(settings, tmp_path, None, sys.executable, "codex")
+    assert all(bridge not in group["hooks"] for group in settings["hooks"]["PreToolUse"])
 
 
 def test_hook_entrypoint_runs_without_a_legacy_desktop(tmp_path):
