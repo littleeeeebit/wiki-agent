@@ -70,10 +70,10 @@ def main():
         fake.add_api_route(path, handler, methods=[method])
 
     @fake.get('/api/loops/events')
-    def feed_events(after: int | None = None):
+    def feed_events(after: int | None = None, generation: str | None = None):
         if feed_offline.is_set():
             raise HTTPException(503, 'Synthetic feed outage')
-        return loop.events(after)
+        return loop.events(after, generation)
 
     @fake.api_route("/api/{path:path}", methods=["GET", "POST"])
     async def api(path: str, request: Request):
@@ -223,7 +223,7 @@ def main():
                 print('PASS: network-online recovery attaches to the externally started active run and retains the draft')
                 response = pc.request.post(desktop + '/api/reset/wiki', headers={'X-Project': 'fixture'},
                                            data={'keep': 'delete'})
-                assert response.ok
+                assert response.ok, (response.status, response.text())
                 for page in (pc, phone):
                     conversation(page).get_by_text('Recorded while phone offline', exact=True).wait_for(state='detached')
                 assert errors == [], errors

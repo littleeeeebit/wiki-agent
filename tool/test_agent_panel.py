@@ -131,6 +131,64 @@ def test_provider_usage_uses_attached_session_not_toolbar(tmp_path, monkeypatch)
     assert result["provider"] == "codex"
 
 
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_compaction_events_show_start_end_and_survive_record_replay(tmp_path, provider):
+    chat = ChatSession(tmp_path, model="codex:test" if provider == "codex" else "sonnet")
+    if provider == "codex":
+        events = [{"method": f"item/{state}", "params": {"item": {"type": "contextCompaction", "id": "compact-1"}}}
+                  for state in ("started", "completed")]
+        events += [{"method": "thread/compacted", "params": {}},
+                   {"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "Finished"}}},
+                   {"method": "turn/completed", "params": {"turn": {"status": "completed"}}}]
+    else:
+        events = [{"type": "system", "subtype": "status", "status": "compacting"},
+                  {"type": "system", "subtype": "compact_boundary", "compact_metadata": {"trigger": "auto", "pre_tokens": 120000}},
+                  {"type": "result", "result": "Finished", "usage": {}}]
+    for event in events:
+        chat._events.put(event)
+    received = list(chat._drain())
+    compact = [event for event in received if event.kind == "compaction"]
+    assert [event.meta["phase"] for event in compact] == ["started", "completed"]
+    assert received[-1].kind == "done" and not chat._compacting
+    replay = work.steps([{"kind": event.kind, "text": event.text, "meta": event.meta} for event in received])
+    assert [event["phase"] for event in replay] == ["started", "completed"]
+    if provider == "claude":
+        assert replay[-1]["pre_tokens"] == 120000
+
+
+def test_all_provider_limits_include_query_and_review_sessions(tmp_path, monkeypatch):
+    from main import loop, query
+
+    claude = ChatSession(tmp_path)
+    claude.quota = [{"name": "five_hour", "used_percent": 20, "resets_at": 1800000000},
+                    {"name": "seven_day", "used_percent": 40, "resets_at": 1800600000}]
+    claude._quota_at = time.monotonic()
+    codex = ChatSession(tmp_path, model="codex:test")
+    codex.quota = quota_windows({"rateLimits": {"secondary": {
+        "usedPercent": 10, "windowDurationMins": 10080, "resetsAt": 1800600000}}})
+    codex._quota_at = time.monotonic()
+    monkeypatch.setattr(work, "_sessions", {})
+    monkeypatch.setattr(query, "_sessions", {("project", "next"): claude})
+    monkeypatch.setattr(loop, "_review_runs", {("project", "task"): SimpleNamespace(chat=codex)})
+    data = work.all_provider_usage()["providers"]
+    assert [row["provider"] for row in data] == ["claude", "codex"]
+    assert len(data[0]["quota"]) == 2 and len(data[1]["quota"]) == 1
+    assert data[1]["quota"][0]["window_minutes"] == 10080
+
+
+def test_question_and_finished_run_publish_global_notices(tmp_path, monkeypatch):
+    monkeypatch.setattr(work, "feed", work.Feed())
+    run = work.Run(ChatSession(tmp_path))
+    run.put({"kind": "approval", "text": "Question", "meta": {"id": "q", "tool": "requestUserInput"}})
+    run.put({"kind": "compaction", "text": "Compacting", "meta": {"phase": "started"}})
+    run.finish()
+    assert [event["title"] for event in work.feed.events] == ["에이전트가 답을 기다린다", "에이전트 실행 완료"]
+    failed = work.Run(ChatSession(tmp_path))
+    failed.put({"kind": "error", "text": "Failed", "meta": {}})
+    failed.finish()
+    assert work.feed.events[-1]["title"] == "에이전트 실행 실패"
+
+
 def test_diff_git_stops_reading_at_preview_limit(tmp_path, monkeypatch):
     captured = []
     run = work.subprocess.run

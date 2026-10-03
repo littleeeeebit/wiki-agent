@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 from agent import ChatSession
 from main import loop, specs, survey, work
@@ -54,6 +55,60 @@ def test_tasks_use_original_repo_and_keep_diff_and_conversation_across_switches(
         assert web.post("/api/worktrees/remove", json={"path": path, "force": True}).status_code == 409
         assert (repo / ".git").exists()
     work.close_all()
+
+
+def test_delete_draft_inactive_and_active_branch_tasks_persists_across_restart(repo):
+    web = client()
+    Worker.replies, Worker.made = ["First task", "Second task"], []
+    with patch.object(work, "ChatSession", Worker):
+        draft = made(repo, spec_block(slug="draft"))[0]["id"]
+        stale_draft = specs.load(repo.name, draft)
+        assert web.post(f"/api/specs/{draft}/delete").status_code == 200
+        first = made(repo, spec_block(slug="first"))[0]["id"]
+        path = started(web, first)
+        stale = specs.load(repo.name, first)
+        second = made(repo, spec_block(slug="second"))[0]["id"]
+        started(web, second)
+        current_chat = work._sessions[path]
+        assert web.post(f"/api/specs/{first}/delete").status_code == 200
+        with pytest.raises(HTTPException) as refused:
+            specs.save(stale)
+        assert refused.value.status_code == 410
+        assert work._sessions[path] is current_chat and current_chat.alive
+        (repo / "precious.txt").write_text("Preserve changes\n", encoding="utf-8")
+        assert web.post(f"/api/specs/{second}/delete").status_code == 200
+        work.close_all()
+        work._runs.clear()
+        assert not specs.listing(repo.name)
+        assert not web.get("/api/worktrees").json()["rows"]
+        assert (repo / ".git").exists() and git(repo, "branch", "--show-current") == second
+        assert (repo / "precious.txt").read_text(encoding="utf-8") == "Preserve changes\n"
+        assert len(list((specs.SPECS / repo.name / "dropped").glob("*.json"))) == 3
+        replacement = made(repo, spec_block(slug="draft", goal="A new task with the same name"), session="new")[0]["id"]
+        assert replacement == draft
+        with pytest.raises(HTTPException) as refused:
+            specs.save(stale_draft)
+        assert refused.value.status_code == 410
+        assert specs.load(repo.name, draft)["goal"] == "A new task with the same name"
+
+
+def test_delete_running_task_stops_it_before_archiving(repo):
+    web = client()
+    running = threading.Event()
+
+    def wait_for_stop(path, halt):
+        running.set()
+        assert halt.wait(10)
+        return "Stopped"
+
+    Worker.replies = [wait_for_stop]
+    with patch.object(work, "ChatSession", Worker):
+        sid = made(repo, spec_block(slug="running"))[0]["id"]
+        response = web.post(f"/api/specs/{sid}/start", json={})
+        assert response.status_code == 200 and running.wait(5)
+        assert web.post(f"/api/specs/{sid}/delete").status_code == 200
+        assert not specs.load(repo.name, sid) and str(repo) not in work._busy
+        assert not work.listing()["rows"] and repo.is_dir()
 
 
 def test_active_spec_revision_records_old_requirements_and_refreshes_agent(repo):

@@ -739,6 +739,7 @@ export const setSurveySettings = (body: SurveySettings) =>
 /** What the server changed on its own: a spec moved, it started a turn, or a
  *  repository's connection changed. */
 export type FeedEv =
+  | { kind: 'notice'; seq: number; ts: number; title: string; body: string }
   | ({ kind: 'spec'; seq: number } & LoopRow)
   | { kind: 'turn'; seq: number; path: string; turn: string; session_id: string }
   | { kind: 'connect'; seq: number; repo: string }
@@ -750,12 +751,15 @@ export type FeedEv =
 
 /** Tail the server's own changes until `signal` aborts or the stream drops. */
 export async function loopEvents(onEvent: (ev: FeedEv) => void, signal: AbortSignal,
-  after: number | undefined, ready: (cursor?: number) => void): Promise<void> {
-  const url = '/api/loops/events' + (after === undefined ? '' : `?after=${after}`)
+  after: number | undefined, ready: (cursor?: number, generation?: string) => void, generation?: string): Promise<void> {
+  const params = new URLSearchParams()
+  if (after !== undefined) params.set('after', String(after))
+  if (generation !== undefined) params.set('generation', generation)
+  const url = '/api/loops/events' + (params.size ? `?${params}` : '')
   const res = await fetch(url, { headers: await scoped(url), signal })
   if (res.ok) {
     const cursor = res.headers.get('X-Feed-Cursor')
-    ready(cursor === null ? undefined : Number(cursor))
+    ready(cursor === null ? undefined : Number(cursor), res.headers.get('X-Feed-Generation') ?? undefined)
   }
   await events<FeedEv | null>(res, (ev) => ev && onEvent(ev), () => null)
 }
@@ -802,6 +806,10 @@ export type ProviderStatus = {
 }
 export const providerUsage = (provider: 'claude' | 'codex', path = '') =>
   get(`/api/providers/${provider}/usage?${new URLSearchParams({ path })}`).then((r) => json<ProviderStatus>(r, '사용량'))
+export const allProviderUsage = () => get('/api/providers/usage')
+  .then((r) => json<{ providers: ProviderStatus[] }>(r, 'CLI 사용 한도'))
+export const deleteTask = (id: string) => post(`/api/specs/${encodeURIComponent(id)}/delete`)
+  .then((r) => json(r, '작업 삭제'))
 /** `force`: stop what runs there and drop uncommitted changes — a person's delete. */
 export const removeWorktree = (path: string, force = false) =>
   post('/api/worktrees/remove', { path, force }).then((r) => json<{ text: string }>(r, '작업트리 정리'))
@@ -815,9 +823,11 @@ export type AnsweredBy = 'person' | 'session' | 'outside' | 'read'
  *  one, and what an approval answer has to name. `turn` and `seq` place it in
  *  the server's buffer of that turn, which a reattaching screen reads from. */
 export type WorkEv = {
-  kind: 'delta' | 'progress' | 'tool' | 'said' | 'hook' | 'approval' | 'answered' | 'done' | 'error'
+  kind: 'delta' | 'progress' | 'tool' | 'said' | 'hook' | 'compaction' | 'approval' | 'answered' | 'done' | 'error'
   text: string
   meta: {
+    phase?: 'started' | 'completed'
+    pre_tokens?: number
     /** A hook's: which event, and what it put into context. */
     event?: string
     context?: string
@@ -845,6 +855,7 @@ export type WorkEv = {
 }
 
 export type WorkStep =
+  | { kind: 'compaction'; text: string; phase?: 'started' | 'completed'; pre_tokens?: number }
   | { kind: 'tool' | 'progress' | 'said' | 'hook'; text: string; command?: boolean }
   | { kind: 'approval'; tool: string; text: string; answer: 'allow' | 'deny' | 'none'; by: AnsweredBy;
       answers?: string[]; input?: Record<string, unknown> }

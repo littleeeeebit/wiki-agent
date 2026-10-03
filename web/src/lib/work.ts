@@ -5,6 +5,7 @@ import type { AnsweredBy, Rule, Tokens, WorkEv, WorkStep } from '@/lib/api'
 /** What happened inside one agent turn, in order. Commands and approvals
  *  retain their originals; completed progress gets the Korean overlay. */
 export type Step =
+  | { kind: 'compaction'; text: string; phase?: 'started' | 'completed'; pre_tokens?: number }
   | { kind: 'tool'; text: string; command?: boolean }
   | { kind: 'progress'; text: string }
   /** What the person said into the turn while it ran. */
@@ -150,6 +151,9 @@ function apply(t: Turn, ev: WorkEv): Turn {
   }
   if (ev.kind === 'hook') {
     return { ...t, steps: [...t.steps, { kind: 'hook', text: ev.text, context: m.context }], latest: 'step' }
+  }
+  if (ev.kind === 'compaction') {
+    return { ...t, steps: [...t.steps, { kind: 'compaction', text: ev.text, phase: m.phase, pre_tokens: m.pre_tokens }], latest: 'step' }
   }
   if (ev.kind === 'approval') {
     return { ...t, latest: 'step', steps: [...t.steps, { kind: 'approval', text: ev.text, id: String(m.id ?? ''),

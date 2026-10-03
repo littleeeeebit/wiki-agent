@@ -2017,16 +2017,17 @@ def loops() -> dict:
 
 
 @router.get("/api/loops/events")
-def events(after: int | None = None) -> StreamingResponse:
+def events(after: int | None = None, generation: str | None = None) -> StreamingResponse:
     """The server's own changes, as they come. From now, unless `after` says."""
 
     with work.feed.wake:
         latest = len(work.feed.events) - 1
-        # A restarted server has a new buffer. Never wait for a cursor from
-        # the old process to catch up; clients also refresh their snapshot.
-        start_at = latest if after is None else max(-1, min(after, latest))
+        # A cursor belongs to one process, even if the new buffer grew past it.
+        restarted = generation is not None and generation != work.feed.generation
+        start_at = latest if after is None else -1 if restarted or after > latest else max(-1, after)
     response = streaming(work.tail(work.feed, start_at))
     response.headers["X-Feed-Cursor"] = str(start_at)
+    response.headers["X-Feed-Generation"] = work.feed.generation
     return response
 
 

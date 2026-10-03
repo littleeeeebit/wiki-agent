@@ -28,7 +28,7 @@ def test_conversation_append_and_clear_announce_after_persistence(tmp_path):
 
 
 @pytest.mark.parametrize("after, cursor, expected", [(None, 1, []), (-1, -1, [0, 1]),
-                                                     (0, 0, [1]), (999, 1, [])])
+                                                     (0, 0, [1]), (999, -1, [0, 1])])
 def test_feed_replay_and_cursor_after_server_restart(after, cursor, expected):
     feed = work.Feed()
     feed.put({"kind": "conversation", "cid": "wiki"})
@@ -43,6 +43,27 @@ def test_feed_replay_and_cursor_after_server_restart(after, cursor, expected):
                     async for chunk in response.body_iterator]
 
         assert asyncio.run(collect()) == expected
+
+
+@pytest.mark.parametrize("after", [0, 1, 99])
+def test_notice_replay_belongs_to_its_feed_generation(after):
+    old = work.Feed()
+    restarted = work.Feed()
+    restarted.done = True
+    with patch.object(work, "feed", restarted):
+        work.notice("Question pending", "fixture")
+        restarted.put({"kind": "sync"})
+
+        async def collect(response):
+            return [json.loads(chunk.removeprefix("data: ").strip())
+                    async for chunk in response.body_iterator]
+
+        response = loop.events(after, old.generation)
+        assert response.headers["X-Feed-Generation"] == restarted.generation
+        assert response.headers["X-Feed-Cursor"] == "-1"
+        assert asyncio.run(collect(response)) == restarted.events
+        # Reconnecting within the same generation resumes, rather than replaying.
+        assert asyncio.run(collect(loop.events(0, restarted.generation))) == restarted.events[1:]
 
 
 def test_queue_cancel_and_session_permissions_invalidate_state(tmp_path):

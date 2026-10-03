@@ -3,8 +3,7 @@ import { Eraser } from 'lucide-react'
 import { Answer } from '@/components/Answer'
 import { Questions } from '@/components/Questions'
 import type { Asked } from '@/components/Questions'
-import { LiveChanges } from '@/components/LiveChanges'
-import { ProviderUsage } from '@/components/ProviderUsage'
+import { TokenUsage } from '@/components/ProviderUsage'
 import { Composer } from '@/components/Composer'
 import { Btn, ClearAsk } from '@/components/Modal'
 import { Toolbar } from '@/components/Toolbar'
@@ -53,6 +52,7 @@ export function Agent({
   const [seed, setSeed] = useState<{ text: string } | null>(null)
   const busy = turns.at(-1)?.pending ?? false
   const last = turns.at(-1)
+  const compaction = last?.steps.findLast((s) => s.kind === 'compaction')
   const grown = turns.length + (last?.text.length ?? 0) + (last?.steps.length ?? 0)
   useEffect(() => {
     const question = [...(end.current?.parentElement?.querySelectorAll('[data-question-pending="true"]') ?? [])].at(-1)
@@ -66,7 +66,8 @@ export function Agent({
         {/* The model and effort stand here before there is a worktree too:
             a spec's [시작] runs its first turn on them. */}
         <div className="agent-toolbar flex h-11 items-center justify-end gap-1.5">
-          <span className="agent-model-label mr-auto truncate font-heading text-[11px] font-semibold text-faint">작업 모델</span>
+          <span className="agent-model-label shrink-0 font-heading text-[11px] font-semibold text-faint">작업 모델</span>
+          <TokenUsage model={choice.model} path={row?.path} />
           {row && busy && last?.turn && (
             <Btn tone="danger" onClick={() => onStop(last)} title="도는 턴을 멈춘다. 대화는 남아 다음 지시가 이어진다">
               멈춤
@@ -105,13 +106,10 @@ export function Agent({
         )}
       </header>
 
-      <div className="agent-options shrink-0" data-open={optionsOpen}>
-        <ProviderUsage key={`${choice.model.startsWith('codex:')}:${row?.path ?? ''}`} model={choice.model} path={row?.path} />
-      </div>
+      {busy && compaction?.kind === 'compaction' && compaction.phase === 'started' &&
+        <p role="status" className="shrink-0 border-b border-border px-5 py-2 text-[12.5px] text-primary">문맥 압축 중 · 대화 기록을 요약하고 있다</p>}
+
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {row && <div className="agent-changes sticky top-0 z-10 bg-background px-4 py-2">
-          <LiveChanges key={`${row.path}:${row.branch}`} path={row.path} busy={busy} turn={last?.turn} />
-        </div>}
         <div className="space-y-5 px-4 py-4">
           {!row && (
             <p className="text-[13.5px] text-faint">
@@ -204,13 +202,17 @@ export function Reply({ turn, on, onAnswer, onPeek }: {
   const marker = turn.pending && (
     <Running since={turn.since}
       label={lastStep?.kind === 'approval' && lastStep.answer === undefined && turn.latest === 'step' ? '답을 기다린다'
-        : turn.latest !== 'step' && turn.answered != null ? '마무리 중' : '실행 중'} />
+        : lastStep?.kind === 'compaction' && lastStep.phase === 'started' ? '문맥 압축 중'
+          : turn.latest !== 'step' && turn.answered != null ? '마무리 중' : '실행 중'} />
   )
   const list = (from: number, to: number) => to > from && (
     <ul className="space-y-1.5">
       {turn.steps.slice(from, to).map((s, j) => (
         <li key={from + j}>
-          {s.kind === 'progress' ? <Progress text={s.text} on={on} onPeek={onPeek} />
+          {s.kind === 'compaction' ? <p role="status" className="text-[12.5px] text-primary">
+            {s.phase === 'started' ? '문맥 압축 시작 · 대화 기록을 요약한다' : '문맥 압축 완료'}
+            {s.pre_tokens != null && ` · 압축 전 ${s.pre_tokens.toLocaleString()} 토큰`}
+          </p> : s.kind === 'progress' ? <Progress text={s.text} on={on} onPeek={onPeek} />
             : s.kind === 'tool' ? <Tool text={s.text} on={on && !s.command} />
             : s.kind === 'said' ? <Said text={s.text} />
               : s.kind === 'hook' ? <Hook text={s.text} context={s.context} />

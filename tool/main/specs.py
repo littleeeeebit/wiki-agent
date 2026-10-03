@@ -97,21 +97,29 @@ def save(spec: dict) -> None:
     sees half a spec. Every save is told to the screens: the loop moves specs
     with nobody asking."""
 
-    file = file_of(spec["repo"], spec["id"])
-    file.parent.mkdir(parents=True, exist_ok=True)
-    temporary = file.with_suffix(".tmp")
-    temporary.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
-    # On Windows the swap is refused while a reader has the file open — a
-    # screen's listing, another thread's `load` — so it is tried again briefly.
-    for attempt in range(40):
-        try:
-            temporary.replace(file)
-            break
-        except PermissionError:
-            if attempt == 39:
-                raise
-            time.sleep(0.025)
-    publish(spec)
+    with _files:
+        file = file_of(spec["repo"], spec["id"])
+        birth = spec["history"][0]["ts"]
+        current = load(spec["repo"], spec["id"])
+        if current is not None and current["history"][0]["ts"] != birth:
+            raise HTTPException(410, "이 이름으로 새 작업이 만들어졌다. 이전 작업은 저장할 수 없다")
+        if current is None:
+            for archived in (file.parent / "dropped").glob(f"{spec['id']}.*.json"):
+                if json.loads(archived.read_text(encoding="utf-8"))["history"][0]["ts"] == birth:
+                    raise HTTPException(410, "삭제한 작업은 다시 저장할 수 없다")
+        file.parent.mkdir(parents=True, exist_ok=True)
+        temporary = file.with_suffix(".tmp")
+        temporary.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
+        # Windows readers can temporarily prevent the atomic swap.
+        for attempt in range(40):
+            try:
+                temporary.replace(file)
+                break
+            except PermissionError:
+                if attempt == 39:
+                    raise
+                time.sleep(0.025)
+        publish(spec)
 
 
 def summary(spec: dict) -> dict:
@@ -657,7 +665,7 @@ class Start(BaseModel):
     effort: str = ""
 
 
-def noticed(repo: Path, spec: dict) -> dict:
+def noticed(repo: Path, spec: dict) -> dict | None:
     """A pull request merged on GitHub moves its spec to `머지됨`, once."""
 
     pr = spec.get("pr")
@@ -668,7 +676,7 @@ def noticed(repo: Path, spec: dict) -> dict:
         from . import loop
 
         loop.landed(repo, spec)
-        return load(repo.name, spec["id"]) or spec
+        return load(repo.name, spec["id"])
     try:
         done = sh(["gh", "pr", "view", str(pr["number"]), "--json", "state,mergedAt"], repo, 30)
         state = json.loads(done.stdout).get("state") if not done.returncode else ""
@@ -677,7 +685,9 @@ def noticed(repo: Path, spec: dict) -> dict:
     if state != "MERGED":
         return spec
     with _files:
-        spec = load(repo.name, spec["id"]) or spec
+        spec = load(repo.name, spec["id"])
+        if spec is None:
+            return None
         if spec["state"] == "머지됨":
             return spec
         save(moved(spec, "머지됨"))
@@ -690,7 +700,7 @@ def specs() -> dict:
     with _lock:
         name, repo = project(), current_repo()
     return {"project": name, "gate": gate_of(repo),
-            "specs": [view(repo, noticed(repo, s)) for s in listing(name)]}
+            "specs": [view(repo, current) for s in listing(name) if (current := noticed(repo, s)) is not None]}
 
 
 @router.put("/api/specs/{sid}")
@@ -764,6 +774,55 @@ def aside(repo: str, sid: str) -> None:
     away = SPECS / repo / "dropped" / f"{sid}.{time.time_ns()}.json"
     away.parent.mkdir(parents=True, exist_ok=True)
     file_of(repo, sid).replace(away)
+
+
+def dismissed(repo: str, branch: str) -> bool:
+    sid = folder_for(branch)
+    return bool(sid and load(repo, sid) is None and any((SPECS / repo / "dropped").glob(f"{sid}.*.json")))
+
+
+@router.post("/api/specs/{sid}/delete")
+def delete_task(sid: str) -> dict:
+    """Archive a task by identity; a shared checkout and its Git changes remain."""
+    from . import loop, planning
+
+    with _lock:
+        repo = current_repo()
+    with _files:
+        spec = load(repo.name, sid)
+    if spec is None:
+        raise HTTPException(404, "그런 명세가 없다")
+    with _lock:
+        worker = planning._workers.get((repo.name, sid))
+    if worker is not None:
+        worker.cancel()
+        if worker.thread is not None:
+            worker.thread.join(work.HALT_WAIT)
+            if worker.thread.is_alive():
+                raise HTTPException(409, "계획 작업이 멈춘 뒤 삭제해라")
+    path = Path(spec["worktree"]) if spec.get("worktree") else None
+    if path and spec.get("workspace_mode") != "branch" and path.resolve() != repo.resolve() and path.exists():
+        work.clear(work.Removal(path=str(path), force=True))
+    else:
+        loop.halt_loop(repo.name, sid)
+        # An inactive task shares another task's checkout; never stop that owner.
+        active = owner(path) if path and path.exists() else None
+        if active and active["id"] == sid:
+            work.halt_all(str(path), repo)
+            with _lock:
+                release = hold(work._busy, _lock, str(path), "작업이 멈춘 뒤 삭제해라")
+            try:
+                work.forget(path)
+                with _files:
+                    if load(repo.name, sid) is not None:
+                        aside(repo.name, sid)
+            finally:
+                release()
+    with _files:
+        if load(repo.name, sid) is not None:
+            aside(repo.name, sid)
+    work.feed.put({"kind": "sync"})
+    return {"ok": True}
 
 
 @router.post("/api/specs/{sid}/drop")

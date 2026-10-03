@@ -8,7 +8,7 @@ export function LiveChanges({ path, busy, turn }: {
 }) {
   const [changes, setChanges] = useState<api.Changes | null>(null)
   const [error, setError] = useState('')
-  const [open, setOpen] = useState(() => document.documentElement.dataset.mobileLayout === 'desktop')
+  const [open, setOpen] = useState(false)
   useEffect(() => {
     let alive = true
     let timer: ReturnType<typeof setTimeout>
@@ -28,8 +28,8 @@ export function LiveChanges({ path, busy, turn }: {
   const lines = changes?.diff.split('\n') ?? []
   const { added = 0, deleted = 0, files = 0, binary = 0, unknown = 0 } = changes?.totals ?? {}
   return (
-    <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="live-changes min-w-0 rounded-lg border border-border bg-card">
-      <summary className="cursor-pointer px-4 py-3 text-[14px] font-semibold">
+    <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="live-changes min-w-0 border-b border-border bg-card">
+      <summary className="cursor-pointer px-5 py-3 text-[12.5px]">
         코드 변경 현황 <span className="font-normal text-muted-foreground"><span className="live-change-mode">· {busy ? '실시간' : '현재 변경'}</span> · {files}개 파일</span>
         {' '}<span className="text-add">+{added}</span> <span className="text-del">−{deleted}</span>
         {!!binary && <span className="font-normal text-muted-foreground"> · 바이너리 {binary}개</span>}

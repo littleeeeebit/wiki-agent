@@ -87,6 +87,7 @@ type Props = {
   onChannels: (list: Channel[]) => void
   onBusy: (busy: boolean) => void
   specs: Spec[]
+  selectedSpec: Spec | null
   onSpecs: () => void
   onStart: (id: string) => Promise<void>
   /** A plan the Plan action started: select its worktree. */
@@ -126,7 +127,7 @@ const SCOPES = [
 
 /** The middle pane's conversation: ask the wiki under one focus, read the
  *  grounds, and settle the next task into a spec. */
-export function Query({ channels, options, on, seed, onChannels, onBusy, specs, onSpecs, onStart, onPlanned,
+export function Query({ channels, options, on, seed, onChannels, onBusy, specs, selectedSpec, onSpecs, onStart, onPlanned,
   onMapRun }: Props) {
   const [active, setActive] = useState('wiki')
   const [planning, setPlanning] = useState(false)
@@ -430,7 +431,9 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <Stream
-            messages={messages}
+            messages={active === 'next' && selectedSpec && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === selectedSpec.id))
+              ? [...messages, { role: 'assistant', text: '', tools: [], blocks: [{ name: 'spec', id: selectedSpec.id }] }]
+              : messages}
             korean={on}
             remote={here?.remote ?? ''}
             onPeek={showPeek}

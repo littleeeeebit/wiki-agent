@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Questions } from '@/components/Questions'
+import { PlanStatus } from '@/components/Plan'
 import { Btn } from '@/components/Modal'
 import * as api from '@/lib/api'
 import type { Block, ChoiceQuestion, Spec } from '@/lib/api'
@@ -90,7 +91,7 @@ function SpecCard({ id, specs, ...props }: { id: string } & BlockProps) {
   const [current, setCurrent] = useState(id)
   const spec = specs.find((s) => s.id === current)
   if (!spec) return <p className="text-[12.5px] text-faint">명세 `{current}` 는 이제 없다 — 버렸거나 이름을 바꿨다.</p>
-  if (spec.state !== '정리됨') return <Started spec={spec} />
+  if (spec.state !== '정리됨') return <Started spec={spec} {...props} />
   // A new version of the spec starts what is typed over.
   return <SpecForm key={`${spec.id}:${spec.rev}`} spec={spec} onRenamed={setCurrent} {...props} />
 }
@@ -106,11 +107,22 @@ function Head({ spec }: { spec: Spec }) {
   )
 }
 
-function Started({ spec }: { spec: Spec }) {
+function Started({ spec, korean, busy, onSpecs, onStart }: { spec: Spec } & Pick<BlockProps, 'korean' | 'busy' | 'onSpecs' | 'onStart'>) {
+  const [editing, setEditing] = useState(false)
+  const [fault, setFault] = useState('')
   return (
     <div className={box}>
       <Head spec={spec} />
-      <div className="text-[13.5px]">{spec.goal}</div>
+      <SpecDetails spec={spec} korean={korean} />
+      {spec.planning && <PlanStatus spec={spec} korean={korean} onChanged={onSpecs} />}
+      {!busy && !/^(머지됨|머지 대기|리뷰 대기|리뷰 R\d+|고치는 중 R\d+)$/.test(spec.state) &&
+        <Btn onClick={() => setEditing((open) => !open)}>{editing ? '편집 닫기' : '명세 수정'}</Btn>}
+      {editing && <SpecForm key={`${spec.id}:${spec.rev}`} spec={spec} korean={korean} busy={busy}
+        onSpecs={onSpecs} onStart={onStart} onRenamed={() => setEditing(false)} />}
+      {spec.workspace_mode === 'branch' && !busy && <Btn onClick={async () => {
+        try { await onStart(spec.id) } catch (err) { setFault(String(err)) }
+      }}>브랜치 열기</Btn>}
+      {fault && <p role="alert" className="text-destructive">{fault}</p>}
       <div className="mt-1 flex flex-wrap gap-x-3 font-mono text-[10.5px] text-muted-foreground">
         {spec.worktree && <span>{spec.workspace_mode === 'branch'
           ? `브랜치 ${spec.branch ?? spec.id}` : `작업트리 ${spec.worktree.split(/[\\/]/).pop()}`}</span>}
@@ -127,14 +139,40 @@ function Started({ spec }: { spec: Spec }) {
   )
 }
 
-export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed }:
-  { spec: Spec; onRenamed: (id: string) => void } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart'>) {
+/** Mirror requirements without changing their stored or submitted originals. */
+function SpecDetails({ spec, korean }: { spec: Spec; korean: boolean }) {
+  const originals = [spec.goal, ...spec.out, ...spec.done,
+    ...spec.decisions.flatMap((d) => [d.what, d.why ?? '', d.rejected ?? '']),
+    ...(spec.report ?? []).map((r) => r.item)].filter((text) => text !== spec.done[0])
+  const translated = useOverlay(originals, korean)
+  const overlay = new Map(originals.map((text, i) => [text, translated[i]]))
+  const shown = (text: string) => overlay.get(text) ?? text
+  const list = (title: string, items: string[]) => items.length > 0 && <div className="mt-2">
+    <div className="font-heading text-[11px] text-faint">{title}</div>
+    <ul className="mt-1 space-y-1 text-[13.5px] leading-relaxed">{items.map((text, i) => <li key={i}>· {text}</li>)}</ul>
+  </div>
+  return <div className="break-words">
+    <p className="text-[13.5px] leading-relaxed">{shown(spec.goal)}</p>
+    <details className="mt-2 text-[12.5px]">
+      <summary className="cursor-pointer text-primary">범위 · 완료 조건 보기</summary>
+      {list('빼는 것', spec.out.map(shown))}
+      {list('완료 조건', spec.done.map(shown))}
+      {list('결정', spec.decisions.map((d) => `${shown(d.what)}${d.why ? ` — ${shown(d.why)}` : ''}${d.rejected ? ` (버린 것: ${shown(d.rejected)})` : ''}`))}
+      {list('작업 셀의 보고', (spec.report ?? []).map((r) => `${r.pass ? '통과' : '실패'} · ${shown(r.item)}`))}
+      {!!spec.revisions?.length && <div className="mt-2">변경 이력 · 현재 판 {spec.rev}</div>}
+    </details>
+  </div>
+}
+
+export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed, korean = false }:
+  { spec: Spec; onRenamed: (id: string) => void; korean?: boolean } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart'>) {
   const [goal, setGoal] = useState(spec.goal)
   const [out, setOut] = useState(spec.out.join('\n'))
   const [done, setDone] = useState(spec.done.slice(1).join('\n'))
   const [slug, setSlug] = useState(spec.id)
   const [working, setWorking] = useState('')
   const [fault, setFault] = useState('')
+  const [editing, setEditing] = useState(spec.state !== '정리됨')
 
   const edited = goal !== spec.goal || out !== spec.out.join('\n') || done !== spec.done.slice(1).join('\n')
     || slug !== spec.id
@@ -156,7 +194,9 @@ export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed }:
   return (
     <div className={box}>
       <Head spec={spec} />
-      <div className="space-y-2 text-[12.5px]">
+      <SpecDetails spec={spec} korean={korean} />
+      <Btn className="mt-2" onClick={() => setEditing((open) => !open)}>{editing ? '원문 편집 닫기' : '원문 수정'}</Btn>
+      {editing && <div className="mt-2 space-y-2 text-[12.5px]">
         <label className="block">
           <span className="text-faint">이름</span>
           <input value={slug} onChange={(e) => setSlug(e.target.value.toLowerCase())} spellCheck={false}
@@ -208,7 +248,7 @@ export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed }:
         {spec.source.plan && (
           <div className="font-mono text-[10.5px] text-faint">계획 행 · {spec.source.plan.path} #{spec.source.plan.row}</div>
         )}
-      </div>
+      </div>}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
         <Btn disabled={!edited || !!working}
           onClick={() => act('save', async () => {

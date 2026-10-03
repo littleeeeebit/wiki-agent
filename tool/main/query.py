@@ -347,6 +347,8 @@ def line(cid: str, ev) -> dict | None:
         return {"kind": "tool", "text": f"거절 · {ev.text}"}
     if ev.kind == "hook":   # a line of what ran, as the work pane has it
         return {"kind": "tool", "text": f"훅 · {ev.text}"}
+    if ev.kind == "compaction":
+        return {"kind": "tool", "text": ev.text, **ev.meta}
     if ev.kind == "context":   # the CLI's conversation could not be resumed
         remember(cid, "context", ev.text)
         return {"kind": "tool", "text": ev.text}
@@ -934,6 +936,10 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                 outcome = ("cancelled" if code == "cancelled" else "failed" if failed else
                            verification["status"] if verification else "answered")
                 run.finish(outcome, code or None, out if verification else None, answered="".join(reply))
+                if code != "cancelled":
+                    from . import work
+
+                    work.notice("대화 응답 실패" if failed else "대화 응답 완료", f"{run.repo} · {cid}")
             finally:
                 release()
 
