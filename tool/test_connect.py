@@ -696,3 +696,22 @@ def test_the_merge_of_a_survey_hands_over_instead_of_the_plain_fast_forward(orig
     forward.assert_not_called()
     assert git(repo, "rev-parse", "HEAD") == commit
     assert any("adapter 를 넘기고" in n for n in specs.load("proj", "wiki-bootstrap")["cleanup"])
+
+
+def test_shared_checkout_survey_returns_to_base_before_adapter_handover(original):
+    repo, merge, _ = original
+    commit = merge()
+    git(repo, "switch", "-c", "wiki-bootstrap")
+    git(repo, "add", ".wiki/adapter.toml")
+    git(repo, "commit", "-qm", "survey adapter")
+    task_head = git(repo, "rev-parse", "HEAD")
+    spec = {"id": "wiki-bootstrap", "repo": "proj", "state": "머지 대기", "pr": {"number": 7, "head": task_head},
+            "survey": {"handover": True}, "history": [{"ts": 0, "state": "정리됨"}], "worktree": str(repo),
+            "workspace_mode": "branch", "branch": "wiki-bootstrap", "goal": "Initialize the fixture wiki"}
+    specs.save(spec)
+    with patch.object(specs, "sh", Merged(commit)), \
+         patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None):
+        loop.finish(repo, spec, "main", commit, "Merged fixture survey")
+    assert connect.record("proj")["handover"]["state"] == "완료"
+    assert git(repo, "rev-parse", "HEAD") == commit
+    assert git(repo, "rev-parse", "wiki-bootstrap") == task_head

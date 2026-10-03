@@ -1468,18 +1468,34 @@ def landed(repo: Path, spec: dict) -> None:
             stop(None, repo.name, spec["id"], Why.LEFT_QUEUE, "PR 이 닫혔다", WAITING)
 
 
-def forward(repo: Path, base: str) -> str:
-    """The original checkout moves only when it stands on the base, clean,
-    and only by fast-forward. It is the second of the two writes the server
-    makes to an original checkout."""
+def forward(repo: Path, base: str, *, task_branch: str = "") -> str:
+    """Fast-forward a clean base, optionally returning from the merged task.
 
-    specs.sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], repo, 120)
-    on = specs.sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
-    dirty = specs.sh(["git", "status", "--porcelain"], repo)
-    if on != base or dirty.returncode or dirty.stdout.strip():
-        return f"원본이 뒤처짐 — 원본이 `{base}` 에 깨끗이 서 있지 않다"
-    done = specs.sh(["git", "merge", "--ff-only", f"origin/{base}"], repo, 60)
-    return f"원본을 `origin/{base}` 로 앞으로 옮겼다" if not done.returncode else f"원본이 뒤처짐 — {specs.said(done)}"
+    Never switch an unrelated branch or interrupt another turn. The local
+    task branch remains intact, including commits added after publication.
+    """
+
+    try:
+        release = hold(work._busy, _lock, str(repo), "", kind="turn")
+    except HTTPException:
+        return "원본이 뒤처짐 — 다른 작업이 저장소를 쓰고 있다"
+    try:
+        on = specs.sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
+        dirty = specs.sh(["git", "status", "--porcelain"], repo)
+        if on not in {base, task_branch} or dirty.returncode or dirty.stdout.strip():
+            return f"원본이 뒤처짐 — 원본이 `{base}` 에 깨끗이 서 있지 않다"
+        fetched = specs.sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], repo, 120)
+        if fetched.returncode:
+            return f"원본이 뒤처짐 — {specs.said(fetched)}"
+        if on != base:
+            switched = specs.sh(["git", "switch", base], repo)
+            if switched.returncode:
+                return f"원본이 뒤처짐 — {specs.said(switched)}"
+            work.forget(repo)
+        done = specs.sh(["git", "merge", "--ff-only", f"origin/{base}"], repo, 60)
+        return f"원본을 `origin/{base}` 로 앞으로 옮겼다" if not done.returncode else f"원본이 뒤처짐 — {specs.said(done)}"
+    finally:
+        release()
 
 
 def cleared(repo: Path, path: Path) -> str:
@@ -1524,13 +1540,16 @@ def finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
                                merge={"commit": commit, "base": base}))
     specs.told(repo, spec, text)
     if (spec.get("survey") or {}).get("handover"):
+        if spec.get("workspace_mode") == "branch":
+            notes.append(forward(repo, base, task_branch=specs.branch_of(spec)))
         # The original's adapter is uncommitted and would block the
         # fast-forward. The handover moves it aside and fast-forwards
         # itself; when it stops, the fast-forward is skipped too.
         handed = connect.handover(repo, n)
         notes.append(handed["reason"] if handed["ok"] else f"adapter 넘기기 대기 — {handed['reason']}")
     else:
-        notes.append(forward(repo, base))
+        notes.append(forward(repo, base, task_branch=specs.branch_of(spec)
+                             if spec.get("workspace_mode") == "branch" else ""))
     if spec.get("workspace_mode") == "branch":
         notes.append("원본 저장소와 작업 브랜치를 남겼다")
     elif spec.get("worktree"):

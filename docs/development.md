@@ -59,8 +59,10 @@ protection, prerequisites and device acceptance are in the same mobile guide.
 The agent pane reads `GET /api/work/diff?path=…` every second during a turn
 and every five seconds while idle. It includes staged, unstaged and untracked
 files without changing the index. The panel stays above the conversation, with
-added/deleted lines and file counts. A task's initial commit remains its diff
-base across turns, commits and restarts. Large previews are explicitly truncated. Questions in
+added/deleted lines and file counts. A task's base persists across turns,
+commits and restarts; its current merge base excludes integrated upstream changes.
+Git supplies totals independently of the capped preview. Binary files and unread
+symlink targets are identified without claiming text line counts. Questions in
 Agent, Next Task and Planner share chapter cards, Markdown examples and the
 Korean overlay; submissions retain original option labels.
 
@@ -93,6 +95,9 @@ about the intended result still wait for answers. Read-only review and Cloud
 verification keep their separate execution scopes.
 
 Implementation and repair agents may commit, push and open their task PR.
+Reused PRs receive the current title, requirements and completion evidence.
+After merge, a clean shared task checkout returns to and fast-forwards its
+base; busy or dirty checkouts and unrelated branches remain untouched.
 The server retains gate execution, PR recovery and independent review.
 An idle task's requirements can be edited in its spec panel. During a turn,
 later instructions can be recorded through a `spec-update` block before the

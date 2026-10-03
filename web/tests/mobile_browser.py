@@ -63,7 +63,8 @@ def fixture(path, method):
         return {"rows": [{"role": "assistant", "text": "Synthetic task reply."}], "session_id": "fixture",
                 "busy": False, "running": None, "rules": [], "queued": None}
     if path == "work/diff":
-        return {"diff": "+synthetic change", "base": "fixture", "truncated": False, "omitted": []}
+        return {"diff": "+synthetic change", "base": "fixture", "truncated": False, "omitted": [],
+                "totals": {"files": 1, "added": 1, "deleted": 0, "binary": 0, "unknown": 0}}
     if path.startswith("providers/"):
         return {"provider": "claude", "live": False, "connection_ms": None, "error": "", "quota": [], "usage": {}}
     if path == "connect":

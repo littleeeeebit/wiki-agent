@@ -789,7 +789,8 @@ export type Worktree = {
 export const getWorktrees = () =>
   get('/api/worktrees').then((r) => json<{ project: string; repo: string; rows: Worktree[] }>(r, '작업트리'))
 
-export type Changes = { diff: string; base: string; truncated: boolean; omitted: string[] }
+export type Changes = { diff: string; base: string; truncated: boolean; omitted: string[];
+  totals: { files: number; added: number; deleted: number; binary: number; unknown: number } }
 export const workDiff = (path: string) => get(`/api/work/diff?${new URLSearchParams({ path })}`)
   .then((r) => json<Changes>(r, '코드 변경 현황'))
 

@@ -45,7 +45,8 @@ def main():
                     "busy": False, "running": None, "rules": [], "queued": None}
         if path == "work/diff":
             return {"diff": "diff --git a/src/app.ts b/src/app.ts\n--- a/src/app.ts\n+++ b/src/app.ts\n"
-                            "@@ -1 +1 @@\n-old\n+new\n", "base": "fixture", "truncated": False, "omitted": []}
+                            "@@ -1 +1 @@\n-old\n+new\n", "base": "fixture", "truncated": True, "omitted": [],
+                    "totals": {"files": 2, "added": 12_001, "deleted": 12_000, "binary": 0, "unknown": 0}}
         if path == "file":
             params = parse_qs(urlparse(str(request.url)).query)
             citations.append(params)
@@ -81,7 +82,8 @@ def main():
             measured = diff.bounding_box()
             assert measured["y"] >= 0 and measured["y"] + measured["height"] < 900, measured
             assert "-old" in diff.inner_text() and "+new" in diff.inner_text()
-            assert "1개 파일" in page.locator("summary").filter(has_text="코드 변경 현황").inner_text()
+            summary = page.locator("summary").filter(has_text="코드 변경 현황").inner_text()
+            assert "2개 파일" in summary and "+12001" in summary and "−12000" in summary
             for label, path, line in (("Windows source", "C:/fixture/src/app.ts", "12"),
                                        ("Encoded file", "C:/fixture/My Project/app.ts", "20"),
                                        ("Relative source", "src/app.ts", "3")):

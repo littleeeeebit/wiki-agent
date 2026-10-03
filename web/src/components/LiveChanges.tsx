@@ -26,14 +26,14 @@ export function LiveChanges({ path, busy, turn }: {
     return () => { alive = false; clearTimeout(timer) }
   }, [path, busy, turn])
   const lines = changes?.diff.split('\n') ?? []
-  const added = lines.filter((l) => l.startsWith('+') && !l.startsWith('+++')).length
-  const deleted = lines.filter((l) => l.startsWith('-') && !l.startsWith('---')).length
-  const files = lines.filter((l) => l.startsWith('diff --git ')).length
+  const { added = 0, deleted = 0, files = 0, binary = 0, unknown = 0 } = changes?.totals ?? {}
   return (
     <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="live-changes min-w-0 rounded-lg border border-border bg-card">
       <summary className="cursor-pointer px-4 py-3 text-[14px] font-semibold">
         코드 변경 현황 <span className="font-normal text-muted-foreground"><span className="live-change-mode">· {busy ? '실시간' : '현재 변경'}</span> · {files}개 파일</span>
         {' '}<span className="text-add">+{added}</span> <span className="text-del">−{deleted}</span>
+        {!!binary && <span className="font-normal text-muted-foreground"> · 바이너리 {binary}개</span>}
+        {!!unknown && <span className="font-normal text-muted-foreground"> · 줄 수 미확인 {unknown}개</span>}
       </summary>
       {error && <p role="status" className="px-4 pb-3 text-[14px] text-destructive">{error}{changes && ' · 마지막으로 읽은 변경을 표시한다'}</p>}
       {!changes?.diff && !error && <p className="px-4 pb-3 text-[14px] text-muted-foreground">{changes ? '코드 변경 없음' : '변경 읽는 중…'}</p>}

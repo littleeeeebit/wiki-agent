@@ -1153,28 +1153,37 @@ def pull_request(path: Path, branch: str, base: str, title: str, body: str) -> t
     """`(number, url)` of the pull request from `branch` into `base`: the one
     already open, else a new one. A create that failed or timed out is not
     tried again — the list is read once more, since GitHub may have made it
-    before the answer was lost. `RuntimeError` says why there is none."""
+    before the answer was lost. Reused PRs receive the current title and body.
+    `RuntimeError` says why publication could not complete."""
 
     found = existing_pr(path, branch, base)
-    if found:
-        return found
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
         fh.write(body)
     try:
-        made = sh(["gh", "pr", "create", "--base", base, "--head", branch, "--title", title, "--body-file", fh.name],
-                  path, 120)
-        why = said(made)
-    except subprocess.TimeoutExpired:
-        made, why = None, "시간 초과"
+        if not found:
+            try:
+                made = sh(["gh", "pr", "create", "--base", base, "--head", branch,
+                           "--title", title, "--body-file", fh.name], path, 120)
+                why = said(made)
+            except subprocess.TimeoutExpired:
+                made, why = None, "시간 초과"
+            number = re.search(r"/pull/(\d+)", made.stdout) if made is not None and not made.returncode else None
+            if number:
+                return int(number.group(1)), made.stdout.strip().splitlines()[-1]
+            found = existing_pr(path, branch, base)
+            if not found:
+                raise RuntimeError(f"PR 을 만들지 못했다 — {why}")
+        # The agent may have opened it early, or GitHub accepted a timed-out
+        # create. In both cases publish the current requirements and evidence.
+        try:
+            edited = sh(["gh", "pr", "edit", str(found[0]), "--title", title, "--body-file", fh.name], path, 120)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("PR 명세와 확인 기록을 갱신하지 못했다 — 시간 초과") from exc
+        if edited.returncode:
+            raise RuntimeError(f"PR 명세와 확인 기록을 갱신하지 못했다 — {said(edited)}")
+        return found
     finally:
         os.unlink(fh.name)
-    number = re.search(r"/pull/(\d+)", made.stdout) if made is not None and not made.returncode else None
-    if number:
-        return int(number.group(1)), made.stdout.strip().splitlines()[-1]
-    found = existing_pr(path, branch, base)
-    if found:
-        return found
-    raise RuntimeError(f"PR 을 만들지 못했다 — {why}")
 
 
 def opened(repo: Path, path: Path, run, spec: dict):

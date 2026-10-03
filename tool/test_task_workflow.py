@@ -2,8 +2,11 @@
 
 import json
 import subprocess
+import threading
 from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from agent import ChatSession
 from main import loop, specs, survey, work
@@ -106,6 +109,9 @@ def test_agent_spec_update_and_completion_open_or_reuse_pr(repo):
             remote.calls.clear()
             specs.opened(repo, repo, run, saved)
             assert remote.pushes() == 1 and not remote.created()
+            edit = next(call for call in remote.calls if call[:3] == ["gh", "pr", "edit"])
+            assert edit[edit.index("--title") + 1] == "Handle an edge case"
+            assert "Handle an edge case" in remote.body and "Edge case passes" in remote.body
     work.close_all()
 
 
@@ -170,3 +176,95 @@ def test_new_task_branch_preserves_dirty_checkout_and_works_in_linked_checkout(r
     git(repo, "worktree", "add", "-qb", "selected", str(path))
     assert create(path, "task") == path.resolve()
     assert git(path, "branch", "--show-current") == "task"
+
+
+@pytest.mark.parametrize("stale_remote", [False, True])
+def test_task_diff_excludes_base_updates_merged_after_task_start(repo, stale_remote):
+    web = client()
+    Worker.replies = ["Working"]
+    with patch.object(work, "ChatSession", Worker):
+        sid = made(repo, spec_block())[0]["id"]
+        started(web, sid)
+    if stale_remote:
+        git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    (repo / "task.txt").write_text("agent change\n", encoding="utf-8")
+    git(repo, "add", "task.txt")
+    git(repo, "commit", "-qm", "task change")
+    git(repo, "switch", "main")
+    (repo / "upstream.txt").write_text("upstream change\n", encoding="utf-8")
+    git(repo, "add", "upstream.txt")
+    git(repo, "commit", "-qm", "upstream change")
+    upstream = git(repo, "rev-parse", "HEAD")
+    git(repo, "switch", sid)
+    git(repo, "merge", "--no-edit", "main")
+    work._runs.clear()
+    data = work.changes(str(repo))
+    assert "+agent change" in data["diff"] and "upstream.txt" not in data["diff"]
+    assert data["base"] == upstream
+
+
+def test_shared_checkout_after_merge_updates_base_for_the_next_task(repo, tmp_path):
+    origin = tmp_path / "origin.git"
+    git(repo, "init", "--bare", "-q", str(origin))
+    git(repo, "remote", "add", "origin", str(origin))
+    git(repo, "push", "-qu", "origin", "main")
+    web = client()
+    Worker.replies = ["Working"]
+    with patch.object(work, "ChatSession", Worker):
+        sid = made(repo, spec_block())[0]["id"]
+        started(web, sid)
+        (repo / "merged.txt").write_text("merged task\n", encoding="utf-8")
+        git(repo, "add", "merged.txt")
+        git(repo, "commit", "-qm", "task change")
+        head = git(repo, "rev-parse", "HEAD")
+        git(repo, "push", "-q", "origin", "HEAD:main")
+        saved = specs.update(repo.name, sid, pr={"number": 7, "head": head, "branch": sid, "base": "main"})
+        with patch.object(loop, "pruned", return_value="Remote task branch retained for fixture"), \
+             patch.object(loop, "close_cell"):
+            loop.finish(repo, saved, "main", head, "Merged fixture task")
+        assert git(repo, "rev-parse", "main") == head
+        assert git(repo, "rev-parse", sid) == head  # Never delete the local task branch.
+        second = made(repo, spec_block(slug="second"))[0]["id"]
+        assert started(web, second) == str(repo)
+        assert git(repo, "rev-parse", "HEAD") == head and (repo / "merged.txt").exists()
+
+
+@pytest.mark.parametrize("blocked", ["dirty", "busy", "unrelated"])
+def test_merge_return_does_not_interrupt_user_work(repo, blocked):
+    git(repo, "switch", "-c", "task")
+    if blocked == "dirty":
+        (repo / "mine.txt").write_text("keep this\n", encoding="utf-8")
+    elif blocked == "busy":
+        work._busy[str(repo)] = object()
+    else:
+        git(repo, "switch", "-c", "other")
+    before = git(repo, "branch", "--show-current")
+    with patch.object(specs, "sh", wraps=specs.sh) as calls:
+        assert loop.forward(repo, "main", task_branch="task").startswith("원본이 뒤처짐")
+        assert not any(call.args[0][:2] in (["git", "switch"], ["git", "merge"]) for call in calls.call_args_list)
+    assert git(repo, "branch", "--show-current") == before
+
+
+def test_failed_reused_pr_update_does_not_record_new_requirements_as_published(repo):
+    remote = Remote()
+    Worker.replies = ["Working"]
+    with patch.object(work, "ChatSession", Worker):
+        sid = made(repo, spec_block())[0]["id"]
+        started(client(), sid)
+    spec = specs.load(repo.name, sid)
+    spec.update(report=[{"item": PASS, "pass": True}], gate={"cmd": PASS, "tail": "ok", "head": "fixture"})
+    run = work._runs[str(repo)]
+    run.halt = threading.Event()
+    real = remote.__call__
+
+    def refused(args, cwd, timeout=60):
+        if args[:3] == ["gh", "pr", "edit"]:
+            return subprocess.CompletedProcess(args, 1, "", "metadata edit refused")
+        return real(args, cwd, timeout)
+
+    with patch.object(specs, "sh", side_effect=refused), \
+         patch.object(specs, "existing_pr", return_value=(7, "https://github.com/o/proj/pull/7")), \
+         patch.object(specs, "korean", side_effect=lambda value: value):
+        assert specs.opened(repo, repo, run, spec) is None
+    saved = specs.load(repo.name, sid)
+    assert "metadata edit refused" in saved["fault"] and not saved.get("pr")

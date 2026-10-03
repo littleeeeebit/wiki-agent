@@ -79,6 +79,9 @@ class Remote:
         if args[:3] == ["gh", "pr", "create"]:
             self.body = Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8")
             return ok("https://github.com/o/proj/pull/7\n")
+        if args[:3] == ["gh", "pr", "edit"]:
+            self.body = Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8")
+            return ok()
         if args[:3] == ["gh", "pr", "view"]:
             return ok(json.dumps({"state": "MERGED" if self.merged else "OPEN", "mergedAt": None}))
         if args[:3] == ["gh", "pr", "list"] and "--head" in args:

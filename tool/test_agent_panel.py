@@ -173,3 +173,21 @@ def test_diff_git_timeout_reaps_process(tmp_path, monkeypatch):
     with pytest.raises(subprocess.TimeoutExpired):
         work.diff_git(tmp_path, "diff", "HEAD", "--")
     assert children[0].poll() is not None
+
+
+def test_change_totals_include_files_and_lines_beyond_the_capped_preview(tmp_path, monkeypatch):
+    def git(*args):
+        return subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True)
+
+    git("init", "-q")
+    file = tmp_path / "a.txt"
+    file.write_text("old line\n" * 12_000, encoding="utf-8")
+    git("add", ".")
+    git("-c", "user.name=Panel", "-c", "user.email=panel@example.test", "commit", "-qm", "baseline")
+    file.write_text("new line\n" * 12_000, encoding="utf-8")
+    (tmp_path / "z.txt").write_text("untracked\n", encoding="utf-8")
+    monkeypatch.setattr(work, "known", lambda _: tmp_path)
+    monkeypatch.setattr(work, "_runs", {})
+    data = work.changes(str(tmp_path))
+    assert data["truncated"] and "z.txt" not in data["diff"]
+    assert data["totals"] == {"files": 2, "added": 12_001, "deleted": 12_000, "binary": 0, "unknown": 0}
