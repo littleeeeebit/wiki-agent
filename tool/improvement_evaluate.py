@@ -17,7 +17,7 @@ import sys
 import time
 from pathlib import Path
 
-from improvement import execute
+from improvement import execute, usage_ceiling
 
 
 def evaluate(request: dict, manifest: dict, directory: Path) -> dict:
@@ -38,6 +38,9 @@ def evaluate(request: dict, manifest: dict, directory: Path) -> dict:
         task = manifest["tasks"][task_id]
         if type(task.get("inference")) is not bool:
             raise ValueError("Each task must explicitly declare whether it performs inference")
+        cap = usage_ceiling(task.get("max_usage")) if task["inference"] else {"calls": 0, "tokens": 0}
+        if task["inference"] and any(v <= 0 for v in cap.values()):
+            raise ValueError("Inference tasks require positive enforced usage ceilings")
         argv = task["argv"]
         if not isinstance(argv, list) or not argv or any(not isinstance(a, str) or not a for a in argv):
             raise ValueError("Task commands must be argument arrays")
@@ -60,11 +63,19 @@ def evaluate(request: dict, manifest: dict, directory: Path) -> dict:
             remaining = request["limits"]["seconds"] - (time.monotonic() - started)
             if remaining <= 0:
                 raise ValueError("Evaluation time allowance exhausted")
+            if any(cap[k] > request["limits"][k] - usage[k] for k in cap):
+                return {"error": "Evaluation allowance cannot cover the next trial's usage ceiling",
+                        "usage": usage, "trials": rows}
             key = hashlib.sha256(task_id.encode("utf-8")).hexdigest()
             cache = Path(os.environ["WIKI_IMPROVEMENT_CACHE"]) / key / str(trial)
             cache.mkdir(parents=True, exist_ok=True)
             env = {**os.environ, "WIKI_IMPROVEMENT_MODEL": request["model"], "WIKI_IMPROVEMENT_CACHE": str(cache)}
-            code, output, errors = execute(command, Path(request["root"]), None, min(seconds, remaining), env)
+            payload = {**{k: request[k] for k in ("root", "model", "split", "scope", "repo_key") if k in request},
+                       "stage": "task", "id": task_id, "trial": trial,
+                       "limits": {"seconds": min(seconds, remaining), **cap}}
+            code, output, errors = execute(command, Path(request["root"]),
+                                           json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                                           payload["limits"]["seconds"], env)
             if task["inference"]:
                 result = json.loads(output.decode("utf-8"))
                 cost = result.get("usage", {})
@@ -81,8 +92,8 @@ def evaluate(request: dict, manifest: dict, directory: Path) -> dict:
                 usage[key] += cost[key]
             rows.append({"id": task_id, "trial": trial, "reward": reward, "tokens": cost["tokens"],
                          "diagnostic": errors if reward < 1 else ""})
-            if any(usage[key] > request["limits"][key] for key in usage):
-                return {"error": "Evaluation allowance exceeded", "usage": usage, "trials": rows}
+            if any(cost[key] > cap[key] for key in cap):
+                return {"error": "Inference task violated its hard usage ceiling", "usage": usage, "trials": rows}
     guards = {}
     for name, ids in guard_tasks.items():
         guards[name] = all(r["reward"] == 1 for r in rows if r["id"] in ids)

@@ -49,7 +49,7 @@ usage handling rejects unknown costs rather than treating them as zero.
 Each edit in a bundled candidate shares that candidate's measured result.
 It does not establish the causal contribution of each edit. Prune directives
 ask for a measured removal experiment; they do not delete machinery themselves.
-Native critic judgments and component declarations still require review.
+Critic judgments and component declarations still require review.
 
 ## Configure an experiment
 
@@ -65,6 +65,7 @@ The owner supplies a JSON file with schema `wiki-improvement/1`. Required fields
 | `beta0`, `beta1` | Relative token-cost allowance for gains exceeding `delta` |
 | `w_score`, `w_cost`, `w_novelty` | Finite nonnegative weights within the noise band |
 | `limits` | Positive finite `seconds`, and positive integer `calls` and `tokens`, shared across the whole experiment |
+| `caps` | `propose`, `critic`, `evaluate`: each maps to nonnegative integer `{calls, tokens}` upper bounds enforced by its trusted adapter; each bound must fit the total allowance |
 | `tasks` | Disjoint nonempty `evolve` and `held_out` task-ID lists |
 | `components` | Component names mapped to editable relative paths or directory prefixes ending in `/` |
 | `guards` | Mandatory boolean guard names; missing or false guards fail |
@@ -91,12 +92,14 @@ adapter for these experiments must evaluate each candidate separately and export
 comparable per-task trial records under the shared frozen conditions; it must
 not bypass the existing report's compatibility checks.
 
-`tool/improvement_host.py --model <role-model> --effort <effort>` is a supplied
-native adapter for either proposal or critic requests. It uses a fresh read-only
-session and returns a patch or verdict, never edits. Each completed native role
-turn charges one call and its reported input/output tokens. Select both role
-models explicitly in their command arrays. A domain-specific evaluator is still
-required: the system cannot infer a project's success criteria from its name.
+`tool/improvement_host.py --model <role-model> --effort <effort>` refuses both
+native roles before opening a session, with zero calls and tokens. The current
+native `ChatSession` hosts cannot enforce a total call/token ceiling. Their
+ambient settings, hooks and persisted sessions therefore never enter an
+experiment through this adapter. Native model-backed proposal and criticism
+remain unsupported; this runner requires owner-supplied, isolated domain
+adapters with real provider-level enforcement. It does not launch a new API
+provider or infer a project's success criteria from its name.
 
 `tool/improvement_evaluate.py --tasks <frozen-tasks.json>` supplies a task-command
 evaluator for both scopes. Its task manifest uses schema `wiki-improvement-tasks/1`:
@@ -117,8 +120,14 @@ Declare the manifest, external test files and their dependencies in
 `controller_files`. Include separate task IDs and fixtures for each split.
 `inference: false` explicitly declares offline commands: exit zero scores one,
 other exits score zero, and model cost is zero. An inference command instead
-returns JSON with `reward` and known `usage: {calls, tokens}`. The pinned policy
-model reaches it through `WIKI_IMPROVEMENT_MODEL`. Guard values list the tasks
+requires positive `max_usage: {calls, tokens}` bounds enforced by that command
+and returns JSON with `reward` and known `usage: {calls, tokens}`. Before
+each trial, the evaluator checks that the entire bound fits its unused allowance.
+If not, it returns an error with known usage without starting that trial.
+The task receives JSON on stdin with `stage: "task"`, `id`, `trial`,
+`root`, `model`, `split`, owner fields and `limits`; those limits contain
+its own call/token ceiling and bounded timeout. The pinned policy model also
+reaches it through `WIKI_IMPROVEMENT_MODEL`. Guard values list the tasks
 that must pass every repetition; an empty integrity guard relies on the
 controller's unchanged-checkout check. Other mandatory guards must have real
 task checks. Each command receives a separate cache per task and repetition.
@@ -128,15 +137,34 @@ task checks. Each command receives a separate cache per task and repetition.
 
 Every command reads one JSON object on stdin and writes one JSON object to
 stdout. Diagnostics go to stderr. Requests include `stage`, `scope`,
-`repo_key`, candidate `root`, pinned policy `model`, and remaining `limits`.
+`repo_key`, candidate `root`, pinned policy `model`, and allocated `limits`.
+The controller admits a whole operation only if its frozen `caps` fit the
+persisted remaining budget; the request's call/token limits are those caps,
+not the experiment's entire remainder. Zero ceilings are for genuinely
+offline commands only; offline work can continue with no inference allowance.
+For example, `caps.evaluate: {calls: 4, tokens: 4000}` covers one complete
+evaluation, including every task repetition and any grading overhead, not one
+trial. A generic evaluator's per-trial `max_usage` must fit within that allocation.
 Every result includes `usage: {calls, tokens}` with known nonnegative integers.
 The evaluator's total reported tokens must include all measured policy tokens
 and any grading overhead. Unknown usage stops the experiment; restarting does
-not grant a new allowance. Adapters must honor the remaining limits and use
+not grant a new allowance. Adapters must enforce allocated ceilings before
+making inference: bound input plus output tokens, retries, tool/agent calls
+and grading overhead, or refuse without inference. An output-token option alone
+does not cap total tokens. Declaring a number is not enforcement: the owner must
+verify the frozen adapter and provider actually implement the cap. A host lacking
+that capability must not be used. Returned cap violations preserve actual usage
+and stop the experiment without another operation or adoption; that check detects
+a broken trusted adapter, it does not make an uncapped one safe.
+
+Adapters must use
 the supplied `WIKI_IMPROVEMENT_CACHE` root for their state. Namespace trial
 memory and caches by split, task, repetition and candidate; never retain a task
 solution for another trial. This directory is separate for every candidate
 operation and repository.
+All model/role inputs must be frozen or supplied in the request. Disable ambient
+instructions, settings, hooks and persistent sessions; never fall back to an
+ordinary interactive host. Include any explicit settings in the frozen inputs.
 
 Proposal requests contain evolve results, history, context, component mappings
 and directives. Their response has this form:
@@ -191,8 +219,10 @@ usage stops that experiment with its evidence intact; it is not redrawn with
 a fresh budget. OS locks prevent concurrent operations. Held-out reveal ends
 search whether it passes or fails. Further tuning requires new unseen tasks.
 Handoff includes immutable commit and contract IDs plus the evidence location.
-Open the branch's PR through the normal workflow and use the app's existing
-review loop and final gate. Keep private trial content out of public PR bodies.
+Open the branch's PR through the normal workflow and use the current host's
+independent review loop and repository gate. An app-managed session uses its
+Review Loop control; an Orca-hosted session reuses its supplied native review cell.
+Keep private trial content out of public PR bodies.
 
 Records live under `raw/improvement/<scope>/<git-identity>/<experiment>/` on
 the host, outside the shared knowledge corpus. Git identity uses the canonical

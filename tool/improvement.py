@@ -34,6 +34,14 @@ class Refused(ValueError):
     """A boundary, measurement or persisted allowance cannot be established."""
 
 
+def usage_ceiling(value: object) -> dict:
+    """Validate an adapter's declared, provider-enforced usage upper bound."""
+    if not isinstance(value, dict) or set(value) != {"calls", "tokens"} or any(
+            type(value[k]) is not int or value[k] < 0 for k in value):
+        raise Refused("Declare a provider-enforced calls/tokens usage ceiling")
+    return value
+
+
 def digest(value: object) -> str:
     return hashlib.sha256(json.dumps(value, sort_keys=True, ensure_ascii=False,
                                      allow_nan=False).encode("utf-8")).hexdigest()
@@ -149,6 +157,13 @@ def contract(config: dict, source: Path) -> dict:
     if not finite(limits.get("seconds"), positive=True) or any(
             type(limits.get(k)) is not int or limits[k] <= 0 for k in ("calls", "tokens")):
         raise Refused("Submit positive finite time, call and token limits")
+    caps = config.get("caps")
+    if not isinstance(caps, dict) or set(caps) != {"propose", "critic", "evaluate"}:
+        raise Refused("Declare hard usage caps for propose, critic and evaluate")
+    for value in caps.values():
+        cap = usage_ceiling(value)
+        if any(cap[k] > limits[k] for k in cap):
+            raise Refused("An operation's usage ceiling exceeds the total allowance")
     tasks = config.get("tasks", {})
     for split in ("evolve", "held_out"):
         ids = tasks.get(split)
@@ -346,12 +361,13 @@ class Experiment:
         self.tick(state)
         cfg, used = state["contract"], state["spent"]
         remaining = {k: cfg["limits"][k] - used[k] for k in ("seconds", "calls", "tokens")}
-        if any(v <= 0 for v in remaining.values()):
-            state["stopped"] = "The experiment's persisted allowance is exhausted"
+        cap = cfg["caps"][stage]
+        if remaining["seconds"] <= 0 or any(remaining[k] < cap[k] for k in cap):
+            state["stopped"] = "The experiment's persisted allowance is exhausted for the next operation's ceiling"
             self.save(state)
             raise Refused(state["stopped"])
         payload = {**request, "scope": self.scope, "repo_key": self.key, "root": str(path),
-                   "model": cfg["model"], "limits": remaining}
+                   "model": cfg["model"], "limits": {"seconds": remaining["seconds"], **cap}}
         atomic(self.root / "records" / f"{artifact}-request.json", payload)
         state["active"] = {"stage": stage, "artifact": artifact, "started": time.time()}
         self.save(state)
@@ -371,6 +387,8 @@ class Experiment:
                 raise Refused("Adapter usage is missing or malformed; it is never charged as zero")
             used["calls"] += usage["calls"]
             used["tokens"] += usage["tokens"]
+            if any(usage[k] > cap[k] for k in cap):
+                raise Refused("Adapter violated its hard usage ceiling; retain evidence and replace the adapter")
             if code:
                 raise Refused(f"{stage} adapter failed; its process record was retained")
         except BaseException as exc:

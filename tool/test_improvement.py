@@ -78,6 +78,8 @@ def world(tmp_path):
               "stall_window": 1, "prune_window": 2, "delta": 0.01, "beta0": 0.1, "beta1": 1.0,
               "w_score": 1.0, "w_cost": 1.0, "w_novelty": 0.0,
               "limits": {"seconds": 60, "calls": 100, "tokens": 100_000},
+              "caps": {"propose": {"calls": 1, "tokens": 10}, "critic": {"calls": 1, "tokens": 10},
+                       "evaluate": {"calls": 1, "tokens": 40}},
               "tasks": {"evolve": ["evolve-a", "evolve-b"], "held_out": ["unseen-x", "unseen-y"]},
               "components": {"context_mgmt": ["setting.txt"], "config": ["eval/"]},
               "guards": ["integrity"], "protected": [], "controller_files": ["tasks.json"],
@@ -266,6 +268,11 @@ def test_context_is_frozen_from_the_owner_only(world):
     {"delta": -1}, {"edits_min": 3},
     {"tasks": {"evolve": ["same"], "held_out": ["same"]}},
     {"controller_files": []}, {"commands": {"propose": "python fake.py"}},
+    {"caps": {}},
+    {"caps": {"propose": {"calls": True, "tokens": 10},
+              "critic": {"calls": 1, "tokens": 10}, "evaluate": {"calls": 1, "tokens": 40}}},
+    {"caps": {"propose": {"calls": 101, "tokens": 10},
+              "critic": {"calls": 1, "tokens": 10}, "evaluate": {"calls": 1, "tokens": 40}}},
     {"components": {"memory": ["../other/"]}},
 ])
 def test_invalid_experiments_cannot_start(world, change):
@@ -325,32 +332,41 @@ def test_cli_status_is_read_only(world):
         improve.Experiment = original
 
 
-def test_native_roles_are_fresh_read_only_sessions_with_reported_usage(monkeypatch, tmp_path):
+@pytest.mark.parametrize("stage", ["propose", "critic"])
+def test_uncapped_native_roles_are_refused_without_opening_any_session(monkeypatch, tmp_path, stage):
+    import agent
     import improvement_host
-    from agent.chat_session import Event
 
-    sessions = []
+    def unexpected_session(*args, **kwargs):
+        pytest.fail("Unsupported native hosts must not load ambient instructions or persist a session")
 
-    class Host:
-        def __init__(self, path, **kwargs):
-            self.id = str(len(sessions))
-            self.kwargs, self.closed = kwargs, False
-            sessions.append(self)
+    monkeypatch.setattr(agent, "ChatSession", unexpected_session)
+    result = improvement_host.run({"stage": stage, "root": str(tmp_path),
+                                   "limits": {"seconds": 1, "calls": 1, "tokens": 1}}, "fixed-role-v1", "high")
+    assert "cannot enforce hard call/token ceilings" in result["error"]
+    assert result["usage"] == {"calls": 0, "tokens": 0}
+    assert list(tmp_path.iterdir()) == []
 
-        def say(self, text, halted):
-            request = json.loads(text)
-            value = {"edits": [], "patch": ""} if request["stage"] == "propose" else {"verdict": "accept", "reasons": []}
-            yield Event("done", json.dumps(value), {"tokens": {"in": 10, "out": 5}})
 
-        def close(self):
-            self.closed = True
+def test_insufficient_remaining_tokens_refuse_before_proposal_and_survive_restart(world):
+    exp = world.make(limits={"seconds": 60, "calls": 10, "tokens": 45})
+    baseline = json.loads((exp.root / "records/baseline-request.json").read_text(encoding="utf-8"))
+    assert baseline["limits"]["tokens"] == 40
+    with pytest.raises(Refused, match="exhausted"):
+        exp.round()
+    assert exp.read()["spent"]["tokens"] == 40
+    assert not (exp.root / "records/r0-c0-propose-request.json").exists()
+    resumed = Experiment(world.repo, "project", exp.name, hub=world.hub, store=world.tmp / "state")
+    with pytest.raises(Refused, match="exhausted"):
+        resumed.round()
 
-        def stop(self, halted):
-            halted.set()
 
-    monkeypatch.setattr(improvement_host, "ChatSession", Host)
-    results = [improvement_host.run({"stage": stage, "root": str(tmp_path), "limits": {"seconds": 1}},
-                                    "fixed-role-v1", "high") for stage in ("propose", "critic")]
-    assert results[0]["role_session"] != results[1]["role_session"]
-    assert all(result["usage"] == {"calls": 1, "tokens": 15} for result in results)
-    assert all(s.kwargs["tools"] == "Read,Glob,Grep" and s.closed for s in sessions)
+def test_adapter_cap_violation_is_recorded_and_permanently_stops_search(world):
+    caps = {**world.config["caps"], "propose": {"calls": 0, "tokens": 0}}
+    exp = world.make(caps=caps)
+    with pytest.raises(Refused, match="violated its hard usage ceiling"):
+        exp.round()
+    assert exp.read()["spent"]["tokens"] == 50
+    assert not (exp.root / "records/r0-c0-critic-request.json").exists()
+    with pytest.raises(Refused, match="violated its hard usage ceiling"):
+        exp.round()
