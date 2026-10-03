@@ -44,6 +44,14 @@ are separate from the program. They match the hub's rules against the
 utterance without the search daemon or Jev, so a rule reaches the host
 whatever retrieval or its audience scope does.
 
+[Self-improvement](self-improvement.md) has two separately owned scopes: the
+hub's harness and each connected repository's code and workflows. The explicit
+`tool/improve.py` runner compares candidate patches under a frozen evaluator,
+records their performance and cost, and prepares a local review branch after
+held-out validation. Operating records are namespaced by scope and canonical
+Git identity; project results never become shared rules automatically. Normal
+Stop hooks and conversations do not start experiments.
+
 Native hooks own SessionStart context, UserPromptSubmit injection, PreToolUse
 checks and Stop reconciliation. `host_boundary.py` redirects accidental legacy
 desktop commands to the application's workflow. Reinstall removes the old

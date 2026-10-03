@@ -61,7 +61,8 @@ def walk(root: Path, roots: list[str]) -> list[Path]:
                 path for path in sorted(base.rglob("*.md"))
                 if not SKIP_DIRS & set(path.parts)
             ]
-    return list(dict.fromkeys(found))
+    private = (root / "raw" / "improvement").resolve()
+    return [path for path in dict.fromkeys(found) if not path.resolve().is_relative_to(private)]
 
 
 def collect(root: Path, roots: list[str]) -> list[dict]:

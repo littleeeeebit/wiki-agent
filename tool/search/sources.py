@@ -95,7 +95,14 @@ def listing(hub: Path, project: Path | None) -> list[Path]:
     for folder in ("decisions", "modules", "memory"):
         mine += [p for p in sorted((project / ".wiki" / folder).glob("*.md")) if not p.name.endswith(".raw.md")]
     seen = {p.resolve() for p in files}
-    return files + [p for p in dict.fromkeys(mine) if p.resolve() not in seen]
+    candidates = files + [p for p in dict.fromkeys(mine) if p.resolve() not in seen]
+    private = (hub / "raw" / "improvement").resolve()
+    selected = project.resolve()
+    # A Git outage must not make another project's experimental checkout
+    # searchable through the hub's recursive fallback. An explicitly selected
+    # candidate may still evaluate its own documents inside this private area.
+    return [p for p in candidates if not p.resolve().is_relative_to(private)
+            or (selected.is_relative_to(private) and p.resolve().is_relative_to(selected))]
 
 
 def canonical_url(url: str) -> str:
