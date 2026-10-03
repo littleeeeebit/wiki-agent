@@ -4,8 +4,8 @@ param(
     [string]$LogDirectory = (Join-Path $env:LOCALAPPDATA 'wiki-hook-diagnostics')
 )
 
-# Orca가 재생성하는 명령·설정을 바꾸지 않고 실제 훅 프로세스를 관측한다.
-# CommandLine은 식별에만 쓰고 출력하지 않는다. stdin·환경·토큰은 읽지 않는다.
+# Observe native hook processes without changing their commands or settings.
+# Command lines identify hooks only; payloads and environment are never read.
 $ErrorActionPreference = 'Stop'
 $directoryHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes([IO.Path]::GetFullPath($LogDirectory).ToLowerInvariant())))
 $mutex = [Threading.Mutex]::new($false, "Local\WikiHookTimeoutObserver-$directoryHash")
@@ -32,7 +32,7 @@ try {
                     catch { continue }
                 }
                 if ($command -match 'watch_hook|Get-CimInstance|pytest| -c ') { continue }
-                if ($command -notmatch '[\\/](codex-hook\.cmd|codex_pretool\.py|inject\.py|session_state\.py|declared_continuation\.py|sync\.py)(?:[\x22\x27\s]|$)') { continue }
+                if ($command -notmatch '[\\/](hook\.py|host_boundary\.py|codex_pretool\.py|inject\.py|session_state\.py|declared_continuation\.py|sync\.py)(?:[\x22\x27\s]|$)') { continue }
                 $hook = $Matches[1]
                 $children = @($processes | Where-Object ParentProcessId -eq $process.ProcessId | ForEach-Object {
                     @{pid = $_.ProcessId; name = $_.Name; created_utc = $_.CreationDate.ToUniversalTime().ToString('o')}

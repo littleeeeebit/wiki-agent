@@ -6,8 +6,7 @@ checkout listing needs the same knowledge, so it stands on its own here rather
 than inside `census`, the report generator.
 
 **A checkout is not a repository.** `git worktree` gives one repository
-several, and on this machine most of them are Orca's, under
-`~/orca/workspaces/<repo>/<name>`. The leaf name is not an identifier — two
+several. The leaf name is not an identifier — two
 different repositories both had a worktree called `pollock` — so which
 repository a checkout belongs to is read out of git, and nothing here infers it
 from the shape of a path.
@@ -150,8 +149,7 @@ def checkout(path: Path) -> tuple[str, str, str]:
     above it, which is how a subdirectory stops being a separate entry.
     `--git-common-dir` is the main clone's `.git` seen from any worktree of it,
     which is the one thing that answers "the same repository" without a
-    registry to consult — and the registries disagree: `git worktree list`
-    covers only what this clone knows, Orca's covers the machine.
+    registry to consult. `git worktree list` describes this repository's checkouts.
 
     The order of the three is not cosmetic. `rev-parse` answers in argument
     order and stops at the first it cannot, so a clone with no commit yet
@@ -287,23 +285,10 @@ def claude_cwd(path: Path) -> Path | None:
 
 
 def codex_homes() -> list[Path]:
-    """Every session directory this machine's Codex could be writing into.
-
-    The default is `~/.codex`, and `CODEX_HOME` moves it. Orca sets that per
-    account, so every Codex cell launched from Orca writes under
-    `%APPDATA%/orca/codex-accounts/<id>/home` and none of it appears in the
-    default. A listing that reads only the default sees no session the person
-    actually runs, and says "no session" while one is running in front of
-    them — which is exactly what the old mirror did.
-    """
+    """Session directories in the default and explicitly selected Codex home."""
 
     roots = [Path(os.environ["CODEX_HOME"])] if os.environ.get("CODEX_HOME") else []
     roots.append(Path.home() / ".codex")
-    accounts = Path(
-        os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming"
-    ) / "orca" / "codex-accounts"
-    if accounts.is_dir():
-        roots += [account / "home" for account in accounts.iterdir() if account.is_dir()]
     found = [root / "sessions" for root in roots]
     return [path for path in dict.fromkeys(found) if path.is_dir()]
 

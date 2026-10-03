@@ -173,7 +173,7 @@ this wiki was built for. Skills are `operator` scope, so hanging them once in
 
 This mode merges into the target's `.codex/hooks.json` alone. The interpreter
 and the wiki path are decided at install time, so another machine installs
-again. Existing Claude settings and the Orca hooks in the user's `CODEX_HOME`
+again. Existing Claude settings and unrelated hooks in the user's `CODEX_HOME`
 are left alone. Codex's hooks feature and project trust have to be on, and
 after installing, the five new wiki hooks must be reviewed and trusted in
 `/hooks` before they run. The installer does not write the trust hash.

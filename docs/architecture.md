@@ -44,6 +44,26 @@ are separate from the program. They match the hub's rules against the
 utterance without the search daemon or Jev, so a rule reaches the host
 whatever retrieval or its audience scope does.
 
+Native hooks own SessionStart context, UserPromptSubmit injection, PreToolUse
+checks and Stop reconciliation. `host_boundary.py` redirects accidental legacy
+desktop commands to the application's workflow. Reinstall removes the old
+desktop hook bridge and this hub's retired keepalive commands while preserving
+unrelated hooks. The search daemon has no terminal transport or idle model turns.
+Managed sessions strip inherited desktop transport variables. Claude's automatic
+skill loading is disabled; Codex disables inherited skills whose instructions
+reference the retired desktop host using process-local `skills.config` overrides.
+The selected CLI login and unrelated Codex skills stay in their current home.
+
+A task PR published manually may precede `done-report`. The review-loop button
+matches that PR by exact task branch, verifies repository and checkout ownership,
+and attaches it to the existing specification through server-owned metadata.
+Requirements, revision, history and task identity survive. Busy or wrong-branch
+checkouts are refused before metadata changes; review still checks the real PR
+head and runs the repository gate.
+
+Observed causes, regression scope and real host-event evidence are recorded in
+[native host boundary and PR recovery](research/native-host-boundary.md).
+
 ## Processes and state
 
 | Process | Started by | State it owns |

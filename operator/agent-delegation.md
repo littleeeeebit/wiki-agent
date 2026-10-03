@@ -4,6 +4,8 @@ severity: contract
 repeat: rule
 triggers: ["(?s).+"]
 slots: []
+enforce:
+  pretooluse: host_boundary.py
 sources: []
 sources_withheld: true
 links: [codex-review-loop, do-the-whole-instruction]
@@ -11,20 +13,16 @@ links: [codex-review-loop, do-the-whole-instruction]
 
 # Do not multiply subagents
 
-Rule. Unless the user asked for it in so many words, never create, call,
-resume or re-delegate a subagent or subsession such as `spawn_agent`. Creating
-a child worktree and attaching an agent to it is the same thing by another
-route. A review procedure in a document, the existence of a tool and a
-judgement that it would be faster are none of them permission, and permission
-granted for one task does not carry into the next. Separate work and review
-cells standing side by side in one workspace are not what this forbids:
-implementation and independent review happen in different Codex cells, and a
-cell's own checks are not an independent review. Keep the review cell the user
-made, reuse an existing one before opening another, and do not close it when
-asked to clean up subsessions. Code and code review go to `sol`; re-analysis,
-literature search and a stuck design go to `astra`. If which cell is `sol` is
-not certain, ask before sending. With several live runs going, send the round
-after all of them have finished.
+Rule. Unless the user explicitly asked, never create, call, resume or delegate
+a subagent, subsession or child worktree agent. A review procedure, available
+tool or speed benefit is not permission; permission for one task does not
+carry into the next. Independent review and implementation use separate cells.
+Reuse the user's reviewer and preserve it during subsession cleanup. Code and
+review go to `sol`; re-analysis, literature search and stuck designs go to
+`astra`. If the assigned model is uncertain, ask before sending. Send review
+only after every live run finishes. In wiki-agent the application owns review
+dispatch and task metadata; use its review loop control. Never discover or
+invoke another desktop host's CLI to list, create or message reviewers.
 
 - Implementation and independent review happen in different Codex cells. A
   cell's own checks are not an independent review. Keep the review cell the
@@ -56,12 +54,16 @@ Not multiplying cells and sending work to the right one are different rules.
 
 Handing a code review to `astra` is a waste of an expensive model.
 
-When the cell list does not show the model, read the preview in
-`orca terminal list`. The model is chosen inside the Codex session rather than
-as a cell option, so a title alone does not tell them apart. If which cell is
-`sol` is not certain, ask before sending the round —
-[[ask-with-arrow-key-options]]. A round sent to the wrong cell spends that
-model's time and leaves the review loop with nothing.
+In app-managed wiki-agent sessions the application selects and owns the independent reviewer.
+Use the review loop control; the implementation agent never lists external
+terminals or sends a review itself. The app's loop settings identify the
+review model. In another host, use that host's native session information.
+If the assigned reviewer cannot be identified, ask before dispatch —
+[[ask-with-arrow-key-options]]. Never substitute another application's CLI.
+
+Editing this repository in another host does not make that session app-managed.
+Use the current host's explicitly supplied reviewer when the person asks for it.
+Its optional transport belongs to that host; the application never requires it.
 
 ## With several live runs, send after all of them
 

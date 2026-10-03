@@ -12,7 +12,6 @@ from __future__ import annotations
 import hook_diagnostics  # noqa: F401
 import argparse
 import json
-import os
 import re
 import sys
 import time
@@ -175,18 +174,6 @@ def main() -> int:
     if not prompt:
         return 0
     session = str(payload.get("session_id") or "")
-    # Keep-alive, before anything slow: the daemon's ping turn carries nothing
-    # and is recorded nowhere, and any other turn's `/busy` goes out on a
-    # thread while this translates. Imported only where it can apply, so
-    # every other turn runs as before.
-    busy = None
-    if args.host == "claude" and os.environ.get("ORCA_TERMINAL_HANDLE"):
-        import keepalive
-
-        pinged, busy = keepalive.on_prompt(prompt, args.host, args.project, session)
-        if pinged:
-            return 0
-
     # Triggers are matched on the Korean the person typed, then the bodies are
     # translated, then everything downstream measures the English that will
     # actually go out. One deadline covers this and the utterance rendering,
@@ -280,9 +267,6 @@ def main() -> int:
         # stderr write under a cp949 console, which is how the report of a
         # failure became a second failure.
         print(f"trajectory skipped: {failed}", file=sys.stderr)
-    if busy is not None:
-        # Bounded by its own retry; usually done long before the translation.
-        busy.join()
     return 0
 
 
@@ -295,4 +279,3 @@ if __name__ == "__main__":
         print(f"hook skipped: {type(_error).__name__}", file=sys.stderr)
         _code = 0
     raise SystemExit(_code)
-

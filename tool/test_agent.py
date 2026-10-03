@@ -169,7 +169,7 @@ def test_a_read_session_refuses_without_asking(tmp_path):
 def test_codex_write_runs_app_server_and_answers_by_id(tree):
     session = ChatSession(tree, model="codex:test-model", write=True)
     command, events = run(session, CODEX, tree, lambda e: session.answer(e.meta["id"], True))
-    assert command == ["codex", "app-server", "--enable", "default_mode_request_user_input"]
+    assert command[:4] == ["codex", "app-server", "--enable", "default_mode_request_user_input"]
     approvals = [e for e in events if e.kind == "approval"]
     # the command ran in a cwd outside the worktree: declined unasked
     assert [(e.meta["id"], e.meta["tool"], e.meta.get("by")) for e in approvals] == [

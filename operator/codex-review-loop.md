@@ -9,22 +9,20 @@ sources_withheld: true
 links: [pick-up-async-results, ask-with-arrow-key-options, agent-delegation, gate-the-exit-not-the-callers, measure-after-the-last-change, verify-narrow-then-wide, cloud-local-review]
 ---
 
-# The Codex review loop — files carry it, the terminal is a doorbell
+# The Codex review loop — the application owns dispatch
 
-Rule. Reviews pass through files, one round at a time with the skill
-`review-loop`. The reviewer is the session already assigned; a request for an
-independent review does not widen into spawning another implementation agent
-— [[agent-delegation]]. The instruction goes in
-`{review_dir}/<topic>-round-<n>.md`, and the terminal receives one sentence:
-`'read that file and review it'`. The reviewer writes the result to
-`<topic>-round-<n>-result.md`. Do not scrape the result off the terminal. Arm
-the watch before sending, and do not end the turn between the two —
-[[pick-up-async-results]]. Every round runs only the tests its fixes touch,
-carries the live run's result where there is one (`{live_cmd}`), and is
-committed and pushed; the offline gate `{gate_cmd}` runs once, after the
-result says `머지 허용`, before the merge — [[verify-narrow-then-wide]].
-Where the skill is not installed, its steps are in the hub wiki's
-`skills/review-loop/SKILL.md`.
+Rule. Use `review-loop`. In app-managed wiki-agent sessions, the review loop control asks the server
+to attach an existing task PR, write instructions, dispatch its independent
+reviewer and persist the result. The implementation agent never edits raw
+metadata or contacts an external terminal. Review authorization does not
+permit another implementation agent — [[agent-delegation]]. In a host that
+explicitly supplies a manual review cell, write
+`{review_dir}/<topic>-round-<n>.md`, arm the result watch, then send one native
+instruction to read it. Read `<topic>-round-<n>-result.md`, not terminal output
+— [[pick-up-async-results]]. Repair rounds run scoped checks and carry actual
+live evidence (`{live_cmd}`). Commit and push the fixes. After `머지 허용`,
+run `{gate_cmd}` once on that head before a requested merge —
+[[verify-narrow-then-wide]]. The procedure is in `skills/review-loop/SKILL.md`.
 
 Cloud implementations additionally follow [[cloud-local-review]]: a separate
 local reviewer checks actual API/browser evidence, and failures return to

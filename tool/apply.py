@@ -39,10 +39,34 @@ HOOK_MARK = "inject.py"
 SESSION_MARK = "session_state.py"
 SYNC_MARK = "sync.py"
 CONTINUATION_MARK = "declared_continuation.py"
-KEEPALIVE_MARK = "keepalive.py"
 # Every script this wiki wires by name, besides the pages' `enforce.pretooluse`.
-OWNED = (HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK, KEEPALIVE_MARK,
-         "codex_pretool.py", "deny.py")
+OWNED = (HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK, "keepalive.py",
+         "codex_pretool.py", "host_boundary.py", "deny.py")
+
+# Recognize the retired bridge by its executable/script, never by an
+# account-home path: CODEX_HOME still holds the selected CLI login.
+BRIDGE = re.compile(r"[\\/]\.orca[\\/]agent-hooks[\\/]", re.I)
+
+
+def transport(command: str) -> bool:
+    """Recognize an invoked transport, rather than transport words in arguments."""
+    command = re.sub(r"^\s*(?:cmd(?:\.exe)?\s+/c|(?:pwsh|powershell)(?:\.exe)?\s+-Command)\s+",
+                     "", command, flags=re.I)
+    token = r'''\s*&?\s*(?:"([^"]+)"|'([^']+)'|([^\s"']+))'''
+    first = re.match(token, command)
+    if not first:
+        return False
+    executable = next(value for value in first.groups() if value is not None)
+    name = Path(executable.replace("\\", "/")).name.lower()
+    if BRIDGE.search(executable) or name in {"orca", "orca.exe", "orca.cmd", "orca.ps1"}:
+        return True
+    if not re.fullmatch(r"(?:python[\d.]*|py|node|bash|sh)(?:\.exe)?", name):
+        return False
+    # Only the immediate positional argument of a script launcher is a script.
+    # A quoted executable's --watch value, or Python's -c body, is data.
+    second = re.match(token, command[first.end():])
+    script = next((value for value in second.groups() if value is not None), "") if second else ""
+    return bool(not script.startswith("-") and BRIDGE.search(script))
 
 # The quoted arguments of a hook command. Our own writer emits
 # `"<python>" "<wiki>/tool/<script>"`, optionally behind `& ` for PowerShell
@@ -293,31 +317,6 @@ def continuation_entry(python: str) -> dict:
     }
 
 
-def keepalive_entry(python: str, project: str) -> dict:
-    """Claude only, on `SessionStart`, `Stop` and `SessionEnd` — one command,
-    the event read from the payload. It does nothing unless the repository
-    set `keep_alive`, so wiring it everywhere costs one Python start.
-
-    A per-project install names the host itself; through `hook.py` the
-    dispatcher adds it. The checkout is left to `keepalive.py`, which reads
-    it off the payload's `cwd` — a fixed path here would be the main clone's
-    in every worktree (review round 1)."""
-
-    return {
-        "hooks": [
-            {
-                "type": "command",
-                "command": (
-                    f'"{python}" "{(HERE / KEEPALIVE_MARK).as_posix()}"'
-                    + (f' --project "{project}" --host claude' if project else "")
-                ),
-                "timeout": 10,
-                "statusMessage": "위키: keep-alive",
-            }
-        ]
-    }
-
-
 def script_entry(python: str, script: str, status: str) -> dict:
     return {
         "hooks": [
@@ -444,10 +443,8 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
     hook going through `hook.py`.
     """
     where = project.as_posix() if project else ""
-    # `inject.py` judges keep-alive — and the host's ceiling — by `--host`.
-    # Through `hook.py` the dispatcher adds it; a per-project Claude command
-    # says it itself, or its `/busy` never goes out while `keepalive.py`'s
-    # `/idle` does. Codex's per-project command is left as it was.
+    # The dispatcher supplies the host for global hooks; a per-project
+    # command supplies it directly for the host-specific output ceiling.
     host = agent if project else ""
     wrap = (lambda entry: dispatched(entry, agent)) if project is None else (lambda entry: entry)
     denies, scripts = declared()
@@ -491,9 +488,19 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
             wrap(sync_entry(python, where)),
             wrap(continuation_entry(python)),
         )
-        for event in ("SessionStart", "Stop", "SessionEnd"):
-            changes += put_hook(settings, event, KEEPALIVE_MARK, wrap(keepalive_entry(python, where)))
-
+    # Native wiring and terminal transport removal are applied together so
+    # an upgrade cannot leave a missing script in a host event.
+    for event, groups in settings.get("hooks", {}).items():
+        for group in list(groups):
+            before = group.get("hooks", [])
+            kept = [h for h in before if not runs(str(h.get("command", "")), "keepalive.py")
+                    and not (project is not None and any(transport(str(h.get(key, "")))
+                                for key in ("command", "commandWindows", "command_windows")))]
+            if len(kept) != len(before):
+                group["hooks"] = kept
+                changes.append(f"{event} 옛 데스크톱 전송 훅 제거")
+                if not kept:
+                    groups.remove(group)
     return changes
 
 
@@ -518,9 +525,8 @@ _HOME = os.environ.get("WIKI_USER_HOME")
 def user_files(agent: str) -> list[Path]:
     """Every user-level settings file the host may start from on this machine.
 
-    Claude has one. Codex has one per `CODEX_HOME`, and Orca gives each Codex
-    account its own home under `%APPDATA%/orca/codex-accounts/` — a session
-    Orca opens never reads `~/.codex` at all.
+    Claude uses its default settings. Codex uses the default home and an
+    explicitly selected `CODEX_HOME`; no other application's accounts are scanned.
     """
 
     home = Path(_HOME or Path.home())
@@ -530,8 +536,6 @@ def user_files(agent: str) -> list[Path]:
     if not _HOME:
         if os.environ.get("CODEX_HOME"):
             homes.append(Path(os.environ["CODEX_HOME"]))
-        orca = Path(os.environ.get("APPDATA") or home / "AppData/Roaming") / "orca/codex-accounts"
-        homes += sorted(orca.glob("*/home"))
     seen: dict[str, Path] = {}
     for path in homes:
         if path.is_dir() or path == home / ".codex":

@@ -618,25 +618,8 @@ IDLE = 60  # Minutes. Past this the prompt cache (one hour) has gone cold
 LENGTHS = ((1, 4), (5, 19), (20, None))
 
 
-def orca(path: str) -> bool:
-    """Is this Orca's `~/orca/workspaces/<repo>` folder, which holds worktrees?"""
-    return Path(path).parent.name == "workspaces" and Path(path).parent.parent.name == "orca"
-
-
 def repo_of(cwd: str | None, cache: dict) -> str | None:
-    """The repository a session ran in, as its main clone's path, or `None`.
-
-    Git's answer for the nearest directory still on disk. A path, not a name:
-    two clones called the same are two repositories. A deleted Orca worktree
-    leaves `~/orca/workspaces/<repo>/`, which git does not answer for; any
-    worktree still standing beside it does, and names the same clone. With
-    none standing, that folder is the answer and keeps a row of its own —
-    its name does not prove which clone it belonged to. A session outside
-    any repository — a scratchpad, a tool's model call in a temporary folder —
-    is not anyone's work on a repository.
-
-    ponytail: a deleted worktree outside Orca's layout comes back `None`.
-    """
+    """Git identity of the nearest existing directory; never infer from a layout."""
 
     if not cwd:
         return None
@@ -644,23 +627,14 @@ def repo_of(cwd: str | None, cache: dict) -> str | None:
         here = Path(cwd)
         alive = next((p for p in (here, *here.parents) if p.is_dir()), None)
         _top, repo, _branch = checkout(alive) if alive else ("", "", "")
-        if not repo and alive is not None and alive != here and orca(str(alive)):
-            repo = next((found for sibling in sorted(alive.iterdir()) if sibling.is_dir()
-                         for _t, found, _b in [checkout(sibling)] if found), str(alive))
         cache[cwd] = repo or None
     return cache[cwd]
 
 
 def shown(repos: set[str]) -> dict[str, str]:
-    """`repo → what the table prints`: the name, unless two clones share it.
-
-    An Orca folder standing in for its deleted worktrees keeps a row of its
-    own, labelled. A name does not prove which clone it was a worktree of.
-    """
-
-    names = Counter(Path(r).name for r in repos if not orca(r))
-    return {r: f"{Path(r).name} (지워진 Orca 작업트리)" if orca(r)
-            else Path(r).name if names[Path(r).name] == 1 else r for r in repos}
+    """Use clone names when unique, full paths when names collide."""
+    names = Counter(Path(r).name for r in repos)
+    return {r: Path(r).name if names[Path(r).name] == 1 else r for r in repos}
 
 
 def usage(argv: list[str]) -> int:

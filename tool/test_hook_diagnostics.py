@@ -7,7 +7,6 @@ import subprocess
 import sys
 import time
 
-import pytest
 
 # This file does not print anything itself. The encoding is pinned anyway:
 # `lint.py`'s check looks at every `tool/*.py` without exception, and that
@@ -59,54 +58,6 @@ def test_timeout_evidence_survives_process_kill(tmp_path):
     )
     assert (normal.returncode, normal.stdout, normal.stderr) == (0, "unchanged\n", "")
     assert not list(tmp_path.rglob("*.log"))
-
-
-@pytest.mark.skipif(os.name != "nt", reason="설치된 Windows Orca 훅 통합 검사")
-def test_orca_stalled_endpoint_leaves_process_evidence_without_payload(tmp_path):
-    hook = Path.home() / ".orca" / "agent-hooks" / "codex-hook.cmd"
-    if not hook.exists():
-        pytest.skip("Orca 훅 미설치")
-    endpoint = tmp_path / "endpoint.cmd"
-    endpoint.write_text(
-        f'@"{sys.executable}" -c "import time; time.sleep(30)"\n', encoding="utf-8",
-    )
-    env = {**os.environ, "LOCALAPPDATA": str(tmp_path),
-           "ORCA_AGENT_HOOK_ENDPOINT": str(endpoint), "ORCA_AGENT_HOOK_PORT": ""}
-    process = subprocess.Popen(
-        ["cmd.exe", "/d", "/c", str(hook)], stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
-    )
-    observer = subprocess.Popen([
-        "pwsh", "-NoProfile", "-File", str(TOOL / "watch_hook_timeouts.ps1"),
-        "-ThresholdSeconds", "0.2", "-DurationSeconds", "2", "-LogDirectory", str(tmp_path),
-    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    try:
-        process.stdin.write(b'{"prompt":"PRIVATE_SENTINEL"}')
-        process.stdin.flush()
-        deadline = time.monotonic() + 6
-        evidence = ""
-        while time.monotonic() < deadline:
-            logs = list(tmp_path.glob("process-*.log"))
-            evidence = "\n".join(p.read_text(encoding="utf-8") for p in logs)
-            if '"hook":"codex-hook.cmd"' in evidence:
-                break
-            time.sleep(0.05)
-        assert '"hook":"codex-hook.cmd"' in evidence
-        assert "PRIVATE_SENTINEL" not in evidence
-    finally:
-        subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                       capture_output=True, timeout=10)
-        process.communicate(timeout=5)
-        stdout, stderr = observer.communicate(timeout=10)
-        assert (observer.returncode, stdout, stderr) == (0, b"", b"")
-    assert logs[0].exists()
-    logs[0].unlink()
-    env["ORCA_AGENT_HOOK_ENDPOINT"] = ""
-    normal = subprocess.run(
-        ["cmd.exe", "/d", "/c", str(hook)], input=b"private input",
-        capture_output=True, env=env, timeout=5,
-    )
-    assert (normal.returncode, normal.stdout, normal.stderr) == (0, b"", b"")
 
 
 def test_installed_pretool_records_blocked_stdin_without_content(tmp_path):

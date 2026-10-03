@@ -46,12 +46,7 @@ def rollout(day: Path, name: str, cwd: Path) -> Path:
 
 
 def test_codex_sessions_are_not_only_under_the_default_home(tmp_path, monkeypatch):
-    """Orca gives every Codex cell its own `CODEX_HOME`, per account.
-
-    Reading only `~/.codex/sessions` found none of the sessions the person
-    actually runs, and the mirror said "no session" while one was running in
-    front of them. Measured, with a live cell open.
-    """
+    """Use only the explicitly selected and default account homes."""
 
     default = tmp_path / "home" / ".codex"
     account = tmp_path / "roaming" / "orca" / "codex-accounts" / "acc-1" / "home"
@@ -67,7 +62,7 @@ def test_codex_sessions_are_not_only_under_the_default_home(tmp_path, monkeypatc
 
     assert moved / "sessions" in found          # CODEX_HOME wins, and comes first
     assert default / "sessions" in found        # the default is still read
-    assert account / "sessions" in found        # and so is every Orca account
+    assert account / "sessions" not in found   # other applications' accounts are private
     assert found[0] == moved / "sessions"
     assert len(found) == len(set(found))        # a home named twice is read once
 

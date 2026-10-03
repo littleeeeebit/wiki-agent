@@ -32,6 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from common import worktree_home
+from common.host import INSTRUCTIONS, environment, skill_config
 
 from .chat_local import cli_command, codex_usage, quota_windows
 from . import read_tools
@@ -99,7 +100,7 @@ class Event:
 def our_worktree(repo: Path) -> bool:
     """Is `repo` the top of a worktree in `worktree_home` of its own repository?
 
-    Not just any `git worktree`: Orca and `claude -w` make those too, and they
+    Not just any `git worktree`: other tools make those too, and they
     are somebody's work. The original checkout never passes — it is not inside
     its own `-worktrees` folder.
     """
@@ -159,7 +160,7 @@ class ChatSession:
         # The CLI's login is whatever its environment points at (`CODEX_HOME`,
         # Claude's config). Held from here, so a restart or a `--resume` goes
         # on as the same account even if the server's environment changed.
-        self._env = {**os.environ, **(env or {})}
+        self._env = environment(env)
         if self.verification is not None:
             # Keep routine tool caches and transient output out of the reviewed source.
             temporary = self.verification / "tmp"
@@ -172,6 +173,8 @@ class ChatSession:
         # model reads the introduction and starts going through files. A
         # system prompt costs no turn and applies from the first utterance.
         self.system = system.strip()
+        if not isolated:
+            self.system += "\n" + INSTRUCTIONS
         if write:
             self.system += (
                 "\nWhen asking the person, use AskUserQuestion (Claude) or request_user_input (Codex). "
@@ -302,6 +305,10 @@ class ChatSession:
             # kept; only the settings, hooks and tools are isolated.
             cmd += ["--setting-sources", "", "--settings", '{"disableAllHooks":true}',
                     "--strict-mcp-config", "--no-session-persistence"]
+        else:
+            # Shared user skills can carry the previous desktop host's routing
+            # instructions. Native hooks and the app's prompts own this workflow.
+            cmd += ["--disable-slash-commands"]
         if self.system:
             cmd += ["--system-prompt" if self.isolated else "--append-system-prompt", self.system]
         if self.model:
@@ -333,6 +340,9 @@ class ChatSession:
                 # exposes only the tools above, not a native shell or filesystem.
                 cmd += ["--enable", "code_mode_host"]
             self.model_name = self.model.removeprefix("codex:")
+            skills = skill_config(self.repo, self._env)
+            if skills:
+                cmd += ["-c", skills]
         elif self.is_codex:
             cmd = ["codex", "exec", "--model", self.model.removeprefix("codex:"),
                    "--json", "--sandbox", "read-only",
