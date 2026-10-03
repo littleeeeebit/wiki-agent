@@ -260,6 +260,50 @@ def test_shared_checkout_after_merge_updates_base_for_the_next_task(repo, tmp_pa
             assert not (original / "second.txt").exists()
 
 
+@pytest.mark.parametrize("base_state", ["ahead", "diverged", "missing upstream", "wrong upstream"])
+def test_reopened_merged_task_refuses_an_unverified_sibling_base(repo, tmp_path, base_state):
+    original = repo
+    git(original, "init", "--bare", "-q", str(tmp_path / "origin.git"))
+    git(original, "remote", "add", "origin", str(tmp_path / "origin.git"))
+    git(original, "push", "-qu", "origin", "main")
+    repo = tmp_path / "selected" / original.name
+    git(original, "worktree", "add", "-qb", "selected", str(repo))
+    (repo / ".wiki").mkdir()
+    (repo / ".wiki/adapter.toml").write_bytes((original / ".wiki/adapter.toml").read_bytes())
+    web = client()
+    Worker.replies = ["Working"]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "current_repo", return_value=repo):
+        sid = made(repo, spec_block())[0]["id"]
+        started(web, sid)
+        (repo / "merged.txt").write_text("merged task\n", encoding="utf-8")
+        git(repo, "add", "merged.txt")
+        git(repo, "commit", "-qm", "merged task")
+        head = git(repo, "rev-parse", "HEAD")
+        git(repo, "push", "-q", "origin", "HEAD:main")
+        if base_state == "ahead":
+            git(original, "merge", "--ff-only", "origin/main")
+        if base_state in {"ahead", "diverged"}:
+            (original / "sibling-only.txt").write_text("unpublished user work\n", encoding="utf-8")
+            git(original, "add", "sibling-only.txt")
+            git(original, "commit", "-qm", "sibling work")
+        elif base_state == "missing upstream":
+            git(original, "branch", "--unset-upstream", "main")
+        else:
+            git(original, "push", "-q", "origin", "main:other")
+            git(original, "branch", "--set-upstream-to=origin/other", "main")
+        specs.update(repo.name, sid, state="머지됨", merge={"base": "main", "head": head})
+        refs = git(repo, "show-ref", "--heads")
+        second = made(repo, spec_block(slug="second"))[0]["id"]
+        response = web.post(f"/api/specs/{second}/start", json={})
+        assert response.status_code == 409, response.text
+        assert git(repo, "show-ref", "--heads") == refs
+        assert git(repo, "branch", "--show-current") == sid
+        assert specs.load(repo.name, second)["state"] == "정리됨"
+        assert git(original, "branch", "--show-current") == "main"
+        if base_state in {"ahead", "diverged"}:
+            assert (original / "sibling-only.txt").read_text(encoding="utf-8") == "unpublished user work\n"
+
+
 @pytest.mark.parametrize("blocked", ["dirty", "busy", "unrelated"])
 def test_merge_return_does_not_interrupt_user_work(repo, blocked):
     git(repo, "switch", "-c", "task")

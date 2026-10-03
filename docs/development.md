@@ -104,6 +104,9 @@ This creates only a Git ref, not a checkout. It never moves the sibling's base
 ref or files. Survey handover validates this branch's actual upstream base and
 repository too. New tasks may use a fetched fast-forward of their saved base
 without changing an occupied branch.
+Starting from a reopened merged task refuses an ahead or divergent saved base,
+or an unverified upstream, before creating any branch. Resolve that history
+explicitly; unpublished sibling work is never silently imported into the task.
 The server retains gate execution, PR recovery and independent review.
 An idle task's requirements can be edited in its spec panel. During a turn,
 later instructions can be recorded through a `spec-update` block before the

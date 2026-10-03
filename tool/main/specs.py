@@ -201,15 +201,22 @@ def fork(repo: Path, sid: str) -> tuple[Path, str, str]:
     branch = sh(["git", "branch", "--show-current"], repo).stdout.strip()
     base = (parent.get("return_branch") or (parent.get("pr") or {}).get("base")) \
         if parent and parent.get("workspace_mode") == "branch" else branch
-    if parent and parent.get("workspace_mode") == "branch" and parent.get("merge"):
-        base = parent["merge"]["base"]
+    merged = parent.get("merge") if parent and parent.get("workspace_mode") == "branch" else None
+    if merged:
+        base = merged["base"]
     source = base or ""
     if source:
         upstream = sh(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name",
                        f"{source}@{{upstream}}"], repo)
-        if not upstream.returncode and not sh(["git", "merge-base", "--is-ancestor",
-                                              f"refs/heads/{source}", upstream.stdout.strip()], repo).returncode:
-            source = upstream.stdout.strip()  # A fast-forward, without moving a sibling's checked-out ref.
+        if merged and (upstream.returncode or upstream.stdout.strip() != f"origin/{base}"):
+            raise RuntimeError(f"`{base}` 의 upstream 을 확인한 뒤 새 작업을 시작해라")
+        if not upstream.returncode:
+            ancestry = sh(["git", "merge-base", "--is-ancestor", f"refs/heads/{source}",
+                           upstream.stdout.strip()], repo)
+            if merged and ancestry.returncode:
+                raise RuntimeError(f"`{base}` 의 미게시 변경·분기를 해결한 뒤 새 작업을 시작해라")
+            if not ancestry.returncode:
+                source = upstream.stdout.strip()  # A fast-forward, without moving a sibling's checked-out ref.
     path = create(repo, sid, base=source)
     return path, sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), base or branch
 
