@@ -58,16 +58,21 @@ protection, prerequisites and device acceptance are in the same mobile guide.
 
 The agent pane reads `GET /api/work/diff?path=…` every second during a turn
 and every five seconds while idle. It includes staged, unstaged and untracked
-files without changing the index. The panel stays above the conversation, with
-added/deleted lines and file counts. A task's base persists across turns,
+files without changing the index. The collapsed panel replaces the right-side
+specification summary above the task tabs, with added/deleted lines and file
+counts. Its position is independent of transcript scrolling and the selected
+tab. A task's base persists across turns,
 commits and restarts; its current merge base excludes integrated upstream changes.
 Git supplies totals independently of the capped preview. Binary files and unread
 symlink targets are identified without claiming text line counts. Questions in
 Agent, Next Task and Planner share chapter cards, Markdown examples and the
 Korean overlay; submissions retain original option labels.
 
-`GET /api/providers/{claude|codex}/usage?path=…` reports connection preparation
-time, tokens and quota/reset fields supplied by the provider. Codex reads its
+`GET /api/providers/{claude|codex}/usage?path=…` reports tokens and provider
+status for the task model row. `GET /api/providers/usage` gathers account limits
+from work, conversation and review sessions for the rail footer. Each provider's
+quota windows are displayed separately, with only the reset date and time.
+Codex reads its
 public account quota through app-server, cached for one minute; Claude uses
 its rate-limit stream events. Missing account fields are shown as unavailable.
 The response's `provider` names the attached session even if the next-turn
@@ -117,8 +122,31 @@ review approval; the next agent turn receives the current spec.
 Markdown file links, including absolute paths and line numbers, open the
 source drawer. HTTP/HTTPS links use the system browser in the Tauri window;
 normal browser tabs keep their native link behavior.
-`python web/tests/task_browser.py` checks diff visibility after a long transcript,
-file citation destinations and desktop/browser link dispatch using synthetic data.
+`python web/tests/task_browser.py` checks fixed diff visibility across scrolling
+and tabs, translated specification reading and original editing, all CLI quota
+windows, task tokens, native notification dispatch, compaction progress and
+deletion across reload, plus file citations and link dispatch using synthetic data.
+
+The right-side specification summary is hidden; requirements and planning
+controls remain in Next Task. Its selected task card also appears when the
+original specification message is outside the loaded conversation. Generated
+goal, exclusions, completion conditions and decisions use the Korean overlay;
+editing and submitting preserve the originals.
+
+Task deletion uses `POST /api/specs/{sid}/delete`. It stops that task and archives
+its specification in `raw/specs/<repo>/dropped/`. A shared repository, its branch
+and uncommitted changes remain. Archived tasks stay hidden after restart, and a
+late save from a deleted task cannot restore it or overwrite a new task with the
+same name. Legacy worktree deletion retains its existing cleanup behavior.
+
+Questions, execution completion/failure and conversation completion/failure emit
+identifier-only notice events on the shared feed. Desktop delivery explicitly
+uses Tauri's notification plugin, including permission checks; browsers use their
+notification permission and service worker when available. Settings offers an
+alert test and permission guidance. Codex compaction items and Claude status/
+boundary events show start/end steps, retain them on replay and show an agent
+banner while compaction runs. Browser checks cover native IPC dispatch with a
+stub, not Windows notification-center delivery or a real model's compaction.
 
 The native privacy regression uses Playwright/CDP and a separate fixture app,
 not desktop control. With Playwright already available, run

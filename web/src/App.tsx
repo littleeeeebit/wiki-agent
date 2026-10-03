@@ -11,7 +11,7 @@ import { Projects } from '@/components/Projects'
 import { RepoMap } from '@/components/RepoMap'
 import { Review } from '@/components/Review'
 import { Settings } from '@/components/Settings'
-import { SpecSummary } from '@/components/SpecSummary'
+import { LiveChanges } from '@/components/LiveChanges'
 import { TaskRail } from '@/components/TaskRail'
 import type { View } from '@/components/TaskRail'
 import { Terminal, closed } from '@/components/Terminal'
@@ -20,6 +20,7 @@ import type { Channel, LoopRow, LoopSettings, Options, Peek as PeekData, Pr, Run
 import { LOOPING, elsewhere, phase, tasks as taskList } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { useWork } from '@/lib/work'
+import { notify, requestNotifications } from '@/lib/notifications'
 
 type Theme = 'dark' | 'light'
 type Tab = 'agent' | 'review' | 'terminal'
@@ -34,17 +35,6 @@ const TABS: { id: Tab; label: string }[] = [{ id: 'agent', label: '에이전트'
 const TONE: Record<string, string> = {
   draft: 'text-st-draft', work: 'text-st-work', review: 'text-st-review', ready: 'text-st-ready',
   queued: 'text-st-queued', stop: 'text-st-stop', done: 'text-faint', none: 'text-faint',
-}
-
-/** An OS notification, only while the window is not in front. Without the
- *  person's leave the rail's mark is all there is. */
-function notify(title: string, body: string) {
-  if (document.hasFocus() || !('Notification' in window) || Notification.permission !== 'granted') return
-  try {
-    new Notification(title, { body })
-  } catch {
-    // A webview without notifications: the rail still shows it.
-  }
 }
 
 function stored<T extends string>(key: string, fallback: T): T {
@@ -62,6 +52,16 @@ export default function App() {
   const [channels, setChannels] = useState<Channel[]>([])
   const [options, setOptions] = useState<Options | null>(null)
   const [fault, setFault] = useState('')
+  useEffect(() => {
+    const request = () => { void requestNotifications().catch((err) => setFault(`알림 연결 실패 · ${err}`)) }
+    const failed = (event: Event) => setFault(`알림 전송 실패 · ${(event as CustomEvent<string>).detail}`)
+    window.addEventListener('pointerdown', request, { once: true })
+    window.addEventListener('notification-failed', failed)
+    return () => {
+      window.removeEventListener('pointerdown', request)
+      window.removeEventListener('notification-failed', failed)
+    }
+  }, [])
   const [sw, setSw] = useState<Switch | null>(null)
   const [rows, setRows] = useState<Worktree[]>([])
   const [specs, setSpecs] = useState<Spec[]>([])
@@ -239,6 +239,7 @@ export default function App() {
   // server-started turn attaches to it, and a loop that comes to wait on an
   // approval, or a merge into an unreviewed base, notifies once.
   const feedCursor = useRef<number | undefined>(undefined)
+  const notified = useRef(new Set<string>())
   const [feedEpoch, setFeedEpoch] = useState(0)
   useEffect(() => {
     const reconnect = () => setFeedEpoch((n) => n + 1)
@@ -272,6 +273,14 @@ export default function App() {
     }
     const on = (ev: api.FeedEv) => {
       feedCursor.current = ev.seq
+      if (ev.kind === 'notice') {
+        const key = `${ev.ts}:${ev.seq}`
+        if (!notified.current.has(key) && Date.now() / 1000 - ev.ts < 120) {
+          notified.current.add(key)
+          void notify(ev.title, ev.body)
+        }
+        return
+      }
       if (ev.kind === 'conversation') {
         window.dispatchEvent(new CustomEvent('conversation-changed', { detail: ev.cid }))
         api.getChannels().then(accept).catch(() => {})
@@ -307,6 +316,8 @@ export default function App() {
       seen.set(key, ev)
       const name = `${ev.repo} · ${ev.id}${ev.pr ? ` #${ev.pr}` : ''}`
       if (ev.waiting && !before?.waiting && LOOPING.test(ev.state)) notify('리뷰 루프가 승인을 기다린다', name)
+      if (ev.state !== before?.state && ev.state === '머지 가능') void notify('리뷰 완료 · 머지 가능', name)
+      if (ev.state !== before?.state && ev.state === '멈춤') void notify('작업이 멈췄다', `${name} · ${ev.stopped?.reason ?? ''}`)
       if (ev.stopped?.reason === '검토하지 않은 base 에 머지됨' && before?.state !== '멈춤') {
         notify('검토하지 않은 base 에 머지됐다', name)
       }
@@ -448,6 +459,24 @@ export default function App() {
   const remove = useCallback(async (target: string, force = false) => {
     setFault('')
     try {
+      if (target.startsWith('spec:')) {
+        const id = target.slice(5)
+        const removed = specs.find((s) => s.id === id)
+        const active = removed?.worktree && rows.some((r) => r.path === removed.worktree
+          && (removed.workspace_mode !== 'branch' || r.branch === (removed.branch ?? removed.id)))
+        if (selected === target || (active && removed?.worktree === selected)) {
+          flushSync(() => setSelected(''))
+        }
+        if (active && removed?.worktree) await closed(removed.worktree)
+        await api.deleteTask(id)
+        if (active && removed?.worktree) {
+          work.forget(removed.worktree)
+          work.dismiss(removed.worktree)
+        }
+        refresh()
+        readSpecs()
+        return
+      }
       // A terminal's shell may stand in that folder, and Windows will not
       // delete a directory a process stands in. Rendered now so a selected
       // one starts closing; then every close there is waited on — one
@@ -464,7 +493,7 @@ export default function App() {
     } catch (err) {
       setFault(String(err instanceof Error ? err.message : err))
     }
-  }, [selected, work, refresh, readSpecs])
+  }, [selected, specs, rows, work, refresh, readSpecs])
 
   // The rail leaves a terminal's changes to the next read: when the person
   // leaves the terminal tab, the worktree list is read again.
@@ -560,7 +589,7 @@ export default function App() {
         }}
         onLoop={async (numbers, environment, owner) => {
           // Asked here, on a click: a browser grants it only to a gesture.
-          if ('Notification' in window && Notification.permission === 'default') void Notification.requestPermission()
+          void requestNotifications().catch((err) => setFault(`알림 연결 실패 · ${err}`))
           const { results } = await api.startLoops(numbers, environment, owner)
           readPrs()
           readSpecs()
@@ -608,6 +637,7 @@ export default function App() {
             onChannels={accept}
             onBusy={setQueryBusy}
             specs={specs}
+            selectedSpec={spec}
             onSpecs={readSpecs}
             onStart={start}
             onPlanned={planned}
@@ -650,10 +680,9 @@ export default function App() {
             </Btn>
           )}
         </header>
-        {task && <div id="task-options" className="task-spec shrink-0" data-open={taskOptionsOpen}
-          data-required={spec?.state === '정리됨' || Boolean(spec?.planning && spec.state === '작업 중')}>
-          <SpecSummary key={spec?.id ?? task.key} spec={spec} onStart={start} onChanged={readSpecs}
-            korean={on} active={!!task.row} busy={task.busy} />
+        {row && <div className="task-changes shrink-0 min-h-0 overflow-y-auto max-h-[45dvh]">
+          <LiveChanges key={`${row.path}:${row.branch}`} path={row.path} busy={busy(row.path)}
+            turn={work.turns[row.path]?.at(-1)?.turn} />
         </div>}
         <div role="tablist" aria-label="작업 면" className="task-view-tabs flex h-9 shrink-0 items-end gap-1 border-b border-border px-3">
           {TABS.map((t) => (
@@ -665,7 +694,7 @@ export default function App() {
             </button>
           ))}
           {(task || other) && <Btn tone="ghost" className="mobile-only hidden ml-auto" aria-expanded={taskOptionsOpen}
-            aria-controls={[task ? 'task-options' : '', tab === 'agent' ? 'agent-model-options' : ''].filter(Boolean).join(' ') || undefined}
+            aria-controls={tab === 'agent' ? 'agent-model-options' : undefined}
             onClick={() => setTaskOptionsOpen((open) => !open)}>작업 옵션 {taskOptionsOpen ? '닫기' : '열기'}</Btn>}
         </div>
         <div className="flex min-h-0 flex-1">

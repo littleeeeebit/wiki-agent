@@ -65,6 +65,8 @@ def fixture(path, method):
     if path == "work/diff":
         return {"diff": "+synthetic change", "base": "fixture", "truncated": False, "omitted": [],
                 "totals": {"files": 1, "added": 1, "deleted": 0, "binary": 0, "unknown": 0}}
+    if path == "providers/usage":
+        return {"providers": []}
     if path.startswith("providers/"):
         return {"provider": "claude", "live": False, "connection_ms": None, "error": "", "quota": [], "usage": {}}
     if path == "connect":
@@ -177,10 +179,10 @@ def inspect_modes(page):
     toggle = page.get_by_role("button", name="작업 옵션 열기", exact=True)
     toggle.click()
     page.get_by_role("combobox").first.wait_for()
-    page.get_by_label("연결 및 사용량", exact=True).wait_for()
+    page.get_by_label("사용 토큰", exact=True).wait_for(state="attached")
     page.get_by_role("button", name="작업 옵션 닫기", exact=True).click()
     assert not page.get_by_role("combobox").count()
-    assert not page.get_by_label("연결 및 사용량", exact=True).is_visible()
+    assert not page.get_by_label("연결 및 사용량", exact=True).count()
     # Measure content, not merely the absence of a horizontal scrollbar.
     for width, height, mode in ((320, 740, 'portrait'), (400, 800, 'portrait')):
         select_app_mode(page, mode)
@@ -190,11 +192,12 @@ def inspect_modes(page):
           const reading = session.querySelector('.overflow-y-auto').getBoundingClientRect();
           const header = document.querySelector('.mobile-header').getBoundingClientRect();
           const composer = session.querySelector('.composer').getBoundingClientRect();
+          const changes = document.querySelector('.task-changes').getBoundingClientRect();
           return { mode: document.documentElement.dataset.mobileLayout,
             document: document.documentElement.scrollWidth,
             columns: getComputedStyle(document.querySelector('.app-shell')).gridTemplateColumns,
             header: header.height, reading: reading.height, composerBottom: composer.bottom,
-            contentShare: reading.height / innerHeight,
+            contentShare: reading.height / innerHeight, changes: changes.height,
             navigationTop: document.querySelector('.mobile-navigation').getBoundingClientRect().top,
             navigationWidth: document.querySelector('.mobile-navigation').getBoundingClientRect().width,
             navigationDirection: getComputedStyle(document.querySelector('.mobile-navigation')).flexDirection,
@@ -203,7 +206,9 @@ def inspect_modes(page):
         assert measured["mode"] == mode and measured["document"] <= width, measured
         assert measured["header"] == 48, measured
         assert len(measured["columns"].split()) == 1, measured
-        assert measured["contentShare"] >= 0.70, measured
+        # The requested fixed diff disclosure now occupies one row outside the transcript.
+        assert measured["reading"] >= height * 0.70 - measured["changes"], measured
+        assert measured["changes"] <= 48, measured
         assert measured["composerBottom"] <= measured["navigationTop"] + 1, measured
         assert not page.get_by_text("Synthetic conversation visible on the phone.", exact=True).first.is_visible()
         print(json.dumps({"width": width, "height": height, **measured}))

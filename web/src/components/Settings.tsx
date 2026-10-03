@@ -4,6 +4,7 @@ import { Btn, Modal } from '@/components/Modal'
 import { MobileSettings } from '@/components/MobileAccess'
 import * as api from '@/lib/api'
 import { FAMILY } from '@/lib/run'
+import { notify, requestNotifications } from '@/lib/notifications'
 import type { Hub, Jev, JevLimits, JevMode, LoopSettings, Options, Probe, SurveySettings, Switch } from '@/lib/api'
 
 type Props = {
@@ -30,6 +31,7 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
   const [seats, setSeats] = useState(0)
   const [working, setWorking] = useState('')
   const [fault, setFault] = useState('')
+  const [notification, setNotification] = useState('')
 
   useEffect(() => {
     api.getConnect()
@@ -139,6 +141,16 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
           )}
         </Part>
 
+        <Part title="알림">
+          <Row label="질문 · 완료 · 실패" note="연결된 앱의 시스템 알림으로 받는다">
+            <Btn onClick={() => act('notifications', async () => {
+              const granted = await requestNotifications()
+              setNotification(granted ? '알림 허용됨' : '시스템 설정에서 알림을 허용해라')
+              if (granted) await notify('wiki-agent 알림 확인', '질문, 완료와 실패 알림을 받을 수 있다.')
+            })}>알림 확인</Btn>
+          </Row>
+          {notification && <p role="status">{notification}</p>}
+        </Part>
         <JevPart />
 
         <Part title="리뷰">

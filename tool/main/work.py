@@ -96,6 +96,32 @@ def provider_usage(provider: Literal["claude", "codex"], path: str = "") -> dict
         return {"provider": provider, "live": False, "usage": {}, "connection_ms": None, **_provider_usage["data"]}
 
 
+@router.get("/api/providers/usage")
+def all_provider_usage() -> dict:
+    from . import loop, query
+
+    with _lock:
+        chats = list(_sessions.values()) + list(query._sessions.values())
+        chats += list(loop._cells.values())
+        chats += [run.chat for run in loop._review_runs.values()]
+    providers = []
+    for provider in ("claude", "codex"):
+        matching = [chat for chat in chats if chat.is_codex == (provider == "codex")]
+        if not matching:
+            providers.append(provider_usage(provider))
+            continue
+        windows = {}
+        for chat in sorted(matching, key=lambda chat: chat._quota_at):
+            for window in chat.quota:
+                windows[window["name"]] = window
+        latest = max(matching, key=lambda chat: chat._quota_at)
+        status = latest.status()
+        for window in status["quota"]:
+            windows[window["name"]] = window
+        providers.append({"provider": provider, **status, "quota": list(windows.values())})
+    return {"providers": providers}
+
+
 def diff_git(path: Path, *args: str, codes=(0,)) -> str:
     command = ["git", "-c", "core.quotepath=false", "-C", str(path), *args]
     expired = threading.Event()
@@ -257,6 +283,10 @@ def listing() -> dict:
         raise HTTPException(409, str(exc)) from exc
     out = []
     for row in rows:
+        from . import specs
+
+        if row["path"].resolve() == repo.resolve() and specs.dismissed(repo.name, row["branch"]):
+            continue
         chat = _sessions.get(str(row["path"]))
         out.append({**row, "path": str(row["path"]), "name": row["branch"] or row["path"].name,
                     "primary": row["path"].resolve() == repo.resolve(),
@@ -532,11 +562,18 @@ class Run:
         with self.wake:
             self.events.append({**payload, "seq": len(self.events), "turn": self.turn, "ts": time.time()})
             self.wake.notify_all()
+        meta = payload.get("meta") or {}
+        if payload["kind"] == "approval" and not meta.get("by"):
+            notice("에이전트가 답을 기다린다", Path(getattr(self.chat, "repo", getattr(self.chat, "path", "wiki-agent"))).name)
 
     def finish(self) -> None:
         with self.wake:
             self.done = True
             self.wake.notify_all()
+        if not self.halt.is_set():
+            failed = any(e["kind"] == "error" or (e.get("meta") or {}).get("error") for e in self.events)
+            notice("에이전트 실행 실패" if failed else "에이전트 실행 완료",
+                   Path(getattr(self.chat, "repo", getattr(self.chat, "path", "wiki-agent"))).name)
 
 
 class Feed:
@@ -561,6 +598,10 @@ class Feed:
 
 
 feed = Feed()
+
+
+def notice(title: str, body: str) -> None:
+    feed.put({"kind": "notice", "title": title, "body": body, "ts": time.time()})
 
 
 def tail(run: Run, after: int):
@@ -598,8 +639,9 @@ def steps(events: list[dict]) -> list[dict]:
     for ev in events:
         meta = ev["meta"]
         # A hook's `context` is left out too: it is the wiki's, and the wiki has it.
-        if ev["kind"] in ("tool", "progress", "said", "hook"):
+        if ev["kind"] in ("tool", "progress", "said", "hook", "compaction"):
             out.append({"kind": ev["kind"], "text": ev["text"],
+                        **({"phase": meta.get("phase"), "pre_tokens": meta.get("pre_tokens")} if ev["kind"] == "compaction" else {}),
                         **({"command": True} if meta.get("tool") in ("commandExecution", "command_execution") else {})})
         elif ev["kind"] == "approval":
             # `none`: the turn ended before anyone answered.

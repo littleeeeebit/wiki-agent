@@ -7,6 +7,7 @@ import type { Item } from '@/components/Toolbar'
 import type { Options, Pr } from '@/lib/api'
 import type { Elsewhere, Group, Phase, Task } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
+import { ProviderUsage } from '@/components/ProviderUsage'
 
 /** What the middle pane shows. */
 export type View = 'chat' | 'map' | 'projects'
@@ -30,7 +31,7 @@ type Props = {
   onRemove: (path: string) => void
 }
 
-type Target = { path: string; name: string }
+type Target = { path: string; name: string; shared: boolean }
 
 const DOT: Record<Phase, string> = {
   draft: 'bg-st-draft', work: 'bg-st-work', review: 'bg-st-review', ready: 'bg-st-ready',
@@ -82,9 +83,10 @@ export function TaskRail(props: Props) {
       window.removeEventListener('keydown', esc)
     }
   }, [menu])
-  const onMenu = (t: Task) => (t.path && !t.row?.primary ? (e: MouseEvent) => {
+  const onMenu = (t: Task) => (t.spec || (t.path && !t.row?.primary) ? (e: MouseEvent) => {
     e.preventDefault()
-    setMenu({ path: t.path!, name: t.name, x: e.clientX, y: e.clientY })
+    setMenu({ path: t.spec ? `spec:${t.spec.id}` : t.path!, name: t.name,
+      shared: !t.path || t.spec?.workspace_mode === 'branch' || !!t.row?.primary, x: e.clientX, y: e.clientY })
   } : undefined)
 
   const projects: Item[] = options?.projects.map((p) => ({ value: p.id, label: p.id,
@@ -219,6 +221,8 @@ export function TaskRail(props: Props) {
         )}
       </nav>
 
+      <ProviderUsage />
+
       {menu && (
         <div role="menu" style={{ left: menu.x, top: menu.y }}
           className="fixed z-50 min-w-28 rounded-md border border-border bg-popover p-1 text-popover-foreground shadow-md">
@@ -230,7 +234,7 @@ export function TaskRail(props: Props) {
       )}
 
       {doomed && (
-        <Modal title="작업트리 삭제" onClose={() => setDoomed(null)} foot={(
+        <Modal title="작업 삭제" onClose={() => setDoomed(null)} foot={(
           <>
             <Btn onClick={() => setDoomed(null)}>닫기</Btn>
             <Btn tone="danger" onClick={() => {
@@ -242,10 +246,11 @@ export function TaskRail(props: Props) {
             </Btn>
           </>
         )}>
-          <p>
+          {doomed.shared ? <p><span className="font-mono text-[12.5px]">{doomed.name}</span> 작업을 목록에서 지우고 실행을 멈춘다.
+            명세는 보관하며 저장소, 브랜치, 코드 변경과 PR은 남긴다.</p> : <p>
             <span className="font-mono text-[12.5px]">{doomed.name}</span> 작업트리를 지운다. 도는 에이전트와 리뷰 루프는
             멈추고, 커밋하지 않은 변경은 사라진다. 머지 전 작업이면 목록에서도 빠진다. 브랜치와 올린 PR 은 남긴다.
-          </p>
+          </p>}
         </Modal>
       )}
 

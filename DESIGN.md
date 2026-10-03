@@ -79,7 +79,7 @@ rounded:
 components:
   - 레일 — 앱 이름 · 톱니바퀴 · 프로젝트 고르기 · 모든 프로젝트 · 리뷰 루프 (N) · 작업 행 (할 것 → 도는 것 → 정리됨 → 끝난 것 N)
   - 가운데 — 대화 (다음 작업 · 위키 · 회고) · 지도 · 프로젝트 목록
-  - 오른쪽 — 작업 머리글 · 명세 요약 (접힘) · 에이전트 · 리뷰 · 터미널 탭
+  - 오른쪽 — 작업 머리글 · 코드 변경 현황 (접힘) · 에이전트 · 리뷰 · 터미널 탭
   - 답 — 진행 (검색 → 그래프 확장 → 답변 → 게시) · 멈춤 · 근거와 판단 보기 (펼침)
   - 지도 — 층 토글 · 찾기 · 되돌리기 · 지표 한 줄 · 옆 패널 · 이번 질문 경로 층과 경로 목록
   - 모달 — 설정 (일반 · 연결 · 질문 (Jev) · 리뷰) · 리뷰 루프 PR 고르기 · 연결 확인
@@ -104,7 +104,7 @@ It is a 3-column layout centered on tasks (loop stage 6, 2026-09-26). There is n
 | --- | --- | --- |
 | Rail | Left `15rem` | Task (specification) rows are lined up in the order of To-Do → In Progress → Done. You know what to do just by looking at the rail |
 | Center | `1.1fr` | [Conversation · Map]. The focus of the conversation is the next task · wiki · retrospective. "All Projects" swaps into this position |
-| Right | `1fr` | Selected task. [Agent · Review · Terminal] tabs below the specification summary (collapsed). If waiting for approval, a `wait` dot appears on the agent tab |
+| Right | `1fr` | Selected task. A collapsed code-change disclosure sits above [Agent · Review · Terminal], outside transcript scrolling. If waiting for approval, a `wait` dot appears on the agent tab |
 
 Local windows use the 3-column layout at 1280px or wider. From 1101px through
 1279px, the rail collapses to `3.25rem` of icons and task dots. At 1100px or
@@ -126,9 +126,10 @@ disclosure and composer. Only remote clients enter this landscape layout; local 
 retain their existing columns, breakpoints and controls, even when wide and
 short. Pane headers and the rail's duplicate app title disappear; panes stay
 mounted. The browser companion has no native screen-rotation control.
-Task model, usage and specification details sit behind Task options. A ready
-specification or a planning question remains visible so starting work and
-answering questions do not depend on finding that disclosure. Project/review
+Task model controls sit behind Task options. Token usage stays beside the task
+model label. Specification details, editing, start/reopen controls and planning
+questions live in Next Task, with the Korean overlay over generated requirements.
+CLI quota windows live at the bottom of the task rail. Project/review
 tools are collapsed in the task list. Live diff counts remain visible, but
 the diff itself starts collapsed on phones. Stop and session permission
 revocation remain visible while applicable.
@@ -212,10 +213,15 @@ Question cards use a reading scale separate from compact tool chrome:
 controls retain keyboard navigation. Examples use Markdown and fenced text
 sketches. The existing user-selected palette remains the reference.
 
-The agent pane shows actual Git changes with additions and deletions, refreshed
-every second while running. The preview scrolls within the pane. Provider
-status shows reported quota windows, reset times, tokens and connection setup
-duration; an unavailable value stays explicitly unavailable.
+The task pane shows actual Git changes with additions and deletions, refreshed
+every second while running. Its disclosure starts collapsed and stays above the
+tabs across transcript scrolling and tab changes. The expanded preview scrolls
+within its own bounded area. The rail footer shows each CLI's reported quota
+windows separately, including five-hour and seven-day limits, with an absolute
+reset date and time. The task model row shows input and output tokens. Connection
+setup duration and connection labels are omitted; unavailable quota values remain
+explicitly unavailable. Compaction starts and finishes appear in the transcript;
+an ongoing agent compaction also has a visible status above the reading area.
 
 Only multiples of 2px are used. Chrome controls are `28px` (`h-7`). Question
 actions are at least `44px`, and option cards grow with their descriptions.
@@ -257,3 +263,12 @@ unused reading space stays empty rather than becoming another status dashboard.
 The local PC geometry matched the before-change baseline at 1440×900,
 1440×390, 1200×390 and 1100×800. These measurements do not cover actual screen
 rotation, real keyboard behavior or native overflow taps on a physical phone.
+
+The task-monitoring update on 2026-10-03 keeps the established palette and type
+scale. At 1440×900 the rail footer ends at y=900, its padding is 12px, and the
+fixed diff summary uses 12px by 20px padding with 12.5px control text. Measured
+summary contrast is 13.73 in dark and 17.76 in light. Desktop geometry remains
+the same at the four sizes above; the folded 52px rail opens quotas in a bounded
+240px popover. On a 400×800 phone the requested fixed diff disclosure consumes
+45px, leaving 550px for the task transcript. Both task and mobile browser checks
+pass without horizontal overflow. No new palette choice is introduced.

@@ -230,10 +230,8 @@ html[data-mobile-client="remote"][data-mobile-layout="landscape"] {
     .agent-toolbar { padding-inline: 0; min-height: 0; }
     .agent-model-label { display: none; }
     .agent-options:not([data-open="true"]) { display: none; }
-    .agent-changes { padding: 4px 8px; }
     .live-changes > summary { padding: 8px; }
     .live-change-mode { display: none; }
-    .task-spec:not([data-open="true"]):not([data-required="true"]) { display: none; }
     #agent-model-options { width: 100%; flex-wrap: wrap; padding-bottom: 8px; }
     .composer > div { padding: 8px 12px; }
     .composer textarea { min-height: 44px; max-height: 25dvh !important; overflow-y: auto !important; }
@@ -293,11 +291,20 @@ html[data-mobile-client="remote"][data-mobile-layout="landscape"] {
     .task-view-tabs { gap: 0; }
     .task-view-tabs > button { padding-inline: 6px; white-space: nowrap; }
     .composer > div { padding-inline: 8px; }
-    .task-spec { max-height: 35dvh; overflow-y: auto; }
     .agent-header { max-height: 35dvh; overflow-y: auto; }
     .query-options[data-open="true"] { max-height: 35dvh; overflow-y: auto; }
     .composer textarea { max-height: max(44px, 20dvh) !important; }
     .task-pane .prose-answer, .conversation-pane .prose-answer { max-width: 75ch; }
+}
+
+@media (min-width: 1101px) and (max-width: 1279px) {
+    :root[data-mobile-layout="desktop"] .provider-limits { padding: 8px 4px; overflow: visible; }
+    :root[data-mobile-layout="desktop"] .provider-limits details > div {
+        position: fixed; left: 52px; bottom: 0; z-index: 40;
+        width: 240px; max-height: 45dvh; overflow-y: auto;
+        margin: 0; padding: 12px; background: var(--card);
+        border: 1px solid var(--border); border-radius: var(--radius);
+    }
 }
 
 /* Remote touch targets also hold when the APK has a wide WebView viewport. */

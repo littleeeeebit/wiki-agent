@@ -237,6 +237,7 @@ class ChatSession:
         self._quota_at = 0.0
         self._quota_error = ""
         self._quota_lock = threading.Lock()
+        self._compacting = False
 
     def status(self) -> dict:
         """Connection timing and provider usage, without login identifiers."""
@@ -864,6 +865,13 @@ class ChatSession:
                         yield event
                 elif method == "item/agentMessage/delta" and params.get("delta"):
                     yield Event("delta", str(params["delta"]))
+                elif method in ("item/started", "item/completed") and item.get("type") == "contextCompaction":
+                    self._compacting = method == "item/started"
+                    yield Event("compaction", "Context compaction started" if self._compacting else "Context compaction completed",
+                                {"phase": "started" if self._compacting else "completed"})
+                elif method == "thread/compacted" and self._compacting:
+                    self._compacting = False
+                    yield Event("compaction", "Context compaction completed", {"phase": "completed"})
                 elif method == "item/started" and item.get("type") in (
                     "commandExecution", "fileChange", "mcpToolCall", "webSearch",
                 ):
@@ -952,6 +960,19 @@ class ChatSession:
                 window = {"name": name, "used_percent": utilization * 100 if isinstance(utilization, (float, int)) else None,
                           "resets_at": info.get("resetsAt", info.get("resets_at")), "status": info.get("status")}
                 self.quota = [q for q in self.quota if q["name"] != name] + [window]
+                self._quota_at = time.monotonic()
+
+            elif kind == "system" and ev.get("subtype") == "status" and ev.get("status") == "compacting":
+                self._compacting = True
+                yield Event("compaction", "Context compaction started", {"phase": "started"})
+
+            elif kind == "system" and ev.get("subtype") == "compact_boundary":
+                self._compacting = False
+                info = ev.get("compact_metadata") or {}
+                tokens = info.get("pre_tokens")
+                detail = f" · {tokens:,} tokens before compaction" if isinstance(tokens, int) else ""
+                yield Event("compaction", "Context compaction completed" + detail,
+                            {"phase": "completed", "trigger": info.get("trigger"), "pre_tokens": tokens})
 
             elif kind == "stream_event":
                 inner = ev.get("event") or {}
