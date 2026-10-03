@@ -109,17 +109,19 @@ export function Agent({
         <ProviderUsage key={`${choice.model.startsWith('codex:')}:${row?.path ?? ''}`} model={choice.model} path={row?.path} />
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {row && <div className="agent-changes sticky top-0 z-10 bg-background px-4 py-2">
+          <LiveChanges key={`${row.path}:${row.branch}`} path={row.path} busy={busy} turn={last?.turn} />
+        </div>}
         <div className="space-y-5 px-4 py-4">
           {!row && (
             <p className="text-[13.5px] text-faint">
-              아직 작업트리가 없다. 명세의 [시작] 이 작업트리를 만들고 위의 작업 모델로 첫 턴을 보낸다. 에이전트는 그 안에서 쓴다. 설정에서 권한 묻기를 켜 두면 쓰기마다 여기서 묻는다.
+              명세의 [시작]이 선택한 저장소에 작업 브랜치를 만들고 첫 턴을 보낸다. 에이전트는 전체 접근 권한으로 작업한다.
             </p>
           )}
           {row && turns.length === 0 && (
             <p className="text-[13.5px] text-faint">지시를 보내라. 도는 동안에도 보내면 그 턴에 끼어든다.</p>
           )}
           {note && turns.length === 0 && <p className="text-[12.5px] text-muted-foreground">{note}</p>}
-          {row && <LiveChanges key={row.path} path={row.path} busy={busy} turn={last?.turn} />}
           {turns.map((t) =>
             t.role === 'user' ? (
               <div key={t.key} className="flex justify-end">

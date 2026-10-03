@@ -5,7 +5,15 @@ import sys
 
 import pytest
 
-from workspace import create, remove, worktrees
+from workspace import create as make_workspace, remove, worktrees as list_workspaces
+
+
+def create(repo, task):
+    return make_workspace(repo, task, linked=True)
+
+
+def worktrees(repo):
+    return [row for row in list_workspaces(repo) if row["path"] != repo.resolve()]
 
 
 def git(where, *args):

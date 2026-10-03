@@ -170,6 +170,18 @@ fn which(name: &str) -> bool {
 }
 
 #[tauri::command]
+fn open_url(url: String) -> Result<(), String> {
+    let parsed = Url::parse(&url).map_err(|_| "잘못된 링크다")?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err("웹 링크만 기본 브라우저에서 연다".into());
+    }
+    let launcher = if cfg!(windows) { "explorer.exe" } else if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let mut child = Command::new(launcher).arg(parsed.as_str()).spawn().map_err(|e| e.to_string())?;
+    thread::spawn(move || { let _ = child.wait(); });
+    Ok(())
+}
+
+#[tauri::command]
 fn pty_open(app: AppHandle, ptys: State<Ptys>, cwd: String, cols: u16, rows: u16) -> Result<u32, String> {
     if !Path::new(&cwd).is_dir() {
         return Err(format!("그런 폴더가 없다: {cwd}"));
@@ -237,7 +249,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(Ptys::default())
         .manage(Sidecar(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close])
+        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url])
         .setup(move |app| {
             let (child, port) = spawn_sidecar(&root, &log)?;
             app.state::<Sidecar>().0.lock().unwrap().replace(child);

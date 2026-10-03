@@ -1,12 +1,12 @@
-"""worktrees — where an agent is allowed to write.
+"""Task branches in the selected checkout, plus explicitly isolated review trees.
 
-Every write happens in a worktree made here, never in the checkout the person
-works in. They all sit beside the repository, in `../<repo>-worktrees/<task>`,
-so what is the program's and what is the person's is one directory apart.
+Implementation tasks reuse the repository directory. Linked worktrees remain
+available for independent reviewers and for tasks created by older versions.
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 import subprocess
 from pathlib import Path
@@ -18,6 +18,12 @@ from .sessions import checkout
 # A task name is both a branch and a directory. Lowercase ASCII only: a Korean
 # directory name in a path has broken `subprocess` decoding on this machine.
 TASK = re.compile(r"[a-z0-9][a-z0-9-]{0,63}")
+
+
+def base_branch(repo: Path, base: str) -> str:
+    """A checkout-local base ref when the real base is open in a sibling."""
+    key = hashlib.sha256(str(repo.resolve()).encode("utf-8")).hexdigest()[:12]
+    return f"wiki-base/{key}/{base}"
 
 
 def _git(repo: Path, *args: str) -> subprocess.CompletedProcess:
@@ -35,12 +41,24 @@ def _main(repo: Path) -> Path:
     return Path(top)
 
 
-def create(repo: Path, task: str) -> Path:
-    """A new worktree on a new branch `task`, from the checkout's HEAD."""
+def create(repo: Path, task: str, *, linked: bool = False, base: str = "") -> Path:
+    """Create a task branch in the selected checkout; linked checkouts are explicit."""
 
-    repo = _main(repo)
+    top, _, _ = checkout(Path(repo))
+    if not top or Path(top) != Path(repo).resolve():
+        raise ValueError(f"저장소 루트가 아니다: {repo}")
+    repo = Path(top)
     if not TASK.fullmatch(task):
         raise ValueError(f"작업 이름은 소문자·숫자·- 만, 64자까지: {task!r}")
+    if not linked:
+        clean = _git(repo, "status", "--porcelain")
+        if clean.returncode or clean.stdout.strip():
+            raise ValueError("브랜치를 만들기 전에 현재 변경을 커밋하거나 보관해라. 변경은 그대로 남겼다")
+        done = _git(repo, "switch", "-c", task, *([base] if base else []))
+        if done.returncode:
+            raise RuntimeError(done.stderr.strip() or f"git switch 실패: {task}")
+        return repo
+    repo = _main(repo)
     path = worktree_home(repo) / task
     done = _git(repo, "worktree", "add", "-b", task, str(path))
     if done.returncode:
@@ -160,9 +178,12 @@ def merged(repo: Path, branch: str) -> bool:
 
 
 def worktrees(repo: Path) -> list[dict]:
-    """The worktrees under `worktree_home(repo)`: `path`, `branch`, `dirty`, `merged`."""
+    """The selected checkout and legacy task trees: path, branch, dirty, merged."""
 
-    repo = _main(repo)
+    top, _, _ = checkout(Path(repo))
+    if not top or Path(top) != Path(repo).resolve():
+        raise ValueError(f"저장소 루트가 아니다: {repo}")
+    repo = Path(top)
     root = worktree_home(repo)
     rows, row = [], {}
     for line in [*_git(repo, "worktree", "list", "--porcelain").stdout.splitlines(), ""]:
@@ -171,9 +192,9 @@ def worktrees(repo: Path) -> list[dict]:
         elif line.startswith("branch "):
             row["branch"] = line[7:].removeprefix("refs/heads/")
         elif not line and row:
-            if row["path"].parent == root:
+            if row["path"] == repo or row["path"].parent == root:
                 row["dirty"] = bool(_git(row["path"], "status", "--porcelain").stdout.strip())
-                row["merged"] = merged(repo, row["branch"])
+                row["merged"] = row["path"] != repo and merged(repo, row["branch"])
                 rows.append(row)
             row = {}
     return rows
@@ -188,6 +209,8 @@ def remove(repo: Path, path: Path, force: bool = False) -> str:
     recognise a squash merge. Otherwise it stays, `force` or not.
     """
 
+    if Path(path).resolve() == Path(repo).resolve():
+        raise ValueError("원본 저장소는 삭제하지 않는다. 작업 브랜치는 Git에서 관리해라")
     repo = _main(repo)
     row = next((r for r in worktrees(repo) if r["path"] == Path(path).resolve()), None)
     if row is None:

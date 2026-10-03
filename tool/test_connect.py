@@ -28,6 +28,7 @@ from main import channels as chat_channels
 from main import connect, loop, specs, survey, work
 from main import query as chat
 from test_main import _repo, client, no_machine_settings  # noqa: F401 — the fixture is autouse
+from workspace import base_branch
 
 HERE = Path(__file__).resolve().parent
 URL = "https://github.com/o/proj"
@@ -335,6 +336,7 @@ class Spender:
 @pytest.fixture
 def surveyed(tmp_path):
     repo = _repo(tmp_path)
+    (repo / ".git/info/exclude").write_text(".wiki/adapter.toml\n", encoding="utf-8")
     for name in ("src/a/x.py", "src/b/y.py", "README.md"):
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_text("print(1)\n", encoding="utf-8")
@@ -588,12 +590,15 @@ def test_the_handover_moves_the_adapter_aside_fast_forwards_and_checks(original)
     assert box(repo) == [] and connect.record("proj")["handover"]["state"] == "완료"
 
 
-@pytest.mark.parametrize("breach", ["off base", "other remote", "dirty", "left copy"])
+@pytest.mark.parametrize("breach", ["off base", "other remote", "dirty", "left copy", "alias wrong upstream"])
 def test_the_first_two_steps_touch_nothing_when_a_condition_fails(original, breach):
     repo, merge, _ = original
     commit = merge()
     if breach == "off base":
         git(repo, "checkout", "-q", "-b", "elsewhere")
+    elif breach == "alias wrong upstream":
+        git(repo, "switch", "--track", "-c", base_branch(repo, "main"), "origin/main")
+        git(repo, "branch", "--set-upstream-to=main")
     elif breach == "other remote":
         git(repo, "remote", "set-url", "origin", "https://github.com/x/other")
     elif breach == "dirty":
@@ -695,3 +700,32 @@ def test_the_merge_of_a_survey_hands_over_instead_of_the_plain_fast_forward(orig
     forward.assert_not_called()
     assert git(repo, "rev-parse", "HEAD") == commit
     assert any("adapter 를 넘기고" in n for n in specs.load("proj", "wiki-bootstrap")["cleanup"])
+
+
+@pytest.mark.parametrize("linked", [False, True])
+def test_shared_checkout_survey_returns_to_base_before_adapter_handover(original, linked):
+    repo, merge, _ = original
+    commit = merge()
+    sibling = repo
+    if linked:
+        repo = sibling.parent / "selected" / sibling.name
+        git(sibling, "worktree", "add", "-qb", "selected", str(repo))
+        (repo / ".wiki").mkdir()
+        (repo / ".wiki/adapter.toml").write_bytes((sibling / ".wiki/adapter.toml").read_bytes())
+    git(repo, "switch", "-c", "wiki-bootstrap")
+    git(repo, "add", ".wiki/adapter.toml")
+    git(repo, "commit", "-qm", "survey adapter")
+    task_head = git(repo, "rev-parse", "HEAD")
+    spec = {"id": "wiki-bootstrap", "repo": "proj", "state": "머지 대기", "pr": {"number": 7, "head": task_head},
+            "survey": {"handover": True}, "history": [{"ts": 0, "state": "정리됨"}], "worktree": str(repo),
+            "workspace_mode": "branch", "branch": "wiki-bootstrap", "goal": "Initialize the fixture wiki"}
+    specs.save(spec)
+    with patch.object(specs, "sh", Merged(commit)), \
+         patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None):
+        loop.finish(repo, spec, "main", commit, "Merged fixture survey")
+    assert connect.record("proj")["handover"]["state"] == "완료"
+    assert git(repo, "rev-parse", "HEAD") == commit
+    assert git(repo, "rev-parse", "wiki-bootstrap") == task_head
+    if linked:
+        assert git(sibling, "branch", "--show-current") == "main"
+        assert git(sibling, "rev-parse", "HEAD") != commit

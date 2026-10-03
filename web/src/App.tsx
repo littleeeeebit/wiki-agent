@@ -406,26 +406,34 @@ export default function App() {
     api.getSwitch().then(setSw).catch(() => {})
   }, [path, choice, work, refresh])
 
-  // `[시작]`: the server makes the worktree and starts its first turn; the
-  // screen selects it, and loading it attaches to that turn.
+  // `[시작]`: create or reopen a task branch in the same repository directory.
+  // Reload its own conversation even though the path did not change.
   const start = useCallback(async (id: string) => {
-    const { path } = await api.startSpec(id, choice)
+    const target = specs.find((spec) => spec.id === id)
+    const { path } = target && target.state !== '정리됨'
+      ? await api.checkoutSpec(id) : await api.startSpec(id, choice)
+    work.forget(path)
+    work.load(path)
     readSpecs()
     refresh()
     setSelected(path)
     setTab('agent')
     setMobilePane('task')
-  }, [choice, readSpecs, refresh])
+  }, [choice, readSpecs, refresh, specs, work])
 
-  // `[계획]`: the server made the plan's worktree and runs its planner there;
+  // `[계획]`: the server made the plan's branch and runs its planner there;
   // selecting it attaches to the planner's turn like any other.
   const planned = useCallback((spec: api.Spec) => {
     readSpecs()
     refresh()
-    if (spec.worktree) setSelected(spec.worktree)
+    if (spec.worktree) {
+      work.forget(spec.worktree)
+      work.load(spec.worktree)
+      setSelected(spec.worktree)
+    }
     setTab('agent')
     setMobilePane('task')
-  }, [readSpecs, refresh])
+  }, [readSpecs, refresh, work])
 
   const showPeek = useCallback(async (file: string, line: number) => {
     if (!path) return
@@ -644,7 +652,8 @@ export default function App() {
         </header>
         {task && <div id="task-options" className="task-spec shrink-0" data-open={taskOptionsOpen}
           data-required={spec?.state === '정리됨' || Boolean(spec?.planning && spec.state === '작업 중')}>
-          <SpecSummary key={spec?.id ?? task.key} spec={spec} onStart={start} onChanged={readSpecs} korean={on} />
+          <SpecSummary key={spec?.id ?? task.key} spec={spec} onStart={start} onChanged={readSpecs}
+            korean={on} active={!!task.row} busy={task.busy} />
         </div>}
         <div role="tablist" aria-label="작업 면" className="task-view-tabs flex h-9 shrink-0 items-end gap-1 border-b border-border px-3">
           {TABS.map((t) => (
@@ -663,7 +672,7 @@ export default function App() {
           <div className="min-w-0 flex-1">
             {tab === 'agent' && (task || other) && (
               <Agent
-                key={path}
+                key={`${path}:${row?.branch ?? ''}`}
                 row={row}
                 turns={(path && work.turns[path]) || []}
                 options={options}

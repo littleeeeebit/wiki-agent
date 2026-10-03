@@ -7,7 +7,7 @@ file's only owner — reading, checking, saving and moving its state happen here
 and nowhere else.
 
 The loop in this stage: the `next` focus ends in a `spec` block, `[시작]` makes
-the worktree and a write session whose system prompt is the spec, the
+the task branch and a write session whose system prompt is the spec, the
 session's `done-report` is believed only after the gate passes again here, and
 then the pull request goes up. What reaches the screen is read by a person and
 stays Korean.
@@ -63,7 +63,7 @@ STATE = re.compile(r"정리됨|작업 중|PR #\d+|리뷰 대기|리뷰 R\d+|고�
 
 # A named block at the end of an answer: a fenced block whose info string is
 # its name. A block cut off before its closing fence is not one.
-BLOCK = re.compile(r"^```(candidates|choices|spec|done-report)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
+BLOCK = re.compile(r"^```(candidates|choices|spec|spec-update|done-report)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 
 # `path:line` or `path:line-line` as an answer cites it.
 LINE = re.compile(r":\d+(?:[-–]\d+)?$")
@@ -164,13 +164,61 @@ def listing(repo: str) -> list[dict]:
 
 
 def owner(path: Path) -> dict | None:
-    """The spec whose worktree `path` is. The id is the worktree's name, and
-    the repository's name is its `<repo>-worktrees` folder's."""
+    """Resolve ownership by checkout and branch, including legacy worktrees."""
 
-    if not TASK.fullmatch(path.name):
+    path = path.resolve()
+    if TASK.fullmatch(path.name):
+        spec = load(path.parent.name.removesuffix("-worktrees"), path.name)
+        if spec and spec.get("worktree") and Path(spec["worktree"]).resolve() == path:
+            return spec
+    # Cleanup still needs a removed legacy tree's stored owner. Only branch
+    # ownership requires a live checkout for its Git lookup.
+    if not path.is_dir() or not (SPECS / path.name).is_dir():
         return None
-    spec = load(path.parent.name.removesuffix("-worktrees"), path.name)
-    return spec if spec and spec.get("worktree") and Path(spec["worktree"]) == path else None
+    branch = sh(["git", "branch", "--show-current"], path).stdout.strip()
+    sid = folder_for(branch)
+    spec = load(path.name, sid) if sid else None
+    return spec if spec and spec.get("worktree") and Path(spec["worktree"]).resolve() == path \
+        and branch_of(spec) == branch else None
+
+
+def checkout_idle(repo: Path) -> None:
+    """No branch switch while a loop or a planner still owns this checkout."""
+    for spec in listing(repo.name):
+        if spec.get("workspace_mode") != "branch" or spec.get("worktree") != str(repo):
+            continue
+        if re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+|머지 대기", spec["state"]):
+            raise HTTPException(409, "이 저장소의 리뷰·머지를 마친 뒤 브랜치를 바꿔라")
+        if spec.get("planning") and spec["planning"].get("phase") not in ("handoff", "stopped"):
+            raise HTTPException(409, "이 저장소의 계획 작업을 마친 뒤 브랜치를 바꿔라")
+        if spec.get("survey", {}).get("running") and spec["state"] != "멈춤":
+            raise HTTPException(409, "이 저장소의 위키 조사를 마친 뒤 브랜치를 바꿔라")
+
+
+def fork(repo: Path, sid: str) -> tuple[Path, str, str]:
+    """New tasks fork the selected non-task branch, not a previous task's commits."""
+    parent = owner(repo)
+    branch = sh(["git", "branch", "--show-current"], repo).stdout.strip()
+    base = (parent.get("return_branch") or (parent.get("pr") or {}).get("base")) \
+        if parent and parent.get("workspace_mode") == "branch" else branch
+    merged = parent.get("merge") if parent and parent.get("workspace_mode") == "branch" else None
+    if merged:
+        base = merged["base"]
+    source = base or ""
+    if source:
+        upstream = sh(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name",
+                       f"{source}@{{upstream}}"], repo)
+        if merged and (upstream.returncode or upstream.stdout.strip() != f"origin/{base}"):
+            raise RuntimeError(f"`{base}` 의 upstream 을 확인한 뒤 새 작업을 시작해라")
+        if not upstream.returncode:
+            ancestry = sh(["git", "merge-base", "--is-ancestor", f"refs/heads/{source}",
+                           upstream.stdout.strip()], repo)
+            if merged and ancestry.returncode:
+                raise RuntimeError(f"`{base}` 의 미게시 변경·분기를 해결한 뒤 새 작업을 시작해라")
+            if not ancestry.returncode:
+                source = upstream.stdout.strip()  # A fast-forward, without moving a sibling's checked-out ref.
+    path = create(repo, sid, base=source)
+    return path, sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), base or branch
 
 
 # -- Checking what a person settles -----------------------------------------
@@ -601,6 +649,7 @@ class Edit(BaseModel):
     out: list[str] = []
     done: list[str] = []
     slug: str = ""
+    reason: str = "Updated by the person during the task"
 
 
 class Start(BaseModel):
@@ -646,20 +695,30 @@ def specs() -> dict:
 
 @router.put("/api/specs/{sid}")
 def edit(sid: str, body: Edit) -> dict:
-    """The card's edit. Only a spec not started yet; a stale `rev` is 409."""
+    """Revise a draft or an idle active task, preserving prior requirements."""
 
     repo = current_repo()
     gate = gate_of(repo)
     if not gate:
         raise HTTPException(409, "연결 먼저 — 이 저장소의 adapter 에 `gate_cmd` 가 없다")
-    with _files:
+    with _lock, _files:
         spec = load(repo.name, sid)
         if spec is None:
             raise HTTPException(404, "그런 명세가 없다")
         if spec["rev"] != body.rev:
             raise HTTPException(409, f"다른 곳에서 먼저 고쳤다 — 지금은 판 {spec['rev']}")
+        if spec.get("worktree") in work._busy:
+            raise HTTPException(409, "작업 중에는 에이전트에 변경 지시를 보내라. 턴 종료 때 명세에 반영한다")
+        if spec["state"] in ("머지됨", "머지 대기") or re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+", spec["state"]):
+            raise HTTPException(409, "리뷰·머지를 멈춘 뒤 명세를 고쳐라")
         if spec["state"] != "정리됨":
-            raise HTTPException(409, "시작한 명세는 고치지 않는다. 목표가 바뀌면 새 명세다")
+            if body.slug and body.slug != sid:
+                raise HTTPException(409, "시작한 작업의 브랜치 이름은 그대로 둔다")
+            try:
+                revise(repo, spec, body.model_dump())
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            return view(repo, spec)
         try:
             made = fields(repo, {**spec, "goal": body.goal, "out": body.out, "done": body.done}, gate)
         except ValueError as exc:
@@ -675,6 +734,28 @@ def edit(sid: str, body: Edit) -> dict:
         if new != sid:
             file_of(repo.name, sid).unlink()
     return view(repo, spec)
+
+
+def revise(repo: Path, spec: dict, change: dict) -> None:
+    """Persist a full spec revision; approval of earlier requirements expires."""
+    if not isinstance(change, dict) or change.get("rev") != spec["rev"]:
+        raise ValueError("명세 판이 바뀌었다. 현재 명세를 읽고 수정해라")
+    reason = change.get("reason")
+    if not isinstance(reason, str) or not reason.strip() or not all(k in change for k in ("goal", "out", "done")):
+        raise ValueError("명세 변경에는 reason, goal, out, done 이 필요하다")
+    gate = gate_of(repo)
+    if not gate:
+        raise ValueError("저장소의 gate_cmd 를 먼저 연결해라")
+    made = fields(repo, {**spec, **{k: change[k] for k in ("goal", "out", "done")}}, gate)
+    spec.setdefault("revisions", []).append({"rev": spec["rev"], "ts": time.time(), "reason": reason.strip(),
+                                            **{k: spec[k] for k in ("goal", "out", "done")}})
+    for round_ in spec.get("rounds") or []:
+        round_["stale"] = True
+        round_["stale_reason"] = "Specification revised"
+    spec.update(made, rev=spec["rev"] + 1, report=None, gate=None, validation=None, checks=[], fault=None)
+    if spec.get("worktree") and not re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+", spec["state"]):
+        moved(spec, "작업 중", stopped=None)
+    save(spec)
 
 
 def aside(repo: str, sid: str) -> None:
@@ -714,7 +795,7 @@ def forsaken(path: Path) -> None:
             return
         # The repository as `owner` read it: from the path. Gone already is
         # nothing to set aside.
-        repo = path.parent.name.removesuffix("-worktrees")
+        repo = spec["repo"]
         if not file_of(repo, spec["id"]).exists():
             return
         aside(repo, spec["id"])
@@ -730,7 +811,8 @@ def start(sid: str, body: Start) -> dict:
 
     with _lock:
         repo = current_repo()
-        release = hold(work._busy, _lock, str(worktree_home(repo) / sid), "그 작업트리를 다른 요청이 쓰고 있다")
+        checkout_idle(repo)
+        release = hold(work._busy, _lock, str(repo), "이 저장소에서 다른 작업이 돌고 있다")
     try:
         with _files:
             spec = load(repo.name, sid)
@@ -739,13 +821,16 @@ def start(sid: str, body: Start) -> dict:
             if spec["state"] != "정리됨":
                 raise HTTPException(409, f"이미 시작했다 — {spec['state']}")
             try:
-                path = create(repo, sid)
+                path, before, previous = fork(repo, sid)
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
             except RuntimeError as exc:
                 raise HTTPException(409, str(exc)) from exc
             # The model is kept for the turns the loop sends this worktree.
-            save(moved(spec, "작업 중", worktree=str(path), cell={"model": body.model, "effort": body.effort}))
+            save(moved(spec, "작업 중", worktree=str(path), workspace_mode="branch", branch=sid,
+                       start_head=before, return_branch=previous, cell={"model": body.model, "effort": body.effort}))
+        # Closing a session takes _lock; keep the same lock order as spec editing.
+        work.forget(path)
         # Made: from here it is a turn, and a switch no longer waits for it.
         release.held.kind = "turn"
         # The server's own turn: Jev may gather evidence first, or ask the person instead.
@@ -754,6 +839,29 @@ def start(sid: str, body: Start) -> dict:
         release()
         raise
     return {"path": str(path), "turn": run.turn, "session_id": run.session_id}
+
+
+@router.post("/api/specs/{sid}/checkout")
+def activate(sid: str) -> dict:
+    """Open a saved task branch in the same checkout, preserving its conversation."""
+    with _lock:
+        repo = current_repo()
+        checkout_idle(repo)
+        release = hold(work._busy, _lock, str(repo), "이 저장소에서 다른 작업이 돌고 있다")
+    try:
+        spec = load(repo.name, sid)
+        if not spec or spec.get("workspace_mode") != "branch" or spec.get("worktree") != str(repo):
+            raise HTTPException(404, "이 저장소의 작업 브랜치가 아니다")
+        clean = sh(["git", "status", "--porcelain"], repo)
+        if clean.returncode or clean.stdout.strip():
+            raise HTTPException(409, "현재 변경을 커밋하거나 보관한 뒤 작업 브랜치를 열어라")
+        switched = sh(["git", "switch", branch_of(spec)], repo)
+        if switched.returncode:
+            raise HTTPException(409, said(switched))
+        work.forget(repo)
+        return {"path": str(repo)}
+    finally:
+        release()
 
 
 # -- The work session -------------------------------------------------------
@@ -766,7 +874,7 @@ def system(path: Path) -> str:
     spec = owner(path)
     if spec is None:
         return ""
-    shown = {**{k: spec[k] for k in ("id", "goal", "out", "done", "grounds", "decisions")}, **profile_of(spec)}
+    shown = {**{k: spec[k] for k in ("id", "rev", "goal", "out", "done", "grounds", "decisions")}, **profile_of(spec)}
     return SPEC_PROMPT.rstrip() + "\n\n```json\n" + json.dumps(shown, ensure_ascii=False, indent=2) + "\n```\n"
 
 
@@ -1061,28 +1169,37 @@ def pull_request(path: Path, branch: str, base: str, title: str, body: str) -> t
     """`(number, url)` of the pull request from `branch` into `base`: the one
     already open, else a new one. A create that failed or timed out is not
     tried again — the list is read once more, since GitHub may have made it
-    before the answer was lost. `RuntimeError` says why there is none."""
+    before the answer was lost. Reused PRs receive the current title and body.
+    `RuntimeError` says why publication could not complete."""
 
     found = existing_pr(path, branch, base)
-    if found:
-        return found
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
         fh.write(body)
     try:
-        made = sh(["gh", "pr", "create", "--base", base, "--head", branch, "--title", title, "--body-file", fh.name],
-                  path, 120)
-        why = said(made)
-    except subprocess.TimeoutExpired:
-        made, why = None, "시간 초과"
+        if not found:
+            try:
+                made = sh(["gh", "pr", "create", "--base", base, "--head", branch,
+                           "--title", title, "--body-file", fh.name], path, 120)
+                why = said(made)
+            except subprocess.TimeoutExpired:
+                made, why = None, "시간 초과"
+            number = re.search(r"/pull/(\d+)", made.stdout) if made is not None and not made.returncode else None
+            if number:
+                return int(number.group(1)), made.stdout.strip().splitlines()[-1]
+            found = existing_pr(path, branch, base)
+            if not found:
+                raise RuntimeError(f"PR 을 만들지 못했다 — {why}")
+        # The agent may have opened it early, or GitHub accepted a timed-out
+        # create. In both cases publish the current requirements and evidence.
+        try:
+            edited = sh(["gh", "pr", "edit", str(found[0]), "--title", title, "--body-file", fh.name], path, 120)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("PR 명세와 확인 기록을 갱신하지 못했다 — 시간 초과") from exc
+        if edited.returncode:
+            raise RuntimeError(f"PR 명세와 확인 기록을 갱신하지 못했다 — {said(edited)}")
+        return found
     finally:
         os.unlink(fh.name)
-    number = re.search(r"/pull/(\d+)", made.stdout) if made is not None and not made.returncode else None
-    if number:
-        return int(number.group(1)), made.stdout.strip().splitlines()[-1]
-    found = existing_pr(path, branch, base)
-    if found:
-        return found
-    raise RuntimeError(f"PR 을 만들지 못했다 — {why}")
 
 
 def opened(repo: Path, path: Path, run, spec: dict):
@@ -1180,9 +1297,20 @@ def _check(path: Path, run, final: str):
     repo = channels.repo_for(spec["repo"]) if spec else None
     if spec is None or repo is None:
         return None
-    if spec.get("planning") and spec["state"] == "작업 중":
+    if spec.get("planning") and spec["planning"].get("phase") != "handoff" and spec["state"] == "작업 중":
         # A plan goes up through `planning` only; a done report here publishes nothing.
         return None
+    changes = [b for b in blocks(final)[1] if b["name"] == "spec-update"]
+    if changes:
+        if len(changes) != 1 or "error" in changes[0]:
+            return failed(run, spec, "명세 변경 블록은 올바른 JSON 객체 하나여야 한다")
+        try:
+            with _files:
+                spec = load(spec["repo"], spec["id"])
+                revise(repo, spec, changes[0].get("value"))
+        except ValueError as exc:
+            return failed(run, spec, f"명세 변경을 반영하지 못했다 — {exc}")
+        note(run, f"명세 판 {spec['rev']} 반영 · 이전 리뷰 승인은 다시 확인한다")
     if spec["state"].startswith("PR #") and spec.get("plan_commit") == "asked":
         # Any turn that ends here is not the row's commit: a person's turn may
         # have got there first, or the agent answered without the edit. Only

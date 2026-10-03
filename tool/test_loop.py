@@ -265,7 +265,7 @@ def pr_spec(w, name: str, n: int, file: str = "", **extra) -> dict:
     """A spec as stage 3 leaves it: the pull request up, its gate passed.
     Its one commit adds `file`, by default `<name>.txt`."""
 
-    path = create(w.repo, name)
+    path = create(w.repo, name, linked=True)
     (path / (file or name)).parent.mkdir(parents=True, exist_ok=True)
     head = commit(path, file or f"{name}.txt")
     git(path, "push", "-q", "-u", "origin", name)

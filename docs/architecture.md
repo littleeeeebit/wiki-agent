@@ -30,7 +30,7 @@ The packages under `tool/` are pipelines whose imports `tool/lint.py` checks
 | --- | --- |
 | `tool/common/` | Settings reader, budgets, process options; imports no pipeline |
 | `tool/wiki/` | Hub pages, their front matter and matching |
-| `tool/workspace/` | Checkouts and host session records |
+| `tool/workspace/` | Task branches, explicit linked checkouts and host session records |
 | `tool/translate/` | English normalization and the Korean overlay |
 | `tool/search/` | Sources, chunks, the evidence store, the knowledge graph and retrieval |
 | `tool/decision/` | Jev transport, typed decisions, policy and claims; no retrieval or execution |
@@ -48,7 +48,7 @@ whatever retrieval or its audience scope does.
 
 | Process | Started by | State it owns |
 | --- | --- | --- |
-| The app server (`tool/main`) | `tool/app.cmd` or the Tauri window | Chat records in `raw/chat/`, runs, specifications, worktrees |
+| The app server (`tool/main`) | `tool/app.cmd` or the Tauri window | Chat records in `raw/chat/`, runs, revisable specifications, task branches and legacy worktrees |
 | The search daemon (`tool/search/daemon.py`) | The first search that needs it; replaced when its code hash differs | The evidence store and vectors in the user cache, per hub and project |
 | Host sessions (Claude, Codex) | The app's work and review cells | Their own transcripts; the program reads their events |
 | Mobile tunnel (`cloudflared`) | Explicitly enabled in desktop Settings | Temporary HTTPS hostname; paired browser requests reach the same app server |

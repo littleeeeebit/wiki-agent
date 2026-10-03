@@ -1,9 +1,9 @@
-"""work — the selected project's worktrees, and one write session in each.
+"""work — the selected checkout and isolated trees, with task-specific sessions.
 
 The screen names a worktree by path, and a path from the screen is never
 opened as it is: it has to be on `workspace`'s own list for the selected
-project. Every write the agent wants arrives as an `approval` event and waits
-for a person.
+project. Implementation agents have full access; product questions still arrive
+as interactive events. Task branches share a directory, not a conversation.
 
 A turn runs in its own thread, not in the response that started it. Its
 events pile up in a `Run`, and every response only tails that buffer, so a
@@ -99,6 +99,7 @@ def provider_usage(provider: Literal["claude", "codex"], path: str = "") -> dict
 def diff_git(path: Path, *args: str, codes=(0,)) -> str:
     command = ["git", "-c", "core.quotepath=false", "-C", str(path), *args]
     expired = threading.Event()
+    preview = args[0] == "diff" and "--numstat" not in args
     with tempfile.TemporaryFile() as errors, subprocess.Popen(
             command, stdout=subprocess.PIPE, stderr=errors, text=True,
             encoding="utf-8", errors="replace", **background_options()) as proc:
@@ -111,8 +112,8 @@ def diff_git(path: Path, *args: str, codes=(0,)) -> str:
         timer.start()
         try:
             # One extra character carries truncation; never capture the full patch.
-            output = proc.stdout.read(200_001 if args[0] == "diff" else -1)
-            truncated = args[0] == "diff" and len(output) > 200_000
+            output = proc.stdout.read(200_001 if preview else -1)
+            truncated = preview and len(output) > 200_000
             if truncated:
                 proc.kill()
             proc.wait()
@@ -137,27 +138,68 @@ def changes(path: str) -> dict:
     """
     root = known(path)
     run = _runs.get(path)
-    base = getattr(run, "diff_base", None) or "HEAD"
-    flags = ("--no-ext-diff", "--no-textconv", "--no-color")
+    from . import specs
+
+    spec = specs.owner(root)
+    base = (spec or {}).get("start_head") or getattr(run, "diff_base", None)
+    if not base:
+        base = next((r.get("diff_base") for r in reversed(recall(root)) if r.get("diff_base")), None) or "HEAD"
+    flags = ("--no-ext-diff", "--no-textconv", "--no-color", "--no-renames")
     try:
+        branch = ((spec or {}).get("pr") or {}).get("base") or (spec or {}).get("return_branch")
+        if branch:
+            baseline = ""
+            for ref in (f"refs/remotes/origin/{branch}", f"refs/heads/{branch}"):
+                try:
+                    candidate = diff_git(root, "merge-base", ref, "HEAD").strip()
+                    if not baseline or diff_git(root, "merge-base", baseline, candidate).strip() == baseline:
+                        baseline = candidate
+                except RuntimeError:
+                    continue  # An unfetched remote can use the selected local base.
+            base = baseline or base
+        totals = {"files": 0, "added": 0, "deleted": 0, "binary": 0, "unknown": 0}
+
+        def count(output):
+            rows = iter(output.split("\0"))
+            for row in rows:
+                if not row:
+                    continue
+                added, deleted, name = row.split("\t", 2)
+                if not name:
+                    # --no-index uses a NUL-separated old/new pair even with
+                    # rename detection disabled. Neither path is another stat.
+                    next(rows)
+                    next(rows)
+                totals["files"] += 1
+                if added == "-" or deleted == "-":
+                    totals["binary"] += 1
+                else:
+                    totals["added"] += int(added)
+                    totals["deleted"] += int(deleted)
+
+        count(diff_git(root, "diff", "--numstat", "-z", *flags, base, "--"))
         patch = diff_git(root, "diff", *flags, base, "--")
         untracked = diff_git(root, "ls-files", "--others", "--exclude-standard", "-z")
         omitted = []
         for name in untracked.split("\0"):
-            if len(patch) > 200_000:
-                break
             if not name:
                 continue
             file = root / name
             # A symlink may target a private file outside this worktree.
-            if file.is_symlink() or not file.resolve().is_relative_to(root.resolve()) or file.stat().st_size > 1_000_000:
+            if file.is_symlink() or not file.resolve().is_relative_to(root.resolve()):
+                totals["files"] += 1
+                totals["unknown"] += 1
                 omitted.append(name)
                 continue
-            patch += diff_git(root, "diff", "--no-index", *flags, "--", "/dev/null", name, codes=(0, 1))
-            if len(patch) > 200_000:
-                break
+            count(diff_git(root, "diff", "--no-index", "--numstat", "-z", *flags,
+                           "--", "/dev/null", name, codes=(0, 1)))
+            if file.stat().st_size > 1_000_000:
+                omitted.append(name)
+            elif len(patch) <= 200_000:
+                patch += diff_git(root, "diff", "--no-index", *flags, "--", "/dev/null", name, codes=(0, 1))
         # ponytail: cap the preview at 200k characters; paginate if large patches become common.
-        return {"diff": patch[:200_000], "base": base, "truncated": len(patch) > 200_000, "omitted": omitted}
+        return {"diff": patch[:200_000], "base": base, "truncated": len(patch) > 200_000,
+                "omitted": omitted, "totals": totals}
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         raise HTTPException(503, f"변경 현황을 읽지 못했다 — {exc}") from exc
 
@@ -167,6 +209,11 @@ def record(path: Path) -> Path:
     task name is only unique within its repository, and the project selection
     can change while a turn is still being written."""
 
+    from . import specs
+
+    spec = specs.owner(path)
+    if spec and spec.get("workspace_mode") == "branch":
+        return LOGS / spec["repo"] / f"{spec['id']}.jsonl"
     return LOGS / path.parent.name / f"{path.name}.jsonl"
 
 
@@ -211,7 +258,8 @@ def listing() -> dict:
     out = []
     for row in rows:
         chat = _sessions.get(str(row["path"]))
-        out.append({**row, "path": str(row["path"]), "name": row["path"].name,
+        out.append({**row, "path": str(row["path"]), "name": row["branch"] or row["path"].name,
+                    "primary": row["path"].resolve() == repo.resolve(),
                     "live": bool(chat and chat.alive), "busy": str(row["path"]) in _busy})
     return {"project": name, "repo": str(repo), "rows": out}
 
@@ -250,6 +298,8 @@ def clear(body: Removal) -> dict:
     # handed it another repository, and a stop aimed at another project.
     with _lock:
         repo = current_repo()
+    if Path(body.path).resolve() == repo.resolve():
+        raise HTTPException(409, "원본 저장소는 삭제하지 않는다. 작업 브랜치는 Git에서 관리해라")
     if body.force:
         # Only that project's worktree is stopped: a path from anywhere else
         # is a 404 before anything halts.
@@ -362,6 +412,7 @@ def session(path: Path, model: str, effort: str) -> ChatSession:
 
     key = str(path)
     bypass = settings()["bypass"]
+    prompt = specs.system(path)
     with _lock:
         chat = _sessions.get(key)
         if chat is not None and chat.is_codex != model.startswith("codex:"):
@@ -369,9 +420,14 @@ def session(path: Path, model: str, effort: str) -> ChatSession:
             chat.close()
             remember(path, "context", "CLI 변경")
             chat = None
+        if chat is not None and getattr(chat, "_spec_system", prompt) != prompt:
+            chat.close()
+            _sessions.pop(key)
+            chat = None
         if chat is None:
-            chat = ChatSession(path, model=model, effort=effort, write=True, system=specs.system(path),
+            chat = ChatSession(path, model=model, effort=effort, write=True, system=prompt,
                                bypass=bypass)
+            chat._spec_system = prompt
             chat.session_id = resumable(recall(path), chat.is_codex)
             _sessions[key] = chat
         else:
@@ -389,9 +445,7 @@ WORK_DEFAULTS = {"bypass": True}
 
 
 def settings() -> dict:
-    from . import loop  # `loop` imports this module
-
-    return loop.settings(WORK_DEFAULTS)
+    return dict(WORK_DEFAULTS)
 
 
 class WorkSettings(BaseModel):
@@ -407,7 +461,7 @@ def get_settings() -> dict:
 def set_settings(body: WorkSettings) -> dict:
     from . import loop
 
-    loop.store(bypass=body.bypass)
+    loop.store(bypass=True)
     return settings()
 
 
@@ -632,7 +686,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> 
                 at = next((i for i, e in enumerate(run.events) if e["kind"] == "done"), None)
                 answered = {} if at is None else {"answered": len(steps(run.events[:at + 1]))}
             remember(path, "assistant", final, error=failed, steps=made,
-                     provider="codex" if chat.is_codex else "claude", **answered, **meta)
+                     provider="codex" if chat.is_codex else "claude", diff_base=run.diff_base, **answered, **meta)
         finally:
             # Released before the end is told, so a screen that sees the end
             # can send the next instruction at once.

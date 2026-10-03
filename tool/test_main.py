@@ -691,7 +691,7 @@ def _made(task: str = "t1") -> str:
 
     from workspace import create
 
-    return str(create(chat.current_repo(), task))
+    return str(create(chat.current_repo(), task, linked=True))
 
 
 class Agent:
@@ -786,15 +786,15 @@ def test_work_opens_only_its_own_worktrees(tmp_path):
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
          patch.object(chat, "_project", "proj"):
         path = _made()
-        assert [r["name"] for r in web.get("/api/worktrees").json()["rows"]] == ["t1"]
-        for other in (str(repo), str(tmp_path / "elsewhere")):
+        assert [r["name"] for r in web.get("/api/worktrees").json()["rows"]] == ["main", "t1"]
+        for other in (str(tmp_path / "elsewhere"),):
             assert web.post("/api/work/say", json={"path": other, "text": "x"}).status_code == 404
             assert web.get("/api/work/log", params={"path": other}).status_code == 404
             assert web.get("/api/file", params={"repo": other, "path": "a.txt"}).status_code == 404
         assert web.get("/api/file", params={"repo": path, "path": "a.txt"}).json()["lines"] == ["a"]
         assert web.get("/api/file", params={"repo": path, "path": "../proj/a.txt"}).status_code == 404
         assert "지웠다" in web.post("/api/worktrees/remove", json={"path": path}).json()["text"]
-        assert web.get("/api/worktrees").json()["rows"] == []
+        assert web.get("/api/worktrees").json()["rows"][0]["primary"]
 
 
 def test_a_cite_finds_its_file_the_ways_answers_write_it(tmp_path):
@@ -998,7 +998,7 @@ def test_a_forced_delete_stays_with_the_project_it_checked(tmp_path):
         return found
 
     with patch.object(chat_channels, "repo_for", side_effect=repos.get), \
-         patch.object(specs, "owner", lambda path: {"id": "t1", "state": "리뷰 R1"}), \
+         patch.object(specs, "owner", lambda path: {"id": "t1", "repo": "proj", "state": "리뷰 R1"}), \
          patch.object(loop, "halt_loop", lambda repo, sid: halted.append((repo, sid))):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         path = _made()
@@ -1264,7 +1264,7 @@ def test_a_screen_that_missed_a_switch_writes_nothing_into_the_new_project(tmp_p
         assert web.get("/api/worktrees", headers=showing_a).status_code == 409
         assert web.post("/api/work/say", json={"path": path, "text": "x"}, headers=showing_a).status_code == 409
         assert not work._busy and not chat._busy
-        assert web.get("/api/worktrees", headers={"X-Project": "b"}).json()["rows"] == []
+        assert [r["name"] for r in web.get("/api/worktrees", headers={"X-Project": "b"}).json()["rows"]] == ["main"]
         # The switch itself names its project in the body.
         assert web.post("/api/config/wiki", json={"repo": "a"}, headers={"X-Project": "b"}).status_code == 200
 

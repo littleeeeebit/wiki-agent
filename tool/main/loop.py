@@ -35,7 +35,7 @@ from pydantic import BaseModel
 import translate
 from agent import ChatSession
 from common import worktree_home
-from workspace import adopt, folder_for, remove, worktrees
+from workspace import adopt, base_branch, folder_for, remove, worktrees
 
 from . import channels, connect, decisions, query, specs, verification, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
@@ -551,7 +551,8 @@ def fixing(n: int, findings: list[dict], said: str) -> str:
         f"Review round {n} refused the merge (`{said}`) and found the following. For each finding: "
         "reproduce it first. Fix it where it "
         "points, and count separately the other places the same rule applies to. If you do not agree, "
-        "say why with evidence rather than changing the code. Commit what you change; do not push.\n\n"
+        "say why with evidence rather than changing the code. Commit and push the task branch. "
+        "The server also synchronizes the branch before the next review.\n\n"
         "End the answer with a fenced block whose info string is `disposition`, holding a JSON list with "
         "one entry per finding, in order: `{\"finding\": \"<its first line, copied>\", \"id\": \"<its id, "
         "when it has one, else null>\", \"action\": \"fixed\" | \"not-reproduced\" | \"disagree\", "
@@ -928,7 +929,7 @@ def reusable(spec: dict, head: str, chosen: dict) -> bool:
 
 def repair(cmd: str, verdict: dict) -> str:
     return (f"The server ran the gate `{cmd}` in this worktree and it failed: {verdict['reason']}. The end "
-            f"of its output:\n\n```\n{verdict['tail']}\n```\n\nFix it and commit. Do not push.")
+            f"of its output:\n\n```\n{verdict['tail']}\n```\n\nFix it, commit, and push the task branch.")
 
 
 def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str) -> bool:
@@ -1178,6 +1179,9 @@ def step(loop: Loop) -> bool:
         return stop(loop, loop.repo, loop.sid, Why.NO_REPO, str(exc))
     if not spec.get("worktree") or path.resolve() not in listed:
         return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE, f"`{path.name}` 가 `{repo.name}` 의 작업트리 목록에 없다")
+    if spec.get("workspace_mode") == "branch" and \
+            specs.sh(["git", "branch", "--show-current"], path).stdout.strip() != specs.branch_of(spec):
+        return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE, "작업 브랜치를 다시 연 뒤 리뷰를 계속해라")
     rounds, pr = counted(spec), spec["pr"]["number"]
     n = len(rounds) + 1
     head, base = pr_head(repo, pr)
@@ -1347,6 +1351,8 @@ def step(loop: Loop) -> bool:
     answer = told(loop, spec, path, text)
     if answer is None:
         return False
+    # The implementation turn may revise the requirements and invalidate prior rounds.
+    spec = specs.load(loop.repo, loop.sid) or spec
     latest = spec["rounds"][-1]
     disposition = vouched(disposed(answer), latest.get("items") or [])
     spec = change(loop, rounds=[*spec["rounds"][:-1], {**latest, "disposition": disposition,
@@ -1462,18 +1468,50 @@ def landed(repo: Path, spec: dict) -> None:
             stop(None, repo.name, spec["id"], Why.LEFT_QUEUE, "PR 이 닫혔다", WAITING)
 
 
-def forward(repo: Path, base: str) -> str:
-    """The original checkout moves only when it stands on the base, clean,
-    and only by fast-forward. It is the second of the two writes the server
-    makes to an original checkout."""
+def forward(repo: Path, base: str, *, task_branch: str = "") -> str:
+    """Fast-forward a clean base, optionally returning from the merged task.
 
-    specs.sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], repo, 120)
-    on = specs.sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
-    dirty = specs.sh(["git", "status", "--porcelain"], repo)
-    if on != base or dirty.returncode or dirty.stdout.strip():
-        return f"원본이 뒤처짐 — 원본이 `{base}` 에 깨끗이 서 있지 않다"
-    done = specs.sh(["git", "merge", "--ff-only", f"origin/{base}"], repo, 60)
-    return f"원본을 `origin/{base}` 로 앞으로 옮겼다" if not done.returncode else f"원본이 뒤처짐 — {specs.said(done)}"
+    Never switch an unrelated branch or interrupt another turn. The local
+    task branch remains intact, including commits added after publication.
+    """
+
+    try:
+        release = hold(work._busy, _lock, str(repo), "", kind="turn")
+    except HTTPException:
+        return "원본이 뒤처짐 — 다른 작업이 저장소를 쓰고 있다"
+    try:
+        on = specs.sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
+        dirty = specs.sh(["git", "status", "--porcelain"], repo)
+        if on not in {base, task_branch} or dirty.returncode or dirty.stdout.strip():
+            return f"원본이 뒤처짐 — 원본이 `{base}` 에 깨끗이 서 있지 않다"
+        fetched = specs.sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], repo, 120)
+        if fetched.returncode:
+            return f"원본이 뒤처짐 — {specs.said(fetched)}"
+        if on != base:
+            trees = specs.sh(["git", "worktree", "list", "--porcelain"], repo)
+            if trees.returncode:
+                return f"원본이 뒤처짐 — {specs.said(trees)}"
+            target = base_branch(repo, base) if f"branch refs/heads/{base}" in trees.stdout.splitlines() else base
+            args = ["git", "switch", target]
+            if target != base:
+                exists = specs.sh(["git", "show-ref", "--verify", "--quiet", f"refs/heads/{target}"], repo)
+                if exists.returncode == 1:
+                    args = ["git", "switch", "--track", "-c", target, f"origin/{base}"]
+                elif exists.returncode:
+                    return f"원본이 뒤처짐 — {specs.said(exists)}"
+                else:
+                    upstream = specs.sh(["git", "rev-parse", "--abbrev-ref", "--symbolic-full-name",
+                                         f"{target}@{{upstream}}"], repo)
+                    if upstream.returncode or upstream.stdout.strip() != f"origin/{base}":
+                        return f"원본이 뒤처짐 — `{target}` 의 upstream 을 확인해라"
+            switched = specs.sh(args, repo)
+            if switched.returncode:
+                return f"원본이 뒤처짐 — {specs.said(switched)}"
+            work.forget(repo)
+        done = specs.sh(["git", "merge", "--ff-only", f"origin/{base}"], repo, 60)
+        return f"원본을 `origin/{base}` 로 앞으로 옮겼다" if not done.returncode else f"원본이 뒤처짐 — {specs.said(done)}"
+    finally:
+        release()
 
 
 def cleared(repo: Path, path: Path) -> str:
@@ -1518,14 +1556,19 @@ def finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
                                merge={"commit": commit, "base": base}))
     specs.told(repo, spec, text)
     if (spec.get("survey") or {}).get("handover"):
+        if spec.get("workspace_mode") == "branch":
+            notes.append(forward(repo, base, task_branch=specs.branch_of(spec)))
         # The original's adapter is uncommitted and would block the
         # fast-forward. The handover moves it aside and fast-forwards
         # itself; when it stops, the fast-forward is skipped too.
         handed = connect.handover(repo, n)
         notes.append(handed["reason"] if handed["ok"] else f"adapter 넘기기 대기 — {handed['reason']}")
     else:
-        notes.append(forward(repo, base))
-    if spec.get("worktree"):
+        notes.append(forward(repo, base, task_branch=specs.branch_of(spec)
+                             if spec.get("workspace_mode") == "branch" else ""))
+    if spec.get("workspace_mode") == "branch":
+        notes.append("원본 저장소와 작업 브랜치를 남겼다")
+    elif spec.get("worktree"):
         notes.append(cleared(repo, Path(spec["worktree"])))
     notes.append(pruned(repo, specs.branch_of(spec), allowed["head"] if allowed else spec["pr"].get("head", "")))
     close_cell(spec["repo"], n)
@@ -1715,10 +1758,13 @@ def proceed(repo: Path, spec: dict, note: str) -> dict:
     elif why is Why.NO_REPO and channels.repo_for(spec["repo"]) is None:
         raise HTTPException(409, f"`{spec['repo']}` 가 아직 작업 공간에 없다")
     elif why is Why.NO_WORKTREE:
-        view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "headRefName,headRefOid"])
-        path = adopted(repo, view["headRefName"], view["headRefOid"],
-                       detached=spec.get("implementation_environment", "local") != "local")
-        specs.update(repo.name, sid, worktree=str(path), pr={**spec["pr"], "branch": view["headRefName"]})
+        if spec.get("workspace_mode") == "branch":
+            specs.activate(sid)
+        else:
+            view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "headRefName,headRefOid"])
+            path = adopted(repo, view["headRefName"], view["headRefOid"],
+                           detached=spec.get("implementation_environment", "local") != "local")
+            specs.update(repo.name, sid, worktree=str(path), pr={**spec["pr"], "branch": view["headRefName"]})
     elif why is Why.LEFT_QUEUE:
         view = gh_or_502(repo, ["pr", "view", str(spec["pr"]["number"]), "--json", "state,headRefOid,baseRefName"])
         allowed = specs.approved(spec)

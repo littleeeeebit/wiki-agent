@@ -491,6 +491,9 @@ export type Spec = {
   id: string
   repo: string
   rev: number
+  workspace_mode?: 'branch'
+  branch?: string
+  revisions?: { rev: number; reason: string; goal: string; out: string[]; done: string[] }[]
   goal: string
   out: string[]
   done: string[]
@@ -538,11 +541,12 @@ export type Spec = {
 
 export const getSpecs = () =>
   get('/api/specs').then((r) => json<{ project: string; gate: string; specs: Spec[] }>(r, '명세'))
-export const saveSpec = (id: string, body: { rev: number; goal: string; out: string[]; done: string[]; slug: string }) =>
+export const saveSpec = (id: string, body: { rev: number; goal: string; out: string[]; done: string[]; slug: string; reason?: string }) =>
   post(`/api/specs/${id}`, body, 'PUT').then((r) => json<Spec>(r, '명세 저장'))
 export const startSpec = (id: string, choice: { model: string; effort: string }) =>
   post(`/api/specs/${id}/start`, choice).then((r) => json<{ path: string; turn: string }>(r, '시작'))
 export const dropSpec = (id: string) => post(`/api/specs/${id}/drop`).then((r) => json(r, '버리기'))
+export const checkoutSpec = (id: string) => post(`/api/specs/${id}/checkout`).then((r) => json<{ path: string }>(r, '브랜치 열기'))
 
 // -- The Plan action -----------------------------------------------------------
 
@@ -775,6 +779,7 @@ export type Worktree = {
   path: string
   name: string
   branch: string
+  primary?: boolean
   dirty: boolean
   merged: boolean
   live: boolean
@@ -784,7 +789,8 @@ export type Worktree = {
 export const getWorktrees = () =>
   get('/api/worktrees').then((r) => json<{ project: string; repo: string; rows: Worktree[] }>(r, '작업트리'))
 
-export type Changes = { diff: string; base: string; truncated: boolean; omitted: string[] }
+export type Changes = { diff: string; base: string; truncated: boolean; omitted: string[];
+  totals: { files: number; added: number; deleted: number; binary: number; unknown: number } }
 export const workDiff = (path: string) => get(`/api/work/diff?${new URLSearchParams({ path })}`)
   .then((r) => json<Changes>(r, '코드 변경 현황'))
 

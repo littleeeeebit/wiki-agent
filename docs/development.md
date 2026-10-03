@@ -58,8 +58,11 @@ protection, prerequisites and device acceptance are in the same mobile guide.
 
 The agent pane reads `GET /api/work/diff?path=…` every second during a turn
 and every five seconds while idle. It includes staged, unstaged and untracked
-files without changing the index; the turn's initial commit remains its diff
-base after a commit. Large previews are explicitly truncated. Questions in
+files without changing the index. The panel stays above the conversation, with
+added/deleted lines and file counts. A task's base persists across turns,
+commits and restarts; its current merge base excludes integrated upstream changes.
+Git supplies totals independently of the capped preview. Binary files and unread
+symlink targets are identified without claiming text line counts. Questions in
 Agent, Next Task and Planner share chapter cards, Markdown examples and the
 Korean overlay; submissions retain original option labels.
 
@@ -73,6 +76,49 @@ child is stopped at the limit; a ten-second watchdog reaps stalled children.
 `python -m pytest -q tool/test_agent_panel.py` checks real Git changes, question
 replay and both providers' event fields. Restart the app after rebuilding the
 screen so its Python server loads the updated routes too.
+
+New tasks create a branch with `git switch -c` in the selected repository;
+they do not create another checkout or a `<repo>-worktrees` folder. Only one
+branch can run in a checkout at a time. Starting or opening another branch
+waits for active work/review and refuses uncommitted changes. Existing linked
+worktrees remain readable, and external PR review can explicitly use one.
+The original repository cannot be deleted through worktree cleanup.
+New tasks started from another managed task use its saved base branch, so the
+previous task's commits do not leak into the next PR. A restart releases an
+interrupted survey's checkout reservation without replaying its writes.
+
+Implementation sessions use full access: Claude starts with
+`--dangerously-skip-permissions`; Codex uses `approval_policy="never"` and
+`sandbox_mode="danger-full-access"` at process, thread and turn boundaries.
+An old saved permission toggle cannot downgrade these sessions. Questions
+about the intended result still wait for answers. Read-only review and Cloud
+verification keep their separate execution scopes.
+
+Implementation and repair agents may commit, push and open their task PR.
+Reused PRs receive the current title, requirements and completion evidence.
+After merge, a clean shared task checkout returns to and fast-forwards its
+base; busy or dirty checkouts and unrelated branches remain untouched.
+If that base is already open in a sibling worktree, the selected checkout uses
+one reusable `wiki-base/<checkout-id>/<base>` branch tracking the remote base.
+This creates only a Git ref, not a checkout. It never moves the sibling's base
+ref or files. Survey handover validates this branch's actual upstream base and
+repository too. New tasks may use a fetched fast-forward of their saved base
+without changing an occupied branch.
+Starting from a reopened merged task refuses an ahead or divergent saved base,
+or an unverified upstream, before creating any branch. Resolve that history
+explicitly; unpublished sibling work is never silently imported into the task.
+The server retains gate execution, PR recovery and independent review.
+An idle task's requirements can be edited in its spec panel. During a turn,
+later instructions can be recorded through a `spec-update` block before the
+completion report. Revisions preserve prior requirements and invalidate old
+review approval; the next agent turn receives the current spec.
+`python -m pytest -q tool/test_task_workflow.py` verifies these transitions.
+
+Markdown file links, including absolute paths and line numbers, open the
+source drawer. HTTP/HTTPS links use the system browser in the Tauri window;
+normal browser tabs keep their native link behavior.
+`python web/tests/task_browser.py` checks diff visibility after a long transcript,
+file citation destinations and desktop/browser link dispatch using synthetic data.
 
 The native privacy regression uses Playwright/CDP and a separate fixture app,
 not desktop control. With Playwright already available, run

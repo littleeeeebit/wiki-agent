@@ -41,6 +41,8 @@ def repo(tmp_path):
     loop is not started here — `test_loop.py` drives it — only noted."""
 
     repo = _repo(tmp_path)
+    # Connected projects keep per-machine runtime wiring outside Git.
+    (repo / ".git/info/exclude").write_text(".wiki/adapter.toml\n", encoding="utf-8")
     _adapter(repo, PASS)
     KICKED.clear()
     with patch.object(chat_channels, "repo_for", side_effect=lambda name: repo if name == "proj" else None), \
@@ -77,6 +79,9 @@ class Remote:
         if args[:3] == ["gh", "pr", "create"]:
             self.body = Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8")
             return ok("https://github.com/o/proj/pull/7\n")
+        if args[:3] == ["gh", "pr", "edit"]:
+            self.body = Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8")
+            return ok()
         if args[:3] == ["gh", "pr", "view"]:
             return ok(json.dumps({"state": "MERGED" if self.merged else "OPEN", "mergedAt": None}))
         if args[:3] == ["gh", "pr", "list"] and "--head" in args:
@@ -336,7 +341,7 @@ sys.stdin.read()
     finally:
         work.close_all()
     system = commands[0][commands[0].index("--append-system-prompt") + 1]
-    assert system.startswith("Task: carry out the spec") and "로그인 뒤 원래 페이지로 돌아간다" in system
+    assert system.startswith("Task: carry out the current spec") and "로그인 뒤 원래 페이지로 돌아간다" in system
     assert json.loads(system.split("```json\n")[1].split("```")[0])["done"][0] == PASS
     spec = specs.load("proj", sid)
     assert spec["state"] == "작업 중" and spec["worktree"] == path
@@ -370,6 +375,8 @@ def test_a_passing_report_is_not_believed_over_a_failing_gate_or_an_uncommitted_
         assert spec["gate"]["reason"] == "커밋 안 된 변경" and not remote.created()
 
         # A report with an item not passed is not judged at all.
+        subprocess.run(["git", "-C", str(repo), "add", "left.txt"], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "-qm", "preserve previous task changes"], check=True)
         sid = made(repo, spec_block(slug="half"))[0]["id"]
         Worker.replies = [report(True, False)]
         path = started(web, sid)
