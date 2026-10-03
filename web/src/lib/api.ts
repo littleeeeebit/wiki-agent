@@ -743,11 +743,20 @@ export type FeedEv =
   | { kind: 'turn'; seq: number; path: string; turn: string; session_id: string }
   | { kind: 'connect'; seq: number; repo: string }
   | { kind: 'review'; seq: number; repo: string; id: string; turn: string }
+  | { kind: 'conversation'; seq: number; cid: string }
+  | { kind: 'work-record'; seq: number; path: string }
+  | { kind: 'work-state'; seq: number; path: string }
+  | { kind: 'sync'; seq: number }
 
 /** Tail the server's own changes until `signal` aborts or the stream drops. */
-export async function loopEvents(onEvent: (ev: FeedEv) => void, signal: AbortSignal): Promise<void> {
-  const url = '/api/loops/events'
+export async function loopEvents(onEvent: (ev: FeedEv) => void, signal: AbortSignal,
+  after: number | undefined, ready: (cursor?: number) => void): Promise<void> {
+  const url = '/api/loops/events' + (after === undefined ? '' : `?after=${after}`)
   const res = await fetch(url, { headers: await scoped(url), signal })
+  if (res.ok) {
+    const cursor = res.headers.get('X-Feed-Cursor')
+    ready(cursor === null ? undefined : Number(cursor))
+  }
   await events<FeedEv | null>(res, (ev) => ev && onEvent(ev), () => null)
 }
 

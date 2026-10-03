@@ -19,6 +19,7 @@ type Props = {
   turns: Turn[]
   options: Options | null
   choice: Choice
+  optionsOpen: boolean
   on: boolean
   onChoice: (c: Choice) => void
   onSend: (text: string) => void
@@ -42,7 +43,7 @@ type Props = {
  *  ran and what it asks to write stay as they are, because a person approves
  *  those and a reworded command is not the command. */
 export function Agent({
-  row, turns, options, choice, on, onChoice, onSend, onAnswer, onStop, onSteer, queued, onQueue, onUnqueue, refused,
+  row, turns, options, choice, optionsOpen, on, onChoice, onSend, onAnswer, onStop, onSteer, queued, onQueue, onUnqueue, refused,
   onDismiss, rules, onClearRules, onReset, onPeek,
 }: Props) {
   const end = useRef<HTMLDivElement>(null)
@@ -61,24 +62,26 @@ export function Agent({
 
   return (
     <section aria-label="에이전트 세션" className="flex h-full min-h-0 flex-col">
-      <header className="border-b border-border px-5">
+      <header className="agent-header shrink-0 border-b border-border px-5">
         {/* The model and effort stand here before there is a worktree too:
             a spec's [시작] runs its first turn on them. */}
         <div className="agent-toolbar flex h-11 items-center justify-end gap-1.5">
-          <span className="mr-auto truncate font-heading text-[11px] font-semibold text-faint">작업 모델</span>
+          <span className="agent-model-label mr-auto truncate font-heading text-[11px] font-semibold text-faint">작업 모델</span>
           {row && busy && last?.turn && (
             <Btn tone="danger" onClick={() => onStop(last)} title="도는 턴을 멈춘다. 대화는 남아 다음 지시가 이어진다">
               멈춤
             </Btn>
           )}
-          <Toolbar value={choice} options={options} busy={busy} onChange={onChoice} />
-          {row && (
-            <Btn tone="ghost" className="px-1.5" onClick={() => setAsking(true)}
-              disabled={busy} aria-label="문맥 비우기"
-              title="문맥 비우기 — 이 작업트리의 대화를 새로 시작한다. 지금 대화는 메모리로 남기거나 지운다">
-              <Eraser className="size-4" />
-            </Btn>
-          )}
+          <div id="agent-model-options" className="agent-options flex items-center gap-1.5" data-open={optionsOpen}>
+            <Toolbar value={choice} options={options} busy={busy} onChange={onChoice} />
+            {row && (
+              <Btn tone="ghost" className="px-1.5" onClick={() => setAsking(true)}
+                disabled={busy} aria-label="문맥 비우기"
+                title="문맥 비우기 — 이 작업트리의 대화를 새로 시작한다. 지금 대화는 메모리로 남기거나 지운다">
+                <Eraser className="size-4" />
+              </Btn>
+            )}
+          </div>
         </div>
         {row && rules.length > 0 && (
           <div className="-mt-1 flex items-center gap-2 pb-2 text-[12.5px] text-muted-foreground">
@@ -102,11 +105,13 @@ export function Agent({
         )}
       </header>
 
-      <ProviderUsage key={`${choice.model.startsWith('codex:')}:${row?.path ?? ''}`} model={choice.model} path={row?.path} />
-      {row && <div className="shrink-0 px-4 py-2">
-        <LiveChanges key={`${row.path}:${row.branch}`} path={row.path} busy={busy} turn={last?.turn} />
-      </div>}
+      <div className="agent-options shrink-0" data-open={optionsOpen}>
+        <ProviderUsage key={`${choice.model.startsWith('codex:')}:${row?.path ?? ''}`} model={choice.model} path={row?.path} />
+      </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {row && <div className="agent-changes sticky top-0 z-10 bg-background px-4 py-2">
+          <LiveChanges key={`${row.path}:${row.branch}`} path={row.path} busy={busy} turn={last?.turn} />
+        </div>}
         <div className="space-y-5 px-4 py-4">
           {!row && (
             <p className="text-[13.5px] text-faint">
@@ -166,7 +171,7 @@ export function Agent({
         disabled={!row}
         max={320}
         seed={seed}
-        placeholder={!busy ? '지시를 적어라. Enter 로 보내고 Shift+Enter 로 줄바꿈.'
+        placeholder={!busy ? '지시를 입력하세요'
           : last?.answered != null
             ? queued ? '지시 하나가 이미 기다린다. 그것을 취소하면 이것을 보낼 수 있다.'
               : '답은 끝났고 마무리가 도는 중이다. 보내면 끝난 뒤 다음 지시로 보낸다.'

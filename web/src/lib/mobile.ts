@@ -1,25 +1,63 @@
 /** The desktop remains the only owner of execution. Remote requests reuse its
  *  HTTP routes over WebSocket because temporary tunnels buffer SSE. */
 export let remote = false
-export type MobileLayout = 'portrait' | 'landscape'
-let preferred: MobileLayout = 'portrait'
-try { if (localStorage.getItem('mobile-layout') === 'landscape') preferred = 'landscape' } catch { /* Storage may be blocked. */ }
 const compact = window.matchMedia('(max-width: 1100px)')
+let chosenMode: 'portrait' | 'landscape' = 'portrait'
 const applyLayout = () => {
-  document.documentElement.dataset.mobileLayout = remote ? preferred : compact.matches ? 'portrait' : 'desktop'
+  const root = document.documentElement
+  root.dataset.mobileClient = remote ? 'remote' : 'local'
+  root.dataset.mobileLayout = remote ? chosenMode : compact.matches ? 'portrait' : 'desktop'
 }
-// Only local windows follow viewport width. A paired phone keeps its chosen mode.
+// Only an explicit APK menu choice sets the mobile mode. Never infer it from
+// viewport shape, orientation sensors, auto-rotate or the keyboard's height.
+window.addEventListener('mobile-screen-mode', (event) => {
+  const mode = (event as CustomEvent<unknown>).detail
+  if (!remote || (mode !== 'portrait' && mode !== 'landscape')) return
+  chosenMode = mode
+  applyLayout()
+})
 compact.addEventListener('change', applyLayout)
-export const mobileLayout = () => preferred
-export const setMobileLayout = (value: MobileLayout) => {
-  preferred = value
-  try { localStorage.setItem('mobile-layout', value) } catch { /* Keep the choice for this session. */ }
+export const setRemote = (value: boolean) => {
+  remote = value
+  const nativeMode = document.documentElement.dataset.nativeMode
+  if (remote && (nativeMode === 'portrait' || nativeMode === 'landscape')) chosenMode = nativeMode
   applyLayout()
 }
-export const setRemote = (value: boolean) => { remote = value; applyLayout() }
 
 export type MobileStatus = {
-  local: boolean; paired?: boolean; enabled?: boolean; starting?: boolean; origin?: string; error?: string
+  local: boolean; paired?: boolean; enabled?: boolean; starting?: boolean; origin?: string; error?: string; apk_available?: boolean
+}
+
+type InstallPrompt = Event & {
+  prompt: () => Promise<void>
+  userChoice: Promise<{ outcome: 'accepted' | 'dismissed' }>
+}
+
+let installPrompt: InstallPrompt | null = null
+let installedHere = false
+const standalone = window.matchMedia('(display-mode: standalone)')
+const installChanged = () => window.dispatchEvent(new Event('mobile-install-changed'))
+
+window.addEventListener('beforeinstallprompt', (event) => {
+  event.preventDefault()
+  installPrompt = event as InstallPrompt
+  installChanged()
+})
+window.addEventListener('appinstalled', () => { installPrompt = null; installedHere = true; installChanged() })
+standalone.addEventListener('change', installChanged)
+
+export type InstallState = 'installed' | 'ready' | 'manual'
+export const installState = (): InstallState => installedHere || standalone.matches
+  || Boolean((navigator as Navigator & { standalone?: boolean }).standalone)
+  ? 'installed' : installPrompt ? 'ready' : 'manual'
+
+export async function installApp(): Promise<void> {
+  if (!installPrompt) return
+  const prompt = installPrompt
+  installPrompt = null
+  await prompt.prompt()
+  installedHere = (await prompt.userChoice).outcome === 'accepted'
+  installChanged()
 }
 
 export async function status(): Promise<MobileStatus> {

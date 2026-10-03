@@ -36,7 +36,8 @@ The packages under `tool/` are pipelines whose imports `tool/lint.py` checks
 | `tool/decision/` | Jev transport, typed decisions, policy and claims; no retrieval or execution |
 | `tool/agent/` | Generative models and host sessions |
 | `tool/main/` | The program: composes the others into the query, work, specification, planning and loop workflows |
-| `web/src/` | The screen; `web/src-tauri/` is the window around it |
+| `web/src/` | The screen; `web/src-tauri/` is the desktop window around it |
+| `android/` | The APK shell: QR pairing, saved HTTPS origin and hardened WebView |
 
 The hooks (`tool/inject.py`, `tool/hook.py` and the other `PreToolUse` checks)
 are separate from the program. They match the hub's rules against the
@@ -57,9 +58,17 @@ Indexes are derived data: a changed source makes a new store generation, and
 one answer reads one generation. Documents and memories stay authoritative.
 
 The [mobile companion](mobile.md) keeps execution on the desktop. Its paired
-browser uses the same HTTP routes through a WebSocket bridge; project and
-approval guards remain at those routes. The Python listener stays on localhost,
-and only the desktop can create pairing links or revoke devices.
+browser or Android APK uses the same HTTP routes through a WebSocket bridge;
+project and approval guards remain at those routes. The APK adds no execution
+API or JavaScript bridge: it validates and opens the one-use HTTPS pairing link.
+The Python listener stays on localhost, and only the desktop can create pairing
+links or revoke devices.
+
+The shared change feed also invalidates conversations and work records/state.
+Both PC HTTP and paired WebSocket clients subscribe, refresh their scoped
+records and follow live runs started by the other client. Feed reconnect uses
+the last accepted sequence and a fresh snapshot; it never resubmits writes.
+The native APK needs no execution or synchronization bridge for this behavior.
 
 ## The four graphs
 

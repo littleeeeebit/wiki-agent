@@ -37,6 +37,33 @@ def pair(desktop, phone):
     return link, response
 
 
+def test_install_download_precedes_pairing_without_opening_private_files(companion, tmp_path):
+    desktop, phone = browsers()
+    apk = tmp_path / "wiki-agent.apk"
+    payload = b"synthetic-apk-download"
+    with patch.object(mobile, "APK", apk):
+        assert not desktop.get("/api/mobile/status").json()["apk_available"]
+        assert phone.get("/mobile-install").status_code == 404
+        assert phone.get("/mobile-install.apk").status_code == 404
+        apk.write_bytes(payload)
+        assert desktop.get("/api/mobile/status").json()["apk_available"]
+        code = desktop.post("/api/mobile/link").json()["link"]
+        page = phone.get("/mobile-install")
+        assert page.status_code == 200 and 'href="/mobile-install.apk"' in page.text
+        downloaded = phone.get("/mobile-install.apk")
+        assert downloaded.status_code == 200 and downloaded.content == payload
+        assert downloaded.headers["content-type"] == "application/vnd.android.package-archive"
+        assert 'filename="wiki-agent.apk"' in downloaded.headers["content-disposition"]
+        assert downloaded.headers["cache-control"] == "no-store"
+        assert mobile.COOKIE not in phone.cookies
+        assert companion.code == code.split("#pair=")[1]
+        assert phone.get("/api/switch").status_code == 401
+        assert phone.get("/artifacts/wiki-agent-debug.apk").status_code == 404
+        assert phone.get("/mobile-install.apk", headers={"Host": "evil.example"}).status_code == 403
+        with patch.object(app, "DIST", tmp_path):
+            assert phone.get("/mobile-install").status_code == 404
+
+
 def test_pairing_origin_expiry_replay_cookie_and_revocation(companion):
     desktop, phone = browsers()
     assert phone.get("/api/switch").status_code == 401

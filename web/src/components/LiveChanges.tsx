@@ -8,6 +8,7 @@ export function LiveChanges({ path, busy, turn }: {
 }) {
   const [changes, setChanges] = useState<api.Changes | null>(null)
   const [error, setError] = useState('')
+  const [open, setOpen] = useState(() => document.documentElement.dataset.mobileLayout === 'desktop')
   useEffect(() => {
     let alive = true
     let timer: ReturnType<typeof setTimeout>
@@ -29,9 +30,9 @@ export function LiveChanges({ path, busy, turn }: {
   const deleted = lines.filter((l) => l.startsWith('-') && !l.startsWith('---')).length
   const files = lines.filter((l) => l.startsWith('diff --git ')).length
   return (
-    <details open className="min-w-0 rounded-lg border border-border bg-card">
+    <details open={open} onToggle={(event) => setOpen(event.currentTarget.open)} className="live-changes min-w-0 rounded-lg border border-border bg-card">
       <summary className="cursor-pointer px-4 py-3 text-[14px] font-semibold">
-        코드 변경 현황 <span className="font-normal text-muted-foreground">· {busy ? '실시간' : '현재 변경'} · {files}개 파일</span>
+        코드 변경 현황 <span className="font-normal text-muted-foreground"><span className="live-change-mode">· {busy ? '실시간' : '현재 변경'}</span> · {files}개 파일</span>
         {' '}<span className="text-add">+{added}</span> <span className="text-del">−{deleted}</span>
       </summary>
       {error && <p role="status" className="px-4 pb-3 text-[14px] text-destructive">{error}{changes && ' · 마지막으로 읽은 변경을 표시한다'}</p>}

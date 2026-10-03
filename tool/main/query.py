@@ -230,6 +230,10 @@ def remember(cid: str, role: str, text: str, error: str = "", repo: Path | None 
     if error:
         row["error"] = error
     memory.append(LOGS / f"{cid}.jsonl", row)
+    # Publish an invalidation, not conversation content. Each client reads
+    # its own selected project's record through the existing scope guard.
+    from main import work
+    work.feed.put({"kind": "conversation", "cid": cid})
 
 
 def recall(cid: str, legacy: bool = False, include_context: bool = False) -> list[dict]:
@@ -631,6 +635,8 @@ def configure(cid: str, body: Config) -> dict:
             chat.close()
         else:
             chat.reconfigure(cfg["model"], cfg["effort"])
+    from main import work
+    work.feed.put({"kind": "sync"})
     return {"kept": not moved, "switched": switched, **cfg}
 
 
@@ -659,6 +665,8 @@ def reset(cid: str, body: Clear) -> dict:
         chat = _sessions.pop(session_key(cid), None)
     if chat:
         chat.close()
+    from main import work
+    work.feed.put({"kind": "conversation", "cid": cid})
     return {"ok": True, **keep(repo, cid, rows, cfg, body)}
 
 

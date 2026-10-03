@@ -110,13 +110,28 @@ Local windows use the 3-column layout at 1280px or wider. From 1101px through
 1279px, the rail collapses to `3.25rem` of icons and task dots. At 1100px or
 narrower, a local window shows one full-width pane and bottom navigation.
 
-Paired phones choose Portrait or Landscape in Settings, independently of
-viewport width or physical rotation. Portrait is the default single-pane
-layout, with full task names and Tasks, Conversation and Selected task in the
-bottom navigation. Landscape reuses all three desktop panes with a `12rem`
-named task rail and wrapping toolbars. Mode selection is immediate and stored
-per browser origin; panes stay mounted across switches. At the tested 844px
-and 932px landscape widths there is no horizontal page scroll.
+Paired phones use focused portrait views and a compact PC-style landscape workspace.
+In APK 0.1.3, the native overflow menu explicitly selects Portrait or Landscape.
+One saved choice owns both the requested Activity orientation and the web layout.
+Neither sensors, the system auto-rotate setting nor viewport shape choose the
+mode; both menu choices remain enabled. The former web three-pane preference
+is ignored. A shared 48px header names the project or task and keeps Settings
+and the native menu reachable. Conversation offers Map there.
+Portrait uses 48px bottom navigation. Landscape shows a 180px task rail,
+conversation (`1.1fr`) and selected task (`1fr`) simultaneously below the shared
+header. List (`목록`) folds the rail; Together, Conversation and Task
+(`함께`, `대화`, `작업`) choose both content panes or one focused pane without
+discarding drafts. Each pane retains its own compact focus/tabs row, options
+disclosure and composer. Only remote clients enter this landscape layout; local PC windows
+retain their existing columns, breakpoints and controls, even when wide and
+short. Pane headers and the rail's duplicate app title disappear; panes stay
+mounted. The browser companion has no native screen-rotation control.
+Task model, usage and specification details sit behind Task options. A ready
+specification or a planning question remains visible so starting work and
+answering questions do not depend on finding that disclosure. Project/review
+tools are collapsed in the task list. Live diff counts remain visible, but
+the diff itself starts collapsed on phones. Stop and session permission
+revocation remain visible while applicable.
 
 The center is slightly wider than the right because at 1280px, the conversation header (three focuses, two models, clear context) must fit on one line. If they were the same width, it would be `520px` and the header would need `574px`. Clear context is therefore an icon on both sides, and the names are in `aria-label` and `title`.
 
@@ -134,6 +149,12 @@ Neutral background with two accent colors. Selected by the user on 2026-09-25.
 `add`·`del` are used only for the `+`·`-` lines of a patch. Since it is a direction, not a state, values like `ok`·`warn` are not used — deleted lines are not errors.
 
 Dark is the default. Light is selected in the general settings modal and remembered per machine.
+
+Landscape workspace controls fill only the selected mode with existing `primary`
+and use `primary-foreground` for its label. The user chose Filled blue over
+Blue outline on 2026-10-03. This changes emphasis, not the established palette. Browser-measured
+label contrast is 7.26 in dark and 5.66 in light; the outlined candidate is
+6.62 and 5.66. No desktop colour or token changes.
 
 All accent colors exceed WCAG AA against the backgrounds and cards of both themes. The measured contrast is 6.6–8.3 for dark and 5.1–6.1 for light.
 
@@ -206,5 +227,33 @@ conversations mounted so switching views does not stop their streams. Settings
 includes desktop-owned pairing controls and a locally rendered 232px QR code
 with four modules of quiet margin. The QR stays black on white in both themes
 for scanning, and encodes the same single-use pairing link. The phone sees
-connection guidance and native radio cards for Portrait/Landscape. The active
-card reuses the existing blue outline and neutral surface; no new palette.
+connection guidance for the single-view layout. The install card
+uses the existing blue primary action selected by the user on 2026-10-03;
+no new palette.
+
+Desktop Mobile settings orders onboarding as 1. Install Android app, then
+2. Connect to PC. Each has a separately labelled 232px black-on-white QR with
+four modules of quiet margin. The installation QR opens a download page and
+contains no pairing secret. The phone page uses 16px reading text, one 22px
+heading and one 48px blue download action inside a 384px maximum-width panel.
+The existing dark panel, ground, ink and muted ink values are reused.
+
+The Android shell has one native bootstrap screen before the shared companion:
+Scan connection QR (`연결 QR 스캔`) is primary, Clipboard link
+(`클립보드 링크 연결`) is its fallback. After connection, a 44px native overflow
+target replaces the former 56px toolbar. Its menu offers QR scanning, clipboard
+connection, reload and both screen modes. A one-way public DOM layout hint
+reserves that target in the shared header and applies the explicit screen mode;
+it exposes no JavaScript-to-native bridge or pairing data. The app retains
+the existing palette and release signing key.
+
+On 2026-10-03 browser checks measured 595px of task reading space at 400×800
+in portrait. The landscape follow-up replaced the rejected one-pane side-navigation
+model with simultaneous task list, conversation and task panes. At 844×390,
+their measured widths are 180px, 347.80px and 316.20px; all start below the
+48px header and both composers end at the viewport bottom. At 740×320,
+both content panes still exceed 260px. Secondary controls remain disclosed;
+unused reading space stays empty rather than becoming another status dashboard.
+The local PC geometry matched the before-change baseline at 1440×900,
+1440×390, 1200×390 and 1100×800. These measurements do not cover actual screen
+rotation, real keyboard behavior or native overflow taps on a physical phone.

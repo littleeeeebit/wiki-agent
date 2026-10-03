@@ -188,54 +188,56 @@
     button:active:not(:disabled) { filter: brightness(0.9); }
 }
 
-/* Paired phones choose a layout in Settings; only local windows follow width. */
-html[data-mobile-layout="portrait"] {
+/* Shared mobile chrome; desktop keeps its existing breakpoint rules. */
+html[data-mobile-layout="portrait"],
+html[data-mobile-client="remote"][data-mobile-layout="landscape"] {
     .app-shell {
         grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: minmax(0, 1fr) auto;
+        grid-template-rows: 48px minmax(0, 1fr) auto;
         padding-top: env(safe-area-inset-top, 0px);
         padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
     }
-    .app-shell > aside, .conversation-pane, .task-pane { grid-column: 1; grid-row: 1; }
-    .app-shell[data-mobile-pane="tasks"] > .conversation-pane,
-    .app-shell[data-mobile-pane="tasks"] > .task-pane,
-    .app-shell[data-mobile-pane="chat"] > aside,
-    .app-shell[data-mobile-pane="chat"] > .task-pane,
-    .app-shell[data-mobile-pane="task"] > aside,
-    .app-shell[data-mobile-pane="task"] > .conversation-pane { display: none; }
+    .mobile-header { display: flex; grid-column: 1; grid-row: 1; }
+    .mobile-only { display: inline-flex; }
+    .app-shell > aside, .conversation-pane, .task-pane { grid-column: 1; grid-row: 2; border-inline-end: 0; }
     .app-shell > aside .rail-expanded { display: revert; }
     .app-shell > aside .rail-folded { display: none; }
-    .app-shell > aside > div:first-child { justify-content: space-between; padding-inline: 12px; }
+    .app-shell > aside > div:first-child, .conversation-pane > header, .task-pane > header { display: none; }
+    #rail-tools:not([data-open="true"]) { display: none; }
+    .app-shell > aside > .rail-expanded { padding: 12px 16px; }
+    .app-shell > aside > .rail-expanded > button { min-height: 44px; }
+    .rail-primary { display: flex; gap: 8px; }
+    .rail-primary > * { margin-block: 0 !important; }
+    .rail-primary > label { flex: 1; min-width: 0; }
+    .rail-primary > button { width: auto; min-height: 44px; padding-inline: 12px; }
+    .app-shell > aside nav .task-name { font-family: var(--font-sans); font-size: 16px; white-space: normal; overflow-wrap: anywhere; }
+    .app-shell > aside nav .task-state { font-size: 13px; }
     .app-shell > aside nav button { display: block; height: auto; min-height: 56px; padding: 12px; }
-    .mobile-navigation { display: flex; grid-row: 2; padding-bottom: env(safe-area-inset-bottom, 0px); }
+    .mobile-navigation { display: flex; grid-column: 1; grid-row: 3; padding-bottom: env(safe-area-inset-bottom, 0px); }
+    .mobile-navigation button { min-height: 48px; white-space: nowrap; }
     .file-peek { position: fixed; inset: 0; z-index: 40; width: 100%; padding-block: env(safe-area-inset-top, 0px) env(safe-area-inset-bottom, 0px); }
-}
-
-html[data-mobile-layout="landscape"] {
-    .app-shell {
-        grid-template-columns: 12rem minmax(0, 1.1fr) minmax(0, 1fr);
-        grid-template-rows: minmax(0, 1fr);
-    }
-    .app-shell > aside .rail-expanded { display: revert; }
-    .app-shell > aside .rail-folded { display: none; }
-    .app-shell > aside > div:first-child { justify-content: space-between; padding-inline: 12px; }
-    .app-shell > aside nav { padding-inline: 8px; }
-    .app-shell > aside .rail-expanded button { height: auto; min-height: 44px; }
-    .conversation-pane > header, .task-pane > header { padding-inline: 12px; flex-wrap: wrap; }
-}
-
-html:is([data-mobile-layout="portrait"], [data-mobile-layout="landscape"]) {
-    .app-shell {
-        padding-top: env(safe-area-inset-top, 0px);
-        padding-inline: env(safe-area-inset-left, 0px) env(safe-area-inset-right, 0px);
-    }
-    .query-toolbar, .agent-toolbar { height: auto; min-height: 44px; flex-wrap: wrap; padding-block: 8px; }
+    .query-toolbar, .agent-toolbar { height: auto; min-height: 44px; flex-wrap: wrap; padding-block: 0; padding-inline: 12px; gap: 4px; }
+    .query-toolbar > nav { flex: 1; overflow-x: auto; }
+    .query-toolbar > nav button { padding-inline: 8px; font-size: 14px; }
     .query-toolbar > div { min-width: 0; flex-wrap: wrap; gap: 8px; }
     .query-toolbar .query-options-toggle { display: inline-flex; }
     .query-toolbar .query-options { display: none; width: 100%; max-width: 100%; flex-basis: 100%; flex-shrink: 1; }
     .query-toolbar .query-options[data-open="true"] { display: flex; }
     .query-toolbar > div > div, .agent-toolbar > div { flex-wrap: wrap; }
-    .conversation-pane > header, .task-pane > header { height: auto; min-height: 46px; }
+    .query-options { padding-block: 8px; }
+    .agent-header { padding-inline: 12px; }
+    .agent-header > div:last-child:not(.agent-toolbar) { margin-top: 0; padding-top: 4px; }
+    .agent-toolbar { padding-inline: 0; min-height: 0; }
+    .agent-model-label { display: none; }
+    .agent-options:not([data-open="true"]) { display: none; }
+    .agent-changes { padding: 4px 8px; }
+    .live-changes > summary { padding: 8px; }
+    .live-change-mode { display: none; }
+    .task-spec:not([data-open="true"]):not([data-required="true"]) { display: none; }
+    #agent-model-options { width: 100%; flex-wrap: wrap; padding-bottom: 8px; }
+    .composer > div { padding: 8px 12px; }
+    .composer textarea { min-height: 44px; max-height: 25dvh !important; overflow-y: auto !important; }
+    .task-pane p, .task-pane .prose-answer, .conversation-pane .prose-answer { font-size: 16px; line-height: 1.6; }
     [role="tablist"] { height: auto; min-height: 46px; }
     .map-toolbar { height: auto; flex-wrap: wrap; padding-block: 8px; }
     .map-toolbar > [role="radiogroup"] { height: auto; flex-wrap: wrap; max-width: 100%; }
@@ -245,6 +247,68 @@ html:is([data-mobile-layout="portrait"], [data-mobile-layout="landscape"]) {
     .task-pane table { display: block; max-width: 100%; overflow-x: auto; }
     dialog > div > div:last-child { flex-wrap: wrap; }
 }
+
+/* Portrait owns exclusive pane navigation. Never inherit it in landscape. */
+html[data-mobile-layout="portrait"] {
+    .app-shell[data-mobile-pane="tasks"] > .conversation-pane,
+    .app-shell[data-mobile-pane="tasks"] > .task-pane,
+    .app-shell[data-mobile-pane="chat"] > aside,
+    .app-shell[data-mobile-pane="chat"] > .task-pane,
+    .app-shell[data-mobile-pane="task"] > aside,
+    .app-shell[data-mobile-pane="task"] > .conversation-pane { display: none; }
+}
+
+/* The PC's task/conversation/agent relationship, sized for a phone. Only
+   explicit controls hide a pane; viewport shape never selects screen mode. */
+html[data-mobile-client="remote"][data-mobile-layout="landscape"] {
+    .app-shell {
+        grid-template-columns: 180px minmax(0, 1.1fr) minmax(0, 1fr);
+        grid-template-rows: 48px minmax(0, 1fr);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+    .mobile-header { grid-column: 1 / -1; }
+    .landscape-only { display: inline-flex; }
+    .portrait-title, .portrait-header-action, .mobile-navigation { display: none; }
+    .landscape-selected { background: var(--primary); color: var(--primary-foreground); }
+    .app-shell > aside { grid-column: 1; border-inline-end: 1px solid var(--border); }
+    .conversation-pane { grid-column: 2; border-inline-end: 1px solid var(--border); }
+    .task-pane { grid-column: 3; }
+    .app-shell > aside > .rail-expanded { padding: 8px; }
+    .rail-primary { display: grid; grid-template-columns: minmax(0, 1fr) 44px; }
+    .rail-primary > .rail-new-task { padding-inline: 0; }
+    .rail-new-task-label { display: none; }
+    .rail-new-task svg { width: 20px; height: 20px; }
+    .app-shell > aside nav .task-name { font-size: 14px; line-height: 1.4; }
+    .app-shell > aside nav .task-state { font-size: 12px; }
+    .app-shell > aside nav button { padding: 8px; min-height: 48px; }
+    .app-shell[data-landscape-rail="false"] { grid-template-columns: 0 minmax(0, 1.1fr) minmax(0, 1fr); }
+    .app-shell[data-landscape-rail="false"] > aside { display: none; }
+    .app-shell[data-landscape-view="chat"] { grid-template-columns: 180px minmax(0, 1fr) 0; }
+    .app-shell[data-landscape-view="chat"] > .task-pane { display: none; }
+    .app-shell[data-landscape-view="task"] { grid-template-columns: 180px 0 minmax(0, 1fr); }
+    .app-shell[data-landscape-view="task"] > .conversation-pane { display: none; }
+    .app-shell[data-landscape-rail="false"][data-landscape-view="chat"] { grid-template-columns: 0 minmax(0, 1fr) 0; }
+    .app-shell[data-landscape-rail="false"][data-landscape-view="task"] { grid-template-columns: 0 0 minmax(0, 1fr); }
+    .query-toolbar, .task-view-tabs { padding-inline: 8px; }
+    .task-view-tabs { gap: 0; }
+    .task-view-tabs > button { padding-inline: 6px; white-space: nowrap; }
+    .composer > div { padding-inline: 8px; }
+    .task-spec { max-height: 35dvh; overflow-y: auto; }
+    .agent-header { max-height: 35dvh; overflow-y: auto; }
+    .query-options[data-open="true"] { max-height: 35dvh; overflow-y: auto; }
+    .composer textarea { max-height: max(44px, 20dvh) !important; }
+    .task-pane .prose-answer, .conversation-pane .prose-answer { max-width: 75ch; }
+}
+
+/* Remote touch targets also hold when the APK has a wide WebView viewport. */
+html[data-mobile-client="remote"] {
+    input:not([type="checkbox"]):not([type="radio"]), textarea, select { font-size: 16px !important; }
+    button, [role="combobox"], summary { min-height: 44px; min-width: 44px; }
+    [class*="overflow-y-auto"], [class*="overflow-auto"] { overscroll-behavior: contain; }
+}
+
+/* The native overflow occupies only one touch target, not a second app bar. */
+html[data-native-shell="android"]:is([data-mobile-layout="portrait"], [data-mobile-layout="landscape"]) .mobile-header { padding-inline-start: 56px; }
 
 @media (pointer: coarse), (max-width: 1100px) {
     input:not([type="checkbox"]):not([type="radio"]), textarea, select { font-size: 16px !important; }
