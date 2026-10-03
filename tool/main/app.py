@@ -152,6 +152,7 @@ def flip(body: Switch) -> dict:
     temporary = SWITCH.with_suffix(".tmp")
     temporary.write_text(json.dumps(saved, ensure_ascii=False) + "\n", encoding="utf-8")
     temporary.replace(SWITCH)
+    work.feed.put({"kind": "sync"})
     return switch()
 
 
@@ -259,6 +260,22 @@ def peek(repo: str, path: str, line: int = 1, around: int = 25) -> dict:
 
 # -- The screen -------------------------------------------------------------
 
+@app.get("/mobile-install.apk")
+def mobile_apk() -> FileResponse:
+    # Installation precedes pairing. Expose only this fixed build artifact.
+    if not mobile.APK.is_file():
+        raise HTTPException(404, "Android 설치 파일이 없습니다. PC에서 APK를 먼저 빌드하세요.")
+    return FileResponse(mobile.APK, media_type="application/vnd.android.package-archive",
+                        filename="wiki-agent.apk", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/mobile-install")
+def mobile_install() -> FileResponse:
+    if not mobile.APK.is_file() or not (DIST / "mobile-install.html").is_file():
+        raise HTTPException(404, "Android 설치 파일이 준비되지 않았습니다. PC에서 다시 확인하세요.")
+    return FileResponse(DIST / "mobile-install.html", headers={"Cache-Control": "no-store"})
+
+
 @app.get("/api/graph")
 def wiki_graph(repo: str = "") -> dict:
     """The map of one repository, in two layers the screen toggles.
@@ -319,6 +336,22 @@ if DIST.is_dir():
     @app.get("/mobile-icon.svg")
     def mobile_icon() -> FileResponse:
         return FileResponse(DIST / "mobile-icon.svg", media_type="image/svg+xml")
+
+    @app.get("/pwa-192.png")
+    @app.get("/pwa-512.png")
+    @app.get("/pwa-maskable-512.png")
+    @app.get("/apple-touch-icon.png")
+    def mobile_png(request: Request) -> FileResponse:
+        return FileResponse(DIST / request.url.path.removeprefix("/"), media_type="image/png")
+
+    @app.get("/offline.html")
+    def offline() -> FileResponse:
+        return FileResponse(DIST / "offline.html", headers={"Cache-Control": "no-cache"})
+
+    @app.get("/sw.js")
+    def service_worker() -> FileResponse:
+        return FileResponse(DIST / "sw.js", media_type="application/javascript",
+                            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 else:
     @app.get("/")
     def index() -> dict:

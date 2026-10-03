@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Btn } from '@/components/Modal'
-import { mobileLayout, setMobileLayout, setRemote, status } from '@/lib/mobile'
+import { installApp, installState, setRemote, status } from '@/lib/mobile'
 import type { MobileStatus } from '@/lib/mobile'
+import type { InstallState } from '@/lib/mobile'
 import * as api from '@/lib/api'
 
 // A pairing secret is a fragment, never a URL logged by the server or relay.
@@ -37,13 +38,14 @@ export function MobileAccess({ children }: { children: ReactNode }) {
   const [checking, setChecking] = useState(false)
   const [connected, setConnected] = useState(true)
 
-  async function check() {
+  async function check(reconnect = false) {
     setChecking(true)
     setFault('')
     try {
       const info = await open()
       setConnected(true)
       setReady(info.local || !!info.paired)
+      if (reconnect && (info.local || info.paired)) window.dispatchEvent(new Event('mobile-reconnect'))
       if (!info.local && !info.paired) setFault('PC의 설정 → 휴대폰에서 새 연결 링크를 만들어 여세요.')
     } catch (error) {
       setConnected(false)
@@ -52,14 +54,20 @@ export function MobileAccess({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    void Promise.resolve().then(check)
+    void Promise.resolve().then(() => check())
     const offline = () => setConnected(false)
+    const online = () => { void check(true) }
+    const connected = () => setConnected(true)
     const revoked = () => { setReady(false); setFault('PC에서 연결이 해제됐습니다. 새 연결 링크로 연결하세요.') }
     window.addEventListener('offline', offline)
+    window.addEventListener('online', online)
+    window.addEventListener('mobile-connected', connected)
     window.addEventListener('mobile-disconnected', offline)
     window.addEventListener('mobile-unauthorized', revoked)
     return () => {
       window.removeEventListener('offline', offline)
+      window.removeEventListener('online', online)
+      window.removeEventListener('mobile-connected', connected)
       window.removeEventListener('mobile-disconnected', offline)
       window.removeEventListener('mobile-unauthorized', revoked)
     }
@@ -67,7 +75,7 @@ export function MobileAccess({ children }: { children: ReactNode }) {
 
   if (ready) return <>
     {!connected && <div role="status" className="fixed inset-x-0 top-0 z-50 bg-card p-3 text-center text-[14px]">
-      연결이 끊겼습니다 · 다시 연결하면 PC 기록을 불러옵니다 <Btn onClick={() => location.reload()}>다시 연결</Btn>
+      연결이 끊겼습니다 · 다시 연결하면 PC 기록을 불러옵니다 <Btn disabled={checking} onClick={() => void check(true)}>{checking ? '연결하는 중…' : '다시 연결'}</Btn>
     </div>}
     {children}
   </>
@@ -83,12 +91,12 @@ export function MobileAccess({ children }: { children: ReactNode }) {
 
 export function MobileSettings() {
   const [info, setInfo] = useState<MobileStatus | null>(null)
-  const [layout, setLayout] = useState(mobileLayout)
   const [link, setLink] = useState('')
   const [expires, setExpires] = useState(0)
   const [now, setNow] = useState(0)
   const [working, setWorking] = useState(false)
   const [fault, setFault] = useState('')
+  const [installation, setInstallation] = useState<InstallState>(installState)
   useEffect(() => {
     let stale = false
     const read = () => {
@@ -98,6 +106,11 @@ export function MobileSettings() {
     void Promise.resolve().then(read)
     const timer = window.setInterval(read, 2000)
     return () => { stale = true; window.clearInterval(timer) }
+  }, [])
+  useEffect(() => {
+    const changed = () => setInstallation(installState())
+    window.addEventListener('mobile-install-changed', changed)
+    return () => window.removeEventListener('mobile-install-changed', changed)
   }, [])
 
   async function act(fn: () => Promise<void>) {
@@ -109,9 +122,22 @@ export function MobileSettings() {
   }
   return <section aria-label="휴대폰 연결" className="space-y-3">
     <h3 className="font-heading text-[14px] font-semibold">휴대폰</h3>
-    <p className="text-[14px] leading-relaxed text-muted-foreground">PC에서 작업을 실행하고 휴대폰 브라우저에서 대화·변경 사항·승인을 이어갑니다. 모바일 데이터와 다른 Wi-Fi에서도 연결됩니다.</p>
+    <p className="text-[14px] leading-relaxed text-muted-foreground">PC에서 작업을 실행하고 휴대폰 앱이나 브라우저에서 대화·변경 사항·승인을 이어갑니다. 모바일 데이터와 다른 Wi-Fi에서도 연결됩니다.</p>
     {info?.local ? <>
       <p role="status" className="text-[14px]">{info.starting ? '외부 연결을 여는 중…' : info.enabled ? '외부 연결 켜짐' : '외부 연결 꺼짐'}</p>
+      <div className="space-y-2 rounded-md border border-border bg-background p-3">
+        <h4 className="font-heading text-[14px] font-semibold">1. Android 앱 설치</h4>
+        {!info.apk_available ? <p className="text-[14px] leading-relaxed text-muted-foreground">설치 파일이 아직 준비되지 않았습니다. PC에서 APK를 빌드한 뒤 다시 확인하세요.</p>
+          : info.enabled && info.origin ? <>
+            <figure className="space-y-2 text-[14px]">
+              <QRCodeSVG value={`${info.origin}/mobile-install`} size={232} marginSize={4} level="M" role="img"
+                aria-label="Android 앱 설치 QR 코드" title="Android 앱 설치 QR 코드" className="max-w-full h-auto" />
+              <figcaption className="leading-relaxed">휴대폰 카메라로 스캔 → APK 다운로드 → 설치를 누르세요. Android 8 이상에서 설치할 수 있습니다.</figcaption>
+            </figure>
+            <Btn onClick={() => void act(() => navigator.clipboard.writeText(`${info.origin}/mobile-install`))}>설치 링크 복사</Btn>
+          </> : <p className="text-[14px] leading-relaxed text-muted-foreground">외부 연결을 켜면 휴대폰 카메라로 스캔할 설치 QR이 표시됩니다.</p>}
+      </div>
+      <h4 className="font-heading text-[14px] font-semibold">2. PC 연결</h4>
       <div className="flex flex-wrap gap-3">
         {!info.enabled && <Btn disabled={working || info.starting} onClick={() => void act(async () => setInfo(await api.startMobile()))}>
           외부 연결 켜기
@@ -130,7 +156,7 @@ export function MobileSettings() {
         <figure className="space-y-2">
           <QRCodeSVG value={link} size={232} marginSize={4} level="M" role="img"
             aria-label="휴대폰 연결 QR 코드" title="휴대폰 연결 QR 코드" className="max-w-full h-auto" />
-          <figcaption className="leading-relaxed">휴대폰 카메라로 QR 코드를 스캔하세요. 5분 안에 한 번만 연결할 수 있습니다.</figcaption>
+          <figcaption className="leading-relaxed">설치한 앱의 ‘연결 QR 스캔’으로 스캔하세요. 브라우저는 휴대폰 카메라로 여세요. 5분 안에 한 번만 연결할 수 있습니다.</figcaption>
         </figure>
         <input aria-label="휴대폰 연결 링크" readOnly value={link} onFocus={(e) => e.target.select()}
           className="w-full rounded-md border border-border bg-background p-2 font-mono text-[12px]" />
@@ -140,22 +166,23 @@ export function MobileSettings() {
       <p className="text-[14px] leading-relaxed text-muted-foreground">PC와 앱이 켜져 있어야 합니다. 기본 연결 주소는 다시 켤 때 바뀝니다. 연결 링크를 가진 사람은 PC 작업을 제어할 수 있으니 본인 휴대폰에서만 여세요.</p>
       {info.error && <p role="alert" className="text-destructive">{info.error}</p>}
     </> : info ? <>
-      <fieldset className="space-y-2">
-        <legend className="mb-2 font-heading text-[14px] font-semibold">화면 모드</legend>
-        <div className="grid grid-cols-2 gap-3">
-          {([{ id: 'portrait', label: '세로 모드', note: '한 화면씩 보기' },
-            { id: 'landscape', label: '가로 모드', note: 'PC처럼 나란히 보기' }] as const).map((mode) => (
-            <label key={mode.id} className={`flex min-h-11 cursor-pointer items-start gap-2 rounded-md border p-3 ${
-              layout === mode.id ? 'border-primary bg-secondary' : 'border-border'}`}>
-              <input type="radio" name="mobile-layout" value={mode.id} checked={layout === mode.id}
-                className="mt-0.5 accent-primary" onChange={() => { setLayout(mode.id); setMobileLayout(mode.id) }} />
-              <span className="text-[14px] leading-relaxed"><span className="block">{mode.label}</span>
-                <span className="block text-muted-foreground">{mode.note}</span></span>
-            </label>
-          ))}
-        </div>
-        <p className="text-[14px] leading-relaxed text-muted-foreground">선택은 이 브라우저에 저장됩니다. 휴대폰을 돌려도 자동으로 바뀌지 않습니다. 가로 모드는 휴대폰을 가로로 놓고 사용하세요.</p>
-      </fieldset>
+      <div className="space-y-2 rounded-md border border-border bg-background p-3">
+        <h4 className="font-heading text-[14px] font-semibold">앱 설치</h4>
+        {installation === 'installed' ? (
+          <p role="status" className="text-[14px] leading-relaxed">홈 화면 앱으로 설치되어 있습니다.</p>
+        ) : installation === 'ready' ? <>
+          <p className="text-[14px] leading-relaxed text-muted-foreground">홈 화면에서 바로 열고, 브라우저 주소창 없이 사용합니다.</p>
+          <Btn tone="primary" disabled={working} onClick={() => void act(() => installApp())}>앱 설치</Btn>
+        </> : <div className="space-y-1 text-[14px] leading-relaxed text-muted-foreground">
+          <p>브라우저 메뉴에서 설치할 수 있습니다.</p>
+          <p>iPhone·iPad: Safari 공유 → 홈 화면에 추가</p>
+          <p>Android: 브라우저 메뉴 → 앱 설치 또는 홈 화면에 추가</p>
+        </div>}
+        {location.hostname.endsWith('.trycloudflare.com') && (
+          <p className="text-[14px] leading-relaxed text-muted-foreground">현재 임시 주소는 PC에서 연결을 다시 켜면 바뀝니다. 계속 쓸 앱은 고정 주소에서 설치하세요.</p>
+        )}
+      </div>
+      <p className="text-[14px] leading-relaxed text-muted-foreground">Android 앱 왼쪽 위 ⋮ → 세로 모드 또는 가로 모드를 선택하세요. 화면과 배치가 함께 바뀌며, 자동 회전이 꺼져 있어도 두 모드를 선택할 수 있습니다. 세로는 아래 메뉴로 이동합니다. 가로는 목록·대화·작업을 함께 보고, 목록을 접거나 대화·작업만 넓게 볼 수 있습니다. 브라우저에서는 앱 화면 회전을 제어할 수 없습니다.</p>
       <p className="text-[14px] text-muted-foreground">연결과 기기 해제는 PC의 설정에서 관리합니다.</p>
     </> : <p className="text-[14px] text-muted-foreground">연결 상태를 읽는 중…</p>}
     {fault && <p role="alert" className="text-destructive">{fault}</p>}

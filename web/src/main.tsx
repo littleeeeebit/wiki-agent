@@ -15,6 +15,12 @@ if ('__TAURI_INTERNALS__' in window) {
   })
 }
 
+// The worker keeps only a connection-help screen. Conversations and API
+// responses remain on the desktop and are never put in browser caches.
+if (!('__TAURI_INTERNALS__' in window) && 'serviceWorker' in navigator) {
+  void navigator.serviceWorker.register('/sw.js').catch(() => {})
+}
+
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <MobileAccess><App /></MobileAccess>

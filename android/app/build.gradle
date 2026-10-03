@@ -1,0 +1,50 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'dev.wikiagent.mobile'
+    compileSdk 36
+    buildToolsVersion '36.0.0'
+
+    defaultConfig {
+        applicationId 'dev.wikiagent.mobile'
+        minSdk 26
+        targetSdk 36
+        versionCode 4
+        versionName '0.1.3'
+    }
+
+    signingConfigs {
+        release {
+            storeFile file(System.getenv('WIKI_ANDROID_KEYSTORE') ?: '../../raw/android-signing/release.p12')
+            storePassword System.getenv('WIKI_ANDROID_KEY_PASSWORD')
+            keyAlias 'wiki-agent'
+            keyPassword System.getenv('WIKI_ANDROID_KEY_PASSWORD')
+            enableV1Signing false
+            enableV2Signing true
+            enableV3Signing true
+        }
+    }
+
+    buildTypes {
+        release {
+            debuggable false
+            signingConfig signingConfigs.release
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+dependencies {
+    implementation 'com.google.android.gms:play-services-code-scanner:16.1.0'
+    testImplementation 'junit:junit:4.13.2'
+}

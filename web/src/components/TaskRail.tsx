@@ -51,6 +51,7 @@ export function TaskRail(props: Props) {
   const { repo, options, view, tasks, selected, prs } = props
   const [fault, setFault] = useState('')
   const [looping, setLooping] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const [environment, setEnvironment] = useState<'local' | 'claude-cloud' | 'external'>('local')
   // A choice belongs to the project it was made in. When the window follows
   // another project the modal is gone with it: the same numbers there are
@@ -119,8 +120,15 @@ export function TaskRail(props: Props) {
       </div>
 
       <div className={cn('shrink-0 space-y-2 border-b border-sidebar-border p-3', WIDE)}>
+        <div className="rail-primary space-y-2">
         <Picker label="프로젝트" hideLabel width="w-full" mono items={projects} value={repo}
           disabled={props.projectBusy || !options} onPick={(v) => v && v !== repo && props.onProject(v)} />
+        <button type="button" onClick={props.onNew}
+          aria-label="새 작업" className="rail-new-task flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-sidebar-border text-[12.5px] hover:bg-sidebar-accent"
+          title="다음 작업 대화에 한 줄 명세 틀을 넣는다. 명세의 [시작] 이 작업트리를 만든다">
+          <Plus className="size-3.5" /> <span className="rail-new-task-label">새 작업</span>
+        </button>
+        </div>
         {unwired && (
           <div className="flex items-center gap-2 text-[12.5px]">
             <span aria-hidden className={cn('size-2 shrink-0 rounded-full', unwired === '일부' ? 'bg-wait' : 'bg-border')} />
@@ -128,12 +136,11 @@ export function TaskRail(props: Props) {
             <Btn tone="primary" onClick={() => props.onView('projects')}>연결</Btn>
           </div>
         )}
-        <button type="button" onClick={props.onNew}
-          className="flex h-7 w-full items-center justify-center gap-1.5 rounded-md border border-sidebar-border text-[12.5px] hover:bg-sidebar-accent"
-          title="다음 작업 대화에 한 줄 명세 틀을 넣는다. 명세의 [시작] 이 작업트리를 만든다">
-          <Plus className="size-3.5" /> 새 작업
+        <button type="button" className="mobile-only hidden w-full items-center justify-between rounded-md px-2 text-[14px] text-muted-foreground"
+          aria-expanded={toolsOpen} aria-controls="rail-tools" onClick={() => setToolsOpen((open) => !open)}>
+          프로젝트 · 리뷰 <span aria-hidden>{toolsOpen ? '−' : '+'}</span>
         </button>
-        <div className="grid grid-cols-2 gap-1.5">
+        <div id="rail-tools" data-open={toolsOpen} className="grid grid-cols-2 gap-1.5">
           <button type="button" aria-pressed={view === 'projects'}
             onClick={() => props.onView(view === 'projects' ? 'chat' : 'projects')}
             className={cn('h-7 rounded-md border border-sidebar-border px-2 text-[12.5px] hover:bg-sidebar-accent',
@@ -308,14 +315,14 @@ function Row({ task: t, selected, onSelect, onMenu, title }: {
       <span className="flex items-center gap-2">
         <span aria-hidden className={cn('size-2 shrink-0 rounded-full', t.waiting ? 'bg-wait' : DOT[t.phase],
           t.busy && 'animate-pulse')} />
-        <span className={cn('min-w-0 truncate font-mono text-[12px]', WIDE)}>{t.name}</span>
+        <span className={cn('task-name min-w-0 truncate font-mono text-[12px]', WIDE)}>{t.name}</span>
         {(t.pr || t.round > 0) && (
           <span className={cn('ml-auto shrink-0 font-mono text-[10.5px] text-muted-foreground', WIDE)}>
             {t.pr ? `#${t.pr}` : ''}{t.round > 0 ? ` R${t.round}` : ''}
           </span>
         )}
       </span>
-      <span className={cn('mt-0.5 block truncate pl-4 font-mono text-[10.5px]', t.waiting ? 'text-wait' : 'text-muted-foreground', WIDE)}>
+      <span className={cn('task-state mt-0.5 block truncate pl-4 font-mono text-[10.5px]', t.waiting ? 'text-wait' : 'text-muted-foreground', WIDE)}>
         {t.line}
       </span>
       <span className={cn('sr-only', NARROW)}>{tip}</span>

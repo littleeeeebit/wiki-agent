@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
+import { Settings as Gear } from 'lucide-react'
 import { Agent } from '@/components/Agent'
 import type { Choice } from '@/components/Toolbar'
 import { Btn } from '@/components/Modal'
@@ -87,6 +88,9 @@ export default function App() {
   const [loopSettings, setLoopSettings] = useState<LoopSettings | null>(null)
   const [tab, setTab] = useState<Tab>('agent')
   const [mobilePane, setMobilePane] = useState<'tasks' | 'chat' | 'task'>('tasks')
+  const [landscapeView, setLandscapeView] = useState<'workspace' | 'chat' | 'task'>('workspace')
+  const [landscapeRail, setLandscapeRail] = useState(true)
+  const [taskOptionsOpen, setTaskOptionsOpen] = useState(false)
   const work = useWork()
   const { attach } = work
   const repo = channels[0]?.repo ?? ''
@@ -234,6 +238,18 @@ export default function App() {
   // (a burst of changes is one read), a window showing the worktree of a
   // server-started turn attaches to it, and a loop that comes to wait on an
   // approval, or a merge into an unreviewed base, notifies once.
+  const feedCursor = useRef<number | undefined>(undefined)
+  const [feedEpoch, setFeedEpoch] = useState(0)
+  useEffect(() => {
+    const reconnect = () => setFeedEpoch((n) => n + 1)
+    const visible = () => { if (!document.hidden) reconnect() }
+    window.addEventListener('mobile-reconnect', reconnect)
+    document.addEventListener('visibilitychange', visible)
+    return () => {
+      window.removeEventListener('mobile-reconnect', reconnect)
+      document.removeEventListener('visibilitychange', visible)
+    }
+  }, [])
   useEffect(() => {
     if (!repo) return
     const stop = new AbortController()
@@ -248,7 +264,32 @@ export default function App() {
         readPrs()
       }, 800)
     }
+    const resync = () => {
+      soon()
+      api.getChannels().then(accept).catch(() => {})
+      api.getSwitch().then(setSw).catch(() => {})
+      window.dispatchEvent(new Event('server-resync'))
+    }
     const on = (ev: api.FeedEv) => {
+      feedCursor.current = ev.seq
+      if (ev.kind === 'conversation') {
+        window.dispatchEvent(new CustomEvent('conversation-changed', { detail: ev.cid }))
+        api.getChannels().then(accept).catch(() => {})
+        return
+      }
+      if (ev.kind === 'work-record') {
+        attach(ev.path)
+        soon()
+        return
+      }
+      if (ev.kind === 'work-state') {
+        window.dispatchEvent(new CustomEvent('work-state', { detail: ev.path }))
+        return
+      }
+      if (ev.kind === 'sync') {
+        resync()
+        return
+      }
       if (ev.kind === 'turn') {
         attach(ev.path, ev.turn)
         return
@@ -274,18 +315,26 @@ export default function App() {
     void (async () => {
       while (!stop.signal.aborted) {
         try {
-          await api.loopEvents(on, stop.signal)
+          await api.loopEvents(on, stop.signal, feedCursor.current, (cursor) => {
+            if (stop.signal.aborted) return
+            if (cursor !== undefined) feedCursor.current = cursor
+            resync()
+            window.dispatchEvent(new Event('mobile-connected'))
+          })
         } catch {
           // Dropped or aborted; tried again below unless aborted.
         }
-        if (!stop.signal.aborted) await new Promise((r) => window.setTimeout(r, 2000))
+        if (!stop.signal.aborted) {
+          window.dispatchEvent(new Event('mobile-disconnected'))
+          await new Promise((r) => window.setTimeout(r, 2000))
+        }
       }
     })()
     return () => {
       stop.abort()
       window.clearTimeout(timer)
     }
-  }, [repo, attach, refresh, readSpecs, readLoops, readPrs])
+  }, [repo, feedEpoch, attach, refresh, readSpecs, readLoops, readPrs, accept])
 
   const path = selected.startsWith('spec:') ? '' : selected
   useEffect(() => {
@@ -442,7 +491,40 @@ export default function App() {
 
   const middle = view === 'projects' ? '프로젝트 · 연결' : repo
   return (
-    <div data-mobile-pane={mobilePane} className="app-shell grid h-dvh grid-cols-[15rem_minmax(0,1.1fr)_minmax(0,1fr)] overflow-hidden max-[1280px]:grid-cols-[3.25rem_minmax(0,1.1fr)_minmax(0,1fr)]">
+    <div data-mobile-pane={mobilePane} data-landscape-view={landscapeView} data-landscape-rail={landscapeRail}
+      className="app-shell grid h-dvh grid-cols-[15rem_minmax(0,1.1fr)_minmax(0,1fr)] overflow-hidden max-[1280px]:grid-cols-[3.25rem_minmax(0,1.1fr)_minmax(0,1fr)]">
+      <header className="mobile-header hidden shrink-0 items-center gap-2 border-b border-border bg-card px-3">
+        <h1 className="min-w-0 flex-1 truncate text-[16px] font-semibold" title={mobilePane === 'task' ? task?.name ?? other?.name : repo}>
+          <span className="portrait-title">{mobilePane === 'tasks' ? '작업 목록' : mobilePane === 'task' ? task?.name ?? other?.name ?? '작업 선택' : repo || 'wiki-agent'}</span>
+          <span className="landscape-only hidden" title={`${repo} · ${task?.name ?? other?.name ?? '작업 선택'}`}>
+            {repo || 'wiki-agent'} · {task?.name ?? other?.name ?? '작업 선택'}
+          </span>
+        </h1>
+        <div className="landscape-only hidden shrink-0 items-center gap-2">
+          <Btn tone="ghost" aria-label={landscapeRail ? '작업 목록 접기' : '작업 목록 펼치기'}
+            aria-expanded={landscapeRail} onClick={() => setLandscapeRail((open) => !open)}>목록</Btn>
+          <div role="group" aria-label="가로 작업 공간" className="flex rounded-md border border-border">
+            {([{ id: 'workspace', label: '함께' }, { id: 'chat', label: '대화' }, { id: 'task', label: '작업' }] as const).map((pane) => (
+              <Btn key={pane.id} tone="ghost" aria-pressed={landscapeView === pane.id}
+                className={landscapeView === pane.id ? 'landscape-selected' : 'text-muted-foreground'}
+                onClick={() => setLandscapeView(pane.id)}>{pane.label}</Btn>
+            ))}
+          </div>
+          <Btn tone="ghost" aria-pressed={view === 'map'} onClick={() => {
+            if (view !== 'map') setMapped(true)
+            setView(view === 'map' ? 'chat' : 'map')
+            if (landscapeView === 'task') setLandscapeView('workspace')
+          }}>{view === 'map' ? '대화로' : '지도'}</Btn>
+        </div>
+        {mobilePane === 'chat' && <Btn tone="ghost" className="portrait-header-action" aria-pressed={view === 'map'} onClick={() => {
+          if (view !== 'map') setMapped(true)
+          setView(view === 'map' ? 'chat' : 'map')
+        }}>{view === 'map' ? '대화' : '지도'}</Btn>}
+        {mobilePane === 'task' && tidy && <Btn tone="ghost" className="portrait-header-action" onClick={() => void remove(row!.path)}>정리</Btn>}
+        <button type="button" aria-label="설정" onClick={() => setSetting(true)} className="grid size-11 shrink-0 place-items-center rounded-md text-muted-foreground">
+          <Gear className="size-5" />
+        </button>
+      </header>
       <TaskRail
         repo={repo}
         options={options}
@@ -460,7 +542,7 @@ export default function App() {
           setView(v)
           setMobilePane('chat')
         }}
-        onSelect={(key) => { setSelected(key); setMobilePane('task') }}
+        onSelect={(key) => { setSelected(key); setTaskOptionsOpen(false); setMobilePane('task'); setLandscapeView('workspace') }}
         onRemove={(target) => void remove(target, true)}
         onSettings={() => setSetting(true)}
         onNew={() => {
@@ -552,7 +634,7 @@ export default function App() {
               <span className={TONE[spec ? phase(spec.state) : 'none']}>{spec?.state ?? (other ? other.line : '명세 없음')}</span>
             </span>
           )}
-          {!task && !other && <span className="truncate text-[12.5px] text-faint">왼쪽에서 작업을 고른다</span>}
+          {!task && !other && <span className="truncate text-[12.5px] text-faint">작업 목록에서 선택하세요</span>}
           {tidy && (
             <Btn className="ml-auto" onClick={() => void remove(row!.path)}
               title="작업트리와 브랜치를 지운다. 브랜치의 변경은 원본 HEAD 에 다 있다">
@@ -560,8 +642,11 @@ export default function App() {
             </Btn>
           )}
         </header>
-        {task && <SpecSummary key={spec?.id ?? task.key} spec={spec} onStart={start} onChanged={readSpecs} korean={on} />}
-        <div role="tablist" aria-label="작업 면" className="flex h-9 shrink-0 items-end gap-1 border-b border-border px-3">
+        {task && <div id="task-options" className="task-spec shrink-0" data-open={taskOptionsOpen}
+          data-required={spec?.state === '정리됨' || Boolean(spec?.planning && spec.state === '작업 중')}>
+          <SpecSummary key={spec?.id ?? task.key} spec={spec} onStart={start} onChanged={readSpecs} korean={on} />
+        </div>}
+        <div role="tablist" aria-label="작업 면" className="task-view-tabs flex h-9 shrink-0 items-end gap-1 border-b border-border px-3">
           {TABS.map((t) => (
             <button key={t.id} type="button" role="tab" aria-selected={tab === t.id} onClick={() => pick(t.id)}
               className={cn('-mb-px flex h-8 items-center gap-1.5 border-b-2 px-2.5 text-[12.5px]',
@@ -570,16 +655,20 @@ export default function App() {
               {t.id === 'agent' && waiting && <span className="size-1.5 rounded-full bg-wait" title="승인을 기다린다" />}
             </button>
           ))}
+          {(task || other) && <Btn tone="ghost" className="mobile-only hidden ml-auto" aria-expanded={taskOptionsOpen}
+            aria-controls={[task ? 'task-options' : '', tab === 'agent' ? 'agent-model-options' : ''].filter(Boolean).join(' ') || undefined}
+            onClick={() => setTaskOptionsOpen((open) => !open)}>작업 옵션 {taskOptionsOpen ? '닫기' : '열기'}</Btn>}
         </div>
         <div className="flex min-h-0 flex-1">
           <div className="min-w-0 flex-1">
-            {tab === 'agent' && (
+            {tab === 'agent' && (task || other) && (
               <Agent
                 key={path}
                 row={row}
                 turns={(path && work.turns[path]) || []}
                 options={options}
                 choice={choice}
+                optionsOpen={taskOptionsOpen}
                 on={on}
                 onChoice={setChoice}
                 onSend={order}
@@ -597,6 +686,10 @@ export default function App() {
                 onPeek={showPeek}
               />
             )}
+            {!task && !other && tab === 'agent' && <div className="flex h-full flex-col items-center justify-center gap-4 p-4">
+              <p className="text-[16px] text-muted-foreground">진행 상황을 확인할 작업을 선택하세요.</p>
+              <Btn onClick={() => setMobilePane('tasks')} className="mobile-only hidden">작업 목록 보기</Btn>
+            </div>}
             {tab === 'review' && (
               <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} on={on} options={options}
                 settings={loopSettings} onSettings={async (s) => setLoopSettings(await api.setLoopSettings(s))}
