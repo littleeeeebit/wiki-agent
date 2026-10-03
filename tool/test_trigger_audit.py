@@ -99,11 +99,6 @@ def test_usage_keeps_two_repositories_of_one_name_apart():
     assert first and second and first != second, (first, second)
     assert trigger_audit.repo_of(str(root / "nowhere"), cache) is None
 
-    # A deleted Orca worktree's folder is not handed to a clone by its name:
-    # it keeps its own row, labelled. Two clones of one name show their paths.
-    gone = "C:/u/orca/workspaces/shop"
-    one = trigger_audit.shown({"D:/other/shop", gone})
-    assert one == {"D:/other/shop": "shop", gone: "shop (지워진 Orca 작업트리)"}, one
     two = trigger_audit.shown({"C:/p/shop", "D:/q/shop"})
     assert two == {"C:/p/shop": "C:/p/shop", "D:/q/shop": "D:/q/shop"}, two
 

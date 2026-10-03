@@ -2,7 +2,7 @@
 
 `worktree_home` is where `workspace` makes the worktrees an agent writes in,
 and the one place `agent` opens a write session. Held here so the two cannot
-drift apart: a worktree anywhere else — Orca's, `claude -w`'s — is not ours.
+drift apart: a worktree created by another tool is not ours.
 """
 
 from pathlib import Path

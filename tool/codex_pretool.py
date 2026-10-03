@@ -7,12 +7,13 @@ from pathlib import Path
 import sys
 
 def verdict(payload: dict) -> dict | None:
+    import host_boundary
     import deny
     import edit_as_diff
     import english_progress
     import markdown_emphasis
 
-    denied = deny.verdict(payload)
+    denied = host_boundary.verdict(payload) or deny.verdict(payload)
     if denied:
         return denied
     answer = edit_as_diff.verdict(payload, Path(str(payload.get("cwd") or Path.cwd())))

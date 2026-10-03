@@ -1897,6 +1897,45 @@ def by_pr(name: str) -> dict[int, dict]:
     return {s["pr"]["number"]: s for s in specs.listing(name) if s.get("pr")}
 
 
+def unlinked(repo: Path, branch: str) -> dict | None:
+    """A manually published task PR still belongs to its existing spec."""
+    matches = [s for s in specs.listing(repo.name) if not s.get("pr")
+               and s.get("worktree") and specs.branch_of(s) == branch]
+    if len(matches) > 1:
+        raise HTTPException(409, "이 브랜치에 연결할 명세가 여러 개다. 작업 연결을 확인하세요")
+    return matches[0] if matches else None
+
+
+def attach(repo: Path, spec: dict, view: dict, environment: str) -> dict:
+    """Server-owned metadata adoption; preserve requirements and task identity."""
+    path = Path(spec["worktree"]).resolve()
+    if path not in {row["path"].resolve() for row in worktrees(repo)}:
+        raise HTTPException(409, "명세의 작업 폴더가 이 저장소에 속하지 않는다")
+    release = hold(work._busy, _lock, str(path), "작업이 실행 중이다. 끝난 뒤 리뷰를 시작하세요")
+    try:
+        branch = specs.sh(["git", "branch", "--show-current"], path)
+        if branch.returncode or branch.stdout.strip() != view["headRefName"]:
+            raise HTTPException(409, "명세의 작업 브랜치를 먼저 여세요")
+        with specs._files:
+            fresh = specs.load(repo.name, spec["id"])
+            if fresh is None or fresh["history"][0]["ts"] != spec["history"][0]["ts"]:
+                raise HTTPException(409, "명세가 바뀌었다. 다시 선택하세요")
+            if fresh.get("pr"):
+                if fresh["pr"]["number"] != view["number"]:
+                    raise HTTPException(409, "명세가 이미 다른 PR 에 연결되어 있다")
+                return fresh
+            if specs.branch_of(fresh) != view["headRefName"] or fresh.get("rounds"):
+                raise HTTPException(409, "명세의 브랜치·리뷰 기록을 확인하세요")
+            specs.save(specs.moved(fresh, f"PR #{view['number']}",
+                pr={"number": view["number"], "url": view["url"], "base": view["baseRefName"],
+                    "head": view["headRefOid"], "branch": view["headRefName"]},
+                implementation_environment=environment, stopped=None, fault=None,
+                gate=None, validation=None))
+            return fresh
+    finally:
+        release()
+
+
 @router.get("/api/prs")
 def prs() -> dict:
     """The selected project's open pull requests, and which can go into a loop."""
@@ -1910,8 +1949,8 @@ def prs() -> dict:
     known = by_pr(name)
     rows = []
     for row in json.loads(done.stdout):
-        spec = known.get(row["number"])
-        why = refusal(row, spec)
+        spec = known.get(row["number"]) or unlinked(repo, row["headRefName"])
+        why = refusal(row, spec if spec and spec.get("pr") else None)
         rows.append({"number": row["number"], "title": row["title"], "branch": row["headRefName"],
                      "head": row["headRefOid"], "url": row["url"], "fork": bool(row.get("isCrossRepository")),
                      "spec": spec["id"] if spec else None, "state": spec["state"] if spec else None,
@@ -1974,6 +2013,11 @@ def take(repo: Path, n: int, environment: str = "local") -> str:
     if not gate:
         raise HTTPException(409, "연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
     sid = folder_for(view["headRefName"])
+    existing = unlinked(repo, view["headRefName"])
+    if existing is not None:
+        spec = attach(repo, existing, view, environment)
+        kick(repo.name, spec["id"])
+        return spec["id"]
     if sid and specs.file_of(repo.name, sid).exists():
         raise HTTPException(409, f"같은 이름의 명세 `{sid}` 가 이미 있다")
     path = adopted(repo, view["headRefName"], view["headRefOid"], detached=environment != "local")

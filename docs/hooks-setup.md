@@ -25,10 +25,10 @@ hooks need PowerShell.
 `python tool/search "<query>" --project <repo>` prints the sections that
 match, with the `path:line` each starts at. It asks a small local daemon on
 `127.0.0.1:8791`, starts it when it is not there, and the daemon stops after
-three idle hours, or later while a keep-alive is pending; nothing needs to be
+three idle hours; nothing needs to be
 run by hand. No hook asks it what to inject: the triggers stay the only
-authority there. The keep-alive hooks (`keepalive.py`, and `inject.py` on each
-utterance) only tell it what their cell is doing.
+authority there. Native lifecycle hooks run independently of search and do
+not notify a terminal keepalive service.
 
 For the vector half, install `python -m pip install -r <wiki path>/requirements-search.txt`
 into the same Python. Without it the daemon ranks with BM25 alone. The model
@@ -80,14 +80,11 @@ about = "review state, publication and merge invariants"
 paths = ["tool/main/loop.py", "tool/main/specs.py", "tool/prompts/review-*.md"]
 ```
 
-`keep_alive = 2`, above `agents`, turns on keep-alive for the repository. A
-Claude session in an Orca cell that sits idle for 55 minutes gets a one-line
-ping, at most that many times per utterance a person types, so its prompt
-cache is still there when the person comes back. It pays only where people
-return after an hour, which is why each repository opts in; without the line,
-or on Codex, nothing is sent. The search daemon above does the pinging, after
-checking with `orca terminal show` and `read` that the cell is still this
-repository's and its input box is empty.
+Native lifecycle hooks own session context, rule injection, tool checks and
+Stop reconciliation. `host_boundary.py` redirects obsolete desktop CLI calls to
+the app's task and review workflow. Reinstalling removes this wiki's retired
+`keepalive.py` entries; the search daemon never sends keystrokes or paid idle
+turns. The old `keep_alive` adapter value is ignored.
 
 Run `git rev-parse HEAD` in the wiki folder and store the resulting
 40-character value as a single line in the **target project's**
@@ -132,14 +129,13 @@ verifying a released version.
 ## 3a. Install once for the whole machine
 
 The per-project install above writes gitignored files into one checkout, with
-that checkout's absolute path in every command. A new worktree — which is
-what Orca opens after you restart a session for a CLI update — has none of
+that checkout's absolute path in every command. A new worktree has none of
 them, and Codex drops its trust in a hook whenever the entry changes (a new
 timeout is enough). Both look like "the update broke the hooks".
 
-The user-level install writes the hooks once into `~/.claude/settings.json`
-and into every Codex home on the machine (`~/.codex`, `CODEX_HOME`, and each
-Orca account under `%APPDATA%/orca/codex-accounts/`). Every command calls
+The user-level install writes the hooks into `~/.claude/settings.json`
+and the default and explicitly selected Codex homes (`~/.codex` and
+`CODEX_HOME`). Other applications' accounts are never scanned. Every command calls
 `tool/hook.py`, which works out the project from the session's directory: a
 worktree is served by its main clone's `.wiki/adapter.toml`, and a directory
 with no adapter passes silently. Run it from the stable wiki checkout:

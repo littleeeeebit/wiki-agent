@@ -249,7 +249,9 @@ if m["method"] == "thread/resume":
     m = read()
 p = m["params"]
 assert m["method"] == "thread/start", m
-assert (p["sandbox"], p["approvalPolicy"], p["developerInstructions"]) == ("read-only", "never", "Find evidence."), p
+assert (p["sandbox"], p["approvalPolicy"]) == ("read-only", "never"), p
+assert p["developerInstructions"].startswith("Find evidence.\\n"), p
+assert "This session runs inside wiki-agent." in p["developerInstructions"], p
 say({"id": m["id"], "result": {"thread": {"id": "th-1"}}})
 while True:
     m = read(); assert m["params"]["effort"] == "low"; say({"id": m["id"], "result": {"turn": {}}})
@@ -289,7 +291,8 @@ for event in [
                 # The sum of each call's `last`, never the thread's running total.
                 assert events[-1].meta["tokens"] == {"in": 220, "out": 12, "cache_read": 160, "reasoning": 2}
                 assert session.alive
-            assert commands == [["codex", "app-server", "--disable", "multi_agent"]]   # one process, two turns
+            assert len(commands) == 1   # one process, two turns, with native skill overrides
+            assert commands[0][:4] == ["codex", "app-server", "--disable", "multi_agent"]
         finally:
             session.close()
 

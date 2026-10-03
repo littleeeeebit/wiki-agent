@@ -354,8 +354,8 @@ def relink(link, target):
 def install_global(choice, check, projects, trust):
     """Attach the wiki once, at each host's user level.
 
-    Every checkout on the machine — a worktree Orca opens after an update
-    included — reads these files, and `hook.py` works out the project per
+    Every checkout on the machine, including a newly created worktree,
+    reads these files, and `hook.py` works out the project per
     call. The commands carry nothing that changes with the project, so the
     entries, and with them Codex's trust hashes, stay put.
     """

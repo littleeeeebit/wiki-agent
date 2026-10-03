@@ -30,7 +30,7 @@ import threading
 import time
 from pathlib import Path
 
-__all__ = ("ask", "local_index", "evidence_store", "resolve", "notify", "PING", "spawn", "PORT", "HUB",
+__all__ = ("ask", "local_index", "evidence_store", "resolve", "spawn", "PORT", "HUB",
            "cache_dir", "state_path", "version", "records", "refresh", "sources", "providers",
            "knowledge_graph", "projection", "retrieval", "retrieve", "published")
 
@@ -252,53 +252,6 @@ def local_index(project: str | Path | None, hub: Path | None = None, vectors: bo
     while vectors and not index.complete() and embedder.state != "off" and time.monotonic() < end:
         time.sleep(0.2)
     return index
-
-
-# The keep-alive ping the daemon types into an idle Claude cell. The hook
-# (`keepalive.on_prompt`) takes a turn of exactly this text for the ping once
-# the daemon confirms it sent one, and `workspace.INJECTED` carries its
-# opening so no count takes it for a person.
-PING = 'keep-alive — reply "ok" and nothing else.'
-NOTIFY_TIMEOUT = 0.15
-# How long a hook that had to start the daemon waits for it before dropping
-# the notice.
-SPAWN_WAIT = 3.0
-
-
-def notify(path: str, body: dict, spawn_wait: float | None = None,
-           retry: float = 0.0) -> dict | None:
-    """Tell the daemon what a cell is doing. Its answer once it took the
-    notice — `{"ping": ...}` — or `None`.
-
-    Unlike a search, a notice left undelivered is not free: the timer it would
-    have set or cleared stays as it was. Two ways to miss, two waits:
-
-    - No daemon was there, so this started one. Nothing was armed in a daemon
-      that was not running; wait up to `spawn_wait` for the new one and send
-      again, or drop it — the daemon then errs towards pinging less.
-    - A daemon was there and did not answer in time. It may hold a timer this
-      notice was meant to clear, so try again for up to `retry` seconds. In
-      the public copy's review a `/busy` lost this way let a ping into a turn.
-
-    The whole notice takes at most the larger wait plus two calls, and a call
-    is at most `NOTIFY_TIMEOUT` to connect and `NOTIFY_TIMEOUT` to answer —
-    the socket timeout cuts a refused connect too, 155 ms measured on Windows.
-    With 3 s and 2 s waits that is about 3.6 s, inside the hook's 10 seconds.
-    """
-
-    if os.environ.get("WIKI_SEARCH") == "off":
-        return None
-    answer, started = call(path, body, NOTIFY_TIMEOUT)
-    if answer is not None:
-        return answer
-    wait = (SPAWN_WAIT if spawn_wait is None else spawn_wait) if started else retry
-    until = time.monotonic() + wait
-    while time.monotonic() < until:
-        time.sleep(0.1)
-        answer = call(path, body, NOTIFY_TIMEOUT, start=False)[0]
-        if answer is not None:
-            return answer
-    return None
 
 
 def call(path: str, body: dict, timeout: float, wait: float = 0.0,

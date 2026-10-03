@@ -6,8 +6,7 @@ vector cache. It ranks them two ways — BM25
 over English words and Hangul bigrams, and cosine over a local
 `multilingual-e5-small` — merged by reciprocal rank. It serves the wiki chat
 pages (`/search`) and chunk-level results with the graph lane (`/retrieve`,
-`retrieval.run`), each from an index snapshot read outside its lock, and
-keeps idle Claude cells' prompt caches warm (`Keeper`). No hook asks it
+`retrieval.run`), each from an index snapshot read outside its lock. No hook asks it
 what to inject: the regex triggers stay the only authority there (in the
 public copy a one-line hint for pages they missed was built and measured, and
 no threshold reached 8% precision).
@@ -40,9 +39,7 @@ import os
 import queue
 import re
 import secrets
-import shutil
 import sqlite3
-import subprocess
 import sys
 import threading
 import time
@@ -56,8 +53,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from common.language import language  # noqa: E402
-from common.process import background_options  # noqa: E402
-from search import PING, PORT, cache_dir, evidence, knowledge_graph, proof, retrieval, state_path, version  # noqa: E402
+from search import PORT, cache_dir, evidence, knowledge_graph, proof, retrieval, state_path, version  # noqa: E402
 from search.retrieval import family  # noqa: E402
 from search.sources import SOURCE_NAMES, Records, audiences, listing, records_folder  # noqa: E402
 
@@ -1074,244 +1070,18 @@ class Index:
             self.store.cleared([i for i, _key in pending])
 
 
-# ---- keep-alive -------------------------------------------------------------
-#
-# A Claude session left idle for an hour loses its prompt cache and writes its
-# whole context again when the person comes back. One short turn inside the
-# hour keeps it. The cell's hooks say what the cell is doing (`keepalive.py`,
-# `inject.py`); this only writes it down, and never guesses from Orca's output
-# times or a transcript — the public copy's review broke three such guesses.
-
-PING_EVERY = 55 * 60
-PING_REPLY = 10 * 60
-TICK = 30
-
-
-def orca(*args: str) -> dict | None:
-    """One `orca` CLI call, its `result`, or `None` for anything else.
-
-    The one place the daemon touches Orca, so a test swaps it for a fake.
-    Decoded as UTF-8: the screen holds `❯` and box lines, and the console's
-    own code page mangles them.
-    """
-
-    exe = shutil.which("orca")
-    if exe is None:
-        return None
-    try:
-        # Short: `send` runs under the keeper's lock, and notices wait on it.
-        # The daemon is detached, so a child of it would get a console window of its own.
-        done = subprocess.run([exe, *args, "--json"], capture_output=True, timeout=5, **background_options())
-        answer = json.loads(done.stdout.decode("utf-8", errors="replace"))
-    except (OSError, subprocess.SubprocessError, ValueError):
-        return None
-    return answer.get("result") if isinstance(answer, dict) and answer.get("ok") else None
-
-
-RULE = re.compile(r"─{20,}")
-
-
-def input_empty(lines: list[str]) -> bool:
-    """Is Claude Code's input box, at the bottom of the screen, empty?
-
-    Its shape in an Orca cell, read on 2026-09-25 (Claude Code 2.1.282,
-    Orca 1.4.167) — a lone `❯` between two rules, a status footer below:
-
-        ────────────────────────────
-        ❯
-        ────────────────────────────
-          ⏵⏵ bypass permissions on (shift+tab to cycle)
-
-    A half-written message has text after `❯`; a cell that fell back to its
-    shell has a prompt below the box. Anything that is not this shape is not
-    empty, so an unknown screen sends nothing.
-    """
-
-    lines = [line.rstrip() for line in lines]
-    while lines and not lines[-1].strip():
-        lines.pop()
-    rules = [i for i, line in enumerate(lines) if RULE.fullmatch(line.strip())]
-    if len(rules) < 2 or rules[-2] != rules[-1] - 2:
-        return False
-    footer = lines[rules[-1] + 1:]
-    return (lines[rules[-1] - 1].strip() == "❯" and len(footer) <= 3
-            and all(line.startswith(" ") for line in footer))
-
-
-def same_path(a: str, b: str) -> bool:
-    try:
-        return os.path.normcase(str(Path(a).resolve())) == os.path.normcase(str(Path(b).resolve()))
-    except (OSError, ValueError):
-        return False
-
-
-class Keeper:
-    """Per session `{handle, checkout, state, due, count, limit, expires, sent}`;
-    per cell, its one owner. Times are `clock()` seconds.
-
-    The owner is whoever sent the latest notice from that cell. A hook runs
-    inside the session that holds the cell, so a notice is itself the proof;
-    a session pushed out — `/clear` — can send nothing more. That also brings
-    the owners back after a restart, from the next notice.
-
-    The count is never brought back. A session first seen here, however, is
-    at its cap (`None`), and only a person's utterance — `/busy` with
-    `reset` — puts it to zero. `SessionStart` is no evidence of a new session:
-    `resume` and `compact` arrive for one that was already pinged. Wrong, this
-    pings less; it never pings past the cap.
-    """
-
-    def __init__(self, clock=time.time, call=None):
-        self.clock = clock
-        self.call = call or orca
-        self.sessions: dict[str, dict] = {}
-        self.owners: dict[str, str] = {}
-        self.lock = threading.Lock()
-
-    def drop(self, session: str) -> None:
-        mine = self.sessions.pop(session, None)
-        if mine and self.owners.get(mine["handle"]) == session:
-            del self.owners[mine["handle"]]
-
-    def claim(self, session: str, handle: str) -> dict:
-        mine = self.sessions.get(session)
-        if mine is None:
-            mine = self.sessions[session] = {"handle": handle, "checkout": None, "state": None,
-                                             "due": None, "count": None, "limit": 0,
-                                             "expires": None, "sent": None}
-        if mine["handle"] != handle and self.owners.get(mine["handle"]) == session:
-            del self.owners[mine["handle"]]
-        mine["handle"] = handle
-        other = self.owners.get(handle)
-        if other not in (None, session):
-            self.drop(other)
-        self.owners[handle] = session
-        return mine
-
-    def notice(self, kind: str, data: dict) -> bool:
-        """`own`, `ping-turn`, `busy`, `idle` or `gone`, from the cell's hooks.
-
-        `True` only for a `ping-turn` answering a ping this daemon sent. The
-        hook knows the ping by its words, and a person can type the same
-        words; one that arrives with no ping out is that person, and counts as
-        their `busy` (review round 2). Except in a session this daemon holds
-        no count for — first seen since a restart, perhaps by its `own`: that
-        may be a ping sent before the restart, and a reset there could ping
-        past the cap.
-        """
-
-        session, handle = str(data["session"]), str(data["handle"])
-        with self.lock:
-            if kind == "gone":
-                self.drop(session)
-                return False
-            if kind not in ("own", "ping-turn", "busy", "idle"):
-                raise ValueError(kind)
-            known = self.sessions.get(session) or {}
-            # `ping-turn` too: the hook retries a notice whose answer was
-            # late, and the retry finds the first one's state. No other turn
-            # can come between — a `Stop` lies between any two (round 3).
-            if kind == "ping-turn" and known.get("state") not in ("sent", "ping-turn"):
-                kind, data = "busy", data | {"reset": known.get("count") is not None}
-            pinged = kind == "ping-turn"
-            mine = self.claim(session, handle)
-            # Every notice but `idle` means a turn is starting or running.
-            # Its timer goes, and so does its expiry: a turn may run for hours,
-            # and the count must still be here at its `Stop`.
-            mine.update(state=kind, due=None, expires=None, sent=None)
-            if kind == "busy" and data.get("reset"):
-                mine["count"] = 0
-            if kind == "idle":
-                now = self.clock()
-                mine["checkout"], mine["limit"] = str(data["checkout"]), int(data["limit"])
-                mine["expires"] = now + PING_EVERY * mine["limit"] + PING_REPLY
-                if mine["count"] is not None and mine["count"] < mine["limit"]:
-                    mine["due"] = now + PING_EVERY
-        return pinged
-
-    def latest(self) -> float:
-        """The last expiry among the sessions. The idle shutdown waits for it."""
-
-        with self.lock:
-            return max((s["expires"] for s in self.sessions.values() if s["expires"]), default=0.0)
-
-    def tick(self) -> None:
-        """Run every `TICK` seconds: drop what expired, ping what is due."""
-
-        now = self.clock()
-        due = []
-        with self.lock:
-            for session, mine in list(self.sessions.items()):
-                if (mine["expires"] is not None and now >= mine["expires"]) or (
-                        mine["state"] == "sent" and now >= mine["sent"] + PING_REPLY):
-                    self.drop(session)
-                elif mine["due"] is not None and now >= mine["due"]:
-                    due.append((session, dict(mine)))
-        for session, seen in due:
-            self.ping(session, seen)
-
-    def ready(self, handle: str, checkout: str) -> bool:
-        """The cell is live, is still the repository `Stop` named, and its input box is empty."""
-
-        shown = self.call("terminal", "show", "--terminal", handle)
-        cell = (shown or {}).get("terminal") or {}
-        if not (cell.get("connected") and cell.get("writable")
-                and same_path(str(cell.get("worktreePath") or ""), checkout)):
-            return False
-        screen = ((self.call("terminal", "read", "--terminal", handle, "--limit", "20") or {})
-                  .get("terminal") or {})
-        return input_empty(list(screen.get("tail") or []))
-
-    def armed(self, session: str, seen: dict) -> bool:
-        """Still idle on the timer `tick` saw — no notice came in since."""
-
-        mine = self.sessions.get(session)
-        return (mine is not None and mine["state"] == "idle" and mine["due"] == seen["due"]
-                and self.owners.get(mine["handle"]) == session)
-
-    def ping(self, session: str, seen: dict) -> None:
-        """Look again before typing. Anything off, and the session is dropped.
-
-        The look — `show` and `read`, about 0.25 s each — runs outside the
-        lock. The last check of the session and the send run inside it, back
-        to back, so a notice that arrives during the send waits for it rather
-        than slipping between the check and the keystrokes.
-
-        What is left cannot be closed from here: Orca has no check-and-type.
-        A person who presses Enter between the screen read and the keystrokes
-        landing — about half a second — gets the ping in their turn. So does
-        a turn whose `/busy` was lost even after `keepalive.RETRY`.
-        """
-
-        with self.lock:
-            if not self.armed(session, seen):
-                return
-        ok = self.ready(seen["handle"], seen["checkout"])
-        with self.lock:
-            if not self.armed(session, seen):
-                return
-            if not ok or self.call("terminal", "send", "--terminal", seen["handle"],
-                                   "--text", PING, "--enter") is None:
-                self.drop(session)
-                return
-            mine = self.sessions[session]
-            mine.update(state="sent", due=None, sent=self.clock(), count=mine["count"] + 1)
-
-
 class Daemon:
     def __init__(self, token: str, embedder: Embedder):
         self.token, self.embedder = token, embedder
-        self.keeper = Keeper()
         self.indexes: dict[tuple[Path, Path | None], Index] = {}
         # ponytail: one lock for every index; per-index locks if requests ever queue
         self.lock = threading.Lock()
         self.last = time.monotonic()
 
     def finished(self) -> bool:
-        """Idle for `IDLE`. A pending keep-alive holds it open, but no longer
-        than the last session's expiry — nothing can be due after that."""
+        """Idle for `IDLE`; agent lifecycle belongs to the app."""
 
-        return time.monotonic() - self.last >= IDLE and self.keeper.latest() <= self.keeper.clock()
+        return time.monotonic() - self.last >= IDLE
 
     def search(self, query: str, hub: str, project: str | None, k: int, wait: float,
                sources: list[str] | None = None) -> list[dict]:
@@ -1377,12 +1147,6 @@ def handler(daemon: Daemon, server_ref: list) -> type:
                 self.reply(200, {})
                 threading.Thread(target=server_ref[0].shutdown, daemon=True).start()
                 return None
-            if self.path in ("/own", "/ping-turn", "/busy", "/idle", "/gone"):
-                try:
-                    pinged = daemon.keeper.notice(self.path[1:], json.loads(data))
-                except Exception as error:  # noqa: BLE001
-                    return self.reply(400, {"error": type(error).__name__})
-                return self.reply(200, {"ping": pinged})
             if self.path == "/retrieve":
                 try:
                     ask = json.loads(data)
@@ -1451,16 +1215,7 @@ def main() -> int:
             time.sleep(60)
         server.shutdown()
 
-    def keep() -> None:
-        while True:
-            time.sleep(TICK)
-            try:
-                daemon.keeper.tick()
-            except Exception as error:  # noqa: BLE001
-                print(f"keep-alive tick skipped: {type(error).__name__}", file=sys.stderr)
-
     threading.Thread(target=idle, daemon=True).start()
-    threading.Thread(target=keep, daemon=True).start()
     try:
         server.serve_forever()
     finally:

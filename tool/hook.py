@@ -4,8 +4,8 @@
 
 Wiring used to live in each checkout's `.claude/settings.json` and
 `.codex/hooks.json`, with the checkout's absolute path baked into every
-command. Both files are gitignored, so a fresh worktree — which is what Orca
-opens after every CLI update — had no hooks at all, and nothing said so. The
+command. Both files are gitignored, so a fresh worktree
+had no hooks at all, and nothing said so. The
 hosts' user-level settings are read in every directory, so the wiring moves
 there and the project is worked out here, per call, from where the session is.
 
@@ -32,7 +32,7 @@ sys.path.insert(0, str(HERE))
 from workspace import checkout  # noqa: E402
 
 # The scripts that read a target repository and need to be told which one.
-PROJECT = {"inject.py", "session_state.py", "sync.py", "keepalive.py"}
+PROJECT = {"inject.py", "session_state.py", "sync.py"}
 LEGACY = {"claude": ".claude/settings.json", "codex": ".codex/hooks.json"}
 
 
@@ -96,13 +96,12 @@ def main(argv: list[str]) -> int:
         return 0
     if script in PROJECT:
         extra += ["--project", str(project)]
-    if script in ("session_state.py", "keepalive.py"):
+    if script == "session_state.py":
         extra += ["--checkout", str(top)]
-    if script in ("inject.py", "keepalive.py"):
+    if script == "inject.py":
         # The host decides the ceiling the injection is fitted to, and without
         # one the injection deduplicates nothing — `inject.recall`. It also
-        # decides whether keep-alive may run: both scripts judge it the same
-        # way (`keepalive.target`).
+        # carries the host-specific output limit.
         extra += ["--host", host]
 
     # In this process rather than a second interpreter: the hooks run under

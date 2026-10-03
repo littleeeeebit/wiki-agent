@@ -281,6 +281,48 @@ def pr_spec(w, name: str, n: int, file: str = "", **extra) -> dict:
     return spec
 
 
+@pytest.mark.parametrize("shared", [False, True])
+def test_review_button_reuses_a_manually_published_task_pr(world, shared):
+    sid = "migrate-postgresql-pgvector-reduced-embeddings"
+    spec = pr_spec(world, sid, 11)
+    if shared:
+        git(world.repo, "worktree", "remove", spec["worktree"])
+        git(world.repo, "checkout", "-q", sid)
+        spec.update(worktree=str(world.repo), workspace_mode="branch")
+    original = {key: spec[key] for key in ("goal", "done", "grounds", "rev", "source")}
+    spec.update(pr=None, state="작업 중", branch=sid, gate=None)
+    specs.save(spec)
+    web = client()
+    row = web.get("/api/prs").json()["rows"][0]
+    assert row["spec"] == sid and row["pickable"]
+    result = web.post("/api/loops", json={"prs": [11]}).json()["results"]
+    assert result == [{"number": 11, "id": sid}]
+    waited(lambda: not loop._loops)
+    fresh = specs.load("proj", sid)
+    assert fresh["state"] == "머지 가능" and len(fresh["rounds"]) == 1
+    assert fresh["pr"]["number"] == 11 and fresh["worktree"] == spec["worktree"]
+    assert {key: fresh[key] for key in original} == original
+    assert len(specs.listing("proj")) == 1
+    # A repeated click follows the existing review path, without a new task.
+    assert web.post("/api/loops", json={"prs": [11]}).json()["results"] == result
+    waited(lambda: not loop._loops)
+
+
+def test_review_attach_refuses_a_busy_or_wrong_checkout_without_changing_metadata(world):
+    sid = "manual-pr"
+    spec = pr_spec(world, sid, 11)
+    spec.update(pr=None, state="작업 중", branch=sid)
+    specs.save(spec)
+    path = spec["worktree"]
+    with patch.dict(work._busy, {path: object()}):
+        result = client().post("/api/loops", json={"prs": [11]}).json()["results"][0]
+    assert "실행 중" in result["error"] and specs.load("proj", sid)["pr"] is None
+    git(Path(path), "checkout", "-q", "--detach")
+    result = client().post("/api/loops", json={"prs": [11]}).json()["results"][0]
+    assert "브랜치" in result["error"] and specs.load("proj", sid)["pr"] is None
+    assert not loop._loops
+
+
 def looped(name: str, seconds: float = 30) -> dict:
     """Start the spec's loop and wait until it has stopped driving."""
 

@@ -39,6 +39,7 @@ from pydantic import BaseModel
 import apply
 import setup_agents
 from agent import cli_command
+from common.host import environment, skill_config
 from workspace import base_branch
 
 from . import channels, specs, work
@@ -193,7 +194,7 @@ def cheapest() -> str:
 
 def command(host: str) -> list[str]:
     if host == "claude":
-        return [*cli_command("claude"), "-p", "--model", "haiku", "Reply OK"]
+        return [*cli_command("claude"), "-p", "--model", "haiku", "--disable-slash-commands", "Reply OK"]
     return [*cli_command("codex"), "exec", "--model", cheapest(), "-c", 'model_reasoning_effort="low"', "Reply OK"]
 
 
@@ -206,7 +207,13 @@ def probe(path: Path, host: str) -> dict:
     trail = PROBES / f"{nonce}.jsonl"
     detail = ""
     try:
-        done = spawn(command(host), path, {**os.environ, "WIKI_PROBE": nonce}, PROBE_SECONDS)
+        env = environment({"WIKI_PROBE": nonce})
+        args = command(host)
+        if host == "codex":
+            skills = skill_config(path, env)
+            if skills:
+                args = [*args[:-1], "-c", skills, args[-1]]
+        done = spawn(args, path, env, PROBE_SECONDS)
         if done.returncode:
             detail = specs.said(done)
     except Exception as exc:  # noqa: BLE001 — a CLI that would not start is a failed test

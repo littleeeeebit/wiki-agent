@@ -18,9 +18,8 @@ tokens measured — where a compacted one writes about 55K. This PC compacts on
 its own at 400K tokens: Claude's `autoCompactWindow` and Codex's
 `model_auto_compact_token_limit`, both set by
 `python tool/setup_agents.py --compact-window <tokens>`, which is also how
-the value changes. In a repository whose `.wiki/adapter.toml` sets
-`keep_alive`, the search daemon's ping is the utterance
-`keep-alive — reply "ok" and nothing else.` — answer `ok` and nothing else.
+the value changes. wiki-agent does not create automatic idle model turns;
+old `keep_alive` adapter entries have no effect.
 
 What goes wrong. A session left over lunch and picked up again costs as much
 as the whole conversation so far, once, and nothing on screen says so. A
@@ -60,14 +59,10 @@ A session that ends without a return loses every ping.
 | 1 | −396,066 | 6,748,666 |
 | 2 | −792,131 | 8,901,757 |
 
-Harness utterances left out, gaps measured from the agent's last response.
-The public copy had two returns after an hour in its whole history, so every
-ping is a loss; ai-nara-shop had 52. A repository opts in with
-`keep_alive = 2`. The daemon's side is `tool/search/daemon.py` (`Keeper`),
-the hooks' side `tool/keepalive.py`. Anything uncertain — a restarted daemon,
-a screen that is not an empty input box — sends nothing, the same direction
-[[hooks-fail-open]] takes. The ping is in `workspace.INJECTED`, so no count
-of a person's utterances takes it for one.
+Harness utterances were left out and gaps measured from the agent's last
+response. These are historical measurements from the public copy. The terminal
+keepalive transport has been retired in wiki-agent; the figures do not authorize
+new pings or establish current host cache behavior.
 
 ## Why the trigger skips `<`
 

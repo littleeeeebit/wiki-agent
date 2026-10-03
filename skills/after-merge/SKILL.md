@@ -54,7 +54,8 @@ Same, then `-D`. Different, then review the conflict resolution or follow-up
 commits, preserve them as a bundle, and decide. Differing from the latest main
 is not by itself evidence that it is unmerged. For a branch attached to a
 worktree, finish preserving assets below first, then remove the worktree and
-delete it. Remove an Orca worktree with Orca.
+delete it. Use this application's workspace cleanup for a managed worktree;
+use `git worktree remove` for a verified independent Git worktree.
 
 ### 4. Remote branch
 
