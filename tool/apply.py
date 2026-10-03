@@ -475,8 +475,8 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
         for group in list(groups):
             before = group.get("hooks", [])
             kept = [h for h in before if not runs(str(h.get("command", "")), "keepalive.py")
-                    and not any(TRANSPORT.search(str(h.get(key, "")))
-                                for key in ("command", "commandWindows", "command_windows"))]
+                    and not (project is not None and any(TRANSPORT.search(str(h.get(key, "")))
+                                for key in ("command", "commandWindows", "command_windows")))]
             if len(kept) != len(before):
                 group["hooks"] = kept
                 changes.append(f"{event} 옛 데스크톱 전송 훅 제거")

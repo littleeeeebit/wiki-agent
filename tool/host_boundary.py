@@ -2,6 +2,7 @@
 
 import hook_diagnostics  # noqa: F401
 import json
+import os
 import re
 import sys
 
@@ -20,6 +21,8 @@ CALL = re.compile(
 
 
 def verdict(payload: dict) -> dict | None:
+    if os.environ.get("WIKI_AGENT_MANAGED") != "1":
+        return None
     tool = str(payload.get("tool_name") or "")
     given = payload.get("tool_input") or {}
     if not isinstance(given, dict):

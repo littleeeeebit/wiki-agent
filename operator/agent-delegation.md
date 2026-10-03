@@ -54,12 +54,16 @@ Not multiplying cells and sending work to the right one are different rules.
 
 Handing a code review to `astra` is a waste of an expensive model.
 
-In wiki-agent the application selects and owns the independent reviewer.
+In app-managed wiki-agent sessions the application selects and owns the independent reviewer.
 Use the review loop control; the implementation agent never lists external
 terminals or sends a review itself. The app's loop settings identify the
 review model. In another host, use that host's native session information.
 If the assigned reviewer cannot be identified, ask before dispatch —
 [[ask-with-arrow-key-options]]. Never substitute another application's CLI.
+
+Editing this repository in another host does not make that session app-managed.
+Use the current host's explicitly supplied reviewer when the person asks for it.
+Its optional transport belongs to that host; the application never requires it.
 
 ## With several live runs, send after all of them
 

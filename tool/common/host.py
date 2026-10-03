@@ -20,8 +20,8 @@ INSTRUCTIONS = (
 
 
 def environment(extra: dict | None = None) -> dict:
-    return {k: v for k, v in {**os.environ, **(extra or {})}.items()
-            if not k.upper().startswith("ORCA_")}
+    return {**{k: v for k, v in {**os.environ, **(extra or {})}.items()
+               if not k.upper().startswith("ORCA_")}, "WIKI_AGENT_MANAGED": "1"}
 
 
 def skill_config(repo: Path, env: dict) -> str | None:

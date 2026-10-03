@@ -32,14 +32,18 @@ a server state-transition rule; supported PR adoption was missing.
 Native SessionStart, UserPromptSubmit, PreToolUse and Stop hooks keep context,
 rules, command checks and reconciliation. `host_boundary.py` redirects accidental
 external-host commands with native workflow context and fails open on exceptions.
-The shared rules and review procedure now route review through the app.
+The shared rules and review procedure route app-managed review through the app.
+Managed subprocesses identify themselves with `WIKI_AGENT_MANAGED=1`; outside
+that runtime the command guard preserves the current host's supplied transport.
+Working in this repository alone does not identify an app-managed session.
 
 App-owned sessions drop inherited transport variables while retaining the
 selected CLI login. Claude disables automatic skills for managed sessions;
 Codex uses process-local overrides for inherited skills referencing the retired
 host. The host's user skill files remain intact. Connection probes use the same
-boundary. Hook reinstall retires the identified external hook bridge and this
-hub's keepalive commands while preserving unrelated hooks. Search has no terminal
+boundary. Project hook reinstall retires the identified external hook bridge and
+this hub's keepalive commands. Global installation preserves other hosts' user
+bridges. Search has no terminal
 transport, and discovery reads only the default or explicitly selected Codex home.
 
 For a manually published task PR, the server matches the exact task branch and

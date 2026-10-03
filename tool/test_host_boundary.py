@@ -13,6 +13,17 @@ from common import host
 from host_boundary import verdict
 
 
+@pytest.fixture(autouse=True)
+def managed_session(monkeypatch):
+    monkeypatch.setenv("WIKI_AGENT_MANAGED", "1")
+
+
+def test_other_hosts_keep_their_explicit_review_transport(monkeypatch):
+    monkeypatch.delenv("WIKI_AGENT_MANAGED")
+    assert verdict({"tool_name": "exec_command", "tool_input": {"cmd": "orca terminal list --json"}}) is None
+    assert verdict({"tool_name": "Skill", "tool_input": {"skill": "orca-cli"}}) is None
+
+
 @pytest.mark.parametrize("command", [
     "orca", "orca status", "git status; orca --help",
     "orca terminal list --json", "Get-Command orca -ErrorAction SilentlyContinue",
@@ -44,7 +55,8 @@ def test_environment_and_skill_overrides_do_not_modify_the_login_or_other_skills
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
     env = host.environment({"CODEX_HOME": str(home), "ORCA_TERMINAL_HANDLE": "obsolete", "ORCA_CLI_COMMAND": "obsolete"})
-    assert env["CODEX_HOME"] == str(home) and not any(k.startswith("ORCA_") for k in env)
+    assert env["CODEX_HOME"] == str(home) and env["WIKI_AGENT_MANAGED"] == "1"
+    assert not any(k.startswith("ORCA_") for k in env)
     config = host.skill_config(tmp_path, env)
     rows = tomllib.loads(config)["skills"]["config"]
     assert len(rows) == 3 and not any(row["enabled"] for row in rows)
@@ -69,6 +81,14 @@ def test_reinstall_removes_the_legacy_bridge_and_preserves_unrelated_hooks(tmp_p
     apply.configure(settings, tmp_path, None, sys.executable, agent)
     hooks = settings["hooks"]["PreToolUse"][0]["hooks"]
     assert hooks == [other] and settings["model"] == "keep"
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+def test_global_install_preserves_the_current_hosts_bridge(agent):
+    bridge = {"type": "command", "command": 'cmd /c "C:/user/.orca/agent-hooks/codex-hook.cmd"'}
+    settings = {"hooks": {"PreToolUse": [{"hooks": [bridge]}]}}
+    apply.configure(settings, None, None, sys.executable, agent)
+    assert any(bridge in group["hooks"] for group in settings["hooks"]["PreToolUse"])
 
 
 def test_hook_entrypoint_runs_without_a_legacy_desktop(tmp_path):

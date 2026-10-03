@@ -18,7 +18,7 @@ most repositories), the offline gate and the live run. A skill is the same
 file in every repository, so those values are read off the injected page, not
 written here.
 
-## In wiki-agent
+## In an app-managed wiki-agent session
 
 Use the application's Review Loop control for the selected pull request.
 The server attaches a manually published PR to its existing task by verified
@@ -45,3 +45,7 @@ native tools to send one instruction file, arm the result watch before dispatch,
 and read the result file after it arrives. Never install or invoke another
 desktop application's transport as a fallback. If no reviewer is available,
 report that specific limitation while continuing the authorized implementation.
+
+The repository directory does not identify the runtime. When maintaining
+wiki-agent from another host, reuse the review cell the person supplied there.
+An optional current-host transport is not a dependency of the managed app.
