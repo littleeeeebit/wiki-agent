@@ -587,6 +587,7 @@ class Feed:
     """
 
     def __init__(self) -> None:
+        self.generation = uuid.uuid4().hex
         self.events: list[dict] = []
         self.done = False
         self.wake = threading.Condition()

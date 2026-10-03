@@ -132,6 +132,8 @@ controls remain in Next Task. Its selected task card also appears when the
 original specification message is outside the loaded conversation. Generated
 goal, exclusions, completion conditions and decisions use the Korean overlay;
 editing and submitting preserve the originals.
+The server-owned first completion condition is an executable gate and stays
+verbatim, outside the prose overlay.
 
 Task deletion uses `POST /api/specs/{sid}/delete`. It stops that task and archives
 its specification in `raw/specs/<repo>/dropped/`. A shared repository, its branch
@@ -143,7 +145,11 @@ Questions, execution completion/failure and conversation completion/failure emit
 identifier-only notice events on the shared feed. Desktop delivery explicitly
 uses Tauri's notification plugin, including permission checks; browsers use their
 notification permission and service worker when available. Settings offers an
-alert test and permission guidance. Codex compaction items and Claude status/
+alert test and permission guidance. Feed cursors carry a process generation;
+a reconnect to another generation replays its buffer, including notices
+already emitted before reconnecting. The client suppresses duplicate notice
+timestamps/sequences and ignores notices older than two minutes.
+Codex compaction items and Claude status/
 boundary events show start/end steps, retain them on replay and show an agent
 banner while compaction runs. Browser checks cover native IPC dispatch with a
 stub, not Windows notification-center delivery or a real model's compaction.

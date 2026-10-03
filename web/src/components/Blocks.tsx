@@ -143,7 +143,7 @@ function Started({ spec, korean, busy, onSpecs, onStart }: { spec: Spec } & Pick
 function SpecDetails({ spec, korean }: { spec: Spec; korean: boolean }) {
   const originals = [spec.goal, ...spec.out, ...spec.done,
     ...spec.decisions.flatMap((d) => [d.what, d.why ?? '', d.rejected ?? '']),
-    ...(spec.report ?? []).map((r) => r.item)]
+    ...(spec.report ?? []).map((r) => r.item)].filter((text) => text !== spec.done[0])
   const translated = useOverlay(originals, korean)
   const overlay = new Map(originals.map((text, i) => [text, translated[i]]))
   const shown = (text: string) => overlay.get(text) ?? text

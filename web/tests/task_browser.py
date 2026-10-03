@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 from urllib.parse import urlparse, parse_qs
+from unittest.mock import patch
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -14,6 +15,7 @@ from playwright.sync_api import sync_playwright
 import uvicorn
 
 from mobile_browser import ROOT, app, fixture, mobile
+from main import loop, work
 
 
 def main():
@@ -25,11 +27,14 @@ def main():
     deleted = False
     compacting = False
     compact_done = threading.Event()
+    restarted_feed = None
+    feed_requests = []
     spec = {"id": "fixture-task", "repo": "fixture", "rev": 1, "goal": "Synthetic task requirements",
             "out": ["Do not change stored data"], "done": ["git --version", "Synthetic check passes"], "state": "작업 중",
             "worktree": "fixture-task", "workspace_mode": "branch", "branch": "fixture",
             "grounds": {"pages": [], "files": [], "rules": []}, "decisions": [], "history": [],
             "source": {"plan": None}, "missing": []}
+    spec["report"] = [{"item": "git --version", "pass": True}]
 
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
     async def api(path: str, request: Request):
@@ -40,7 +45,8 @@ def main():
             data = await request.json()
             translations.extend(data["texts"])
             mapping = {"Synthetic task requirements": "합성 작업 요구사항", "Do not change stored data": "저장된 데이터를 바꾸지 않는다",
-                       "Synthetic check passes": "합성 검사가 통과한다", "Revised synthetic requirements": "수정된 합성 요구사항"}
+                       "Synthetic check passes": "합성 검사가 통과한다", "Revised synthetic requirements": "수정된 합성 요구사항",
+                       "git --version": "깃 --버전"}
             return {"texts": [mapping.get(text, text) for text in data["texts"]], "statuses": ["translated"] * len(data["texts"])}
         if path == "log/next":
             return [{"role": "assistant", "text": "Synthetic specification", "blocks": [{"name": "spec", "id": spec["id"]}]}]
@@ -63,6 +69,10 @@ def main():
             return {"provider": "codex", "quota": [], "usage": {"input_tokens": 1234, "output_tokens": 56, "scope": "thread"},
                     "error": "", "live": True, "connection_ms": 400}
         if path == "loops/events":
+            feed_requests.append(dict(request.query_params))
+            if restarted_feed is not None:
+                with patch.object(work, "feed", restarted_feed):
+                    return loop.events(int(request.query_params.get("after", "-1")), request.query_params.get("generation"))
             async def notices():
                 await asyncio.sleep(0.5)
                 stamp = time.time()
@@ -70,7 +80,8 @@ def main():
                 for replay in (event, event, {**event, "ts": stamp + .001, "title": "서버 재시작 후 알림"}):
                     yield "data: " + json.dumps(replay) + "\n\n"
                 await asyncio.sleep(60)
-            return StreamingResponse(notices(), media_type="text/event-stream")
+            return StreamingResponse(notices(), media_type="text/event-stream",
+                                     headers={"X-Feed-Cursor": "-1", "X-Feed-Generation": "fixture-old"})
         if path == "work/events":
             async def compact_events():
                 for phase in ("started", "completed"):
@@ -200,6 +211,8 @@ def main():
             page.get_by_text("저장된 데이터를 바꾸지 않는다", exact=False).wait_for()
             page.get_by_text("합성 검사가 통과한다", exact=False).wait_for()
             assert "Do not change stored data" in translations
+            assert "git --version" not in translations, "Executable gate was sent for prose translation"
+            page.get_by_text("· git --version", exact=True).wait_for()
             page.get_by_role("button", name="명세 수정", exact=True).click()
             assert page.get_by_role("textbox", name="목표", exact=True).input_value() == "Synthetic task requirements"
             page.get_by_role("textbox", name="목표", exact=True).fill("Revised synthetic requirements")
@@ -237,6 +250,14 @@ def main():
             desktop.wait_for_function("window.notifications.length === 2")
             assert desktop.evaluate("window.notifications[0].title") == "에이전트 실행 완료"
             assert desktop.evaluate("window.notifications[1].title") == "서버 재시작 후 알림"
+            # Reconnect through the real endpoint with an old cursor/generation.
+            restarted_feed = work.Feed()
+            restarted_feed.put({"kind": "notice", "ts": time.time(), "title": "재시작 전송 대기 알림", "body": "fixture"})
+            restarted_feed.done = True
+            desktop.evaluate("window.dispatchEvent(new Event('mobile-reconnect'))")
+            desktop.wait_for_function("window.notifications.length === 3")
+            assert desktop.evaluate("window.notifications[2].title") == "재시작 전송 대기 알림"
+            assert any(r.get("after") == "1" and r.get("generation") == "fixture-old" for r in feed_requests), feed_requests
             desktop.get_by_role("link", name="PR", exact=True).click()
             desktop.wait_for_function("window.openedUrls.length === 1")
             assert desktop.evaluate("window.openedUrls") == ["https://example.com/pull/7"]

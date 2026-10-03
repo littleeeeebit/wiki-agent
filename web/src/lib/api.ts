@@ -751,12 +751,15 @@ export type FeedEv =
 
 /** Tail the server's own changes until `signal` aborts or the stream drops. */
 export async function loopEvents(onEvent: (ev: FeedEv) => void, signal: AbortSignal,
-  after: number | undefined, ready: (cursor?: number) => void): Promise<void> {
-  const url = '/api/loops/events' + (after === undefined ? '' : `?after=${after}`)
+  after: number | undefined, ready: (cursor?: number, generation?: string) => void, generation?: string): Promise<void> {
+  const params = new URLSearchParams()
+  if (after !== undefined) params.set('after', String(after))
+  if (generation !== undefined) params.set('generation', generation)
+  const url = '/api/loops/events' + (params.size ? `?${params}` : '')
   const res = await fetch(url, { headers: await scoped(url), signal })
   if (res.ok) {
     const cursor = res.headers.get('X-Feed-Cursor')
-    ready(cursor === null ? undefined : Number(cursor))
+    ready(cursor === null ? undefined : Number(cursor), res.headers.get('X-Feed-Generation') ?? undefined)
   }
   await events<FeedEv | null>(res, (ev) => ev && onEvent(ev), () => null)
 }

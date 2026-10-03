@@ -239,6 +239,7 @@ export default function App() {
   // server-started turn attaches to it, and a loop that comes to wait on an
   // approval, or a merge into an unreviewed base, notifies once.
   const feedCursor = useRef<number | undefined>(undefined)
+  const feedGeneration = useRef<string | undefined>(undefined)
   const notified = useRef(new Set<string>())
   const [feedEpoch, setFeedEpoch] = useState(0)
   useEffect(() => {
@@ -326,12 +327,13 @@ export default function App() {
     void (async () => {
       while (!stop.signal.aborted) {
         try {
-          await api.loopEvents(on, stop.signal, feedCursor.current, (cursor) => {
+          await api.loopEvents(on, stop.signal, feedCursor.current, (cursor, generation) => {
             if (stop.signal.aborted) return
             if (cursor !== undefined) feedCursor.current = cursor
+            if (generation !== undefined) feedGeneration.current = generation
             resync()
             window.dispatchEvent(new Event('mobile-connected'))
-          })
+          }, feedGeneration.current)
         } catch {
           // Dropped or aborted; tried again below unless aborted.
         }
