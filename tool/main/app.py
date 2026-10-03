@@ -29,7 +29,7 @@ from pydantic import AnyHttpUrl, BaseModel
 
 import translate
 
-from . import channels, connect, loop, mobile, planning, query, specs, survey, verification, work
+from . import channels, connect, improvements, loop, mobile, planning, query, specs, survey, verification, work
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
 # `text/plain`. The browser then refuses `<script type="module">` silently:
@@ -73,6 +73,7 @@ app.include_router(work.router)
 app.include_router(specs.router)
 app.include_router(loop.router)
 app.include_router(planning.router)
+app.include_router(improvements.router)
 app.include_router(connect.router)
 app.include_router(verification.router)
 app.include_router(mobile.router)
