@@ -1929,7 +1929,8 @@ def attach(repo: Path, spec: dict, view: dict, environment: str) -> dict:
             specs.save(specs.moved(fresh, f"PR #{view['number']}",
                 pr={"number": view["number"], "url": view["url"], "base": view["baseRefName"],
                     "head": view["headRefOid"], "branch": view["headRefName"]},
-                implementation_environment=environment, stopped=None, fault=None,
+                implementation_environment=(environment if environment != "local" else
+                                            fresh.get("implementation_environment", "local")), stopped=None, fault=None,
                 gate=None, validation=None))
             return fresh
     finally:

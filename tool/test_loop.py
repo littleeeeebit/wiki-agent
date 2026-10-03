@@ -308,6 +308,18 @@ def test_review_button_reuses_a_manually_published_task_pr(world, shared):
     waited(lambda: not loop._loops)
 
 
+@pytest.mark.parametrize("environment", ["external", "claude-cloud"])
+def test_manual_pr_attachment_preserves_external_implementation_ownership(world, environment):
+    spec = pr_spec(world, "external-manual-pr", 11, implementation_environment=environment)
+    spec.update(pr=None, state="작업 중", branch=spec["id"])
+    specs.save(spec)
+    with patch.object(loop, "kick") as dispatch:
+        result = client().post("/api/loops", json={"prs": [11]}).json()["results"]
+    assert result == [{"number": 11, "id": spec["id"]}]
+    assert specs.load("proj", spec["id"])["implementation_environment"] == environment
+    dispatch.assert_called_once_with("proj", spec["id"])
+
+
 def test_review_attach_refuses_a_busy_or_wrong_checkout_without_changing_metadata(world):
     sid = "manual-pr"
     spec = pr_spec(world, sid, 11)

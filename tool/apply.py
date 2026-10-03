@@ -45,9 +45,21 @@ OWNED = (HOOK_MARK, SESSION_MARK, SYNC_MARK, CONTINUATION_MARK, "keepalive.py",
 
 # Recognize the retired bridge by its executable/script, never by an
 # account-home path: CODEX_HOME still holds the selected CLI login.
-TRANSPORT = re.compile(r"[\\/]\.orca[\\/]agent-hooks[\\/]|"
-                       r"(?:^|[\s\"'])orca(?:\.exe|\.cmd|\.ps1)?(?:[\s\"']|$)|"
-                       r"ORCA_AGENT_HOOK_(?:ENDPOINT|PORT)", re.I)
+BRIDGE = re.compile(r"[\\/]\.orca[\\/]agent-hooks[\\/]", re.I)
+
+
+def transport(command: str) -> bool:
+    """Recognize an invoked transport, rather than transport words in arguments."""
+    command = re.sub(r"^\s*(?:cmd(?:\.exe)?\s+/c|(?:pwsh|powershell)(?:\.exe)?\s+-Command)\s+",
+                     "", command, flags=re.I)
+    first = re.match(r'''\s*&?\s*(?:"([^"]+)"|'([^']+)'|([^\s"']+))''', command)
+    if not first:
+        return False
+    executable = next(value for value in first.groups() if value is not None)
+    script = script_arg(command)
+    return bool(BRIDGE.search(executable) or (script and BRIDGE.search(script))
+                or Path(executable.replace("\\", "/")).name.lower() in
+                {"orca", "orca.exe", "orca.cmd", "orca.ps1"})
 
 # The quoted arguments of a hook command. Our own writer emits
 # `"<python>" "<wiki>/tool/<script>"`, optionally behind `& ` for PowerShell
@@ -475,7 +487,7 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
         for group in list(groups):
             before = group.get("hooks", [])
             kept = [h for h in before if not runs(str(h.get("command", "")), "keepalive.py")
-                    and not (project is not None and any(TRANSPORT.search(str(h.get(key, "")))
+                    and not (project is not None and any(transport(str(h.get(key, "")))
                                 for key in ("command", "commandWindows", "command_windows")))]
             if len(kept) != len(before):
                 group["hooks"] = kept

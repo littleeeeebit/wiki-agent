@@ -29,6 +29,9 @@ def test_other_hosts_keep_their_explicit_review_transport(monkeypatch):
     "orca terminal list --json", "Get-Command orca -ErrorAction SilentlyContinue",
     'pwsh -Command "orca worktree current --json"', "which orca",
     '& "C:/tools/orca.exe" terminal send --enter', "$env:ORCA_CLI_COMMAND --help",
+    'pwsh -Command "orca status"', 'powershell -Command "orca status"',
+    "pwsh -NoProfile -Command 'orca status'", 'cmd /c "orca status"',
+    'pwsh -Command "orca"', 'cmd /c "orca"',
 ])
 def test_legacy_transport_is_redirected(command):
     for name, field in (("Bash", "command"), ("exec_command", "cmd"), ("exec", "code")):
@@ -89,6 +92,18 @@ def test_global_install_preserves_the_current_hosts_bridge(agent):
     settings = {"hooks": {"PreToolUse": [{"hooks": [bridge]}]}}
     apply.configure(settings, None, None, sys.executable, agent)
     assert any(bridge in group["hooks"] for group in settings["hooks"]["PreToolUse"])
+
+
+@pytest.mark.parametrize("agent", ["claude", "codex"])
+def test_project_install_preserves_transport_words_used_as_hook_data(tmp_path, agent):
+    foreign = [
+        {"type": "command", "command": '\"python\" \"C:/hooks/audit.py\" --label orca'},
+        {"type": "command", "command": '\"python\" \"C:/hooks/audit.py\" --watch \"C:/user/.orca/agent-hooks/a.cmd\"'},
+        {"type": "command", "command": '\"python\" \"C:/hooks/audit.py\" --label ORCA_AGENT_HOOK_PORT'},
+    ]
+    settings = {"hooks": {"PreToolUse": [{"hooks": list(foreign)}]}}
+    apply.configure(settings, tmp_path, None, sys.executable, agent)
+    assert all(any(hook in group["hooks"] for group in settings["hooks"]["PreToolUse"]) for hook in foreign)
 
 
 def test_hook_entrypoint_runs_without_a_legacy_desktop(tmp_path):

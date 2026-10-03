@@ -11,10 +11,13 @@ from common.host import INSTRUCTIONS
 # Covers direct/nested calls and the discovery commands seen in the incident.
 # This is an accidental-host guard, not a sandbox for arbitrary generated code.
 CALL = re.compile(
-    r"(?:(?:^|[;&|\n])[ &\"']*orca(?:\.exe|\.cmd|\.ps1)?(?:\s|$)|"
+    r"(?:(?:^|[;&|\n])[ &\"']*orca(?:\.exe|\.cmd|\.ps1)?(?:[\s\"']|$)|"
     r"\borca(?:\.exe|\.cmd|\.ps1)?\s+(?:terminal|worktree|skills|browser|computer|"
     r"message|worker|artifact|repo|--help|--version|--json)\b|"
     r"(?:Get-Command|where(?:\.exe)?|which|command\s+-v)\s+orca\b|"
+    r"\b(?:pwsh|powershell)(?:\.exe)?\s+(?:-NoProfile\s+|-NonInteractive\s+|-NoLogo\s+)*"
+    r"-(?:Command|c)\s+[ &\"']*orca(?:\.exe|\.cmd|\.ps1)?(?:[\s\"']|$)|"
+    r"\bcmd(?:\.exe)?\s+/c\s+[ &\"']*orca(?:\.exe|\.cmd|\.ps1)?(?:[\s\"']|$)|"
     r"ORCA_(?:CLI_COMMAND|TERMINAL_HANDLE|AGENT_HOOK_\w+)|"
     r"[\\/]orca(?:\.exe|\.cmd|\.ps1)[\"'\s]|[\\/]\.orca[\\/]agent-hooks[\\/])", re.I,
 )
