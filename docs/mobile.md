@@ -82,7 +82,9 @@ The native shell under `android/` produces a directly installable APK. It scans
 the same one-use QR without requesting camera permission, validates that the
 result is a root HTTPS pairing link, and loads only that origin in an isolated
 WebView. External links leave the app; mixed content, file access, third-party
-cookies, popups and invalid TLS are refused. There is no JavaScript bridge.
+cookies, gesture-free popups and invalid TLS are refused. New-window link
+clicks use the existing navigation guard, which sends external destinations
+to the browser instead of creating another WebView. There is no JavaScript bridge.
 The WebView keeps the pairing cookie but disables its HTTP response cache;
 conversation and API responses remain on the PC.
 
@@ -102,7 +104,7 @@ powershell -ExecutionPolicy Bypass -File tool/build_android.ps1
 ```
 
 The outputs are the ignored local release artifacts `artifacts/wiki-agent.apk`
-and `artifacts/wiki-agent.aab`. Version 0.1.3 targets API 36, retains the
+and `artifacts/wiki-agent.aab`. Version 0.1.4 targets API 36, retains the
 Android 8 minimum, disables debugging and signs the APK with v2 and v3 schemes.
 Android 15 on Galaxy S21 meets these requirements; a higher target API does
 not require the phone to run that newer OS. The build runs release parser
@@ -122,8 +124,12 @@ usable while the current external connection is running, even after a
 pairing link expires. After installation, scan the separate one-use connection
 QR inside the app. Android still requires confirmation to install the file.
 
-Version 0.1.3 adds explicit screen modes to the overflow menu introduced in
-0.1.2. Update the installed release from the same installation QR;
+Version 0.1.3 added explicit screen modes to the overflow menu introduced in
+0.1.2. Version 0.1.4 routes new-window PR/citation links through the existing
+navigation guard instead of leaving them inert. Multiple windows are disabled
+and gesture-free JavaScript window requests stay blocked, following
+[Android's WebSettings contract](https://developer.android.com/reference/android/webkit/WebSettings#setSupportMultipleWindows(boolean)).
+Update the installed release from the same installation QR;
 the application ID and release certificate are unchanged, so uninstalling is
 not part of this update. The saved connection and cookies are not deliberately
 cleared by the update. An older APK does not gain screen-rotation controls
@@ -304,13 +310,14 @@ old process is clamped to the new buffer. Reconnect never retries a write.
 
 The 2026-10-03 sync fix changes Python as well as the screen. Restart the PC
 app to load it, then reload the phone's web screen. The existing APK 0.1.3
-can load this update; it does not need a new native installation. A temporary
+can load the web/sync update without a new native installation. Install APK
+0.1.4 in place for the external-link fix. A temporary
 tunnel restarted with the app needs a fresh pairing QR.
 
 ## Verification
 
 ```powershell
-python -m pytest -q tool/test_mobile.py tool/test_main.py tool/test_sync.py
+python -m pytest -q tool/test_mobile.py tool/test_main.py tool/test_sync.py tool/test_android_shell.py
 python web/tests/mobile_browser.py
 python web/tests/mobile_sync.py
 python web/tests/mobile_browser.py --live-tunnel
@@ -345,6 +352,10 @@ focus isolation, manual feed reconnect without losing a draft or resending a
 question, online recovery into an externally started active run, and cross-client clear.
 It needs OpenSSL (Git for Windows includes
 it), Playwright and Chromium. It does not publish a tunnel or touch user records.
+`tool/test_android_shell.py` guards the native window/navigation configuration
+in source; it does not execute Android's WebView. On a device, tap a PR or
+citation link that requests a new window and confirm the external browser
+opens while the paired app and draft remain available.
 
 Physical-device acceptance remains necessary: install the APK and scan a live
 pairing QR; with system auto-rotate off, select Landscape from portrait and

@@ -187,7 +187,10 @@ public final class MainActivity extends Activity {
         settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
         settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
         settings.setGeolocationEnabled(false);
-        settings.setSupportMultipleWindows(true);
+        // Keep target=_blank in the navigation guard instead of requesting
+        // an unsupported WebChromeClient window. Gesture-free popups stay blocked.
+        settings.setSupportMultipleWindows(false);
+        settings.setJavaScriptCanOpenWindowsAutomatically(false);
         settings.setSafeBrowsingEnabled(true);
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(view, false);
