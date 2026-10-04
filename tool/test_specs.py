@@ -8,6 +8,7 @@ a stand-in object, except where the CLI's own arguments are the evidence.
 import json
 import subprocess
 import sys
+import threading
 import uuid
 from pathlib import Path
 from unittest.mock import patch
@@ -33,6 +34,60 @@ def _adapter(repo: Path, gate: str | None) -> None:
 
 
 KICKED: list = []
+
+
+def test_spec_read_waits_for_its_atomic_replacement(tmp_path, monkeypatch):
+    monkeypatch.setattr(specs, "SPECS", tmp_path)
+    monkeypatch.setattr(specs, "publish", lambda *_: None)
+    initial = {"repo": "fixture", "id": "review", "state": "review", "history": [{"ts": 1}]}
+    specs.save(initial)
+    file = specs.file_of("fixture", "review")
+    replacing, release, reading, finished = (threading.Event() for _ in range(4))
+    original_replace, original_read = Path.replace, Path.read_text
+    result, errors = [], []
+
+    def replace(path, target):
+        if target == file:
+            replacing.set()
+            assert release.wait(10)
+        try:
+            return original_replace(path, target)
+        finally:
+            replacing.clear()
+
+    def read(path, *args, **kwargs):
+        if path == file and replacing.is_set():
+            raise PermissionError("Windows sharing violation during replacement")
+        return original_read(path, *args, **kwargs)
+
+    def save():
+        try:
+            specs.save({**initial, "state": "ready"})
+        except BaseException as exc:
+            errors.append(exc)
+
+    def load():
+        reading.set()
+        result.append(specs.load("fixture", "review"))
+        finished.set()
+
+    monkeypatch.setattr(Path, "replace", replace)
+    monkeypatch.setattr(Path, "read_text", read)
+    writer, reader = threading.Thread(target=save), threading.Thread(target=load)
+    writer.start()
+    try:
+        assert replacing.wait(10)
+        reader.start()
+        assert reading.wait(10)
+        assert not finished.wait(.2), "A spec being replaced was reported as missing"
+    finally:
+        release.set()
+        writer.join(10)
+        if reader.ident is not None:
+            reader.join(10)
+    assert not errors and not writer.is_alive() and not reader.is_alive()
+    assert result and result[0]["state"] == "ready"
+    assert specs.load("fixture", "absent") is None
 
 
 @pytest.fixture

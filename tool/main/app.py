@@ -78,9 +78,9 @@ async def lifespan(_: FastAPI):
             yield
         finally:
             poll_stop.set()
-            poll_thread.join(timeout=12)
             architecture_stop.set()
-            architecture_thread.join(timeout=12)
+            poll_thread.join()
+            architecture_thread.join()
             mobile.companion.stop()
             loop.close_all()
             planning.close_all()

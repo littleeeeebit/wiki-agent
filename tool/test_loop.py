@@ -545,6 +545,12 @@ def test_a_disposition_id_counts_only_when_this_round_gave_it_to_that_finding():
     again = loop.vouched(said("[P1] a.py:1 — close connection", "F2"), shared)
     assert again[0]["id"] == "F2"
     assert loop.disputed(loop.vouched(said("[P1] a.py:1 — validate input", "F1"), shared), again) == ""
+    misplaced = loop.vouched(said("[P1] a.py:1 — validate input", "F2"), shared)
+    assert misplaced[0]["id"] is None
+    completed = loop.settled(shared, misplaced)
+    assert [f["disposition"] for f in completed] == ["disagree", None]
+    ambiguous = loop.vouched(said("[P1] a.py:1 — reworded", None), shared)
+    assert all(f["disposition"] is None for f in loop.settled(shared, ambiguous))
 
 
 def test_the_same_change_reviewed_as_plan_or_code_gets_its_own_criteria(world):
@@ -825,6 +831,42 @@ def test_resume_finishes_the_pending_correction_before_requesting_another_review
     assert loop.counted(complete)[1]["head"] != complete["rounds"][0]["head"]
     if stale:
         assert complete["rounds"][1] == stale and len(complete["rounds"]) == 3
+
+
+@pytest.mark.parametrize("identity", [False, True])
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_same_line_findings_need_separate_correction_reports_before_the_next_review(world, identity, ambiguous):
+    spec = pr_spec(world, "same-line-repair", 7)
+    findings = ["[P1] a.py:10 — validate input", "[P1] a.py:10 — close connection"]
+    Reviewer.replies = [denied(findings, meta(("a", "input"), ("a", "connection"))) if identity else deny(*findings), allow]
+
+    def report(entries):
+        return "```disposition\n" + json.dumps([
+            {"finding": f, "action": "not-reproduced", "evidence": f"Ran the trigger for {f}"} for f in entries]) + "\n```"
+
+    entered, release = threading.Event(), threading.Event()
+
+    def complete(_path, _halt):
+        entered.set()
+        assert release.wait(15)
+        return report(findings)
+
+    Worker.replies = [report(["[P1] a.py:10 — this location" if ambiguous else findings[0]]), complete]
+    loop.kick("proj", spec["id"])
+    try:
+        waited(lambda: entered.is_set() or not loop._loops)
+        assert entered.is_set(), "One location-based disposition incorrectly completed two findings"
+        pending = specs.load("proj", spec["id"])
+        assert pending["state"] == "고치는 중 R1" and len(pending["rounds"]) == 1
+        assert not (loop.folder("proj", 7) / "round-2.md").exists()
+        assert world.hub.head(7) == spec["pr"]["head"]
+    finally:
+        release.set()
+        waited(lambda: not loop._loops)
+    finished = specs.load("proj", spec["id"])
+    assert finished["state"] == "머지 가능" and len(finished["rounds"]) == 2
+    assert all(f["disposition"] == "not-reproduced" for f in finished["rounds"][0]["items"])
+    assert world.hub.head(7) == spec["pr"]["head"]
 
 
 @pytest.mark.parametrize("action", ["disagree", "not-reproduced"])

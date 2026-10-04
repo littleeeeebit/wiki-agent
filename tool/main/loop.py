@@ -325,32 +325,41 @@ def identified(spec: dict, findings: list[dict]) -> list[dict]:
     return out
 
 
+def _named(finding: str, items: list[dict]) -> list[dict]:
+    """Prefer the complete caption before falling back to a shared location."""
+
+    exact = [f for f in items if _norm(finding) == _norm(f["head"])]
+    return exact or [f for f in items if same(finding, f["head"])]
+
+
 def vouched(disposition: list[dict] | None, items: list[dict]) -> list[dict] | None:
     """The fixing side's disposition with each `id` kept only when this round
     gave it — to one of the findings the entry's text names, when it names
-    any. `same` is loose (a shared file and line is enough), so two findings
-    at one place are both named. A made-up or misplaced id is dropped, and
-    `same` decides instead: an id never makes two findings one."""
+    any. A complete caption identifies its own finding even when another
+    shares its location. A made-up or misplaced id is dropped."""
 
     if disposition is None:
         return None
     given = {f["id"] for f in items if f.get("id")}
     out = []
     for d in disposition:
-        named = {f.get("id") for f in items if same(d["finding"], f["head"])}
+        named = {f.get("id") for f in _named(d["finding"], items)}
         ok = d.get("id") in given and (not named or d.get("id") in named)
         out.append({**d, "id": d.get("id") if ok else None})
     return out
 
 
 def settled(items: list[dict], disposition: list[dict] | None) -> list[dict]:
-    """Each kept finding with the action the fixing side gave it, or `None`."""
+    """Each finding's action; an entry without an id must name exactly one."""
 
-    def action(f: dict):
-        mine = {"id": f.get("id"), "finding": f["head"]}
-        return next((d["action"] for d in disposition or [] if one(d, mine)), None)
-
-    return [{**f, "disposition": action(f)} if f["grade"] != "P2" else f for f in items]
+    actions = {}
+    for d in disposition or []:
+        named = ([f for f in items if f.get("id") == d["id"]]
+                 if d.get("id") else _named(d["finding"], items))
+        if d.get("id") or len(named) == 1:
+            for f in named:
+                actions.setdefault(id(f), d["action"])
+    return [{**f, "disposition": actions.get(id(f))} if f["grade"] != "P2" else f for f in items]
 
 
 # -- The profile a round is reviewed under -------------------------------------------
@@ -662,6 +671,9 @@ def close_all() -> None:
         loop.stop()
     for chat in alive:
         chat.close()
+    for loop in loops:
+        if loop.thread is not None and loop.thread is not threading.current_thread():
+            loop.thread.join()
 
 
 # -- One loop -------------------------------------------------------------------

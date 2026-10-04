@@ -86,11 +86,14 @@ One app server owns a hub's persisted workflows. Startup holds an OS lock on
 `raw/server.lock` before recovering interrupted tasks; a second server cannot
 mark the first server's live review as stopped. Startup resumes active loops
 and previous restart stops after recovery; explicit user stops and blockers
-remain stopped. The poller reattaches active states without a driver and ends
-with its owning server. Review correction stays in its current round until the work session
-returns a complete finding report; claimed fixes need a new commit, and round
-checks and publication precede the next review. Evidence and regression scope
-are in [task lifecycle recovery](research/task-lifecycle-recovery.md).
+remain stopped. The poller reattaches active states without a driver. Shutdown
+stops and joins watchers and review drivers before releasing ownership.
+Review correction stays in its current round until the work session returns a
+complete finding report. A report without an id must uniquely identify one
+finding, including when distinct findings share a file and line. Claimed fixes
+need a new commit, and round checks and publication precede the next review.
+Evidence and regression scope are in
+[task lifecycle recovery](research/task-lifecycle-recovery.md).
 
 The Suite tab reads scoped work, planning, review and conversation records and
 their live runs through `GET /api/suite`. It shows active cells and the latest

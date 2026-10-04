@@ -220,3 +220,45 @@ without adding dependencies or raising persisted size limits.
 All 12 error-log tests passed with normal exit. Ruff, wiki lint, whitespace and
 BOM checks passed. Both fresh native-session hook probes completed again;
 automatic context delivery was observed and tool blocking remained untested.
+
+## Review continuity and shutdown ownership
+
+PR 71's first independent GPT-5.6 Sol review reproduced two P1 defects. A
+single correction report without an id settled two distinct findings at the
+same file and line. Shutdown also released the server lock while a review
+driver was still executing, letting a replacement server take ownership.
+
+Correction matching now prefers the complete finding caption. A report
+without a validated id must identify exactly one finding; an ambiguous shared
+location leaves both pending. Validated ids still cover repeated appearances
+of the same issue. The next review waits for the remaining correction even
+when the first report legitimately requires no code change.
+
+Shutdown signals both watchers, waits for them to stop, then cancels and joins
+the review drivers before releasing server ownership. A replacement server
+cannot recover persisted workflow state while an old driver can still write it.
+These waits run outside the loop registry lock so driver cleanup can finish.
+
+All five new regressions failed on the reviewed head and passed after repair.
+Four use real Git with simulated models to hold the second correction turn,
+covering identified and legacy findings with exact and ambiguous captions.
+The fifth holds a real review driver during app shutdown, verifies that a
+second owner is refused, then verifies ownership is released after the driver
+stops. This is local lifecycle evidence, not a live provider or GitHub test.
+
+The wider repair check exposed a third failure: the poller test read a spec as
+missing while its file still existed. A Windows scratch-data stress run with
+500 atomic writes produced 270 raw read permission errors and 232 `None`
+results from `specs.load`. That return value can prematurely end a driver or
+hide an active task from recovery. Reads now share the existing reentrant spec
+lock with writes. A deterministic concurrent-read regression models the
+sharing violation during replacement and requires the completed snapshot;
+genuinely absent files still return `None`. It failed before this repair.
+Repeating the same 500-write stress run after repair produced no read errors
+and no missing-spec results.
+
+The repair's review, correction, resume, restart, ownership and final-gate
+selection passed all 37 tests. The complete spec and planning modules passed
+all 63 tests. Both processes exited normally with code zero. Ruff, wiki lint,
+whitespace and UTF-8-without-BOM checks passed; the unchanged frontend retains
+the initial PR's build and browser evidence.

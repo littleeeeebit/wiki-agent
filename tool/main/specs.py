@@ -86,10 +86,12 @@ def file_of(repo: str, sid: str) -> Path:
 
 
 def load(repo: str, sid: str) -> dict | None:
-    try:
-        return json.loads(file_of(repo, sid).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
+    # Windows can refuse a read during replacement; it is not a deleted task.
+    with _files:
+        try:
+            return json.loads(file_of(repo, sid).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
 
 
 def save(spec: dict) -> None:
