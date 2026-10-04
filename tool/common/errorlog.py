@@ -12,6 +12,7 @@ import traceback
 FILE = Path(__file__).resolve().parents[2] / "raw" / "errors.jsonl"
 _lock = threading.Lock()
 _logger = None
+SECRET_KEY = r"(?:access[_-]?token|refresh[_-]?token|api[_-]?key|password|secret)"
 
 
 def redact(text: str) -> str:
@@ -20,8 +21,21 @@ def redact(text: str) -> str:
             text = text.replace(value, "[redacted]")
     text = re.sub(r"(?i)(Bearer\s+)[\w.\-]+", r"\1[redacted]", text)
     text = re.sub(r"\b(?:sk-[\w-]+|gh[pousr]_[\w]+|github_pat_[\w]+)\b", "[redacted]", text)
-    return re.sub(r'(?i)((?:access[_-]?token|refresh[_-]?token|api[_-]?key|password|secret)[\"\s]*[:=]\s*[\"\']?)[^\s\"\',}]+',
+    return re.sub(rf'(?i)({SECRET_KEY}[\"\s]*[:=]\s*[\"\']?)[^\s\"\',}}]+',
                   r"\1[redacted]", text)
+
+
+def safe(value):
+    """Redact decoded values, never the serialized JSON syntax."""
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {redact(key) if isinstance(key, str) else key:
+                "[redacted]" if re.fullmatch(SECRET_KEY, str(key), re.I) else safe(item)
+                for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [safe(item) for item in value]
+    return value
 
 
 def record(source: str, error, **context) -> None:
@@ -44,6 +58,6 @@ def record(source: str, error, **context) -> None:
                 _logger.addHandler(handler)
             from datetime import datetime, timezone
             row["ts"] = datetime.now(timezone.utc).isoformat()
-            _logger.error(redact(json.dumps(row, ensure_ascii=False)))
+            _logger.error(json.dumps(safe(row), ensure_ascii=False))
     except Exception:
         pass

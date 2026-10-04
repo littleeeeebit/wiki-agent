@@ -1459,7 +1459,8 @@ def landed(repo: Path, spec: dict) -> None:
             view = gh_json(repo, ["pr", "view", str(n), "--json", "state,mergeCommit,baseRefName,autoMergeRequest"])
             state = view["state"]
             queued = state == "OPEN" and (bool(view.get("autoMergeRequest")) or in_queue(repo, n))
-        except (RuntimeError, ValueError, KeyError, TypeError, OSError, subprocess.TimeoutExpired):
+        except (RuntimeError, ValueError, KeyError, TypeError, OSError, subprocess.TimeoutExpired) as exc:
+            errorlog.record("merge-status", exc, repo=repo.name, spec=spec["id"], pr=n)
             return
         commit = (view.get("mergeCommit") or {}).get("oid", "")
         if state == "MERGED" and view.get("baseRefName") != allowed["base"]:

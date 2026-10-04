@@ -1035,6 +1035,31 @@ def test_a_merge_that_only_queued_cleans_nothing_until_it_lands(world):
     assert specs.load("proj", "fix-m")["state"] == "머지됨" and not path.exists()
 
 
+@pytest.mark.parametrize("queue_read", [False, True])
+def test_failed_merge_observation_is_logged_without_advancing_cleanup(tmp_path, queue_read):
+    from common import errorlog
+
+    repo = tmp_path / "fixture"
+    spec = {"id": "status-error", "repo": repo.name, "state": "머지 대기",
+            "pr": {"number": 70, "base": "main", "head": "a" * 40}, "rounds": []}
+
+    def observation(*_args):
+        if queue_read:
+            return {"state": "OPEN"}
+        raise RuntimeError("Fixture status failure")
+
+    with patch.object(specs, "load", return_value=spec), patch.object(loop, "gh_json", observation), \
+         patch.object(loop, "in_queue", side_effect=RuntimeError("Fixture queue failure")), \
+         patch.object(loop, "finish") as finish:
+        loop.landed(repo, spec)
+    finish.assert_not_called()
+    assert spec["state"] == "머지 대기"
+    rows = [json.loads(line) for line in errorlog.FILE.read_text(encoding="utf-8").splitlines()]
+    row = next(row for row in rows if row["source"] == "merge-status")
+    assert (row["repo"], row["spec"], row["pr"]) == ("fixture", "status-error", 70)
+    assert row["type"] == "RuntimeError" and "Fixture" in row["error"]
+
+
 def test_every_row_of_the_after_merge_table(world):
     """One `state` and one condition per row; a read that fails changes nothing."""
 

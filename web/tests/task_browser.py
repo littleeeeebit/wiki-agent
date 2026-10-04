@@ -130,7 +130,7 @@ def main():
                     "rules": [], "queued": None}
         if path == "work/diff":
             return {"diff": "diff --git a/src/app.ts b/src/app.ts\n--- a/src/app.ts\n+++ b/src/app.ts\n"
-                            "@@ -1 +1 @@\n-old\n+new\n", "base": "fixture", "truncated": True, "omitted": [],
+                            "@@ -1,2 +1,2 @@\n-old\n+new\n---legacy\n+++counter\n", "base": "fixture", "truncated": True, "omitted": [],
                     "totals": {"files": 2, "added": 12_001, "deleted": 12_000, "binary": 0, "unknown": 0},
                     "files": [{"path": "src/app.ts", "added": 12001, "deleted": 12000, "binary": False, "untracked": False},
                               {"path": "assets/binary.bin", "added": None, "deleted": None, "binary": True, "untracked": True}]}
@@ -185,12 +185,14 @@ def main():
             diff_colors = []
             for theme in ("dark", "light"):
                 page.evaluate("theme => { document.documentElement.classList.remove('dark', 'light'); document.documentElement.classList.add(theme) }", theme)
-                colors = diff.evaluate("""el => ['+new', '-old'].map(text => {
+                colors = diff.evaluate("""el => ['+new', '-old', '+++counter', '---legacy', '+++ b/src/app.ts', '--- a/src/app.ts'].map(text => {
                   const row = [...el.children].find(row => row.textContent === text);
                   return getComputedStyle(row).color.match(/[\\d.]+/g).slice(0, 3).map(Number);
                 })""")
                 assert colors[0][1] > colors[0][0] and colors[0][1] > colors[0][2], colors
                 assert colors[1][0] > colors[1][1] and colors[1][0] > colors[1][2], colors
+                assert colors[2] == colors[0] and colors[3] == colors[1], colors
+                assert colors[4] == colors[5] and colors[4] not in colors[:2], colors
                 diff_colors.append({"theme": theme, "added": colors[0], "deleted": colors[1]})
             page.evaluate("document.documentElement.classList.remove('light'); document.documentElement.classList.add('dark')")
             print(json.dumps({"diff_colors": diff_colors}))

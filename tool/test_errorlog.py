@@ -35,6 +35,18 @@ def test_http_screen_and_background_errors_share_utf8_redacted_records(monkeypat
     assert any("RuntimeError" in row.get("traceback", "") for row in rows)
 
 
+def test_quoted_and_nested_secrets_are_redacted_before_json_encoding(monkeypatch):
+    secret = 'escaped-fixture"password\\with\nnewline'
+    monkeypatch.setenv("FIXTURE_PASSWORD", secret)
+    errorlog.record("fixture", "failure", stack='password="fixture-password"',
+                    fields={"API_KEY": "structured-fixture", "values": [secret, ("other", secret)]})
+    rows = [json.loads(line) for line in errorlog.FILE.read_text(encoding="utf-8").splitlines()]
+    row = next(row for row in rows if row["source"] == "fixture")
+    assert row["stack"] == 'password="[redacted]"'
+    assert row["fields"] == {"API_KEY": "[redacted]", "values": ["[redacted]", ["other", "[redacted]"]]}
+    assert not any(secret in json.dumps(rows) for secret in ("fixture-password", "escaped-fixture", "structured-fixture"))
+
+
 def test_rotation_and_logging_failure_do_not_break_the_caller(monkeypatch):
     errorlog.record("fixture", "initial")
     handler = errorlog._logger.handlers[0]

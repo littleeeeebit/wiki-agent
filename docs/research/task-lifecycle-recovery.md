@@ -86,3 +86,33 @@ passed together (16 tests). The frontend build, frontend lint (zero errors,
 13 existing warnings), task and mobile browser checks, Ruff, wiki lint,
 whitespace checks and UTF-8-without-BOM checks passed. The model label's line
 height was fitted to the 320px mobile reading-space check without hiding it.
+
+## Independent review repair
+
+The first independent GPT-5.6 Sol review of PR 70 found two serious P1 defects:
+the merge-status observer swallowed its own exceptions before the outer poller
+could log them, and a prefix-only diff classifier treated real hunk content
+beginning with `+++` or `---` as file metadata. The observer now records the
+failure without advancing state; per-file diff colors begin after the first
+hunk marker, leaving metadata neutral.
+
+A separate synthetic check exposed redaction after JSON encoding: escaped
+quotes could leave a password visible and invalidate the record. Redaction now
+walks decoded values and secret-named fields before serialization. A regression
+checks quoted, nested and escaped values and parses every resulting JSON line.
+
+The repair checks passed: 20 targeted backend tests, the frontend build and
+lint, Ruff, wiki lint, and the task browser test. Browser assertions cover real
+`+++`/`---` content and neutral file headers in both themes, plus 400px and
+1440px containment.
+
+Fresh native Claude Code and Codex sessions also completed read-only hook
+smoke checks without tools, edits, delegation or manual hook calls. Both
+reported automatic startup branch/document context and seven automatically
+delivered rule summaries, including scoped repair and review ownership.
+Claude's event stream independently showed successful SessionStart responses.
+The Codex probe explicitly used GPT-6.1 Sol; Claude used its existing default
+model only for hook validation, not implementation or independent review.
+The options question tool was offered in Codex's Default mode but absent in
+Claude print mode. Runtime tool blocking remains untested because the probes
+did not attempt tool calls. No CLI settings, trust or credentials were changed.
