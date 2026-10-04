@@ -75,6 +75,10 @@ update counts and parent children; unchanged fields are not rewritten. Staged
 cleanup removes metadata-only obsolete generated elements and reconciles parent
 registries, while elements with maintainer content remain. Existing maintainer
 fields are not republished from a stale staging copy.
+If document content, native metadata or tree membership changes during staging,
+publication stops before replacing or pruning live files. The failed refresh
+is recorded and requires an explicit retry rather than another automatic paid
+scan. This detects staging conflicts, not a cross-process filesystem transaction.
 The staged output is validated before publication. Diagrams fit the pane and can switch to natural
 size for scrolling. Frontend builds never run the scanner.
 Automatic generation runs once after a confirmed PR merge and completed

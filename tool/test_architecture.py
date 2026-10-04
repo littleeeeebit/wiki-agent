@@ -103,20 +103,35 @@ def test_existing_non_document_assets_are_not_rewritten_or_decoded(tmp_path, cli
     assert asset.read_bytes() == b"\xff\x00\xfe"
 
 
-def test_publication_does_not_restore_a_staged_copy_over_new_maintainer_notes(tmp_path, cli, monkeypatch):
+@pytest.mark.parametrize("removed", [False, True])
+def test_concurrent_native_notes_and_history_abort_publication_without_mutation(tmp_path, cli, monkeypatch, removed):
     architecture.write_nodes(tmp_path, NODES, threading.Event())
-    note = tmp_path / ".omm/overall-architecture/note.md"
-    note.write_text("Original note", encoding="utf-8")
+    note = tmp_path / ".omm/overall-architecture/server/note.md"
+    metadata = note.parent / "meta.yaml"
     native_run = subprocess.run
+    before = yaml.safe_load(metadata.read_text(encoding="utf-8"))
+    diagram = tmp_path / ".omm/overall-architecture/diagram.mmd"
+    prior_diagram = diagram.read_bytes()
+    concurrent = {}
 
     def run(args, **kwargs):
         if args[-1] == "validate":
             note.write_text("New maintainer note", encoding="utf-8")
+            content = {**before, "update_count": before["update_count"] + 1, "last_field": "note"}
+            metadata.write_text(yaml.safe_dump(content), encoding="utf-8")
+            concurrent["metadata"] = metadata.read_bytes()
         return native_run(args, **kwargs)
 
     monkeypatch.setattr(architecture.subprocess, "run", run)
-    architecture.write_nodes(tmp_path, NODES, threading.Event())
+    replacement = [{"path": "overall-architecture", "description": "Replacement",
+                    "diagram": 'graph TD\n api["API"]\n'},
+                   {"path": "overall-architecture/api", "description": "New API"}]
+    with pytest.raises(ValueError, match="changed during staging"):
+        architecture.write_nodes(tmp_path, replacement if removed else NODES, threading.Event())
     assert note.read_text(encoding="utf-8") == "New maintainer note"
+    assert metadata.read_bytes() == concurrent["metadata"] and diagram.read_bytes() == prior_diagram
+    parent = yaml.safe_load((note.parent.parent / "meta.yaml").read_text(encoding="utf-8"))
+    assert parent["children"] == ["server"] and not (note.parent.parent / "api").exists()
 
 
 @pytest.mark.parametrize("path", ["../escape", "/absolute", "overall-architecture/../../escape"])

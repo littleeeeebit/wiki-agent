@@ -24,6 +24,21 @@ from . import query
 router = APIRouter()
 _lock = threading.Lock()
 FIELDS = ("description", "diagram", "context", "constraint", "concern", "todo", "note")
+DOCUMENT_FILES = {"meta.yaml", "config.yaml", "diagram.mmd", *(f"{field}.md" for field in FIELDS)}
+
+
+def document_state(directory: Path) -> dict:
+    """Fence staged publication against native writes and hierarchy changes."""
+    if directory.resolve() != directory.parent.resolve() / directory.name:
+        raise ValueError("Architecture documents cannot follow symbolic links")
+    state = {}
+    for source in directory.rglob("*"):
+        relative = source.relative_to(directory)
+        if source.is_symlink() or source.resolve() != directory.resolve() / relative:
+            raise ValueError("Architecture documents cannot follow symbolic links")
+        state[relative.as_posix()] = hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() and (
+            source.name in DOCUMENT_FILES or source.name in ("analysis.json", "generated.json")) else None
+    return state
 
 
 def read_existing(root: Path) -> dict:
@@ -84,6 +99,7 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
         raise ValueError("Architecture requires 1–120 described elements")
     paths = set()
     directory = root / ".omm"
+    original = document_state(directory)
     manifest = directory / "analysis.json"
     legacy = directory / "generated.json"
     previous = []
@@ -130,6 +146,8 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
             if any(source.is_symlink() for source in directory.rglob("*")):
                 raise ValueError("Architecture staging cannot follow symbolic links")
             shutil.copytree(directory, stage / ".omm")
+            if document_state(stage / ".omm") != original:
+                raise ValueError("Architecture documents changed during staging; retry the scan")
         removed = []
         for path in sorted(set(previous) - paths, key=lambda p: (p.count("/"), p), reverse=True):
             folder = stage / ".omm" / path
@@ -175,9 +193,10 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
                                  **background_options())
         if checked.returncode:
             raise ValueError(f"Invalid architecture diagram: {checked.stdout} {checked.stderr}")
+        if document_state(directory) != original:
+            raise ValueError("Architecture documents changed during staging; retry the scan")
         for source in (stage / ".omm").rglob("*"):
-            if (not source.is_file() or source.name not in {
-                    "meta.yaml", "config.yaml", "diagram.mmd", *(f"{field}.md" for field in FIELDS)}):
+            if not source.is_file() or source.name not in DOCUMENT_FILES:
                 continue
             target = root / ".omm" / source.relative_to(stage / ".omm")
             if halt.is_set():

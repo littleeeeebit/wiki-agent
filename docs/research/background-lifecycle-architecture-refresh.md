@@ -1,7 +1,8 @@
 # Background lifecycle and architecture publication
 
-Two independent reviews of PR #72 exposed ownership gaps beyond the original
+Three independent reviews of PR #72 exposed ownership gaps beyond the original
 missing-progress report. Round 1 examined `006c7e3`; round 2 examined `69461bb`.
+Round 3 examined `1ce6c59`.
 Their results and native receipts are under `artifacts/review/` locally. The
 reproductions below also have committed regression tests, so the reasoning does
 not depend on retaining terminal output.
@@ -35,6 +36,15 @@ description and diagram still left metadata-only elements visible in `omm tree`.
 Cleanup must preserve maintainer content, remove otherwise empty owned elements,
 and reconcile the native parent registry with the staged directories.
 
+Preserving a concurrently written note was insufficient: round 3's native
+`omm write` reproduction preserved its Markdown but rolled back its newer
+metadata counter and history. A note added to an obsolete element also retained
+the directory while losing its parent registration. Publication now compares
+document content, metadata and tree membership with the staging snapshot.
+Any detected change aborts before publishing or pruning anything. It does not
+merge native history heuristically or launch another paid scan automatically;
+the recorded failure can be retried explicitly.
+
 ## Sources and interpretation
 
 The [Claude Python ResultMessage reference](https://code.claude.com/docs/en/agent-sdk/python#resultmessage)
@@ -62,11 +72,16 @@ consecutive prompts after a provider error using real subprocess transports.
 `tool/test_architecture.py` verifies native metadata publication, obsolete
 element removal, retained notes, binary assets, path boundaries and merge-only
 dispatch with a deterministic CLI stand-in.
+Concurrent metadata or note changes during validation must reject publication
+and leave the live note, metadata, diagram and child registry intact.
 
 The installed native OMM smoke independently advanced an update counter from
 2 to 3, preserved the previous diagram, created new-child metadata and correct
 Git provenance, kept an unchanged refresh byte-identical, and removed an
 obsolete child from both the filesystem and native tree. This used no model.
+An additional installed-CLI probe writes a note during staged validation, both
+with and without attempted element removal. Both refreshes abort, preserving
+the exact newer metadata bytes, history, note and parent registration.
 Fresh Claude and Codex sessions delivered actual SessionStart and
 UserPromptSubmit hooks after the adapter repairs. The earlier live Claude
 background execution and desktop/mobile display runs remain separate evidence.
@@ -78,3 +93,5 @@ perfectly. Windows symbolic-link verification remains skipped on hosts without
 link privileges. No review restarted the user's running app or changed their
 installed host configuration. Full-gate evidence is recorded only after an
 independent approval of the exact head.
+The conflict check covers changes detected before publication; it is not a
+cross-process filesystem transaction or a lock respected by external OMM CLIs.
