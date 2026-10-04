@@ -843,6 +843,8 @@ class ChatSession:
         used = {"in": 0, "out": 0, "cache_read": 0, "reasoning": 0}
         background = set()
         background_status = {}
+        followups = 0
+        foreground_result_seen = False
         while True:
             try:
                 ev = self._events.get(timeout=deadline)
@@ -1021,6 +1023,8 @@ class ChatSession:
                 subtype = ev["subtype"]
                 patch = ev.get("patch") or {}
                 task = str(ev.get("task_id") or "")
+                if task and task not in background_status:
+                    followups += 1
                 status = str(patch.get("status") or ev.get("status") or
                              ("running" if subtype == "task_progress" else background_status.get(task)) or
                              ("started" if subtype == "task_started" else "running"))
@@ -1094,18 +1098,25 @@ class ChatSession:
                         yield Event("tool", str(content)[:4000],
                                     {"tool": "tool_result", "tool_use_id": block.get("tool_use_id")})
 
-            elif kind == "result" and background:
-                # A foreground result may precede background completion and
-                # the automatic follow-up. Only their final result ends work.
-                yield Event("tool", f"Background · waiting for {len(background)} task(s)", {"tool": "background"})
-                continue
-
-            elif kind == "result" and not self._closing():
-                # A steered message came after the last step: the CLI answers it
-                # as one more turn of its own, and this turn waits for that.
-                continue
-
             elif kind == "result":
+                if not ev.get("is_error"):
+                    origin = ev.get("origin") or {}
+                    injected = origin.get("kind") == "task-notification"
+                    if injected:
+                        followups = max(0, followups - 1)
+                    else:
+                        # Older CLIs omit origin: after the foreground result,
+                        # terminal tasks still owe their completion response.
+                        if not origin and foreground_result_seen and not background:
+                            followups = max(0, followups - 1)
+                        foreground_result_seen = True
+                    if background or followups or (injected and ev.get("num_turns") == 0):
+                        yield Event("tool", f"Background · waiting for {max(len(background), followups)} follow-up(s)",
+                                    {"tool": "background"})
+                        continue
+                if not self._closing():
+                    # A steered message still owns a later provider result.
+                    continue
                 usage = ev.get("usage") or {}
                 self.usage = {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
                               "cost_usd": ev.get("total_cost_usd"), "scope": "turn"}

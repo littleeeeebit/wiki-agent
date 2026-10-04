@@ -109,9 +109,11 @@ when transcript or feed publication fails.
 Claude background execution stays within the work turn until task lifecycle
 events settle and the provider's follow-up result arrives. `_drain` forwards
 task start/progress/update/notification, elapsed tool progress and bounded raw
-tool output to the same Agent stream and history. A foreground result while
-tasks remain active is intermediate; `task_updated.patch.status` can settle a
-task even without `task_notification`. Child text never replaces the parent
+tool output to the same Agent stream and history. A foreground result is
+intermediate while any task still owes a follow-up, even if execution already
+ended. Result `origin` distinguishes human and task-notification responses;
+empty batched results do not close the turn. `task_updated.patch.status` can
+settle execution even without `task_notification`. Child text never replaces the parent
 answer. Raw tool output remains outside automatic translation.
 Codex command output deltas and MCP progress notifications also reach the
 same stream; command output retains its raw-display marker in history.

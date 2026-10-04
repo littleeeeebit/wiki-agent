@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -117,8 +119,16 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
             if f"{node['path']}/{child}" not in paths:
                 raise ValueError("Every diagram component requires a described child")
     command = cli_command("omm")
+    git = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=root, capture_output=True,
+                         text=True, encoding="utf-8", errors="replace", timeout=10, **background_options())
+    env = {**os.environ, **({"GIT_DIR": git.stdout.strip(), "GIT_WORK_TREE": str(root)}
+                           if not git.returncode else {})}
     with tempfile.TemporaryDirectory(prefix="wiki-omm-") as temporary:
         stage = Path(temporary)
+        if directory.exists():
+            if any(source.is_symlink() for source in directory.rglob("*")):
+                raise ValueError("Architecture staging cannot follow symbolic links")
+            shutil.copytree(directory, stage / ".omm")
         for node in nodes:
             for field in FIELDS:
                 text = node.get(field, "")
@@ -127,18 +137,23 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
                     continue
                 if not text:
                     continue
+                existing = directory / node["path"] / ("diagram.mmd" if field == "diagram" else f"{field}.md")
+                if ((existing.parent / "meta.yaml").exists() and existing.exists()
+                        and existing.read_text(encoding="utf-8") == text):
+                    continue
                 if halt.is_set():
                     raise ValueError("Architecture analysis cancelled")
                 subprocess.run([*command, "write", node["path"], field, "-"], input=text,
                                cwd=stage, text=True, encoding="utf-8", errors="replace",
-                               capture_output=True, check=True, timeout=30, **background_options())
+                               env=env, capture_output=True, check=True, timeout=30, **background_options())
         checked = subprocess.run([*command, "validate"], cwd=stage, capture_output=True,
                                  text=True, encoding="utf-8", errors="replace", timeout=30,
                                  **background_options())
         if checked.returncode:
             raise ValueError(f"Invalid architecture diagram: {checked.stdout} {checked.stderr}")
         for source in (stage / ".omm").rglob("*"):
-            if not source.is_file() or source.name == "meta.yaml":
+            if (not source.is_file() or source.name not in {
+                    "meta.yaml", "config.yaml", "diagram.mmd", *(f"{field}.md" for field in FIELDS)}):
                 continue
             target = root / ".omm" / source.relative_to(stage / ".omm")
             if halt.is_set():

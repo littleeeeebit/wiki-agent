@@ -1,5 +1,6 @@
 """OMM reads are passive; CLI generation is explicit or follows one merged PR."""
 
+import json
 import subprocess
 import sys
 import threading
@@ -21,7 +22,7 @@ NODES = [{"path": "overall-architecture", "description": "HTTP requests enter se
 def cli(tmp_path, monkeypatch):
     """Stand-in OMM CLI; the live scan separately verifies the installed CLI."""
     script = tmp_path / "omm_cli.py"
-    script.write_text('''import sys
+    script.write_text('''import json, sys
 from pathlib import Path
 if sys.argv[1] == "validate":
     sys.exit(0)
@@ -29,7 +30,19 @@ assert sys.argv[1] == "write" and sys.argv[4] == "-"
 field = sys.argv[3]
 target = Path(".omm") / sys.argv[2] / ("diagram.mmd" if field == "diagram" else field + ".md")
 target.parent.mkdir(parents=True, exist_ok=True)
-target.write_text(sys.stdin.read(), encoding="utf-8")
+content = sys.stdin.read()
+meta_path = target.parent / "meta.yaml"
+meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {"update_count": 0, "children": []}
+if field == "diagram" and target.exists():
+    meta["prev_diagram"] = target.read_text(encoding="utf-8")
+meta.update(update_count=meta["update_count"] + 1, last_field=field)
+target.write_text(content, encoding="utf-8")
+meta_path.write_text(json.dumps(meta), encoding="utf-8")
+if "/" in sys.argv[2]:
+    parent_path = target.parent.parent / "meta.yaml"
+    parent = json.loads(parent_path.read_text(encoding="utf-8"))
+    parent["children"] = sorted(set(parent["children"]) | {target.parent.name})
+    parent_path.write_text(json.dumps(parent), encoding="utf-8")
 ''', encoding="utf-8")
     monkeypatch.setattr(architecture, "cli_command", lambda name: [sys.executable, "-X", "utf8", str(script)])
     calls = []
@@ -57,6 +70,32 @@ def test_scan_preserves_context_and_reads_do_not_regenerate(tmp_path, cli):
     for _ in range(3):
         assert architecture.refresh(root)["installed"]
     assert cli == [root, root]
+
+
+def test_native_field_metadata_history_and_new_children_are_published(tmp_path, cli):
+    architecture.write_nodes(tmp_path, NODES, threading.Event())
+    metadata = tmp_path / ".omm/overall-architecture/meta.yaml"
+    before = json.loads(metadata.read_text(encoding="utf-8"))
+    replacement = [{"path": "overall-architecture", "description": NODES[0]["description"],
+                    "diagram": 'graph TD\n api["New API"]\n'},
+                   {"path": "overall-architecture/api", "description": "New endpoint"}]
+    architecture.write_nodes(tmp_path, replacement, threading.Event())
+    after = json.loads(metadata.read_text(encoding="utf-8"))
+    assert after["update_count"] == before["update_count"] + 1
+    assert after["last_field"] == "diagram" and after["prev_diagram"] == NODES[0]["diagram"]
+    assert "api" in after["children"]
+    assert (metadata.parent / "api/meta.yaml").is_file()
+    history = metadata.read_bytes()
+    architecture.write_nodes(tmp_path, replacement, threading.Event())
+    assert metadata.read_bytes() == history
+
+
+def test_existing_non_document_assets_are_not_rewritten_or_decoded(tmp_path, cli):
+    architecture.write_nodes(tmp_path, NODES, threading.Event())
+    asset = tmp_path / ".omm/diagram-preview.png"
+    asset.write_bytes(b"\xff\x00\xfe")
+    architecture.write_nodes(tmp_path, NODES, threading.Event())
+    assert asset.read_bytes() == b"\xff\x00\xfe"
 
 
 @pytest.mark.parametrize("path", ["../escape", "/absolute", "overall-architecture/../../escape"])

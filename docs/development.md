@@ -69,8 +69,10 @@ model CLI to read source behavior, then the installed `omm` CLI to write
 descriptions and labeled Mermaid diagrams. Install `oh-my-mermaid` first.
 `python tool/omm_scan.py --repo <path> --model <model>` requests a manual scan;
 without arguments it scans wiki-agent with the default Claude login.
-Generation preserves existing maintainer fields and validates staged CLI
-output before publishing it. Diagrams fit the pane and can switch to natural
+Generation preserves existing maintainer fields and seeds staged CLI writes
+with existing OMM metadata. Publication includes native history, timestamps,
+update counts and parent children; unchanged fields are not rewritten. Staged
+output is validated before publishing it. Diagrams fit the pane and can switch to natural
 size for scrolling. Frontend builds never run the scanner.
 Automatic generation runs once after a confirmed PR merge and completed
 checkout cleanup, using that task's saved model. Busy or unpublished checkouts

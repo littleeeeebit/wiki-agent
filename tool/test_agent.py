@@ -655,6 +655,51 @@ sys.stdin.read()
     assert any("Child progress" in e.text for e in events if e.kind == "tool")
 
 
+@pytest.mark.parametrize("origin", [{"kind": "human"}, None])
+def test_fast_background_completion_does_not_close_on_foreground_result(tree, origin):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1"})
+say({"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"})
+say({"type": "result", "origin": ORIGIN, "result": "Foreground", "session_id": "cli-1"})
+say({"type": "user", "isReplay": True, "isSynthetic": True, "origin": {"kind": "task-notification"}, "message": {"content": []}})
+say({"type": "result", "origin": {"kind": "task-notification"}, "result": "Follow-up", "session_id": "cli-1"})
+sys.stdin.read()
+'''.replace("ORIGIN", repr(origin))
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert [event.text for event in events if event.kind == "done"] == ["Follow-up"]
+
+
+@pytest.mark.parametrize("batched", [True, False])
+def test_multiple_background_results_drain_each_notification_before_final_response(tree, batched):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+for task in ("bg-1", "bg-2"):
+    say({"type": "system", "subtype": "task_started", "task_id": task})
+    say({"type": "system", "subtype": "task_notification", "task_id": task, "status": "completed"})
+say({"type": "result", "origin": {"kind": "human"}, "result": "Foreground", "session_id": "cli-1"})
+say({"type": "result", "origin": {"kind": "task-notification"}, "num_turns": FIRST_TURNS, "result": "First finished", "session_id": "cli-1"})
+say({"type": "result", "origin": {"kind": "task-notification"}, "num_turns": 1, "result": "Both finished", "session_id": "cli-1"})
+sys.stdin.read()
+'''.replace("FIRST_TURNS", "0" if batched else "1")
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert [event.text for event in events if event.kind == "done"] == ["Both finished"]
+
+
+def test_background_work_does_not_hide_a_provider_error_result(tree):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1"})
+say({"type": "result", "is_error": True, "result": "API failed", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert events[-1].kind == "done" and events[-1].meta["error"]
+
+
 CODEX_STEER = '''import json, sys
 read = lambda: json.loads(sys.stdin.readline())
 say = lambda m: print(json.dumps(m), flush=True)
