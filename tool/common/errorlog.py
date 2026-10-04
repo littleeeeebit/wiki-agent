@@ -21,6 +21,8 @@ def redact(text: str) -> str:
             text = text.replace(value, "[redacted]")
     text = re.sub(r"(?i)(Bearer\s+)[\w.\-]+", r"\1[redacted]", text)
     text = re.sub(r"\b(?:sk-[\w-]+|gh[pousr]_[\w]+|github_pat_[\w]+)\b", "[redacted]", text)
+    text = re.sub(rf'''(?i)({SECRET_KEY}["\s]*[:=]\s*)(["'])(?:\\(?:[\s\S]|$)|(?!\2)[^\\])*(?:\2|$)''',
+                  r"\1\2[redacted]\2", text)
     return re.sub(rf'(?i)({SECRET_KEY}[\"\s]*[:=]\s*[\"\']?)[^\s\"\',}}]+',
                   r"\1[redacted]", text)
 

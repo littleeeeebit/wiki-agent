@@ -4,6 +4,7 @@ import asyncio
 import json
 from types import SimpleNamespace
 
+import pytest
 from starlette.requests import Request
 
 from common import errorlog
@@ -57,3 +58,20 @@ def test_rotation_and_logging_failure_do_not_break_the_caller(monkeypatch):
     assert errorlog.FILE.with_name("errors.jsonl.1").exists()
     monkeypatch.setattr(handler, "emit", lambda _record: (_ for _ in ()).throw(OSError("Disk unavailable")))
     errorlog.record("fixture", "must not raise")
+
+
+@pytest.mark.parametrize("assignment", [
+    'password="fixture first second"',
+    "secret='fixture,first second'",
+    'api_key="fixture\\"first second"',
+    'access_token="fixture\nfirst second"',
+    'password="fixture first second',
+    'password="fixture first second\\',
+])
+def test_quoted_secret_is_removed_in_full_including_truncated_values(assignment):
+    errorlog.record("fixture", RuntimeError(assignment), stack=assignment)
+    row = json.loads(errorlog.FILE.read_text(encoding="utf-8").splitlines()[-1])
+    key, value = assignment.split("=", 1)
+    expected = f"{key}={value[0]}[redacted]{value[0]}"
+    assert row["error"] == row["stack"] == expected
+    assert "first" not in row["traceback"] and "second" not in row["traceback"]

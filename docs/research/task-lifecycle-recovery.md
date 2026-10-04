@@ -116,3 +116,14 @@ model only for hook validation, not implementation or independent review.
 The options question tool was offered in Codex's Default mode but absent in
 Claude print mode. Runtime tool blocking remains untested because the probes
 did not attempt tool calls. No CLI settings, trust or credentials were changed.
+
+Round 2 allowed the reviewed repair with zero findings. A separate synthetic
+boundary check then found that text-form secrets in quotes were masked only
+up to their first space. The shared text redactor now consumes complete quoted
+values, including escaped quotes, newlines and values truncated before the
+closing quote. Six record-level regressions cover error, traceback and browser
+stack fields without using real credentials. This additional safety repair
+requires a new reviewed head rather than reusing round 2's approval.
+All nine error-log tests passed after this change. Ruff, wiki lint, whitespace
+and BOM checks passed, and both fresh native-session smoke probes completed
+again with the same observed delivery and the same untested blocking limit.
