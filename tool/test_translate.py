@@ -200,6 +200,15 @@ def test_the_env_file_can_be_pointed_away_for_a_test_run(tmp_path: Path) -> None
     assert done.stdout.strip() == "pointed-away", done.stderr
 
 
+def test_pytest_configuration_disarms_an_inherited_machine_key() -> None:
+    done = subprocess.run(
+        [sys.executable, "-c", "import conftest, translate; assert not translate.api_key()"],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(HERE),
+        env={**os.environ, "GEMINI_API_KEY": "inherited-machine-key"}, timeout=15,
+    )
+    assert done.returncode == 0, done.stderr
+
+
 def test_a_cached_entry_is_served_without_a_key(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

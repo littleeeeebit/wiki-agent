@@ -13,6 +13,7 @@ npm --prefix web run lint
 npm --prefix web run build
 powershell -ExecutionPolicy Bypass -File tool/build_android.ps1
 python tool/graph.py
+python tool/omm_scan.py
 ```
 
 Inside a virtual environment, run with that environment's Python.
@@ -36,6 +37,44 @@ Terminal translation is manual: select output, remove private values in the
 preview, then confirm sending it to the external translator. Merely enabling
 the Korean overlay never uploads terminal output. Agent and Review progress
 continue to use the automatic overlay.
+
+The code-change disclosure lists every changed file, including binary and
+untracked files, using Git's full numstat inventory. Each file has its own
+keyboard-accessible toggle and loads a separate patch when expanded. The
+200,000-character preview limit applies to that file, so a large earlier
+patch cannot hide later files. Symlinks and large untracked files remain in
+the list with an explicit content omission. Paths are selected from that
+inventory and passed as literal Git pathspecs; the index is never changed.
+
+Task model controls include a FAST switch, initially OFF. It requests native
+CLI processing speed, independently of reasoning effort: Claude receives
+process-local `--settings` with `fastMode`, and Codex receives `service_tier`
+plus an explicit thread/turn service tier. OFF explicitly requests standard
+speed even when the CLI account defaults to fast. A change resumes the same
+conversation on the next turn. Queued instructions and the task's saved cell
+carry the choice into subsequent implementation fixes. Unsupported models
+disable the switch. An unresolved Claude default also disables it; choose
+the Opus alias or a documented Opus 4.8, 5 or 5.5 identity to request FAST.
+Unknown future model names do not imply support. Provider account access, billing and fallback remain
+provider-owned. These mappings follow the
+[Claude fast-mode documentation](https://code.claude.com/docs/en/fast-mode) and
+[Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).
+Local launch and protocol tests verify requested settings; they do not
+measure paid account speed or prove that a provider granted the requested tier.
+
+The center pane's App structure tab displays this application's `.omm/`
+documents. Diagrams initially fit the pane and can switch to natural size
+for scrolling. `python tool/omm_scan.py` refreshes the documents manually;
+frontend builds run the same scanner before compilation, and the server refreshes every
+five seconds, including while that tab is closed. The scanner inventories
+Git-visible source and resolves local Python and TypeScript imports into
+nested Mermaid diagrams. Descriptions and diagrams are generated fields;
+other oh-my-mermaid fields remain available for maintainer notes. Only changed
+fields are written, and removed modules lose their generated fields while
+notes survive. The scanner makes no model calls and publishes nothing.
+Dynamic dependencies are not inferred; the top-level host connections are
+documented explicitly. The existing wiki and evidence maps keep their own
+data and purpose.
 
 The [mobile companion](mobile.md) shares the desktop server. Paired phones
 keep a focused portrait pane and a compact PC-style landscape workspace. APK 0.1.3 selects screen orientation and

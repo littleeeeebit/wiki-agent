@@ -223,6 +223,21 @@ setup duration and connection labels are omitted; unavailable quota values remai
 explicitly unavailable. Compaction starts and finishes appear in the transcript;
 an ongoing agent compaction also has a visible status above the reading area.
 
+The expanded code-change disclosure lists all modified files, with a second
+disclosure per file for its own diff. Paths use code type, controls use the
+control stage, and additions/deletions retain `add`/`del`. The list remains
+within 35dvh and an expanded patch within 25dvh. Task model options include
+FAST OFF by default, with an explicit switch state and provider support hint.
+The center pane's App structure tab shows the app's local `.omm` diagram,
+module selector and source inventory. Diagram surfaces remain neutral;
+selection and enabled FAST use the existing blue interaction token. Diagram
+text and source inventories use the code stage. Diagrams fit the available
+width initially; natural-size mode scrolls within the container. No separate
+dashboard is added.
+The user chose the outlined blue FAST ON state on 2026-10-04. Browser-measured
+label contrast is 6.27 in dark and 4.50 in light; the filled alternative is
+7.26 and 5.66. The palette and semantic roles remain the same.
+
 Only multiples of 2px are used. Chrome controls are `28px` (`h-7`). Question
 actions are at least `44px`, and option cards grow with their descriptions.
 

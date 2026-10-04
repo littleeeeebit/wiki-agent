@@ -70,6 +70,8 @@ def codex_models() -> list[dict]:
                     "id": "codex:" + model["model"], "label": model["displayName"], "note": "Codex",
                     "default_effort": default,
                     "is_default": model.get("isDefault", False),
+                    "supports_fast": any(tier.get("id") in {"fast", "priority"} for tier in model.get("serviceTiers", []))
+                    or bool({"fast", "priority"} & set(model.get("additionalSpeedTiers", []))),
                     "efforts": [{"id": "", "label": f"기본 ({default})", "note": ""}] + [
                         {"id": e["reasoningEffort"], "label": e["reasoningEffort"], "note": ""}
                         for e in model["supportedReasoningEfforts"]

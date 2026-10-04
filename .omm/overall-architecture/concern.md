@@ -1,0 +1,1 @@
+The import graph is static: dynamic imports, reflection, HTTP routing, Java and Rust dependencies are not inferred. Root host connections are documented explicitly. A file with a syntax error stays in the inventory until it parses.

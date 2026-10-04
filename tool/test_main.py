@@ -584,6 +584,7 @@ for line in sys.stdin:
     elif req.get("method") == "model/list":
         cursor = req["params"].get("cursor")
         model = {"model":"second" if cursor else "first", "displayName":"Example model",
+                 "serviceTiers": [] if cursor else [{"id":"priority", "name":"Fast", "description":"Priority"}],
                  "defaultReasoningEffort":"medium",
                  "supportedReasoningEfforts":[{"reasoningEffort":"medium"},{"reasoningEffort":"ultra"}]}
         print(json.dumps({"method":"notice"}), flush=True)
@@ -601,6 +602,7 @@ for line in sys.stdin:
             models = chat_channels.codex_models()
             assert [m["id"] for m in models] == ["codex:first", "codex:second"]
             assert models[0]["efforts"][-1]["id"] == "ultra"
+            assert models[0]["supports_fast"] and not models[1]["supports_fast"]
     finally:
         chat_channels.codex_models.cache_clear()
     with patch.object(chat_channels, "codex_models", side_effect=RuntimeError("offline")):

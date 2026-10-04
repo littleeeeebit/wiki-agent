@@ -64,6 +64,7 @@ def fixture(path, method):
                 "busy": False, "running": None, "rules": [], "queued": None}
     if path == "work/diff":
         return {"diff": "+synthetic change", "base": "fixture", "truncated": False, "omitted": [],
+                "files": [{"path": "src/app.ts", "added": 1, "deleted": 0, "binary": False, "untracked": False}],
                 "totals": {"files": 1, "added": 1, "deleted": 0, "binary": 0, "unknown": 0}}
     if path == "providers/usage":
         return {"providers": []}
@@ -121,9 +122,12 @@ def inspect_phone(page, width, height):
     assert row.inner_text().find("fixture-task") >= 0
     row.click()
     page.get_by_text("Synthetic task reply.", exact=True).wait_for()
-    diff = page.get_by_label("실시간 코드 diff", exact=True)
+    diff = page.get_by_label("src/app.ts diff", exact=True)
     assert not diff.is_visible()
     page.get_by_text('코드 변경 현황', exact=False).click()
+    file = page.get_by_label("변경된 파일 목록").locator("summary").filter(has_text="src/app.ts")
+    if not file.evaluate("e => e.parentElement.open"):
+        file.click()
     diff.wait_for()
     page.get_by_text('코드 변경 현황', exact=False).click()
     assert not diff.is_visible()

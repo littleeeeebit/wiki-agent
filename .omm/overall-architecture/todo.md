@@ -1,0 +1,1 @@
+No pending architecture work is implied by this generated inventory. Add maintenance-specific follow-up items here when needed.

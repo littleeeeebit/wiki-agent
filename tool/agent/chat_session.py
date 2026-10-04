@@ -134,7 +134,8 @@ class ChatSession:
                  effort: str | None = None, resume: str | None = None,
                  isolated: bool = False, write: bool = False,
                  parent_id: str | None = None, bypass: bool = False,
-                 verification: Path | None = None, env: dict | None = None) -> None:
+                 verification: Path | None = None, env: dict | None = None,
+                 fast: bool = False) -> None:
         self.repo = Path(repo)
         if verification is not None and not our_worktree(self.repo):
             raise ValueError(f"쓰기 세션은 workspace 가 만든 작업트리에서만 연다: {self.repo}")
@@ -189,6 +190,7 @@ class ChatSession:
         # `--resume` so the conversation is not lost.
         self.model = model or None
         self.effort = effort or None
+        self.fast = fast
         self.isolated = isolated
         self.session_id: str | None = resume
         self.model_name = ""
@@ -303,12 +305,13 @@ class ChatSession:
         if self.isolated:
             # `--bare` would skip the subscription login too. The sign-in is
             # kept; only the settings, hooks and tools are isolated.
-            cmd += ["--setting-sources", "", "--settings", '{"disableAllHooks":true}',
+            cmd += ["--setting-sources", "", "--settings", json.dumps({"disableAllHooks": True, "fastMode": self.fast}),
                     "--strict-mcp-config", "--no-session-persistence"]
         else:
             # Shared user skills can carry the previous desktop host's routing
             # instructions. Native hooks and the app's prompts own this workflow.
             cmd += ["--disable-slash-commands"]
+            cmd += ["--settings", json.dumps({"fastMode": self.fast})]
         if self.system:
             cmd += ["--system-prompt" if self.isolated else "--append-system-prompt", self.system]
         if self.model:
@@ -343,6 +346,7 @@ class ChatSession:
             skills = skill_config(self.repo, self._env)
             if skills:
                 cmd += ["-c", skills]
+            cmd += ["-c", 'service_tier="fast"' if self.fast else 'service_tier="default"']
         elif self.is_codex:
             cmd = ["codex", "exec", "--model", self.model.removeprefix("codex:"),
                    "--json", "--sandbox", "read-only",
@@ -354,6 +358,7 @@ class ChatSession:
                    "--disable", "memories"]
             if self.effort:
                 cmd += ["-c", "model_reasoning_effort=" + json.dumps(self.effort)]
+            cmd += ["-c", 'service_tier="fast"' if self.fast else 'service_tier="default"']
             cmd.append("-")
             self.model_name = self.model.removeprefix("codex:")
         self._stderr = deque(maxlen=20)
@@ -437,7 +442,7 @@ class ChatSession:
         params = {"cwd": str(self.repo), "sandbox": "workspace-write" if self.verification is not None
                   else "danger-full-access" if self.bypass else "read-only",
                   "approvalPolicy": "on-request" if self.write and not self.bypass else "never",
-                  "model": self.model_name}
+                  "model": self.model_name, "serviceTier": "priority" if self.fast else "default"}
         if self.system:
             params["developerInstructions"] = self.system
         if self.source_only or self.verification is not None:
@@ -686,7 +691,7 @@ class ChatSession:
         self._send({"id": rid, "error": {"code": -32601, "message": f"{method} is not handled here"}})
         return None
 
-    def reconfigure(self, model: str | None, effort: str | None) -> None:
+    def reconfigure(self, model: str | None, effort: str | None, fast: bool | None = None) -> None:
         """Change the model or the effort without losing the conversation.
 
         Both are fixed at start-up, so the process has to start again — and
@@ -696,10 +701,12 @@ class ChatSession:
         going to ask anything.
         """
 
-        if (model or None) == self.model and (effort or None) == self.effort:
+        fast = self.fast if fast is None else fast
+        if (model or None) == self.model and (effort or None) == self.effort and fast == self.fast:
             return
         self.model = model or None
         self.effort = effort or None
+        self.fast = fast
         self.close()
 
     def stop(self, halt: threading.Event) -> None:
@@ -776,6 +783,7 @@ class ChatSession:
             if self.app:
                 start = self._request("turn/start", {
                     "threadId": self.session_id, "input": [{"type": "text", "text": text}],
+                    "serviceTier": "priority" if self.fast else "default",
                     **({"approvalPolicy": "never", "sandboxPolicy": {
                         "type": "workspaceWrite", "writableRoots": [str(self.repo.resolve()), str(self.verification)],
                         "networkAccess": True, "excludeTmpdirEnvVar": True, "excludeSlashTmp": True}}

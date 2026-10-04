@@ -1,0 +1,1 @@
+Description and diagram fields are scanner-owned and updated from Git-visible source. Context, constraint, concern, todo and note remain maintainer-owned. UTF-8 without BOM is required.

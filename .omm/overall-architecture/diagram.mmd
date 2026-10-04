@@ -1,0 +1,8 @@
+graph LR
+    android["android\nandroid/"]
+    desktop["desktop\nweb/src-tauri/"]
+    tool["tool\ntool/"]
+    web["web\nweb/"]
+    android -->|"paired WebView"| web
+    desktop -->|"desktop window"| web
+    web -->|"HTTP / SSE"| tool

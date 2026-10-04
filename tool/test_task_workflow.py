@@ -23,6 +23,29 @@ def git(repo, *args):
                           text=True, encoding="utf-8").stdout.strip()
 
 
+def test_changed_file_inventory_and_individual_patches_survive_a_large_preview(repo):
+    (repo / "a.txt").write_text("changed\n", encoding="utf-8")
+    (repo / "large.txt").write_text("large line\n" * 25000, encoding="utf-8")
+    (repo / "한 글.txt").write_text("new line\n", encoding="utf-8")
+    (repo / "binary.bin").write_bytes(b"\x00binary")
+    web = client()
+    path = web.get("/api/worktrees").json()["rows"][0]["path"]
+    response = web.get("/api/work/diff", params={"path": path, "preview": False})
+    assert response.status_code == 200, response.text
+    overview = response.json()
+    assert not overview["diff"]
+    files = {entry["path"]: entry for entry in overview["files"]}
+    assert {"a.txt", "large.txt", "한 글.txt", "binary.bin"} <= files.keys()
+    assert files["binary.bin"]["binary"] and files["large.txt"]["added"] == 25000
+    detail = web.get("/api/work/diff", params={"path": path, "file": "한 글.txt"}).json()
+    assert "+new line" in detail["diff"] and "large line" not in detail["diff"]
+    assert detail["totals"] == overview["totals"] and not detail["truncated"]
+    assert web.get("/api/work/diff", params={"path": path, "file": "../outside"}).status_code == 404
+    (repo / "a.txt").unlink()
+    removed = web.get("/api/work/diff", params={"path": path, "file": "a.txt"}).json()
+    assert "-a" in removed["diff"]
+
+
 def test_tasks_use_original_repo_and_keep_diff_and_conversation_across_switches(repo):
     web = client()
     Worker.replies, Worker.made = ["First task"], []

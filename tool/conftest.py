@@ -18,6 +18,8 @@ os.environ["WIKI_SEARCH"] = "off"
 _scratch = tempfile.mkdtemp(prefix="wiki-translate-")
 os.environ["TRANSLATE_ENV"] = os.path.join(_scratch, "absent.env")
 os.environ["TRANSLATE_CACHE"] = os.path.join(_scratch, "cache.sqlite3")
+# An absent file still falls back to the inherited machine key.
+os.environ.pop("GEMINI_API_KEY", None)
 
 # The same for Jev: the hub's `.env` holds a live TypeSafe key, and a machine
 # may export one too. No test reads either; a test that wants a key writes

@@ -1,0 +1,1 @@
+Run python tool/omm_scan.py to refresh without starting the app. Frontend builds run it automatically. The app server refreshes every five seconds and writes only changed fields. Removed elements lose generated fields while maintainer notes survive.
