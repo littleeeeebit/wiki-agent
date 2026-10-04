@@ -581,7 +581,8 @@ def test_a_response_is_charged_from_its_usage(monkeypatch: pytest.MonkeyPatch) -
     }
     monkeypatch.setattr(T.urllib.request, "urlopen", lambda *_a, **_k: _Answer(payload))
 
-    assert ko("훅이 조용히 죽는다") == "EN"
+    # This checks billing; the deadline/fallback tests cover slow responses.
+    assert ko("훅이 조용히 죽는다", deadline=time.monotonic() + 30) == "EN"
     assert T.usage()["usd"] == pytest.approx(T.PRICE_IN + T.PRICE_OUT)
 
 
