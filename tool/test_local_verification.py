@@ -427,17 +427,16 @@ def test_offline_and_review_same_head_recovery_requires_investigation(cloud_worl
         Reviewer.replies = [deny("[P1] change.py:1 — Intermittent independent finding")]
     else:
         monkeypatch.setattr(specs, "judge", fail_once)
-    # Real Git and HTTP span several stages; this verifies recovery, not speed.
-    first = looped("cloud", seconds=90)
+    first = looped("cloud")
     assert first["local_verification"]["state"] == "waiting_cloud"
-    retried = looped("cloud", seconds=90)
+    retried = looped("cloud")
     record = retried["local_verification"]
     assert record["state"] == "unstable" and record["needs_research"]
     assert retried["state"] == "멈춤" and world.github.statuses[-1][1] == "pending"
     assert record["failure_attempts"][0]["reason"]
     assert client().post("/api/specs/cloud/resume", json={}).status_code == 400
     assert client().post("/api/specs/cloud/resume", json={"note": "Investigated nondeterminism; isolated and measured fixture"}).status_code == 200
-    waited(lambda: ("proj", "cloud") not in loop._loops, seconds=90)
+    waited(lambda: ("proj", "cloud") not in loop._loops)
     assert specs.load("proj", "cloud")["state"] == "머지 가능"
 
 
@@ -468,12 +467,11 @@ def test_missing_test_dataset_waits_without_a_cloud_failure_cycle(cloud_world):
     world = cloud_world
     cloud_spec(world)
     world.missing.touch()
-    # Keep a finite guard without making fixture throughput the assertion.
-    record = looped("cloud", seconds=90)["local_verification"]
+    record = looped("cloud")["local_verification"]
     assert record["state"] == "waiting_environment" and "dataset" in record["reason"]
     assert not record.get("failures") and not world.hub.comments and not Reviewer.made
     world.missing.unlink()
-    assert looped("cloud", seconds=90)["state"] == "머지 가능"
+    assert looped("cloud")["state"] == "머지 가능"
 
 
 def test_distinct_same_head_failures_return_to_cloud_without_duplicate_retries(cloud_world):
