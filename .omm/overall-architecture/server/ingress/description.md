@@ -1,0 +1,1 @@
+only_this_screen in main.app checks local origin or the configured mobile origin, requires pairing authentication for remote API access, and rejects writes without X-Project except pairing. HTTP exceptions, validation failures, server errors and POST /api/errors are recorded through common.errorlog. Invalid requests do not reach workflow dispatch.

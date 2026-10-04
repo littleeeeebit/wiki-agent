@@ -1,0 +1,1 @@
+spawn_sidecar in web/src-tauri/src/main.rs launches Python on a free localhost port with --exit-with-stdin. open_window waits for the listener or displays a failure page containing the server log location. stop_sidecar closes the ownership pipe, allows graceful shutdown, then kills the child if necessary. Rust also owns PTYs and external web-link opening.

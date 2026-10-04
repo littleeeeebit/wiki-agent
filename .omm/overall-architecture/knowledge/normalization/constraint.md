@@ -1,0 +1,1 @@
+The frontend overlay switch controls display translation, not agent input normalization. Translation failures preserve originals; protected-span or checked fact changes reject the rendering.

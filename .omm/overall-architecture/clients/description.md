@@ -1,0 +1,1 @@
+web/src/App.tsx owns project selection, task navigation and the query, agent, review, map, architecture and Suite views. The same frontend runs in a browser, a Tauri webview or the paired mobile origin. Desktop native commands provide terminals; mobile execution requests return to the Python server.

@@ -1,0 +1,1 @@
+ChatSession submits provider input and converts protocol output into shared events. Quota failures on a done event still become errors, and a missing complete answer becomes an incomplete execution. Explicit cancellation sets the run event and stops the matching provider process instead of depending on browser connection state.

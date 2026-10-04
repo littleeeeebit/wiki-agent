@@ -1,0 +1,20 @@
+graph TD
+draft["Accepted task specification\ntool/main/specs.py"]
+work["Implementation running\ntool/main/work.py"]
+published["PR published and waiting\ntool/main/specs.py"]
+review["Independent review round\ntool/main/loop.py"]
+correction["Current-round correction\ntool/main/loop.py"]
+ready["Merge eligible\ntool/main/loop.py"]
+stopped["Stopped with persisted reason\ntool/main/loop.py"]
+merged["Merge observed and cleanup\ntool/main/loop.py"]
+draft -->|"Explicit start creates the task branch and first turn"| work
+work -->|"Passing done-report and round checks permit PR publication"| published
+published -->|"Person explicitly selects the PR in Review Loop"| review
+review -->|"Denied review or failed final gate sends repair evidence"| correction
+correction -->|"Complete finding dispositions and checks permit the next round"| review
+review -->|"Allowed verdict and matching full gate permit merge eligibility"| ready
+review -->|"User halt, cap, malformed result or blocker persists a stop"| stopped
+correction -->|"Unproven repair completion or unresolved dispute persists a stop"| stopped
+stopped -->|"Explicit resume or eligible restart intent re-enters guarded execution"| review
+ready -->|"Changed approval identity requires renewed validation"| review
+ready -->|"Authorized head-bound merge is observed on GitHub"| merged

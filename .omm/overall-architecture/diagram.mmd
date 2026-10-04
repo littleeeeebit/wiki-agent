@@ -1,8 +1,17 @@
-graph LR
-    android["android\nandroid/"]
-    desktop["desktop\nweb/src-tauri/"]
-    tool["tool\ntool/"]
-    web["web\nweb/"]
-    android -->|"paired WebView"| web
-    desktop -->|"desktop window"| web
-    web -->|"HTTP / SSE"| tool
+graph TD
+clients["Desktop and mobile clients\nweb/src/App.tsx"]
+server["Local application server\ntool/main/app.py"]
+workflows["Task and review ownership\ntool/main/specs.py"]
+knowledge["Evidence and answer workflow\ntool/main/knowledge.py"]
+hosts["Native agent sessions\ntool/agent/chat_session.py"]
+repository["Repository knowledge and records\ntool/search/sources.py"]
+hooks["Native host event hooks\ntool/hook.py"]
+clients -->|"Scoped requests"| server
+server -->|"Task / plan / review"| workflows
+server -->|"Question runs"| knowledge
+workflows -->|"Role prompts"| hosts
+knowledge -->|"Answer synthesis"| hosts
+hosts -->|"Native host events"| hooks
+hooks -->|"Match rules / sync"| repository
+repository -->|"Scoped evidence"| knowledge
+workflows -->|"Commit plan files"| repository

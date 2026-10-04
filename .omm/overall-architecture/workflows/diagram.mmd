@@ -1,0 +1,15 @@
+graph TD
+specification["Task specification owner\ntool/main/specs.py"]
+execution["Implementation turn owner\ntool/main/work.py"]
+planning["Research-backed planner\ntool/main/planning.py"]
+review["Explicit review loop\ntool/main/loop.py"]
+verification["Cloud local verification\ntool/main/verification.py"]
+git["Checkout and branch operations\ntool/workspace/worktrees.py"]
+specification -->|"Start creates a task branch and sends the accepted specification"| execution
+specification -->|"fork creates or activates the task checkout"| git
+execution -->|"Completed final text supplies spec-update or done-report blocks"| specification
+planning -->|"Validated planning phases save artifacts and PR metadata on the task"| specification
+review -->|"An explicit Review Loop request attaches a PR and persists rounds"| specification
+review -->|"Denied local rounds send findings to the implementation session"| execution
+review -->|"Cloud PRs require local runtime receipts before independent review"| verification
+review -->|"PR adoption and merge cleanup verify checkout and ref ownership"| git

@@ -1,0 +1,1 @@
+Grounding validates claim/evidence references and computes support, conflicts and requirement coverage before published renders accepted claims. Citation metadata retains original locators and revisions. Analysis and host-settled verification have explicit statuses, while unresolved coverage remains visible as missing requirements.

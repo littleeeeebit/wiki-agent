@@ -1696,6 +1696,10 @@ def _finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
     if pending:
         errorlog.record("merge-cleanup", "\n".join(notes), repo=repo.name, spec=spec["id"])
     specs.update(repo.name, spec["id"], cleanup=notes, cleanup_complete=not pending)
+    if not pending:
+        from . import architecture
+
+        architecture.after_merge(repo, specs.load(repo.name, spec["id"]))
 
 
 def local_pruned(repo: Path, branch: str, approved: str) -> str:

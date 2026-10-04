@@ -1,0 +1,36 @@
+created: 2026-10-04T12:08:54.091Z
+updated: 2026-10-04T12:15:16.706Z
+update_count: 1
+last_field: diagram
+kind: nested-class
+title: hosts
+children:
+  - protocol
+parentPath: []
+prev_diagram: "graph LR\r
+
+  process[\"Role-specific CLI process\\ntool/agent/chat_session.py\"]\r
+
+  protocol[\"Turn and event protocol\\ntool/agent/chat_session.py\"]\r
+
+  approvals[\"Approval and question routing\\ntool/main/work.py\"]\r
+
+  read-tools[\"Restricted source tools\\ntool/agent/read_tools.py\"]\r
+
+  process -->|\"Pumps deliver Claude stream JSON or Codex RPC messages\"|
+  protocol\r
+
+  protocol -->|\"Pending tool permissions or questions become identified
+  events\"| approvals\r
+
+  approvals -->|\"Matching session answers return to the requesting process\"|
+  protocol\r
+
+  protocol -->|\"Source-only Codex tool calls dispatch fixed read operations\"|
+  read-tools\r
+
+  read-tools -->|\"Bounded UTF-8 source results return as tool content\"|
+  protocol\r
+
+  protocol -->|\"Turn submission, steering and stop target the owned CLI\"|
+  process"

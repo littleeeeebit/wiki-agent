@@ -1,0 +1,1 @@
+loop.stop persists the reason and detail while cancellation reaches current waits and sessions. recover preserves automatic intent only for active loops and restart stops. Explicit user stops and blockers remain stopped; resume and review-again routes apply their normal admission checks.

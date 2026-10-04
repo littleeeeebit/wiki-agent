@@ -1,0 +1,1 @@
+apply.py and setup_agents.py compose adapter slots, declared enforcement and native hook wiring into host settings. connect records connection probes in raw/connect and distinguishes configured wiring from observed host injection. Existing unrelated settings are preserved; connected repositories own their local adapter and pinned wiki revision.

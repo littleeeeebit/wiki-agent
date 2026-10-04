@@ -1,0 +1,15 @@
+graph TD
+sources["Authoritative documents and editions\ntool/search/sources.py"]
+index["Chunk generation and provenance\ntool/search/evidence.py"]
+dossier["Requirements and evidence dossier\ntool/main/knowledge.py"]
+draft["Model answer draft\ntool/agent/chat_session.py"]
+claims["Checked claims and citations\ntool/main/knowledge.py"]
+screen["Answer and overlay consumer\nweb/src/components/Answer.tsx"]
+memory["Retained conversation summary\ntool/main/memory.py"]
+sources -->|"Eligible current files or stored editions supply source bytes"| index
+index -->|"Retrieval returns generation-bound chunks and original locators"| dossier
+dossier -->|"Grounding prompt supplies evidence IDs and requirements"| draft
+draft -->|"Structured draft text and claim references enter checking"| claims
+claims -->|"Published text, citations and verification status reach the screen"| screen
+screen -->|"Explicit retain-on-clear requests transcript and summary storage"| memory
+memory -->|"Validated memory pages become eligible after index refresh"| sources

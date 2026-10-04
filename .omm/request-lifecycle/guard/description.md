@@ -1,0 +1,1 @@
+app.only_this_screen checks origin, pairing and write project identity, then sets query.claimed. query.project compares that claim with the server selection. Route-level work.ours, specs ownership checks and checkout holds further validate the action's target before mutation or execution.

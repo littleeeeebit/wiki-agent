@@ -1,0 +1,1 @@
+read_existing reads description.md, diagram.mmd and optional maintainer fields beneath .omm, rejecting symbolic-link escapes. It hashes the returned nodes to produce revision and performs no model execution. refresh chooses scan only for an explicit create request when .omm does not exist.

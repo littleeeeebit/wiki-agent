@@ -1,0 +1,1 @@
+loop.kick and step execute a round only after PR, repository and checkout checks. The persisted round records head, base, profile, reviewer and verdict. A remote head/base change makes the completed verdict stale rather than applicable to the new PR.

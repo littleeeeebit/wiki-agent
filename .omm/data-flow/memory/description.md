@@ -1,0 +1,1 @@
+On explicit retain-on-clear, memory.keep creates the .raw.md transcript before requesting a structured summary with oneshot. shape validates that summary before the searchable .md is written. query.keep refreshes the local search index on success; a summary failure reports a fault while retaining the raw transcript and existing server record.

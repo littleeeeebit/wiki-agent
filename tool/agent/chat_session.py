@@ -821,7 +821,7 @@ class ChatSession:
                 yield Event("context", f"Codex 이어가기 실패 — 새 대화로 시작했다 ({self._lost})")
                 self._lost = None
             for event in self._drain():
-                completed = event.kind == "done"
+                completed = event.kind == "done" and not event.meta.get("error")
                 yield event
         finally:
             with self._steering:
@@ -841,6 +841,11 @@ class ChatSession:
         # total for the thread. A turn is the sum of its calls: a total taken
         # from before the turn is not there after a resume.
         used = {"in": 0, "out": 0, "cache_read": 0, "reasoning": 0}
+        background = set()
+        background_status = {}
+        followups = 0
+        foreground_result_seen = False
+        replay_human = None
         while True:
             try:
                 ev = self._events.get(timeout=deadline)
@@ -854,6 +859,8 @@ class ChatSession:
             deadline = TURN_TIMEOUT
 
             kind = ev.get("type")
+            if kind == "user" and ev.get("isReplay"):
+                replay_human = not ev.get("isSynthetic")
             if kind == "__closed__":
                 err = "".join(self._stderr)[-800:]
                 self.close()
@@ -889,6 +896,12 @@ class ChatSession:
                         yield event
                 elif method == "item/agentMessage/delta" and params.get("delta"):
                     yield Event("delta", str(params["delta"]))
+                elif method == "item/commandExecution/outputDelta" and params.get("delta"):
+                    yield Event("tool", str(params["delta"])[:4000],
+                                {"tool": "commandExecution", "item_id": params.get("itemId")})
+                elif method == "item/mcpToolCall/progress" and params.get("message"):
+                    yield Event("tool", str(params["message"])[:4000],
+                                {"tool": "mcpToolCall", "item_id": params.get("itemId")})
                 elif method in ("item/started", "item/completed") and item.get("type") == "contextCompaction":
                     self._compacting = method == "item/started"
                     yield Event("compaction", "Context compaction started" if self._compacting else "Context compaction completed",
@@ -1005,8 +1018,34 @@ class ChatSession:
                 inner = ev.get("event") or {}
                 if inner.get("type") == "content_block_delta":
                     delta = inner.get("delta") or {}
-                    if delta.get("type") == "text_delta" and delta.get("text"):
+                    if delta.get("type") == "text_delta" and delta.get("text") and not ev.get("parent_tool_use_id"):
                         yield Event("delta", delta["text"])
+
+            elif kind == "system" and ev.get("subtype") in (
+                    "task_started", "task_progress", "task_updated", "task_notification"):
+                subtype = ev["subtype"]
+                patch = ev.get("patch") or {}
+                task = str(ev.get("task_id") or "")
+                if task and task not in background_status:
+                    followups += 1
+                status = str(patch.get("status") or ev.get("status") or
+                             ("running" if subtype == "task_progress" else background_status.get(task)) or
+                             ("started" if subtype == "task_started" else "running"))
+                background_status[task] = status
+                if status in ("completed", "failed", "stopped", "cancelled"):
+                    background.discard(task)
+                elif task and (subtype in ("task_started", "task_progress") or patch.get("status") or ev.get("status")):
+                    background.add(task)
+                detail = str(ev.get("summary") or ev.get("description") or patch.get("description") or "")
+                usage = ev.get("usage") or patch.get("usage") or {}
+                elapsed = usage.get("duration_ms")
+                suffix = f" · {elapsed / 1000:.1f}s" if isinstance(elapsed, (int, float)) else ""
+                yield Event("tool", f"Background {task} · {status} · {detail}{suffix}"[:4000],
+                            {"tool": "background", "task_id": task, "status": status})
+
+            elif kind == "tool_progress":
+                yield Event("tool", f"{ev.get('tool_name') or 'Tool'} · {ev.get('elapsed_time_seconds', 0)}s",
+                            {"tool": str(ev.get("tool_name") or ""), "task_id": ev.get("task_id")})
 
             elif kind == "control_request":
                 rid, request = str(ev.get("request_id")), ev.get("request") or {}
@@ -1032,7 +1071,9 @@ class ChatSession:
             elif kind == "assistant":
                 blocks = list(_blocks(ev.get("message") or {}))
                 progress = "\n\n".join(b.get("text", "") for b in blocks if b.get("type") == "text")
-                if progress.strip():
+                if progress.strip() and ev.get("parent_tool_use_id"):
+                    yield Event("tool", f"Background · {progress}"[:4000], {"tool": "background"})
+                elif progress.strip():
                     yield Event("progress", progress)
                 for block in blocks:
                     if block.get("type") == "tool_use":
@@ -1044,19 +1085,42 @@ class ChatSession:
                 if event:
                     yield event
 
-            elif kind == "user" and ev.get("isReplay"):
+            elif kind == "user" and ev.get("isReplay") and not ev.get("isSynthetic"):
                 with self._steering:
                     if not self._prompt_seen:
                         self._prompt_seen = True
                     elif self._unread:
                         self._unread -= 1
 
-            elif kind == "result" and not self._closing():
-                # A steered message came after the last step: the CLI answers it
-                # as one more turn of its own, and this turn waits for that.
-                continue
+            elif kind == "user":
+                for block in _blocks(ev.get("message") or {}):
+                    if block.get("type") == "tool_result":
+                        content = block.get("content") or ""
+                        if isinstance(content, list):
+                            content = "\n".join(str(b.get("text") or "") for b in content if isinstance(b, dict))
+                        yield Event("tool", str(content)[:4000],
+                                    {"tool": "tool_result", "tool_use_id": block.get("tool_use_id")})
 
             elif kind == "result":
+                if not ev.get("is_error"):
+                    origin = ev.get("origin") or {}
+                    injected = origin.get("kind") == "task-notification" or (not origin and replay_human is False)
+                    if injected:
+                        followups = max(0, followups - 1)
+                    else:
+                        # Older CLIs omit origin: after the foreground result,
+                        # terminal tasks still owe their completion response.
+                        if not origin and replay_human is None and foreground_result_seen:
+                            followups = max(0, followups - 1)
+                        foreground_result_seen = True
+                    replay_human = None
+                    if background or followups or (injected and ev.get("num_turns") == 0):
+                        yield Event("tool", f"Background · waiting for {max(len(background), followups)} follow-up(s)",
+                                    {"tool": "background"})
+                        continue
+                if not self._closing():
+                    # A steered message still owns a later provider result.
+                    continue
                 usage = ev.get("usage") or {}
                 self.usage = {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
                               "cost_usd": ev.get("total_cost_usd"), "scope": "turn"}

@@ -1,0 +1,13 @@
+graph TD
+install["Host hook installation\ntool/apply.py"]
+dispatch["Attached-repository dispatch\ntool/hook.py"]
+context["Session-start context\ntool/session_state.py"]
+injection["Prompt rule injection\ntool/inject.py"]
+guards["Pre-tool enforcement\ntool/codex_pretool.py"]
+sync["Stop reconciliation\ntool/sync.py"]
+install -->|"Generated native event settings invoke the shared dispatcher"| dispatch
+dispatch -->|"SessionStart passes project and checkout identity"| context
+dispatch -->|"UserPromptSubmit passes original utterance and host identity"| injection
+dispatch -->|"PreToolUse passes tool name and submitted arguments"| guards
+dispatch -->|"Stop passes the repository to derived-record reconciliation"| sync
+sync -->|"Updated corpus and decision records become future session context"| context

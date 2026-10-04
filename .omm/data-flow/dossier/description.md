@@ -1,0 +1,1 @@
+Flow accumulates requirements, material supplied by the person, selected sources, ranked evidence, missing coverage, graph paths, transitions and consumed budget. prepare passes the dossier into grounded and retains it on Run for later evidence inspection. An unavailable or partial dossier remains explicitly labelled.

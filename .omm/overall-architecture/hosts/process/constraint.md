@@ -1,0 +1,1 @@
+work.WORK_DEFAULTS currently enables bypass for implementation sessions. Such sessions use full-access execution and do not rely on per-action approval prompts. Non-bypass writes, read-only analysis and cloud verification have distinct restrictions.

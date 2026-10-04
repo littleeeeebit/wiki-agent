@@ -1,0 +1,1 @@
+MainActivity validates saved origins and pairing links through PairingLink, stores the HTTPS origin in SharedPreferences and opens the shared application in a WebView. Explicit ScreenMode selection controls orientation and sends a presentation hint to the page. The shell does not introduce an agent execution API.

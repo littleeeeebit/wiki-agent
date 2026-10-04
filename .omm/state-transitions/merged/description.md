@@ -1,0 +1,1 @@
+A successful gh merge request first records merge waiting; landed observes GitHub completion and _finish records merged state. Cleanup has its own completion flag and retryable notes, so a merged PR can retain unfinished local cleanup. Architecture refresh is queued only after cleanup successfully synchronizes the base.

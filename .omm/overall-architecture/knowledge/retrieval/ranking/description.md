@@ -1,0 +1,1 @@
+retrieval.run validates repo_id and the requested generation, then blocked filters every seed and graph-reached chunk. It combines original and English queries using BM25 and available cosine lanes with reciprocal-rank fusion. Duplicate texts share candidate identity, source-family coverage receives bounded slots, and returned results expose spent allowance and truncation.

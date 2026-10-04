@@ -1,0 +1,1 @@
+ChatSession is the execution adapter used by conversations, implementations, planners, architecture analysis and independent review. Its role determines tools and sandbox behavior. It translates provider-specific stdout and RPC messages into common events, retains resumable host session IDs and routes approvals to the process that requested them.

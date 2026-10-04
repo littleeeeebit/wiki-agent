@@ -1,0 +1,1 @@
+work.Feed keeps ordered invalidations and notifications in memory with a process generation ID. GET /api/loops/events returns X-Feed-Cursor and X-Feed-Generation, resetting incompatible cursors after restart. App reconnects, refreshes snapshots and attaches live runs without resubmitting writes. The buffer currently retains events for the server's lifetime.

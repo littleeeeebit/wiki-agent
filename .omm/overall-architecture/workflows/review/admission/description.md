@@ -1,0 +1,1 @@
+take finds an existing PR-linked task or an unlinked task with the exact branch. attach verifies registered checkout ownership, idle execution, branch identity and task incarnation before preserving requirements and adopting PR metadata. PRs without specifications receive an adopted checkout and minimal task; forks and missing gate configuration are refused.

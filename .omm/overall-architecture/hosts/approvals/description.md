@@ -1,0 +1,1 @@
+ChatSession._approval either records an automatic role-based decision or stores a pending process-specific reply. POST /api/work/answer checks path, application session ID and approval ID before sending the answer, then emits answered for other clients. Reset sessions and dead or already answered processes are refused. Session allowances remain in the ChatSession object.

@@ -1,0 +1,1 @@
+POST /api/loops takes explicitly selected PRs into server-owned Loop drivers. step verifies checkout ownership, PR head and checks before requesting an independent reviewer verdict. Denial requires complete finding dispositions before another round; approval requires a full gate tied to the reviewed identity before merge eligibility.

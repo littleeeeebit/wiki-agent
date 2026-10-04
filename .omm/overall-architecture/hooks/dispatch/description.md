@@ -1,0 +1,1 @@
+hook.project_for resolves Git checkout and repository ownership, preferring the main repository adapter for linked checkouts. main skips unattached repositories and avoids duplicate invocation when legacy per-project wiring still owns the hook. It reconstructs stdin and runs the selected script with runpy; probe mode additionally records which event actually injected context.

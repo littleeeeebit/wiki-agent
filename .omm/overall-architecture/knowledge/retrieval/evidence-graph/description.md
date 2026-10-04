@@ -1,0 +1,1 @@
+Index.link calls knowledge_graph.update with current chunks, source editions and observed rule co-injections. retrieval.expand follows permitted relationship types under hop, fanout and candidate limits, checking scope at each step. A relationship supplies discovery and provenance; it does not by itself prove a claim.

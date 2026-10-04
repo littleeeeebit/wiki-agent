@@ -1,0 +1,16 @@
+graph TD
+normalization["English normalization\ntool/translate/__init__.py"]
+controller["Bounded retrieval controller\ntool/main/knowledge.py"]
+retrieval["Scoped evidence retrieval\ntool/search/retrieval.py"]
+decision["Typed Jev judgments\ntool/decision/contract.py"]
+grounding["Claim verification and publication\ntool/main/knowledge.py"]
+records["Question run evidence\ntool/main/knowledge.py"]
+normalization -->|"Usable English outcomes allow semantic routing"| controller
+controller -->|"Route and coverage questions carry state and allowed choices"| decision
+decision -->|"Validated verdicts and uncertainty guide offered transitions"| controller
+controller -->|"Selected sources and remaining budget form retrieval requests"| retrieval
+retrieval -->|"Generation-bound chunks, scores and graph paths form the dossier"| controller
+controller -->|"Evidence, requirements and restrictions initialize grounding"| grounding
+grounding -->|"Claims and cited passages request support and coverage judgments"| decision
+grounding -->|"Publication emits text, citations and verification metadata"| records
+controller -->|"Every transition and external call is recorded"| records

@@ -1,0 +1,1 @@
+session_state reads checkout state, document headings, recent decisions and open rows from plan Steps tables. It excludes finished plan series and recognizes completed or cancelled status cells. It supplies pointers and bounded context rather than inferring the full meaning of a plan from its status table.

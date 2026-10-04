@@ -1,0 +1,1 @@
+GET /api/suite combines scoped conversation, work, planning and review records with live runs. It projects waiting approvals, stopped or failed turns, completed executions and interrupted prompts, retaining the latest 100 historical executions. suite.py reads existing state and does not dispatch an agent.

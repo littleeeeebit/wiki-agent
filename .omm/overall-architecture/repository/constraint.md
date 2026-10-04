@@ -1,0 +1,1 @@
+A summarized memory is searchable; its paired .raw.md transcript is excluded from sources.listing. Failed summarization preserves the transcript. Derived maps, vectors and evidence generations do not replace authoritative documents.

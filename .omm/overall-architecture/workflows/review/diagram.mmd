@@ -1,0 +1,15 @@
+graph TD
+admission["PR and task admission\ntool/main/loop.py"]
+round["Independent review round\ntool/main/loop.py"]
+correction["Finding completion barrier\ntool/main/loop.py"]
+final["Full gate on approved code\ntool/main/loop.py"]
+merge["Head-bound merge and cleanup\ntool/main/loop.py"]
+recovery["Interrupted-loop recovery\ntool/main/loop.py"]
+admission -->|"Explicit selection associates the PR and kicks its driver"| round
+round -->|"Denied verdict carries identified findings and the reviewed HEAD"| correction
+correction -->|"Complete dispositions and required checks permit another round"| round
+round -->|"Allow verdict supplies the exact head and base identity"| final
+final -->|"Successful full gate persists merge eligibility"| merge
+final -->|"Failed gate supplies repair output to the local work session"| correction
+recovery -->|"Eligible restart state resumes through normal ownership checks"| admission
+round -->|"Interruptions persist stopped state and unfinished round evidence"| recovery

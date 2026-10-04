@@ -1,0 +1,1 @@
+collect calls specs.materials to snapshot plans, PRs, decisions and warnings, writes materials.md under the task's draft area and records its hash and base HEAD. It refuses an already existing artifact root. This phase does not invoke a model.

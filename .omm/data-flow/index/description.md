@@ -1,0 +1,1 @@
+Evidence chunks carry source revision, repository identity, visibility and original locators. Store generations and Index.snapshot keep retrieval internally consistent; continuation requests naming a different generation are refused as stale. English evidence outcomes retain their normalization status beside original provenance.

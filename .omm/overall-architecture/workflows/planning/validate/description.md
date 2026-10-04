@@ -1,0 +1,1 @@
+validate calls problems over the manifest, paths, requirements and draft contents. On failure it records errors and permits one repair turn restricted to manifested files. A second unsuccessful validation stops instead of granting another unbounded rewrite.

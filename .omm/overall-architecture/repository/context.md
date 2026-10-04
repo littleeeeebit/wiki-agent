@@ -1,0 +1,1 @@
+docs/architecture.md separates product maintenance, connected-repository operation and Jev maintenance authorities. docs/self-improvement.md keeps hub harness experiments separate from project experiments; project results do not automatically become shared rules.

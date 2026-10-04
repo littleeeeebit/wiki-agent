@@ -1,0 +1,1 @@
+web/src/lib/api.ts centralizes route requests, JSON errors and SSE readers. scoped waits for the first known project and adds X-Project; moved dispatches project-moved when a refusal supplies X-Project-Moved. workSay submits once, while workEvents and reviewEvents reattach to existing runs using their identities and sequence cursors.

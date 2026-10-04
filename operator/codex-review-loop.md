@@ -11,7 +11,9 @@ links: [pick-up-async-results, ask-with-arrow-key-options, agent-delegation, gat
 
 # The Codex review loop — the application owns dispatch
 
-Rule. Use `review-loop`. In app-managed wiki-agent sessions, the review loop control asks the server
+Rule. Start review only after the person's explicit request. Stop after PR
+publication and wait at that boundary; a completion report or planner handoff
+never authorizes review. Use `review-loop` for an authorized request. In app-managed wiki-agent sessions, the review loop control asks the server
 to attach an existing task PR, write instructions, dispatch its independent
 reviewer and persist the result. The implementation agent never edits raw
 metadata or contacts an external terminal. Review authorization does not

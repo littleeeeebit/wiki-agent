@@ -617,6 +617,166 @@ def test_a_steer_after_the_last_step_is_still_this_turn(tree):
     assert not session.steer("late")
 
 
+@pytest.mark.parametrize("terminal", ["task_notification", "task_updated"])
+def test_background_completion_drains_followup_and_reports_progress(tree, terminal):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1", "description": "Calibration"})
+say({"type": "system", "subtype": "task_progress", "task_id": "bg-1", "description": "40 percent", "usage": {"duration_ms": 1200}})
+say({"type": "result", "result": "Waiting for calibration", "session_id": "cli-1"})
+say({"type": "system", "subtype": "TERMINAL", "task_id": "bg-1", "status": "completed", "patch": {"status": "completed"}})
+say({"type": "system", "subtype": "task_updated", "task_id": "bg-1", "patch": {"description": "Output available"}})
+say({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "tool-1", "content": "Calibration finished: 10/10"}]}})
+say({"type": "assistant", "message": {"content": [{"type": "text", "text": "Picking up calibration results"}]}})
+say({"type": "result", "result": "Calibration verified", "session_id": "cli-1"})
+sys.stdin.read()
+'''.replace("TERMINAL", terminal)
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert [e.text for e in events if e.kind == "done"] == ["Calibration verified"]
+    statuses = [e.meta.get("status") for e in events if e.meta.get("task_id") == "bg-1"]
+    assert statuses == ["started", "running", "completed", "completed"]
+    assert any("40 percent" in e.text and "1.2s" in e.text for e in events)
+    assert any("Calibration finished: 10/10" in e.text for e in events)
+
+
+def test_background_child_text_does_not_replace_the_parent_answer(tree):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "assistant", "parent_tool_use_id": "bg-1", "message": {"content": [{"type": "text", "text": "Child progress"}]}})
+say({"type": "stream_event", "parent_tool_use_id": "bg-1", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Child delta"}}})
+say({"type": "result", "result": "Parent answer", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert events[-1].text == "Parent answer"
+    assert not any(e.kind in ("progress", "delta") for e in events)
+    assert any("Child progress" in e.text for e in events if e.kind == "tool")
+
+
+@pytest.mark.parametrize("origin", [{"kind": "human"}, None])
+def test_fast_background_completion_does_not_close_on_foreground_result(tree, origin):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1"})
+say({"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"})
+say({"type": "result", "origin": ORIGIN, "result": "Foreground", "session_id": "cli-1"})
+say({"type": "user", "isReplay": True, "isSynthetic": True, "origin": {"kind": "task-notification"}, "message": {"content": []}})
+say({"type": "result", "origin": {"kind": "task-notification"}, "result": "Follow-up", "session_id": "cli-1"})
+sys.stdin.read()
+'''.replace("ORIGIN", repr(origin))
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert [event.text for event in events if event.kind == "done"] == ["Follow-up"]
+
+
+@pytest.mark.parametrize("batched", [True, False])
+def test_multiple_background_results_drain_each_notification_before_final_response(tree, batched):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+for task in ("bg-1", "bg-2"):
+    say({"type": "system", "subtype": "task_started", "task_id": task})
+    say({"type": "system", "subtype": "task_notification", "task_id": task, "status": "completed"})
+say({"type": "result", "origin": {"kind": "human"}, "result": "Foreground", "session_id": "cli-1"})
+say({"type": "result", "origin": {"kind": "task-notification"}, "num_turns": FIRST_TURNS, "result": "First finished", "session_id": "cli-1"})
+say({"type": "result", "origin": {"kind": "task-notification"}, "num_turns": 1, "result": "Both finished", "session_id": "cli-1"})
+sys.stdin.read()
+'''.replace("FIRST_TURNS", "0" if batched else "1")
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert [event.text for event in events if event.kind == "done"] == ["Both finished"]
+
+
+def test_background_work_does_not_hide_a_provider_error_result(tree):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1"})
+say({"type": "result", "is_error": True, "result": "API failed", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert events[-1].kind == "done" and events[-1].meta["error"]
+
+
+def test_failed_background_turn_cannot_complete_the_next_prompt_with_stale_events(tree):
+    failed = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1"})
+say({"type": "result", "is_error": True, "result": "API failed", "session_id": "cli-1"})
+say({"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"})
+say({"type": "result", "origin": {"kind": "task-notification"}, "result": "Stale response", "session_id": "cli-1"})
+if sys.stdin.readline():
+    say({"type": "result", "result": "Fresh second answer", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    fresh = '''import json, sys
+sys.stdin.readline()
+print(json.dumps({"type": "result", "result": "Fresh second answer", "session_id": "cli-1"}), flush=True)
+sys.stdin.read()
+'''
+    session = ChatSession(tree, write=True, bypass=True)
+    real_popen, processes = subprocess.Popen, []
+
+    def spawn(command, **kwargs):
+        process = real_popen([sys.executable, "-X", "utf8", "-c", failed if not processes else fresh], **kwargs)
+        processes.append(process)
+        return process
+
+    try:
+        with patch.object(chat_session.subprocess, "Popen", spawn), \
+             patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+            first = list(session.say("First prompt"))
+            assert first[-1].meta["error"] and not session.alive
+            second = list(session.say("Second prompt"))
+        assert [event.text for event in second if event.kind == "done"] == ["Fresh second answer"]
+        assert len(processes) == 2 and processes[0].poll() is not None
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("replay", [True, False])
+def test_unattributed_overlapping_tasks_settle_each_followup_while_other_tasks_run(tree, replay):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+for task in ("bg-1", "bg-2"):
+    say({"type": "system", "subtype": "task_started", "task_id": task})
+say({"type": "result", "result": "Foreground", "session_id": "cli-1"})
+for task in ("bg-1", "bg-2"):
+    say({"type": "system", "subtype": "task_notification", "task_id": task, "status": "completed"})
+    if REPLAY:
+        say({"type": "user", "isReplay": True, "isSynthetic": True, "message": {"content": []}})
+    say({"type": "result", "result": task + " done", "session_id": "cli-1"})
+sys.stdin.read()
+'''.replace("REPLAY", repr(replay))
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert [event.text for event in events if event.kind == "done"] == ["bg-2 done"]
+
+
+def test_unattributed_steered_human_result_does_not_consume_background_followup(tree):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+first = json.loads(sys.stdin.readline())
+say({"type": "user", "isReplay": True, "message": first["message"]})
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1"})
+steer = json.loads(sys.stdin.readline())
+say({"type": "result", "result": "Foreground", "session_id": "cli-1"})
+say({"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"})
+say({"type": "user", "isReplay": True, "message": steer["message"]})
+say({"type": "result", "result": "Steered response", "session_id": "cli-1"})
+say({"type": "user", "isReplay": True, "isSynthetic": True, "message": {"content": []}})
+say({"type": "result", "result": "Background finished", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    session = ChatSession(tree, write=True, bypass=True)
+    _, events = run(session, fixture, tree, each=lambda event: session.steer("More")
+                    if event.meta.get("status") == "started" else None)
+    assert [event.text for event in events if event.kind == "done"] == ["Background finished"]
+
+
 CODEX_STEER = '''import json, sys
 read = lambda: json.loads(sys.stdin.readline())
 say = lambda m: print(json.dumps(m), flush=True)
@@ -738,6 +898,18 @@ def test_a_tool_line_shows_the_command_beside_what_it_is_for():
         == "Bash · Read files\nThen check · $ git status\ngit diff"
     assert brief({"name": "Read", "input": {"file_path": "a.py"}}) == "Read · a.py"
     assert brief({"name": "TodoWrite", "input": {}}) == "TodoWrite"
+
+
+def test_codex_command_output_and_mcp_progress_reach_the_agent_stream(tree):
+    fixture = CODEX_BYPASS.replace(
+        'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})',
+        'say({"method": "item/commandExecution/outputDelta", "params": {"itemId": "command-1", "delta": "40 percent\\n"}})\n'
+        'say({"method": "item/mcpToolCall/progress", "params": {"itemId": "mcp-1", "message": "Collecting results"}})\n'
+        'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})')
+    _, events = run(ChatSession(tree, model="codex:m", write=True, bypass=True), fixture, tree)
+    assert [(e.text, e.meta["tool"]) for e in events if e.meta.get("item_id")] == [
+        ("40 percent\n", "commandExecution"), ("Collecting results", "mcpToolCall")]
+    assert events[-1].kind == "done" and events[-1].text == "ran"
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex", "codex-legacy"])

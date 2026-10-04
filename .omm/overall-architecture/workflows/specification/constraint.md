@@ -1,0 +1,1 @@
+Requirements changes go through specs.revise and invalidate prior approval. Publication ends at specs.reviewed; it does not dispatch independent review.

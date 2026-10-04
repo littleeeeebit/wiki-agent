@@ -1,9 +1,0 @@
-graph LR
-    canvas["canvas\nweb/src/graph/"]
-    components["components\nweb/src/components/"]
-    entry["entry\nweb/src/*"]
-    lib["lib\nweb/src/lib/"]
-    components -->|"imports"| canvas
-    components -->|"imports"| lib
-    entry -->|"imports"| components
-    entry -->|"imports"| lib

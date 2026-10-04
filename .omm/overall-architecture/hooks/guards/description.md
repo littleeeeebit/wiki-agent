@@ -1,0 +1,1 @@
+codex_pretool.verdict chains host-boundary and deny checks, edit-as-diff checks, Markdown emphasis and English progress enforcement. Claude installs the corresponding checks separately through apply.py. A concrete refusal produces native hook output; unexpected hook failures emit diagnostics and pass rather than terminating the session.

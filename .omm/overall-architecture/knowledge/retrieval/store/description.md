@@ -1,0 +1,1 @@
+Store.sync and pass_ compare source revisions and publish evidence generations in SQLite. Index.refresh loads chunks, builds BM25 postings, queues local embedding work and updates graph relationships. Index.snapshot retains a stable chunk set and frozen graph; a graph built from different loaded evidence is unavailable to that search.

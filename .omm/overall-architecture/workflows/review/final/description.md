@@ -1,0 +1,1 @@
+finalized persists final_running with ok=false before executing the full required gate. The finished record binds head, merge base, command and environment digest. allowed reuses only matching evidence; otherwise it reruns the gate. A failure returns to local correction or the external/cloud implementation owner.

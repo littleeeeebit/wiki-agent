@@ -1,0 +1,1 @@
+query.drafting sends the accepted conversation prompt plus grounding instructions to ChatSession. Drafts remain run evidence rather than ordinary conversation answers until checking and publication complete. Baseline mode instead lets the host answer directly and records its calls and searches without implying verification.

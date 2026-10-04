@@ -1,0 +1,1 @@
+A submitted action is scoped and admitted before execution starts. Query and work endpoints create independent server-owned runs, so disconnecting the response does not stop the agent. Common event identities support reattachment, while persisted records support later reload and process restart.

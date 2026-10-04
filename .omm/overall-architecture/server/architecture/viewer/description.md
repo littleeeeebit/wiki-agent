@@ -1,0 +1,1 @@
+Architecture.tsx polls getArchitecture every five seconds and accepts responses only for its repository and request generation. It avoids replacing unchanged revisions and renders the selected Mermaid diagram locally with strict security settings. The add button calls the scoped POST helper and exposes generation failures.

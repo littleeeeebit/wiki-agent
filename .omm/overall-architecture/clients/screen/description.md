@@ -1,0 +1,1 @@
+App initially calls getChannels and api.claim before accepting other scoped data. accept, follow and generation counters prevent late responses from restoring a previous project's tasks. Shared feed events refresh specifications and records, attach remotely started turns, and dispatch conversation-changed, review-turn and server-resync events to frontend consumers.

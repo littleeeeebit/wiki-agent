@@ -1,0 +1,13 @@
+graph TD
+sources["Local and external source catalog\ntool/search/sources.py"]
+store["Versioned evidence store\ntool/search/daemon.py"]
+daemon["Search daemon and snapshots\ntool/search/daemon.py"]
+ranking["Filtered retrieval lanes\ntool/search/retrieval.py"]
+evidence-graph["Evidence relationship expansion\ntool/search/knowledge_graph.py"]
+sources -->|"Index refresh supplies eligible files and enabled source editions"| store
+store -->|"Index loads chunks and embedding state into a frozen search snapshot"| daemon
+daemon -->|"POST retrieve dispatches a typed request against that snapshot"| ranking
+store -->|"Refresh rebuilds graph relationships for the loaded generation"| evidence-graph
+ranking -->|"Budgeted seeds request bounded context and relationship walks"| evidence-graph
+evidence-graph -->|"Reachable in-scope chunks return with paths and truncation reasons"| ranking
+ranking -->|"Chunks, ranks, coverage and generation return to the requester"| daemon

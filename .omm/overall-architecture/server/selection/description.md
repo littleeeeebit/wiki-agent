@@ -1,0 +1,1 @@
+query.project reads the server-wide selection from raw/chat/project.json and compares it with the request's claimed project. A mismatch returns 409 with X-Project-Moved. current_repo resolves that name through channels.repo_for, which confines ordinary project names to the configured workspace; question threads retain their accepted repository when the selection later changes.

@@ -1,6 +1,54 @@
 created: 2026-10-04T00:04:51.520Z
-updated: 2026-10-04T00:05:04.954Z
-update_count: 5
-last_field: note
-git_commit: c88630c
+updated: 2026-10-04T12:18:40.868Z
+update_count: 9
+last_field: diagram
+git_commit: 5520c8c
 git_branch: main
+prev_diagram: "graph TD\r
+
+  clients[\"Desktop and mobile clients\\nweb/src/App.tsx\"]\r
+
+  server[\"Local application server\\ntool/main/app.py\"]\r
+
+  workflows[\"Task and review ownership\\ntool/main/specs.py\"]\r
+
+  knowledge[\"Evidence and answer workflow\\ntool/main/knowledge.py\"]\r
+
+  hosts[\"Native agent sessions\\ntool/agent/chat_session.py\"]\r
+
+  repository[\"Repository knowledge and records\\ntool/search/sources.py\"]\r
+
+  hooks[\"Native host event hooks\\ntool/hook.py\"]\r
+
+  clients -->|\"User actions send scoped HTTP requests or paired WebSocket
+  requests\"| server\r
+
+  server -->|\"Task, planning and explicit review routes dispatch owned
+  workflows\"| workflows\r
+
+  server -->|\"Conversation submission starts a repository-bound question run\"|
+  knowledge\r
+
+  workflows -->|\"Work, planner and reviewer turns send role-specific prompts\"|
+  hosts\r
+
+  knowledge -->|\"Answer drafting and uncertain decisions request model
+  synthesis\"| hosts\r
+
+  hosts -->|\"Configured native host events invoke installed hooks\"| hooks\r
+
+  hooks -->|\"Prompt matching reads rules; Stop reconciliation writes derived
+  records\"| repository\r
+
+  repository -->|\"Retrieval loads eligible documents, memories and source
+  editions\"| knowledge\r
+
+  workflows -->|\"Planning publication commits validated plan documents\"|
+  repository\r\n"
+children:
+  - clients
+  - hooks
+  - hosts
+  - knowledge
+  - server
+  - workflows

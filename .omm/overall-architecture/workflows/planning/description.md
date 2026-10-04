@@ -1,0 +1,1 @@
+planning.start creates a task and launches a Worker whose phase and usage are persisted in the specification. The planner returns structured research, outline and file blocks; only the server writes plan artifacts. walk advances phases until clarification, stop or publication, and handoff closes the planner role before waiting for explicit review.
