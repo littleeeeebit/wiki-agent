@@ -1,0 +1,1 @@
+outline validates plan-outline and the overview plan-file against requested stage counts. stages requests one file per undrafted stage and persists each hashed draft in artifact_manifest. Restart or cancellation retains completed drafts rather than requesting every stage again.

@@ -64,22 +64,19 @@ measure paid account speed or prove that a provider granted the requested tier.
 
 The center pane's App structure tab displays the selected repository's `.omm/`
 documents. A repository without them offers an Add .omm button; reading the
-tab does not create documents in another repository. Adding inventories its
-Git-visible sources locally without installing a package or calling a model.
-Existing documents without this scanner's `generated.json` manifest are read
-without rewriting their diagrams or notes. Diagrams initially fit the pane
-and can switch to natural size for scrolling. `python tool/omm_scan.py`
-refreshes wiki-agent's own documents manually; frontend builds run the same
-scanner before compilation, and the server refreshes its own and the selected
-repository's documents every five seconds, including while that tab is closed. The scanner inventories
-Git-visible source and resolves local Python and TypeScript imports into
-nested Mermaid diagrams. Descriptions and diagrams are generated fields;
-other oh-my-mermaid fields remain available for maintainer notes. Only changed
-fields are written, and removed modules lose their generated fields while
-notes survive. The scanner makes no model calls and publishes nothing.
-Dynamic dependencies are not inferred; the top-level host connections are
-documented explicitly. The existing wiki and evidence maps keep their own
-data and purpose.
+tab does not create or regenerate documents. Explicit creation uses a native
+model CLI to read source behavior, then the installed `omm` CLI to write
+descriptions and labeled Mermaid diagrams. Install `oh-my-mermaid` first.
+`python tool/omm_scan.py --repo <path> --model <model>` requests a manual scan;
+without arguments it scans wiki-agent with the default Claude login.
+Generation preserves existing maintainer fields and validates staged CLI
+output before publishing it. Diagrams fit the pane and can switch to natural
+size for scrolling. Frontend builds never run the scanner.
+Automatic generation runs once after a confirmed PR merge and completed
+checkout cleanup, using that task's saved model. Busy or unpublished checkouts
+wait; failure is recorded without repeated paid requests. Shutdown cancels
+analysis, leaving the persisted request pending. Five-second polling only
+reads saved documents. The wiki and evidence maps keep their own purposes.
 
 Frontend builds retain previous content-hashed assets because an open window
 can still import an older Mermaid chunk. If a chunk is already missing, the
@@ -199,6 +196,9 @@ Investigation and verification scope are recorded in
 [task lifecycle recovery](research/task-lifecycle-recovery.md).
 
 The server retains gate execution, PR recovery and independent review.
+Ordinary completion and planner publication stop at the published PR until
+the person explicitly starts Review Loop. Once requested, rounds and restart
+recovery remain automatic within that loop.
 An unfinished correction does not start another review on the same head.
 Empty answers are failed work turns; incomplete reports get one continuation
 in the current round, then a visible stop if completion is still unverified.

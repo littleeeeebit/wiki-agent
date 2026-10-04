@@ -617,6 +617,44 @@ def test_a_steer_after_the_last_step_is_still_this_turn(tree):
     assert not session.steer("late")
 
 
+@pytest.mark.parametrize("terminal", ["task_notification", "task_updated"])
+def test_background_completion_drains_followup_and_reports_progress(tree, terminal):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1", "description": "Calibration"})
+say({"type": "system", "subtype": "task_progress", "task_id": "bg-1", "description": "40 percent", "usage": {"duration_ms": 1200}})
+say({"type": "result", "result": "Waiting for calibration", "session_id": "cli-1"})
+say({"type": "system", "subtype": "TERMINAL", "task_id": "bg-1", "status": "completed", "patch": {"status": "completed"}})
+say({"type": "system", "subtype": "task_updated", "task_id": "bg-1", "patch": {"description": "Output available"}})
+say({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "tool-1", "content": "Calibration finished: 10/10"}]}})
+say({"type": "assistant", "message": {"content": [{"type": "text", "text": "Picking up calibration results"}]}})
+say({"type": "result", "result": "Calibration verified", "session_id": "cli-1"})
+sys.stdin.read()
+'''.replace("TERMINAL", terminal)
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert [e.text for e in events if e.kind == "done"] == ["Calibration verified"]
+    statuses = [e.meta.get("status") for e in events if e.meta.get("task_id") == "bg-1"]
+    assert statuses == ["started", "running", "completed", "completed"]
+    assert any("40 percent" in e.text and "1.2s" in e.text for e in events)
+    assert any("Calibration finished: 10/10" in e.text for e in events)
+
+
+def test_background_child_text_does_not_replace_the_parent_answer(tree):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "assistant", "parent_tool_use_id": "bg-1", "message": {"content": [{"type": "text", "text": "Child progress"}]}})
+say({"type": "stream_event", "parent_tool_use_id": "bg-1", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Child delta"}}})
+say({"type": "result", "result": "Parent answer", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert events[-1].text == "Parent answer"
+    assert not any(e.kind in ("progress", "delta") for e in events)
+    assert any("Child progress" in e.text for e in events if e.kind == "tool")
+
+
 CODEX_STEER = '''import json, sys
 read = lambda: json.loads(sys.stdin.readline())
 say = lambda m: print(json.dumps(m), flush=True)
@@ -738,6 +776,18 @@ def test_a_tool_line_shows_the_command_beside_what_it_is_for():
         == "Bash · Read files\nThen check · $ git status\ngit diff"
     assert brief({"name": "Read", "input": {"file_path": "a.py"}}) == "Read · a.py"
     assert brief({"name": "TodoWrite", "input": {}}) == "TodoWrite"
+
+
+def test_codex_command_output_and_mcp_progress_reach_the_agent_stream(tree):
+    fixture = CODEX_BYPASS.replace(
+        'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})',
+        'say({"method": "item/commandExecution/outputDelta", "params": {"itemId": "command-1", "delta": "40 percent\\n"}})\n'
+        'say({"method": "item/mcpToolCall/progress", "params": {"itemId": "mcp-1", "message": "Collecting results"}})\n'
+        'say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "text": "ran"}}})')
+    _, events = run(ChatSession(tree, model="codex:m", write=True, bypass=True), fixture, tree)
+    assert [(e.text, e.meta["tool"]) for e in events if e.meta.get("item_id")] == [
+        ("40 percent\n", "commandExecution"), ("Collecting results", "mcpToolCall")]
+    assert events[-1].kind == "done" and events[-1].text == "ran"
 
 
 @pytest.mark.parametrize("provider", ["claude", "codex", "codex-legacy"])

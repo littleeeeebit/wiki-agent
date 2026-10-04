@@ -973,15 +973,11 @@ def walk(worker: Worker, path: Path, repo: Path) -> None:
 
 def handoff(repo: str, sid: str, path: Path) -> None:
     """A lets go: its session is closed already, and a context row keeps any
-    later session in this worktree from resuming it. The loop takes the pull
-    request; its reviser and review cell are the roles the plan named."""
+    later session in this worktree from resuming it. The published PR waits
+    for an explicit review request; its cells keep the roles the plan named."""
 
     work.remember(path, "context", "계획자 인계 — 이 뒤의 세션은 계획자의 대화를 잇지 않는다")
-    try:
-        loop.kick(repo, sid)
-    except HTTPException as exc:
-        return halted(repo, sid, "broken", f"리뷰로 넘기지 못했다 — {exc.detail}")
-    # Only once the loop took it: `kick` moved the state on first, which `recover` reads.
+    specs.reviewed(specs.load(repo, sid))
     planned(repo, sid, handed={"ts": time.time()})
 
 

@@ -1,0 +1,1 @@
+The terminal is available only when App detects Tauri. The native pty_open command starts a shell in the chosen directory and emits pty-out bytes and pty-exit events; pty_write and resize commands operate on its numeric PTY identity. This channel belongs to the desktop shell rather than the FastAPI agent stream.

@@ -62,7 +62,10 @@ skill loading is disabled; Codex disables inherited skills whose instructions
 reference the retired desktop host using process-local `skills.config` overrides.
 The selected CLI login and unrelated Codex skills stay in their current home.
 
-A task PR published manually may precede `done-report`. The review-loop button
+PR publication, including planner handoff, stops before review. The person
+explicitly starts Review Loop once per PR; only that authorized loop resumes
+automatically after interruption. A task PR published manually may precede
+`done-report`. The review-loop button
 matches that PR by exact task branch, verifies repository and checkout ownership,
 and attaches it to the existing specification through server-owned metadata.
 Requirements, revision, history and task identity survive. Busy or wrong-branch
@@ -103,6 +106,16 @@ their live runs through `GET /api/suite`. It shows active cells and the latest
 does not dispatch work; server-owned completion callbacks advance tasks even
 when transcript or feed publication fails.
 
+Claude background execution stays within the work turn until task lifecycle
+events settle and the provider's follow-up result arrives. `_drain` forwards
+task start/progress/update/notification, elapsed tool progress and bounded raw
+tool output to the same Agent stream and history. A foreground result while
+tasks remain active is intermediate; `task_updated.patch.status` can settle a
+task even without `task_notification`. Child text never replaces the parent
+answer. Raw tool output remains outside automatic translation.
+Codex command output deltas and MCP progress notifications also reach the
+same stream; command output retains its raw-display marker in history.
+
 Indexes are derived data: a changed source makes a new store generation, and
 one answer reads one generation. Documents and memories stay authoritative.
 
@@ -122,16 +135,18 @@ The native APK needs no execution or synchronization bridge for this behavior.
 ## The four graphs
 
 The App structure tab is a separate source architecture view, backed by
-local oh-my-mermaid documents in the selected repository's `.omm/`. The server's
-`main/architecture.py` owns generation, writes descriptions and Mermaid diagrams
-from source inventories and static imports, and leaves maintainer context and
-constraints intact. The frontend renders those diagrams locally. The server
-refreshes every five seconds, and `tool/omm_scan.py` also refreshes wiki-agent's
-own documents before frontend builds. A repository without `.omm` offers an
-explicit add action, bound to the selected project by the same request guard
-as other writes. The scanner owns documents with its `generated.json`
-manifest; other existing OMM diagrams and notes are displayed without being
-rewritten. Generated documents live under `.omm/overall-architecture/`.
+local oh-my-mermaid documents in the selected repository's `.omm/`.
+The server's `main/architecture.py` reads documents without generating them.
+Explicit creation and `tool/omm_scan.py` use a native model CLI with read-only
+source tools to trace callers, routes, state and persistence, then validate
+and write architecture fields through `omm`. Diagrams have meaningful labeled
+connections and described child elements. Existing maintainer context and
+constraints survive generation. Frontend builds never generate architecture.
+After a PR is confirmed merged and cleanup synchronizes the default branch,
+one persisted refresh request is queued. A busy, dirty or unrelated branch
+defers it; shutdown cancels analysis and preserves pending intent. The frontend
+polls the saved documents every five seconds. A repository without `.omm`
+offers explicit creation bound to the selected project request guard.
 
 Four different things are called a graph here. They do not stand in for each
 other.

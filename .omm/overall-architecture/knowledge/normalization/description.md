@@ -1,0 +1,1 @@
+knowledge.english uses translate.english for question, state and evidence normalization, retaining status and provenance. The translation package protects code, paths, front matter and glossary spans, shares a SQLite cache and enforces budgets. Failed normalization triggers multilingual baseline retrieval rather than labelling unchanged non-English text as English.

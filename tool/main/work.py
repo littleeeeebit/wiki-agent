@@ -674,7 +674,7 @@ def steps(events: list[dict]) -> list[dict]:
         if ev["kind"] in ("tool", "progress", "said", "hook", "compaction"):
             out.append({"kind": ev["kind"], "text": ev["text"],
                         **({"phase": meta.get("phase"), "pre_tokens": meta.get("pre_tokens")} if ev["kind"] == "compaction" else {}),
-                        **({"command": True} if meta.get("tool") in ("commandExecution", "command_execution") else {})})
+                        **({"command": True} if meta.get("tool") in ("commandExecution", "command_execution", "tool_result") else {})})
         elif ev["kind"] == "approval":
             # `none`: the turn ended before anyone answered.
             step = asked[str(meta.get("id"))] = {

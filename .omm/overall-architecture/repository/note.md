@@ -1,0 +1,1 @@
+The policy graph, repository document map, evidence knowledge graph and workflow transition graph have different owners and consumers. GET /api/graph composes graph.build or root graph.json with repo_graph.picture for RepoMap; it does not execute a workflow.

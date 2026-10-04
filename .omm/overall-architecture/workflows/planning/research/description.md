@@ -1,0 +1,1 @@
+research asks the planner to read relevant decisions and obtain web evidence. A plan-questions block persists a clarification phase that waits for submitted answers. A source list without observed web search or fetch activity stops as web_unavailable; validated plan-sources advances to outline.

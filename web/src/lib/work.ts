@@ -147,7 +147,7 @@ function apply(t: Turn, ev: WorkEv): Turn {
   }
   if (ev.kind === 'tool' || ev.kind === 'said') {
     return { ...t, steps: [...t.steps, { kind: ev.kind, text: ev.text,
-      ...(['commandExecution', 'command_execution'].includes(m.tool ?? '') ? { command: true } : {}) }], latest: 'step' }
+      ...(['commandExecution', 'command_execution', 'tool_result'].includes(m.tool ?? '') ? { command: true } : {}) }], latest: 'step' }
   }
   if (ev.kind === 'hook') {
     return { ...t, steps: [...t.steps, { kind: 'hook', text: ev.text, context: m.context }], latest: 'step' }

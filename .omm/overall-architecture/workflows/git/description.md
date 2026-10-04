@@ -1,0 +1,1 @@
+workspace.create defaults to git switch -c in the selected checkout; linked worktrees are explicit. specs.fork selects the non-task base rather than inheriting a previous task branch. workspace.adopt fetches a PR ref and verifies the requested object ID, refusing conflicting local commits. Cleanup compares complete trees and guarded refs before deleting reviewed branches.

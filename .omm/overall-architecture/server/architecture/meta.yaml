@@ -1,0 +1,30 @@
+created: 2026-10-04T12:08:57.957Z
+updated: 2026-10-04T12:15:34.061Z
+update_count: 1
+last_field: diagram
+kind: nested-class
+title: architecture
+children:
+  - writer
+parentPath:
+  - server
+prev_diagram: "graph LR\r
+
+  reader[\"Existing document reader\\ntool/main/architecture.py\"]\r
+
+  analyzer[\"Source-reading model session\\ntool/agent/chat_session.py\"]\r
+
+  writer[\"Validated OMM writer\\ntool/main/architecture.py\"]\r
+
+  viewer[\"Architecture frontend
+  consumer\\nweb/src/components/Architecture.tsx\"]\r
+
+  reader -->|\"GET returns hierarchy fields and a content revision\"| viewer\r
+
+  viewer -->|\"Explicit add requests generation for a repository without OMM\"|
+  analyzer\r
+
+  analyzer -->|\"Completed analysis returns a JSON nodes array\"| writer\r
+
+  writer -->|\"Staged validation and per-file replacement update local
+  documents\"| reader"

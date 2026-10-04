@@ -1,0 +1,1 @@
+publish verifies draft hashes, target paths and checkout contents, commits exactly the plan files and records HEAD before push. Resume accepts only the recorded commit or a provably equivalent interrupted publication. It persists PR metadata and phase=handoff; handoff records the planner context boundary and calls specs.reviewed without starting review.

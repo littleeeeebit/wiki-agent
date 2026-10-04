@@ -1,0 +1,1 @@
+write_nodes validates staged output before publication, but replaces destination files individually. A cancellation during replacement can leave only part of the generated hierarchy updated.

@@ -1,0 +1,1 @@
+inject.main matches original utterance triggers before translating any content, then composes budgeted rule and repository blocks. recall uses session-specific trajectory offsets and transcript compaction markers to decide whether previously injected pages remain present. Missing or unreadable tracking causes full reinjection, and translation failure preserves the original.

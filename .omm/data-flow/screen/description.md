@@ -1,0 +1,1 @@
+Answer and Run consumers receive the server's text, citation and verification fields through api.ts and query events. The overlay uses /api/translate after publication; checked rendering rejects introduced facts and falls back to the original. The separate plain explanation is recorded with its own errors and, for verified answers, checked for added numbers or identifiers.

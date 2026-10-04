@@ -1,0 +1,1 @@
+read_tools.call implements repo_read, repo_glob and repo_grep against a fixed git ls-files inventory. It rejects private paths, repository escapes, unsupported arguments, binary files and oversized text. _codex_asks exposes these operations for source-only sessions and returns a generic failure without leaking exception contents.

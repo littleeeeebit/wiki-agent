@@ -32,7 +32,9 @@ The person's later instructions update the assignment as work progresses.
   block. Say what is blocking and ask.
 - The server runs the first `done` item, the repository's gate, again in this
   checkout before it believes the report.
-- Review Loop starts server-owned automation for this PR. After each repair,
+- After publishing the PR, stop and wait for the person's explicit Review Loop
+  request. Completion reporting and PR publication never authorize review.
+  Review Loop starts server-owned automation for this PR. After each repair,
   finish checks, commit and push, and return the requested complete disposition.
   The server waits for that completion before starting the next review and
   resumes interrupted loops on restart. Do not ask the person to click Review

@@ -1,0 +1,1 @@
+work.begin starts run_turn on a registered thread after acquiring a hold; query.say similarly starts ask with copied request context and a knowledge.Run. runtime.stopping blocks new work threads. Successful implementation final text is interpreted by specs.check before releasing the checkout, so completion checks and publication remain part of the owned operation.

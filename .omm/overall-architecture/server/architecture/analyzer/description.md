@@ -1,0 +1,1 @@
+architecture.analyze loads tool/prompts/architecture-scan.md and creates ChatSession with Read,Glob,Grep. It consumes the final answer as JSON, rejects host failures or cancellation and closes the session and cancellation watcher. tool/omm_scan.py invokes the same scan path explicitly.

@@ -1,0 +1,13 @@
+graph TD
+desktop["Desktop window and sidecar\nweb/src-tauri/src/main.rs"]
+screen["Shared React screen\nweb/src/App.tsx"]
+api["Scoped API client\nweb/src/lib/api.ts"]
+mobile["Mobile request adapter\nweb/src/lib/mobile.ts"]
+android["Android WebView shell\nandroid/app/src/main/java/dev/wikiagent/mobile/MainActivity.java"]
+terminal["Desktop terminal view\nweb/src/components/Terminal.tsx"]
+desktop -->|"Startup opens the sidecar URL in a webview"| screen
+android -->|"Validated pairing or saved HTTPS origin loads the shared page"| screen
+screen -->|"Actions and refreshes call typed route helpers"| api
+api -->|"Each request passes URL, body and project header to the transport"| mobile
+screen -->|"Tauri-only task tab mounts the terminal consumer"| terminal
+terminal -->|"Native commands open, write and resize a task-directory PTY"| desktop

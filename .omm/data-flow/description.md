@@ -1,0 +1,1 @@
+Documents and fetched editions become versioned chunks, a bounded dossier and cited answer claims. The frontend receives text together with explicit verification metadata, and display translation is applied afterward. Conversation retention feeds summarized memory back into later retrieval without treating raw transcripts or model fluency as verified evidence.

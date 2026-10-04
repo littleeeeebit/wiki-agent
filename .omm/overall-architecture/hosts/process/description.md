@@ -1,0 +1,1 @@
+_spawn launches Claude stream-json, Codex app-server or isolated Codex exec according to role and configuration. Ordinary write sessions are rooted at the selected repository; source-only sessions disable shell and connector capabilities. The session captures its account environment and can resume after process replacement.

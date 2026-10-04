@@ -1,0 +1,1 @@
+Hooks are installed into native Claude/Codex event configuration and run independently of the application query and search daemon. hook.py resolves the attached repository and dispatches scripts in-process. SessionStart supplies current context, UserPromptSubmit matches rules, PreToolUse applies checks and Stop reconciles repository knowledge.

@@ -1,0 +1,1 @@
+specs.card and answered accept structured task blocks from the next-task conversation. The record includes goal, exclusions, done conditions, grounds, decisions and source attribution. Editing before start changes the specification; start requires the accepted draft state and an available checkout.

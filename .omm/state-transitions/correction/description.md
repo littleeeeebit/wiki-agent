@@ -1,0 +1,1 @@
+A denied round stays current until corrected validates finding dispositions and evidence. Claimed repairs must move HEAD; incomplete reports receive one bounded continuation. Cloud and external implementation failures return to their implementation owners rather than opening local correction work.

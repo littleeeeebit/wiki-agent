@@ -1,0 +1,12 @@
+graph TD
+collect["Repository material snapshot\ntool/main/planning.py"]
+research["Research and clarification turn\ntool/main/planning.py"]
+drafts["Outline and stage drafts\ntool/main/planning.py"]
+validate["Artifact contract checks\ntool/main/planning.py"]
+publication["Resumable plan publication\ntool/main/planning.py"]
+collect -->|"Saved materials and base HEAD initialize the research phase"| research
+research -->|"Observed web activity and validated sources advance to outline"| drafts
+drafts -->|"Structured files and hashes populate the artifact manifest"| validate
+validate -->|"Mechanical checks pass for the complete manifest"| publication
+validate -->|"One bounded repair requests replacement file blocks"| drafts
+publication -->|"PR metadata and handoff retain the source manifest"| research

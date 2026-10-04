@@ -1,0 +1,1 @@
+api.ts waits for project identification, sends the scoped POST once and parses response events. useWork and useReview retain turn/session identities and sequence cursors, ignore stale events and read snapshots when an earlier live turn is gone. Feed reconnect refreshes state without replaying the original action.

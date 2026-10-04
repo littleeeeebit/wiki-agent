@@ -1,0 +1,1 @@
+knowledge.prepare builds a bounded evidence dossier through Flow; grounded then generates and checks an answer using that dossier. decision supplies typed judgments rather than executing retrieval or task actions. Run records transitions, calls, cancellation and publication metadata for frontend inspection.

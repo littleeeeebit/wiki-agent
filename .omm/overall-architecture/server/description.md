@@ -1,0 +1,1 @@
+main.app registers the query, work, specification, loop, planning, connection, verification, architecture, mobile and status routers. Its middleware validates the requesting screen and installs repository context; lifespan acquires exclusive workflow ownership before recovery and starts background watchers. Routes expose persisted snapshots alongside live subscriptions.

@@ -1311,13 +1311,8 @@ def opened(repo: Path, path: Path, run, spec: dict):
 
 
 def reviewed(spec: dict) -> None:
-    """The pull request is whole — the plan row's commit pushed, when there is
-    one — so the review loop takes it. Started before that, the first round
-    read the head from before the row's commit."""
-
-    from . import loop  # `loop` imports this module
-
-    loop.kick(spec["repo"], spec["id"])
+    """Publication ends here. The person's Review Loop request dispatches."""
+    work.notice("PR 준비 완료 · 리뷰 시작을 기다린다", f"{spec['repo']} · {spec['id']}")
 
 
 def failed(run, spec: dict, reason: str) -> None:

@@ -1,0 +1,15 @@
+graph TD
+caller["User action and API submission\nweb/src/lib/api.ts"]
+guard["Request scope admission\ntool/main/app.py"]
+worker["Owned execution thread\ntool/main/work.py"]
+adapter["Native CLI turn\ntool/agent/chat_session.py"]
+records["Conversation and task records\ntool/main/memory.py"]
+subscription["Sequence-based live tail\ntool/main/work.py"]
+caller -->|"POST supplies action, task identity and X-Project"| guard
+guard -->|"Accepted context reaches a route that acquires its execution hold"| worker
+worker -->|"Role-specific prompt and cancellation event start the turn"| adapter
+adapter -->|"Provider events return progress, approvals and completion"| worker
+worker -->|"Final text, errors, steps and task updates are persisted"| records
+worker -->|"Buffered events notify the live tail"| subscription
+subscription -->|"SSE or WebSocket frames carry run identity and sequence"| caller
+caller -->|"Explicit stop names the current run or turn"| worker

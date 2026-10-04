@@ -1,0 +1,1 @@
+Local files retain repository and revision identity. External Records retains fetched editions and original content snapshots, coverage, status and adoption/rejection rationale. Re-fetching different bytes creates a new edition rather than destroying the content cited by an older answer.

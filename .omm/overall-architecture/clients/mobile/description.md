@@ -1,0 +1,1 @@
+request in web/src/lib/mobile.ts uses fetch locally and one WebSocket per request remotely. It transmits the API URL, method, body and project, then reconstructs a native Response from status headers and binary response frames. Closing or aborting this transport ends its subscription; server-owned execution requires a separate stop request.

@@ -1,0 +1,1 @@
+work.tail waits on the run condition and emits events after the requested sequence, adding keep-alive comments while idle. /api/work/events returns 410 when another turn replaced the requested identity. Query run routes can expose saved run evidence after live execution; live work buffers and feed generations are process-local.

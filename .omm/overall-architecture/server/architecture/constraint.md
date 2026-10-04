@@ -1,0 +1,1 @@
+write_nodes preserves existing maintainer fields, rejects unsafe paths and symbolic links, and requires described parents plus overall-architecture. The model session has read tools; the server's writer owns output changes.

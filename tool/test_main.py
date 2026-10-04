@@ -58,6 +58,11 @@ def test_progress_record_preserves_lines_without_duplicating_the_final_answer(ho
     assert len(work.steps(events[:-1])) == 2 + len(hooks)
 
 
+def test_tool_results_keep_raw_output_out_of_the_automatic_translation_overlay():
+    assert work.steps([{"kind": "tool", "text": "Raw command output", "meta": {"tool": "tool_result"}}]) == [
+        {"kind": "tool", "text": "Raw command output", "command": True}]
+
+
 @pytest.fixture(autouse=True)
 def no_machine_settings(tmp_path):
     from main import runtime

@@ -1,0 +1,1 @@
+knowledge.run_round first requests the search daemon and otherwise attempts one guarded cold local index. retrieval.run reads a generation snapshot, applies repository and source filters, fuses lexical and available dense rankings and optionally expands graph evidence. Missing vectors or stale graph state reduce available lanes rather than inventing retrieval results.

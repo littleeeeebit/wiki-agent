@@ -580,8 +580,7 @@ def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
         assert remote.pushes() == 2, "PR 을 올릴 때, 계획 행 커밋 뒤에"
         # The loop takes the pull request only once the row's commit is up —
         # after the turn let go of the worktree, so it is waited for.
-        until(lambda: KICKED)
-        assert [k for k, _ in KICKED] == [sid] and KICKED[0][1]["plan_commit"] == "pushed"
+        assert KICKED == [], "Publication pauses before independent review"
 
         result = [r for r in chat.recall("next") if r["role"] == "result"]
         assert [r["text"] for r in result] == [f"PR #7 — {spec['goal']}. 완료 조건 2개 통과"]
@@ -704,3 +703,4 @@ def test_the_pr_goes_up_in_korean_and_the_spec_stays_english(repo):
     assert "- KO(서버에서 돌린다) — KO(화면은 기록을 모른다) (버린 것: KO(history))" in remote.body
     assert "- [x] KO(항목 1) — ran 1 · ok" in remote.body, "명령과 그 출력은 옮기지 않는다"
     assert specs.load("proj", sid)["goal"] == "Return to the page after login"
+    assert KICKED == [], "An ordinary done report opens the PR, then waits for explicit review"

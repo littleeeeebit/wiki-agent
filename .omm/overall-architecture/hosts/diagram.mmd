@@ -1,0 +1,11 @@
+graph TD
+process["Role-specific CLI process\ntool/agent/chat_session.py"]
+protocol["Turn and event protocol\ntool/agent/chat_session.py"]
+approvals["Approval and question routing\ntool/main/work.py"]
+read-tools["Restricted source tools\ntool/agent/read_tools.py"]
+process -->|"Pumps deliver Claude stream JSON or Codex RPC messages"| protocol
+protocol -->|"Pending tool permissions or questions become identified events"| approvals
+approvals -->|"Matching session answers return to the requesting process"| protocol
+protocol -->|"Source-only Codex tool calls dispatch fixed read operations"| read-tools
+read-tools -->|"Bounded UTF-8 source results return as tool content"| protocol
+protocol -->|"Turn submission, steering and stop target the owned CLI"| process

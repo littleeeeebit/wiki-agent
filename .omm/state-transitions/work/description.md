@@ -1,0 +1,1 @@
+specs.start records branch, initial HEAD, return branch and cell settings before work.begin. Ordinary successful text does not complete the task: _check requires a valid done-report whose items cover the done conditions and all pass. spec-update revises requirements and invalidates old approval evidence.

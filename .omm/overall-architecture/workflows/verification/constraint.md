@@ -1,0 +1,1 @@
+Cloud verification uses a separate checkout and artifact capability profile. Successful execution alone is insufficient: receipt, checkout, environment and review evidence must still match before verification publication and merge.

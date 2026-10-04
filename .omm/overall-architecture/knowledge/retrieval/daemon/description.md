@@ -1,0 +1,1 @@
+search.retrieve sends /retrieve through the lightweight client, which verifies daemon identity and code version before sending the query. spawn launches a detached daemon using the user cache as its working directory. Daemon.snapshot refreshes the selected hub/project index; failed transport becomes no answer, allowing knowledge.run_round to try a bounded cold index.

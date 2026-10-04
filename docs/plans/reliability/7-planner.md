@@ -218,7 +218,8 @@ Live host capability and role handoff are checked in PR 10.
   when every file in the folder is a finished draft (by hash) or a swap
   `atomic` left. A turn is marked in flight on disk before it is sent, so a
   restart mid-turn keeps the call and marks the spend unknown. The hand-off
-  is marked only after `loop.kick` took the pull request.
+  is marked after publication pauses for the person's explicit review request;
+  handoff and restart recovery never start independent review on their own.
 - The reviser is a read-only session per fix turn (`revise`, called from
   `loop.told`); the server checks every returned path before writing any and
   commits them. A path outside the folder writes nothing.

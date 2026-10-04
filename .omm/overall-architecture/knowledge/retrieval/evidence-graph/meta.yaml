@@ -1,0 +1,10 @@
+created: 2026-10-04T12:01:40.877Z
+updated: 2026-10-04T12:01:40.878Z
+update_count: 1
+last_field: description
+kind: nested-class
+title: evidence-graph
+children: []
+parentPath:
+  - knowledge
+  - retrieval

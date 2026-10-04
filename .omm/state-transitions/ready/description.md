@@ -1,0 +1,1 @@
+allowed makes a task merge eligible only after an allowed review and successful full gate for matching head, merge base and environment digest. _merge_spec checks that identity again. A changed head, base or validation contract removes the applicability of earlier approval and requires renewed processing.

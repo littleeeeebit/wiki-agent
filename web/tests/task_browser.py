@@ -41,7 +41,7 @@ def main():
     architecture_revision = 1
     architecture_installed = False
     architecture_adds = []
-    architecture_nodes = architecture.scan(ROOT)["nodes"]
+    architecture_nodes = architecture.read_existing(ROOT)["nodes"]
     suite_fault = False
     suite_rows = [{"id": f"suite-{kind}", "kind": kind, "target": "fixture-task" if kind != "query" else "wiki",
                    "task": "fixture-task" if kind != "query" else None, "path": "fixture-task" if kind != "query" else None,
@@ -125,8 +125,12 @@ def main():
                             await asyncio.sleep(0.05)
                     yield "data: " + json.dumps({"kind": "compaction", "text": "Context compaction " + phase,
                         "meta": {"phase": phase, "pre_tokens": 120000 if phase == "completed" else None},
-                        "seq": 0 if phase == "started" else 1, "turn": "compact-turn", "session_id": "fixture", "parent_id": None}) + "\n\n"
-                yield 'data: {"kind":"done","text":"Finished","meta":{},"seq":2,"turn":"compact-turn","session_id":"fixture","parent_id":null}\n\n'
+                        "seq": 0 if phase == "started" else 2, "turn": "compact-turn", "session_id": "fixture", "parent_id": None}) + "\n\n"
+                    if phase == "started":
+                        yield 'data: {"kind":"tool","text":"Background bg-fixture · running · 40 percent","meta":{"tool":"background","task_id":"bg-fixture","status":"running"},"seq":1,"turn":"compact-turn","session_id":"fixture","parent_id":null}\n\n'
+                yield 'data: {"kind":"tool","text":"Background bg-fixture · completed · 10/10","meta":{"tool":"background","task_id":"bg-fixture","status":"completed"},"seq":3,"turn":"compact-turn","session_id":"fixture","parent_id":null}\n\n'
+                yield 'data: {"kind":"tool","text":"RAW_BACKGROUND_OUTPUT","meta":{"tool":"tool_result"},"seq":4,"turn":"compact-turn","session_id":"fixture","parent_id":null}\n\n'
+                yield 'data: {"kind":"done","text":"Finished","meta":{},"seq":5,"turn":"compact-turn","session_id":"fixture","parent_id":null}\n\n'
             return StreamingResponse(compact_events(), media_type="text/event-stream")
         if path == "specs/fixture-task" and request.method == "PUT":
             change = await request.json()
@@ -466,8 +470,13 @@ def main():
             desktop.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(
                 has_text="fixture-task").click()
             desktop.get_by_text("문맥 압축 중 · 대화 기록을 요약하고 있다", exact=True).wait_for()
+            desktop.get_by_text("40 percent", exact=False).wait_for()
             compact_done.set()
             desktop.get_by_text("문맥 압축 완료", exact=False).wait_for()
+            desktop.get_by_text("completed · 10/10", exact=False).wait_for()
+            desktop.get_by_text("RAW_BACKGROUND_OUTPUT", exact=False).wait_for()
+            assert not any("RAW_BACKGROUND_OUTPUT" in text for text in translations)
+            desktop.get_by_label("에이전트 세션", exact=True).locator('p[role="status"]').filter(has_text="실행 중").wait_for(state="detached")
             assert not desktop.get_by_text("문맥 압축 중 · 대화 기록을 요약하고 있다", exact=True).count()
             desktop.wait_for_function("window.notifications.length === 2")
             assert desktop.evaluate("window.notifications[0].title") == "에이전트 실행 완료"
@@ -507,7 +516,7 @@ def main():
             page.get_by_text("아직 작업이 없다.", exact=False).wait_for()
             assert not page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").count()
             browser.close()
-            print("PASS: Suite polling, filters, details, task links and error recovery; file diff toggles; FAST OFF/ON request forwarding; explicit OMM add and missing-chunk reload; automatic architecture refresh and all generated diagrams; 400px/1440px containment; task workflow regressions")
+            print("PASS: Background progress/completion and idle UI; Suite polling and error recovery; file diff toggles; FAST forwarding; explicit OMM add and saved-document polling; all architecture diagrams; 400px/1440px containment; task workflow regressions")
     finally:
         server.should_exit = True
         thread.join(timeout=10)

@@ -1,0 +1,1 @@
+Specifications retain task identity, requirements, revisions, history, PR metadata and validation evidence. Work completion may publish a PR, but specs.reviewed only notifies that review awaits the person's request. Planning and independent review use separate sessions and server-owned drivers.

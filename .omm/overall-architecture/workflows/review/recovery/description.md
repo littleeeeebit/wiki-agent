@@ -1,0 +1,1 @@
+recover records active loops as interrupted and returns only active or previous restart-stopped tasks for automatic resumption. Explicit stops and blockers remain stopped. poll reattaches orphaned active drivers and retries merge observation or cleanup. Runtime shutdown prevents new driver creation and drains existing review threads.

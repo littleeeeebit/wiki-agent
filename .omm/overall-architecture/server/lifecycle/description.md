@@ -1,0 +1,1 @@
+runtime.server_owner holds an OS lock on raw/server.lock before app.lifespan calls loop.recover, planning.recover and survey.recover. Shutdown sets runtime.stopping, joins watchers, stops the mobile companion and closes loop, planning, query and work owners before releasing the lock. A second server cannot recover workflows while another owns them.

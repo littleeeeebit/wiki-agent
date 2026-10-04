@@ -238,7 +238,6 @@ def test_one_run_publishes_a_two_stage_plan_once_and_hands_off(checkout):
         sid = answer.json()["id"]
         assert sid == "planner-x" and answer.json()["review_profile"] == "plan"
         spec = settled(sid, "handoff")
-        until(lambda: KICKED)
 
         p, path = spec["planning"], Path(spec["worktree"])
         root = p["artifact_root"]
@@ -266,7 +265,7 @@ def test_one_run_publishes_a_two_stage_plan_once_and_hands_off(checkout):
         # The reviser works the pull request, the reviewer checks it; neither is A.
         assert spec["cell"] == {"model": "codex:gpt-6.1-sol", "effort": "high"}
         assert spec["reviewer"] == {"model": "claude-sonnet-5-5", "effort": "medium"}
-        assert [k for k, _ in KICKED] == [sid] and p.get("handed")
+        assert KICKED == [] and p.get("handed"), "Plan publication never authorizes review"
         rows = work.recall(path)
         assert rows[-1]["role"] == "context" and not any(r.get("session_id") for r in rows), \
             "이 작업트리의 다음 세션이 A 의 대화를 잇지 않는다"
@@ -549,28 +548,25 @@ def test_a_hand_off_cut_by_a_restart_is_resumed(checkout):
         assert (p["phase"], p["stopped"]["reason"], p["stopped"]["phase"]) == ("stopped", "restart", "handoff")
         assert web.post(f"/api/plans/{sid}/resume").status_code == 200
         spec = settled(sid, "handoff")
-    assert spec["planning"]["handed"] and len(KICKED) == kicked + 1
+    assert spec["planning"]["handed"] and len(KICKED) == kicked
 
 
-def test_a_hand_off_is_marked_only_once_the_loop_took_it(checkout):
+def test_a_hand_off_waits_for_review_even_when_dispatch_is_unavailable(checkout):
     web = client()
     Host.replies = [sources, outline, stage(1), stage(2)]
     busy = HTTPException(409, "앞 루프가 아직 멈추는 중이다")
     with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", GitHub()):
         with patch.object(loop, "kick", side_effect=busy):
             sid = web.post("/api/plans", json=request()).json()["id"]
-            p = settled(sid, "stopped")["planning"]
-        assert (p["stopped"]["reason"], p["stopped"]["phase"]) == ("broken", "handoff") and not p.get("handed")
-        kicked = len(KICKED)
-        assert web.post(f"/api/plans/{sid}/resume").status_code == 200
-        assert settled(sid, "handoff")["planning"]["handed"] and len(KICKED) == kicked + 1
+            p = settled(sid, "handoff")["planning"]
+        assert p["handed"] and KICKED == []
 
         # The loop took it — `kick` moved the state — and the server went down before the mark.
         planning.planned("proj", sid, handed=None)
         specs.update("proj", sid, state="리뷰 대기")
         planning.recover()
         p = specs.load("proj", sid)["planning"]
-    assert p["phase"] == "handoff" and p["handed"] and len(KICKED) == kicked + 1, "두 번 넘기지 않는다"
+    assert p["phase"] == "handoff" and p["handed"] and KICKED == [], "Recovery never grants review permission"
 
 
 def test_a_restart_mid_turn_keeps_the_call_and_marks_its_spend_unknown(checkout):

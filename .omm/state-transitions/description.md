@@ -1,0 +1,1 @@
+Task state is persisted through specs.moved and save rather than inferred from an assistant's prose. Completion, PR publication, review approval and merge are separate transitions. The diagram uses English names for the implemented states; faults, stopped reasons, validation phases and history preserve distinctions that affect restart and continuation.

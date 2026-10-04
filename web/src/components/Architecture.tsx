@@ -80,13 +80,13 @@ export function Architecture({ repo, theme }: { repo: string; theme: 'dark' | 'l
           {data?.nodes.map((item) => <option key={item.path} value={item.path}>{item.path.replace('overall-architecture', '전체 구조')}</option>)}
         </select>
       </label>
-      {data?.installed && <span className="font-mono text-[10.5px] text-muted-foreground">.omm · {data.files === null ? '기존 문서' : `${data.files}개 소스`} · 자동 갱신 5초</span>}
+      {data?.installed && <span className="font-mono text-[10.5px] text-muted-foreground">.omm · PR 머지 후 갱신</span>}
     </div>
     <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
       {error && <p role="status" className="text-[12.5px] text-destructive">{error}{data && ' · 마지막으로 읽은 구조를 표시한다'}</p>}
       {!data && !error && <p className="text-[12.5px] text-muted-foreground">구조 읽는 중…</p>}
       {data && !data.installed && <div className="space-y-3">
-        <p className="text-[12.5px] text-muted-foreground">{repo}에 .omm 구조 문서가 없다. 추가하면 소스를 읽어 구조를 만들고 자동으로 갱신한다.</p>
+        <p className="text-[12.5px] text-muted-foreground">{repo}에 .omm 구조 문서가 없다. 추가하면 모델이 실행 흐름을 분석한다. 이후 PR 머지 후 갱신한다.</p>
         <button type="button" disabled={adding} onClick={() => void add()}
           className="min-h-11 rounded-md border border-border bg-secondary px-3 text-[12.5px] disabled:opacity-50">
           {adding ? '.omm 추가 중…' : '.omm 추가'}</button>
@@ -105,7 +105,7 @@ export function Architecture({ repo, theme }: { repo: string; theme: 'dark' | 'l
         <div className={`architecture-diagram overflow-auto rounded-md border border-border bg-card p-3 [&_svg]:h-auto ${fit ? '[&_svg]:max-w-full' : '[&_svg]:max-w-none'}`} tabIndex={0}
           role="img" aria-label={`${node?.path} 구조 도표`} dangerouslySetInnerHTML={{ __html: svg }} />
       </>}
-      <pre className="whitespace-pre-wrap break-all font-mono text-[12px] leading-relaxed text-muted-foreground">{node?.description}</pre>
+      <p className="max-w-prose whitespace-pre-wrap break-words text-[13.5px] leading-relaxed text-muted-foreground">{node?.description}</p>
       {([['context', '맥락'], ['constraint', '제약'], ['concern', '유의점'], ['todo', '할 일'], ['note', '메모']] as const)
         .map(([field, label]) => node?.[field] && <details key={field}>
           <summary className="cursor-pointer text-[12.5px]">{label}</summary>

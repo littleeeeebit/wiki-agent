@@ -1,0 +1,1 @@
+specs.opened checks cancellation before push and PR creation, records the PR and reports the result into the originating conversation. Plan-row tasks may receive a follow-up commit updating the table's PR status. specs.reviewed ends publication with a notification and waits for explicit review.

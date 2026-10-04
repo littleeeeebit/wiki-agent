@@ -1,0 +1,9 @@
+graph TD
+reader["Existing document reader\ntool/main/architecture.py"]
+analyzer["Source-reading model session\ntool/agent/chat_session.py"]
+writer["Validated OMM writer\ntool/main/architecture.py"]
+viewer["Architecture frontend consumer\nweb/src/components/Architecture.tsx"]
+reader -->|"GET returns hierarchy fields and a content revision"| viewer
+viewer -->|"Explicit add requests generation for a repository without OMM"| analyzer
+analyzer -->|"Completed analysis returns a JSON nodes array"| writer
+writer -->|"Staged validation and per-file replacement update local documents"| reader
