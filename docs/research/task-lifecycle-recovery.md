@@ -293,3 +293,35 @@ errors and waits for its own child to exit; the live app stays running. The
 publication case passed the focused rerun without a product change, then the
 complete module rerun passed. This records the first failure rather than
 counting it as a clean run. Ruff, wiki lint, whitespace and BOM checks passed.
+
+## Mobile disconnect cancellation found by the full gate
+
+The final full Python run at PR 71's round-3 head recorded 1,486 passes, two
+skips and one failure in `test_websocket_runs_existing_guards_and_delivers_each_chunk`.
+The WebSocket test session raised `CancelledError` while closing after the
+second stream chunk. A focused rerun passed, but repeating that same case
+failed after nine passes. The race therefore reproduced outside the full run.
+
+The bridge cancels its HTTP producer and disconnect watcher, then awaits
+their drain in `finally`. That await was exposed to the outer ASGI cancellation
+scope. The [AnyIO cancellation guidance](https://anyio.readthedocs.io/en/stable/cancellation.html#finalization)
+requires shielding awaited cleanup in an already cancelled scope. The
+application now shields only this child drain, retaining both child
+cancellation and propagation of the parent's cancellation. This applies the
+documented finalization rule to the observed ordering; it does not change
+authentication, HTTP guards or stream contents.
+
+An explicit early-disconnect regression reads the first frame, disconnects
+before stream completion, then requires the HTTP producer to finish and the
+socket registry to be empty. The mobile, synchronization and Suite modules
+passed all 19 tests with normal exit. This additional product repair needs
+a newly reviewed head and a new final gate; round 3's approval is not reused.
+
+Repeating both disconnect cases 30 times in a fresh scratch directory passed
+all 60 tests and exited with code zero. The earlier repeat also passed 60 tests
+and exited normally after delayed old temporary-directory cleanup. Its command
+identity and stack were checked while waiting; it finished before a proposed
+stop, so no process was stopped. Ruff, wiki lint, whitespace and BOM checks
+passed. The next full gate
+uses a unique new temporary base outside the checkout, retaining all test
+selection while avoiding cleanup of prior sessions' unrelated temporary runs.
