@@ -977,6 +977,7 @@ def test_a_head_that_moved_while_it_was_read_throws_the_round_away(world):
 
 
 def test_a_base_that_moved_throws_the_round_away_and_merge_refuses_it(world):
+    git(world.origin, "branch", "dev", "main")
     pr_spec(world, "fix-h", 7)
 
     def rebased(first, _text):
@@ -1352,6 +1353,135 @@ def base_onto_first(w, name: str, n: int) -> tuple[str, dict]:
     assert spec["state"] == "머지 가능"
     git(w.hub.elsewhere(), "push", "-q", "origin", f"{first}:refs/heads/main")
     return first, spec
+
+
+def conflicting_base(w, filename="collision.txt"):
+    path = w.hub.elsewhere()
+    git(path, "checkout", "-q", "-B", "main", "origin/main")
+    head = commit(path, filename, "upstream behavior\n")
+    git(path, "push", "-q", "origin", "main")
+    return head
+
+
+def integrate_conflict(path, halt):
+    result = subprocess.run(["git", "merge", "--no-commit", "origin/main"], cwd=path, capture_output=True)
+    assert result.returncode == 1
+    (path / "collision.txt").write_text("upstream behavior\ntask behavior\n", encoding="utf-8")
+    git(path, "add", "collision.txt")
+    git(path, "commit", "-qm", "Integrate both behaviors")
+    return "Integrated the current base; ready for new checks and review."
+
+
+def test_conflicting_base_is_repaired_before_review_and_preserves_both_sides(world):
+    spec = pr_spec(world, "base-conflict", 7, file="collision.txt")
+    old_base = git(Path(spec["worktree"]), "merge-base", "HEAD", "origin/main")
+    tip = conflicting_base(world)
+    preview = loop.merge_preview(Path(spec["worktree"]), spec["pr"]["head"], "main")
+    assert not preview["ok"] and preview["base_oid"] == tip
+    assert git(Path(spec["worktree"]), "merge-base", "HEAD", "origin/main") == old_base
+    assert not git(Path(spec["worktree"]), "status", "--porcelain")
+    assert git(Path(spec["worktree"]), "rev-parse", "HEAD") == spec["pr"]["head"]
+    Worker.replies = [integrate_conflict]
+    fresh = looped(spec["id"])
+    assert fresh["state"] == "머지 가능", fresh
+    assert len(fresh["rounds"]) == 1 and fresh["rounds"][0]["head"] != spec["pr"]["head"]
+    assert len(Worker.made) == 1 and "git merge-tree" in Worker.made[0].heard[0]
+    assert fresh["validation"]["final"]["head"] == fresh["rounds"][0]["head"]
+    assert (Path(spec["worktree"]) / "collision.txt").read_text(encoding="utf-8") == "upstream behavior\ntask behavior\n"
+
+
+def test_merge_rechecks_conflict_when_base_moves_without_changing_merge_base(world):
+    spec = looped(pr_spec(world, "approved-conflict", 7, file="collision.txt")["id"])
+    conflicting_base(world)
+    Worker.replies = [integrate_conflict]
+    response = client().post(f"/api/specs/{spec['id']}/merge", json={"head": spec["pr"]["head"]})
+    assert response.status_code == 409 and "병합 충돌" in response.json()["detail"]
+    assert not any(args[:3] == ["gh", "pr", "merge"] for args in world.hub.calls)
+    waited(lambda: ("proj", spec["id"]) not in loop._loops)
+    fresh = specs.load("proj", spec["id"])
+    assert fresh["state"] == "머지 가능" and len(fresh["rounds"]) == 2
+    assert fresh["rounds"][0]["head"] != fresh["rounds"][1]["head"]
+
+
+def test_failed_merge_repair_stops_once_and_persists_across_resume(world):
+    spec = pr_spec(world, "failed-integration", 7, file="collision.txt")
+    conflicting_base(world)
+    Worker.replies = [lambda path, halt: "Could not resolve the conflict."]
+    fresh = looped(spec["id"])
+    assert fresh["state"] == "멈춤" and "포함되지 않았다" in fresh["stopped"]["detail"]
+    assert not fresh["rounds"] and not fresh.get("auto_merge_pending")
+    assert len(Worker.made[0].heard) == 1
+    resumed = looped(spec["id"])
+    assert resumed["state"] == "멈춤" and "충돌이 남아 있다" in resumed["stopped"]["detail"]
+    assert len(Worker.made[0].heard) == 1
+
+
+def test_external_merge_conflict_never_dispatches_local_implementation(world):
+    spec = pr_spec(world, "external-conflict", 7, file="collision.txt", implementation_environment="external")
+    conflicting_base(world)
+    fresh = looped(spec["id"])
+    assert fresh["state"] == "멈춤" and fresh["stopped"]["reason"] == loop.Why.EXTERNAL.value
+    assert not Worker.made and not Reviewer.made
+
+
+def test_nonconflict_merge_failure_does_not_keep_automatic_retry_pending(world):
+    spec = looped(pr_spec(world, "refused-merge", 7)["id"])
+    real = world.hub
+    def refuse(args, cwd, timeout=60):
+        if args[:3] == ["gh", "pr", "merge"]:
+            return subprocess.CompletedProcess(args, 1, "", "Repository policy refused merge")
+        return real(args, cwd, timeout)
+    with patch.object(specs, "sh", refuse):
+        loop.automatic(world.repo, spec)
+    fresh = specs.load("proj", spec["id"])
+    assert fresh["state"] == "머지 가능" and not fresh["auto_merge_pending"]
+    assert "자동 머지 중단" in fresh["fault"]
+
+
+def test_conflict_created_during_final_gate_requires_new_head_and_review(world):
+    spec = pr_spec(world, "gate-base-race", 7, file="collision.txt")
+    original = specs.judge
+    advanced = []
+    def gate(path, cmds, halt, noted=lambda text: None):
+        if not advanced:
+            advanced.append(conflicting_base(world))
+        return original(path, cmds, halt, noted)
+    Worker.replies = [integrate_conflict]
+    with patch.object(specs, "judge", gate):
+        fresh = looped(spec["id"])
+    assert fresh["state"] == "머지 가능" and len(fresh["rounds"]) == 2
+    assert fresh["rounds"][0]["head"] != fresh["rounds"][1]["head"]
+    assert fresh["validation"]["final"]["head"] == fresh["rounds"][1]["head"]
+
+
+def test_conflict_created_between_preview_and_github_merge_returns_to_repair(world):
+    spec = looped(pr_spec(world, "github-base-race", 7, file="collision.txt")["id"])
+    original = world.hub
+    attempts = []
+    def race(args, cwd, timeout=60):
+        if args[:3] == ["gh", "pr", "merge"]:
+            attempts.append(args)
+            conflicting_base(world)
+            return subprocess.CompletedProcess(args, 1, "", "Merge commit cannot be cleanly created")
+        return original(args, cwd, timeout)
+    Worker.replies = [integrate_conflict]
+    with patch.object(specs, "sh", race):
+        response = client().post(f"/api/specs/{spec['id']}/merge", json={"head": spec["pr"]["head"]})
+        assert response.status_code == 409 and "머지 직전" in response.json()["detail"]
+        waited(lambda: ("proj", spec["id"]) not in loop._loops)
+    fresh = specs.load("proj", spec["id"])
+    assert len(attempts) == 1 and fresh["state"] == "머지 가능" and len(fresh["rounds"]) == 2
+
+
+def test_merge_preview_failure_cannot_be_reported_as_a_clean_merge(world):
+    spec = pr_spec(world, "preview-error", 7)
+    original = world.hub
+    def fail(args, cwd, timeout=60):
+        if args[:3] == ["git", "merge-tree", "--write-tree"]:
+            return subprocess.CompletedProcess(args, 2, "", "Fixture unsupported merge-tree")
+        return original(args, cwd, timeout)
+    with patch.object(specs, "sh", fail), pytest.raises(ValueError, match="검사하지 못했다"):
+        loop.merge_preview(Path(spec["worktree"]), spec["pr"]["head"], "main")
 
 
 def test_merge_reads_the_base_as_it_stands_now_not_as_last_fetched(world):
@@ -1831,7 +1961,7 @@ def test_review_progress_has_its_own_reconnectable_stream_and_record(world):
     with patch.object(Reviewer, "say", say):
         loop.kick("proj", original["id"])
         try:
-            assert started.wait(15)
+            assert started.wait(30)
             found = client().get("/api/specs/visible-review/review/log").json()
             assert found["running"] and not found["rows"]
             assert specs.load("proj", original["id"])["state"] == "리뷰 R1"

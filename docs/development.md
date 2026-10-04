@@ -79,8 +79,16 @@ If document content, native metadata or tree membership changes during staging,
 publication stops before replacing or pruning live files. The failed refresh
 is recorded and requires an explicit retry rather than another automatic paid
 scan. This detects staging conflicts, not a cross-process filesystem transaction.
-The staged output is validated before publication. Diagrams fit the pane and can switch to natural
-size for scrolling. Frontend builds never run the scanner.
+The staged output is validated before publication. Diagrams initially fit both
+dimensions of their viewport. Wheel zoom and the zoom buttons enlarge them;
+right-button dragging moves an enlarged drawing. Zoom cannot go below the
+fitted size and dragging is disabled there. The upper-left reset button restores
+that fitted view. A box opens its saved child diagram or leaf description, and
+the breadcrumb returns to a parent or the overall view. Keyboard users can
+activate boxes with Enter or Space and use plus/minus, arrows and Home for the
+viewport. The Korean overlay translates human node/edge labels before Mermaid
+layout, perspective names and prose; source paths, node IDs and the Mermaid
+original retain their source text. Frontend builds never run the scanner.
 Automatic generation runs once after a confirmed PR merge and completed
 checkout cleanup, using that task's saved model. Busy or unpublished checkouts
 wait; failure is recorded without repeated paid requests. Shutdown cancels
@@ -190,6 +198,18 @@ keeps the branch-derived task ID, rather than using the repository folder name.
 Busy checkouts and unpublished edits are refused before attaching metadata.
 Cleanup closes the review cell and removes only that PR's `raw/review/<repo>/<pr>`
 artifacts. Requirements, round verdicts and deferred P2 remain in the spec.
+
+Review approval also requires a clean merge preview against the fetched base
+tip. `git merge-tree --write-tree` checks this before review, around the final
+gate and immediately before merge, without altering working files or the index.
+A merge base alone cannot detect conflicting independent advances of `main`.
+A conflict uses the existing implementation session for one integration repair
+per base tip. The resulting commit must contain that base tip, pass checks and
+receive new review. Cloud and external tasks retain their implementation owner;
+planning tasks stop for preparation. A failed repair is persisted and cannot
+silently restart the same attempt after a server restart. A failed automatic
+merge clears its retry flag and remains visible. Diagnosis and regression scope
+are in [architecture navigation and merge conflicts](research/architecture-navigation-merge-conflicts.md).
 
 Errors are recorded locally in `raw/errors.jsonl`: HTTP refusals and exceptions,
 agent/query failures, review startup and cleanup failures, uncaught server/thread

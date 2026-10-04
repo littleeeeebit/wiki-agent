@@ -842,6 +842,52 @@ def pr_head(repo: Path, n: int) -> tuple[str, str]:
     return view["headRefOid"], view["baseRefName"]
 
 
+def merge_preview(path: Path, head: str, base: str) -> dict:
+    """Test the current base tip without changing the index or working files."""
+    fetched = specs.sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], path, 120)
+    if fetched.returncode:
+        raise ValueError(f"병합 대상 브랜치를 가져오지 못했다 — {specs.said(fetched)}")
+    tip = specs.sh(["git", "rev-parse", f"origin/{base}"], path)
+    if tip.returncode:
+        raise ValueError("병합 대상 커밋을 읽지 못했다")
+    result = specs.sh(["git", "merge-tree", "--write-tree", head, tip.stdout.strip()], path, 120)
+    if result.returncode not in (0, 1):
+        raise ValueError(f"병합 충돌을 검사하지 못했다 — {specs.said(result)}")
+    return {"head": head, "base_oid": tip.stdout.strip(), "ok": result.returncode == 0,
+            "detail": specs.said(result)}
+
+
+def resolve_merge(loop: Loop, spec: dict, repo: Path, path: Path, preview: dict, base: str) -> bool:
+    """One persisted repair per base tip; the resulting commit needs fresh review."""
+    reason = f"{base}와 병합 충돌 — 승인된 커밋을 그대로 머지할 수 없다"
+    if verification.cloud(spec):
+        verification.return_to_cloud(repo, spec, preview["head"], reason + "\n" + preview["detail"], ["merge/conflict"])
+        return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, reason + " — 클라우드 수정 대기")
+    if spec.get("implementation_environment") == "external":
+        return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, reason + " — 외부 수정 후 리뷰를 계속한다")
+    if spec.get("planning"):
+        return stop(loop, loop.repo, loop.sid, Why.PREPARATION, reason + " — 계획 파일 충돌을 먼저 해결한다")
+    if (spec.get("merge_repair") or {}).get("base_oid") == preview["base_oid"]:
+        return stop(loop, loop.repo, loop.sid, Why.GATE, reason + " — 한 번의 병합 수정 뒤에도 충돌이 남아 있다")
+    saved = change(loop, f"고치는 중 R{len(counted(spec)) + 1}", merge_repair=preview,
+                   auto_merge_pending=False)
+    if saved is None:
+        return False
+    prompt = (f"The server tested PR head `{preview['head']}` against the fetched `{base}` tip "
+              f"`{preview['base_oid']}` using git merge-tree. They conflict:\n\n{preview['detail']}\n\n"
+              "Inspect both sides and resolve the conflict in this task branch by merging that exact base commit. "
+              "Preserve both intended behaviors and any uncommitted user changes. Do not force-push, reset, "
+              "drop either side wholesale, merge the PR, or claim the old review still applies. "
+              "Commit the integration and push the task branch; the server will run checks and request a fresh review.")
+    if told(loop, saved, path, prompt) is None:
+        return False
+    head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+    if head == preview["head"] or specs.sh(
+            ["git", "merge-base", "--is-ancestor", preview["base_oid"], head], path).returncode:
+        return stop(loop, loop.repo, loop.sid, Why.GATE, "병합 수정 커밋에 대상 브랜치가 포함되지 않았다")
+    return True
+
+
 def wait_hold(loop: Loop, path: Path):
     """The worktree, once nobody else holds it — a person's turn ends first."""
 
@@ -1065,12 +1111,18 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
     commit gets its round checks and a new review. No new commit stops. A
     final result that already stands for this identity is not run again."""
 
+    preview = merge_preview(path, head, base)
+    if not preview["ok"]:
+        return resolve_merge(loop, spec, repo, path, preview, base)
     stands = not specs.proven(spec, head, specs.current_merge_base(path, base, head),
                               specs.digest(repo, path, specs.required(repo, spec)))
     final = spec["validation"]["final"] if stands else finalized(loop, spec, repo, path, head, base)
     if final is None:
         return False
     if final["ok"]:
+        preview = merge_preview(path, head, base)
+        if not preview["ok"]:
+            return resolve_merge(loop, spec, repo, path, preview, base)
         deferred = spec.get("deferred") or []
         kept_p2 = pick(loop, chat, deferred)
         if verification.cloud(spec):
@@ -1248,6 +1300,9 @@ def step(loop: Loop) -> bool:
     if (spec.get("gate") or {}).get("head") != head:
         # A remote push after synchronization needs its own checks before review.
         return True
+    preview = merge_preview(path, head, base)
+    if not preview["ok"]:
+        return resolve_merge(loop, spec, repo, path, preview, base)
     if verification.cloud(spec):
         problem = verification.proven(repo, path, spec, head, specs.current_merge_base(path, base, head))
         if problem:
@@ -1741,7 +1796,7 @@ def automatic(repo: Path, spec: dict) -> None:
             specs.update(repo.name, spec["id"], auto_merge_pending=False, fault=None)
     except Exception as exc:
         errorlog.record("automatic-merge", exc, repo=repo.name, spec=spec["id"])
-        specs.update(repo.name, spec["id"], fault=f"자동 머지 대기 — {exc}")
+        specs.update(repo.name, spec["id"], auto_merge_pending=False, fault=f"자동 머지 중단 — {exc}")
 
 
 def poll(halt: threading.Event | None = None) -> None:
@@ -1880,6 +1935,13 @@ def _merge_spec(repo: Path, spec: dict, body: Merge) -> dict:
         else:
             kick(repo.name, sid)
         raise HTTPException(409, "리뷰 뒤 base 변경 — 새 라운드를 받는다")
+    try:
+        preview = merge_preview(path, allowed["head"], base)
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    if not preview["ok"]:
+        kick(repo.name, sid)
+        raise HTTPException(409, f"{base}와 병합 충돌 — 기존 승인을 해제하고 병합 수정 후 새 리뷰를 받는다")
     done = specs.sh(["gh", "pr", "merge", str(n), "--squash", "--match-head-commit", allowed["head"]], repo, 120)
     if done.returncode:
         try:
@@ -1890,6 +1952,10 @@ def _merge_spec(repo: Path, spec: dict, body: Merge) -> dict:
             if not verification.cloud(spec):
                 kick(repo.name, sid)
             raise HTTPException(409, "리뷰 뒤 새 커밋 — GitHub 이 머지를 거절했다. 새 라운드를 받는다")
+        preview = merge_preview(path, allowed["head"], base)
+        if not preview["ok"]:
+            kick(repo.name, sid)
+            raise HTTPException(409, f"머지 직전 {base}가 이동하여 충돌 — 병합 수정 후 새 리뷰를 받는다")
         raise HTTPException(409, f"머지하지 못했다 — {specs.said(done)}")
     with specs._files:
         spec = specs.load(repo.name, sid)

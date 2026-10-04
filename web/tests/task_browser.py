@@ -81,7 +81,9 @@ def main():
             translations.extend(data["texts"])
             mapping = {"Synthetic task requirements": "합성 작업 요구사항", "Do not change stored data": "저장된 데이터를 바꾸지 않는다",
                        "Synthetic check passes": "합성 검사가 통과한다", "Revised synthetic requirements": "수정된 합성 요구사항",
-                       "git --version": "깃 --버전"}
+                       "git --version": "깃 --버전", "Web": "화면", "Server": "서버", "Router": "요청 분배",
+                       "Request handling": "요청 처리", "Web internals": "화면 내부", "Leaf details": "말단 설명",
+                       "overall architecture / web": "전체 구조 / 화면", "전체 구조 / web": "전체 구조 / 화면"}
             return {"texts": [mapping.get(text, text) for text in data["texts"]], "statuses": ["translated"] * len(data["texts"])}
         if path == "log/next":
             return [{"role": "assistant", "text": "Synthetic specification", "blocks": [{"name": "spec", "id": spec["id"]}]}]
@@ -166,6 +168,9 @@ def main():
             return {"repo": "fixture", "installed": True, "revision": str(architecture_revision), "files": architecture_revision,
                     "nodes": [{"path": "overall-architecture", "description": f"Synthetic source revision {architecture_revision}",
                                "diagram": 'graph LR\n    web["Web\\nweb/src/"]\n    tool["Server\\ntool/main/"]\n    web -->|"HTTP"| tool\n'},
+                              {"path": "overall-architecture/web", "description": "Web internals",
+                               "diagram": 'graph TD\nrouter["Router\\nweb/src/App.tsx"]\nrouter -->|Request handling| router'},
+                              {"path": "overall-architecture/web/router", "description": "Leaf details", "diagram": ""},
                               *[{**node, "path": "actual/" + node["path"]} for node in architecture_nodes]]}
         if path == "file":
             params = parse_qs(urlparse(str(request.url)).query)
@@ -343,7 +348,7 @@ def main():
             assert architecture_adds == ["fixture"]
             reload_screen = page.get_by_role("button", name="화면 새로고침", exact=True)
             reload_screen.wait_for()
-            assert "도표를 표시하지 못했다" in page.get_by_role("region", name="앱 구조", exact=True).inner_text()
+            page.get_by_role("region", name="앱 구조", exact=True).get_by_text("도표를 표시하지 못했다", exact=False).wait_for()
             page.unroute("**/assets/mermaid.core-*.js")
             reload_screen.click()
             page.wait_for_load_state()
@@ -352,11 +357,51 @@ def main():
             model_picker.click()
             page.get_by_role("option", name="opus", exact=True).click()
             page.get_by_role("tab", name="앱 구조", exact=True).click()
-            diagram = page.get_by_role("img", name="overall-architecture 구조 도표")
+            diagram = page.get_by_role("group", name="overall-architecture 구조 도표")
             diagram.locator("svg").wait_for()
             assert "HTTP" in diagram.inner_text()
+            page.wait_for_function("document.querySelector('.architecture-diagram')?.textContent.includes('화면')")
+            assert "web/src/" in diagram.inner_text() and "서버" in diagram.inner_text(), diagram.evaluate("el => ({text:el.innerText, content:el.textContent})")
+            def transform():
+                return diagram.evaluate("el => [Number(el.dataset.scale), Number(el.dataset.x), Number(el.dataset.y)]")
+            box = diagram.bounding_box()
+            x, y = box["x"] + box["width"] / 2, box["y"] + box["height"] / 2
+            page.mouse.move(x, y)
+            page.mouse.wheel(0, 300)
+            page.wait_for_timeout(100)
+            assert transform() == [1, 0, 0]
+            page.mouse.down(button="right")
+            page.mouse.move(x - 40, y - 40, steps=3)
+            page.mouse.up(button="right")
+            assert transform() == [1, 0, 0]
+            page.mouse.move(x, y)
+            page.mouse.wheel(0, -400)
+            page.wait_for_function("Number(document.querySelector('.architecture-diagram').dataset.scale) > 1")
+            zoomed = transform()
+            page.mouse.down(button="right")
+            page.mouse.move(x - 20, y - 20, steps=3)
+            page.mouse.up(button="right")
+            page.wait_for_timeout(100)
+            assert transform()[0] == zoomed[0] and transform()[1:] != zoomed[1:]
+            page.mouse.move(x, y)
+            page.mouse.wheel(0, 100)
+            page.wait_for_timeout(100)
+            assert transform()[0] < zoomed[0]
             page.get_by_role("button", name="원래 크기로 보기", exact=True).click()
-            page.get_by_role("button", name="도표 전체 맞추기", exact=True).click()
+            assert transform() == [1, 0, 0]
+            assert diagram.get_by_role("button").count(), diagram.locator("g.node").evaluate_all("nodes => nodes.map(n => ({id:n.id, text:n.textContent, role:n.getAttribute('role')}))")
+            diagram.get_by_role("button", name="화면", exact=False).click()
+            child = page.get_by_role("group", name="overall-architecture/web 구조 도표")
+            child.locator("svg").wait_for()
+            page.get_by_text("화면 내부", exact=True).wait_for()
+            assert "요청 처리" in child.inner_text()
+            assert child.get_attribute("data-scale") == "1"
+            child.get_by_role("button", name="요청 분배", exact=False).focus()
+            page.keyboard.press("Enter")
+            page.get_by_text("말단 설명", exact=True).wait_for()
+            assert page.locator(".architecture-diagram").count() == 0
+            page.get_by_role("navigation", name="구조 경로").get_by_role("button", name="전체 구조", exact=True).click()
+            diagram.locator("svg").wait_for()
             architecture_revision = 2
             page.get_by_text("Synthetic source revision 2", exact=True).wait_for(timeout=12000)
             page.get_by_text("Mermaid 원본", exact=True).click()
@@ -366,19 +411,19 @@ def main():
                     continue
                 page.get_by_label("구조 보기", exact=True).select_option("actual/" + node["path"])
                 try:
-                    page.get_by_role("img", name="actual/" + node["path"] + " 구조 도표").locator("svg").wait_for(timeout=10000)
+                    page.get_by_role("group", name="actual/" + node["path"] + " 구조 도표").locator("svg").wait_for(timeout=10000)
                 except Exception:
                     print(page.get_by_role("region", name="앱 구조", exact=True).inner_text())
                     raise
                 last_diagram = node["path"]
             page.get_by_label("구조 보기", exact=True).select_option("actual/overall-architecture")
             last_diagram = "overall-architecture"
-            page.get_by_role("img", name="actual/overall-architecture 구조 도표").locator("svg").wait_for()
+            page.get_by_role("group", name="actual/overall-architecture 구조 도표").locator("svg").wait_for()
             for width in (1440, 400):
                 page.set_viewport_size({"width": width, "height": 900})
                 if width == 400:
                     page.get_by_role("navigation", name="화면", exact=True).get_by_role("button", name="대화", exact=True).click()
-                    page.get_by_role("img", name="actual/" + last_diagram + " 구조 도표").wait_for()
+                    page.get_by_role("group", name="actual/" + last_diagram + " 구조 도표").wait_for()
                 assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
                 page.screenshot(path=str(ROOT / "artifacts" / f"architecture-{width}-fixture.png"))
             page.set_viewport_size({"width": 1440, "height": 900})
