@@ -53,7 +53,9 @@ plus an explicit thread/turn service tier. OFF explicitly requests standard
 speed even when the CLI account defaults to fast. A change resumes the same
 conversation on the next turn. Queued instructions and the task's saved cell
 carry the choice into subsequent implementation fixes. Unsupported models
-disable the switch; provider account access, billing and fallback remain
+disable the switch. An unresolved Claude default also disables it; choose
+the Opus alias or a documented Opus 4.8, 5 or 5.5 identity to request FAST.
+Unknown future model names do not imply support. Provider account access, billing and fallback remain
 provider-owned. These mappings follow the
 [Claude fast-mode documentation](https://code.claude.com/docs/en/fast-mode) and
 [Codex configuration reference](https://learn.chatgpt.com/docs/config-file/config-reference).

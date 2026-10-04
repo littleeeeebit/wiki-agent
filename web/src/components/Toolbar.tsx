@@ -35,7 +35,9 @@ export function Toolbar({ value, options, busy, onChange, showFast = false }: Pr
   const pick = (patch: Partial<Choice>) => onChange({ ...value, ...patch })
   const supportsFast = (model: string) => model.startsWith('codex:')
     ? !!options?.models.find((item) => item.id === model)?.supports_fast
-    : !model || /^(opus|claude-opus-(5|4-8))(\b|\[)/.test(model)
+    // The empty choice leaves the CLI default unresolved. Only documented
+    // Opus identities qualify; a future 5.x name is not a capability signal.
+    : /^(opus|claude-opus-(4-8|5|5-5)(-\d{8})?)(\[1m\])?$/.test(model)
   const fastSupported = supportsFast(value.model)
 
   // The list only holds aliases, which already follow the newest model. A

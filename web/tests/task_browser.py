@@ -32,6 +32,11 @@ def main():
     restarted_feed = None
     feed_requests = []
     fast_requests = []
+    fast_models = [("opus", True), ("opus[1m]", True), ("claude-opus-4-8", True),
+                   ("claude-opus-5", True), ("claude-opus-5-5", True),
+                   ("claude-opus-5-5-20261001[1m]", True), ("claude-opus-4-6", False),
+                   ("claude-opus-4-7", False), ("claude-opus-5-9", False),
+                   ("sonnet", False), ("codex:fixture-fast", True), ("codex:fixture-standard", False)]
     architecture_revision = 1
     architecture_nodes = architecture.scan(ROOT)["nodes"]
     spec = {"id": "fixture-task", "repo": "fixture", "rev": 1, "goal": "Synthetic task requirements",
@@ -46,6 +51,11 @@ def main():
         nonlocal deleted
         if path == "switch":
             return {"translate": True, "usage": {"month": "2026-10", "usd": 0, "limit": 10}}
+        if path == "options":
+            options = fixture(path, request.method)
+            options["models"].extend({"id": model, "label": model, "note": "", "supports_fast": supported}
+                                     for model, supported in fast_models)
+            return options
         if path == "translate":
             data = await request.json()
             translations.extend(data["texts"])
@@ -177,6 +187,15 @@ def main():
             page.get_by_role("tab", name="에이전트", exact=True).click()
             fast = page.get_by_role("switch", name="FAST 모드")
             assert fast.get_attribute("aria-checked") == "false"
+            assert fast.is_disabled()  # The unresolved CLI default is not a capability signal.
+            model_picker = page.get_by_label("에이전트 세션", exact=True).get_by_role("combobox").first
+            for model, supported in fast_models:
+                model_picker.click()
+                page.get_by_role("option", name=model, exact=True).click()
+                assert fast.is_enabled() == supported, model
+                assert fast.get_attribute("aria-checked") == "false", model
+            model_picker.click()
+            page.get_by_role("option", name="opus", exact=True).click()
             fast.click()
             assert fast.get_attribute("aria-checked") == "true"
             palette = []
@@ -210,6 +229,14 @@ def main():
             fast.wait_for(state="visible")
             page.wait_for_function("!document.querySelector('[aria-label=\"FAST 모드\"]').disabled")
             assert fast_requests[-1]["fast"] is True
+            # Switching to an unsupported identity clears an enabled preference.
+            model_picker.click()
+            page.get_by_role("option", name="sonnet", exact=True).click()
+            assert fast.is_disabled() and fast.get_attribute("aria-checked") == "false"
+            model_picker.click()
+            page.get_by_role("option", name="opus", exact=True).click()
+            assert fast.get_attribute("aria-checked") == "false"
+            fast.click()
             fast.click()
             assert fast.get_attribute("aria-checked") == "false"
             composer.fill("Synthetic FAST disabled instruction")
