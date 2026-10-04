@@ -252,6 +252,34 @@ def test_the_account_is_the_environment_at_creation(tmp_path, monkeypatch):
     assert seen == ["first"]
 
 
+@pytest.mark.parametrize("model", ["opus", "codex:test-model"])
+@pytest.mark.parametrize("fast", [False, True])
+def test_native_fast_mode_is_explicit_and_reconfiguration_preserves_the_session(tmp_path, model, fast):
+    session = ChatSession(tmp_path, model=model, fast=fast, resume="existing-thread")
+    commands = []
+
+    def spawn(command, **kwargs):
+        commands.append(command)
+        raise OSError("Captured launch without starting a real model")
+
+    with patch.object(chat_session.subprocess, "Popen", spawn), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+        with pytest.raises(OSError):
+            session.ensure()
+    if model.startswith("codex:"):
+        assert f'service_tier="{"fast" if fast else "default"}"' in commands[0]
+        calls = []
+        session._call = lambda method, params: calls.append((method, params)) or {"thread": {"id": "existing-thread"}}
+        session._send = lambda request: True
+        session._open_thread()
+        assert calls[-1][1]["serviceTier"] == ("priority" if fast else "default")
+    else:
+        command = commands[0]
+        assert json.loads(command[command.index("--settings") + 1])["fastMode"] is fast
+    session.reconfigure(model, "high", not fast)
+    assert session.fast is not fast and session.session_id == "existing-thread" and session.effort == "high"
+
+
 def test_allowed_for_the_session_is_asked_no_more(tree):
     """A file tool is allowed by the tool, a command only by its exact text.
     The rule never reaches past the worktree."""

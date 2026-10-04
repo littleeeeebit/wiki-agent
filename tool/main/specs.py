@@ -663,6 +663,7 @@ class Edit(BaseModel):
 class Start(BaseModel):
     model: str = ""
     effort: str = ""
+    fast: bool = False
 
 
 def noticed(repo: Path, spec: dict) -> dict | None:
@@ -887,13 +888,14 @@ def start(sid: str, body: Start) -> dict:
                 raise HTTPException(409, str(exc)) from exc
             # The model is kept for the turns the loop sends this worktree.
             save(moved(spec, "작업 중", worktree=str(path), workspace_mode="branch", branch=sid,
-                       start_head=before, return_branch=previous, cell={"model": body.model, "effort": body.effort}))
+                        start_head=before, return_branch=previous,
+                        cell={"model": body.model, "effort": body.effort, "fast": body.fast}))
         # Closing a session takes _lock; keep the same lock order as spec editing.
         work.forget(path)
         # Made: from here it is a turn, and a switch no longer waits for it.
         release.held.kind = "turn"
         # The server's own turn: Jev may gather evidence first, or ask the person instead.
-        run = work.begin(path, work.session(path, body.model, body.effort), "Start.", release, decide=True)
+        run = work.begin(path, work.session(path, body.model, body.effort, body.fast), "Start.", release, decide=True)
     except BaseException:
         release()
         raise

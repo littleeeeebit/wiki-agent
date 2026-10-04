@@ -1,0 +1,38 @@
+graph LR
+    agent["agent\ntool/agent/"]
+    commands["commands\ntool/*.py"]
+    common["common\ntool/common/"]
+    decision["decision\ntool/decision/"]
+    eval["eval\ntool/eval/"]
+    main["main\ntool/main/"]
+    search["search\ntool/search/"]
+    translate["translate\ntool/translate/"]
+    wiki["wiki\ntool/wiki/"]
+    workspace["workspace\ntool/workspace/"]
+    agent -->|"imports"| common
+    commands -->|"imports"| agent
+    commands -->|"imports"| common
+    commands -->|"imports"| decision
+    commands -->|"imports"| main
+    commands -->|"imports"| search
+    commands -->|"imports"| translate
+    commands -->|"imports"| wiki
+    commands -->|"imports"| workspace
+    decision -->|"imports"| common
+    eval -->|"imports"| agent
+    eval -->|"imports"| common
+    eval -->|"imports"| decision
+    eval -->|"imports"| main
+    eval -->|"imports"| search
+    eval -->|"imports"| translate
+    main -->|"imports"| agent
+    main -->|"imports"| commands
+    main -->|"imports"| common
+    main -->|"imports"| decision
+    main -->|"imports"| search
+    main -->|"imports"| translate
+    main -->|"imports"| wiki
+    main -->|"imports"| workspace
+    search -->|"imports"| common
+    translate -->|"imports"| common
+    workspace -->|"imports"| common

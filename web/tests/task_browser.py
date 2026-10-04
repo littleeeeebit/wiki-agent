@@ -3,6 +3,7 @@
 import asyncio
 import json
 import socket
+import sys
 import threading
 import time
 from urllib.parse import urlparse, parse_qs
@@ -15,10 +16,11 @@ from playwright.sync_api import sync_playwright
 import uvicorn
 
 from mobile_browser import ROOT, app, fixture, mobile
-from main import loop, work
+from main import architecture, loop, work
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8")
     fake = FastAPI()
     fake.middleware("http")(app.only_this_screen)
     fake.include_router(mobile.router)
@@ -29,6 +31,9 @@ def main():
     compact_done = threading.Event()
     restarted_feed = None
     feed_requests = []
+    fast_requests = []
+    architecture_revision = 1
+    architecture_nodes = architecture.scan(ROOT)["nodes"]
     spec = {"id": "fixture-task", "repo": "fixture", "rev": 1, "goal": "Synthetic task requirements",
             "out": ["Do not change stored data"], "done": ["git --version", "Synthetic check passes"], "state": "작업 중",
             "worktree": "fixture-task", "workspace_mode": "branch", "branch": "fixture",
@@ -112,7 +117,17 @@ def main():
         if path == "work/diff":
             return {"diff": "diff --git a/src/app.ts b/src/app.ts\n--- a/src/app.ts\n+++ b/src/app.ts\n"
                             "@@ -1 +1 @@\n-old\n+new\n", "base": "fixture", "truncated": True, "omitted": [],
-                    "totals": {"files": 2, "added": 12_001, "deleted": 12_000, "binary": 0, "unknown": 0}}
+                    "totals": {"files": 2, "added": 12_001, "deleted": 12_000, "binary": 0, "unknown": 0},
+                    "files": [{"path": "src/app.ts", "added": 12001, "deleted": 12000, "binary": False, "untracked": False},
+                              {"path": "assets/binary.bin", "added": None, "deleted": None, "binary": True, "untracked": True}]}
+        if path == "work/say":
+            fast_requests.append(await request.json())
+            return StreamingResponse(iter(['data: {"kind":"done","text":"Finished","meta":{},"seq":0,"turn":"fast-turn","session_id":"fixture"}\n\n']), media_type="text/event-stream")
+        if path == "architecture":
+            return {"revision": str(architecture_revision), "files": architecture_revision,
+                    "nodes": [{"path": "overall-architecture", "description": f"Synthetic source revision {architecture_revision}",
+                               "diagram": 'graph LR\n    web["Web\\nweb/src/"]\n    tool["Server\\ntool/main/"]\n    web -->|"HTTP"| tool\n'},
+                              *[{**node, "path": "actual/" + node["path"]} for node in architecture_nodes]]}
         if path == "file":
             params = parse_qs(urlparse(str(request.url)).query)
             citations.append(params)
@@ -143,7 +158,8 @@ def main():
             page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(
                 has_text="fixture-task").click()
             page.locator(".live-changes > summary").click()
-            diff = page.locator('pre[aria-label="실시간 코드 diff"]')
+            page.get_by_label("변경된 파일 목록").locator("summary").filter(has_text="src/app.ts").click()
+            diff = page.locator('pre[aria-label="src/app.ts diff"]')
             diff.wait_for()
             page.get_by_role("link", name="PR", exact=True).wait_for()
             measured = diff.bounding_box()
@@ -159,6 +175,79 @@ def main():
             page.get_by_role("tab", name="리뷰", exact=True).click()
             assert diff.is_visible()
             page.get_by_role("tab", name="에이전트", exact=True).click()
+            fast = page.get_by_role("switch", name="FAST 모드")
+            assert fast.get_attribute("aria-checked") == "false"
+            fast.click()
+            assert fast.get_attribute("aria-checked") == "true"
+            palette = []
+            for theme in ("dark", "light"):
+                page.evaluate("theme => { document.documentElement.classList.remove('dark', 'light'); document.documentElement.classList.add(theme) }", theme)
+                palette.append(fast.evaluate("""el => {
+                  const canvas = document.createElement('canvas'), ctx = canvas.getContext('2d');
+                  const sample = (color, background) => {
+                    ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = background; ctx.fillRect(0, 0, 1, 1);
+                    ctx.fillStyle = color; ctx.fillRect(0, 0, 1, 1); return [...ctx.getImageData(0, 0, 1, 1).data].slice(0, 3);
+                  };
+                  const lum = rgb => rgb.map(v => v / 255).map(v => v <= .04045 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4)
+                    .reduce((sum, v, i) => sum + v * [.2126, .7152, .0722][i], 0);
+                  const measure = () => {
+                    const s = getComputedStyle(el), parent = getComputedStyle(document.body).backgroundColor;
+                    const background = sample(s.backgroundColor, parent), foreground = sample(s.color, 'white');
+                    return (Math.max(lum(background), lum(foreground)) + .05) / (Math.min(lum(background), lum(foreground)) + .05);
+                  };
+                  const original = el.className, outlined = measure();
+                  el.className = original.replace('bg-primary/10 text-primary', 'bg-primary text-primary-foreground');
+                  const filled = measure(); el.className = original;
+                  return {theme: document.documentElement.className, outlined, filled, font: getComputedStyle(el).fontSize};
+                }"""))
+                assert min(palette[-1]["outlined"], palette[-1]["filled"]) >= 4.5, palette
+            page.evaluate("document.documentElement.classList.remove('light'); document.documentElement.classList.add('dark')")
+            print(json.dumps({"fast_palette": palette}))
+            page.screenshot(path=str(ROOT / "artifacts" / "task-features-fixture.png"))
+            composer = page.get_by_label("에이전트 세션", exact=True).get_by_role("textbox", name="질문 또는 지시")
+            composer.fill("Synthetic FAST enabled instruction")
+            composer.press("Enter")
+            fast.wait_for(state="visible")
+            page.wait_for_function("!document.querySelector('[aria-label=\"FAST 모드\"]').disabled")
+            assert fast_requests[-1]["fast"] is True
+            fast.click()
+            assert fast.get_attribute("aria-checked") == "false"
+            composer.fill("Synthetic FAST disabled instruction")
+            composer.press("Enter")
+            page.wait_for_function("!document.querySelector('[aria-label=\"FAST 모드\"]').disabled")
+            assert fast_requests[-1]["fast"] is False
+            page.get_by_role("tab", name="앱 구조", exact=True).click()
+            diagram = page.get_by_role("img", name="overall-architecture 구조 도표")
+            diagram.locator("svg").wait_for()
+            assert "HTTP" in diagram.inner_text()
+            page.get_by_role("button", name="원래 크기로 보기", exact=True).click()
+            page.get_by_role("button", name="도표 전체 맞추기", exact=True).click()
+            architecture_revision = 2
+            page.get_by_text("Synthetic source revision 2", exact=True).wait_for(timeout=12000)
+            page.get_by_text("Mermaid 원본", exact=True).click()
+            assert 'graph LR' in page.get_by_role("region", name="앱 구조", exact=True).inner_text()
+            for node in architecture_nodes:
+                if not node["diagram"]:
+                    continue
+                page.get_by_label("구조 보기", exact=True).select_option("actual/" + node["path"])
+                try:
+                    page.get_by_role("img", name="actual/" + node["path"] + " 구조 도표").locator("svg").wait_for(timeout=10000)
+                except Exception:
+                    print(page.get_by_role("region", name="앱 구조", exact=True).inner_text())
+                    raise
+                last_diagram = node["path"]
+            page.get_by_label("구조 보기", exact=True).select_option("actual/overall-architecture")
+            last_diagram = "overall-architecture"
+            page.get_by_role("img", name="actual/overall-architecture 구조 도표").locator("svg").wait_for()
+            for width in (1440, 400):
+                page.set_viewport_size({"width": width, "height": 900})
+                if width == 400:
+                    page.get_by_role("navigation", name="화면", exact=True).get_by_role("button", name="대화", exact=True).click()
+                    page.get_by_role("img", name="actual/" + last_diagram + " 구조 도표").wait_for()
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                page.screenshot(path=str(ROOT / "artifacts" / f"architecture-{width}-fixture.png"))
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.get_by_role("tab", name="대화", exact=True).click()
             page.get_by_label("사용 토큰", exact=True).filter(has_text="1,234 → 56 토큰").wait_for()
             limits = page.get_by_label("CLI 사용 한도", exact=True)
             limits.get_by_text("Claude", exact=True).wait_for()
@@ -273,7 +362,7 @@ def main():
             page.get_by_text("아직 작업이 없다.", exact=False).wait_for()
             assert not page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").count()
             browser.close()
-            print("PASS: fixed diff across scrolling/tabs; translated spec editing; all CLI limits; tokens; native notices; compaction; persistent task deletion; source links")
+            print("PASS: file diff toggles; FAST OFF/ON request forwarding; automatic architecture refresh and all generated diagrams; 400px/1440px containment; task workflow regressions")
     finally:
         server.should_exit = True
         thread.join(timeout=10)

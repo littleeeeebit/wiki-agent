@@ -12,6 +12,7 @@ import { RepoMap } from '@/components/RepoMap'
 import { Review } from '@/components/Review'
 import { Settings } from '@/components/Settings'
 import { LiveChanges } from '@/components/LiveChanges'
+import { Architecture } from '@/components/Architecture'
 import { TaskRail } from '@/components/TaskRail'
 import type { View } from '@/components/TaskRail'
 import { Terminal, closed } from '@/components/Terminal'
@@ -554,11 +555,19 @@ export default function App() {
             setView(view === 'map' ? 'chat' : 'map')
             if (landscapeView === 'task') setLandscapeView('workspace')
           }}>{view === 'map' ? '대화로' : '지도'}</Btn>
+          <Btn tone="ghost" aria-label="앱 구조" aria-pressed={view === 'architecture'} onClick={() => {
+            setView(view === 'architecture' ? 'chat' : 'architecture')
+            if (landscapeView === 'task') setLandscapeView('workspace')
+          }}>구조</Btn>
         </div>
         {mobilePane === 'chat' && <Btn tone="ghost" className="portrait-header-action" aria-pressed={view === 'map'} onClick={() => {
           if (view !== 'map') setMapped(true)
           setView(view === 'map' ? 'chat' : 'map')
         }}>{view === 'map' ? '대화' : '지도'}</Btn>}
+        {mobilePane === 'chat' && <Btn tone="ghost" className="portrait-header-action" aria-label="앱 구조"
+          aria-pressed={view === 'architecture'} onClick={() => setView(view === 'architecture' ? 'chat' : 'architecture')}>
+          {view === 'architecture' ? '대화로' : '구조'}
+        </Btn>}
         {mobilePane === 'task' && tidy && <Btn tone="ghost" className="portrait-header-action" onClick={() => void remove(row!.path)}>정리</Btn>}
         <button type="button" aria-label="설정" onClick={() => setSetting(true)} className="grid size-11 shrink-0 place-items-center rounded-md text-muted-foreground">
           <Gear className="size-5" />
@@ -608,7 +617,7 @@ export default function App() {
             <Btn tone="ghost" onClick={() => setView('chat')}>← 돌아가기</Btn>
           ) : (
             <div role="tablist" aria-label="가운데" className="flex h-7 shrink-0 rounded-md border border-border p-0.5">
-              {(['chat', 'map'] as const).map((v) => (
+              {(['chat', 'map', 'architecture'] as const).map((v) => (
                 <button key={v} type="button" role="tab" aria-selected={view === v}
                   onClick={() => {
                     if (v === 'map') setMapped(true)
@@ -616,7 +625,7 @@ export default function App() {
                   }}
                   className={cn('rounded-[4px] px-2.5 text-[12.5px]',
                     view === v ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground')}>
-                  {v === 'chat' ? '대화' : '지도'}
+                  {v === 'chat' ? '대화' : v === 'map' ? '지도' : '앱 구조'}
                 </button>
               ))}
             </div>
@@ -659,6 +668,7 @@ export default function App() {
             }} />
           </div>
         )}
+        {view === 'architecture' && <div className="min-h-0 flex-1"><Architecture theme={theme} /></div>}
         {view === 'projects' && <div className="min-h-0 flex-1"><Projects current={repo} /></div>}
       </main>
 

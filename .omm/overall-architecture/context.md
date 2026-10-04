@@ -1,0 +1,1 @@
+This is the local architecture of wiki-agent. The frontend App structure tab reads these generated source inventories and Mermaid diagrams through /api/architecture. No cloud publishing or model execution is involved.

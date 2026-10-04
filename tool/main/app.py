@@ -29,7 +29,7 @@ from pydantic import AnyHttpUrl, BaseModel
 
 import translate
 
-from . import channels, connect, improvements, loop, mobile, planning, query, specs, survey, verification, work
+from . import architecture, channels, connect, improvements, loop, mobile, planning, query, specs, survey, verification, work
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
 # `text/plain`. The browser then refuses `<script type="module">` silently:
@@ -59,7 +59,12 @@ async def lifespan(_: FastAPI):
     planning.recover()
     survey.recover()
     threading.Thread(target=loop.poll, daemon=True).start()
+    architecture_stop = threading.Event()
+    architecture_thread = threading.Thread(target=architecture.watch, args=(architecture_stop,), daemon=True)
+    architecture_thread.start()
     yield
+    architecture_stop.set()
+    architecture_thread.join(timeout=12)
     mobile.companion.stop()
     loop.close_all()
     planning.close_all()
@@ -69,6 +74,7 @@ async def lifespan(_: FastAPI):
 
 app = FastAPI(title="wiki-agent", lifespan=lifespan)
 app.include_router(query.router)
+app.include_router(architecture.router)
 app.include_router(work.router)
 app.include_router(specs.router)
 app.include_router(loop.router)

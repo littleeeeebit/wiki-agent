@@ -1,6 +1,11 @@
 // Every point of contact with the backend. Nothing else calls fetch.
 import { request as fetch } from '@/lib/mobile'
 
+export type ArchitectureData = { revision: string; files: number;
+  nodes: { path: string; description: string; diagram: string;
+    context?: string; constraint?: string; concern?: string; todo?: string; note?: string }[] }
+export const getArchitecture = () => get('/api/architecture').then((r) => json<ArchitectureData>(r, '앱 구조'))
+
 export type Channel = {
   id: string
   label: string
@@ -79,7 +84,7 @@ export type SurveyProgress = {
 export type Choice = { id: string; label: string; note: string }
 export type Options = {
   projects: Project[]
-  models: (Choice & { efforts?: Choice[]; is_default?: boolean })[]
+  models: (Choice & { efforts?: Choice[]; is_default?: boolean; supports_fast?: boolean })[]
   efforts: Choice[]
   codex_error: string
 }
@@ -543,7 +548,7 @@ export const getSpecs = () =>
   get('/api/specs').then((r) => json<{ project: string; gate: string; specs: Spec[] }>(r, '명세'))
 export const saveSpec = (id: string, body: { rev: number; goal: string; out: string[]; done: string[]; slug: string; reason?: string }) =>
   post(`/api/specs/${id}`, body, 'PUT').then((r) => json<Spec>(r, '명세 저장'))
-export const startSpec = (id: string, choice: { model: string; effort: string }) =>
+export const startSpec = (id: string, choice: { model: string; effort: string; fast?: boolean }) =>
   post(`/api/specs/${id}/start`, choice).then((r) => json<{ path: string; turn: string }>(r, '시작'))
 export const dropSpec = (id: string) => post(`/api/specs/${id}/drop`).then((r) => json(r, '버리기'))
 export const checkoutSpec = (id: string) => post(`/api/specs/${id}/checkout`).then((r) => json<{ path: string }>(r, '브랜치 열기'))
@@ -793,9 +798,10 @@ export type Worktree = {
 export const getWorktrees = () =>
   get('/api/worktrees').then((r) => json<{ project: string; repo: string; rows: Worktree[] }>(r, '작업트리'))
 
-export type Changes = { diff: string; base: string; truncated: boolean; omitted: string[];
+export type ChangedFile = { path: string; added: number | null; deleted: number | null; binary: boolean; untracked: boolean }
+export type Changes = { diff: string; base: string; truncated: boolean; omitted: string[]; files: ChangedFile[];
   totals: { files: number; added: number; deleted: number; binary: number; unknown: number } }
-export const workDiff = (path: string) => get(`/api/work/diff?${new URLSearchParams({ path })}`)
+export const workDiff = (path: string, file = '') => get(`/api/work/diff?${new URLSearchParams({ path, file, preview: String(!!file) })}`)
   .then((r) => json<Changes>(r, '코드 변경 현황'))
 
 export type ProviderStatus = {
@@ -893,7 +899,7 @@ export const workStop = (path: string, turn: string) =>
 export const workSteer = (path: string, turn: string, text: string) =>
   post('/api/work/steer', { path, turn, text }).then((r) => json(r, '끼어들기'))
 /** The next instruction, sent by the server once this turn's run lets go. */
-export const workQueue = (body: { path: string; turn: string; text: string; model: string; effort: string }) =>
+export const workQueue = (body: { path: string; turn: string; text: string; model: string; effort: string; fast?: boolean }) =>
   post('/api/work/queue', body).then((r) => json(r, '대기'))
 export const workUnqueue = (path: string) => post('/api/work/unqueue', { path }).then((r) => json(r, '대기 취소'))
 export type WorkSettings = { bypass: boolean }
@@ -906,7 +912,7 @@ export const clearRules = (path: string, session_id: string) =>
 const workError = (t: string): WorkEv => ({ kind: 'error', text: t, meta: {}, session_id: '', parent_id: null })
 
 export async function workSay(
-  body: { path: string; text: string; model: string; effort: string },
+  body: { path: string; text: string; model: string; effort: string; fast?: boolean },
   onEvent: (ev: WorkEv) => void,
 ): Promise<void> {
   await events(await post('/api/work/say', body), onEvent, workError)

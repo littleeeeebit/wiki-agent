@@ -100,6 +100,15 @@ The native APK needs no execution or synchronization bridge for this behavior.
 
 ## The four graphs
 
+The App structure tab is a separate source architecture view, backed by
+local oh-my-mermaid documents under `.omm/overall-architecture/`. The server's
+`main/architecture.py` owns generation, writes descriptions and Mermaid diagrams
+from source inventories and static imports, and leaves maintainer context and
+constraints intact. The frontend renders those diagrams locally. The server
+refreshes every five seconds, and `tool/omm_scan.py` also runs before frontend
+builds. This view always describes wiki-agent itself, independent of the
+project selected for conversations or tasks.
+
 Four different things are called a graph here. They do not stand in for each
 other.
 

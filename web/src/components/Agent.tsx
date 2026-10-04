@@ -74,7 +74,7 @@ export function Agent({
             </Btn>
           )}
           <div id="agent-model-options" className="agent-options flex items-center gap-1.5" data-open={optionsOpen}>
-            <Toolbar value={choice} options={options} busy={busy} onChange={onChoice} />
+            <Toolbar value={choice} options={options} busy={busy} onChange={onChoice} showFast />
             {row && (
               <Btn tone="ghost" className="px-1.5" onClick={() => setAsking(true)}
                 disabled={busy} aria-label="문맥 비우기"

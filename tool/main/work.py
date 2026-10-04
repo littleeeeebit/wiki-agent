@@ -156,7 +156,7 @@ def diff_git(path: Path, *args: str, codes=(0,)) -> str:
 
 
 @router.get("/api/work/diff")
-def changes(path: str) -> dict:
+def changes(path: str, file: str = "", preview: bool = True) -> dict:
     """Read actual files, including shell edits, the index and new files.
 
     A running turn pins HEAD before the host starts, so committing does not
@@ -184,8 +184,9 @@ def changes(path: str) -> dict:
                     continue  # An unfetched remote can use the selected local base.
             base = baseline or base
         totals = {"files": 0, "added": 0, "deleted": 0, "binary": 0, "unknown": 0}
+        entries = []
 
-        def count(output):
+        def count(output, untracked=""):
             rows = iter(output.split("\0"))
             for row in rows:
                 if not row:
@@ -195,7 +196,10 @@ def changes(path: str) -> dict:
                     # --no-index uses a NUL-separated old/new pair even with
                     # rename detection disabled. Neither path is another stat.
                     next(rows)
-                    next(rows)
+                    name = next(rows)
+                entries.append({"path": untracked or name, "added": None if added == "-" else int(added),
+                                "deleted": None if deleted == "-" else int(deleted),
+                                "binary": added == "-", "untracked": bool(untracked)})
                 totals["files"] += 1
                 if added == "-" or deleted == "-":
                     totals["binary"] += 1
@@ -204,28 +208,34 @@ def changes(path: str) -> dict:
                     totals["deleted"] += int(deleted)
 
         count(diff_git(root, "diff", "--numstat", "-z", *flags, base, "--"))
-        patch = diff_git(root, "diff", *flags, base, "--")
+        patch = "" if file or not preview else diff_git(root, "diff", *flags, base, "--")
         untracked = diff_git(root, "ls-files", "--others", "--exclude-standard", "-z")
         omitted = []
         for name in untracked.split("\0"):
             if not name:
                 continue
-            file = root / name
+            target = root / name
             # A symlink may target a private file outside this worktree.
-            if file.is_symlink() or not file.resolve().is_relative_to(root.resolve()):
+            if target.is_symlink() or not target.resolve().is_relative_to(root.resolve()):
                 totals["files"] += 1
                 totals["unknown"] += 1
                 omitted.append(name)
+                entries.append({"path": name, "added": None, "deleted": None, "binary": False, "untracked": True})
                 continue
             count(diff_git(root, "diff", "--no-index", "--numstat", "-z", *flags,
-                           "--", "/dev/null", name, codes=(0, 1)))
-            if file.stat().st_size > 1_000_000:
+                           "--", "/dev/null", name, codes=(0, 1)), name)
+            if target.stat().st_size > 1_000_000:
                 omitted.append(name)
-            elif len(patch) <= 200_000:
+            elif preview and (not file or file == name) and len(patch) <= 200_000:
                 patch += diff_git(root, "diff", "--no-index", *flags, "--", "/dev/null", name, codes=(0, 1))
+        if file:
+            if file not in {entry["path"] for entry in entries}:
+                raise HTTPException(404, "변경된 파일이 아니다")
+            if file not in untracked.split("\0"):
+                patch = diff_git(root, "diff", *flags, base, "--", ":(literal)" + file)
         # ponytail: cap the preview at 200k characters; paginate if large patches become common.
         return {"diff": patch[:200_000], "base": base, "truncated": len(patch) > 200_000,
-                "omitted": omitted, "totals": totals}
+                "omitted": omitted, "totals": totals, "files": entries}
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         raise HTTPException(503, f"변경 현황을 읽지 못했다 — {exc}") from exc
 
@@ -419,6 +429,7 @@ class Order(BaseModel):
     text: str
     model: str = ""
     effort: str = ""
+    fast: bool = False
 
 
 class Answer(BaseModel):
@@ -430,7 +441,7 @@ class Answer(BaseModel):
     answers: list[str] | None = None   # a question's, one per question
 
 
-def session(path: Path, model: str, effort: str) -> ChatSession:
+def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSession:
     """The worktree's write session, started if there is none.
 
     Another model of the same CLI reconnects with `--resume`. Another CLI is
@@ -466,6 +477,13 @@ def session(path: Path, model: str, effort: str) -> ChatSession:
                 chat.bypass = bypass
                 chat.close()
             chat.reconfigure(model, effort)
+        if getattr(chat, "fast", False) != fast:
+            chat.fast = fast
+            chat.close()
+        spec = specs.owner(path)
+        choice = {"model": model, "effort": effort, "fast": fast}
+        if spec and spec.get("cell") != choice:
+            specs.update(spec["repo"], spec["id"], cell=choice)
         return chat
 
 
@@ -760,7 +778,7 @@ def dispatch(path: Path, ended: Run) -> None:
         del _queued[key]
         release = hold(_busy, _lock, key, "", kind="turn")
     try:
-        begin(path, session(path, order.model, order.effort), order.text, release)
+        begin(path, session(path, order.model, order.effort, order.fast), order.text, release)
     except Exception as exc:
         # Nobody's request is waiting on this thread: the failure and the
         # instruction itself go on record, and screens read it again.
@@ -809,7 +827,7 @@ def say(body: Order) -> StreamingResponse:
         release = hold(_busy, _lock, body.path, "이 작업트리의 에이전트가 아직 돌고 있다", kind="turn")
     try:
         path = ours(body.path, repo)
-        run = begin(path, session(path, body.model, body.effort), text, release)
+        run = begin(path, session(path, body.model, body.effort, body.fast), text, release)
     except BaseException:
         release()
         raise
@@ -905,6 +923,7 @@ def steer(body: Steer) -> dict:
 class Queued(Steer):
     model: str = ""
     effort: str = ""
+    fast: bool = False
 
 
 @router.post("/api/work/queue")
@@ -933,7 +952,7 @@ def queue(body: Queued) -> dict:
         with _lock:
             if body.path in _queued:
                 raise HTTPException(409, "기다리는 지시가 이미 있다. 그것을 취소하고 다시 보내라")
-            _queued[body.path] = Order(path=body.path, text=text, model=body.model, effort=body.effort)
+            _queued[body.path] = Order(path=body.path, text=text, model=body.model, effort=body.effort, fast=body.fast)
     feed.put({"kind": "work-state", "path": body.path})
     return {"ok": True}
 

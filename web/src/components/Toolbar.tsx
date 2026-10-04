@@ -8,13 +8,14 @@ import {
 import type { Options } from '@/lib/api'
 import { useState } from 'react'
 
-export type Choice = { model: string; effort: string }
+export type Choice = { model: string; effort: string; fast?: boolean }
 
 type Props = {
   value: Choice
   options: Options | null
   busy: boolean
   onChange: (next: Choice) => void
+  showFast?: boolean
 }
 
 // A Radix Select cannot use the empty string as a value. "default" — meaning
@@ -30,8 +31,12 @@ export type Item = { value: string; label: string; note?: string }
 
 /** A model and its effort — for a focus, or for a worktree's agent. The
  *  project is the rail's: it applies to both panes at once. */
-export function Toolbar({ value, options, busy, onChange }: Props) {
-  const pick = (patch: Partial<Choice>) => onChange({ model: value.model, effort: value.effort, ...patch })
+export function Toolbar({ value, options, busy, onChange, showFast = false }: Props) {
+  const pick = (patch: Partial<Choice>) => onChange({ ...value, ...patch })
+  const supportsFast = (model: string) => model.startsWith('codex:')
+    ? !!options?.models.find((item) => item.id === model)?.supports_fast
+    : !model || /^(opus|claude-opus-(5|4-8))(\b|\[)/.test(model)
+  const fastSupported = supportsFast(value.model)
 
   // The list only holds aliases, which already follow the newest model. A
   // name that is not on it — a new family, a pinned version — is typed in,
@@ -48,7 +53,7 @@ export function Toolbar({ value, options, busy, onChange }: Props) {
     []
 
   return (
-    <div className="flex items-center gap-1.5">
+    <div className="flex flex-wrap items-center gap-1.5">
       <Picker
         label="모델"
         hideLabel
@@ -60,7 +65,8 @@ export function Toolbar({ value, options, busy, onChange }: Props) {
           if (v === CUSTOM) return setTyping(true)
           const model = out(v)
           const supported = options?.models.find((m) => m.id === model)?.efforts ?? options?.efforts
-          pick({ model, effort: supported?.some((e) => e.id === value.effort) ? value.effort : '' })
+          pick({ model, effort: supported?.some((e) => e.id === value.effort) ? value.effort : '',
+            ...(showFast ? { fast: !!value.fast && supportsFast(model) } : {}) })
         }}
       />
       {typing && (
@@ -74,7 +80,7 @@ export function Toolbar({ value, options, busy, onChange }: Props) {
             if (e.key !== 'Enter') return
             const model = e.currentTarget.value.trim()
             setTyping(false)
-            if (model) pick({ model, effort: '' })
+            if (model) pick({ model, effort: '', ...(showFast ? { fast: !!value.fast && supportsFast(model) } : {}) })
           }}
           onBlur={() => setTyping(false)}
         />
@@ -89,6 +95,13 @@ export function Toolbar({ value, options, busy, onChange }: Props) {
         onPick={(v) => pick({ effort: out(v) })}
       />
       {options?.codex_error && <p role="status" className="w-full text-xs text-destructive">{options.codex_error}</p>}
+      {showFast && <button type="button" role="switch" aria-label="FAST 모드" aria-checked={!!value.fast}
+        disabled={busy || !options || !fastSupported} onClick={() => pick({ fast: !value.fast })}
+        title={fastSupported ? 'CLI의 빠른 처리 모드 · 다음 턴부터 적용 · 계정과 모델 지원 및 추가 요금은 제공자 정책에 따른다'
+          : '선택한 모델이 FAST 지원을 표시하지 않는다. 지원 모델을 선택하세요'}
+        className={`h-7 shrink-0 rounded-md border px-2 text-[12.5px] disabled:opacity-40 ${value.fast ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground'}`}>
+        FAST {value.fast ? 'ON' : 'OFF'}
+      </button>}
     </div>
   )
 }
