@@ -39,7 +39,7 @@ from agent import ChatSession
 from common import errorlog, worktree_home
 from workspace import adopt, base_branch, folder_for, merged, remove, worktrees
 
-from . import channels, connect, decisions, query, specs, verification, work
+from . import channels, connect, decisions, query, runtime, specs, verification, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 
 REVIEW = ROOT / "raw" / "review"
@@ -738,19 +738,20 @@ def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
             specs.save(specs.moved(spec, "리뷰 대기", stopped=None, fault=None))
     loop = Loop(repo, sid)
     with _lock:
+        if runtime.stopping.is_set():
+            return  # Keep the accepted handoff queued for startup recovery.
         if _loops.get(key) not in (None, old):
             return
         _loops[key] = loop
-    try:
-        loop.thread = threading.Thread(target=drive, args=(loop,), daemon=True)
-        loop.thread.start()
-    except Exception as exc:
-        with _lock:
+        try:
+            loop.thread = threading.Thread(target=drive, args=(loop,), daemon=True)
+            loop.thread.start()
+        except Exception as exc:
             if _loops.get(key) is loop:
                 _loops.pop(key)
-        errorlog.record("review-start", exc, repo=repo, spec=sid)
-        stop(None, repo, sid, Why.FORMAT, f"리뷰 실행을 시작하지 못했다 — {exc}")
-        raise
+            errorlog.record("review-start", exc, repo=repo, spec=sid)
+            stop(None, repo, sid, Why.FORMAT, f"리뷰 실행을 시작하지 못했다 — {exc}")
+            raise
 
 
 def drive(loop: Loop) -> None:

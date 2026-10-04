@@ -87,7 +87,9 @@ One app server owns a hub's persisted workflows. Startup holds an OS lock on
 mark the first server's live review as stopped. Startup resumes active loops
 and previous restart stops after recovery; explicit user stops and blockers
 remain stopped. The poller reattaches active states without a driver. Shutdown
-stops and joins watchers and review drivers before releasing ownership.
+gates new driver creation, stops watchers and review drivers, and drains work
+callbacks and planning handoffs before releasing ownership. Accepted late
+review handoffs stay queued for the next owner's startup recovery.
 Review correction stays in its current round until the work session returns a
 complete finding report. A report without an id must uniquely identify one
 finding, including when distinct findings share a file and line. Claimed fixes

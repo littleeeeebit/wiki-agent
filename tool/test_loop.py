@@ -1098,6 +1098,99 @@ def test_poller_reattaches_an_active_loop_without_a_driver_and_stops_on_shutdown
         waited(lambda: not loop._loops)
 
 
+@pytest.mark.parametrize("producer", ["planning", "work"])
+def test_shutdown_keeps_late_review_handoffs_pending_for_the_next_owner(world, producer):
+    spec = pr_spec(world, "late-shutdown-review", 7)
+    entered, release = threading.Event(), threading.Event()
+
+    def held_step(_loop):
+        entered.set()
+        assert release.wait(15)
+        return False
+
+    async def shutdown():
+        async with main_app.lifespan(main_app.app):
+            pass
+
+    try:
+        with patch.object(loop, "step", held_step), patch.object(loop, "poll", lambda *_: None), \
+             patch.object(main_app.architecture, "watch", lambda *_: None), \
+             patch.object(main_app.planning, "recover", lambda: None), \
+             patch.object(main_app.survey, "recover", lambda: None), \
+             patch.object(getattr(main_app, producer), "close_all", lambda: loop.kick("proj", spec["id"])):
+            asyncio.run(shutdown())
+        assert not loop._loops and not entered.is_set(), "A shutdown handoff started a late review driver"
+        assert specs.load("proj", spec["id"])["state"] == "리뷰 대기"
+    finally:
+        release.set()
+        loop.close_all()
+    Reviewer.replies = [allow]
+    with patch.object(loop, "poll", lambda *_: None), patch.object(main_app.architecture, "watch", lambda *_: None), \
+         patch.object(main_app.planning, "recover", lambda: None), patch.object(main_app.survey, "recover", lambda: None):
+        async def restarted():
+            async with main_app.lifespan(main_app.app):
+                waited(lambda: not loop._loops)
+                assert specs.load("proj", spec["id"])["state"] == "머지 가능"
+        asyncio.run(restarted())
+
+
+def test_shutdown_drains_an_accepted_work_callback_before_releasing_ownership(world):
+    from main.runtime import server_owner
+
+    spec = pr_spec(world, "accepted-shutdown-review", 7)
+    entered, requested, closing, release, finished = (threading.Event() for _ in range(5))
+    errors, runs = [], []
+
+    def callback():
+        entered.set()
+        assert release.wait(20)
+        loop.kick("proj", spec["id"])
+
+    original_close = work.close_all
+
+    def close():
+        closing.set()
+        original_close()
+
+    async def server():
+        async with main_app.lifespan(main_app.app):
+            path = Path(spec["worktree"])
+            runs.append(work.begin(path, work.session(path, "codex:test", "high"), "accepted", lambda: None))
+            assert requested.wait(15)
+
+    def own():
+        try:
+            asyncio.run(server())
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    Worker.replies = ["accepted"]
+    with patch.object(specs, "check", lambda *_: callback), patch.object(loop, "poll", lambda *_: None), \
+         patch.object(main_app.architecture, "watch", lambda *_: None), \
+         patch.object(main_app.planning, "recover", lambda: None), patch.object(main_app.survey, "recover", lambda: None), \
+         patch.object(work, "close_all", close):
+        owner = threading.Thread(target=own, daemon=True)
+        owner.start()
+        try:
+            assert entered.wait(15) and runs[0].done
+            requested.set()
+            assert closing.wait(15)
+            assert not finished.wait(.2), "Ownership was released before the accepted callback finished"
+            with pytest.raises(RuntimeError, match="이미 실행 중"):
+                with server_owner(specs.SPECS.parent):
+                    pytest.fail("A replacement owner overlapped the accepted callback")
+        finally:
+            requested.set()
+            release.set()
+            owner.join(15)
+    assert not owner.is_alive() and not errors and not loop._loops and not work._turns
+    assert specs.load("proj", spec["id"])["state"] == "리뷰 대기"
+    with server_owner(specs.SPECS.parent):
+        pass
+
+
 def test_a_second_server_cannot_stop_another_servers_live_review(world):
     entered, release = threading.Event(), threading.Event()
 

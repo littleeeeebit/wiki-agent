@@ -262,3 +262,34 @@ selection passed all 37 tests. The complete spec and planning modules passed
 all 63 tests. Both processes exited normally with code zero. Ruff, wiki lint,
 whitespace and UTF-8-without-BOM checks passed; the unchanged frontend retains
 the initial PR's build and browser evidence.
+
+Round 2 reproduced a remaining late-creation race: an accepted work callback
+or planning handoff could start a review driver after the one-time shutdown
+snapshot. Both carried repairs and the spec reader passed independent review,
+but this distinct trigger still let a replacement owner overlap an old driver.
+
+The server now closes dispatch before taking any shutdown snapshots. Review
+handoffs still persist their queued state, but create no driver until the next
+owner recovers it. Registration and thread start share the registry lock, so
+shutdown cannot observe an unstarted registered driver. Work tracks the thread
+through its completion callback and queued dispatch, rather than treating
+`Run.done` as thread exit. Shutdown cancels and joins those threads. Planning
+keeps its worker registered through handoff and joins it without a timeout
+that could release ownership early. New work and planning starts are gated.
+
+Two real-Git regressions failed before this repair: a late work or planning
+handoff started a driver after the snapshot. After repair, each remains queued
+and resumes automatically under the next owner. A held accepted work callback
+also verifies that ownership remains exclusive after `Run.done`, and a held
+planning handoff verifies that its worker remains registered until thread exit.
+
+The focused shutdown, dispatch, ordering and resume group passed 24 tests.
+The complete task, planning and Suite modules passed 99 tests on rerun, with
+normal process exits. The first broader run had two failures: the shell smoke
+test tried to acquire the live app's actual workflow lock, and a plan
+publication exceeded its existing ten-second test wait. The shell test now
+invokes the real entry point with scratch workflow state, captures startup
+errors and waits for its own child to exit; the live app stays running. The
+publication case passed the focused rerun without a product change, then the
+complete module rerun passed. This records the first failure rather than
+counting it as a clean run. Ruff, wiki lint, whitespace and BOM checks passed.

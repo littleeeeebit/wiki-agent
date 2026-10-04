@@ -33,7 +33,7 @@ from workspace import remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
 # changes the project under it, so a hold can never land in between.
-from . import memory
+from . import memory, runtime
 from .query import ROOT, _lock, current_repo, hold, keep, project, resumable, sse, streaming
 
 LOGS = ROOT / "raw" / "work"
@@ -46,6 +46,7 @@ router = APIRouter()
 _sessions: dict[str, ChatSession] = {}    # worktree path -> its session
 _busy: dict[str, object] = {}   # worktree path -> the hold of its running turn
 _runs: dict[str, "Run"] = {}    # worktree path -> its last turn, kept until the next one starts
+_turns: dict[threading.Thread, "Run"] = {}  # includes completed turns still running their callbacks
 _queued: dict[str, "Order"] = {}   # worktree path -> the instruction waiting for it to be let go
 _provider_usage: dict = {}
 _provider_usage_lock = threading.Lock()
@@ -55,8 +56,16 @@ def close_all() -> None:
     with _lock:
         alive = list(_sessions.values())
         _sessions.clear()
+        turns = list(_turns.items())
+        _queued.clear()
+    for _, run in turns:
+        run.halt.set()
+        run.chat.stop(run.halt)
     for chat in alive:
         chat.close()
+    for thread, _ in turns:
+        if thread is not threading.current_thread():
+            thread.join()
 
 
 def ours(path: str, repo: Path | None = None) -> Path:
@@ -863,11 +872,26 @@ def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = N
         pass  # The diff endpoint reports its failure; the agent still runs.
     if not decide:
         remember(path, "user", text)
-    with _lock:
-        _runs[str(path)] = run
+
+    def execute():
+        try:
+            run_turn(path, run, text, release, decide)
+        finally:
+            with _lock:
+                _turns.pop(threading.current_thread(), None)
+
+    thread = None
     try:
-        threading.Thread(target=run_turn, args=(path, run, text, release, decide), daemon=True).start()
+        thread = threading.Thread(target=execute, daemon=True)
+        with _lock:
+            if runtime.stopping.is_set():
+                raise HTTPException(503, "서버가 종료 중이다. 다시 시작한 뒤 이어가라")
+            _runs[str(path)] = run
+            _turns[thread] = run
+            thread.start()
     except BaseException as exc:
+        with _lock:
+            _turns.pop(thread, None)
         # No thread will end it: ended here, or it reads as running forever
         # and a screen that attaches never sees its stream close.
         run.put({"kind": "error", "text": f"턴을 시작하지 못했다 — {type(exc).__name__}: {exc}", "meta": {},

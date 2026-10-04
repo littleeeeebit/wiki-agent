@@ -9,7 +9,7 @@ import threading
 import pytest
 
 from main.runtime import server_owner
-from main import app, loop, specs
+from main import app, loop, runtime, specs
 
 
 def test_a_killed_server_releases_ownership_without_removing_the_lock_file(tmp_path):
@@ -33,6 +33,7 @@ def test_a_killed_server_releases_ownership_without_removing_the_lock_file(tmp_p
 
 
 def test_shutdown_keeps_server_ownership_until_its_review_driver_stops(tmp_path, monkeypatch):
+    monkeypatch.setattr(runtime, "stopping", threading.Event())
     entered, requested, stopping, release, finished = (threading.Event() for _ in range(5))
     errors = []
     monkeypatch.setattr(specs, "SPECS", tmp_path / "raw/specs")

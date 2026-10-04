@@ -3,6 +3,10 @@
 from contextlib import contextmanager
 from pathlib import Path
 import sys
+import threading
+
+
+stopping = threading.Event()
 
 
 @contextmanager

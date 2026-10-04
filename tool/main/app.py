@@ -33,7 +33,7 @@ from fastapi.exceptions import RequestValidationError
 import translate
 from common import errorlog
 
-from . import architecture, channels, connect, improvements, loop, mobile, planning, query, specs, suite, survey, verification, work
+from . import architecture, channels, connect, improvements, loop, mobile, planning, query, runtime, specs, suite, survey, verification, work
 from .runtime import server_owner
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
@@ -58,6 +58,7 @@ async def lifespan(_: FastAPI):
     """
 
     with server_owner(specs.SPECS.parent):
+        runtime.stopping.clear()
         # Recovery must run only after exclusive ownership is acquired: a
         # second server must never mark the first server's live loops stopped.
         resume = loop.recover()
@@ -77,6 +78,7 @@ async def lifespan(_: FastAPI):
         try:
             yield
         finally:
+            runtime.stopping.set()
             poll_stop.set()
             architecture_stop.set()
             poll_thread.join()
