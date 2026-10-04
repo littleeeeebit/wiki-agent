@@ -5,6 +5,8 @@ export type ArchitectureData = { revision: string; files: number;
   nodes: { path: string; description: string; diagram: string;
     context?: string; constraint?: string; concern?: string; todo?: string; note?: string }[] }
 export const getArchitecture = () => get('/api/architecture').then((r) => json<ArchitectureData>(r, '앱 구조'))
+export const reportError = (message: string, stack = '') =>
+  post('/api/errors', { message: message.slice(0, 8000), stack: stack.slice(0, 16000) }).then(() => {})
 
 export type Channel = {
   id: string
@@ -493,6 +495,7 @@ export type Validation = {
 export const PROFILE_LABEL: Record<ReviewProfile, string> = { plan: '계획', code: '코드', mixed: '계획+코드' }
 
 export type Spec = {
+  cleanup_complete?: boolean
   id: string
   repo: string
   rev: number
@@ -635,7 +638,7 @@ export type LoopRow = {
   queued?: string | null
 }
 
-export type LoopSettings = { rounds: number; concurrent: number; review_model: string; review_effort: string }
+export type LoopSettings = { rounds: number; concurrent: number; review_model: string; review_effort: string; auto_merge?: boolean }
 
 export const getPrs = () =>
   get('/api/prs').then((r) => json<{ project: string; rows: Pr[]; error?: string }>(r, 'PR 목록'))

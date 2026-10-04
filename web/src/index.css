@@ -40,6 +40,8 @@
     --color-background: var(--background);
     --color-faint: var(--faint);
     --color-added: var(--added);
+    --color-add: var(--added);
+    --color-del: var(--destructive);
     --color-wait: var(--wait);
     --color-wait-foreground: var(--wait-foreground);
     --color-st-draft: var(--st-draft);

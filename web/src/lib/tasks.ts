@@ -42,6 +42,7 @@ export type Task = {
 
 /** One word for a state. The PR and the round are on the first line already. */
 function word(state: string): string {
+  if (state === '정리됨') return '시작 대기'
   if (/^리뷰 R\d+$/.test(state)) return '리뷰 중'
   if (/^고치는 중 R\d+$/.test(state)) return '고치는 중'
   if (/^PR #\d+$/.test(state)) return 'PR 올림'
@@ -60,14 +61,15 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
     const row = found && (s.workspace_mode !== 'branch' || found.branch === (s.branch ?? s.id)) ? found : null
     if (row) owned.add(row.path)
     const p = phase(s.state)
-    if (p === 'done' && !row) continue
+    if (p === 'done' && (s.cleanup_complete || (s.cleanup_complete === undefined && !row))) continue
+    const cleanupPending = p === 'done' && s.cleanup_complete === false
     const asks = row ? approvals(row.path) : 0
     const waiting = asks > 0 || Boolean(row && s.waiting)
     const running = row ? busy(row.path) : false
     // A plan still being drafted says its phase; its questions and its stop wait on the person.
     const plan = s.state === '작업 중' ? s.planning : null
     const planAct = plan?.phase === 'clarify' || plan?.phase === 'stopped'
-    const parts = [plan ? `계획 · ${PLAN_PHASE[plan.phase]}` : word(s.state)]
+    const parts = [cleanupPending ? '정리 대기' : plan ? `계획 · ${PLAN_PHASE[plan.phase]}` : word(s.state)]
     if (plan?.stopped) parts.push(PLAN_STOP[plan.stopped.reason] ?? plan.stopped.reason)
     if (waiting) parts.push(asks ? `승인 ${asks}` : '승인 대기')
     if (p === 'ready') parts.push('머지를 누른다')
@@ -77,13 +79,14 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
       key: row?.path ?? `spec:${s.id}`, path: row?.path ?? null, spec: s, name: s.id,
       pr: s.pr?.number ?? null, round: (s.rounds ?? []).filter((r) => !r.stale).length,
       phase: p,
-      group: waiting || planAct || p === 'ready' || p === 'stop' ? 'act'
+      group: waiting || planAct || cleanupPending || p === 'ready' || p === 'stop' ? 'act'
         : p === 'done' ? 'done' : p === 'draft' && !running ? 'idle' : 'run',
       line: parts.join(' · '), waiting, busy: running, live: row?.live ?? false, row,
     })
   }
   for (const r of rows) {
     if (owned.has(r.path)) continue
+    if (r.primary && !r.busy && !r.live) continue
     const asks = approvals(r.path)
     const running = busy(r.path)
     const parts = ['명세 없음']

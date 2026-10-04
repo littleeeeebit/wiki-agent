@@ -691,9 +691,10 @@ def noticed(repo: Path, spec: dict) -> dict | None:
             return None
         if spec["state"] == "머지됨":
             return spec
-        save(moved(spec, "머지됨"))
-    told(repo, spec, f"PR #{pr['number']} 머지됨 — {spec['goal']}")
-    return spec
+        save(moved(spec, "머지 대기"))
+    from . import loop
+    loop.landed(repo, spec)
+    return load(repo.name, spec["id"])
 
 
 @router.get("/api/specs")

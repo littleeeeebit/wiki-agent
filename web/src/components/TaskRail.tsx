@@ -38,7 +38,7 @@ const DOT: Record<Phase, string> = {
   queued: 'bg-st-queued', stop: 'bg-st-stop', done: 'bg-border', none: 'bg-border',
 }
 const GROUPS: { id: Exclude<Group, 'done'>; label: string }[] = [
-  { id: 'act', label: '할 것' }, { id: 'run', label: '도는 것' }, { id: 'idle', label: '정리됨' },
+  { id: 'act', label: '할 것' }, { id: 'run', label: '도는 것' }, { id: 'idle', label: '시작 대기' },
 ]
 
 // Below 1280px the rail folds to its icons and dots (`max-[1280px]:`).

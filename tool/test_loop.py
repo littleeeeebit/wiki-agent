@@ -254,6 +254,7 @@ def world(tmp_path, template):
          patch.object(specs, "sh", hub), patch.object(loop, "REVIEW", tmp_path / "review"), \
          patch.object(loop, "_cells", {}), patch.object(loop, "_loops", {}), patch.object(loop, "_review_runs", {}), \
          patch.object(loop, "_seated", 0):
+        loop.store(auto_merge=False)  # Legacy round tests inspect the manual merge boundary.
         yield SimpleNamespace(repo=repo, hub=hub, origin=origin, tmp=tmp_path)
         for running in list(loop._loops.values()):
             running.stop()
@@ -306,6 +307,81 @@ def test_review_button_reuses_a_manually_published_task_pr(world, shared):
     # A repeated click follows the existing review path, without a new task.
     assert web.post("/api/loops", json={"prs": [11]}).json()["results"] == result
     waited(lambda: not loop._loops)
+
+
+def test_external_pr_on_selected_checkout_reviews_merges_and_cleans_automatically(world):
+    repo = world.repo
+    git(repo, "switch", "-c", "external-task")
+    head = commit(repo, "external.txt")
+    git(repo, "push", "-qu", "origin", "external-task")
+    world.hub.open(12, "external-task")
+    loop.store(auto_merge=True)
+    response = client().post("/api/loops", json={"prs": [12]}).json()
+    assert response["results"] == [{"number": 12, "id": "external-task"}]
+    waited(lambda: not loop._loops)
+    fresh = specs.load("proj", "external-task")
+    assert fresh["state"] == "머지됨" and fresh["cleanup_complete"], fresh
+    assert fresh["workspace_mode"] == "branch" and fresh["worktree"] == str(repo)
+    assert git(repo, "branch", "--show-current") == "main" and (repo / "external.txt").exists()
+    assert not git(repo, "branch", "--list", "external-task")
+    assert not git(world.origin, "branch", "--list", "external-task")
+    assert not loop.folder("proj", 12).exists()
+    assert not loop._cells
+    assert fresh["rounds"][0]["head"] == head
+
+
+def test_adoption_preserves_a_dirty_checked_out_pr_and_does_not_create_metadata(world):
+    git(world.repo, "switch", "-c", "dirty-pr")
+    commit(world.repo, "published.txt")
+    git(world.repo, "push", "-qu", "origin", "dirty-pr")
+    world.hub.open(12, "dirty-pr")
+    (world.repo / "notes.txt").write_text("keep\n", encoding="utf-8")
+    result = client().post("/api/loops", json={"prs": [12]}).json()["results"][0]
+    assert "커밋하지 않은 변경" in result["error"]
+    assert specs.load("proj", "dirty-pr") is None
+    assert (world.repo / "notes.txt").read_text(encoding="utf-8") == "keep\n"
+
+
+def test_cleanup_retries_after_dirty_checkout_without_repeating_merge(world):
+    spec = pr_spec(world, "retry-cleanup", 12)
+    path = spec["worktree"]
+    git(world.repo, "worktree", "remove", path)
+    git(world.repo, "switch", "retry-cleanup")
+    spec.update(workspace_mode="branch", worktree=str(world.repo))
+    specs.save(spec)
+    looped("retry-cleanup")
+    (world.repo / "notes.txt").write_text("keep\n", encoding="utf-8")
+    ready = specs.load("proj", "retry-cleanup")
+    loop.merge_spec(world.repo, ready, loop.Merge(head=ready["pr"]["head"]))
+    pending = specs.load("proj", "retry-cleanup")
+    assert pending["state"] == "머지됨" and not pending["cleanup_complete"]
+    assert loop.folder("proj", 12).exists() and (world.repo / "notes.txt").exists()
+    (world.repo / "notes.txt").unlink()
+    # A freshly loaded record is all restart recovery needs.
+    loop.finish(world.repo, specs.load("proj", "retry-cleanup"), "main", pending["merge"]["commit"], "")
+    done = specs.load("proj", "retry-cleanup")
+    assert done["cleanup_complete"] and not loop.folder("proj", 12).exists()
+    assert git(world.repo, "branch", "--show-current") == "main"
+    assert not git(world.repo, "branch", "--list", "retry-cleanup")
+    assert sum(args[:3] == ["gh", "pr", "merge"] for args in world.hub.calls) == 1
+
+
+def test_automatic_merge_gets_another_review_when_remote_head_moves(world):
+    spec = pr_spec(world, "automatic-race", 12)
+    original = loop.automatic
+    attempts = []
+    def raced(repo, saved):
+        attempts.append(saved["pr"]["head"])
+        if len(attempts) == 1:
+            world.hub.push_elsewhere(12)
+        original(repo, saved)
+    loop.store(auto_merge=True)
+    with patch.object(loop, "automatic", raced):
+        looped(spec["id"], seconds=60)
+    fresh = specs.load("proj", spec["id"])
+    assert fresh["state"] == "머지됨" and fresh["cleanup_complete"]
+    assert len(fresh["rounds"]) == 2 and len(attempts) == 2
+    assert fresh["rounds"][0]["head"] != fresh["rounds"][1]["head"]
 
 
 @pytest.mark.parametrize("environment", ["external", "claude-cloud"])
@@ -887,9 +963,21 @@ def test_merge_is_bound_to_the_allowed_head_and_cleans_up_after(world):
     assert git(world.repo, "rev-parse", "HEAD") == git(world.origin, "rev-parse", "main"), "원본이 앞으로 갔다"
     assert not path.exists() and not git(world.repo, "branch", "--list", "fix-k"), "작업트리와 브랜치를 지웠다"
     assert not git(world.origin, "branch", "--list", "fix-k"), "원격 브랜치도"
-    assert loop._cells == {} and (world.tmp / "review/proj/7/round-1.md").exists()
+    assert loop._cells == {} and not (world.tmp / "review/proj/7").exists()
     told = [r["text"] for r in chat.recall("next") if r["role"] == "result"]
     assert told[-1] == "PR #7 머지됨 — 라운드 1, 남은 P2 1"
+
+
+def test_legacy_cleanup_preserves_a_local_commit_added_after_review(world):
+    spec = looped(pr_spec(world, "late-local", 7)["id"])
+    path = Path(spec["worktree"])
+    commit = world.hub.squash(7)
+    git(path, "commit", "--allow-empty", "-m", "local after review")
+    newer = git(path, "rev-parse", "HEAD")
+    loop.finish(world.repo, spec, "main", commit, "Merged fixture")
+    assert not path.exists()
+    assert git(world.repo, "rev-parse", "late-local") == newer
+    assert not specs.load("proj", "late-local")["cleanup_complete"]
 
 
 def test_merge_refuses_a_head_the_review_did_not_allow(world):
@@ -945,6 +1033,31 @@ def test_a_merge_that_only_queued_cleans_nothing_until_it_lands(world):
     world.hub.prs[7].update(state="MERGED", merged=world.hub.squash(7), queue=False)
     client().get("/api/specs")   # the window comes back into focus
     assert specs.load("proj", "fix-m")["state"] == "머지됨" and not path.exists()
+
+
+@pytest.mark.parametrize("queue_read", [False, True])
+def test_failed_merge_observation_is_logged_without_advancing_cleanup(tmp_path, queue_read):
+    from common import errorlog
+
+    repo = tmp_path / "fixture"
+    spec = {"id": "status-error", "repo": repo.name, "state": "머지 대기",
+            "pr": {"number": 70, "base": "main", "head": "a" * 40}, "rounds": []}
+
+    def observation(*_args):
+        if queue_read:
+            return {"state": "OPEN"}
+        raise RuntimeError("Fixture status failure")
+
+    with patch.object(specs, "load", return_value=spec), patch.object(loop, "gh_json", observation), \
+         patch.object(loop, "in_queue", side_effect=RuntimeError("Fixture queue failure")), \
+         patch.object(loop, "finish") as finish:
+        loop.landed(repo, spec)
+    finish.assert_not_called()
+    assert spec["state"] == "머지 대기"
+    rows = [json.loads(line) for line in errorlog.FILE.read_text(encoding="utf-8").splitlines()]
+    row = next(row for row in rows if row["source"] == "merge-status")
+    assert (row["repo"], row["spec"], row["pr"]) == ("fixture", "status-error", 70)
+    assert row["type"] == "RuntimeError" and "Fixture" in row["error"]
 
 
 def test_every_row_of_the_after_merge_table(world):

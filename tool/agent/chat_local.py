@@ -1,9 +1,11 @@
 """Find this checkout's settings and the current user's executables, nothing else.
 
-Credential files are never touched.
+Account quota reads the existing CLI credential file without changing it.
 """
 
 import json
+import hashlib
+from datetime import datetime
 import os
 from pathlib import Path
 import queue
@@ -12,6 +14,8 @@ import shutil
 import subprocess
 import threading
 import time
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
 
 from common.process import background_options
 
@@ -137,3 +141,66 @@ def quota_windows(data: dict) -> list[dict]:
              "window_minutes": value.get("windowDurationMins"), "resets_at": value.get("resetsAt")}
             for name, bucket in buckets.items() for key in ("primary", "secondary")
             if isinstance(value := bucket.get(key), dict)]
+
+
+_claude_usage_cache: dict = {}
+_claude_usage_lock = threading.Lock()
+
+
+def claude_usage(env=None) -> list[dict]:
+    """Read quota with the selected CLI login; never refresh or rewrite credentials.
+
+    Responses close in this call. Cache only public quota fields, keyed by a
+    token digest, and cache failures too to avoid hammering a throttled endpoint.
+    """
+    env = {**os.environ, **(env or {})}
+    token = env.get("CLAUDE_CODE_OAUTH_TOKEN", "")
+    if not token:
+        config = Path(env.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+        try:
+            saved = json.loads((config / ".credentials.json").read_text(encoding="utf-8"))
+            token = (saved.get("claudeAiOauth") or {}).get("accessToken", "")
+        except (OSError, ValueError, AttributeError):
+            pass
+    if not token:
+        raise RuntimeError("Claude 계정 로그인 사용량을 확인할 수 없다. Claude CLI 로그인을 확인하세요")
+    key = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    with _claude_usage_lock:
+        cached = _claude_usage_cache.get(key)
+        if cached and time.monotonic() - cached["at"] < 300:
+            if cached.get("error"):
+                raise RuntimeError(cached["error"])
+            return cached["quota"]
+        try:
+            request = Request("https://api.anthropic.com/api/oauth/usage", headers={
+                "Authorization": f"Bearer {token}", "anthropic-beta": "oauth-2025-04-20",
+                "Accept": "application/json", "User-Agent": "wiki-agent"})
+            with urlopen(request, timeout=8) as response:
+                quota = claude_quota(json.loads(response.read(100_000)))
+            if not quota:
+                raise ValueError("No quota windows")
+        except (HTTPError, URLError, OSError, ValueError) as exc:
+            status = exc.code if isinstance(exc, HTTPError) else None
+            if isinstance(exc, HTTPError):
+                exc.close()
+            message = f"Claude 계정 사용량을 받지 못했다{f' (HTTP {status})' if status else ''}. 5분 후 다시 확인한다"
+            _claude_usage_cache[key] = {"at": time.monotonic(), "error": message}
+            raise RuntimeError(message) from None
+        _claude_usage_cache[key] = {"at": time.monotonic(), "quota": quota}
+        return quota
+
+
+def claude_quota(data: dict) -> list[dict]:
+    """OAuth utilization is already a percentage; SDK event utilization is a fraction."""
+    rows = []
+    for name in ("five_hour", "seven_day", "seven_day_opus", "seven_day_sonnet", "seven_day_oauth_apps"):
+        value = data.get(name)
+        if not isinstance(value, dict):
+            continue
+        used, reset = value.get("utilization"), value.get("resets_at")
+        if not isinstance(used, (int, float)) or isinstance(used, bool) or not 0 <= used <= 100:
+            continue
+        if isinstance(reset, str):
+            reset = datetime.fromisoformat(reset.replace("Z", "+00:00")).timestamp()
+        rows.append({"name": name, "used_percent": used, "resets_at": reset})
+    return rows

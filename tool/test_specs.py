@@ -83,7 +83,8 @@ class Remote:
             self.body = Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8")
             return ok()
         if args[:3] == ["gh", "pr", "view"]:
-            return ok(json.dumps({"state": "MERGED" if self.merged else "OPEN", "mergedAt": None}))
+            return ok(json.dumps({"state": "MERGED" if self.merged else "OPEN", "mergedAt": None,
+                                  "baseRefName": "main", "mergeCommit": {"oid": "fixture-merge"}}))
         if args[:3] == ["gh", "pr", "list"] and "--head" in args:
             return ok("[]")
         if args[0] == "gh":
@@ -536,7 +537,7 @@ def test_a_passing_gate_opens_the_pr_and_the_plan_row_follows(repo):
         assert next(s for s in listed["specs"] if s["id"] == sid)["state"] == "머지됨"
         web.get("/api/specs")
         result = [r["text"] for r in chat.recall("next") if r["role"] == "result"]
-        assert result[-1] == f"PR #7 머지됨 — {spec['goal']}" and len(result) == 2
+        assert result[-1].startswith("PR #7 머지됨") and len(result) == 2
 
 
 # -- which checks a head needs ------------------------------------------------------

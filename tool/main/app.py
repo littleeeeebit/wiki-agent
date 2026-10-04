@@ -25,9 +25,13 @@ from urllib.parse import unquote
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import AnyHttpUrl, BaseModel
+from pydantic import AnyHttpUrl, BaseModel, Field
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from fastapi.exception_handlers import http_exception_handler, request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 
 import translate
+from common import errorlog
 
 from . import architecture, channels, connect, improvements, loop, mobile, planning, query, specs, survey, verification, work
 
@@ -84,20 +88,60 @@ app.include_router(connect.router)
 app.include_router(verification.router)
 app.include_router(mobile.router)
 
+@app.exception_handler(StarletteHTTPException)
+async def http_error(request: Request, exc: StarletteHTTPException):
+    errorlog.record("http", exc.detail, method=request.method, route=request.url.path, status=exc.status_code)
+    return await http_exception_handler(request, exc)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_error(request: Request, exc: RequestValidationError):
+    # Validation exceptions embed submitted inputs; record only locations/types.
+    errorlog.record("http", "Invalid request", method=request.method, route=request.url.path, status=422,
+                    fields=[{"loc": e["loc"], "type": e["type"]} for e in exc.errors()])
+    return await request_validation_exception_handler(request, exc)
+
+
+@app.middleware("http")
+async def log_failures(request: Request, call_next):
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        errorlog.record("http", exc, method=request.method, route=request.url.path)
+        raise
+    if response.status_code >= 500:
+        errorlog.record("http-response", "Server error", method=request.method, route=request.url.path,
+                        status=response.status_code)
+    return response
+
+class ScreenError(BaseModel):
+    message: str = Field(max_length=8000)
+    stack: str = Field(default="", max_length=16000)
+
+
+@app.post("/api/errors")
+def screen_error(body: ScreenError) -> dict:
+    errorlog.record("screen", body.message, stack=body.stack)
+    return {"ok": True}
+
 @app.middleware("http")
 async def only_this_screen(request: Request, call_next):
     """Keep the local origin guard and require pairing on the explicit tunnel."""
 
+    def refused(status: int, message: str):
+        errorlog.record("http-guard", message, method=request.method, route=request.url.path, status=status)
+        return JSONResponse({"detail": message}, status_code=status)
+
     if not mobile.companion.allowed(request):
-        return JSONResponse({"detail": "이 화면의 요청이 아니다"}, status_code=403)
+        return refused(403, "이 화면의 요청이 아니다")
     remote = not mobile.local(request)
     pairing = request.url.path == "/api/mobile/pair"
     if remote:
         if request.method != "GET" and request.headers.get("origin") != mobile.companion.origin:
-            return JSONResponse({"detail": "이 화면의 요청이 아니다"}, status_code=403)
+            return refused(403, "이 화면의 요청이 아니다")
         if request.url.path.startswith("/api/") and request.url.path != "/api/mobile/status" and not pairing \
                 and not mobile.companion.authenticated(request):
-            return JSONResponse({"detail": "PC에서 연결 링크를 만들어 휴대폰을 연결하세요"}, status_code=401)
+            return refused(401, "PC에서 연결 링크를 만들어 휴대폰을 연결하세요")
     # Which project the screen shows. `query.project()` refuses a request from
     # a screen that shows another — a switch included: a screen that shows the
     # current project switches as before, and a stale one must not act at all.
@@ -109,7 +153,7 @@ async def only_this_screen(request: Request, call_next):
     # screen holds everything but `/api/channels` until it knows its project;
     # this is the check behind that promise.
     if not screen and request.method != "GET" and not pairing:
-        return JSONResponse({"detail": "어느 프로젝트의 화면인지 모르는 쓰기는 받지 않는다"}, status_code=400)
+        return refused(400, "어느 프로젝트의 화면인지 모르는 쓰기는 받지 않는다")
     token = query.claimed.set(unquote(screen) if screen else None)
     try:
         response = await call_next(request)
@@ -422,6 +466,14 @@ def main() -> int:
     # cp949 character eight times.
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
+    previous_exception, previous_thread_exception = sys.excepthook, threading.excepthook
+    def exception(kind, value, trace):
+        errorlog.record("uncaught", value)
+        previous_exception(kind, value, trace)
+    def thread_exception(args):
+        errorlog.record("thread", args.exc_value, thread=args.thread.name if args.thread else "")
+        previous_thread_exception(args)
+    sys.excepthook, threading.excepthook = exception, thread_exception
 
     ap = argparse.ArgumentParser(prog="python tool/main")
     ap.add_argument("--port", type=int, default=8787)

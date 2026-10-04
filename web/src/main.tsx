@@ -4,6 +4,17 @@ import './index.css'
 import App from './App.tsx'
 import { MobileAccess } from '@/components/MobileAccess'
 import { openWebLink } from '@/lib/links'
+import { reportError } from '@/lib/api'
+
+// Bound repeated failures locally; reporting must never create another rejection.
+let errorReports = 0
+const logError = (error: unknown) => {
+  if (errorReports++ >= 20) return
+  void reportError(error instanceof Error ? error.message : String(error),
+    error instanceof Error ? error.stack : '').catch(() => {})
+}
+window.addEventListener('error', (event) => logError(event.error || event.message))
+window.addEventListener('unhandledrejection', (event) => logError(event.reason))
 
 // In the window, the WebView's own menu — save as, print — is a web page's,
 // not this program's. It stays where it does something: a text box, selected

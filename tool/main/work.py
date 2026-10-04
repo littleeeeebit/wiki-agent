@@ -26,8 +26,9 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from agent import ChatSession, codex_usage
+from agent import ChatSession, claude_usage, codex_usage
 from common.process import background_options
+from common import errorlog
 from workspace import remove, worktrees
 
 # One lock with the wiki query's. A project switch reads every hold and
@@ -84,16 +85,16 @@ def provider_usage(provider: Literal["claude", "codex"], path: str = "") -> dict
         chat = _sessions.get(path)
         if chat:
             return {"provider": "codex" if chat.is_codex else "claude", **chat.status()}
-    if provider == "claude":
-        return {"provider": provider, "live": False, "quota": [], "usage": {}, "connection_ms": None, "error": ""}
     with _provider_usage_lock:
-        if not _provider_usage or time.monotonic() - _provider_usage["at"] >= 60:
+        cached = _provider_usage.get(provider)
+        if not cached or time.monotonic() - cached["at"] >= (60 if provider == "codex" else 300):
             try:
-                data = {"quota": codex_usage(), "error": ""}
-            except Exception:
+                data = {"quota": codex_usage() if provider == "codex" else claude_usage(), "error": ""}
+            except Exception as exc:
+                errorlog.record("provider-usage", exc, provider=provider)
                 data = {"quota": [], "error": "계정 사용량을 받지 못했다"}
-            _provider_usage.update(at=time.monotonic(), data=data)
-        return {"provider": provider, "live": False, "usage": {}, "connection_ms": None, **_provider_usage["data"]}
+            cached = _provider_usage[provider] = {"at": time.monotonic(), "data": data}
+        return {"provider": provider, "live": False, "usage": {}, "connection_ms": None, **cached["data"]}
 
 
 @router.get("/api/providers/usage")
@@ -577,6 +578,8 @@ class Run:
         self.diff_base: str | None = None
 
     def put(self, payload: dict) -> None:
+        if payload.get("kind") == "error" or (payload.get("meta") or {}).get("error"):
+            errorlog.record("agent", payload.get("text", "Failed turn"), turn=self.turn, session=self.session_id)
         with self.wake:
             self.events.append({**payload, "seq": len(self.events), "turn": self.turn, "ts": time.time()})
             self.wake.notify_all()
@@ -735,6 +738,7 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> 
 
             then = specs.check(path, run, final)
     except Exception as exc:  # a turn that broke still owes the screen a reason
+        errorlog.record("agent-exception", exc, turn=run.turn, path=str(path))
         # A stop while the process started breaks the start, not the turn.
         failed = "사람이 멈춤" if run.halt.is_set() else f"{type(exc).__name__}: {exc}"
         run.put({"kind": "error", "text": failed, "meta": {}, "session_id": chat.id, "parent_id": None})

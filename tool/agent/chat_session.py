@@ -34,7 +34,7 @@ from pathlib import Path
 from common import worktree_home
 from common.host import INSTRUCTIONS, environment, skill_config
 
-from .chat_local import cli_command, codex_usage, quota_windows
+from .chat_local import claude_usage, cli_command, codex_usage, quota_windows
 from . import read_tools
 
 # Something opened in a browser that edits files is not a chat, it is a remote
@@ -240,18 +240,24 @@ class ChatSession:
         self.usage: dict = {}
         self.quota: list[dict] = []
         self._quota_at = 0.0
+        self._quota_poll_at = 0.0
         self._quota_error = ""
         self._quota_lock = threading.Lock()
         self._compacting = False
 
     def status(self) -> dict:
         """Connection timing and provider usage, without login identifiers."""
-        if self.is_codex and self._quota_lock.acquire(blocking=False):
+        if self._quota_lock.acquire(blocking=False):
             try:
-                if time.monotonic() - self._quota_at >= 60:
-                    self._quota_at = time.monotonic()
+                interval = 60 if self.is_codex else 300
+                last = self._quota_at if self.is_codex else self._quota_poll_at
+                if time.monotonic() - last >= interval:
+                    self._quota_poll_at = time.monotonic()
+                    if self.is_codex:
+                        self._quota_at = self._quota_poll_at
                     try:
-                        self.quota = codex_usage(env=self._env, cwd=self.repo)
+                        self.quota = codex_usage(env=self._env, cwd=self.repo) if self.is_codex else claude_usage(env=self._env)
+                        self._quota_at = time.monotonic()
                         self._quota_error = ""
                     except Exception:
                         self._quota_error = "계정 사용량을 받지 못했다 · 마지막 사용량은 오래되었을 수 있다"
@@ -977,6 +983,9 @@ class ChatSession:
                 utilization = info.get("utilization")
                 window = {"name": name, "used_percent": utilization * 100 if isinstance(utilization, (float, int)) else None,
                           "resets_at": info.get("resetsAt", info.get("resets_at")), "status": info.get("status")}
+                previous = next((q for q in self.quota if q["name"] == name), None)
+                if previous and window["used_percent"] is None and previous.get("resets_at") == window["resets_at"]:
+                    window["used_percent"] = previous.get("used_percent")
                 self.quota = [q for q in self.quota if q["name"] != name] + [window]
                 self._quota_at = time.monotonic()
 

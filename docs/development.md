@@ -111,9 +111,13 @@ Korean overlay; submissions retain original option labels.
 status for the task model row. `GET /api/providers/usage` gathers account limits
 from work, conversation and review sessions for the rail footer. Each provider's
 quota windows are displayed separately, with only the reset date and time.
-Codex reads its
-public account quota through app-server, cached for one minute; Claude uses
-its rate-limit stream events. Missing account fields are shown as unavailable.
+Codex reads its public account quota through app-server, cached for one minute.
+Claude reads its existing CLI OAuth login's account quota, cached for five
+minutes, including failures. It never refreshes or writes credentials. SDK
+rate-limit events supplement this reading; missing utilization does not erase
+a measured percentage for the same reset window. SDK events use a fraction,
+while the account endpoint supplies a percentage. Missing account fields are
+shown as unavailable.
 The response's `provider` names the attached session even if the next-turn
 model selector differs. Diff stdout is read to 200,001 characters and the Git
 child is stopped at the limit; a ten-second watchdog reaps stalled children.
@@ -124,7 +128,10 @@ screen so its Python server loads the updated routes too.
 New tasks create a branch with `git switch -c` in the selected repository;
 they do not create another checkout or a `<repo>-worktrees` folder. Only one
 branch can run in a checkout at a time. Starting or opening another branch
-waits for active work/review and refuses uncommitted changes. Existing linked
+waits for active work/review. New task creation carries compatible staged,
+unstaged and untracked changes through Git's ordinary switch; Git refuses
+overwrites without committing or stashing anything. Explicitly reopening an
+existing task still requires a clean checkout. Existing linked
 worktrees remain readable, and external PR review can explicitly use one.
 The original repository cannot be deleted through worktree cleanup.
 New tasks started from another managed task use its saved base branch, so the
@@ -140,8 +147,16 @@ verification keep their separate execution scopes.
 
 Implementation and repair agents may commit, push and open their task PR.
 Reused PRs receive the current title, requirements and completion evidence.
+By default independent review approval and a passing final gate proceed
+through the existing guarded merge automatically. `auto_merge = false` in
+the loop settings retains manual merge. A queue waits for confirmed merge.
 After merge, a clean shared task checkout returns to and fast-forwards its
-base; busy or dirty checkouts and unrelated branches remain untouched.
+base. The reviewed local branch is deleted only after its content is verified
+on that base, with an atomic expected-head check. The remote branch is deleted
+with a lease on the reviewed head. Busy or dirty checkouts, newer commits and
+unrelated branches retain a visible cleanup-pending task. Cleanup is persisted
+and retried across restarts; a merged task disappears from the rail only after
+cleanup completes. Drafts remain under Start pending.
 If that base is already open in a sibling worktree, the selected checkout uses
 one reusable `wiki-base/<checkout-id>/<base>` branch tracking the remote base.
 This creates only a Git ref, not a checkout. It never moves the sibling's base
@@ -151,6 +166,27 @@ without changing an occupied branch.
 Starting from a reopened merged task refuses an ahead or divergent saved base,
 or an unverified upstream, before creating any branch. Resolve that history
 explicitly; unpublished sibling work is never silently imported into the task.
+
+A manually published PR whose branch is already open in the selected checkout
+reuses that directory after verifying its clean state and exact PR head. It
+keeps the branch-derived task ID, rather than using the repository folder name.
+Busy checkouts and unpublished edits are refused before attaching metadata.
+Cleanup closes the review cell and removes only that PR's `raw/review/<repo>/<pr>`
+artifacts. Requirements, round verdicts and deferred P2 remain in the spec.
+
+Errors are recorded locally in `raw/errors.jsonl`: HTTP refusals and exceptions,
+agent/query failures, review startup and cleanup failures, uncaught server/thread
+exceptions, and browser errors/rejected promises via `POST /api/errors`. Records
+carry UTC time, source and workflow identifiers; exceptions include stack traces
+without frame locals. Request bodies, prompts, headers and URL queries are not
+recorded. Known credential formats and secret environment values are redacted.
+Files use UTF-8 without BOM and rotate at 2 MB with three backups. Logging failure
+does not change the original response or workflow result. Browser reporting is
+limited to twenty errors per loaded page. These local records are not uploaded.
+
+Investigation and verification scope are recorded in
+[task lifecycle recovery](research/task-lifecycle-recovery.md).
+
 The server retains gate execution, PR recovery and independent review.
 An idle task's requirements can be edited in its spec panel. During a turn,
 later instructions can be recorded through a `spec-update` block before the

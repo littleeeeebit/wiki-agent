@@ -67,6 +67,10 @@ export function Agent({
             a spec's [시작] runs its first turn on them. */}
         <div className="agent-toolbar flex h-11 items-center justify-end gap-1.5">
           <span className="agent-model-label shrink-0 font-heading text-[11px] font-semibold text-faint">작업 모델</span>
+          <span className="min-w-0 truncate text-[12.5px] leading-4" aria-label="선택한 작업 모델">
+            {choice.model ? options?.models.find((model) => model.id === choice.model)?.label || choice.model
+              : last?.model || 'Claude 기본'}
+          </span>
           <TokenUsage model={choice.model} path={row?.path} />
           {row && busy && last?.turn && (
             <Btn tone="danger" onClick={() => onStop(last)} title="도는 턴을 멈춘다. 대화는 남아 다음 지시가 이어진다">
