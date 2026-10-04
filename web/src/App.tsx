@@ -677,7 +677,7 @@ export default function App() {
             }} />
           </div>
         )}
-        {view === 'architecture' && repo && <div className="min-h-0 flex-1"><Architecture key={repo} repo={repo} theme={theme} /></div>}
+        {view === 'architecture' && repo && <div className="min-h-0 flex-1"><Architecture key={repo} repo={repo} theme={theme} korean={on} /></div>}
         {view === 'suite' && repo && <div className="min-h-0 flex-1"><Suite key={repo} repo={repo} korean={on}
           onPeek={showPeek} onOpen={(cell) => {
             const target = list.find((t) => cell.task ? t.spec?.id === cell.task : t.path === cell.path)
