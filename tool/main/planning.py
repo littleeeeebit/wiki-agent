@@ -37,7 +37,7 @@ from pydantic import BaseModel
 from agent import ChatSession
 from common.budget import Budget, Cancelled, Exhausted
 
-from . import channels, loop, specs, work
+from . import channels, loop, runtime, specs, work
 from .query import ROOT, _lock, current_repo, hold
 
 PROMPT = (ROOT / "tool/prompts/plan-planner.md").read_text(encoding="utf-8")
@@ -540,6 +540,7 @@ def consume(path: Path, run: work.Run, text: str) -> tuple[str, str, dict, int, 
             made = work.steps(run.events)
         try:
             work.remember(path, "assistant", final, error=failed, steps=made,
+                          turn=run.turn, cell=run.chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
                           provider="codex" if run.chat.is_codex else "claude",
                           **{k: v for k, v in meta.items() if k != "session_id"})
         except OSError as exc:  # a lost transcript row must not take the turn's usage with it
@@ -986,6 +987,15 @@ def handoff(repo: str, sid: str, path: Path) -> None:
 
 def drive(worker: Worker, path: Path, repo: Path, release) -> None:
     try:
+        _drive(worker, path, repo, release)
+    finally:
+        with _lock:
+            if _workers.get((worker.repo, worker.sid)) is worker:
+                del _workers[(worker.repo, worker.sid)]
+
+
+def _drive(worker: Worker, path: Path, repo: Path, release) -> None:
+    try:
         walk(worker, path, repo)
     except Exception as exc:  # a broken worker still owes the plan a reason
         worker.stop("broken", f"{type(exc).__name__}: {exc}")
@@ -994,9 +1004,6 @@ def drive(worker: Worker, path: Path, repo: Path, release) -> None:
             worker.chat.close()
         planned(worker.repo, worker.sid, spent=worker.spent())
         release()
-        with _lock:
-            if _workers.get((worker.repo, worker.sid)) is worker:
-                del _workers[(worker.repo, worker.sid)]
     try:
         spec = specs.load(worker.repo, worker.sid)
         if spec and spec["planning"]["phase"] == "handoff" and not spec["planning"].get("handed"):
@@ -1013,19 +1020,21 @@ def launch(repo: Path, spec: dict, release) -> None:
 
     worker = Worker(repo.name, spec["id"], spec["planning"])
     with _lock:
+        if runtime.stopping.is_set():
+            release()
+            raise HTTPException(503, "서버가 종료 중이다. 다시 시작한 뒤 이어가라")
         if (repo.name, spec["id"]) in _workers:
             release()
             raise HTTPException(409, "이 계획은 이미 돌고 있다")
         _workers[(repo.name, spec["id"])] = worker
-    worker.thread = threading.Thread(target=drive, args=(worker, Path(spec["worktree"]), repo, release),
-                                     daemon=True)
-    try:
-        worker.thread.start()
-    except BaseException:
-        with _lock:
+        try:
+            worker.thread = threading.Thread(target=drive, args=(worker, Path(spec["worktree"]), repo, release),
+                                             daemon=True)
+            worker.thread.start()
+        except BaseException:
             _workers.pop((repo.name, spec["id"]), None)
-        release()
-        raise
+            release()
+            raise
 
 
 def held(path: Path):
@@ -1042,7 +1051,7 @@ def close_all() -> None:
         worker.cancel("restart")
     for worker in running:
         if worker.thread is not None:
-            worker.thread.join(5)
+            worker.thread.join()
 
 
 def recover() -> None:

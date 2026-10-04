@@ -228,8 +228,10 @@ disclosure per file for its own diff. Paths use code type, controls use the
 control stage, and additions/deletions retain `add`/`del`. The list remains
 within 35dvh and an expanded patch within 25dvh. Task model options include
 FAST OFF by default, with an explicit switch state and provider support hint.
-The center pane's App structure tab shows the app's local `.omm` diagram,
-module selector and source inventory. Diagram surfaces remain neutral;
+The center pane's App structure tab shows the selected repository's local
+`.omm` diagram, module selector and source inventory. Missing documents offer
+an explicit Add .omm action; the repository name stays visible above it.
+Diagram-loading errors offer a screen reload. Diagram surfaces remain neutral;
 selection and enabled FAST use the existing blue interaction token. Diagram
 text and source inventories use the code stage. Diagrams fit the available
 width initially; natural-size mode scrolls within the container. No separate

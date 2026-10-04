@@ -7,10 +7,12 @@ against a bare origin, so pushes, the squash merge and the lease on deleting
 the remote branch all run through git itself.
 """
 
+import asyncio
 import json
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -23,6 +25,7 @@ import pytest
 from agent import chat_session
 from agent.chat_session import Event
 from main import channels as chat_channels
+from main import app as main_app
 from main import loop, specs, work
 from main import query as chat
 from test_main import _repo, client, no_machine_settings  # noqa: F401 — the fixture is autouse
@@ -542,6 +545,12 @@ def test_a_disposition_id_counts_only_when_this_round_gave_it_to_that_finding():
     again = loop.vouched(said("[P1] a.py:1 — close connection", "F2"), shared)
     assert again[0]["id"] == "F2"
     assert loop.disputed(loop.vouched(said("[P1] a.py:1 — validate input", "F1"), shared), again) == ""
+    misplaced = loop.vouched(said("[P1] a.py:1 — validate input", "F2"), shared)
+    assert misplaced[0]["id"] is None
+    completed = loop.settled(shared, misplaced)
+    assert [f["disposition"] for f in completed] == ["disagree", None]
+    ambiguous = loop.vouched(said("[P1] a.py:1 — reworded", None), shared)
+    assert all(f["disposition"] is None for f in loop.settled(shared, ambiguous))
 
 
 def test_the_same_change_reviewed_as_plan_or_code_gets_its_own_criteria(world):
@@ -747,6 +756,133 @@ def test_a_refusal_goes_to_the_work_cell_through_the_gate_and_up(world):
     assert spec["rounds"][0]["disposition"][0]["finding"] == finding
 
 
+@pytest.mark.parametrize("early", ["", "Tests are still running.", "claimed-fixed", "partial", "unsupported-disagree", "errored"])
+def test_the_next_review_waits_for_a_complete_correction_and_published_head(world, monkeypatch, early):
+    spec = pr_spec(world, "repair-pending", 7)
+    finding = "[P1] a.txt:1 — incomplete repair"
+    other = "[P1] b.txt:2 — another pending finding"
+    if early == "claimed-fixed":
+        early = "```disposition\n" + json.dumps([
+            {"finding": f, "action": "fixed", "evidence": "claimed done"} for f in (finding, other)]) + "\n```"
+    elif early == "partial":
+        early = fixed((finding, "fixed"))
+    elif early == "unsupported-disagree":
+        early = "```disposition\n" + json.dumps([
+            {"finding": f, "action": "disagree", "evidence": ""} for f in (finding, other)]) + "\n```"
+    elif early == "errored":
+        early = fixed((finding, "fixed"), (other, "fixed"))
+        say = Worker.say
+
+        def interrupted(worker, text, halt=None):
+            if not worker.heard:
+                yield Event("error", "Provider stream interrupted", {}, worker.id)
+            yield from say(worker, text, halt)
+
+        monkeypatch.setattr(Worker, "say", interrupted)
+    entered, release = threading.Event(), threading.Event()
+
+    def finish_repair(path, halt):
+        entered.set()
+        assert release.wait(15), "The fixture did not finish the correction"
+        return fixed((finding, "fixed"), (other, "fixed"))(path, halt)
+
+    Reviewer.replies = [deny(finding, other), allow]
+    Worker.replies = [early, finish_repair]
+    loop.kick("proj", spec["id"])
+    try:
+        waited(lambda: entered.is_set() or not loop._loops, seconds=15)
+        assert entered.is_set(), "The loop advanced without continuing the incomplete correction"
+        pending = specs.load("proj", spec["id"])
+        assert pending["state"] == "고치는 중 R1" and len(pending["rounds"]) == 1
+        assert not (loop.folder("proj", 7) / "round-2.md").exists()
+        assert world.hub.head(7) == spec["pr"]["head"]
+        assert len(Reviewer.made[0].heard) == 1
+    finally:
+        release.set()
+        waited(lambda: not loop._loops)
+    complete = specs.load("proj", spec["id"])
+    assert complete["state"] == "머지 가능" and len(complete["rounds"]) == 2
+    assert complete["rounds"][1]["head"] != complete["rounds"][0]["head"]
+    assert complete["rounds"][1]["head"] == world.hub.head(7)
+
+
+@pytest.mark.parametrize("stored", ["pending", "partial", "stale"])
+def test_resume_finishes_the_pending_correction_before_requesting_another_review(world, stored):
+    spec = pr_spec(world, "repair-resume", 7)
+    finding = "[P1] a.txt:1 — incomplete repair"
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = ["", ""]
+    pending = looped(spec["id"])
+    assert pending["state"] == "멈춤" and len(pending["rounds"]) == 1
+    assert pending["rounds"][0]["disposition"] is None
+    assert not (loop.folder("proj", 7) / "round-2.md").exists()
+    stale = None
+    if stored == "partial":
+        specs.update("proj", spec["id"], rounds=[{**pending["rounds"][0], "disposition": []}])
+    elif stored == "stale":
+        stale = {**pending["rounds"][0], "n": 2, "stale": True}
+        specs.update("proj", spec["id"], rounds=[*pending["rounds"], stale])
+    Worker.replies = [fixed((finding, "fixed"))]
+    client().post(f"/api/specs/{spec['id']}/resume", json={}).raise_for_status()
+    waited(lambda: not loop._loops)
+    complete = specs.load("proj", spec["id"])
+    assert complete["state"] == "머지 가능" and len(loop.counted(complete)) == 2
+    assert "round 1" in Worker.made[-1].heard[-1]
+    assert loop.counted(complete)[1]["head"] != complete["rounds"][0]["head"]
+    if stale:
+        assert complete["rounds"][1] == stale and len(complete["rounds"]) == 3
+
+
+@pytest.mark.parametrize("identity", [False, True])
+@pytest.mark.parametrize("ambiguous", [False, True])
+def test_same_line_findings_need_separate_correction_reports_before_the_next_review(world, identity, ambiguous):
+    spec = pr_spec(world, "same-line-repair", 7)
+    findings = ["[P1] a.py:10 — validate input", "[P1] a.py:10 — close connection"]
+    Reviewer.replies = [denied(findings, meta(("a", "input"), ("a", "connection"))) if identity else deny(*findings), allow]
+
+    def report(entries):
+        return "```disposition\n" + json.dumps([
+            {"finding": f, "action": "not-reproduced", "evidence": f"Ran the trigger for {f}"} for f in entries]) + "\n```"
+
+    entered, release = threading.Event(), threading.Event()
+
+    def complete(_path, _halt):
+        entered.set()
+        assert release.wait(15)
+        return report(findings)
+
+    Worker.replies = [report(["[P1] a.py:10 — this location" if ambiguous else findings[0]]), complete]
+    loop.kick("proj", spec["id"])
+    try:
+        waited(lambda: entered.is_set() or not loop._loops)
+        assert entered.is_set(), "One location-based disposition incorrectly completed two findings"
+        pending = specs.load("proj", spec["id"])
+        assert pending["state"] == "고치는 중 R1" and len(pending["rounds"]) == 1
+        assert not (loop.folder("proj", 7) / "round-2.md").exists()
+        assert world.hub.head(7) == spec["pr"]["head"]
+    finally:
+        release.set()
+        waited(lambda: not loop._loops)
+    finished = specs.load("proj", spec["id"])
+    assert finished["state"] == "머지 가능" and len(finished["rounds"]) == 2
+    assert all(f["disposition"] == "not-reproduced" for f in finished["rounds"][0]["items"])
+    assert world.hub.head(7) == spec["pr"]["head"]
+
+
+@pytest.mark.parametrize("action", ["disagree", "not-reproduced"])
+def test_evidence_backed_correction_without_a_code_change_can_be_reviewed(world, action):
+    spec = pr_spec(world, "repair-no-change", 7)
+    finding = "[P1] a.txt:1 — alleged defect"
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = ["```disposition\n" + json.dumps([
+        {"finding": finding, "action": action, "evidence": "Ran the reported trigger; output is correct"}]) + "\n```"]
+    complete = looped(spec["id"])
+    assert complete["state"] == "머지 가능" and len(complete["rounds"]) == 2
+    assert complete["rounds"][0]["disposition"][0]["action"] == action
+    assert complete["rounds"][1]["head"] == spec["pr"]["head"] == world.hub.head(7)
+    assert len(Worker.made[0].heard) == 1
+
+
 def test_the_gate_failing_twice_in_a_row_stops(world):
     pr_spec(world, "fix-c", 7)
     Reviewer.replies = [deny("[P1] a.txt:1 — 틀렸다")]
@@ -884,9 +1020,221 @@ def test_a_restart_stops_every_running_loop(world):
     specs.update("proj", "fix-i", state="리뷰 R2")
     pr_spec(world, "fix-j", 8)
     specs.update("proj", "fix-j", state="머지 가능")
-    loop.recover()
+    assert loop.recover() == [("proj", "fix-i")]
     assert specs.load("proj", "fix-i")["stopped"] == {"reason": "서버 재시작", "detail": ""}
     assert specs.load("proj", "fix-j")["state"] == "머지 가능"
+
+
+@pytest.mark.parametrize("interrupted", ["running", "restart-stop", "correction"])
+def test_server_start_resumes_reviews_without_another_button_click(world, interrupted):
+    spec = pr_spec(world, "restart-automatic", 7)
+    finding = "[P1] a.txt:1 — pending repair at restart"
+    if interrupted == "correction":
+        Reviewer.replies, Worker.replies = [deny(finding)], ["", ""]
+        pending = looped(spec["id"])
+        assert pending["state"] == "멈춤" and len(pending["rounds"]) == 1
+        specs.update("proj", spec["id"], state="고치는 중 R1", stopped=None)
+        Worker.replies = [fixed((finding, "fixed"))]
+    elif interrupted == "restart-stop":
+        specs.update("proj", spec["id"], state="멈춤", stopped={"reason": loop.Why.RESTART.value, "detail": ""})
+    else:
+        specs.update("proj", spec["id"], state="리뷰 R1")
+    for number, reason in ((8, loop.Why.PERSON), (9, loop.Why.GATE)):
+        paused = pr_spec(world, f"paused-{number}", number)
+        specs.update("proj", paused["id"], state="멈춤", stopped={"reason": reason.value, "detail": "preserve"})
+    Reviewer.replies = [allow]
+
+    async def exercise():
+        with patch.object(loop, "poll", lambda *_: None), patch.object(main_app.architecture, "watch", lambda stop: None), \
+             patch.object(main_app.planning, "recover", lambda: None), patch.object(main_app.survey, "recover", lambda: None):
+            async with main_app.lifespan(main_app.app):
+                waited(lambda: not loop._loops)
+                complete = specs.load("proj", spec["id"])
+                assert complete["state"] == "머지 가능"
+                if interrupted == "correction":
+                    assert len(complete["rounds"]) == 2
+                    assert complete["rounds"][1]["head"] != complete["rounds"][0]["head"]
+                    assert "round 1" in Worker.made[-1].heard[-1]
+                for number in (8, 9):
+                    assert specs.load("proj", f"paused-{number}")["stopped"]["detail"] == "preserve"
+                    assert not (loop.folder("proj", number) / "round-1.md").exists()
+
+    asyncio.run(exercise())
+
+
+def test_automatic_dispatch_preserves_a_new_user_stop_and_a_start_failure_can_be_retried(world):
+    spec = pr_spec(world, "dispatch-recovery", 7)
+    specs.update("proj", spec["id"], state="리뷰 R1")
+    restart = loop.recover()
+    specs.update("proj", spec["id"], state="멈춤", stopped={"reason": loop.Why.PERSON.value, "detail": "new user stop"})
+    for repo, sid in restart:
+        loop.kick(repo, sid, automatic=True)
+    assert not loop._loops and not Reviewer.made
+    assert specs.load("proj", spec["id"])["stopped"]["reason"] == loop.Why.PERSON.value
+    with patch.object(loop.threading, "Thread", side_effect=RuntimeError("Cannot start thread")), \
+         pytest.raises(RuntimeError, match="Cannot start thread"):
+        loop.kick("proj", spec["id"])
+    assert not loop._loops
+    assert "Cannot start thread" in specs.load("proj", spec["id"])["stopped"]["detail"]
+    Reviewer.replies = [allow]
+    assert looped(spec["id"])["state"] == "머지 가능"
+
+
+def test_poller_reattaches_an_active_loop_without_a_driver_and_stops_on_shutdown(world):
+    spec = pr_spec(world, "orphaned-review", 7)
+    specs.update("proj", spec["id"], state="리뷰 R1")
+    Reviewer.replies = [allow]
+    halt = threading.Event()
+    with patch.object(loop, "POLL", .02):
+        thread = threading.Thread(target=loop.poll, args=(halt,), daemon=True)
+        thread.start()
+        try:
+            waited(lambda: specs.load("proj", spec["id"])["state"] == "머지 가능")
+            assert len(Reviewer.made) == 1 and len(Reviewer.made[0].heard) == 1
+        finally:
+            halt.set()
+            thread.join(2)
+        assert not thread.is_alive()
+        waited(lambda: not loop._loops)
+
+
+@pytest.mark.parametrize("producer", ["planning", "work"])
+def test_shutdown_keeps_late_review_handoffs_pending_for_the_next_owner(world, producer):
+    spec = pr_spec(world, "late-shutdown-review", 7)
+    entered, release = threading.Event(), threading.Event()
+
+    def held_step(_loop):
+        entered.set()
+        assert release.wait(15)
+        return False
+
+    async def shutdown():
+        async with main_app.lifespan(main_app.app):
+            pass
+
+    try:
+        with patch.object(loop, "step", held_step), patch.object(loop, "poll", lambda *_: None), \
+             patch.object(main_app.architecture, "watch", lambda *_: None), \
+             patch.object(main_app.planning, "recover", lambda: None), \
+             patch.object(main_app.survey, "recover", lambda: None), \
+             patch.object(getattr(main_app, producer), "close_all", lambda: loop.kick("proj", spec["id"])):
+            asyncio.run(shutdown())
+        assert not loop._loops and not entered.is_set(), "A shutdown handoff started a late review driver"
+        assert specs.load("proj", spec["id"])["state"] == "리뷰 대기"
+    finally:
+        release.set()
+        loop.close_all()
+    Reviewer.replies = [allow]
+    with patch.object(loop, "poll", lambda *_: None), patch.object(main_app.architecture, "watch", lambda *_: None), \
+         patch.object(main_app.planning, "recover", lambda: None), patch.object(main_app.survey, "recover", lambda: None):
+        async def restarted():
+            async with main_app.lifespan(main_app.app):
+                waited(lambda: not loop._loops)
+                assert specs.load("proj", spec["id"])["state"] == "머지 가능"
+        asyncio.run(restarted())
+
+
+def test_shutdown_drains_an_accepted_work_callback_before_releasing_ownership(world):
+    from main.runtime import server_owner
+
+    spec = pr_spec(world, "accepted-shutdown-review", 7)
+    entered, requested, closing, release, finished = (threading.Event() for _ in range(5))
+    errors, runs = [], []
+
+    def callback():
+        entered.set()
+        assert release.wait(20)
+        loop.kick("proj", spec["id"])
+
+    original_close = work.close_all
+
+    def close():
+        closing.set()
+        original_close()
+
+    async def server():
+        async with main_app.lifespan(main_app.app):
+            path = Path(spec["worktree"])
+            runs.append(work.begin(path, work.session(path, "codex:test", "high"), "accepted", lambda: None))
+            assert requested.wait(15)
+
+    def own():
+        try:
+            asyncio.run(server())
+        except BaseException as exc:
+            errors.append(exc)
+        finally:
+            finished.set()
+
+    Worker.replies = ["accepted"]
+    with patch.object(specs, "check", lambda *_: callback), patch.object(loop, "poll", lambda *_: None), \
+         patch.object(main_app.architecture, "watch", lambda *_: None), \
+         patch.object(main_app.planning, "recover", lambda: None), patch.object(main_app.survey, "recover", lambda: None), \
+         patch.object(work, "close_all", close):
+        owner = threading.Thread(target=own, daemon=True)
+        owner.start()
+        try:
+            assert entered.wait(15) and runs[0].done
+            requested.set()
+            assert closing.wait(15)
+            assert not finished.wait(.2), "Ownership was released before the accepted callback finished"
+            with pytest.raises(RuntimeError, match="이미 실행 중"):
+                with server_owner(specs.SPECS.parent):
+                    pytest.fail("A replacement owner overlapped the accepted callback")
+        finally:
+            requested.set()
+            release.set()
+            owner.join(15)
+    assert not owner.is_alive() and not errors and not loop._loops and not work._turns
+    assert specs.load("proj", spec["id"])["state"] == "리뷰 대기"
+    with server_owner(specs.SPECS.parent):
+        pass
+
+
+def test_a_second_server_cannot_stop_another_servers_live_review(world):
+    entered, release = threading.Event(), threading.Event()
+
+    def reviewing(first, text):
+        entered.set()
+        assert release.wait(30), "The fixture did not release the reviewer"
+        return allow(first, text)
+
+    child = '''import asyncio, sys
+from pathlib import Path
+from main import app, specs, loop, planning, survey, architecture, query
+specs.SPECS = Path(sys.argv[1])
+query.LOGS = specs.SPECS.parent / "chat"
+loop.poll = lambda *_: None
+planning.recover = survey.recover = lambda: None
+architecture.watch = lambda stop: None
+async def run():
+    async with app.lifespan(app.app):
+        print("second server started")
+asyncio.run(run())
+'''
+
+    async def exercise():
+        with patch.object(loop, "poll", lambda *_: None), patch.object(main_app.architecture, "watch", lambda stop: None), \
+             patch.object(main_app.planning, "recover", lambda: None), patch.object(main_app.survey, "recover", lambda: None):
+            async with main_app.lifespan(main_app.app):
+                spec = pr_spec(world, "server-owned", 7)
+                Reviewer.replies = [reviewing]
+                loop.kick("proj", spec["id"])
+                assert entered.wait(10)
+                before = specs.load("proj", spec["id"])
+                try:
+                    duplicate = subprocess.run([sys.executable, "-X", "utf8", "-c", child, str(specs.SPECS)],
+                                               cwd=Path(__file__).parent, capture_output=True, text=True,
+                                               encoding="utf-8", timeout=20)
+                    assert duplicate.returncode != 0, duplicate.stdout + duplicate.stderr
+                    assert "second server started" not in duplicate.stdout
+                    assert specs.load("proj", spec["id"]) == before
+                finally:
+                    release.set()
+                    waited(lambda: not loop._loops)
+                assert specs.load("proj", spec["id"])["state"] == "머지 가능"
+
+    asyncio.run(exercise())
 
 
 # -- the pull requests ---------------------------------------------------------------------

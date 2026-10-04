@@ -149,6 +149,34 @@ def test_websocket_runs_existing_guards_and_delivers_each_chunk(companion):
         app.app.router.routes[:] = [r for r in app.app.router.routes if getattr(r, "path", "") != "/api/mobile-fixture-stream"]
 
 
+def test_an_early_phone_disconnect_finishes_the_http_stream_and_releases_the_socket(companion):
+    desktop, phone = browsers()
+    pair(desktop, phone)
+    ended = threading.Event()
+
+    async def chunks():
+        try:
+            yield b"first event"
+            await asyncio.Event().wait()
+        finally:
+            ended.set()
+
+    async def stream():
+        return StreamingResponse(chunks(), media_type="text/event-stream")
+
+    path = "/api/mobile-fixture-disconnect"
+    app.app.add_api_route(path, stream)
+    try:
+        with phone.websocket_connect("wss://fixture.trycloudflare.com/api/mobile/request") as ws:
+            ws.send_json({"url": path})
+            assert ws.receive_json()["status"] == 200
+            assert ws.receive_bytes() == b"first event"
+        assert ended.wait(3), "The disconnected phone left its HTTP producer running"
+        assert not companion.sockets
+    finally:
+        app.app.router.routes[:] = [r for r in app.app.router.routes if getattr(r, "path", "") != path]
+
+
 def test_start_is_explicit_and_reaps_the_child(companion):
     companion.origin = ""
     desktop, _ = browsers()

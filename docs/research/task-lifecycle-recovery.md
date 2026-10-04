@@ -23,6 +23,80 @@ in the reported refusal. Those files were preserved.
 The originally reported failure is reproduced by an isolated real-Git regression
 whose selected checkout is already on the PR branch, without an existing spec.
 
+## Premature review and live-loop interruption
+
+The user's repair agent reported round 2 arriving before its round 1 changes
+were published. Read-only inspection of the saved PR 13 records confirmed
+that both rounds reviewed `803ae40`, and both retained a null disposition.
+Round 1 entered correction at 07:22:11 UTC; round 2 began at 07:22:52 UTC.
+The work record between them held an empty terminal answer with no error.
+`work.run_turn` accepted it as success, `loop.told` returned an empty string,
+and the existing passing gate was reused on the unchanged head. The loop
+therefore advanced without a completed correction. This ordering is observed;
+why the provider returned an empty answer remains unknown.
+
+The [Claude streaming reference](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode)
+describes sequential queued messages and response iterators ending at a result.
+It does not establish that this particular empty result meant the user's
+correction had finished. The repair boundary now validates its own completion:
+a nonempty terminal answer, a disposition and evidence for every serious
+finding, and a changed local head whenever a fix is claimed. Existing round
+checks and push verification still run before the next review.
+An incomplete correction gets one continuation in the same round and work
+session. A second incomplete answer stops with the reason. Explicit resume
+finishes that pending correction before dispatching another review.
+Requirements revised during correction invalidate the old review normally.
+
+The same saved task stopped at 07:33:16 UTC with `서버 재시작`, although the
+desktop server process observed during investigation predated that time.
+A second server's unconditional startup recovery could rewrite the first
+server's live tasks. An isolated subprocess reproduction confirmed that
+defect. The identity of the process that caused the historical stop was not
+established; the user's next-round waiting explanation alone does not account
+for the persisted restart reason.
+
+Server startup now acquires exclusive ownership of the hub's `raw/server.lock`
+before recovery. A second server fails before touching workflow records.
+The lock remains held through shutdown and the file stays in place. It uses
+Python's [Windows byte-range locking](https://docs.python.org/3/library/msvcrt.html#msvcrt.locking)
+or [POSIX flock](https://docs.python.org/3/library/fcntl.html#fcntl.flock), rather
+than treating a leftover file as proof of a live process. A forced-process
+termination regression verifies that the next process can acquire ownership.
+Startup recovery previously stopped every active loop and required explicit
+Continue. This was a real continuity gap, separate from premature round 2.
+Recovery now retains automatic intent for active loops and previous restart
+stops; after exclusive ownership and startup recovery, normal dispatch resumes
+them. Checkout and head checks still apply, pending correction finishes before
+a new review, and interrupted final gates rerun. Explicit user stops, gate
+failures and other blockers remain stopped. The minute poller reattaches active
+states without a driver and exits on server shutdown. Automatic dispatch
+rechecks eligibility so it cannot overwrite a user stop made since polling.
+
+Two further failures were reproduced with synthetic execution: an exception
+writing the completed work record or publishing its feed notification skipped
+the already accepted review/plan completion callback and queued instruction.
+Both failures now log their error while preserving that handoff. The Suite
+view reads existing scoped records and live cells so completion, failure,
+approval waits and interrupted execution are visible separately.
+
+The agent's claim that every stopped task is merely awaiting a manual next
+round was unsupported. The work prompt, operator rule and review skill now
+state that the server owns continuation and reject saving per-round clicking
+as a standing instruction. No unknown instruction file in another repository
+was rewritten.
+
+Real-Git regressions hold the repair turn open and verify that no round 2
+artifact or reviewer request exists, and that the remote head stays unchanged.
+They cover empty answers, unfinished status text, a fixed claim without a new
+commit, partial finding reports, unsupported disagreement, and explicit resume.
+The models and GitHub endpoint are simulated; the commits and pushes use a
+temporary bare origin. The subprocess startup regression retains a blocked
+review in the first server while attempting a second startup. These tests do
+not alter or resume the user's live task.
+Additional real-Git startup regressions verify automatic review and correction
+recovery while preserving user stops and gate failures. A poller regression
+verifies recovery of an orphaned active loop and prompt shutdown.
+
 ## Claude quota provenance
 
 The vendor's [headless SDK quota issue](https://github.com/anthropics/claude-code/issues/50518)
@@ -146,3 +220,108 @@ without adding dependencies or raising persisted size limits.
 All 12 error-log tests passed with normal exit. Ruff, wiki lint, whitespace and
 BOM checks passed. Both fresh native-session hook probes completed again;
 automatic context delivery was observed and tool blocking remained untested.
+
+## Review continuity and shutdown ownership
+
+PR 71's first independent GPT-5.6 Sol review reproduced two P1 defects. A
+single correction report without an id settled two distinct findings at the
+same file and line. Shutdown also released the server lock while a review
+driver was still executing, letting a replacement server take ownership.
+
+Correction matching now prefers the complete finding caption. A report
+without a validated id must identify exactly one finding; an ambiguous shared
+location leaves both pending. Validated ids still cover repeated appearances
+of the same issue. The next review waits for the remaining correction even
+when the first report legitimately requires no code change.
+
+Shutdown signals both watchers, waits for them to stop, then cancels and joins
+the review drivers before releasing server ownership. A replacement server
+cannot recover persisted workflow state while an old driver can still write it.
+These waits run outside the loop registry lock so driver cleanup can finish.
+
+All five new regressions failed on the reviewed head and passed after repair.
+Four use real Git with simulated models to hold the second correction turn,
+covering identified and legacy findings with exact and ambiguous captions.
+The fifth holds a real review driver during app shutdown, verifies that a
+second owner is refused, then verifies ownership is released after the driver
+stops. This is local lifecycle evidence, not a live provider or GitHub test.
+
+The wider repair check exposed a third failure: the poller test read a spec as
+missing while its file still existed. A Windows scratch-data stress run with
+500 atomic writes produced 270 raw read permission errors and 232 `None`
+results from `specs.load`. That return value can prematurely end a driver or
+hide an active task from recovery. Reads now share the existing reentrant spec
+lock with writes. A deterministic concurrent-read regression models the
+sharing violation during replacement and requires the completed snapshot;
+genuinely absent files still return `None`. It failed before this repair.
+Repeating the same 500-write stress run after repair produced no read errors
+and no missing-spec results.
+
+The repair's review, correction, resume, restart, ownership and final-gate
+selection passed all 37 tests. The complete spec and planning modules passed
+all 63 tests. Both processes exited normally with code zero. Ruff, wiki lint,
+whitespace and UTF-8-without-BOM checks passed; the unchanged frontend retains
+the initial PR's build and browser evidence.
+
+Round 2 reproduced a remaining late-creation race: an accepted work callback
+or planning handoff could start a review driver after the one-time shutdown
+snapshot. Both carried repairs and the spec reader passed independent review,
+but this distinct trigger still let a replacement owner overlap an old driver.
+
+The server now closes dispatch before taking any shutdown snapshots. Review
+handoffs still persist their queued state, but create no driver until the next
+owner recovers it. Registration and thread start share the registry lock, so
+shutdown cannot observe an unstarted registered driver. Work tracks the thread
+through its completion callback and queued dispatch, rather than treating
+`Run.done` as thread exit. Shutdown cancels and joins those threads. Planning
+keeps its worker registered through handoff and joins it without a timeout
+that could release ownership early. New work and planning starts are gated.
+
+Two real-Git regressions failed before this repair: a late work or planning
+handoff started a driver after the snapshot. After repair, each remains queued
+and resumes automatically under the next owner. A held accepted work callback
+also verifies that ownership remains exclusive after `Run.done`, and a held
+planning handoff verifies that its worker remains registered until thread exit.
+
+The focused shutdown, dispatch, ordering and resume group passed 24 tests.
+The complete task, planning and Suite modules passed 99 tests on rerun, with
+normal process exits. The first broader run had two failures: the shell smoke
+test tried to acquire the live app's actual workflow lock, and a plan
+publication exceeded its existing ten-second test wait. The shell test now
+invokes the real entry point with scratch workflow state, captures startup
+errors and waits for its own child to exit; the live app stays running. The
+publication case passed the focused rerun without a product change, then the
+complete module rerun passed. This records the first failure rather than
+counting it as a clean run. Ruff, wiki lint, whitespace and BOM checks passed.
+
+## Mobile disconnect cancellation found by the full gate
+
+The final full Python run at PR 71's round-3 head recorded 1,486 passes, two
+skips and one failure in `test_websocket_runs_existing_guards_and_delivers_each_chunk`.
+The WebSocket test session raised `CancelledError` while closing after the
+second stream chunk. A focused rerun passed, but repeating that same case
+failed after nine passes. The race therefore reproduced outside the full run.
+
+The bridge cancels its HTTP producer and disconnect watcher, then awaits
+their drain in `finally`. That await was exposed to the outer ASGI cancellation
+scope. The [AnyIO cancellation guidance](https://anyio.readthedocs.io/en/stable/cancellation.html#finalization)
+requires shielding awaited cleanup in an already cancelled scope. The
+application now shields only this child drain, retaining both child
+cancellation and propagation of the parent's cancellation. This applies the
+documented finalization rule to the observed ordering; it does not change
+authentication, HTTP guards or stream contents.
+
+An explicit early-disconnect regression reads the first frame, disconnects
+before stream completion, then requires the HTTP producer to finish and the
+socket registry to be empty. The mobile, synchronization and Suite modules
+passed all 19 tests with normal exit. This additional product repair needs
+a newly reviewed head and a new final gate; round 3's approval is not reused.
+
+Repeating both disconnect cases 30 times in a fresh scratch directory passed
+all 60 tests and exited with code zero. The earlier repeat also passed 60 tests
+and exited normally after delayed old temporary-directory cleanup. Its command
+identity and stack were checked while waiting; it finished before a proposed
+stop, so no process was stopped. Ruff, wiki lint, whitespace and BOM checks
+passed. The next full gate
+uses a unique new temporary base outside the checkout, retaining all test
+selection while avoiding cleanup of prior sessions' unrelated temporary runs.

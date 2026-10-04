@@ -1,4 +1,4 @@
-"""Derived, local oh-my-mermaid documents for this application's source tree."""
+"""Local oh-my-mermaid documents for the selected repository."""
 
 from __future__ import annotations
 
@@ -15,11 +15,10 @@ from fastapi import APIRouter, HTTPException
 
 from common.process import background_options
 from .channels import WIKI
+from . import query
 
 router = APIRouter()
 _lock = threading.Lock()
-_snapshot: dict = {}
-_error = ""
 SOURCE = {".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".css", ".rs", ".kt", ".kts", ".java"}
 
 
@@ -62,50 +61,61 @@ def scan(root: Path) -> dict:
             try:
                 for node in ast.walk(ast.parse(text)):
                     if isinstance(node, ast.Import):
-                        references.extend("tool/" + alias.name.replace(".", "/") for alias in node.names)
+                        references.extend(alias.name.replace(".", "/") for alias in node.names)
                     elif isinstance(node, ast.ImportFrom):
                         base = name.split("/")[:-1]
                         if node.level:
                             base = base[:len(base) - node.level + 1]
                             prefix = "/".join(base + (node.module or "").split(".")).rstrip("/")
                         else:
-                            prefix = "tool/" + (node.module or "").replace(".", "/")
+                            prefix = (node.module or "").replace(".", "/")
                         references.append(prefix)
                         references.extend(prefix + "/" + alias.name for alias in node.names)
             except SyntaxError:
                 pass  # A file mid-edit remains in the inventory until it parses.
-        elif name.endswith((".ts", ".tsx")):
+        elif name.endswith((".ts", ".tsx", ".js", ".jsx", ".mjs")):
             for ref in re.findall(r'(?:from\s*|import\s*\(\s*|import\s*)[\'\"]([^\'\"]+)[\'\"]', text):
                 if ref.startswith("@/"):
+                    references.append("src/" + ref[2:])
                     references.append("web/src/" + ref[2:])
                 elif ref.startswith("."):
                     candidate = (root / name).parent / ref
                     references.append(candidate.resolve().relative_to(root.resolve()).as_posix()
                                       if candidate.resolve().is_relative_to(root.resolve()) else "")
         for ref in references:
-            target = next((p for p in (ref + ".py", ref + "/__init__.py", ref + ".ts", ref + ".tsx",
-                                       ref + "/index.ts", ref + "/index.tsx") if p in sources), None)
+            target = next((p for base in (ref, "src/" + ref, "tool/" + ref)
+                           for p in (base, base + ".py", base + "/__init__.py", base + ".ts", base + ".tsx",
+                                     base + ".js", base + ".jsx", base + ".mjs", base + "/index.ts", base + "/index.tsx")
+                           if p in sources), None)
             if target and group(target) != group(name):
                 edges.add((group(name), group(target)))
 
     nodes = []
 
     def diagram(children, links):
+        def identifier(name):
+            readable = name.replace("/", "-")
+            return readable if readable != "end" and re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_-]*", readable) else "n" + hashlib.sha256(name.encode()).hexdigest()[:12]
+
         lines = ["graph LR"]
         for child, label in children:
-            node_id = child.replace("/", "-")
-            lines.append(f'    {node_id}["{child}\\n{label}"]')
+            caption = (child + "\\n" + label).replace('"', "#quot;")
+            lines.append(f'    {identifier(child)}["{caption}"]')
         for source, target, label in sorted(links):
-            lines.append(f'    {source.replace("/", "-")} -->|"{label}"| {target.replace("/", "-")}')
+            lines.append(f'    {identifier(source)} -->|"{label}"| {identifier(target)}')
         return "\n".join(lines) + "\n"
 
     perspective = "overall-architecture"
     roots = sorted({g.split("/")[0] for g in groups})
+    root_links = {(a.split("/")[0], b.split("/")[0], "imports") for a, b in edges
+                  if a.split("/")[0] != b.split("/")[0]}
+    if root.resolve() == WIKI.resolve():
+        root_links = {(a, b, label) for a, b, label in [("web", "tool", "HTTP / SSE"),
+                      ("desktop", "web", "desktop window"), ("android", "web", "paired WebView")]
+                      if a in roots and b in roots}
     nodes.append({"path": perspective, "description": "Application source architecture, regenerated from Git-visible files.\n",
                   "diagram": diagram([(r, "web/src-tauri/" if r == "desktop" else r + "/") for r in roots],
-                    [(a, b, label) for a, b, label in [("web", "tool", "HTTP / SSE"),
-                     ("desktop", "web", "desktop window"), ("android", "web", "paired WebView")]
-                     if a in roots and b in roots])})
+                                     root_links)})
     for parent in roots:
         members = sorted(g for g in groups if g.split("/")[0] == parent)
         children = [(g.split("/")[-1], "tool/*.py" if g == "tool/commands" else "web/src/*" if g == "web/entry"
@@ -142,7 +152,7 @@ def scan(root: Path) -> dict:
     for node in nodes:
         for field, filename in (("description", "description.md"), ("diagram", "diagram.mmd")):
             target = directory / node["path"] / filename
-            if not target.resolve().is_relative_to(directory.resolve()) or any(p.is_symlink() for p in target.parents if p != root):
+            if target.is_symlink() or not target.resolve().is_relative_to(directory.resolve()) or any(p.is_symlink() for p in target.parents if p != root):
                 raise ValueError("Architecture output cannot follow symbolic links")
             if field == "diagram" and not node[field]:
                 if target.exists():
@@ -175,27 +185,64 @@ def scan(root: Path) -> dict:
     return {"revision": revision, "files": len(sources), "nodes": nodes}
 
 
-def refresh():
-    global _snapshot, _error
+def read_existing(root: Path) -> dict:
+    """Read unowned OMM documents without replacing their diagrams or notes."""
+    directory = root / ".omm"
+    nodes = []
+    for folder in sorted({p.parent for p in directory.rglob("*.md")} |
+                         {p.parent for p in directory.rglob("diagram.mmd")}):
+        node = {"path": folder.relative_to(directory).as_posix()}
+        for field in ("description", "diagram", "context", "constraint", "concern", "todo", "note"):
+            target = folder / ("diagram.mmd" if field == "diagram" else f"{field}.md")
+            if not target.resolve().is_relative_to(directory.resolve()) or any(
+                    p.is_symlink() for p in (target, *target.parents) if p != root):
+                raise ValueError("Architecture documents cannot follow symbolic links")
+            node[field] = target.read_text(encoding="utf-8") if target.exists() else ""
+        nodes.append(node)
+    revision = hashlib.sha256(json.dumps(nodes, sort_keys=True).encode("utf-8")).hexdigest()
+    return {"revision": revision, "files": None, "nodes": nodes}
+
+
+def refresh(root: Path = WIKI, *, create: bool = False):
     with _lock:
         try:
-            _snapshot = scan(WIKI)
-            _error = ""
+            directory = root / ".omm"
+            if directory.is_symlink():
+                raise ValueError(".omm must be a local directory")
+            if directory.exists() and not directory.is_dir():
+                raise ValueError(".omm must be a local directory")
+            if not directory.exists() and not create and root != WIKI:
+                data = {"revision": "missing", "files": 0, "nodes": [], "installed": False}
+            elif directory.exists() and not (directory / "generated.json").exists():
+                data = {**read_existing(root), "installed": True}
+            else:
+                data = {**scan(root), "installed": True}
+            return {**data, "repo": root.name}
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
-            _error = str(exc)
+            raise HTTPException(503, f"구조를 갱신하지 못했다 — {exc}") from exc
 
 
 def watch(stop: threading.Event):
     while not stop.is_set():
-        refresh()
+        try:
+            refresh()
+            root = query.current_repo()
+            if root != WIKI:
+                refresh(root)
+        except HTTPException:
+            pass
         stop.wait(5)
 
 
 @router.get("/api/architecture")
 def architecture():
-    if not _snapshot:
-        refresh()
-    with _lock:
-        if _error:
-            raise HTTPException(503, f"구조를 갱신하지 못했다 — {_error}")
-        return _snapshot
+    root = query.current_repo()
+    return refresh(root)
+
+
+@router.post("/api/architecture")
+def add_architecture():
+    # Bind the write to the checked selection until all generated files exist.
+    with query._lock:
+        root = query.current_repo()
+        return refresh(root, create=True)

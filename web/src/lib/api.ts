@@ -1,10 +1,12 @@
 // Every point of contact with the backend. Nothing else calls fetch.
 import { request as fetch } from '@/lib/mobile'
 
-export type ArchitectureData = { revision: string; files: number;
+export type ArchitectureData = { revision: string; repo: string; installed: boolean; files: number | null;
   nodes: { path: string; description: string; diagram: string;
     context?: string; constraint?: string; concern?: string; todo?: string; note?: string }[] }
-export const getArchitecture = () => get('/api/architecture').then((r) => json<ArchitectureData>(r, '앱 구조'))
+export const getArchitecture = (repo: string) => get('/api/architecture', repo).then((r) => json<ArchitectureData>(r, '앱 구조'))
+export const addArchitecture = (repo: string) => post('/api/architecture', undefined, 'POST', repo)
+  .then((r) => json<ArchitectureData>(r, '.omm 추가'))
 export const reportError = (message: string, stack = '') =>
   post('/api/errors', { message: message.slice(0, 8000), stack: stack.slice(0, 16000) }).then(() => {})
 
@@ -886,6 +888,26 @@ export type WorkTurn = {
 export type Rule = { kind: 'file' | 'command'; tool: string; command?: string; cwd?: string }
 
 export type Running = { turn: string; session_id: string; seq: number }
+
+export type SuiteCell = {
+  id: string
+  kind: 'work' | 'review' | 'planning' | 'query'
+  target: string
+  task: string | null
+  path: string | null
+  pr: number | null
+  status: 'running' | 'waiting' | 'stopping' | 'completed' | 'failed' | 'stopped' | 'interrupted'
+  model: string
+  cell: string
+  started_at: number | null
+  finished_at: number | null
+  prompt: string
+  text: string
+  error: string
+  steps: { kind: string; text: string; answer?: string }[]
+}
+export const getSuite = (repo: string) => get('/api/suite', repo).then((r) =>
+  json<{ repo: string; rows: SuiteCell[]; history_limit: number }>(r, '셀 실행 목록'))
 
 export const workLog = (path: string) =>
   get(`/api/work/log?${new URLSearchParams({ path })}`).then((r) =>

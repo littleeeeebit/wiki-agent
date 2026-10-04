@@ -15,6 +15,7 @@ import time
 from urllib.parse import unquote, urlsplit
 from urllib.request import urlopen
 
+import anyio
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
@@ -308,7 +309,9 @@ async def request_stream(ws: WebSocket):
         finally:
             run.cancel()
             watcher.cancel()
-            await asyncio.gather(run, watcher, return_exceptions=True)
+            # An outer ASGI cancel scope must not interrupt the child drain.
+            with anyio.CancelScope(shield=True):
+                await asyncio.gather(run, watcher, return_exceptions=True)
     except (WebSocketDisconnect, RuntimeError):
         pass
     except (ValueError, KeyError, TypeError, AttributeError, UnicodeError, asyncio.TimeoutError):

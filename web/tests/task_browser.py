@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from playwright.sync_api import sync_playwright
 import uvicorn
 
@@ -39,7 +39,18 @@ def main():
                    ("claude-opus-4-7", False), ("claude-opus-5-9", False),
                    ("sonnet", False), ("codex:fixture-fast", True), ("codex:fixture-standard", False)]
     architecture_revision = 1
+    architecture_installed = False
+    architecture_adds = []
     architecture_nodes = architecture.scan(ROOT)["nodes"]
+    suite_fault = False
+    suite_rows = [{"id": f"suite-{kind}", "kind": kind, "target": "fixture-task" if kind != "query" else "wiki",
+                   "task": "fixture-task" if kind != "query" else None, "path": "fixture-task" if kind != "query" else None,
+                   "pr": 7 if kind == "review" else None, "status": status, "model": "Synthetic cell model",
+                   "cell": f"cell-{kind}", "started_at": time.time() - 60, "finished_at": None,
+                   "prompt": "Synthetic suite instruction", "text": "Synthetic suite answer",
+                   "error": "Synthetic review failure" if kind == "review" else "",
+                   "steps": [{"kind": "tool", "text": "Synthetic suite check"}]}
+                  for kind, status in (("work", "running"), ("review", "failed"), ("planning", "completed"), ("query", "completed"))]
     spec = {"id": "fixture-task", "repo": "fixture", "rev": 1, "goal": "Synthetic task requirements",
             "out": ["Do not change stored data"], "done": ["git --version", "Synthetic check passes"], "state": "작업 중",
             "worktree": "fixture-task", "workspace_mode": "branch", "branch": "fixture",
@@ -49,9 +60,14 @@ def main():
 
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
     async def api(path: str, request: Request):
-        nonlocal deleted
+        nonlocal deleted, architecture_installed
         if path == "switch":
             return {"translate": True, "usage": {"month": "2026-10", "usd": 0, "limit": 10}}
+        if path == "suite":
+            assert request.headers.get("x-project") == "fixture"
+            if suite_fault:
+                return JSONResponse({"detail": "Synthetic suite unavailable"}, status_code=503)
+            return {"repo": "fixture", "rows": suite_rows, "history_limit": 100}
         if path == "errors":
             screen_errors.append(await request.json())
             return {"ok": True}
@@ -138,7 +154,12 @@ def main():
             fast_requests.append(await request.json())
             return StreamingResponse(iter(['data: {"kind":"done","text":"Finished","meta":{},"seq":0,"turn":"fast-turn","session_id":"fixture"}\n\n']), media_type="text/event-stream")
         if path == "architecture":
-            return {"revision": str(architecture_revision), "files": architecture_revision,
+            if request.method == "POST":
+                architecture_adds.append(request.headers.get("x-project"))
+                architecture_installed = True
+            if not architecture_installed:
+                return {"repo": "fixture", "installed": False, "revision": "missing", "files": 0, "nodes": []}
+            return {"repo": "fixture", "installed": True, "revision": str(architecture_revision), "files": architecture_revision,
                     "nodes": [{"path": "overall-architecture", "description": f"Synthetic source revision {architecture_revision}",
                                "diagram": 'graph LR\n    web["Web\\nweb/src/"]\n    tool["Server\\ntool/main/"]\n    web -->|"HTTP"| tool\n'},
                               *[{**node, "path": "actual/" + node["path"]} for node in architecture_nodes]]}
@@ -264,6 +285,68 @@ def main():
             composer.press("Enter")
             page.wait_for_function("!document.querySelector('[aria-label=\"FAST 모드\"]').disabled")
             assert fast_requests[-1]["fast"] is False
+            page.get_by_role("tab", name="스위트", exact=True).click()
+            suite = page.get_by_role("region", name="스위트 · 셀 실행 목록", exact=True)
+            suite.locator("summary").filter(has_text="작업 · fixture-task").wait_for()
+            assert suite.locator("li > details > summary").count() == 4
+            suite.get_by_label("실행 상태").select_option("active")
+            assert suite.locator("li > details > summary").count() == 1
+            suite.locator("summary").filter(has_text="작업 · fixture-task").click()
+            suite.get_by_text("Synthetic suite check", exact=True).wait_for()
+            suite.get_by_text("실행 지시", exact=True).click()
+            suite.get_by_text("Synthetic suite instruction", exact=True).wait_for()
+            suite_rows[0].update(status="completed", finished_at=time.time())
+            suite.get_by_text("표시할 셀 실행이 없다.", exact=True).wait_for(timeout=6000)
+            suite.get_by_label("실행 상태").select_option("completed")
+            assert suite.locator("li > details > summary").count() == 3
+            suite.get_by_label("실행 상태").select_option("failed")
+            suite.locator("summary").filter(has_text="리뷰 · fixture-task").click()
+            suite.get_by_text("Synthetic review failure", exact=True).wait_for()
+            suite.get_by_role("button", name="리뷰에서 열기", exact=True).click()
+            assert page.get_by_role("tab", name="리뷰", exact=True).get_attribute("aria-selected") == "true"
+            suite.get_by_label("실행 상태").select_option("all")
+            for width in (1440, 400):
+                page.set_viewport_size({"width": width, "height": 900})
+                if width == 400:
+                    page.get_by_role("navigation", name="화면", exact=True).get_by_role("button", name="대화", exact=True).click()
+                    assert page.get_by_role("button", name="스위트", exact=True).bounding_box()["height"] >= 44
+                suite.wait_for(state="visible")
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                page.screenshot(path=str(ROOT / "artifacts" / f"suite-{width}-fixture.png"))
+            page.set_viewport_size({"width": 1440, "height": 900})
+            suite_fault = True
+            suite.get_by_role("alert").wait_for(timeout=6000)
+            assert "Synthetic suite unavailable" in suite.get_by_role("alert").inner_text()
+            suite_fault = False
+            suite.get_by_role("alert").wait_for(state="detached", timeout=6000)
+            suite.locator("summary").filter(has_text="작업 · fixture-task").click()
+            suite.get_by_role("button", name="에이전트에서 열기", exact=True).click()
+            assert page.get_by_role("tab", name="에이전트", exact=True).get_attribute("aria-selected") == "true"
+            page.get_by_role("tab", name="앱 구조", exact=True).click()
+            add_omm = page.get_by_role("button", name=".omm 추가", exact=True)
+            add_omm.wait_for()
+            assert not architecture_adds
+            for width in (1440, 400):
+                page.set_viewport_size({"width": width, "height": 900})
+                if width == 400:
+                    page.get_by_role("navigation", name="화면", exact=True).get_by_role("button", name="대화", exact=True).click()
+                assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+                assert add_omm.bounding_box()["height"] >= 44
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.route("**/assets/mermaid.core-*.js", lambda route: route.fulfill(status=404, body="Missing old build chunk"))
+            add_omm.click()
+            add_omm.wait_for(state="detached")
+            assert architecture_adds == ["fixture"]
+            reload_screen = page.get_by_role("button", name="화면 새로고침", exact=True)
+            reload_screen.wait_for()
+            assert "도표를 표시하지 못했다" in page.get_by_role("region", name="앱 구조", exact=True).inner_text()
+            page.unroute("**/assets/mermaid.core-*.js")
+            reload_screen.click()
+            page.wait_for_load_state()
+            page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(
+                has_text="fixture-task").click()
+            model_picker.click()
+            page.get_by_role("option", name="opus", exact=True).click()
             page.get_by_role("tab", name="앱 구조", exact=True).click()
             diagram = page.get_by_role("img", name="overall-architecture 구조 도표")
             diagram.locator("svg").wait_for()
@@ -424,7 +507,7 @@ def main():
             page.get_by_text("아직 작업이 없다.", exact=False).wait_for()
             assert not page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").count()
             browser.close()
-            print("PASS: file diff toggles; FAST OFF/ON request forwarding; automatic architecture refresh and all generated diagrams; 400px/1440px containment; task workflow regressions")
+            print("PASS: Suite polling, filters, details, task links and error recovery; file diff toggles; FAST OFF/ON request forwarding; explicit OMM add and missing-chunk reload; automatic architecture refresh and all generated diagrams; 400px/1440px containment; task workflow regressions")
     finally:
         server.should_exit = True
         thread.join(timeout=10)

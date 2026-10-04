@@ -4,7 +4,11 @@ import subprocess
 
 import pytest
 
+from fastapi.testclient import TestClient
+
+from main import app, channels, query
 from main.architecture import scan
+from common import errorlog
 
 
 def test_source_changes_refresh_omm_and_preserve_maintainer_context(tmp_path):
@@ -49,3 +53,58 @@ def test_omm_output_cannot_escape_through_a_directory_link(tmp_path):
     with pytest.raises(ValueError, match="local directory"):
         scan(tmp_path)
     assert not list(target.iterdir())
+
+
+def test_selected_repository_add_refresh_and_existing_documents(tmp_path, monkeypatch):
+    for name in ("first", "second"):
+        root = tmp_path / name
+        root.mkdir()
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        (root / "client").mkdir()
+        (root / "server").mkdir()
+        (root / "client/app.py").write_text("import server.api\n", encoding="utf-8")
+        (root / "server/api.py").write_text("print('server')\n", encoding="utf-8")
+    monkeypatch.setattr(channels, "WORKSPACE", tmp_path)
+    monkeypatch.setattr(query, "_project", "first")
+    monkeypatch.setattr(errorlog, "record", lambda *args, **kwargs: None)
+    web = TestClient(app.app, base_url="http://127.0.0.1:8787")
+    headers = {"X-Project": "first"}
+    first = tmp_path / "first"
+    missing = web.get("/api/architecture", headers=headers)
+    assert missing.status_code == 200 and missing.json()["installed"] is False
+    assert not (first / ".omm").exists()
+    added = web.post("/api/architecture", headers=headers)
+    assert added.status_code == 200
+    data = added.json()
+    assert data["repo"] == "first" and data["installed"] and data["files"] == 2
+    assert 'client -->|"imports"| server' in data["nodes"][0]["diagram"]
+    assert (first / ".omm/generated.json").exists()
+    assert not (tmp_path / "second/.omm").exists()
+    context = first / ".omm/overall-architecture/context.md"
+    context.write_text("Preserve this note.\n", encoding="utf-8")
+    (first / "client/app.py").write_text("print('updated')\n", encoding="utf-8")
+    refreshed = web.get("/api/architecture", headers=headers).json()
+    assert refreshed["revision"] != data["revision"]
+    assert '-->' not in refreshed["nodes"][0]["diagram"]
+    assert refreshed["nodes"][0]["context"] == "Preserve this note.\n"
+    assert web.post("/api/architecture", headers=headers).json() == refreshed
+    assert web.post("/api/architecture").status_code == 400
+
+    monkeypatch.setattr(query, "_project", "second")
+    assert web.post("/api/architecture", headers=headers).status_code == 409
+    assert web.get("/api/architecture", headers=headers).status_code == 409
+    assert not (tmp_path / "second/.omm").exists()
+    custom = tmp_path / "second/.omm/custom"
+    custom.mkdir(parents=True)
+    diagram = custom / "diagram.mmd"
+    diagram.write_text("graph LR\n A --> B\n", encoding="utf-8")
+    (custom / "note.md").write_text("Handwritten context.\n", encoding="utf-8")
+    before = diagram.stat().st_mtime_ns
+    second_headers = {"X-Project": "second"}
+    existing = web.get("/api/architecture", headers=second_headers).json()
+    assert existing["repo"] == "second" and existing["installed"] and existing["files"] is None
+    assert existing["nodes"][0]["diagram"] == "graph LR\n A --> B\n"
+    assert existing["nodes"][0]["note"] == "Handwritten context.\n"
+    assert web.post("/api/architecture", headers=second_headers).json() == existing
+    assert diagram.stat().st_mtime_ns == before
+    assert not (custom.parent / "generated.json").exists()

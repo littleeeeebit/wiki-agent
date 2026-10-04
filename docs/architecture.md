@@ -82,6 +82,27 @@ Observed causes, regression scope and real host-event evidence are recorded in
 | Mobile tunnel (`cloudflared`) | Explicitly enabled in desktop Settings | Temporary HTTPS hostname; paired browser requests reach the same app server |
 | Hooks | The host, per event | The target's `.wiki/trajectory.jsonl` and hook diagnostics |
 
+One app server owns a hub's persisted workflows. Startup holds an OS lock on
+`raw/server.lock` before recovering interrupted tasks; a second server cannot
+mark the first server's live review as stopped. Startup resumes active loops
+and previous restart stops after recovery; explicit user stops and blockers
+remain stopped. The poller reattaches active states without a driver. Shutdown
+gates new driver creation, stops watchers and review drivers, and drains work
+callbacks and planning handoffs before releasing ownership. Accepted late
+review handoffs stay queued for the next owner's startup recovery.
+Review correction stays in its current round until the work session returns a
+complete finding report. A report without an id must uniquely identify one
+finding, including when distinct findings share a file and line. Claimed fixes
+need a new commit, and round checks and publication precede the next review.
+Evidence and regression scope are in
+[task lifecycle recovery](research/task-lifecycle-recovery.md).
+
+The Suite tab reads scoped work, planning, review and conversation records and
+their live runs through `GET /api/suite`. It shows active cells and the latest
+100 historical executions, including failures and unanswered approvals. It
+does not dispatch work; server-owned completion callbacks advance tasks even
+when transcript or feed publication fails.
+
 Indexes are derived data: a changed source makes a new store generation, and
 one answer reads one generation. Documents and memories stay authoritative.
 
@@ -101,13 +122,16 @@ The native APK needs no execution or synchronization bridge for this behavior.
 ## The four graphs
 
 The App structure tab is a separate source architecture view, backed by
-local oh-my-mermaid documents under `.omm/overall-architecture/`. The server's
+local oh-my-mermaid documents in the selected repository's `.omm/`. The server's
 `main/architecture.py` owns generation, writes descriptions and Mermaid diagrams
 from source inventories and static imports, and leaves maintainer context and
 constraints intact. The frontend renders those diagrams locally. The server
-refreshes every five seconds, and `tool/omm_scan.py` also runs before frontend
-builds. This view always describes wiki-agent itself, independent of the
-project selected for conversations or tasks.
+refreshes every five seconds, and `tool/omm_scan.py` also refreshes wiki-agent's
+own documents before frontend builds. A repository without `.omm` offers an
+explicit add action, bound to the selected project by the same request guard
+as other writes. The scanner owns documents with its `generated.json`
+manifest; other existing OMM diagrams and notes are displayed without being
+rewritten. Generated documents live under `.omm/overall-architecture/`.
 
 Four different things are called a graph here. They do not stand in for each
 other.

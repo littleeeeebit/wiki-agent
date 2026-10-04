@@ -60,13 +60,18 @@ def test_progress_record_preserves_lines_without_duplicating_the_final_answer(ho
 
 @pytest.fixture(autouse=True)
 def no_machine_settings(tmp_path):
+    from main import runtime
+    import threading
+
     with patch.object(chat_channels, "LOCAL", {}), patch.object(chat, "LOGS", tmp_path), \
          patch.object(chat, "_project", None), patch.object(chat, "_config", {}), \
          patch.object(chat, "_sessions", {}), patch.object(chat, "_busy", {}), \
          patch.object(main_app, "SWITCH", tmp_path / "main.json"), \
          patch.object(work, "LOGS", tmp_path / "work"), \
          patch.object(work, "_sessions", {}), patch.object(work, "_busy", {}), \
-         patch.object(work, "_runs", {}), patch.object(specs, "SPECS", tmp_path / "specs"), \
+         patch.object(work, "_runs", {}), patch.object(work, "_turns", {}), \
+         patch.object(specs, "SPECS", tmp_path / "specs"), \
+         patch.object(runtime, "stopping", threading.Event()), \
          patch.object(errorlog, "FILE", tmp_path / "errors.jsonl"), \
          patch.object(chat_session, "claude_usage", return_value=[]):
         try:
@@ -881,7 +886,7 @@ def test_an_approval_goes_only_to_the_session_that_asked(tmp_path):
         assert web.post("/api/work/answer", json=right).status_code == 409
 
 
-def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it():
+def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it(tmp_path):
     """Started as the Tauri shell starts it: stdin is a pipe the shell holds.
 
     Reading that pipe in a thread once blocked every `CreateProcess` on
@@ -897,8 +902,20 @@ def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it():
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     main_dir = Path(__file__).resolve().parent / "main"
-    server = subprocess.Popen([sys.executable, str(main_dir), "--port", str(port), "--exit-with-stdin"],
-                              stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    launcher = tmp_path / "app.py"
+    launcher.write_text(
+        "import runpy, sys\nfrom pathlib import Path\n"
+        "entry = Path(sys.argv[1])\nscratch = Path(__file__).parent\n"
+        "sys.path.insert(0, str(entry.parent))\nfrom main import app, specs, query, work\n"
+        "specs.SPECS = scratch / 'specs'\nquery.LOGS = scratch / 'chat'\n"
+        "work.LOGS = scratch / 'work'\napp.SWITCH = scratch / 'main.json'\n"
+        "app.architecture.watch = lambda halt: halt.wait()\n"
+        "sys.argv = [str(entry), *sys.argv[2:]]\nrunpy.run_path(str(entry), run_name='__main__')\n",
+        encoding="utf-8")
+    log = tmp_path / "server.log"
+    output = log.open("w", encoding="utf-8")
+    server = subprocess.Popen([sys.executable, str(launcher), str(main_dir), "--port", str(port), "--exit-with-stdin"],
+                              stdin=subprocess.PIPE, stdout=output, stderr=output)
     try:
         deadline = time.monotonic() + 30
         while True:
@@ -906,7 +923,7 @@ def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it():
                 with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/switch", timeout=1):
                     break
             except OSError:
-                assert time.monotonic() < deadline, "서버가 안 떴다"
+                assert server.poll() is None and time.monotonic() < deadline, log.read_text(encoding="utf-8")
                 time.sleep(0.2)
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/channels", timeout=20) as reply:
             assert json.loads(reply.read())
@@ -914,6 +931,8 @@ def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it():
         assert server.wait(timeout=20) == 0
     finally:
         server.kill()
+        server.wait(timeout=10)
+        output.close()
 
 
 def test_a_body_that_never_starts_holds_nothing(tmp_path):

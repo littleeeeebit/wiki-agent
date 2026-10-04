@@ -1,17 +1,18 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import * as api from '@/lib/api'
 
-/** The app's repository is fixed by the server, independent of project selection. */
-export function Architecture({ theme }: { theme: 'dark' | 'light' }) {
+/** Requests stay bound to this repository, including while a write is pending. */
+export function Architecture({ repo, theme }: { repo: string; theme: 'dark' | 'light' }) {
   const [data, setData] = useState<api.ArchitectureData | null>(null)
   const [selected, setSelected] = useState('overall-architecture')
   const [fit, setFit] = useState(true)
   const [error, setError] = useState('')
+  const [adding, setAdding] = useState(false)
   const [picture, setPicture] = useState({ key: '', svg: '', error: '' })
   const generation = useRef(0)
   const renderGeneration = useRef(0)
   const id = useId().replace(/[^a-zA-Z0-9]/g, '')
-  const node = data?.nodes.find((item) => item.path === selected) ?? data?.nodes[0]
+  const node = data?.nodes.find((item) => item.path === selected) ?? data?.nodes.find((item) => item.diagram) ?? data?.nodes[0]
   const pictureKey = `${theme}:${node?.diagram ?? ''}`
   const svg = picture.key === pictureKey ? picture.svg : ''
   const renderError = picture.key === pictureKey ? picture.error : ''
@@ -20,8 +21,8 @@ export function Architecture({ theme }: { theme: 'dark' | 'light' }) {
     let timer: ReturnType<typeof setTimeout>
     const poll = async () => {
       try {
-        const next = await api.getArchitecture()
-        if (ticket === generation.current) {
+        const next = await api.getArchitecture(repo)
+        if (ticket === generation.current && next.repo === repo) {
           setData((old) => old?.revision === next.revision ? old : next)
           setError('')
         }
@@ -33,7 +34,20 @@ export function Architecture({ theme }: { theme: 'dark' | 'light' }) {
     }
     void poll()
     return () => { generation.current = ticket + 1; clearTimeout(timer) }
-  }, [])
+  }, [repo])
+  const add = async () => {
+    const ticket = generation.current
+    setAdding(true)
+    setError('')
+    try {
+      const next = await api.addArchitecture(repo)
+      if (ticket === generation.current && next.repo === repo) setData(next)
+    } catch (err) {
+      if (ticket === generation.current) setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      if (ticket === generation.current) setAdding(false)
+    }
+  }
   useEffect(() => {
     const ticket = ++renderGeneration.current
     if (!node?.diagram) return
@@ -59,18 +73,30 @@ export function Architecture({ theme }: { theme: 'dark' | 'light' }) {
   }, [node?.diagram, theme, id, pictureKey])
   return <section aria-label="앱 구조" className="flex h-full min-h-0 flex-col">
     <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-4 py-3">
-      <label className="min-w-0 flex-1 text-[12.5px]">구조 보기
+      <label className="min-w-0 flex-1 text-[12.5px]">{repo} · 구조 보기
         <select aria-label="구조 보기" value={node?.path ?? selected} onChange={(event) => setSelected(event.target.value)}
+          disabled={!data?.nodes.length}
           className="mt-1 block w-full rounded-md border border-border bg-card px-2 py-1 text-[12.5px]">
           {data?.nodes.map((item) => <option key={item.path} value={item.path}>{item.path.replace('overall-architecture', '전체 구조')}</option>)}
         </select>
       </label>
-      <span className="font-mono text-[10.5px] text-muted-foreground">.omm · {data?.files ?? '…'}개 소스 · 자동 갱신 5초</span>
+      {data?.installed && <span className="font-mono text-[10.5px] text-muted-foreground">.omm · {data.files === null ? '기존 문서' : `${data.files}개 소스`} · 자동 갱신 5초</span>}
     </div>
     <div className="min-h-0 flex-1 space-y-4 overflow-auto p-4">
       {error && <p role="status" className="text-[12.5px] text-destructive">{error}{data && ' · 마지막으로 읽은 구조를 표시한다'}</p>}
       {!data && !error && <p className="text-[12.5px] text-muted-foreground">구조 읽는 중…</p>}
-      {renderError && <p role="status" className="text-[12.5px] text-destructive">도표를 표시하지 못했다 — {renderError}</p>}
+      {data && !data.installed && <div className="space-y-3">
+        <p className="text-[12.5px] text-muted-foreground">{repo}에 .omm 구조 문서가 없다. 추가하면 소스를 읽어 구조를 만들고 자동으로 갱신한다.</p>
+        <button type="button" disabled={adding} onClick={() => void add()}
+          className="min-h-11 rounded-md border border-border bg-secondary px-3 text-[12.5px] disabled:opacity-50">
+          {adding ? '.omm 추가 중…' : '.omm 추가'}</button>
+      </div>}
+      {data?.installed && !data.nodes.length && <p className="text-[12.5px] text-muted-foreground">.omm에 표시할 구조 문서가 없다.</p>}
+      {renderError && <div className="space-y-2">
+        <p role="status" className="text-[12.5px] text-destructive">도표를 표시하지 못했다 — {renderError}</p>
+        <button type="button" onClick={() => window.location.reload()}
+          className="min-h-11 rounded-md border border-border px-3 text-[12.5px]">화면 새로고침</button>
+      </div>}
       {node?.diagram && !svg && !renderError && <p className="text-[12.5px] text-muted-foreground">도표 그리는 중…</p>}
       {svg && <>
         <button type="button" aria-pressed={fit} onClick={() => setFit((value) => !value)}

@@ -190,6 +190,43 @@ def planned_folder(spec: dict) -> set[str]:
 # -- one run ------------------------------------------------------------------------
 
 
+def test_shutdown_tracks_the_planner_until_its_accepted_handoff_finishes(checkout):
+    entered, closing, release, finished = (threading.Event() for _ in range(4))
+    original = planning.handoff
+
+    def handoff(*args):
+        entered.set()
+        assert release.wait(20)
+        original(*args)
+
+    def close():
+        closing.set()
+        try:
+            planning.close_all()
+        finally:
+            finished.set()
+
+    Host.replies = [sources, outline, stage(1), stage(2)]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", GitHub()), \
+         patch.object(planning, "handoff", handoff):
+        answer = client().post("/api/plans", json=request())
+        assert answer.status_code == 200, answer.text
+        sid = answer.json()["id"]
+        closer = None
+        try:
+            assert entered.wait(20)
+            assert ("proj", sid) in planning._workers, "The planner disappeared before completing handoff"
+            closer = threading.Thread(target=close, daemon=True)
+            closer.start()
+            assert closing.wait(10) and not finished.wait(.2)
+        finally:
+            release.set()
+            if closer:
+                closer.join(15)
+        assert closer is not None and not closer.is_alive()
+        assert ("proj", sid) not in planning._workers and specs.load("proj", sid)["planning"].get("handed")
+
+
 def test_one_run_publishes_a_two_stage_plan_once_and_hands_off(checkout):
     web = client()
     remote = GitHub()
