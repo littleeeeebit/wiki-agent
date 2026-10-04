@@ -62,11 +62,16 @@ provider-owned. These mappings follow the
 Local launch and protocol tests verify requested settings; they do not
 measure paid account speed or prove that a provider granted the requested tier.
 
-The center pane's App structure tab displays this application's `.omm/`
-documents. Diagrams initially fit the pane and can switch to natural size
-for scrolling. `python tool/omm_scan.py` refreshes the documents manually;
-frontend builds run the same scanner before compilation, and the server refreshes every
-five seconds, including while that tab is closed. The scanner inventories
+The center pane's App structure tab displays the selected repository's `.omm/`
+documents. A repository without them offers an Add .omm button; reading the
+tab does not create documents in another repository. Adding inventories its
+Git-visible sources locally without installing a package or calling a model.
+Existing documents without this scanner's `generated.json` manifest are read
+without rewriting their diagrams or notes. Diagrams initially fit the pane
+and can switch to natural size for scrolling. `python tool/omm_scan.py`
+refreshes wiki-agent's own documents manually; frontend builds run the same
+scanner before compilation, and the server refreshes its own and the selected
+repository's documents every five seconds, including while that tab is closed. The scanner inventories
 Git-visible source and resolves local Python and TypeScript imports into
 nested Mermaid diagrams. Descriptions and diagrams are generated fields;
 other oh-my-mermaid fields remain available for maintainer notes. Only changed
@@ -75,6 +80,12 @@ notes survive. The scanner makes no model calls and publishes nothing.
 Dynamic dependencies are not inferred; the top-level host connections are
 documented explicitly. The existing wiki and evidence maps keep their own
 data and purpose.
+
+Frontend builds retain previous content-hashed assets because an open window
+can still import an older Mermaid chunk. If a chunk is already missing, the
+diagram error offers a screen reload to load the current build. A missing
+JavaScript asset is separate from a repository without `.omm`. Retained build
+assets may be pruned while the app is closed if storage becomes material.
 
 The [mobile companion](mobile.md) shares the desktop server. Paired phones
 keep a focused portrait pane and a compact PC-style landscape workspace. APK 0.1.3 selects screen orientation and
@@ -188,6 +199,32 @@ Investigation and verification scope are recorded in
 [task lifecycle recovery](research/task-lifecycle-recovery.md).
 
 The server retains gate execution, PR recovery and independent review.
+An unfinished correction does not start another review on the same head.
+Empty answers are failed work turns; incomplete reports get one continuation
+in the current round, then a visible stop if completion is still unverified.
+Continue resumes the pending correction before a new review. Claimed fixes
+require a new commit; evidence-backed disagreement can keep the same head.
+One server per hub holds `raw/server.lock` before startup recovery, preventing
+a second window or development server from stopping live tasks.
+Startup automatically resumes active loops and tasks stopped by a previous
+restart, rechecking current checkout, head and pending repairs. User stops and
+genuine blockers remain stopped. The minute poller also reattaches active
+states without a loop driver, and shuts down with its owning server.
+The work prompt and review skill explicitly reject manual per-round clicking.
+`python -m pytest -q tool/test_loop.py tool/test_runtime.py tool/test_agent_panel.py tool/test_suite.py`
+checks correction ordering, automatic restart and orphan recovery, process
+ownership, empty-answer failure and completion handoffs after publication errors.
+
+The Suite tab beside App structure lists the selected repository's live cells
+and 100 recent executions from existing work, planning, review and conversation
+records. It refreshes every two seconds, filters by status and expands model,
+time, prompt, steps, answer and error details. Existing records without new
+metadata keep an explicit unknown label. An unmatched historical instruction
+is interrupted, not completed. Task cells link to their Agent or Review pane;
+portrait phones also have a Suite header button. `test_suite.py` checks project
+isolation and live-to-history transitions; `web/tests/task_browser.py` checks
+filters, polling, details, task links, recovery from read errors and mobile fit.
+
 An idle task's requirements can be edited in its spec panel. During a turn,
 later instructions can be recorded through a `spec-update` block before the
 completion report. Revisions preserve prior requirements and invalidate old

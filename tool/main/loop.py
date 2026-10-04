@@ -692,14 +692,15 @@ _seats = threading.Condition()
 _seated = 0
 
 
-def kick(repo: str, sid: str) -> None:
+def kick(repo: str, sid: str, *, automatic: bool = False) -> None:
     """Put the spec in `리뷰 대기` and start its loop, unless one runs. A loop
     that was stopped is waited for first, so two never drive one spec."""
 
     key = (repo, sid)
     with _lock:
         old = _loops.get(key)
-    if old is not None and not old.halt.is_set():
+    if (old is not None and not old.halt.is_set()
+            and (old.thread is None or old.thread.ident is None or old.thread.is_alive())):
         spec = specs.load(repo, sid)
         if spec is not None and LOOPING.fullmatch(spec["state"]):
             return
@@ -717,6 +718,9 @@ def kick(repo: str, sid: str) -> None:
         spec = specs.load(repo, sid)
         if spec is None:
             raise HTTPException(404, "그런 명세가 없다")
+        if automatic and not (LOOPING.fullmatch(spec["state"]) or (
+                spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == Why.RESTART.value)):
+            return  # A user stop or blocker may have won since recovery/poll read it.
         if spec["state"] != "리뷰 대기" or spec.get("stopped"):
             # A fault is the work stage's; in the loop it only misleads.
             specs.save(specs.moved(spec, "리뷰 대기", stopped=None, fault=None))
@@ -725,8 +729,16 @@ def kick(repo: str, sid: str) -> None:
         if _loops.get(key) not in (None, old):
             return
         _loops[key] = loop
-    loop.thread = threading.Thread(target=drive, args=(loop,), daemon=True)
-    loop.thread.start()
+    try:
+        loop.thread = threading.Thread(target=drive, args=(loop,), daemon=True)
+        loop.thread.start()
+    except Exception as exc:
+        with _lock:
+            if _loops.get(key) is loop:
+                _loops.pop(key)
+        errorlog.record("review-start", exc, repo=repo, spec=sid)
+        stop(None, repo, sid, Why.FORMAT, f"리뷰 실행을 시작하지 못했다 — {exc}")
+        raise
 
 
 def drive(loop: Loop) -> None:
@@ -869,7 +881,9 @@ def ask(loop: Loop, chat: ChatSession, text: str) -> str:
         try:
             kept = folder(loop.repo, spec["pr"]["number"])
             kept.mkdir(parents=True, exist_ok=True)
-            row = {"role": "assistant", "turn": run.turn, "text": verification.redact(final, redaction) if redaction else final,
+            row = {"role": "assistant", "turn": run.turn, "ts": time.time(), "started_at": run.started_at,
+                   "cell": chat.id, "model": chat.model, "cancelled": loop.halt.is_set(),
+                   "text": verification.redact(final, redaction) if redaction else final,
                    "steps": work.steps(run.events), "error": verification.redact(failed, redaction) if redaction else failed}
             with (kept / "progress.jsonl").open("a", encoding="utf-8", newline="\n") as fh:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
@@ -927,7 +941,12 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     if loop.halt.is_set():
         return None
     end = next((e for e in reversed(run.events) if e["kind"] in ("done", "error")), None)
-    return end["text"] if end and end["kind"] == "done" else ""
+    failure = next((e for e in run.events if e["kind"] == "error" or (e.get("meta") or {}).get("error")), None)
+    if failure:
+        raise RuntimeError(failure["text"] or "완료된 답이 없다")
+    if not end or end["kind"] != "done" or not end["text"].strip():
+        raise RuntimeError("완료된 답이 없다")
+    return end["text"]
 
 
 def reusable(spec: dict, head: str, chosen: dict) -> bool:
@@ -1201,6 +1220,13 @@ def step(loop: Loop) -> bool:
     rounds, pr = counted(spec), spec["pr"]["number"]
     n = len(rounds) + 1
     head, base = pr_head(repo, pr)
+    pending = rounds[-1] if rounds else {}
+    incomplete = (pending.get("disposition") is None or any(
+        f["grade"] != "P2" and not f.get("disposition")
+        for f in settled(pending.get("items") or [], pending.get("disposition"))))
+    if (pending.get("verdict") == "deny" and incomplete
+            and not verification.cloud(spec) and spec.get("implementation_environment", "local") == "local"):
+        return corrected(loop, spec, repo, path)
     ship = cloud_shipped if verification.cloud(spec) else external_shipped if spec.get("implementation_environment") == "external" else shipped
     if not ship(loop, spec, repo, path, head, base):
         return False
@@ -1311,6 +1337,7 @@ def step(loop: Loop) -> bool:
               "reviewer": reviewer(chat),
               "gate": {k: (spec.get("gate") or {}).get(k) for k in ("ok", "cmd", "head")},
               "disposition": None, "ts": time.time()}
+    record["said"] = parsed["said"]
     if verification.cloud(spec):
         record["local_verification_digest"] = verification.evidence_identity(spec)
     moved = pr_head(repo, pr)
@@ -1345,17 +1372,27 @@ def step(loop: Loop) -> bool:
         details = "\n\n".join(f["head"] + "\n" + f["body"] for f in record["items"])
         return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, parsed["said"] + "\n\n" + details)
 
+    return corrected(loop, spec, repo, path)
+
+
+def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
+    """Complete the refused round's repair before another review can start."""
+
+    rounds = counted(spec)
+    record = rounds[-1]
+    n, head, base = record["n"], record["head"], record["base"]
+
     spec = change(loop, f"고치는 중 R{n}")
     if spec is None:
         return False
-    serious = [f for f in record["items"] if f["grade"] != "P2"]
+    serious = [f for f in record.get("items") or [] if f["grade"] != "P2"]
     # Jev may gather the context the findings touch first. The verdict, the
     # cap and the merge conditions above are settled; this only shapes the turn.
-    against = [d["finding"] for d in (rounds[-1].get("disposition") or [] if rounds else [])
+    against = [d["finding"] for d in (rounds[-2].get("disposition") or [] if len(rounds) > 1 else [])
                if d["action"] == "disagree"]
     text = decisions.fix_turn(loop, spec, repo, path, n, head, serious,
                               [f["head"] for f in serious if any(same(f["head"], a) for a in against)],
-                              fixing(n, serious, parsed["said"]))
+                              fixing(n, serious, record.get("said") or "The merge was refused."))
     if text is None:
         # Refused at the execution boundary three times over: the worktree went, or its
         # state kept moving under the loop. Stopped with the reason, never sent regardless.
@@ -1364,18 +1401,44 @@ def step(loop: Loop) -> bool:
         gone = not path.is_dir()
         return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE if gone else Why.FORMAT,
                     f"R{n} 수정 턴을 보내지 않았다 — 제안이 실행 직전 확인을 넘지 못했다")
-    answer = told(loop, spec, path, text)
-    if answer is None:
-        return False
-    # The implementation turn may revise the requirements and invalidate prior rounds.
-    spec = specs.load(loop.repo, loop.sid) or spec
-    latest = spec["rounds"][-1]
-    disposition = vouched(disposed(answer), latest.get("items") or [])
-    spec = change(loop, rounds=[*spec["rounds"][:-1], {**latest, "disposition": disposition,
-                                                       "items": settled(latest.get("items") or [], disposition)}])
+    for attempt in range(2):
+        try:
+            answer = told(loop, spec, path, text)
+            if answer is None:
+                return False
+            # Revised requirements invalidate the old review; do not restore it.
+            spec = specs.load(loop.repo, loop.sid) or spec
+            current = counted(spec)
+            if not current or (current[-1]["n"], current[-1]["head"]) != (n, head):
+                return True
+            latest = current[-1]
+            disposition = vouched(disposed(answer), latest.get("items") or [])
+            completed = settled(latest.get("items") or [], disposition)
+            missing = [f["head"] for f in completed if f["grade"] != "P2" and not f.get("disposition")]
+            problem = "발견별 처리 보고가 없거나 빠졌다" if disposition is None or missing else ""
+            if not problem and any(not isinstance(d.get("evidence"), str) or not d["evidence"].strip()
+                                   for d in disposition):
+                problem = "발견별 처리 보고에 근거가 없다"
+            if not problem and any(d["action"] == "fixed" for d in disposition):
+                if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == head:
+                    problem = "고쳤다고 보고했지만 검토한 HEAD 뒤의 수정 커밋이 없다"
+        except RuntimeError as exc:
+            if loop.halt.is_set():
+                return False
+            problem = str(exc) or "완료된 답이 없다"
+        if not problem:
+            break
+        if attempt:
+            return stop(loop, loop.repo, loop.sid, Why.FORMAT, f"R{n} 수정 완료를 확인하지 못했다 — {problem}")
+        text = (f"Continue the correction for review round {n}; the next review has not started. "
+                f"The previous turn did not prove completion: {problem}. Finish the pending work and checks, "
+                "commit and push the repair, then return the required disposition for every finding. "
+                "Use not-reproduced or disagree with evidence when no code change is needed.\n\n" + text)
+    finished = {**latest, "disposition": disposition, "items": completed}
+    spec = change(loop, rounds=[finished if r is latest else r for r in kept_rounds(spec)])
     if spec is None:
         return False
-    before = rounds[-1].get("disposition") if rounds else None
+    before = rounds[-2].get("disposition") if len(rounds) > 1 else None
     stuck = disputed(before, disposition)
     if stuck:
         return stop(loop, loop.repo, loop.sid, Why.DISPUTE, f"두 라운드 연속 반대 — {stuck}")
@@ -1398,15 +1461,14 @@ def pick(loop: Loop, chat: ChatSession, deferred: list[str]) -> list[str]:
     return [k.strip() for k in kept if isinstance(k, str) and k.strip()] if isinstance(kept, list) else []
 
 
-def recover() -> None:
-    """At start-up: a loop that was running when the server went down stopped
-    with it. It does not start again by itself — nobody knows what changed
-    meanwhile — and one `[계속]` takes it on.
+def recover() -> list[tuple[str, str]]:
+    """Record interrupted execution and return loops to resume after recovery.
 
-    A final gate it cut off keeps the failed, unfinished record `finalized`
-    wrote first; only the phase goes. `[계속]` runs the final gate again,
-    after the round checks confirm the head is the one allowed."""
+    Only active loops and previous restart stops retain automatic intent.
+    Resume uses the normal head, checkout and unfinished-correction checks;
+    a final gate cut off by restart must run again before merge."""
 
+    resume = []
     for repo in specs.SPECS.glob("*"):
         if repo.is_dir():
             for spec in specs.listing(repo.name):
@@ -1414,8 +1476,12 @@ def recover() -> None:
                     specs.validate(repo.name, spec["id"], phase=None)
                 if LOOPING.fullmatch(spec["state"]):
                     if verification.cloud(spec) and (spec.get("local_verification") or {}).get("state") == "running":
-                        verification.keep(spec, state="interrupted", reason="서버 재시작 — 사용자가 재개한다")
+                        verification.keep(spec, state="interrupted", reason="서버 재시작 — 자동 재개 대기")
                     stop(None, repo.name, spec["id"], Why.RESTART)
+                    resume.append((repo.name, spec["id"]))
+                elif spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == Why.RESTART.value:
+                    resume.append((repo.name, spec["id"]))
+    return resume
 
 
 # -- Merging -----------------------------------------------------------------------
@@ -1661,16 +1727,24 @@ def automatic(repo: Path, spec: dict) -> None:
         specs.update(repo.name, spec["id"], fault=f"자동 머지 대기 — {exc}")
 
 
-def poll() -> None:
-    """The pull requests in `머지 대기`, read again every minute."""
+def poll(halt: threading.Event | None = None) -> None:
+    """Reattach orphaned active loops and retry merge/cleanup every minute."""
 
-    while True:
-        time.sleep(POLL)
+    halt = halt or threading.Event()
+    while not halt.wait(POLL):
         for repo in specs.SPECS.glob("*"):
             path = channels.repo_for(repo.name)
             if path is None:
                 continue
             for spec in specs.listing(repo.name):
+                if halt.is_set():
+                    return
+                if LOOPING.fullmatch(spec["state"]):
+                    try:
+                        kick(repo.name, spec["id"], automatic=True)
+                    except Exception as exc:
+                        errorlog.record("review-reattach", exc, repo=repo.name, spec=spec["id"])
+                    continue
                 if (verification.cloud(spec) and spec["state"] == "머지 가능"
                         and (spec.get("local_verification") or {}).get("state") == "verified"):
                     allowed = specs.approved(spec)

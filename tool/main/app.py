@@ -33,7 +33,8 @@ from fastapi.exceptions import RequestValidationError
 import translate
 from common import errorlog
 
-from . import architecture, channels, connect, improvements, loop, mobile, planning, query, specs, survey, verification, work
+from . import architecture, channels, connect, improvements, loop, mobile, planning, query, specs, suite, survey, verification, work
+from .runtime import server_owner
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
 # `text/plain`. The browser then refuses `<script type="module">` silently:
@@ -56,29 +57,41 @@ async def lifespan(_: FastAPI):
     started this closes its pipe. A forced kill never reaches this.
     """
 
-    # A loop that ran when the server last went down stopped with it; it
-    # says so, and waits for a person's `[계속]`.
-    loop.recover()
-    # A plan's worker too: stopped with its phase, never replayed by itself.
-    planning.recover()
-    survey.recover()
-    threading.Thread(target=loop.poll, daemon=True).start()
-    architecture_stop = threading.Event()
-    architecture_thread = threading.Thread(target=architecture.watch, args=(architecture_stop,), daemon=True)
-    architecture_thread.start()
-    yield
-    architecture_stop.set()
-    architecture_thread.join(timeout=12)
-    mobile.companion.stop()
-    loop.close_all()
-    planning.close_all()
-    query.close_all()
-    work.close_all()
+    with server_owner(specs.SPECS.parent):
+        # Recovery must run only after exclusive ownership is acquired: a
+        # second server must never mark the first server's live loops stopped.
+        resume = loop.recover()
+        planning.recover()
+        survey.recover()
+        for repo, sid in resume:
+            try:
+                loop.kick(repo, sid, automatic=True)
+            except Exception as exc:
+                errorlog.record("review-resume", exc, repo=repo, spec=sid)
+        poll_stop = threading.Event()
+        poll_thread = threading.Thread(target=loop.poll, args=(poll_stop,), daemon=True)
+        poll_thread.start()
+        architecture_stop = threading.Event()
+        architecture_thread = threading.Thread(target=architecture.watch, args=(architecture_stop,), daemon=True)
+        architecture_thread.start()
+        try:
+            yield
+        finally:
+            poll_stop.set()
+            poll_thread.join(timeout=12)
+            architecture_stop.set()
+            architecture_thread.join(timeout=12)
+            mobile.companion.stop()
+            loop.close_all()
+            planning.close_all()
+            query.close_all()
+            work.close_all()
 
 
 app = FastAPI(title="wiki-agent", lifespan=lifespan)
 app.include_router(query.router)
 app.include_router(architecture.router)
+app.include_router(suite.router)
 app.include_router(work.router)
 app.include_router(specs.router)
 app.include_router(loop.router)

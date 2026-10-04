@@ -1,6 +1,6 @@
 # web
 
-Source files (44):
+Source files (45):
 
 - `web/public/sw.js`
 - `web/src/App.tsx`
@@ -24,6 +24,7 @@ Source files (44):
 - `web/src/components/Run.tsx`
 - `web/src/components/Settings.tsx`
 - `web/src/components/Stream.tsx`
+- `web/src/components/Suite.tsx`
 - `web/src/components/TaskRail.tsx`
 - `web/src/components/Terminal.tsx`
 - `web/src/components/Toolbar.tsx`

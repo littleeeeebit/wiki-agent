@@ -74,7 +74,7 @@ The reasons for stopping are all in the table below. The overview and other step
 | `반론` | [Continue] after a human writes what they decided for that discovery. That statement goes into the handling clause of the next instruction |
 | `라운드 형식` | [Continue] |
 | `사람이 멈춤` | [Continue] |
-| `서버 재시작` | [Continue]. When the server starts, it changes all specifications in loop status to this |
+| `서버 재시작` | Startup records the interruption and automatically resumes after recovery, checking the current head and pending repair; old restart stops also resume |
 | `저장소 없음` | `repo` of the specification cannot be resolved to a path. [Continue] when that repository returns |
 | `작업트리 없음` | `worktree` of the specification is not in the list of that repository. [Continue] receives it again from the PR as `adopt` and continues |
 | `검토하지 않은 base 에 머지됨` | No [Continue]. End with one of the two buttons under "End of merge with mismatched base" below |
@@ -221,7 +221,7 @@ Temporary. Step 6 rebuilds it.
 | Fork PR cannot be selected | |
 | [Merge] passes screen's head commit as `--match-head-commit` | If argument is removed |
 | Cleanup does not ff on dirty original | If check is deleted |
-| Loop status after server restart is `멈춤 — 서버 재시작` | |
+| Startup records `멈춤 — 서버 재시작`, then resumes automatically; user stops and blockers remain stopped | |
 | Stop reason is same enum as this document's table. Failure if stopped for reason not in table | |
 | `accept` of `settle` cleans up only after `머지됨`, and `reopen` returns to `작업 중` without deleting worktree and branch. 409 in other statuses | If status check is deleted |
 | After `reopen`, `rounds` is empty, old round is in `history`, limit is default, new PR's first round is R1 and new review cell | If initialization is removed |
@@ -245,11 +245,17 @@ Temporary. Step 6 rebuilds it.
 | Loop merging itself | Safety boundary of overview |
 | Fork PR | Nowhere to push |
 | Allow writing to review cell | User's decision |
-| Automatic loop resume after restart | Don't know what changed while human was away. One [Continue] is enough |
 
 ## Agreements in implementation
 
 Filled the spots left empty by the plan like this.
+
+The 2026-10-04 continuity report changes the original explicit-restart policy:
+the server now resumes active loops and previous restart stops automatically
+after exclusive startup recovery. Normal head, checkout, repair and final-gate
+checks resolve changes while the server was away. User stops and actual
+blockers still require resolution. The poller reattaches orphaned active loops;
+manual clicking is not required between rounds.
 
 The Review tab now shows its independent session's live progress and owns the
 review model and effort controls. Settings retains round limits and concurrency.

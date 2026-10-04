@@ -1,6 +1,6 @@
 # web/components
 
-Source files (28):
+Source files (29):
 
 - `web/src/components/Agent.tsx`
 - `web/src/components/Answer.tsx`
@@ -22,6 +22,7 @@ Source files (28):
 - `web/src/components/Run.tsx`
 - `web/src/components/Settings.tsx`
 - `web/src/components/Stream.tsx`
+- `web/src/components/Suite.tsx`
 - `web/src/components/TaskRail.tsx`
 - `web/src/components/Terminal.tsx`
 - `web/src/components/Toolbar.tsx`

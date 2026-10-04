@@ -26,6 +26,13 @@ branch identity, preserves the specification and writes review instructions.
 It dispatches an independent read-only reviewer, persists each round's result,
 and returns valid serious findings to the implementation session.
 
+Start the control once for a PR. The server continues review and repair rounds
+after verified completion and publication, and resumes active loops after a
+server restart. Do not tell the person to click it for every round or save that
+advice as a standing instruction. A stopped task has a persisted reason; read
+that reason instead of describing a stop as normal next-round waiting. Explicit
+user stops and genuine blockers require resolution before continuing.
+
 The implementation agent reports completion through `done-report` and records
 requirements changes through `spec-update`. It never edits `raw/specs` to force
 a state, discovers external terminals, or starts a second review workflow.

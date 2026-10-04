@@ -540,6 +540,7 @@ def consume(path: Path, run: work.Run, text: str) -> tuple[str, str, dict, int, 
             made = work.steps(run.events)
         try:
             work.remember(path, "assistant", final, error=failed, steps=made,
+                          turn=run.turn, cell=run.chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
                           provider="codex" if run.chat.is_codex else "claude",
                           **{k: v for k, v in meta.items() if k != "session_id"})
         except OSError as exc:  # a lost transcript row must not take the turn's usage with it

@@ -569,6 +569,7 @@ class Run:
 
     def __init__(self, chat: ChatSession) -> None:
         self.turn = uuid.uuid4().hex
+        self.started_at = time.time()
         self.chat = chat
         self.session_id = chat.id
         self.events: list[dict] = []
@@ -731,6 +732,9 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> 
                 failed = ev.text = "사람이 멈춤" if run.halt.is_set() else ev.text
             run.put({"kind": ev.kind, "text": ev.text, "meta": ev.meta,
                      "session_id": ev.session_id, "parent_id": ev.parent_id})
+        if not failed and not final.strip():
+            failed = "완료된 답이 없다"
+            run.put({"kind": "error", "text": failed, "meta": {}, "session_id": chat.id, "parent_id": None})
         if not failed:
             # Still holding the worktree: the gate runs where nothing else
             # writes, and its lines are in this turn's record.
@@ -751,13 +755,21 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> 
                 at = next((i for i, e in enumerate(run.events) if e["kind"] == "done"), None)
                 answered = {} if at is None else {"answered": len(steps(run.events[:at + 1]))}
             remember(path, "assistant", final, error=failed, steps=made,
+                     turn=run.turn, cell=chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
                      provider="codex" if chat.is_codex else "claude", diff_base=run.diff_base, **answered, **meta)
+        except Exception as exc:
+            # Transcript publication is not the execution boundary. A lost
+            # record must not skip an already accepted review/plan handoff.
+            errorlog.record("work-record", exc, turn=run.turn, path=str(path))
         finally:
             # Released before the end is told, so a screen that sees the end
             # can send the next instruction at once.
             release()
-            run.finish()
-            feed.put({"kind": "work-record", "path": str(path)})
+            try:
+                run.finish()
+                feed.put({"kind": "work-record", "path": str(path)})
+            except Exception as exc:
+                errorlog.record("work-publication", exc, turn=run.turn, path=str(path))
     try:
         if then:
             then()

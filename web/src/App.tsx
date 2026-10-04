@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
-import { Settings as Gear } from 'lucide-react'
+import { ListOrdered, Settings as Gear } from 'lucide-react'
 import { Agent } from '@/components/Agent'
 import type { Choice } from '@/components/Toolbar'
 import { Btn } from '@/components/Modal'
@@ -13,6 +13,7 @@ import { Review } from '@/components/Review'
 import { Settings } from '@/components/Settings'
 import { LiveChanges } from '@/components/LiveChanges'
 import { Architecture } from '@/components/Architecture'
+import { Suite } from '@/components/Suite'
 import { TaskRail } from '@/components/TaskRail'
 import type { View } from '@/components/TaskRail'
 import { Terminal, closed } from '@/components/Terminal'
@@ -559,6 +560,10 @@ export default function App() {
             setView(view === 'architecture' ? 'chat' : 'architecture')
             if (landscapeView === 'task') setLandscapeView('workspace')
           }}>구조</Btn>
+          <Btn tone="ghost" aria-label="스위트" aria-pressed={view === 'suite'} onClick={() => {
+            setView(view === 'suite' ? 'chat' : 'suite')
+            if (landscapeView === 'task') setLandscapeView('workspace')
+          }}><ListOrdered className="size-4" /></Btn>
         </div>
         {mobilePane === 'chat' && <Btn tone="ghost" className="portrait-header-action" aria-pressed={view === 'map'} onClick={() => {
           if (view !== 'map') setMapped(true)
@@ -567,6 +572,10 @@ export default function App() {
         {mobilePane === 'chat' && <Btn tone="ghost" className="portrait-header-action" aria-label="앱 구조"
           aria-pressed={view === 'architecture'} onClick={() => setView(view === 'architecture' ? 'chat' : 'architecture')}>
           {view === 'architecture' ? '대화로' : '구조'}
+        </Btn>}
+        {mobilePane === 'chat' && <Btn tone="ghost" className="portrait-header-action" aria-label="스위트"
+          aria-pressed={view === 'suite'} onClick={() => setView(view === 'suite' ? 'chat' : 'suite')}>
+          <ListOrdered className="size-4" />
         </Btn>}
         {mobilePane === 'task' && tidy && <Btn tone="ghost" className="portrait-header-action" onClick={() => void remove(row!.path)}>정리</Btn>}
         <button type="button" aria-label="설정" onClick={() => setSetting(true)} className="grid size-11 shrink-0 place-items-center rounded-md text-muted-foreground">
@@ -617,7 +626,7 @@ export default function App() {
             <Btn tone="ghost" onClick={() => setView('chat')}>← 돌아가기</Btn>
           ) : (
             <div role="tablist" aria-label="가운데" className="flex h-7 shrink-0 rounded-md border border-border p-0.5">
-              {(['chat', 'map', 'architecture'] as const).map((v) => (
+              {(['chat', 'map', 'architecture', 'suite'] as const).map((v) => (
                 <button key={v} type="button" role="tab" aria-selected={view === v}
                   onClick={() => {
                     if (v === 'map') setMapped(true)
@@ -625,7 +634,7 @@ export default function App() {
                   }}
                   className={cn('rounded-[4px] px-2.5 text-[12.5px]',
                     view === v ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground')}>
-                  {v === 'chat' ? '대화' : v === 'map' ? '지도' : '앱 구조'}
+                  {v === 'chat' ? '대화' : v === 'map' ? '지도' : v === 'architecture' ? '앱 구조' : '스위트'}
                 </button>
               ))}
             </div>
@@ -668,7 +677,17 @@ export default function App() {
             }} />
           </div>
         )}
-        {view === 'architecture' && <div className="min-h-0 flex-1"><Architecture theme={theme} /></div>}
+        {view === 'architecture' && repo && <div className="min-h-0 flex-1"><Architecture key={repo} repo={repo} theme={theme} /></div>}
+        {view === 'suite' && repo && <div className="min-h-0 flex-1"><Suite key={repo} repo={repo} korean={on}
+          onPeek={showPeek} onOpen={(cell) => {
+            const target = list.find((t) => cell.task ? t.spec?.id === cell.task : t.path === cell.path)
+            if (!target) { setFault('이 실행의 작업은 현재 목록에 없다. 스위트에서 기록을 확인해라.'); return }
+            setSelected(target.key)
+            setTab(cell.kind === 'review' ? 'review' : 'agent')
+            setTaskOptionsOpen(false)
+            setMobilePane('task')
+            setLandscapeView('workspace')
+          }} /></div>}
         {view === 'projects' && <div className="min-h-0 flex-1"><Projects current={repo} /></div>}
       </main>
 

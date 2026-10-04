@@ -11,7 +11,7 @@ from fastapi import HTTPException
 
 from agent import chat_local
 from agent.chat_local import quota_windows
-from agent.chat_session import ChatSession
+from agent.chat_session import ChatSession, Event
 from main import specs, work
 
 
@@ -239,6 +239,23 @@ def test_question_and_finished_run_publish_global_notices(tmp_path, monkeypatch)
     failed.put({"kind": "error", "text": "Failed", "meta": {}})
     failed.finish()
     assert work.feed.events[-1]["title"] == "에이전트 실행 실패"
+
+
+def test_an_empty_terminal_answer_is_recorded_as_failure_and_skips_completion(tmp_path, monkeypatch):
+    recorded, released = [], []
+    chat = SimpleNamespace(id="empty-worker", parent_id=None, is_codex=False, path=tmp_path,
+                           say=lambda *_: iter([Event("done", "", {"error": False}, "empty-worker")]))
+    run = work.Run(chat)
+    monkeypatch.setattr(work, "feed", work.Feed())
+    monkeypatch.setattr(work, "remember", lambda *args, **kwargs: recorded.append((args, kwargs)))
+    monkeypatch.setattr(work.errorlog, "record", lambda *args, **kwargs: None)
+    monkeypatch.setattr(work, "dispatch", lambda *_: None)
+    monkeypatch.setattr(specs, "check", lambda *_: pytest.fail("An empty answer was accepted as completion"))
+    work.run_turn(tmp_path, run, "Finish the repair", lambda: released.append(True))
+    assert run.done and released == [True]
+    assert recorded[-1][1]["error"] == "완료된 답이 없다"
+    assert run.events[-1]["kind"] == "error"
+    assert [e["title"] for e in work.feed.events if e["kind"] == "notice"] == ["에이전트 실행 실패"]
 
 
 def test_diff_git_stops_reading_at_preview_limit(tmp_path, monkeypatch):

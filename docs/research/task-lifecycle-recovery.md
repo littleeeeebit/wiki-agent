@@ -23,6 +23,80 @@ in the reported refusal. Those files were preserved.
 The originally reported failure is reproduced by an isolated real-Git regression
 whose selected checkout is already on the PR branch, without an existing spec.
 
+## Premature review and live-loop interruption
+
+The user's repair agent reported round 2 arriving before its round 1 changes
+were published. Read-only inspection of the saved PR 13 records confirmed
+that both rounds reviewed `803ae40`, and both retained a null disposition.
+Round 1 entered correction at 07:22:11 UTC; round 2 began at 07:22:52 UTC.
+The work record between them held an empty terminal answer with no error.
+`work.run_turn` accepted it as success, `loop.told` returned an empty string,
+and the existing passing gate was reused on the unchanged head. The loop
+therefore advanced without a completed correction. This ordering is observed;
+why the provider returned an empty answer remains unknown.
+
+The [Claude streaming reference](https://code.claude.com/docs/en/agent-sdk/streaming-vs-single-mode)
+describes sequential queued messages and response iterators ending at a result.
+It does not establish that this particular empty result meant the user's
+correction had finished. The repair boundary now validates its own completion:
+a nonempty terminal answer, a disposition and evidence for every serious
+finding, and a changed local head whenever a fix is claimed. Existing round
+checks and push verification still run before the next review.
+An incomplete correction gets one continuation in the same round and work
+session. A second incomplete answer stops with the reason. Explicit resume
+finishes that pending correction before dispatching another review.
+Requirements revised during correction invalidate the old review normally.
+
+The same saved task stopped at 07:33:16 UTC with `서버 재시작`, although the
+desktop server process observed during investigation predated that time.
+A second server's unconditional startup recovery could rewrite the first
+server's live tasks. An isolated subprocess reproduction confirmed that
+defect. The identity of the process that caused the historical stop was not
+established; the user's next-round waiting explanation alone does not account
+for the persisted restart reason.
+
+Server startup now acquires exclusive ownership of the hub's `raw/server.lock`
+before recovery. A second server fails before touching workflow records.
+The lock remains held through shutdown and the file stays in place. It uses
+Python's [Windows byte-range locking](https://docs.python.org/3/library/msvcrt.html#msvcrt.locking)
+or [POSIX flock](https://docs.python.org/3/library/fcntl.html#fcntl.flock), rather
+than treating a leftover file as proof of a live process. A forced-process
+termination regression verifies that the next process can acquire ownership.
+Startup recovery previously stopped every active loop and required explicit
+Continue. This was a real continuity gap, separate from premature round 2.
+Recovery now retains automatic intent for active loops and previous restart
+stops; after exclusive ownership and startup recovery, normal dispatch resumes
+them. Checkout and head checks still apply, pending correction finishes before
+a new review, and interrupted final gates rerun. Explicit user stops, gate
+failures and other blockers remain stopped. The minute poller reattaches active
+states without a driver and exits on server shutdown. Automatic dispatch
+rechecks eligibility so it cannot overwrite a user stop made since polling.
+
+Two further failures were reproduced with synthetic execution: an exception
+writing the completed work record or publishing its feed notification skipped
+the already accepted review/plan completion callback and queued instruction.
+Both failures now log their error while preserving that handoff. The Suite
+view reads existing scoped records and live cells so completion, failure,
+approval waits and interrupted execution are visible separately.
+
+The agent's claim that every stopped task is merely awaiting a manual next
+round was unsupported. The work prompt, operator rule and review skill now
+state that the server owns continuation and reject saving per-round clicking
+as a standing instruction. No unknown instruction file in another repository
+was rewritten.
+
+Real-Git regressions hold the repair turn open and verify that no round 2
+artifact or reviewer request exists, and that the remote head stays unchanged.
+They cover empty answers, unfinished status text, a fixed claim without a new
+commit, partial finding reports, unsupported disagreement, and explicit resume.
+The models and GitHub endpoint are simulated; the commits and pushes use a
+temporary bare origin. The subprocess startup regression retains a blocked
+review in the first server while attempting a second startup. These tests do
+not alter or resume the user's live task.
+Additional real-Git startup regressions verify automatic review and correction
+recovery while preserving user stops and gate failures. A poller regression
+verifies recovery of an orphaned active loop and prompt shutdown.
+
 ## Claude quota provenance
 
 The vendor's [headless SDK quota issue](https://github.com/anthropics/claude-code/issues/50518)

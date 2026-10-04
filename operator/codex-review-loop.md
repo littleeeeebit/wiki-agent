@@ -24,6 +24,12 @@ live evidence (`{live_cmd}`). Commit and push the fixes. After `머지 허용`,
 run `{gate_cmd}` once on that head before a requested merge —
 [[verify-narrow-then-wide]]. The procedure is in `skills/review-loop/SKILL.md`.
 
+In the managed app, start the loop once per PR. The server waits for completed
+repairs and publication, advances subsequent rounds automatically, and resumes
+interrupted execution on restart. Read a stopped task's persisted reason;
+never assume it means waiting for another button click, and never store manual
+per-round clicking as a standing instruction.
+
 Cloud implementations additionally follow [[cloud-local-review]]: a separate
 local reviewer checks actual API/browser evidence, and failures return to
 cloud. The ordinary local implementation workflow stays as above.
