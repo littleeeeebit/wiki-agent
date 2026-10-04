@@ -3383,6 +3383,10 @@ class Run:
         return None if what is None else budget_left(what) if isinstance(what, Budget) else what()
 
     def put(self, payload: dict) -> dict:
+        if payload.get("kind") == "error" or payload.get("status") == "failed":
+            from common import errorlog
+            safe = self.redact(payload)
+            errorlog.record("query", safe.get("text") or safe.get("reason") or "Failed run", run=self.id)
         with self.wake:
             event = {**payload, "run_id": self.id, "seq": len(self.events),
                      "stage": payload.get("stage", self.stage), "status": payload.get("status", payload["kind"]),

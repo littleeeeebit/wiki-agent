@@ -241,19 +241,41 @@ def test_branch_switches_wait_for_review_and_survey_but_restart_releases_survey(
 
 def test_new_task_branch_preserves_dirty_checkout_and_works_in_linked_checkout(repo, tmp_path):
     (repo / "uncommitted.txt").write_text("keep", encoding="utf-8")
-    try:
-        create(repo, "must-wait")
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("Dirty checkout was switched")
-    assert git(repo, "branch", "--show-current") == "main"
+    assert create(repo, "new-task") == repo.resolve()
+    assert git(repo, "branch", "--show-current") == "new-task"
     assert (repo / "uncommitted.txt").read_text(encoding="utf-8") == "keep"
     # An externally selected checkout is already a worktree; no nested copy is needed.
     path = tmp_path / "selected-checkout"
     git(repo, "worktree", "add", "-qb", "selected", str(path))
     assert create(path, "task") == path.resolve()
     assert git(path, "branch", "--show-current") == "task"
+
+
+def test_task_start_preserves_staged_unstaged_and_untracked_changes(repo):
+    (repo / "a.txt").write_text("staged\n", encoding="utf-8")
+    git(repo, "add", "a.txt")
+    (repo / "a.txt").write_text("unstaged\n", encoding="utf-8")
+    (repo / "notes.txt").write_text("user notes\n", encoding="utf-8")
+    before = git(repo, "diff"), git(repo, "diff", "--cached")
+    sid = made(repo, spec_block(slug="with-edits"))[0]["id"]
+    Worker.replies = ["Working"]
+    with patch.object(work, "ChatSession", Worker):
+        assert started(client(), sid) == str(repo)
+    assert git(repo, "diff") == before[0] and git(repo, "diff", "--cached") == before[1]
+    assert (repo / "notes.txt").read_text(encoding="utf-8") == "user notes\n"
+
+
+def test_conflicting_task_base_refuses_switch_without_losing_changes(repo):
+    import pytest
+    git(repo, "switch", "-c", "other")
+    (repo / "a.txt").write_text("other committed\n", encoding="utf-8")
+    git(repo, "commit", "-qam", "other commit")
+    (repo / "a.txt").write_text("precious edits\n", encoding="utf-8")
+    with pytest.raises(RuntimeError):
+        create(repo, "conflicting-task", base="main")
+    assert git(repo, "branch", "--show-current") == "other"
+    assert not git(repo, "branch", "--list", "conflicting-task")
+    assert (repo / "a.txt").read_text(encoding="utf-8") == "precious edits\n"
 
 
 @pytest.mark.parametrize("stale_remote", [False, True])
@@ -314,10 +336,9 @@ def test_shared_checkout_after_merge_updates_base_for_the_next_task(repo, tmp_pa
             local_base = git(repo, "branch", "--show-current")
             assert local_base.startswith("wiki-base/")
             assert git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}") == "origin/main"
-            assert web.post(f"/api/specs/{sid}/checkout").status_code == 200  # Reopening an old merged task is safe too.
         else:
             assert git(repo, "rev-parse", "main") == head
-        assert git(repo, "rev-parse", sid) == head  # Never delete the local task branch.
+        assert not git(repo, "branch", "--list", sid)  # Reviewed merged task refs are removed.
         second = made(repo, spec_block(slug="second"))[0]["id"]
         assert started(web, second) == str(repo)
         assert git(repo, "rev-parse", "HEAD") == head and (repo / "merged.txt").exists()

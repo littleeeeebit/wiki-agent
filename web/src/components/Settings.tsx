@@ -164,6 +164,13 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
               onChange={(e) => setSeats(Number(e.target.value))} />
           </Row>
           <p className="text-faint">리뷰 모델과 추론 강도는 리뷰 탭에서 고른다.</p>
+          <Row label="자동 머지 · 정리" note="리뷰 허용과 최종 검사 통과 후 머지하고 브랜치·리뷰 아티팩트를 정리한다">
+            <input type="checkbox" role="switch" className="size-4 accent-primary" checked={loop.auto_merge ?? true}
+              disabled={working === 'loop'} onChange={(e) => {
+                const auto_merge = e.target.checked
+                void act('loop', () => onLoop({ ...loop, auto_merge }))
+              }} />
+          </Row>
           <Save edited={loopEdited} busy={working === 'loop'}
             onSave={() => act('loop', () => onLoop({ ...loop, rounds, concurrent: seats }))} />
           </>)}

@@ -22,6 +22,7 @@ from main import channels as chat_channels
 from main import query as chat
 from main import specs, work
 from agent.chat_session import ChatSession, Event
+from common import errorlog
 
 
 class Screen(TestClient):
@@ -65,8 +66,17 @@ def no_machine_settings(tmp_path):
          patch.object(main_app, "SWITCH", tmp_path / "main.json"), \
          patch.object(work, "LOGS", tmp_path / "work"), \
          patch.object(work, "_sessions", {}), patch.object(work, "_busy", {}), \
-         patch.object(work, "_runs", {}), patch.object(specs, "SPECS", tmp_path / "specs"):
-        yield
+         patch.object(work, "_runs", {}), patch.object(specs, "SPECS", tmp_path / "specs"), \
+         patch.object(errorlog, "FILE", tmp_path / "errors.jsonl"), \
+         patch.object(chat_session, "claude_usage", return_value=[]):
+        try:
+            yield
+        finally:
+            with errorlog._lock:
+                if errorlog._logger:
+                    for handler in errorlog._logger.handlers:
+                        handler.close()
+                    errorlog._logger = None
 
 
 def test_explanation_isolated(tmp_path):

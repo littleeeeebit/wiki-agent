@@ -1,6 +1,6 @@
 # tool
 
-Source files (99):
+Source files (100):
 
 - `tool/agent/__init__.py`
 - `tool/agent/chat_local.py`
@@ -12,6 +12,7 @@ Source files (99):
 - `tool/codex_pretool.py`
 - `tool/common/__init__.py`
 - `tool/common/budget.py`
+- `tool/common/errorlog.py`
 - `tool/common/host.py`
 - `tool/common/language.py`
 - `tool/common/process.py`

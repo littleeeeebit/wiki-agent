@@ -725,7 +725,8 @@ def test_shared_checkout_survey_returns_to_base_before_adapter_handover(original
         loop.finish(repo, spec, "main", commit, "Merged fixture survey")
     assert connect.record("proj")["handover"]["state"] == "완료"
     assert git(repo, "rev-parse", "HEAD") == commit
-    assert git(repo, "rev-parse", "wiki-bootstrap") == task_head
+    assert git(repo, "branch", "--list", "wiki-bootstrap") == ""
+    assert specs.load("proj", "wiki-bootstrap")["cleanup_complete"]
     if linked:
         assert git(sibling, "branch", "--show-current") == "main"
         assert git(sibling, "rev-parse", "HEAD") != commit

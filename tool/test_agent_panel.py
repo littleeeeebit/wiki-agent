@@ -15,6 +15,14 @@ from agent.chat_session import ChatSession
 from main import specs, work
 
 
+@pytest.fixture(autouse=True)
+def no_live_claude_quota(monkeypatch):
+    from agent import chat_session
+    def unavailable(**_kwargs):
+        raise RuntimeError("No live provider in fixture checks")
+    monkeypatch.setattr(chat_session, "claude_usage", unavailable)
+
+
 def test_live_diff_reads_new_staged_shell_and_committed_changes(tmp_path, monkeypatch):
     def git(*args):
         return subprocess.run(["git", "-C", str(tmp_path), *args], check=True, capture_output=True,
@@ -105,6 +113,50 @@ def test_provider_events_capture_usage_and_reset_without_ending_turn(tmp_path):
     assert list(codex._drain())[-1].kind == "done"
     assert codex.status()["quota"] == windows
     assert codex.usage["scope"] == "thread" and codex.usage["input_tokens"] == 100
+
+
+def test_claude_quota_uses_login_caches_results_and_keeps_missing_stream_utilization(tmp_path, monkeypatch):
+    from io import BytesIO
+    from agent import chat_local
+    credentials = tmp_path / ".credentials.json"
+    credentials.write_text(json.dumps({"claudeAiOauth": {"accessToken": "fixture-token"}}), encoding="utf-8")
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setattr(chat_local, "_claude_usage_cache", {})
+    calls = []
+    def respond(request, timeout):
+        calls.append(request)
+        return BytesIO(json.dumps({"five_hour": {"utilization": 23, "resets_at": "2027-01-15T08:00:00Z"},
+                                  "seven_day": {"utilization": 0, "resets_at": None}}).encode())
+    monkeypatch.setattr(chat_local, "urlopen", respond)
+    environment = {"CLAUDE_CONFIG_DIR": str(tmp_path)}
+    quota = chat_local.claude_usage(environment)
+    assert quota[0]["used_percent"] == 23 and quota[1]["used_percent"] == 0
+    assert chat_local.claude_usage(environment) == quota and len(calls) == 1
+    assert "fixture-token" not in json.dumps(quota)
+    assert credentials.read_text(encoding="utf-8") == json.dumps({"claudeAiOauth": {"accessToken": "fixture-token"}})
+    chat = ChatSession(tmp_path)
+    chat.quota = quota
+    chat._events.put({"type": "rate_limit_event", "rate_limit_info": {
+        "rateLimitType": "five_hour", "resetsAt": quota[0]["resets_at"], "status": "allowed"}})
+    chat._events.put({"type": "result", "result": "Done"})
+    list(chat._drain())
+    assert next(q for q in chat.quota if q["name"] == "five_hour")["used_percent"] == 23
+
+
+def test_claude_quota_throttling_is_cached_without_leaking_credentials(tmp_path, monkeypatch):
+    from urllib.error import HTTPError
+    from agent import chat_local
+    monkeypatch.setattr(chat_local, "_claude_usage_cache", {})
+    calls = []
+    def throttled(request, timeout):
+        calls.append(request)
+        raise HTTPError(request.full_url, 429, "secret-token", {}, None)
+    monkeypatch.setattr(chat_local, "urlopen", throttled)
+    for _ in range(2):
+        with pytest.raises(RuntimeError, match="HTTP 429") as caught:
+            chat_local.claude_usage({"CLAUDE_CODE_OAUTH_TOKEN": "secret-token"})
+        assert "secret-token" not in str(caught.value)
+    assert len(calls) == 1
 
 
 def test_codex_failed_initialization_reaps_process(tmp_path, monkeypatch):

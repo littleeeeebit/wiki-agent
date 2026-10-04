@@ -32,6 +32,7 @@ def main():
     restarted_feed = None
     feed_requests = []
     fast_requests = []
+    screen_errors = []
     fast_models = [("opus", True), ("opus[1m]", True), ("claude-opus-4-8", True),
                    ("claude-opus-5", True), ("claude-opus-5-5", True),
                    ("claude-opus-5-5-20261001[1m]", True), ("claude-opus-4-6", False),
@@ -51,6 +52,9 @@ def main():
         nonlocal deleted
         if path == "switch":
             return {"translate": True, "usage": {"month": "2026-10", "usd": 0, "limit": 10}}
+        if path == "errors":
+            screen_errors.append(await request.json())
+            return {"ok": True}
         if path == "options":
             options = fixture(path, request.method)
             options["models"].extend({"id": model, "label": model, "note": "", "supports_fast": supported}
@@ -165,6 +169,9 @@ def main():
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(base)
+            page.evaluate("window.dispatchEvent(new ErrorEvent('error', {error: new Error('Synthetic screen failure')}))")
+            page.wait_for_timeout(200)
+            assert screen_errors and screen_errors[0]["message"] == "Synthetic screen failure", screen_errors
             page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(
                 has_text="fixture-task").click()
             page.locator(".live-changes > summary").click()
@@ -175,6 +182,18 @@ def main():
             measured = diff.bounding_box()
             assert measured["y"] >= 0 and measured["y"] + measured["height"] < 900, measured
             assert "-old" in diff.inner_text() and "+new" in diff.inner_text()
+            diff_colors = []
+            for theme in ("dark", "light"):
+                page.evaluate("theme => { document.documentElement.classList.remove('dark', 'light'); document.documentElement.classList.add(theme) }", theme)
+                colors = diff.evaluate("""el => ['+new', '-old'].map(text => {
+                  const row = [...el.children].find(row => row.textContent === text);
+                  return getComputedStyle(row).color.match(/[\\d.]+/g).slice(0, 3).map(Number);
+                })""")
+                assert colors[0][1] > colors[0][0] and colors[0][1] > colors[0][2], colors
+                assert colors[1][0] > colors[1][1] and colors[1][0] > colors[1][2], colors
+                diff_colors.append({"theme": theme, "added": colors[0], "deleted": colors[1]})
+            page.evaluate("document.documentElement.classList.remove('light'); document.documentElement.classList.add('dark')")
+            print(json.dumps({"diff_colors": diff_colors}))
             summary = page.locator("summary").filter(has_text="코드 변경 현황").inner_text()
             assert "2개 파일" in summary and "+12001" in summary and "−12000" in summary
             pane = page.locator('section[aria-label="에이전트 세션"] > .overflow-y-auto')
@@ -306,6 +325,8 @@ def main():
             limits.get_by_text("Claude", exact=True).wait_for()
             assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
             page.get_by_text("한도", exact=True).click()
+            assert page.get_by_label("선택한 작업 모델", exact=True).is_visible()
+            assert page.get_by_label("선택한 작업 모델", exact=True).inner_text() == "opus"
             page.set_viewport_size({"width": 1440, "height": 900})
             print(json.dumps({"task_layout": measurements}))
             for label, path, line in (("Windows source", "C:/fixture/src/app.ts", "12"),
@@ -385,6 +406,18 @@ def main():
             page.get_by_role("menuitem", name="삭제", exact=True).click()
             page.get_by_role("dialog").get_by_role("button", name="삭제", exact=True).click()
             row.wait_for(state="detached")
+            page.reload()
+            page.get_by_text("아직 작업이 없다.", exact=False).wait_for()
+            assert not page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").count()
+            # A merged task remains actionable while cleanup waits, then disappears
+            # even though its shared checkout still exists on the server.
+            deleted = False
+            spec.update(state="머지됨", cleanup_complete=False)
+            page.reload()
+            row = page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task")
+            row.wait_for()
+            assert "정리 대기" in row.inner_text()
+            spec["cleanup_complete"] = True
             page.reload()
             page.get_by_text("아직 작업이 없다.", exact=False).wait_for()
             assert not page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").count()

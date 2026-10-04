@@ -6,8 +6,9 @@ review is read-only, while Cloud review can execute and create verification
 artifacts. The work cell is the implementation session from `work`. A round:
 the server writes the instruction into the hub, the review cell answers, the
 server parses the answer, and a refusal goes to the work cell as one turn,
-then through the gate and up. It ends at `머지 가능`; a person presses
-`[머지]`. Otherwise it stops only for a reason in `Why`.
+then through the gate and up. After the final gate, it merges the reviewed
+head and cleans up. Disabling auto-merge preserves the manual `[머지]` boundary.
+Otherwise it stops only for a reason in `Why`.
 
 A loop carries its repository: its spec names the project, the path is found
 from that name each round, and nothing here reads the selected project. What
@@ -21,6 +22,7 @@ import enum
 import json
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -34,8 +36,8 @@ from pydantic import BaseModel
 
 import translate
 from agent import ChatSession
-from common import worktree_home
-from workspace import adopt, base_branch, folder_for, remove, worktrees
+from common import errorlog, worktree_home
+from workspace import adopt, base_branch, folder_for, merged, remove, worktrees
 
 from . import channels, connect, decisions, query, specs, verification, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
@@ -46,7 +48,7 @@ PROMPT = (ROOT / "tool/prompts/review-round.md").read_text(encoding="utf-8")
 RUBRIC = {name: (ROOT / f"tool/prompts/review-{name}.md").read_text(encoding="utf-8").strip()
           for name in ("plan", "code")}
 
-DEFAULTS = {"rounds": 12, "concurrent": 3, "review_model": "", "review_effort": "high"}
+DEFAULTS = {"rounds": 12, "concurrent": 3, "review_model": "", "review_effort": "high", "auto_merge": True}
 MORE = 4        # rounds a `[계속]` past the cap adds, to that spec only
 POLL = 60.0     # seconds between reads of a pull request waiting to merge
 # Never `READ_TOOLS`: its `Bash` is on `--allowedTools`, runs unasked, and one
@@ -702,6 +704,12 @@ def kick(repo: str, sid: str) -> None:
         if spec is not None and LOOPING.fullmatch(spec["state"]):
             return
     if old is not None and old.thread is not None:
+        if old.thread is threading.current_thread():
+            with specs._files:
+                spec = specs.load(repo, sid)
+                if spec:
+                    specs.save(specs.moved(spec, "리뷰 대기", stopped=None, fault=None))
+            return
         old.thread.join(30)
         if old.thread.is_alive():
             raise HTTPException(409, "앞 루프가 아직 멈추는 중이다. 잠시 뒤에 다시")
@@ -733,13 +741,21 @@ def drive(loop: Loop) -> None:
                 _seats.wait(1)
             _seated += 1
         try:
-            while step(loop):
-                pass
+            while True:
+                while step(loop):
+                    pass
+                fresh = specs.load(loop.repo, loop.sid)
+                if fresh and fresh["state"] == "머지 가능" and not loop.halt.is_set() and settings()["auto_merge"]:
+                    automatic(channels.repo_for(loop.repo), fresh)
+                fresh = specs.load(loop.repo, loop.sid)
+                if not fresh or not LOOPING.fullmatch(fresh["state"]) or loop.halt.is_set():
+                    break
         finally:
             with _seats:
                 _seated -= 1
                 _seats.notify_all()
     except Exception as exc:  # a loop that broke still owes the spec a reason
+        errorlog.record("review-loop", exc, repo=loop.repo, spec=loop.sid)
         stop(loop, loop.repo, loop.sid, Why.FORMAT, f"루프가 깨졌다 — {type(exc).__name__}: {exc}")
     finally:
         with _lock:
@@ -1404,7 +1420,7 @@ def recover() -> None:
 
 # -- Merging -----------------------------------------------------------------------
 
-_landing = threading.Lock()   # one reading of the merge table at a time
+_landing = threading.RLock()   # one merge observation and cleanup at a time
 
 
 def in_queue(repo: Path, n: int) -> bool:
@@ -1435,7 +1451,7 @@ def landed(repo: Path, spec: dict) -> None:
 
     with _landing:
         spec = specs.load(repo.name, spec["id"])
-        if spec is None or spec["state"] != "머지 대기":
+        if spec is None or spec["state"] not in ("머지 대기", "머지됨") or spec.get("cleanup_complete"):
             return
         n = spec["pr"]["number"]
         allowed = specs.approved(spec) or {"base": spec["pr"].get("base"), "head": spec["pr"].get("head", "")}
@@ -1482,12 +1498,12 @@ def forward(repo: Path, base: str, *, task_branch: str = "") -> str:
     try:
         on = specs.sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
         dirty = specs.sh(["git", "status", "--porcelain"], repo)
-        if on not in {base, task_branch} or dirty.returncode or dirty.stdout.strip():
+        if on not in {base, base_branch(repo, base), task_branch} or dirty.returncode or dirty.stdout.strip():
             return f"원본이 뒤처짐 — 원본이 `{base}` 에 깨끗이 서 있지 않다"
         fetched = specs.sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], repo, 120)
         if fetched.returncode:
             return f"원본이 뒤처짐 — {specs.said(fetched)}"
-        if on != base:
+        if on not in {base, base_branch(repo, base)}:
             trees = specs.sh(["git", "worktree", "list", "--porcelain"], repo)
             if trees.returncode:
                 return f"원본이 뒤처짐 — {specs.said(trees)}"
@@ -1521,7 +1537,7 @@ def cleared(repo: Path, path: Path) -> str:
         return "작업트리가 쓰이고 있어 남겼다"
     try:
         work.forget(path)
-        return remove(repo, path)
+        return remove(repo, path, keep_branch=True)
     except (ValueError, RuntimeError) as exc:
         return f"작업트리를 지우지 못했다 — {exc}"
     finally:
@@ -1542,19 +1558,34 @@ def pruned(repo: Path, branch: str, approved: str) -> str:
 
 
 def finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
+    with _landing:
+        fresh = specs.load(repo.name, spec["id"])
+        if fresh is not None and not fresh.get("cleanup_complete"):
+            _finish(repo, fresh, base, commit, text)
+
+
+def _finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
     """After a merge: the P2 comment, `머지됨` and its result row, then the
     cleanup — only ever from `머지됨`."""
 
     n, allowed = spec["pr"]["number"], specs.approved(spec)
     notes = []
-    if spec.get("p2_comment"):
+    if spec.get("p2_comment") and not spec.get("cleanup_comment_done"):
         failed = comment(repo, n, spec["p2_comment"])
         notes.append(f"P2 코멘트를 달지 못했다 — {failed}" if failed else "P2 코멘트를 달았다")
+        if not failed:
+            specs.update(repo.name, spec["id"], cleanup_comment_done=True)
     with specs._files:
         spec = specs.load(repo.name, spec["id"])
-        specs.save(specs.moved(spec, "머지됨", stopped=None,
-                               merge={"commit": commit, "base": base}))
-    specs.told(repo, spec, text)
+        first = spec["state"] != "머지됨"
+        if first:
+            specs.save(specs.moved(spec, "머지됨", stopped=None, cleanup_complete=False,
+                                   merge={"commit": commit, "base": base}))
+        elif not spec.get("merge"):
+            spec = specs.update(repo.name, spec["id"], merge={"commit": commit, "base": base})
+    if first:
+        specs.told(repo, spec, text)
+    close_cell(spec["repo"], n)
     if (spec.get("survey") or {}).get("handover"):
         if spec.get("workspace_mode") == "branch":
             notes.append(forward(repo, base, task_branch=specs.branch_of(spec)))
@@ -1566,13 +1597,67 @@ def finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
     else:
         notes.append(forward(repo, base, task_branch=specs.branch_of(spec)
                              if spec.get("workspace_mode") == "branch" else ""))
-    if spec.get("workspace_mode") == "branch":
-        notes.append("원본 저장소와 작업 브랜치를 남겼다")
-    elif spec.get("worktree"):
+    if spec.get("workspace_mode") != "branch" and spec.get("worktree") and Path(spec["worktree"]).exists():
         notes.append(cleared(repo, Path(spec["worktree"])))
+    notes.append(local_pruned(repo, specs.branch_of(spec), allowed["head"] if allowed else spec["pr"].get("head", "")))
     notes.append(pruned(repo, specs.branch_of(spec), allowed["head"] if allowed else spec["pr"].get("head", "")))
-    close_cell(spec["repo"], n)
-    specs.update(repo.name, spec["id"], cleanup=notes)
+    pending = any(marker in note for note in notes for marker in ("뒤처짐", "남겼다", "남김", "못했다", "대기", "폴더는"))
+    if not pending:
+        try:
+            artifacts = folder(repo.name, n).resolve()
+            if artifacts != REVIEW.resolve() / repo.name / str(n):
+                raise ValueError("Review artifact path escaped its root")
+            if artifacts.exists():
+                shutil.rmtree(artifacts)
+            notes.append("리뷰 아티팩트를 지웠다")
+        except (OSError, ValueError) as exc:
+            pending = True
+            notes.append(f"리뷰 아티팩트를 지우지 못했다 — {exc}")
+    if pending:
+        errorlog.record("merge-cleanup", "\n".join(notes), repo=repo.name, spec=spec["id"])
+    specs.update(repo.name, spec["id"], cleanup=notes, cleanup_complete=not pending)
+
+
+def local_pruned(repo: Path, branch: str, approved: str) -> str:
+    """Delete only the reviewed local ref after returning to an updated base."""
+    try:
+        release = hold(work._busy, _lock, str(repo), "", kind="turn")
+    except HTTPException:
+        return "작업 브랜치를 다른 작업이 쓰고 있어 남겼다"
+    try:
+        return _local_pruned(repo, branch, approved)
+    finally:
+        release()
+
+
+def _local_pruned(repo: Path, branch: str, approved: str) -> str:
+    ref = specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"], repo)
+    if ref.returncode == 1:
+        return f"작업 브랜치 `{branch}` 는 이미 없다"
+    if ref.returncode or ref.stdout.strip() != approved:
+        return f"작업 브랜치 `{branch}` 에 새 커밋 — 남김"
+    trees = specs.sh(["git", "worktree", "list", "--porcelain"], repo)
+    if trees.returncode or f"branch refs/heads/{branch}" in trees.stdout.splitlines():
+        return f"작업 브랜치 `{branch}` 를 아직 쓰고 있어 남겼다"
+    # Compare complete trees, including submodules and squash merges.
+    if not merged(repo, branch):
+        return f"작업 브랜치 `{branch}` 의 머지 내용을 확인하지 못했다"
+    done = specs.sh(["git", "update-ref", "-d", f"refs/heads/{branch}", approved], repo)
+    if not done.returncode:
+        specs.sh(["git", "config", "--remove-section", f"branch.{branch}"], repo)
+    return f"작업 브랜치 `{branch}` 를 지웠다" if not done.returncode else f"작업 브랜치를 지우지 못했다 — {specs.said(done)}"
+
+
+def automatic(repo: Path, spec: dict) -> None:
+    specs.update(repo.name, spec["id"], auto_merge_pending=True)
+    try:
+        allowed = specs.approved(spec)
+        if allowed:
+            merge_spec(repo, spec, Merge(head=allowed["head"]))
+            specs.update(repo.name, spec["id"], auto_merge_pending=False, fault=None)
+    except Exception as exc:
+        errorlog.record("automatic-merge", exc, repo=repo.name, spec=spec["id"])
+        specs.update(repo.name, spec["id"], fault=f"자동 머지 대기 — {exc}")
 
 
 def poll() -> None:
@@ -1601,8 +1686,21 @@ def poll() -> None:
                 if spec["state"] == "머지 대기":
                     try:
                         landed(path, spec)
-                    except Exception:   # the next minute tries again
-                        pass
+                    except Exception as exc:   # the next minute tries again
+                        errorlog.record("merge-poll", exc, repo=repo.name, spec=spec["id"])
+                elif spec["state"] == "머지됨" and not spec.get("cleanup_complete"):
+                    try:
+                        if spec.get("merge"):
+                            finish(path, spec, spec["merge"]["base"], spec["merge"].get("commit", ""), "")
+                        elif spec.get("pr"):
+                            landed(path, spec)
+                    except Exception as exc:
+                        errorlog.record("cleanup-retry", exc, repo=repo.name, spec=spec["id"])
+                elif spec["state"] == "머지 가능" and spec.get("auto_merge_pending") and settings()["auto_merge"]:
+                    with _lock:
+                        running = (repo.name, spec["id"]) in _loops
+                    if not running:
+                        automatic(path, spec)
 
 
 # -- The screen ----------------------------------------------------------------------
@@ -1634,6 +1732,20 @@ def merge(sid: str, body: Merge) -> dict:
     spec without one goes back to the loop, which runs only the final gate."""
 
     repo, spec = mine(sid)
+    return merge_spec(repo, spec, body)
+
+
+def merge_spec(repo: Path, spec: dict, body: Merge) -> dict:
+    """The same guarded merge for an automatic loop or the selected screen."""
+    with _landing:
+        fresh = specs.load(repo.name, spec["id"])
+        if fresh is None or fresh["history"][0]["ts"] != spec["history"][0]["ts"]:
+            raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
+        return _merge_spec(repo, fresh, body)
+
+
+def _merge_spec(repo: Path, spec: dict, body: Merge) -> dict:
+    sid = spec["id"]
     if spec["state"] != "머지 가능":
         raise HTTPException(409, f"머지할 수 있는 상태가 아니다 — {spec['state']}")
     allowed = specs.approved(spec)
@@ -1794,14 +1906,19 @@ def gh_or_502(repo: Path, args: list[str]) -> dict:
 def adopted(repo: Path, branch: str, oid: str, detached: bool = False) -> Path:
     """`workspace.adopt`, held like making a worktree: the switch waits."""
 
-    release = hold(work._busy, _lock, str(worktree_home(repo) / folder_for(branch)), "그 작업트리를 다른 요청이 쓰고 있다")
+    release = hold(work._busy, _lock, str(repo), "이 저장소에서 작업이 실행 중이다")
+    tree_release = None
     try:
+        specs.checkout_idle(repo)
+        tree_release = hold(work._busy, _lock, str(worktree_home(repo) / folder_for(branch)), "그 작업트리를 다른 요청이 쓰고 있다")
         return adopt(repo, branch, oid, detached=detached)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
     except RuntimeError as exc:
         raise HTTPException(409, str(exc)) from exc
     finally:
+        if tree_release:
+            tree_release()
         release()
 
 
@@ -2023,9 +2140,12 @@ def take(repo: Path, n: int, environment: str = "local") -> str:
         raise HTTPException(409, f"같은 이름의 명세 `{sid}` 가 이미 있다")
     path = adopted(repo, view["headRefName"], view["headRefOid"], detached=environment != "local")
     with specs._files:
-        specs.save({**minimal(repo, view, path, gate), "implementation_environment": environment})
-    kick(repo.name, path.name)
-    return path.name
+        made = {**minimal(repo, view, path, gate), "id": sid, "implementation_environment": environment}
+        if path.resolve() == repo.resolve():
+            made.update(workspace_mode="branch", branch=view["headRefName"], return_branch=view["baseRefName"])
+        specs.save(made)
+    kick(repo.name, sid)
+    return sid
 
 
 class Pick(BaseModel):
@@ -2044,6 +2164,7 @@ def start(body: Pick) -> dict:
         try:
             out.append({"number": n, "id": take(repo, n, body.implementation_environment)})
         except HTTPException as exc:
+            errorlog.record("review-start", exc.detail, repo=repo.name, pr=n, status=exc.status_code)
             out.append({"number": n, "error": exc.detail})
     return {"results": out}
 
@@ -2145,6 +2266,7 @@ class Settings(BaseModel):
     concurrent: int
     review_model: str = ""
     review_effort: str = "high"
+    auto_merge: bool = True
 
 
 @router.get("/api/loop/settings")
@@ -2167,7 +2289,8 @@ def set_settings(body: Settings) -> dict:
         raise HTTPException(503, f"Codex 모델 목록 확인 실패: {exc}") from exc
     if body.review_effort not in allowed:
         raise HTTPException(400, "이 모델이 지원하지 않는 추론 강도")
-    store(rounds=body.rounds, concurrent=body.concurrent, review_model=model, review_effort=body.review_effort)
+    store(rounds=body.rounds, concurrent=body.concurrent, review_model=model, review_effort=body.review_effort,
+          auto_merge=body.auto_merge)
     with _seats:
         _seats.notify_all()   # more seats may be free now
     return settings()

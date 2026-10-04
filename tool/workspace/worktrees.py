@@ -52,8 +52,10 @@ def create(repo: Path, task: str, *, linked: bool = False, base: str = "") -> Pa
         raise ValueError(f"작업 이름은 소문자·숫자·- 만, 64자까지: {task!r}")
     if not linked:
         clean = _git(repo, "status", "--porcelain")
-        if clean.returncode or clean.stdout.strip():
-            raise ValueError("브랜치를 만들기 전에 현재 변경을 커밋하거나 보관해라. 변경은 그대로 남겼다")
+        if clean.returncode:
+            raise RuntimeError(clean.stderr.strip() or "현재 변경을 확인하지 못했다")
+        # Git carries compatible edits into the new task and refuses a switch
+        # that would overwrite them. Never commit or stash the person's work.
         done = _git(repo, "switch", "-c", task, *([base] if base else []))
         if done.returncode:
             raise RuntimeError(done.stderr.strip() or f"git switch 실패: {task}")
@@ -88,7 +90,7 @@ def adopt(repo: Path, branch: str, oid: str, detached: bool = False) -> Path:
     A detached external review uses `oid` without touching a local branch.
     """
 
-    repo = _main(repo)
+    repo = Path(repo).resolve()
     task = folder_for(branch)
     if not task or not re.fullmatch(r"[0-9a-f]{40}", oid):
         raise ValueError(f"받을 수 없는 브랜치다: {branch!r}")
@@ -99,6 +101,14 @@ def adopt(repo: Path, branch: str, oid: str, detached: bool = False) -> Path:
     local = _git(repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}").stdout.strip()
     if local and local != oid and not detached:
         raise RuntimeError(f"로컬 `{branch}` 가 PR 머리와 다르다 — 로컬 {local[:12]}, PR {oid[:12]}")
+    if not detached and _git(repo, "branch", "--show-current").stdout.strip() == branch:
+        clean = _git(repo, "status", "--porcelain")
+        if clean.returncode or clean.stdout.strip():
+            raise RuntimeError("PR 브랜치에 커밋하지 않은 변경이 있다. 변경을 보존한 채 리뷰를 기다린다")
+        if _git(repo, "rev-parse", "HEAD").stdout.strip() != oid:
+            raise RuntimeError("체크아웃의 커밋이 PR 머리와 다르다")
+        return repo
+    repo = _main(repo)
     args = ["worktree", "add", "--detach", str(path), oid] if detached else \
         ["worktree", "add", str(path), branch] if local else \
         ["worktree", "add", "--track", "-b", branch, str(path), f"origin/{branch}"]
@@ -200,13 +210,14 @@ def worktrees(repo: Path) -> list[dict]:
     return rows
 
 
-def remove(repo: Path, path: Path, force: bool = False) -> str:
+def remove(repo: Path, path: Path, force: bool = False, *, keep_branch: bool = False) -> str:
     """Remove one worktree made here, then its branch. Returns what happened.
 
     A dirty worktree is refused: that is work nobody has looked at — unless
     `force`, a person's explicit delete, which drops it. The branch goes only
     when `merged` says its work is in HEAD — `-D`, since git itself does not
     recognise a squash merge. Otherwise it stays, `force` or not.
+    `keep_branch` delegates ref deletion to the caller's expected-head guard.
     """
 
     if Path(path).resolve() == Path(repo).resolve():
@@ -226,7 +237,7 @@ def remove(repo: Path, path: Path, force: bool = False) -> str:
         if any(r["path"] == row["path"] for r in worktrees(repo)):
             raise RuntimeError(done.stderr.strip() or f"git worktree remove 실패: {path}")
         left = f" 폴더는 다른 프로세스가 쥐고 있어 남았다: {row['path']}"
-    if not row["branch"]:
+    if not row["branch"] or keep_branch:
         return "작업트리를 지웠다" + left
     if not row["merged"]:
         return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 머지되지 않아 남겼다" + left
