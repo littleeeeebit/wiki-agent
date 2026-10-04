@@ -75,3 +75,22 @@ def test_quoted_secret_is_removed_in_full_including_truncated_values(assignment)
     expected = f"{key}={value[0]}[redacted]{value[0]}"
     assert row["error"] == row["stack"] == expected
     assert "first" not in row["traceback"] and "second" not in row["traceback"]
+
+
+@pytest.mark.parametrize("environment", [False, True])
+def test_large_secrets_are_redacted_before_either_size_cap(monkeypatch, environment):
+    secret = "fixture-tail-" * 2000
+    if environment:
+        monkeypatch.setenv("FIXTURE_SECRET", secret)
+    message = secret if environment else f'password="{secret}"'
+    errorlog.record("fixture", RuntimeError(message))
+    row = json.loads(errorlog.FILE.read_text(encoding="utf-8").splitlines()[-1])
+    assert "fixture-tail-" not in row["error"] and "fixture-tail-" not in row["traceback"]
+    assert "[redacted]" in row["error"] and "[redacted]" in row["traceback"]
+    assert len(row["error"]) <= 8000 and len(row["traceback"]) <= 16000
+
+
+def test_error_and_traceback_size_caps_still_bound_nonsecret_messages():
+    errorlog.record("fixture", RuntimeError("x" * 26000))
+    row = json.loads(errorlog.FILE.read_text(encoding="utf-8").splitlines()[-1])
+    assert len(row["error"]) == 8000 and len(row["traceback"]) == 16000

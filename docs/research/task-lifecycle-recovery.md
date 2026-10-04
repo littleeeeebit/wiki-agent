@@ -127,3 +127,22 @@ requires a new reviewed head rather than reusing round 2's approval.
 All nine error-log tests passed after this change. Ruff, wiki lint, whitespace
 and BOM checks passed, and both fresh native-session smoke probes completed
 again with the same observed delivery and the same untested blocking limit.
+
+Round 3 found a distinct ordering defect: keeping only the traceback's last
+16,000 characters before masking removed the secret key and exposed its tail.
+The implementer's full-file reproduction confirmed this and also exposed the
+same issue in the error field when an environment secret exceeded its 8,000
+character cap. Both fields now redact the complete decoded value before slicing.
+The regression covers both long assignments and long environment credentials,
+and a nonsecret case verifies the original output caps still apply.
+
+The [OWASP logging guidance](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html#data-to-exclude)
+requires masking passwords and access tokens and recommends testing logging
+failures and unwanted effects. The specific ordering is an inference from the
+two reproductions, not a rule attributed to OWASP: destructive truncation loses
+information needed for detection, just as serialization changes the syntax
+the detector sees. Processing decoded input first retains those invariants
+without adding dependencies or raising persisted size limits.
+All 12 error-log tests passed with normal exit. Ruff, wiki lint, whitespace and
+BOM checks passed. Both fresh native-session hook probes completed again;
+automatic context delivery was observed and tool blocking remained untested.

@@ -44,10 +44,10 @@ def record(source: str, error, **context) -> None:
     """No request bodies, prompts, headers or frame locals; logging fails open."""
     global _logger
     try:
-        row = {"source": source, "error": redact(str(error)[:8000]), **context}
+        row = {"source": source, "error": redact(str(error))[:8000], **context}
         if isinstance(error, BaseException):
             row["type"] = type(error).__name__
-            row["traceback"] = redact("".join(traceback.format_exception(error))[-16000:])
+            row["traceback"] = redact("".join(traceback.format_exception(error)))[-16000:]
         with _lock:
             if _logger is None or Path(_logger.handlers[0].baseFilename) != FILE.resolve():
                 if _logger:
