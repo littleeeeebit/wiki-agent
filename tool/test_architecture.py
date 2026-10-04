@@ -1,11 +1,11 @@
 """OMM reads are passive; CLI generation is explicit or follows one merged PR."""
 
-import json
 import subprocess
 import sys
 import threading
 
 import pytest
+import yaml
 from fastapi.testclient import TestClient
 
 from main import app, architecture, channels, query, specs, work
@@ -22,9 +22,12 @@ NODES = [{"path": "overall-architecture", "description": "HTTP requests enter se
 def cli(tmp_path, monkeypatch):
     """Stand-in OMM CLI; the live scan separately verifies the installed CLI."""
     script = tmp_path / "omm_cli.py"
-    script.write_text('''import json, sys
+    script.write_text('''import json, shutil, sys, yaml
 from pathlib import Path
 if sys.argv[1] == "validate":
+    sys.exit(0)
+if sys.argv[1] == "delete":
+    shutil.rmtree(Path(".omm") / sys.argv[2])
     sys.exit(0)
 assert sys.argv[1] == "write" and sys.argv[4] == "-"
 field = sys.argv[3]
@@ -32,7 +35,7 @@ target = Path(".omm") / sys.argv[2] / ("diagram.mmd" if field == "diagram" else 
 target.parent.mkdir(parents=True, exist_ok=True)
 content = sys.stdin.read()
 meta_path = target.parent / "meta.yaml"
-meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {"update_count": 0, "children": []}
+meta = yaml.safe_load(meta_path.read_text(encoding="utf-8")) if meta_path.exists() else {"update_count": 0, "children": []}
 if field == "diagram" and target.exists():
     meta["prev_diagram"] = target.read_text(encoding="utf-8")
 meta.update(update_count=meta["update_count"] + 1, last_field=field)
@@ -40,7 +43,7 @@ target.write_text(content, encoding="utf-8")
 meta_path.write_text(json.dumps(meta), encoding="utf-8")
 if "/" in sys.argv[2]:
     parent_path = target.parent.parent / "meta.yaml"
-    parent = json.loads(parent_path.read_text(encoding="utf-8"))
+    parent = yaml.safe_load(parent_path.read_text(encoding="utf-8"))
     parent["children"] = sorted(set(parent["children"]) | {target.parent.name})
     parent_path.write_text(json.dumps(parent), encoding="utf-8")
 ''', encoding="utf-8")
@@ -75,15 +78,17 @@ def test_scan_preserves_context_and_reads_do_not_regenerate(tmp_path, cli):
 def test_native_field_metadata_history_and_new_children_are_published(tmp_path, cli):
     architecture.write_nodes(tmp_path, NODES, threading.Event())
     metadata = tmp_path / ".omm/overall-architecture/meta.yaml"
-    before = json.loads(metadata.read_text(encoding="utf-8"))
+    before = yaml.safe_load(metadata.read_text(encoding="utf-8"))
     replacement = [{"path": "overall-architecture", "description": NODES[0]["description"],
                     "diagram": 'graph TD\n api["New API"]\n'},
                    {"path": "overall-architecture/api", "description": "New endpoint"}]
     architecture.write_nodes(tmp_path, replacement, threading.Event())
-    after = json.loads(metadata.read_text(encoding="utf-8"))
+    after = yaml.safe_load(metadata.read_text(encoding="utf-8"))
     assert after["update_count"] == before["update_count"] + 1
     assert after["last_field"] == "diagram" and after["prev_diagram"] == NODES[0]["diagram"]
     assert "api" in after["children"]
+    assert "server" not in after["children"]
+    assert not (metadata.parent / "server").exists()
     assert (metadata.parent / "api/meta.yaml").is_file()
     history = metadata.read_bytes()
     architecture.write_nodes(tmp_path, replacement, threading.Event())
@@ -96,6 +101,22 @@ def test_existing_non_document_assets_are_not_rewritten_or_decoded(tmp_path, cli
     asset.write_bytes(b"\xff\x00\xfe")
     architecture.write_nodes(tmp_path, NODES, threading.Event())
     assert asset.read_bytes() == b"\xff\x00\xfe"
+
+
+def test_publication_does_not_restore_a_staged_copy_over_new_maintainer_notes(tmp_path, cli, monkeypatch):
+    architecture.write_nodes(tmp_path, NODES, threading.Event())
+    note = tmp_path / ".omm/overall-architecture/note.md"
+    note.write_text("Original note", encoding="utf-8")
+    native_run = subprocess.run
+
+    def run(args, **kwargs):
+        if args[-1] == "validate":
+            note.write_text("New maintainer note", encoding="utf-8")
+        return native_run(args, **kwargs)
+
+    monkeypatch.setattr(architecture.subprocess, "run", run)
+    architecture.write_nodes(tmp_path, NODES, threading.Event())
+    assert note.read_text(encoding="utf-8") == "New maintainer note"
 
 
 @pytest.mark.parametrize("path", ["../escape", "/absolute", "overall-architecture/../../escape"])
@@ -130,6 +151,8 @@ def test_removed_generated_elements_keep_notes(tmp_path, cli, monkeypatch):
     assert note.read_text(encoding="utf-8") == "Retain operational evidence"
     assert not (note.parent / "description.md").exists()
     assert (tmp_path / ".omm/analysis.json").is_file()
+    metadata = yaml.safe_load((tmp_path / ".omm/overall-architecture/meta.yaml").read_text(encoding="utf-8"))
+    assert metadata["children"] == ["api", "server"]
 
 
 @pytest.mark.parametrize("diagram,children,reason", [

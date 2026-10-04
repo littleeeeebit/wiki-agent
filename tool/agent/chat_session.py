@@ -821,7 +821,7 @@ class ChatSession:
                 yield Event("context", f"Codex 이어가기 실패 — 새 대화로 시작했다 ({self._lost})")
                 self._lost = None
             for event in self._drain():
-                completed = event.kind == "done"
+                completed = event.kind == "done" and not event.meta.get("error")
                 yield event
         finally:
             with self._steering:
@@ -845,6 +845,7 @@ class ChatSession:
         background_status = {}
         followups = 0
         foreground_result_seen = False
+        replay_human = None
         while True:
             try:
                 ev = self._events.get(timeout=deadline)
@@ -858,6 +859,8 @@ class ChatSession:
             deadline = TURN_TIMEOUT
 
             kind = ev.get("type")
+            if kind == "user" and ev.get("isReplay"):
+                replay_human = not ev.get("isSynthetic")
             if kind == "__closed__":
                 err = "".join(self._stderr)[-800:]
                 self.close()
@@ -1101,15 +1104,16 @@ class ChatSession:
             elif kind == "result":
                 if not ev.get("is_error"):
                     origin = ev.get("origin") or {}
-                    injected = origin.get("kind") == "task-notification"
+                    injected = origin.get("kind") == "task-notification" or (not origin and replay_human is False)
                     if injected:
                         followups = max(0, followups - 1)
                     else:
                         # Older CLIs omit origin: after the foreground result,
                         # terminal tasks still owe their completion response.
-                        if not origin and foreground_result_seen and not background:
+                        if not origin and replay_human is None and foreground_result_seen:
                             followups = max(0, followups - 1)
                         foreground_result_seen = True
+                    replay_human = None
                     if background or followups or (injected and ev.get("num_turns") == 0):
                         yield Event("tool", f"Background · waiting for {max(len(background), followups)} follow-up(s)",
                                     {"tool": "background"})

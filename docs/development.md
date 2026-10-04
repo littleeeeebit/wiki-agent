@@ -72,7 +72,10 @@ without arguments it scans wiki-agent with the default Claude login.
 Generation preserves existing maintainer fields and seeds staged CLI writes
 with existing OMM metadata. Publication includes native history, timestamps,
 update counts and parent children; unchanged fields are not rewritten. Staged
-output is validated before publishing it. Diagrams fit the pane and can switch to natural
+cleanup removes metadata-only obsolete generated elements and reconciles parent
+registries, while elements with maintainer content remain. Existing maintainer
+fields are not republished from a stale staging copy.
+The staged output is validated before publication. Diagrams fit the pane and can switch to natural
 size for scrolling. Frontend builds never run the scanner.
 Automatic generation runs once after a confirmed PR merge and completed
 checkout cleanup, using that task's saved model. Busy or unpublished checkouts

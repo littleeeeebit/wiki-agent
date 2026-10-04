@@ -115,6 +115,11 @@ ended. Result `origin` distinguishes human and task-notification responses;
 empty batched results do not close the turn. `task_updated.patch.status` can
 settle execution even without `task_notification`. Child text never replaces the parent
 answer. Raw tool output remains outside automatic translation.
+Older unattributed results use replayed human/synthetic boundaries and count
+each task's follow-up independently. A failed result closes its provider session
+before another prompt can reuse the channel, so late frames cannot answer a new
+request. The [lifecycle and publication research](research/background-lifecycle-architecture-refresh.md)
+records the review reproductions and protocol evidence.
 Codex command output deltas and MCP progress notifications also reach the
 same stream; command output retains its raw-display marker in history.
 

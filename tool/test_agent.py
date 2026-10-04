@@ -700,6 +700,83 @@ sys.stdin.read()
     assert events[-1].kind == "done" and events[-1].meta["error"]
 
 
+def test_failed_background_turn_cannot_complete_the_next_prompt_with_stale_events(tree):
+    failed = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1"})
+say({"type": "result", "is_error": True, "result": "API failed", "session_id": "cli-1"})
+say({"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"})
+say({"type": "result", "origin": {"kind": "task-notification"}, "result": "Stale response", "session_id": "cli-1"})
+if sys.stdin.readline():
+    say({"type": "result", "result": "Fresh second answer", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    fresh = '''import json, sys
+sys.stdin.readline()
+print(json.dumps({"type": "result", "result": "Fresh second answer", "session_id": "cli-1"}), flush=True)
+sys.stdin.read()
+'''
+    session = ChatSession(tree, write=True, bypass=True)
+    real_popen, processes = subprocess.Popen, []
+
+    def spawn(command, **kwargs):
+        process = real_popen([sys.executable, "-X", "utf8", "-c", failed if not processes else fresh], **kwargs)
+        processes.append(process)
+        return process
+
+    try:
+        with patch.object(chat_session.subprocess, "Popen", spawn), \
+             patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+            first = list(session.say("First prompt"))
+            assert first[-1].meta["error"] and not session.alive
+            second = list(session.say("Second prompt"))
+        assert [event.text for event in second if event.kind == "done"] == ["Fresh second answer"]
+        assert len(processes) == 2 and processes[0].poll() is not None
+    finally:
+        session.close()
+
+
+@pytest.mark.parametrize("replay", [True, False])
+def test_unattributed_overlapping_tasks_settle_each_followup_while_other_tasks_run(tree, replay):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+for task in ("bg-1", "bg-2"):
+    say({"type": "system", "subtype": "task_started", "task_id": task})
+say({"type": "result", "result": "Foreground", "session_id": "cli-1"})
+for task in ("bg-1", "bg-2"):
+    say({"type": "system", "subtype": "task_notification", "task_id": task, "status": "completed"})
+    if REPLAY:
+        say({"type": "user", "isReplay": True, "isSynthetic": True, "message": {"content": []}})
+    say({"type": "result", "result": task + " done", "session_id": "cli-1"})
+sys.stdin.read()
+'''.replace("REPLAY", repr(replay))
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert [event.text for event in events if event.kind == "done"] == ["bg-2 done"]
+
+
+def test_unattributed_steered_human_result_does_not_consume_background_followup(tree):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+first = json.loads(sys.stdin.readline())
+say({"type": "user", "isReplay": True, "message": first["message"]})
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1"})
+steer = json.loads(sys.stdin.readline())
+say({"type": "result", "result": "Foreground", "session_id": "cli-1"})
+say({"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"})
+say({"type": "user", "isReplay": True, "message": steer["message"]})
+say({"type": "result", "result": "Steered response", "session_id": "cli-1"})
+say({"type": "user", "isReplay": True, "isSynthetic": True, "message": {"content": []}})
+say({"type": "result", "result": "Background finished", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    session = ChatSession(tree, write=True, bypass=True)
+    _, events = run(session, fixture, tree, each=lambda event: session.steer("More")
+                    if event.meta.get("status") == "started" else None)
+    assert [event.text for event in events if event.kind == "done"] == ["Background finished"]
+
+
 CODEX_STEER = '''import json, sys
 read = lambda: json.loads(sys.stdin.readline())
 say = lambda m: print(json.dumps(m), flush=True)

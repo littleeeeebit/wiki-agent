@@ -13,6 +13,7 @@ import threading
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
+import yaml
 
 from agent import ChatSession, cli_command
 from common import errorlog
@@ -129,6 +130,19 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
             if any(source.is_symlink() for source in directory.rglob("*")):
                 raise ValueError("Architecture staging cannot follow symbolic links")
             shutil.copytree(directory, stage / ".omm")
+        removed = []
+        for path in sorted(set(previous) - paths, key=lambda p: (p.count("/"), p), reverse=True):
+            folder = stage / ".omm" / path
+            for filename in ("description.md", "diagram.mmd"):
+                (folder / filename).unlink(missing_ok=True)
+            if folder.is_dir() and all(p.name == "meta.yaml" and p.is_file() for p in folder.iterdir()):
+                subprocess.run([*command, "delete", path], cwd=stage, env=env, capture_output=True,
+                               text=True, encoding="utf-8", errors="replace", check=True, timeout=30,
+                               **background_options())
+                removed.append(path)
+        for node in nodes:
+            if not node.get("diagram"):
+                (stage / ".omm" / node["path"] / "diagram.mmd").unlink(missing_ok=True)
         for node in nodes:
             for field in FIELDS:
                 text = node.get(field, "")
@@ -146,6 +160,16 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
                 subprocess.run([*command, "write", node["path"], field, "-"], input=text,
                                cwd=stage, text=True, encoding="utf-8", errors="replace",
                                env=env, capture_output=True, check=True, timeout=30, **background_options())
+        # Native delete removes the directory but leaves the parent's registry.
+        # Retained maintainer-only elements still belong to that registry.
+        for metadata in (stage / ".omm").rglob("meta.yaml"):
+            content = yaml.safe_load(metadata.read_text(encoding="utf-8"))
+            if not isinstance(content, dict):
+                raise ValueError("Invalid native architecture metadata")
+            children = sorted(p.name for p in metadata.parent.iterdir() if p.is_dir() and not p.name.startswith("."))
+            if content.get("children") != children:
+                content["children"] = children
+                write_changed(metadata, yaml.safe_dump(content, sort_keys=False, allow_unicode=True))
         checked = subprocess.run([*command, "validate"], cwd=stage, capture_output=True,
                                  text=True, encoding="utf-8", errors="replace", timeout=30,
                                  **background_options())
@@ -160,13 +184,19 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
                 raise ValueError("Architecture analysis cancelled")
             if target.is_symlink():
                 raise ValueError("Architecture output cannot follow symbolic links")
+            if target.exists() and source.name not in ("description.md", "diagram.mmd", "meta.yaml"):
+                continue
             content = source.read_text(encoding="utf-8")
             if target.exists() and target.read_text(encoding="utf-8") == content:
                 continue
             write_changed(target, content)
-    for path in set(previous) - paths:
+    for path in sorted(set(previous) - paths, key=lambda p: (p.count("/"), p), reverse=True):
         for filename in ("description.md", "diagram.mmd"):
             (directory / path / filename).unlink(missing_ok=True)
+        folder = directory / path
+        if path in removed and folder.is_dir() and all(p.name == "meta.yaml" and p.is_file() for p in folder.iterdir()):
+            (folder / "meta.yaml").unlink(missing_ok=True)
+            folder.rmdir()
     for node in nodes:
         if not node.get("diagram"):
             (directory / node["path"] / "diagram.mmd").unlink(missing_ok=True)
