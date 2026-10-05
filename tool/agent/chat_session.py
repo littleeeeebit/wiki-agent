@@ -8,8 +8,8 @@ A session reads by default. `write=True` opens one in a repository checkout;
 implementation sessions use full access, while explicitly non-bypass callers
 can still route writes through `approval` and `answer`. Codex runs `app-server`,
 which keeps one process across turns and is the only way Codex asks;
-`exec` is left to the isolated plain
-explanation.
+`exec` is left to the isolated explanation and
+the refactor proposer, whose bypass writes in its candidate checkout.
 
 `verification=<artifact directory>` is an independent Cloud review cell, not
 an implementation session: it executes and creates verification files with
@@ -355,13 +355,13 @@ class ChatSession:
             cmd += ["-c", 'service_tier="fast"' if self.fast else 'service_tier="default"']
         elif self.is_codex:
             cmd = ["codex", "exec", "--model", self.model.removeprefix("codex:"),
-                   "--json", "--sandbox", "read-only",
+                   "--json", "--sandbox", "danger-full-access" if self.bypass else "read-only",
                    "-c", 'approval_policy="never"', "--disable", "multi_agent",
                    "-c", "developer_instructions=" + json.dumps(self.system, ensure_ascii=False),
                    "--ephemeral", "--skip-git-repo-check", "--ignore-user-config",
                    "-c", "project_doc_max_bytes=0", "-c", 'web_search="disabled"',
-                   "--disable", "shell_tool", "--disable", "apps", "--disable", "plugins",
-                   "--disable", "memories"]
+                   *(() if self.bypass else ("--disable", "shell_tool")),
+                   "--disable", "apps", "--disable", "plugins", "--disable", "memories"]
             if self.effort:
                 cmd += ["-c", "model_reasoning_effort=" + json.dumps(self.effort)]
             cmd += ["-c", 'service_tier="fast"' if self.fast else 'service_tier="default"']

@@ -101,6 +101,15 @@ remain unsupported; this runner requires owner-supplied, isolated domain
 adapters with real provider-level enforcement. It does not launch a new API
 provider or infer a project's success criteria from its name.
 
+One exception, chosen by the owner: `--profile refactor` runs a native write
+session as the proposer for `tool/refactor_profile.py` experiments. Only a
+contract with `profile: "refactor"` may list `propose` in `soft_caps`; its
+ceiling is then kept between turns, and a crossing is recorded in `overruns`
+rather than stopping the experiment. Unknown usage still stops it, and the total
+allowance still bounds the next operation. That profile's critic is
+deterministic: frozen characterization tests and the debt ratchet judge every
+candidate. The [refactor plan](plans/refactor/2-runner.md) has the details.
+
 `tool/improvement_evaluate.py --tasks <frozen-tasks.json>` supplies a task-command
 evaluator for both scopes. Its task manifest uses schema `wiki-improvement-tasks/1`:
 
@@ -119,7 +128,8 @@ This is a shape example, not approved experiment thresholds or a ready dataset.
 Declare the manifest, external test files and their dependencies in
 `controller_files`. Include separate task IDs and fixtures for each split.
 `inference: false` explicitly declares offline commands: exit zero scores one,
-other exits score zero, and model cost is zero. An inference command instead
+other exits score zero, and model cost is zero. Adding `scored: true` makes an
+offline command print its own JSON `reward` instead, still at zero cost. An inference command instead
 requires positive `max_usage: {calls, tokens}` bounds enforced by that command
 and returns JSON with `reward` and known `usage: {calls, tokens}`. Before
 each trial, the evaluator checks that the entire bound fits its unused allowance.

@@ -164,6 +164,11 @@ def contract(config: dict, source: Path) -> dict:
         cap = usage_ceiling(value)
         if any(cap[k] > limits[k] for k in cap):
             raise Refused("An operation's usage ceiling exceeds the total allowance")
+    # A native host reports a turn's usage only after it ends, so its ceiling is
+    # kept between turns: the refactor profile alone may accept that for proposals.
+    soft = config.get("soft_caps", [])
+    if soft and (config.get("profile") != "refactor" or not isinstance(soft, list) or set(soft) - {"propose"}):
+        raise Refused("Only the refactor profile may declare a soft proposal ceiling")
     tasks = config.get("tasks", {})
     for split in ("evolve", "held_out"):
         ids = tasks.get(split)
@@ -388,7 +393,11 @@ class Experiment:
             used["calls"] += usage["calls"]
             used["tokens"] += usage["tokens"]
             if any(usage[k] > cap[k] for k in cap):
-                raise Refused("Adapter violated its hard usage ceiling; retain evidence and replace the adapter")
+                if stage not in cfg.get("soft_caps", []):
+                    raise Refused("Adapter violated its hard usage ceiling; retain evidence and replace the adapter")
+                # Crossed, not kept: recorded; the total allowance still stops the next operation.
+                state.setdefault("overruns", []).append({"stage": stage, "artifact": artifact, "usage": usage,
+                                                         "cap": cap})
             if code:
                 raise Refused(f"{stage} adapter failed; its process record was retained")
         except BaseException as exc:
@@ -680,7 +689,7 @@ def summary(state: dict) -> dict:
             "commit": incumbent.get("commit"), "score": evaluation.get("score"), "cost": evaluation.get("cost"),
             "spent": state["spent"], "limits": state["contract"]["limits"], "stopped": state.get("stopped"),
             "active": state.get("active"), "held_out": (state.get("held_out") or {}).get("phase"),
-            "handoff": state.get("handoff")}
+            "handoff": state.get("handoff"), "overruns": state.get("overruns", [])}
 
 
 def listing(repo: Path, *, hub: Path = HUB, store: Path = STORE) -> dict:
