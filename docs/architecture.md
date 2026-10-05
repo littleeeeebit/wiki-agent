@@ -106,6 +106,14 @@ their live runs through `GET /api/suite`. It shows active cells and the latest
 does not dispatch work; server-owned completion callbacks advance tasks even
 when transcript or feed publication fails.
 
+The 리펙터링 tab drives `tool/main/refactor.py`. A run first freezes behaviour
+in a characterization-test PR, then stacks one step PR per hotspot. Each step
+is chosen by the improvement runner's refactor profile
+(`tool/refactor_profile.py`). Its specs are ordinary tasks, and the request
+authorizes Review Loop for L0–L1 PRs. Runs live in `raw/refactor/runs/`, and
+a restart stops a running one instead of replaying it. Plans and status are in
+[the refactor plan](plans/refactor/0-overview.md).
+
 Claude background execution stays within the work turn until task lifecycle
 events settle and the provider's follow-up result arrives. `_drain` forwards
 task start/progress/update/notification, elapsed tool progress and bounded raw

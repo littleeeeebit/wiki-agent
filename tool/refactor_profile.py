@@ -152,7 +152,7 @@ def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float = 3600.0,
 
 
 def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: dict,
-            store: Path = STORE, halt: threading.Event | None = None) -> Path:
+            store: Path | None = None, halt: threading.Event | None = None) -> Path:
     """The experiment config for `step` = `{goal, tier, files, tests, test_argv}`;
     `test_argv` runs the characterization tests from a checkout's root, within
     `limits["seconds"]` and until `halt`. The runner gets what that run left."""
@@ -180,7 +180,7 @@ def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: d
     # L0–L1 stay inside the listed files, for edits and for credit alike; L2–L3
     # may add files beside them, so they own the files' directories.
     scope_paths = sorted(step["files"]) if step["tier"] in ("L0", "L1") else prefixes(step["files"])
-    folder = store.resolve() / scope / name
+    folder = (store or STORE).resolve() / scope / name
     if folder.exists():
         raise improvement.Refused("A refactor step with this name was already prepared")
     folder.mkdir(parents=True)

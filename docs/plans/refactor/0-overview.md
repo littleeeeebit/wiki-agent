@@ -50,7 +50,7 @@ Chosen by the owner on 2026-10-05 from offered options.
 | --- | --- | --- | --- |
 | 1 | [Scanner and ratchet](1-scanner.md) | `tool/debt.py`, final-gate check, merge-time tightening, hub baseline | Done |
 | 2 | [Runner profile](2-runner.md) | Characterization freeze and metric scoring in `improvement.py` | Done — `tool/refactor_profile.py`, native proposer with a soft ceiling |
-| 3 | [Quick cleanup](3-cleanup.md) | First mode end to end and a minimal 리펙터링 tab | Not started |
+| 3 | [Quick cleanup](3-cleanup.md) | First mode end to end and a minimal 리펙터링 tab | Done — `tool/main/refactor.py`, `web/src/components/Refactor.tsx` |
 | 4 | [Module restructure](4-restructure.md) | Module audit, short plan, task blocking | Not started |
 | 5 | [Full refactor](5-full.md) | Whole-repo audit feeding the planner's series | Not started |
 | 6 | [Hub and first use](6-hub.md) | Hub scope and a real split of `knowledge.py` | Not started |
