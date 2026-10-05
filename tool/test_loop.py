@@ -22,6 +22,7 @@ from unittest.mock import patch
 
 import pytest
 
+import debt
 from agent import chat_session
 from agent.chat_session import Event
 from main import channels as chat_channels
@@ -34,6 +35,7 @@ from test_specs import Worker
 from workspace import adopt, create, remove
 
 GATE = "python gate.py"
+FINAL = f"{GATE} && {debt.command()}"   # the final gate ends with the debt ratchet
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -1805,7 +1807,7 @@ def test_a_standing_final_result_is_reused_only_for_the_base_as_it_stands_now(wo
     first, _ = base_onto_first(world, "fix-mc", 7)
     with judged(calls := []):
         spec = looped("fix-mc")   # the screen asks again
-    assert calls == [[GATE]] and spec["validation"]["final"]["base_oid"] == first
+    assert calls == [[FINAL]] and spec["validation"]["final"]["base_oid"] == first
 
 
 def test_a_merge_that_only_queued_cleans_nothing_until_it_lands(world):
@@ -1902,14 +1904,15 @@ def allowed_spec(w, name: str, n: int, **validation) -> dict:
 
 def final_of(w, spec: dict, **extra) -> dict:
     path, head = Path(spec["worktree"]), spec["pr"]["head"]
-    return {"head": head, "base_oid": specs.merge_base(path, "main", head), "command": GATE,
-            "environment_digest": specs.digest(w.repo, path, GATE), "ok": True, "code": 0, "reason": "",
+    cmd = specs.required(w.repo, spec)
+    return {"head": head, "base_oid": specs.merge_base(path, "main", head), "command": cmd,
+            "environment_digest": specs.digest(w.repo, path, cmd), "ok": True, "code": 0, "reason": "",
             "finished_at": 1.0, **extra}
 
 
 def round_of(spec: dict) -> dict:
     path, head = Path(spec["worktree"]), spec["pr"]["head"]
-    return {"head": head, "base_oid": specs.merge_base(path, "main", head), "commands": [GATE],
+    return {"head": head, "base_oid": specs.merge_base(path, "main", head), "commands": [FINAL],
             "selection": "full", "ok": True, "finished_at": 1.0}
 
 
@@ -1925,7 +1928,7 @@ def test_a_targeted_pass_cannot_merge_and_the_loop_runs_only_the_final_gate(worl
         assert answer.status_code == 409 and "최종 게이트" in answer.json()["detail"]
         assert not any(c[1:3] == ["pr", "merge"] for c in world.hub.calls)
         waited(lambda: ("proj", "fix-u") not in loop._loops)
-    assert calls == [[GATE]], "the round result is reused; only the final gate runs"
+    assert calls == [[FINAL]], "the round result is reused; only the final gate runs"
     spec = specs.load("proj", "fix-u")
     assert spec["state"] == "머지 가능" and spec["validation"]["final"]["ok"] and len(spec["rounds"]) == 1
     assert not any(r.heard for r in Reviewer.made), "the review was not asked again"
@@ -1972,7 +1975,7 @@ def test_a_restart_during_the_final_gate_stays_blocked_and_resume_reruns_only_it
     with judged(calls := []):
         client().post("/api/specs/fix-y/resume", json={}).raise_for_status()
         waited(lambda: ("proj", "fix-y") not in loop._loops)
-    assert calls == [[GATE]], "the unchanged round result is reused; the final gate runs again"
+    assert calls == [[FINAL]], "the unchanged round result is reused; the final gate runs again"
     spec = specs.load("proj", "fix-y")
     assert spec["state"] == "머지 가능" and spec["validation"]["final"]["finished_at"]
 
@@ -1990,13 +1993,13 @@ def test_a_mapped_round_then_the_full_gate_once_and_the_same_identity_reuses_bot
     pr_spec(world, "fix-z", 7, gate=None)
     with judged(calls := []):
         spec = looped("fix-z")
-        assert calls == [["git --version"], [GATE]] and spec["state"] == "머지 가능"
+        assert calls == [["git --version"], [FINAL]] and spec["state"] == "머지 가능"
         v = spec["validation"]
         assert v["round"]["selection"] == "mapped" and v["final"]["ok"] and v["final"]["head"] == spec["pr"]["head"]
         assert "the checks this change maps to" in order(world, 7, 1)
         # The screen asks again: nothing changed, so nothing runs.
         spec = looped("fix-z")
-    assert calls == [["git --version"], [GATE]] and spec["state"] == "머지 가능" and len(spec["rounds"]) == 1
+    assert calls == [["git --version"], [FINAL]] and spec["state"] == "머지 가능" and len(spec["rounds"]) == 1
 
 
 def test_a_failed_final_gate_goes_to_repair_and_a_new_review(world):
