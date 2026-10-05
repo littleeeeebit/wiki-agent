@@ -356,12 +356,21 @@ def reviewed(w: Worker, sid: str) -> None:
     waited(w, lambda: live(w, sid)["state"] in REVIEWED)
 
 
+def head_of(repo: Path, spec: dict) -> str:
+    """The spec's branch head. Once merge cleanup has pruned a merged branch,
+    the head its merge was bound to: the counted round that allowed it."""
+
+    head = specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{spec['id']}"], repo).stdout.strip()
+    allowed = specs.approved(spec)
+    return allowed["head"] if not head and spec["state"] == "머지됨" and allowed else head
+
+
 def mark(repo: Path, spec: dict) -> dict | None:
     """What an approval is given for: the spec's revision and its branch head,
     only while the counted review round allowed exactly that head."""
 
     allowed = specs.approved(spec)
-    head = specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{spec['id']}"], repo).stdout.strip()
+    head = head_of(repo, spec)
     if spec["state"] not in REVIEWED or not allowed or not head or allowed["head"] != head:
         return None
     return {"rev": spec["rev"], "head": head}
@@ -487,7 +496,8 @@ def stepped(w: Worker, run: dict) -> dict:
             run["steps"][k] = step = {**step, "spec": sid, "base": previous}
             run = w.note(steps=run["steps"])
         with owning(w):
-            switched(w, sid, previous)
+            below = specs.load(w.repo.name, previous)
+            switched(w, sid, (below and head_of(w.repo, below)) or previous)
             if step["state"] == "pending":
                 spec_for(w, run, sid, step["goal"], previous, git(w.repo, "rev-parse", "HEAD"))
             if step["tier"] in BLOCKING:

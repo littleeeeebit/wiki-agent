@@ -248,6 +248,9 @@ def test_restructure_holds_the_repository_until_the_person_approves(selected):
     assert run["state"] == "done", run.get("stopped")
     assert run["spent"]["tokens"] == 25, "the audit and the test turn are both charged"
     specs.checkout_idle(selected)
+    pruned = {"id": "pruned-by-merge", "rev": 2, "state": "머지됨", "rounds": [{"verdict": "allow", "head": head}]}
+    assert refactor.mark(selected, pruned) == {"rev": 2, "head": head}, "merge cleanup pruned what its merge was bound to"
+    assert refactor.mark(selected, {**pruned, "state": "머지 가능"}) is None, "an unmerged step needs its branch"
 
     spec = specs.load("proj", step["spec"])   # a hold a restart kept, with no worker left to release it
     specs.save({**spec, "refactor": {**spec["refactor"], "block": True}})
