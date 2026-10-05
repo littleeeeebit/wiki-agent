@@ -233,11 +233,16 @@ def test_restructure_holds_the_repository_until_the_person_approves(selected):
         until(api, rid, lambda r: r["state"] == "stopped")
         specs.checkout_idle(selected)   # cancelling releases it
 
+        head = _git(selected, "rev-parse", step["spec"])
+        _git(selected, "switch", "-q", "--detach")
+        _git(selected, "branch", "-D", step["spec"])   # pruned while the run was stopped
         api.post(f"/api/refactors/{rid}/resume")
         until(api, rid, lambda r: specs.load("proj", step["spec"])["refactor"].get("block"))
         with pytest.raises(HTTPException):
             specs.checkout_idle(selected)   # resuming takes it again
-        head = _git(selected, "rev-parse", step["spec"])
+        assert subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{step['spec']}"],
+                              cwd=selected, capture_output=True).returncode, "resume never remakes a published branch"
+        _git(selected, "branch", step["spec"], head)
         specs.update("proj", step["spec"], state="작업 중")   # a revision sends the step back to work
         assert api.post(f"/api/refactors/{rid}/approve").status_code == 409, "approval needs the review as it stands"
         specs.update("proj", step["spec"], state="머지 가능", rounds=[{"verdict": "allow", "head": "0" * 40}])
@@ -248,9 +253,20 @@ def test_restructure_holds_the_repository_until_the_person_approves(selected):
     assert run["state"] == "done", run.get("stopped")
     assert run["spent"]["tokens"] == 25, "the audit and the test turn are both charged"
     specs.checkout_idle(selected)
-    pruned = {"id": "pruned-by-merge", "rev": 2, "state": "머지됨", "rounds": [{"verdict": "allow", "head": head}]}
-    assert refactor.mark(selected, pruned) == {"rev": 2, "head": head}, "merge cleanup pruned what its merge was bound to"
-    assert refactor.mark(selected, {**pruned, "state": "머지 가능"}) is None, "an unmerged step needs its branch"
+    pruned = {"id": "pruned-by-merge", "rev": 2, "state": "머지됨", "pr": {"number": 7},
+              "rounds": [{"verdict": "allow", "head": head}]}
+    real = specs.sh
+
+    def delivered(oid):   # what GitHub says the merged PR's head was
+        view = json.dumps({"state": "MERGED", "headRefOid": oid})
+        return lambda args, cwd, timeout=60: (subprocess.CompletedProcess(args, 0, view, "") if args[0] == "gh"
+                                              else real(args, cwd, timeout))
+
+    with patch.object(specs, "sh", delivered(head)):
+        assert refactor.mark(selected, pruned) == {"rev": 2, "head": head}, "merge cleanup pruned the reviewed head"
+        assert refactor.mark(selected, {**pruned, "state": "머지 가능"}) is None, "an unmerged step needs its branch"
+    with patch.object(specs, "sh", delivered("b" * 40)):
+        assert refactor.mark(selected, pruned) is None, "GitHub merged a head the review never allowed"
 
     spec = specs.load("proj", step["spec"])   # a hold a restart kept, with no worker left to release it
     specs.save({**spec, "refactor": {**spec["refactor"], "block": True}})

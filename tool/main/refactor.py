@@ -358,11 +358,18 @@ def reviewed(w: Worker, sid: str) -> None:
 
 def head_of(repo: Path, spec: dict) -> str:
     """The spec's branch head. Once merge cleanup has pruned a merged branch,
-    the head its merge was bound to: the counted round that allowed it."""
+    the allowed round's head, but only when GitHub says the merged PR delivered
+    exactly that head; a merge adopted from GitHub is not bound to it otherwise."""
 
     head = specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{spec['id']}"], repo).stdout.strip()
-    allowed = specs.approved(spec)
-    return allowed["head"] if not head and spec["state"] == "머지됨" and allowed else head
+    allowed, n = specs.approved(spec), (spec.get("pr") or {}).get("number")
+    if head or spec["state"] != "머지됨" or not allowed or not n:
+        return head
+    try:
+        view = loop.gh_json(repo, ["pr", "view", str(n), "--json", "state,headRefOid"])
+    except (RuntimeError, ValueError, OSError, subprocess.TimeoutExpired):
+        return ""   # unread is unproven; the approval wait reads it again
+    return allowed["head"] if view.get("state") == "MERGED" and view.get("headRefOid") == allowed["head"] else ""
 
 
 def mark(repo: Path, spec: dict) -> dict | None:
@@ -496,8 +503,9 @@ def stepped(w: Worker, run: dict) -> dict:
             run["steps"][k] = step = {**step, "spec": sid, "base": previous}
             run = w.note(steps=run["steps"])
         with owning(w):
-            below = specs.load(w.repo.name, previous)
-            switched(w, sid, (below and head_of(w.repo, below)) or previous)
+            if step["state"] in ("pending", "adopted"):   # a published step's branch is its PR's, never remade
+                below = specs.load(w.repo.name, previous)
+                switched(w, sid, (below and head_of(w.repo, below)) or previous)
             if step["state"] == "pending":
                 spec_for(w, run, sid, step["goal"], previous, git(w.repo, "rev-parse", "HEAD"))
             if step["tier"] in BLOCKING:
