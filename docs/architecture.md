@@ -106,7 +106,8 @@ their live runs through `GET /api/suite`. It shows active cells and the latest
 does not dispatch work; server-owned completion callbacks advance tasks even
 when transcript or feed publication fails.
 
-The 리펙터링 tab drives `tool/main/refactor.py`. A run first freezes behaviour
+The 리펙터링 tab drives `tool/main/refactor.py` through the routes in
+`tool/main/refactor_api.py`. A run first freezes behaviour
 in a characterization-test PR, then stacks one step PR per hotspot. Each step
 is chosen by the improvement runner's refactor profile
 (`tool/refactor_profile.py`). Its specs are ordinary tasks, and the request

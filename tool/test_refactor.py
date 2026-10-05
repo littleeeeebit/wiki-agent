@@ -22,7 +22,7 @@ from fastapi import HTTPException
 
 import refactor_profile
 from agent.chat_session import Event
-from main import loop, query, refactor, specs, work
+from main import loop, query, refactor, refactor_api, specs, work
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_specs import Remote, made, repo, spec_block  # noqa: F401 — `repo` is a fixture
 
@@ -221,13 +221,13 @@ def test_the_checkout_test_names_one_request_and_the_test_command_are_all_bounde
         run = finished(api, started("refactor-req-0005", seconds=3))
     assert run["stopped"]["reason"] == "budget" and time.monotonic() - began < 20, run["stopped"]
 
-    token, ids = refactor.secrets.token_hex, []
+    token, ids = refactor_api.secrets.token_hex, []
 
     def slow(n):   # widens the gap two equal requests would both walk through
         time.sleep(0.3)
         return token(n)
 
-    with patch.object(refactor.secrets, "token_hex", slow), patch.object(refactor, "launch") as launch:
+    with patch.object(refactor_api.secrets, "token_hex", slow), patch.object(refactor, "launch") as launch:
         threads = [threading.Thread(target=lambda: ids.append(started("refactor-req-0006"))) for _ in range(2)]
         [t.start() for t in threads]
         [t.join() for t in threads]
