@@ -218,7 +218,9 @@ carry UTC time, source and workflow identifiers; exceptions include stack traces
 without frame locals. Request bodies, prompts, headers and URL queries are not
 recorded. Known credential formats and secret environment values are redacted.
 Files use UTF-8 without BOM and rotate at 2 MB with three backups. Logging failure
-does not change the original response or workflow result. Browser reporting is
+falls back to redacted JSON on stderr and does not change the original response
+or workflow result. Review blockers include task, PR, round and reason; caught
+task-check exceptions retain their traceback. Browser reporting is
 limited to twenty errors per loaded page. These local records are not uploaded.
 
 Investigation and verification scope are recorded in
@@ -229,6 +231,12 @@ Ordinary completion and planner publication stop at the published PR until
 the person explicitly starts Review Loop. Once requested, rounds and restart
 recovery remain automatic within that loop.
 An unfinished correction does not start another review on the same head.
+Commands registered with `is_backgrounded=false` finish in the foreground turn,
+even when they emit a terminal task notification; they create no pending
+automatic reply. Later backgrounding updates restore background waiting.
+Collected background commands without notifications also owe no extra reply.
+Diagnosis and subprocess/review
+reproductions are in [background lifecycle](research/background-lifecycle-architecture-refresh.md).
 Empty answers are failed work turns; incomplete reports get one continuation
 in the current round, then a visible stop if completion is still unverified.
 Continue resumes the pending correction before a new review. Claimed fixes

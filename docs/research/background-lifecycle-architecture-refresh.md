@@ -21,6 +21,111 @@ to be empty conflated independent obligations. Replayed human and synthetic
 messages provide a boundary on older streams; a steered human response must not
 discharge a background obligation.
 
+## Collected tasks and phantom follow-ups
+
+The 2026-10-05 recurrence exposed an incorrect premise in that counter: a task
+start does not promise a separate automatic response. The saved Langfuse work
+transcript ended with a completed final report, then `waiting for 47 follow-up(s)`
+and a 600-second silence timeout. Later correction turns retained five and one
+phantom follow-ups. These are observed adapter records; they do not preserve
+every original provider event or establish the origin of every historical result.
+
+Anthropic's [SDK issue 1019](https://github.com/anthropics/claude-agent-sdk-python/issues/1019)
+reports that a task collected through `TaskOutput` can terminate with only
+`task_updated.patch.status=completed`, followed by the foreground result, without
+`task_notification`. This is a provider issue report, not a guarantee covering
+every CLI version. It explains why counting every start leaves an obligation
+that the provider never created. The adapter already cleared the active task
+on either terminal event; its separate follow-up counter remained inflated.
+
+The first repair added a follow-up obligation only for an actual terminal
+`task_notification`, once per task. It removed the collected-task counter leak,
+but its assumption that every notification requires another answer was wrong.
+
+Before repair, a persistent subprocess fixture with 47 collected tasks returned
+no completed answer. After repair it completes two successive prompts in the
+same provider process. A real-Git review regression uses the actual session
+adapter with a simulated CLI: the first review refuses, the correction collects
+47 tasks and commits, and the server checks, pushes and dispatches round 2 on
+the new remote head without another button click. It reaches mergeable state.
+The provider and GitHub are simulated; no user's task is resumed by these tests.
+
+The running desktop app separately reproduced a correction ending at
+`waiting for 4 follow-up(s)` while still using the old imported adapter. After
+normal window shutdown and reopening with this repair, the saved Langfuse loop
+resumed automatically and advanced from correction R2 to review R3. This is live
+continuation evidence, separate from the simulated round-2 regression; it is
+not a claim that the reviewed application's tracing findings are resolved.
+The user then reported another stall. Before restarting, the live R3 correction
+showed three completed command tasks, a pushed `ba7bebc`, a complete disposition,
+and `waiting for 3 follow-up(s)`. The first repair was incomplete.
+
+A direct protocol probe of the installed Claude CLI 2.1.289 established the
+missing distinction without relying on that historical transcript. One
+foreground `sleep 3; echo READY` command emitted, in order:
+
+```text
+task_started(task_type=local_bash, is_backgrounded=false)
+task_notification(status=completed)
+user(tool_result for the same tool_use_id)
+assistant(text)
+result(success, num_turns=2, terminal_reason=completed)
+```
+
+The CLI then waited for input; the adapter timed out instead of returning the
+successful result. The installed binary's task-start schema describes
+`is_backgrounded=false` as a foreground registration whose spawning tool blocks,
+and `task_updated.patch.is_backgrounded` as a later move into the background.
+This is observed installed-version evidence, not a promise for older versions.
+The live R3 record is consistent with this sequence; its original raw provider
+frames were not recorded, so that correspondence is an inference.
+
+The adapter now retains that flag per task and applies later updates. Foreground
+tasks remain visible but do not enter the background wait set or owe synthetic
+replies on notification. Actual background tasks still drain their replies;
+older streams without the flag retain the existing fallback. The counter is no
+longer based solely on the notification's name.
+
+The exact foreground sequence failed its regression before this change. It now
+finishes three successive prompts in one persistent simulated CLI, and a
+foreground-to-background transition still waits for its final synthetic answer.
+The real-Git regression also runs three correction/review transitions to R4,
+checking a new published head and a recorded disposition each time. All 49
+session protocol tests pass, including steering, fast completion and batching.
+An installed-CLI probe separately completes three foreground-command turns in
+one process without phantom waiting. No review was dispatched by that probe.
+
+After normal window shutdown and reopening with the foreground distinction,
+the live Langfuse correction completed with an empty error field and recorded
+its disposition in turn `74f2d958ab844668b0552854e2e802ff`. The app automatically
+dispatched review R4 on the pushed `ba7bebc`, with no stopped reason. Its final
+correction steps include the command's completion and hook response, without
+a phantom follow-up wait. This establishes the repaired live boundary; R4's
+review verdict and the other repository's tracing correctness are separate.
+
+The same investigation found diagnostic gaps. Review stops and task-check
+exceptions could be persisted or shown as ordinary progress without calling
+the error recorder. They now write `review-stop`, `task-failure` and `task-check`
+records; review stops include repository, task, PR, round, head and reason.
+Unreadable/corrupt task records and failed queued dispatch also record their
+exceptions. An absent task file is an ordinary lookup and creates no error.
+Explicit user stops and server restart transitions remain ordinary lifecycle
+events. Disk-open, write and rotation failures emit the already redacted JSON
+record to stderr, and later calls can recover file logging. The default Python
+handler's failure report is bypassed because it prints unredacted source lines.
+One diagnostic `POST /api/errors` to the restarted server returned HTTP 200 and
+wrote its matching `screen` record to the actual local JSONL file.
+
+The Agent's no-selection view also hid its entire component, including controls
+that the component already supported before task creation. The Agent now mounts
+in that state, with the model picker and mobile options toggle available. Its
+composer stays disabled until there is a task. Browser checks select a Codex
+model at 1440px and 400px with empty task and checkout lists.
+A separate browser session against the restarted live server selected
+`GPT-6.1-Sol` in an empty Agent pane and confirmed that its composer was disabled.
+
+## Other lifecycle and architecture evidence
+
 An error result is terminal for the caller, not proof that its reusable provider
 process has no pending events. A two-prompt subprocess reproduction returned an
 old task's response for the second prompt. Failed `done` events must therefore

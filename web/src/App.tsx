@@ -724,13 +724,13 @@ export default function App() {
               {t.id === 'agent' && waiting && <span className="size-1.5 rounded-full bg-wait" title="승인을 기다린다" />}
             </button>
           ))}
-          {(task || other) && <Btn tone="ghost" className="mobile-only hidden ml-auto" aria-expanded={taskOptionsOpen}
+          {(tab === 'agent' || task || other) && <Btn tone="ghost" className="mobile-only hidden ml-auto" aria-expanded={taskOptionsOpen}
             aria-controls={tab === 'agent' ? 'agent-model-options' : undefined}
             onClick={() => setTaskOptionsOpen((open) => !open)}>작업 옵션 {taskOptionsOpen ? '닫기' : '열기'}</Btn>}
         </div>
         <div className="flex min-h-0 flex-1">
           <div className="min-w-0 flex-1">
-            {tab === 'agent' && (task || other) && (
+            {tab === 'agent' && (
               <Agent
                 key={`${path}:${row?.branch ?? ''}`}
                 row={row}
@@ -755,10 +755,6 @@ export default function App() {
                 onPeek={showPeek}
               />
             )}
-            {!task && !other && tab === 'agent' && <div className="flex h-full flex-col items-center justify-center gap-4 p-4">
-              <p className="text-[16px] text-muted-foreground">진행 상황을 확인할 작업을 선택하세요.</p>
-              <Btn onClick={() => setMobilePane('tasks')} className="mobile-only hidden">작업 목록 보기</Btn>
-            </div>}
             {tab === 'review' && (
               <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} on={on} options={options}
                 settings={loopSettings} onSettings={async (s) => setLoopSettings(await api.setLoopSettings(s))}

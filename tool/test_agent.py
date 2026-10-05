@@ -640,6 +640,82 @@ sys.stdin.read()
     assert any("Calibration finished: 10/10" in e.text for e in events)
 
 
+def test_collected_background_tasks_do_not_leave_phantom_followups_on_the_next_turn(tree):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+for turn in (1, 2):
+    sys.stdin.readline()
+    for i in range(47):
+        task = f"bg-{turn}-{i}"
+        say({"type": "system", "subtype": "task_started", "task_id": task})
+        say({"type": "system", "subtype": "task_updated", "task_id": task, "patch": {"status": "completed"}})
+    say({"type": "result", "origin": {"kind": "human"}, "result": f"Finished {turn}", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    session = ChatSession(tree, write=True, bypass=True)
+    real_popen = subprocess.Popen
+    try:
+        with patch.object(chat_session.subprocess, "Popen", lambda _, **kw: real_popen(
+                [sys.executable, "-X", "utf8", "-c", fixture], **kw)), \
+             patch.object(chat_session, "cli_command", side_effect=lambda name: [name]), \
+             patch.object(chat_session, "TURN_TIMEOUT", .2):
+            first = list(session.say("First correction"))
+            assert [e.text for e in first if e.kind == "done"] == ["Finished 1"]
+            second = list(session.say("Next correction"))
+            assert [e.text for e in second if e.kind == "done"] == ["Finished 2"]
+            assert session.alive
+    finally:
+        session.close()
+
+
+def test_foreground_task_notifications_finish_successive_turns_without_followups(tree):
+    # Claude 2.1.289 reports foreground Bash lifecycle with the same terminal
+    # notification as background work. It emits no synthetic answer afterward.
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+for turn in (1, 2, 3):
+    message = json.loads(sys.stdin.readline())
+    say({"type": "user", "isReplay": True, "message": message["message"]})
+    for i in range(3):
+        task = f"fg-{turn}-{i}"
+        say({"type": "system", "subtype": "task_started", "task_id": task,
+             "task_type": "local_bash", "is_backgrounded": False})
+        say({"type": "system", "subtype": "task_notification", "task_id": task, "status": "completed"})
+    say({"type": "result", "num_turns": 4, "terminal_reason": "completed",
+         "result": f"Correction {turn}", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    session = ChatSession(tree, write=True, bypass=True)
+    real_popen = subprocess.Popen
+    try:
+        with patch.object(chat_session.subprocess, "Popen", lambda _, **kw: real_popen(
+                [sys.executable, "-X", "utf8", "-c", fixture], **kw)), \
+             patch.object(chat_session, "cli_command", side_effect=lambda name: [name]), \
+             patch.object(chat_session, "TURN_TIMEOUT", .2):
+            for turn in (1, 2, 3):
+                events = list(session.say(f"Correct round {turn}"))
+                assert [e.text for e in events if e.kind == "done"] == [f"Correction {turn}"]
+                assert not any("waiting for" in e.text for e in events)
+            assert session.alive
+    finally:
+        session.close()
+
+
+def test_foreground_task_moved_to_background_still_drains_its_followup(tree):
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_backgrounded": False})
+say({"type": "system", "subtype": "task_updated", "task_id": "bg-1", "patch": {"is_backgrounded": True}})
+say({"type": "result", "origin": {"kind": "human"}, "result": "Waiting", "session_id": "cli-1"})
+say({"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"})
+say({"type": "result", "origin": {"kind": "task-notification"}, "result": "Finished", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert [e.text for e in events if e.kind == "done"] == ["Finished"]
+
+
 def test_background_child_text_does_not_replace_the_parent_answer(tree):
     fixture = '''import json, sys
 say = lambda m: print(json.dumps(m), flush=True)

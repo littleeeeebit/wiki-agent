@@ -843,6 +843,8 @@ class ChatSession:
         used = {"in": 0, "out": 0, "cache_read": 0, "reasoning": 0}
         background = set()
         background_status = {}
+        backgrounded = {}
+        notified = set()
         followups = 0
         foreground_result_seen = False
         replay_human = None
@@ -1026,15 +1028,26 @@ class ChatSession:
                 subtype = ev["subtype"]
                 patch = ev.get("patch") or {}
                 task = str(ev.get("task_id") or "")
-                if task and task not in background_status:
-                    followups += 1
+                moved = patch.get("is_backgrounded", ev.get("is_backgrounded"))
+                if isinstance(moved, bool):
+                    backgrounded[task] = moved
+                if backgrounded.get(task) is False:
+                    background.discard(task)
                 status = str(patch.get("status") or ev.get("status") or
                              ("running" if subtype == "task_progress" else background_status.get(task)) or
                              ("started" if subtype == "task_started" else "running"))
                 background_status[task] = status
                 if status in ("completed", "failed", "stopped", "cancelled"):
                     background.discard(task)
-                elif task and (subtype in ("task_started", "task_progress") or patch.get("status") or ev.get("status")):
+                    # Foreground Bash emits this notification too, then returns
+                    # its tool result inside the current turn. It owes no reply.
+                    if (subtype == "task_notification" and backgrounded.get(task) is not False
+                            and task and task not in notified):
+                        notified.add(task)
+                        followups += 1
+                elif (task and backgrounded.get(task) is not False
+                      and (subtype in ("task_started", "task_progress") or patch.get("status")
+                           or ev.get("status") or moved is True)):
                     background.add(task)
                 detail = str(ev.get("summary") or ev.get("description") or patch.get("description") or "")
                 usage = ev.get("usage") or patch.get("usage") or {}
