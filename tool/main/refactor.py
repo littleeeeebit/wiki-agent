@@ -477,19 +477,21 @@ def charted(w: Worker, run: dict) -> dict:
         run = w.note(audit=final[-(planning.MAX_CONTEXT - len(PLAN_RULES) - 100):])
     if current_repo().resolve() != w.repo.resolve():
         raise Stop("moved", "다른 저장소가 선택됐다 — 이 저장소로 돌아와 [재개] 하라")
-    left = w.left()
-    if min(left.values()) <= 0:
-        raise Stop("budget", "한도를 다 썼다")
-    role = planning.Role(**run["role"])
-    body = planning.Plan(
-        request_id=f"refactor-{w.rid}-plan", refactor=True,
-        goal="Pay down the structural debt the audit found, in stages that each keep behaviour unless their tier "
-             "is L3, so every stage can become one reviewed refactoring pull request.",
-        context=f"{PLAN_RULES}\n\n## Audit\n\n{run['audit']}",
-        roles=planning.Roles(planner=role, reviser=role, reviewer=planning.Role(**(run["reviewer"] or run["role"]))),
-        limits=planning.Limits(seconds=left["seconds"], calls=left["calls"], tokens=left["tokens"]))
+    if not run.get("planner"):   # kept before it is sent: a resume sends the same request, not today's limits
+        left = w.left()
+        if min(left.values()) <= 0:
+            raise Stop("budget", "한도를 다 썼다")
+        role = planning.Role(**run["role"])
+        run = w.note(planner=planning.Plan(
+            request_id=f"refactor-{w.rid}-plan", refactor=True,
+            goal="Pay down the structural debt the audit found, in stages that each keep behaviour unless their "
+                 "tier is L3, so every stage can become one reviewed refactoring pull request.",
+            context=f"{PLAN_RULES}\n\n## Audit\n\n{run['audit']}",
+            roles=planning.Roles(planner=role, reviser=role,
+                                 reviewer=planning.Role(**(run["reviewer"] or run["role"]))),
+            limits=planning.Limits(seconds=left["seconds"], calls=left["calls"], tokens=left["tokens"])).model_dump())
     try:
-        plan = planning.start(body)   # the same key on a resume is the same plan
+        plan = planning.start(planning.Plan(**run["planner"]))   # the same key and input on a resume: the same plan
     except HTTPException as exc:
         raise Stop("plan_refused", str(exc.detail)) from exc
     return w.note(phase="plan", plan=plan["id"])
@@ -509,20 +511,32 @@ def staged(w: Worker, run: dict) -> dict:
 
     waited(w, ready)
     spec = specs.load(w.repo.name, run["plan"])
-    p = spec["planning"]
+    p, commit = spec["planning"], spec["merge"]["commit"]
+    # The stage files that merged, not the outline written before review: a revision may add or drop one.
+    names = git(w.repo, "ls-tree", "--name-only", f"{commit}:{p['artifact_root']}").splitlines()
+    stages = sorted((int(m[1]), name) for name in names if (m := re.fullmatch(r"(\d+)-.+\.md", name)) and int(m[1]))
+    if not stages or len({n for n, _ in stages}) != len(stages):
+        raise Stop("format", f"머지된 계획의 단계 파일을 읽지 못했다: {', '.join(names)}")
     steps = []
-    for s in p["outline"]["stages"]:
-        rel = planning.file_of(p["artifact_root"], s)
-        text = git(w.repo, "show", f"{spec['merge']['commit']}:{rel}")
+    for n, name in stages:
+        rel = f"{p['artifact_root']}/{name}"
+        text = git(w.repo, "show", f"{commit}:{rel}")
         try:
             t = planning.tiered(text)
         except ValueError as exc:
             raise Stop("format", f"{rel}: {exc}") from exc
-        steps.append({"n": s["n"], "tier": t["tier"], "files": t["files"], "state": "pending", "spec": None,
-                      "goal": f"{s['title']}, as `{rel}` describes:\n\n{text[:6000]}"})
-    w.budget.used["calls"] += p["spent"]["calls"]    # the planner spent the run's budget
-    w.budget.used["tokens"] += p["spent"]["tokens"]
-    return w.note(phase="tests", steps=steps)
+        title = (re.search(r"^#[ \t]+(.+)$", text, re.M) or [None, name])[1]
+        steps.append({"n": n, "tier": t["tier"], "files": t["files"], "state": "pending", "spec": None,
+                      "goal": f"{title}, as `{rel}` describes:\n\n{text[:6000]}"})
+    # The planner spent the run's allowance, its seconds inside the wait set aside above. Charged in the
+    # same write that leaves this phase, and in memory only once it holds: a failed write charges nothing.
+    used, spent = p["spent"], w.spent()
+    run = update(w.repo.name, w.rid, phase="tests", steps=steps,
+                 spent={k: spent[k] + used[k] for k in ("seconds", "calls", "tokens")})
+    w.budget.used["calls"] += used["calls"]
+    w.budget.used["tokens"] += used["tokens"]
+    w.budget.aside(-used["seconds"])
+    return run
 
 
 def frozen(w: Worker, run: dict) -> dict:

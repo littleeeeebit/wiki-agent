@@ -357,6 +357,11 @@ def test_an_l3_stage_must_say_how_it_migrates():
         planning.tiered(STAGE.format(n=1, tier="L3"))
     with pytest.raises(ValueError, match="Tier"):
         planning.tiered("# Stage\n\nFiles: big.py\n")
+    for files in (" ,", "../outside.py", "C:/Windows/python.exe", "big.py, big.py"):
+        with pytest.raises(ValueError, match="Files"):
+            planning.tiered(f"Tier: L1\nFiles: {files}\n")
+    with pytest.raises(ValueError, match="Tier"):
+        planning.tiered("Tier: L1\nTier: L3\nFiles: big.py\n## Migration\n")
 
 
 def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
@@ -367,7 +372,7 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
         asked.append(body)
         spec = specs.load("proj", made(selected, spec_block())[0]["id"])
         specs.save({**spec, "id": "plan-refactor", "state": "PR #1", "planning": {
-            "phase": "handoff", "artifact_root": "docs/plans/p", "spent": {"calls": 2, "tokens": 100},
+            "phase": "handoff", "artifact_root": "docs/plans/p", "spent": {"seconds": 40, "calls": 2, "tokens": 100},
             "outline": {"stages": [{"n": 1, "slug": "dedupe", "title": "Dedupe"},
                                    {"n": 2, "slug": "split", "title": "Split"}]}}})
         return {"id": "plan-refactor"}
@@ -385,17 +390,38 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
         assert run["plan"] == "plan-refactor" and run["tests"] is None, run.get("stopped")
         assert asked[0].refactor and "Tier: L0" in asked[0].context and "Plan." in asked[0].context
 
+        api.post(f"/api/refactors/{rid}/cancel")   # stopped after the planner started, before the phase moved
+        until(api, rid, lambda r: r["state"] == "stopped")
+        refactor.update("proj", rid, phase="audit")
+        time.sleep(1.5)
+        api.post(f"/api/refactors/{rid}/resume")
+        until(api, rid, lambda r: r["phase"] == "plan" and len(asked) == 2 or r["state"] != "running")
+        assert asked[1] == asked[0], "a resume sends the request it kept, not one rebuilt from today's limits"
+
         plan = selected / "docs/plans/p"
         plan.mkdir(parents=True)
         (plan / "1-dedupe.md").write_text(STAGE.format(n=1, tier="L1"), encoding="utf-8")
         (plan / "2-split.md").write_text(STAGE.format(n=2, tier="L0"), encoding="utf-8")
+        (plan / "3-added-in-review.md").write_text(STAGE.format(n=3, tier="L0"), encoding="utf-8")
         _git(selected, "add", "docs")
         _git(selected, "commit", "-qm", "plan")
         time.sleep(3.5)
         assert until(api, rid, lambda r: True)["phase"] == "plan", "an open plan PR holds the stages back"
-        specs.update("proj", "plan-refactor", state="머지됨", cleanup_complete=True,
-                     merge={"commit": _git(selected, "rev-parse", "HEAD"), "base": "main"})
+        update, broke = refactor.update, []
+
+        def flaky(repo, run_id, **fields):   # the write that leaves the plan phase fails once
+            if fields.get("phase") == "tests" and not broke:
+                broke.append(fields)
+                raise OSError("disk full")
+            return update(repo, run_id, **fields)
+
+        with patch.object(refactor, "update", side_effect=flaky):
+            specs.update("proj", "plan-refactor", state="머지됨", cleanup_complete=True,
+                         merge={"commit": _git(selected, "rev-parse", "HEAD"), "base": "main"})
+            assert finished(api, rid)["stopped"]["reason"] == "broken"
+        api.post(f"/api/refactors/{rid}/resume")
         run = finished(api, rid)
     assert run["state"] == "done", run.get("stopped")
-    assert [(s["tier"], s["files"]) for s in run["steps"]] == [("L1", ["big.py"]), ("L0", ["big.py"])]
-    assert run["spent"]["calls"] >= 2 + 2 and run["spent"]["tokens"] == 10 + 15 + 100
+    assert [(s["n"], s["tier"]) for s in run["steps"]] == [(1, "L1"), (2, "L0"), (3, "L0")], "the stages that merged"
+    assert run["spent"]["calls"] == 2 + 2 and run["spent"]["tokens"] == 10 + 15 + 100, "the planner once"
+    assert run["spent"]["seconds"] >= 40, "the planner's time is the run's"

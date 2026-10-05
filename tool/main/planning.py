@@ -34,6 +34,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import improvement
 from agent import ChatSession
 from common.budget import Budget, Cancelled, Exhausted
 
@@ -444,16 +445,22 @@ def leftover(path: Path, root: str, manifest: list[dict]) -> list[Path] | None:
 # -- Mechanical checks -----------------------------------------------------------------
 
 def tiered(text: str) -> dict:
-    """A refactor stage's `Tier: L0–L3` and `Files: a, b` lines, or `ValueError`.
-    An L3 stage changes a contract, so it also needs `## Migration`."""
+    """A refactor stage's one `Tier: L0–L3` and one `Files: a, b` line, or `ValueError`.
+    Files are distinct repository-relative paths; an L3 stage changes a contract,
+    so it also needs `## Migration`."""
 
-    tier = re.search(r"^Tier:[ \t]*(L[0-3])[ \t]*$", text, re.M)
-    files = re.search(r"^Files:[ \t]*(.+?)[ \t]*$", text, re.M)
-    if not tier or not files:
-        raise ValueError("리펙터링 단계는 `Tier: L0–L3` 줄과 `Files:` 줄을 적어야 한다")
-    if tier[1] == "L3" and not re.search(r"^##[ \t]+Migration", text, re.M):
+    tier, files = re.findall(r"^Tier:[ \t]*(.*?)[ \t]*$", text, re.M), re.findall(r"^Files:(.*)$", text, re.M)
+    names = [f.strip().strip("`") for f in (files or [""])[0].split(",") if f.strip()]
+    if tier[:1] not in (["L0"], ["L1"], ["L2"], ["L3"]) or len(tier) != 1 or len(files) != 1 or not names:
+        raise ValueError("리펙터링 단계는 `Tier: L0–L3` 줄과 비지 않은 `Files:` 줄을 하나씩 적어야 한다")
+    try:
+        if len(set(names)) != len(names) or not all(improvement.relative(n) for n in names):
+            raise improvement.Refused("a file is named twice")
+    except improvement.Refused as exc:
+        raise ValueError(f"`Files:` 는 저장소 기준 상대 경로를 한 번씩 적는다: {', '.join(names)}") from exc
+    if tier[0] == "L3" and not re.search(r"^##[ \t]+Migration", text, re.M):
         raise ValueError("L3 단계에는 `## Migration` 절이 있어야 한다")
-    return {"tier": tier[1], "files": [f.strip().strip("`") for f in files[1].split(",") if f.strip()]}
+    return {"tier": tier[0], "files": names}
 
 
 def problems(repo: str, sid: str, spec: dict, path: Path) -> list[tuple[str, str]]:
