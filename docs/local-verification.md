@@ -242,7 +242,16 @@ previously verified cloud results when a changed environment is observed.
 GitHub's required commit status blocks new heads even before the local app
 has seen them. Protection applies repository-wide, so the app publishes the
 same status after a local implementation's existing review and final gate;
-it does not add cloud runtime checks to that local workflow.
+it does not add cloud runtime checks or a protection-setup prerequisite to
+ordinary local/other-environment review. Saving local execution settings
+enables status publication on ordinary tasks, including unprotected branches.
+GitHub still applies any configured protections when the person requests merge.
+
+A Cloud task first reads the target branch's protection flag. An explicitly
+unprotected branch shows a setup instruction for the Review tab instead of
+misreporting a protection endpoint's expected 404 as a connection failure.
+Unreadable branch/protection responses remain blockers, including permission
+errors and protections supplied only through rulesets.
 
 The initial GitHub integration uses classic branch protection. Existing
 rulesets are not treated as proof of equivalent protection; configure the

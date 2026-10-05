@@ -165,6 +165,21 @@ def update(repo: str, sid: str, **fields) -> dict | None:
         return spec
 
 
+def merge_progress(repo: str, sid: str, stage: str, state: str = "running", *, reset: bool = False) -> None:
+    """Persist merge stages through the existing spec feed, without authorizing merge."""
+    with _files:
+        spec = load(repo, sid)
+        if spec is None:
+            return
+        previous = {} if reset else spec.get("merge_progress") or {}
+        now = time.time()
+        steps = list(previous.get("steps") or [])
+        if not steps or steps[-1]["text"] != stage:
+            steps.append({"text": stage, "ts": now})
+        update(repo, sid, merge_progress={"stage": stage, "state": state, "started_at": previous.get("started_at", now),
+                                         "updated_at": now, "steps": steps[-20:]})
+
+
 def listing(repo: str) -> list[dict]:
     """The repository's specs, newest first. A dropped one is not listed."""
 
@@ -200,6 +215,8 @@ def checkout_idle(repo: Path) -> None:
     for spec in listing(repo.name):
         if spec.get("workspace_mode") != "branch" or spec.get("worktree") != str(repo):
             continue
+        if spec["state"] == "머지됨" and not spec.get("cleanup_complete"):
+            raise HTTPException(409, "머지 후 로컬 기본 브랜치 동기화·정리를 마친 뒤 새 작업을 시작하세요")
         if re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+|머지 대기", spec["state"]):
             raise HTTPException(409, "이 저장소의 리뷰·머지를 마친 뒤 브랜치를 바꿔라")
         if spec.get("planning") and spec["planning"].get("phase") not in ("handoff", "stopped"):
@@ -769,7 +786,8 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     for round_ in spec.get("rounds") or []:
         round_["stale"] = True
         round_["stale_reason"] = "Specification revised"
-    spec.update(made, rev=spec["rev"] + 1, report=None, gate=None, validation=None, checks=[], fault=None)
+    spec.update(made, rev=spec["rev"] + 1, report=None, gate=None, validation=None, checks=[], fault=None,
+                merge_request=None, maintenance=None, merge_progress=None)
     if spec.get("worktree") and not re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+", spec["state"]):
         moved(spec, "작업 중", stopped=None)
     save(spec)

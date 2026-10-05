@@ -539,6 +539,8 @@ export type Spec = {
   p2_comment?: string
   extra?: number
   merge?: { commit: string; base: string } | null
+  merge_progress?: { stage: string; state: 'running' | 'waiting_review' | 'queued' | 'blocked' | 'completed';
+    started_at: number; updated_at: number; steps: { text: string; ts: number }[] } | null
   cleanup?: string[]
   /** Who holds a `머지 대기`: "대기열" or "자동 머지 — 검사 대기". */
   queued?: string | null
@@ -777,11 +779,12 @@ export async function loopEvents(onEvent: (ev: FeedEv) => void, signal: AbortSig
 // -- The translation switch ---------------------------------------------------
 
 export type Usage = { month: string; usd: number | null; limit: number }
-export type Switch = { translate: boolean; usage: Usage }
+export type TranslationMode = 'off' | 'full' | 'partial'
+export type Switch = { translate: boolean; mode?: TranslationMode; usage: Usage }
 
 export const getSwitch = () => get('/api/switch').then((r) => json<Switch>(r, '번역 스위치'))
-export const setSwitch = (on: boolean) =>
-  post('/api/switch', { translate: on }).then((r) => json<Switch>(r, '번역 스위치'))
+export const setSwitch = (mode: TranslationMode) =>
+  post('/api/switch', { mode }).then((r) => json<Switch>(r, '번역 스위치'))
 
 export const startMobile = () => post('/api/mobile/start').then((r) => json<import('./mobile').MobileStatus>(r, '휴대폰 연결'))
 export const mobileLink = () => post('/api/mobile/link').then((r) => json<{ link: string; seconds: number }>(r, '휴대폰 연결 링크'))

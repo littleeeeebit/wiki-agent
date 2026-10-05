@@ -26,11 +26,17 @@ def main():
     fake.include_router(mobile.router)
     citations = []
     translations = []
+    say_requests = []
+    conversation_records = {}
+    translation_mode = "full"
     deleted = False
     compacting = False
     compact_done = threading.Event()
     restarted_feed = None
     feed_requests = []
+    merge_events = []
+    merge_release = threading.Event()
+    merge_failed = False
     fast_requests = []
     screen_errors = []
     fast_models = [("opus", True), ("opus[1m]", True), ("claude-opus-4-8", True),
@@ -60,9 +66,12 @@ def main():
 
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
     async def api(path: str, request: Request):
-        nonlocal deleted, architecture_installed
+        nonlocal deleted, architecture_installed, translation_mode
         if path == "switch":
-            return {"translate": True, "usage": {"month": "2026-10", "usd": 0, "limit": 10}}
+            if request.method == "POST":
+                translation_mode = (await request.json())["mode"]
+            return {"translate": translation_mode != "off", "mode": translation_mode,
+                    "usage": {"month": "2026-10", "usd": 0, "limit": 10}}
         if path == "suite":
             assert request.headers.get("x-project") == "fixture"
             if suite_fault:
@@ -85,14 +94,53 @@ def main():
                        "Request handling": "요청 처리", "Web internals": "화면 내부", "Leaf details": "말단 설명",
                        "overall architecture / web": "전체 구조 / 화면", "전체 구조 / web": "전체 구조 / 화면"}
             return {"texts": [mapping.get(text, text) for text in data["texts"]], "statuses": ["translated"] * len(data["texts"])}
+        if path.startswith("log/") and path.split("/")[1] in conversation_records:
+            return [] if request.query_params.get("legacy") == "true" else conversation_records[path.split("/")[1]]
         if path == "log/next":
             return [{"role": "assistant", "text": "Synthetic specification", "blocks": [{"name": "spec", "id": spec["id"]}]}]
+        if request.method == "POST" and path.startswith("say/"):
+            focus = path.split("/")[1]
+            say_requests.append(focus)
+            frames = [{"kind": "tool", "text": f"Synthetic interactive tool {focus}", "seq": 0},
+                      {"kind": "done", "text": f"Synthetic interactive answer {focus}", "seq": 1}]
+            conversation_records[focus] = [{"role": "user", "text": "Synthetic interactive question"},
+                                           {"role": "assistant", "text": frames[-1]["text"]}]
+            async def interactive():
+                for frame in frames:
+                    yield "data: " + json.dumps(frame) + "\n\n"
+                    await asyncio.sleep(0.1)
+            return StreamingResponse(interactive(), media_type="text/event-stream")
         if path == "worktrees":
             return {"project": "fixture", "repo": "fixture", "rows": [] if deleted else [
                 {"path": "fixture-task", "name": "fixture-task", "branch": "fixture", "dirty": False,
                  "primary": True, "merged": False, "live": False, "busy": compacting}]}
         if path == "specs":
             return {"project": "fixture", "specs": [] if deleted else [spec]}
+        if path == "specs/fixture-task/review/log":
+            return {"rows": [], "running": None}
+        if path == "specs/fixture-task/merge":
+            assert (await request.json())["head"] == spec["approved"]
+            started = time.time()
+            steps = []
+
+            def progress(stage, state="running"):
+                steps.append({"text": stage, "ts": time.time()})
+                spec["merge_progress"] = {"stage": stage, "state": state, "started_at": started,
+                                          "updated_at": time.time(), "steps": list(steps)}
+                merge_events.append({"kind": "spec", "seq": 100 + len(merge_events), "repo": "fixture",
+                                     "id": spec["id"], "state": spec["state"], "pr": 7, "round": 1})
+
+            progress("위키 색인 새로 고치는 중")
+            await asyncio.sleep(1.2)
+            progress(".omm 구조 문서 새로 고치는 중")
+            while not merge_release.is_set():
+                await asyncio.sleep(.05)
+            if merge_failed:
+                progress("머지 중단 — 합성 구조 갱신 실패", "blocked")
+                return JSONResponse({"detail": "합성 구조 갱신 실패"}, status_code=409)
+            spec["state"] = "리뷰 R2"
+            progress("준비 커밋 독립 리뷰·최종 게이트 진행 중", "waiting_review")
+            return spec
         if path == "specs/fixture-task/delete":
             deleted = True
             return {"ok": True}
@@ -116,7 +164,12 @@ def main():
                 event = {"kind": "notice", "seq": 1, "ts": stamp, "title": "에이전트 실행 완료", "body": "fixture"}
                 for replay in (event, event, {**event, "ts": stamp + .001, "title": "서버 재시작 후 알림"}):
                     yield "data: " + json.dumps(replay) + "\n\n"
-                await asyncio.sleep(60)
+                seen = 0
+                while True:
+                    for event in merge_events[seen:]:
+                        yield "data: " + json.dumps(event) + "\n\n"
+                        seen += 1
+                    await asyncio.sleep(.05)
             return StreamingResponse(notices(), media_type="text/event-stream",
                                      headers={"X-Feed-Cursor": "-1", "X-Feed-Generation": "fixture-old"})
         if path == "work/events":
@@ -143,11 +196,17 @@ def main():
                         rev=spec["rev"] + 1)
             return spec
         if path == "work/log":
-            reply = "\n\n".join("Long synthetic paragraph " + str(i) for i in range(50))
+            reply = f"Synthetic final reply {translation_mode}\n\n" + "\n\n".join("Long synthetic paragraph " + str(i) for i in range(50))
             reply += "\n\n[Windows source](C:/fixture/src/app.ts:12) "
             reply += "[Encoded file](file:///C:/fixture/My%20Project/app.ts#L20) "
             reply += "[Relative source](src/app.ts:3) [PR](https://example.com/pull/7)"
-            return {"rows": [{"role": "assistant", "text": reply}], "session_id": "fixture",
+            return {"rows": [{"role": "assistant", "text": reply,
+                    "steps": [{"kind": "progress", "text": f"Synthetic translation progress {translation_mode}"},
+                              {"kind": "tool", "text": f"Synthetic translation tool {translation_mode}"},
+                              {"kind": "approval", "id": "translation-choice", "tool": "requestUserInput",
+                               "text": "Choose", "answer": "none", "by": "person",
+                               "input": {"questions": [{"header": "Choice", "question": f"Synthetic translation question {translation_mode}",
+                                                       "options": [{"label": "Keep", "description": f"Synthetic translation option {translation_mode}"}]}]}}]}], "session_id": "fixture",
                     "busy": compacting, "running": {"turn": "compact-turn", "session_id": "fixture", "seq": -1} if compacting else None,
                     "rules": [], "queued": None}
         if path == "work/diff":
@@ -218,6 +277,48 @@ def main():
             page.unroute("**/api/specs")
             page.set_viewport_size({"width": 1440, "height": 900})
             page.goto(base)
+            # Fresh pages avoid overlay cache hits hiding accidental requests.
+            for mode in ("off", "partial", "full"):
+                probe = browser.new_page(viewport={"width": 1440, "height": 900})
+                probe.goto(base)
+                probe.get_by_role("button", name="설정", exact=True).first.click()
+                picker = probe.get_by_role("combobox", name="한국어 번역 모드")
+                expect(picker.locator("option")).to_have_text(["끄기", "전체 활성화", "일부 활성화"])
+                picker.select_option(mode)
+                probe.get_by_role("dialog").get_by_role("button", name="닫기", exact=True).click()
+                translations.clear()
+                probe.reload()
+                probe.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").click()
+                probe.get_by_text(f"Synthetic final reply {mode}", exact=True).wait_for()
+                probe.get_by_text(f"Synthetic translation option {mode}", exact=True).wait_for()
+                probe.wait_for_timeout(300)
+                assert (f"Synthetic final reply {mode}" in translations) == (mode != "off"), (mode, translations)
+                assert (f"Synthetic translation question {mode}" in translations) == (mode != "off"), (mode, translations)
+                assert (f"Synthetic translation option {mode}" in translations) == (mode != "off"), (mode, translations)
+                assert (f"Synthetic translation progress {mode}" in translations) == (mode == "full"), (mode, translations)
+                assert (f"Synthetic translation tool {mode}" in translations) == (mode == "full"), (mode, translations)
+                if mode == "partial":
+                    for focus, label in (("wiki", "위키"), ("retro", "회고"), ("next", "다음 작업")):
+                        focus_button = probe.get_by_role("navigation", name="초점", exact=True).get_by_role("button", name=label, exact=True)
+                        if focus_button.get_attribute("aria-pressed") != "true":
+                            with probe.expect_response(lambda response: response.url.split("?")[0].endswith(f"/api/log/{focus}")):
+                                focus_button.focus()
+                                focus_button.press("Enter")
+                        expect(focus_button).to_have_attribute("aria-pressed", "true")
+                        probe.wait_for_timeout(100)
+                        composer = probe.get_by_label("대화", exact=True).get_by_role("textbox", name="질문 또는 지시")
+                        composer.fill("Synthetic interactive question")
+                        composer.press("Enter")
+                        probe.wait_for_timeout(300)
+                        assert focus in say_requests, (focus, say_requests,
+                            probe.get_by_label("대화", exact=True).inner_text()[:2000])
+                        probe.get_by_text(f"Synthetic interactive answer {focus}", exact=True).wait_for()
+                        probe.wait_for_timeout(200)
+                        assert f"Synthetic interactive answer {focus}" in translations, translations
+                        assert f"Synthetic interactive tool {focus}" in translations, translations
+                probe.close()
+            translation_mode = "full"
+            page.reload()
             page.evaluate("window.dispatchEvent(new ErrorEvent('error', {error: new Error('Synthetic screen failure')}))")
             page.wait_for_timeout(200)
             assert screen_errors and screen_errors[0]["message"] == "Synthetic screen failure", screen_errors
@@ -559,6 +660,40 @@ def main():
             assert desktop.url == base + "/"
             desktop.close()
             compacting = False
+            restarted_feed = None
+            spec.update(state="머지 가능", approved="a" * 40, unproven="", rounds=[],
+                        pr={"number": 7, "url": "https://example.com/pull/7", "base": "main", "head": "a" * 40})
+            page.set_viewport_size({"width": 400, "height": 900})
+            page.reload()
+            page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").click()
+            page.get_by_role("tab", name="리뷰", exact=True).click()
+            page.get_by_role("button", name="머지 ▸", exact=True).click()
+            progress = page.get_by_role("region", name="머지 진행상황", exact=True)
+            progress.get_by_role("status").filter(has_text=".omm 구조 문서 새로 고치는 중").wait_for()
+            expect(page.get_by_role("button", name="머지 진행 중…", exact=True)).to_be_disabled()
+            assert progress.get_attribute("aria-busy") == "true"
+            progress.locator("summary").click()
+            progress.get_by_text("위키 색인 새로 고치는 중", exact=True).wait_for()
+            assert page.evaluate("document.documentElement.scrollWidth <= innerWidth")
+            page.screenshot(path=str(ROOT / "artifacts" / "merge-progress-400px.png"))
+            merge_release.set()
+            progress.get_by_role("status").filter(has_text="준비 커밋 독립 리뷰·최종 게이트 진행 중").wait_for()
+            expect(page.get_by_role("button", name="머지 ▸", exact=True)).to_have_count(0)
+            assert progress.get_attribute("aria-busy") == "true"
+            spec.update(state="머지 가능", merge_progress=None)
+            merge_release.clear()
+            merge_failed = True
+            page.reload()
+            page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").click()
+            page.get_by_role("tab", name="리뷰", exact=True).click()
+            page.get_by_role("button", name="머지 ▸", exact=True).click()
+            progress.get_by_role("status").filter(has_text=".omm 구조 문서 새로 고치는 중").wait_for()
+            merge_release.set()
+            progress.get_by_role("status").filter(has_text="머지 중단 — 합성 구조 갱신 실패").wait_for()
+            expect(page.get_by_role("button", name="머지 ▸", exact=True)).to_be_enabled()
+            assert progress.get_attribute("aria-busy") == "false"
+            assert not errors, errors
+            page.set_viewport_size({"width": 1440, "height": 900})
             row = page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task")
             row.click(button="right")
             page.get_by_role("menuitem", name="삭제", exact=True).click()

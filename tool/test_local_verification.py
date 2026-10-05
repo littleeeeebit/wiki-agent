@@ -378,6 +378,49 @@ def test_github_requirement_is_enforced_and_setup_preserves_existing_rules(cloud
     assert looped("cloud")["state"] == "머지 가능"
 
 
+@pytest.mark.parametrize("environment", ["local", "external"])
+def test_ordinary_review_with_local_settings_does_not_require_branch_protection(cloud_world, environment):
+    world = cloud_world
+    spec = pr_spec(world, "ordinary-unprotected", 12)
+    specs.update("proj", spec["id"], implementation_environment=environment)
+    github = world.github
+    calls = []
+
+    def unprotected(args, cwd, timeout=60):
+        if args[:2] == ["gh", "api"] and "/branches/" in args[2]:
+            calls.append(args[2])
+            return subprocess.CompletedProcess(args, 1, "", "gh: Branch not protected (HTTP 404)")
+        return github(args, cwd, timeout)
+
+    with patch.object(specs, "sh", unprotected):
+        ready = looped(spec["id"])
+    assert ready["state"] == "머지 가능", ready
+    assert world.github.statuses[-1][1] == "success" and not calls
+    assert not any(args[:3] == ["gh", "pr", "merge"] for args in world.hub.calls)
+
+
+@pytest.mark.parametrize("failure", ["unprotected", "unreadable"])
+def test_cloud_protection_preparation_distinguishes_missing_rule_from_api_failure(cloud_world, failure):
+    world = cloud_world
+    cloud_spec(world)
+    github = world.github
+
+    def branch(args, cwd, timeout=60):
+        if args[:2] == ["gh", "api"] and "/branches/" in args[2]:
+            assert not args[2].endswith("/protection")
+            if failure == "unprotected":
+                return subprocess.CompletedProcess(args, 0, '{"protected": false}', "")
+            return subprocess.CompletedProcess(args, 1, "", "gh: Not Found (HTTP 404)")
+        return github(args, cwd, timeout)
+
+    with patch.object(specs, "sh", branch):
+        stopped = looped("cloud")
+    assert stopped["state"] == "멈춤" and not Reviewer.made
+    assert not any(row[1] == "success" for row in world.github.statuses)
+    reason = stopped["local_verification"]["reason"]
+    assert ("보호 규칙이 없다" if failure == "unprotected" else "GitHub 검증 상태 연결 실패") in reason
+
+
 @pytest.mark.parametrize("configuration", ["none", "missing_env"])
 def test_doc_only_cloud_change_keeps_review_but_exempts_runtime_setup(cloud_world, configuration):
     world = cloud_world

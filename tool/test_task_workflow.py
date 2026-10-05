@@ -331,8 +331,8 @@ def test_shared_checkout_after_merge_updates_base_for_the_next_task(repo, tmp_pa
             loop.finish(repo, saved, "main", head, "Merged fixture task")
         if linked:
             assert git(original, "branch", "--show-current") == "main"
-            assert git(original, "rev-parse", "HEAD") != head  # Never move the sibling's ref or files.
-            assert not (original / "merged.txt").exists()
+            assert git(original, "rev-parse", "HEAD") == head  # Synchronize the clean sibling's real main too.
+            assert (original / "merged.txt").read_text(encoding="utf-8") == "merged task\n"
             local_base = git(repo, "branch", "--show-current")
             assert local_base.startswith("wiki-base/")
             assert git(repo, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{upstream}") == "origin/main"
@@ -356,7 +356,8 @@ def test_shared_checkout_after_merge_updates_base_for_the_next_task(repo, tmp_pa
             assert git(repo, "rev-parse", "HEAD") == next_head
             assert len(git(repo, "for-each-ref", "--format=%(refname)", "refs/heads/wiki-base").splitlines()) == 1
             assert len(git(repo, "worktree", "list", "--porcelain").split("worktree ")) == 3
-            assert not (original / "second.txt").exists()
+            assert git(original, "rev-parse", "main") == next_head
+            assert (original / "second.txt").read_text(encoding="utf-8") == "second merged task\n"
 
 
 @pytest.mark.parametrize("base_state", ["ahead", "diverged", "missing upstream", "wrong upstream"])

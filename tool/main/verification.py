@@ -326,7 +326,11 @@ def github(repo: Path, endpoint: str, payload: dict | None = None, method: str =
 
 
 def protection(repo: Path, base: str) -> dict:
-    protected = github(repo, f"repos/{{owner}}/{{repo}}/branches/{quote(base, safe='')}/protection")
+    endpoint = f"repos/{{owner}}/{{repo}}/branches/{quote(base, safe='')}/protection"
+    branch = github(repo, endpoint.removesuffix("/protection"))
+    if branch.get("protected") is False:
+        raise ValueError("대상 브랜치에 보호 규칙이 없다 — 리뷰 탭에서 GitHub 필수 검사 설정 후 로컬 검증을 재개하세요")
+    protected = github(repo, endpoint)
     checks = protected.get("required_status_checks") or {}
     contexts = {*checks.get("contexts", []), *(c["context"] for c in checks.get("checks", []))}
     if CONTEXT not in contexts or not checks.get("strict") or not (protected.get("enforce_admins") or {}).get("enabled"):
@@ -678,17 +682,18 @@ def merge_proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str) -
 
 
 def publish(repo: Path, spec: dict, head: str, base: str) -> dict:
-    if cloud(spec):
-        unresolved = uninvestigated(repo, Path(spec["worktree"]), spec, head)
-        if unresolved:
-            reason = "같은 커밋·환경에서 실패 후 통과 — 원인 확인 필요"
-            return_to_cloud(repo, spec, head, reason + "\n\n" + "\n\n".join(r["reason"] for r in unresolved),
-                            sorted({issue for r in unresolved for issue in r["failures"]}), "unstable")
-            raise ValueError(reason)
-    protection(repo, base)
     if not cloud(spec):
+        # Local verification settings also enable status publication for ordinary
+        # tasks. They do not opt those tasks into Cloud's protection prerequisite.
         status(repo, head, "success", "Local implementation: existing review and final gate passed")
         return spec
+    unresolved = uninvestigated(repo, Path(spec["worktree"]), spec, head)
+    if unresolved:
+        reason = "같은 커밋·환경에서 실패 후 통과 — 원인 확인 필요"
+        return_to_cloud(repo, spec, head, reason + "\n\n" + "\n\n".join(r["reason"] for r in unresolved),
+                        sorted({issue for r in unresolved for issue in r["failures"]}), "unstable")
+        raise ValueError(reason)
+    protection(repo, base)
     rows = (spec.get("local_verification") or {}).get("flows", [])
     body = "Local verification passed\n\n" + f"Commit: `{head}`\n\n" + "\n".join(
         f"- `{r['id']}`: passed" + (f"; reused: {r['reuse_reason']}" if r.get("reuse_reason") else "") for r in rows)

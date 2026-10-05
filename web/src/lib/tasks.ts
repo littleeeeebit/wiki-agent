@@ -66,22 +66,23 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
     const asks = row ? approvals(row.path) : 0
     const waiting = asks > 0 || Boolean(row && s.waiting)
     const running = row ? busy(row.path) : false
+    const merging = !!s.merge_progress && ['running', 'waiting_review', 'queued'].includes(s.merge_progress.state)
     // A plan still being drafted says its phase; its questions and its stop wait on the person.
     const plan = s.state === '작업 중' ? s.planning : null
     const planAct = plan?.phase === 'clarify' || plan?.phase === 'stopped'
-    const parts = [cleanupPending ? '정리 대기' : plan ? `계획 · ${PLAN_PHASE[plan.phase]}` : word(s.state)]
+    const parts = [merging ? s.merge_progress!.stage : cleanupPending ? '정리 대기' : plan ? `계획 · ${PLAN_PHASE[plan.phase]}` : word(s.state)]
     if (plan?.stopped) parts.push(PLAN_STOP[plan.stopped.reason] ?? plan.stopped.reason)
     if (waiting) parts.push(asks ? `승인 ${asks}` : '승인 대기')
-    if (p === 'ready') parts.push('머지를 누른다')
+    if (p === 'ready' && !merging) parts.push('머지를 누른다')
     if (p === 'stop' && s.stopped) parts.push(s.stopped.reason)
     if (p === 'queued') parts.push(s.queued || '대기열')
     out.push({
       key: row?.path ?? `spec:${s.id}`, path: row?.path ?? null, spec: s, name: s.id,
       pr: s.pr?.number ?? null, round: (s.rounds ?? []).filter((r) => !r.stale).length,
       phase: p,
-      group: waiting || planAct || cleanupPending || p === 'ready' || p === 'stop' ? 'act'
+      group: waiting || planAct || cleanupPending || p === 'ready' && !merging || p === 'stop' ? 'act'
         : p === 'done' ? 'done' : p === 'draft' && !running ? 'idle' : 'run',
-      line: parts.join(' · '), waiting, busy: running, live: row?.live ?? false, row,
+      line: parts.join(' · '), waiting, busy: running || merging, live: row?.live ?? false, row,
     })
   }
   for (const r of rows) {

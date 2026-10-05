@@ -11,8 +11,8 @@ const STATUS = { running: '실행 중', waiting: '응답 대기', stopping: '멈
   failed: '실패', stopped: '멈춤', interrupted: '중단 · 완료 기록 없음' }
 const ACTIVE = new Set<SuiteCell['status']>(['running', 'waiting', 'stopping'])
 
-export function Suite({ repo, korean, onPeek, onOpen }: {
-  repo: string; korean: boolean; onPeek: (path: string, line: number) => void; onOpen: (cell: SuiteCell) => void
+export function Suite({ repo, korean, progressOn = korean, onPeek, onOpen }: {
+  repo: string; korean: boolean; progressOn?: boolean; onPeek: (path: string, line: number) => void; onOpen: (cell: SuiteCell) => void
 }) {
   const [data, setData] = useState<{ rows: SuiteCell[]; history_limit: number } | null>(null)
   const [fault, setFault] = useState('')
@@ -51,7 +51,8 @@ export function Suite({ repo, korean, onPeek, onOpen }: {
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
       {!data && !fault && <p role="status" className="text-[13.5px] text-muted-foreground">실행 목록을 읽는 중…</p>}
       {data && !rows.length && <p className="text-[13.5px] text-muted-foreground">표시할 셀 실행이 없다.</p>}
-      <ul className="space-y-2">{rows.map((cell) => <Cell key={cell.id} cell={cell} korean={korean} onPeek={onPeek} onOpen={onOpen} />)}</ul>
+      <ul className="space-y-2">{rows.map((cell) => <Cell key={cell.id} cell={cell}
+        korean={korean && (progressOn || !ACTIVE.has(cell.status))} onPeek={onPeek} onOpen={onOpen} />)}</ul>
     </div>
   </section>
 }

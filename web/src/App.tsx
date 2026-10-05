@@ -407,9 +407,9 @@ export default function App() {
     }
   }, [channels, follow])
 
-  const flip = useCallback(async (on: boolean) => {
+  const flip = useCallback(async (mode: api.TranslationMode) => {
     try {
-      setSw(await api.setSwitch(on))
+      setSw(await api.setSwitch(mode))
     } catch (err) {
       setFault(String(err))
     }
@@ -527,7 +527,9 @@ export default function App() {
     : undefined)
   const spec = task?.spec ?? null
   const waiting = (task?.waiting || other?.waiting) ?? false
-  const on = sw?.translate ?? false
+  const mode = sw?.mode ?? (sw?.translate ? 'full' : 'off')
+  const on = mode !== 'off'
+  const full = mode === 'full'
   const tidy = row && task?.row && row.merged && !row.dirty && !task.busy
 
   const middle = view === 'projects' ? '프로젝트 · 연결' : repo
@@ -670,15 +672,15 @@ export default function App() {
         </div>
         {mapped && (
           <div className={cn('min-h-0 flex-1', view !== 'map' && 'hidden')}>
-            <RepoMap repo={repo} on={on} run={mapRun?.repo === repo ? mapRun.run : null}
+            <RepoMap repo={repo} on={full} run={mapRun?.repo === repo ? mapRun.run : null}
               onRunClose={() => setMapRun(null)} onAsk={(file) => {
               setSeed({ focus: 'wiki', text: `\`${file}\` ` })
               setView('chat')
             }} />
           </div>
         )}
-        {view === 'architecture' && repo && <div className="min-h-0 flex-1"><Architecture key={repo} repo={repo} theme={theme} korean={on} /></div>}
-        {view === 'suite' && repo && <div className="min-h-0 flex-1"><Suite key={repo} repo={repo} korean={on}
+        {view === 'architecture' && repo && <div className="min-h-0 flex-1"><Architecture key={repo} repo={repo} theme={theme} korean={full} /></div>}
+        {view === 'suite' && repo && <div className="min-h-0 flex-1"><Suite key={repo} repo={repo} korean={on} progressOn={full}
           onPeek={showPeek} onOpen={(cell) => {
             const target = list.find((t) => cell.task ? t.spec?.id === cell.task : t.path === cell.path)
             if (!target) { setFault('이 실행의 작업은 현재 목록에 없다. 스위트에서 기록을 확인해라.'); return }
@@ -739,6 +741,7 @@ export default function App() {
                 choice={choice}
                 optionsOpen={taskOptionsOpen}
                 on={on}
+                progressOn={full}
                 onChoice={setChoice}
                 onSend={order}
                 onAnswer={(turn, id, allow, scope, answers) => work.answer(path, turn, id, allow, scope, answers)}
@@ -756,7 +759,7 @@ export default function App() {
               />
             )}
             {tab === 'review' && (
-              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} on={on} options={options}
+              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} on={on} progressOn={full} options={options}
                 settings={loopSettings} onSettings={async (s) => setLoopSettings(await api.setLoopSettings(s))}
                 onPeek={showPeek} onChanged={() => {
                 readSpecs()
@@ -767,7 +770,7 @@ export default function App() {
             )}
             {/* Kept mounted: leaving the tab must not end the shell. */}
             <div className={cn('h-full', tab !== 'terminal' && 'hidden')}>
-              <Terminal cwd={path} theme={theme} on={on} />
+              <Terminal cwd={path} theme={theme} on={full} />
             </div>
           </div>
           {peek && <Peek data={peek.data} error={peek.error} onClose={() => setPeek(null)} />}

@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils'
 /** The review tab: the loop of the selected task's spec — its rounds, why it
  *  stopped, and the buttons that act on it. Which spec and PR it is, the
  *  pane's header says. */
-type Props = { spec: Spec | null; onChanged: () => void; on: boolean; options: Options | null;
+type Props = { spec: Spec | null; onChanged: () => void; on: boolean; progressOn?: boolean; options: Options | null;
   settings: LoopSettings | null; onSettings: (s: LoopSettings) => Promise<void>; onPeek: (path: string, line: number) => void }
 
 export function Review(props: Props) {
@@ -47,7 +47,7 @@ export function Review(props: Props) {
   </section>
 }
 
-function ReviewBody({ spec, onChanged, on, onPeek }: Props) {
+function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
   const [working, setWorking] = useState('')
   const [fault, setFault] = useState('')
   const [note, setNote] = useState('')
@@ -95,6 +95,7 @@ function ReviewBody({ spec, onChanged, on, onPeek }: Props) {
   const final = spec.validation?.final
   const running = spec.validation?.phase === 'final_running'
   const proven = !running && spec.unproven === ''
+  const merging = !!spec.merge_progress && ['running', 'waiting_review', 'queued'].includes(spec.merge_progress.state)
   return (
     <div className="h-full overflow-y-auto px-5 py-4 text-[12.5px]">
       <div className="flex items-center gap-2">
@@ -102,7 +103,7 @@ function ReviewBody({ spec, onChanged, on, onPeek }: Props) {
           GitHub 에서 PR #{spec.pr.number} 열기
         </a>
         {(spec.state === '머지 가능' || /^PR #\d+$/.test(spec.state)) && spec.plan_commit !== 'asked' && (
-          <Btn className="ml-auto" disabled={!!working}
+          <Btn className="ml-auto" disabled={!!working || merging}
             onClick={() => act('review', () => api.reviewSpec(spec.id, spec.repo))}>
             {working === 'review' ? '…' : rounds.length ? '다음 리뷰 라운드' : '리뷰 시작'}
           </Btn>
@@ -116,6 +117,8 @@ function ReviewBody({ spec, onChanged, on, onPeek }: Props) {
       </div>
 
       {cloud && <VerificationPanel spec={spec} />}
+
+      {(spec.merge_progress || working === 'merge') && <MergeProgress spec={spec} pending={working === 'merge'} />}
 
       {spec.state === '멈춤' && spec.stopped && (
         <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 p-3">
@@ -150,7 +153,7 @@ function ReviewBody({ spec, onChanged, on, onPeek }: Props) {
 
       {turns.length > 0 && <section aria-label="리뷰 진행상황" className="mt-4 space-y-4 border-t border-border pt-3">
         <div className="font-heading text-[11px] font-semibold text-faint">독립 리뷰 진행상황</div>
-        {turns.map((turn) => <Reply key={turn.key} turn={turn} on={on} onPeek={onPeek} onAnswer={() => {}} />)}
+        {turns.map((turn) => <Reply key={turn.key} turn={turn} on={on} progressOn={progressOn} onPeek={onPeek} onAnswer={() => {}} />)}
       </section>}
 
       {/^PR #\d+$/.test(spec.state) && spec.fault && (
@@ -187,8 +190,8 @@ function ReviewBody({ spec, onChanged, on, onPeek }: Props) {
         <div className="mt-3 rounded-md border border-st-ready/50 p-3">
           <div className="flex items-center gap-2">
             {proven ? (
-              <Btn tone="primary" disabled={!!working} onClick={() => act('merge', () => api.mergeSpec(spec.id, spec.approved!, spec.repo))}>
-                {working === 'merge' ? '머지하는 중…' : '머지 ▸'}
+              <Btn tone="primary" disabled={!!working || merging} onClick={() => act('merge', () => api.mergeSpec(spec.id, spec.approved!, spec.repo))}>
+                {working === 'merge' || merging ? '머지 진행 중…' : '머지 ▸'}
               </Btn>
             ) : (
               // The server refuses the merge and sends the spec back to run only the final gate.
@@ -275,6 +278,32 @@ function ReviewBody({ spec, onChanged, on, onPeek }: Props) {
       )}
     </div>
   )
+}
+
+function MergeProgress({ spec, pending }: { spec: Spec; pending: boolean }) {
+  const record = spec.merge_progress
+  const active = record ? ['running', 'waiting_review', 'queued'].includes(record.state) : pending
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!active) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [active])
+  const elapsed = record ? Math.max(0, Math.floor(now / 1000 - record.started_at)) : 0
+  return <section aria-label="머지 진행상황" aria-busy={active} className="mt-3 rounded-md border border-border p-3">
+    <div role="status" className="flex items-center gap-2">
+      {active && <span aria-hidden="true" className="size-3 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent motion-reduce:animate-none" />}
+      <span>{record?.stage ?? '머지 요청 보내는 중'}</span>
+      {active && <span aria-hidden="true" className="ml-auto shrink-0 text-faint">{elapsed}초</span>}
+    </div>
+    {record?.state === 'waiting_review' && <p className="mt-1 text-faint">
+      {spec.state} · {spec.validation?.phase === 'final_running' ? '최종 게이트 실행 중' : '독립 리뷰와 최종 게이트가 끝나면 요청한 커밋을 머지한다'}
+    </p>}
+    {!!record?.steps.length && <details className="mt-2 text-muted-foreground">
+      <summary className="cursor-pointer">머지 과정 · {record.steps.length}단계</summary>
+      <ol className="mt-1 list-decimal space-y-1 pl-5">{record.steps.map((step, index) => <li key={index}>{step.text}</li>)}</ol>
+    </details>}
+  </section>
 }
 
 function Detail({ text, on }: { text: string; on: boolean }) {
