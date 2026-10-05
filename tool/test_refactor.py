@@ -99,17 +99,36 @@ def test_cleanup_freezes_then_stacks_a_reviewed_step(selected):
 
     body = {"request_id": "refactor-req-0001", "mode": "cleanup", "top": 1,
             "role": {"model": "m", "effort": "high"}, "limits": {"seconds": 600, "calls": 5, "tokens": 100_000}}
-    with patch.object(specs, "sh", side_effect=remote), patch.object(loop, "kick", side_effect=review), \
+    dropped = []
+
+    def watching(args, cwd, timeout=60):   # what the run says when the runner's handoff branch goes
+        if args[:3] == ["git", "branch", "-D"]:
+            dropped.append(refactor.listing("proj")[0]["steps"][0]["state"])
+        return remote(args, cwd, timeout)
+
+    with patch.object(specs, "sh", side_effect=watching), patch.object(loop, "kick", side_effect=review), \
             patch.object(refactor_profile, "drive", side_effect=adopted):
         rid = api.post("/api/refactors", json=body).json()["id"]
         run = finished(api, rid)
         again = api.post("/api/refactors", json=body).json()
 
+        last = run["steps"][0]   # published, then stopped before its checkpoint and its review request
+        specs.update("proj", last["spec"], state=f"PR #{last['pr']}", rounds=[])
+        refactor.update("proj", rid, phase="steps", state="stopped", steps=[{**last, "state": "adopted"}])
+        kicks = kicked[:]
+        kicked.clear()
+        prs = len([c for c in remote.calls if c[:3] == ["gh", "pr", "create"]])
+        api.post(f"/api/refactors/{rid}/resume")
+        resumed = finished(api, rid)
+    assert resumed["state"] == "done" and kicked == [last["spec"]], "resume asks for the review the stop skipped"
+    assert len([c for c in remote.calls if c[:3] == ["gh", "pr", "create"]]) == prs, "and never publishes again"
+    assert dropped == ["adopted"], "the handoff branch outlives the pending checkpoint"
+
     assert run["state"] == "done", run.get("stopped")
     assert again["id"] == rid, "the same request is the same run"
     assert [h["path"] for h in run["hotspots"]] == ["big.py"]
     tests, step = run["tests"]["spec"], run["steps"][0]["spec"]
-    assert kicked == [tests, step], "both tiers are covered by the request: review starts itself"
+    assert kicks == [tests, step], "both tiers are covered by the request: review starts itself"
     creates = [c for c in remote.calls if c[:3] == ["gh", "pr", "create"]]
     assert [(c[c.index("--head") + 1], c[c.index("--base") + 1]) for c in creates] == [(tests, "main"), (step, tests)]
     assert _git(selected, "show", "--name-only", "--format=", tests) == "test_big.py", "the test PR holds tests only"

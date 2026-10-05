@@ -50,7 +50,11 @@ after cancel; restart keeps the block; the approval gate holds the next step.
   merge cleanup pruned, stands for its allowed head only when GitHub reports
   the merged PR's `headRefOid` as exactly that head; the next step stacks on
   that commit. Resume never remakes a published step's branch, including
-  one whose PR the spec already holds while the run still says `adopted`.
+  one whose PR the spec already holds while the run still says `adopted`;
+  an L0–L1 step stopped before its review request is sent to review then, if
+  its spec is still at `PR #n` with no rounds. The runner's handoff branch is
+  deleted only after the `adopted` checkpoint, so a resume from `pending` can
+  re-adopt.
 
 Tests: `test_restructure_holds_the_repository_until_the_person_approves` in
 `tool/test_refactor.py`.

@@ -503,8 +503,10 @@ def stepped(w: Worker, run: dict) -> dict:
             run["steps"][k] = step = {**step, "spec": sid, "base": previous}
             run = w.note(steps=run["steps"])
         known = specs.load(w.repo.name, sid) if step["state"] == "adopted" else None
-        if known and (known.get("pr") or {}).get("number"):   # published, then stopped before its checkpoint
-            run["steps"][k] = step = {**step, "state": "published", "pr": known["pr"]["number"]}
+        if known and (n := (known.get("pr") or {}).get("number")):   # published, then stopped before its checkpoint
+            if step["tier"] in AUTO_REVIEW and known["state"] == f"PR #{n}" and not known.get("rounds"):
+                loop.kick(w.repo.name, sid)   # and maybe before the review was asked for
+            run["steps"][k] = step = {**step, "state": "published", "pr": n}
             run = w.note(steps=run["steps"])
         with owning(w):
             if step["state"] in ("pending", "adopted"):   # a published step's branch is its PR's, never remade
@@ -517,10 +519,11 @@ def stepped(w: Worker, run: dict) -> dict:
             if step["state"] == "pending":
                 adopted = competed(w, run, step, sid)
                 git(w.repo, "merge", "--ff-only", adopted["commit"])
-                specs.sh(["git", "branch", "-D", adopted["branch"]], w.repo)
-                run["steps"][k] = step = {**step, "state": "adopted"}
+                run["steps"][k] = step = {**step, "state": "adopted", "handoff": adopted["branch"]}
                 run = w.note(steps=run["steps"])
             if step["state"] == "adopted":
+                if step.get("handoff"):   # only after the checkpoint: until then a resume needs it to re-adopt
+                    specs.sh(["git", "branch", "-D", step["handoff"]], w.repo)
                 n = published(w, sid, previous, step["goal"], body(step["goal"], [
                     "Frozen characterization tests pass on every candidate considered.",
                     "Selected by the largest drop in debt (`tool/refactor_profile.py`)."]), step["tier"])
