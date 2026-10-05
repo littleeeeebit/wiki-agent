@@ -827,6 +827,12 @@ def stop(loop: Loop | None, repo: str, sid: str, why: Why, detail: str = "", sou
         spec = specs.load(repo, sid)
         if spec is not None and source.fullmatch(spec["state"]):
             specs.save(specs.moved(spec, "멈춤", stopped={"reason": why.value, "detail": detail}))
+            if why not in (Why.PERSON, Why.RESTART):
+                rounds = counted(spec)
+                errorlog.record("review-stop", detail or why.value, repo=repo, spec=sid, reason=why.value,
+                                pr=(spec.get("pr") or {}).get("number"),
+                                round=rounds[-1]["n"] if rounds else None,
+                                head=rounds[-1]["head"] if rounds else None)
     return False
 
 

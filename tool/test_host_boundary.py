@@ -60,7 +60,9 @@ def test_environment_and_skill_overrides_do_not_modify_the_login_or_other_skills
     env = host.environment({"CODEX_HOME": str(home), "ORCA_TERMINAL_HANDLE": "obsolete", "ORCA_CLI_COMMAND": "obsolete"})
     assert env["CODEX_HOME"] == str(home) and env["WIKI_AGENT_MANAGED"] == "1"
     assert not any(k.startswith("ORCA_") for k in env)
-    config = host.skill_config(tmp_path, env)
+    # Keep ancestor discovery inside the fixture rather than the machine's home.
+    monkeypatch.chdir(tmp_path)
+    config = host.skill_config(Path("."), env)
     rows = tomllib.loads(config)["skills"]["config"]
     assert len(rows) == 3 and not any(row["enabled"] for row in rows)
     assert not any("native" in row["path"] for row in rows)

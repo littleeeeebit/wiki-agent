@@ -32,7 +32,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 import translate
-from common import worktree_home
+from common import errorlog, worktree_home
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
@@ -90,7 +90,10 @@ def load(repo: str, sid: str) -> dict | None:
     with _files:
         try:
             return json.loads(file_of(repo, sid).read_text(encoding="utf-8"))
-        except (OSError, ValueError):
+        except FileNotFoundError:
+            return None
+        except (OSError, ValueError) as exc:
+            errorlog.record("task-read", exc, repo=repo, spec=sid)
             return None
 
 
@@ -1316,6 +1319,7 @@ def reviewed(spec: dict) -> None:
 
 
 def failed(run, spec: dict, reason: str) -> None:
+    errorlog.record("task-failure", reason, repo=spec["repo"], spec=spec["id"], turn=getattr(run, "turn", None))
     note(run, reason)
     update(spec["repo"], spec["id"], fault=reason)
     return None
@@ -1347,6 +1351,7 @@ def check(path: Path, run, final: str):
     try:
         return _check(path, run, final)
     except Exception as exc:
+        errorlog.record("task-check", exc, turn=getattr(run, "turn", None), path=str(path))
         note(run, f"명세 확인이 깨졌다 — {type(exc).__name__}: {exc}")
         return None
 

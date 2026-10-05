@@ -808,6 +808,7 @@ def dispatch(path: Path, ended: Run) -> None:
         # Nobody's request is waiting on this thread: the failure and the
         # instruction itself go on record, and screens read it again.
         release()
+        errorlog.record("work-queue", exc, path=key, turn=ended.turn)
         remember(path, "assistant", "", error=f"기다리던 지시를 보내지 못했다 — {type(exc).__name__}: {exc}"
                                                 f"\n지시: {order.text}")
         feed.put({"kind": "turn", "path": key, "turn": "", "session_id": ""})

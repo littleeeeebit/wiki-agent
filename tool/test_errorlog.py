@@ -8,7 +8,7 @@ import pytest
 from starlette.requests import Request
 
 from common import errorlog
-from main import app, work
+from main import app, specs, work
 from test_main import client, no_machine_settings  # noqa: F401
 
 
@@ -94,3 +94,51 @@ def test_error_and_traceback_size_caps_still_bound_nonsecret_messages():
     errorlog.record("fixture", RuntimeError("x" * 26000))
     row = json.loads(errorlog.FILE.read_text(encoding="utf-8").splitlines()[-1])
     assert len(row["error"]) == 8000 and len(row["traceback"]) == 16000
+
+
+def test_caught_task_check_failure_keeps_the_exception_traceback(monkeypatch, tmp_path):
+    def broken(*_args):
+        raise RuntimeError("fixture task check failed")
+
+    monkeypatch.setattr(specs, "_check", broken)
+    run = work.Run(SimpleNamespace(id="fixture", repo="fixture", parent_id=None))
+    assert specs.check(tmp_path, run, "Finished") is None
+    row = json.loads(errorlog.FILE.read_text(encoding="utf-8").splitlines()[-1])
+    assert row["source"] == "task-check" and row["turn"] == run.turn
+    assert "RuntimeError: fixture task check failed" in row["traceback"]
+
+
+def test_broken_task_file_is_logged_while_missing_task_is_ordinary(tmp_path):
+    assert specs.load("fixture", "absent") is None
+    assert not errorlog.FILE.exists()
+    file = specs.file_of("fixture", "broken")
+    file.parent.mkdir(parents=True)
+    file.write_text("{", encoding="utf-8")
+    assert specs.load("fixture", "broken") is None
+    row = json.loads(errorlog.FILE.read_text(encoding="utf-8").splitlines()[-1])
+    assert (row["source"], row["repo"], row["spec"]) == ("task-read", "fixture", "broken")
+    assert row["type"] == "JSONDecodeError"
+
+
+@pytest.mark.parametrize("failure", ["open", "emit", "rotation"])
+def test_logging_failure_emits_a_redacted_fallback_and_can_retry(monkeypatch, capsys, failure):
+    from logging.handlers import RotatingFileHandler
+
+    if failure != "open":
+        errorlog.record("fixture", "initial")
+    with monkeypatch.context() as broken:
+        if failure == "open":
+            broken.setattr(RotatingFileHandler, "_open", lambda _: (_ for _ in ()).throw(OSError("disk unavailable")))
+        elif failure == "emit":
+            broken.setattr(errorlog._logger.handlers[0], "emit", lambda _: (_ for _ in ()).throw(OSError("disk unavailable")))
+        else:
+            handler = errorlog._logger.handlers[0]
+            handler.maxBytes = 1
+            broken.setattr(handler, "doRollover", lambda: (_ for _ in ()).throw(OSError("disk unavailable")))
+        errorlog.record("fixture", RuntimeError('password="fixture secret with spaces"'))
+    fallback = capsys.readouterr().err
+    assert '"source": "fixture"' in fallback and "[redacted]" in fallback
+    assert "fixture secret" not in fallback
+    errorlog.record("fixture", "Recovered logging")
+    row = json.loads(errorlog.FILE.read_text(encoding="utf-8").splitlines()[-1])
+    assert row["error"] == "Recovered logging"

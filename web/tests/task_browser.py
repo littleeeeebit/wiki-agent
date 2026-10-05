@@ -12,7 +12,7 @@ from unittest.mock import patch
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, StreamingResponse
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect, sync_playwright
 import uvicorn
 
 from mobile_browser import ROOT, app, fixture, mobile
@@ -198,6 +198,25 @@ def main():
             page = browser.new_page(viewport={"width": 1440, "height": 900})
             errors = []
             page.on("pageerror", lambda error: errors.append(str(error)))
+            page.route("**/api/worktrees", lambda route: route.fulfill(json={"project": "fixture", "repo": "fixture", "rows": []}))
+            page.route("**/api/specs", lambda route: route.fulfill(json={"project": "fixture", "specs": []}))
+            for width in (1440, 400):
+                page.set_viewport_size({"width": width, "height": 900})
+                page.goto(base)
+                if width == 400:
+                    page.get_by_role("navigation", name="화면", exact=True).get_by_role("button", name="선택한 작업").click()
+                    page.get_by_role("button", name="작업 옵션 열기", exact=True).click()
+                agent = page.get_by_label("에이전트 세션", exact=True)
+                picker = agent.get_by_role("combobox").first
+                picker.wait_for()
+                expect(picker).to_be_enabled()
+                picker.click()
+                page.get_by_role("option", name="codex:fixture-fast", exact=True).click()
+                assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() == "codex:fixture-fast"
+                assert agent.get_by_role("textbox").is_disabled()
+            page.unroute("**/api/worktrees")
+            page.unroute("**/api/specs")
+            page.set_viewport_size({"width": 1440, "height": 900})
             page.goto(base)
             page.evaluate("window.dispatchEvent(new ErrorEvent('error', {error: new Error('Synthetic screen failure')}))")
             page.wait_for_timeout(200)

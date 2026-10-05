@@ -892,6 +892,66 @@ def test_the_gate_failing_twice_in_a_row_stops(world):
     assert world.hub.head(7) != git(Path(spec["worktree"]), "rev-parse", "HEAD"), "통과하지 못한 것은 올리지 않는다"
 
 
+def test_review_stop_is_logged_with_round_and_task_identity(world):
+    from common import errorlog
+
+    spec = pr_spec(world, "logged-stop", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — failed repair")]
+    Worker.replies = ["", ""]
+    stopped = looped(spec["id"])
+    assert stopped["state"] == "멈춤"
+    rows = [json.loads(line) for line in errorlog.FILE.read_text(encoding="utf-8").splitlines()]
+    row = next(r for r in rows if r["source"] == "review-stop")
+    assert (row["repo"], row["spec"], row["pr"], row["round"]) == ("proj", spec["id"], 7, 1)
+    assert row["reason"] == stopped["stopped"]["reason"]
+    assert row["error"] == stopped["stopped"]["detail"]
+
+
+@pytest.mark.parametrize("foreground", [False, True], ids=["collected", "foreground-notifications"])
+def test_task_completion_advances_successive_review_rounds_automatically(world, monkeypatch, foreground):
+    spec = pr_spec(world, "collected-correction", 7, cell={"model": "opus", "effort": "high"})
+    finding = "[P1] a.txt:1 — repair with collected background checks"
+    corrections = 3 if foreground else 1
+    Reviewer.replies = [deny(finding)] * corrections + [allow]
+    fixture = '''import json, subprocess, sys
+from pathlib import Path
+say = lambda m: print(json.dumps(m), flush=True)
+foreground = sys.argv[2] == "True"
+for turn in range(int(sys.argv[3])):
+    sys.stdin.readline()
+    for i in range(3 if foreground else 47):
+        task = f"{turn}-{i}"
+        say({"type": "system", "subtype": "task_started", "task_id": task,
+             **({"task_type": "local_bash", "is_backgrounded": False} if foreground else {})})
+        if foreground:
+            say({"type": "system", "subtype": "task_notification", "task_id": task, "status": "completed"})
+        else:
+            say({"type": "system", "subtype": "task_updated", "task_id": task, "patch": {"status": "completed"}})
+    Path("repair.txt").write_text(f"Fixed {turn}", encoding="utf-8")
+    subprocess.run(["git", "add", "repair.txt"], check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-qm", "Repair"], check=True, capture_output=True)
+    answer = "```disposition\\n" + json.dumps([{"finding": sys.argv[1], "action": "fixed", "evidence": "All checks collected"}]) + "\\n```"
+    say({"type": "result", "origin": {"kind": "human"}, "result": answer, "session_id": "fixture-cli"})
+sys.stdin.read()
+'''
+    real_popen = subprocess.Popen
+
+    def spawn(command, **kwargs):
+        if command[0] == "claude":
+            command = [sys.executable, "-X", "utf8", "-c", fixture, finding, str(foreground), str(corrections)]
+        return real_popen(command, **kwargs)
+
+    monkeypatch.setattr(work, "ChatSession", chat_session.ChatSession)
+    monkeypatch.setattr(chat_session, "cli_command", lambda name: [name])
+    monkeypatch.setattr(chat_session.subprocess, "Popen", spawn)
+    monkeypatch.setattr(chat_session, "TURN_TIMEOUT", 2)
+    complete = looped(spec["id"])
+    assert complete["state"] == "머지 가능" and len(complete["rounds"]) == corrections + 1
+    assert len({r["head"] for r in complete["rounds"]}) == corrections + 1
+    assert all(r.get("disposition") for r in complete["rounds"][:-1])
+    assert complete["rounds"][-1]["head"] == world.hub.head(7)
+
+
 def test_the_round_cap_stops_and_continue_adds_four_to_this_spec(world):
     loop.store(rounds=2)
     pr_spec(world, "fix-d", 7)
