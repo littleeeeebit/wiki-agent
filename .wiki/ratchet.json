@@ -266,6 +266,11 @@
       "lines": 525,
       "reason": "baseline at adoption"
     },
+    "web/src/App.tsx": {
+      "dup": 0,
+      "lines": 802,
+      "reason": "the refactoring tab's import and pane; splitting App.tsx is left to a refactor run, not this feature"
+    },
     "web/src/components/Blocks.tsx": {
       "dup": 6,
       "lines": 272,

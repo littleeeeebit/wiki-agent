@@ -205,9 +205,9 @@ function moved(res: Response) {
   if (to) window.dispatchEvent(new CustomEvent('project-moved', { detail: decodeURIComponent(to) }))
 }
 
-const get = async (url: string, owner?: string) => fetch(url, { headers: await scoped(url, owner) })
+export const get = async (url: string, owner?: string) => fetch(url, { headers: await scoped(url, owner) })
 
-async function json<T>(res: Response, what: string): Promise<T> {
+export async function json<T>(res: Response, what: string): Promise<T> {
   if (!res.ok) {
     moved(res)
     let detail = ''
@@ -221,7 +221,7 @@ async function json<T>(res: Response, what: string): Promise<T> {
   return res.json()
 }
 
-const post = async (url: string, body?: unknown, method = 'POST', owner?: string) =>
+export const post = async (url: string, body?: unknown, method = 'POST', owner?: string) =>
   fetch(url, {
     method,
     headers: { 'Content-Type': 'application/json', ...(await scoped(url, owner)) },
