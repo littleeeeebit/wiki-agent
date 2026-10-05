@@ -71,7 +71,8 @@ LIMITS = {"seconds": 900, "calls": 8, "tokens": 40000}
 def test_frozen_tests_reject_and_the_debt_drop_selects(tmp_path):
     repo = _repo(tmp_path / "repo")
     assert refactor_profile.debt_of(repo, ["src/"]) == 12, "six shared lines, twice"
-    config = refactor_profile.prepare(repo, "project", "dedupe", STEP, {"model": "m"}, LIMITS,
+    # L2 owns the directory, so the frozen test beside the code is reachable and must be refused.
+    config = refactor_profile.prepare(repo, "project", "dedupe", {**STEP, "tier": "L2"}, {"model": "m"}, LIMITS,
                                       store=tmp_path / "frozen")
     fake = tmp_path / "proposer.py"
     fake.write_text(PROPOSER, encoding="utf-8")
@@ -92,6 +93,34 @@ def test_frozen_tests_reject_and_the_debt_drop_selects(tmp_path):
     adopted = subprocess.run(["git", "show", f"{result['branch']}:src/calc.py"], cwd=repo, capture_output=True,
                              text=True, check=True).stdout
     assert "return area(w, h) * 2" in adopted
+
+
+def test_a_low_tier_step_owns_its_files_and_the_codex_proposer_can_write(tmp_path, monkeypatch):
+    repo = _repo(tmp_path / "repo")
+    (repo / "src/other.py").write_text(CALC, encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", "sibling")
+    config = refactor_profile.prepare(repo, "project", "own", STEP, {}, LIMITS, store=tmp_path / "frozen")
+    data = json.loads(config.read_text(encoding="utf-8"))
+    assert data["components"] == {"step": ["src/calc.py"]}, "an L1 step may not edit its siblings"
+    spec = json.loads((config.parent / "frozen.json").read_text(encoding="utf-8"))
+    assert spec["baseline"] == refactor_profile.debt_of(repo, ["src/calc.py"]) \
+        < refactor_profile.debt_of(repo, ["src/"]), "nor earn credit from them"
+
+    from agent import chat_session
+    seen = []
+
+    def spawn(cmd, **_):
+        seen.append(cmd)
+        raise OSError("not launched")
+
+    chat = chat_session.ChatSession(repo, write=True, bypass=True, isolated=True, model="codex:m")
+    monkeypatch.setattr(chat_session, "cli_command", lambda name: [name])
+    monkeypatch.setattr(chat_session.subprocess, "Popen", spawn)
+    with pytest.raises(OSError):
+        chat._spawn()
+    cmd = seen[0]
+    assert cmd[cmd.index("--sandbox") + 1] == "danger-full-access" and "shell_tool" not in cmd
 
 
 def test_a_step_is_frozen_only_when_its_tests_pass_today(tmp_path):

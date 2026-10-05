@@ -93,7 +93,9 @@ def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: d
     gate = slots_for(repo.name, repo).get("gate_cmd", "").strip()
     if not gate:
         raise improvement.Refused("The repository has no gate_cmd; connect it first")
-    scope_paths = prefixes(step["files"])
+    # L0–L1 stay inside the listed files, for edits and for credit alike; L2–L3
+    # may add files beside them, so they own the files' directories.
+    scope_paths = sorted(step["files"]) if step["tier"] in ("L0", "L1") else prefixes(step["files"])
     folder = store.resolve() / scope / name
     if folder.exists():
         raise improvement.Refused("A refactor step with this name was already prepared")
