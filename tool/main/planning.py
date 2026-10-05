@@ -1166,8 +1166,14 @@ def shown(repo: Path, spec: dict) -> dict:
 
 @router.post("/api/plans")
 def start(body: Plan) -> dict:
+    return begun(body)
+
+
+def begun(body: Plan, create: bool = True) -> dict:
     """`[계획]`: the worktree and the spec, then the worker. The same key with
-    the same input is the same plan; with other input, a conflict."""
+    the same input is the same plan; with other input, a conflict. With
+    `create=False` it only finds: a key no spec carries is a 404, decided in
+    the same lookup that would otherwise create."""
 
     checked(body)
     with _lock:
@@ -1184,6 +1190,8 @@ def start(body: Plan) -> dict:
             if old["planning"]["input_revision"] != revision:
                 raise HTTPException(409, "같은 요청 키에 다른 입력이다 — 새 계획은 새 키로")
             return shown(repo, old)
+        if not create:
+            raise HTTPException(404, "이 요청 키의 계획이 없다")
         sid = specs.unique(repo, given["slug"] or f"plan-{revision[:8]}")
         root = f"docs/plans/{sid}"
         with _lock:

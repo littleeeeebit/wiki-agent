@@ -113,8 +113,8 @@
     },
     "tool/main/planning.py": {
       "dup": 18,
-      "lines": 1347,
-      "reason": "refactor plans: the validator checks each stage's single tier, distinct repository-relative files and L3 migration (tiered)"
+      "lines": 1355,
+      "reason": "refactor plans: the validator checks each stage's tier, files and L3 migration (tiered); begun(create=False) finds without creating"
     },
     "tool/main/query.py": {
       "dup": 0,

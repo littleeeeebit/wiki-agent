@@ -477,27 +477,31 @@ def charted(w: Worker, run: dict) -> dict:
         run = w.note(audit=final[-(planning.MAX_CONTEXT - len(PLAN_RULES) - 100):])
     if current_repo().resolve() != w.repo.resolve():
         raise Stop("moved", "다른 저장소가 선택됐다 — 이 저장소로 돌아와 [재개] 하라")
-    key = f"refactor-{w.rid}-plan"
-    if not any((s.get("planning") or {}).get("request_id") == key for s in specs.listing(w.repo.name)):
-        # No planner yet, so this creates one: checked against what is left now and asked with today's limits.
-        # Once one exists, a resume sends the request it was made with and finds it, whatever is left.
+    found = None
+    if run.get("planner"):   # a planner made from the saved request is found by it, however little is left
+        try:
+            found = planning.begun(planning.Plan(**run["planner"]), create=False)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise Stop("plan_refused", str(exc.detail)) from exc
+    if found is None:   # none carries the key: this creates one, checked against what is left now
         left = w.left()
         if min(left.values()) <= 0:
             raise Stop("budget", "한도를 다 썼다")
         role = planning.Role(**run["role"])
         run = w.note(planner=planning.Plan(
-            request_id=key, refactor=True,
+            request_id=f"refactor-{w.rid}-plan", refactor=True,
             goal="Pay down the structural debt the audit found, in stages that each keep behaviour unless their "
                  "tier is L3, so every stage can become one reviewed refactoring pull request.",
             context=f"{PLAN_RULES}\n\n## Audit\n\n{run['audit']}",
             roles=planning.Roles(planner=role, reviser=role,
                                  reviewer=planning.Role(**(run["reviewer"] or run["role"]))),
             limits=planning.Limits(seconds=left["seconds"], calls=left["calls"], tokens=left["tokens"])).model_dump())
-    try:
-        plan = planning.start(planning.Plan(**run["planner"]))
-    except HTTPException as exc:
-        raise Stop("plan_refused", str(exc.detail)) from exc
-    return w.note(phase="plan", plan=plan["id"])
+        try:
+            found = planning.begun(planning.Plan(**run["planner"]))
+        except HTTPException as exc:
+            raise Stop("plan_refused", str(exc.detail)) from exc
+    return w.note(phase="plan", plan=found["id"])
 
 
 def staged(w: Worker, run: dict) -> dict:

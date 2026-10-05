@@ -368,8 +368,11 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
     api = client()
     asked = []
 
-    def planned(body):   # the planner's spec, as `planning.start` leaves it once its PR is open
+    def planned(body, create=True):   # the planner's spec, as `planning.begun` leaves it once its PR is open
         asked.append(body)
+        if not create and not any((s.get("planning") or {}).get("request_id") == body.request_id
+                                  for s in specs.listing("proj")):
+            raise HTTPException(404, "none")
         spec = specs.load("proj", made(selected, spec_block())[0]["id"])
         specs.save({**spec, "id": "plan-refactor", "state": "PR #1", "planning": {
             "phase": "handoff", "artifact_root": "docs/plans/p", "request_id": body.request_id,
@@ -385,7 +388,7 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
             "role": {"model": "m", "effort": "high"}, "limits": {"seconds": 600, "calls": 9, "tokens": 100_000}}
     with patch.object(specs, "sh", side_effect=Remote()), patch.object(loop, "kick", side_effect=review), \
             patch.object(refactor_profile, "drive", side_effect=adopted), \
-            patch.object(planning, "start", side_effect=planned):
+            patch.object(planning, "begun", side_effect=planned):
         rid = api.post("/api/refactors", json=body).json()["id"]
         run = until(api, rid, lambda r: r["phase"] == "plan" or r["state"] != "running")
         assert run["plan"] == "plan-refactor" and run["tests"] is None, run.get("stopped")
@@ -429,10 +432,10 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
 
     refactor.update("proj", rid, spent={"seconds": 600, "calls": 9, "tokens": 100_000})   # nothing left
     w = refactor.Worker(selected, refactor.load("proj", rid))
-    with patch.object(planning, "start", side_effect=planned):
+    with patch.object(planning, "begun", side_effect=planned):
         assert refactor.charted(w, refactor.load("proj", rid))["plan"] == "plan-refactor", "found, though spent"
-        spec = specs.load("proj", "plan-refactor")
-        specs.save({**spec, "planning": {**spec["planning"], "request_id": "refactor-elsewhere-plan"}})
-        with pytest.raises(refactor.Stop) as stop:
-            refactor.charted(w, refactor.load("proj", rid))
-    assert stop.value.reason == "budget" and len(asked) == 3, "a saved request makes no new planner once spent"
+    spec = specs.load("proj", "plan-refactor")   # gone, as if deleted after any earlier look: the real lookup
+    specs.save({**spec, "planning": {**spec["planning"], "request_id": "refactor-elsewhere-plan"}})
+    with patch.object(planning, "launch") as launched, pytest.raises(refactor.Stop) as stop:
+        refactor.charted(w, refactor.load("proj", rid))
+    assert stop.value.reason == "budget" and not launched.called, "a saved request makes no new planner once spent"
