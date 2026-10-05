@@ -17,7 +17,8 @@ def test_private_runtime_paths_are_ignored():
                             capture_output=True, text=True, encoding="utf-8", check=True)
     assert set(result.stdout.splitlines()) == set(paths)
     tracked = subprocess.check_output(["git", "ls-files", "-z"], cwd=ROOT).decode().split("\0")
-    placeholders = {"raw/.gitkeep", ".wiki/.gitignore", ".wiki/decisions/.gitkeep"}
+    # The debt ratchet's baselines are a committed contract, not runtime data.
+    placeholders = {"raw/.gitkeep", ".wiki/.gitignore", ".wiki/decisions/.gitkeep", ".wiki/ratchet.json"}
     assert not any(p.startswith(("raw/", ".wiki/", ".claude/", ".codex/", "artifacts/"))
                    for p in tracked if p not in placeholders)
     assert "adapters/example.toml" in tracked

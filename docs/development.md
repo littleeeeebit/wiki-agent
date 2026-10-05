@@ -8,6 +8,7 @@ python -m pip install -r requirements-dev.txt
 python -m ruff check tool
 python -m pytest -q tool
 python tool/lint.py --check
+python tool/debt.py check
 npm --prefix web ci
 npm --prefix web run lint
 npm --prefix web run build

@@ -204,6 +204,13 @@ once, on the commit review allowed, and merge is bound to that head. The flow
 and its commands are in [development](development.md) and the
 [reliability plan](plans/reliability/2-tests.md).
 
+The final gate ends with the debt ratchet, `tool/debt.py check`, for every
+repository; one without `.wiki/ratchet.json` passes it. Files may not grow
+past their entries, and new files stay under the caps with no duplicated
+block. Clicking Merge lowers the entries to what the PR achieved. The
+[refactor plan](plans/refactor/0-overview.md) records the rules and the
+refactoring workflow built on them.
+
 For Claude Code Cloud implementations, `tool/main/verification.py` adds
 repository-specific local execution evidence before the independent review.
 Failures return to cloud instead of opening a local implementation turn.

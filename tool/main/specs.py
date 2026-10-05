@@ -31,6 +31,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import debt
 import translate
 from common import errorlog, worktree_home
 from session_state import active_page, decisions, plans, steps_block
@@ -1051,9 +1052,10 @@ LOCKS = ("requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.
 
 def required(repo: Path, spec: dict) -> str:
     """The full gate: the adapter's `gate_cmd` as it is now, else the one the
-    spec was settled with."""
+    spec was settled with, then the debt ratchet (`tool/debt.py`), which
+    passes in a repository that has not adopted it."""
 
-    return gate_of(repo) or spec["done"][0]
+    return f"{gate_of(repo) or spec['done'][0]} && {debt.command(spec.get('base') or '')}"
 
 
 def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event,
