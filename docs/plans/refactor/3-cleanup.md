@@ -38,8 +38,14 @@ PRs; restart does not republish.
   L2 proposal can arise in this mode.
 - The characterization tests come first, on their own branch and PR against
   the original base. The host may only add or edit test files, which must
-  pass before they are committed. Each step branch stacks on the previous
-  one, and its PR targets that branch.
+  pass before they are committed. A named test must be a test-file path
+  (`debt.TEST`) and never one of the files being refactored. The test command
+  runs within the run's time left, and a cancel kills its process tree. Each
+  step branch stacks on the previous one, and its PR targets that branch.
+- The run holds the checkout (`work._busy`) from its first switch or fork to
+  the PR it publishes, so no other turn writes in between. Waiting for review
+  happens outside the hold, because the review loop needs the checkout.
+  `request_id` lookup and record creation are one critical section.
 - Every model turn and every runner call is charged to the run's limits.
   Unknown usage stops the run. A server restart stops a running run with
   `restart`, and 재개 continues from the recorded phase without reopening a

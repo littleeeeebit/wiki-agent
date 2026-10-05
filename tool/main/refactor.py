@@ -15,10 +15,14 @@ continues from the recorded step and never publishes twice.
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
+import shutil
+import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
@@ -30,6 +34,7 @@ import refactor_profile
 from agent import ChatSession
 from common import errorlog
 from common.budget import Budget, Cancelled, Exhausted
+from common.process import background_options
 
 from . import loop, runtime, specs, work
 from .query import ROOT, _lock, current_repo, hold
@@ -136,8 +141,19 @@ class Worker:
         return update(self.repo.name, self.rid, spent=self.spent(), **fields)
 
 
-def held(repo: Path):
-    return hold(work._busy, _lock, str(repo), "그 저장소를 다른 요청이 쓰고 있다", kind="turn")
+@contextmanager
+def owning(w: Worker):
+    """The checkout is the run's from its first switch to its PR, so no other
+    turn writes between them. Review waits outside: its loop needs the checkout."""
+
+    try:
+        release = hold(work._busy, _lock, str(w.repo), "그 저장소를 다른 요청이 쓰고 있다", kind="turn")
+    except HTTPException as exc:
+        raise Stop("busy", exc.detail) from exc
+    try:
+        yield
+    finally:
+        release()
 
 
 def git(repo: Path, *args: str) -> str:
@@ -162,25 +178,35 @@ def switched(w: Worker, sid: str, start: str) -> None:
     git(w.repo, "switch", *((sid,) if exists else ("-c", sid, start)))
 
 
+def tested(w: Worker, argv: list[str]) -> subprocess.CompletedProcess:
+    """The characterization command, cut with its whole tree by the run's time
+    left or its cancel."""
+
+    argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]   # `npm` is `npm.cmd` on Windows
+    proc = subprocess.Popen(argv, cwd=w.repo, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                            start_new_session=os.name != "nt", **background_options())
+    deadline = time.monotonic() + w.budget.left()
+    while True:
+        try:
+            out, _ = proc.communicate(timeout=1)
+            return subprocess.CompletedProcess(argv, proc.returncode, out, "")
+        except subprocess.TimeoutExpired:
+            if w.halt.is_set() or time.monotonic() > deadline:
+                specs.kill(proc)
+                proc.communicate()
+                raise Stop("cancelled" if w.halt.is_set() else "budget", "특성 테스트 명령을 끊었다") from None
+
+
 def turn(w: Worker, run: dict, text: str) -> str:
-    """One native write turn in the checkout, shown in the agent pane like any
-    work turn; its tokens are charged, and unknown usage stops the run."""
+    """One native write turn in the checkout the caller owns, shown in the
+    agent pane like any work turn; its tokens are charged, and unknown usage
+    stops the run."""
 
     try:
         w.budget.call()
     except (Exhausted, Cancelled) as exc:
         raise Stop("budget" if isinstance(exc, Exhausted) else "cancelled", str(exc)) from exc
-    try:
-        release = held(w.repo)
-    except HTTPException as exc:
-        raise Stop("busy", exc.detail) from exc
-    try:
-        return _turn(w, run, text)
-    finally:
-        release()
-
-
-def _turn(w: Worker, run: dict, text: str) -> str:
     role = run["role"]
     chat = ChatSession(w.repo, write=True, bypass=True, system=TESTS_PROMPT, model=role["model"] or None,
                        effort=role["effort"] or None)
@@ -296,6 +322,13 @@ def scan(w: Worker, run: dict) -> dict:
 def frozen(w: Worker, run: dict) -> dict:
     """The characterization PR every step stacks on."""
 
+    with owning(w):
+        sid = characterized(w, run)
+    reviewed(w, sid)
+    return w.note(phase="steps")
+
+
+def characterized(w: Worker, run: dict) -> str:
     t = dict(run.get("tests") or {})
     files = sorted({f for s in run["steps"] for f in s["files"]})
     if not t.get("spec"):
@@ -319,11 +352,14 @@ def frozen(w: Worker, run: dict) -> dict:
             assert tests and argv and all(isinstance(a, str) and a for a in argv)
         except (IndexError, ValueError, KeyError, TypeError, AssertionError, improvement.Refused) as exc:
             raise Stop("format", f"refactor-tests 블록을 읽지 못했다 — {exc}") from exc
+        # The host names its tests, so a name alone proves nothing: a test is a
+        # test-file path, never one of the files being refactored.
+        code = sorted(rel for rel in tests if rel in files or not debt.TEST.search(rel))
         changed = {line[3:].strip('"') for line in specs.sh(["git", "status", "--porcelain", "-uall"], w.repo)
                    .stdout.splitlines()}
-        if not changed or not changed <= set(tests):
-            raise Stop("tests_touched_code", f"테스트 밖을 바꿨다: {sorted(changed - set(tests))}")
-        done = refactor_profile.sh(argv, w.repo)
+        if code or not changed or not changed <= set(tests):
+            raise Stop("tests_touched_code", f"테스트 밖을 바꿨다: {sorted({*code, *(changed - set(tests))})}")
+        done = tested(w, argv)
         if done.returncode:
             raise Stop("tests_fail", (done.stdout + done.stderr)[-2000:])
         git(w.repo, "add", "--", *tests)
@@ -333,9 +369,8 @@ def frozen(w: Worker, run: dict) -> dict:
     if not t.get("pr"):
         t["pr"] = published(w, sid, t["base"], f"Characterization tests for {', '.join(files)}",
                             body("Pin today's behaviour before refactoring.", [f"`{f}`" for f in t["tests"]]), "L0")
-        run = w.note(tests=t)
-    reviewed(w, sid)
-    return w.note(phase="steps")
+        w.note(tests=t)
+    return sid
 
 
 def stepped(w: Worker, run: dict) -> dict:
@@ -348,20 +383,21 @@ def stepped(w: Worker, run: dict) -> dict:
         if not step["spec"]:
             run["steps"][k] = step = {**step, "spec": sid, "base": previous}
             run = w.note(steps=run["steps"])
-        switched(w, sid, previous)
-        if step["state"] == "pending":
-            spec_for(w, run, sid, step["goal"], previous, git(w.repo, "rev-parse", "HEAD"))
-            adopted = competed(w, run, step, sid)
-            git(w.repo, "merge", "--ff-only", adopted["commit"])
-            specs.sh(["git", "branch", "-D", adopted["branch"]], w.repo)
-            run["steps"][k] = step = {**step, "state": "adopted"}
-            run = w.note(steps=run["steps"])
-        if step["state"] == "adopted":
-            n = published(w, sid, previous, step["goal"], body(step["goal"], [
-                "Frozen characterization tests pass on every candidate considered.",
-                "Selected by the largest drop in debt (`tool/refactor_profile.py`)."]), step["tier"])
-            run["steps"][k] = step = {**step, "state": "published", "pr": n}
-            run = w.note(steps=run["steps"])
+        with owning(w):
+            switched(w, sid, previous)
+            if step["state"] == "pending":
+                spec_for(w, run, sid, step["goal"], previous, git(w.repo, "rev-parse", "HEAD"))
+                adopted = competed(w, run, step, sid)
+                git(w.repo, "merge", "--ff-only", adopted["commit"])
+                specs.sh(["git", "branch", "-D", adopted["branch"]], w.repo)
+                run["steps"][k] = step = {**step, "state": "adopted"}
+                run = w.note(steps=run["steps"])
+            if step["state"] == "adopted":
+                n = published(w, sid, previous, step["goal"], body(step["goal"], [
+                    "Frozen characterization tests pass on every candidate considered.",
+                    "Selected by the largest drop in debt (`tool/refactor_profile.py`)."]), step["tier"])
+                run["steps"][k] = step = {**step, "state": "published", "pr": n}
+                run = w.note(steps=run["steps"])
         reviewed(w, sid)
         run["steps"][k] = {**step, "state": "done"}
         run = w.note(steps=run["steps"])
@@ -511,18 +547,17 @@ def start(body: Start) -> dict:
     scope = scope_of(repo)
     if scope == "hub":
         raise HTTPException(409, "wiki-agent 자신의 리펙터링은 아직 열지 않았다")
-    with _files:
+    with _files:   # one transaction: two equal requests never both find nothing
         old = next((r for r in listing(repo.name) if r["request_id"] == body.request_id), None)
-    if old is not None:
-        return old
-    rid = secrets.token_hex(4)
-    now = time.time()
-    run = {"id": rid, "repo": repo.name, "mode": body.mode, "scope": scope, "request_id": body.request_id,
-           "files": body.files, "top": body.top, "role": body.role.model_dump(),
-           "reviewer": body.reviewer.model_dump() if body.reviewer else None, "limits": limits.model_dump(),
-           "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "scan", "state": "running", "stopped": None,
-           "hotspots": [], "steps": [], "tests": None, "created": now, "updated": now}
-    with _files:
+        if old is not None:
+            return old
+        rid = secrets.token_hex(4)
+        now = time.time()
+        run = {"id": rid, "repo": repo.name, "mode": body.mode, "scope": scope, "request_id": body.request_id,
+               "files": body.files, "top": body.top, "role": body.role.model_dump(),
+               "reviewer": body.reviewer.model_dump() if body.reviewer else None, "limits": limits.model_dump(),
+               "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "scan", "state": "running",
+               "stopped": None, "hotspots": [], "steps": [], "tests": None, "created": now, "updated": now}
         improvement.atomic(file_of(repo.name, rid), run)
     launch(repo, run)
     return load(repo.name, rid)
