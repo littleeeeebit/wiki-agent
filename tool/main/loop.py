@@ -835,6 +835,8 @@ def stop(loop: Loop | None, repo: str, sid: str, why: Why, detail: str = "", sou
         if spec is not None and source.fullmatch(spec["state"]):
             specs.save(specs.moved(spec, "멈춤", stopped={"reason": why.value, "detail": detail},
                                    merge_request=spec.get("merge_request") if why is Why.RESTART else None))
+            if spec.get("merge_progress"):
+                specs.merge_progress(repo, sid, f"머지 진행 중단 — {why.value}", "blocked")
             if why not in (Why.PERSON, Why.RESTART):
                 rounds = counted(spec)
                 errorlog.record("review-stop", detail or why.value, repo=repo, spec=sid, reason=why.value,
@@ -1554,6 +1556,8 @@ def recover() -> list[tuple[str, str]]:
     for repo in specs.SPECS.glob("*"):
         if repo.is_dir():
             for spec in specs.listing(repo.name):
+                if (spec.get("merge_progress") or {}).get("state") == "running":
+                    specs.merge_progress(repo.name, spec["id"], "서버 재시작 — 머지 진행 확인 후 다시 요청하세요", "blocked")
                 if (spec.get("validation") or {}).get("phase") == "final_running":
                     specs.validate(repo.name, spec["id"], phase=None)
                 if LOOPING.fullmatch(spec["state"]):
@@ -1747,6 +1751,7 @@ def _finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
     cleanup — only ever from `머지됨`."""
 
     n, allowed = spec["pr"]["number"], specs.approved(spec)
+    specs.merge_progress(repo.name, spec["id"], f"로컬 {base}를 origin/{base}와 동기화하는 중")
     notes = []
     if spec.get("p2_comment") and not spec.get("cleanup_comment_done"):
         failed = comment(repo, n, spec["p2_comment"])
@@ -1778,7 +1783,9 @@ def _finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
     if any(marker in note for note in notes for marker in ("뒤처짐", "못했다", "대기")):
         errorlog.record("merge-cleanup", "\n".join(notes), repo=repo.name, spec=spec["id"])
         specs.update(repo.name, spec["id"], cleanup=notes, cleanup_complete=False)
+        specs.merge_progress(repo.name, spec["id"], "머지 완료 · 로컬 동기화 대기", "blocked")
         return
+    specs.merge_progress(repo.name, spec["id"], "머지한 브랜치·리뷰 아티팩트 정리 중")
     if not shared and spec.get("worktree") and Path(spec["worktree"]).exists():
         notes.append(cleared(repo, Path(spec["worktree"])))
     notes.append(local_pruned(repo, specs.branch_of(spec), allowed["head"] if allowed else spec["pr"].get("head", "")))
@@ -1798,6 +1805,8 @@ def _finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
     if pending:
         errorlog.record("merge-cleanup", "\n".join(notes), repo=repo.name, spec=spec["id"])
     specs.update(repo.name, spec["id"], cleanup=notes, cleanup_complete=not pending)
+    specs.merge_progress(repo.name, spec["id"], "머지 완료 · 정리 대기" if pending else "머지·로컬 동기화 완료",
+                         "blocked" if pending else "completed")
 
 
 def local_pruned(repo: Path, branch: str, approved: str) -> str:
@@ -1839,6 +1848,7 @@ def requested_merge(repo: Path, spec: dict) -> None:
     if (not allowed or request.get("head") != allowed["head"] or request.get("base") != allowed["base"]
             or request.get("rev") != spec["rev"] or request.get("pr") != spec["pr"]["number"]):
         specs.update(repo.name, spec["id"], merge_request=None)
+        specs.merge_progress(repo.name, spec["id"], "승인한 커밋·명세 변경 — 머지 요청 취소", "blocked")
         return
     try:
         merge_spec(repo, spec, Merge(head=request["head"]), prepare=False)
@@ -1937,9 +1947,11 @@ def merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) -> 
         if fresh is None or fresh["history"][0]["ts"] != spec["history"][0]["ts"]:
             raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
         try:
+            specs.merge_progress(repo.name, spec["id"], "리뷰·게이트·GitHub 머지 상태 확인 중", reset=prepare)
             return _merge_spec(repo, fresh, body, prepare=prepare)
-        except Exception:
+        except Exception as exc:
             specs.update(repo.name, spec["id"], merge_request=None)
+            specs.merge_progress(repo.name, spec["id"], f"머지 중단 — {getattr(exc, 'detail', str(exc))}", "blocked")
             raise
 
 
@@ -2015,6 +2027,7 @@ def _merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) ->
             release()
         if prepared != allowed["head"]:
             # A click authorizes this maintenance commit, never later repairs.
+            specs.merge_progress(repo.name, sid, "준비 커밋 독립 리뷰·최종 게이트 진행 중", "waiting_review")
             kick(repo.name, sid)
             return specs.view(repo, specs.load(repo.name, sid))
         # Recheck GitHub, base and gate after a potentially long maintenance run.
@@ -2030,6 +2043,7 @@ def _merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) ->
         dirty = specs.sh(["git", "status", "--porcelain"], path)
         if local.returncode or local.stdout.strip() != allowed["head"] or dirty.returncode or dirty.stdout.strip():
             raise HTTPException(409, "머지 직전 작업 폴더가 바뀌었다")
+        specs.merge_progress(repo.name, sid, "GitHub에 squash 머지 요청 중")
         done = specs.sh(["gh", "pr", "merge", str(n), "--squash", "--match-head-commit", allowed["head"]], repo, 120)
         if not done.returncode:
             with specs._files:
@@ -2051,6 +2065,7 @@ def _merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) ->
             kick(repo.name, sid)
             raise HTTPException(409, f"머지 직전 {base}가 이동하여 충돌 — 병합 수정 후 새 리뷰를 받는다")
         raise HTTPException(409, f"머지하지 못했다 — {specs.said(done)}")
+    specs.merge_progress(repo.name, sid, "GitHub 실제 머지 결과 확인 중", "queued")
     landed(repo, spec)
     return specs.view(repo, specs.load(repo.name, sid))
 

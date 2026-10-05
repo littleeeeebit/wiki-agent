@@ -539,6 +539,8 @@ export type Spec = {
   p2_comment?: string
   extra?: number
   merge?: { commit: string; base: string } | null
+  merge_progress?: { stage: string; state: 'running' | 'waiting_review' | 'queued' | 'blocked' | 'completed';
+    started_at: number; updated_at: number; steps: { text: string; ts: number }[] } | null
   cleanup?: string[]
   /** Who holds a `머지 대기`: "대기열" or "자동 머지 — 검사 대기". */
   queued?: string | null

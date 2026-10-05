@@ -445,6 +445,43 @@ def test_merge_preparation_repairs_lint_before_committing(world):
     assert next(d for d in corpus["docs"] if d["path"] == "docs/feature.md")["title"] == "Repaired"
 
 
+def test_merge_progress_is_readable_while_the_merge_request_is_waiting(world):
+    spec = pr_spec(world, "visible-merge", 12, file="docs/feature.md")
+    path = Path(spec["worktree"])
+    (path / ".omm").mkdir()
+    commit(path, ".omm/description.md", "# Architecture\n\nBefore scan.\n")
+    git(path, "push", "origin", spec["id"])
+    ready = looped(spec["id"])
+    reached, release = threading.Event(), threading.Event()
+    responses = []
+
+    def scan(root, **kwargs):
+        reached.set()
+        assert release.wait(15)
+
+    def merge():
+        responses.append(client().post(f"/api/specs/{spec['id']}/merge", json={"head": specs.approved(ready)["head"]}))
+
+    with patch.object(maintenance.architecture, "scan", scan):
+        worker = threading.Thread(target=merge)
+        worker.start()
+        try:
+            assert reached.wait(15), [response.text for response in responses]
+            rows = client().get("/api/specs").json()["specs"]
+            visible = next(row for row in rows if row["id"] == spec["id"])["merge_progress"]
+            assert visible["state"] == "running" and ".omm" in visible["stage"]
+            assert any("색인" in step["text"] for step in visible["steps"])
+            assert not any(c[:3] == ["gh", "pr", "merge"] for c in world.hub.calls)
+        finally:
+            release.set()
+            worker.join(30)
+        waited(lambda: not loop._loops)
+    assert responses[0].status_code == 200
+    done = specs.load("proj", spec["id"])
+    assert done["merge_progress"]["state"] == "completed" and done["cleanup_complete"]
+    assert any("origin/main" in step["text"] for step in done["merge_progress"]["steps"])
+
+
 @pytest.mark.parametrize("failure", ["dirty", "scan", "lint"])
 def test_failed_merge_preparation_preserves_files_and_never_merges(world, failure):
     spec = looped(pr_spec(world, "failed-preparation", 12)["id"])
@@ -470,6 +507,71 @@ def test_merge_intent_does_not_follow_a_later_repair_head(world):
     loop.requested_merge(world.repo, specs.load("proj", spec["id"]))
     assert not specs.load("proj", spec["id"])["merge_request"]
     assert not any(c[:3] == ["gh", "pr", "merge"] for c in world.hub.calls)
+
+
+@pytest.mark.parametrize("stage", ["scan", "lint"])
+def test_interrupted_maintenance_retries_saved_outputs_after_a_new_click(world, stage):
+    spec = pr_spec(world, "interrupted-maintenance", 12, file="docs/feature.md")
+    path = Path(spec["worktree"])
+    (path / ".omm").mkdir()
+    commit(path, ".omm/description.md", "# Architecture\n\nBefore scan.\n")
+    git(path, "push", "origin", spec["id"])
+    ready = looped(spec["id"])
+    head = specs.approved(ready)["head"]
+
+    def interrupt(*args, **kwargs):
+        if stage == "lint":
+            (path / "docs/feature.md").write_text("# Repaired\n\nSaved before interruption.\n", encoding="utf-8")
+        raise ValueError("Interrupted maintenance")
+
+    with patch.object(maintenance, "findings", return_value=[("lint", "Bad prose")] if stage == "lint" else []), \
+         patch.object(maintenance, "repair", interrupt), \
+         patch.object(maintenance.architecture, "scan", interrupt):
+        response = client().post(f"/api/specs/{spec['id']}/merge", json={"head": head})
+    assert response.status_code == 409
+    saved = specs.load("proj", spec["id"])
+    assert saved["maintenance"]["state"] == "interrupted" and not saved.get("merge_request")
+    assert (path / ".wiki/corpus.json").exists()
+    loop.requested_merge(world.repo, saved)
+    assert not any(c[:3] == ["gh", "pr", "merge"] for c in world.hub.calls)
+    with patch.object(maintenance, "findings", return_value=[]), patch.object(maintenance.architecture, "scan"):
+        client().post(f"/api/specs/{spec['id']}/merge", json={"head": head}).raise_for_status()
+        waited(lambda: not loop._loops)
+    done = specs.load("proj", spec["id"])
+    assert done["state"] == "머지됨" and len(done["rounds"]) == 2, done
+    assert done["validation"]["final"]["head"] == done["maintenance"]["head"] != head
+    if stage == "lint":
+        assert (world.repo / "docs/feature.md").read_text(encoding="utf-8").startswith("# Repaired")
+
+
+@pytest.mark.parametrize("change", ["user_file", "generated_file", "staging", "rev", "base", "pr", "source_head"])
+def test_interrupted_maintenance_never_adopts_changed_outputs_or_identity(world, change):
+    spec = pr_spec(world, "interrupted-scope", 12, file="docs/feature.md")
+    path = Path(spec["worktree"])
+    (path / ".omm").mkdir()
+    commit(path, ".omm/description.md", "# Architecture\n\nBefore scan.\n")
+    git(path, "push", "origin", spec["id"])
+    ready = looped(spec["id"])
+    head = specs.approved(ready)["head"]
+    with patch.object(maintenance.architecture, "scan", side_effect=ValueError("Scan interrupted")):
+        with pytest.raises(ValueError, match="Scan interrupted"):
+            maintenance.prepare(world.repo, path, ready, head, "main")
+    saved = specs.load("proj", spec["id"])
+    if change == "user_file":
+        (path / "personal.md").write_text("# Personal\n\nPreserve me.\n", encoding="utf-8")
+    elif change == "generated_file":
+        (path / ".wiki/corpus.json").write_text('{"keep": true}', encoding="utf-8")
+    elif change == "staging":
+        git(path, "add", "-f", ".wiki/corpus.json")
+    else:
+        saved["maintenance"][change] = "another" if change == "base" else 99
+        if change == "source_head":
+            saved["maintenance"]["head"] = "0" * 40
+    before = maintenance.outputs(path)
+    with pytest.raises(ValueError, match="커밋하지 않은"):
+        maintenance.prepare(world.repo, path, saved, head, "main")
+    assert maintenance.outputs(path) == before
+    assert git(path, "rev-parse", "HEAD") == head
 
 
 def test_completed_preparation_is_reused_and_ignored_documents_stay_private(world):
