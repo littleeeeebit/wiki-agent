@@ -113,8 +113,8 @@
     },
     "tool/main/planning.py": {
       "dup": 18,
-      "lines": 1321,
-      "reason": "baseline at adoption"
+      "lines": 1340,
+      "reason": "refactor plans: the validator checks each stage's tier, files and L3 migration (tiered)"
     },
     "tool/main/query.py": {
       "dup": 0,

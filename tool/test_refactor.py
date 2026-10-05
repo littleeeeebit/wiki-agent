@@ -22,7 +22,7 @@ from fastapi import HTTPException
 
 import refactor_profile
 from agent.chat_session import Event
-from main import loop, query, refactor, refactor_api, specs, work
+from main import loop, planning, query, refactor, refactor_api, specs, work
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_specs import Remote, made, repo, spec_block  # noqa: F401 — `repo` is a fixture
 
@@ -346,3 +346,56 @@ def test_a_read_only_audit_that_writes_stops_the_run(selected):
     with patch.object(specs, "sh", side_effect=Remote()), patch.object(Host, "say", writes):
         run = finished(api, api.post("/api/refactors", json=body).json()["id"])
     assert run["stopped"]["reason"] == "read_only_wrote", run["stopped"]
+
+
+STAGE = "# Stage {n}\n\nTier: {tier}\nFiles: big.py\n\n## Rollback\n\nRevert.\n"
+
+
+def test_an_l3_stage_must_say_how_it_migrates():
+    assert planning.tiered(STAGE.format(n=1, tier="L2")) == {"tier": "L2", "files": ["big.py"]}
+    with pytest.raises(ValueError, match="Migration"):
+        planning.tiered(STAGE.format(n=1, tier="L3"))
+    with pytest.raises(ValueError, match="Tier"):
+        planning.tiered("# Stage\n\nFiles: big.py\n")
+
+
+def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
+    api = client()
+    asked = []
+
+    def planned(body):   # the planner's spec, as `planning.start` leaves it once its PR is open
+        asked.append(body)
+        spec = specs.load("proj", made(selected, spec_block())[0]["id"])
+        specs.save({**spec, "id": "plan-refactor", "state": "PR #1", "planning": {
+            "phase": "handoff", "artifact_root": "docs/plans/p", "spent": {"calls": 2, "tokens": 100},
+            "outline": {"stages": [{"n": 1, "slug": "dedupe", "title": "Dedupe"},
+                                   {"n": 2, "slug": "split", "title": "Split"}]}}})
+        return {"id": "plan-refactor"}
+
+    adopted = lambda repo, scope, name, config: {"state": "adopted", "branch": "none",  # noqa: E731
+                                                  "commit": _git(repo, "rev-parse", "HEAD")}
+    review = lambda name, sid: specs.update(name, sid, state="머지 가능")  # noqa: E731
+    body = {"request_id": "refactor-req-0004", "mode": "full",
+            "role": {"model": "m", "effort": "high"}, "limits": {"seconds": 600, "calls": 9, "tokens": 100_000}}
+    with patch.object(specs, "sh", side_effect=Remote()), patch.object(loop, "kick", side_effect=review), \
+            patch.object(refactor_profile, "drive", side_effect=adopted), \
+            patch.object(planning, "start", side_effect=planned):
+        rid = api.post("/api/refactors", json=body).json()["id"]
+        run = until(api, rid, lambda r: r["phase"] == "plan" or r["state"] != "running")
+        assert run["plan"] == "plan-refactor" and run["tests"] is None, run.get("stopped")
+        assert asked[0].refactor and "Tier: L0" in asked[0].context and "Plan." in asked[0].context
+
+        plan = selected / "docs/plans/p"
+        plan.mkdir(parents=True)
+        (plan / "1-dedupe.md").write_text(STAGE.format(n=1, tier="L1"), encoding="utf-8")
+        (plan / "2-split.md").write_text(STAGE.format(n=2, tier="L0"), encoding="utf-8")
+        _git(selected, "add", "docs")
+        _git(selected, "commit", "-qm", "plan")
+        time.sleep(3.5)
+        assert until(api, rid, lambda r: True)["phase"] == "plan", "an open plan PR holds the stages back"
+        specs.update("proj", "plan-refactor", state="머지됨", cleanup_complete=True,
+                     merge={"commit": _git(selected, "rev-parse", "HEAD"), "base": "main"})
+        run = finished(api, rid)
+    assert run["state"] == "done", run.get("stopped")
+    assert [(s["tier"], s["files"]) for s in run["steps"]] == [("L1", ["big.py"]), ("L0", ["big.py"])]
+    assert run["spent"]["calls"] >= 2 + 2 and run["spent"]["tokens"] == 10 + 15 + 100

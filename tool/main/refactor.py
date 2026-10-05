@@ -31,12 +31,13 @@ from agent import ChatSession
 from common import errorlog
 from common.budget import Budget, Cancelled, Exhausted
 
-from . import loop, runtime, specs, work
-from .query import ROOT, _lock, hold
+from . import loop, planning, runtime, specs, work
+from .query import ROOT, _lock, current_repo, hold
 
 RUNS = ROOT / "raw" / "refactor" / "runs"
 MODES = {"cleanup": {"tiers": ("L0", "L1"), "limits": {"seconds": 1800, "calls": 24, "tokens": 500_000}},
-         "restructure": {"tiers": ("L0", "L1", "L2"), "limits": {"seconds": 3600, "calls": 40, "tokens": 1_000_000}}}
+         "restructure": {"tiers": ("L0", "L1", "L2"), "limits": {"seconds": 3600, "calls": 40, "tokens": 1_000_000}},
+         "full": {"tiers": ("L0", "L1", "L2", "L3"), "limits": {"seconds": 7200, "calls": 80, "tokens": 3_000_000}}}
 AUTO_REVIEW = ("L0", "L1")    # tiers whose PRs the request itself sends to review
 BLOCKING = ("L2", "L3")       # tiers that hold the repository while they run
 REVIEWED = ("머지 가능", "머지 대기", "머지됨")
@@ -49,6 +50,15 @@ AUDIT_PROMPT = (
     "between modules with every public import path still working. A step lists the repository-relative files "
     "it touches; an L2 step may name a new file under an existing directory. End with a fenced block tagged "
     '`refactor-plan` holding JSON: {{"steps": [{{"tier": "L1", "goal": "...", "files": ["..."]}}]}}.')
+FULL_PROMPT = (
+    "Audit this whole repository for structural debt. Start from the debt scan you are given, then read the "
+    "architecture documents and `.omm/` when present. Do not edit anything. Answer in prose: the target "
+    "structure, which seams to cut, and the order to get there in, smallest safe change first, with the tier "
+    "each change needs (L0 mechanical, L1 inside files, L2 across modules, L3 a contract change).")
+PLAN_RULES = (
+    "This plan is a refactoring series. Every stage file must carry two plain lines: `Tier: L0`, `L1`, `L2` "
+    "or `L3`, and `Files: ` with the repository-relative files it touches, comma-separated. An L3 stage also "
+    "needs a `## Migration` section beside its `## Rollback`. Behaviour must not change below L3.")
 TESTS_PROMPT = (
     "Write characterization tests that pin the current observable behaviour of the files listed, so a later "
     "refactoring can prove it changed nothing. Use the repository's existing test framework and conventions; "
@@ -413,6 +423,8 @@ def body(goal: str, lines: list[str]) -> str:
 # -- The phases ----------------------------------------------------------------
 
 def scan(w: Worker, run: dict) -> dict:
+    if run["mode"] == "full":
+        return w.note(phase="audit", hotspots=hotspots(w.repo, 20))
     if run["mode"] != "cleanup":   # the person chose the module; its measurements are shown, not filtered
         return w.note(phase="audit", hotspots=[r for r in debt.scan(w.repo) if r["path"] in run["files"]])
     rows = hotspots(w.repo, run["top"]) if not run["files"] else \
@@ -429,6 +441,8 @@ def scan(w: Worker, run: dict) -> dict:
 def audited(w: Worker, run: dict) -> dict:
     """A read-only audit of the chosen module into one to three steps."""
 
+    if run["mode"] == "full":
+        return charted(w, run)
     tiers = MODES[run["mode"]]["tiers"]
     with owning(w):
         final = turn(w, run, "Module:\n" + "\n".join(f"- {f}" for f in run["files"]),
@@ -451,6 +465,66 @@ def audited(w: Worker, run: dict) -> dict:
     return w.note(phase="tests", steps=steps)
 
 
+def charted(w: Worker, run: dict) -> dict:
+    """The whole-repository audit, handed to the planner as a refactor series."""
+
+    if not run.get("audit"):
+        table = "\n".join(f"- {r['path']}: {r['lines']} lines (cap {r['cap']}), {r['dup']} duplicated, longest "
+                          f"block {r['block']}, {r['churn']} commits in 180 days" for r in run["hotspots"])
+        with owning(w):
+            final = turn(w, run, "Debt scan, worst first:\n" + (table or "(nothing over the caps)"), FULL_PROMPT,
+                         write=False)
+        run = w.note(audit=final[-(planning.MAX_CONTEXT - len(PLAN_RULES) - 100):])
+    if current_repo().resolve() != w.repo.resolve():
+        raise Stop("moved", "다른 저장소가 선택됐다 — 이 저장소로 돌아와 [재개] 하라")
+    left = w.left()
+    if min(left.values()) <= 0:
+        raise Stop("budget", "한도를 다 썼다")
+    role = planning.Role(**run["role"])
+    body = planning.Plan(
+        request_id=f"refactor-{w.rid}-plan", refactor=True,
+        goal="Pay down the structural debt the audit found, in stages that each keep behaviour unless their tier "
+             "is L3, so every stage can become one reviewed refactoring pull request.",
+        context=f"{PLAN_RULES}\n\n## Audit\n\n{run['audit']}",
+        roles=planning.Roles(planner=role, reviser=role, reviewer=planning.Role(**(run["reviewer"] or run["role"]))),
+        limits=planning.Limits(seconds=left["seconds"], calls=left["calls"], tokens=left["tokens"]))
+    try:
+        plan = planning.start(body)   # the same key on a resume is the same plan
+    except HTTPException as exc:
+        raise Stop("plan_refused", str(exc.detail)) from exc
+    return w.note(phase="plan", plan=plan["id"])
+
+
+def staged(w: Worker, run: dict) -> dict:
+    """After the plan PR merges and the checkout is back on its base, its
+    stages become the run's steps."""
+
+    def ready() -> bool:
+        spec = specs.load(w.repo.name, run["plan"])
+        if spec is None:
+            raise Stop("spec_gone", f"계획 `{run['plan']}` 이 없어졌다")
+        if spec["state"] == "멈춤" or spec["planning"]["phase"] == "stopped":
+            raise Stop("plan_stopped", f"계획 `{run['plan']}` 이 멈췄다 — 계획을 이은 뒤 이 리펙터링을 [재개] 하라")
+        return spec["state"] == "머지됨" and bool(spec.get("cleanup_complete"))
+
+    waited(w, ready)
+    spec = specs.load(w.repo.name, run["plan"])
+    p = spec["planning"]
+    steps = []
+    for s in p["outline"]["stages"]:
+        rel = planning.file_of(p["artifact_root"], s)
+        text = git(w.repo, "show", f"{spec['merge']['commit']}:{rel}")
+        try:
+            t = planning.tiered(text)
+        except ValueError as exc:
+            raise Stop("format", f"{rel}: {exc}") from exc
+        steps.append({"n": s["n"], "tier": t["tier"], "files": t["files"], "state": "pending", "spec": None,
+                      "goal": f"{s['title']}, as `{rel}` describes:\n\n{text[:6000]}"})
+    w.budget.used["calls"] += p["spent"]["calls"]    # the planner spent the run's budget
+    w.budget.used["tokens"] += p["spent"]["tokens"]
+    return w.note(phase="tests", steps=steps)
+
+
 def frozen(w: Worker, run: dict) -> dict:
     """The characterization PR every step stacks on."""
 
@@ -462,7 +536,7 @@ def frozen(w: Worker, run: dict) -> dict:
 
 def characterized(w: Worker, run: dict) -> str:
     t = dict(run.get("tests") or {})
-    files = run["files"] or sorted({f for s in run["steps"] for f in s["files"]})
+    files = run["files"] or sorted({f for s in run["steps"] for f in s["files"] if (w.repo / f).is_file()})
     if not t.get("spec"):
         try:
             idle(w)
@@ -586,7 +660,7 @@ def competed(w: Worker, run: dict, step: dict, sid: str) -> dict:
     return result
 
 
-PHASES = {"scan": scan, "audit": audited, "tests": frozen, "steps": stepped}
+PHASES = {"scan": scan, "audit": audited, "plan": staged, "tests": frozen, "steps": stepped}
 
 
 def drive(w: Worker) -> None:

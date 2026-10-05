@@ -102,6 +102,7 @@ class Plan(BaseModel):
     stages: int | None = None
     roles: Roles
     limits: Limits
+    refactor: bool = False   # a full refactor's plan: every stage names its tier and files (`tiered`)
 
 
 def normalized(body: Plan) -> dict:
@@ -114,7 +115,7 @@ def normalized(body: Plan) -> dict:
             "roles": {name: {"model": role.model.strip(), "effort": role.effort.strip()}
                       for name, role in (("planner", roles.planner), ("reviser", roles.reviser),
                                          ("reviewer", roles.reviewer))},
-            "limits": body.limits.model_dump()}
+            "limits": body.limits.model_dump(), **({"refactor": True} if body.refactor else {})}
 
 
 def digest(value) -> str:
@@ -442,6 +443,19 @@ def leftover(path: Path, root: str, manifest: list[dict]) -> list[Path] | None:
 
 # -- Mechanical checks -----------------------------------------------------------------
 
+def tiered(text: str) -> dict:
+    """A refactor stage's `Tier: L0–L3` and `Files: a, b` lines, or `ValueError`.
+    An L3 stage changes a contract, so it also needs `## Migration`."""
+
+    tier = re.search(r"^Tier:[ \t]*(L[0-3])[ \t]*$", text, re.M)
+    files = re.search(r"^Files:[ \t]*(.+?)[ \t]*$", text, re.M)
+    if not tier or not files:
+        raise ValueError("리펙터링 단계는 `Tier: L0–L3` 줄과 `Files:` 줄을 적어야 한다")
+    if tier[1] == "L3" and not re.search(r"^##[ \t]+Migration", text, re.M):
+        raise ValueError("L3 단계에는 `## Migration` 절이 있어야 한다")
+    return {"tier": tier[1], "files": [f.strip().strip("`") for f in files[1].split(",") if f.strip()]}
+
+
 def problems(repo: str, sid: str, spec: dict, path: Path) -> list[tuple[str, str]]:
     """`(file, what)` for each mechanical failure: structure, coverage, links,
     ids and sources. Semantic validity is the reviewer's; a field being there
@@ -470,6 +484,11 @@ def problems(repo: str, sid: str, spec: dict, path: Path) -> list[tuple[str, str
         for h in OVERVIEW if stage is None else STAGE:
             if not any(x.startswith(h.lower()) for x in headings):
                 out.append((rel, f"`## {h}` 절이 없다"))
+        if stage is not None and p["input"].get("refactor"):
+            try:
+                tiered(text)
+            except ValueError as exc:
+                out.append((rel, str(exc)))
         for rid in entry["requirement_ids"]:
             if rid not in requirements:
                 out.append((rel, f"없는 요구사항 `{rid}` 을 적었다"))

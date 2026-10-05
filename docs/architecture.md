@@ -114,7 +114,9 @@ is chosen by the improvement runner's refactor profile
 authorizes Review Loop for L0–L1 PRs. Runs live in `raw/refactor/runs/`, and
 a restart stops a running one instead of replaying it. An L2–L3 step holds its
 repository through `refactor.block` on its spec: `specs.checkout_idle` then
-refuses every new task until the person approves the step or it stops. Plans
+refuses every new task until the person approves the step or it stops. A full
+refactor first audits the repository and hands the audit to the planner as a
+refactor plan. Its stages become steps only after that plan's PR merges. Plans
 and status are in
 [the refactor plan](plans/refactor/0-overview.md).
 

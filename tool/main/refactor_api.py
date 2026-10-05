@@ -90,7 +90,7 @@ def start(body: Start) -> dict:
         old = next((r for r in refactor.listing(repo.name) if r["request_id"] == body.request_id), None)
         if old is not None:
             return old
-        if body.mode != "cleanup":
+        if body.mode == "restructure":
             if not body.files:
                 raise HTTPException(400, "재구성할 모듈의 파일을 골라라")
             for rel in body.files:
