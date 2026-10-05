@@ -15,10 +15,8 @@ continues from the recorded step and never publishes twice.
 from __future__ import annotations
 
 import json
-import os
 import re
 import secrets
-import shutil
 import subprocess
 import threading
 import time
@@ -34,7 +32,6 @@ import refactor_profile
 from agent import ChatSession
 from common import errorlog
 from common.budget import Budget, Cancelled, Exhausted
-from common.process import background_options
 
 from . import loop, runtime, specs, work
 from .query import ROOT, _lock, current_repo, hold
@@ -179,23 +176,13 @@ def switched(w: Worker, sid: str, start: str) -> None:
 
 
 def tested(w: Worker, argv: list[str]) -> subprocess.CompletedProcess:
-    """The characterization command, cut with its whole tree by the run's time
-    left or its cancel."""
+    """The characterization command, cut with its whole tree, orphans included,
+    by the run's time left or its cancel."""
 
-    argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]   # `npm` is `npm.cmd` on Windows
-    proc = subprocess.Popen(argv, cwd=w.repo, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
-                            start_new_session=os.name != "nt", **background_options())
-    deadline = time.monotonic() + w.budget.left()
-    while True:
-        try:
-            out, _ = proc.communicate(timeout=1)
-            return subprocess.CompletedProcess(argv, proc.returncode, out, "")
-        except subprocess.TimeoutExpired:
-            if w.halt.is_set() or time.monotonic() > deadline:
-                specs.kill(proc)
-                proc.communicate()
-                raise Stop("cancelled" if w.halt.is_set() else "budget", "특성 테스트 명령을 끊었다") from None
+    done = refactor_profile.sh(argv, w.repo, seconds=w.budget.left(), halt=w.halt)
+    if done.returncode == refactor_profile.CUT:
+        raise Stop("cancelled" if w.halt.is_set() else "budget", "특성 테스트 명령을 끊었다")
+    return done
 
 
 def turn(w: Worker, run: dict, text: str) -> str:
@@ -353,8 +340,9 @@ def characterized(w: Worker, run: dict) -> str:
         except (IndexError, ValueError, KeyError, TypeError, AssertionError, improvement.Refused) as exc:
             raise Stop("format", f"refactor-tests 블록을 읽지 못했다 — {exc}") from exc
         # The host names its tests, so a name alone proves nothing: a test is a
-        # test-file path, never one of the files being refactored.
-        code = sorted(rel for rel in tests if rel in files or not debt.TEST.search(rel))
+        # test-file path (`Tests/` too, as Swift lays them out), never one of
+        # the files being refactored.
+        code = sorted(rel for rel in tests if rel in files or not debt.TEST.search(rel.lower()))
         changed = {line[3:].strip('"') for line in specs.sh(["git", "status", "--porcelain", "-uall"], w.repo)
                    .stdout.splitlines()}
         if code or not changed or not changed <= set(tests):
@@ -417,11 +405,11 @@ def competed(w: Worker, run: dict, step: dict, sid: str) -> dict:
             config = refactor_profile.prepare(
                 w.repo, run["scope"], sid, {"goal": step["goal"], "tier": step["tier"], "files": step["files"],
                                             "tests": run["tests"]["tests"], "test_argv": run["tests"]["test_argv"]},
-                run["role"], left)
+                run["role"], left, halt=w.halt)
         # ponytail: a cancel lands after the runner returns; the runner's own limits bound the wait
         result = refactor_profile.drive(w.repo, run["scope"], sid, config)
     except improvement.Refused as exc:
-        raise Stop("runner", str(exc)) from exc
+        raise Stop("cancelled" if w.halt.is_set() else "runner", str(exc)) from exc
     finally:
         try:
             spent = improvement.Experiment(w.repo, run["scope"], sid).read()["spent"]
