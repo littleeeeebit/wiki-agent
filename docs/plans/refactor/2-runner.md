@@ -32,3 +32,27 @@ edit to a frozen test is refused; the retry happens exactly once.
 ## Rollback
 
 The profile is additive; existing experiments keep their configuration.
+
+## Implementation notes
+
+- `tool/refactor_profile.py`: `prepare` refuses uncommitted tests or tests
+  failing today, then writes `frozen.json`, `tasks.json` and `experiment.json`
+  under `raw/refactor/<scope>/<name>/`. `drive` initializes, runs rounds until a
+  winner or the second round, then hands off or returns `split` with every
+  candidate's reason.
+- Debt for scoring is `lines over cap + dup + block over 80`, summed under the
+  step's directories, so a split file scores and a mere move does not.
+  Reward is the fraction of that debt removed.
+- Tasks: `preserve` (frozen tests, then the ratchet; failures go to stderr and
+  reach the next proposal), `shrink` (a `scored` offline task, new in
+  `improvement_evaluate.py`), held-out `gate` (the adapter gate plus the ratchet).
+- The owner chose a native proposer over an API adapter.
+  `improvement_host.py --profile refactor` opens an isolated write session in
+  the candidate checkout, returns everything it changed as one patch and
+  resets the checkout. `soft_caps: ["propose"]` is accepted only with
+  `profile: "refactor"`; a crossing lands in `overruns`. The critic accepts
+  deterministically.
+- `tool/test_refactor_profile.py` drives the real runner with a scripted
+  proposer: a behaviour change fails the frozen test, a test edit is refused,
+  the deduplication wins in the second round, a no-gain change is rejected and
+  the overrun is recorded.

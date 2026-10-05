@@ -76,9 +76,10 @@ def evaluate(request: dict, manifest: dict, directory: Path) -> dict:
             code, output, errors = execute(command, Path(request["root"]),
                                            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
                                            payload["limits"]["seconds"], env)
-            if task["inference"]:
+            if task["inference"] or task.get("scored") is True:
+                # A scored offline task prints its reward like an inference task, at zero cost.
                 result = json.loads(output.decode("utf-8"))
-                cost = result.get("usage", {})
+                cost = result.get("usage", {}) if task["inference"] else {"calls": 0, "tokens": 0}
                 if any(type(cost.get(k)) is not int or cost[k] < 0 for k in usage):
                     raise ValueError("Inference task usage is unavailable")
                 reward = result["reward"]
