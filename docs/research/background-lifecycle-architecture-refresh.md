@@ -171,6 +171,15 @@ cleanup. A removed element with notes or other maintainer content is retained.
 
 ## Verification and limits
 
+The first post-review full gate exposed two research-promotion regressions:
+`knowledge.submitted()` passes a lightweight run without a `turn` attribute to
+`specs.failed()`. Reading that attribute for diagnostics raised before the
+original failure could be recorded in the task. Diagnostic turn identity is now
+optional in both failure and caught-check recording. The existing promotion
+regressions cover the missing-gate and failed-gate paths. A separate host-skill
+test picked up real ancestor skills when its fixture was beneath the user's
+directory; its relative repository root now keeps that scan inside the fixture.
+
 `tool/test_agent.py` exercises early completion, explicit and absent origins,
 separate and batched notifications, overlapping tasks, human steering, and two
 consecutive prompts after a provider error using real subprocess transports.

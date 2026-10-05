@@ -1319,7 +1319,7 @@ def reviewed(spec: dict) -> None:
 
 
 def failed(run, spec: dict, reason: str) -> None:
-    errorlog.record("task-failure", reason, repo=spec["repo"], spec=spec["id"], turn=run.turn)
+    errorlog.record("task-failure", reason, repo=spec["repo"], spec=spec["id"], turn=getattr(run, "turn", None))
     note(run, reason)
     update(spec["repo"], spec["id"], fault=reason)
     return None
@@ -1351,7 +1351,7 @@ def check(path: Path, run, final: str):
     try:
         return _check(path, run, final)
     except Exception as exc:
-        errorlog.record("task-check", exc, turn=run.turn, path=str(path))
+        errorlog.record("task-check", exc, turn=getattr(run, "turn", None), path=str(path))
         note(run, f"명세 확인이 깨졌다 — {type(exc).__name__}: {exc}")
         return None
 
