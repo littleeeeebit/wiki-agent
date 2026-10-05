@@ -50,6 +50,9 @@ def test_duplicates_are_shared_blocks_not_imports_comments_or_punctuation(tmp_pa
     names = [f"    Type{i}," for i in range(6)]
     assert debt.duplicated({"a.ts": ["import {", *names, '} from "./one";'],
                             "b.py": ["from x import (", *names, ")"]}) == {"a.ts": 0, "b.py": 0}
+    body = [f"    total += value{i};" for i in range(6)]
+    code = {"a.cs": ["using (var c = Open()) {", *body, "}"], "b.ts": ['import("./x").then(m => {', *body, "});"]}
+    assert debt.duplicated(code) == {"a.cs": 6, "b.ts": 6}, "a block opened by `using` or `import(` is code"
 
 
 def test_longest_block_is_a_body_not_its_container():

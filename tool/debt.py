@@ -36,6 +36,9 @@ WINDOW = 6          # significant lines in a row that count as one duplicated bl
 CHURN_DAYS = 180
 IMPORT = re.compile(r"(import|from|#include|using|use|require|package)\b")
 COMMENT = ("#", "//", "/*", "*", "<!--", "--")
+# Only a statement that is an import and leaves its list open: `import {`, `import type {`,
+# `export {`, `from x import (`. A `using (...) {` or `import("x").then(m => {` body is code.
+OPENS = re.compile(r"(?:(?:import|export)(?:\s+type)?(?:\s+\w+\s*,)?\s*(\{)|from\s+[\w.]+\s+import\s*\()")
 # A block whose header opens a container is a whole class or test suite, not one body.
 CONTAINER = re.compile(r"((export|public|private|internal|abstract|final|data|sealed|open)\s+)*"
                        r"(class|interface|struct|impl|enum|namespace|module|extension|object|protocol|trait)\b"
@@ -92,10 +95,9 @@ def imported(lines: list[str]) -> list[str]:
             closing = "" if closing in norm else closing
             continue
         out.append(line)
-        if IMPORT.match(norm):
-            for opener, closer in (("{", "}"), ("(", ")")):
-                if norm.endswith(opener) or (opener in norm and closer not in norm):
-                    closing = closer
+        opened = OPENS.fullmatch(norm)
+        if opened:
+            closing = "}" if opened[1] else ")"
     return out
 
 
