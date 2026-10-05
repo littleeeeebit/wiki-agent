@@ -1,0 +1,309 @@
+{
+  "exclude": [],
+  "files": {
+    "tool/agent/chat_session.py": {
+      "dup": 0,
+      "lines": 1291,
+      "reason": "baseline at adoption"
+    },
+    "tool/apply.py": {
+      "dup": 6,
+      "lines": 866,
+      "reason": "baseline at adoption"
+    },
+    "tool/census.py": {
+      "dup": 19,
+      "lines": 305,
+      "reason": "baseline at adoption"
+    },
+    "tool/codex_pretool.py": {
+      "dup": 10,
+      "lines": 41,
+      "reason": "baseline at adoption"
+    },
+    "tool/declared_continuation.py": {
+      "dup": 12,
+      "lines": 222,
+      "reason": "baseline at adoption"
+    },
+    "tool/deny.py": {
+      "dup": 10,
+      "lines": 51,
+      "reason": "baseline at adoption"
+    },
+    "tool/edit_as_diff.py": {
+      "dup": 12,
+      "lines": 235,
+      "reason": "baseline at adoption"
+    },
+    "tool/english_progress.py": {
+      "dup": 17,
+      "lines": 114,
+      "reason": "baseline at adoption"
+    },
+    "tool/eval/actions.py": {
+      "dup": 7,
+      "lines": 262,
+      "reason": "baseline at adoption"
+    },
+    "tool/eval/answers.py": {
+      "dup": 14,
+      "lines": 150,
+      "reason": "baseline at adoption"
+    },
+    "tool/eval/baseline.py": {
+      "dup": 7,
+      "lines": 202,
+      "reason": "baseline at adoption"
+    },
+    "tool/eval/compare.py": {
+      "dup": 6,
+      "lines": 766,
+      "reason": "baseline at adoption"
+    },
+    "tool/eval/decisions.py": {
+      "dup": 8,
+      "lines": 162,
+      "reason": "baseline at adoption"
+    },
+    "tool/eval/retrieval.py": {
+      "dup": 7,
+      "lines": 150,
+      "reason": "baseline at adoption"
+    },
+    "tool/host_boundary.py": {
+      "dup": 10,
+      "lines": 57,
+      "reason": "baseline at adoption"
+    },
+    "tool/inject.py": {
+      "dup": 8,
+      "lines": 281,
+      "reason": "baseline at adoption"
+    },
+    "tool/intersect.py": {
+      "dup": 6,
+      "lines": 102,
+      "reason": "baseline at adoption"
+    },
+    "tool/jev_search.py": {
+      "dup": 6,
+      "lines": 183,
+      "reason": "baseline at adoption"
+    },
+    "tool/lint.py": {
+      "dup": 7,
+      "lines": 962,
+      "reason": "baseline at adoption"
+    },
+    "tool/main/decisions.py": {
+      "dup": 0,
+      "lines": 824,
+      "reason": "baseline at adoption"
+    },
+    "tool/main/knowledge.py": {
+      "dup": 0,
+      "lines": 3800,
+      "reason": "baseline at adoption"
+    },
+    "tool/main/loop.py": {
+      "dup": 0,
+      "lines": 2560,
+      "reason": "baseline at adoption"
+    },
+    "tool/main/planning.py": {
+      "dup": 18,
+      "lines": 1321,
+      "reason": "baseline at adoption"
+    },
+    "tool/main/query.py": {
+      "dup": 0,
+      "lines": 1017,
+      "reason": "baseline at adoption"
+    },
+    "tool/main/specs.py": {
+      "dup": 0,
+      "lines": 1437,
+      "reason": "baseline at adoption"
+    },
+    "tool/main/verification.py": {
+      "dup": 12,
+      "lines": 805,
+      "reason": "baseline at adoption"
+    },
+    "tool/main/work.py": {
+      "dup": 0,
+      "lines": 1057,
+      "reason": "baseline at adoption"
+    },
+    "tool/markdown_emphasis.py": {
+      "dup": 17,
+      "lines": 465,
+      "reason": "baseline at adoption"
+    },
+    "tool/repo_lint.py": {
+      "dup": 7,
+      "lines": 176,
+      "reason": "baseline at adoption"
+    },
+    "tool/search/daemon.py": {
+      "dup": 10,
+      "lines": 1232,
+      "reason": "baseline at adoption"
+    },
+    "tool/search/evidence.py": {
+      "dup": 6,
+      "lines": 176,
+      "reason": "baseline at adoption"
+    },
+    "tool/search/knowledge_graph.py": {
+      "dup": 0,
+      "lines": 897,
+      "reason": "baseline at adoption"
+    },
+    "tool/search/sources.py": {
+      "dup": 16,
+      "lines": 424,
+      "reason": "baseline at adoption"
+    },
+    "tool/session_state.py": {
+      "dup": 8,
+      "lines": 354,
+      "reason": "baseline at adoption"
+    },
+    "tool/sync.py": {
+      "dup": 8,
+      "lines": 216,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_agent.py": {
+      "dup": 46,
+      "lines": 1010,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_agent_decisions.py": {
+      "dup": 12,
+      "lines": 495,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_decision_flow.py": {
+      "dup": 7,
+      "lines": 1433,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_edit_as_diff.py": {
+      "dup": 11,
+      "lines": 198,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_evaluation.py": {
+      "dup": 12,
+      "lines": 606,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_jev_contract.py": {
+      "dup": 23,
+      "lines": 619,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_local_verification.py": {
+      "dup": 6,
+      "lines": 1176,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_loop.py": {
+      "dup": 19,
+      "lines": 2325,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_main.py": {
+      "dup": 61,
+      "lines": 1849,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_markdown_emphasis.py": {
+      "dup": 11,
+      "lines": 838,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_planning.py": {
+      "dup": 33,
+      "lines": 744,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_runtime.py": {
+      "dup": 7,
+      "lines": 102,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_sessions.py": {
+      "dup": 12,
+      "lines": 409,
+      "reason": "baseline at adoption"
+    },
+    "tool/test_task_workflow.py": {
+      "dup": 22,
+      "lines": 445,
+      "reason": "baseline at adoption"
+    },
+    "tool/transcript.py": {
+      "dup": 13,
+      "lines": 134,
+      "reason": "baseline at adoption"
+    },
+    "tool/translate/__init__.py": {
+      "dup": 12,
+      "lines": 1288,
+      "reason": "baseline at adoption"
+    },
+    "tool/trigger_audit.py": {
+      "dup": 0,
+      "lines": 925,
+      "reason": "baseline at adoption"
+    },
+    "tool/wiki/match.py": {
+      "dup": 6,
+      "lines": 525,
+      "reason": "baseline at adoption"
+    },
+    "web/src/components/Blocks.tsx": {
+      "dup": 6,
+      "lines": 272,
+      "reason": "baseline at adoption"
+    },
+    "web/src/components/Projects.tsx": {
+      "dup": 9,
+      "lines": 193,
+      "reason": "baseline at adoption"
+    },
+    "web/src/components/Settings.tsx": {
+      "dup": 18,
+      "lines": 329,
+      "reason": "baseline at adoption"
+    },
+    "web/src/lib/api.ts": {
+      "dup": 0,
+      "lines": 957,
+      "reason": "baseline at adoption"
+    },
+    "web/tests/mobile_browser.py": {
+      "dup": 12,
+      "lines": 595,
+      "reason": "baseline at adoption"
+    },
+    "web/tests/task_browser.py": {
+      "dup": 12,
+      "lines": 726,
+      "reason": "baseline at adoption"
+    },
+    "web/tests/terminal_privacy.py": {
+      "dup": 6,
+      "lines": 101,
+      "reason": "baseline at adoption"
+    }
+  },
+  "new_file_max_lines": 800,
+  "reason": "",
+  "test_file_max_lines": 1500,
+  "version": 1
+}

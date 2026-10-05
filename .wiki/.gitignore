@@ -2,4 +2,5 @@
 !.gitignore
 !decisions/
 !decisions/.gitkeep
+!ratchet.json
 trajectory.jsonl

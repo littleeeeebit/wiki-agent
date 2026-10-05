@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 
 import corpus
+import debt
 import lint
 import repo_graph
 import repo_lint
@@ -133,15 +134,16 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
     receipt = {**identity, "source_head": head, "head": head, "state": "preparing"}
     specs.update(spec["repo"], spec["id"], maintenance=receipt)
     try:
-        specs.merge_progress(spec["repo"], spec["id"], "위키 색인 새로 고치는 중")
-        generated = indexes(path)
+        specs.merge_progress(spec["repo"], spec["id"], "위키 색인·부채 기준선 새로 고치는 중")
+        ratcheted = debt.tighten(path)   # only lowers: what this PR shrank stays shrunk
+        generated = indexes(path) + ratcheted
         specs.merge_progress(spec["repo"], spec["id"], "위키 lint 확인 중")
         problems = findings(repo, path)
         if problems:
             specs.merge_progress(spec["repo"], spec["id"], "위키 lint 수정 중")
             repair(path, spec, problems)
             specs.merge_progress(spec["repo"], spec["id"], "수정한 위키 lint·색인 다시 확인 중")
-            generated = indexes(path)
+            generated = indexes(path) + ratcheted
             remaining = findings(repo, path)
             if remaining:
                 raise ValueError("위키 lint 수정이 끝나지 않았다 — " + json.dumps(remaining, ensure_ascii=False))
