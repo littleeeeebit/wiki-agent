@@ -52,7 +52,10 @@ after cancel; restart keeps the block; the approval gate holds the next step.
   that commit. Resume never remakes a published step's branch, including
   one whose PR the spec already holds while the run still says `adopted`;
   an L0–L1 step stopped before its review request is sent to review then, if
-  its spec is still at `PR #n` with no rounds. The runner's handoff branch is
+  its spec is still at `PR #n` with no rounds (`recovered`: the move to
+  `리뷰 대기` is taken under the spec lock and the kick is automatic, so a
+  person's stop in between wins). The characterization PR gets the same
+  recovery, and its branch is never remade once it has a PR. The runner's handoff branch is
   deleted only after the `adopted` checkpoint, so a resume from `pending` can
   re-adopt.
 

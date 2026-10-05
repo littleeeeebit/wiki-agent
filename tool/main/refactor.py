@@ -328,6 +328,23 @@ def published(w: Worker, sid: str, base: str, title: str, body: str, tier: str) 
     return n
 
 
+def recovered(repo: Path, sid: str, tier: str) -> int | None:
+    """The PR `published` saved on the spec before the run's own checkpoint.
+    For a tier the request reviews, the review request a stop may have cut off
+    after it: taken only while the spec is still where `published` left it, and
+    started as an automatic kick, which a person's stop in between still wins."""
+
+    with specs._files:
+        spec = specs.load(repo.name, sid)
+        n = ((spec or {}).get("pr") or {}).get("number")
+        due = bool(n) and tier in AUTO_REVIEW and spec["state"] == f"PR #{n}" and not spec.get("rounds")
+        if due:
+            specs.save(specs.moved(spec, "리뷰 대기"))
+    if due:
+        loop.kick(repo.name, sid, automatic=True)
+    return n
+
+
 def waited(w: Worker, ready) -> None:
     """Wait until `ready()`; the time is set aside from the run's."""
 
@@ -458,7 +475,11 @@ def characterized(w: Worker, run: dict) -> str:
         t = {"spec": git(w.repo, "branch", "--show-current"), "base": base, "start": start}
         run = w.note(tests=t)
     sid = t["spec"]
-    switched(w, sid, t["start"])
+    if not t.get("pr") and (n := recovered(w.repo, sid, "L0")):
+        t["pr"] = n
+        run = w.note(tests=t)
+    if not t.get("pr"):   # a published test branch is its PR's, never remade from before the tests
+        switched(w, sid, t["start"])
     if not t.get("tests"):
         spec_for(w, run, sid, f"Characterization tests for {', '.join(files)}", t["base"], t["start"])
         final = turn(w, run, "Files:\n" + "\n".join(f"- {f}" for f in files))
@@ -502,10 +523,7 @@ def stepped(w: Worker, run: dict) -> dict:
         if not step["spec"]:
             run["steps"][k] = step = {**step, "spec": sid, "base": previous}
             run = w.note(steps=run["steps"])
-        known = specs.load(w.repo.name, sid) if step["state"] == "adopted" else None
-        if known and (n := (known.get("pr") or {}).get("number")):   # published, then stopped before its checkpoint
-            if step["tier"] in AUTO_REVIEW and known["state"] == f"PR #{n}" and not known.get("rounds"):
-                loop.kick(w.repo.name, sid)   # and maybe before the review was asked for
+        if step["state"] == "adopted" and (n := recovered(w.repo, sid, step["tier"])):
             run["steps"][k] = step = {**step, "state": "published", "pr": n}
             run = w.note(steps=run["steps"])
         with owning(w):

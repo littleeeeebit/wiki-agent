@@ -26,6 +26,7 @@ from main import loop, query, refactor, specs, work
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_specs import Remote, made, repo, spec_block  # noqa: F401 — `repo` is a fixture
 
+KICK = loop.kick   # the real one: the `repo` fixture stands in for it
 BIG = "".join(f"value_{i} = {i}\n" for i in range(801))
 TEST = "import big\nassert big.value_800 == 800\n"
 
@@ -90,8 +91,8 @@ def test_cleanup_freezes_then_stacks_a_reviewed_step(selected):
     remote = Remote()
     kicked = []
 
-    def review(name, sid):   # review allows each PR at once
-        kicked.append(sid)
+    def review(name, sid, automatic=False):   # review allows each PR at once
+        kicked.append((sid, "automatic") if automatic else sid)
         specs.update(name, sid, state="머지 가능")
 
     def adopted(repo, scope, name, config):
@@ -120,9 +121,29 @@ def test_cleanup_freezes_then_stacks_a_reviewed_step(selected):
         prs = len([c for c in remote.calls if c[:3] == ["gh", "pr", "create"]])
         api.post(f"/api/refactors/{rid}/resume")
         resumed = finished(api, rid)
-    assert resumed["state"] == "done" and kicked == [last["spec"]], "resume asks for the review the stop skipped"
+        assert resumed["state"] == "done" and kicked == [(last["spec"], "automatic")], "resume asks for the review"
+
+        tested_at = _git(selected, "rev-parse", run["tests"]["spec"])
+        _git(selected, "branch", "-D", run["tests"]["spec"])   # the test PR merged and pruned while the run waited
+        refactor.update("proj", rid, phase="tests", state="stopped")
+        api.post(f"/api/refactors/{rid}/resume")
+        assert finished(api, rid)["state"] == "done"
+    assert subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{run['tests']['spec']}"],
+                          cwd=selected, capture_output=True).returncode, "resume never remakes the published test branch"
     assert len([c for c in remote.calls if c[:3] == ["gh", "pr", "create"]]) == prs, "and never publishes again"
     assert dropped == ["adopted"], "the handoff branch outlives the pending checkpoint"
+
+    sid, n, save = last["spec"], last["pr"], specs.save
+    specs.update("proj", sid, state=f"PR #{n}", rounds=[], stopped=None)
+
+    def stopping(spec):   # a person's stop landing between recovery's move and its kick
+        save(spec)
+        if spec["state"] == "리뷰 대기":
+            save({**spec, "state": "멈춤", "stopped": {"reason": "user"}})
+
+    with patch.object(specs, "save", side_effect=stopping), patch.object(loop, "kick", KICK):
+        assert refactor.recovered(selected, sid, "L1") == n
+    assert specs.load("proj", sid)["stopped"] == {"reason": "user"}, "the person's stop wins over recovery's kick"
 
     assert run["state"] == "done", run.get("stopped")
     assert again["id"] == rid, "the same request is the same run"
@@ -131,7 +152,7 @@ def test_cleanup_freezes_then_stacks_a_reviewed_step(selected):
     assert kicks == [tests, step], "both tiers are covered by the request: review starts itself"
     creates = [c for c in remote.calls if c[:3] == ["gh", "pr", "create"]]
     assert [(c[c.index("--head") + 1], c[c.index("--base") + 1]) for c in creates] == [(tests, "main"), (step, tests)]
-    assert _git(selected, "show", "--name-only", "--format=", tests) == "test_big.py", "the test PR holds tests only"
+    assert _git(selected, "show", "--name-only", "--format=", tested_at) == "test_big.py", "the test PR holds tests only"
     frozen = (refactor_profile.STORE / "project" / step / "frozen.json").read_text(encoding="utf-8")
     assert '"tests": [\n    "test_big.py"' in frozen
     assert run["spent"]["calls"] == 1 and run["spent"]["tokens"] == 15
