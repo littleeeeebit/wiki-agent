@@ -7,7 +7,7 @@ artifacts. The work cell is the implementation session from `work`. A round:
 the server writes the instruction into the hub, the review cell answers, the
 server parses the answer, and a refusal goes to the work cell as one turn,
 then through the gate and up. After the final gate, it merges the reviewed
-head and cleans up. Disabling auto-merge preserves the manual `[머지]` boundary.
+head only after the person clicks `[머지]`, then cleans up.
 Otherwise it stops only for a reason in `Why`.
 
 A loop carries its repository: its spec names the project, the path is found
@@ -48,7 +48,7 @@ PROMPT = (ROOT / "tool/prompts/review-round.md").read_text(encoding="utf-8")
 RUBRIC = {name: (ROOT / f"tool/prompts/review-{name}.md").read_text(encoding="utf-8").strip()
           for name in ("plan", "code")}
 
-DEFAULTS = {"rounds": 12, "concurrent": 3, "review_model": "", "review_effort": "high", "auto_merge": True}
+DEFAULTS = {"rounds": 12, "concurrent": 3, "review_model": "", "review_effort": "high", "auto_merge": False}
 MORE = 4        # rounds a `[계속]` past the cap adds, to that spec only
 POLL = 60.0     # seconds between reads of a pull request waiting to merge
 # Never `READ_TOOLS`: its `Bash` is on `--allowedTools`, runs unasked, and one
@@ -98,7 +98,8 @@ def settings(defaults: dict = DEFAULTS) -> dict:
     except (OSError, ValueError):
         saved = {}
     saved = saved if isinstance(saved, dict) else {}
-    return {k: saved[k] if type(saved.get(k)) is type(v) else v for k, v in defaults.items()}
+    return {k: False if k == "auto_merge" else saved[k] if type(saved.get(k)) is type(v) else v
+            for k, v in defaults.items()}
 
 
 def store(**changes) -> None:
@@ -498,6 +499,12 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
     ]
     if last:
         out.append(f"- Since round {last['n']}: `{last['head'][:7]}..{head[:7]}`")
+    maintenance = spec.get("maintenance") or {}
+    if maintenance.get("head") == head:
+        out += ["", "The person clicked Merge and authorized wiki maintenance in this PR. "
+                "The server committed lint repairs, document indexes and architecture updates in these files. "
+                "Review their correctness and scope as part of this head:",
+                *[f"- `{name}`" for name in maintenance.get("files", [])]]
     out += profiled(spec, profile, head, base, base_oid)
     out += known_findings(spec)
     out += ["", "## What became of the last round's findings", ""]
@@ -770,8 +777,8 @@ def drive(loop: Loop) -> None:
                 while step(loop):
                     pass
                 fresh = specs.load(loop.repo, loop.sid)
-                if fresh and fresh["state"] == "머지 가능" and not loop.halt.is_set() and settings()["auto_merge"]:
-                    automatic(channels.repo_for(loop.repo), fresh)
+                if fresh and fresh["state"] == "머지 가능" and not loop.halt.is_set():
+                    requested_merge(channels.repo_for(loop.repo), fresh)
                 fresh = specs.load(loop.repo, loop.sid)
                 if not fresh or not LOOPING.fullmatch(fresh["state"]) or loop.halt.is_set():
                     break
@@ -826,7 +833,8 @@ def stop(loop: Loop | None, repo: str, sid: str, why: Why, detail: str = "", sou
             return False
         spec = specs.load(repo, sid)
         if spec is not None and source.fullmatch(spec["state"]):
-            specs.save(specs.moved(spec, "멈춤", stopped={"reason": why.value, "detail": detail}))
+            specs.save(specs.moved(spec, "멈춤", stopped={"reason": why.value, "detail": detail},
+                                   merge_request=spec.get("merge_request") if why is Why.RESTART else None))
             if why not in (Why.PERSON, Why.RESTART):
                 rounds = counted(spec)
                 errorlog.record("review-stop", detail or why.value, repo=repo, spec=sid, reason=why.value,
@@ -1625,7 +1633,7 @@ def landed(repo: Path, spec: dict) -> None:
             stop(None, repo.name, spec["id"], Why.LEFT_QUEUE, "PR 이 닫혔다", WAITING)
 
 
-def forward(repo: Path, base: str, *, task_branch: str = "") -> str:
+def forward(repo: Path, base: str, *, task_branch: str = "", handover: int | None = None) -> str:
     """Fast-forward a clean base, optionally returning from the merged task.
 
     Never switch an unrelated branch or interrupt another turn. The local
@@ -1666,7 +1674,36 @@ def forward(repo: Path, base: str, *, task_branch: str = "") -> str:
                 return f"원본이 뒤처짐 — {specs.said(switched)}"
             work.forget(repo)
         done = specs.sh(["git", "merge", "--ff-only", f"origin/{base}"], repo, 60)
-        return f"원본을 `origin/{base}` 로 앞으로 옮겼다" if not done.returncode else f"원본이 뒤처짐 — {specs.said(done)}"
+        if done.returncode:
+            return f"원본이 뒤처짐 — {specs.said(done)}"
+        if specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip() != specs.sh(
+                ["git", "rev-parse", f"origin/{base}"], repo).stdout.strip():
+            return f"원본이 뒤처짐 — 로컬 `{base}` 에 미게시 커밋이 있다"
+        if specs.sh(["git", "branch", "--show-current"], repo).stdout.strip() != base:
+            # A checkout-local tracking branch does not update the real local main.
+            trees = specs.sh(["git", "worktree", "list", "--porcelain"], repo)
+            if trees.returncode:
+                return f"원본이 뒤처짐 — {specs.said(trees)}"
+            sibling = None
+            for line in trees.stdout.splitlines():
+                if line.startswith("worktree "):
+                    sibling = Path(line[9:])
+                elif line == f"branch refs/heads/{base}" and sibling and sibling.resolve() != repo.resolve():
+                    if handover is not None:
+                        try:
+                            sibling_release = hold(work._busy, _lock, str(sibling), "", kind="turn")
+                        except HTTPException:
+                            return "원본이 뒤처짐 — 기본 브랜치에서 다른 작업이 실행 중이다"
+                        try:
+                            handed = connect.handover(sibling, handover)
+                        finally:
+                            sibling_release()
+                        if not handed["ok"]:
+                            return "원본이 뒤처짐 — " + handed["reason"]
+                    synced = forward(sibling, base)
+                    if synced.startswith("원본이 뒤처짐"):
+                        return synced
+        return f"원본을 `origin/{base}` 로 앞으로 옮겼다"
     finally:
         release()
 
@@ -1727,18 +1764,22 @@ def _finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
     if first:
         specs.told(repo, spec, text)
     close_cell(spec["repo"], n)
+    shared = bool(spec.get("worktree")) and Path(spec["worktree"]).resolve() == repo.resolve()
     if (spec.get("survey") or {}).get("handover"):
-        if spec.get("workspace_mode") == "branch":
-            notes.append(forward(repo, base, task_branch=specs.branch_of(spec)))
+        if shared:
+            notes.append(forward(repo, base, task_branch=specs.branch_of(spec), handover=n))
         # The original's adapter is uncommitted and would block the
         # fast-forward. The handover moves it aside and fast-forwards
         # itself; when it stops, the fast-forward is skipped too.
         handed = connect.handover(repo, n)
         notes.append(handed["reason"] if handed["ok"] else f"adapter 넘기기 대기 — {handed['reason']}")
     else:
-        notes.append(forward(repo, base, task_branch=specs.branch_of(spec)
-                             if spec.get("workspace_mode") == "branch" else ""))
-    if spec.get("workspace_mode") != "branch" and spec.get("worktree") and Path(spec["worktree"]).exists():
+        notes.append(forward(repo, base, task_branch=specs.branch_of(spec) if shared else ""))
+    if any(marker in note for note in notes for marker in ("뒤처짐", "못했다", "대기")):
+        errorlog.record("merge-cleanup", "\n".join(notes), repo=repo.name, spec=spec["id"])
+        specs.update(repo.name, spec["id"], cleanup=notes, cleanup_complete=False)
+        return
+    if not shared and spec.get("worktree") and Path(spec["worktree"]).exists():
         notes.append(cleared(repo, Path(spec["worktree"])))
     notes.append(local_pruned(repo, specs.branch_of(spec), allowed["head"] if allowed else spec["pr"].get("head", "")))
     notes.append(pruned(repo, specs.branch_of(spec), allowed["head"] if allowed else spec["pr"].get("head", "")))
@@ -1757,10 +1798,6 @@ def _finish(repo: Path, spec: dict, base: str, commit: str, text: str) -> None:
     if pending:
         errorlog.record("merge-cleanup", "\n".join(notes), repo=repo.name, spec=spec["id"])
     specs.update(repo.name, spec["id"], cleanup=notes, cleanup_complete=not pending)
-    if not pending:
-        from . import architecture
-
-        architecture.after_merge(repo, specs.load(repo.name, spec["id"]))
 
 
 def local_pruned(repo: Path, branch: str, approved: str) -> str:
@@ -1793,16 +1830,21 @@ def _local_pruned(repo: Path, branch: str, approved: str) -> str:
     return f"작업 브랜치 `{branch}` 를 지웠다" if not done.returncode else f"작업 브랜치를 지우지 못했다 — {specs.said(done)}"
 
 
-def automatic(repo: Path, spec: dict) -> None:
-    specs.update(repo.name, spec["id"], auto_merge_pending=True)
+def requested_merge(repo: Path, spec: dict) -> None:
+    """Continue only a clicked request bound to the maintenance head and revision."""
+    request = spec.get("merge_request") or {}
+    allowed = specs.approved(spec)
+    if not request:
+        return
+    if (not allowed or request.get("head") != allowed["head"] or request.get("base") != allowed["base"]
+            or request.get("rev") != spec["rev"] or request.get("pr") != spec["pr"]["number"]):
+        specs.update(repo.name, spec["id"], merge_request=None)
+        return
     try:
-        allowed = specs.approved(spec)
-        if allowed:
-            merge_spec(repo, spec, Merge(head=allowed["head"]))
-            specs.update(repo.name, spec["id"], auto_merge_pending=False, fault=None)
+        merge_spec(repo, spec, Merge(head=request["head"]), prepare=False)
     except Exception as exc:
-        errorlog.record("automatic-merge", exc, repo=repo.name, spec=spec["id"])
-        specs.update(repo.name, spec["id"], auto_merge_pending=False, fault=f"자동 머지 중단 — {exc}")
+        errorlog.record("requested-merge", exc, repo=repo.name, spec=spec["id"])
+        specs.update(repo.name, spec["id"], merge_request=None, fault=f"요청한 머지 중단 — {exc}")
 
 
 def poll(halt: threading.Event | None = None) -> None:
@@ -1849,11 +1891,11 @@ def poll(halt: threading.Event | None = None) -> None:
                             landed(path, spec)
                     except Exception as exc:
                         errorlog.record("cleanup-retry", exc, repo=repo.name, spec=spec["id"])
-                elif spec["state"] == "머지 가능" and spec.get("auto_merge_pending") and settings()["auto_merge"]:
+                elif spec["state"] == "머지 가능" and spec.get("merge_request"):
                     with _lock:
                         running = (repo.name, spec["id"]) in _loops
                     if not running:
-                        automatic(path, spec)
+                        requested_merge(path, spec)
 
 
 # -- The screen ----------------------------------------------------------------------
@@ -1888,16 +1930,20 @@ def merge(sid: str, body: Merge) -> dict:
     return merge_spec(repo, spec, body)
 
 
-def merge_spec(repo: Path, spec: dict, body: Merge) -> dict:
-    """The same guarded merge for an automatic loop or the selected screen."""
+def merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) -> dict:
+    """The guarded merge for a click or its explicitly authorized prepared head."""
     with _landing:
         fresh = specs.load(repo.name, spec["id"])
         if fresh is None or fresh["history"][0]["ts"] != spec["history"][0]["ts"]:
             raise HTTPException(410, "명세가 바뀌었다. 다시 선택하세요")
-        return _merge_spec(repo, fresh, body)
+        try:
+            return _merge_spec(repo, fresh, body, prepare=prepare)
+        except Exception:
+            specs.update(repo.name, spec["id"], merge_request=None)
+            raise
 
 
-def _merge_spec(repo: Path, spec: dict, body: Merge) -> dict:
+def _merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) -> dict:
     sid = spec["id"]
     if spec["state"] != "머지 가능":
         raise HTTPException(409, f"머지할 수 있는 상태가 아니다 — {spec['state']}")
@@ -1948,7 +1994,49 @@ def _merge_spec(repo: Path, spec: dict, body: Merge) -> dict:
     if not preview["ok"]:
         kick(repo.name, sid)
         raise HTTPException(409, f"{base}와 병합 충돌 — 기존 승인을 해제하고 병합 수정 후 새 리뷰를 받는다")
-    done = specs.sh(["gh", "pr", "merge", str(n), "--squash", "--match-head-commit", allowed["head"]], repo, 120)
+    if prepare:
+        from . import maintenance
+
+        release = hold(work._busy, _lock, str(path), "작업이 끝난 뒤 머지를 요청하세요", kind="turn")
+        try:
+            prepared = maintenance.prepare(repo, path, spec, allowed["head"], base)
+            with specs._files:
+                fresh = specs.load(repo.name, sid)
+                if fresh["rev"] != spec["rev"] or fresh["state"] != "머지 가능":
+                    raise ValueError("머지 준비 중 명세가 바뀌었다")
+                specs.update(repo.name, sid,
+                             merge_request={"head": prepared, "base": base, "rev": spec["rev"], "pr": n},
+                             pr={**spec["pr"], "head": prepared}, fault=None)
+        except Exception as exc:
+            specs.update(repo.name, sid, merge_request=None, fault=f"머지 준비 실패 — {exc}")
+            errorlog.record("merge-preparation", exc, repo=repo.name, spec=sid)
+            raise HTTPException(409, f"머지 준비 실패 — {exc}") from exc
+        finally:
+            release()
+        if prepared != allowed["head"]:
+            # A click authorizes this maintenance commit, never later repairs.
+            kick(repo.name, sid)
+            return specs.view(repo, specs.load(repo.name, sid))
+        # Recheck GitHub, base and gate after a potentially long maintenance run.
+        return _merge_spec(repo, specs.load(repo.name, sid), body, prepare=False)
+    else:
+        request = spec.get("merge_request") or {}
+        if (request.get("head"), request.get("base"), request.get("rev"), request.get("pr")) != (
+                allowed["head"], base, spec["rev"], n):
+            raise HTTPException(409, "사용자가 요청한 커밋의 머지가 아니다")
+    release = hold(work._busy, _lock, str(path), "작업이 끝난 뒤 머지를 요청하세요", kind="turn")
+    try:
+        local = specs.sh(["git", "rev-parse", "HEAD"], path)
+        dirty = specs.sh(["git", "status", "--porcelain"], path)
+        if local.returncode or local.stdout.strip() != allowed["head"] or dirty.returncode or dirty.stdout.strip():
+            raise HTTPException(409, "머지 직전 작업 폴더가 바뀌었다")
+        done = specs.sh(["gh", "pr", "merge", str(n), "--squash", "--match-head-commit", allowed["head"]], repo, 120)
+        if not done.returncode:
+            with specs._files:
+                spec = specs.load(repo.name, sid)
+                specs.save(specs.moved(spec, "머지 대기", merge_request=None))
+    finally:
+        release()
     if done.returncode:
         try:
             moved = pr_head(repo, n)[0] != allowed["head"]
@@ -1963,9 +2051,6 @@ def _merge_spec(repo: Path, spec: dict, body: Merge) -> dict:
             kick(repo.name, sid)
             raise HTTPException(409, f"머지 직전 {base}가 이동하여 충돌 — 병합 수정 후 새 리뷰를 받는다")
         raise HTTPException(409, f"머지하지 못했다 — {specs.said(done)}")
-    with specs._files:
-        spec = specs.load(repo.name, sid)
-        specs.save(specs.moved(spec, "머지 대기"))
     landed(repo, spec)
     return specs.view(repo, specs.load(repo.name, sid))
 
@@ -2430,7 +2515,7 @@ class Settings(BaseModel):
     concurrent: int
     review_model: str = ""
     review_effort: str = "high"
-    auto_merge: bool = True
+    auto_merge: bool = False
 
 
 @router.get("/api/loop/settings")
@@ -2454,7 +2539,7 @@ def set_settings(body: Settings) -> dict:
     if body.review_effort not in allowed:
         raise HTTPException(400, "이 모델이 지원하지 않는 추론 강도")
     store(rounds=body.rounds, concurrent=body.concurrent, review_model=model, review_effort=body.review_effort,
-          auto_merge=body.auto_merge)
+          auto_merge=False)
     with _seats:
         _seats.notify_all()   # more seats may be free now
     return settings()

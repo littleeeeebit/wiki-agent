@@ -729,4 +729,4 @@ def test_shared_checkout_survey_returns_to_base_before_adapter_handover(original
     assert specs.load("proj", "wiki-bootstrap")["cleanup_complete"]
     if linked:
         assert git(sibling, "branch", "--show-current") == "main"
-        assert git(sibling, "rev-parse", "HEAD") != commit
+        assert git(sibling, "rev-parse", "HEAD") == commit

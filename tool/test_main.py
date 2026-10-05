@@ -684,6 +684,21 @@ def test_translation_off_sends_nothing():
     assert web.get("/api/switch").json()["translate"] is False
 
 
+@pytest.mark.parametrize("mode", ["off", "full", "partial"])
+def test_translation_modes_persist_and_preserve_loop_settings(mode):
+    from main import loop as main_loop
+
+    main_loop.store(rounds=7, auto_merge=True)
+    web = client()
+    result = web.post("/api/switch", json={"mode": mode})
+    result.raise_for_status()
+    assert web.get("/api/switch").json()["mode"] == mode
+    assert result.json()["translate"] == (mode != "off")
+    assert main_loop.settings()["rounds"] == 7
+    assert main_loop.settings()["auto_merge"] is False
+    assert web.post("/api/switch", json={"mode": "unknown"}).status_code == 422
+
+
 # -- the work pane -----------------------------------------------------------
 
 
@@ -914,7 +929,6 @@ def test_the_shell_s_pipe_neither_blocks_the_server_nor_outlives_it(tmp_path):
         "sys.path.insert(0, str(entry.parent))\nfrom main import app, specs, query, work\n"
         "specs.SPECS = scratch / 'specs'\nquery.LOGS = scratch / 'chat'\n"
         "work.LOGS = scratch / 'work'\napp.SWITCH = scratch / 'main.json'\n"
-        "app.architecture.watch = lambda halt: halt.wait()\n"
         "sys.argv = [str(entry), *sys.argv[2:]]\nrunpy.run_path(str(entry), run_name='__main__')\n",
         encoding="utf-8")
     log = tmp_path / "server.log"

@@ -44,7 +44,6 @@ def test_shutdown_keeps_server_ownership_until_its_review_driver_stops(tmp_path,
     monkeypatch.setattr(loop, "_review_runs", {})
     monkeypatch.setattr(loop, "_seated", 0)
     monkeypatch.setattr(loop, "poll", lambda halt: halt.wait())
-    monkeypatch.setattr(app.architecture, "watch", lambda halt: halt.wait())
     for module in (app.planning, app.survey):
         monkeypatch.setattr(module, "recover", lambda: None)
     for module in (app.planning, app.query, app.work):

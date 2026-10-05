@@ -20,6 +20,7 @@ type Props = {
   choice: Choice
   optionsOpen: boolean
   on: boolean
+  progressOn?: boolean
   onChoice: (c: Choice) => void
   onSend: (text: string) => void
   onAnswer: (turn: Turn, id: string, allow: boolean, scope?: 'once' | 'session', answers?: string[]) => void
@@ -42,7 +43,7 @@ type Props = {
  *  ran and what it asks to write stay as they are, because a person approves
  *  those and a reworded command is not the command. */
 export function Agent({
-  row, turns, options, choice, optionsOpen, on, onChoice, onSend, onAnswer, onStop, onSteer, queued, onQueue, onUnqueue, refused,
+  row, turns, options, choice, optionsOpen, on, progressOn = on, onChoice, onSend, onAnswer, onStop, onSteer, queued, onQueue, onUnqueue, refused,
   onDismiss, rules, onClearRules, onReset, onPeek,
 }: Props) {
   const end = useRef<HTMLDivElement>(null)
@@ -132,7 +133,7 @@ export function Agent({
                 </div>
               </div>
             ) : (
-              <Reply key={t.key} turn={t} on={on} onAnswer={onAnswer} onPeek={onPeek} />
+              <Reply key={t.key} turn={t} on={on} progressOn={progressOn} onAnswer={onAnswer} onPeek={onPeek} />
             ),
           )}
           {queued && (
@@ -189,9 +190,10 @@ export function Agent({
   )
 }
 
-export function Reply({ turn, on, onAnswer, onPeek }: {
+export function Reply({ turn, on, progressOn = on, onAnswer, onPeek }: {
   turn: Turn
   on: boolean
+  progressOn?: boolean
   onAnswer: Props['onAnswer']
   onPeek: Props['onPeek']
 }) {
@@ -216,8 +218,8 @@ export function Reply({ turn, on, onAnswer, onPeek }: {
           {s.kind === 'compaction' ? <p role="status" className="text-[12.5px] text-primary">
             {s.phase === 'started' ? '문맥 압축 시작 · 대화 기록을 요약한다' : '문맥 압축 완료'}
             {s.pre_tokens != null && ` · 압축 전 ${s.pre_tokens.toLocaleString()} 토큰`}
-          </p> : s.kind === 'progress' ? <Progress text={s.text} on={on} onPeek={onPeek} />
-            : s.kind === 'tool' ? <Tool text={s.text} on={on && !s.command} />
+          </p> : s.kind === 'progress' ? <Progress text={s.text} on={progressOn} onPeek={onPeek} />
+            : s.kind === 'tool' ? <Tool text={s.text} on={progressOn && !s.command} />
             : s.kind === 'said' ? <Said text={s.text} />
               : s.kind === 'hook' ? <Hook text={s.text} context={s.context} />
                 : QUESTIONS.has(s.tool) ? <Question step={s} turn={turn} korean={on} onAnswer={onAnswer} />

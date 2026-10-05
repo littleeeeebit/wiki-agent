@@ -36,7 +36,13 @@ history.
 Terminal translation is manual: select output, remove private values in the
 preview, then confirm sending it to the external translator. Merely enabling
 the Korean overlay never uploads terminal output. Agent and Review progress
-continue to use the automatic overlay.
+continue to use the selected overlay mode. Settings offers Off, Full and Partial.
+Partial translates completed Agent and Review replies and question choices;
+progress and tool descriptions retain their original language. The completed
+reply is `Turn.text` after the provider's `done` event, including the interval
+when the server is still running the gate. Wiki, retrospective and Next Task
+conversations use the full overlay in Partial mode. Off suppresses every
+automatic overlay request. Existing binary settings migrate to Full or Off.
 
 The code-change disclosure lists every changed file, including binary and
 untracked files, using Git's full numstat inventory. Each file has its own
@@ -89,11 +95,15 @@ activate boxes with Enter or Space and use plus/minus, arrows and Home for the
 viewport. The Korean overlay translates human node/edge labels before Mermaid
 layout, perspective names and prose; source paths, node IDs and the Mermaid
 original retain their source text. Frontend builds never run the scanner.
-Automatic generation runs once after a confirmed PR merge and completed
-checkout cleanup, using that task's saved model. Busy or unpublished checkouts
-wait; failure is recorded without repeated paid requests. Shutdown cancels
-analysis, leaving the persisted request pending. Five-second polling only
-reads saved documents. The wiki and evidence maps keep their own purposes.
+When the person clicks Merge, the server refreshes existing `.omm` documents
+on the clean PR checkout using the task's saved model. Wiki lint repairs and
+document indexes enter the same maintenance commit and PR. A changed head
+receives another independent review and final gate before the clicked request
+continues. Failure blocks merge and preserves the edits. Completed preparation
+is reused for that exact head; no scan writes into the base after merge.
+Five-second polling only reads saved documents. Repositories without `.omm`
+retain explicit creation through Add .omm. The wiki and evidence maps keep
+their own purposes.
 
 Frontend builds retain previous content-hashed assets because an open window
 can still import an older Mermaid chunk. If a chunk is already missing, the
@@ -172,20 +182,28 @@ verification keep their separate execution scopes.
 
 Implementation and repair agents may commit, push and open their task PR.
 Reused PRs receive the current title, requirements and completion evidence.
-By default independent review approval and a passing final gate proceed
-through the existing guarded merge automatically. `auto_merge = false` in
-the loop settings retains manual merge. A queue waits for confirmed merge.
+Independent review approval and a passing final gate stop at Merge. Saved
+`auto_merge` settings cannot authorize a merge. Clicking Merge prepares wiki
+lint repairs, `.wiki/corpus.json`, `.wiki/graph.json` and existing `.omm` on the
+PR branch, commits them and pushes to that PR. A changed head receives review
+and a final gate. The clicked request names that exact head, PR, base and
+specification revision; a later repair or revised requirement cancels it.
+A queue waits for confirmed merge.
 After merge, a clean shared task checkout returns to and fast-forwards its
 base. The reviewed local branch is deleted only after its content is verified
 on that base, with an atomic expected-head check. The remote branch is deleted
 with a lease on the reviewed head. Busy or dirty checkouts, newer commits and
-unrelated branches retain a visible cleanup-pending task. Cleanup is persisted
-and retried across restarts; a merged task disappears from the rail only after
+unrelated branches retain a visible cleanup-pending task. Ref removal waits
+for base synchronization, and another shared-checkout task cannot start while
+cleanup is incomplete. Cleanup is persisted and retried across restarts;
+a merged task disappears from the rail only after
 cleanup completes. Drafts remain under Start pending.
 If that base is already open in a sibling worktree, the selected checkout uses
 one reusable `wiki-base/<checkout-id>/<base>` branch tracking the remote base.
-This creates only a Git ref, not a checkout. It never moves the sibling's base
-ref or files. Survey handover validates this branch's actual upstream base and
+This creates only a Git ref, not a checkout. Merge cleanup also fast-forwards
+the clean, idle sibling checkout holding the actual base. Busy or unpublished
+base checkouts remain pending; unpublished local commits are preserved.
+Survey handover validates this branch's actual upstream base and
 repository too. New tasks may use a fetched fast-forward of their saved base
 without changing an occupied branch.
 Starting from a reopened merged task refuses an ahead or divergent saved base,

@@ -149,11 +149,17 @@ source tools to trace callers, routes, state and persistence, then validate
 and write architecture fields through `omm`. Diagrams have meaningful labeled
 connections and described child elements. Existing maintainer context and
 constraints survive generation. Frontend builds never generate architecture.
-After a PR is confirmed merged and cleanup synchronizes the default branch,
-one persisted refresh request is queued. A busy, dirty or unrelated branch
-defers it; shutdown cancels analysis and preserves pending intent. The frontend
-polls the saved documents every five seconds. A repository without `.omm`
+Clicking Merge runs `main/maintenance.py` on the PR checkout before merge:
+wiki lint repairs, document indexes and existing `.omm` updates are committed
+and pushed together. A changed head receives review and its final gate before
+that clicked request continues. The request is bound to the prepared head,
+PR, base and specification revision. A later repair cannot inherit it.
+Generation never runs on the base after merge. The frontend polls the saved
+documents every five seconds. A repository without `.omm`
 offers explicit creation bound to the selected project request guard.
+
+The [merge and translation investigation](research/merge-authorization-maintenance.md)
+records the runtime evidence, defects and regression coverage.
 
 Four different things are called a graph here. They do not stand in for each
 other.

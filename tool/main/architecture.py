@@ -16,7 +16,6 @@ from fastapi import APIRouter, HTTPException
 import yaml
 
 from agent import ChatSession, cli_command
-from common import errorlog
 from common.process import background_options
 from .channels import WIKI
 from . import query
@@ -249,48 +248,6 @@ def refresh(root: Path = WIKI, *, create: bool = False):
         return scan(root) if create and not (root / ".omm").exists() else read_existing(root)
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as exc:
         raise HTTPException(503, f"구조를 읽거나 생성하지 못했다 — {exc}") from exc
-
-
-def after_merge(root: Path, spec: dict) -> None:
-    """Queue once for this merge, after cleanup has synchronized the base."""
-    from . import specs
-
-    if (root / ".omm").is_dir() and not spec.get("architecture_refresh"):
-        specs.update(spec["repo"], spec["id"], architecture_refresh={"state": "pending"})
-
-
-def watch(stop: threading.Event):
-    from . import channels, specs, work
-
-    while not stop.wait(5):
-        for directory in specs.SPECS.glob("*"):
-            root = channels.repo_for(directory.name)
-            if root is None:
-                continue
-            for spec in specs.listing(directory.name):
-                if stop.is_set():
-                    return
-                if ((spec.get("architecture_refresh") or {}).get("state") != "pending"
-                        or spec["state"] != "머지됨" or not spec.get("cleanup_complete")):
-                    continue
-                try:
-                    release = query.hold(work._busy, work._lock, str(root), "", kind="turn")
-                except HTTPException:
-                    continue
-                try:
-                    branch = specs.sh(["git", "branch", "--show-current"], root)
-                    dirty = specs.sh(["git", "status", "--porcelain", "--", ".", ":(exclude).omm"], root)
-                    if (branch.returncode or dirty.returncode or dirty.stdout.strip()
-                            or branch.stdout.strip() != spec["merge"]["base"]):
-                        continue
-                    scan(root, model=(spec.get("cell") or {}).get("model") or None, halt=stop)
-                    specs.update(spec["repo"], spec["id"], architecture_refresh={"state": "complete"})
-                except Exception as exc:
-                    errorlog.record("architecture-scan", exc, repo=spec["repo"], spec=spec["id"])
-                    if not stop.is_set():
-                        specs.update(spec["repo"], spec["id"], architecture_refresh={"state": "failed", "error": str(exc)})
-                finally:
-                    release()
 
 
 @router.get("/api/architecture")

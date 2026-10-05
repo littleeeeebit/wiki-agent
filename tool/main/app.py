@@ -20,6 +20,7 @@ import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 from urllib.parse import unquote
 
 from fastapi import FastAPI, HTTPException, Request
@@ -72,17 +73,12 @@ async def lifespan(_: FastAPI):
         poll_stop = threading.Event()
         poll_thread = threading.Thread(target=loop.poll, args=(poll_stop,), daemon=True)
         poll_thread.start()
-        architecture_stop = threading.Event()
-        architecture_thread = threading.Thread(target=architecture.watch, args=(architecture_stop,), daemon=True)
-        architecture_thread.start()
         try:
             yield
         finally:
             runtime.stopping.set()
             poll_stop.set()
-            architecture_stop.set()
             poll_thread.join()
-            architecture_thread.join()
             mobile.companion.stop()
             loop.close_all()
             planning.close_all()
@@ -192,30 +188,42 @@ TRANSLATE_CHARS = 40_000    # characters per request
 TRANSLATE_SECONDS = 60.0    # an overlay renders whole answers; the hook's 6s cut them (#19)
 
 
-def translating() -> bool:
+def translation_mode() -> str:
     try:
-        return bool(json.loads(SWITCH.read_text(encoding="utf-8")).get("translate", True))
+        saved = json.loads(SWITCH.read_text(encoding="utf-8"))
+        mode = saved.get("translation_mode")
+        if mode in ("off", "full", "partial"):
+            return mode
+        return "full" if saved.get("translate", True) else "off"
     except (OSError, ValueError, AttributeError):
-        return True
+        return "full"
+
+
+def translating() -> bool:
+    return translation_mode() != "off"
 
 
 class Switch(BaseModel):
-    translate: bool
+    translate: bool | None = None
+    mode: Literal["off", "full", "partial"] | None = None
 
 
 @app.get("/api/switch")
 def switch() -> dict:
-    return {"translate": translating(), "usage": translate.usage()}
+    return {"translate": translating(), "mode": translation_mode(), "usage": translate.usage()}
 
 
 @app.post("/api/switch")
 def flip(body: Switch) -> dict:
+    if body.mode is None and body.translate is None:
+        raise HTTPException(400, "번역 모드를 선택하세요")
+    mode = body.mode or ("full" if body.translate else "off")
     # The loop's settings share the file; they are kept.
     try:
         saved = json.loads(SWITCH.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         saved = {}
-    saved = {**(saved if isinstance(saved, dict) else {}), "translate": body.translate}
+    saved = {**(saved if isinstance(saved, dict) else {}), "translate": mode != "off", "translation_mode": mode}
     SWITCH.parent.mkdir(parents=True, exist_ok=True)
     temporary = SWITCH.with_suffix(".tmp")
     temporary.write_text(json.dumps(saved, ensure_ascii=False) + "\n", encoding="utf-8")

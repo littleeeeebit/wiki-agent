@@ -12,7 +12,7 @@ import { cn } from '@/lib/utils'
 /** The review tab: the loop of the selected task's spec — its rounds, why it
  *  stopped, and the buttons that act on it. Which spec and PR it is, the
  *  pane's header says. */
-type Props = { spec: Spec | null; onChanged: () => void; on: boolean; options: Options | null;
+type Props = { spec: Spec | null; onChanged: () => void; on: boolean; progressOn?: boolean; options: Options | null;
   settings: LoopSettings | null; onSettings: (s: LoopSettings) => Promise<void>; onPeek: (path: string, line: number) => void }
 
 export function Review(props: Props) {
@@ -47,7 +47,7 @@ export function Review(props: Props) {
   </section>
 }
 
-function ReviewBody({ spec, onChanged, on, onPeek }: Props) {
+function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
   const [working, setWorking] = useState('')
   const [fault, setFault] = useState('')
   const [note, setNote] = useState('')
@@ -150,7 +150,7 @@ function ReviewBody({ spec, onChanged, on, onPeek }: Props) {
 
       {turns.length > 0 && <section aria-label="리뷰 진행상황" className="mt-4 space-y-4 border-t border-border pt-3">
         <div className="font-heading text-[11px] font-semibold text-faint">독립 리뷰 진행상황</div>
-        {turns.map((turn) => <Reply key={turn.key} turn={turn} on={on} onPeek={onPeek} onAnswer={() => {}} />)}
+        {turns.map((turn) => <Reply key={turn.key} turn={turn} on={on} progressOn={progressOn} onPeek={onPeek} onAnswer={() => {}} />)}
       </section>}
 
       {/^PR #\d+$/.test(spec.state) && spec.fault && (

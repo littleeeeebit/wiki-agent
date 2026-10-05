@@ -12,7 +12,7 @@ type Props = {
   theme: 'dark' | 'light'
   options: Options | null
   loop: LoopSettings | null
-  onSwitch: (on: boolean) => void
+  onSwitch: (mode: api.TranslationMode) => void
   onTheme: (theme: 'dark' | 'light') => void
   onLoop: (s: LoopSettings) => Promise<void>
   onClose: () => void
@@ -82,9 +82,15 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
       <div className="space-y-5">
         <Part title="일반">
           <Row label="한국어 번역" note={usage ? `이번 달 ${usage.usd == null ? '?' : `$${usage.usd.toFixed(2)}`} / $${usage.limit.toFixed(0)}` : undefined}>
-            <input type="checkbox" role="switch" className="size-4 accent-primary" checked={sw?.translate ?? false}
-              disabled={!sw} onChange={(e) => onSwitch(e.target.checked)} />
+            <select aria-label="한국어 번역 모드" className={`${field} font-sans`}
+              value={sw?.mode ?? (sw?.translate ? 'full' : 'off')} disabled={!sw}
+              onChange={(e) => onSwitch(e.target.value as api.TranslationMode)}>
+              <option value="off">끄기</option>
+              <option value="full">전체 활성화</option>
+              <option value="partial">일부 활성화</option>
+            </select>
           </Row>
+          <p className="text-[12.5px] text-faint">일부 활성화는 에이전트·리뷰의 완료된 답변과 질문·선택지를 번역한다. 위키·회고·다음 작업 대화는 전체 한국어로 표시한다.</p>
           <Row label="작업 권한" note="에이전트는 전체 접근 권한으로 실행한다. 필요한 작업 방향만 질문한다">
             <span className="text-[12px]">전체 접근</span>
           </Row>
@@ -164,13 +170,7 @@ export function Settings({ sw, theme, options, loop, onSwitch, onTheme, onLoop, 
               onChange={(e) => setSeats(Number(e.target.value))} />
           </Row>
           <p className="text-faint">리뷰 모델과 추론 강도는 리뷰 탭에서 고른다.</p>
-          <Row label="자동 머지 · 정리" note="리뷰 허용과 최종 검사 통과 후 머지하고 브랜치·리뷰 아티팩트를 정리한다">
-            <input type="checkbox" role="switch" className="size-4 accent-primary" checked={loop.auto_merge ?? true}
-              disabled={working === 'loop'} onChange={(e) => {
-                const auto_merge = e.target.checked
-                void act('loop', () => onLoop({ ...loop, auto_merge }))
-              }} />
-          </Row>
+          <p className="text-faint">리뷰 허용 후 [머지]를 눌러야 진행한다. 위키·색인·앱 구조를 PR에 반영하고 필요한 재검토를 거친 뒤 머지·정리한다.</p>
           <Save edited={loopEdited} busy={working === 'loop'}
             onSave={() => act('loop', () => onLoop({ ...loop, rounds, concurrent: seats }))} />
           </>)}

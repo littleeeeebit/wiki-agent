@@ -1,4 +1,4 @@
-"""OMM reads are passive; CLI generation is explicit or follows one merged PR."""
+"""OMM reads are passive; generation is explicit or prepared on a PR branch."""
 
 import subprocess
 import sys
@@ -8,7 +8,7 @@ import pytest
 import yaml
 from fastapi.testclient import TestClient
 
-from main import app, architecture, channels, query, specs, work
+from main import app, architecture, channels, query
 from common import errorlog
 
 
@@ -205,52 +205,3 @@ def test_selected_repository_add_is_explicit_and_reads_are_passive(tmp_path, cli
     monkeypatch.setattr(query, "_project", "second")
     assert web.post("/api/architecture", headers=headers).status_code == 409
     assert web.get("/api/architecture", headers=headers).status_code == 409
-
-
-@pytest.mark.parametrize("blocked", ["none", "busy", "dirty", "task-branch", "unmerged"])
-def test_merge_refresh_runs_once_and_defers_unsafe_checkouts(tmp_path, monkeypatch, blocked):
-    root = tmp_path / "repo"
-    root.mkdir()
-    subprocess.run(["git", "init", "-q", "-b", "main", str(root)], check=True)
-    subprocess.run(["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@t", "commit",
-                    "-q", "--allow-empty", "-m", "base"], check=True)
-    (root / ".omm").mkdir()
-    records = tmp_path / "records/repo"
-    records.mkdir(parents=True)
-    spec = {"repo": "repo", "id": "task", "state": "머지됨", "cleanup_complete": True,
-            "merge": {"base": "main"}, "cell": {"model": "codex:fixture"}}
-    monkeypatch.setattr(specs, "SPECS", records.parent)
-    monkeypatch.setattr(channels, "repo_for", lambda _: root)
-    monkeypatch.setattr(specs, "listing", lambda _: [spec])
-    monkeypatch.setattr(specs, "update", lambda repo, sid, **fields: spec.update(fields))
-    architecture.after_merge(root, spec)
-    architecture.after_merge(root, spec)
-    assert spec["architecture_refresh"] == {"state": "pending"}
-    if blocked == "unmerged":
-        spec["state"] = "PR #7"
-    if blocked == "task-branch":
-        subprocess.run(["git", "-C", str(root), "switch", "-q", "-c", "another-task"], check=True)
-    if blocked == "dirty":
-        (root / "unpublished.txt").write_text("Preserve me", encoding="utf-8")
-    if blocked == "busy":
-        monkeypatch.setitem(work._busy, str(root), {"kind": "turn"})
-    stop = threading.Event()
-    native_wait = stop.wait
-    monkeypatch.setattr(stop, "wait", lambda timeout: native_wait(0.01))
-    calls = []
-
-    def scan(path, **kwargs):
-        calls.append((path, kwargs["model"]))
-
-    monkeypatch.setattr(architecture, "scan", scan)
-    thread = threading.Thread(target=architecture.watch, args=(stop,))
-    thread.start()
-    native_wait(0.1)
-    stop.set()
-    thread.join(5)
-    assert not thread.is_alive()
-    if blocked == "none":
-        assert calls == [(root, "codex:fixture")]
-        assert spec["architecture_refresh"] == {"state": "complete"}
-    else:
-        assert not calls and spec["architecture_refresh"]["state"] == "pending"

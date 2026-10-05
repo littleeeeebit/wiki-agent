@@ -200,6 +200,8 @@ def checkout_idle(repo: Path) -> None:
     for spec in listing(repo.name):
         if spec.get("workspace_mode") != "branch" or spec.get("worktree") != str(repo):
             continue
+        if spec["state"] == "머지됨" and not spec.get("cleanup_complete"):
+            raise HTTPException(409, "머지 후 로컬 기본 브랜치 동기화·정리를 마친 뒤 새 작업을 시작하세요")
         if re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+|머지 대기", spec["state"]):
             raise HTTPException(409, "이 저장소의 리뷰·머지를 마친 뒤 브랜치를 바꿔라")
         if spec.get("planning") and spec["planning"].get("phase") not in ("handoff", "stopped"):
@@ -769,7 +771,8 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     for round_ in spec.get("rounds") or []:
         round_["stale"] = True
         round_["stale_reason"] = "Specification revised"
-    spec.update(made, rev=spec["rev"] + 1, report=None, gate=None, validation=None, checks=[], fault=None)
+    spec.update(made, rev=spec["rev"] + 1, report=None, gate=None, validation=None, checks=[], fault=None,
+                merge_request=None, maintenance=None)
     if spec.get("worktree") and not re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+", spec["state"]):
         moved(spec, "작업 중", stopped=None)
     save(spec)
