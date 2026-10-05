@@ -372,7 +372,8 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
         asked.append(body)
         spec = specs.load("proj", made(selected, spec_block())[0]["id"])
         specs.save({**spec, "id": "plan-refactor", "state": "PR #1", "planning": {
-            "phase": "handoff", "artifact_root": "docs/plans/p", "spent": {"seconds": 40, "calls": 2, "tokens": 100},
+            "phase": "handoff", "artifact_root": "docs/plans/p", "request_id": body.request_id,
+            "spent": {"seconds": 40, "calls": 2, "tokens": 100},
             "outline": {"stages": [{"n": 1, "slug": "dedupe", "title": "Dedupe"},
                                    {"n": 2, "slug": "split", "title": "Split"}]}}})
         return {"id": "plan-refactor"}
@@ -425,3 +426,13 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
     assert [(s["n"], s["tier"]) for s in run["steps"]] == [(1, "L1"), (2, "L0"), (3, "L0")], "the stages that merged"
     assert run["spent"]["calls"] == 2 + 2 and run["spent"]["tokens"] == 10 + 15 + 100, "the planner once"
     assert run["spent"]["seconds"] >= 40, "the planner's time is the run's"
+
+    refactor.update("proj", rid, spent={"seconds": 600, "calls": 9, "tokens": 100_000})   # nothing left
+    w = refactor.Worker(selected, refactor.load("proj", rid))
+    with patch.object(planning, "start", side_effect=planned):
+        assert refactor.charted(w, refactor.load("proj", rid))["plan"] == "plan-refactor", "found, though spent"
+        spec = specs.load("proj", "plan-refactor")
+        specs.save({**spec, "planning": {**spec["planning"], "request_id": "refactor-elsewhere-plan"}})
+        with pytest.raises(refactor.Stop) as stop:
+            refactor.charted(w, refactor.load("proj", rid))
+    assert stop.value.reason == "budget" and len(asked) == 3, "a saved request makes no new planner once spent"

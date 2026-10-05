@@ -23,16 +23,17 @@ without migration fails validation; stages start only after plan merge.
 - Mode `full` measures the top 20 hotspots, then runs a read-only audit turn
   that answers in prose. The audit and `PLAN_RULES` become the planner's
   context. `planning.start` is called with `refactor: true` and the request
-  key `refactor-<run>-plan`. The planner's limits are what is left of the
-  run's. The request is saved on the run before it is sent, and a resume
-  sends that saved request, so the same key always carries the same input
-  and finds the same plan.
+  key `refactor-<run>-plan`. While no plan spec carries that key, the run's
+  allowance is checked and the request is built from what is left of it,
+  then saved on the run before it is sent. Once a spec carries the key, a
+  resume sends the saved request and finds that plan, however little is left.
 - `planning.tiered` checks a stage file's single `Tier: L0–L3` line and its
   single, non-empty `Files:` line of distinct repository-relative paths, and
   requires `## Migration` for L3. The validator's `problems` uses it for
   refactor plans, so its single repair turn can fix a stage missing them.
 - The run waits in phase `plan` until the plan spec is `머지됨` with its
-  cleanup done. It then lists the stage files in the plan folder at the merge
+  cleanup done. It then lists the stage files (`planning.NAME`, overview
+  excluded) in the plan folder at the merge
   commit, not the outline written before review, so a stage a revision added
   or dropped is followed. Each becomes a step. The planner's seconds, calls
   and tokens are charged to the run in the same write that leaves the phase,
