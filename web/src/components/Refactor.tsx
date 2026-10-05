@@ -18,7 +18,8 @@ type Run = {
 
 const MODE: Record<string, string> = { cleanup: '빠른 정리 · L0–L1', restructure: '모듈 재구성 · L0–L2', full: '전면 · L0–L3' }
 const STATE = { running: '실행 중', stopped: '멈춤', done: '끝남' }
-const STEP: Record<string, string> = { pending: '대기', adopted: '후보 채택', published: 'PR 리뷰 중', done: '리뷰 통과' }
+const STEP: Record<string, string> = { pending: '대기', adopted: '후보 채택', published: 'PR 리뷰 중',
+  awaiting: '승인 대기', done: '리뷰 통과' }
 const LIMIT: [keyof Limits, string][] = [['seconds', '초'], ['calls', '호출'], ['tokens', '토큰']]
 
 const request = () => `refactor-${crypto.randomUUID()}`
@@ -29,6 +30,7 @@ export function Refactor({ repo }: { repo: string }) {
   const [fault, setFault] = useState('')
   const [mode, setMode] = useState('cleanup')
   const [top, setTop] = useState(3)
+  const [files, setFiles] = useState('')   // the module a restructure audits, one path per line
   const [limits, setLimits] = useState<Limits | null>(null)
   const [rid, setRid] = useState(request)   // one key per start, so a double click is one run
   const [busy, setBusy] = useState(false)
@@ -71,7 +73,10 @@ export function Refactor({ repo }: { repo: string }) {
     }
   }
   const start = async () => {
-    if (limits && await act('/api/refactors', { request_id: rid, mode, top, limits })) setRid(request())
+    const chosen = files.split('\n').map((f) => f.trim()).filter(Boolean)
+    if (limits && await act('/api/refactors', { request_id: rid, mode, top, limits, files: mode === 'cleanup' ? [] : chosen })) {
+      setRid(request())
+    }
   }
 
   return <section aria-label="리펙터링" className="flex h-full min-h-0 flex-col overflow-y-auto">
@@ -91,19 +96,24 @@ export function Refactor({ repo }: { repo: string }) {
               {Object.keys(scan?.modes ?? { cleanup: null }).map((m) => <option key={m} value={m}>{MODE[m] ?? m}</option>)}
             </select>
           </label>
-          <label className="flex flex-col gap-1">대상 파일 수
+          {mode === 'cleanup' ? <label className="flex flex-col gap-1">대상 파일 수
             <input type="number" min={1} max={10} value={top} onChange={(e) => setTop(Number(e.target.value))}
               className="min-h-11 w-20 rounded-md border border-border bg-card px-2" />
-          </label>
+          </label> : <label className="flex min-w-0 flex-1 flex-col gap-1">모듈 파일 (한 줄에 하나)
+            <textarea rows={3} value={files} onChange={(e) => setFiles(e.target.value)} placeholder="src/orders/service.py"
+              className="min-h-11 rounded-md border border-border bg-card px-2 py-1 font-mono text-[11.5px]" />
+          </label>}
           {limits && LIMIT.map(([key, label]) => <label key={key} className="flex flex-col gap-1">{label} 한도
             <input type="number" min={1} value={limits[key]} onChange={(e) => setLimits({ ...limits, [key]: Number(e.target.value) })}
               className="min-h-11 w-28 rounded-md border border-border bg-card px-2" />
           </label>)}
-          <Btn tone="primary" className="min-h-11" disabled={busy || !limits || !scan?.rows.length} onClick={() => void start()}>
+          <Btn tone="primary" className="min-h-11" onClick={() => void start()}
+            disabled={busy || !limits || (mode === 'cleanup' ? !scan?.rows.length : !files.trim())}>
             {busy ? '여는 중…' : '시작'}
           </Btn>
         </div>
         <p className="text-[12.5px] text-muted-foreground">L0–L1 단계 PR 은 이 요청으로 리뷰까지 자동으로 넘어간다. 실패한 단계는 한 번 다시 시도하고, 그래도 안 되면 더 작게 나누라고 멈춘다.</p>
+        {mode !== 'cleanup' && <p className="text-[12.5px] text-muted-foreground">L2 이상 단계는 열린 작업이 없을 때만 시작하고, 도는 동안 이 저장소의 새 작업을 막는다. 리뷰는 직접 시작하고, 끝나면 [승인] 해야 다음 단계로 간다.</p>}
       </div>
 
       <div className="space-y-2">
@@ -115,7 +125,10 @@ export function Refactor({ repo }: { repo: string }) {
             <span className={cn(run.state === 'stopped' ? 'text-destructive' : 'text-muted-foreground')}>{STATE[run.state]} · {run.phase}</span>
             <span className="font-mono text-[10.5px] text-muted-foreground">{new Date(run.created * 1000).toLocaleString('ko-KR')}</span>
             <span className="ml-auto flex gap-2">
-              {run.state === 'running' && <Btn tone="danger" disabled={busy} onClick={() => void act(`/api/refactors/${run.id}/cancel`)}>멈추기</Btn>}
+              {(run.state === 'running' || (run.state === 'stopped' && run.steps.some((s) => ['L2', 'L3'].includes(s.tier) && s.spec && s.state !== 'done'))) && (
+                <Btn tone="danger" disabled={busy} onClick={() => void act(`/api/refactors/${run.id}/cancel`)}>{run.state === 'running' ? '멈추기' : '저장소 놓기'}</Btn>)}
+              {run.steps.some((s) => s.state === 'awaiting') && (
+                <Btn tone="primary" disabled={busy} onClick={() => void act(`/api/refactors/${run.id}/approve`)}>승인</Btn>)}
               {run.state === 'stopped' && <Btn disabled={busy} onClick={() => void act(`/api/refactors/${run.id}/resume`)}>재개</Btn>}
             </span>
           </div>

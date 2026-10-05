@@ -211,9 +211,14 @@ def owner(path: Path) -> dict | None:
         and branch_of(spec) == branch else None
 
 
-def checkout_idle(repo: Path) -> None:
-    """No branch switch while a loop or a planner still owns this checkout."""
+def checkout_idle(repo: Path, run: str = "") -> None:
+    """No branch switch while a loop or a planner still owns this checkout,
+    and no new task while an L2–L3 refactor step holds the repository (`run`
+    names the refactor run that is asking, which its own hold lets through)."""
     for spec in listing(repo.name):
+        held = spec.get("refactor") or {}
+        if held.get("block") and held.get("run") != run and spec["state"] != "머지됨":
+            raise HTTPException(409, f"리펙터링 단계 `{spec['id']}` 가 이 저장소를 잡고 있다 — 끝나거나 취소되면 풀린다")
         if spec.get("workspace_mode") != "branch" or spec.get("worktree") != str(repo):
             continue
         if spec["state"] == "머지됨" and not spec.get("cleanup_complete"):

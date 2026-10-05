@@ -18,13 +18,15 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 import refactor_profile
 from agent.chat_session import Event
 from main import loop, query, refactor, specs, work
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
-from test_specs import Remote, repo  # noqa: F401 — `repo` is a fixture
+from test_specs import Remote, made, repo, spec_block  # noqa: F401 — `repo` is a fixture
 
+KICK = loop.kick   # the real one: the `repo` fixture stands in for it
 BIG = "".join(f"value_{i} = {i}\n" for i in range(801))
 TEST = "import big\nassert big.value_800 == 800\n"
 
@@ -39,6 +41,10 @@ class Host:
         Host.made.append(self)
 
     def say(self, text, halt=None):
+        if not self.rest.get("write"):   # the read-only audit: one L2 step on the module
+            plan = '{"steps": [{"tier": "L2", "goal": "Split big.py by value range", "files": ["big.py"]}]}'
+            yield Event("done", f"Plan.\n\n```refactor-plan\n{plan}\n```", {"tokens": {"in": 7, "out": 3}}, self.id)
+            return
         (self.path / "test_big.py").write_text(TEST, encoding="utf-8")
         block = '{"tests": ["test_big.py"], "test_argv": ["%s", "-B", "test_big.py"]}' % sys.executable.replace("\\", "/")
         yield Event("done", f"Pinned.\n\n```refactor-tests\n{block}\n```", {"tokens": {"in": 10, "out": 5}}, self.id)
@@ -67,13 +73,17 @@ def selected(repo, tmp_path, monkeypatch):
     return repo
 
 
-def finished(client, rid: str) -> dict:
-    for _ in range(300):
+def until(client, rid: str, ready) -> dict:
+    for _ in range(900):
         run = next(r for r in client.get("/api/refactors").json()["runs"] if r["id"] == rid)
-        if run["state"] != "running":
+        if ready(run):
             return run
         time.sleep(0.1)
-    raise AssertionError("the run did not finish")
+    raise AssertionError(f"the run never got there: {run}")
+
+
+def finished(client, rid: str) -> dict:
+    return until(client, rid, lambda run: run["state"] != "running")
 
 
 def test_cleanup_freezes_then_stacks_a_reviewed_step(selected):
@@ -81,8 +91,8 @@ def test_cleanup_freezes_then_stacks_a_reviewed_step(selected):
     remote = Remote()
     kicked = []
 
-    def review(name, sid):   # review allows each PR at once
-        kicked.append(sid)
+    def review(name, sid, automatic=False):   # review allows each PR at once
+        kicked.append((sid, "automatic") if automatic else sid)
         specs.update(name, sid, state="머지 가능")
 
     def adopted(repo, scope, name, config):
@@ -90,20 +100,59 @@ def test_cleanup_freezes_then_stacks_a_reviewed_step(selected):
 
     body = {"request_id": "refactor-req-0001", "mode": "cleanup", "top": 1,
             "role": {"model": "m", "effort": "high"}, "limits": {"seconds": 600, "calls": 5, "tokens": 100_000}}
-    with patch.object(specs, "sh", side_effect=remote), patch.object(loop, "kick", side_effect=review), \
+    dropped = []
+
+    def watching(args, cwd, timeout=60):   # what the run says when the runner's handoff branch goes
+        if args[:3] == ["git", "branch", "-D"]:
+            dropped.append(refactor.listing("proj")[0]["steps"][0]["state"])
+        return remote(args, cwd, timeout)
+
+    with patch.object(specs, "sh", side_effect=watching), patch.object(loop, "kick", side_effect=review), \
             patch.object(refactor_profile, "drive", side_effect=adopted):
         rid = api.post("/api/refactors", json=body).json()["id"]
         run = finished(api, rid)
         again = api.post("/api/refactors", json=body).json()
 
+        last = run["steps"][0]   # published, then stopped before its checkpoint and its review request
+        specs.update("proj", last["spec"], state=f"PR #{last['pr']}", rounds=[])
+        refactor.update("proj", rid, phase="steps", state="stopped", steps=[{**last, "state": "adopted"}])
+        kicks = kicked[:]
+        kicked.clear()
+        prs = len([c for c in remote.calls if c[:3] == ["gh", "pr", "create"]])
+        api.post(f"/api/refactors/{rid}/resume")
+        resumed = finished(api, rid)
+        assert resumed["state"] == "done" and kicked == [(last["spec"], "automatic")], "resume asks for the review"
+
+        tested_at = _git(selected, "rev-parse", run["tests"]["spec"])
+        _git(selected, "branch", "-D", run["tests"]["spec"])   # the test PR merged and pruned while the run waited
+        refactor.update("proj", rid, phase="tests", state="stopped")
+        api.post(f"/api/refactors/{rid}/resume")
+        assert finished(api, rid)["state"] == "done"
+    assert subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{run['tests']['spec']}"],
+                          cwd=selected, capture_output=True).returncode, "resume never remakes the published test branch"
+    assert len([c for c in remote.calls if c[:3] == ["gh", "pr", "create"]]) == prs, "and never publishes again"
+    assert dropped == ["adopted"], "the handoff branch outlives the pending checkpoint"
+
+    sid, n, save = last["spec"], last["pr"], specs.save
+    specs.update("proj", sid, state=f"PR #{n}", rounds=[], stopped=None)
+
+    def stopping(spec):   # a person's stop landing between recovery's move and its kick
+        save(spec)
+        if spec["state"] == "리뷰 대기":
+            save({**spec, "state": "멈춤", "stopped": {"reason": "user"}})
+
+    with patch.object(specs, "save", side_effect=stopping), patch.object(loop, "kick", KICK):
+        assert refactor.recovered(selected, sid, "L1") == n
+    assert specs.load("proj", sid)["stopped"] == {"reason": "user"}, "the person's stop wins over recovery's kick"
+
     assert run["state"] == "done", run.get("stopped")
     assert again["id"] == rid, "the same request is the same run"
     assert [h["path"] for h in run["hotspots"]] == ["big.py"]
     tests, step = run["tests"]["spec"], run["steps"][0]["spec"]
-    assert kicked == [tests, step], "both tiers are covered by the request: review starts itself"
+    assert kicks == [tests, step], "both tiers are covered by the request: review starts itself"
     creates = [c for c in remote.calls if c[:3] == ["gh", "pr", "create"]]
     assert [(c[c.index("--head") + 1], c[c.index("--base") + 1]) for c in creates] == [(tests, "main"), (step, tests)]
-    assert _git(selected, "show", "--name-only", "--format=", tests) == "test_big.py", "the test PR holds tests only"
+    assert _git(selected, "show", "--name-only", "--format=", tested_at) == "test_big.py", "the test PR holds tests only"
     frozen = (refactor_profile.STORE / "project" / step / "frozen.json").read_text(encoding="utf-8")
     assert '"tests": [\n    "test_big.py"' in frozen
     assert run["spent"]["calls"] == 1 and run["spent"]["tokens"] == 15
@@ -183,3 +232,117 @@ def test_the_checkout_test_names_one_request_and_the_test_command_are_all_bounde
         [t.start() for t in threads]
         [t.join() for t in threads]
     assert len(set(ids)) == 1 and launch.call_count == 1, "one request is one run"
+
+
+def test_restructure_holds_the_repository_until_the_person_approves(selected):
+    api = client()
+    adopted = lambda repo, scope, name, config: {"state": "adopted", "branch": "none",  # noqa: E731
+                                                  "commit": _git(repo, "rev-parse", "HEAD")}
+    body = {"request_id": "refactor-req-0003", "mode": "restructure", "files": ["big.py"],
+            "role": {"model": "m", "effort": "high"}, "limits": {"seconds": 600, "calls": 9, "tokens": 100_000}}
+    other = specs.unique(selected, "other-task")
+    specs.save({**specs.load("proj", made(selected, spec_block())[0]["id"]), "id": other, "state": "작업 중"})
+    review = lambda name, sid: specs.update(name, sid, state="머지 가능")  # noqa: E731
+    with patch.object(specs, "sh", side_effect=Remote()), patch.object(loop, "kick", side_effect=review), \
+            patch.object(refactor_profile, "drive", side_effect=adopted):
+        refused = api.post("/api/refactors", json=body)
+        assert refused.status_code == 409 and other in refused.json()["detail"], "an open task refuses L2 work"
+        specs.update("proj", other, state="머지됨")
+
+        rid = api.post("/api/refactors", json=body).json()["id"]
+        run = until(api, rid, lambda r: r["steps"] and r["steps"][0]["state"] == "published" or r["state"] != "running")
+        step = run["steps"][0]
+        assert (step["tier"], step["files"]) == ("L2", ["big.py"]), run.get("stopped")
+        with pytest.raises(HTTPException, match=step["spec"]):
+            specs.checkout_idle(selected)   # a new task is refused while the step runs
+        specs.update("proj", step["spec"], state="머지 가능")   # the person ran the review; no kick for L2
+        until(api, rid, lambda r: r["steps"][0]["state"] == "awaiting")
+        audit = next(h for h in Host.made if not h.rest.get("write"))
+        assert audit.rest["tools"] == "Read,Glob,Grep", "the audit gets no shell"
+
+        branch = _git(selected, "branch", "--show-current")
+        cleanup = api.post("/api/refactors", json={**body, "request_id": "refactor-req-0004", "mode": "cleanup",
+                                                   "files": []}).json()["id"]
+        assert finished(api, cleanup)["stopped"]["reason"] == "busy"
+        assert _git(selected, "branch", "--show-current") == branch, "another run never forks a blocked checkout"
+
+        refactor.recover()   # what a restart leaves: the hold, read off the spec
+        with pytest.raises(HTTPException):
+            specs.checkout_idle(selected)
+        assert api.post(f"/api/refactors/{rid}/cancel").status_code == 200
+        until(api, rid, lambda r: r["state"] == "stopped")
+        specs.checkout_idle(selected)   # cancelling releases it
+
+        head = _git(selected, "rev-parse", step["spec"])
+        _git(selected, "switch", "-q", "--detach")
+        _git(selected, "branch", "-D", step["spec"])   # pruned while the run was stopped
+        steps = refactor.load("proj", rid)["steps"]   # published, then stopped before its checkpoint
+        refactor.update("proj", rid, steps=[{**steps[0], "state": "adopted"}, *steps[1:]])
+        api.post(f"/api/refactors/{rid}/resume")
+        until(api, rid, lambda r: specs.load("proj", step["spec"])["refactor"].get("block"))
+        with pytest.raises(HTTPException):
+            specs.checkout_idle(selected)   # resuming takes it again
+        assert until(api, rid, lambda r: r["steps"][0]["state"] == "awaiting")["steps"][0]["pr"] == step["pr"]
+        assert subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{step['spec']}"],
+                              cwd=selected, capture_output=True).returncode, "resume never remakes a published branch"
+        _git(selected, "branch", step["spec"], head)
+        specs.update("proj", step["spec"], state="작업 중")   # a revision sends the step back to work
+        assert api.post(f"/api/refactors/{rid}/approve").status_code == 409, "approval needs the review as it stands"
+        specs.update("proj", step["spec"], state="머지 가능", rounds=[{"verdict": "allow", "head": "0" * 40}])
+        assert api.post(f"/api/refactors/{rid}/approve").status_code == 409, "the review allowed another head"
+        specs.update("proj", step["spec"], rounds=[{"verdict": "allow", "head": head}])
+        assert api.post(f"/api/refactors/{rid}/approve").status_code == 200
+        run = finished(api, rid)
+    assert run["state"] == "done", run.get("stopped")
+    assert run["spent"]["tokens"] == 25, "the audit and the test turn are both charged"
+    specs.checkout_idle(selected)
+    pruned = {"id": "pruned-by-merge", "rev": 2, "state": "머지됨", "pr": {"number": 7},
+              "rounds": [{"verdict": "allow", "head": head}]}
+    real = specs.sh
+
+    def delivered(oid):   # what GitHub says the merged PR's head was
+        view = json.dumps({"state": "MERGED", "headRefOid": oid})
+        return lambda args, cwd, timeout=60: (subprocess.CompletedProcess(args, 0, view, "") if args[0] == "gh"
+                                              else real(args, cwd, timeout))
+
+    with patch.object(specs, "sh", delivered(head)):
+        assert refactor.mark(selected, pruned) == {"rev": 2, "head": head}, "merge cleanup pruned the reviewed head"
+        assert refactor.mark(selected, {**pruned, "state": "머지 가능"}) is None, "an unmerged step needs its branch"
+    with patch.object(specs, "sh", delivered("b" * 40)):
+        assert refactor.mark(selected, pruned) is None, "GitHub merged a head the review never allowed"
+
+    spec = specs.load("proj", step["spec"])   # a hold a restart kept, with no worker left to release it
+    specs.save({**spec, "refactor": {**spec["refactor"], "block": True}})
+    with pytest.raises(HTTPException):
+        specs.checkout_idle(selected)
+    release, resumed = refactor.released, []
+    racer = threading.Thread(target=refactor.launch, args=(selected, refactor.load("proj", rid)))
+
+    def racing(repo, run_id):   # a resume landing between cancel's lookup and its release
+        racer.start()
+        racer.join(1)
+        assert racer.is_alive(), "a resume waits until the workerless cancel has released"
+        release(repo, run_id)
+
+    with patch.object(refactor, "released", side_effect=racing), patch.object(refactor, "drive", resumed.append):
+        assert api.post(f"/api/refactors/{rid}/cancel").status_code == 200
+        racer.join()
+    assert resumed, "the resume starts once the release is done"
+    refactor._workers.pop(("proj", rid))
+    specs.checkout_idle(selected)   # cancel releases it without a worker
+
+
+def test_a_read_only_audit_that_writes_stops_the_run(selected):
+    api = client()
+    say = Host.say
+
+    def writes(self, text, halt=None):
+        if not self.rest.get("write"):
+            (self.path / "note.txt").write_text("x", encoding="utf-8")
+        yield from say(self, text, halt)
+
+    body = {"request_id": "refactor-req-0005", "mode": "restructure", "files": ["big.py"],
+            "limits": {"seconds": 600, "calls": 9, "tokens": 100_000}}
+    with patch.object(specs, "sh", side_effect=Remote()), patch.object(Host, "say", writes):
+        run = finished(api, api.post("/api/refactors", json=body).json()["id"])
+    assert run["stopped"]["reason"] == "read_only_wrote", run["stopped"]
