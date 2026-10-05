@@ -62,6 +62,7 @@ TESTS_PROMPT = (
 router = APIRouter()
 _files = threading.RLock()   # reads too: on Windows a read racing `atomic`'s replace fails
 _workers: dict[tuple[str, str], "Worker"] = {}
+_launching = threading.Lock()   # a workerless cancel's release never interleaves with a resume
 
 
 class Stop(Exception):
@@ -355,10 +356,14 @@ def reviewed(w: Worker, sid: str) -> None:
     waited(w, lambda: live(w, sid)["state"] in REVIEWED)
 
 
-def mark(repo: Path, spec: dict) -> dict:
-    """What an approval is given for: the spec's revision and its branch head."""
+def mark(repo: Path, spec: dict) -> dict | None:
+    """What an approval is given for: the spec's revision and its branch head,
+    only while the counted review round allowed exactly that head."""
 
+    allowed = specs.approved(spec)
     head = specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{spec['id']}"], repo).stdout.strip()
+    if spec["state"] not in REVIEWED or not allowed or not head or allowed["head"] != head:
+        return None
     return {"rev": spec["rev"], "head": head}
 
 
@@ -368,7 +373,7 @@ def approved(w: Worker, sid: str) -> bool:
 
     spec = live(w, sid)
     given = (load(w.repo.name, w.rid).get("approved") or {}).get(sid)
-    return spec["state"] in REVIEWED and given == mark(w.repo, spec)
+    return given is not None and given == mark(w.repo, spec)
 
 
 def body(goal: str, lines: list[str]) -> str:
@@ -565,7 +570,7 @@ def drive(w: Worker) -> None:
 
 
 def launch(repo: Path, run: dict) -> None:
-    with _lock:
+    with _launching, _lock:
         if runtime.stopping.is_set():
             raise HTTPException(503, "서버가 종료 중이다")
         if (repo.name, run["id"]) in _workers:
@@ -689,12 +694,13 @@ def start(body: Start) -> dict:
 def cancel(rid: str) -> dict:
     repo = current_repo()
     mine(repo, rid)
-    with _lock:
-        w = _workers.get((repo.name, rid))
-    if w is not None:
-        w.halt.set()
-    else:   # stopped, e.g. by a restart that kept its block: nothing else would release it
-        released(repo, rid)
+    with _launching:
+        with _lock:
+            w = _workers.get((repo.name, rid))
+        if w is not None:
+            w.halt.set()
+        else:   # stopped, e.g. by a restart that kept its block: nothing else would release it
+            released(repo, rid)
     return load(repo.name, rid)
 
 
@@ -711,9 +717,9 @@ def approve(rid: str) -> dict:
     marks = {}
     for sid in waiting:
         spec = specs.load(repo.name, sid)
-        if spec is None or spec["state"] not in REVIEWED:
+        if spec is None or (given := mark(repo, spec)) is None:
             raise HTTPException(409, f"`{sid}` 는 리뷰를 다시 통과해야 승인할 수 있다")
-        marks[sid] = mark(repo, spec)
+        marks[sid] = given
     return update(repo.name, rid, approved={**(run.get("approved") or {}), **marks})
 
 

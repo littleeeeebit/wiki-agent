@@ -37,13 +37,16 @@ after cancel; restart keeps the block; the approval gate holds the next step.
   the same check early.
 - A stop or cancel releases the hold. A shutdown and `recover` keep it, and
   재개 takes it again. Cancel on a run with no worker, as after a restart,
-  releases its holds directly; the tab offers it as 저장소 놓기.
+  releases its holds directly; the tab offers it as 저장소 놓기. That lookup
+  and release hold `_launching`, which `launch` takes too, so a resume never
+  lands between them and loses its hold.
 - L2–L3 PRs are not sent to Review Loop. The person starts the review. Once it
   allows the PR, the step waits in `awaiting` until
   `POST /api/refactors/{id}/approve`. Approval is refused unless the step's
-  spec is in a reviewed state, and it is bound to that spec's revision and
-  branch head: a revision or a new commit afterwards needs review and approval
-  again before the next step starts.
+  spec is in a reviewed state and its branch head is the head the counted
+  review round allowed (`specs.approved`). It is bound to that revision and
+  head: a revision or a new commit afterwards needs review and approval again
+  before the next step starts.
 
 Tests: `test_restructure_holds_the_repository_until_the_person_approves` in
 `tool/test_refactor.py`.

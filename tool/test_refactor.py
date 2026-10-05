@@ -237,9 +237,12 @@ def test_restructure_holds_the_repository_until_the_person_approves(selected):
         until(api, rid, lambda r: specs.load("proj", step["spec"])["refactor"].get("block"))
         with pytest.raises(HTTPException):
             specs.checkout_idle(selected)   # resuming takes it again
+        head = _git(selected, "rev-parse", step["spec"])
         specs.update("proj", step["spec"], state="작업 중")   # a revision sends the step back to work
         assert api.post(f"/api/refactors/{rid}/approve").status_code == 409, "approval needs the review as it stands"
-        specs.update("proj", step["spec"], state="머지 가능")
+        specs.update("proj", step["spec"], state="머지 가능", rounds=[{"verdict": "allow", "head": "0" * 40}])
+        assert api.post(f"/api/refactors/{rid}/approve").status_code == 409, "the review allowed another head"
+        specs.update("proj", step["spec"], rounds=[{"verdict": "allow", "head": head}])
         assert api.post(f"/api/refactors/{rid}/approve").status_code == 200
         run = finished(api, rid)
     assert run["state"] == "done", run.get("stopped")
@@ -250,7 +253,20 @@ def test_restructure_holds_the_repository_until_the_person_approves(selected):
     specs.save({**spec, "refactor": {**spec["refactor"], "block": True}})
     with pytest.raises(HTTPException):
         specs.checkout_idle(selected)
-    assert api.post(f"/api/refactors/{rid}/cancel").status_code == 200
+    release, resumed = refactor.released, []
+    racer = threading.Thread(target=refactor.launch, args=(selected, refactor.load("proj", rid)))
+
+    def racing(repo, run_id):   # a resume landing between cancel's lookup and its release
+        racer.start()
+        racer.join(1)
+        assert racer.is_alive(), "a resume waits until the workerless cancel has released"
+        release(repo, run_id)
+
+    with patch.object(refactor, "released", side_effect=racing), patch.object(refactor, "drive", resumed.append):
+        assert api.post(f"/api/refactors/{rid}/cancel").status_code == 200
+        racer.join()
+    assert resumed, "the resume starts once the release is done"
+    refactor._workers.pop(("proj", rid))
     specs.checkout_idle(selected)   # cancel releases it without a worker
 
 
