@@ -123,6 +123,33 @@ def test_a_low_tier_step_owns_its_files_and_the_codex_proposer_can_write(tmp_pat
     assert cmd[cmd.index("--sandbox") + 1] == "danger-full-access" and "shell_tool" not in cmd
 
 
+def test_a_command_is_cut_whole_and_preparing_a_step_is_bounded(tmp_path):
+    import threading
+    import time
+
+    mark = tmp_path / "orphan-lived"
+    child = f"import time, pathlib; time.sleep(2); pathlib.Path({str(mark)!r}).write_text('x')"
+    parent = f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child!r}]); print('parent done')"
+    began = time.monotonic()
+    done = refactor_profile.sh([sys.executable, "-c", parent], tmp_path, seconds=30)
+    assert done.returncode == 0 and "parent done" in done.stdout and time.monotonic() - began < 2, \
+        "a child holding the output does not hold the wait"
+    time.sleep(3)
+    assert not mark.exists(), "the child that outlived its parent died with the call"
+
+    halt, sleep = threading.Event(), [sys.executable, "-c", "import time; time.sleep(60)"]
+    threading.Timer(0.5, halt.set).start()
+    began = time.monotonic()
+    assert refactor_profile.sh(sleep, tmp_path, halt=halt).returncode == refactor_profile.CUT
+    assert refactor_profile.sh(sleep, tmp_path, seconds=0.5).returncode == refactor_profile.CUT
+    assert time.monotonic() - began < 10
+
+    repo = _repo(tmp_path / "repo")
+    with pytest.raises(improvement.Refused, match="outran"):
+        refactor_profile.prepare(repo, "project", "slow", {**STEP, "test_argv": sleep}, {},
+                                 {**LIMITS, "seconds": 0.5}, store=tmp_path / "frozen")
+
+
 def test_a_step_is_frozen_only_when_its_tests_pass_today(tmp_path):
     repo = _repo(tmp_path / "repo")
     (repo / "src/check_calc.py").write_text("assert False\n", encoding="utf-8")

@@ -16,9 +16,14 @@ The tasks the evaluator runs are this file's own commands:
 from __future__ import annotations
 
 import json
+import os
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
+import threading
+import time
 from pathlib import Path, PurePosixPath
 
 HERE = Path(__file__).resolve().parent
@@ -64,18 +69,93 @@ def debt_of(root: Path, scope: list[str]) -> int:
 
 # -- Freezing a step -------------------------------------------------------------
 
-def sh(argv: list[str], cwd: Path, shell: bool = False) -> subprocess.CompletedProcess:
+CUT = -9   # the return code of a command cut by its time or a halt
+
+if os.name == "nt":
+    import ctypes
+    from ctypes import wintypes
+
+    class _Limits(ctypes.Structure):   # JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+        _fields_ = [("times", ctypes.c_int64 * 2), ("flags", wintypes.DWORD), ("sets", ctypes.c_size_t * 2),
+                    ("active", wintypes.DWORD), ("affinity", ctypes.c_size_t), ("priority", wintypes.DWORD),
+                    ("scheduling", wintypes.DWORD), ("io", ctypes.c_uint64 * 6), ("memory", ctypes.c_size_t * 4)]
+
+    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    _k32.CreateJobObjectW.restype = wintypes.HANDLE
+    _k32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
+    _k32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
+    _k32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+    _k32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
+    _k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+
+
+def _contained(proc: subprocess.Popen):
+    """A Windows job holding `proc` and all it starts; closing it, or this
+    process dying, kills them all. `taskkill /T` cannot find a descendant
+    whose parent already exited; the job can. None elsewhere or on failure.
+    ponytail: a grandchild spawned before the assignment escapes; starting
+    suspended needs the thread handle `Popen` does not keep."""
+
+    if os.name != "nt":
+        return None
+    job = _k32.CreateJobObjectW(None, None)
+    limits = _Limits(flags=0x2000)   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    if job and _k32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)) \
+            and _k32.AssignProcessToJobObject(job, int(proc._handle)):
+        return job
+    if job:
+        _k32.CloseHandle(job)
+    return None
+
+
+def _ended(proc: subprocess.Popen, job) -> None:
+    """Kill `proc`'s whole tree, living or orphaned, and reap `proc`."""
+
+    if job:
+        _k32.TerminateJobObject(job, 1)
+        _k32.CloseHandle(job)
+    elif os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, **background_options())
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)   # its own session: the group outlives the parent
+        except (ProcessLookupError, PermissionError):
+            pass
+    proc.wait()
+
+
+def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float = 3600.0,
+       halt: threading.Event | None = None) -> subprocess.CompletedProcess:
+    """`argv` in `cwd` with its output combined; cut with return code `CUT` at
+    `seconds` or on `halt`. Output goes to a file, so a descendant holding it
+    open cannot hold the wait, and the whole tree is killed when this returns."""
+
     if not shell:
         # `npm` is `npm.cmd` on Windows, which a shell-less spawn does not find by itself.
         argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]
-    return subprocess.run(argv if not shell else argv[0], cwd=cwd, shell=shell, capture_output=True, text=True,
-                          encoding="utf-8", errors="replace", **background_options())
+    with tempfile.TemporaryFile() as out:
+        proc = subprocess.Popen(argv[0] if shell else argv, cwd=cwd, shell=shell, stdin=subprocess.DEVNULL,
+                                stdout=out, stderr=subprocess.STDOUT, start_new_session=os.name != "nt",
+                                **background_options())
+        job, deadline, code = _contained(proc), time.monotonic() + seconds, CUT
+        try:
+            while not (halt and halt.is_set()) and time.monotonic() < deadline:
+                try:
+                    code = proc.wait(timeout=0.5)
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+        finally:
+            _ended(proc, job)
+        out.seek(0)
+        return subprocess.CompletedProcess(argv, code, out.read().decode("utf-8", "replace"), "")
 
 
 def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: dict,
-            store: Path = STORE) -> Path:
+            store: Path = STORE, halt: threading.Event | None = None) -> Path:
     """The experiment config for `step` = `{goal, tier, files, tests, test_argv}`;
-    `test_argv` runs the characterization tests from a checkout's root."""
+    `test_argv` runs the characterization tests from a checkout's root, within
+    `limits["seconds"]` and until `halt`. The runner gets what that run left."""
 
     repo = repo.resolve()
     if step.get("tier") not in CANDIDATES or not step.get("files") or not step.get("tests") \
@@ -86,7 +166,11 @@ def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: d
     for rel in step["tests"]:
         if sh(["git", "ls-files", "--error-unmatch", "--", rel], repo).returncode:
             raise improvement.Refused(f"Characterization test {rel} is not committed; candidates would not see it")
-    done = sh(step["test_argv"], repo)
+    started = time.monotonic()
+    done = sh(step["test_argv"], repo, seconds=limits["seconds"], halt=halt)
+    limits = {**limits, "seconds": limits["seconds"] - (time.monotonic() - started)}
+    if done.returncode == CUT or limits["seconds"] <= 0:
+        raise improvement.Refused("The characterization tests outran the run's time or were cancelled")
     if done.returncode:
         raise improvement.Refused("The characterization tests fail on today's code; nothing to freeze\n"
                                   + (done.stdout + done.stderr)[-TAIL:])
