@@ -125,7 +125,8 @@ export function Refactor({ repo }: { repo: string }) {
             <span className={cn(run.state === 'stopped' ? 'text-destructive' : 'text-muted-foreground')}>{STATE[run.state]} · {run.phase}</span>
             <span className="font-mono text-[10.5px] text-muted-foreground">{new Date(run.created * 1000).toLocaleString('ko-KR')}</span>
             <span className="ml-auto flex gap-2">
-              {run.state === 'running' && <Btn tone="danger" disabled={busy} onClick={() => void act(`/api/refactors/${run.id}/cancel`)}>멈추기</Btn>}
+              {(run.state === 'running' || (run.state === 'stopped' && run.steps.some((s) => ['L2', 'L3'].includes(s.tier) && s.spec && s.state !== 'done'))) && (
+                <Btn tone="danger" disabled={busy} onClick={() => void act(`/api/refactors/${run.id}/cancel`)}>{run.state === 'running' ? '멈추기' : '저장소 놓기'}</Btn>)}
               {run.steps.some((s) => s.state === 'awaiting') && (
                 <Btn tone="primary" disabled={busy} onClick={() => void act(`/api/refactors/${run.id}/approve`)}>승인</Btn>)}
               {run.state === 'stopped' && <Btn disabled={busy} onClick={() => void act(`/api/refactors/${run.id}/resume`)}>재개</Btn>}

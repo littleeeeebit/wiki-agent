@@ -179,13 +179,19 @@ def git(repo: Path, *args: str) -> str:
     return done.stdout.strip()
 
 
-def switched(w: Worker, sid: str, start: str) -> None:
-    """The checkout on `sid`, made from `start` the first time."""
+def idle(w: Worker) -> None:
+    """Before any fork or switch: no loop, planner or other run's L2–L3 block owns the checkout."""
 
     try:
         specs.checkout_idle(w.repo, run=w.rid)
     except HTTPException as exc:
         raise Stop("busy", exc.detail) from exc
+
+
+def switched(w: Worker, sid: str, start: str) -> None:
+    """The checkout on `sid`, made from `start` the first time."""
+
+    idle(w)
     if git(w.repo, "branch", "--show-current") == sid:
         return
     if git(w.repo, "status", "--porcelain"):
@@ -207,15 +213,18 @@ def tested(w: Worker, argv: list[str]) -> subprocess.CompletedProcess:
 def turn(w: Worker, run: dict, text: str, system: str = TESTS_PROMPT, write: bool = True) -> str:
     """One native turn in the checkout the caller owns, shown in the agent
     pane like any work turn; its tokens are charged, and unknown usage stops
-    the run."""
+    the run. A read-only turn gets read tools only — no shell — and must leave
+    HEAD and the working tree as it found them."""
 
     try:
         w.budget.call()
     except (Exhausted, Cancelled) as exc:
         raise Stop("budget" if isinstance(exc, Exhausted) else "cancelled", str(exc)) from exc
     role = run["role"]
+    state = lambda: (git(w.repo, "rev-parse", "HEAD"), git(w.repo, "status", "--porcelain"))  # noqa: E731
+    before = None if write else state()
     chat = ChatSession(w.repo, write=write, bypass=write, system=system, model=role["model"] or None,
-                       effort=role["effort"] or None)
+                       effort=role["effort"] or None, **({} if write else {"tools": "Read,Glob,Grep"}))
     active = work.Run(chat)
     with _lock:
         work._runs[str(w.repo)] = active
@@ -247,6 +256,8 @@ def turn(w: Worker, run: dict, text: str, system: str = TESTS_PROMPT, write: boo
     w.budget.charge({"input_tokens": tokens["in"], "output_tokens": tokens["out"]})
     if failed or active.halt.is_set():
         raise Stop("cancelled" if w.halt.is_set() else "host", failed or "턴이 끊겼다")
+    if before is not None and state() != before:
+        raise Stop("read_only_wrote", "읽기 전용 턴이 저장소를 바꿨다 — 그 상태 위에서는 이어가지 않는다")
     return final
 
 
@@ -329,18 +340,35 @@ def waited(w: Worker, ready) -> None:
         w.budget.aside(time.monotonic() - started)
 
 
+def live(w: Worker, sid: str) -> dict:
+    spec = specs.load(w.repo.name, sid)
+    if spec is None:
+        raise Stop("spec_gone", f"`{sid}` 명세가 없어졌다")
+    if spec["state"] == "멈춤":
+        raise Stop("review_stopped", (spec.get("stopped") or {}).get("reason") or "리뷰가 멈췄다")
+    return spec
+
+
 def reviewed(w: Worker, sid: str) -> None:
     """Wait until review allows `sid`."""
 
-    def ready() -> bool:
-        spec = specs.load(w.repo.name, sid)
-        if spec is None:
-            raise Stop("spec_gone", f"`{sid}` 명세가 없어졌다")
-        if spec["state"] == "멈춤":
-            raise Stop("review_stopped", (spec.get("stopped") or {}).get("reason") or "리뷰가 멈췄다")
-        return spec["state"] in REVIEWED
+    waited(w, lambda: live(w, sid)["state"] in REVIEWED)
 
-    waited(w, ready)
+
+def mark(repo: Path, spec: dict) -> dict:
+    """What an approval is given for: the spec's revision and its branch head."""
+
+    head = specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{spec['id']}"], repo).stdout.strip()
+    return {"rev": spec["rev"], "head": head}
+
+
+def approved(w: Worker, sid: str) -> bool:
+    """The person approved `sid` as it stands now, and its review still allows it:
+    a revision or a new commit since the approval needs review and approval again."""
+
+    spec = live(w, sid)
+    given = (load(w.repo.name, w.rid).get("approved") or {}).get(sid)
+    return spec["state"] in REVIEWED and given == mark(w.repo, spec)
 
 
 def body(goal: str, lines: list[str]) -> str:
@@ -402,6 +430,7 @@ def characterized(w: Worker, run: dict) -> str:
     files = run["files"] or sorted({f for s in run["steps"] for f in s["files"]})
     if not t.get("spec"):
         try:
+            idle(w)
             _, start, base = specs.fork(w.repo, specs.unique(w.repo, f"refactor-{w.rid}-tests"))
         except (ValueError, RuntimeError) as exc:
             raise Stop("busy", str(exc)) from exc
@@ -475,7 +504,7 @@ def stepped(w: Worker, run: dict) -> dict:
             if step["state"] != "awaiting":
                 run["steps"][k] = step = {**step, "state": "awaiting"}
                 run = w.note(steps=run["steps"])
-            waited(w, lambda: sid in (load(w.repo.name, w.rid).get("approved") or []))
+            waited(w, lambda: approved(w, sid))
             blocked(w, sid, False)
         run["steps"][k] = {**step, "state": "done"}
         run = w.note(steps=run["steps"])
@@ -664,19 +693,28 @@ def cancel(rid: str) -> dict:
         w = _workers.get((repo.name, rid))
     if w is not None:
         w.halt.set()
+    else:   # stopped, e.g. by a restart that kept its block: nothing else would release it
+        released(repo, rid)
     return load(repo.name, rid)
 
 
 @router.post("/api/refactors/{rid}/approve")
 def approve(rid: str) -> dict:
-    """The person lets the step waiting on them finish, so the next may start."""
+    """The person lets the step waiting on them finish, so the next may start —
+    for the step as it stands now, and only while its review still allows it."""
 
     repo = current_repo()
     run = mine(repo, rid)
     waiting = [s["spec"] for s in run["steps"] if s["state"] == "awaiting"]
     if not waiting:
         raise HTTPException(409, "승인을 기다리는 단계가 없다")
-    return update(repo.name, rid, approved=[*(run.get("approved") or []), *waiting])
+    marks = {}
+    for sid in waiting:
+        spec = specs.load(repo.name, sid)
+        if spec is None or spec["state"] not in REVIEWED:
+            raise HTTPException(409, f"`{sid}` 는 리뷰를 다시 통과해야 승인할 수 있다")
+        marks[sid] = mark(repo, spec)
+    return update(repo.name, rid, approved={**(run.get("approved") or {}), **marks})
 
 
 @router.post("/api/refactors/{rid}/resume")

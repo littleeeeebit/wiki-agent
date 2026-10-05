@@ -26,16 +26,24 @@ after cancel; restart keeps the block; the approval gate holds the next step.
   `audit` phase is a read-only turn that ends in a `refactor-plan` block of one
   to three steps. Each step has a tier within L0–L2, a goal and its files. The
   characterization-test PR still comes first, as in cleanup.
+- A read-only turn (the audit) gets `Read,Glob,Grep` only, so Claude has no
+  shell and Codex runs source-only. It must leave HEAD and the working tree as
+  it found them, or the run stops with `read_only_wrote`.
 - The hold is `refactor.block` on the L2–L3 step's spec.
   `specs.checkout_idle`, which every task start passes through, refuses while
-  another run's step holds the repository. Taking the hold refuses when any
+  another run's step holds the repository. A run checks it before its own fork
+  as well as before every switch. Taking the hold refuses when any
   other task is open, meaning any state but `정리됨` and `머지됨`. Start makes
   the same check early.
 - A stop or cancel releases the hold. A shutdown and `recover` keep it, and
-  재개 takes it again.
+  재개 takes it again. Cancel on a run with no worker, as after a restart,
+  releases its holds directly; the tab offers it as 저장소 놓기.
 - L2–L3 PRs are not sent to Review Loop. The person starts the review. Once it
   allows the PR, the step waits in `awaiting` until
-  `POST /api/refactors/{id}/approve`.
+  `POST /api/refactors/{id}/approve`. Approval is refused unless the step's
+  spec is in a reviewed state, and it is bound to that spec's revision and
+  branch head: a revision or a new commit afterwards needs review and approval
+  again before the next step starts.
 
 Tests: `test_restructure_holds_the_repository_until_the_person_approves` in
 `tool/test_refactor.py`.

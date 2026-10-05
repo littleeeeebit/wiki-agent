@@ -217,6 +217,14 @@ def test_restructure_holds_the_repository_until_the_person_approves(selected):
             specs.checkout_idle(selected)   # a new task is refused while the step runs
         specs.update("proj", step["spec"], state="머지 가능")   # the person ran the review; no kick for L2
         until(api, rid, lambda r: r["steps"][0]["state"] == "awaiting")
+        audit = next(h for h in Host.made if not h.rest.get("write"))
+        assert audit.rest["tools"] == "Read,Glob,Grep", "the audit gets no shell"
+
+        branch = _git(selected, "branch", "--show-current")
+        cleanup = api.post("/api/refactors", json={**body, "request_id": "refactor-req-0004", "mode": "cleanup",
+                                                   "files": []}).json()["id"]
+        assert finished(api, cleanup)["stopped"]["reason"] == "busy"
+        assert _git(selected, "branch", "--show-current") == branch, "another run never forks a blocked checkout"
 
         refactor.recover()   # what a restart leaves: the hold, read off the spec
         with pytest.raises(HTTPException):
@@ -229,8 +237,34 @@ def test_restructure_holds_the_repository_until_the_person_approves(selected):
         until(api, rid, lambda r: specs.load("proj", step["spec"])["refactor"].get("block"))
         with pytest.raises(HTTPException):
             specs.checkout_idle(selected)   # resuming takes it again
+        specs.update("proj", step["spec"], state="작업 중")   # a revision sends the step back to work
+        assert api.post(f"/api/refactors/{rid}/approve").status_code == 409, "approval needs the review as it stands"
+        specs.update("proj", step["spec"], state="머지 가능")
         assert api.post(f"/api/refactors/{rid}/approve").status_code == 200
         run = finished(api, rid)
     assert run["state"] == "done", run.get("stopped")
     assert run["spent"]["tokens"] == 25, "the audit and the test turn are both charged"
     specs.checkout_idle(selected)
+
+    spec = specs.load("proj", step["spec"])   # a hold a restart kept, with no worker left to release it
+    specs.save({**spec, "refactor": {**spec["refactor"], "block": True}})
+    with pytest.raises(HTTPException):
+        specs.checkout_idle(selected)
+    assert api.post(f"/api/refactors/{rid}/cancel").status_code == 200
+    specs.checkout_idle(selected)   # cancel releases it without a worker
+
+
+def test_a_read_only_audit_that_writes_stops_the_run(selected):
+    api = client()
+    say = Host.say
+
+    def writes(self, text, halt=None):
+        if not self.rest.get("write"):
+            (self.path / "note.txt").write_text("x", encoding="utf-8")
+        yield from say(self, text, halt)
+
+    body = {"request_id": "refactor-req-0005", "mode": "restructure", "files": ["big.py"],
+            "limits": {"seconds": 600, "calls": 9, "tokens": 100_000}}
+    with patch.object(specs, "sh", side_effect=Remote()), patch.object(Host, "say", writes):
+        run = finished(api, api.post("/api/refactors", json=body).json()["id"])
+    assert run["stopped"]["reason"] == "read_only_wrote", run["stopped"]
