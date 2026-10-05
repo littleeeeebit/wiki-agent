@@ -236,10 +236,13 @@ def test_restructure_holds_the_repository_until_the_person_approves(selected):
         head = _git(selected, "rev-parse", step["spec"])
         _git(selected, "switch", "-q", "--detach")
         _git(selected, "branch", "-D", step["spec"])   # pruned while the run was stopped
+        steps = refactor.load("proj", rid)["steps"]   # published, then stopped before its checkpoint
+        refactor.update("proj", rid, steps=[{**steps[0], "state": "adopted"}, *steps[1:]])
         api.post(f"/api/refactors/{rid}/resume")
         until(api, rid, lambda r: specs.load("proj", step["spec"])["refactor"].get("block"))
         with pytest.raises(HTTPException):
             specs.checkout_idle(selected)   # resuming takes it again
+        assert until(api, rid, lambda r: r["steps"][0]["state"] == "awaiting")["steps"][0]["pr"] == step["pr"]
         assert subprocess.run(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{step['spec']}"],
                               cwd=selected, capture_output=True).returncode, "resume never remakes a published branch"
         _git(selected, "branch", step["spec"], head)

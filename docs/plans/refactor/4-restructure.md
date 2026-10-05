@@ -49,7 +49,8 @@ after cancel; restart keeps the block; the approval gate holds the next step.
   before the next step starts. A step merged before approval, whose branch
   merge cleanup pruned, stands for its allowed head only when GitHub reports
   the merged PR's `headRefOid` as exactly that head; the next step stacks on
-  that commit. Resume never remakes a published step's branch.
+  that commit. Resume never remakes a published step's branch, including
+  one whose PR the spec already holds while the run still says `adopted`.
 
 Tests: `test_restructure_holds_the_repository_until_the_person_approves` in
 `tool/test_refactor.py`.

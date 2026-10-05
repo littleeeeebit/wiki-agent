@@ -502,6 +502,10 @@ def stepped(w: Worker, run: dict) -> dict:
         if not step["spec"]:
             run["steps"][k] = step = {**step, "spec": sid, "base": previous}
             run = w.note(steps=run["steps"])
+        known = specs.load(w.repo.name, sid) if step["state"] == "adopted" else None
+        if known and (known.get("pr") or {}).get("number"):   # published, then stopped before its checkpoint
+            run["steps"][k] = step = {**step, "state": "published", "pr": known["pr"]["number"]}
+            run = w.note(steps=run["steps"])
         with owning(w):
             if step["state"] in ("pending", "adopted"):   # a published step's branch is its PR's, never remade
                 below = specs.load(w.repo.name, previous)
