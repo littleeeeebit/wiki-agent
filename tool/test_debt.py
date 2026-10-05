@@ -47,6 +47,9 @@ def test_duplicates_are_shared_blocks_not_imports_comments_or_punctuation(tmp_pa
     assert m["a.py"]["dup"] == m["b.ts"]["dup"] == 8
     assert m["c.py"]["dup"] == m["d.py"]["dup"] == 0
     assert "notes.md" not in m, "documents are not code"
+    names = [f"    Type{i}," for i in range(6)]
+    assert debt.duplicated({"a.ts": ["import {", *names, '} from "./one";'],
+                            "b.py": ["from x import (", *names, ")"]}) == {"a.ts": 0, "b.py": 0}
 
 
 def test_longest_block_is_a_body_not_its_container():
@@ -103,6 +106,8 @@ def test_tighten_only_lowers_and_drops_what_the_caps_cover(tmp_path):
     assert debt.tighten(root) == [debt.RATCHET]
     files = json.loads((root / debt.RATCHET).read_text(encoding="utf-8"))["files"]
     assert {k: v["lines"] for k, v in files.items()} == {"big.py": 1000}
+    assert debt.tighten(root) == [debt.RATCHET], "a retried preparation still owns the lowered file"
+    _commit_as_base(root)
     _write(root, {"big.py": _lines(1100, "x")})
     assert debt.tighten(root) == [], "growth never raises an entry"
 

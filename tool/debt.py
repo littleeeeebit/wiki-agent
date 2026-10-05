@@ -80,6 +80,25 @@ def significant(line: str) -> str:
     return norm
 
 
+def imported(lines: list[str]) -> list[str]:
+    """`lines` with the continuation lines of a multiline import blanked:
+    `import {` … `}` or `from x import (` … `)` is still just an import."""
+
+    out, closing = [], ""
+    for line in lines:
+        norm = " ".join(line.split())
+        if closing:
+            out.append("")
+            closing = "" if closing in norm else closing
+            continue
+        out.append(line)
+        if IMPORT.match(norm):
+            for opener, closer in (("{", "}"), ("(", ")")):
+                if norm.endswith(opener) or (opener in norm and closer not in norm):
+                    closing = closer
+    return out
+
+
 def duplicated(files: dict[str, list[str]]) -> dict[str, int]:
     """Per file, how many lines sit in a block of `WINDOW` significant lines
     that also appears somewhere else, in this file or another. Exact text
@@ -87,7 +106,7 @@ def duplicated(files: dict[str, list[str]]) -> dict[str, int]:
 
     places = defaultdict(list)
     for rel, lines in files.items():
-        sig = [(i, n) for i, n in ((i, significant(line)) for i, line in enumerate(lines)) if n]
+        sig = [(i, n) for i, n in ((i, significant(line)) for i, line in enumerate(imported(lines))) if n]
         for k in range(len(sig) - WINDOW + 1):
             chunk = sig[k:k + WINDOW]
             places[tuple(n for _, n in chunk)].append((rel, [i for i, _ in chunk]))
@@ -255,7 +274,9 @@ def init(root: Path) -> dict:
 
 def tighten(root: Path) -> list[str]:
     """Lower every entry to today's numbers and drop entries the caps now
-    cover or whose file is gone. `[RATCHET]` when the file changed, else `[]`."""
+    cover or whose file is gone. `[RATCHET]` while the file differs from
+    HEAD, else `[]`: a retry after an interrupted merge preparation finds it
+    already lowered, and it is still that preparation's output."""
 
     file = root / RATCHET
     if not file.exists():
@@ -270,10 +291,9 @@ def tighten(root: Path) -> list[str]:
         cap = limit(rel, {**ratchet, "files": {}})[0]
         if lowered["lines"] > cap or lowered["dup"]:
             files[rel] = lowered
-    if files == ratchet["files"]:
-        return []
-    write(file, {**ratchet, "files": files})
-    return [RATCHET]
+    if files != ratchet["files"]:
+        write(file, {**ratchet, "files": files})
+    return [RATCHET] if git(root, "status", "--porcelain", "--", RATCHET).strip() else []
 
 
 def command(base: str = "") -> str:

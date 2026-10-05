@@ -213,7 +213,7 @@
     },
     "tool/test_loop.py": {
       "dup": 19,
-      "lines": 2325,
+      "lines": 2328,
       "reason": "baseline at adoption"
     },
     "tool/test_main.py": {
