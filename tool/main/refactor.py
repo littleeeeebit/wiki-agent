@@ -37,11 +37,20 @@ from . import loop, runtime, specs, work
 from .query import ROOT, _lock, current_repo, hold
 
 RUNS = ROOT / "raw" / "refactor" / "runs"
-MODES = {"cleanup": {"tiers": ("L0", "L1"), "limits": {"seconds": 1800, "calls": 24, "tokens": 500_000}}}
+MODES = {"cleanup": {"tiers": ("L0", "L1"), "limits": {"seconds": 1800, "calls": 24, "tokens": 500_000}},
+         "restructure": {"tiers": ("L0", "L1", "L2"), "limits": {"seconds": 3600, "calls": 40, "tokens": 1_000_000}}}
 AUTO_REVIEW = ("L0", "L1")    # tiers whose PRs the request itself sends to review
+BLOCKING = ("L2", "L3")       # tiers that hold the repository while they run
 REVIEWED = ("머지 가능", "머지 대기", "머지됨")
+CLOSED = ("정리됨", "머지됨")  # a proposal not yet started, or a finished task
 REQUEST = re.compile(r"[A-Za-z0-9-]{8,64}")
-TESTS = re.compile(r"^```refactor-tests[ \t]*\r?\n(.*?)^```", re.M | re.S)
+AUDIT_PROMPT = (
+    "Audit the listed module for a structure-only refactoring. Read its callers, the state it owns and the seams "
+    "it could split along. Do not edit anything. Propose one to three steps, smallest first, each with a tier "
+    "from {tiers}: L0 mechanical, L1 inside the listed files with public names unchanged, L2 code may move "
+    "between modules with every public import path still working. A step lists the repository-relative files "
+    "it touches; an L2 step may name a new file under an existing directory. End with a fenced block tagged "
+    '`refactor-plan` holding JSON: {{"steps": [{{"tier": "L1", "goal": "...", "files": ["..."]}}]}}.')
 TESTS_PROMPT = (
     "Write characterization tests that pin the current observable behaviour of the files listed, so a later "
     "refactoring can prove it changed nothing. Use the repository's existing test framework and conventions; "
@@ -59,6 +68,16 @@ class Stop(Exception):
     def __init__(self, reason: str, detail: str = "") -> None:
         super().__init__(reason)
         self.reason, self.detail = reason, detail
+
+
+def fenced(tag: str, text: str):
+    """The JSON in the last block tagged `tag`."""
+
+    found = re.findall(rf"^```{tag}[ \t]*\r?\n(.*?)^```", text, re.M | re.S)
+    try:
+        return json.loads(found[-1])
+    except (IndexError, ValueError) as exc:
+        raise Stop("format", f"`{tag}` 블록을 읽지 못했다 — {exc}") from exc
 
 
 # -- The record ----------------------------------------------------------------
@@ -164,7 +183,7 @@ def switched(w: Worker, sid: str, start: str) -> None:
     """The checkout on `sid`, made from `start` the first time."""
 
     try:
-        specs.checkout_idle(w.repo)
+        specs.checkout_idle(w.repo, run=w.rid)
     except HTTPException as exc:
         raise Stop("busy", exc.detail) from exc
     if git(w.repo, "branch", "--show-current") == sid:
@@ -185,17 +204,17 @@ def tested(w: Worker, argv: list[str]) -> subprocess.CompletedProcess:
     return done
 
 
-def turn(w: Worker, run: dict, text: str) -> str:
-    """One native write turn in the checkout the caller owns, shown in the
-    agent pane like any work turn; its tokens are charged, and unknown usage
-    stops the run."""
+def turn(w: Worker, run: dict, text: str, system: str = TESTS_PROMPT, write: bool = True) -> str:
+    """One native turn in the checkout the caller owns, shown in the agent
+    pane like any work turn; its tokens are charged, and unknown usage stops
+    the run."""
 
     try:
         w.budget.call()
     except (Exhausted, Cancelled) as exc:
         raise Stop("budget" if isinstance(exc, Exhausted) else "cancelled", str(exc)) from exc
     role = run["role"]
-    chat = ChatSession(w.repo, write=True, bypass=True, system=TESTS_PROMPT, model=role["model"] or None,
+    chat = ChatSession(w.repo, write=write, bypass=write, system=system, model=role["model"] or None,
                        effort=role["effort"] or None)
     active = work.Run(chat)
     with _lock:
@@ -229,6 +248,33 @@ def turn(w: Worker, run: dict, text: str) -> str:
     if failed or active.halt.is_set():
         raise Stop("cancelled" if w.halt.is_set() else "host", failed or "턴이 끊겼다")
     return final
+
+
+def others(repo: Path, rid: str) -> list[str]:
+    """Open tasks in `repo` that are not this run's."""
+
+    return [s["id"] for s in specs.listing(repo.name)
+            if s["state"] not in CLOSED and (s.get("refactor") or {}).get("run") != rid]
+
+
+def blocked(w: Worker, sid: str, on: bool) -> None:
+    """Hold or release the repository for an L2–L3 step. The hold lives on the
+    step's spec, so `specs.checkout_idle` refuses new tasks and a restart keeps it."""
+
+    if on and (busy := others(w.repo, w.rid)):
+        raise Stop("open_tasks", f"열린 작업이 있어 L2 이상 단계를 시작하지 않는다: {', '.join(busy)}")
+    with specs._files:
+        spec = specs.load(w.repo.name, sid)
+        if spec is not None and spec["refactor"].get("block") is not on:
+            specs.save({**spec, "refactor": {**spec["refactor"], "block": on}})
+
+
+def released(repo: Path, rid: str) -> None:
+    for spec in specs.listing(repo.name):
+        if (spec.get("refactor") or {}).get("run") == rid and spec["refactor"].get("block"):
+            with specs._files:
+                fresh = specs.load(repo.name, spec["id"])
+                specs.save({**fresh, "refactor": {**fresh["refactor"], "block": False}})
 
 
 def spec_for(w: Worker, run: dict, sid: str, goal: str, base: str, start: str) -> dict:
@@ -270,22 +316,31 @@ def published(w: Worker, sid: str, base: str, title: str, body: str, tier: str) 
     return n
 
 
-def reviewed(w: Worker, sid: str) -> None:
-    """Wait until review allows `sid`; its time is set aside from the run's."""
+def waited(w: Worker, ready) -> None:
+    """Wait until `ready()`; the time is set aside from the run's."""
 
     started = time.monotonic()
     try:
         while not w.halt.wait(3):
-            spec = specs.load(w.repo.name, sid)
-            if spec is None:
-                raise Stop("spec_gone", f"`{sid}` 명세가 없어졌다")
-            if spec["state"] in REVIEWED:
+            if ready():
                 return
-            if spec["state"] == "멈춤":
-                raise Stop("review_stopped", (spec.get("stopped") or {}).get("reason") or "리뷰가 멈췄다")
         raise Stop("cancelled")
     finally:
         w.budget.aside(time.monotonic() - started)
+
+
+def reviewed(w: Worker, sid: str) -> None:
+    """Wait until review allows `sid`."""
+
+    def ready() -> bool:
+        spec = specs.load(w.repo.name, sid)
+        if spec is None:
+            raise Stop("spec_gone", f"`{sid}` 명세가 없어졌다")
+        if spec["state"] == "멈춤":
+            raise Stop("review_stopped", (spec.get("stopped") or {}).get("reason") or "리뷰가 멈췄다")
+        return spec["state"] in REVIEWED
+
+    waited(w, ready)
 
 
 def body(goal: str, lines: list[str]) -> str:
@@ -295,6 +350,8 @@ def body(goal: str, lines: list[str]) -> str:
 # -- The phases ----------------------------------------------------------------
 
 def scan(w: Worker, run: dict) -> dict:
+    if run["mode"] != "cleanup":   # the person chose the module; its measurements are shown, not filtered
+        return w.note(phase="audit", hotspots=[r for r in debt.scan(w.repo) if r["path"] in run["files"]])
     rows = hotspots(w.repo, run["top"]) if not run["files"] else \
         [r for r in hotspots(w.repo) if r["path"] in run["files"]]
     if not rows:
@@ -304,6 +361,31 @@ def scan(w: Worker, run: dict) -> dict:
                       f"lines, longest block {r['block']}. {MODES[run['mode']]['tiers'][-1]} changes only."}
              for k, r in enumerate(rows)]
     return w.note(phase="tests", hotspots=rows, steps=steps)
+
+
+def audited(w: Worker, run: dict) -> dict:
+    """A read-only audit of the chosen module into one to three steps."""
+
+    tiers = MODES[run["mode"]]["tiers"]
+    with owning(w):
+        final = turn(w, run, "Module:\n" + "\n".join(f"- {f}" for f in run["files"]),
+                     AUDIT_PROMPT.format(tiers=", ".join(tiers)), write=False)
+    plan = fenced("refactor-plan", final)
+    try:
+        given = plan["steps"]
+        assert isinstance(given, list) and 1 <= len(given) <= 3, "1–3 steps"
+        steps = []
+        for k, s in enumerate(given):
+            assert s["tier"] in tiers, f"tier {s['tier']!r} is outside {tiers}"
+            assert isinstance(s["goal"], str) and s["goal"].strip(), "a step needs a goal"
+            assert isinstance(s["files"], list) and s["files"], "a step needs files"
+            for rel in s["files"]:
+                improvement.relative(rel)
+            steps.append({"n": k + 1, "tier": s["tier"], "files": s["files"], "state": "pending", "spec": None,
+                          "goal": s["goal"].strip()})
+    except (KeyError, TypeError, AssertionError, improvement.Refused) as exc:
+        raise Stop("format", f"refactor-plan 이 맞지 않다 — {exc}") from exc
+    return w.note(phase="tests", steps=steps)
 
 
 def frozen(w: Worker, run: dict) -> dict:
@@ -317,7 +399,7 @@ def frozen(w: Worker, run: dict) -> dict:
 
 def characterized(w: Worker, run: dict) -> str:
     t = dict(run.get("tests") or {})
-    files = sorted({f for s in run["steps"] for f in s["files"]})
+    files = run["files"] or sorted({f for s in run["steps"] for f in s["files"]})
     if not t.get("spec"):
         try:
             _, start, base = specs.fork(w.repo, specs.unique(w.repo, f"refactor-{w.rid}-tests"))
@@ -330,14 +412,13 @@ def characterized(w: Worker, run: dict) -> str:
     if not t.get("tests"):
         spec_for(w, run, sid, f"Characterization tests for {', '.join(files)}", t["base"], t["start"])
         final = turn(w, run, "Files:\n" + "\n".join(f"- {f}" for f in files))
-        found = TESTS.findall(final)
+        given = fenced("refactor-tests", final)
         try:
-            given = json.loads(found[-1])
             tests, argv = given["tests"], given["test_argv"]
             for rel in tests:
                 improvement.relative(rel)
             assert tests and argv and all(isinstance(a, str) and a for a in argv)
-        except (IndexError, ValueError, KeyError, TypeError, AssertionError, improvement.Refused) as exc:
+        except (KeyError, TypeError, AssertionError, improvement.Refused) as exc:
             raise Stop("format", f"refactor-tests 블록을 읽지 못했다 — {exc}") from exc
         # The host names its tests, so a name alone proves nothing: a test is a
         # test-file path (`Tests/` too, as Swift lays them out), never one of
@@ -375,6 +456,9 @@ def stepped(w: Worker, run: dict) -> dict:
             switched(w, sid, previous)
             if step["state"] == "pending":
                 spec_for(w, run, sid, step["goal"], previous, git(w.repo, "rev-parse", "HEAD"))
+            if step["tier"] in BLOCKING:
+                blocked(w, sid, True)
+            if step["state"] == "pending":
                 adopted = competed(w, run, step, sid)
                 git(w.repo, "merge", "--ff-only", adopted["commit"])
                 specs.sh(["git", "branch", "-D", adopted["branch"]], w.repo)
@@ -387,6 +471,12 @@ def stepped(w: Worker, run: dict) -> dict:
                 run["steps"][k] = step = {**step, "state": "published", "pr": n}
                 run = w.note(steps=run["steps"])
         reviewed(w, sid)
+        if step["tier"] not in AUTO_REVIEW:   # the person approves before the next step starts
+            if step["state"] != "awaiting":
+                run["steps"][k] = step = {**step, "state": "awaiting"}
+                run = w.note(steps=run["steps"])
+            waited(w, lambda: sid in (load(w.repo.name, w.rid).get("approved") or []))
+            blocked(w, sid, False)
         run["steps"][k] = {**step, "state": "done"}
         run = w.note(steps=run["steps"])
         previous = sid
@@ -422,7 +512,7 @@ def competed(w: Worker, run: dict, step: dict, sid: str) -> dict:
     return result
 
 
-PHASES = {"scan": scan, "tests": frozen, "steps": stepped}
+PHASES = {"scan": scan, "audit": audited, "tests": frozen, "steps": stepped}
 
 
 def drive(w: Worker) -> None:
@@ -432,9 +522,12 @@ def drive(w: Worker) -> None:
                 raise Stop("cancelled")
             PHASES[run["phase"]](w, run)
     except Stop as stop:
+        if not runtime.stopping.is_set():   # a shutdown keeps the hold for the restart, as `recover` does
+            released(w.repo, w.rid)
         w.note(state="stopped", stopped={"reason": stop.reason, "detail": stop.detail, "ts": time.time()})
     except Exception as exc:  # a broken worker still owes the run a reason
         errorlog.record("refactor", exc, repo=w.repo.name, run=w.rid)
+        released(w.repo, w.rid)
         w.note(state="stopped", stopped={"reason": "broken", "detail": f"{type(exc).__name__}: {exc}",
                                          "ts": time.time()})
     finally:
@@ -539,6 +632,18 @@ def start(body: Start) -> dict:
         old = next((r for r in listing(repo.name) if r["request_id"] == body.request_id), None)
         if old is not None:
             return old
+        if body.mode != "cleanup":
+            if not body.files:
+                raise HTTPException(400, "재구성할 모듈의 파일을 골라라")
+            for rel in body.files:
+                try:
+                    improvement.relative(rel)
+                except improvement.Refused as exc:
+                    raise HTTPException(400, str(exc)) from exc
+                if not (repo / rel).is_file():
+                    raise HTTPException(400, f"`{rel}` 이 저장소에 없다")
+            if busy := others(repo, ""):
+                raise HTTPException(409, f"열린 작업을 먼저 끝내라 — L2 단계는 저장소를 혼자 쓴다: {', '.join(busy)}")
         rid = secrets.token_hex(4)
         now = time.time()
         run = {"id": rid, "repo": repo.name, "mode": body.mode, "scope": scope, "request_id": body.request_id,
@@ -560,6 +665,18 @@ def cancel(rid: str) -> dict:
     if w is not None:
         w.halt.set()
     return load(repo.name, rid)
+
+
+@router.post("/api/refactors/{rid}/approve")
+def approve(rid: str) -> dict:
+    """The person lets the step waiting on them finish, so the next may start."""
+
+    repo = current_repo()
+    run = mine(repo, rid)
+    waiting = [s["spec"] for s in run["steps"] if s["state"] == "awaiting"]
+    if not waiting:
+        raise HTTPException(409, "승인을 기다리는 단계가 없다")
+    return update(repo.name, rid, approved=[*(run.get("approved") or []), *waiting])
 
 
 @router.post("/api/refactors/{rid}/resume")

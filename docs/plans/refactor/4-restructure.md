@@ -20,6 +20,26 @@ L0–L2 work on a module the person chooses, behind a short plan.
 Start refused with an open task; new task refused during the step and allowed
 after cancel; restart keeps the block; the approval gate holds the next step.
 
+## As built
+
+- Mode `restructure` in `tool/main/refactor.py` needs the module's files. Its
+  `audit` phase is a read-only turn that ends in a `refactor-plan` block of one
+  to three steps. Each step has a tier within L0–L2, a goal and its files. The
+  characterization-test PR still comes first, as in cleanup.
+- The hold is `refactor.block` on the L2–L3 step's spec.
+  `specs.checkout_idle`, which every task start passes through, refuses while
+  another run's step holds the repository. Taking the hold refuses when any
+  other task is open, meaning any state but `정리됨` and `머지됨`. Start makes
+  the same check early.
+- A stop or cancel releases the hold. A shutdown and `recover` keep it, and
+  재개 takes it again.
+- L2–L3 PRs are not sent to Review Loop. The person starts the review. Once it
+  allows the PR, the step waits in `awaiting` until
+  `POST /api/refactors/{id}/approve`.
+
+Tests: `test_restructure_holds_the_repository_until_the_person_approves` in
+`tool/test_refactor.py`.
+
 ## Rollback
 
 Disable the mode; the block is derived from spec state and disappears with it.

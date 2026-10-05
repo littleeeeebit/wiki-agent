@@ -18,12 +18,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from fastapi import HTTPException
 
 import refactor_profile
 from agent.chat_session import Event
 from main import loop, query, refactor, specs, work
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
-from test_specs import Remote, repo  # noqa: F401 — `repo` is a fixture
+from test_specs import Remote, made, repo, spec_block  # noqa: F401 — `repo` is a fixture
 
 BIG = "".join(f"value_{i} = {i}\n" for i in range(801))
 TEST = "import big\nassert big.value_800 == 800\n"
@@ -39,6 +40,10 @@ class Host:
         Host.made.append(self)
 
     def say(self, text, halt=None):
+        if not self.rest.get("write"):   # the read-only audit: one L2 step on the module
+            plan = '{"steps": [{"tier": "L2", "goal": "Split big.py by value range", "files": ["big.py"]}]}'
+            yield Event("done", f"Plan.\n\n```refactor-plan\n{plan}\n```", {"tokens": {"in": 7, "out": 3}}, self.id)
+            return
         (self.path / "test_big.py").write_text(TEST, encoding="utf-8")
         block = '{"tests": ["test_big.py"], "test_argv": ["%s", "-B", "test_big.py"]}' % sys.executable.replace("\\", "/")
         yield Event("done", f"Pinned.\n\n```refactor-tests\n{block}\n```", {"tokens": {"in": 10, "out": 5}}, self.id)
@@ -67,13 +72,17 @@ def selected(repo, tmp_path, monkeypatch):
     return repo
 
 
-def finished(client, rid: str) -> dict:
-    for _ in range(300):
+def until(client, rid: str, ready) -> dict:
+    for _ in range(900):
         run = next(r for r in client.get("/api/refactors").json()["runs"] if r["id"] == rid)
-        if run["state"] != "running":
+        if ready(run):
             return run
         time.sleep(0.1)
-    raise AssertionError("the run did not finish")
+    raise AssertionError(f"the run never got there: {run}")
+
+
+def finished(client, rid: str) -> dict:
+    return until(client, rid, lambda run: run["state"] != "running")
 
 
 def test_cleanup_freezes_then_stacks_a_reviewed_step(selected):
@@ -183,3 +192,45 @@ def test_the_checkout_test_names_one_request_and_the_test_command_are_all_bounde
         [t.start() for t in threads]
         [t.join() for t in threads]
     assert len(set(ids)) == 1 and launch.call_count == 1, "one request is one run"
+
+
+def test_restructure_holds_the_repository_until_the_person_approves(selected):
+    api = client()
+    adopted = lambda repo, scope, name, config: {"state": "adopted", "branch": "none",  # noqa: E731
+                                                  "commit": _git(repo, "rev-parse", "HEAD")}
+    body = {"request_id": "refactor-req-0003", "mode": "restructure", "files": ["big.py"],
+            "role": {"model": "m", "effort": "high"}, "limits": {"seconds": 600, "calls": 9, "tokens": 100_000}}
+    other = specs.unique(selected, "other-task")
+    specs.save({**specs.load("proj", made(selected, spec_block())[0]["id"]), "id": other, "state": "작업 중"})
+    review = lambda name, sid: specs.update(name, sid, state="머지 가능")  # noqa: E731
+    with patch.object(specs, "sh", side_effect=Remote()), patch.object(loop, "kick", side_effect=review), \
+            patch.object(refactor_profile, "drive", side_effect=adopted):
+        refused = api.post("/api/refactors", json=body)
+        assert refused.status_code == 409 and other in refused.json()["detail"], "an open task refuses L2 work"
+        specs.update("proj", other, state="머지됨")
+
+        rid = api.post("/api/refactors", json=body).json()["id"]
+        run = until(api, rid, lambda r: r["steps"] and r["steps"][0]["state"] == "published" or r["state"] != "running")
+        step = run["steps"][0]
+        assert (step["tier"], step["files"]) == ("L2", ["big.py"]), run.get("stopped")
+        with pytest.raises(HTTPException, match=step["spec"]):
+            specs.checkout_idle(selected)   # a new task is refused while the step runs
+        specs.update("proj", step["spec"], state="머지 가능")   # the person ran the review; no kick for L2
+        until(api, rid, lambda r: r["steps"][0]["state"] == "awaiting")
+
+        refactor.recover()   # what a restart leaves: the hold, read off the spec
+        with pytest.raises(HTTPException):
+            specs.checkout_idle(selected)
+        assert api.post(f"/api/refactors/{rid}/cancel").status_code == 200
+        until(api, rid, lambda r: r["state"] == "stopped")
+        specs.checkout_idle(selected)   # cancelling releases it
+
+        api.post(f"/api/refactors/{rid}/resume")
+        until(api, rid, lambda r: specs.load("proj", step["spec"])["refactor"].get("block"))
+        with pytest.raises(HTTPException):
+            specs.checkout_idle(selected)   # resuming takes it again
+        assert api.post(f"/api/refactors/{rid}/approve").status_code == 200
+        run = finished(api, rid)
+    assert run["state"] == "done", run.get("stopped")
+    assert run["spent"]["tokens"] == 25, "the audit and the test turn are both charged"
+    specs.checkout_idle(selected)

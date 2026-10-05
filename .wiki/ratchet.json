@@ -123,8 +123,8 @@
     },
     "tool/main/specs.py": {
       "dup": 0,
-      "lines": 1437,
-      "reason": "baseline at adoption"
+      "lines": 1442,
+      "reason": "the refactor hold belongs in checkout_idle, the one check every task start passes"
     },
     "tool/main/verification.py": {
       "dup": 12,
