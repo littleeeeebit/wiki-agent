@@ -22,6 +22,7 @@ from fastapi import HTTPException
 
 import refactor_profile
 from agent.chat_session import Event
+from common import worktree_home
 from main import loop, planning, query, refactor, refactor_api, specs, work
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_specs import Remote, made, repo, spec_block  # noqa: F401 — `repo` is a fixture
@@ -439,3 +440,27 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
     with patch.object(planning, "launch") as launched, pytest.raises(refactor.Stop) as stop:
         refactor.charted(w, refactor.load("proj", rid))
     assert stop.value.reason == "budget" and not launched.called, "a saved request makes no new planner once spent"
+
+
+def test_the_hub_refactors_in_linked_worktrees_and_never_switches_its_own_checkout(selected):
+    api = client()
+    adopted = lambda repo, scope, name, config: {"state": "adopted", "branch": "none",  # noqa: E731
+                                                  "commit": _git(repo, "rev-parse", "HEAD")}
+    review = lambda name, sid: specs.update(name, sid, state="머지 가능")  # noqa: E731
+    body = {"request_id": "refactor-req-0005", "mode": "cleanup", "top": 1,
+            "role": {"model": "m", "effort": "high"}, "limits": {"seconds": 600, "calls": 9, "tokens": 100_000}}
+    before = _git(selected, "rev-parse", "HEAD")
+    with patch.object(refactor, "scope_of", return_value="hub"), patch.object(specs, "sh", side_effect=Remote()), \
+            patch.object(loop, "kick", side_effect=review), patch.object(refactor_profile, "drive", side_effect=adopted):
+        refused = api.post("/api/refactors", json={**body, "request_id": "refactor-req-0006", "mode": "full"})
+        assert refused.status_code == 409, "the planner would fork the server's own checkout"
+        rid = api.post("/api/refactors", json=body).json()["id"]
+        run = finished(api, rid)
+    assert run["state"] == "done" and run["scope"] == "hub", run.get("stopped")
+    assert _git(selected, "branch", "--show-current") == "main" and _git(selected, "rev-parse", "HEAD") == before
+    for sid in (run["tests"]["spec"], run["steps"][0]["spec"]):
+        spec = specs.load("proj", sid)
+        assert Path(spec["worktree"]) == worktree_home(selected) / sid and "workspace_mode" not in spec
+        assert _git(Path(spec["worktree"]), "branch", "--show-current") == sid
+    assert (refactor_profile.STORE / "hub" / run["steps"][0]["spec"] / "frozen.json").exists()
+    assert not (refactor_profile.STORE / "project").exists(), "hub records stay under the hub's scope"

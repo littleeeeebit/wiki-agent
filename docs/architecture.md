@@ -116,7 +116,10 @@ a restart stops a running one instead of replaying it. An L2–L3 step holds its
 repository through `refactor.block` on its spec: `specs.checkout_idle` then
 refuses every new task until the person approves the step or it stops. A full
 refactor first audits the repository and hands the audit to the planner as a
-refactor plan. Its stages become steps only after that plan's PR merges. Plans
+refactor plan. Its stages become steps only after that plan's PR merges. On
+the hub, each step runs in a linked worktree of its own, so the server's
+checkout never switches. A merged hub step takes effect after an app restart.
+Plans
 and status are in
 [the refactor plan](plans/refactor/0-overview.md).
 

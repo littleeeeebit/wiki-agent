@@ -28,7 +28,7 @@ import debt
 import improvement
 import refactor_profile
 from agent import ChatSession
-from common import errorlog
+from common import errorlog, worktree_home
 from common.budget import Budget, Cancelled, Exhausted
 
 from . import loop, planning, runtime, specs, work
@@ -141,7 +141,7 @@ class Worker:
     """One run on its own thread. Waiting for review is not charged to its time."""
 
     def __init__(self, repo: Path, run: dict) -> None:
-        self.repo, self.rid = repo, run["id"]
+        self.repo, self.rid, self.hub = repo, run["id"], run["scope"] == "hub"
         self.halt = threading.Event()
         self.base = dict(run["spent"])
         left = {k: run["limits"][k] - self.base[k] for k in ("seconds", "calls", "tokens")}
@@ -165,13 +165,19 @@ class Worker:
         return update(self.repo.name, self.rid, spent=self.spent(), **fields)
 
 
+def place(w: Worker, sid: str) -> Path:
+    """Where `sid` is worked: the selected checkout, or the hub step's own linked worktree."""
+
+    return worktree_home(w.repo) / sid if w.hub else w.repo
+
+
 @contextmanager
-def owning(w: Worker):
+def owning(path: Path):
     """The checkout is the run's from its first switch to its PR, so no other
     turn writes between them. Review waits outside: its loop needs the checkout."""
 
     try:
-        release = hold(work._busy, _lock, str(w.repo), "그 저장소를 다른 요청이 쓰고 있다", kind="turn")
+        release = hold(work._busy, _lock, str(path), "그 저장소를 다른 요청이 쓰고 있다", kind="turn")
     except HTTPException as exc:
         raise Stop("busy", exc.detail) from exc
     try:
@@ -196,53 +202,64 @@ def idle(w: Worker) -> None:
         raise Stop("busy", exc.detail) from exc
 
 
-def switched(w: Worker, sid: str, start: str) -> None:
-    """The checkout on `sid`, made from `start` the first time."""
+def switched(w: Worker, sid: str, start: str) -> Path:
+    """The checkout on `sid`, made from `start` the first time: the selected
+    checkout for a project; for the hub a linked worktree of the step's own, so
+    the running server's files never change under it. Merge cleanup removes it
+    as it does any linked task's."""
 
     idle(w)
-    if git(w.repo, "branch", "--show-current") == sid:
-        return
-    if git(w.repo, "status", "--porcelain"):
-        raise Stop("dirty", "저장소에 커밋 안 된 변경이 있다")
-    exists = not specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{sid}"], w.repo).returncode
-    git(w.repo, "switch", *((sid,) if exists else ("-c", sid, start)))
+    if w.hub:
+        path = place(w, sid)
+        if not path.exists():
+            exists = not specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{sid}"], w.repo).returncode
+            git(w.repo, "worktree", "add", *((str(path), sid) if exists else ("-b", sid, str(path), start)))
+        return path
+    if git(w.repo, "branch", "--show-current") != sid:
+        if git(w.repo, "status", "--porcelain"):
+            raise Stop("dirty", "저장소에 커밋 안 된 변경이 있다")
+        exists = not specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{sid}"], w.repo).returncode
+        git(w.repo, "switch", *((sid,) if exists else ("-c", sid, start)))
+    return w.repo
 
 
-def tested(w: Worker, argv: list[str]) -> subprocess.CompletedProcess:
+def tested(w: Worker, argv: list[str], where: Path) -> subprocess.CompletedProcess:
     """The characterization command, cut with its whole tree, orphans included,
     by the run's time left or its cancel."""
 
-    done = refactor_profile.sh(argv, w.repo, seconds=w.budget.left(), halt=w.halt)
+    done = refactor_profile.sh(argv, where, seconds=w.budget.left(), halt=w.halt)
     if done.returncode == refactor_profile.CUT:
         raise Stop("cancelled" if w.halt.is_set() else "budget", "특성 테스트 명령을 끊었다")
     return done
 
 
-def turn(w: Worker, run: dict, text: str, system: str = TESTS_PROMPT, write: bool = True) -> str:
-    """One native turn in the checkout the caller owns, shown in the agent
-    pane like any work turn; its tokens are charged, and unknown usage stops
-    the run. A read-only turn gets read tools only — no shell — and must leave
-    HEAD and the working tree as it found them."""
+def turn(w: Worker, run: dict, text: str, system: str = TESTS_PROMPT, write: bool = True,
+         where: Path | None = None) -> str:
+    """One native turn in the checkout `where`, which the caller owns, shown in
+    the agent pane like any work turn; its tokens are charged, and unknown usage
+    stops the run. A read-only turn gets read tools only — no shell — and must
+    leave HEAD and the working tree as it found them."""
 
+    where = where or w.repo
     try:
         w.budget.call()
     except (Exhausted, Cancelled) as exc:
         raise Stop("budget" if isinstance(exc, Exhausted) else "cancelled", str(exc)) from exc
     role = run["role"]
-    state = lambda: (git(w.repo, "rev-parse", "HEAD"), git(w.repo, "status", "--porcelain"))  # noqa: E731
+    state = lambda: (git(where, "rev-parse", "HEAD"), git(where, "status", "--porcelain"))  # noqa: E731
     before = None if write else state()
-    chat = ChatSession(w.repo, write=write, bypass=write, system=system, model=role["model"] or None,
+    chat = ChatSession(where, write=write, bypass=write, system=system, model=role["model"] or None,
                        effort=role["effort"] or None, **({} if write else {"tools": "Read,Glob,Grep"}))
     active = work.Run(chat)
     with _lock:
-        work._runs[str(w.repo)] = active
+        work._runs[str(where)] = active
     timer = threading.Timer(w.budget.left(), lambda: (active.halt.set(), chat.stop(active.halt)))
     timer.daemon = True
     timer.start()
     final, failed, tokens = "", "", {}
     try:
-        work.remember(w.repo, "user", text)
-        work.feed.put({"kind": "started", "path": str(w.repo), "turn": active.turn})
+        work.remember(where, "user", text)
+        work.feed.put({"kind": "started", "path": str(where), "turn": active.turn})
         for ev in chat.say(text, active.halt):
             if w.halt.is_set():
                 active.halt.set()
@@ -255,10 +272,10 @@ def turn(w: Worker, run: dict, text: str, system: str = TESTS_PROMPT, write: boo
     finally:
         timer.cancel()
         chat.close()
-        work.remember(w.repo, "assistant", final, error=failed, steps=work.steps(active.events), turn=active.turn,
+        work.remember(where, "assistant", final, error=failed, steps=work.steps(active.events), turn=active.turn,
                       cell=chat.id, started_at=active.started_at)
         active.finish()
-        work.feed.put({"kind": "work-record", "path": str(w.repo)})
+        work.feed.put({"kind": "work-record", "path": str(where)})
     if type(tokens.get("in")) is not int or type(tokens.get("out")) is not int:
         raise Stop("budget_unknown", "호스트가 사용량을 알려 주지 않았다 — 0 으로 치지 않고 멈춘다")
     w.budget.charge({"input_tokens": tokens["in"], "output_tokens": tokens["out"]})
@@ -296,14 +313,15 @@ def released(repo: Path, rid: str) -> None:
                 specs.save({**fresh, "refactor": {**fresh["refactor"], "block": False}})
 
 
-def spec_for(w: Worker, run: dict, sid: str, goal: str, base: str, start: str) -> dict:
+def spec_for(w: Worker, run: dict, sid: str, goal: str, base: str, start: str, where: Path) -> dict:
     gate = specs.gate_of(w.repo)
     now = time.time()
     spec = {"id": sid, "repo": w.repo.name, "rev": 1, "goal": goal, "out": [], "done": [gate],
             "grounds": {"pages": [], "files": [], "rules": []}, "decisions": [],
             "review_profile": "code", "review_profile_version": specs.PROFILE_VERSION, "artifact_root": None,
             "source": {"focus": "refactor", "turn": now, "plan": None}, "state": "작업 중", "stopped": None,
-            "worktree": str(w.repo), "workspace_mode": "branch", "branch": sid, "start_head": start,
+            # A hub step's linked worktree has no mode, as a linked task's never had.
+            "worktree": str(where), **({} if w.hub else {"workspace_mode": "branch"}), "branch": sid, "start_head": start,
             "return_branch": base, "pr": None, "report": None, "gate": None, "fault": None,
             "cell": run["role"], **({"reviewer": run["reviewer"]} if run.get("reviewer") else {}),
             "refactor": {"run": run["id"]}, "history": [{"ts": now, "state": "작업 중"}]}
@@ -313,18 +331,18 @@ def spec_for(w: Worker, run: dict, sid: str, goal: str, base: str, start: str) -
     return specs.load(w.repo.name, sid)
 
 
-def published(w: Worker, sid: str, base: str, title: str, body: str, tier: str) -> int:
+def published(w: Worker, sid: str, where: Path, base: str, title: str, body: str, tier: str) -> int:
     """Push and open (or find) the PR from `sid` into `base`; send it to review
     when the request covers its tier."""
 
     if w.halt.is_set():
         raise Stop("cancelled")
-    git(w.repo, "push", "-u", "origin", sid)
+    git(where, "push", "-u", "origin", sid)
     try:
-        n, url = specs.pull_request(w.repo, sid, base, title, body)
+        n, url = specs.pull_request(where, sid, base, title, body)
     except RuntimeError as exc:
         raise Stop("publish_failed", str(exc)) from exc
-    head = git(w.repo, "rev-parse", "HEAD")
+    head = git(where, "rev-parse", "HEAD")
     with specs._files:
         spec = specs.load(w.repo.name, sid)
         if not (spec.get("pr") or {}).get("number"):
@@ -444,7 +462,7 @@ def audited(w: Worker, run: dict) -> dict:
     if run["mode"] == "full":
         return charted(w, run)
     tiers = MODES[run["mode"]]["tiers"]
-    with owning(w):
+    with owning(w.repo):
         final = turn(w, run, "Module:\n" + "\n".join(f"- {f}" for f in run["files"]),
                      AUDIT_PROMPT.format(tiers=", ".join(tiers)), write=False)
     plan = fenced("refactor-plan", final)
@@ -471,7 +489,7 @@ def charted(w: Worker, run: dict) -> dict:
     if not run.get("audit"):
         table = "\n".join(f"- {r['path']}: {r['lines']} lines (cap {r['cap']}), {r['dup']} duplicated, longest "
                           f"block {r['block']}, {r['churn']} commits in 180 days" for r in run["hotspots"])
-        with owning(w):
+        with owning(w.repo):
             final = turn(w, run, "Debt scan, worst first:\n" + (table or "(nothing over the caps)"), FULL_PROMPT,
                          write=False)
         run = w.note(audit=final[-(planning.MAX_CONTEXT - len(PLAN_RULES) - 100):])
@@ -550,32 +568,37 @@ def staged(w: Worker, run: dict) -> dict:
 def frozen(w: Worker, run: dict) -> dict:
     """The characterization PR every step stacks on."""
 
-    with owning(w):
-        sid = characterized(w, run)
+    sid = (run.get("tests") or {}).get("spec") or specs.unique(w.repo, f"refactor-{w.rid}-tests")
+    with owning(place(w, sid)):
+        characterized(w, run, sid)
     reviewed(w, sid)
     return w.note(phase="steps")
 
 
-def characterized(w: Worker, run: dict) -> str:
+def characterized(w: Worker, run: dict, sid: str) -> None:
     t = dict(run.get("tests") or {})
     files = run["files"] or sorted({f for s in run["steps"] for f in s["files"] if (w.repo / f).is_file()})
     if not t.get("spec"):
-        try:
-            idle(w)
-            _, start, base = specs.fork(w.repo, specs.unique(w.repo, f"refactor-{w.rid}-tests"))
-        except (ValueError, RuntimeError) as exc:
-            raise Stop("busy", str(exc)) from exc
-        t = {"spec": git(w.repo, "branch", "--show-current"), "base": base, "start": start}
+        idle(w)
+        if w.hub:   # from the branch the server runs, without switching it
+            t = {"spec": sid, "base": git(w.repo, "branch", "--show-current"), "start": git(w.repo, "rev-parse", "HEAD")}
+        else:
+            try:
+                _, start, base = specs.fork(w.repo, sid)
+            except (ValueError, RuntimeError) as exc:
+                raise Stop("busy", str(exc)) from exc
+            t = {"spec": git(w.repo, "branch", "--show-current"), "base": base, "start": start}
         run = w.note(tests=t)
     sid = t["spec"]
     if not t.get("pr") and (n := recovered(w.repo, sid, "L0")):
         t["pr"] = n
         run = w.note(tests=t)
+    where = place(w, sid)
     if not t.get("pr"):   # a published test branch is its PR's, never remade from before the tests
-        switched(w, sid, t["start"])
+        where = switched(w, sid, t["start"])
     if not t.get("tests"):
-        spec_for(w, run, sid, f"Characterization tests for {', '.join(files)}", t["base"], t["start"])
-        final = turn(w, run, "Files:\n" + "\n".join(f"- {f}" for f in files))
+        spec_for(w, run, sid, f"Characterization tests for {', '.join(files)}", t["base"], t["start"], where)
+        final = turn(w, run, "Files:\n" + "\n".join(f"- {f}" for f in files), where=where)
         given = fenced("refactor-tests", final)
         try:
             tests, argv = given["tests"], given["test_argv"]
@@ -588,22 +611,21 @@ def characterized(w: Worker, run: dict) -> str:
         # test-file path (`Tests/` too, as Swift lays them out), never one of
         # the files being refactored.
         code = sorted(rel for rel in tests if rel in files or not debt.TEST.search(rel.lower()))
-        changed = {line[3:].strip('"') for line in specs.sh(["git", "status", "--porcelain", "-uall"], w.repo)
+        changed = {line[3:].strip('"') for line in specs.sh(["git", "status", "--porcelain", "-uall"], where)
                    .stdout.splitlines()}
         if code or not changed or not changed <= set(tests):
             raise Stop("tests_touched_code", f"테스트 밖을 바꿨다: {sorted({*code, *(changed - set(tests))})}")
-        done = tested(w, argv)
+        done = tested(w, argv, where)
         if done.returncode:
             raise Stop("tests_fail", (done.stdout + done.stderr)[-2000:])
-        git(w.repo, "add", "--", *tests)
-        git(w.repo, "commit", "-m", f"Add characterization tests for {', '.join(files)}")
+        git(where, "add", "--", *tests)
+        git(where, "commit", "-m", f"Add characterization tests for {', '.join(files)}")
         t.update(tests=tests, test_argv=argv)
         run = w.note(tests=t)
     if not t.get("pr"):
-        t["pr"] = published(w, sid, t["base"], f"Characterization tests for {', '.join(files)}",
+        t["pr"] = published(w, sid, where, t["base"], f"Characterization tests for {', '.join(files)}",
                             body("Pin today's behaviour before refactoring.", [f"`{f}`" for f in t["tests"]]), "L0")
         w.note(tests=t)
-    return sid
 
 
 def stepped(w: Worker, run: dict) -> dict:
@@ -619,23 +641,24 @@ def stepped(w: Worker, run: dict) -> dict:
         if step["state"] == "adopted" and (n := recovered(w.repo, sid, step["tier"])):
             run["steps"][k] = step = {**step, "state": "published", "pr": n}
             run = w.note(steps=run["steps"])
-        with owning(w):
+        where = place(w, sid)
+        with owning(where):
             if step["state"] in ("pending", "adopted"):   # a published step's branch is its PR's, never remade
                 below = specs.load(w.repo.name, previous)
-                switched(w, sid, (below and head_of(w.repo, below)) or previous)
+                where = switched(w, sid, (below and head_of(w.repo, below)) or previous)
             if step["state"] == "pending":
-                spec_for(w, run, sid, step["goal"], previous, git(w.repo, "rev-parse", "HEAD"))
+                spec_for(w, run, sid, step["goal"], previous, git(where, "rev-parse", "HEAD"), where)
             if step["tier"] in BLOCKING:
                 blocked(w, sid, True)
             if step["state"] == "pending":
-                adopted = competed(w, run, step, sid)
-                git(w.repo, "merge", "--ff-only", adopted["commit"])
+                adopted = competed(w, run, step, sid, where)
+                git(where, "merge", "--ff-only", adopted["commit"])
                 run["steps"][k] = step = {**step, "state": "adopted", "handoff": adopted["branch"]}
                 run = w.note(steps=run["steps"])
             if step["state"] == "adopted":
                 if step.get("handoff"):   # only after the checkpoint: until then a resume needs it to re-adopt
-                    specs.sh(["git", "branch", "-D", step["handoff"]], w.repo)
-                n = published(w, sid, previous, step["goal"], body(step["goal"], [
+                    specs.sh(["git", "branch", "-D", step["handoff"]], where)
+                n = published(w, sid, where, previous, step["goal"], body(step["goal"], [
                     "Frozen characterization tests pass on every candidate considered.",
                     "Selected by the largest drop in debt (`tool/refactor_profile.py`)."]), step["tier"])
                 run["steps"][k] = step = {**step, "state": "published", "pr": n}
@@ -653,8 +676,9 @@ def stepped(w: Worker, run: dict) -> dict:
     return w.note(phase="done", state="done")
 
 
-def competed(w: Worker, run: dict, step: dict, sid: str) -> dict:
-    """The step through the runner; its spend is charged to the run."""
+def competed(w: Worker, run: dict, step: dict, sid: str, where: Path) -> dict:
+    """The step through the runner from the checkout `where`; its spend is
+    charged to the run."""
 
     left = w.left()
     if left["seconds"] <= 0 or left["calls"] <= 0 or left["tokens"] <= 0:
@@ -663,16 +687,16 @@ def competed(w: Worker, run: dict, step: dict, sid: str) -> dict:
     try:
         if not config.exists():
             config = refactor_profile.prepare(
-                w.repo, run["scope"], sid, {"goal": step["goal"], "tier": step["tier"], "files": step["files"],
-                                            "tests": run["tests"]["tests"], "test_argv": run["tests"]["test_argv"]},
-                run["role"], left, halt=w.halt)
+                where, run["scope"], sid, {"goal": step["goal"], "tier": step["tier"], "files": step["files"],
+                                           "tests": run["tests"]["tests"], "test_argv": run["tests"]["test_argv"]},
+                run["role"], left, halt=w.halt, gate=specs.gate_of(w.repo))
         # ponytail: a cancel lands after the runner returns; the runner's own limits bound the wait
-        result = refactor_profile.drive(w.repo, run["scope"], sid, config)
+        result = refactor_profile.drive(where, run["scope"], sid, config)
     except improvement.Refused as exc:
         raise Stop("cancelled" if w.halt.is_set() else "runner", str(exc)) from exc
     finally:
         try:
-            spent = improvement.Experiment(w.repo, run["scope"], sid).read()["spent"]
+            spent = improvement.Experiment(where, run["scope"], sid).read()["spent"]
             w.budget.used["calls"] += spent["calls"]
             w.budget.used["tokens"] += spent["tokens"]
         except improvement.Refused:

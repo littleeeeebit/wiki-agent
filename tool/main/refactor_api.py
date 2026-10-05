@@ -84,8 +84,8 @@ def start(body: Start) -> dict:
     if not specs.gate_of(repo):
         raise HTTPException(409, "연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
     scope = refactor.scope_of(repo)
-    if scope == "hub":
-        raise HTTPException(409, "wiki-agent 자신의 리펙터링은 아직 열지 않았다")
+    if scope == "hub" and body.mode == "full":   # the planner forks the checkout the server runs from
+        raise HTTPException(409, "wiki-agent 자신은 전면 리펙터링을 열지 않는다 — 정리나 모듈 재구성으로 하라")
     with refactor._files:   # one transaction: two equal requests never both find nothing
         old = next((r for r in refactor.listing(repo.name) if r["request_id"] == body.request_id), None)
         if old is not None:
