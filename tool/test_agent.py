@@ -857,12 +857,17 @@ def test_a_close_waits_for_a_stop_still_using_the_job(tree):
         time.sleep(.5)
         order.append("kill")
 
+    def close(job):
+        order.append("close")
+        terminated(job)   # the real one: the job's handle is not left open
+
+    terminated = chat_session.terminated
     session, halt, real_popen = ChatSession(tree, write=True, bypass=True), threading.Event(), subprocess.Popen
     with patch.object(chat_session.subprocess, "Popen", lambda _, **kw: real_popen(
             [sys.executable, "-X", "utf8", "-c", "import sys; sys.stdin.read()"], **kw)), \
          patch.object(chat_session, "cli_command", side_effect=lambda name: [name]), \
          patch.object(chat_session, "killed", side_effect=slow_kill), \
-         patch.object(chat_session, "terminated", side_effect=lambda job: order.append("close")):
+         patch.object(chat_session, "terminated", side_effect=close):
         session.ensure()
         session._halt = halt
         halt.set()
