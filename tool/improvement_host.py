@@ -2,7 +2,7 @@
 
 Without a profile both roles are refused: a native ChatSession cannot enforce a
 hard call/token ceiling. The `refactor` profile (`tool/refactor_profile.py`)
-accepts that ceiling as soft — the runner records a crossing — and its critic is
+has no usage ceiling; missing token counts stay unknown. Its critic is
 deterministic, because frozen characterization tests judge every candidate.
 """
 
@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import threading
@@ -30,7 +31,9 @@ TIERS = {
 }
 SYSTEM = ("You propose one refactoring candidate in a throwaway checkout. Change structure only: frozen "
           "characterization tests you cannot edit judge behaviour, and debt metrics judge the improvement. "
-          "Do not commit, push, open pull requests, delegate or ask questions. End with exactly one line: "
+          "Do not commit, push, open pull requests or delegate. If the agreed goal or permitted mode must "
+          "change, do not edit: return a fenced refactor-scope JSON question with options containing label "
+          "and note, or a questions array of such questions. Otherwise end with exactly one line: "
           "`Hypothesis: <what you changed and why it lowers debt>`.")
 
 
@@ -86,9 +89,11 @@ def propose(request: dict, spec: dict, model: str, effort: str) -> dict:
         halt.set()
         chat.stop(halt)
 
-    timer = threading.Timer(request["limits"]["seconds"], expire)
-    timer.daemon = True
-    timer.start()
+    timer = None
+    if request["limits"]["seconds"] is not None:
+        timer = threading.Timer(request["limits"]["seconds"], expire)
+        timer.daemon = True
+        timer.start()
     final, tokens, failed = "", {}, ""
     try:
         for ev in chat.say(prompt(request, spec), halt):
@@ -97,17 +102,24 @@ def propose(request: dict, spec: dict, model: str, effort: str) -> dict:
             if ev.kind == "error" or ev.meta.get("error"):
                 failed = ev.text or "host error"
     finally:
-        timer.cancel()
+        if timer:
+            timer.cancel()
         chat.close()
     patch, paths = captured(root, start)
     if type(tokens.get("in")) is not int or type(tokens.get("out")) is not int:
-        # Never charged as zero: the runner stops on unknown usage.
-        return {"error": failed or "the host reported no usage", "usage": {}}
+        tokens = None
+    else:
+        tokens = tokens["in"] + tokens["out"]
+    if failed:
+        return {"error": failed, "usage": {"calls": 1, "tokens": tokens}}
+    scope = re.findall(r"^```refactor-scope[ \t]*\r?\n(.*?)^```", final, re.M | re.S)
+    if scope:
+        return {"scope_change": json.loads(scope[-1]), "usage": {"calls": 1, "tokens": tokens}}
     lines = [line for line in final.splitlines() if line.startswith("Hypothesis:")]
     hypothesis = lines[-1].removeprefix("Hypothesis:").strip() if lines else (failed or final.strip()[:200])
     # No paths makes the runner reject this candidate rather than stop the experiment.
     return {"edits": [{"component": "step", "hypothesis": hypothesis or "no change", "paths": paths}],
-            "patch": patch, "usage": {"calls": 1, "tokens": tokens["in"] + tokens["out"]}}
+            "patch": patch, "usage": {"calls": 1, "tokens": tokens}}
 
 
 def run(request: dict, model: str, effort: str, profile: str = "", spec: dict | None = None) -> dict:

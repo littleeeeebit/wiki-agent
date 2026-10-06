@@ -41,12 +41,12 @@ class Cancelled(Exception):
 
 
 class Budget:
-    def __init__(self, seconds: float, calls: int, candidates: int, tokens: int | None = None,
+    def __init__(self, seconds: float | None, calls: int | None, candidates: int, tokens: int | None = None,
                  cancel: threading.Event | None = None, call_seconds: float = CALL_SECONDS):
         self.limits = {"seconds": seconds, "calls": calls, "candidates": candidates, "tokens": tokens}
         self.used = {"calls": 0, "candidates": 0, "tokens": 0}
         self.started = time.monotonic()
-        self.deadline = self.started + seconds
+        self.deadline = self.started + seconds if seconds is not None else float("inf")
         self.cancel = cancel or threading.Event()
         self.call_seconds = call_seconds
         # Time spent in turns with an allowance of their own (the host's fallback): not the run's.
@@ -69,7 +69,7 @@ class Budget:
 
         with self._lock:
             self.check(0.0)
-            if self.used["calls"] >= self.limits["calls"]:
+            if self.limits["calls"] is not None and self.used["calls"] >= self.limits["calls"]:
                 raise Exhausted("calls")
             tokens = self.limits["tokens"]
             if tokens is not None and self.used["tokens"] >= tokens:

@@ -295,6 +295,20 @@ and tabs, translated specification reading and original editing, all CLI quota
 windows, task tokens, native notification dispatch, compaction progress and
 deletion across reload, plus file citations and link dispatch using synthetic data.
 
+Refactoring is a conversation focus immediately after Next Task. Its header
+selects quick cleanup, module restructure or full refactoring. Entry scans the
+selected repository and presents problem cards with measurement disclosures;
+conversation settles the purpose and completion conditions before Start. A
+mode change preserves the discussion but invalidates a draft from another
+mode. The spec card dispatches the existing test/candidate/PR pipeline, and an
+updating execution card exposes Stop, Resume, review and approval. Prior runs
+remain in the conversation. File-count and time/call/token limits are removed
+throughout this pipeline, including its full-mode planner. Usage is displayed
+only in details and missing tokens are explicitly unknown. Ordinary planners
+and improvement experiments retain their budgets. Tests are
+`tool/test_refactor_conversation.py`, `tool/test_refactor.py`,
+`tool/test_refactor_profile.py` and `web/tests/refactor_browser.py`.
+
 The right-side specification summary is hidden; requirements and planning
 controls remain in Next Task. Its selected task card also appears when the
 original specification message is outside the loaded conversation. Generated

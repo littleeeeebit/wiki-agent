@@ -113,7 +113,7 @@ def _contained(proc: subprocess.Popen):
     return None
 
 
-def _ended(proc: subprocess.Popen, job) -> None:
+def _ended(proc: subprocess.Popen, job, process_group: bool = True) -> None:
     """Kill `proc`'s whole tree, living or orphaned, and reap `proc`."""
 
     if job:
@@ -121,16 +121,18 @@ def _ended(proc: subprocess.Popen, job) -> None:
         _k32.CloseHandle(job)
     elif os.name == "nt":
         subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, **background_options())
-    else:
+    elif process_group:
         try:
             os.killpg(proc.pid, signal.SIGKILL)   # its own session: the group outlives the parent
         except (ProcessLookupError, PermissionError):
             pass
+    elif proc.poll() is None:
+        proc.kill()   # the outer evaluator owns and reaps this inherited group
     proc.wait()
 
 
-def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float = 3600.0,
-       halt: threading.Event | None = None) -> subprocess.CompletedProcess:
+def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float | None = None,
+       halt: threading.Event | None = None, process_group: bool = True) -> subprocess.CompletedProcess:
     """`argv` in `cwd` with its output combined; cut with return code `CUT` at
     `seconds` or on `halt`. Output goes to a file, so a descendant holding it
     open cannot hold the wait, and the whole tree is killed when this returns."""
@@ -143,8 +145,9 @@ def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float = 3600.0,
         options["creationflags"] |= 0x4   # CREATE_SUSPENDED: in its job before its first instruction
     with tempfile.TemporaryFile() as out:
         proc = subprocess.Popen(argv[0] if shell else argv, cwd=cwd, shell=shell, stdin=subprocess.DEVNULL,
-                                stdout=out, stderr=subprocess.STDOUT, start_new_session=os.name != "nt", **options)
-        job, deadline, code = _contained(proc), time.monotonic() + seconds, CUT
+                                stdout=out, stderr=subprocess.STDOUT,
+                                start_new_session=os.name != "nt" and process_group, **options)
+        job, deadline, code = _contained(proc), time.monotonic() + seconds if seconds is not None else float("inf"), CUT
         try:
             if os.name == "nt" and _nt.NtResumeProcess(int(proc._handle)):
                 raise OSError(f"could not resume {argv[0]!r}")
@@ -155,16 +158,16 @@ def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float = 3600.0,
                 except subprocess.TimeoutExpired:
                     pass
         finally:
-            _ended(proc, job)
+            _ended(proc, job, process_group)
         out.seek(0)
         return subprocess.CompletedProcess(argv, code, out.read().decode("utf-8", "replace"), "")
 
 
-def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: dict,
+def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: dict | None = None,
             store: Path | None = None, halt: threading.Event | None = None, gate: str = "") -> Path:
     """The experiment config for `step` = `{goal, tier, files, tests, test_argv}`;
     `test_argv` runs the characterization tests from a checkout's root, within
-    `limits["seconds"]` and until `halt`. The runner gets what that run left. A
+    cancellation through `halt`, without a usage ceiling. A
     linked worktree passes the original checkout's `gate`: the adapter that
     names it is per-machine wiring Git does not carry."""
 
@@ -177,11 +180,9 @@ def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: d
     for rel in step["tests"]:
         if sh(["git", "ls-files", "--error-unmatch", "--", rel], repo).returncode:
             raise improvement.Refused(f"Characterization test {rel} is not committed; candidates would not see it")
-    started = time.monotonic()
-    done = sh(step["test_argv"], repo, seconds=limits["seconds"], halt=halt)
-    limits = {**limits, "seconds": limits["seconds"] - (time.monotonic() - started)}
-    if done.returncode == CUT or limits["seconds"] <= 0:
-        raise improvement.Refused("The characterization tests outran the run's time or were cancelled")
+    done = sh(step["test_argv"], repo, halt=halt)
+    if done.returncode == CUT:
+        raise improvement.Refused("The characterization tests were cancelled")
     if done.returncode:
         raise improvement.Refused("The characterization tests fail on today's code; nothing to freeze\n"
                                   + (done.stdout + done.stderr)[-TAIL:])
@@ -203,10 +204,10 @@ def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: d
     me = [sys.executable, str(HERE / "refactor_profile.py")]
     tasks = {"schema": "wiki-improvement-tasks/1",
              "tasks": {"preserve": {"argv": [*me, "preserve", "--spec", str(spec)], "inference": False,
-                                    "seconds": 1800},
+                                    "seconds": None},
                        "shrink": {"argv": [*me, "shrink", "--spec", str(spec)], "inference": False,
-                                  "scored": True, "seconds": 600},
-                       "gate": {"argv": [*me, "gate", "--spec", str(spec)], "inference": False, "seconds": 3600}},
+                                  "scored": True, "seconds": None},
+                       "gate": {"argv": [*me, "gate", "--spec", str(spec)], "inference": False, "seconds": None}},
              "guards": {"evolve": {"preserved": ["preserve"]}, "held_out": {"preserved": ["gate"]}}}
     manifest = folder / "tasks.json"
     manifest.write_text(json.dumps(tasks, indent=2), encoding="utf-8", newline="\n")
@@ -214,15 +215,13 @@ def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: d
     host = [sys.executable, str(HERE / "improvement_host.py"), "--model", role.get("model") or "default",
             "--effort", role.get("effort") or "default", "--profile", "refactor", "--spec", str(spec)]
     config = {
-        "schema": "wiki-improvement/1", "profile": "refactor", "soft_caps": ["propose"],
+        "schema": "wiki-improvement/1", "profile": "refactor",
         "model": role.get("model") or "default",
         "rounds": 2, "candidates": n, "trials": 1, "edits_min": 1, "edits_max": 1,
         "stall_window": 1, "prune_window": 1,
         # Deterministic metrics: no noise band, no cost to trade, any real drop in debt counts.
         "delta": 0, "beta0": 0, "beta1": 0, "w_score": 1, "w_cost": 1, "w_novelty": 0,
-        "limits": limits,
-        "caps": {"propose": {"calls": 1, "tokens": max(1, limits["tokens"] // (2 * n))},
-                 "critic": {"calls": 0, "tokens": 0}, "evaluate": {"calls": 0, "tokens": 0}},
+        "limits": None,
         "tasks": {"evolve": ["preserve", "shrink"], "held_out": ["gate"]},
         "components": {"step": scope_paths}, "guards": ["preserved"],
         "protected": step["tests"],
@@ -236,11 +235,14 @@ def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: d
     return path
 
 
-def drive(repo: Path, scope: str, name: str, config: Path, store: Path = improvement.STORE) -> dict:
+def drive(repo: Path, scope: str, name: str, config: Path, store: Path = improvement.STORE,
+          halt: threading.Event | None = None) -> dict:
     """Run the step: `{"state": "adopted", "branch", ...}` or `{"state": "split", "reasons"}`."""
 
-    experiment = improvement.Experiment(repo, scope, name, store=store)
+    experiment = improvement.Experiment(repo, scope, name, store=store, halt=halt)
     state = experiment.read() if experiment.state_file.exists() else experiment.initialize(config)
+    if state.get("stopped") == "cancelled":
+        state = experiment.resume_cancelled()
     base = state["base"]
     while state["incumbent"]["commit"] == base and len(state["rounds"]) < state["contract"]["rounds"]:
         state = experiment.round()
@@ -253,6 +255,8 @@ def drive(repo: Path, scope: str, name: str, config: Path, store: Path = improve
 # -- The tasks the evaluator runs, in the candidate checkout ----------------------
 
 def task(action: str, spec: dict, root: Path) -> int:
+    # Nested tasks stay in the evaluator's cancellable POSIX group.
+    process_group = os.name == "nt" or os.environ.get("WIKI_IMPROVEMENT_GROUP") != str(os.getpgrp())
     if action == "shrink":
         now = debt_of(root, spec["scope"])
         reward = (1.0 if now == 0 else 0.0) if spec["baseline"] == 0 else \
@@ -260,7 +264,7 @@ def task(action: str, spec: dict, root: Path) -> int:
         print(json.dumps({"reward": reward, "debt": now}))
         return 0
     if action == "preserve":
-        done = sh(spec["test_argv"], root)
+        done = sh(spec["test_argv"], root, process_group=process_group)
         if done.returncode:
             sys.stderr.write((done.stdout + done.stderr)[-TAIL:])
             return 1
@@ -269,7 +273,7 @@ def task(action: str, spec: dict, root: Path) -> int:
             sys.stderr.write("ratchet:\n" + "\n".join(problems))
             return 1
         return 0
-    done = sh([spec["gate"]], root, shell=True)
+    done = sh([spec["gate"]], root, shell=True, process_group=process_group)
     if done.returncode:
         sys.stderr.write((done.stdout + done.stderr)[-TAIL:])
     return done.returncode

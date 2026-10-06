@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Questions } from '@/components/Questions'
 import { PlanStatus } from '@/components/Plan'
+import { RefactorStatus, REFACTOR_MODE } from '@/components/Refactor'
+import type { RefactorMode } from '@/components/Refactor'
 import { Btn } from '@/components/Modal'
 import * as api from '@/lib/api'
 import type { Block, ChoiceQuestion, Spec } from '@/lib/api'
@@ -15,6 +17,8 @@ export type BlockProps = {
   /** Read the spec list again: a card changed. */
   onSpecs: () => void
   onStart: (id: string) => Promise<void>
+  refactorMode?: RefactorMode
+  refactorGeneration?: number
 }
 
 /** The named blocks at the end of a `next` answer, drawn as what they ask for. */
@@ -91,6 +95,8 @@ function SpecCard({ id, specs, ...props }: { id: string } & BlockProps) {
   const [current, setCurrent] = useState(id)
   const spec = specs.find((s) => s.id === current)
   if (!spec) return <p className="text-[12.5px] text-faint">명세 `{current}` 는 이제 없다 — 버렸거나 이름을 바꿨다.</p>
+  if (spec.refactor?.mode && spec.refactor.run) return <RefactorStatus repo={spec.repo} id={spec.refactor.run}
+    specs={specs} korean={props.korean} onSay={props.onSay} onChanged={props.onSpecs} />
   if (spec.state !== '정리됨') return <Started spec={spec} {...props} />
   // A new version of the spec starts what is typed over.
   return <SpecForm key={`${spec.id}:${spec.rev}`} spec={spec} onRenamed={setCurrent} {...props} />
@@ -100,6 +106,7 @@ function Head({ spec }: { spec: Spec }) {
   return (
     <div className="mb-2 flex items-center gap-2 font-heading text-[11px] text-faint">
       <span>명세</span>
+      {spec.refactor?.mode && <span>{REFACTOR_MODE[spec.refactor.mode]}</span>}
       <span className="font-mono">{spec.id}</span>
       {spec.rev > 1 && <span>판 {spec.rev}</span>}
       <span className="ml-auto font-mono text-[10.5px] font-normal text-muted-foreground">{spec.state}</span>
@@ -164,8 +171,8 @@ function SpecDetails({ spec, korean }: { spec: Spec; korean: boolean }) {
   </div>
 }
 
-export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed, korean = false }:
-  { spec: Spec; onRenamed: (id: string) => void; korean?: boolean } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart'>) {
+export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed, korean = false, refactorMode, refactorGeneration }:
+  { spec: Spec; onRenamed: (id: string) => void; korean?: boolean; refactorMode?: RefactorMode; refactorGeneration?: number } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart'>) {
   const [goal, setGoal] = useState(spec.goal)
   const [out, setOut] = useState(spec.out.join('\n'))
   const [done, setDone] = useState(spec.done.slice(1).join('\n'))
@@ -176,6 +183,8 @@ export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed, korean = fal
 
   const edited = goal !== spec.goal || out !== spec.out.join('\n') || done !== spec.done.slice(1).join('\n')
     || slug !== spec.id
+  const modeChanged = spec.refactor?.mode && refactorMode && (spec.refactor.mode !== refactorMode
+    || (spec.source.refactor_generation ?? 0) !== (refactorGeneration ?? 0))
 
   async function act(what: string, fn: () => Promise<unknown>) {
     setFault('')
@@ -257,7 +266,7 @@ export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed, korean = fal
           })}>
           {working === 'save' ? '…' : '저장'}
         </Btn>
-        {spec.state === '정리됨' && <Btn tone="primary" disabled={edited || busy || !!working}
+        {spec.state === '정리됨' && <Btn tone="primary" disabled={edited || busy || !!working || !!modeChanged}
           title={edited ? '고친 것을 먼저 저장한다' : '저장소에 작업 브랜치를 만들고 첫 턴을 보낸다'}
           onClick={() => act('start', () => onStart(spec.id))}>
           {working === 'start' ? '시작하는 중…' : '시작 ▸'}
@@ -266,6 +275,7 @@ export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed, korean = fal
           버리기
         </Btn>}
       </div>
+      {modeChanged && <p role="status" className="mt-2 text-wait">모드가 바뀌었다. 대화에서 범위·명세를 다시 정한 뒤 시작한다.</p>}
       {fault && <p role="alert" className="mt-1.5 text-[12.5px] text-destructive">{fault}</p>}
     </div>
   )

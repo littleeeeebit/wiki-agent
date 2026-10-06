@@ -102,7 +102,7 @@ class Plan(BaseModel):
     slug: str = ""
     stages: int | None = None
     roles: Roles
-    limits: Limits
+    limits: Limits | None = None
     refactor: bool = False   # a full refactor's plan: every stage names its tier and files (`tiered`)
 
 
@@ -116,7 +116,7 @@ def normalized(body: Plan) -> dict:
             "roles": {name: {"model": role.model.strip(), "effort": role.effort.strip()}
                       for name, role in (("planner", roles.planner), ("reviser", roles.reviser),
                                          ("reviewer", roles.reviewer))},
-            "limits": body.limits.model_dump(), **({"refactor": True} if body.refactor else {})}
+            "limits": body.limits.model_dump() if body.limits else None, **({"refactor": True} if body.refactor else {})}
 
 
 def digest(value) -> str:
@@ -138,7 +138,8 @@ def checked(body: Plan) -> None:
     if body.slug and not specs.slugged(body.slug):
         raise HTTPException(400, "이름은 소문자·숫자·- 만, 64자까지")
     limits = body.limits
-    if not (math.isfinite(limits.seconds) and limits.seconds > 0 and limits.calls > 0 and limits.tokens > 0):
+    if not (body.refactor and limits is None) and (limits is None or not (
+            math.isfinite(limits.seconds) and limits.seconds > 0 and limits.calls > 0 and limits.tokens > 0)):
         raise HTTPException(400, "시간·호출·토큰 한도는 모두 0보다 큰 유한한 값이어야 한다")
     for name, role in (("planner", body.roles.planner), ("reviser", body.roles.reviser),
                        ("reviewer", body.roles.reviewer)):
@@ -479,8 +480,9 @@ def problems(repo: str, sid: str, spec: dict, path: Path) -> list[tuple[str, str
     root, outline = p["artifact_root"], p["outline"]
     out: list[tuple[str, str]] = []
     limits = p["limits"]
-    if not all(isinstance(limits[k], (int, float)) and math.isfinite(limits[k]) and limits[k] > 0
-               for k in ("seconds", "calls", "tokens")):
+    if not (p["input"].get("refactor") and limits is None) and (limits is None or not all(
+            isinstance(limits[k], (int, float)) and math.isfinite(limits[k]) and limits[k] > 0
+            for k in ("seconds", "calls", "tokens"))):
         out.append(("", "한도가 유한한 양수가 아니다"))
     expected = [file_of(root)] + [file_of(root, s) for s in outline["stages"]]
     manifest = {e["path"]: e for e in p["artifact_manifest"] or []}
@@ -599,9 +601,10 @@ class Worker:
         self.thread: threading.Thread | None = None
         self.base = dict(planning["spent"])
         limits = planning["limits"]
-        self.budget = Budget(seconds=max(0.0, limits["seconds"] - self.base["seconds"]),
-                             calls=max(0, limits["calls"] - self.base["calls"]), candidates=0,
-                             tokens=max(0, limits["tokens"] - self.base["tokens"]), cancel=self.halt)
+        self.unlimited = planning["input"].get("refactor", False)
+        self.budget = Budget(seconds=None if self.unlimited else max(0.0, limits["seconds"] - self.base["seconds"]),
+                             calls=None if self.unlimited else max(0, limits["calls"] - self.base["calls"]), candidates=0,
+                             tokens=None if self.unlimited else max(0, limits["tokens"] - self.base["tokens"]), cancel=self.halt)
         self.started = time.monotonic()
         self.tools, self.web, self.unknown = 0, 0, False
         self.reason = "cancelled"   # what a halt is recorded as: a person's cancel, or the server going down
@@ -639,7 +642,7 @@ class Worker:
         stopping with the reason. The allowance is taken before the request,
         the reported usage charged after it; the wall deadline stops the turn."""
 
-        if self.unknown:
+        if self.unknown and not self.unlimited:
             self.stop("budget_unknown", "호스트가 사용량을 알려 주지 않았다 — 0 으로 치지 않고 멈춘다")
             return None
         try:
@@ -663,9 +666,11 @@ class Worker:
             run.halt.set()
             chat.stop(run.halt)
 
-        timer = threading.Timer(self.budget.left(), expire)
-        timer.daemon = True
-        timer.start()
+        timer = None
+        if not self.unlimited:
+            timer = threading.Timer(self.budget.left(), expire)
+            timer.daemon = True
+            timer.start()
         try:
             final, failed, meta, tools, web = consume(path, run, text)
         except BaseException:
@@ -674,7 +679,8 @@ class Worker:
             planned(self.repo, self.sid, spent=self.spent(), inflight=False)
             raise
         finally:
-            timer.cancel()
+            if timer:
+                timer.cancel()
             run.finish()
             self.run = None
         self.tools += tools
@@ -687,7 +693,7 @@ class Worker:
             # nothing more; a person's `[재개]` goes on, with the spend shown as a lower bound.
             self.unknown = True
         fields = {"spent": self.spent(), "inflight": False}
-        if self.budget.used["tokens"] > self.budget.limits["tokens"]:
+        if not self.unlimited and self.budget.used["tokens"] > self.budget.limits["tokens"]:
             # Usage comes after the answer: the ceiling was crossed, not kept.
             fields["overrun"] = {"tokens": fields["spent"]["tokens"], "limit": spec["planning"]["limits"]["tokens"]}
         if chat.session_id:
@@ -998,7 +1004,7 @@ def walk(worker: Worker, path: Path, repo: Path) -> None:
             return
         if worker.halt.is_set():
             return worker.stop(worker.reason)
-        if worker.unknown:
+        if worker.unknown and not worker.unlimited:
             return worker.stop("budget_unknown", "호스트가 사용량을 알려 주지 않았다 — 0 으로 치지 않고 멈춘다")
         if phase == "collect":
             collect(worker, spec, path, repo)

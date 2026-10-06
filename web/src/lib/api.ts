@@ -20,6 +20,8 @@ export type Channel = {
   model: string
   model_name: string
   effort: string
+  refactor_mode?: 'cleanup' | 'restructure' | 'full'
+  refactor_generation?: number
 }
 
 /** A repository's own documents, as `repo_graph.picture` drew them. */
@@ -250,7 +252,7 @@ export const reset = (id: string, keep: Keep) =>
 
 /** Every channel shares the project; conversations are kept per project and
  *  per channel. */
-export const setConfig = (id: string, cfg: { repo: string; model: string; effort: string }) =>
+export const setConfig = (id: string, cfg: { repo: string; model: string; effort: string; refactor_mode?: 'cleanup' | 'restructure' | 'full' }) =>
   post(`/api/config/${id}`, cfg).then((r) => json<{ kept: boolean; switched: boolean; repo: string }>(r, '설정'))
 
 /** Name one category at the moment it went wrong, in the census's format. */
@@ -513,7 +515,7 @@ export type Spec = {
   review_profile: ReviewProfile
   review_profile_version: number
   artifact_root: string | null
-  source: { focus: string; turn: number; plan: { path: string; row: string } | null }
+  source: { focus: string; turn: number; plan: { path: string; row: string } | null; refactor_generation?: number }
   state: string
   /** Why a `멈춤` stopped: one of the stage 4 plan's table. */
   stopped: { reason: string; detail: string } | null
@@ -549,6 +551,7 @@ export type Spec = {
   local_verification?: LocalVerification
   /** A plan the Plan action drafts: its phase, budget and hand-off (reliability PR 7). */
   planning?: Planning | null
+  refactor?: { mode?: 'cleanup' | 'restructure' | 'full'; files?: string[]; run?: string }
 }
 
 export const getSpecs = () =>
@@ -556,7 +559,7 @@ export const getSpecs = () =>
 export const saveSpec = (id: string, body: { rev: number; goal: string; out: string[]; done: string[]; slug: string; reason?: string }) =>
   post(`/api/specs/${id}`, body, 'PUT').then((r) => json<Spec>(r, '명세 저장'))
 export const startSpec = (id: string, choice: { model: string; effort: string; fast?: boolean }) =>
-  post(`/api/specs/${id}/start`, choice).then((r) => json<{ path: string; turn: string }>(r, '시작'))
+  post(`/api/specs/${id}/start`, choice).then((r) => json<{ path: string; turn: string; refactor?: string }>(r, '시작'))
 export const dropSpec = (id: string) => post(`/api/specs/${id}/drop`).then((r) => json(r, '버리기'))
 export const checkoutSpec = (id: string) => post(`/api/specs/${id}/checkout`).then((r) => json<{ path: string }>(r, '브랜치 열기'))
 
@@ -571,7 +574,7 @@ export type Planning = {
   phase: PlanPhase
   artifact_root: string
   roles: { planner: PlanRole; reviser: PlanRole; reviewer: PlanRole }
-  limits: PlanLimits
+  limits: PlanLimits | null
   /** `calls` counts turns sent to the planner; `unknown`: a turn came back without usage, so the spend is a lower bound. */
   spent: PlanLimits & { tools: number; unknown: boolean }
   /** Usage reported after an answer crossed the token ceiling: a failed ceiling check. */

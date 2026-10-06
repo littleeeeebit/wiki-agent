@@ -532,13 +532,24 @@ def card(repo: Path, block, gate: str, source: dict, accepted: dict | None = Non
     not started. Otherwise the name gets `-2`, `-3`."""
 
     made = fields(repo, block, gate, accepted)
+    if source.get("focus") == "refactor":
+        from . import refactor_api
+
+        try:
+            request = refactor_api.Start(request_id="draft-refactor", **(block.get("refactor") or {}))
+            if request.mode != source.get("refactor_mode", "cleanup"):
+                raise ValueError("명세 모드가 상단에서 고른 모드와 다르다. 현재 모드로 다시 정해라")
+            refactor_api.checked(repo, request)
+        except (HTTPException, ValueError) as exc:
+            raise ValueError(getattr(exc, "detail", str(exc))) from exc
+        made["refactor"] = {"mode": request.mode, "files": request.files}
     base = slugged(block.get("slug"))
     if not base:
         raise ValueError("`slug` 가 비었거나 쓸 수 있는 글자가 없다")
     source = {**source, "plan": plan_row(repo, block.get("plan"))}
     with _files:
         old = load(repo.name, base)
-        if old and old["state"] == "정리됨" and source.get("session") \
+        if old and old["state"] == "정리됨" and not (old.get("refactor") or {}).get("run") and source.get("session") \
                 and old["source"].get("session") == source["session"]:
             old.update(made, rev=old["rev"] + 1, source=source)
             save(old)
@@ -742,9 +753,7 @@ def edit(sid: str, body: Edit) -> dict:
     if not gate:
         raise HTTPException(409, "연결 먼저 — 이 저장소의 adapter 에 `gate_cmd` 가 없다")
     with _lock, _files:
-        spec = load(repo.name, sid)
-        if spec is None:
-            raise HTTPException(404, "그런 명세가 없다")
+        spec = editable_task(load(repo.name, sid))
         if spec["rev"] != body.rev:
             raise HTTPException(409, f"다른 곳에서 먼저 고쳤다 — 지금은 판 {spec['rev']}")
         if spec.get("worktree") in work._busy:
@@ -812,6 +821,15 @@ def dismissed(repo: str, branch: str) -> bool:
     return bool(sid and load(repo, sid) is None and any((SPECS / repo / "dropped").glob(f"{sid}.*.json")))
 
 
+def editable_task(spec: dict | None) -> dict:
+    if spec is None:
+        raise HTTPException(404, "그런 명세가 없다")
+    request = spec.get("refactor") or {}
+    if request.get("mode") and request.get("run"):
+        raise HTTPException(409, "시작한 리펙터링은 실행 카드에서 관리해라. 목적·모드 변경은 새 명세로 정해라")
+    return spec
+
+
 @router.post("/api/specs/{sid}/delete")
 def delete_task(sid: str) -> dict:
     """Archive a task by identity; a shared checkout and its Git changes remain."""
@@ -820,9 +838,7 @@ def delete_task(sid: str) -> dict:
     with _lock:
         repo = current_repo()
     with _files:
-        spec = load(repo.name, sid)
-    if spec is None:
-        raise HTTPException(404, "그런 명세가 없다")
+        spec = editable_task(load(repo.name, sid))
     with _lock:
         worker = planning._workers.get((repo.name, sid))
     if worker is not None:
@@ -863,9 +879,7 @@ def drop(sid: str) -> dict:
 
     repo = current_repo()
     with _files:
-        spec = load(repo.name, sid)
-        if spec is None:
-            raise HTTPException(404, "그런 명세가 없다")
+        spec = editable_task(load(repo.name, sid))
         if spec["state"] not in ("정리됨", "머지됨"):
             raise HTTPException(409, "시작한 명세는 머지된 뒤에 버린다")
         aside(repo.name, sid)
@@ -899,6 +913,13 @@ def start(sid: str, body: Start) -> dict:
     In that order, a worktree that could not be made leaves the spec exactly
     as it was; the other way round, a failure had to be rolled back."""
 
+    repo = current_repo()
+    spec = load(repo.name, sid)
+    if spec and (spec.get("refactor") or {}).get("mode"):
+        from . import refactor_api
+
+        run = refactor_api.from_spec(repo, sid, body.model_dump())
+        return {"refactor": run["id"]}
     with _lock:
         repo = current_repo()
         checkout_idle(repo)

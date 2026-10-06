@@ -26,6 +26,7 @@ def evaluate(request: dict, manifest: dict, directory: Path) -> dict:
     started = time.monotonic()
     usage = {"calls": 0, "tokens": 0}
     rows = []
+    unlimited = request.get("profile") == "refactor" and request["limits"]["seconds"] is None
     guard_tasks = manifest["guards"][request["split"]]
     if not isinstance(guard_tasks, dict):
         raise ValueError("Guard tasks must be a mapping")
@@ -45,7 +46,8 @@ def evaluate(request: dict, manifest: dict, directory: Path) -> dict:
         if not isinstance(argv, list) or not argv or any(not isinstance(a, str) or not a for a in argv):
             raise ValueError("Task commands must be argument arrays")
         seconds = task.get("seconds")
-        if type(seconds) not in (int, float) or not math.isfinite(seconds) or seconds <= 0:
+        if not (unlimited and seconds is None) and (type(seconds) not in (int, float)
+                or not math.isfinite(seconds) or seconds <= 0):
             raise ValueError("Each task needs a positive finite timeout")
         executable = shutil.which(argv[0])
         if not executable:
@@ -60,22 +62,25 @@ def evaluate(request: dict, manifest: dict, directory: Path) -> dict:
                     argument = str(file.resolve())
             command.append(argument)
         for trial in range(request["trials"]):
-            remaining = request["limits"]["seconds"] - (time.monotonic() - started)
-            if remaining <= 0:
+            remaining = None if unlimited else request["limits"]["seconds"] - (time.monotonic() - started)
+            if not unlimited and remaining <= 0:
                 raise ValueError("Evaluation time allowance exhausted")
-            if any(cap[k] > request["limits"][k] - usage[k] for k in cap):
+            if not unlimited and any(cap[k] > request["limits"][k] - usage[k] for k in cap):
                 return {"error": "Evaluation allowance cannot cover the next trial's usage ceiling",
                         "usage": usage, "trials": rows}
             key = hashlib.sha256(task_id.encode("utf-8")).hexdigest()
             cache = Path(os.environ["WIKI_IMPROVEMENT_CACHE"]) / key / str(trial)
             cache.mkdir(parents=True, exist_ok=True)
             env = {**os.environ, "WIKI_IMPROVEMENT_MODEL": request["model"], "WIKI_IMPROVEMENT_CACHE": str(cache)}
+            if unlimited and os.name != "nt":
+                env["WIKI_IMPROVEMENT_GROUP"] = str(os.getpgrp())
             payload = {**{k: request[k] for k in ("root", "model", "split", "scope", "repo_key") if k in request},
                        "stage": "task", "id": task_id, "trial": trial,
-                       "limits": {"seconds": min(seconds, remaining), **cap}}
+                       "limits": {"seconds": seconds if unlimited else min(seconds, remaining), **cap}}
             code, output, errors = execute(command, Path(request["root"]),
                                            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                                           payload["limits"]["seconds"], env)
+                                           payload["limits"]["seconds"], env,
+                                           **({"process_group": False} if unlimited else {}))
             if task["inference"] or task.get("scored") is True:
                 # A scored offline task prints its reward like an inference task, at zero cost.
                 result = json.loads(output.decode("utf-8"))

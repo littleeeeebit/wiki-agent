@@ -126,6 +126,9 @@ def config(cid: str, name: str | None = None) -> dict:
             except Exception as exc:
                 raise HTTPException(503, "기본 Codex 모델을 확인할 수 없습니다. 설치 명령을 다시 실행하세요.") from exc
         _config[key] = {"repo": name, "model": model, "effort": effort}
+        if cid == "refactor":
+            _config[key]["refactor_mode"] = "cleanup"
+            _config[key]["refactor_generation"] = 0
     return _config[key]
 
 
@@ -399,6 +402,7 @@ class Config(BaseModel):
     repo: str
     model: str = ""
     effort: str = ""
+    refactor_mode: Literal["cleanup", "restructure", "full"] | None = None
 
 
 @router.get("/api/options")
@@ -625,6 +629,10 @@ def configure(cid: str, body: Config) -> dict:
         moved = not switched and body.model.startswith("codex:") != cfg["model"].startswith("codex:")
         if not switched:
             cfg.update(model=body.model, effort=body.effort or selected.get("default_effort", ""))
+        if cid == "refactor" and body.refactor_mode is not None:
+            if cfg.get("refactor_mode", "cleanup") != body.refactor_mode:
+                cfg["refactor_generation"] = cfg.get("refactor_generation", 0) + 1
+            cfg["refactor_mode"] = body.refactor_mode
         key = session_key(cid)
         if moved:
             remember(cid, "context", "CLI 변경")
@@ -757,6 +765,10 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
         if body.propose:
             sent = specs.materials(run.repo) + (f"\n\n{text}" if text else "")
             flags = {"said": "(후보 요청)" + (f" {text}" if text else ""), "propose": True}
+        if cid == "refactor":
+            sent = f"Selected refactoring mode: {cfg.get('refactor_mode', 'cleanup')}. Reconsider any draft " \
+                   "specification if this mode differs from the earlier discussion.\n\n" + sent
+            flags["said"] = text
         results = unseen(cid)
         if results:
             sent = "Since your last turn:\n" + "\n".join(f"- {r['text']}" for r in results) + "\n\n" + sent
@@ -820,11 +832,14 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                 reply = [out["text"]]
                 finished = True
                 metadata = {k: v for k, v in spent.items() if k != "error"}
-                if cid == "next":
+                if cid in ("next", "refactor"):
                     found = specs.blocks(out["rest"])[1]
                     cited = {c["evidence_id"]: c for c in verification["citations"]}
                     accepted = {e: cited[c] for e, c in out["evidence_ids"].items() if c in cited}
                     source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
+                    if cid == "refactor":
+                        source["refactor_mode"] = cfg.get("refactor_mode", "cleanup")
+                        source["refactor_generation"] = cfg.get("refactor_generation", 0)
                     shown = specs.answered(run.repo, found, source, accepted)
                 put({"kind": "done", "text": reply[0], **metadata, "verification": verification})
                 if shown:
@@ -856,11 +871,14 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                 finished = bool(reply[0].strip())
                 metadata = ev.meta
                 metadata.pop("error", None)
-                if cid == "next":
+                if cid in ("next", "refactor"):
                     # The blocks leave the answer, so the overlay never
                     # translates JSON; they go to the screen apart.
                     reply[0], found = specs.blocks(reply[0])
                     source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
+                    if cid == "refactor":
+                        source["refactor_mode"] = cfg.get("refactor_mode", "cleanup")
+                        source["refactor_generation"] = cfg.get("refactor_generation", 0)
                     shown = specs.answered(run.repo, found, source)
                     ev.text = reply[0]
             put({"kind": ev.kind, "text": ev.text, **({"code": code} if ev.kind == "error" else {}), **ev.meta})

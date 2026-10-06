@@ -96,7 +96,7 @@ def test_cleanup_freezes_then_stacks_a_reviewed_step(selected):
         kicked.append((sid, "automatic") if automatic else sid)
         specs.update(name, sid, state="머지 가능")
 
-    def adopted(repo, scope, name, config):
+    def adopted(repo, scope, name, config, halt=None):
         return {"state": "adopted", "commit": _git(repo, "rev-parse", "HEAD"), "branch": "none"}
 
     body = {"request_id": "refactor-req-0001", "mode": "cleanup", "top": 1,
@@ -188,7 +188,7 @@ def _named(tests: list[str], argv: list[str], code: bool = False):
     return say
 
 
-def test_the_checkout_test_names_one_request_and_the_test_command_are_all_bounded(selected):
+def test_the_checkout_test_names_one_request_and_cancellation_remain_enforced(selected):
     api = client()
     limits = {"seconds": 600, "calls": 5, "tokens": 100}
 
@@ -219,8 +219,12 @@ def test_the_checkout_test_names_one_request_and_the_test_command_are_all_bounde
     hangs = _named(["test_big.py"], [py, "-c", "import time; time.sleep(3600)"])
     with patch.object(specs, "sh", side_effect=Remote()), patch.object(Host, "say", hangs):
         began = time.monotonic()
-        run = finished(api, started("refactor-req-0005", seconds=3))
-    assert run["stopped"]["reason"] == "budget" and time.monotonic() - began < 20, run["stopped"]
+        rid = started("refactor-req-0005", seconds=0.01)
+        until(api, rid, lambda r: bool(r.get("tests")))
+        time.sleep(0.2)
+        api.post(f"/api/refactors/{rid}/cancel")
+        run = finished(api, rid)
+    assert run["stopped"]["reason"] == "cancelled" and time.monotonic() - began < 20, run["stopped"]
 
     token, ids = refactor_api.secrets.token_hex, []
 
@@ -237,7 +241,7 @@ def test_the_checkout_test_names_one_request_and_the_test_command_are_all_bounde
 
 def test_restructure_holds_the_repository_until_the_person_approves(selected):
     api = client()
-    adopted = lambda repo, scope, name, config: {"state": "adopted", "branch": "none",  # noqa: E731
+    adopted = lambda repo, scope, name, config, halt=None: {"state": "adopted", "branch": "none",  # noqa: E731
                                                   "commit": _git(repo, "rev-parse", "HEAD")}
     body = {"request_id": "refactor-req-0003", "mode": "restructure", "files": ["big.py"],
             "role": {"model": "m", "effort": "high"}, "limits": {"seconds": 600, "calls": 9, "tokens": 100_000}}
@@ -386,7 +390,7 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
                                    {"n": 2, "slug": "split", "title": "Split"}]}}})
         return {"id": "plan-refactor"}
 
-    adopted = lambda repo, scope, name, config: {"state": "adopted", "branch": "none",  # noqa: E731
+    adopted = lambda repo, scope, name, config, halt=None: {"state": "adopted", "branch": "none",  # noqa: E731
                                                   "commit": _git(repo, "rev-parse", "HEAD")}
     review = lambda name, sid: specs.update(name, sid, state="머지 가능")  # noqa: E731
     body = {"request_id": "refactor-req-0004", "mode": "full",
@@ -450,14 +454,14 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
         assert refactor.charted(w, refactor.load("proj", rid))["plan"] == "plan-refactor", "found, though spent"
     spec = specs.load("proj", "plan-refactor")   # gone, as if deleted after any earlier look: the real lookup
     specs.save({**spec, "planning": {**spec["planning"], "request_id": "refactor-elsewhere-plan"}})
-    with patch.object(planning, "launch") as launched, pytest.raises(refactor.Stop) as stop:
+    with patch.object(planning, "begun", side_effect=planned):
         refactor.charted(w, refactor.load("proj", rid))
-    assert stop.value.reason == "budget" and not launched.called, "a saved request makes no new planner once spent"
+    assert asked[-1].limits is None, "the planner has no refactoring budget"
 
 
 def test_the_hub_refactors_in_linked_worktrees_and_never_switches_its_own_checkout(selected):
     api = client()
-    adopted = lambda repo, scope, name, config: {"state": "adopted", "branch": "none",  # noqa: E731
+    adopted = lambda repo, scope, name, config, halt=None: {"state": "adopted", "branch": "none",  # noqa: E731
                                                   "commit": _git(repo, "rev-parse", "HEAD")}
     review = lambda name, sid: specs.update(name, sid, state="머지 가능")  # noqa: E731
     body = {"request_id": "refactor-req-0005", "mode": "cleanup", "top": 1,

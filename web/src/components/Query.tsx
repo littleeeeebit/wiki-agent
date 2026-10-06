@@ -5,6 +5,8 @@ import { Composer } from '@/components/Composer'
 import { Btn, ClearAsk } from '@/components/Modal'
 import { Peek } from '@/components/Peek'
 import { PlanStart } from '@/components/Plan'
+import { RefactorCandidates, RefactorHistory, REFACTOR_MODE } from '@/components/Refactor'
+import type { RefactorMode } from '@/components/Refactor'
 import { Stream } from '@/components/Stream'
 import { Picker, Toolbar } from '@/components/Toolbar'
 import * as api from '@/lib/api'
@@ -292,20 +294,30 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
 
   const here = channels.find((c) => c.id === active)
   const busy = busyOn.includes(slot(active)) || configuring
+  const latestSpec = new Map(messages.flatMap((m) => (m.blocks ?? [])
+    .flatMap((b) => b.name === 'spec' && 'id' in b ? [[b.id, m] as const] : [])))
+  const start = async (id: string) => {
+    if (specs.find((s) => s.id === id)?.refactor?.mode) {
+      await api.startSpec(id, here ?? { model: '', effort: '' })
+      onSpecs()
+    } else await onStart(id)
+  }
 
   const apply = useCallback(
-    async (cfg: { model: string; effort: string }) => {
+    async (cfg: { model: string; effort: string; refactor_mode?: RefactorMode }) => {
       if (!here) return
       setFault('')
       setConfiguring(true)
       try {
-        const { kept } = await api.setConfig(active, { repo: here.repo, ...cfg })
+        const { kept } = await api.setConfig(active, { repo: here.repo,
+          ...(here.refactor_mode ? { refactor_mode: here.refactor_mode } : {}), ...cfg })
         onChannels(await api.getChannels())
         if (!kept) {
           setMessages([])
           setNote('Claude/Codex 를 바꿔 새 대화를 시작했다. 지난 기록은 그대로 남아 있다.')
         } else {
-          setNote('다음 질문부터 적용된다. 지금까지 한 대화는 이어진다.')
+          setNote(cfg.refactor_mode ? '모드를 바꿨다. 대화는 이어지고, 시작 전 명세는 새 모드로 다시 검토한다.'
+            : '다음 질문부터 적용된다. 지금까지 한 대화는 이어진다.')
         }
       } catch (err) {
         setFault(String(err))
@@ -412,6 +424,17 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         </div>
       </header>
 
+      {active === 'refactor' && here && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-5 py-2 text-[12.5px]">
+        <label className="flex min-w-0 items-center gap-2">모드
+          <select aria-label="리펙터링 모드" disabled={busy} value={here.refactor_mode ?? 'cleanup'}
+            onChange={(e) => void apply({ model: here.model, effort: here.effort, refactor_mode: e.target.value as RefactorMode })}
+            className="min-h-9 min-w-0 rounded-md border border-border bg-card px-2">
+            {Object.entries(REFACTOR_MODE).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <span className="text-muted-foreground">목적과 완료 조건으로 범위를 정한다</span>
+      </div>}
+
       {fault && (
         <div role="alert" className="border-b border-destructive/30 bg-destructive/10 px-5 py-2 text-[12.5px] text-destructive">
           {fault}
@@ -431,7 +454,17 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <Stream
-            messages={active === 'next' && selectedSpec && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === selectedSpec.id))
+            intro={active === 'refactor' && here && <RefactorCandidates key={here.repo} repo={here.repo}
+              mode={here.refactor_mode ?? 'cleanup'} busy={busy} onSay={(text) => void send(text)} />}
+            after={active === 'refactor' && here && <>
+              {specs.filter((s) => s.source.focus === 'refactor' && s.refactor?.mode && !messages.some((m) => m.blocks?.some((b) =>
+                b.name === 'spec' && 'id' in b && b.id === s.id))).map((s) => <Blocks key={s.id} blocks={[{ name: 'spec', id: s.id }]}
+                  specs={specs} korean={on} busy={busy} refactorMode={here.refactor_mode ?? 'cleanup'}
+                  refactorGeneration={here.refactor_generation}
+                  onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />)}
+              <RefactorHistory key={here.repo} repo={here.repo} specs={specs} korean={on} onSay={(text) => void send(text)} onChanged={onSpecs} />
+            </>}
+            messages={active === 'next' && selectedSpec && !selectedSpec.refactor?.mode && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === selectedSpec.id))
               ? [...messages, { role: 'assistant', text: '', tools: [], blocks: [{ name: 'spec', id: selectedSpec.id }] }]
               : messages}
             korean={on}
@@ -441,16 +474,19 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
             onMark={markTurn}
             onStop={stop}
             onMapRun={onMapRun}
-            blocks={active === 'next' ? (m) => (
-              <Blocks blocks={m.blocks ?? []} specs={specs} korean={on} busy={busy}
-                onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={onStart} />
+            blocks={active === 'next' || active === 'refactor' ? (m) => (
+              <Blocks blocks={(m.blocks ?? []).filter((b) => active !== 'refactor' || b.name !== 'spec'
+                || !('id' in b) || latestSpec.get(b.id) === m)} specs={specs} korean={on} busy={busy}
+                refactorMode={active === 'refactor' ? here?.refactor_mode ?? 'cleanup' : undefined}
+                refactorGeneration={here?.refactor_generation}
+                onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />
             ) : undefined}
             empty={active === 'next' ? (
               <div className="space-y-2 text-[13.5px] text-faint">
                 <p>계획의 남은 행, 열린 PR, 최근 결정, 경고를 모아 다음 작업 후보를 낸다. 직접 물어도 된다.</p>
                 <Btn tone="primary" disabled={busy} onClick={() => void send('', true)}>후보 내기</Btn>
               </div>
-            ) : undefined}
+            ) : active === 'refactor' ? <p className="text-[13.5px] text-faint">선택한 문제의 목적·범위·완료 조건을 대화로 정한다.</p> : undefined}
           />
           <Composer busy={busy} onSend={send} seed={typed} />
         </div>

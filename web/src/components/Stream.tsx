@@ -23,9 +23,11 @@ type Props = {
    *  for candidates in an empty conversation. */
   blocks?: (m: Msg) => ReactNode
   empty?: ReactNode
+  intro?: ReactNode
+  after?: ReactNode
 }
 
-export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onStop, onMapRun, blocks, empty }: Props) {
+export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onStop, onMapRun, blocks, empty, intro, after }: Props) {
   const end = useRef<HTMLDivElement>(null)
 
   // The answer grows in pieces, so this follows every change in length
@@ -38,6 +40,7 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onS
   return (
     <div className="flex-1 overflow-y-auto">
       <div className="mx-auto max-w-3xl px-6 py-6">
+        {intro}
         {messages.length === 0 && empty}
         {messages.length === 0 && !empty && (
           <p className="text-[13.5px] text-faint">
@@ -88,6 +91,7 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onS
             ),
           )}
         </div>
+        {after}
         <div ref={end} />
       </div>
     </div>

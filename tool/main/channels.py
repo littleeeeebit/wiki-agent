@@ -152,6 +152,13 @@ CHANNELS: list[Channel] = [
         preamble=(WIKI / "tool/prompts/next-task.md").read_text(encoding="utf-8").strip(),
     ),
     Channel(
+        id="refactor",
+        label="리펙터링",
+        blurb="모드를 고르고, 대화로 범위를 정해 리펙터링 명세를 만든다",
+        preamble=(WIKI / "tool/prompts/next-task.md").read_text(encoding="utf-8").strip() + "\n\n"
+                 + (WIKI / "tool/prompts/refactor-task.md").read_text(encoding="utf-8").strip(),
+    ),
+    Channel(
         id="wiki",
         label="위키",
         blurb="위키와 도구를 본다 — 왜 안 되나는 기록부터",
