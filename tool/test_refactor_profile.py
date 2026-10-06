@@ -2,8 +2,11 @@
 
 import json
 import os
+import shlex
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,7 +28,7 @@ sys.path.insert(0, sys.argv[1])
 from improvement_host import captured, git
 request = json.load(sys.stdin)
 root = Path(request["root"])
-label = Path(os.environ["WIKI_IMPROVEMENT_CACHE"]).name
+label = Path(os.environ["WIKI_IMPROVEMENT_CACHE"]).name.split("-resume-")[0]
 start = git(root, "rev-parse", "HEAD").strip()
 calc = root / "src/calc.py"
 text = calc.read_text(encoding="utf-8")
@@ -97,6 +100,78 @@ def test_frozen_tests_reject_and_the_debt_drop_selects(tmp_path):
     adopted = subprocess.run(["git", "show", f"{result['branch']}:src/calc.py"], cwd=repo, capture_output=True,
                              text=True, check=True).stdout
     assert "return area(w, h) * 2" in adopted
+
+
+@pytest.mark.parametrize("stage", ["baseline", "r0-c0-propose", "heldout-champion"])
+def test_cancelled_refactoring_resumes_without_replacing_its_evidence(tmp_path, stage):
+    repo = _repo(tmp_path / "repo")
+    config = refactor_profile.prepare(repo, "project", "resume", STEP, {}, store=tmp_path / "frozen")
+    fake = tmp_path / "proposer.py"
+    fake.write_text(PROPOSER, encoding="utf-8")
+    data = json.loads(config.read_text(encoding="utf-8"))
+    data["commands"]["propose"] = [sys.executable, str(fake), str(Path(refactor_profile.__file__).parent)]
+    config.write_text(json.dumps(data), encoding="utf-8")
+    halt, execute = threading.Event(), improvement.execute
+
+    def interrupted(*args, **kwargs):
+        if Path(args[4]["WIKI_IMPROVEMENT_CACHE"]).name == stage:
+            halt.set()
+            raise improvement.Refused("cancelled")
+        return execute(*args, **kwargs)
+
+    store = tmp_path / "runs"
+    with patch.object(improvement, "execute", interrupted), pytest.raises(improvement.Refused, match="cancelled"):
+        refactor_profile.drive(repo, "project", "resume", config, store=store, halt=halt)
+    experiment = improvement.Experiment(repo, "project", "resume", store=store)
+    stopped = experiment.read()
+    assert stopped["stopped"] == "cancelled"
+    result = refactor_profile.drive(repo, "project", "resume", config, store=store, halt=threading.Event())
+    assert result["state"] == "adopted"
+    resumed = experiment.read()
+    assert resumed["recovery"] == 1 and resumed["spent"]["calls"] >= stopped["spent"]["calls"]
+    retained = json.loads((experiment.root / "cancellations/1.json").read_text(encoding="utf-8"))
+    assert retained["stopped"] == "cancelled" and retained["base"] == resumed["base"]
+    assert (experiment.root / "records" / f"{stage}-request.json").exists()
+    assert (experiment.root / "records" / f"{stage}-resume-1-request.json").exists()
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX evaluator process groups")
+@pytest.mark.parametrize("action", ["preserve", "gate"])
+def test_nested_unbounded_commands_die_with_the_cancelled_evaluator(tmp_path, action):
+    ready, escaped = tmp_path / "ready", tmp_path / "escaped"
+    descendant = f"import time; from pathlib import Path; time.sleep(3); Path({str(escaped)!r}).write_text('escaped')"
+    leaf = (f"import subprocess,sys,time; from pathlib import Path; subprocess.Popen([sys.executable,'-c',{descendant!r}]); "
+            f"Path({str(ready)!r}).write_text('ready'); time.sleep(60)")
+    argv = [sys.executable, "-c", leaf]
+    spec = tmp_path / "frozen.json"
+    spec.write_text(json.dumps({"test_argv": argv, "gate": shlex.join(argv)}), encoding="utf-8")
+    tasks = tmp_path / "tasks.json"
+    tasks.write_text(json.dumps({"schema": "wiki-improvement-tasks/1", "tasks": {"hold": {
+        "argv": [sys.executable, str(Path(refactor_profile.__file__)), action, "--spec", str(spec)],
+        "inference": False, "seconds": None}}, "guards": {"evolve": {"integrity": [], "preserved": ["hold"]}}}), encoding="utf-8")
+    request = {"stage": "evaluate", "root": str(tmp_path), "profile": "refactor", "model": "m",
+               "split": "evolve", "ids": ["hold"], "trials": 1, "limits": {"seconds": None}}
+    halt = threading.Event()
+
+    def stop():
+        for _ in range(500):
+            if ready.exists():
+                break
+            time.sleep(.02)
+        halt.set()
+
+    stopper = threading.Thread(target=stop)
+    stopper.start()
+    try:
+        with pytest.raises(improvement.Refused, match="cancelled"):
+            improvement.execute([sys.executable, str(Path(improvement.__file__).with_name("improvement_evaluate.py")),
+                "--tasks", str(tasks)], tmp_path, json.dumps(request).encode(), None,
+                {**os.environ, "WIKI_IMPROVEMENT_CACHE": str(tmp_path / "cache")}, halt)
+    finally:
+        stopper.join()
+    assert ready.exists(), "the nested test/gate actually started before cancellation"
+    time.sleep(3.5)
+    assert not escaped.exists(), "the evaluator, task wrapper, test/gate and descendant share the cancelled group"
 
 
 def test_a_low_tier_step_owns_its_files_and_the_codex_proposer_can_write(tmp_path, monkeypatch):

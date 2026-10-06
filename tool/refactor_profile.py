@@ -113,7 +113,7 @@ def _contained(proc: subprocess.Popen):
     return None
 
 
-def _ended(proc: subprocess.Popen, job) -> None:
+def _ended(proc: subprocess.Popen, job, process_group: bool = True) -> None:
     """Kill `proc`'s whole tree, living or orphaned, and reap `proc`."""
 
     if job:
@@ -121,16 +121,18 @@ def _ended(proc: subprocess.Popen, job) -> None:
         _k32.CloseHandle(job)
     elif os.name == "nt":
         subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, **background_options())
-    else:
+    elif process_group:
         try:
             os.killpg(proc.pid, signal.SIGKILL)   # its own session: the group outlives the parent
         except (ProcessLookupError, PermissionError):
             pass
+    elif proc.poll() is None:
+        proc.kill()   # the outer evaluator owns and reaps this inherited group
     proc.wait()
 
 
 def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float | None = None,
-       halt: threading.Event | None = None) -> subprocess.CompletedProcess:
+       halt: threading.Event | None = None, process_group: bool = True) -> subprocess.CompletedProcess:
     """`argv` in `cwd` with its output combined; cut with return code `CUT` at
     `seconds` or on `halt`. Output goes to a file, so a descendant holding it
     open cannot hold the wait, and the whole tree is killed when this returns."""
@@ -143,7 +145,8 @@ def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float | None = 
         options["creationflags"] |= 0x4   # CREATE_SUSPENDED: in its job before its first instruction
     with tempfile.TemporaryFile() as out:
         proc = subprocess.Popen(argv[0] if shell else argv, cwd=cwd, shell=shell, stdin=subprocess.DEVNULL,
-                                stdout=out, stderr=subprocess.STDOUT, start_new_session=os.name != "nt", **options)
+                                stdout=out, stderr=subprocess.STDOUT,
+                                start_new_session=os.name != "nt" and process_group, **options)
         job, deadline, code = _contained(proc), time.monotonic() + seconds if seconds is not None else float("inf"), CUT
         try:
             if os.name == "nt" and _nt.NtResumeProcess(int(proc._handle)):
@@ -155,7 +158,7 @@ def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float | None = 
                 except subprocess.TimeoutExpired:
                     pass
         finally:
-            _ended(proc, job)
+            _ended(proc, job, process_group)
         out.seek(0)
         return subprocess.CompletedProcess(argv, code, out.read().decode("utf-8", "replace"), "")
 
@@ -238,6 +241,8 @@ def drive(repo: Path, scope: str, name: str, config: Path, store: Path = improve
 
     experiment = improvement.Experiment(repo, scope, name, store=store, halt=halt)
     state = experiment.read() if experiment.state_file.exists() else experiment.initialize(config)
+    if state.get("stopped") == "cancelled":
+        state = experiment.resume_cancelled()
     base = state["base"]
     while state["incumbent"]["commit"] == base and len(state["rounds"]) < state["contract"]["rounds"]:
         state = experiment.round()
@@ -250,6 +255,8 @@ def drive(repo: Path, scope: str, name: str, config: Path, store: Path = improve
 # -- The tasks the evaluator runs, in the candidate checkout ----------------------
 
 def task(action: str, spec: dict, root: Path) -> int:
+    # Nested tasks stay in the evaluator's cancellable POSIX group.
+    process_group = os.name == "nt" or os.environ.get("WIKI_IMPROVEMENT_GROUP") != str(os.getpgrp())
     if action == "shrink":
         now = debt_of(root, spec["scope"])
         reward = (1.0 if now == 0 else 0.0) if spec["baseline"] == 0 else \
@@ -257,7 +264,7 @@ def task(action: str, spec: dict, root: Path) -> int:
         print(json.dumps({"reward": reward, "debt": now}))
         return 0
     if action == "preserve":
-        done = sh(spec["test_argv"], root)
+        done = sh(spec["test_argv"], root, process_group=process_group)
         if done.returncode:
             sys.stderr.write((done.stdout + done.stderr)[-TAIL:])
             return 1
@@ -266,7 +273,7 @@ def task(action: str, spec: dict, root: Path) -> int:
             sys.stderr.write("ratchet:\n" + "\n".join(problems))
             return 1
         return 0
-    done = sh([spec["gate"]], root, shell=True)
+    done = sh([spec["gate"]], root, shell=True, process_group=process_group)
     if done.returncode:
         sys.stderr.write((done.stdout + done.stderr)[-TAIL:])
     return done.returncode

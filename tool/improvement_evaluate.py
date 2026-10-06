@@ -72,12 +72,15 @@ def evaluate(request: dict, manifest: dict, directory: Path) -> dict:
             cache = Path(os.environ["WIKI_IMPROVEMENT_CACHE"]) / key / str(trial)
             cache.mkdir(parents=True, exist_ok=True)
             env = {**os.environ, "WIKI_IMPROVEMENT_MODEL": request["model"], "WIKI_IMPROVEMENT_CACHE": str(cache)}
+            if unlimited and os.name != "nt":
+                env["WIKI_IMPROVEMENT_GROUP"] = str(os.getpgrp())
             payload = {**{k: request[k] for k in ("root", "model", "split", "scope", "repo_key") if k in request},
                        "stage": "task", "id": task_id, "trial": trial,
                        "limits": {"seconds": seconds if unlimited else min(seconds, remaining), **cap}}
             code, output, errors = execute(command, Path(request["root"]),
                                            json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-                                           payload["limits"]["seconds"], env)
+                                           payload["limits"]["seconds"], env,
+                                           **({"process_group": False} if unlimited else {}))
             if task["inference"] or task.get("scored") is True:
                 # A scored offline task prints its reward like an inference task, at zero cost.
                 result = json.loads(output.decode("utf-8"))

@@ -740,9 +740,11 @@ def competed(w: Worker, run: dict, step: dict, sid: str, where: Path) -> dict:
     finally:
         try:
             spent = improvement.Experiment(where, run["scope"], sid).read()["spent"]
-            w.budget.used["calls"] += spent["calls"]
-            w.budget.used["tokens"] += spent["tokens"]
+            previous = (load(w.repo.name, w.rid).get("runner_spent") or {}).get(sid, {})
+            for key in ("calls", "tokens"):
+                w.budget.used[key] += max(0, spent[key] - previous.get(key, 0))
             w.unknown = w.unknown or spent.get("unknown", False)
+            w.note(runner_spent={**(load(w.repo.name, w.rid).get("runner_spent") or {}), sid: spent})
         except improvement.Refused:
             pass
     if result["state"] == "split":

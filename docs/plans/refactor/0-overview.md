@@ -68,6 +68,13 @@ token usage marked as a lower bound. Unknown usage does not stop refactoring.
 Candidate trials and the single failed-step retry still bound the selection
 procedure; they are algorithm decisions, not editable usage limits.
 
+Resume archives a cancelled candidate experiment before restarting its
+unfinished trial, retaining completed rounds and usage. Nested test and gate
+commands share the evaluator's cancellation group on POSIX; Windows retains
+job containment. Scope-change replies carry each question, selected answer,
+option context and stopped reason back to the conversation for a replacement
+specification.
+
 Refactoring audits, test commands, candidate adapters and full-mode planning
 have no time/call/token allowance. Cancellation still stops the active model
 or command process tree. Ordinary planning and improvement experiments retain

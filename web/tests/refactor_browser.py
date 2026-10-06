@@ -29,7 +29,7 @@ def main():
            "goal": "Remove duplicate order handling", "done": ["No duplicated order handling"], "out": [],
            "spec": "clean-orders", "spent": {"seconds": 7, "calls": 1, "tokens": 12, "unknown": True},
            "steps": [], "tests": None, "stopped": None, "created": time.time()}
-    actions, errors = [], []
+    actions, errors, requests = [], [], []
 
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
     async def api(path: str, request: Request):
@@ -55,6 +55,7 @@ def main():
         if path == "log/refactor":
             return [] if request.query_params.get("legacy") == "true" else records
         if path == "say/refactor":
+            requests.append((await request.json())["text"])
             spec = {"id": "clean-orders", "repo": "fixture", "rev": len(records) + 1,
                 "goal": run["goal"], "out": [], "done": ["git --version", *run["done"]],
                 "grounds": {"pages": [], "files": [], "rules": []}, "decisions": [], "state": "정리됨",
@@ -149,6 +150,21 @@ def main():
             output = ROOT / "artifacts"
             output.mkdir(exist_ok=True)
             page.screenshot(path=str(output / "refactor-conversation.png"), full_page=True)
+            run.update(state="stopped", stopped={"reason": "scope", "detail": "Public migration is required"},
+                scope_change={"reason": "Two independent contracts must change", "questions": [
+                    {"header": "API", "question": "Change the public API?", "options": [
+                        {"label": "Yes", "note": "Approve API migration"}, {"label": "No", "note": "Keep the API"}]},
+                    {"header": "Storage", "question": "Change the storage schema?", "options": [
+                        {"label": "Yes", "note": "Approve storage migration"}, {"label": "No", "note": "Keep storage"}]}]})
+            for index in range(2):
+                status.locator('fieldset').nth(index).get_by_role('radio', name='Yes', exact=True).check()
+            status.get_by_role('button', name='답하고 이어 가기', exact=True).click()
+            expect(start).to_be_enabled()
+            answer = requests[-1]
+            for context in ("Change the public API?", "Change the storage schema?", "Approve API migration",
+                            "Approve storage migration", "Two independent contracts must change", "Public migration is required",
+                            "1. [API] Change the public API?\nAnswer: Yes", "2. [Storage] Change the storage schema?\nAnswer: Yes"):
+                assert context in answer, (context, answer)
             assert not errors, errors
             print(json.dumps({"measurements": measurements, "starts": len(starts), "actions": actions}, ensure_ascii=False))
             browser.close()

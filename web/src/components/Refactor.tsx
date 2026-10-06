@@ -119,7 +119,11 @@ export function RefactorStatus({ repo, id, specs, korean, onSay, onChanged }: {
       {run.stopped && <p className="mt-2 whitespace-pre-wrap break-words text-destructive">{run.stopped.detail || run.stopped.reason}</p>}
       {!!questions.length && <Questions korean={korean} disabled={working} questions={questions.map((q) => ({
         question: q.question, header: q.header, multiSelect: q.multi, options: q.options.map((o) => ({ label: o.label, description: o.note, preview: o.preview })),
-      }))} onSubmit={(answers) => onSay(`Refactoring ${id} stopped because the agreed scope must change. My choices:\n${answers.join('\n')}\nReconsider the specification before starting a replacement run.`)} />}
+      }))} onSubmit={(answers) => onSay(`Refactoring ${id} stopped because the agreed scope must change.\n`
+        + `Agreed request: ${JSON.stringify({ goal: run.goal, mode: run.mode, done: run.done, out: run.out })}\n`
+        + `Stopped reason: ${run.stopped?.detail ?? ''}\nScope change: ${JSON.stringify(run.scope_change)}\nMy choices:\n`
+        + questions.map((q, i) => `${i + 1}. ${q.header ? `[${q.header}] ` : ''}${q.question}\nAnswer: ${answers[i]}`).join('\n')
+        + '\nReconsider the specification before starting a replacement run.')} />}
       {run.tests && <p className="mt-2">현재 동작 고정 · {pr(run.tests.spec, run.tests.pr) || '테스트 작성 중'}</p>}
       {run.plan && <p className="mt-2">계획 · {pr(run.plan) || run.plan}</p>}
       <ol className="mt-2 space-y-1">{run.steps.map((s) => <li key={s.n}>

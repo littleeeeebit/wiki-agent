@@ -75,7 +75,7 @@ def git(repo: Path, *args: str, data: str | None = None) -> str:
 
 
 def execute(argv: list[str], path: Path, data: bytes | None, seconds: float | None, env: dict,
-            halt: threading.Event | None = None) -> tuple[int, bytes, str]:
+            halt: threading.Event | None = None, process_group: bool = True) -> tuple[int, bytes, str]:
     """Bounded output and termination of this command's descendants on timeout or interrupt."""
     process_helpers = None
     options = background_options()
@@ -87,7 +87,7 @@ def execute(argv: list[str], path: Path, data: bytes | None, seconds: float | No
             options["creationflags"] |= 0x4
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         proc = subprocess.Popen(argv, cwd=path, stdin=subprocess.PIPE, stdout=output, stderr=errors, env=env,
-                                **({"start_new_session": True} if os.name != "nt" else {}), **options)
+                                **({"start_new_session": process_group} if os.name != "nt" else {}), **options)
         job = None
         try:
             if process_helpers:
@@ -115,14 +115,14 @@ def execute(argv: list[str], path: Path, data: bytes | None, seconds: float | No
                 else:
                     import signal
                     try:
-                        os.killpg(proc.pid, signal.SIGKILL)
+                        os.killpg(proc.pid, signal.SIGKILL) if process_group else proc.kill()
                     except ProcessLookupError:
                         pass
                 proc.wait(timeout=10)
             raise
         finally:
             if process_helpers:
-                process_helpers._ended(proc, job)
+                process_helpers._ended(proc, job, process_group)
         output.seek(0)
         raw = output.read(2_000_001)
         if len(raw) > 2_000_000:
@@ -365,6 +365,26 @@ class Experiment:
         self.tick(state)
         atomic(self.state_file, state)
 
+    def resume_cancelled(self) -> dict:
+        """Retain cancelled refactor evidence and restart only its unfinished trial."""
+        with self.locked():
+            state = self.read()
+            if state.get("stopped") != "cancelled":
+                return state
+            if state["contract"].get("profile") != "refactor" or state["contract"]["limits"] is not None:
+                raise Refused("Only unlimited refactoring can resume a cancelled experiment")
+            self.check({**state, "stopped": None, "active": None})
+            self.begin(state)
+            recovery = state.get("recovery", 0) + 1
+            atomic(self.root / "cancellations" / f"{recovery}.json", state)
+            state.update(stopped=None, active=None, recovery=recovery)
+            if state["rounds"] and state["rounds"][-1]["phase"] == "stopped":
+                state["rounds"].pop()
+            if state.get("held_out") and state["held_out"]["phase"] == "running":
+                state["held_out"] = None
+            self.save(state)
+            return self.measure_base(state) if state["incumbent"] is None else state
+
     def check(self, state: dict) -> None:
         if self.halt and self.halt.is_set():
             raise Refused("cancelled")
@@ -399,6 +419,8 @@ class Experiment:
         self.check(state)
         self.tick(state)
         cfg, used = state["contract"], state["spent"]
+        if state.get("recovery"):
+            artifact += f"-resume-{state['recovery']}"
         unlimited = cfg["limits"] is None
         remaining = {k: None if unlimited else cfg["limits"][k] - used[k] for k in ("seconds", "calls", "tokens")}
         cap = {} if unlimited else cfg["caps"][stage]
@@ -503,17 +525,20 @@ class Experiment:
                      "held_out": None, "handoff": None, "context": context}
             self.begin(state)
             self.save(state)
-            path = self.checkout("base", base)
-            measured = self.evaluate(state, path, base, "evolve", "baseline")
-            if measured["missing"] or not all(measured["guards"].values()):
-                state["stopped"] = "The baseline is incomplete or fails a mandatory guard"
-                self.save(state)
-                raise Refused(state["stopped"])
-            state["incumbent"] = {"commit": base, "checkout": str(path), "evaluation": measured}
-            state["best"] = measured["score"]
-            state["trajectory"] = [measured["score"]]
+            return self.measure_base(state)
+
+    def measure_base(self, state: dict) -> dict:
+        path = self.checkout("base", state["base"])
+        measured = self.evaluate(state, path, state["base"], "evolve", "baseline")
+        if measured["missing"] or not all(measured["guards"].values()):
+            state["stopped"] = "The baseline is incomplete or fails a mandatory guard"
             self.save(state)
-            return state
+            raise Refused(state["stopped"])
+        state["incumbent"] = {"commit": state["base"], "checkout": str(path), "evaluation": measured}
+        state["best"] = measured["score"]
+        state["trajectory"] = [measured["score"]]
+        self.save(state)
+        return state
 
     def directives(self, state: dict, n: int) -> dict:
         cfg = state["contract"]
@@ -612,7 +637,8 @@ class Experiment:
             try:
                 for v in range(cfg["candidates"]):
                     label = f"r{n}-c{v}"
-                    path = self.checkout(label, incumbent["commit"])
+                    checkout = f"{label}-resume-{state['recovery']}" if state.get("recovery") else label
+                    path = self.checkout(checkout, incumbent["commit"])
                     item = {"round": n, "candidate": v, "edits": [], "verdict": "rejected", "reason": "",
                             "commit": None, "checkout": str(path), "evaluation": None}
                     reserved = bool(directives["stalled"] and directives["untried"] and v == cfg["candidates"] - 1)

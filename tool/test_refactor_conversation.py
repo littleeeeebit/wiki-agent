@@ -126,3 +126,22 @@ def test_cancel_stops_a_turn_even_before_another_event_arrives(selected):
     worker.active = Active()
     worker.cancel()
     assert halted.is_set()
+
+
+def test_resumed_runner_usage_is_recorded_once(selected, tmp_path):
+    with patch.object(refactor, "launch"):
+        rid = client().post("/api/refactors", json={"request_id": "runner-usage-resume", "mode": "cleanup",
+                           "files": ["big.py"]}).json()["id"]
+    run = refactor.load("proj", rid)
+    run["tests"] = {"tests": ["tests.py"], "test_argv": ["python", "tests.py"]}
+    step = {"goal": "Remove duplication", "tier": "L1", "files": ["big.py"]}
+    with patch.object(refactor.refactor_profile, "prepare", return_value=tmp_path / "experiment.json"), \
+         patch.object(refactor.refactor_profile, "drive", return_value={"state": "adopted"}), \
+         patch.object(refactor.improvement.Experiment, "read") as read:
+        for calls, tokens in [(4, 100), (4, 100), (7, 160)]:
+            read.return_value = {"spent": {"calls": calls, "tokens": tokens, "unknown": True}}
+            worker = refactor.Worker(selected, refactor.load("proj", rid))
+            refactor.competed(worker, run, step, "usage", selected)
+            saved = refactor.load("proj", rid)
+            assert saved["spent"]["calls"] == calls and saved["spent"]["tokens"] == tokens
+            assert saved["spent"]["unknown"]

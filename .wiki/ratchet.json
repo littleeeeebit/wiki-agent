@@ -123,8 +123,8 @@
     },
     "tool/main/refactor.py": {
       "dup": 0,
-      "lines": 801,
-      "reason": "Settled purpose and scope choices are carried through existing audits and candidates; unlimited runs retain immediate cancellation and file discovery."
+      "lines": 803,
+      "reason": "Settled refactoring conversations retain cancellation and file discovery; resumed candidate runs checkpoint cumulative usage so earlier calls and tokens are not counted twice."
     },
     "tool/main/specs.py": {
       "dup": 0,
