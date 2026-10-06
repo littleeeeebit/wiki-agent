@@ -375,7 +375,7 @@ class ChatSession:
             self.model_name = self.model.removeprefix("codex:")
         self._stderr = deque(maxlen=20)
         cmd = [*cli_command(cmd[0]), *cmd[1:]]
-        self._proc = subprocess.Popen(
+        proc = subprocess.Popen(
             cmd, cwd=str(self.repo), env=self._env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
@@ -387,7 +387,11 @@ class ChatSession:
         # Started suspended, so nothing it starts escapes the job.
         # ponytail: Windows only; elsewhere the CLI's exit is trusted. Start
         # it in its own session and `killpg` if orphans show up there.
-        self._job = contained(self._proc)
+        job = contained(proc)
+        # Published as a pair under `_halting`, which `stop` holds while it
+        # uses the job: a closed handle's number goes to the next job made.
+        with self._halting:
+            self._proc, self._job = proc, job
         try:
             resumed(self._proc)
         except OSError:
@@ -763,8 +767,11 @@ class ChatSession:
                     proc.kill()
 
     def close(self) -> None:
-        proc, self._proc = self._proc, None
-        job, self._job = self._job, None
+        # Taken from `stop` under its lock: once here, no stop still holds
+        # this job's handle, so closing it cannot end a job that reuses it.
+        with self._halting:
+            proc, self._proc = self._proc, None
+            job, self._job = self._job, None
         self._pending.clear()
         self._asks.clear()
         self._changes.clear()

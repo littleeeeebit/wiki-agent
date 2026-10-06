@@ -847,6 +847,33 @@ sys.stdin.read()
     assert [e.text for e in events if e.kind == "done"] == ["Steered request completed"]
 
 
+def test_a_close_waits_for_a_stop_still_using_the_job(tree):
+    # Windows hands a closed handle's number to the next job: a close that
+    # ran while a stop held the handle let that stop kill an unrelated job.
+    order, inside = [], threading.Event()
+
+    def slow_kill(job):
+        inside.set()
+        time.sleep(.5)
+        order.append("kill")
+
+    session, halt, real_popen = ChatSession(tree, write=True, bypass=True), threading.Event(), subprocess.Popen
+    with patch.object(chat_session.subprocess, "Popen", lambda _, **kw: real_popen(
+            [sys.executable, "-X", "utf8", "-c", "import sys; sys.stdin.read()"], **kw)), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]), \
+         patch.object(chat_session, "killed", side_effect=slow_kill), \
+         patch.object(chat_session, "terminated", side_effect=lambda job: order.append("close")):
+        session.ensure()
+        session._halt = halt
+        halt.set()
+        stopper = threading.Thread(target=session.stop, args=(halt,))
+        stopper.start()
+        assert inside.wait(5)
+        session.close()
+        stopper.join(5)
+    assert order == ["kill", "close"]
+
+
 # Starts a child that marks a file 1.5 s later unless its tree is killed first.
 MARKS = '''import json, subprocess, sys
 subprocess.Popen([sys.executable, "-c", "import pathlib, sys, time; time.sleep(1.5); pathlib.Path(sys.argv[1]).touch()",
