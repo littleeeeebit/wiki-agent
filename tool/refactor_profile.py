@@ -31,7 +31,7 @@ sys.path.insert(0, str(HERE))
 
 import debt  # noqa: E402
 import improvement  # noqa: E402
-from common.process import background_options, contained, terminated  # noqa: E402
+from common.process import SUSPENDED, background_options, contained, resumed, terminated  # noqa: E402
 from wiki import slots_for  # noqa: E402
 
 STORE = improvement.HUB / "raw" / "refactor"
@@ -71,13 +71,6 @@ def debt_of(root: Path, scope: list[str]) -> int:
 
 CUT = -9   # the return code of a command cut by its time or a halt
 
-if os.name == "nt":
-    import ctypes
-    from ctypes import wintypes
-
-    _nt = ctypes.WinDLL("ntdll")
-    _nt.NtResumeProcess.argtypes = (wintypes.HANDLE,)   # resumes every thread; `Popen` keeps no thread handle
-
 
 def _contained(proc: subprocess.Popen):
     """`proc`'s job (`common.process.contained`). `sh` starts `proc` suspended
@@ -116,14 +109,13 @@ def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float = 3600.0,
         argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]
     options = background_options()
     if os.name == "nt":
-        options["creationflags"] |= 0x4   # CREATE_SUSPENDED: in its job before its first instruction
+        options["creationflags"] |= SUSPENDED   # in its job before its first instruction
     with tempfile.TemporaryFile() as out:
         proc = subprocess.Popen(argv[0] if shell else argv, cwd=cwd, shell=shell, stdin=subprocess.DEVNULL,
                                 stdout=out, stderr=subprocess.STDOUT, start_new_session=os.name != "nt", **options)
         job, deadline, code = _contained(proc), time.monotonic() + seconds, CUT
         try:
-            if os.name == "nt" and _nt.NtResumeProcess(int(proc._handle)):
-                raise OSError(f"could not resume {argv[0]!r}")
+            resumed(proc)
             while not (halt and halt.is_set()) and time.monotonic() < deadline:
                 try:
                     code = proc.wait(timeout=0.5)

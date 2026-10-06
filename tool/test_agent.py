@@ -781,6 +781,120 @@ sys.stdin.read()
         assert not survived.exists()
 
 
+# A stand-in CLI whose background child holds the inherited stdout open, so the
+# pipe never ends while the child lives.
+HOLDS_PIPE = '''import json, subprocess, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_backgrounded": True})
+say({"type": "result", "result": "Waiting for the task", "session_id": "cli-1"})
+EXIT
+'''
+
+
+def test_a_stop_ends_a_turn_waiting_on_a_child_that_holds_the_pipe(tree):
+    session, halt, events = ChatSession(tree, write=True, bypass=True), threading.Event(), []
+    waiting = threading.Event()
+
+    def consume():
+        for event in session.say("go", halt):
+            events.append(event)
+            if "waiting for" in event.text:
+                waiting.set()
+
+    real_popen = subprocess.Popen
+    with patch.object(chat_session.subprocess, "Popen", lambda _, **kw: real_popen(
+            [sys.executable, "-X", "utf8", "-c", HOLDS_PIPE.replace("EXIT", "sys.stdin.read()")], **kw)), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+        turn = threading.Thread(target=consume, daemon=True)
+        turn.start()
+        try:
+            assert waiting.wait(10)
+            halt.set()
+            session.stop(halt)
+            turn.join(5)
+            assert not turn.is_alive() and events[-1].kind == "error"
+        finally:
+            session.close()
+
+
+def test_a_provider_that_exits_while_its_child_holds_the_pipe_ends_the_turn(tree):
+    with patch.object(chat_session, "TURN_TIMEOUT", 30):
+        started = time.monotonic()
+        _, events = run(ChatSession(tree, write=True, bypass=True), HOLDS_PIPE.replace("EXIT", ""), tree)
+    assert events[-1].kind == "error" and time.monotonic() - started < 10
+
+
+def test_a_closing_answer_does_not_drop_a_steer_already_read(tree):
+    fixture = '''import json, sys, time
+say = lambda m: print(json.dumps(m), flush=True)
+prompt = json.loads(sys.stdin.readline())
+say({"type": "user", "isReplay": True, "message": prompt["message"]})
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_backgrounded": True})
+steer = json.loads(sys.stdin.readline())
+say({"type": "user", "isReplay": True, "message": steer["message"]})
+say({"type": "result", "result": "Old answer\\n```done-report\\n[]\\n```", "session_id": "cli-1"})
+time.sleep(.4)
+say({"type": "system", "subtype": "task_updated", "task_id": "bg-1", "patch": {"status": "completed"}})
+say({"type": "result", "result": "Steered request completed", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    session = ChatSession(tree, write=True, bypass=True)
+    session.settled = lambda answer: "```done-report" in answer
+    _, events = run(session, fixture, tree, each=lambda e: session.steer("One more thing")
+                    if e.meta.get("status") == "started" else None)
+    assert [e.text for e in events if e.kind == "done"] == ["Steered request completed"]
+
+
+# Starts a child that marks a file 1.5 s later unless its tree is killed first.
+MARKS = '''import json, subprocess, sys
+subprocess.Popen([sys.executable, "-c", "import pathlib, sys, time; time.sleep(1.5); pathlib.Path(sys.argv[1]).touch()",
+                  MARKED], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print(json.dumps({"type": "system", "subtype": "task_started", "task_id": "bg-1"}), flush=True)
+sys.stdin.read()
+'''
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the job is Windows only")
+def test_a_reconnect_after_the_provider_died_takes_down_what_it_started(tree, tmp_path):
+    marked = tmp_path / "marked"
+    session, real_popen = ChatSession(tree, write=True, bypass=True), subprocess.Popen
+    with patch.object(chat_session.subprocess, "Popen", lambda _, **kw: real_popen(
+            [sys.executable, "-X", "utf8", "-c", MARKS.replace("MARKED", repr(str(marked)))], **kw)), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+        try:
+            session.ensure()
+            assert session._events.get(timeout=10)["task_id"] == "bg-1"
+            session._proc.kill()
+            session._proc.wait(5)
+            session.ensure()   # the old job is gone here, not overwritten
+        finally:
+            session.close()
+    time.sleep(2.5)
+    assert not marked.exists()
+
+
+@pytest.mark.skipif(os.name != "nt", reason="the job is Windows only")
+def test_nothing_the_provider_starts_escapes_its_job(tree, tmp_path):
+    # Assigned a second late: a provider that ran from its spawn would have
+    # started its child outside the job by then.
+    marked = tmp_path / "marked"
+    session, real_popen = ChatSession(tree, write=True, bypass=True), subprocess.Popen
+    late = chat_session.contained
+    with patch.object(chat_session.subprocess, "Popen", lambda _, **kw: real_popen(
+            [sys.executable, "-X", "utf8", "-c", MARKS.replace("MARKED", repr(str(marked)))], **kw)), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]), \
+         patch.object(chat_session, "contained", side_effect=lambda proc: time.sleep(1) or late(proc)):
+        try:
+            session.ensure()
+            assert session._events.get(timeout=10)["task_id"] == "bg-1"
+        finally:
+            session.close()
+    time.sleep(2.5)
+    assert not marked.exists()
+
+
 def test_background_child_text_does_not_replace_the_parent_answer(tree):
     fixture = '''import json, sys
 say = lambda m: print(json.dumps(m), flush=True)
