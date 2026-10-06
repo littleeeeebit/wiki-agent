@@ -444,6 +444,13 @@ def leftover(path: Path, root: str, manifest: list[dict]) -> list[Path] | None:
 
 # -- Mechanical checks -----------------------------------------------------------------
 
+def listed(overview: str) -> set[str]:
+    """The stage file names the overview's `## Stages` section names: a refactor plan's manifest."""
+
+    section = re.search(r"^##[ \t]+Stages\b[^\n]*\n(.*?)(?=^##[ \t]|\Z)", overview, re.M | re.S)
+    return set(re.findall(r"(?<![\w-])([1-9]\d?-[a-z0-9][a-z0-9-]{0,40}\.md)", section[1] if section else ""))
+
+
 def tiered(text: str) -> dict:
     """A refactor stage's one `Tier: L0–L3` and one `Files: a, b` line, or `ValueError`.
     Files are distinct repository-relative paths; an L3 stage changes a contract,
@@ -496,6 +503,8 @@ def problems(repo: str, sid: str, spec: dict, path: Path) -> list[tuple[str, str
                 tiered(text)
             except ValueError as exc:
                 out.append((rel, str(exc)))
+        if stage is None and p["input"].get("refactor") and listed(text) != names - {Path(rel).name}:
+            out.append((rel, "리펙터링 계획의 `## Stages` 절은 단계 파일 이름을 빠짐없이, 그것만 적는다"))
         for rid in entry["requirement_ids"]:
             if rid not in requirements:
                 out.append((rel, f"없는 요구사항 `{rid}` 을 적었다"))

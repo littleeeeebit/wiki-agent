@@ -354,6 +354,8 @@ STAGE = "# Stage {n}\n\nTier: {tier}\nFiles: big.py\n\n## Rollback\n\nRevert.\n"
 
 def test_an_l3_stage_must_say_how_it_migrates():
     assert planning.tiered(STAGE.format(n=1, tier="L2")) == {"tier": "L2", "files": ["big.py"]}
+    overview = "## Problem\n\nSee 9-elsewhere.md.\n\n## Stages\n\n1. [A](1-a.md)\n2. `11-b.md`\n\n## Sources\n\n3-c.md\n"
+    assert planning.listed(overview) == {"1-a.md", "11-b.md"}, "only the Stages section, whole names"
     with pytest.raises(ValueError, match="Migration"):
         planning.tiered(STAGE.format(n=1, tier="L3"))
     with pytest.raises(ValueError, match="Tier"):
@@ -408,10 +410,19 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
         (plan / "1-dedupe.md").write_text(STAGE.format(n=1, tier="L1"), encoding="utf-8")
         (plan / "2-split.md").write_text(STAGE.format(n=2, tier="L0"), encoding="utf-8")
         (plan / "3-added-in-review.md").write_text(STAGE.format(n=3, tier="L0"), encoding="utf-8")
+        overview = "# Plan\n\n## Stages\n\n- [Dedupe](1-dedupe.md)\n- [Split](2-split.md)\n{}\n## Sources\n\nNone.\n"
+        (plan / "0-overview.md").write_text(overview.format(""), encoding="utf-8")
         _git(selected, "add", "docs")
         _git(selected, "commit", "-qm", "plan")
         time.sleep(3.5)
         assert until(api, rid, lambda r: True)["phase"] == "plan", "an open plan PR holds the stages back"
+        specs.update("proj", "plan-refactor", state="머지됨", cleanup_complete=True,
+                     merge={"commit": _git(selected, "rev-parse", "HEAD"), "base": "main"})
+        stopped = finished(api, rid)["stopped"]
+        assert stopped["reason"] == "format" and "3-added-in-review.md" in stopped["detail"], \
+            "a stage file the overview leaves out is neither run nor skipped silently"
+        (plan / "0-overview.md").write_text(overview.format("- [Added](3-added-in-review.md)\n"), encoding="utf-8")
+        _git(selected, "commit", "-qam", "list the added stage")
         update, broke = refactor.update, []
 
         def flaky(repo, run_id, **fields):   # the write that leaves the plan phase fails once
@@ -421,8 +432,8 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
             return update(repo, run_id, **fields)
 
         with patch.object(refactor, "update", side_effect=flaky):
-            specs.update("proj", "plan-refactor", state="머지됨", cleanup_complete=True,
-                         merge={"commit": _git(selected, "rev-parse", "HEAD"), "base": "main"})
+            specs.update("proj", "plan-refactor", merge={"commit": _git(selected, "rev-parse", "HEAD"), "base": "main"})
+            api.post(f"/api/refactors/{rid}/resume")
             assert finished(api, rid)["stopped"]["reason"] == "broken"
         api.post(f"/api/refactors/{rid}/resume")
         run = finished(api, rid)

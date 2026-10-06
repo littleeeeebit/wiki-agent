@@ -58,7 +58,9 @@ FULL_PROMPT = (
 PLAN_RULES = (
     "This plan is a refactoring series. Every stage file must carry two plain lines: `Tier: L0`, `L1`, `L2` "
     "or `L3`, and `Files: ` with the repository-relative files it touches, comma-separated. An L3 stage also "
-    "needs a `## Migration` section beside its `## Rollback`. Behaviour must not change below L3.")
+    "needs a `## Migration` section beside its `## Rollback`. Behaviour must not change below L3. The "
+    "overview's `## Stages` section names every stage file by its file name, and only those: it is the list "
+    "the run executes.")
 TESTS_PROMPT = (
     "Write characterization tests that pin the current observable behaviour of the files listed, so a later "
     "refactoring can prove it changed nothing. Use the repository's existing test framework and conventions; "
@@ -549,6 +551,12 @@ def staged(w: Worker, run: dict) -> dict:
                     if planning.NAME.fullmatch(name) and name != "0-overview.md")
     if not stages or len({n for n, _ in stages}) != len(stages):
         raise Stop("format", f"머지된 계획의 단계 파일을 읽지 못했다: {', '.join(names)}")
+    # The overview's `## Stages` is the manifest: a numbered file it leaves out, or one it names that is
+    # missing, is a plan that disagrees with itself, never a step run or skipped silently.
+    if {name for _, name in stages} != (manifest := planning.listed(
+            git(w.repo, "show", f"{commit}:{p['artifact_root']}/0-overview.md"))):
+        raise Stop("format", f"머지된 개요의 `## Stages` 가 단계 파일과 다르다: 개요 {sorted(manifest)}, "
+                             f"파일 {[name for _, name in stages]}")
     steps = []
     for n, name in stages:
         rel = f"{p['artifact_root']}/{name}"

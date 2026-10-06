@@ -37,7 +37,11 @@ without migration fails validation; stages start only after plan merge.
   cleanup done. It then lists the stage files (`planning.NAME`, overview
   excluded) in the plan folder at the merge
   commit, not the outline written before review, so a stage a revision added
-  or dropped is followed. Each becomes a step. The planner's seconds, calls
+  or dropped is followed. The merged overview's `## Stages` section is the
+  manifest (`planning.listed`): it must name exactly those files, or the run
+  stops with `format`, so a numbered file it leaves out is never run or
+  skipped silently. The validator checks the same agreement before
+  publication. Each becomes a step. The planner's seconds, calls
   and tokens are charged to the run in the same write that leaves the phase,
   so a failed write charges nothing and a resume charges once. A stopped plan
   stops the run. From there the characterization PR and the steps run as in
