@@ -96,7 +96,10 @@ def _contained(proc: subprocess.Popen):
     process dying, kills them all. `taskkill /T` cannot find a descendant
     whose parent already exited; the job can. None elsewhere or on failure.
     `sh` starts `proc` suspended and resumes it after this, so nothing it
-    starts is spawned before the assignment."""
+    starts is spawned before the assignment.
+    ponytail: if this process dies between the spawn and the assignment, the
+    suspended `proc` is left behind; closing that needs `CreateProcess` with a
+    `PROC_THREAD_ATTRIBUTE_JOB_LIST`, which `Popen` cannot pass."""
 
     if os.name != "nt":
         return None

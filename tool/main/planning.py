@@ -448,7 +448,7 @@ def listed(overview: str) -> set[str]:
     """The stage file names the overview's `## Stages` section names: a refactor plan's manifest."""
 
     section = re.search(r"^##[ \t]+Stages\b[^\n]*\n(.*?)(?=^##[ \t]|\Z)", overview, re.M | re.S)
-    return set(re.findall(r"(?<![\w-])([1-9]\d?-[a-z0-9][a-z0-9-]{0,40}\.md)", section[1] if section else ""))
+    return set(re.findall(r"(?<![\w-])([1-9]\d?-[a-z0-9][a-z0-9-]{0,40}\.md)(?![\w.-])", section[1] if section else ""))
 
 
 def tiered(text: str) -> dict:

@@ -356,6 +356,7 @@ def test_an_l3_stage_must_say_how_it_migrates():
     assert planning.tiered(STAGE.format(n=1, tier="L2")) == {"tier": "L2", "files": ["big.py"]}
     overview = "## Problem\n\nSee 9-elsewhere.md.\n\n## Stages\n\n1. [A](1-a.md)\n2. `11-b.md`\n\n## Sources\n\n3-c.md\n"
     assert planning.listed(overview) == {"1-a.md", "11-b.md"}, "only the Stages section, whole names"
+    assert planning.listed("## Stages\n\n`1-a.md.bak`, 2-b.mdx, 3-c.md-old, [D](4-d.md).\n") == {"4-d.md"}
     with pytest.raises(ValueError, match="Migration"):
         planning.tiered(STAGE.format(n=1, tier="L3"))
     with pytest.raises(ValueError, match="Tier"):
