@@ -1845,6 +1845,15 @@ def requested_merge(repo: Path, spec: dict) -> None:
     allowed = specs.approved(spec)
     if not request:
         return
+    if (allowed and request.get("head") not in (None, allowed["head"]) and request.get("base") == allowed["base"]
+            and request.get("rev") == spec["rev"] and request.get("pr") == spec["pr"]["number"]):
+        from . import maintenance
+
+        # A reviewed repair of the prepared documents stays inside what the
+        # click authorized; any other change still cancels the request.
+        if maintenance.documents_only(Path(spec.get("worktree") or repo), request["head"], allowed["head"]):
+            request = {**request, "head": allowed["head"]}
+            spec = specs.update(repo.name, spec["id"], merge_request=request) or spec
     if (not allowed or request.get("head") != allowed["head"] or request.get("base") != allowed["base"]
             or request.get("rev") != spec["rev"] or request.get("pr") != spec["pr"]["number"]):
         specs.update(repo.name, spec["id"], merge_request=None)
@@ -2026,7 +2035,8 @@ def _merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) ->
         finally:
             release()
         if prepared != allowed["head"]:
-            # A click authorizes this maintenance commit, never later repairs.
+            # A click authorizes this maintenance commit and document-only
+            # repairs of it (`requested_merge`), never a later code change.
             specs.merge_progress(repo.name, sid, "준비 커밋 독립 리뷰·최종 게이트 진행 중", "waiting_review")
             kick(repo.name, sid)
             return specs.view(repo, specs.load(repo.name, sid))

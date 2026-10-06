@@ -26,6 +26,10 @@ FIELDS = ("description", "diagram", "context", "constraint", "concern", "todo", 
 DOCUMENT_FILES = {"meta.yaml", "config.yaml", "diagram.mmd", *(f"{field}.md" for field in FIELDS)}
 
 
+class Invalid(ValueError):
+    """The model's architecture answer broke the document contract; nothing was published."""
+
+
 def document_state(directory: Path) -> dict:
     """Fence staged publication against native writes and hierarchy changes."""
     if directory.resolve() != directory.parent.resolve() / directory.name:
@@ -60,7 +64,7 @@ def read_existing(root: Path) -> dict:
     return {"revision": revision, "files": None, "nodes": nodes, "installed": directory.is_dir(), "repo": root.name}
 
 
-def analyze(root: Path, model: str | None, halt: threading.Event) -> list[dict]:
+def analyze(root: Path, model: str | None, halt: threading.Event, rejected: str = "") -> list[dict]:
     """The model reads source; only our OMM writer may change architecture files."""
     prompt = (WIKI / "tool/prompts/architecture-scan.md").read_text(encoding="utf-8")
     chat = ChatSession(root, tools="Read,Glob,Grep", system=prompt, model=model)
@@ -76,7 +80,10 @@ def analyze(root: Path, model: str | None, halt: threading.Event) -> list[dict]:
     watcher.start()
     final = ""
     try:
-        for event in chat.say("Analyze this repository and return the architecture JSON. Read the actual execution paths.", halt):
+        ask = "Analyze this repository and return the architecture JSON. Read the actual execution paths."
+        if rejected:
+            ask += f" A previous answer was rejected; do not repeat this: {rejected}"
+        for event in chat.say(ask, halt):
             if event.kind == "error" or (event.kind == "done" and event.meta.get("error")):
                 raise ValueError(event.text or "Architecture analysis failed")
             if event.kind == "done":
@@ -84,7 +91,10 @@ def analyze(root: Path, model: str | None, halt: threading.Event) -> list[dict]:
         if halt.is_set():
             raise ValueError("Architecture analysis cancelled")
         match = re.fullmatch(r"\s*```(?:json)?\s*\n(.*?)\n```\s*", final, re.S)
-        return json.loads(match.group(1) if match else final)["nodes"]
+        try:
+            return json.loads(match.group(1) if match else final)["nodes"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise Invalid(f"Architecture answer is not the requested JSON — {exc}") from exc
     finally:
         ended.set()
         chat.close()
@@ -95,7 +105,7 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
     """Validate all paths and stage CLI output before replacing generated fields."""
     read_existing(root)
     if not isinstance(nodes, list) or not nodes or len(nodes) > 120:
-        raise ValueError("Architecture requires 1–120 described elements")
+        raise Invalid("Architecture requires 1–120 described elements")
     paths = set()
     directory = root / ".omm"
     original = document_state(directory)
@@ -117,23 +127,24 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
                 or node["path"] in paths or not isinstance(node.get("description"), str)
                 or not node["description"].strip()
                 or any(not isinstance(node.get(field, ""), str) for field in FIELDS)):
-            raise ValueError("Invalid or duplicate architecture element")
+            raise Invalid("Invalid or duplicate architecture element")
         paths.add(node["path"])
     if "overall-architecture" not in paths:
-        raise ValueError("Architecture requires an overall perspective")
+        raise Invalid("Architecture requires an overall perspective")
     for path in paths | set(previous):
         if path in paths and "/" in path and path.rsplit("/", 1)[0] not in paths:
-            raise ValueError("Architecture child requires a described parent")
+            raise Invalid("Architecture child requires a described parent")
         folder = root / ".omm" / path
         if any(p.is_symlink() for p in (folder, *folder.parents) if p != root):
             raise ValueError("Architecture output cannot follow symbolic links")
     for node in nodes:
         diagram = node.get("diagram", "")
         if re.search(r"(?m)^\s*(?:graph|flowchart|subgraph|end)\s*\[", diagram):
-            raise ValueError("Mermaid node IDs cannot use reserved keywords")
+            raise Invalid("Mermaid node IDs cannot use reserved keywords")
         for child in re.findall(r"(?m)^\s*([a-z][a-z0-9-]*)\s*\[", diagram):
             if f"{node['path']}/{child}" not in paths:
-                raise ValueError("Every diagram component requires a described child")
+                raise Invalid(f"Every diagram component requires a described child — "
+                              f"`{node['path']}` draws `{child}` but no `{node['path']}/{child}` element")
     command = cli_command("omm")
     git = subprocess.run(["git", "rev-parse", "--absolute-git-dir"], cwd=root, capture_output=True,
                          text=True, encoding="utf-8", errors="replace", timeout=10, **background_options())
@@ -191,7 +202,11 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
                                  text=True, encoding="utf-8", errors="replace", timeout=30,
                                  **background_options())
         if checked.returncode:
-            raise ValueError(f"Invalid architecture diagram: {checked.stdout} {checked.stderr}")
+            said = f"{checked.stdout} {checked.stderr}"
+            # Only rule-coded findings (`error [rule] line N`) are the model's;
+            # a bare `error:` is the validator or the filesystem failing.
+            rejected = re.search(r"(?m)^\s*error \[[\w-]+\]", said) and not re.search(r"(?m)^\s*error:", said)
+            raise (Invalid if rejected else ValueError)(f"Invalid architecture diagram: {said}")
         if document_state(directory) != original:
             raise ValueError("Architecture documents changed during staging; retry the scan")
         for source in (stage / ".omm").rglob("*"):
@@ -239,7 +254,11 @@ def scan(root: Path, *, model: str | None = None, halt: threading.Event | None =
     root = root.resolve()
     halt = halt or threading.Event()
     with _lock:
-        write_nodes(root, analyze(root, model, halt), halt)
+        try:
+            write_nodes(root, analyze(root, model, halt), halt)
+        except Invalid as exc:
+            # The model often slips on the contract; one fresh answer, told why.
+            write_nodes(root, analyze(root, model, halt, str(exc)), halt)
         return read_existing(root)
 
 

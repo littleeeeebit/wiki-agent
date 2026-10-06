@@ -9,6 +9,7 @@ from pathlib import Path
 
 import corpus
 import debt
+from common import errorlog
 import lint
 import repo_graph
 import repo_lint
@@ -28,6 +29,20 @@ def changes(path: Path) -> set[str]:
     names.update(git(path, "diff", "--cached", "--name-only", "-z").split("\0"))
     names.update(git(path, "ls-files", "--others", "--exclude-standard", "-z").split("\0"))
     return names - {""}
+
+
+def maintained(name: str) -> bool:
+    """A file merge preparation may change: documents, `.omm` and the wiki indexes."""
+    return name.endswith(".md") or name.startswith(".omm/") or name in (".wiki/corpus.json", ".wiki/graph.json")
+
+
+def documents_only(path: Path, old: str, new: str) -> bool:
+    """`new` descends from `old` and changes nothing but what preparation may."""
+    if specs.sh(["git", "merge-base", "--is-ancestor", old, new], path).returncode:
+        return False
+    # Without rename detection a renamed source shows its deleted side too.
+    names = specs.sh(["git", "diff", "--no-renames", "--name-only", "-z", old, new], path)
+    return not names.returncode and all(maintained(name) for name in names.stdout.split("\0") if name)
 
 
 def outputs(path: Path) -> dict:
@@ -149,14 +164,19 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
                 raise ValueError("위키 lint 수정이 끝나지 않았다 — " + json.dumps(remaining, ensure_ascii=False))
         if (path / ".omm").is_dir():
             specs.merge_progress(spec["repo"], spec["id"], ".omm 구조 문서 새로 고치는 중")
-            architecture.scan(path, model=(spec.get("cell") or {}).get("model") or None, halt=runtime.stopping)
+            try:
+                architecture.scan(path, model=(spec.get("cell") or {}).get("model") or None, halt=runtime.stopping)
+            except architecture.Invalid as exc:
+                # A model that cannot honour the contract leaves the reviewed
+                # documents as they are; it never holds the merge hostage.
+                errorlog.record("architecture-refresh", exc, repo=spec["repo"], spec=spec["id"])
+                specs.merge_progress(spec["repo"], spec["id"], f".omm 구조 문서는 그대로 둔다 — {exc}"[:300])
         if runtime.stopping.is_set():
             raise ValueError("서버 종료로 머지 준비가 중단됐다")
         if git(path, "rev-parse", "HEAD") != head:
             raise ValueError("위키 수정 중 커밋이 바뀌었다 — 새 리뷰가 필요하다")
         changed = changes(path)
-        unexpected = [name for name in changed if name not in generated
-                      and not (name.endswith(".md") or name.startswith(".omm/"))]
+        unexpected = [name for name in changed if name not in generated and not maintained(name)]
         if unexpected:
             raise ValueError("위키 수정이 코드까지 변경했다 — 머지 중단: " + ", ".join(sorted(unexpected)))
         if changed:
