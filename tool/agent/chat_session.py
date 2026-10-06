@@ -33,6 +33,7 @@ from pathlib import Path
 
 from common import worktree_home
 from common.host import INSTRUCTIONS, environment, skill_config
+from common.process import contained, terminated
 
 from .chat_local import claude_usage, cli_command, codex_usage, quota_windows
 from . import read_tools
@@ -196,6 +197,10 @@ class ChatSession:
         self.model_name = ""
         self._resume: str | None = resume
         self._proc: subprocess.Popen | None = None
+        self._job = None   # `_proc`'s Windows job: its background shells end with it
+        # `settled(answer)`: the answer closes the work. Background tasks still
+        # running after one are left over, not awaited (`_drain`).
+        self.settled = None
         self._events: queue.Queue[dict] = queue.Queue()
         self._turn = threading.Lock()
         self._start = threading.Lock()
@@ -375,6 +380,12 @@ class ChatSession:
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
             errors="replace", bufsize=1,
         )
+        # The CLI's background shells outlive it on Windows — even its own
+        # `stop_task` leaves the shell's child running (2.1.291). Whatever
+        # ends this process ends them through the job (`close`).
+        # ponytail: Windows only; elsewhere the CLI's exit is trusted. Start
+        # it in its own session and `killpg` if orphans show up there.
+        self._job = contained(self._proc)
         # `stop()` sets the turn's halt before it looks at `_proc`. So either it
         # sees this process, or this sees its halt — never neither. Waiting for
         # `ensure()` to return left `_open_thread` waiting on a process nobody
@@ -737,6 +748,7 @@ class ChatSession:
 
     def close(self) -> None:
         proc, self._proc = self._proc, None
+        job, self._job = self._job, None
         self._pending.clear()
         self._asks.clear()
         self._changes.clear()
@@ -749,6 +761,9 @@ class ChatSession:
         except Exception:
             proc.kill()
             proc.wait(timeout=5)
+        finally:
+            # Nobody watches its background work after this: no orphans.
+            terminated(job)
 
     # -- One turn -----------------------------------------------------------
 
@@ -850,7 +865,11 @@ class ChatSession:
         replay_human = None
         while True:
             try:
-                ev = self._events.get(timeout=deadline)
+                # A background task runs silent for as long as it needs — a
+                # test suite, a model sweep. After the answer, while one is
+                # alive, its own end or the process's ends the wait, never the
+                # clock: the clock killed the CLI at 600s and orphaned the task.
+                ev = self._events.get(timeout=None if foreground_result_seen and background else deadline)
             except queue.Empty:
                 # The CLI is silent because it waits on a person. Not a hang.
                 if self._pending:
@@ -1037,12 +1056,14 @@ class ChatSession:
                              ("running" if subtype == "task_progress" else background_status.get(task)) or
                              ("started" if subtype == "task_started" else "running"))
                 background_status[task] = status
-                if status in ("completed", "failed", "stopped", "cancelled"):
+                if status in ("completed", "failed", "stopped", "cancelled", "killed"):
                     background.discard(task)
                     # Foreground Bash emits this notification too, then returns
                     # its tool result inside the current turn. It owes no reply.
-                    if (subtype == "task_notification" and backgrounded.get(task) is not False
-                            and task and task not in notified):
+                    # Nor does a stopped task: the CLI answers only work that
+                    # ran to its end (2.1.291), so counting one waited forever.
+                    if (subtype == "task_notification" and status in ("completed", "failed")
+                            and backgrounded.get(task) is not False and task and task not in notified):
                         notified.add(task)
                         followups += 1
                 elif (task and backgrounded.get(task) is not False
@@ -1128,9 +1149,20 @@ class ChatSession:
                         foreground_result_seen = True
                     replay_human = None
                     if background or followups or (injected and ev.get("num_turns") == 0):
-                        yield Event("tool", f"Background · waiting for {max(len(background), followups)} follow-up(s)",
-                                    {"tool": "background"})
-                        continue
+                        if not (background and self.settled and self.settled(str(ev.get("result") or ""))
+                                and self._closing()):
+                            yield Event("tool", f"Background · waiting for {max(len(background), followups)} "
+                                                "follow-up(s)", {"tool": "background"})
+                            continue
+                        # The work is reported closed, yet tasks still run: left
+                        # over, and holding the turn would keep the review from
+                        # starting. The process and its job take them down; the
+                        # next turn resumes the conversation.
+                        left = sorted(background)
+                        self.close()
+                        for task in left:
+                            yield Event("tool", f"Background {task} · stopped · left running after the work closed",
+                                        {"tool": "background", "task_id": task, "status": "stopped"})
                 if not self._closing():
                     # A steered message still owns a later provider result.
                     continue

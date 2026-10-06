@@ -5,6 +5,7 @@ The CLIs are stand-in child processes that speak each host's protocol.
 """
 
 import json
+import os
 import subprocess
 import sys
 import threading
@@ -714,6 +715,70 @@ sys.stdin.read()
 '''
     _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
     assert [e.text for e in events if e.kind == "done"] == ["Finished"]
+
+
+def test_a_background_task_silent_past_the_turn_timeout_is_still_awaited(tree):
+    # A suite that prints nothing for ten minutes once tripped the turn's clock:
+    # the CLI was killed and the task orphaned. Its own end closes the wait.
+    fixture = '''import json, sys, time
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_backgrounded": True})
+say({"type": "result", "result": "I'll commit once the suite passes", "session_id": "cli-1"})
+time.sleep(1)
+say({"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"})
+say({"type": "result", "origin": {"kind": "task-notification"}, "result": "Committed", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    with patch.object(chat_session, "TURN_TIMEOUT", .2):
+        _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert events[-1].kind == "done" and events[-1].text == "Committed" and not events[-1].meta["error"]
+
+
+def test_a_stopped_background_task_owes_no_followup(tree):
+    # Claude 2.1.291: `TaskStop` or `stop_task` reports killed, then stopped,
+    # and injects no answer. Waiting for one hung until the clock killed it.
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_backgrounded": True})
+say({"type": "system", "subtype": "task_updated", "task_id": "bg-1", "patch": {"status": "killed"}})
+say({"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "stopped"})
+say({"type": "result", "result": "Stopped it", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    with patch.object(chat_session, "TURN_TIMEOUT", 5):
+        started = time.monotonic()
+        _, events = run(ChatSession(tree, write=True, bypass=True), fixture, tree)
+    assert events[-1].kind == "done" and events[-1].text == "Stopped it"
+    assert time.monotonic() - started < 4
+
+
+def test_a_closing_answer_ends_the_turn_and_takes_left_over_background_work_down(tree, tmp_path):
+    # The work is reported done while a watcher still runs: the turn ends at
+    # the report, so the review can start, and the watcher's process goes too.
+    survived = tmp_path / "survived"
+    fixture = '''import json, subprocess, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+subprocess.Popen([sys.executable, "-c", "import pathlib, sys, time; time.sleep(1.5); pathlib.Path(sys.argv[1]).touch()",
+                  SURVIVED])
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_backgrounded": True})
+say({"type": "result", "result": "Done.\\n```done-report\\n[]\\n```", "session_id": "cli-1"})
+sys.stdin.read()
+'''.replace("SURVIVED", repr(str(survived)))
+    session = ChatSession(tree, write=True, bypass=True)
+    session.settled = lambda answer: "```done-report" in answer
+    with patch.object(chat_session, "TURN_TIMEOUT", 30):
+        started = time.monotonic()
+        _, events = run(session, fixture, tree)
+    assert time.monotonic() - started < 10
+    assert events[-1].kind == "done" and events[-1].text.startswith("Done.") and not events[-1].meta["error"]
+    assert any(e.meta.get("task_id") == "bg-1" and e.meta.get("status") == "stopped" for e in events)
+    assert not session.alive
+    if os.name == "nt":   # the job: elsewhere the CLI's own exit is trusted
+        time.sleep(2.5)
+        assert not survived.exists()
 
 
 def test_background_child_text_does_not_replace_the_parent_answer(tree):
