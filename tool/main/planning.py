@@ -34,6 +34,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import improvement
 from agent import ChatSession
 from common.budget import Budget, Cancelled, Exhausted
 
@@ -102,6 +103,7 @@ class Plan(BaseModel):
     stages: int | None = None
     roles: Roles
     limits: Limits
+    refactor: bool = False   # a full refactor's plan: every stage names its tier and files (`tiered`)
 
 
 def normalized(body: Plan) -> dict:
@@ -114,7 +116,7 @@ def normalized(body: Plan) -> dict:
             "roles": {name: {"model": role.model.strip(), "effort": role.effort.strip()}
                       for name, role in (("planner", roles.planner), ("reviser", roles.reviser),
                                          ("reviewer", roles.reviewer))},
-            "limits": body.limits.model_dump()}
+            "limits": body.limits.model_dump(), **({"refactor": True} if body.refactor else {})}
 
 
 def digest(value) -> str:
@@ -442,6 +444,25 @@ def leftover(path: Path, root: str, manifest: list[dict]) -> list[Path] | None:
 
 # -- Mechanical checks -----------------------------------------------------------------
 
+def tiered(text: str) -> dict:
+    """A refactor stage's one `Tier: L0–L3` and one `Files: a, b` line, or `ValueError`.
+    Files are distinct repository-relative paths; an L3 stage changes a contract,
+    so it also needs `## Migration`."""
+
+    tier, files = re.findall(r"^Tier:[ \t]*(.*?)[ \t]*$", text, re.M), re.findall(r"^Files:(.*)$", text, re.M)
+    names = [f.strip().strip("`") for f in (files or [""])[0].split(",") if f.strip()]
+    if tier[:1] not in (["L0"], ["L1"], ["L2"], ["L3"]) or len(tier) != 1 or len(files) != 1 or not names:
+        raise ValueError("리펙터링 단계는 `Tier: L0–L3` 줄과 비지 않은 `Files:` 줄을 하나씩 적어야 한다")
+    try:
+        if len(set(names)) != len(names) or not all(improvement.relative(n) for n in names):
+            raise improvement.Refused("a file is named twice")
+    except improvement.Refused as exc:
+        raise ValueError(f"`Files:` 는 저장소 기준 상대 경로를 한 번씩 적는다: {', '.join(names)}") from exc
+    if tier[0] == "L3" and not re.search(r"^##[ \t]+Migration", text, re.M):
+        raise ValueError("L3 단계에는 `## Migration` 절이 있어야 한다")
+    return {"tier": tier[0], "files": names}
+
+
 def problems(repo: str, sid: str, spec: dict, path: Path) -> list[tuple[str, str]]:
     """`(file, what)` for each mechanical failure: structure, coverage, links,
     ids and sources. Semantic validity is the reviewer's; a field being there
@@ -470,6 +491,11 @@ def problems(repo: str, sid: str, spec: dict, path: Path) -> list[tuple[str, str
         for h in OVERVIEW if stage is None else STAGE:
             if not any(x.startswith(h.lower()) for x in headings):
                 out.append((rel, f"`## {h}` 절이 없다"))
+        if stage is not None and p["input"].get("refactor"):
+            try:
+                tiered(text)
+            except ValueError as exc:
+                out.append((rel, str(exc)))
         for rid in entry["requirement_ids"]:
             if rid not in requirements:
                 out.append((rel, f"없는 요구사항 `{rid}` 을 적었다"))
@@ -1140,8 +1166,14 @@ def shown(repo: Path, spec: dict) -> dict:
 
 @router.post("/api/plans")
 def start(body: Plan) -> dict:
+    return begun(body)
+
+
+def begun(body: Plan, create: bool = True) -> dict:
     """`[계획]`: the worktree and the spec, then the worker. The same key with
-    the same input is the same plan; with other input, a conflict."""
+    the same input is the same plan; with other input, a conflict. With
+    `create=False` it only finds: a key no spec carries is a 404, decided in
+    the same lookup that would otherwise create."""
 
     checked(body)
     with _lock:
@@ -1158,6 +1190,8 @@ def start(body: Plan) -> dict:
             if old["planning"]["input_revision"] != revision:
                 raise HTTPException(409, "같은 요청 키에 다른 입력이다 — 새 계획은 새 키로")
             return shown(repo, old)
+        if not create:
+            raise HTTPException(404, "이 요청 키의 계획이 없다")
         sid = specs.unique(repo, given["slug"] or f"plan-{revision[:8]}")
         root = f"docs/plans/{sid}"
         with _lock:

@@ -4,7 +4,8 @@ The first mode end to end: scan, pick L0–L1 steps, run the profile, open PRs.
 
 ## Work
 
-- `tool/main/refactor.py` (main layer, under the 800-line cap): `POST
+- `tool/main/refactor.py` (main layer, under the 800-line cap; routes in
+  `refactor_api.py`): `POST
   /api/refactors` with mode, scope (`project` or `hub`) and limits;
   `GET /api/refactors/{id}`; cancel and resume like `/api/plans`.
 - Quick cleanup takes the top hotspots from `debt.scan`, asks the model for

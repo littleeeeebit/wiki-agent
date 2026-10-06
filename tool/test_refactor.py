@@ -22,7 +22,7 @@ from fastapi import HTTPException
 
 import refactor_profile
 from agent.chat_session import Event
-from main import loop, query, refactor, specs, work
+from main import loop, planning, query, refactor, refactor_api, specs, work
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
 from test_specs import Remote, made, repo, spec_block  # noqa: F401 — `repo` is a fixture
 
@@ -221,13 +221,13 @@ def test_the_checkout_test_names_one_request_and_the_test_command_are_all_bounde
         run = finished(api, started("refactor-req-0005", seconds=3))
     assert run["stopped"]["reason"] == "budget" and time.monotonic() - began < 20, run["stopped"]
 
-    token, ids = refactor.secrets.token_hex, []
+    token, ids = refactor_api.secrets.token_hex, []
 
     def slow(n):   # widens the gap two equal requests would both walk through
         time.sleep(0.3)
         return token(n)
 
-    with patch.object(refactor.secrets, "token_hex", slow), patch.object(refactor, "launch") as launch:
+    with patch.object(refactor_api.secrets, "token_hex", slow), patch.object(refactor, "launch") as launch:
         threads = [threading.Thread(target=lambda: ids.append(started("refactor-req-0006"))) for _ in range(2)]
         [t.start() for t in threads]
         [t.join() for t in threads]
@@ -346,3 +346,96 @@ def test_a_read_only_audit_that_writes_stops_the_run(selected):
     with patch.object(specs, "sh", side_effect=Remote()), patch.object(Host, "say", writes):
         run = finished(api, api.post("/api/refactors", json=body).json()["id"])
     assert run["stopped"]["reason"] == "read_only_wrote", run["stopped"]
+
+
+STAGE = "# Stage {n}\n\nTier: {tier}\nFiles: big.py\n\n## Rollback\n\nRevert.\n"
+
+
+def test_an_l3_stage_must_say_how_it_migrates():
+    assert planning.tiered(STAGE.format(n=1, tier="L2")) == {"tier": "L2", "files": ["big.py"]}
+    with pytest.raises(ValueError, match="Migration"):
+        planning.tiered(STAGE.format(n=1, tier="L3"))
+    with pytest.raises(ValueError, match="Tier"):
+        planning.tiered("# Stage\n\nFiles: big.py\n")
+    for files in (" ,", "../outside.py", "C:/Windows/python.exe", "big.py, big.py"):
+        with pytest.raises(ValueError, match="Files"):
+            planning.tiered(f"Tier: L1\nFiles: {files}\n")
+    with pytest.raises(ValueError, match="Tier"):
+        planning.tiered("Tier: L1\nTier: L3\nFiles: big.py\n## Migration\n")
+
+
+def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
+    api = client()
+    asked = []
+
+    def planned(body, create=True):   # the planner's spec, as `planning.begun` leaves it once its PR is open
+        asked.append(body)
+        if not create and not any((s.get("planning") or {}).get("request_id") == body.request_id
+                                  for s in specs.listing("proj")):
+            raise HTTPException(404, "none")
+        spec = specs.load("proj", made(selected, spec_block())[0]["id"])
+        specs.save({**spec, "id": "plan-refactor", "state": "PR #1", "planning": {
+            "phase": "handoff", "artifact_root": "docs/plans/p", "request_id": body.request_id,
+            "spent": {"seconds": 40, "calls": 2, "tokens": 100},
+            "outline": {"stages": [{"n": 1, "slug": "dedupe", "title": "Dedupe"},
+                                   {"n": 2, "slug": "split", "title": "Split"}]}}})
+        return {"id": "plan-refactor"}
+
+    adopted = lambda repo, scope, name, config: {"state": "adopted", "branch": "none",  # noqa: E731
+                                                  "commit": _git(repo, "rev-parse", "HEAD")}
+    review = lambda name, sid: specs.update(name, sid, state="머지 가능")  # noqa: E731
+    body = {"request_id": "refactor-req-0004", "mode": "full",
+            "role": {"model": "m", "effort": "high"}, "limits": {"seconds": 600, "calls": 9, "tokens": 100_000}}
+    with patch.object(specs, "sh", side_effect=Remote()), patch.object(loop, "kick", side_effect=review), \
+            patch.object(refactor_profile, "drive", side_effect=adopted), \
+            patch.object(planning, "begun", side_effect=planned):
+        rid = api.post("/api/refactors", json=body).json()["id"]
+        run = until(api, rid, lambda r: r["phase"] == "plan" or r["state"] != "running")
+        assert run["plan"] == "plan-refactor" and run["tests"] is None, run.get("stopped")
+        assert asked[0].refactor and "Tier: L0" in asked[0].context and "Plan." in asked[0].context
+
+        api.post(f"/api/refactors/{rid}/cancel")   # stopped after the planner started, before the phase moved
+        until(api, rid, lambda r: r["state"] == "stopped")
+        refactor.update("proj", rid, phase="audit")
+        time.sleep(1.5)
+        api.post(f"/api/refactors/{rid}/resume")
+        until(api, rid, lambda r: r["phase"] == "plan" and len(asked) == 2 or r["state"] != "running")
+        assert asked[1] == asked[0], "a resume sends the request it kept, not one rebuilt from today's limits"
+
+        plan = selected / "docs/plans/p"
+        plan.mkdir(parents=True)
+        (plan / "1-dedupe.md").write_text(STAGE.format(n=1, tier="L1"), encoding="utf-8")
+        (plan / "2-split.md").write_text(STAGE.format(n=2, tier="L0"), encoding="utf-8")
+        (plan / "3-added-in-review.md").write_text(STAGE.format(n=3, tier="L0"), encoding="utf-8")
+        _git(selected, "add", "docs")
+        _git(selected, "commit", "-qm", "plan")
+        time.sleep(3.5)
+        assert until(api, rid, lambda r: True)["phase"] == "plan", "an open plan PR holds the stages back"
+        update, broke = refactor.update, []
+
+        def flaky(repo, run_id, **fields):   # the write that leaves the plan phase fails once
+            if fields.get("phase") == "tests" and not broke:
+                broke.append(fields)
+                raise OSError("disk full")
+            return update(repo, run_id, **fields)
+
+        with patch.object(refactor, "update", side_effect=flaky):
+            specs.update("proj", "plan-refactor", state="머지됨", cleanup_complete=True,
+                         merge={"commit": _git(selected, "rev-parse", "HEAD"), "base": "main"})
+            assert finished(api, rid)["stopped"]["reason"] == "broken"
+        api.post(f"/api/refactors/{rid}/resume")
+        run = finished(api, rid)
+    assert run["state"] == "done", run.get("stopped")
+    assert [(s["n"], s["tier"]) for s in run["steps"]] == [(1, "L1"), (2, "L0"), (3, "L0")], "the stages that merged"
+    assert run["spent"]["calls"] == 2 + 2 and run["spent"]["tokens"] == 10 + 15 + 100, "the planner once"
+    assert run["spent"]["seconds"] >= 40, "the planner's time is the run's"
+
+    refactor.update("proj", rid, spent={"seconds": 600, "calls": 9, "tokens": 100_000})   # nothing left
+    w = refactor.Worker(selected, refactor.load("proj", rid))
+    with patch.object(planning, "begun", side_effect=planned):
+        assert refactor.charted(w, refactor.load("proj", rid))["plan"] == "plan-refactor", "found, though spent"
+    spec = specs.load("proj", "plan-refactor")   # gone, as if deleted after any earlier look: the real lookup
+    specs.save({**spec, "planning": {**spec["planning"], "request_id": "refactor-elsewhere-plan"}})
+    with patch.object(planning, "launch") as launched, pytest.raises(refactor.Stop) as stop:
+        refactor.charted(w, refactor.load("proj", rid))
+    assert stop.value.reason == "budget" and not launched.called, "a saved request makes no new planner once spent"

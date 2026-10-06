@@ -13,7 +13,7 @@ type Step = { n: number; tier: string; files: string[]; goal: string; state: str
 type Run = {
   id: string; mode: string; state: 'running' | 'stopped' | 'done'; phase: string; created: number
   limits: Limits; spent: Limits; steps: Step[]; tests: { spec: string; pr?: number } | null
-  stopped: { reason: string; detail: string } | null
+  stopped: { reason: string; detail: string } | null; plan?: string
 }
 
 const MODE: Record<string, string> = { cleanup: '빠른 정리 · L0–L1', restructure: '모듈 재구성 · L0–L2', full: '전면 · L0–L3' }
@@ -74,7 +74,7 @@ export function Refactor({ repo }: { repo: string }) {
   }
   const start = async () => {
     const chosen = files.split('\n').map((f) => f.trim()).filter(Boolean)
-    if (limits && await act('/api/refactors', { request_id: rid, mode, top, limits, files: mode === 'cleanup' ? [] : chosen })) {
+    if (limits && await act('/api/refactors', { request_id: rid, mode, top, limits, files: mode === 'restructure' ? chosen : [] })) {
       setRid(request())
     }
   }
@@ -96,10 +96,11 @@ export function Refactor({ repo }: { repo: string }) {
               {Object.keys(scan?.modes ?? { cleanup: null }).map((m) => <option key={m} value={m}>{MODE[m] ?? m}</option>)}
             </select>
           </label>
-          {mode === 'cleanup' ? <label className="flex flex-col gap-1">대상 파일 수
+          {mode === 'cleanup' && <label className="flex flex-col gap-1">대상 파일 수
             <input type="number" min={1} max={10} value={top} onChange={(e) => setTop(Number(e.target.value))}
               className="min-h-11 w-20 rounded-md border border-border bg-card px-2" />
-          </label> : <label className="flex min-w-0 flex-1 flex-col gap-1">모듈 파일 (한 줄에 하나)
+          </label>}
+          {mode === 'restructure' && <label className="flex min-w-0 flex-1 flex-col gap-1">모듈 파일 (한 줄에 하나)
             <textarea rows={3} value={files} onChange={(e) => setFiles(e.target.value)} placeholder="src/orders/service.py"
               className="min-h-11 rounded-md border border-border bg-card px-2 py-1 font-mono text-[11.5px]" />
           </label>}
@@ -108,11 +109,12 @@ export function Refactor({ repo }: { repo: string }) {
               className="min-h-11 w-28 rounded-md border border-border bg-card px-2" />
           </label>)}
           <Btn tone="primary" className="min-h-11" onClick={() => void start()}
-            disabled={busy || !limits || (mode === 'cleanup' ? !scan?.rows.length : !files.trim())}>
+            disabled={busy || !limits || (mode === 'cleanup' ? !scan?.rows.length : mode === 'restructure' && !files.trim())}>
             {busy ? '여는 중…' : '시작'}
           </Btn>
         </div>
         <p className="text-[12.5px] text-muted-foreground">L0–L1 단계 PR 은 이 요청으로 리뷰까지 자동으로 넘어간다. 실패한 단계는 한 번 다시 시도하고, 그래도 안 되면 더 작게 나누라고 멈춘다.</p>
+        {mode === 'full' && <p className="text-[12.5px] text-muted-foreground">저장소 전체를 감사한 뒤 계획 PR 을 연다. 계획이 리뷰를 거쳐 머지되어야 단계가 시작된다.</p>}
         {mode !== 'cleanup' && <p className="text-[12.5px] text-muted-foreground">L2 이상 단계는 열린 작업이 없을 때만 시작하고, 도는 동안 이 저장소의 새 작업을 막는다. 리뷰는 직접 시작하고, 끝나면 [승인] 해야 다음 단계로 간다.</p>}
       </div>
 
@@ -135,6 +137,8 @@ export function Refactor({ repo }: { repo: string }) {
           <p className="mt-1 text-muted-foreground">
             {LIMIT.map(([key, label]) => `${label} ${Math.round(run.spent[key])}/${run.limits[key]}`).join(' · ')}
           </p>
+          {run.plan && <p className="mt-1">계획 <code className="font-mono text-[11.5px]">{run.plan}</code>
+            {run.phase === 'plan' ? ' — 계획 PR 이 머지되면 단계가 시작된다' : ''}</p>}
           {run.stopped && <p className="mt-1 whitespace-pre-wrap break-words text-destructive">{run.stopped.reason} — {run.stopped.detail}</p>}
           <ol className="mt-2 space-y-1">
             {run.tests && <li>0. 특성 테스트 · {run.tests.pr ? `PR #${run.tests.pr}` : '작성 중'}</li>}

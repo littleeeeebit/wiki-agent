@@ -16,15 +16,13 @@ from __future__ import annotations
 
 import json
 import re
-import secrets
 import subprocess
 import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import HTTPException
 
 import debt
 import improvement
@@ -33,12 +31,13 @@ from agent import ChatSession
 from common import errorlog
 from common.budget import Budget, Cancelled, Exhausted
 
-from . import loop, runtime, specs, work
+from . import loop, planning, runtime, specs, work
 from .query import ROOT, _lock, current_repo, hold
 
 RUNS = ROOT / "raw" / "refactor" / "runs"
 MODES = {"cleanup": {"tiers": ("L0", "L1"), "limits": {"seconds": 1800, "calls": 24, "tokens": 500_000}},
-         "restructure": {"tiers": ("L0", "L1", "L2"), "limits": {"seconds": 3600, "calls": 40, "tokens": 1_000_000}}}
+         "restructure": {"tiers": ("L0", "L1", "L2"), "limits": {"seconds": 3600, "calls": 40, "tokens": 1_000_000}},
+         "full": {"tiers": ("L0", "L1", "L2", "L3"), "limits": {"seconds": 7200, "calls": 80, "tokens": 3_000_000}}}
 AUTO_REVIEW = ("L0", "L1")    # tiers whose PRs the request itself sends to review
 BLOCKING = ("L2", "L3")       # tiers that hold the repository while they run
 REVIEWED = ("머지 가능", "머지 대기", "머지됨")
@@ -51,6 +50,15 @@ AUDIT_PROMPT = (
     "between modules with every public import path still working. A step lists the repository-relative files "
     "it touches; an L2 step may name a new file under an existing directory. End with a fenced block tagged "
     '`refactor-plan` holding JSON: {{"steps": [{{"tier": "L1", "goal": "...", "files": ["..."]}}]}}.')
+FULL_PROMPT = (
+    "Audit this whole repository for structural debt. Start from the debt scan you are given, then read the "
+    "architecture documents and `.omm/` when present. Do not edit anything. Answer in prose: the target "
+    "structure, which seams to cut, and the order to get there in, smallest safe change first, with the tier "
+    "each change needs (L0 mechanical, L1 inside files, L2 across modules, L3 a contract change).")
+PLAN_RULES = (
+    "This plan is a refactoring series. Every stage file must carry two plain lines: `Tier: L0`, `L1`, `L2` "
+    "or `L3`, and `Files: ` with the repository-relative files it touches, comma-separated. An L3 stage also "
+    "needs a `## Migration` section beside its `## Rollback`. Behaviour must not change below L3.")
 TESTS_PROMPT = (
     "Write characterization tests that pin the current observable behaviour of the files listed, so a later "
     "refactoring can prove it changed nothing. Use the repository's existing test framework and conventions; "
@@ -59,7 +67,6 @@ TESTS_PROMPT = (
     '{"tests": [repository-relative test paths], "test_argv": [the command that runs exactly those tests '
     "from the repository root, as an argument list]}.")
 
-router = APIRouter()
 _files = threading.RLock()   # reads too: on Windows a read racing `atomic`'s replace fails
 _workers: dict[tuple[str, str], "Worker"] = {}
 _launching = threading.Lock()   # a workerless cancel's release never interleaves with a resume
@@ -416,6 +423,8 @@ def body(goal: str, lines: list[str]) -> str:
 # -- The phases ----------------------------------------------------------------
 
 def scan(w: Worker, run: dict) -> dict:
+    if run["mode"] == "full":
+        return w.note(phase="audit", hotspots=hotspots(w.repo, 20))
     if run["mode"] != "cleanup":   # the person chose the module; its measurements are shown, not filtered
         return w.note(phase="audit", hotspots=[r for r in debt.scan(w.repo) if r["path"] in run["files"]])
     rows = hotspots(w.repo, run["top"]) if not run["files"] else \
@@ -432,6 +441,8 @@ def scan(w: Worker, run: dict) -> dict:
 def audited(w: Worker, run: dict) -> dict:
     """A read-only audit of the chosen module into one to three steps."""
 
+    if run["mode"] == "full":
+        return charted(w, run)
     tiers = MODES[run["mode"]]["tiers"]
     with owning(w):
         final = turn(w, run, "Module:\n" + "\n".join(f"- {f}" for f in run["files"]),
@@ -454,6 +465,88 @@ def audited(w: Worker, run: dict) -> dict:
     return w.note(phase="tests", steps=steps)
 
 
+def charted(w: Worker, run: dict) -> dict:
+    """The whole-repository audit, handed to the planner as a refactor series."""
+
+    if not run.get("audit"):
+        table = "\n".join(f"- {r['path']}: {r['lines']} lines (cap {r['cap']}), {r['dup']} duplicated, longest "
+                          f"block {r['block']}, {r['churn']} commits in 180 days" for r in run["hotspots"])
+        with owning(w):
+            final = turn(w, run, "Debt scan, worst first:\n" + (table or "(nothing over the caps)"), FULL_PROMPT,
+                         write=False)
+        run = w.note(audit=final[-(planning.MAX_CONTEXT - len(PLAN_RULES) - 100):])
+    if current_repo().resolve() != w.repo.resolve():
+        raise Stop("moved", "다른 저장소가 선택됐다 — 이 저장소로 돌아와 [재개] 하라")
+    found = None
+    if run.get("planner"):   # a planner made from the saved request is found by it, however little is left
+        try:
+            found = planning.begun(planning.Plan(**run["planner"]), create=False)
+        except HTTPException as exc:
+            if exc.status_code != 404:
+                raise Stop("plan_refused", str(exc.detail)) from exc
+    if found is None:   # none carries the key: this creates one, checked against what is left now
+        left = w.left()
+        if min(left.values()) <= 0:
+            raise Stop("budget", "한도를 다 썼다")
+        role = planning.Role(**run["role"])
+        run = w.note(planner=planning.Plan(
+            request_id=f"refactor-{w.rid}-plan", refactor=True,
+            goal="Pay down the structural debt the audit found, in stages that each keep behaviour unless their "
+                 "tier is L3, so every stage can become one reviewed refactoring pull request.",
+            context=f"{PLAN_RULES}\n\n## Audit\n\n{run['audit']}",
+            roles=planning.Roles(planner=role, reviser=role,
+                                 reviewer=planning.Role(**(run["reviewer"] or run["role"]))),
+            limits=planning.Limits(seconds=left["seconds"], calls=left["calls"], tokens=left["tokens"])).model_dump())
+        try:
+            found = planning.begun(planning.Plan(**run["planner"]))
+        except HTTPException as exc:
+            raise Stop("plan_refused", str(exc.detail)) from exc
+    return w.note(phase="plan", plan=found["id"])
+
+
+def staged(w: Worker, run: dict) -> dict:
+    """After the plan PR merges and the checkout is back on its base, its
+    stages become the run's steps."""
+
+    def ready() -> bool:
+        spec = specs.load(w.repo.name, run["plan"])
+        if spec is None:
+            raise Stop("spec_gone", f"계획 `{run['plan']}` 이 없어졌다")
+        if spec["state"] == "멈춤" or spec["planning"]["phase"] == "stopped":
+            raise Stop("plan_stopped", f"계획 `{run['plan']}` 이 멈췄다 — 계획을 이은 뒤 이 리펙터링을 [재개] 하라")
+        return spec["state"] == "머지됨" and bool(spec.get("cleanup_complete"))
+
+    waited(w, ready)
+    spec = specs.load(w.repo.name, run["plan"])
+    p, commit = spec["planning"], spec["merge"]["commit"]
+    # The stage files that merged, not the outline written before review: a revision may add or drop one.
+    names = git(w.repo, "ls-tree", "--name-only", f"{commit}:{p['artifact_root']}").splitlines()
+    stages = sorted((int(name.split("-")[0]), name) for name in names
+                    if planning.NAME.fullmatch(name) and name != "0-overview.md")
+    if not stages or len({n for n, _ in stages}) != len(stages):
+        raise Stop("format", f"머지된 계획의 단계 파일을 읽지 못했다: {', '.join(names)}")
+    steps = []
+    for n, name in stages:
+        rel = f"{p['artifact_root']}/{name}"
+        text = git(w.repo, "show", f"{commit}:{rel}")
+        try:
+            t = planning.tiered(text)
+        except ValueError as exc:
+            raise Stop("format", f"{rel}: {exc}") from exc
+        title = (re.search(r"^#[ \t]+(.+)$", text, re.M) or [None, name])[1]
+        steps.append({"n": n, "tier": t["tier"], "files": t["files"], "state": "pending", "spec": None,
+                      "goal": f"{title}, as `{rel}` describes:\n\n{text[:6000]}"})
+    # The planner spent the run's allowance, its seconds inside the wait set aside above. Charged in the
+    # same write that leaves this phase, and in memory only once it holds: a failed write charges nothing.
+    used, spent = p["spent"], w.spent()
+    run = update(w.repo.name, w.rid, phase="tests", steps=steps,
+                 spent={k: spent[k] + used[k] for k in ("seconds", "calls", "tokens")})
+    w.budget.used["calls"] += used["calls"]
+    w.budget.used["tokens"] += used["tokens"]
+    w.budget.aside(-used["seconds"])
+    return run
+
+
 def frozen(w: Worker, run: dict) -> dict:
     """The characterization PR every step stacks on."""
 
@@ -465,7 +558,7 @@ def frozen(w: Worker, run: dict) -> dict:
 
 def characterized(w: Worker, run: dict) -> str:
     t = dict(run.get("tests") or {})
-    files = run["files"] or sorted({f for s in run["steps"] for f in s["files"]})
+    files = run["files"] or sorted({f for s in run["steps"] for f in s["files"] if (w.repo / f).is_file()})
     if not t.get("spec"):
         try:
             idle(w)
@@ -589,7 +682,7 @@ def competed(w: Worker, run: dict, step: dict, sid: str) -> dict:
     return result
 
 
-PHASES = {"scan": scan, "audit": audited, "tests": frozen, "steps": stepped}
+PHASES = {"scan": scan, "audit": audited, "plan": staged, "tests": frozen, "steps": stepped}
 
 
 def drive(w: Worker) -> None:
@@ -638,139 +731,3 @@ def close_all() -> None:
         workers = list(_workers.values())
     for w in workers:
         w.halt.set()
-
-
-# -- Routes --------------------------------------------------------------------
-
-class Role(BaseModel):
-    model: str = ""
-    effort: str = ""
-
-
-class Limits(BaseModel):
-    seconds: float
-    calls: int
-    tokens: int
-
-
-class Start(BaseModel):
-    request_id: str
-    mode: str
-    files: list[str] = []
-    top: int = 3
-    role: Role = Role()
-    reviewer: Role | None = None
-    limits: Limits
-
-
-def mine(repo: Path, rid: str) -> dict:
-    run = load(repo.name, rid) if REQUEST.fullmatch(rid) else None
-    if run is None:
-        raise HTTPException(404, "그런 리펙터링이 없다")
-    return run
-
-
-@router.get("/api/refactors/scan")
-def scanned() -> dict:
-    repo = current_repo()
-    file = repo / debt.RATCHET
-    try:
-        ratchet = debt.load(file) if file.exists() else None
-    except ValueError as exc:
-        raise HTTPException(409, str(exc)) from exc
-    return {"repo": repo.name, "rows": hotspots(repo)[:50], "ratchet": ratchet,
-            "modes": {k: v["limits"] for k, v in MODES.items()}, "scope": scope_of(repo)}
-
-
-@router.get("/api/refactors")
-def runs() -> dict:
-    repo = current_repo()
-    return {"repo": repo.name, "runs": listing(repo.name)}
-
-
-@router.post("/api/refactors")
-def start(body: Start) -> dict:
-    repo = current_repo()
-    if not REQUEST.fullmatch(body.request_id):
-        raise HTTPException(400, "요청 키는 영문·숫자·- 8–64자다")
-    if body.mode not in MODES:
-        raise HTTPException(400, f"모드는 {', '.join(MODES)} 중 하나다")
-    limits = body.limits
-    if not (limits.seconds > 0 and limits.calls > 0 and limits.tokens > 0 and limits.seconds < float("inf")):
-        raise HTTPException(400, "시간·호출·토큰 한도는 모두 0보다 큰 유한한 값이어야 한다")
-    if not 1 <= body.top <= 10:
-        raise HTTPException(400, "대상 수는 1–10 이다")
-    if not specs.gate_of(repo):
-        raise HTTPException(409, "연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
-    scope = scope_of(repo)
-    if scope == "hub":
-        raise HTTPException(409, "wiki-agent 자신의 리펙터링은 아직 열지 않았다")
-    with _files:   # one transaction: two equal requests never both find nothing
-        old = next((r for r in listing(repo.name) if r["request_id"] == body.request_id), None)
-        if old is not None:
-            return old
-        if body.mode != "cleanup":
-            if not body.files:
-                raise HTTPException(400, "재구성할 모듈의 파일을 골라라")
-            for rel in body.files:
-                try:
-                    improvement.relative(rel)
-                except improvement.Refused as exc:
-                    raise HTTPException(400, str(exc)) from exc
-                if not (repo / rel).is_file():
-                    raise HTTPException(400, f"`{rel}` 이 저장소에 없다")
-            if busy := others(repo, ""):
-                raise HTTPException(409, f"열린 작업을 먼저 끝내라 — L2 단계는 저장소를 혼자 쓴다: {', '.join(busy)}")
-        rid = secrets.token_hex(4)
-        now = time.time()
-        run = {"id": rid, "repo": repo.name, "mode": body.mode, "scope": scope, "request_id": body.request_id,
-               "files": body.files, "top": body.top, "role": body.role.model_dump(),
-               "reviewer": body.reviewer.model_dump() if body.reviewer else None, "limits": limits.model_dump(),
-               "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "scan", "state": "running",
-               "stopped": None, "hotspots": [], "steps": [], "tests": None, "created": now, "updated": now}
-        improvement.atomic(file_of(repo.name, rid), run)
-    launch(repo, run)
-    return load(repo.name, rid)
-
-
-@router.post("/api/refactors/{rid}/cancel")
-def cancel(rid: str) -> dict:
-    repo = current_repo()
-    mine(repo, rid)
-    with _launching:
-        with _lock:
-            w = _workers.get((repo.name, rid))
-        if w is not None:
-            w.halt.set()
-        else:   # stopped, e.g. by a restart that kept its block: nothing else would release it
-            released(repo, rid)
-    return load(repo.name, rid)
-
-
-@router.post("/api/refactors/{rid}/approve")
-def approve(rid: str) -> dict:
-    """The person lets the step waiting on them finish, so the next may start —
-    for the step as it stands now, and only while its review still allows it."""
-
-    repo = current_repo()
-    run = mine(repo, rid)
-    waiting = [s["spec"] for s in run["steps"] if s["state"] == "awaiting"]
-    if not waiting:
-        raise HTTPException(409, "승인을 기다리는 단계가 없다")
-    marks = {}
-    for sid in waiting:
-        spec = specs.load(repo.name, sid)
-        if spec is None or (given := mark(repo, spec)) is None:
-            raise HTTPException(409, f"`{sid}` 는 리뷰를 다시 통과해야 승인할 수 있다")
-        marks[sid] = given
-    return update(repo.name, rid, approved={**(run.get("approved") or {}), **marks})
-
-
-@router.post("/api/refactors/{rid}/resume")
-def resume(rid: str) -> dict:
-    repo = current_repo()
-    run = mine(repo, rid)
-    if run["state"] != "stopped":
-        raise HTTPException(409, "멈춘 리펙터링만 잇는다")
-    launch(repo, run)
-    return load(repo.name, rid)
