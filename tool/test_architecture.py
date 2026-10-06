@@ -50,7 +50,7 @@ if "/" in sys.argv[2]:
     monkeypatch.setattr(architecture, "cli_command", lambda name: [sys.executable, "-X", "utf8", str(script)])
     calls = []
 
-    def analyze(root, model, halt):
+    def analyze(root, model, halt, rejected=""):
         calls.append(root)
         return NODES
 
@@ -179,6 +179,23 @@ def test_invalid_hierarchy_is_rejected_before_any_cli_publication(tmp_path, cli,
         architecture.write_nodes(tmp_path, [{"path": "overall-architecture", "description": "Invalid",
                                             "diagram": diagram}, *children], threading.Event())
     assert not (tmp_path / ".omm").exists()
+
+
+def test_a_rejected_answer_gets_one_retry_told_why(tmp_path, cli, monkeypatch):
+    undescribed = [{"path": "overall-architecture", "description": "Invalid",
+                    "diagram": 'graph LR\n missing["Undescribed node"]\n'}]
+    reasons = []
+
+    def analyze(root, model, halt, rejected=""):
+        reasons.append(rejected)
+        return NODES if rejected else undescribed
+
+    monkeypatch.setattr(architecture, "analyze", analyze)
+    assert architecture.scan(tmp_path)["installed"]
+    assert reasons[0] == "" and "missing" in reasons[1]
+    monkeypatch.setattr(architecture, "analyze", lambda *_: undescribed)
+    with pytest.raises(architecture.Invalid, match="described child"):
+        architecture.scan(tmp_path)
 
 
 def test_selected_repository_add_is_explicit_and_reads_are_passive(tmp_path, cli, monkeypatch):

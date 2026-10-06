@@ -511,6 +511,42 @@ def test_merge_intent_does_not_follow_a_later_repair_head(world):
     assert not any(c[:3] == ["gh", "pr", "merge"] for c in world.hub.calls)
 
 
+@pytest.mark.parametrize("repair,merges", [("docs/fixed.md", True), (".omm/fixed/description.md", True),
+                                           ("fixed.py", False)])
+def test_merge_intent_follows_a_reviewed_document_repair_of_the_prepared_head(world, repair, merges):
+    spec = looped(pr_spec(world, "request-repair", 12)["id"])
+    prepared = specs.approved(spec)["head"]
+    specs.update("proj", spec["id"], merge_request={"head": prepared, "base": "main", "rev": 1, "pr": 12})
+    path = Path(spec["worktree"])
+    (path / repair).parent.mkdir(parents=True, exist_ok=True)
+    repaired = commit(path, repair, "# Fixed\n\nThe reviewer's correction.\n")
+    git(path, "push", "origin", spec["id"])
+    done = looped(spec["id"])
+    merged = [c for c in world.hub.calls if c[:3] == ["gh", "pr", "merge"]]
+    if merges:
+        assert done["state"] == "머지됨" and merged[-1][-1] == repaired, done
+    else:
+        assert done["state"] == "머지 가능" and not merged and not done["merge_request"]
+        assert "머지 요청 취소" in done["merge_progress"]["stage"]
+
+
+def test_an_invalid_architecture_answer_keeps_the_documents_and_merges(world):
+    spec = pr_spec(world, "invalid-omm", 12, file="docs/feature.md")
+    path = Path(spec["worktree"])
+    (path / ".omm").mkdir()
+    commit(path, ".omm/description.md", "# Architecture\n\nReviewed.\n")
+    git(path, "push", "origin", spec["id"])
+    ready = looped(spec["id"])
+    failed = maintenance.architecture.Invalid("Every diagram component requires a described child")
+    with patch.object(maintenance.architecture, "scan", side_effect=failed):
+        client().post(f"/api/specs/{spec['id']}/merge", json={"head": specs.approved(ready)["head"]}).raise_for_status()
+        waited(lambda: not loop._loops)
+    done = specs.load("proj", spec["id"])
+    assert done["state"] == "머지됨", done
+    assert (world.repo / ".omm/description.md").read_text(encoding="utf-8") == "# Architecture\n\nReviewed.\n"
+    assert any(".omm 구조 문서는 그대로" in step["text"] for step in done["merge_progress"]["steps"])
+
+
 @pytest.mark.parametrize("stage", ["scan", "lint"])
 def test_interrupted_maintenance_retries_saved_outputs_after_a_new_click(world, stage):
     spec = pr_spec(world, "interrupted-maintenance", 12, file="docs/feature.md")

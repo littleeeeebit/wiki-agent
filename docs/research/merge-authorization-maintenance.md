@@ -45,15 +45,20 @@ The click reserves the clean PR checkout. `maintenance.prepare` rebuilds
 the document catalog, repairs lint findings through the existing local work
 session, rechecks lint, and refreshes existing `.omm` documents through the
 existing staged writer. Only Markdown and known generated files enter its
-commit. Code changes, unfinished repair, scan failure and pre-existing edits
-block merge. External implementation sessions retain ownership of lint repairs.
+commit. Code changes, unfinished repair, a failed or cancelled scan and
+pre-existing edits block merge. A model answer that breaks the `.omm` contract
+gets one retry told the reason; if it is still invalid, the reviewed `.omm`
+documents stay as they are and preparation continues. External implementation sessions retain ownership of lint repairs.
 
 The server commits and pushes maintenance to the same PR. Its receipt records
 the source head, prepared head, PR, base and specification revision before
 push, allowing an explicit retry of a failed push. Preparation is reused only
 for that identity. A changed head receives independent review and a final gate;
-the saved click authorizes that prepared head only. A later repair, stop or
-specification revision cancels the request. Restart preserves an interrupted
+the saved click authorizes that prepared head and reviewed repairs of it that
+change only what preparation itself may (Markdown, `.omm`, the wiki indexes).
+On 2026-10-06 every click produced generated `.omm` prose that review refused,
+so a strict head binding cancelled every request. A code repair, stop or
+specification revision still cancels the request. Restart preserves an interrupted
 clicked request, but cannot invent one. GitHub's expected-head merge guard
 still binds the actual merge. A failed merge attempt cancels the request,
 including a direct click, so the poller cannot retry it unexpectedly.
