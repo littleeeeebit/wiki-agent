@@ -33,6 +33,7 @@ from pathlib import Path
 
 from common import worktree_home
 from common.host import INSTRUCTIONS, environment, skill_config
+from common.process import SUSPENDED, contained, killed, resumed, terminated
 
 from .chat_local import claude_usage, cli_command, codex_usage, quota_windows
 from . import read_tools
@@ -196,6 +197,10 @@ class ChatSession:
         self.model_name = ""
         self._resume: str | None = resume
         self._proc: subprocess.Popen | None = None
+        self._job = None   # `_proc`'s Windows job: its background shells end with it
+        # `settled(answer)`: the answer closes the work. Background tasks still
+        # running after one are left over, not awaited (`_drain`).
+        self.settled = None
         self._events: queue.Queue[dict] = queue.Queue()
         self._turn = threading.Lock()
         self._start = threading.Lock()
@@ -231,6 +236,7 @@ class ChatSession:
         self._open = False
         self._unread = 0
         self._prompt_seen = False
+        self._steered = False    # this turn took a steer: its answer may still be owed
         # Questions waiting on a person: id -> how many answers they need.
         self._asks: dict[str, int] = {}
         self._turn_id = ""       # Codex's id for the running turn, for `turn/steer`
@@ -369,12 +375,28 @@ class ChatSession:
             self.model_name = self.model.removeprefix("codex:")
         self._stderr = deque(maxlen=20)
         cmd = [*cli_command(cmd[0]), *cmd[1:]]
-        self._proc = subprocess.Popen(
+        proc = subprocess.Popen(
             cmd, cwd=str(self.repo), env=self._env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
-            errors="replace", bufsize=1,
+            errors="replace", bufsize=1, creationflags=SUSPENDED,
         )
+        # The CLI's background shells outlive it on Windows — even its own
+        # `stop_task` leaves the shell's child running (2.1.291). Whatever
+        # ends this process ends them through the job (`stop`, `close`).
+        # Started suspended, so nothing it starts escapes the job.
+        # ponytail: Windows only; elsewhere the CLI's exit is trusted. Start
+        # it in its own session and `killpg` if orphans show up there.
+        job = contained(proc)
+        # Published as a pair under `_halting`, which `stop` holds while it
+        # uses the job: a closed handle's number goes to the next job made.
+        with self._halting:
+            self._proc, self._job = proc, job
+        try:
+            resumed(self._proc)
+        except OSError:
+            self.close()
+            raise
         # `stop()` sets the turn's halt before it looks at `_proc`. So either it
         # sees this process, or this sees its halt — never neither. Waiting for
         # `ensure()` to return left `_open_thread` waiting on a process nobody
@@ -413,6 +435,10 @@ class ChatSession:
     def ensure(self) -> None:
         with self._start:
             if not self.alive:
+                if self._proc is not None or self._job:
+                    # A provider that died between turns: its job still
+                    # holds what it started. Gone with it, not overwritten.
+                    self.close()
                 # With a session to reconnect to, start again carrying its id.
                 # Without one, this is a new conversation.
                 self._resume = self.session_id
@@ -565,6 +591,7 @@ class ChatSession:
             sent = self._send(_user(text))
             if sent:
                 self._unread += 1
+                self._steered = True
             return sent
 
     def _closing(self) -> bool:
@@ -732,23 +759,33 @@ class ChatSession:
 
         with self._halting:
             proc = self._proc if self._halt is halt else None
-            if proc is not None and proc.poll() is None:
-                proc.kill()
+            if proc is not None:
+                # Its whole tree: a background child holding the stdout pipe
+                # would otherwise keep the turn waiting after the stop.
+                killed(self._job)
+                if proc.poll() is None:
+                    proc.kill()
 
     def close(self) -> None:
-        proc, self._proc = self._proc, None
+        # Taken from `stop` under its lock: once here, no stop still holds
+        # this job's handle, so closing it cannot end a job that reuses it.
+        with self._halting:
+            proc, self._proc = self._proc, None
+            job, self._job = self._job, None
         self._pending.clear()
         self._asks.clear()
         self._changes.clear()
-        if proc is None:
-            return
         try:
-            if proc.stdin:
-                proc.stdin.close()
-            proc.wait(timeout=5)
+            if proc is not None:
+                if proc.stdin:
+                    proc.stdin.close()
+                proc.wait(timeout=5)
         except Exception:
             proc.kill()
             proc.wait(timeout=5)
+        finally:
+            # Nobody watches its background work after this: no orphans.
+            terminated(job)
 
     # -- One turn -----------------------------------------------------------
 
@@ -815,7 +852,7 @@ class ChatSession:
                 yield Event("error", "프로세스가 죽었다. 다시 보내면 새로 띄운다.")
                 return
             with self._steering:
-                self._open, self._unread, self._prompt_seen = True, 0, False
+                self._open, self._unread, self._prompt_seen, self._steered = True, 0, False, False
             if self._lost:
                 # The caller writes it on record; a resume must not try that thread again.
                 yield Event("context", f"Codex 이어가기 실패 — 새 대화로 시작했다 ({self._lost})")
@@ -848,16 +885,29 @@ class ChatSession:
         followups = 0
         foreground_result_seen = False
         replay_human = None
+        proc = self._proc
         while True:
+            # A background task runs silent for as long as it needs — a test
+            # suite, a model sweep. After the answer, while one is alive, its
+            # own end or the process's ends the wait, never the clock: the
+            # clock killed the CLI at 600s and orphaned the task. The process
+            # is looked at directly: a child holding its stdout keeps the
+            # pipe's end, and so `__closed__`, from ever coming.
+            unbounded = foreground_result_seen and background
             try:
-                ev = self._events.get(timeout=deadline)
+                ev = self._events.get(timeout=1.0 if unbounded else deadline)
             except queue.Empty:
+                if unbounded:
+                    if proc is not None and proc.poll() is None:
+                        continue
+                    ev = {"type": "__closed__"}
                 # The CLI is silent because it waits on a person. Not a hang.
-                if self._pending:
+                elif self._pending:
                     continue
-                self.close()
-                yield Event("error", f"{deadline:.0f}초 안에 답이 없다.")
-                return
+                else:
+                    self.close()
+                    yield Event("error", f"{deadline:.0f}초 안에 답이 없다.")
+                    return
             deadline = TURN_TIMEOUT
 
             kind = ev.get("type")
@@ -1037,12 +1087,14 @@ class ChatSession:
                              ("running" if subtype == "task_progress" else background_status.get(task)) or
                              ("started" if subtype == "task_started" else "running"))
                 background_status[task] = status
-                if status in ("completed", "failed", "stopped", "cancelled"):
+                if status in ("completed", "failed", "stopped", "cancelled", "killed"):
                     background.discard(task)
                     # Foreground Bash emits this notification too, then returns
                     # its tool result inside the current turn. It owes no reply.
-                    if (subtype == "task_notification" and backgrounded.get(task) is not False
-                            and task and task not in notified):
+                    # Nor does a stopped task: the CLI answers only work that
+                    # ran to its end (2.1.291), so counting one waited forever.
+                    if (subtype == "task_notification" and status in ("completed", "failed")
+                            and backgrounded.get(task) is not False and task and task not in notified):
                         notified.add(task)
                         followups += 1
                 elif (task and backgrounded.get(task) is not False
@@ -1128,9 +1180,26 @@ class ChatSession:
                         foreground_result_seen = True
                     replay_human = None
                     if background or followups or (injected and ev.get("num_turns") == 0):
-                        yield Event("tool", f"Background · waiting for {max(len(background), followups)} follow-up(s)",
-                                    {"tool": "background"})
-                        continue
+                        # Not after a steer: its replay says only that it was
+                        # read, not answered, and closing would lose it. A steer
+                        # landing after this check is still unread, so
+                        # `_closing` refuses.
+                        # ponytail: any steer in the turn waits for the tasks,
+                        # as before; pair steers with their results to narrow it.
+                        if not (background and self.settled and self.settled(str(ev.get("result") or ""))
+                                and not self._steered and self._closing()):
+                            yield Event("tool", f"Background · waiting for {max(len(background), followups)} "
+                                                "follow-up(s)", {"tool": "background"})
+                            continue
+                        # The work is reported closed, yet tasks still run: left
+                        # over, and holding the turn would keep the review from
+                        # starting. The process and its job take them down; the
+                        # next turn resumes the conversation.
+                        left = sorted(background)
+                        self.close()
+                        for task in left:
+                            yield Event("tool", f"Background {task} · stopped · left running after the work closed",
+                                        {"tool": "background", "task_id": task, "status": "stopped"})
                 if not self._closing():
                     # A steered message still owns a later provider result.
                     continue

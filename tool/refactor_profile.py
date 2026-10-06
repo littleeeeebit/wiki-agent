@@ -31,7 +31,7 @@ sys.path.insert(0, str(HERE))
 
 import debt  # noqa: E402
 import improvement  # noqa: E402
-from common.process import background_options  # noqa: E402
+from common.process import SUSPENDED, background_options, contained, resumed, terminated  # noqa: E402
 from wiki import slots_for  # noqa: E402
 
 STORE = improvement.HUB / "raw" / "refactor"
@@ -71,54 +71,23 @@ def debt_of(root: Path, scope: list[str]) -> int:
 
 CUT = -9   # the return code of a command cut by its time or a halt
 
-if os.name == "nt":
-    import ctypes
-    from ctypes import wintypes
-
-    class _Limits(ctypes.Structure):   # JOBOBJECT_EXTENDED_LIMIT_INFORMATION
-        _fields_ = [("times", ctypes.c_int64 * 2), ("flags", wintypes.DWORD), ("sets", ctypes.c_size_t * 2),
-                    ("active", wintypes.DWORD), ("affinity", ctypes.c_size_t), ("priority", wintypes.DWORD),
-                    ("scheduling", wintypes.DWORD), ("io", ctypes.c_uint64 * 6), ("memory", ctypes.c_size_t * 4)]
-
-    _k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    _k32.CreateJobObjectW.restype = wintypes.HANDLE
-    _k32.CreateJobObjectW.argtypes = (wintypes.LPVOID, wintypes.LPCWSTR)
-    _k32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int, wintypes.LPVOID, wintypes.DWORD)
-    _k32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
-    _k32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
-    _k32.CloseHandle.argtypes = (wintypes.HANDLE,)
-    _nt = ctypes.WinDLL("ntdll")
-    _nt.NtResumeProcess.argtypes = (wintypes.HANDLE,)   # resumes every thread; `Popen` keeps no thread handle
-
 
 def _contained(proc: subprocess.Popen):
-    """A Windows job holding `proc` and all it starts; closing it, or this
-    process dying, kills them all. `taskkill /T` cannot find a descendant
-    whose parent already exited; the job can. None elsewhere or on failure.
-    `sh` starts `proc` suspended and resumes it after this, so nothing it
-    starts is spawned before the assignment.
+    """`proc`'s job (`common.process.contained`). `sh` starts `proc` suspended
+    and resumes it after this, so nothing it starts is spawned before the
+    assignment.
     ponytail: if this process dies between the spawn and the assignment, the
     suspended `proc` is left behind; closing that needs `CreateProcess` with a
     `PROC_THREAD_ATTRIBUTE_JOB_LIST`, which `Popen` cannot pass."""
 
-    if os.name != "nt":
-        return None
-    job = _k32.CreateJobObjectW(None, None)
-    limits = _Limits(flags=0x2000)   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
-    if job and _k32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)) \
-            and _k32.AssignProcessToJobObject(job, int(proc._handle)):
-        return job
-    if job:
-        _k32.CloseHandle(job)
-    return None
+    return contained(proc)
 
 
 def _ended(proc: subprocess.Popen, job, process_group: bool = True) -> None:
     """Kill `proc`'s whole tree, living or orphaned, and reap `proc`."""
 
     if job:
-        _k32.TerminateJobObject(job, 1)
-        _k32.CloseHandle(job)
+        terminated(job)
     elif os.name == "nt":
         subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True, **background_options())
     elif process_group:
@@ -142,15 +111,14 @@ def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float | None = 
         argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]
     options = background_options()
     if os.name == "nt":
-        options["creationflags"] |= 0x4   # CREATE_SUSPENDED: in its job before its first instruction
+        options["creationflags"] |= SUSPENDED   # in its job before its first instruction
     with tempfile.TemporaryFile() as out:
         proc = subprocess.Popen(argv[0] if shell else argv, cwd=cwd, shell=shell, stdin=subprocess.DEVNULL,
                                 stdout=out, stderr=subprocess.STDOUT,
                                 start_new_session=os.name != "nt" and process_group, **options)
         job, deadline, code = _contained(proc), time.monotonic() + seconds if seconds is not None else float("inf"), CUT
         try:
-            if os.name == "nt" and _nt.NtResumeProcess(int(proc._handle)):
-                raise OSError(f"could not resume {argv[0]!r}")
+            resumed(proc)
             while not (halt and halt.is_set()) and time.monotonic() < deadline:
                 try:
                     code = proc.wait(timeout=0.5)

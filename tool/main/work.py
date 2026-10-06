@@ -13,6 +13,7 @@ reloaded window reattaches and a closed tab stops nothing.
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 import tempfile
 import threading
@@ -38,6 +39,10 @@ from .query import ROOT, _lock, current_repo, hold, keep, project, resumable, ss
 
 LOGS = ROOT / "raw" / "work"
 MAX_REPLAY = 200
+# An answer that closes the work: a task's completion report, a fix round's
+# dispositions. A background task still running after one is left over, and
+# the turn does not wait on it (`ChatSession.settled`).
+SETTLING = re.compile(r"^```(?:done-report|disposition)[ \t]*\r?$", re.M)
 KEEPALIVE = 15.0   # seconds a tail waits before it checks the screen is still there
 HALT_WAIT = 30.0   # seconds a forced removal waits for what it stopped to let go
 
@@ -479,6 +484,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
             chat = ChatSession(path, model=model, effort=effort, write=True, system=prompt,
                                bypass=bypass)
             chat._spec_system = prompt
+            chat.settled = SETTLING.search
             chat.session_id = resumable(recall(path), chat.is_codex)
             _sessions[key] = chat
         else:

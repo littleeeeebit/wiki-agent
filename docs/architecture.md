@@ -133,7 +133,15 @@ empty batched results do not close the turn. `task_updated.patch.status` can
 settle execution even without `task_notification`. Child text never replaces the parent
 answer. Raw tool output remains outside automatic translation.
 Older unattributed results use replayed human/synthetic boundaries and count
-each task's follow-up independently. A failed result closes its provider session
+each task's follow-up independently. Only a task that ran to its end owes one;
+a stopped or killed task does not. While a background task is alive after the
+answer, no turn clock applies: its end, or the process's, ends the wait. An
+answer that closes the work — a `done-report` or a fix round's `disposition` —
+ends the turn even with tasks still running, so the review can start; those
+tasks are left over and go down with the process. On Windows each provider
+process starts suspended inside a job, so whatever ends the process — a stop,
+a close, a reconnect after it died — also ends its background shells, which
+otherwise outlive it. A turn that took a steer waits for its tasks instead. A failed result closes its provider session
 before another prompt can reuse the channel, so late frames cannot answer a new
 request. The [lifecycle and publication research](research/background-lifecycle-architecture-refresh.md)
 records the review reproductions and protocol evidence.

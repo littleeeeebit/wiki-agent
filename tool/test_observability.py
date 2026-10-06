@@ -424,6 +424,7 @@ def test_the_app_and_the_cli_publish_the_same_decisions_and_evidence_for_one_inp
             session = chat_session.ChatSession(*args, **kwargs)
             with patch.object(chat_session, "cli_command", return_value=["claude"]), \
                  patch.object(chat_session.subprocess, "Popen") as spawned, \
+                 patch.object(chat_session, "resumed"), \
                  patch.object(chat_session.threading, "Thread"):
                 session._spawn()
                 commands.append(spawned.call_args.args[0])
