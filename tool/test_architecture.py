@@ -22,10 +22,11 @@ NODES = [{"path": "overall-architecture", "description": "HTTP requests enter se
 def cli(tmp_path, monkeypatch):
     """Stand-in OMM CLI; the live scan separately verifies the installed CLI."""
     script = tmp_path / "omm_cli.py"
-    script.write_text('''import json, shutil, sys, yaml
+    script.write_text('''import json, os, shutil, sys, yaml
 from pathlib import Path
 if sys.argv[1] == "validate":
-    sys.exit(0)
+    print(os.environ.get("FAKE_OMM_VALIDATE", ""))
+    sys.exit(1 if os.environ.get("FAKE_OMM_VALIDATE") else 0)
 if sys.argv[1] == "delete":
     shutil.rmtree(Path(".omm") / sys.argv[2])
     sys.exit(0)
@@ -196,6 +197,18 @@ def test_a_rejected_answer_gets_one_retry_told_why(tmp_path, cli, monkeypatch):
     monkeypatch.setattr(architecture, "analyze", lambda *_: undescribed)
     with pytest.raises(architecture.Invalid, match="described child"):
         architecture.scan(tmp_path)
+
+
+@pytest.mark.parametrize("said,model", [
+    ("x:\n  ✗ invalid (1 error)\n  error [balanced-brackets] line 8: Unbalanced brackets", True),
+    ("error: EISDIR: illegal operation on a directory, read", False),
+])
+def test_only_rule_coded_validator_errors_blame_the_model(tmp_path, cli, monkeypatch, said, model):
+    monkeypatch.setenv("FAKE_OMM_VALIDATE", said)
+    with pytest.raises(ValueError, match="Invalid architecture diagram") as raised:
+        architecture.scan(tmp_path)
+    assert isinstance(raised.value, architecture.Invalid) is model
+    assert len(cli) == (2 if model else 1) and not (tmp_path / ".omm").exists()
 
 
 def test_selected_repository_add_is_explicit_and_reads_are_passive(tmp_path, cli, monkeypatch):

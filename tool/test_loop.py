@@ -530,6 +530,16 @@ def test_merge_intent_follows_a_reviewed_document_repair_of_the_prepared_head(wo
         assert "머지 요청 취소" in done["merge_progress"]["stage"]
 
 
+def test_a_source_renamed_into_a_document_is_not_a_document_repair(world):
+    spec = pr_spec(world, "rename-repair", 12, file="app.py")
+    path = Path(spec["worktree"])
+    before = git(path, "rev-parse", "HEAD")
+    (path / "docs").mkdir()
+    git(path, "mv", "app.py", "docs/retired.md")
+    git(path, "commit", "-qm", "rename")
+    assert not maintenance.documents_only(path, before, git(path, "rev-parse", "HEAD"))
+
+
 def test_an_invalid_architecture_answer_keeps_the_documents_and_merges(world):
     spec = pr_spec(world, "invalid-omm", 12, file="docs/feature.md")
     path = Path(spec["worktree"])

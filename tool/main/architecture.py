@@ -202,7 +202,11 @@ def write_nodes(root: Path, nodes: list[dict], halt: threading.Event) -> None:
                                  text=True, encoding="utf-8", errors="replace", timeout=30,
                                  **background_options())
         if checked.returncode:
-            raise Invalid(f"Invalid architecture diagram: {checked.stdout} {checked.stderr}")
+            said = f"{checked.stdout} {checked.stderr}"
+            # Only rule-coded findings (`error [rule] line N`) are the model's;
+            # a bare `error:` is the validator or the filesystem failing.
+            rejected = re.search(r"(?m)^\s*error \[[\w-]+\]", said) and not re.search(r"(?m)^\s*error:", said)
+            raise (Invalid if rejected else ValueError)(f"Invalid architecture diagram: {said}")
         if document_state(directory) != original:
             raise ValueError("Architecture documents changed during staging; retry the scan")
         for source in (stage / ".omm").rglob("*"):

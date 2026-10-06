@@ -40,7 +40,8 @@ def documents_only(path: Path, old: str, new: str) -> bool:
     """`new` descends from `old` and changes nothing but what preparation may."""
     if specs.sh(["git", "merge-base", "--is-ancestor", old, new], path).returncode:
         return False
-    names = specs.sh(["git", "diff", "--name-only", "-z", old, new], path)
+    # Without rename detection a renamed source shows its deleted side too.
+    names = specs.sh(["git", "diff", "--no-renames", "--name-only", "-z", old, new], path)
     return not names.returncode and all(maintained(name) for name in names.stdout.split("\0") if name)
 
 
