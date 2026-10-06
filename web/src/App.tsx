@@ -13,7 +13,6 @@ import { Review } from '@/components/Review'
 import { Settings } from '@/components/Settings'
 import { LiveChanges } from '@/components/LiveChanges'
 import { Architecture } from '@/components/Architecture'
-import { Refactor } from '@/components/Refactor'
 import { Suite } from '@/components/Suite'
 import { TaskRail } from '@/components/TaskRail'
 import type { View } from '@/components/TaskRail'
@@ -629,7 +628,7 @@ export default function App() {
             <Btn tone="ghost" onClick={() => setView('chat')}>← 돌아가기</Btn>
           ) : (
             <div role="tablist" aria-label="가운데" className="flex h-7 shrink-0 rounded-md border border-border p-0.5">
-              {(['chat', 'map', 'architecture', 'suite', 'refactor'] as const).map((v) => (
+              {(['chat', 'map', 'architecture', 'suite'] as const).map((v) => (
                 <button key={v} type="button" role="tab" aria-selected={view === v}
                   onClick={() => {
                     if (v === 'map') setMapped(true)
@@ -637,7 +636,7 @@ export default function App() {
                   }}
                   className={cn('rounded-[4px] px-2.5 text-[12.5px]',
                     view === v ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground')}>
-                  {v === 'chat' ? '대화' : v === 'map' ? '지도' : v === 'architecture' ? '앱 구조' : v === 'suite' ? '스위트' : '리펙터링'}
+                  {v === 'chat' ? '대화' : v === 'map' ? '지도' : v === 'architecture' ? '앱 구조' : '스위트'}
                 </button>
               ))}
             </div>
@@ -681,7 +680,6 @@ export default function App() {
           </div>
         )}
         {view === 'architecture' && repo && <div className="min-h-0 flex-1"><Architecture key={repo} repo={repo} theme={theme} korean={full} /></div>}
-        {view === 'refactor' && repo && <div className="min-h-0 flex-1"><Refactor key={repo} repo={repo} /></div>}
         {view === 'suite' && repo && <div className="min-h-0 flex-1"><Suite key={repo} repo={repo} korean={on} progressOn={full}
           onPeek={showPeek} onOpen={(cell) => {
             const target = list.find((t) => cell.task ? t.spec?.id === cell.task : t.path === cell.path)

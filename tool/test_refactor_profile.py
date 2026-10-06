@@ -39,7 +39,7 @@ elif label == "r1-c0-propose":  # removes the duplicate
 else:                           # changes nothing that counts
     calc.write_text(text + "# note\n", encoding="utf-8")
 patch, paths = captured(root, start)
-tokens = 20000 if label == "r0-c0-propose" else 10
+tokens = None if label == "r1-c0-propose" else 20000 if label == "r0-c0-propose" else 10
 print(json.dumps({"edits": [{"component": "step", "hypothesis": label, "paths": paths}], "patch": patch,
                   "usage": {"calls": 1, "tokens": tokens}}))
 '''
@@ -91,7 +91,9 @@ def test_frozen_tests_reject_and_the_debt_drop_selects(tmp_path):
     assert "cannot edit" in verdicts[0, 1]["reason"], "a frozen test is not the candidate's to edit"
     assert verdicts[1, 0]["verdict"] == "accepted"
     assert verdicts[1, 1]["verdict"] == "rejected", "no drop in debt is no improvement"
-    assert [o["artifact"] for o in state["overruns"]] == ["r0-c0-propose"], "a soft ceiling is recorded, not fatal"
+    assert state["contract"]["limits"] is None and not state.get("overruns"), "refactoring has no ceilings"
+    assert state["spent"]["tokens"] >= 20000, "reported usage is retained without limiting candidates"
+    assert state["spent"]["unknown"], "missing CLI usage does not reject the winning candidate"
     adopted = subprocess.run(["git", "show", f"{result['branch']}:src/calc.py"], cwd=repo, capture_output=True,
                              text=True, check=True).stdout
     assert "return area(w, h) * 2" in adopted
@@ -125,7 +127,7 @@ def test_a_low_tier_step_owns_its_files_and_the_codex_proposer_can_write(tmp_pat
     assert cmd[cmd.index("--sandbox") + 1] == "danger-full-access" and "shell_tool" not in cmd
 
 
-def test_a_command_is_cut_whole_and_preparing_a_step_is_bounded(tmp_path):
+def test_a_command_is_cut_whole_and_preparing_a_step_remains_cancellable(tmp_path):
     import threading
     import time
 
@@ -152,10 +154,17 @@ def test_a_command_is_cut_whole_and_preparing_a_step_is_bounded(tmp_path):
     assert refactor_profile.sh(sleep, tmp_path, seconds=0.5).returncode == refactor_profile.CUT
     assert time.monotonic() - began < 10
 
+    halt = threading.Event()
+    threading.Timer(0.5, halt.set).start()
+    with pytest.raises(improvement.Refused, match="cancelled"):
+        improvement.execute(sleep, tmp_path, None, None, dict(os.environ), halt)
+
     repo = _repo(tmp_path / "repo")
-    with pytest.raises(improvement.Refused, match="outran"):
+    halt = threading.Event()
+    threading.Timer(0.5, halt.set).start()
+    with pytest.raises(improvement.Refused, match="cancelled"):
         refactor_profile.prepare(repo, "project", "slow", {**STEP, "test_argv": sleep}, {},
-                                 {**LIMITS, "seconds": 0.5}, store=tmp_path / "frozen")
+                                 {**LIMITS, "seconds": 0.01}, store=tmp_path / "frozen", halt=halt)
 
 
 def test_a_step_is_frozen_only_when_its_tests_pass_today(tmp_path):

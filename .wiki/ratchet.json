@@ -113,18 +113,23 @@
     },
     "tool/main/planning.py": {
       "dup": 18,
-      "lines": 1364,
-      "reason": "refactor plans: the validator checks each stage's tier, files and L3 migration (tiered) and that the overview's Stages names exactly the stage files (listed); begun(create=False) finds without creating"
+      "lines": 1370,
+      "reason": "Refactoring alone permits unlimited planning and unknown usage; ordinary planning retains its validated budgets and cancellation."
     },
     "tool/main/query.py": {
       "dup": 0,
-      "lines": 1017,
-      "reason": "baseline at adoption"
+      "lines": 1035,
+      "reason": "The refactoring focus reuses conversation block parsing and preserves logs while mode generations invalidate unsettled specifications."
+    },
+    "tool/main/refactor.py": {
+      "dup": 0,
+      "lines": 801,
+      "reason": "Settled purpose and scope choices are carried through existing audits and candidates; unlimited runs retain immediate cancellation and file discovery."
     },
     "tool/main/specs.py": {
       "dup": 0,
-      "lines": 1442,
-      "reason": "the refactor hold belongs in checkout_idle, the one check every task start passes"
+      "lines": 1463,
+      "reason": "Existing spec cards validate and dispatch refactoring controllers; shared mutation validation prevents changing or archiving a started request."
     },
     "tool/main/verification.py": {
       "dup": 12,
@@ -273,8 +278,8 @@
     },
     "web/src/components/Blocks.tsx": {
       "dup": 6,
-      "lines": 272,
-      "reason": "baseline at adoption"
+      "lines": 282,
+      "reason": "Existing spec cards show refactoring execution in place and prevent stale mode generations from starting."
     },
     "web/src/components/Projects.tsx": {
       "dup": 9,
@@ -288,8 +293,8 @@
     },
     "web/src/lib/api.ts": {
       "dup": 0,
-      "lines": 957,
-      "reason": "baseline at adoption"
+      "lines": 960,
+      "reason": "Shared API types carry refactoring mode, generation and run metadata and allow unlimited refactoring plan limits."
     },
     "web/tests/mobile_browser.py": {
       "dup": 12,

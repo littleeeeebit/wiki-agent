@@ -16,6 +16,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from pathlib import Path, PurePosixPath
 
@@ -73,15 +74,39 @@ def git(repo: Path, *args: str, data: str | None = None) -> str:
     return done.stdout.strip() if "-z" not in args else done.stdout
 
 
-def execute(argv: list[str], path: Path, data: bytes | None, seconds: float, env: dict) -> tuple[int, bytes, str]:
+def execute(argv: list[str], path: Path, data: bytes | None, seconds: float | None, env: dict,
+            halt: threading.Event | None = None) -> tuple[int, bytes, str]:
     """Bounded output and termination of this command's descendants on timeout or interrupt."""
+    process_helpers = None
+    options = background_options()
+    if halt is not None:
+        # Reuse the refactoring command's process-tree containment for a run
+        # that must remain cancellable without a deadline.
+        import refactor_profile as process_helpers
+        if os.name == "nt":
+            options["creationflags"] |= 0x4
     with tempfile.TemporaryFile() as output, tempfile.TemporaryFile() as errors:
         proc = subprocess.Popen(argv, cwd=path, stdin=subprocess.PIPE, stdout=output, stderr=errors, env=env,
-                                **({"start_new_session": True} if os.name != "nt" else {}), **background_options())
+                                **({"start_new_session": True} if os.name != "nt" else {}), **options)
+        job = None
         try:
-            proc.communicate(data, timeout=seconds)
+            if process_helpers:
+                job = process_helpers._contained(proc)
+                if os.name == "nt" and process_helpers._nt.NtResumeProcess(int(proc._handle)):
+                    raise OSError("could not resume the refactoring adapter")
+            deadline = time.monotonic() + seconds if seconds is not None else float("inf")
+            while True:
+                if halt and halt.is_set():
+                    raise Refused("cancelled")
+                try:
+                    proc.communicate(data, timeout=min(0.5, max(0, deadline - time.monotonic())))
+                    break
+                except subprocess.TimeoutExpired:
+                    data = None
+                    if time.monotonic() >= deadline:
+                        raise
         except BaseException:
-            if proc.poll() is None:
+            if proc.poll() is None and process_helpers is None:
                 if os.name == "nt":
                     subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True,
                                    timeout=10, **background_options())
@@ -95,6 +120,9 @@ def execute(argv: list[str], path: Path, data: bytes | None, seconds: float, env
                         pass
                 proc.wait(timeout=10)
             raise
+        finally:
+            if process_helpers:
+                process_helpers._ended(proc, job)
         output.seek(0)
         raw = output.read(2_000_001)
         if len(raw) > 2_000_000:
@@ -154,15 +182,16 @@ def contract(config: dict, source: Path) -> dict:
         if not finite(config.get(field)):
             raise Refused(f"{field} must be finite and nonnegative")
     limits = config.get("limits", {})
-    if not finite(limits.get("seconds"), positive=True) or any(
-            type(limits.get(k)) is not int or limits[k] <= 0 for k in ("calls", "tokens")):
+    unlimited = config.get("profile") == "refactor" and limits is None
+    if not unlimited and (not isinstance(limits, dict) or not finite(limits.get("seconds"), positive=True) or any(
+            type(limits.get(k)) is not int or limits[k] <= 0 for k in ("calls", "tokens"))):
         raise Refused("Submit positive finite time, call and token limits")
     caps = config.get("caps")
-    if not isinstance(caps, dict) or set(caps) != {"propose", "critic", "evaluate"}:
+    if not unlimited and (not isinstance(caps, dict) or set(caps) != {"propose", "critic", "evaluate"}):
         raise Refused("Declare hard usage caps for propose, critic and evaluate")
-    for value in caps.values():
+    for value in (caps or {}).values():
         cap = usage_ceiling(value)
-        if any(cap[k] > limits[k] for k in cap):
+        if not unlimited and any(cap[k] > limits[k] for k in cap):
             raise Refused("An operation's usage ceiling exceeds the total allowance")
     # A native host reports a turn's usage only after it ends, so its ceiling is
     # kept between turns: the refactor profile alone may accept that for proposals.
@@ -264,7 +293,8 @@ def admissible(candidate: dict, incumbent: dict, best: float, config: dict, nove
 
 
 class Experiment:
-    def __init__(self, repo: Path, scope: str, name: str, *, hub: Path = HUB, store: Path = STORE):
+    def __init__(self, repo: Path, scope: str, name: str, *, hub: Path = HUB, store: Path = STORE,
+                 halt: threading.Event | None = None):
         if not NAME.fullmatch(name):
             raise Refused("Experiment names use 1-48 lowercase letters, digits and hyphens")
         self.repo, self.key = owner(repo, scope, hub)
@@ -272,6 +302,7 @@ class Experiment:
         self.root = store.resolve() / scope / self.key / name
         self.state_file = self.root / "state.json"
         self._clock = None
+        self.halt = halt
 
     @contextlib.contextmanager
     def locked(self):
@@ -298,7 +329,8 @@ class Experiment:
                     if self._clock is not None:
                         state = self.read()
                         self.tick(state)
-                        exceeded = state["spent"]["seconds"] > state["contract"]["limits"]["seconds"]
+                        limits = state["contract"]["limits"]
+                        exceeded = limits is not None and state["spent"]["seconds"] > limits["seconds"]
                         if exceeded:
                             state["stopped"] = state.get("stopped") or "The experiment's active time allowance is exhausted"
                         self.save(state)
@@ -334,6 +366,8 @@ class Experiment:
         atomic(self.state_file, state)
 
     def check(self, state: dict) -> None:
+        if self.halt and self.halt.is_set():
+            raise Refused("cancelled")
         cfg = state["contract"]
         if digest(cfg) != state["contract_hash"] or cfg["supervisor"] != file_hash(Path(__file__)):
             raise Refused("The experiment supervisor or contract changed; start a new experiment")
@@ -365,14 +399,16 @@ class Experiment:
         self.check(state)
         self.tick(state)
         cfg, used = state["contract"], state["spent"]
-        remaining = {k: cfg["limits"][k] - used[k] for k in ("seconds", "calls", "tokens")}
-        cap = cfg["caps"][stage]
-        if remaining["seconds"] <= 0 or any(remaining[k] < cap[k] for k in cap):
+        unlimited = cfg["limits"] is None
+        remaining = {k: None if unlimited else cfg["limits"][k] - used[k] for k in ("seconds", "calls", "tokens")}
+        cap = {} if unlimited else cfg["caps"][stage]
+        if not unlimited and (remaining["seconds"] <= 0 or any(remaining[k] < cap[k] for k in cap)):
             state["stopped"] = "The experiment's persisted allowance is exhausted for the next operation's ceiling"
             self.save(state)
             raise Refused(state["stopped"])
         payload = {**request, "scope": self.scope, "repo_key": self.key, "root": str(path),
-                   "model": cfg["model"], "limits": {"seconds": remaining["seconds"], **cap}}
+                   "model": cfg["model"], "profile": cfg.get("profile"),
+                   "limits": {"seconds": remaining["seconds"], **cap}}
         atomic(self.root / "records" / f"{artifact}-request.json", payload)
         state["active"] = {"stage": stage, "artifact": artifact, "started": time.time()}
         self.save(state)
@@ -381,17 +417,24 @@ class Experiment:
                "WIKI_IMPROVEMENT_MODEL": cfg["model"], "WIKI_IMPROVEMENT_CACHE": str(self.root / "cache" / artifact)}
         # Each adapter must use this root for memory, tool caches and trial state.
         # A worktree isolates source files, not an arbitrary process's filesystem access.
+        reported = False
         try:
             code, raw, errors = execute(cfg["commands"][stage], path,
-                                        json.dumps(payload, ensure_ascii=False).encode("utf-8"), remaining["seconds"], env)
+                                        json.dumps(payload, ensure_ascii=False).encode("utf-8"), remaining["seconds"], env,
+                                        **({"halt": self.halt} if self.halt is not None else {}))
             atomic(self.root / "records" / f"{artifact}-process.json", {"exit_code": code, "stderr": errors})
             result = json.loads(raw.decode("utf-8"))
             atomic(self.root / "records" / f"{artifact}-result.json", result)
             usage = result.get("usage", {})
-            if any(type(usage.get(k)) is not int or usage[k] < 0 for k in ("calls", "tokens")):
+            if any((type(usage.get(k)) is not int or usage[k] < 0)
+                   and not (unlimited and k == "tokens" and usage.get(k) is None) for k in ("calls", "tokens")):
                 raise Refused("Adapter usage is missing or malformed; it is never charged as zero")
             used["calls"] += usage["calls"]
-            used["tokens"] += usage["tokens"]
+            if usage.get("tokens") is None:
+                used["unknown"] = True
+            else:
+                used["tokens"] += usage["tokens"]
+            reported = True
             if any(usage[k] > cap[k] for k in cap):
                 if stage not in cfg.get("soft_caps", []):
                     raise Refused("Adapter violated its hard usage ceiling; retain evidence and replace the adapter")
@@ -400,7 +443,12 @@ class Experiment:
                                                          "cap": cap})
             if code:
                 raise Refused(f"{stage} adapter failed; its process record was retained")
+            if unlimited and result.get("scope_change"):
+                state["scope_change"] = result["scope_change"]
+                raise Refused("The agreed refactoring scope needs a new decision")
         except BaseException as exc:
+            if unlimited and stage == "propose" and not reported:
+                used["unknown"] = True
             state["stopped"] = str(exc) or type(exc).__name__
             if not isinstance(exc, Exception):
                 raise
@@ -409,7 +457,7 @@ class Experiment:
             self.tick(state)
             state["active"] = None
             self.save(state)
-        if any(used[k] > cfg["limits"][k] for k in used):
+        if not unlimited and any(used[k] > cfg["limits"][k] for k in ("seconds", "calls", "tokens")):
             state["stopped"] = "An adapter exceeded the experiment's persisted allowance"
             self.save(state)
             raise Refused(state["stopped"])

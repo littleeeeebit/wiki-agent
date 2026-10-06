@@ -149,8 +149,9 @@ export function PlanStatus({ spec, onChanged, korean = true }: { spec: Spec; onC
           {p.stopped.detail && <span className="block whitespace-pre-wrap text-[11.5px]">{p.stopped.detail}</span>}</span>}
       </div>
       <div className="text-[11.5px] text-muted-foreground">
-        시간 {Math.round(p.spent.seconds)}/{p.limits.seconds}초 · 턴 {p.spent.calls}/{p.limits.calls}
-        · 토큰 {p.spent.tokens.toLocaleString()}/{p.limits.tokens.toLocaleString()} · 도구 {p.spent.tools}
+        {p.limits ? <>시간 {Math.round(p.spent.seconds)}/{p.limits.seconds}초 · 턴 {p.spent.calls}/{p.limits.calls}
+          · 토큰 {p.spent.tokens.toLocaleString()}/{p.limits.tokens.toLocaleString()} · 도구 {p.spent.tools}</>
+          : <span>리펙터링 계획 · 사용량은 실행 카드의 상세에서 확인한다</span>}
         {p.overrun && <span className="text-destructive"> · 토큰 한도를 넘었다 ({p.overrun.tokens.toLocaleString()})</span>}
         {p.spent.unknown && <span className="text-destructive"> · 사용량을 모르는 턴이 있다 — 쓴 양은 적어도 이만큼이다</span>}
       </div>

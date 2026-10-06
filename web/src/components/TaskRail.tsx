@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { ProviderUsage } from '@/components/ProviderUsage'
 
 /** What the middle pane shows. */
-export type View = 'chat' | 'map' | 'architecture' | 'suite' | 'refactor' | 'projects'
+export type View = 'chat' | 'map' | 'architecture' | 'suite' | 'projects'
 
 type Props = {
   repo: string

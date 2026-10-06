@@ -29,7 +29,7 @@ Chosen by the owner on 2026-10-05 from offered options.
 | --- | --- |
 | Scope | Hub and connected projects, separated like self-improvement |
 | Form | A dedicated `[리펙터링]` workflow; `tool/improvement.py` selects among candidates |
-| Proposer | A native write session inside the runner, for the refactor profile only; its token ceiling is soft (kept between turns, crossing recorded) |
+| Proposer | A native write session inside the runner, for the refactor profile only; usage is recorded without a ceiling |
 | Modes | Quick cleanup (metric scan, L0–L1, no plan), module restructure (audit of a chosen module, L0–L2, short plan), full (whole-repo audit, L0–L3, plan series) |
 | Risk tiers | L0 mechanical, L1 inside a module, L2 across module boundaries, L3 contract change |
 | Detection | Lines, duplicated blocks, longest block and git churn (`tool/debt.py`) |
@@ -39,10 +39,39 @@ Chosen by the owner on 2026-10-05 from offered options.
 | Failure | One retry with the failing tests as feedback, then stop and propose a smaller step |
 | Continuation | L0–L1 continue after review passes; L2–L3 wait for approval; merge is always a person's |
 | Concurrency | L2–L3 refuse to start beside an open task and block new tasks in that repository while running |
-| Budget | Per-mode defaults shown before launch and editable |
+| Budget | No file-count, time, call or token limit; available usage appears only in execution details |
 | Recurrence | A per-file ratchet with an 800-line cap for new files, checked by every final gate |
-| Screen | A new 리펙터링 tab |
+| Screen | A conversation focus immediately after Next Task; modes are selected in its header |
 | Hub | Runs in a worktree only; the server restarts by hand after merge |
+
+## Conversation entry
+
+The owner revised the entry flow on 2026-10-06 after choosing twelve concrete
+options. The standalone tab is removed. Opening the Refactoring focus runs a
+read-only debt scan and shows problem-centered candidates; measurements are
+disclosed on demand. The mode selector keeps the conversation when changed,
+but a draft from another mode cannot start until it is reconsidered.
+
+The conversation locates a requested module, settles the purpose, exclusions
+and completion conditions, then emits an ordinary spec card carrying
+`refactor: {mode, files}`. Start dispatches the existing mode pipeline and binds
+the resulting run to that card. The initial file list is a discovery seed;
+the audit can add related files within the purpose and permitted tier. A
+change to the purpose or permitted mode stops with grouped choices and
+requires a replacement spec. Started requests are immutable.
+
+Execution cards update in place with test/step PRs, review and approval
+controls, cancellation and resume. Old standalone runs remain accessible in
+the same conversation. Controller cards stay in that conversation; their PR
+steps remain ordinary tasks in the rail. Usage appears in details, with unknown
+token usage marked as a lower bound. Unknown usage does not stop refactoring.
+Candidate trials and the single failed-step retry still bound the selection
+procedure; they are algorithm decisions, not editable usage limits.
+
+Refactoring audits, test commands, candidate adapters and full-mode planning
+have no time/call/token allowance. Cancellation still stops the active model
+or command process tree. Ordinary planning and improvement experiments retain
+their existing budgets. The hub still supports cleanup and restructure only.
 
 ## Stages
 

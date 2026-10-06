@@ -57,6 +57,9 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
   const owned = new Set<string>()
   const out: Task[] = []
   for (const s of specs) {
+    // The controller's card lives in the refactoring conversation; its PR
+    // steps remain ordinary tasks in this rail.
+    if (s.refactor?.mode) continue
     const found = s.worktree ? byPath.get(s.worktree) ?? null : null
     const row = found && (s.workspace_mode !== 'branch' || found.branch === (s.branch ?? s.id)) ? found : null
     if (row) owned.add(row.path)
