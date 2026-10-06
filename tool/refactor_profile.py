@@ -152,10 +152,12 @@ def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float = 3600.0,
 
 
 def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: dict,
-            store: Path | None = None, halt: threading.Event | None = None) -> Path:
+            store: Path | None = None, halt: threading.Event | None = None, gate: str = "") -> Path:
     """The experiment config for `step` = `{goal, tier, files, tests, test_argv}`;
     `test_argv` runs the characterization tests from a checkout's root, within
-    `limits["seconds"]` and until `halt`. The runner gets what that run left."""
+    `limits["seconds"]` and until `halt`. The runner gets what that run left. A
+    linked worktree passes the original checkout's `gate`: the adapter that
+    names it is per-machine wiring Git does not carry."""
 
     repo = repo.resolve()
     if step.get("tier") not in CANDIDATES or not step.get("files") or not step.get("tests") \
@@ -174,7 +176,7 @@ def prepare(repo: Path, scope: str, name: str, step: dict, role: dict, limits: d
     if done.returncode:
         raise improvement.Refused("The characterization tests fail on today's code; nothing to freeze\n"
                                   + (done.stdout + done.stderr)[-TAIL:])
-    gate = slots_for(repo.name, repo).get("gate_cmd", "").strip()
+    gate = (gate or slots_for(repo.name, repo).get("gate_cmd", "")).strip()
     if not gate:
         raise improvement.Refused("The repository has no gate_cmd; connect it first")
     # L0–L1 stay inside the listed files, for edits and for credit alike; L2–L3

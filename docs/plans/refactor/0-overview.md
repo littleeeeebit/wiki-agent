@@ -53,7 +53,7 @@ Chosen by the owner on 2026-10-05 from offered options.
 | 3 | [Quick cleanup](3-cleanup.md) | First mode end to end and a minimal 리펙터링 tab | Done — `tool/main/refactor.py`, `web/src/components/Refactor.tsx` |
 | 4 | [Module restructure](4-restructure.md) | Module audit, short plan, task blocking | Done — `refactor.block` on the step's spec, approve route |
 | 5 | [Full refactor](5-full.md) | Whole-repo audit feeding the planner's series | Done — `planning.tiered`, phase `plan` waits for the merge |
-| 6 | [Hub and first use](6-hub.md) | Hub scope and a real split of `knowledge.py` | Not started |
+| 6 | [Hub scope](6-hub.md) | Hub runs in linked worktrees; applying it to the hub's own code is a later run | Done — `refactor.switched` gives each hub step its own worktree |
 
 Each stage is a PR stacked on the previous stage's branch and merged in order
 by a person. Review rounds: 1 alone; 2 and 3 together, because the profile has

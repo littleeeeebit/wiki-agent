@@ -93,7 +93,8 @@ export function Refactor({ repo }: { repo: string }) {
           <label className="flex flex-col gap-1">모드
             <select value={mode} onChange={(e) => { setMode(e.target.value); setLimits(scan?.modes[e.target.value] ?? null) }}
               className="min-h-11 rounded-md border border-border bg-card px-2">
-              {Object.keys(scan?.modes ?? { cleanup: null }).map((m) => <option key={m} value={m}>{MODE[m] ?? m}</option>)}
+              {Object.keys(scan?.modes ?? { cleanup: null }).filter((m) => !(scan?.scope === 'hub' && m === 'full'))
+                .map((m) => <option key={m} value={m}>{MODE[m] ?? m}</option>)}
             </select>
           </label>
           {mode === 'cleanup' && <label className="flex flex-col gap-1">대상 파일 수
@@ -114,6 +115,7 @@ export function Refactor({ repo }: { repo: string }) {
           </Btn>
         </div>
         <p className="text-[12.5px] text-muted-foreground">L0–L1 단계 PR 은 이 요청으로 리뷰까지 자동으로 넘어간다. 실패한 단계는 한 번 다시 시도하고, 그래도 안 되면 더 작게 나누라고 멈춘다.</p>
+        {scan?.scope === 'hub' && <p className="text-[12.5px] text-wait">wiki-agent 자신이다. 단계마다 따로 만든 worktree 에서 돌고, 지금 도는 서버의 체크아웃은 건드리지 않는다. 머지한 뒤 앱을 다시 시작해야 반영된다.</p>}
         {mode === 'full' && <p className="text-[12.5px] text-muted-foreground">저장소 전체를 감사한 뒤 계획 PR 을 연다. 계획이 리뷰를 거쳐 머지되어야 단계가 시작된다.</p>}
         {mode !== 'cleanup' && <p className="text-[12.5px] text-muted-foreground">L2 이상 단계는 열린 작업이 없을 때만 시작하고, 도는 동안 이 저장소의 새 작업을 막는다. 리뷰는 직접 시작하고, 끝나면 [승인] 해야 다음 단계로 간다.</p>}
       </div>
