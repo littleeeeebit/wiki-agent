@@ -464,3 +464,26 @@ def test_the_hub_refactors_in_linked_worktrees_and_never_switches_its_own_checko
         assert _git(Path(spec["worktree"]), "branch", "--show-current") == sid
     assert (refactor_profile.STORE / "hub" / run["steps"][0]["spec"] / "frozen.json").exists()
     assert not (refactor_profile.STORE / "project").exists(), "hub records stay under the hub's scope"
+
+
+def test_a_hub_l2_admission_holds_the_selected_checkout_and_reuses_only_its_own_tree(selected):
+    w = refactor.Worker(selected, {"id": "hubrun", "scope": "hub", "spent": {"seconds": 0, "calls": 0, "tokens": 0},
+                                   "limits": {"seconds": 600, "calls": 9, "tokens": 100_000}})
+    refused = []
+
+    def looked(repo, rid):   # an ordinary task starts between the look and the hold
+        try:
+            specs.start("ordinary", specs.Start())
+        except HTTPException as exc:
+            refused.append(exc.status_code)
+        return []
+
+    with patch.object(refactor, "others", side_effect=looked), patch.object(work, "begin") as begun:
+        refactor.blocked(w, "refactor-hubrun-1", True)
+    assert refused == [409] and not begun.called, "the selected checkout is the admission's while it looks"
+
+    sid = "refactor-hubrun-2"
+    _git(selected, "worktree", "add", "-q", "-b", "elsewhere", str(worktree_home(selected) / sid))
+    with pytest.raises(refactor.Stop) as stop:
+        refactor.switched(w, sid, "main")
+    assert stop.value.reason == "worktree", "a leftover tree on another branch is kept, not reused"

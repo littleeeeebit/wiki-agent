@@ -19,7 +19,7 @@ import re
 import subprocess
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -214,6 +214,9 @@ def switched(w: Worker, sid: str, start: str) -> Path:
         if not path.exists():
             exists = not specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{sid}"], w.repo).returncode
             git(w.repo, "worktree", "add", *((str(path), sid) if exists else ("-b", sid, str(path), start)))
+        common = lambda p: Path(git(p, "rev-parse", "--path-format=absolute", "--git-common-dir")).resolve()  # noqa: E731
+        if git(path, "branch", "--show-current") != sid or common(path) != common(w.repo):   # kept, not reused
+            raise Stop("worktree", f"`{path}` 이 이 저장소의 `{sid}` 작업 트리가 아니다 — 확인하고 치운 뒤 [재개] 하라")
         return path
     if git(w.repo, "branch", "--show-current") != sid:
         if git(w.repo, "status", "--porcelain"):
@@ -297,12 +300,15 @@ def blocked(w: Worker, sid: str, on: bool) -> None:
     """Hold or release the repository for an L2–L3 step. The hold lives on the
     step's spec, so `specs.checkout_idle` refuses new tasks and a restart keeps it."""
 
-    if on and (busy := others(w.repo, w.rid)):
-        raise Stop("open_tasks", f"열린 작업이 있어 L2 이상 단계를 시작하지 않는다: {', '.join(busy)}")
-    with specs._files:
-        spec = specs.load(w.repo.name, sid)
-        if spec is not None and spec["refactor"].get("block") is not on:
-            specs.save({**spec, "refactor": {**spec["refactor"], "block": on}})
+    # A hub step holds only its own tree, so it holds the selected checkout while it looks and holds:
+    # a task start checks and claims that checkout in one step, so it lands before the look or after the hold.
+    with owning(w.repo) if on and w.hub else nullcontext():
+        if on and (busy := others(w.repo, w.rid)):
+            raise Stop("open_tasks", f"열린 작업이 있어 L2 이상 단계를 시작하지 않는다: {', '.join(busy)}")
+        with specs._files:
+            spec = specs.load(w.repo.name, sid)
+            if spec is not None and spec["refactor"].get("block") is not on:
+                specs.save({**spec, "refactor": {**spec["refactor"], "block": on}})
 
 
 def released(repo: Path, rid: str) -> None:

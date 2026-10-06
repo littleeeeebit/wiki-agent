@@ -22,7 +22,13 @@ mix.
   included, a linked worktree at `worktree_home(repo)/<spec id>`. The step
   branches from the previous step's branch, and the server's checkout keeps
   its branch and HEAD. Hub specs omit `workspace_mode`, as linked tasks
-  always have, so merge cleanup removes each tree.
+  always have, so merge cleanup removes each tree. A tree already at that
+  path is reused only when it is a worktree of the same repository on the
+  step's branch; otherwise the run stops with `worktree` and leaves it as is.
+- An L2–L3 hub step holds the selected checkout while it looks for open tasks
+  and saves its block. A task start checks the block and claims that checkout
+  in one step, so it lands either before the look, which sees it, or after the
+  block, which refuses it.
 - The runner is driven from that worktree. Its gate comes from the original
   checkout (`refactor_profile.prepare(gate=...)`), because the adapter that
   names it is per-machine wiring Git does not carry.
@@ -33,6 +39,7 @@ mix.
   restart.
 
 Tests: `test_the_hub_refactors_in_linked_worktrees_and_never_switches_its_own_checkout`
+and `test_a_hub_l2_admission_holds_the_selected_checkout_and_reuses_only_its_own_tree`
 in `tool/test_refactor.py`.
 
 ## Rollback
