@@ -87,14 +87,19 @@ if os.name == "nt":
     _k32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
     _k32.TerminateJobObject.argtypes = (wintypes.HANDLE, wintypes.UINT)
     _k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+    _nt = ctypes.WinDLL("ntdll")
+    _nt.NtResumeProcess.argtypes = (wintypes.HANDLE,)   # resumes every thread; `Popen` keeps no thread handle
 
 
 def _contained(proc: subprocess.Popen):
     """A Windows job holding `proc` and all it starts; closing it, or this
     process dying, kills them all. `taskkill /T` cannot find a descendant
     whose parent already exited; the job can. None elsewhere or on failure.
-    ponytail: a grandchild spawned before the assignment escapes; starting
-    suspended needs the thread handle `Popen` does not keep."""
+    `sh` starts `proc` suspended and resumes it after this, so nothing it
+    starts is spawned before the assignment.
+    ponytail: if this process dies between the spawn and the assignment, the
+    suspended `proc` is left behind; closing that needs `CreateProcess` with a
+    `PROC_THREAD_ATTRIBUTE_JOB_LIST`, which `Popen` cannot pass."""
 
     if os.name != "nt":
         return None
@@ -133,12 +138,16 @@ def sh(argv: list[str], cwd: Path, shell: bool = False, seconds: float = 3600.0,
     if not shell:
         # `npm` is `npm.cmd` on Windows, which a shell-less spawn does not find by itself.
         argv = [shutil.which(argv[0]) or argv[0], *argv[1:]]
+    options = background_options()
+    if os.name == "nt":
+        options["creationflags"] |= 0x4   # CREATE_SUSPENDED: in its job before its first instruction
     with tempfile.TemporaryFile() as out:
         proc = subprocess.Popen(argv[0] if shell else argv, cwd=cwd, shell=shell, stdin=subprocess.DEVNULL,
-                                stdout=out, stderr=subprocess.STDOUT, start_new_session=os.name != "nt",
-                                **background_options())
+                                stdout=out, stderr=subprocess.STDOUT, start_new_session=os.name != "nt", **options)
         job, deadline, code = _contained(proc), time.monotonic() + seconds, CUT
         try:
+            if os.name == "nt" and _nt.NtResumeProcess(int(proc._handle)):
+                raise OSError(f"could not resume {argv[0]!r}")
             while not (halt and halt.is_set()) and time.monotonic() < deadline:
                 try:
                     code = proc.wait(timeout=0.5)

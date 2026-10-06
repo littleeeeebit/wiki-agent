@@ -113,8 +113,8 @@
     },
     "tool/main/planning.py": {
       "dup": 18,
-      "lines": 1355,
-      "reason": "refactor plans: the validator checks each stage's tier, files and L3 migration (tiered); begun(create=False) finds without creating"
+      "lines": 1364,
+      "reason": "refactor plans: the validator checks each stage's tier, files and L3 migration (tiered) and that the overview's Stages names exactly the stage files (listed); begun(create=False) finds without creating"
     },
     "tool/main/query.py": {
       "dup": 0,

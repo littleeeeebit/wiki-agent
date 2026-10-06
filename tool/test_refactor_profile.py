@@ -1,9 +1,11 @@
 """A refactoring step through the real runner, with a scripted proposer."""
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -136,6 +138,12 @@ def test_a_command_is_cut_whole_and_preparing_a_step_is_bounded(tmp_path):
         "a child holding the output does not hold the wait"
     time.sleep(3)
     assert not mark.exists(), "the child that outlived its parent died with the call"
+    if os.name == "nt":   # however late the job is made, the command has not run yet: its child is inside
+        assign = refactor_profile._contained
+        with patch.object(refactor_profile, "_contained", side_effect=lambda proc: time.sleep(1) or assign(proc)):
+            assert refactor_profile.sh([sys.executable, "-c", parent], tmp_path, seconds=30).returncode == 0
+        time.sleep(3)
+        assert not mark.exists(), "a child started before the job was assigned would have escaped it"
 
     halt, sleep = threading.Event(), [sys.executable, "-c", "import time; time.sleep(60)"]
     threading.Timer(0.5, halt.set).start()

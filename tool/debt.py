@@ -95,7 +95,7 @@ def imported(lines: list[str]) -> list[str]:
             closing = "" if closing in norm else closing
             continue
         out.append(line)
-        opened = OPENS.fullmatch(norm)
+        opened = OPENS.fullmatch(re.sub(r"\s*(#|//).*$", "", norm))   # an opener with a trailing comment opens too
         if opened:
             closing = "}" if opened[1] else ")"
     return out
