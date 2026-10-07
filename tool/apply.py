@@ -1,8 +1,4 @@
-"""apply — attach the wiki to a target repository.
-
-Everything it prints is read by whoever is installing, so those strings are
-Korean.
-"""
+"""Attach the wiki to a target repository; installer output is Korean."""
 
 from __future__ import annotations
 
@@ -10,6 +6,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tomllib
@@ -504,6 +501,10 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
     return changes
 
 
+def available_agents(agents: list[str] | tuple[str, ...]) -> list[str]:
+    return [agent for agent in agents if shutil.which(agent)]
+
+
 def installed_agents(project: Path) -> list[str] | None:
     """This machine's choice. What was installed survives the settings being wiped."""
     path = project / ".wiki/installed-agents.json"
@@ -515,10 +516,7 @@ def installed_agents(project: Path) -> list[str] | None:
     return agents
 
 
-# The hosts' user-level settings. `setup_agents --global` writes here, and
-# every checkout on the machine — a fresh worktree included — reads them.
-# `WIKI_USER_HOME` stands in for the home directory, so a test never reads —
-# or is judged against — the machine's real install.
+# WIKI_USER_HOME isolates user-level hook tests from the machine's real install.
 _HOME = os.environ.get("WIKI_USER_HOME")
 
 
@@ -689,6 +687,8 @@ def wiring_drift(project: Path, agents: tuple[str, ...] | None = None) -> list[t
         except (OSError, ValueError, TypeError):
             return [("훅 배선 드리프트", "adapter 또는 설치 호스트 목록을 읽을 수 없다")]
         agents = tuple(declared_agents) or tuple(agent for agent, path in paths.items() if path.exists())
+        if any(user_wired(agent) for agent in agents):
+            agents = tuple(agent for agent in agents if user_wired(agent) or shutil.which(agent))
     findings = []
     for agent in agents:
         try:

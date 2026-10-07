@@ -735,7 +735,7 @@ export type Estimate = {
   limit: { tokens: number; seconds: number }
   over: boolean
 }
-export type ConnectPlan = { hub: HubPlan; adapter: Record<string, string> | null; unwire: string[]; survey: Estimate | null }
+export type ConnectPlan = { hub: HubPlan; agents: string[]; adapter: Record<string, string> | null; unwire: string[]; survey: Estimate | null }
 
 /** Whether this machine's hooks and skill links point at this hub yet. */
 export type Hub = { name: string; needed: boolean; refused: string }

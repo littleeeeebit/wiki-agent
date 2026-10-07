@@ -42,8 +42,10 @@ def git(cwd: Path, *args: str) -> str:
 
 @pytest.fixture(autouse=True)
 def records(tmp_path):
+    which = shutil.which
     with patch.object(connect, "RECORDS", tmp_path / "connect"), \
-         patch.object(survey, "RATES", tmp_path / "connect" / "survey" / "rates.json"):
+         patch.object(survey, "RATES", tmp_path / "connect" / "survey" / "rates.json"), \
+         patch.object(shutil, "which", side_effect=lambda name: name if name in connect.HOSTS else which(name)):
         yield
 
 
@@ -303,6 +305,51 @@ def test_the_hub_move_lists_every_line_before_writing_and_writes_nothing_unconfi
     assert Path(os.readlink(home / ".claude/skills/gone-here").removeprefix("\\\\?\\")) == old / "skills/gone-here"
     assert trusted == [True], "Codex 신뢰는 확인한 창에서만 쓴다"
     assert (repo / ".wiki/adapter.toml").is_file()
+
+
+@pytest.mark.parametrize("host", ["claude", "codex"])
+def test_connection_on_a_pc_with_only_one_cli(tmp_path, home, monkeypatch, host):
+    machine, _old, trusts = home
+    repo = _repo(tmp_path)
+    (repo / "go.mod").write_text("module x\n", encoding="utf-8")
+    other = "codex" if host == "claude" else "claude"
+    monkeypatch.setattr(shutil, "which", lambda name: name if name == host else None)
+    shown = connect.hub()
+    assert not shown["refused"], shown
+    assert {Path(line["file"]) for line in shown["lines"]} == set(apply.user_files(host))
+    assert shown["trust"] == (host == "codex")
+    assert bool(shown["links"]) == (host == "claude")
+    connect.move(shown["digest"])
+    assert trusts == ([True] if host == "codex" else [])
+    assert connect.write_adapter(repo)
+    data, _ = connect.adapter_of(repo)
+    assert data["agents"] == list(connect.HOSTS), "The shared adapter supports either teammate's CLI."
+    connect.unwire(repo)
+    assert not (repo / setup_agents.SETTINGS[other]).exists()
+
+    connect.keep(repo.name, probe={host: {"ok": True}}, trust=host == "codex")
+    assert connect.status(repo, {host: True})["missing"] == []
+    assert apply.wiring_drift(repo) == [], "The native health check also accepts the installed host alone."
+    assert not (machine / setup_agents.SETTINGS[other]).exists()
+
+
+@pytest.mark.parametrize("hosts", [["claude"], ["codex"], []])
+def test_connection_probe_does_not_start_an_uninstalled_cli(tmp_path, hosts, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / ".wiki").mkdir()
+    (repo / connect.ADAPTER).write_text('agents = ["claude", "codex"]\n[slots]\ngate_cmd = "make test"\n',
+                                       encoding="utf-8")
+    monkeypatch.setattr(shutil, "which", lambda name: name if name in hosts else None)
+    with patch.object(connect, "probe", return_value={"ok": True}) as probe, \
+         patch.object(connect, "trusted", return_value=True) as trust, \
+         patch.object(connect, "threading") as threads:
+        assert connect.examine(repo)
+        threads.Thread.call_args.kwargs["target"]()
+    assert [call.args[1] for call in probe.call_args_list] == hosts
+    assert trust.call_count == int("codex" in hosts)
+    if not hosts:
+        assert connect.hub()["refused"]
+        assert connect.status(repo, ALL)["state"] == "일부"
 
 
 # -- the survey --------------------------------------------------------------------------
