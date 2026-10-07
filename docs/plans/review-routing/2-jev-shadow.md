@@ -10,16 +10,52 @@ permissions, approval or merge eligibility.
 
 ## Existing implementation and remaining work
 
-`review_contract.shadow()` already asks closed add/skip/defer questions for
-additional criteria/evidence facets and stores answers beside the round. It uses
-the existing typed decision transport. It remains shadow-only even when global
-Jev mode is active. Mode off, cancellation and missing keys send no request.
+The v2 implementation in `tool/main/review_contract.py` prepares spec acceptance
+locators, a bounded actual diff, a validated flow catalog, scoped wiki/decision
+passages and receipt identities. `main/knowledge.py::prepare(context_only=True)`
+reuses the existing repository-scoped retrieval contracts without model routing,
+external acquisition, daemon startup or a detached cold-index worker. The running
+index is optional: its absence is recorded separately from normalization failure.
+Retrieval is discovery, not an endorsement of the passage's instructions.
 
-Current context is compact goal/acceptance/exclusions, changed paths and the
-selected contract. There is no semantic caller-contract retrieval and no
-registered flow-ID recommendation. The call occurs after deterministic readiness:
-blocked preparation attempts do not currently produce a shadow recommendation.
-These are implementation limits, not completed contextual routing.
+`shadow()` uses one typed decision call with closed add/skip/defer questions for
+additional facets and registered flow IDs. A separate closed question selects one
+offered ground per recommendation. Missing or uncertain grounds remain unsupported
+audit data. An offered reference is a citation, not proof that the model's causal
+explanation is correct. Unknown answer/flow/ground IDs fail typed validation.
+Commands from the manifest are excluded from the offered catalog.
+
+`observe_shadow()` runs after deterministic selection and before contract
+readiness and reviewer-cell creation. It saves preparation and terminal attempts
+through the spec owner outside the checkout. An interrupted preparation becomes
+an aborted observation when the next attempt starts. Spec revisions, checkout/PR
+head, PR base and manifest changes invalidate an applicable result. The baseline
+contract digest, enforced obligations, collection and dispatch remain unchanged.
+Earlier synchronization/gate/Cloud failures still belong to their existing owners;
+they do not produce a contextual request before a safe diff is available.
+
+Limits are 15 seconds shared by preparation/normalization/decision/identity checks, one Jev call,
+eight retrieved chunks, 24,000 context characters, 32 grounds and 16 catalog flows.
+Oversized context produces unavailable advice, never a weaker baseline. Context
+size is checked again after normalization, before building the request.
+Manifest tracked-file queries and final Git/GitHub identity checks use the remaining
+shared deadline. Final identity refreshes the base and compares both its tip and
+merge base, so an independently advanced base is stale even if the merge base
+did not move. A failed refresh records unavailable advice, not an endless stale retry.
+Local retrieval uses at most two seconds, stops its socket worker on cancellation and
+does not replace an incompatible running daemon. Owned normalization processes
+batches on the caller's thread, checks cancellation between batches and uses the
+remaining deadline; an in-flight synchronous translation finishes before the
+operation returns. Private context is not written into the shared translation
+cache. Transport and provider behavior still require live acceptance evidence.
+
+`replay_shadow()` validates a frozen request/result and reuses the recorded policy
+without normalization, retrieval or transport. `tool/eval/review_shadow.py` replays
+spec observations or evaluates a frozen labelled dataset; only explicit `--live`
+sends requests. Labels/rationales never enter a request. A live run must match the
+current production questions, prompt, catalog and policy. Model-authored historical
+labels have not become human-reviewed labels, and no new live semantic validation
+is claimed by these implementation checks.
 
 ## Context preparation blueprint
 
@@ -161,12 +197,76 @@ Active mode is not required to complete this stage and is not enabled by it.
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Baseline shadow | Closed facet advice, bounded call and non-interference | Done — current focused suite |
-| 2 | Ground context | Scoped retrieval and registered flow candidates | Not started |
-| 3 | Persist lifecycle | Preparation/stale observations, ground refs and replay | Not started |
-| 4 | Evaluate | Human-reviewed labels and production-prompt validation | Not started |
+| 2 | Ground context | Scoped retrieval and registered flow candidates | Done — bounded v2 context and closed flow/ground questions implemented |
+| 3 | Persist lifecycle | Preparation/stale observations, ground refs and replay | Done — spec-owned attempts, identity recheck, unsupported grounds and offline replay implemented; live transport acceptance remains part of evaluation |
+| 4 | Evaluate | Human-reviewed labels and production-prompt validation | In progress — exact production-request replay/evaluation harness implemented; human-reviewed real cases and live validation remain |
+
+## Implementation verification
+
+Recorded on 2026-10-07 against the implementation working tree. These invocations
+overlap; their counts must not be summed into a unique-test total.
+
+| Check | Result |
+| --- | --- |
+| `test_review_contract.py`, `test_agent_decisions.py`, `test_loop.py`, `test_local_verification.py` | 238 passed; controlled reviewer/GitHub/model replies with real temporary Git and isolated HTTP API |
+| `test_review_contract.py`, `test_review_routing.py`, `test_search.py` | 55 passed; includes shadow on/off dispatch equality, exhaustion, scoped references, cancellation, invalid catalogs and replay |
+| `test_review_routing.py`, `test_translate.py`, `test_search.py` | 66 passed; owned socket/batch behavior and production-request schema checks |
+| `test_review_routing.py`, `test_specs.py` | 33 passed; separate-process offline CLI replay, frozen family/label isolation and spec/profile compatibility |
+| Focused retrieved-context accounting regression | 1 passed; all three discovered chunks charged, including rejected scope/instruction passages |
+| Ruff, wiki lint and `git diff --check` | Passed |
+| Repository debt gate | Failed on five pre-existing HEAD findings in `chat_session.py`, `work.py`, `test_agent.py`, `test_loop.py` and `desktop_browser.py`; unrelated limits were not widened |
+
+The old controller fixture counted shadow discovery as correction retrieval;
+its observations now distinguish those operations. A separate-process CLI check
+also exposed an eager profile-helper alias in the spec import cycle; dispatch now
+resolves that helper at call time. No new paid Jev request, human label review,
+actual independent reviewer or native-host interaction is represented by these
+checks. Stage 2 remains in progress until its semantic evaluation exit is met.
+
+## Independent review repair
+
+ORCA's independent 5.6 sol reviewer inspected PR #92 at `334663f` and reported
+three P1 findings: normalization could expand past the context ceiling, the
+base-tip identity was not refreshed, and manifest Git queries used independent
+60-second limits. The reviewer ran 94 focused checks successfully; that did not
+establish the missing boundary guarantees.
+
+The repair rechecks normalized context before request creation, compares refreshed
+base tip and merge base, and passes the same remaining budget through manifest
+queries and terminal identity checks. Existing helper callers retain their defaults.
+Seven focused regression cases passed, including a real sleeping subprocess
+reaped at its half-second manifest deadline. The broader contract/routing/local
+verification/spec invocation finished with 121 passed and two failures from a
+test double that omitted production call-budget accounting. After correcting
+that double, both failed cases passed in a focused rerun. These overlapping runs
+are not a unique-test sum or a claim that the broad invocation was green.
+
+Ruff, wiki lint, diff whitespace and UTF-8 without BOM passed. The debt gate
+still reports only the five pre-existing findings listed above. Independent
+review of the repaired head and the final gate remain separate checks.
 
 ## Rollback
 
-Disable this integration independently of global Jev agent decisions. Retain
+Set `WIKI_REVIEW_SHADOW=off` in the Jev environment file or process environment to
+disable this integration independently of global Jev agent decisions. An invalid
+value sends no request. Retain
 records and deterministic floors. Missing keys/provider outages must not trigger
 a second model, another agent, a wider permission set or a readiness bypass.
+
+## Replay and evaluation commands
+
+```powershell
+python tool/eval/review_shadow.py --spec raw/specs/<repo>/<task>.json --out raw/eval/review-shadow-replay.json
+python tool/eval/review_shadow.py --dataset <frozen-labelled-dataset>.json --out raw/eval/review-shadow-evaluation.json
+```
+
+The dataset schema is `review-shadow-evaluation/1`. Each case has `id`, `family`,
+`split` (`calibration` or `heldout`) and an unchanged v2 `record` containing its
+frozen request/result. Optional `expected` lists `criteria`, `evidence`, `flows`,
+`unresolved` candidate IDs, `prohibited` candidate IDs and `acceptable_extras`.
+Keep label author/reviewer status in top-level `labels`; family membership may
+not cross splits. Scores distinguish missing/extra facet and flow items, exact
+sets, prohibited substitutions and unresolved inputs. Ground support, baseline
+disagreement and typed decision telemetry remain inspectable. These scores are
+audit comparisons, not readiness or approval. Add `--live` only for an authorized
+new semantic experiment; it does not dispatch a reviewer or execution command.

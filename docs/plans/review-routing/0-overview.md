@@ -40,7 +40,7 @@ requires its own evaluated policy and explicit rollout decision.
 | # | Stage | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | [Required obligations](1-required-obligations.md) | Deterministic v1 criteria/evidence selection from explicit spec, diff scope, refactor origin and registered flows | Done — bounded baseline implemented; 14 contract checks passed on 2026-10-07 |
-| 2 | [Jev shadow recommendations](2-jev-shadow.md) | Grounded context, closed facet/flow recommendations, replayable shadow evaluation | In progress — facet-only shadow recording exists; contextual retrieval, flow recommendations and production-prompt evaluation remain |
+| 2 | [Jev shadow recommendations](2-jev-shadow.md) | Grounded context, closed facet/flow recommendations, replayable shadow evaluation | In progress — scoped context, registered-flow advice, persisted preparation/stale observations and exact-request replay implemented; human-reviewed labels and live production-prompt validation remain |
 | 3 | [Composition and provenance](3-composition-provenance.md) | Enforced/candidate sets and inspectable selection grounds for every item | In progress — deterministic union and round persistence exist; per-item grounds and candidate composition remain |
 | 4 | [Evidence and handoff](4-evidence-handoff.md) | General local live collection, native collection, identity checks and existing-loop handoff | In progress — existing receipt validation/handoff work; general local and desktop collectors remain |
 

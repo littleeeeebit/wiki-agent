@@ -350,6 +350,44 @@ def test_a_peer_trickling_its_answer_does_not_hold_the_caller(reachable):
         listener.close()
 
 
+def test_owned_retrieval_cancels_and_collects_its_socket_worker(reachable):
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    accepted = threading.Event()
+    finished = threading.Event()
+    cancel = threading.Event()
+
+    def peer():
+        conn, _ = listener.accept()
+        try:
+            conn.recv(4096)
+            accepted.set()
+            while conn.recv(4096):
+                pass
+        finally:
+            conn.close()
+            finished.set()
+
+    server = threading.Thread(target=peer)
+    server.start()
+    search.state_path().write_text(json.dumps({"port": listener.getsockname()[1], "token": "t"}), encoding="utf-8")
+    timer = threading.Timer(0.15, cancel.set)
+    before = set(threading.enumerate())
+    timer.start()
+    try:
+        started = time.perf_counter()
+        assert search.retrieve({}, None, 2, start=False, cancel=cancel) is None
+        assert accepted.is_set() and time.perf_counter() - started < 1
+        assert finished.wait(1) and not reachable
+        assert not {t for t in threading.enumerate() if t not in before and t is not timer}
+    finally:
+        cancel.set()
+        listener.close()
+        timer.join(2)
+        server.join(2)
+
+
 def test_the_port_is_the_lock():
     daemon = searchd.Daemon("t", searchd.Embedder(None))
     first = searchd.serve(0, daemon)

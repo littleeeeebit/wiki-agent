@@ -806,15 +806,15 @@ def stop(loop: Loop | None, repo: str, sid: str, why: Why, detail: str = "", sou
     return False
 
 
-def gh_json(repo: Path, args: list[str]) -> dict:
-    done = specs.sh(["gh", *args], repo, 60)
+def gh_json(repo: Path, args: list[str], timeout: float = 60) -> dict:
+    done = specs.sh(["gh", *args], repo, timeout)
     if done.returncode:
         raise RuntimeError(f"gh {args[0]} {args[1]} 실패 — {specs.said(done)}")
     return json.loads(done.stdout)
 
 
-def pr_head(repo: Path, n: int) -> tuple[str, str]:
-    view = gh_json(repo, ["pr", "view", str(n), "--json", "headRefOid,baseRefName"])
+def pr_head(repo: Path, n: int, *, timeout: float = 60) -> tuple[str, str]:
+    view = gh_json(repo, ["pr", "view", str(n), "--json", "headRefOid,baseRefName"], timeout)
     return view["headRefOid"], view["baseRefName"]
 
 
@@ -1293,6 +1293,11 @@ def step(loop: Loop) -> bool:
     paths = changed(path, base_oid, head)
     profile = effective(spec, paths)
     contract = review_contract.select(repo, path, spec, profile, paths, head, base_oid)
+    contract["shadow"] = review_contract.observe_shadow(repo, path, spec, paths, contract, loop.halt)
+    if loop.halt.is_set():
+        return False
+    if contract["shadow"]["status"] == "stale":
+        return True
     problem = review_contract.ready(repo, path, spec, contract)
     if problem:
         change(loop, review_contract=contract)
@@ -1318,7 +1323,6 @@ def step(loop: Loop) -> bool:
     kept.mkdir(parents=True, exist_ok=True)
     order = kept / f"round-{n}.md"
     # The changed paths decide the criteria before the review, never after.
-    contract["shadow"] = review_contract.shadow(spec, paths, contract, loop.halt)
     if loop.halt.is_set():
         return False
     review_instruction = instruction(spec, path, n, head, base, chat.is_codex, profile, base_oid, contract)

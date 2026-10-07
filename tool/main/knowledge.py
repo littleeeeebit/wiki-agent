@@ -14,6 +14,7 @@ running on its next turn.
 from __future__ import annotations
 
 import contextlib
+from dataclasses import replace
 import functools
 import hashlib
 import json
@@ -51,7 +52,7 @@ BATCH_SECONDS = 60.0
 
 
 def english(texts: list[str], seconds: float, owners: list[tuple[str, ...]] | None = None,
-            project: str | Path | None = None) -> list[dict]:
+            project: str | Path | None = None, cancel: threading.Event | None = None) -> list[dict]:
     """English normalization, bounded by its seconds.
 
     A text with owners — the private sources it came from — never reaches the
@@ -74,7 +75,8 @@ def english(texts: list[str], seconds: float, owners: list[tuple[str, ...]] | No
             held = {}
             for source in sources if store else ():
                 held |= store.english(source, [texts[i] for i in group if source in owners[i]])
-            made = translate.english([texts[i] for i in group], deadline, held=held if private else None)
+            made = translate.english([texts[i] for i in group], deadline, held=held if private else None,
+                                     **({"cancel": cancel} if cancel is not None else {}))
             for i, outcome in zip(group, made):
                 out[i] = outcome
             for source in sources if store else ():
@@ -1072,7 +1074,8 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
             cfg: decision.Config | None = None, cancel: threading.Event | None = None, *,
             external: bool = False, record: bool = False, cache: decision.Cache | None = DECISIONS,
             require: bool = False, budget: Budget | None = None, run: Run | None = None,
-            audiences: list[str] | None = None, cause: dict | None = None) -> dict:
+            audiences: list[str] | None = None, cause: dict | None = None,
+            context_only: bool = False) -> dict:
     """The dossier for one question, with the settings it ran under (never the key).
 
     The app's query path, its shadow mode and `tool/jev_search.py` all run
@@ -1092,6 +1095,9 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     it implies `require`, so Jev is not asked again whether to retrieve,
     and it is kept on the dossier. The action was admitted at its own
     boundary (`decisions.admit`) before this runs.
+    `context_only` reads the existing scoped index without model routing,
+    translation, daemon startup or an abandoned cold-index worker. An absent
+    daemon is unavailable context, not permission to start another process.
     """
 
     if not query.strip() or not 1 <= k <= MAX_K:
@@ -1103,6 +1109,8 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
             raise ValueError(f"a cause is {CAUSE} of a retrieve_evidence action")
         require = True
     cfg = cfg or decision.config(project or HUB)
+    if context_only:
+        cfg = replace(cfg, mode="off")
     live = cfg.mode != "off"
     root = Path(project).resolve() if project else None
     brief, omitted = summarized(state, root)
@@ -1120,7 +1128,10 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
                 evaluate=watched(run, "jev", functools.partial(decision.evaluate, cfg)),
                 normalize=watched(run, "normalizing", functools.partial(english, project=project)),
                 divide=lambda question, seconds: translate.parts(question, time.monotonic() + seconds),
-                first=lambda req: run_round(req, project, budget),
+                first=lambda req: (retrieve_from_daemon(req, project, min(2.0, budget.left()), start=False,
+                                                       cancel=budget.cancel)
+                                   if context_only and not budget.cancel.is_set() else
+                                   None if context_only else run_round(req, project, budget)),
                 mend=lambda req, result, need, given: repair(
                     req, result, need, project, budget=budget, cfg=cfg, external=external,
                     chunk_ids=given if need == "context" else (),
