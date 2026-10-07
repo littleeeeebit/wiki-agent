@@ -6,13 +6,17 @@ import asyncio
 import hashlib
 import hmac
 import json
+import os
 import re
 import secrets
-import shutil
+import socket
+import ssl
 import subprocess
+import tarfile
 import threading
 import time
 from urllib.parse import unquote, urlsplit
+from urllib.error import URLError
 from urllib.request import urlopen
 
 import anyio
@@ -21,8 +25,9 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from common.process import background_options
+from common import errorlog
 
-from . import channels, query
+from . import channels, mobile_transport, query
 
 HOST = "mobile.wiki-agent.invalid"
 COOKIE = "__Host-wiki-mobile"
@@ -47,8 +52,10 @@ class Companion:
         self.port = 8787
         self.origin = ""
         self.error = ""
+        self.progress = ""
         self.process: subprocess.Popen | None = None
         self.starting = False
+        self.cancel = threading.Event()
         self.code = ""
         self.deadline = 0.0
         self.lock = threading.RLock()
@@ -83,82 +90,144 @@ class Companion:
     def status(self) -> dict:
         with self.lock:
             return {"local": True, "enabled": bool(self.origin) and not self.starting, "starting": self.starting,
-                    "origin": self.origin, "error": self.error, "apk_available": APK.is_file()}
+                    "origin": self.origin, "error": self.error, "progress": self.progress, "apk_available": APK.is_file()}
 
-    def wait_ready(self, process, origin):
+    def wait_ready(self, process):
         # Printing an address precedes DNS propagation and connector readiness.
         # Offer pairing only after the public path actually reaches this server.
-        while True:
+        deadline = time.monotonic() + 45
+        recorded = set()
+        while time.monotonic() < deadline:
             with self.lock:
-                if self.process is not process or self.origin != origin or not self.starting:
-                    return
+                if self.process is not process or self.cancel.is_set() or not self.starting:
+                    return False
+                origin = self.origin
+            if process.poll() is not None:
+                return False
+            if not origin:
+                self.cancel.wait(0.2)
+                continue
             try:
-                with urlopen(origin + "/api/mobile/status", timeout=3) as response:
-                    reached = json.loads(response.read(1024)) == {"local": False, "paired": False}
-                if reached:
+                try:
+                    with urlopen(origin.rstrip("/") + "/api/mobile/status", timeout=3,
+                                 context=mobile_transport.tls_context()) as response:
+                        result = json.loads(response.read(1024))
+                except URLError as exc:
+                    if not isinstance(exc.reason, socket.gaierror):
+                        raise
                     with self.lock:
-                        if self.process is process and self.origin == origin:
+                        if self.process is process:
+                            self.progress = "공개 주소를 자동으로 확인하는 중…"
+                    result = mobile_transport.public_status(origin)
+                if result == {"local": False, "paired": False}:
+                    with self.lock:
+                        if self.process is process and self.origin == origin and not self.cancel.is_set():
                             self.starting = False
-                    return
-            except (OSError, ValueError):
-                pass
-            time.sleep(1)
+                            self.error, self.progress = "", ""
+                            return True
+                    return False
+                raise ValueError("Public address did not reach the mobile status endpoint")
+            except (OSError, ValueError) as exc:
+                reason = getattr(exc, "reason", exc)
+                message = "외부 주소에서 PC에 도달하지 못했습니다. 잠시 후 다시 연결해 주세요"
+                if isinstance(reason, ssl.SSLError):
+                    message = "외부 연결의 보안 인증서를 확인하지 못했습니다"
+                elif isinstance(reason, socket.gaierror) or "DNS" in str(exc):
+                    message = "공개 주소 조회에 실패했습니다. 자동 복구 후에도 주소를 확인하지 못했습니다"
+                with self.lock:
+                    if self.process is process:
+                        self.error = message
+                if type(reason) not in recorded:
+                    errorlog.record("mobile.probe", exc)
+                    recorded.add(type(reason))
+            self.cancel.wait(1)
+        return False
 
     def start(self) -> dict:
         with self.lock:
             if self.origin or self.starting:
                 return self.status()
-            # ponytail: temporary URL changes after a restart; --mobile-origin
-            # with a named tunnel is the upgrade when a stable address matters.
-            binary = shutil.which("cloudflared")
-            if not binary:
-                raise HTTPException(503, "cloudflared를 설치한 뒤 다시 연결하세요")
             self.key()
             self.error = ""
-            try:
-                process = subprocess.Popen(
-                    [binary, "--no-autoupdate", "tunnel", "--url", f"http://127.0.0.1:{self.port}",
-                     "--http-host-header", HOST], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    stdin=subprocess.DEVNULL, text=True, encoding="utf-8", errors="replace", **background_options())
-            except OSError as exc:
-                raise HTTPException(503, "외부 연결을 시작하지 못했습니다") from exc
-            self.process, self.starting = process, True
+            self.progress = "연결 도구를 자동으로 준비하는 중…"
+            self.starting = True
+            self.cancel = cancel = threading.Event()
+        threading.Thread(target=self.prepare, args=(cancel,), daemon=True).start()
+        return self.status()
 
-        def read():
-            try:
-                assert process.stdout is not None
-                for line in process.stdout:
-                    match = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com\b", line)
-                    with self.lock:
-                        if self.process is not process:
-                            return
-                        if match:
-                            self.origin = match[0]
-                            threading.Thread(target=self.wait_ready, args=(process, match[0]), daemon=True).start()
+    def prepare(self, cancel):
+        try:
+            directory = channels.WIKI / "raw" / "mobile-runtime" / mobile_transport.VERSION
+            binary = mobile_transport.cloudflared(directory)
+            directory.mkdir(parents=True, exist_ok=True)
+            config = directory / "config.yml"
+            config.write_text("{}\n", encoding="utf-8", newline="\n")
+            # Ignore unrelated named-tunnel settings on a team member's PC.
+            env = {k: v for k, v in os.environ.items() if not k.upper().startswith("TUNNEL_")}
+            for protocol in ("quic", "http2"):
+                with self.lock:
+                    if self.cancel is not cancel or cancel.is_set():
+                        return
+                    self.origin = ""
+                    self.progress = "외부 연결을 여는 중…" if protocol == "quic" else "다른 연결 방식으로 자동 재시도하는 중…"
+                    process = subprocess.Popen(
+                        [str(binary), "--no-autoupdate", "tunnel", "--config", str(config), "--protocol", protocol,
+                         "--url", f"http://127.0.0.1:{self.port}", "--http-host-header", HOST],
+                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                        text=True, encoding="utf-8", errors="replace", env=env, **background_options())
+                    self.process = process
+                threading.Thread(target=self.read, args=(process,), daemon=True).start()
+                if self.wait_ready(process):
+                    return
                 with self.lock:
                     if self.process is process:
-                        self.origin, self.starting = "", False
-                        self.error = "외부 연결이 끊겼습니다. 다시 연결하세요"
-            finally:
-                process.stdout.close()
+                        self.process, self.origin = None, ""
+                self.reap(process)
+                if cancel.is_set():
+                    return
+            self.failed(cancel, self.error or "중계 서버에 연결하지 못했습니다. 잠시 후 다시 연결해 주세요")
+        except (OSError, ValueError, RuntimeError, tarfile.TarError) as exc:
+            errorlog.record("mobile.start", exc)
+            message = str(exc) if isinstance(exc, RuntimeError) else "연결 도구를 준비하거나 실행하지 못했습니다. 잠시 후 다시 연결해 주세요"
+            self.failed(cancel, message)
 
-        threading.Thread(target=read, daemon=True).start()
-
-        def timeout():
+    def read(self, process):
+        try:
+            for line in process.stdout:
+                with self.lock:
+                    if self.process is not process:
+                        return
+                    match = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com\b", line)
+                    if match and not self.origin:
+                        self.origin = match[0]
+                    if " ERR " in line or "failed" in line.lower():
+                        errorlog.record("mobile.tunnel", line.strip())
             with self.lock:
-                if self.process is process and self.starting:
-                    self.stop()
-                    self.error = "외부 연결에 시간이 너무 걸립니다. 인터넷 연결과 cloudflared 설정을 확인하세요"
+                if self.process is process and not self.starting:
+                    self.origin = ""
+                    self.error = "외부 연결이 끊겼습니다. 다시 연결하세요"
+        finally:
+            process.stdout.close()
 
-        timer = threading.Timer(60, timeout)
-        timer.daemon = True
-        timer.start()
-        return self.status()
+    def failed(self, cancel, message):
+        with self.lock:
+            if self.cancel is cancel and not cancel.is_set():
+                process, self.process = self.process, None
+                self.starting, self.origin, self.progress = False, "", ""
+                self.error = message
+            else:
+                return
+        self.reap(process)
 
     def stop(self):
         with self.lock:
+            self.cancel.set()
             process, self.process = self.process, None
-            self.origin, self.code, self.starting = "", "", False
+            self.origin, self.code, self.progress, self.error, self.starting = "", "", "", "", False
+        self.reap(process)
+
+    @staticmethod
+    def reap(process):
         if process is not None:
             if process.poll() is None:
                 process.terminate()

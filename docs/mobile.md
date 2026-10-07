@@ -19,22 +19,20 @@ connection, and the PC and app must remain awake and online.
    If the app uses `.venv`, use `.venv/Scripts/python.exe` on Windows or
    `.venv/bin/python` on macOS/Linux for the first command.
 
-2. Install `cloudflared` if it is not already installed. On Windows:
-
-   ```powershell
-   winget install --id Cloudflare.cloudflared
-   ```
-
-   Restart the desktop app after installation. Other platforms follow the
-   [Cloudflare installation guide](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/downloads/).
-
-3. On the PC, open Settings → Mobile (`설정 → 휴대폰`) and press
-   Enable external connection (`외부 연결 켜기`).
-4. For Android, scan the installation QR in 1. Install Android app
-   (`1. Android 앱 설치`) with the phone camera. On the opened page, press
+2. On the PC, open Settings → Mobile (`설정 → 휴대폰`) and press
+   Enable external connection (`외부 연결 켜기`). The app prepares its tunnel
+   runtime automatically and creates the pairing QR when the public path is
+   ready. No separate `cloudflared` installation, administrator prompt or DNS
+   setting change is required. The first download can take longer; preparation
+   and retry progress appear in Settings, and Cancel remains available.
+3. Scan the connection QR with the phone camera and open it in the browser.
+   A phone app is optional. The browser can connect even when this PC has no APK.
+4. For the optional Android app, scan the installation QR in Android app installation
+   (`Android 앱 설치 (선택)`) with the phone camera. On the opened page, press
    Download APK (`APK 다운로드`), open the downloaded file and confirm
    installation. If prompted, allow installation from the current browser.
-5. Press Create pairing link (`연결 링크 만들기`). In the Android APK, press
+5. Use the automatically created pairing QR, or press Create pairing link
+   (`연결 링크 만들기`) for another. In the Android APK, press
    Scan connection QR (`연결 QR 스캔`) and scan it. For the browser companion,
    scan it with the phone camera and open the link. Copy link remains available
    as an APK clipboard fallback. Open it within five minutes. Each QR/link
@@ -62,6 +60,30 @@ Cloudflare URL: starting the tunnel again changes the address and requires a
 new link. Cloudflare describes these tunnels as development services without
 an uptime guarantee; a fixed named tunnel is the production option.
 [Cloudflare Quick Tunnels](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
+
+The app pins `cloudflared` 2026.10.0 and its
+[official release SHA256 digests](https://github.com/cloudflare/cloudflared/releases/tag/2026.10.0).
+An installed executable is reused only when it matches the pinned digest;
+otherwise the app downloads and verifies a private copy under
+`raw/mobile-runtime/2026.10.0`. Windows x64/x86, macOS Intel/Apple Silicon and
+Linux x64/ARM64 are supported; Windows ARM uses its x64 emulation. Cancellation
+during a download cannot enable a tunnel afterwards. The process uses an isolated
+empty config and excludes inherited `TUNNEL_*` settings, so another tunnel on
+the PC cannot change the app's public path. A failed QUIC startup automatically
+retries HTTP/2. The normal connection remains explicitly opt-in.
+
+The app verifies the public HTTPS status before offering pairing. If the PC's
+DNS cannot resolve the temporary hostname, it automatically queries Cloudflare
+[DNS over HTTPS](https://developers.cloudflare.com/1.1.1.1/encryption/dns-over-https/make-api-requests/)
+using bootstrap IPs, then connects using the original TLS
+hostname and certificate verification. Only public IPs are accepted. This
+fallback changes neither OS DNS nor other applications; the phone still resolves
+its address through its browser/network. The TLS trust store supplements OS roots
+with the app's bundled CA package. DNS, certificate and public-path failures
+are reported separately and recorded in the existing local `raw/errors.jsonl`.
+GitHub downloads and Cloudflare connectivity must be permitted by the network;
+an offline PC or a network blocking the relay cannot be made reachable by this
+button. No physical teammate-PC acceptance is implied by automated checks.
 
 The phone's network can change while the PC keeps executing. If the screen
 loses its connection, press Reconnect (`다시 연결`) to reload saved records
@@ -317,12 +339,23 @@ tunnel restarted with the app needs a fresh pairing QR.
 ## Verification
 
 ```powershell
-python -m pytest -q tool/test_mobile.py tool/test_main.py tool/test_sync.py tool/test_android_shell.py
+python -m pytest -q tool/test_mobile.py tool/test_mobile_transport.py tool/test_main.py tool/test_sync.py tool/test_android_shell.py
 python web/tests/mobile_browser.py
 python web/tests/mobile_sync.py
 python web/tests/mobile_browser.py --live-tunnel
+python web/tests/mobile_connection.py
 powershell -ExecutionPolicy Bypass -File tool/build_android.ps1
 ```
+
+On 2026-10-07, `mobile_connection.py` passed with an empty runtime cache, no
+installed tunnel executable, no APK and forced desktop DNS failures. One click
+downloaded and verified the official executable, recovered address resolution,
+created the pairing QR and connected a separate browser through real public
+HTTPS. The authenticated cookie, WebSocket API and saved pairing after reload
+also passed. This publishes only synthetic fixtures; it does not verify the
+reported teammate PC or a physical phone. The existing mobile browser/layout
+checks and affected Python checks passed. The full debt ratchet still reports
+five unchanged pre-existing files outside this change.
 
 The browser script needs the installed Playwright package and Chromium. It
 starts a separate synthetic fixture server; the live option publishes only

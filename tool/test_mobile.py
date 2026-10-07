@@ -2,9 +2,12 @@
 
 import asyncio
 import json
+from pathlib import Path
+import socket
 import threading
 import time
-from unittest.mock import patch
+from unittest.mock import Mock, patch
+from urllib.error import URLError
 
 from fastapi.testclient import TestClient
 from starlette.responses import StreamingResponse
@@ -21,6 +24,7 @@ def companion(tmp_path):
     with patch.object(mobile, "companion", state), patch.object(query, "LOGS", tmp_path), \
          patch.object(app, "SWITCH", tmp_path / "switch.json"):
         yield state
+        state.stop()
 
 
 def browsers():
@@ -177,17 +181,20 @@ def test_an_early_phone_disconnect_finishes_the_http_stream_and_releases_the_soc
         app.app.router.routes[:] = [r for r in app.app.router.routes if getattr(r, "path", "") != path]
 
 
-def test_start_is_explicit_and_reaps_the_child(companion):
+def test_start_prepares_its_own_runtime_and_reaps_the_child(companion, tmp_path, monkeypatch):
     companion.origin = ""
     desktop, _ = browsers()
-    with patch.object(mobile.shutil, "which", return_value=None):
-        assert desktop.post("/api/mobile/start").status_code == 503
     from io import StringIO
+    ready = threading.Event()
+    monkeypatch.setenv("TUNNEL_TOKEN", "unrelated-named-tunnel")
 
     class Tunnel:
         def __init__(self, args, **kwargs):
             assert "--http-host-header" in args and mobile.HOST in args
             assert kwargs["encoding"] == "utf-8" and kwargs["stdin"] == mobile.subprocess.DEVNULL
+            assert "TUNNEL_TOKEN" not in kwargs["env"]
+            config = Path(args[args.index("--config") + 1])
+            assert config.read_bytes() == b"{}\n"
             self.stdout = StringIO("https://fixture.trycloudflare.com\n")
             self.terminated = False
 
@@ -200,9 +207,15 @@ def test_start_is_explicit_and_reaps_the_child(companion):
         def wait(self, timeout):
             return 0
 
-    with patch.object(mobile.shutil, "which", return_value="cloudflared"), \
-         patch.object(mobile.subprocess, "Popen", Tunnel), patch.object(mobile.Companion, "wait_ready"):
+    def checked(process):
+        ready.set()
+        return True
+
+    with patch.object(mobile.channels, "WIKI", tmp_path), \
+         patch.object(mobile.mobile_transport, "cloudflared", return_value=Path("managed-cloudflared")), \
+         patch.object(mobile.subprocess, "Popen", Tunnel), patch.object(companion, "wait_ready", checked):
         desktop.post("/api/mobile/start").raise_for_status()
+        assert ready.wait(3)
         child = companion.process
         desktop.post("/api/mobile/stop").raise_for_status()
         assert child.terminated and companion.process is None and not companion.origin
@@ -212,16 +225,69 @@ def test_pairing_waits_for_the_public_path(companion):
     from io import BytesIO
 
     desktop, _ = browsers()
-    process = companion.process = object()
+    process = companion.process = Mock(poll=Mock(return_value=None))
     companion.starting = True
     assert not desktop.get("/api/mobile/status").json()["enabled"]
     assert desktop.post("/api/mobile/link").status_code == 409
     with patch.object(mobile, "urlopen", side_effect=[OSError("DNS pending"), BytesIO(b'{"local":false,"paired":false}')]), \
-         patch.object(mobile.time, "sleep"):
-        companion.wait_ready(process, companion.origin)
+         patch.object(companion.cancel, "wait"):
+        companion.wait_ready(process)
     assert desktop.get("/api/mobile/status").json()["enabled"]
     assert desktop.post("/api/mobile/link").status_code == 200
     companion.process = None
+
+
+def test_failed_system_dns_uses_app_dns_without_bypassing_public_pairing_check(companion):
+    desktop, _ = browsers()
+    process = companion.process = Mock(poll=Mock(return_value=None))
+    companion.starting = True
+    assert desktop.post("/api/mobile/link").status_code == 409
+    with patch.object(mobile, "urlopen", side_effect=URLError(socket.gaierror("DNS unavailable"))), \
+         patch.object(mobile.mobile_transport, "public_status", return_value={"local": False, "paired": False}) as probe:
+        assert companion.wait_ready(process)
+    probe.assert_called_once_with(companion.origin)
+    assert desktop.get("/api/mobile/status").json()["enabled"]
+    assert desktop.post("/api/mobile/link").status_code == 200
+    companion.process = None
+
+
+def test_cancel_during_download_never_launches_a_tunnel(companion, tmp_path):
+    entered, release = threading.Event(), threading.Event()
+    companion.origin = ""
+    companion.starting = True
+
+    def download(directory):
+        entered.set()
+        assert release.wait(3)
+        return Path("managed-cloudflared")
+
+    with patch.object(mobile.channels, "WIKI", tmp_path), \
+         patch.object(mobile.mobile_transport, "cloudflared", download), patch.object(mobile.subprocess, "Popen") as launch:
+        thread = threading.Thread(target=companion.prepare, args=(companion.cancel,))
+        thread.start()
+        try:
+            assert entered.wait(3)
+            companion.stop()
+        finally:
+            release.set()
+            thread.join(3)
+        assert not thread.is_alive()
+        launch.assert_not_called()
+        assert not companion.status()["starting"] and not companion.status()["enabled"]
+
+
+def test_failed_quic_retries_http2_automatically(companion, tmp_path):
+    companion.origin = ""
+    companion.starting = True
+    processes = [Mock(poll=Mock(return_value=None)), Mock(poll=Mock(return_value=None))]
+    with patch.object(mobile.channels, "WIKI", tmp_path), \
+         patch.object(mobile.mobile_transport, "cloudflared", return_value=Path("managed-cloudflared")), \
+         patch.object(mobile.subprocess, "Popen", side_effect=processes) as launch, \
+         patch.object(companion, "read"), patch.object(companion, "wait_ready", side_effect=[False, True]):
+        companion.prepare(companion.cancel)
+    assert [call.args[0][call.args[0].index("--protocol") + 1] for call in launch.call_args_list] == ["quic", "http2"]
+    processes[0].terminate.assert_called_once()
+    assert companion.process is processes[1]
 
 
 def test_fixed_origin_cli_normalizes_browser_origins_and_rejects_invalid_urls(companion, tmp_path):
