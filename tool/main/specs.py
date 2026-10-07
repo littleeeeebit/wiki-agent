@@ -439,9 +439,8 @@ def view(repo: Path, spec: dict) -> dict:
     for the approved head in `머지 가능`, so the screen never judges a result
     by itself: empty only while the final gate stands for the current command
     and environment; `None` in every other state, where `[머지]` is not shown.
-    The base is read as last fetched — this runs for every spec on every
-    refresh — and `merge` fetches it before acting. A worktree that cannot be
-    read is that spec's reason, not the listing's failure."""
+    The base is the last fetched tip; `merge` refreshes it before acting.
+    An unreadable worktree stops that spec, not the listing."""
 
     allowed = approved(spec)
     unproven = None
@@ -460,7 +459,8 @@ def view(repo: Path, spec: dict) -> dict:
                                                        merge_base(path, allowed["base"], allowed["head"]))
         except (OSError, subprocess.SubprocessError) as exc:
             unproven = f"작업트리를 읽지 못했다 — {exc}"
-    return {**spec, **profile_of(spec), "missing": missing(repo, spec), "approved": allowed["head"] if allowed else None,
+    return {**spec, **profile_of(spec), **review_contract.view(repo, spec, allowed),
+            "missing": missing(repo, spec), "approved": allowed["head"] if allowed else None,
             "unproven": unproven, "waiting": bool(spec.get("worktree")) and work.waiting(spec["worktree"])}
 
 
