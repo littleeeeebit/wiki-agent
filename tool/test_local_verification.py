@@ -5,9 +5,11 @@ are used. The assertions exercise dispatch and merge boundaries, not just parser
 """
 
 import json
+import os
 import re
 import socket
 import subprocess
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +19,7 @@ from unittest.mock import patch
 import pytest
 
 from agent.chat_session import Event
+from common import process
 from main import loop, specs, verification
 from main import app as main_app
 from test_loop import (  # noqa: F401 — shared temporary Git/GitHub fixtures
@@ -145,6 +148,191 @@ def repair_cloud(world, spec, name="repair.py"):
     transfer["head"] = head
     world.hub.prs[spec["pr"]["number"]]["body"] = "```cloud-handoff\n" + json.dumps(transfer) + "\n```"
     return head
+
+
+@pytest.mark.parametrize("owner", ["local", "external"])
+def test_ordinary_api_is_collected_automatically_for_read_only_review(cloud_world, owner):
+    world = cloud_world
+    spec = pr_spec(world, "automatic-api", 1, "change.py", implementation_environment=owner,
+                   review={"flows": ["health"]})
+    done = looped(spec["id"])
+    assert done["state"] == "머지 가능", done.get("stopped")
+    row = done["local_verification"]["flows"][0]
+    assert row["ok"] and row["evidence"]["requests"][0]["status"] == 200
+    assert Reviewer.made[0].tools == loop.REVIEW_TOOLS and not Worker.made
+    assert '"status": 200' in (world.tmp / "review/proj/1/round-1.md").read_text(encoding="utf-8")
+    assert not verification.proven(world.repo, Path(spec["worktree"]), done, row["head"],
+                                   done["local_verification"]["base_oid"], flow_ids=["health"])
+    changed = {**done, "rev": done["rev"] + 1}
+    assert verification.proven(world.repo, Path(spec["worktree"]), changed, row["head"],
+                               done["local_verification"]["base_oid"], flow_ids=["health"])
+
+
+@pytest.mark.parametrize("owner", ["local", "external"])
+def test_ordinary_failure_returns_only_to_its_implementation_owner(cloud_world, owner):
+    world = cloud_world
+    spec = pr_spec(world, "owner-failure", 1, "change.py", implementation_environment=owner,
+                   review={"flows": ["health"]})
+    world.failed.touch()
+    done = looped(spec["id"])
+    assert done["state"] == "멈춤" and not Reviewer.made
+    assert bool(Worker.made) is (owner == "local")
+    assert done["local_verification"]["failure_attempts"][0]["evidence"][0]["requests"][0]["status"] == 200
+    assert not done["local_verification"].get("delivery")
+    assert "private-api-key" not in json.dumps(done)
+
+
+def test_selected_subset_unknown_ids_and_stale_contract_stop_before_setup(cloud_world, monkeypatch):
+    world = cloud_world
+    world.contract["flows"].append({**world.contract["flows"][0], "id": "unselected",
+                                   "command": "python -c \"raise RuntimeError('unselected flow ran')\""})
+    (world.repo / verification.MANIFEST).write_text(json.dumps(world.contract), encoding="utf-8")
+    commit(world.repo, "selected-contract.txt")
+    git(world.repo, "push", "origin", "main")
+    world.settings["manifest_digest"] = verification.manifest(world.repo)[1]
+    (world.repo / verification.LOCAL).write_text(json.dumps(world.settings), encoding="utf-8")
+    spec = pr_spec(world, "subset", 1, "change.py", review={"flows": ["health"]})
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    base = specs.current_merge_base(path, "main", head)
+    def forbidden(*args, **kwargs):
+        pytest.fail("Unapproved flow must not execute setup or commands")
+    with monkeypatch.context() as guarded:
+        guarded.setattr(specs, "gate", forbidden)
+        for ids, digest in ((["unknown"], ""), (["health"], "stale"), (["health", "health"], "")):
+            with pytest.raises(ValueError):
+                verification.execute(world.repo, spec, path, head, base, threading.Event(),
+                                     flow_ids=ids, enforced_digest=digest)
+    done = verification.execute(world.repo, spec, path, head, base, threading.Event(), flow_ids=["health"])
+    assert [row["id"] for row in done["local_verification"]["flows"]] == ["health"]
+
+
+def test_cleanup_failure_keeps_successful_observations_but_holds_readiness(cloud_world):
+    world = cloud_world
+    spec = pr_spec(world, "cleanup-failure", 1, "change.py", review={"flows": ["health"]})
+    world.settings["cleanup"] = 'python -c "raise SystemExit(2)"'
+    (world.repo / verification.LOCAL).write_text(json.dumps(world.settings), encoding="utf-8")
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    base = specs.current_merge_base(path, "main", head)
+    with pytest.raises(ValueError, match="정리"):
+        verification.execute(world.repo, spec, path, head, base, threading.Event(), flow_ids=["health"])
+    saved = specs.load("proj", spec["id"])
+    assert saved["local_verification"]["state"] == "waiting_environment"
+    assert saved["local_verification"]["flows"][0]["observed_ok"]
+    assert verification.proven(world.repo, path, saved, head, base, flow_ids=["health"])
+
+
+def test_ordinary_instability_requires_and_records_investigation_before_resume(cloud_world):
+    world = cloud_world
+    spec = pr_spec(world, "ordinary-unstable", 1, "change.py", implementation_environment="external",
+                   review={"flows": ["health"]})
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    base = specs.current_merge_base(path, "main", head)
+    world.failed.touch()
+    failed = verification.execute(world.repo, spec, path, head, base, threading.Event(), flow_ids=["health"])
+    world.failed.unlink()
+    unstable = verification.execute(world.repo, failed, path, head, base, threading.Event(), flow_ids=["health"])
+    assert unstable["local_verification"]["state"] == "unstable"
+    specs.update("proj", spec["id"], state="리뷰 대기")
+    loop.stop(None, "proj", spec["id"], loop.Why.PREPARATION, "Investigate observed instability")
+    with patch.object(loop, "kick"):
+        assert client().post(f"/api/specs/{spec['id']}/resume", json={"note": ""}).status_code == 400
+        result = client().post(f"/api/specs/{spec['id']}/resume", json={"note": "Isolated fault injection; cause and both observations checked"})
+        assert result.status_code == 200
+    record = specs.load("proj", spec["id"])["local_verification"]
+    assert not record["needs_research"] and record["research_note"] and record["failure_attempts"]
+    assert record["research"][-1]["failure_attempts"] == [0, 1]
+
+
+def test_changed_managed_env_is_rejected_before_any_flow_command(cloud_world, monkeypatch):
+    world = cloud_world
+    spec = pr_spec(world, "managed-env-drift", 1, "change.py", review={"flows": ["health"]})
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    base = specs.current_merge_base(path, "main", head)
+    prepare = verification.prepare
+    def changed_copy(repo, tree, settings):
+        prepare(repo, tree, settings)
+        with (tree / ".env").open("a", encoding="utf-8") as file:
+            file.write("UNAPPROVED=changed\n")
+    monkeypatch.setattr(verification, "prepare", changed_copy)
+    monkeypatch.setattr(specs, "judge", lambda *_args, **_kwargs: pytest.fail("Unapproved environment must not execute"))
+    with pytest.raises(ValueError, match=".env"):
+        verification.execute(world.repo, spec, path, head, base, threading.Event(), flow_ids=["health"])
+
+
+def test_identical_user_env_is_not_claimed_or_overwritten_on_later_source_change(cloud_world):
+    world = cloud_world
+    spec = pr_spec(world, "user-env", 1, "change.py")
+    path = Path(spec["worktree"])
+    before = world.env.read_bytes()
+    (path / ".env").write_bytes(before)
+    verification.prepare(world.repo, path, world.settings)
+    assert not (path / ".wiki/verification.env.sha256").exists()
+    with world.env.open("a", encoding="utf-8") as file:
+        file.write("NEW_SETTING=changed\n")
+    with pytest.raises(ValueError, match="다른 .env"):
+        verification.prepare(world.repo, path, world.settings)
+    assert (path / ".env").read_bytes() == before
+
+
+def test_owned_gate_cancellation_reaps_descendants_and_preserves_unrelated_process(tmp_path):
+    script = tmp_path / "tree.py"
+    marker = tmp_path / "pid.txt"
+    script.write_text("import subprocess, sys, time\n"
+                      "from pathlib import Path\n"
+                      "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+                      "Path(sys.argv[1]).write_text(str(p.pid), encoding='utf-8')\n"
+                      "time.sleep(60)\n", encoding="utf-8")
+    halt = threading.Event()
+    unrelated = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                                 **process.background_options())
+    result = []
+    command = subprocess.list2cmdline([sys.executable, str(script), str(marker)])
+    worker = threading.Thread(target=lambda: result.append(specs.gate(command, tmp_path, halt)))
+    worker.start()
+    try:
+        waited(marker.exists)
+        halt.set()
+        worker.join(10)
+        assert not worker.is_alive() and result[0][0] is None and unrelated.poll() is None
+        if os.name == "nt":
+            done = subprocess.run(["tasklist", "/FI", "PID eq " + marker.read_text(encoding="utf-8"), "/FO", "CSV"],
+                                  capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                  **process.background_options())
+            assert '"' + marker.read_text(encoding="utf-8") + '"' not in done.stdout
+    finally:
+        halt.set()
+        worker.join(10)
+        unrelated.terminate()
+        unrelated.wait(timeout=5)
+
+
+def test_automatic_browser_collects_actual_save_reload_api_observations(cloud_world):
+    pytest.importorskip("playwright.sync_api")
+    world = cloud_world
+    script = Path(__file__).with_name("fixtures") / "browser_save.py"
+    (world.repo / "verify_browser.py").write_bytes(script.read_bytes())
+    with socket.socket() as reserved:
+        reserved.bind(("127.0.0.1", 0))
+        port = reserved.getsockname()[1]
+    manifest = {"version": 1, "contracts": ["api-contract.md"], "flows": [
+        {"id": "save-reload", "title": "Save and reload", "kind": "browser", "command": "python verify_browser.py",
+         "paths": ["*.py"], "assertions": [{"id": "persisted", "expected": "Saved value survives reload"}]}]}
+    (world.repo / verification.MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
+    commit(world.repo, "browser-contract.txt")
+    git(world.repo, "push", "origin", "main")
+    with world.env.open("a", encoding="utf-8") as file:
+        file.write(f"BROWSER_PORT={port}\n")
+    settings = {**world.settings, "allowed_origins": [f"http://127.0.0.1:{port}"],
+                "manifest_digest": verification.manifest(world.repo)[1]}
+    (world.repo / verification.LOCAL).write_text(json.dumps(settings), encoding="utf-8")
+    spec = pr_spec(world, "automatic-browser", 1, "change.py", review={"flows": ["save-reload"]})
+    done = looped(spec["id"])
+    assert done["state"] == "머지 가능", done.get("stopped")
+    evidence = done["local_verification"]["flows"][0]["evidence"]
+    assert evidence["observations"][0]["actual"] == "saved-fixture" and evidence["actions"]
+    assert any(row["method"] == "POST" and row["status"] == 201 for row in evidence["requests"])
+    assert sum(row["method"] == "GET" and row["status"] == 200 for row in evidence["requests"]) >= 2
+    assert Reviewer.made[0].tools == loop.REVIEW_TOOLS
 
 
 def test_cloud_runs_real_api_and_independent_review_without_a_local_writer(cloud_world):

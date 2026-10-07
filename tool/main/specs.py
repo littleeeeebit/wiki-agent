@@ -34,6 +34,7 @@ from pydantic import BaseModel
 import debt
 import translate
 from common import errorlog, worktree_home
+from common import process
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
@@ -997,7 +998,8 @@ def kill(proc: subprocess.Popen) -> None:
         os.killpg(proc.pid, signal.SIGKILL)
 
 
-def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None) -> tuple[int | None, str, str]:
+def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
+         *, timeout: float | None = None, owned_jobs: list | None = None) -> tuple[int | None, str, str]:
     """Run the gate in `cwd`, a shell string as the adapter wrote it:
     `(exit code, output, why it was cut)`. A stop of the turn stops it too,
     and a stop that came while a fast gate ran still cuts it: the stop is
@@ -1005,22 +1007,36 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None) ->
 
     proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
-                            start_new_session=os.name != "nt")
-    deadline, cut = time.monotonic() + GATE_SECONDS, ""
-    while True:
-        try:
-            out, _ = proc.communicate(timeout=1)
-            cut = cut or ("사람이 멈춤" if halt.is_set() else "")
-            return (None if cut else proc.returncode), out, cut
-        except subprocess.TimeoutExpired:
-            if cut:
-                continue
-            if halt.is_set():
-                cut = "사람이 멈춤"
-            elif time.monotonic() > deadline:
-                cut = f"{GATE_SECONDS // 60}분 안에 끝나지 않았다"
-            if cut:
-                kill(proc)
+                            start_new_session=os.name != "nt",
+                            **{**process.background_options(), "creationflags":
+                               process.background_options().get("creationflags", 0) | process.SUSPENDED})
+    job = process.contained(proc)
+    try:
+        if os.name == "nt" and not job:
+            proc.kill()
+            proc.communicate()
+            raise OSError("Cannot own the verification process tree")
+        process.resumed(proc)
+        deadline, cut = time.monotonic() + (GATE_SECONDS if timeout is None else timeout), ""
+        while True:
+            try:
+                out, _ = proc.communicate(timeout=1)
+                cut = cut or ("사람이 멈춤" if halt.is_set() else "")
+                return (None if cut else proc.returncode), out, cut
+            except subprocess.TimeoutExpired:
+                if cut:
+                    continue
+                if halt.is_set():
+                    cut = "사람이 멈춤"
+                elif time.monotonic() > deadline:
+                    cut = "검증 실행 시간 제한을 넘었다"
+                if cut:
+                    process.killed(job) if job else kill(proc)
+    finally:
+        if job and owned_jobs is not None:
+            owned_jobs.append(job)
+        else:
+            process.terminated(job)
 
 
 def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None, env: dict | None = None) -> dict:

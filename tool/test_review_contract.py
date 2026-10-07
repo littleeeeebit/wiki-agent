@@ -97,13 +97,16 @@ def test_local_api_receipts_are_not_substituted_by_offline_gate_and_stale_receip
     assert contract.ready(world.repo, path, done, result)
 
 
-def test_refactor_round_and_final_gate_rerun_frozen_checks_and_protect_tests(world, monkeypatch):
+@pytest.mark.parametrize("verification_world", ["world", "cloud_world"])
+def test_refactor_round_and_final_gate_rerun_frozen_checks_and_protect_tests(request, verification_world, monkeypatch):
+    world = request.getfixturevalue(verification_world)
     commit(world.repo, "test_behavior.py", "print('preserved')\n")
     git(world.repo, "push", "origin", "main")
     origin = refactor.spec_for(SimpleNamespace(repo=world.repo, hub=False), {"id": "r1", "role": {}},
                               "refactor-origin", "Preserve behavior", "main", git(world.repo, "rev-parse", "HEAD"),
                               world.repo)
-    spec = pr_spec(world, "refactor-step", 1, "a.py", **{k: origin[k] for k in ("start_head", "refactor")})
+    spec = pr_spec(world, "refactor-step", 1, "a.py", **{k: origin[k] for k in ("start_head", "refactor")},
+                   **({"review": {"flows": ["health"]}} if verification_world == "cloud_world" else {}))
     assert "start" not in spec
     folder = world.tmp / "frozen/project/refactor-step"
     folder.mkdir(parents=True)
@@ -120,6 +123,8 @@ def test_refactor_round_and_final_gate_rerun_frozen_checks_and_protect_tests(wor
     assert done["rounds"][0]["review_contract"]["preservation"]["baseline"] == origin["start_head"]
     assert "preserve" in done["gate"]["cmd"]
     assert "preserve" in done["validation"]["final"]["command"]
+    if verification_world == "cloud_world":
+        assert done["local_verification"]["flows"][0]["evidence"]["requests"][0]["status"] == 200
     for invalid in (None, "", "HEAD", "f" * 40):
         assert selected(world, {**done, "start_head": invalid})["problems"]
     assert selected(world, {k: v for k, v in done.items() if k != "start_head"})["problems"]

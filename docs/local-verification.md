@@ -4,7 +4,10 @@ Claude Code Cloud implements from the repository. A separate local reviewer
 checks the resulting commit with this machine's test API, dataset and browser
 configuration. Cloud does not receive `.env`, credentials or private datasets.
 The existing `plan`, `code` and `mixed` profiles still determine review criteria.
-Locally implemented tasks keep their existing review and final gate.
+Locally implemented tasks keep their existing review and final gate. An authorized
+review loop also collects enforced registered flows for local and external tasks.
+Their reviewers stay read-only. Failure returns to the existing local work session
+or external correction path; shadow advice never selects executable flows.
 
 The Cloud review cell also executes verification commands and creates test
 scripts, fixtures and receipts. Codex uses `workspace-write` with
@@ -102,6 +105,82 @@ when those external inputs change; the program cannot observe an external
 API deployment or dataset replacement by itself. Source `.env` changes,
 local execution settings and dependency locks also invalidate evidence.
 
+## Registered local and Windows native collection
+
+Local and external tasks use the same approved manifest and local settings.
+After the existing offline and frozen-preservation checks, the authorized loop
+collects only its enforced flow IDs. A plan-only artifact cannot launch the future
+application. The existing final gate still runs after independent review.
+
+Execution binds receipts to the specification, head/base, selected contract,
+manifest, commands and environment. Setup and flow attempts are persisted before
+dispatch. `WIKI_VERIFICATION_ARTIFACTS` points to an attempt directory under the
+system temporary directory, outside the source checkout. Keep logs and fixture
+records there. Cleanup has a 30-second bound; its failure holds readiness.
+Windows setup processes stay in owned kill-on-close jobs until cleanup finishes.
+Cancellation kills owned process trees. Restart never reuses unfinished proof or
+kills a process by a stale recorded PID.
+
+Native flows require manifest version `2`, local settings version `2` and the
+fixed `wiki-agent-native` command. Version `1` remains valid for API, browser and
+command flows, and rejects native fields. The first native runtime is Windows
+Win32 with direct child control IDs. It launches a disposable app on an
+attempt-owned Win32 desktop; it never switches the user's input desktop or
+attaches to an existing app. Unsupported hosts, selectors and build identities
+stay preparation failures. This does not make Orca a runtime dependency.
+
+Example native flow, inside the version-2 manifest:
+
+```json
+{
+  "id": "native-save",
+  "title": "Native save event",
+  "kind": "desktop",
+  "command": "wiki-agent-native",
+  "paths": ["native_app.py", "verification.json"],
+  "assertions": [{"id": "saved", "expected": "Saved"}],
+  "native": {
+    "application": "disposable-win32-fixture",
+    "window_class": "WikiVerificationFixture",
+    "arguments": ["native_app.py"],
+    "build_inputs": ["native_app.py"],
+    "actions": [{"assertion": "saved", "action": "click", "control_id": 1,
+                 "observe_id": 2, "expected": "Saved", "event": "WM_COMMAND/save"}]
+  }
+}
+```
+
+The Review tab shows setup for ordinary tasks once collection is pending. Inspect
+the complete native target/actions and approve the application, executable path,
+SHA-256 and disposable profile. Its saved `native` object also contains
+`version: 1`, `host: "windows-win32"`, `ownership: "launch-disposable"` and
+`desktop: "attempt-owned"`. These are closed values, not an agent-selected driver.
+The executable must be a reviewed build input inside the checkout, or an approved
+`python.exe`/`pythonw.exe` running a reviewed `.py` entry point. Unattested external
+compiled builds are unsupported. Git's checkout filters map measured input bytes
+to reviewed blobs; receipts retain both actual-byte hashes and blob IDs.
+
+The app must honor `WIKI_NATIVE_PROFILE` for disposable state and write required
+event observations to `WIKI_NATIVE_EVENTS`. Each event is a JSON line containing
+the actual `pid`, top-level `hwnd`, `control_id` and registered `event` name.
+The runner accepts only registered `click` and `read_text` actions. Before each
+input it measures process/executable, window class, selector and active/focused
+input-queue identity on its owned desktop. Missing required events fail their
+assertions. Native receipts contain OS/runtime, DPI, geometry, profile/revisions,
+measured build inputs, actions and hashed artifact locators. Changed artifacts
+invalidate readiness and merge eligibility.
+
+This is native control/event evidence on an isolated desktop, not physical
+keyboard, compositor screenshot, installed wiki-agent hook or real-account
+acceptance. The sample fixtures are disposable verification inputs. A project
+must register its own app, actions, build inputs and meaningful assertions.
+Representative performance measurement remains a separate unresolved obligation
+until registered coverage exists. Ordinary green assertions cannot satisfy it.
+
+Implementation references: [Windows job ownership](https://learn.microsoft.com/en-us/windows/win32/procthread/job-objects),
+[desktop connection](https://learn.microsoft.com/en-us/windows/win32/winstation/thread-connection-to-a-desktop),
+and [native button events](https://learn.microsoft.com/en-us/windows/win32/controls/bm-click).
+
 ## Cloud handoff
 
 The PR body has exactly one `cloud-handoff` JSON block. Cloud updates its
@@ -181,7 +260,7 @@ If API access, authentication, the dedicated dataset or browser is missing,
 print the same identity fields (`head`, `flow`, `environment_id`, `test_scope`)
 and `"blocked": {"prerequisite": "dataset", "reason": "Test dataset is not prepared"}`
 instead of observations. Allowed prerequisites are `api`, `dataset`,
-`authentication`, `browser` and `setup`. This records preparation pending
+`authentication`, `browser`, `setup` and `native`. This records preparation pending
 without counting a functional failure or cloud repair cycle. Scripts must
 classify these conditions explicitly; a malformed receipt remains a failed
 verification script.
@@ -208,9 +287,11 @@ summaries; the app retains detailed local receipts and logs.
 | All required flows, review and final gate pass | Publish the exact commit's status and summary; enable merge |
 
 Failed or stale runs cannot manufacture a pass. Retrying the same failing
-commit does not consume a cloud repair cycle. Local verification never
-dispatches a local implementation session, commits fixes or pushes changes
-back to cloud. A user starts and resumes it explicitly.
+commit does not consume a cloud repair cycle. Cloud verification never dispatches
+a local implementation session, commits fixes or pushes changes back to cloud.
+Ordinary failures use their existing implementation owner. A user authorizes the
+review loop explicitly. Unchanged failures and same-identity fail-then-pass
+observations require correction or recorded investigation before completion.
 
 The Review tab owns the reviewer model and effort, displays the independent
 reviewer's live progress, and offers the next review round after a correction
@@ -243,7 +324,8 @@ GitHub's required commit status blocks new heads even before the local app
 has seen them. Protection applies repository-wide, so the app publishes the
 same status after a local implementation's existing review and final gate;
 it does not add cloud runtime checks or a protection-setup prerequisite to
-ordinary local/other-environment review. Saving local execution settings
+ordinary local/other-environment review. Required registered local flows still
+need current receipts. Saving local execution settings
 enables status publication on ordinary tasks, including unprotected branches.
 GitHub still applies any configured protections when the person requests merge.
 

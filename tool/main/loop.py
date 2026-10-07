@@ -1107,6 +1107,11 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
             return resolve_merge(loop, spec, repo, path, preview, base)
         deferred = spec.get("deferred") or []
         kept_p2 = pick(loop, chat, deferred)
+        if not verification.cloud(spec) and (spec.get("review_contract") or {}).get("flows"):
+            fresh = specs.load(loop.repo, loop.sid)
+            problem = review_contract.merge_problem(repo, path, fresh, head, specs.current_merge_base(path, base, head))
+            if problem or pr_head(repo, spec["pr"]["number"]) != (head, base):
+                return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem or "검증 뒤 PR 커밋·base 가 바뀌었다")
         if verification.cloud(spec):
             fresh = specs.load(loop.repo, loop.sid)
             problem = verification.proven(repo, path, fresh, head, specs.current_merge_base(path, base, head))
@@ -1301,6 +1306,58 @@ def step(loop: Loop) -> bool:
     contract = review_contract.store(repo, path, spec, review_contract.compose(contract, observation))
     if contract is None:
         return True
+    if not verification.cloud(spec) and contract["flows"] and not contract["problems"]:
+        if review_contract.ready(repo, path, spec, contract):
+            release = wait_hold(loop, path)
+            if release is None:
+                return False
+            try:
+                saved = spec.get("local_verification") or {}
+                if saved.get("needs_research") and not saved.get("research_note"):
+                    raise ValueError("재분석 원인·근거·다음 실험을 적고 로컬 검증을 재개한다")
+                if saved.get("state") == "failed" and saved.get("head") == head \
+                        and saved.get("spec_signature") == review_contract.signature(spec) \
+                        and saved.get("execution_environment_digest") == verification.failure_environment(repo, path, spec) \
+                        and not saved.get("research_note"):
+                    verification.keep(spec, needs_research=True)
+                    raise ValueError("같은 커밋·환경에서 이미 실패했다 — 수정 또는 원인 확인 후 재개한다")
+                spec = verification.pending(repo, spec, head, "등록된 실행 증거를 수집한다", "running")
+                spec = verification.execute(repo, spec, path, head, base_oid, loop.halt,
+                                            flow_ids=contract["enforced"]["flows"],
+                                            enforced_digest=contract["enforced_digest"])
+            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                verification.pending(repo, spec, head, str(exc))
+                return stop(loop, loop.repo, loop.sid, Why.PREPARATION, str(exc))
+            finally:
+                release()
+            if loop.halt.is_set():
+                return False
+            if pr_head(repo, spec["pr"]["number"]) != (head, base) \
+                    or review_contract.signature(specs.load(loop.repo, loop.sid) or {}) != contract["spec_signature"]:
+                return True
+            if problem := verification.checkout_proven(path, head):
+                return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem)
+            result = spec["local_verification"]
+            if result["state"] == "failed":
+                reason = result["reason"] + "\n" + "\n".join(
+                    json.dumps(r, ensure_ascii=False) for r in result.get("flows", []) if not r.get("ok"))
+                if spec.get("implementation_environment") == "external":
+                    return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, reason)
+                fingerprint = verification.sha({"head": head, "environment": result.get("execution_environment_digest"),
+                                                "contract": contract["enforced_digest"]})
+                repair_heads = result.get("repair_heads", [])
+                if result.get("repair") == fingerprint or repair_heads:
+                    return stop(loop, loop.repo, loop.sid, Why.GATE, reason)
+                verification.keep(spec, repair=fingerprint, repair_heads=[*repair_heads, head])
+                spec = change(loop, f"고치는 중 R{n}")
+                if spec is None or told(loop, spec, path, "Registered local verification failed:\n" + reason
+                                         + "\nFix the observed behavior, commit and push the task branch.") is None:
+                    return False
+                if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == head:
+                    return stop(loop, loop.repo, loop.sid, Why.GATE, "실행 검증 실패, 고친 커밋이 없다 — " + reason)
+                return True
+            if result["state"] != "runtime_passed":
+                return stop(loop, loop.repo, loop.sid, Why.PREPARATION, result["reason"])
     problem = review_contract.ready(repo, path, spec, contract)
     if problem:
         return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem)
@@ -1548,7 +1605,7 @@ def recover() -> list[tuple[str, str]]:
                 if (spec.get("validation") or {}).get("phase") == "final_running":
                     specs.validate(repo.name, spec["id"], phase=None)
                 if LOOPING.fullmatch(spec["state"]):
-                    if verification.cloud(spec) and (spec.get("local_verification") or {}).get("state") == "running":
+                    if (spec.get("local_verification") or {}).get("state") == "running":
                         verification.keep(spec, state="interrupted", reason="서버 재시작 — 자동 재개 대기")
                     stop(None, repo.name, spec["id"], Why.RESTART)
                     resume.append((repo.name, spec["id"]))
@@ -1871,15 +1928,16 @@ def poll(halt: threading.Event | None = None) -> None:
                     except Exception as exc:
                         errorlog.record("review-reattach", exc, repo=repo.name, spec=spec["id"])
                     continue
-                if (verification.cloud(spec) and spec["state"] == "머지 가능"
-                        and (spec.get("local_verification") or {}).get("state") == "verified"):
+                if (spec["state"] == "머지 가능" and (verification.cloud(spec) or (spec.get("review_contract") or {}).get("flows")) \
+                        and (spec.get("local_verification") or {}).get("state") in ("runtime_passed", "verified")):
                     allowed = specs.approved(spec)
                     if allowed:
                         tree = Path(spec.get("worktree") or path)
                         try:
                             head, base = pr_head(path, spec["pr"]["number"])
-                            problem = verification.merge_proven(path, tree, spec, head,
-                                                          specs.current_merge_base(tree, base, head))
+                            base_oid = specs.current_merge_base(tree, base, head)
+                            problem = verification.merge_proven(path, tree, spec, head, base_oid) if verification.cloud(spec) \
+                                else review_contract.merge_problem(path, tree, spec, head, base_oid)
                             if problem:
                                 verification.pending(path, spec, head, problem, "waiting_review")
                         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
@@ -2116,8 +2174,8 @@ def proceed(repo: Path, spec: dict, note: str) -> dict:
         raise HTTPException(409, "멈춘 이유를 모른다") from exc
     if why is Why.WRONG_BASE:
         raise HTTPException(409, "이어 가지 않는다 — [받아들임] 이나 [다시 PR] 로 끝낸다")
-    if verification.cloud(spec):
-        record = spec.get("local_verification") or {}
+    if spec.get("local_verification"):
+        record = spec["local_verification"]
         if record.get("needs_research") or record.get("state") in ("reanalysis", "unstable"):
             if not note:
                 raise HTTPException(400, "재분석 원인·근거·다음 실험을 적어야 재개한다")

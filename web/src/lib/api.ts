@@ -681,7 +681,7 @@ export const setLoopSettings = (body: LoopSettings) =>
 export type LocalVerification = {
   version: number
   state: 'waiting_environment' | 'waiting_review' | 'running' | 'runtime_passed' | 'verified'
-    | 'waiting_cloud' | 'reanalysis' | 'unstable' | 'interrupted'
+    | 'waiting_cloud' | 'reanalysis' | 'unstable' | 'interrupted' | 'failed'
   head: string
   reason: string
   document_only?: boolean
@@ -696,7 +696,7 @@ export type VerificationConfig = {
   repo: string
   settings: Record<string, unknown>
   manifest: { version: number; contracts: string[]; flows: { id: string; title: string; command: string; kind: string;
-    environments: string[] }[] } | null
+    environments: string[]; native?: unknown }[] } | null
   manifest_digest: string
   problem: string
 }

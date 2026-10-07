@@ -42,7 +42,7 @@ requires its own evaluated policy and explicit rollout decision.
 | 1 | [Required obligations](1-required-obligations.md) | Deterministic v1 criteria/evidence selection from explicit spec, diff scope, refactor origin and registered flows | Done — bounded baseline implemented; 14 contract checks passed on 2026-10-07 |
 | 2 | [Jev shadow recommendations](2-jev-shadow.md) | Grounded context, closed facet/flow recommendations, replayable shadow evaluation | In progress — scoped context, registered-flow advice, persisted preparation/stale observations and exact-request replay implemented; human-reviewed labels and live production-prompt validation remain |
 | 3 | [Composition and provenance](3-composition-provenance.md) | Enforced/candidate sets and inspectable selection grounds for every item | Done — v2 compositions, scoped grounds, rejection dispositions, snapshot checks and legacy diagnostics implemented; integration and focused regression checks passed |
-| 4 | [Evidence and handoff](4-evidence-handoff.md) | General local live collection, native collection, identity checks and existing-loop handoff | In progress — existing receipt validation/handoff work; general local and desktop collectors remain |
+| 4 | [Evidence and handoff](4-evidence-handoff.md) | General local live collection, native collection, identity checks and existing-loop handoff | In progress — local/API/browser and Windows Win32 collection implemented; actual fixtures and full regression suite passed; completion held by five pre-existing repository ratchet violations |
 
 Stage 1 completion means the documented deterministic baseline, not perfect
 semantic inference from arbitrary prose. Unregistered runtime requirements remain
