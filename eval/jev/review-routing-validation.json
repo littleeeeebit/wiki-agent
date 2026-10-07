@@ -1,0 +1,1995 @@
+{
+  "schema": "review-routing-dataset/1",
+  "id": "review-routing-validation",
+  "version": 1,
+  "created": "2026-10-07",
+  "labels": {
+    "author": "Codex",
+    "reviewed_by": null,
+    "status": "synthetic, model-authored; not a production or human-validated benchmark"
+  },
+  "split_policy": "32 fresh cases in 16 new scenario groups, written after prompt review-routing-3 was frozen. Original review-routing.json is development/regression data after v2 heldout error inspection. No prompt/threshold changes from this validation's responses.",
+  "cases": [
+    {
+      "id": "local-unicode-complete",
+      "group": "local-unicode",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/normalize.py"
+          ],
+          "requirements": "Add Unicode NFC normalization to a pure local string function. Acceptance is specified local outputs for combining marks, with no remote service or UI.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Add Unicode NFC normalization to a pure local string function. Acceptance is specified local outputs for combining marks, with no remote service or UI."
+    },
+    {
+      "id": "local-unicode-incomplete",
+      "group": "local-unicode",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/normalize.py"
+          ],
+          "requirements": "Add Unicode NFC normalization to a pure local string function. Acceptance is specified local outputs for combining marks, with no remote service or UI.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "previous-candidate",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Add Unicode NFC normalization to a pure local string function. Acceptance is specified local outputs for combining marks, with no remote service or UI."
+    },
+    {
+      "id": "provider-contract-local-complete",
+      "group": "provider-contract-local",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/handler.py"
+          ],
+          "requirements": "Change HTTP response fields in a locally runnable provider. Acceptance is a frozen consumer contract verified against that local provider in CI; no deployed environment, token or tenant behavior is claimed.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Change HTTP response fields in a locally runnable provider. Acceptance is a frozen consumer contract verified against that local provider in CI; no deployed environment, token or tenant behavior is claimed."
+    },
+    {
+      "id": "provider-contract-local-incomplete",
+      "group": "provider-contract-local",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/handler.py"
+          ],
+          "requirements": "Change HTTP response fields in a locally runnable provider. Acceptance is a frozen consumer contract verified against that local provider in CI; no deployed environment, token or tenant behavior is claimed.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "previous-candidate",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Change HTTP response fields in a locally runnable provider. Acceptance is a frozen consumer contract verified against that local provider in CI; no deployed environment, token or tenant behavior is claimed."
+    },
+    {
+      "id": "refund-sandbox-complete",
+      "group": "refund-sandbox",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/refund.py"
+          ],
+          "requirements": "Fix refund idempotency using the payment provider's dedicated sandbox account. Acceptance requires two actual sandbox API calls producing one refund. Local response stubs cannot establish sandbox behavior.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "api",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "api",
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Fix refund idempotency using the payment provider's dedicated sandbox account. Acceptance requires two actual sandbox API calls producing one refund. Local response stubs cannot establish sandbox behavior."
+    },
+    {
+      "id": "refund-sandbox-incomplete",
+      "group": "refund-sandbox",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/refund.py"
+          ],
+          "requirements": "Fix refund idempotency using the payment provider's dedicated sandbox account. Acceptance requires two actual sandbox API calls producing one refund. Local response stubs cannot establish sandbox behavior.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "api",
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Fix refund idempotency using the payment provider's dedicated sandbox account. Acceptance requires two actual sandbox API calls producing one refund. Local response stubs cannot establish sandbox behavior."
+    },
+    {
+      "id": "aria-dialog-complete",
+      "group": "aria-dialog",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "web/dialog.tsx"
+          ],
+          "requirements": "Correct accessible dialog focus trapping. Acceptance is actual Tab and Escape interactions in a fixture-backed local browser. No native host or remote service is involved.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "browser",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "browser",
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Correct accessible dialog focus trapping. Acceptance is actual Tab and Escape interactions in a fixture-backed local browser. No native host or remote service is involved."
+    },
+    {
+      "id": "aria-dialog-incomplete",
+      "group": "aria-dialog",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "web/dialog.tsx"
+          ],
+          "requirements": "Correct accessible dialog focus trapping. Acceptance is actual Tab and Escape interactions in a fixture-backed local browser. No native host or remote service is involved.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "browser",
+            "head": "previous-candidate",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "browser",
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Correct accessible dialog focus trapping. Acceptance is actual Tab and Escape interactions in a fixture-backed local browser. No native host or remote service is involved."
+    },
+    {
+      "id": "native-deep-link-complete",
+      "group": "native-deep-link",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/deeplink.rs"
+          ],
+          "requirements": "Fix opening a custom URI in the installed Windows app from a fresh native process. Acceptance concerns native registration and host delivery, which browser fixtures cannot show.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "desktop",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "desktop",
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Fix opening a custom URI in the installed Windows app from a fresh native process. Acceptance concerns native registration and host delivery, which browser fixtures cannot show."
+    },
+    {
+      "id": "native-deep-link-incomplete",
+      "group": "native-deep-link",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/deeplink.rs"
+          ],
+          "requirements": "Fix opening a custom URI in the installed Windows app from a fresh native process. Acceptance concerns native registration and host delivery, which browser fixtures cannot show.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "desktop",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": false
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "desktop",
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Fix opening a custom URI in the installed Windows app from a fresh native process. Acceptance concerns native registration and host delivery, which browser fixtures cannot show."
+    },
+    {
+      "id": "upload-browser-service-complete",
+      "group": "upload-browser-service",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "web/upload.tsx"
+          ],
+          "requirements": "Implement upload, progress and reload against a dedicated deployed file API. Acceptance requires observed browser actions and the actual test service confirming the uploaded file persists.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "api",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "browser",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "api",
+          "browser",
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Implement upload, progress and reload against a dedicated deployed file API. Acceptance requires observed browser actions and the actual test service confirming the uploaded file persists."
+    },
+    {
+      "id": "upload-browser-service-incomplete",
+      "group": "upload-browser-service",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "web/upload.tsx"
+          ],
+          "requirements": "Implement upload, progress and reload against a dedicated deployed file API. Acceptance requires observed browser actions and the actual test service confirming the uploaded file persists.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "api",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "browser",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 4,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "api",
+          "browser",
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Implement upload, progress and reload against a dedicated deployed file API. Acceptance requires observed browser actions and the actual test service confirming the uploaded file persists."
+    },
+    {
+      "id": "refactor-local-sorting-complete",
+      "group": "refactor-local-sorting",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "refactor",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/sort.py"
+          ],
+          "requirements": "Restructure local sorting into a smaller helper without changing stable ordering, errors or side effects. Frozen baseline/candidate witnesses must match; no service or UI exists.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "differential",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "refactor"
+        ],
+        "evidence": [
+          "differential",
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Restructure local sorting into a smaller helper without changing stable ordering, errors or side effects. Frozen baseline/candidate witnesses must match; no service or UI exists."
+    },
+    {
+      "id": "refactor-local-sorting-incomplete",
+      "group": "refactor-local-sorting",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "refactor",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/sort.py"
+          ],
+          "requirements": "Restructure local sorting into a smaller helper without changing stable ordering, errors or side effects. Frozen baseline/candidate witnesses must match; no service or UI exists.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "differential",
+            "head": "previous-candidate",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "refactor"
+        ],
+        "evidence": [
+          "differential",
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Restructure local sorting into a smaller helper without changing stable ordering, errors or side effects. Frozen baseline/candidate witnesses must match; no service or UI exists."
+    },
+    {
+      "id": "refactor-web-shortcuts-complete",
+      "group": "refactor-web-shortcuts",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "refactor",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "web/shortcuts.tsx"
+          ],
+          "requirements": "Restructure keyboard shortcut dispatch without changing focus, ordering or key behavior. Compare frozen baseline/candidate observations through actual local browser interactions. No external service.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "browser",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "differential",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "refactor"
+        ],
+        "evidence": [
+          "browser",
+          "differential",
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Restructure keyboard shortcut dispatch without changing focus, ordering or key behavior. Compare frozen baseline/candidate observations through actual local browser interactions. No external service."
+    },
+    {
+      "id": "refactor-web-shortcuts-incomplete",
+      "group": "refactor-web-shortcuts",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "refactor",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "web/shortcuts.tsx"
+          ],
+          "requirements": "Restructure keyboard shortcut dispatch without changing focus, ordering or key behavior. Compare frozen baseline/candidate observations through actual local browser interactions. No external service.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "browser",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "differential",
+            "head": "new-candidate-4",
+            "base": "wrong-baseline",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "refactor"
+        ],
+        "evidence": [
+          "browser",
+          "differential",
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Restructure keyboard shortcut dispatch without changing focus, ordering or key behavior. Compare frozen baseline/candidate observations through actual local browser interactions. No external service."
+    },
+    {
+      "id": "refactor-cancellation-host-complete",
+      "group": "refactor-cancellation-host",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "refactor",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/cancel.py"
+          ],
+          "requirements": "Restructure Windows child cancellation without altering host event delivery or termination observations. Compare frozen baseline/candidate witnesses in fresh actual native sessions; process stubs are insufficient.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "desktop",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "differential",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "refactor"
+        ],
+        "evidence": [
+          "desktop",
+          "differential",
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Restructure Windows child cancellation without altering host event delivery or termination observations. Compare frozen baseline/candidate witnesses in fresh actual native sessions; process stubs are insufficient."
+    },
+    {
+      "id": "refactor-cancellation-host-incomplete",
+      "group": "refactor-cancellation-host",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "refactor",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/cancel.py"
+          ],
+          "requirements": "Restructure Windows child cancellation without altering host event delivery or termination observations. Compare frozen baseline/candidate witnesses in fresh actual native sessions; process stubs are insufficient.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "desktop",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "differential",
+            "head": "previous-candidate",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "refactor"
+        ],
+        "evidence": [
+          "desktop",
+          "differential",
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Restructure Windows child cancellation without altering host event delivery or termination observations. Compare frozen baseline/candidate witnesses in fresh actual native sessions; process stubs are insufficient."
+    },
+    {
+      "id": "refactor-remote-pagination-complete",
+      "group": "refactor-remote-pagination",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "refactor",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/pages.py"
+          ],
+          "requirements": "Restructure pagination for the deployed test service while preserving page ordering, retries and observable requests. Compare frozen baseline/candidate behavior using the actual dedicated tenant, not mocks.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "api",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "differential",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "refactor"
+        ],
+        "evidence": [
+          "api",
+          "differential",
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Restructure pagination for the deployed test service while preserving page ordering, retries and observable requests. Compare frozen baseline/candidate behavior using the actual dedicated tenant, not mocks."
+    },
+    {
+      "id": "refactor-remote-pagination-incomplete",
+      "group": "refactor-remote-pagination",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "refactor",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/pages.py"
+          ],
+          "requirements": "Restructure pagination for the deployed test service while preserving page ordering, retries and observable requests. Compare frozen baseline/candidate behavior using the actual dedicated tenant, not mocks.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "api",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "differential",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "old-test-deployment",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "refactor"
+        ],
+        "evidence": [
+          "api",
+          "differential",
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Restructure pagination for the deployed test service while preserving page ordering, retries and observable requests. Compare frozen baseline/candidate behavior using the actual dedicated tenant, not mocks."
+    },
+    {
+      "id": "future-storage-plan-complete",
+      "group": "future-storage-plan",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "planner",
+          "requested_profile": "plan",
+          "artifact_root": "docs/plans/storage",
+          "changed_files": [
+            "docs/plans/storage/1-design.md"
+          ],
+          "requirements": "Write a future storage migration roadmap with acceptance, source support and rollback. There is no implementation change now. A future real API validation is a plan requirement, not an execution requirement of this PR.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "plan"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Write a future storage migration roadmap with acceptance, source support and rollback. There is no implementation change now. A future real API validation is a plan requirement, not an execution requirement of this PR."
+    },
+    {
+      "id": "future-storage-plan-incomplete",
+      "group": "future-storage-plan",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "planner",
+          "requested_profile": "plan",
+          "artifact_root": "docs/plans/storage",
+          "changed_files": [
+            "docs/plans/storage/1-design.md"
+          ],
+          "requirements": "Write a future storage migration roadmap with acceptance, source support and rollback. There is no implementation change now. A future real API validation is a plan requirement, not an execution requirement of this PR.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "previous-candidate",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "plan"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Write a future storage migration roadmap with acceptance, source support and rollback. There is no implementation change now. A future real API validation is a plan requirement, not an execution requirement of this PR."
+    },
+    {
+      "id": "plan-ci-mixed-complete",
+      "group": "plan-ci-mixed",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "planner",
+          "requested_profile": "plan",
+          "artifact_root": "docs/plans/checks",
+          "changed_files": [
+            "docs/plans/checks/1-design.md",
+            ".github/workflows/test.yml"
+          ],
+          "requirements": "Change a roadmap and implement its offline CI gate in YAML in the same PR. Check plan traceability and actual CI configuration semantics. No deployed API or UI requirement.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "plan"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Change a roadmap and implement its offline CI gate in YAML in the same PR. Check plan traceability and actual CI configuration semantics. No deployed API or UI requirement."
+    },
+    {
+      "id": "plan-ci-mixed-incomplete",
+      "group": "plan-ci-mixed",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "planner",
+          "requested_profile": "plan",
+          "artifact_root": "docs/plans/checks",
+          "changed_files": [
+            "docs/plans/checks/1-design.md",
+            ".github/workflows/test.yml"
+          ],
+          "requirements": "Change a roadmap and implement its offline CI gate in YAML in the same PR. Check plan traceability and actual CI configuration semantics. No deployed API or UI requirement.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "previous-candidate",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "plan"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Change a roadmap and implement its offline CI gate in YAML in the same PR. Check plan traceability and actual CI configuration semantics. No deployed API or UI requirement."
+    },
+    {
+      "id": "glossary-prose-complete",
+      "group": "glossary-prose",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "docs/glossary.md"
+          ],
+          "requirements": "Correct terms and links in an ordinary non-executable glossary. No roadmap, contract, rules, prompts or implementation changes. The legacy requested profile is code and remains a conservative floor.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "documentation"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Correct terms and links in an ordinary non-executable glossary. No roadmap, contract, rules, prompts or implementation changes. The legacy requested profile is code and remains a conservative floor."
+    },
+    {
+      "id": "glossary-prose-incomplete",
+      "group": "glossary-prose",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "docs/glossary.md"
+          ],
+          "requirements": "Correct terms and links in an ordinary non-executable glossary. No roadmap, contract, rules, prompts or implementation changes. The legacy requested profile is code and remains a conservative floor.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "previous-candidate",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "documentation"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Correct terms and links in an ordinary non-executable glossary. No roadmap, contract, rules, prompts or implementation changes. The legacy requested profile is code and remains a conservative floor."
+    },
+    {
+      "id": "inferred-preservation-complete",
+      "group": "inferred-preservation",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/serialize.py"
+          ],
+          "requirements": "Move pure serialization into a separate module while preserving public serialized bytes, error types and side effects exactly. Compare frozen baseline and candidate observations. The UI created an ordinary implementation task, but its contract explicitly preserves behavior.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "differential",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "refactor"
+        ],
+        "evidence": [
+          "differential",
+          "offline"
+        ],
+        "next": "review"
+      },
+      "rationale": "Move pure serialization into a separate module while preserving public serialized bytes, error types and side effects exactly. Compare frozen baseline and candidate observations. The UI created an ordinary implementation task, but its contract explicitly preserves behavior."
+    },
+    {
+      "id": "inferred-preservation-incomplete",
+      "group": "inferred-preservation",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/serialize.py"
+          ],
+          "requirements": "Move pure serialization into a separate module while preserving public serialized bytes, error types and side effects exactly. Compare frozen baseline and candidate observations. The UI created an ordinary implementation task, but its contract explicitly preserves behavior.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "differential",
+            "head": "previous-candidate",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code",
+          "refactor"
+        ],
+        "evidence": [
+          "differential",
+          "offline"
+        ],
+        "next": "wait_evidence"
+      },
+      "rationale": "Move pure serialization into a separate module while preserving public serialized bytes, error types and side effects exactly. Compare frozen baseline and candidate observations. The UI created an ordinary implementation task, but its contract explicitly preserves behavior."
+    },
+    {
+      "id": "unknown-device-boundary-complete",
+      "group": "unknown-device-boundary",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": null,
+          "requirements": "Repair the device issue. Acceptance and affected component are unknown: it could be a local parser, browser pairing UI or native driver. Clarify the boundary before claiming a check proves the outcome.",
+          "scope_complete": false
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "clarify"
+      },
+      "rationale": "Repair the device issue. Acceptance and affected component are unknown: it could be a local parser, browser pairing UI or native driver. Clarify the boundary before claiming a check proves the outcome."
+    },
+    {
+      "id": "unknown-device-boundary-incomplete",
+      "group": "unknown-device-boundary",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "implementation",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": null,
+          "requirements": "Repair the device issue. Acceptance and affected component are unknown: it could be a local parser, browser pairing UI or native driver. Clarify the boundary before claiming a check proves the outcome.",
+          "scope_complete": false
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline"
+          ],
+          "environment_available": true
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "previous-candidate",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "offline"
+        ],
+        "next": "clarify"
+      },
+      "rationale": "Repair the device issue. Acceptance and affected component are unknown: it could be a local parser, browser pairing UI or native driver. Clarify the boundary before claiming a check proves the outcome."
+    },
+    {
+      "id": "sandbox-unavailable-complete",
+      "group": "sandbox-unavailable",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "external",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/login.py"
+          ],
+          "requirements": "Cloud changed authentication against a dedicated deployed sandbox. Acceptance requires the actual tenant's login flow. The prepared test account is unavailable; local fixtures cannot replace this prerequisite.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline",
+            "api"
+          ],
+          "environment_available": false
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "api",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "api",
+          "offline"
+        ],
+        "next": "wait_environment"
+      },
+      "rationale": "Cloud changed authentication against a dedicated deployed sandbox. Acceptance requires the actual tenant's login flow. The prepared test account is unavailable; local fixtures cannot replace this prerequisite."
+    },
+    {
+      "id": "sandbox-unavailable-incomplete",
+      "group": "sandbox-unavailable",
+      "split": "heldout",
+      "state": {
+        "task": {
+          "origin": "external",
+          "requested_profile": "code",
+          "artifact_root": null,
+          "changed_files": [
+            "src/login.py"
+          ],
+          "requirements": "Cloud changed authentication against a dedicated deployed sandbox. Acceptance requires the actual tenant's login flow. The prepared test account is unavailable; local fixtures cannot replace this prerequisite.",
+          "scope_complete": true
+        },
+        "identity": {
+          "head": "new-candidate-4",
+          "base": "frozen-baseline-3",
+          "spec_revision": 5,
+          "environment": "isolated-test-4"
+        },
+        "registry": {
+          "mandatory_evidence": [
+            "offline",
+            "api"
+          ],
+          "environment_available": false
+        },
+        "history": {
+          "unresolved_same_invariant_heads": []
+        },
+        "receipts": [
+          {
+            "kind": "offline",
+            "head": "new-candidate-4",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          },
+          {
+            "kind": "api",
+            "head": "previous-candidate",
+            "base": "frozen-baseline-3",
+            "spec_revision": 5,
+            "environment": "isolated-test-4",
+            "passed": true,
+            "observed": true
+          }
+        ]
+      },
+      "expected": {
+        "criteria": [
+          "code"
+        ],
+        "evidence": [
+          "api",
+          "offline"
+        ],
+        "next": "wait_environment"
+      },
+      "rationale": "Cloud changed authentication against a dedicated deployed sandbox. Acceptance requires the actual tenant's login flow. The prepared test account is unavailable; local fixtures cannot replace this prerequisite."
+    }
+  ]
+}

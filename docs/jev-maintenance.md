@@ -150,6 +150,19 @@ The frozen datasets, gates, policy fit and the exact command order are in
 code is under `tool/eval/`. Read that stage's recorded choices before changing
 a threshold: accepted gate versions are owner decisions, not accidents.
 
+For review selection research, see
+[criteria, evidence and measured limits](research/review-routing-and-evidence.md).
+`python tool/eval/review_routing.py` evaluates synthetic cases offline;
+`--live` measures Jev recommendations without starting review or changing
+product settings. Its datasets and durable measurements are under `eval/jev/`.
+The experimental policy is provisional and is not a production rollout gate.
+The first production increment stores observations under each spec's
+`rounds[].review_contract.shadow`, beside the actual deterministic criteria and
+required flows. Global active mode still leaves this decision shadow-only;
+mode off disables observations without removing mandatory evidence checks.
+Its prompt is different from the synthetic experiment and has no fitted active
+policy. See the investigation's production section for collection limitations.
+
 ## Rollback
 
 Each switch is independent and touches no document, index generation or trace.

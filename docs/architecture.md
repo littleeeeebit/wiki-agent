@@ -268,3 +268,17 @@ Failures return to cloud instead of opening a local implementation turn.
 Configuration, receipts and the GitHub required status are described in
 [local verification](local-verification.md). The local implementation path
 keeps its existing review and final gate.
+
+The [review criteria and evidence investigation](research/review-routing-and-evidence.md)
+distinguishes these existing paths and records a synthetic Jev selection
+evaluation. `tool/main/review_contract.py` now composes the existing profile,
+explicit task facets and registered flows before each round. Refactoring reruns
+its frozen preservation check; changed obligations or receipts invalidate
+approval. Jev records optional additions in shadow mode only. Ordinary local
+runtime requirements currently validate existing receipts or wait for their
+execution owner; they do not grant Cloud reviewer tools or automatically start
+a new live executor. Native-host collection remains unimplemented.
+
+The [four-stage review-routing plan](plans/review-routing/0-overview.md)
+separates the completed deterministic baseline from contextual shadow advice,
+per-item selection grounds, and the still-required local/native collectors.
