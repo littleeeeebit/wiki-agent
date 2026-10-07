@@ -625,6 +625,8 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
             return keep(spec, state="interrupted", outcome="interrupted", reason="로컬 검증이 중단되었다")
         if settings["setup"]:
             code, out, cut = specs.gate(settings["setup"], path, halt, env=env, owned_jobs=owned_jobs)
+            if halt.is_set():
+                return keep(spec, state="interrupted", outcome="interrupted", reason="로컬 검증이 중단되었다")
             if code != 0:
                 raise ValueError("테스트 환경 준비 실패: " + redact(cut or out[-4000:], settings))
         setup_ok = True

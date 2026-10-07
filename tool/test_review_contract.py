@@ -626,7 +626,7 @@ def test_shadow_closure_is_grounded_unresolved_and_never_enforced(world, added, 
     assert_grounded(result)
 
 
-@pytest.mark.parametrize("kind", ["api", "browser", "command"])
+@pytest.mark.parametrize("kind", ["api", "browser", "command", "desktop"])
 def test_candidate_registered_flow_closure_and_assertion_origins(cloud_world, kind):
     world = cloud_world
     spec = pr_spec(world, "candidate-flow", 1, "change.py")
@@ -639,7 +639,8 @@ def test_candidate_registered_flow_closure_and_assertion_origins(cloud_world, ki
     observation["context_digest"] = verification.sha(observation["request"]["state_en"])
     observation["frozen_digest"] = verification.sha({"request": observation["request"], "result": observation["result"]})
     result = contract.compose(baseline, observation)
-    expected = ["api", "browser", "offline"] if kind == "browser" else ["api", "offline"] if kind == "api" else ["offline"]
+    expected = {"browser": ["api", "browser", "offline"], "api": ["api", "offline"],
+                "desktop": ["desktop", "offline"], "command": ["offline"]}[kind]
     assert result["candidate"]["flows"] == ["health"] and result["candidate"]["evidence"] == expected
     assert result["flows"] == [] and result["enforced"]["flows"] == [] and not result["problems"]
     row = next(r for r in result["items"] if r["id"] == "flow:health")

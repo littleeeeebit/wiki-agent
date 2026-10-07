@@ -38,7 +38,7 @@ def compose(contract: dict, observation: dict | None = None) -> dict:
                 raise ValueError("duplicate offered flow IDs")
             for flow in catalog.values():
                 assertions = [verification.Assertion.model_validate(a).id for a in flow["assertions"]]
-                if (flow["kind"] not in ("api", "browser", "command") or "command" in flow
+                if (flow["kind"] not in ("api", "browser", "command", "desktop") or "command" in flow
                         or not assertions or len(set(assertions)) != len(assertions)):
                     raise ValueError("invalid offered flow catalog")
             manifest = state["manifest"]

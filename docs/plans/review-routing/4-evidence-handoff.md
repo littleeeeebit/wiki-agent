@@ -216,7 +216,7 @@ reliability desktop matrix retains its own additional requirements.
 | 1 | Existing validation | Registered receipt checks and sanitized ordinary-loop handoff | Done — current focused suite |
 | 2 | Generalize execution | Shared selected-flow collection and owner-specific failure routing | Done — automatic isolated API/browser collection, selected-flow approval and local/external/Cloud ownership implemented |
 | 3 | Native collection | Versioned target contract, native runner and receipt validator | Done — Windows Win32 owned desktop/target, measured build/control/event receipts and configuration approval implemented; actual native fixture exercised |
-| 4 | Verify end to end | Local/API/browser/native identity, lifecycle and handoff evidence | In progress — actual API/browser/native, ownership, identity and preservation checks passed; full suite 1,743 passed and 4 skipped; final repository gate held by five pre-existing ratchet violations |
+| 4 | Verify end to end | Local/API/browser/native identity, lifecycle and handoff evidence | In progress — actual fixtures passed; initial full suite 1,743 passed and 4 skipped; review repairs passed focused checks; final repository gate held by five pre-existing ratchet violations |
 
 ## Migration and rollback
 
@@ -304,3 +304,31 @@ The final repository gate is still held by baseline violations in
 (2,374; 2,328) and `web/tests/desktop_browser.py` (6 duplicate lines; ceiling 0).
 These files and their ceilings were not changed by this stage. Stage completion
 remains open until that gate passes on the reviewed revision.
+
+### PR 95 — first independent review and focused repairs
+
+GPT-5.6-Sol independently reviewed
+`c193fddccb7436a11b5a7d04365f8337de671dd4` and reported two blocking P1 issues:
+the audit catalog rejected supported desktop flows, and setup cancellation
+remained `running` or became an environment failure. Both issues were confirmed.
+
+The audit now accepts the closed `desktop` kind while retaining command-free
+candidate catalogs and rejecting malformed inputs. The shared executor records
+`state` and `outcome` as `interrupted` immediately after a cancelled setup, then
+runs existing cleanup. Local, external and Cloud callers retain that outcome
+without starting flows or dispatching a reviewer/implementation worker.
+
+| Exact command | Result |
+| --- | --- |
+| `python -m pytest -q tool/test_local_verification.py::test_setup_cancellation_is_interrupted_in_executor_and_loop tool/test_review_contract.py::test_candidate_registered_flow_closure_and_assertion_origins tool/test_review_contract.py::test_malformed_offered_catalog_is_rejected_before_dependency_closure --tb=short` | 10 passed, 55.39 seconds |
+| `python -m pytest -q tool/test_local_verification.py -k "owned_gate_cancellation or ordinary_api_is_collected or cloud_runs_real_api or restart_keeps_completed or cleanup_failure or selected_subset or ordinary_failure or failure_then_pass_on_same_identity" --tb=short` | 10 passed, 59 deselected, 102.68 seconds |
+
+The second command exercises real owned-process cancellation and HTTP API
+collection as well as protocol ownership, cleanup, restart and instability.
+The initial full-suite record above remains evidence for the initial sources;
+these repair checks are scoped results for the changed paths. The 13 source
+files changed from the original base have combined SHA-256
+`acb67f6cfacd510bb82869f8a7ecb7bd63c437f9c4722f02fd2f96b2565053ee`
+using the same path/NUL/bytes/NUL algorithm. The five baseline debt violations
+remain unchanged. The repaired revision requires independent review before
+approval.

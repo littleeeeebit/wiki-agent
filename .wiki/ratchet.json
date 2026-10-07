@@ -133,8 +133,8 @@
     },
     "tool/main/verification.py": {
       "dup": 12,
-      "lines": 987,
-      "reason": "Stage 4 extends the existing verifier with selected-flow/spec binding, owner outcomes, approved native contracts and native receipt validation."
+      "lines": 989,
+      "reason": "Stage 4 extends the existing verifier with selected-flow/spec binding, owner outcomes, approved native contracts, native receipt validation and setup cancellation outcomes."
     },
     "tool/main/work.py": {
       "dup": 0,
@@ -213,8 +213,8 @@
     },
     "tool/test_local_verification.py": {
       "dup": 6,
-      "lines": 1364,
-      "reason": "Stage 4 verifies actual automatic local/external API and browser collection, owner routing, subset approval, cleanup and process ownership."
+      "lines": 1392,
+      "reason": "Stage 4 verifies actual automatic local/external API and browser collection, owner routing, subset approval, cleanup, process ownership and setup cancellation in every implementation owner's executor and loop."
     },
     "tool/test_loop.py": {
       "dup": 19,

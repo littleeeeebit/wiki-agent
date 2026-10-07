@@ -206,6 +206,34 @@ def test_selected_subset_unknown_ids_and_stale_contract_stop_before_setup(cloud_
     assert [row["id"] for row in done["local_verification"]["flows"]] == ["health"]
 
 
+@pytest.mark.parametrize("owner", ["local", "external", "claude-cloud"])
+def test_setup_cancellation_is_interrupted_in_executor_and_loop(cloud_world, monkeypatch, owner):
+    world = cloud_world
+    spec = cloud_spec(world, review={"flows": ["health"]}) if owner == "claude-cloud" else pr_spec(
+        world, "setup-cancel", 1, "change.py", implementation_environment=owner, review={"flows": ["health"]})
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    base = specs.current_merge_base(path, "main", head)
+    world.settings["setup"] = "cancelled setup"
+    (world.repo / verification.LOCAL).write_text(json.dumps(world.settings), encoding="utf-8")
+    original, calls = specs.gate, []
+
+    def cancelled(command, tree, halt, **kwargs):
+        if command != "cancelled setup":
+            return original(command, tree, halt, **kwargs)
+        calls.append(command)
+        halt.set()
+        return None, "", "사람이 멈춤"
+
+    monkeypatch.setattr(specs, "gate", cancelled)
+    saved = verification.execute(world.repo, spec, path, head, base, threading.Event(), flow_ids=["health"])
+    assert saved["local_verification"]["state"] == saved["local_verification"]["outcome"] == "interrupted"
+    assert not saved["local_verification"].get("flows")
+    stopped = looped(spec["id"])
+    record = stopped["local_verification"]
+    assert record["state"] == record["outcome"] == "interrupted" and len(calls) == 2
+    assert not record.get("flows") and not Reviewer.made and not Worker.made
+
+
 def test_cleanup_failure_keeps_successful_observations_but_holds_readiness(cloud_world):
     world = cloud_world
     spec = pr_spec(world, "cleanup-failure", 1, "change.py", review={"flows": ["health"]})
