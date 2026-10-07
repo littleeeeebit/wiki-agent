@@ -89,7 +89,7 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
 
   const reason = spec.stopped?.reason ?? ''
   const cloud = spec.implementation_environment === 'claude-cloud'
-  const analysis = cloud && (spec.local_verification?.needs_research || ['reanalysis', 'unstable'].includes(spec.local_verification?.state ?? ''))
+  const analysis = spec.local_verification?.needs_research || ['reanalysis', 'unstable'].includes(spec.local_verification?.state ?? '')
   const rounds = spec.rounds ?? []
   const checked = spec.validation?.round
   const final = spec.validation?.final
@@ -116,7 +116,7 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
         )}
       </div>
 
-      {cloud && <VerificationPanel spec={spec} />}
+      {(cloud || spec.local_verification) && <VerificationPanel spec={spec} />}
 
       {(spec.merge_progress || working === 'merge') && <MergeProgress spec={spec} pending={working === 'merge'} />}
 
@@ -315,11 +315,13 @@ const VERIFICATION_STATE: Record<LocalVerification['state'], string> = {
   waiting_environment: '환경 준비 대기', waiting_review: '로컬 리뷰 대기', running: '주요 흐름 검증 중',
   runtime_passed: '실행 검증 통과 · 리뷰 대기', verified: '로컬 검증·리뷰 통과', waiting_cloud: '클라우드 수정 대기',
   reanalysis: '두 수정 주기 실패 · 재분석 필요', unstable: '간헐적 실패 · 원인 확인 필요', interrupted: '중단 · 재개 대기',
+  failed: '실행 검증 실패 · 구현 수정 필요',
 }
 
 /** Repository-specific setup and receipts stay in the existing review tab.
  * Requests retain the repository captured on mount; retired results are dropped. */
 function VerificationPanel({ spec }: { spec: Spec }) {
+  const cloud = spec.implementation_environment === 'claude-cloud'
   const [config, setConfig] = useState<VerificationConfig | null>(null)
   const [editing, setEditing] = useState(false)
   const [values, setValues] = useState<Record<string, string>>({})
@@ -355,6 +357,10 @@ function VerificationPanel({ spec }: { spec: Spec }) {
         fields[key] = String(saved[key] ?? '')
       }
       fields.allowed_origins = (saved.allowed_origins as string[] | undefined)?.join('\n') ?? ''
+      if (found.manifest?.flows.some((f) => f.kind === 'desktop')) {
+        const native = saved.native as Record<string, unknown> | undefined
+        for (const key of ['application', 'executable', 'executable_sha256', 'profile']) fields[`native:${key}`] = String(native?.[key] ?? '')
+      }
       for (const key of new Set(found.manifest?.flows.flatMap((f) => f.environments) ?? [])) fields[`revision:${key}`] = revisions?.[key] ?? ''
       setValues(fields)
       setEditing(true)
@@ -372,8 +378,13 @@ function VerificationPanel({ spec }: { spec: Spec }) {
     try {
       const revisions = Object.fromEntries(Object.entries(values).filter(([k]) => k.startsWith('revision:'))
         .map(([k, v]) => [k.slice(9), v]))
-      const body = { ...config?.settings, ...Object.fromEntries(Object.entries(values).filter(([k]) => !k.startsWith('revision:'))),
+      const native = config?.manifest?.flows.some((f) => f.kind === 'desktop') ? {
+        ...Object.fromEntries(Object.entries(values).filter(([k]) => k.startsWith('native:')).map(([k, v]) => [k.slice(7), v])),
+        version: 1, host: 'windows-win32', ownership: 'launch-disposable', desktop: 'attempt-owned',
+      } : null
+      const body = { ...config?.settings, ...Object.fromEntries(Object.entries(values).filter(([k]) => !k.startsWith('revision:') && !k.startsWith('native:'))),
         revisions, allowed_origins: values.allowed_origins.split('\n').map((v) => v.trim()).filter(Boolean),
+        ...(native ? { version: 2, native } : {}),
         manifest_digest: config!.manifest_digest }
       const found = await api.saveVerificationConfig(owner.repo, owner.id, body)
       if (generation.current === ticket) { setConfig(found); setEditing(false) }
@@ -401,24 +412,27 @@ function VerificationPanel({ spec }: { spec: Spec }) {
   const labels: Record<string, string> = { environment_id: '테스트 환경 이름', test_scope: '테스트 계정·데이터 범위',
     env_file: '로컬 .env 파일의 절대 경로', browser_tool: '브라우저 검증 도구', setup: '환경 준비 명령 (선택)',
     cleanup: '테스트 데이터·서버 정리 명령 (선택)' }
-  return <section aria-label="클라우드 구현의 로컬 검증" className="mt-3 rounded-md border border-border p-3">
-    <div className="font-heading text-[11px] font-semibold">Claude Code Cloud → 로컬 검증</div>
+  const nativeLabels: Record<string, string> = { application: '등록된 네이티브 앱 이름', executable: '승인할 실행 파일의 절대 경로',
+    executable_sha256: '실행 파일 SHA-256', profile: '격리된 테스트 프로필 이름' }
+  return <section aria-label={cloud ? '클라우드 구현의 로컬 검증' : '등록 흐름의 로컬 검증'} className="mt-3 rounded-md border border-border p-3">
+    <div className="font-heading text-[11px] font-semibold">{cloud ? 'Claude Code Cloud → 로컬 검증' : '등록 흐름 → 로컬 검증'}</div>
     <p className="mt-1">{record ? VERIFICATION_STATE[record.state] : '로컬 검증 대기'}</p>
-    <p className="mt-1 text-faint">클라우드에서 PR 인계·주요 흐름 명세 준비 → 이 기계의 테스트 환경 설정 → 로컬 실행 검증 → 독립 리뷰. 실패하면 클라우드에서 고친 뒤 재개한다.</p>
+    <p className="mt-1 text-faint">{cloud ? '클라우드에서 PR 인계·주요 흐름 명세 준비 → 이 기계의 테스트 환경 설정 → 로컬 실행 검증 → 독립 리뷰. 실패하면 클라우드에서 고친 뒤 재개한다.'
+      : '승인한 테스트 환경에서 필요한 등록 흐름을 수집한 뒤 독립 리뷰에 전달한다. 실패하면 해당 작업의 구현 담당 경로에서 수정한다.'}</p>
     {record?.reason && <p className="mt-1 whitespace-pre-wrap text-muted-foreground">{record.reason}</p>}
     <div className="mt-2 flex flex-wrap gap-2">
-      <Btn disabled={working} onClick={async () => {
+      {cloud && <Btn disabled={working} onClick={async () => {
         try { setHandoff((await api.cloudInstructions(spec.id, spec.repo)).text) }
         catch (err) { setFault(String(err instanceof Error ? err.message : err)) }
-      }}>클라우드 인계 지시 보기</Btn>
+      }}>클라우드 인계 지시 보기</Btn>}
       <Btn disabled={working || LOOPING.test(spec.state)} onClick={() => void configure()}>프로젝트 검증 설정</Btn>
-      <Btn disabled={working || LOOPING.test(spec.state)} onClick={() => void protect()}>GitHub 필수 검사 설정</Btn>
+      {cloud && <Btn disabled={working || LOOPING.test(spec.state)} onClick={() => void protect()}>GitHub 필수 검사 설정</Btn>}
     </div>
     {handoff && <label className="mt-2 block">클라우드 구현자에게 전달할 지시
       <textarea readOnly value={handoff} rows={7} onFocus={(e) => e.target.select()}
         className="mt-1 w-full rounded-md border border-border bg-background p-2 font-mono text-[12px]" />
     </label>}
-    <p className="mt-1 text-faint">.env 는 로컬에 유지한다. GitHub 의 기존 보호 규칙에 필수 검사를 추가한다.</p>
+    <p className="mt-1 text-faint">{cloud ? '.env 는 로컬에 유지한다. GitHub 의 기존 보호 규칙에 필수 검사를 추가한다.' : '.env 와 테스트 데이터는 로컬에 유지한다.'}</p>
     {config?.problem && <p className="mt-2 text-muted-foreground">검증 준비 필요 — {config.problem}</p>}
     {editing && config?.manifest && <form className="mt-3 space-y-2" onSubmit={(e) => { e.preventDefault(); void save() }}>
       {Object.entries(labels).map(([key, label]) => <label key={key} className="block">
@@ -435,9 +449,15 @@ function VerificationPanel({ spec }: { spec: Spec }) {
         <span className="block text-faint">{key.slice(9)} 버전 · 환경이 바뀌면 갱신</span>
         <input required disabled={working} value={values[key]} onChange={(e) => setValues((was) => ({ ...was, [key]: e.target.value }))}
           className="h-7 w-full rounded-md border border-border bg-background px-2" /></label>)}
+      {Object.keys(values).filter((k) => k.startsWith('native:')).map((key) => <label key={key} className="block">
+        <span className="block text-faint">{nativeLabels[key.slice(7)]}</span>
+        <input required disabled={working} value={values[key]} onChange={(e) => setValues((was) => ({ ...was, [key]: e.target.value }))}
+          className="h-7 w-full rounded-md border border-border bg-background px-2" /></label>)}
+      {config.manifest.flows.some((f) => f.kind === 'desktop') && <p className="text-faint">Windows 테스트 앱을 작업 전용 데스크톱에서 실행한다. 기존 앱에 연결하지 않는다.</p>}
       <details><summary className="cursor-pointer text-primary">승인할 주요 흐름과 실행 명령</summary>
         <ul className="mt-1 space-y-1">{config.manifest.flows.map((f) => <li key={f.id}>
           {f.title} · {f.kind}<code className="block break-all font-mono text-[12px]">{f.command}</code>
+          {f.native != null && <pre className="whitespace-pre-wrap break-all">{JSON.stringify(f.native, null, 2)}</pre>}
         </li>)}</ul></details>
       <div className="flex gap-2"><Btn type="submit" tone="primary" disabled={working}>명령 확인 후 설정 저장</Btn>
         <Btn disabled={working} onClick={() => setEditing(false)}>닫기</Btn></div>

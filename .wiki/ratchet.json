@@ -108,8 +108,8 @@
     },
     "tool/main/loop.py": {
       "dup": 0,
-      "lines": 2560,
-      "reason": "baseline at adoption"
+      "lines": 2618,
+      "reason": "Stage 4 adds enforced-flow collection, owner-specific recovery, research resume and current-evidence checks to the existing authorized loop."
     },
     "tool/main/planning.py": {
       "dup": 18,
@@ -128,13 +128,13 @@
     },
     "tool/main/specs.py": {
       "dup": 0,
-      "lines": 1473,
-      "reason": "Retain spec validation and add remaining-budget fetch/merge-base identity checks for shadow observations; ordinary callers keep their existing timeouts."
+      "lines": 1489,
+      "reason": "Stage 4 uses existing Windows job ownership for gate cancellation and attempt-owned setup lifetime, with bounded cleanup timeout."
     },
     "tool/main/verification.py": {
       "dup": 12,
-      "lines": 818,
-      "reason": "Manifest tracked-file validation shares the shadow deadline and checks cancellation between Git queries; ordinary verification retains its existing limits."
+      "lines": 989,
+      "reason": "Stage 4 extends the existing verifier with selected-flow/spec binding, owner outcomes, approved native contracts, native receipt validation and setup cancellation outcomes."
     },
     "tool/main/work.py": {
       "dup": 0,
@@ -213,8 +213,8 @@
     },
     "tool/test_local_verification.py": {
       "dup": 6,
-      "lines": 1176,
-      "reason": "baseline at adoption"
+      "lines": 1392,
+      "reason": "Stage 4 verifies actual automatic local/external API and browser collection, owner routing, subset approval, cleanup, process ownership and setup cancellation in every implementation owner's executor and loop."
     },
     "tool/test_loop.py": {
       "dup": 19,

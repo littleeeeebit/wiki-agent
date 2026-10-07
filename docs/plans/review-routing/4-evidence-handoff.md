@@ -11,16 +11,20 @@ without a collector is not completion of this stage.
 ## Current state and implementation owners
 
 `review_contract.ready()` and `verification.proven(..., flow_ids=...)` validate
-existing API/browser receipts for ordinary tasks. `render()` supplies sanitized
+registered API/browser/command/native receipts for ordinary tasks. `render()` supplies sanitized
 observations to ordinary read-only reviewers. Contract/receipt changes invalidate
 approval at completion, view and merge boundaries. Frozen preservation runs in
 round/final checks through the existing refactoring owner.
 
-Automatic runtime collection is currently wired through `loop.cloud_shipped()`.
-`verification.execute()` can execute approved local commands, but failure,
-instability and publication paths still assume Cloud ownership. Ordinary local
-shipping does not call it automatically. There is no desktop flow kind, native
-runner or native receipt validator. These are required work in this stage.
+Automatic runtime collection runs through `loop.cloud_shipped()` for Cloud and
+the enforced contract preparation in `loop.step()` for local/external tasks.
+`verification.execute(..., flow_ids=...)` uses approved selected flows, persists
+attempts, rechecks source/spec/environment identity and routes failures by owner.
+Version-2 manifests/settings support the Windows Win32 collector in
+`tool/native_verification.py`. It launches only owned disposable targets on an
+isolated desktop and validates measured builds, controls/events and artifacts.
+The [local verification guide](../../local-verification.md) records its setup and
+supported scope. Wider installed-host/hook acceptance remains separate.
 
 Reuse `main/verification.py`, `main/loop.py`, registered project scripts, managed
 process/cancellation utilities and current receipt persistence. Do not duplicate
@@ -210,9 +214,9 @@ reliability desktop matrix retains its own additional requirements.
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Existing validation | Registered receipt checks and sanitized ordinary-loop handoff | Done — current focused suite |
-| 2 | Generalize execution | Shared selected-flow collection and owner-specific failure routing | Not started |
-| 3 | Native collection | Versioned target contract, native runner and receipt validator | Not started |
-| 4 | Verify end to end | Local/API/browser/native identity, lifecycle and handoff evidence | Not started |
+| 2 | Generalize execution | Shared selected-flow collection and owner-specific failure routing | Done — automatic isolated API/browser collection, selected-flow approval and local/external/Cloud ownership implemented |
+| 3 | Native collection | Versioned target contract, native runner and receipt validator | Done — Windows Win32 owned desktop/target, measured build/control/event receipts and configuration approval implemented; actual native fixture exercised |
+| 4 | Verify end to end | Local/API/browser/native identity, lifecycle and handoff evidence | In progress — actual fixtures passed; initial full suite 1,743 passed and 4 skipped; review repairs passed focused checks; final repository gate held by five pre-existing ratchet violations |
 
 ## Migration and rollback
 
@@ -221,3 +225,110 @@ production-target discovery. Preserve existing Cloud requirements/statuses and
 legacy offline behavior. Disabling a collector leaves its enforced requirement
 pending, never downgraded to offline-only. Keep failed attempts and artifacts;
 do not delete source, user datasets or historical receipts to obtain a clean pass.
+
+## Working-tree acceptance record — 2026-10-08
+
+The implementation is an uncommitted working tree on `main`, based on
+`a411589bcc8d905f818474369976c1284d590e26`. This records local verification;
+it is not an independent review, release or merge approval.
+The 12 changed/new Python and TypeScript source files have combined SHA-256
+`e3c57ec5547157ad0f3145e23b81835dc664a2049a9ee41d42beb2ece1f7f4da`:
+sort relative paths, then hash each UTF-8 path, NUL, file bytes and NUL.
+
+| Command | Observed result |
+| --- | --- |
+| `python -m pytest -q tool --tb=short` | 1,743 passed, 4 skipped, 1 existing Starlette deprecation warning; 2,336.05 seconds |
+| `python -m pytest -q tool/test_native_verification.py` | 2 passed on Windows, including actual owned-window/event collection and native negatives |
+| `python -m pytest -q tool/test_local_verification.py::test_automatic_browser_collects_actual_save_reload_api_observations` | 1 passed with actual Chromium, HTTP POST 201 and GET 200 observations |
+| `python -m pytest -q tool/test_native_verification.py tool/test_local_verification.py::test_changed_managed_env_is_rejected_before_any_flow_command tool/test_local_verification.py::test_identical_user_env_is_not_claimed_or_overwritten_on_later_source_change --tb=short` | 4 passed on final sources, 25.74 seconds |
+| `python -m ruff check tool` | Passed |
+| `python tool/lint.py --check` | Passed, 26 pages checked |
+| `npm --prefix web run lint` | Passed with existing warnings |
+| `npm --prefix web run build` | Passed; existing bundle-size warnings remain |
+| `git diff --check` | Passed |
+| `python tool/debt.py check` | Held by five pre-existing ratchet violations listed below |
+
+An earlier full run returned 1,737 passed, 4 skipped and 1 failed while native
+receipt code was being edited: the already-imported validator and newly started
+runner used different receipt field versions. Fresh native runs passed after
+the edit; the final full run above supersedes that mixed-version run.
+One user-owned `.env` regression was added after the full run collected its
+tests. The final four-test command covers that addition and rechecks native
+and environment behavior on the final sources; current collection is 1,748
+tests, compared with 1,747 collected by the full run.
+
+| Cases | Executed evidence and limits |
+| --- | --- |
+| E01, E11 | Existing offline/shadow regression checks retain preparation holds, read-only tools and non-authoritative candidates; candidate-only recommendations do not start collection |
+| E02, E04 | Real loopback HTTP API exercised through automatic local/external collection, read-only reviewer handoff and owner-specific failure paths; existing Cloud ownership regressions retained |
+| E03 | Actual browser save/reload against a disposable server; the server's in-memory value survives page reload, with measured Git build identity |
+| E05, E06 | Unknown/duplicate flows, stale approval digest, environment drift, spec/source/base changes and altered evidence hold readiness; a pre-existing identical user `.env` remains unowned and is not overwritten after source changes |
+| E07 | Injected fail/pass on the same identity retains both attempts and requires recorded investigation before ordinary-loop resume; existing Cloud investigation regressions retained |
+| E08 | Cancellation reaps an owned live process tree while an unrelated process survives; cleanup failure retains observations without readiness; restart keeps completed observations and does not silently replay |
+| E09 | Actual Windows Win32 fixture launched on an attempt-owned desktop, measured executable/Git input, focused control, `Saved` observation and `WM_COMMAND/save` event; owned launch cleaned before handoff |
+| E10 | Actual missing control and wrong focus stop without a save event; modified build/host/focus/event receipts and artifact tampering are rejected by validation/readiness/merge checks |
+| E12 | Parameterized preservation integration retains frozen checks at round/final gates; its live variant additionally requires automatically collected API evidence |
+
+Git, HTTP, Chromium and Win32 interactions above are real. GitHub, reviewer and
+implementation-worker transports are test stand-ins. This does not demonstrate
+production account permissions, installed wiki-agent hooks/lifecycle, physical
+keyboard/compositor behavior or the broader reliability desktop matrix. Existing
+performance obligations remain enforced preparation holds without a registered
+collector; they are not treated as offline success.
+
+The successful native observation is snapshotted before deliberate negative
+artifact corruption at the following local locator:
+
+```text
+%TEMP%/wiki-agent-verification/2569a2088195b905c13002cfd0519555bb108af0e0bc4a9f1743493fb55c9f1a/1474d914c70a4f5f89b6a5ab256943ef/native-save/acceptance.json
+```
+
+That snapshot records test head
+`3a716c6c1c65b27dd05c77bccbf8e67f43e3ae1c`, expected/actual `Saved`, a passing
+assertion, PID `12060`, HWND `21893292` and the observed `WM_COMMAND/save` event.
+Its approved configuration digests are:
+
+| Input | SHA-256 |
+| --- | --- |
+| Manifest | `31f50535bbba31d95851d736c549f8da1bfc900f3d9e96631fd1979eb0aad3d6` |
+| Native settings | `0ee68b92a137b6dffef6a57e69578c6a1a7fe7f2e5d0a5854bc9428818c3c32b` |
+| Native target | `62afa66a076abbb37dadf0261929dcc54f358ee61c13fd4548fc311e8305729d` |
+
+The negative test intentionally modifies `observations.json` afterward and
+confirms readiness and merge eligibility are revoked. The snapshot documents
+the earlier successful observation; that tampered attempt is not current proof.
+
+The final repository gate is still held by baseline violations in
+`tool/agent/chat_session.py` (1,360 lines; ceiling 1,291), `tool/main/work.py`
+(1,066; 1,060), `tool/test_agent.py` (1,221; 1,010), `tool/test_loop.py`
+(2,374; 2,328) and `web/tests/desktop_browser.py` (6 duplicate lines; ceiling 0).
+These files and their ceilings were not changed by this stage. Stage completion
+remains open until that gate passes on the reviewed revision.
+
+### PR 95 — first independent review and focused repairs
+
+GPT-5.6-Sol independently reviewed
+`c193fddccb7436a11b5a7d04365f8337de671dd4` and reported two blocking P1 issues:
+the audit catalog rejected supported desktop flows, and setup cancellation
+remained `running` or became an environment failure. Both issues were confirmed.
+
+The audit now accepts the closed `desktop` kind while retaining command-free
+candidate catalogs and rejecting malformed inputs. The shared executor records
+`state` and `outcome` as `interrupted` immediately after a cancelled setup, then
+runs existing cleanup. Local, external and Cloud callers retain that outcome
+without starting flows or dispatching a reviewer/implementation worker.
+
+| Exact command | Result |
+| --- | --- |
+| `python -m pytest -q tool/test_local_verification.py::test_setup_cancellation_is_interrupted_in_executor_and_loop tool/test_review_contract.py::test_candidate_registered_flow_closure_and_assertion_origins tool/test_review_contract.py::test_malformed_offered_catalog_is_rejected_before_dependency_closure --tb=short` | 10 passed, 55.39 seconds |
+| `python -m pytest -q tool/test_local_verification.py -k "owned_gate_cancellation or ordinary_api_is_collected or cloud_runs_real_api or restart_keeps_completed or cleanup_failure or selected_subset or ordinary_failure or failure_then_pass_on_same_identity" --tb=short` | 10 passed, 59 deselected, 102.68 seconds |
+
+The second command exercises real owned-process cancellation and HTTP API
+collection as well as protocol ownership, cleanup, restart and instability.
+The initial full-suite record above remains evidence for the initial sources;
+these repair checks are scoped results for the changed paths. The 13 source
+files changed from the original base have combined SHA-256
+`acb67f6cfacd510bb82869f8a7ecb7bd63c437f9c4722f02fd2f96b2565053ee`
+using the same path/NUL/bytes/NUL algorithm. The five baseline debt violations
+remain unchanged. The repaired revision requires independent review before
+approval.

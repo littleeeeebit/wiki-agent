@@ -16,8 +16,10 @@ from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
 
 from . import decisions, query, verification
+from .review_audit import compose, view as view
 
-VERSION = 1
+VERSION = 2
+CLOSURE_VERSION = "review-closure-2"
 CRITERIA = {
     "refactor": "Preserve externally observable behavior, contracts, errors, side effects and concurrency; measure simplification, not new features.",
     "documentation": "Check factual accuracy, source support, runnable examples, links and consistency; do not demand implementation of future plans.",
@@ -165,7 +167,53 @@ def preservation_command(spec: dict) -> str:
 
 def signature(spec: dict) -> str:
     return verification.sha({k: spec.get(k) for k in ("rev", "goal", "done", "out", "grounds", "review",
-                                                     "review_profile", "artifact_root", "refactor")})
+                                                     "review_profile", "review_profile_version", "artifact_root",
+                                                     "refactor", "start_head", "implementation_environment")})
+
+
+def include(items: dict, cid: str, scope: str, ground: dict) -> None:
+    ground = {**ground, "scope": scope}
+    row = items.setdefault(cid, {"id": cid, "membership": [], "grounds": []})
+    if scope not in row["membership"]:
+        row["membership"].append(scope)
+    if ground not in row["grounds"]:
+        row["grounds"].append(ground)
+
+
+def selected_sets(items: dict, scope: str) -> dict:
+    return {axis: sorted(cid.split(":", 1)[1] for cid, row in items.items()
+                         if scope in row["membership"] and cid.startswith(prefix + ":"))
+            for axis, prefix in (("criteria", "criteria"), ("evidence", "evidence"), ("flows", "flow"))}
+
+
+def close(items: dict, scope: str, flows: list[dict]) -> None:
+    """Code-owned dependencies, including parents already selected by other rules."""
+    for flow in flows:
+        if scope in items.get("flow:" + flow["id"], {}).get("membership", []) and flow["kind"] != "command":
+            include(items, "evidence:" + flow["kind"], scope, {"origin": "dependency", "rule_id": "D03",
+                    "version": CLOSURE_VERSION, "parents": ["flow:" + flow["id"]]})
+    parents = [cid for cid in ("criteria:refactor", "evidence:differential")
+               if scope in items.get(cid, {}).get("membership", [])]
+    for parent in parents:
+        for cid in ("criteria:code", "criteria:refactor", "evidence:differential"):
+            if cid != parent:
+                include(items, cid, scope, {"origin": "dependency", "rule_id": "D01",
+                        "version": CLOSURE_VERSION, "parents": [parent]})
+    if scope in items.get("evidence:browser", {}).get("membership", []):
+        include(items, "evidence:api", scope, {"origin": "dependency", "rule_id": "D02",
+                "version": CLOSURE_VERSION, "parents": ["evidence:browser"]})
+
+
+def coverage(selection: dict, flows: list[dict], preservation_inputs: dict | None) -> list[dict]:
+    missing = []
+    for kind in sorted(set(selection["evidence"]) & {"api", "browser", "desktop"}):
+        if not any(f["kind"] == kind or kind == "api" and f["kind"] == "browser" for f in flows):
+            missing.append({"item_id": "evidence:" + kind, "reason": "no registered " + kind + " flow"})
+    if "differential" in selection["evidence"] and not preservation_inputs:
+        missing.append({"item_id": "evidence:differential", "reason": "owner-frozen preservation inputs unavailable"})
+    if "performance" in selection["criteria"]:
+        missing.append({"item_id": "criteria:performance", "reason": "representative measurement coverage unavailable"})
+    return missing
 
 
 def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | None,
@@ -175,14 +223,13 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
     criteria.update(explicit["criteria"])
     evidence = {"offline", *explicit["evidence"]}
     problems, flows, manifest_digest, frozen_digest, preservation_inputs = [], [], "", "", None
+    mapped, chosen, exemption, rejections = False, [], False, []
     if paths and all(prose(p) for p in paths) and profile == "code":
         criteria.add("documentation")  # Conservative legacy code floor remains.
     frozen, problem = preservation(spec)
     if problem:
         problems.append(problem)
-    if frozen is not None or "refactor" in criteria or "differential" in evidence:
-        criteria.update(("code", "refactor"))
-        evidence.add("differential")
+    if frozen is not None or "refactor" in criteria or "differential" in evidence or problem and spec.get("refactor"):
         if frozen is None:
             problems.append("동작 보존 검사는 리팩토링 실행 소유자의 고정 명세가 필요하다")
     if frozen is not None and not problem:
@@ -200,17 +247,19 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 problems.append("고정된 동작 보존 테스트가 바뀌었거나 기준선을 확인하지 못했다")
         except (OSError, ValueError, KeyError, TypeError):
             problems.append("동작 보존 명세를 확인하지 못했다")
-    if verification.cloud(spec) or explicit["flows"] or evidence & {"api", "browser"}:
+    if verification.cloud(spec) or explicit["flows"] or evidence & {"api", "browser", "desktop"}:
         try:
             contract, manifest_digest = verification.manifest(path)
             catalog = {f.id: f for f in contract.flows}
             unknown = set(explicit["flows"]) - catalog.keys()
             if unknown:
                 problems.append("등록되지 않은 검증 흐름: " + ", ".join(sorted(unknown)))
+                rejections = [{"candidate_id": "flow:" + cid, "origin": "spec", "disposition": "rejected",
+                               "reason": "unknown registered flow", "locator": "review.flows"} for cid in sorted(unknown)]
             # Cloud's complete major-flow floor remains unchanged. Explicit local
             # flows only require their registered receipts, never grant execution.
             chosen = list(catalog) if verification.cloud(spec) else list(explicit["flows"])
-            if evidence & {"api", "browser"} and not chosen:
+            if evidence & {"api", "browser", "desktop"} and not chosen:
                 from . import specs
 
                 mapped = paths and all(any(fnmatchcase(p, g) for f in contract.flows for g in f.paths)
@@ -219,27 +268,81 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 chosen = [f.id for f in contract.flows if any(fnmatchcase(p, g) for p in paths for g in f.paths)] \
                     if mapped else list(catalog)  # Unreadable, shared or unmapped impact widens.
             flows = [catalog[i].model_dump() for i in sorted(set(chosen)) if i in catalog]
-            evidence.update(f["kind"] for f in flows if f["kind"] != "command")
-            if "browser" in evidence:
-                evidence.add("api")  # Existing browser receipts require actual API requests too.
             if verification.cloud(spec) and verification.documents(path, base_oid, head):
+                exemption = True
                 flows = []  # Existing, repository-declared prose exemption.
                 evidence = {"offline", *explicit["evidence"]}
         except (OSError, ValueError):
             problems.append("등록된 검증 명세를 준비해야 한다")
-    for kind in evidence & {"api", "browser"}:
+    items = {}
+    asked = {"asked_profile": spec.get("review_profile") or "code", "effective_profile": profile,
+             "artifact_root": spec.get("artifact_root"), "input_digest": signature(spec)}
+    diff = {"origin": "diff", "head": head, "base_oid": base_oid,
+            "reason": "unknown impact" if paths is None else "actual changed paths" if paths else "empty impact",
+            "paths": sorted(set(paths)) if paths is not None else None,
+            "input_digest": verification.sha({"head": head, "base_oid": base_oid,
+                                              "paths": sorted(set(paths)) if paths is not None else None})}
+    for name in ({"plan", "code"} if profile == "mixed" else {profile}):
+        include(items, "criteria:" + name, "enforced", {"origin": "profile",
+                "rule_id": "F03" if asked["asked_profile"] != profile else "F01" if not spec.get("review_profile")
+                else "F02" if profile == "plan" else "profile-v1",
+                **asked})
+        if asked["asked_profile"] != profile:
+            include(items, "criteria:" + name, "enforced", {**diff, "rule_id": "F03",
+                    "reason": "executable/outside-root/unknown impact or explicit preservation"})
+    include(items, "evidence:offline", "enforced", {**diff, "rule_id": "F08"})
+    for axis in ("criteria", "evidence"):
+        for name in explicit[axis]:
+            include(items, axis + ":" + name, "enforced", {"origin": "spec", "rule_id": "F05",
+                    "locator": "review." + axis, "input_digest": signature(spec)})
+    if paths and all(prose(p) for p in paths) and profile == "code":
+        include(items, "criteria:documentation", "enforced", {**diff, "rule_id": "F04"})
+    if frozen is not None or "refactor" in criteria or "differential" in evidence or problem and spec.get("refactor"):
+        if spec.get("refactor"):
+            include(items, "criteria:refactor", "enforced", {"origin": "refactor", "rule_id": "F06",
+                    "run": spec["refactor"].get("run"), "step": spec.get("id"), "baseline": spec.get("start_head"),
+                    "frozen_digest": frozen_digest, "protected_paths": (preservation_inputs or {}).get("tests", [])})
+    for flow in flows:
+        cid = "flow:" + flow["id"]
+        if flow["id"] in explicit["flows"]:
+            include(items, cid, "enforced", {"origin": "spec", "rule_id": "F10", "locator": "review.flows",
+                    "input_digest": signature(spec)})
+        include(items, cid, "enforced", {"origin": "manifest", "rule_id": "F09" if verification.cloud(spec)
+                else "F10" if explicit["flows"] else "F11", "flow_id": flow["id"],
+                "assertions": [a["id"] for a in flow["assertions"]], "input_digest": manifest_digest,
+                "impact_paths": sorted({p for p in paths or [] if any(fnmatchcase(p, g) for g in flow["paths"])}),
+                "reason": "cloud full catalog" if verification.cloud(spec) else "explicit registered IDs"
+                if explicit["flows"] else "mapped impact" if mapped else "shared/unmapped/unknown impact: full catalog"})
+    close(items, "enforced", flows)
+    if profile == "plan" and flows:
+        problems.append("계획 문서는 미래 프로그램의 실행 검증을 시작하지 않는다 — 현재 산출물의 수락 범위를 확인한다")
+    selection = selected_sets(items, "enforced")
+    criteria, evidence = set(selection["criteria"]), set(selection["evidence"])
+    for kind in sorted(evidence & {"api", "browser", "desktop"}):
         if not any(f["kind"] == kind or kind == "api" and f["kind"] == "browser" for f in flows):
             problems.append(f"{kind}: 필요한 동작을 검증하는 등록 흐름이 없다")
-    if "desktop" in evidence:
-        problems.append("네이티브 호스트 증거 검증 경로가 아직 없다 — 오프라인·브라우저 검사로 대체하지 않는다")
-    out = {"version": VERSION, "head": head, "base_oid": base_oid, "spec_signature": signature(spec),
+    if "performance" in criteria:
+        problems.append("performance: 대표 측정 범위가 없다 — 정확성 검사 통과로 대체하지 않는다")
+    out = {"version": VERSION, "head": head, "base_oid": base_oid, "base": (spec.get("pr") or {}).get("base"),
+           "spec_signature": signature(spec),
            "profile": profile, "criteria": sorted(criteria), "evidence": sorted(evidence), "flows": flows,
            "manifest_digest": manifest_digest, "frozen_digest": frozen_digest, "preservation": preservation_inputs,
            "problems": problems,
-           "rubric_digest": verification.sha(RUBRIC),
-           "catalog_digest": verification.sha({"criteria": CRITERIA, "evidence": EVIDENCE})}
+           "diff_digest": diff["input_digest"], "closure_version": CLOSURE_VERSION,
+           "prose_exemption": exemption,
+           "rubric_digest": verification.sha({k: RUBRIC[k] for k in ("plan", "code") if k in criteria}),
+           "facet_digest": verification.sha({"criteria": {k: CRITERIA[k] for k in sorted(criteria & CRITERIA.keys())},
+                                              "evidence": {k: EVIDENCE[k] for k in sorted(evidence)}})}
     out["digest"] = verification.sha(out)
-    return out
+    out["enforced_digest"] = out["digest"]
+    out["catalog_digest"] = verification.sha({"criteria": CRITERIA, "evidence": EVIDENCE})
+    out["enforced"] = selection
+    out["items"] = list(items.values())
+    out["enforced_rejections"] = rejections
+    out["unresolved"] = [{**r, "scope": "enforced"} for r in coverage(selection, flows, preservation_inputs)]
+    if problems:
+        out["unresolved"] += [{"item_id": None, "scope": "enforced", "reason": p} for p in problems]
+    return compose(out)
 
 
 def ready(repo: Path, path: Path, spec: dict, contract: dict) -> str:
@@ -261,19 +364,76 @@ def ready(repo: Path, path: Path, spec: dict, contract: dict) -> str:
 def matches(spec: dict, record: dict, contract: dict) -> bool:
     old = record.get("review_contract")
     if old:
-        return old.get("digest") == contract["digest"]
+        return old.get("version") == contract.get("version") and old.get("digest") == contract["digest"]
     return not spec.get("review") and not spec.get("refactor") and record.get("profile", "code") == contract["profile"]
+
+
+def store(repo: Path, path: Path, spec: dict, contract: dict) -> dict | None:
+    """Recheck mandatory inputs under the spec owner's lock before publication."""
+    from . import loop, specs
+
+    with specs._files:
+        now = specs.load(spec["repo"], spec["id"])
+        if now is None or now["history"][0] != spec["history"][0] or signature(now) != contract["spec_signature"]:
+            return None
+        observation = contract.get("shadow") or {}
+        if observation.get("attempt_id") and observation["attempt_id"] != (now.get("review_shadow_attempts") or [{}])[-1].get("attempt_id"):
+            return None
+        head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+        base = specs.merge_base(path, now["pr"]["base"], head)
+        paths = loop.changed(path, base, head)
+        current = select(repo, path, now, effective(now, paths), paths, head, base)
+        if current["digest"] != contract["digest"]:
+            return None
+        if observation.get("request") and observation["status"] in ("decided", "uncertain"):
+            try:
+                if current["catalog_digest"] != contract["catalog_digest"]:
+                    raise ValueError("candidate_catalog_changed_before_publication")
+                manifest, digest = verification.manifest(path) if (path / verification.MANIFEST).exists() else (None, "")
+                if digest != observation["manifest"]["digest"]:
+                    raise ValueError("manifest_changed_before_publication")
+                offered = observation["request"]["state_en"]["registered_flows"]
+                registered = [f.model_dump() for f in manifest.flows] if manifest is not None else []
+                def flow_identity(rows):
+                    return sorted((f["id"], f["kind"], sorted(f["paths"]), sorted(f["environments"]),
+                                   sorted(a["id"] for a in f["assertions"])) for f in rows)
+                if flow_identity(offered) != flow_identity(registered):
+                    raise ValueError("offered_catalog_changed_before_publication")
+            except (OSError, ValueError, KeyError, TypeError) as exc:
+                observation = {**observation, "status": "stale", "reason": str(exc)}
+        current = compose(current, observation)
+        attempts = [{**r, **observation} if r.get("attempt_id") == observation.get("attempt_id") else r
+                    for r in now.get("review_shadow_attempts", [])]
+        specs.update(spec["repo"], spec["id"], review_contract=current, review_shadow_attempts=attempts)
+        return current
 
 
 def render(contract: dict, spec: dict | None = None, path: Path | None = None) -> list[str]:
     out = ["", "## Composed review contract", "",
-           f"Contract v{VERSION} · `{contract['digest']}`. Criteria and evidence are separate obligations."]
-    out += [f"- {name}: {CRITERIA[name]}" for name in contract["criteria"] if name in CRITERIA]
+           f"Contract v{contract.get('version', 1)} · `{contract['digest']}`. Enforced criteria and evidence are obligations."]
+    out += [f"- {name}: {CRITERIA.get(name, 'The existing ' + name + ' rubric applies.')}" for name in contract["criteria"]]
     out += ["", "### Required evidence", "", *[f"- {name}: {EVIDENCE[name]}" for name in contract["evidence"]]]
     out += [f"- Flow `{f['id']}` ({f['kind']}): {f['title']} — "
             + "; ".join(a["expected"] for a in f["assertions"]) for f in contract["flows"]]
     if contract["preservation"]:
         out += ["", "Frozen preservation inputs:", "```json", json.dumps(contract["preservation"]), "```"]
+    if "items" not in contract:
+        out += ["", "Selection provenance unavailable for this legacy record."]
+    else:
+        out += ["", "### Enforced selection grounds", ""]
+        out += [f"- `{r['id']}`: " + json.dumps([g for g in r["grounds"] if g["scope"] == "enforced"],
+                                               ensure_ascii=False, sort_keys=True)
+                for r in contract["items"] if "enforced" in r["membership"]]
+        out += [f"- Unresolved enforced preparation: {r['item_id'] or 'inputs'} — {r['reason']}"
+                for r in contract["unresolved"] if r["scope"] == "enforced"]
+        out += ["", "### Shadow diagnostics (audit only)", "",
+                "Candidate items, deferrals and grounds grant no tools, evidence requirements, holds or approval.",
+                "```json", json.dumps({**{k: contract[k] for k in ("candidate", "candidate_digest", "dispositions")},
+                    "grounds": [{"id": r["id"], "grounds": [g for g in r["grounds"] if g["scope"] == "candidate"]}
+                                for r in contract["items"] if any(g["scope"] == "candidate" for g in r["grounds"])]},
+                                      ensure_ascii=False, sort_keys=True), "```"]
+        out += [f"- Unresolved candidate: {r['item_id']} — {r['reason']}"
+                for r in contract["unresolved"] if r["scope"] == "candidate"]
     if spec is not None and contract["flows"] and not verification.cloud(spec):
         from . import channels
 
@@ -288,6 +448,12 @@ def render(contract: dict, spec: dict | None = None, path: Path | None = None) -
                 "Check observed assertions against acceptance and the diff; exit zero alone is not proof. "
                 "These receipts do not grant execution tools.", "", "```json",
                 json.dumps(rows, ensure_ascii=False, indent=2), "```"]
+    if spec is not None and path is not None:
+        from . import channels
+
+        repo = channels.repo_for(spec["repo"])
+        settings = verification.redaction(verification.local(repo) if repo is not None else {}, path)
+        out = [verification.redact(line, settings) for line in out]
     return out
 
 
@@ -512,7 +678,7 @@ def observe_shadow(repo: Path, path: Path, spec: dict, paths: list[str] | None, 
         if now is None or now["history"][0] != spec["history"][0]:
             return {**observation, "status": "stale", "reason": "spec_removed_or_replaced"}
         identity = {"spec_signature": signature(now)}
-        stale = signature(now) != signature(spec)
+        stale = signature(now) != signature(spec) or now["review_shadow_attempts"][-1]["attempt_id"] != attempt
         if observation.get("request") and not halt.is_set():
             try:
                 budget.check()
@@ -529,6 +695,12 @@ def observe_shadow(repo: Path, path: Path, spec: dict, paths: list[str] | None, 
                 budget.check()
                 identity.update(head=head, pr_head=remote_head, base=remote_base,
                                 base_identity={"merge_base": merge_base, "tip": tip}, manifest_digest=digest)
+                frozen, _ = preservation(now)
+                identity.update(frozen_digest=verification.sha(frozen.read_bytes()) if frozen and frozen.is_file() else "",
+                                rubric_digest=verification.sha({k: RUBRIC[k] for k in ("plan", "code") if k in contract["criteria"]}),
+                                catalog_digest=verification.sha({"criteria": CRITERIA, "evidence": EVIDENCE}))
+                budget.check()
+                stale |= any(identity[k] != contract[k] for k in ("frozen_digest", "rubric_digest", "catalog_digest"))
                 stale |= (head != contract["head"] or (remote_head, remote_base) != (
                     contract["head"], spec["pr"]["base"]) or digest != observation["manifest"]["digest"]
                     or identity["base_identity"] != observation["base_identity"])
@@ -557,7 +729,7 @@ def merge_problem(repo: Path, path: Path, spec: dict, head: str, base_oid: str) 
         return ""  # Existing ordinary approvals remain compatible.
     paths = loop.changed(path, base_oid, head)
     current = select(repo, path, spec, loop.effective(spec, paths), paths, head, base_oid)
-    if not old or old.get("digest") != current["digest"]:
+    if not old or not matches(spec, allowed, current):
         return "작업 관점·검증 의무가 바뀌었다 — 독립 리뷰를 다시 받아야 한다"
     if current["flows"] and allowed.get("local_verification_digest") != verification.evidence_identity(spec):
         return "리뷰 뒤 실행 증거가 바뀌었다 — 독립 리뷰를 다시 받아야 한다"
