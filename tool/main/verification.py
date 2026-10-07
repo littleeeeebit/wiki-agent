@@ -1,9 +1,5 @@
-"""Local execution evidence for cloud implementations, beside the existing review loop.
-
-The server executes repository-specific checks; the independent review cell can
-also execute checks and create verification artifacts. A cloud failure never
-opens a local implementation session.
-"""
+"""Approved local evidence for Cloud and explicitly declared review flows.
+Cloud failures never dispatch a local implementation session."""
 
 from __future__ import annotations
 
@@ -593,8 +589,8 @@ def checkout_proven(path: Path, head: str) -> str:
     return ""
 
 
-def proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str) -> str:
-    if not cloud(spec):
+def proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str, *, flow_ids: list[str] | None = None) -> str:
+    if not cloud(spec) and flow_ids is None:
         return ""
     problem = checkout_proven(path, head)
     if problem:
@@ -607,16 +603,20 @@ def proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str) -> str:
     if record.get("base_oid") != base_oid or not base_oid:
         return "로컬 검증 뒤 base 가 바뀌었다"
     if record.get("document_only"):
-        return "" if documents(path, base_oid, head) else "실행 검증을 제외할 수 없는 변경이다"
+        return "" if not flow_ids and documents(path, base_oid, head) else "실행 검증을 제외할 수 없는 변경이다"
     settings = local(repo)
     try:
         contract, digest = manifest(path)
         if not settings or settings["manifest_digest"] != digest:
             return "로컬 검증 설정·명세가 바뀌었다"
         rows = {r["id"]: r for r in record.get("flows", [])}
+        if flow_ids is not None and set(flow_ids) - {f.id for f in contract.flows}:
+            return "등록되지 않은 검증 흐름이다"
         for flow in contract.flows:
+            if flow_ids is not None and flow.id not in flow_ids:
+                continue
             row = rows.get(flow.id, {})
-            if not row.get("ok") or row.get("signature") != signature(repo, path, flow, settings):
+            if row.get("head") != head or not row.get("ok") or row.get("signature") != signature(repo, path, flow, settings):
                 return f"{flow.title}: 로컬 증거가 없거나 환경이 바뀌었다"
     except (ValueError, OSError, KeyError, TypeError, subprocess.SubprocessError):
         return "로컬 검증 환경을 확인하지 못했다"

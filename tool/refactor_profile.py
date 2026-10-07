@@ -15,6 +15,7 @@ The tasks the evaluator runs are this file's own commands:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -250,11 +251,18 @@ def task(action: str, spec: dict, root: Path) -> int:
 def main() -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
+    if len(sys.argv) not in (4, 6):
+        print("usage: refactor_profile.py preserve|shrink|gate --spec <frozen.json> [--sha256 <digest>]", file=sys.stderr)
+        return 2
     action, flag, file = sys.argv[1:4]
     if action not in ("preserve", "shrink", "gate") or flag != "--spec":
         print("usage: refactor_profile.py preserve|shrink|gate --spec <frozen.json>", file=sys.stderr)
         return 2
-    return task(action, json.loads(Path(file).read_text(encoding="utf-8")), Path.cwd())
+    data = Path(file).read_bytes()
+    if len(sys.argv) == 6 and (sys.argv[4] != "--sha256" or sys.argv[5] != hashlib.sha256(data).hexdigest()):
+        print("The frozen specification changed; rerun checks on its current identity", file=sys.stderr)
+        return 2
+    return task(action, json.loads(data.decode("utf-8")), Path.cwd())
 
 
 if __name__ == "__main__":

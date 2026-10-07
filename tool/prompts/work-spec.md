@@ -20,6 +20,15 @@ The person's later instructions update the assignment as work progresses.
   completion report. Use the current `rev`, a concrete `reason`, and the full
   updated `goal`, `out`, and `done` lists. The server preserves revision history
   and invalidates approval of the previous spec. Keep the repository gate.
+- Declare task-specific review obligations in an optional `review` object in
+  the spec or `spec-update`: `criteria` accepts `refactor`, `documentation`,
+  `security`, `data`, `async`, `performance`; `evidence` accepts `offline`,
+  `api`, `browser`, `desktop`, `differential`; `flows` lists existing
+  `verification.json` flow IDs. These add to mandatory floors, never waive
+  them or authorize execution. An API-related pure contract test can be
+  offline; acceptance involving deployed state/authentication needs actual
+  isolated API evidence. Native-host acceptance needs desktop evidence.
+  Refactoring preservation uses the frozen refactoring workflow checks.
 - To say you are done, end the answer with a `done-report` block: a fenced
   code block whose info string is `done-report`, holding a JSON list with one
   entry per item of `done`, in order:

@@ -39,14 +39,13 @@ from agent import ChatSession
 from common import errorlog, worktree_home
 from workspace import adopt, base_branch, folder_for, merged, remove, worktrees
 
-from . import channels, connect, decisions, query, runtime, specs, verification, work
+from . import channels, connect, decisions, query, review_contract, runtime, specs, verification, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 
 REVIEW = ROOT / "raw" / "review"
 PROMPT = (ROOT / "tool/prompts/review-round.md").read_text(encoding="utf-8")
 # The criteria a round is judged by, per profile; a mixed change gets both, once each.
-RUBRIC = {name: (ROOT / f"tool/prompts/review-{name}.md").read_text(encoding="utf-8").strip()
-          for name in ("plan", "code")}
+RUBRIC = review_contract.RUBRIC
 
 DEFAULTS = {"rounds": 12, "concurrent": 3, "review_model": "", "review_effort": "high", "auto_merge": False}
 MORE = 4        # rounds a `[계속]` past the cap adds, to that spec only
@@ -375,16 +374,7 @@ def changed(path: Path, base_oid: str, head: str) -> list[str] | None:
     return None if done.returncode else [f for f in done.stdout.splitlines() if f]
 
 
-def effective(spec: dict, paths: list[str] | None) -> str:
-    """The profile this round is reviewed under. A plan whose change leaves its
-    artifact root, holds anything but Markdown, or cannot be read is mixed:
-    code never passes on the plan criteria alone."""
-
-    asked = specs.profile_of(spec)
-    if asked["review_profile"] != "plan":
-        return asked["review_profile"]
-    root = (asked["artifact_root"] or "").rstrip("/") + "/"   # no root: nothing is inside, so mixed
-    return "plan" if paths and all(p.startswith(root) and p.endswith(".md") for p in paths) else "mixed"
+effective = review_contract.effective
 
 
 # -- The instruction ----------------------------------------------------------
@@ -420,39 +410,7 @@ def shortstat(path: Path, base: str, head: str) -> str:
     return (done.stdout.strip() or "(no change)") if not done.returncode else f"(failed: {specs.said(done)})"
 
 
-def profiled(spec: dict, profile: str, head: str, base: str, base_oid: str) -> list[str]:
-    """The instruction's part that says what the round is judged by: the
-    profile and its version, the immutable head and base, and for a plan its
-    requirements and sources, then the criteria — both, once each, when mixed."""
-
-    asked = specs.profile_of(spec)
-    out = ["", "## Review profile", "",
-           f"- Profile `{profile}`, version {asked['review_profile_version']}. Reviewed head `{head}`, base `{base}`"
-           + (f" at merge base `{base_oid}`." if base_oid else ".")]
-    if asked["review_profile"] != profile:
-        out.append(f"- The spec asked for `{asked['review_profile']}` with artifact root `{asked['artifact_root']}`; "
-                   "the change reaches past it, so the code criteria apply too.")
-    planned = spec.get("planning") or {}
-    if profile != "code" and planned.get("outline"):
-        # A planner's plan: its own requirement ids and the sources its research kept.
-        out += ["", "## Requirements", "", f"- R0: {spec['goal']}"]
-        out += [f"- {r['id']}: {r['text']}" for r in planned["outline"]["requirements"]]
-        out += ["", "## Source manifest", ""]
-        out += [f"- {s['id']}: {s['title']} · {s['url']} · retrieved {s['retrieved']} · {s['locator']}"
-                for s in planned.get("source_manifest") or []] or ["(none kept)"]
-    elif profile != "code":
-        out += ["", "## Requirements", "", f"- R0: {spec['goal']}"]
-        out += [f"- R{i}: {d}" for i, d in enumerate(spec["done"], 1)]
-        grounds = spec.get("grounds") or {}
-        cited = [*grounds.get("pages", []), *grounds.get("files", []),
-                 *(e["cite"] for e in grounds.get("evidence", []))]
-        out += ["", "## Source manifest", "", *(f"- `{c}`" for c in cited or ["(none cited)"])]
-    if profile != "code" and asked["artifact_root"]:
-        out.append(f"- The plan's documents: `{asked['artifact_root']}/`")
-    for name in ("plan", "code"):
-        if profile in (name, "mixed"):
-            out += ["", RUBRIC[name]]
-    return out
+profiled = review_contract.profiled
 
 
 def known_findings(spec: dict) -> list[str]:
@@ -470,7 +428,7 @@ def known_findings(spec: dict) -> list[str]:
 
 
 def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: bool,
-                profile: str | None = None, base_oid: str = "") -> str:
+                profile: str | None = None, base_oid: str = "", contract: dict | None = None) -> str:
     """What `codex-review-loop` says an instruction must carry, with the
     result going to the final answer instead of a file. `profile` is the one
     `effective` gave this round; by default the spec's own."""
@@ -506,6 +464,8 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
                 "Review their correctness and scope as part of this head:",
                 *[f"- `{name}`" for name in maintenance.get("files", [])]]
     out += profiled(spec, profile, head, base, base_oid)
+    if contract is not None:
+        out += review_contract.render(contract, spec, path)
     out += known_findings(spec)
     out += ["", "## What became of the last round's findings", ""]
     if last is None:
@@ -1034,6 +994,8 @@ def reusable(spec: dict, head: str, chosen: dict) -> bool:
         return bool(last.get("ok")) and (last.get("head"), last.get("base_oid"), last.get("commands")) == \
             (head, chosen["base_oid"], chosen["commands"])
     gated = spec.get("gate") or {}
+    if review_contract.preservation_command(spec):
+        return False  # Legacy gate-only receipts never prove the frozen preservation check.
     return gated.get("head") == head and bool(gated.get("ok"))
 
 
@@ -1066,7 +1028,7 @@ def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str
                 specs.sh(["git", "merge", "--ff-only", head], path, 60)
                 local = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
             clean = not specs.sh(["git", "status", "--porcelain"], path).stdout.strip()
-            chosen = specs.selected(repo, path, base, specs.required(repo, spec))
+            chosen = specs.for_round(repo, path, spec, base)
             if local == head and clean and reusable(spec, head, chosen):
                 return True
             verdict, record = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
@@ -1136,6 +1098,10 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
     if final is None:
         return False
     if final["ok"]:
+        problem = review_contract.merge_problem(repo, path, specs.load(loop.repo, loop.sid), head,
+                                               specs.current_merge_base(path, base, head))
+        if problem:
+            return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem)
         preview = merge_preview(path, head, base)
         if not preview["ok"]:
             return resolve_merge(loop, spec, repo, path, preview, base)
@@ -1209,7 +1175,7 @@ def external_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, 
         return False
     try:
         sync_review(spec, path, head)
-        chosen = specs.selected(repo, path, base, specs.required(repo, spec))
+        chosen = specs.for_round(repo, path, spec, base)
         if reusable(spec, head, chosen):
             return True
         verdict, record = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
@@ -1258,7 +1224,7 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
         if spec["local_verification"]["state"] != "runtime_passed":
             why = Why.EXTERNAL if spec["local_verification"]["state"] == "waiting_cloud" else Why.PREPARATION
             return stop(loop, loop.repo, loop.sid, why, spec["local_verification"]["reason"])
-        chosen = specs.selected(repo, path, base, specs.required(repo, spec))
+        chosen = specs.for_round(repo, path, spec, base)
         if not reusable(spec, head, chosen):
             settings = verification.redaction(verification.local(repo), path)
             verdict, check = specs.rounded(repo, path, spec, base, loop.halt, chosen=chosen)
@@ -1323,10 +1289,20 @@ def step(loop: Loop) -> bool:
         problem = verification.proven(repo, path, spec, head, specs.current_merge_base(path, base, head))
         if problem:
             return cloud_stop(loop, repo, spec, head, problem)
+    base_oid = specs.current_merge_base(path, base, head)
+    paths = changed(path, base_oid, head)
+    profile = effective(spec, paths)
+    contract = review_contract.select(repo, path, spec, profile, paths, head, base_oid)
+    problem = review_contract.ready(repo, path, spec, contract)
+    if problem:
+        change(loop, review_contract=contract)
+        return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem)
     last = rounds[-1] if rounds else None
     again = spec.get("review_again", False)
     if (not again and last and last["verdict"] == "allow" and (last["head"], last["base"]) == (head, base)
-            and (not verification.cloud(spec) or last.get("local_verification_digest") == verification.evidence_identity(spec))):
+            and review_contract.matches(spec, last, contract)
+            and (not (verification.cloud(spec) or contract["flows"])
+                 or last.get("local_verification_digest") == verification.evidence_identity(spec))):
         # Allowed already, with no final gate that stands: one from before
         # `validation`, one a restart cut, or one that failed and was resumed.
         # The review is not asked again; only the final gate runs.
@@ -1342,9 +1318,10 @@ def step(loop: Loop) -> bool:
     kept.mkdir(parents=True, exist_ok=True)
     order = kept / f"round-{n}.md"
     # The changed paths decide the criteria before the review, never after.
-    base_oid = specs.current_merge_base(path, base, head)
-    profile = effective(spec, changed(path, base_oid, head))
-    review_instruction = instruction(spec, path, n, head, base, chat.is_codex, profile, base_oid)
+    contract["shadow"] = review_contract.shadow(spec, paths, contract, loop.halt)
+    if loop.halt.is_set():
+        return False
+    review_instruction = instruction(spec, path, n, head, base, chat.is_codex, profile, base_oid, contract)
     order.write_text(review_instruction, encoding="utf-8")
 
     settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
@@ -1417,12 +1394,13 @@ def step(loop: Loop) -> bool:
 
     record = {"n": n, "head": head, "base": base, "base_oid": base_oid, "findings": parsed["counts"],
               "verdict": parsed["verdict"], "profile": profile,
+              "review_contract": contract,
               "profile_version": specs.profile_of(spec)["review_profile_version"], "identity": parsed["identity"],
               "reviewer": reviewer(chat),
               "gate": {k: (spec.get("gate") or {}).get(k) for k in ("ok", "cmd", "head")},
               "disposition": None, "ts": time.time()}
     record["said"] = parsed["said"]
-    if verification.cloud(spec):
+    if verification.cloud(spec) or contract["flows"]:
         record["local_verification_digest"] = verification.evidence_identity(spec)
     moved = pr_head(repo, pr)
     if moved != (head, base):
@@ -1992,6 +1970,9 @@ def _merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) ->
             raise HTTPException(409, str(exc)) from exc
     unproven = specs.proven(spec, allowed["head"], specs.current_merge_base(path, allowed["base"], allowed["head"]),
                             specs.digest(repo, path, specs.required(repo, spec)))
+    if not unproven:
+        unproven = review_contract.merge_problem(repo, path, spec, allowed["head"],
+                                               specs.current_merge_base(path, allowed["base"], allowed["head"]))
     if unproven:
         if verification.cloud(spec):
             verification.pending(repo, spec, allowed["head"], unproven, "waiting_review")

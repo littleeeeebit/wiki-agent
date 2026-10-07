@@ -38,7 +38,7 @@ from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
 
-from . import channels, query, work
+from . import channels, query, review_contract, work
 from .decisions import extra_check, recommend, registered
 from .query import ROOT, _lock, current_repo, hold, project
 
@@ -321,21 +321,7 @@ def profile_of(spec: dict) -> dict:
             "artifact_root": spec.get("artifact_root")}
 
 
-def profiled(repo: Path, block: dict) -> dict:
-    """`review_profile` and `artifact_root` as a spec block names them, checked.
-    A plan names the one folder it writes; the loop reviews a change that
-    reaches past it as mixed (`loop.effective`)."""
-
-    profile = block.get("review_profile") or "code"
-    if profile not in PROFILES:
-        raise ValueError("`review_profile` 은 plan · code · mixed 중 하나여야 한다")
-    root = block.get("artifact_root")
-    if root is not None and (not isinstance(root, str) or not inside(repo, root.strip())):
-        raise ValueError("`artifact_root` 는 저장소 안의 폴더여야 한다")
-    if profile == "plan" and not root:
-        raise ValueError("plan 명세는 `artifact_root` 를 적어야 한다")
-    root = root.strip().replace("\\", "/").strip("/") if root else None
-    return {"review_profile": profile, "review_profile_version": PROFILE_VERSION, "artifact_root": root}
+profiled = review_contract.profile_fields
 
 
 def fields(repo: Path, block, gate: str, accepted: dict | None = None) -> dict:
@@ -468,6 +454,9 @@ def view(repo: Path, spec: dict) -> dict:
 
                 unproven = verification.merge_proven(repo, path, spec, allowed["head"],
                                                 merge_base(path, allowed["base"], allowed["head"]))
+            if not unproven:
+                unproven = review_contract.merge_problem(repo, path, spec, allowed["head"],
+                                                       merge_base(path, allowed["base"], allowed["head"]))
         except (OSError, subprocess.SubprocessError) as exc:
             unproven = f"작업트리를 읽지 못했다 — {exc}"
     return {**spec, **profile_of(spec), "missing": missing(repo, spec), "approved": allowed["head"] if allowed else None,
@@ -795,7 +784,7 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     gate = gate_of(repo)
     if not gate:
         raise ValueError("저장소의 gate_cmd 를 먼저 연결해라")
-    made = fields(repo, {**spec, **{k: change[k] for k in ("goal", "out", "done")}}, gate)
+    made = fields(repo, {**spec, **{k: change[k] for k in ("goal", "out", "done", "review") if k in change}}, gate)
     spec.setdefault("revisions", []).append({"rev": spec["rev"], "ts": time.time(), "reason": reason.strip(),
                                             **{k: spec[k] for k in ("goal", "out", "done")}})
     for round_ in spec.get("rounds") or []:
@@ -986,7 +975,8 @@ def system(path: Path) -> str:
     spec = owner(path)
     if spec is None:
         return ""
-    shown = {**{k: spec[k] for k in ("id", "rev", "goal", "out", "done", "grounds", "decisions")}, **profile_of(spec)}
+    shown = {**{k: spec[k] for k in ("id", "rev", "goal", "out", "done", "grounds", "decisions")},
+             **profile_of(spec), **({"review": spec["review"]} if spec.get("review") else {})}
     return SPEC_PROMPT.rstrip() + "\n\n```json\n" + json.dumps(shown, ensure_ascii=False, indent=2) + "\n```\n"
 
 
@@ -1081,7 +1071,8 @@ def required(repo: Path, spec: dict) -> str:
     spec was settled with, then the debt ratchet (`tool/debt.py`), which
     passes in a repository that has not adopted it."""
 
-    return f"{gate_of(repo) or spec['done'][0]} && {debt.command(spec.get('base') or '')}"
+    return " && ".join(filter(None, [gate_of(repo) or spec["done"][0], debt.command(spec.get("base") or ""),
+                                    review_contract.preservation_command(spec)]))
 
 
 def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event,
@@ -1089,9 +1080,18 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
     """The round checks `selected` picks, run by `judge`: the verdict, kept as
     the spec's `gate` for the screens, and `validation.round`."""
 
-    chosen = chosen or selected(repo, path, base, required(repo, spec))
+    chosen = chosen or for_round(repo, path, spec, base)
     verdict = {**judge(path, chosen["commands"], halt, noted), "selection": chosen["selection"]}
     return verdict, {"head": verdict["head"], **chosen, "ok": verdict["ok"], "finished_at": verdict["ts"]}
+
+
+def for_round(repo: Path, path: Path, spec: dict, base: str) -> dict:
+    """One selection for dispatch and reuse, including mandatory preservation."""
+    chosen = selected(repo, path, base, required(repo, spec))
+    preserve = review_contract.preservation_command(spec)
+    if preserve and chosen["selection"] == "mapped":
+        chosen = {**chosen, "commands": list(dict.fromkeys([*chosen["commands"], preserve]))}
+    return chosen
 
 
 def local_base(spec: dict, path: Path) -> str:

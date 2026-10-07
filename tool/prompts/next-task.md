@@ -93,6 +93,17 @@ send executable HTML. Do not invent alternatives merely to meet a count.
   `artifact_root` naming the one folder it writes, such as `docs/plans/foo`;
   `mixed` when it changes both. A plan whose change reaches past its root is
   reviewed as mixed.
+- `review`: optional additional obligations, not a replacement profile.
+  `criteria` may list `refactor`, `documentation`, `security`, `data`, `async`,
+  `performance`. `evidence` may list `offline`, `api`, `browser`, `desktop`,
+  `differential`. `flows` names existing `verification.json` flow IDs.
+  Derive these from observable acceptance, not keywords: a pure provider
+  contract test can be offline; deployed authentication or state acceptance
+  requires actual isolated API observations; UI acceptance requires actual
+  browser actions; native-host acceptance requires desktop evidence. Plans
+  specify future verification without claiming it already ran. Refactoring
+  preservation uses its frozen workflow checks. Missing collectors or setup
+  block verification; never silently omit an obligation to avoid that wait.
 
 The same `slug` emitted again in this conversation replaces the earlier
 version while it has not started. A block that fails the server's check comes
