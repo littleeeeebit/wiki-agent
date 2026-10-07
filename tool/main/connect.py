@@ -7,11 +7,11 @@ host got the injection. The cheap items are read on every listing; the
 expensive two — the sessions and Codex's trust — are read from the record the
 last `[연결]` or `[다시 시험]` left in `raw/connect/<repo>.json`.
 
-`[연결]` moves the machine's wiring to this hub first when it is elsewhere
+`[연결]` moves the installed hosts' wiring to this hub first when it is elsewhere
 (asked, with every line shown), writes the adapter into the original checkout
 — one of the two writes the server makes there — takes the old per-project
-hooks out, and tests both hosts. With the survey on, `survey` goes on from
-there. After the survey's pull request merges, `handover` takes the original's
+hooks out, and tests the installed hosts declared by the adapter. With the
+survey on, `survey` goes on from there. After the survey's pull request merges, `handover` takes the original's
 uncommitted adapter out of the way of the fast-forward that brings the merged
 one.
 
@@ -125,6 +125,14 @@ def users() -> dict[str, bool]:
     return {host: apply.user_wired(host) for host in HOSTS}
 
 
+def hosts(data: dict | None = None) -> list[str]:
+    """The adapter's hosts available on this PC, or all installed hosts."""
+    declared = (data or {}).get("agents", list(HOSTS))
+    if not isinstance(declared, list):
+        declared = list(HOSTS)
+    return apply.available_agents([host for host in HOSTS if host in declared])
+
+
 def status(path: Path, wired: dict[str, bool] | None = None) -> dict:
     """`{state, missing, notes}`. `일부` names every item that is missing; a
     note is something to see that does not make it partial."""
@@ -135,8 +143,7 @@ def status(path: Path, wired: dict[str, bool] | None = None) -> dict:
     wired = users() if wired is None else wired
     rec = record(path.name)
     slots = {k: str(v).strip() for k, v in (data.get("slots") or {}).items()}
-    agents = data.get("agents", list(HOSTS))
-    agents = [a for a in agents if a in HOSTS] if isinstance(agents, list) else list(HOSTS)
+    agents = hosts(data)
     missing, notes = [], []
     if broken:
         missing.append(broken)
@@ -145,6 +152,8 @@ def status(path: Path, wired: dict[str, bool] | None = None) -> dict:
     empty = [k for k in OPTIONAL if not slots.get(k)]
     if empty:
         notes.append("채워야 함 — " + ", ".join(empty))
+    if not agents:
+        missing.append("이 프로젝트에 사용할 Claude Code 또는 Codex CLI를 PATH에서 찾지 못했다")
     for host in agents:
         if not wired.get(host):
             missing.append(f"사용자 단위 hook 없음 ({LABEL[host]})")
@@ -245,7 +254,7 @@ def trusted(python: str) -> bool:
 
 
 def examine(path: Path, then=None) -> bool:
-    """Both hosts' tests and Codex's trust, on their own thread; `False` when
+    """Available hosts' tests and Codex's trust, on their own thread; `False` when
     one already runs for this repository. `then` runs after, on success or not."""
 
     name = path.name
@@ -257,10 +266,9 @@ def examine(path: Path, then=None) -> bool:
     def run() -> None:
         try:
             data, _ = adapter_of(path)
-            agents = (data or {}).get("agents", list(HOSTS))
-            agents = [a for a in agents if a in HOSTS] if isinstance(agents, list) else list(HOSTS)
+            agents = hosts(data)
             results = {host: probe(path, host) for host in agents}
-            keep(name, probe=results, trust=trusted(interpreter()) if "codex" in agents else None)
+            keep(name, probe=results, trust=trusted(interpreter(data)) if "codex" in agents else None)
         finally:
             with _records:
                 _probing.discard(name)
@@ -274,12 +282,12 @@ def examine(path: Path, then=None) -> bool:
 
 # -- Moving the machine to this hub -------------------------------------------
 
-def interpreter() -> str:
+def interpreter(data: dict | None = None) -> str:
     """The hooks' interpreter as installed: the one the user-level commands
     already name, so a server started under another Python does not read as
     a hub that has to move."""
 
-    for host in HOSTS:
+    for host in hosts(data):
         for file in apply.user_files(host):
             try:
                 groups = (apply.read_json(file).get("hooks") or {}).values()
@@ -294,39 +302,43 @@ def interpreter() -> str:
     return sys.executable
 
 
-def _snapshot() -> tuple[dict, list, list, str]:
+def _snapshot(data: dict | None = None) -> tuple[dict, list, list, str]:
     """`hub()`'s answer with the plan, links and interpreter it was read
     from, so `move` writes the very thing whose digest it checked."""
 
-    python = interpreter()
+    python = interpreter(data)
+    agents = hosts(data)
     try:
-        plan = setup_agents.plan_global("both", [], python)
+        if not agents:
+            raise ValueError("Claude Code 또는 Codex CLI를 설치하고 새 터미널에서 앱을 실행하세요.")
+        plan = setup_agents.plan_global("both" if len(agents) == 2 else agents[0], [], python)
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
-        return ({"needed": True, "refused": str(exc), "lines": [], "links": [], "trust": False, "digest": ""},
+        return ({"needed": True, "refused": str(exc), "agents": agents,
+                 "lines": [], "links": [], "trust": False, "digest": ""},
                 [], [], python)
-    found = setup_agents.skill_links()
+    found = setup_agents.skill_links() if "claude" in agents else []
     lines = [{"file": str(path), "change": change} for path, _s, changes in plan for change in changes]
     links = [{"link": str(link), "from": str(old), "to": str(new) if new else None} for link, old, new in found]
     codex = any(Path(line["file"]).name == "hooks.json" for line in lines)
-    trust = codex or not trusted(python)
-    shown = {"lines": lines, "links": links, "trust": trust}
+    trust = "codex" in agents and (codex or not trusted(python))
+    shown = {"agents": agents, "lines": lines, "links": links, "trust": trust}
     return ({"needed": bool(lines or any(link["to"] for link in links) or trust), "refused": "", **shown,
              "digest": digest(json.dumps(shown, sort_keys=True, ensure_ascii=False).encode())}, plan, found, python)
 
 
-def hub() -> dict:
+def hub(data: dict | None = None) -> dict:
     """What moving the machine's wiring to this hub changes, every line of
     it, and a digest of exactly that list. `needed` is false when nothing."""
 
-    return _snapshot()[0]
+    return _snapshot(data)[0]
 
 
-def move(confirmed: str) -> dict:
+def move(confirmed: str, data: dict | None = None) -> dict:
     """Write what `hub()` showed, only if it is still exactly that. Every
     repository's test was of the old wiring, so the records drop them."""
 
     with _moving:
-        now, plan, found, python = _snapshot()
+        now, plan, found, python = _snapshot(data)
         if now["refused"]:
             raise HTTPException(409, f"허브를 옮길 수 없다 — {now['refused']}")
         if now["digest"] != confirmed:
@@ -393,7 +405,8 @@ def unwire(path: Path, write: bool = True) -> list[str]:
     enforces them — what `setup_agents --global --project` does."""
 
     changed = []
-    for host in HOSTS:
+    data, _ = adapter_of(path)
+    for host in hosts(data):
         file = path / setup_agents.SETTINGS[host]
         if not file.exists() and host != "claude":
             continue
@@ -588,7 +601,9 @@ def plan(name: str) -> dict:
 
     path = repo_of(name)
     exists = (path / ADAPTER).exists()
-    return {"hub": hub(), "adapter": None if exists else guess(path), "unwire": unwire(path, write=False),
+    data, _ = adapter_of(path)
+    return {"hub": hub(data), "agents": hosts(data),
+            "adapter": None if exists else guess(path), "unwire": unwire(path, write=False),
             "survey": survey.estimate(path) if survey.settings()["survey"] else None}
 
 
@@ -597,10 +612,13 @@ def connect(name: str, body: Connect) -> dict:
     from . import survey
 
     path = repo_of(name)
-    if hub()["needed"]:
+    data, _ = adapter_of(path)
+    if not hosts(data):
+        raise HTTPException(409, "이 프로젝트에 사용할 Claude Code 또는 Codex CLI를 PATH에서 찾지 못했다")
+    if hub(data)["needed"]:
         if not body.hub:
             raise HTTPException(409, "허브 이전을 먼저 확인받아야 한다")
-        move(body.hub)
+        move(body.hub, data)
     write_adapter(path)
     unwire(path)
     go_on = None

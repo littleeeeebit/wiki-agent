@@ -4,7 +4,6 @@ import * as api from '@/lib/api'
 import type { ConnectPlan, Project } from '@/lib/api'
 import { cn } from '@/lib/utils'
 
-// `일부` is a person's to finish, so it takes the one warm colour.
 const DOT: Record<Project['state'], string> = { '연결 완료': 'bg-primary', 일부: 'bg-wait', 미연결: 'bg-border' }
 
 const kilo = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : `${Math.round(n / 1000)}k`)
@@ -46,13 +45,10 @@ export function Projects({ current }: { current: string }) {
       setFault(String(err instanceof Error ? err.message : err))
     } finally {
       setWorking('')
-      // Read here and by the rail, which shows the current project's state.
       window.dispatchEvent(new Event('connect-changed'))
     }
   }
 
-  // The plan first. With nothing to confirm — no hub move, no survey — it
-  // connects at once; otherwise the confirmation shows every line.
   const begin = (name: string) => act(name, async () => {
     const plan = await api.connectPlan(name)
     if (!plan.hub.needed && !plan.survey) {
@@ -95,7 +91,7 @@ export function Projects({ current }: { current: string }) {
                 {r.state !== '미연결' && (
                   <Btn disabled={!!working || r.probing}
                     onClick={() => void act(`probe:${r.id}`, () => api.reprobe(r.id).then(() => {}))}
-                    title="Claude 와 Codex 의 실제 세션을 한 턴씩 돌린다. 모델 두 턴의 비용이 든다">
+                    title="이 프로젝트에 연결한 CLI 중 설치된 도구의 실제 세션을 한 턴씩 돌린다. 도구마다 모델 한 턴의 비용이 든다">
                     다시 시험
                   </Btn>
                 )}
@@ -139,6 +135,9 @@ export function Projects({ current }: { current: string }) {
           </>
         )}>
           <div>
+            <p className="mb-3 text-muted-foreground">
+              연결할 도구: {asking.plan.agents.map((agent) => agent === 'claude' ? 'Claude Code' : 'Codex').join(', ') || '설치된 도구 없음'}
+            </p>
             {asking.plan.hub.refused && (
               <p className="mb-2 whitespace-pre-wrap text-destructive">허브를 옮길 수 없다 — {asking.plan.hub.refused}</p>
             )}
@@ -160,14 +159,15 @@ export function Projects({ current }: { current: string }) {
             {asking.plan.adapter && (
               <section className="mb-3">
                 <div className="mb-1 font-heading text-[11px] font-semibold text-faint">원본 체크아웃에 쓰는 .wiki/adapter.toml</div>
+                <p className="mb-1 text-muted-foreground">gate_cmd는 변경 완료 전 검사 명령입니다. 비어 있으면 연결 후에도 일부로 표시됩니다. live_cmd와 server_stop은 실행 확인·종료 방법이며 나중에 채울 수 있습니다.</p>
                 <ul className="font-mono text-[12px]">
-                  {Object.entries(asking.plan.adapter).map(([k, v]) => <li key={k}>{k} = {v || <span className="text-wait">채워야 함</span>}</li>)}
+                  {Object.entries(asking.plan.adapter).map(([k, v]) => <li key={k}>{k} = {v || <span className="text-wait">{k === 'gate_cmd' ? '필수 — 프로젝트 검사 명령' : '미설정 — 나중에 입력 가능'}</span>}</li>)}
                 </ul>
               </section>
             )}
             {asking.plan.unwire.length > 0 && (
               <section className="mb-3">
-                <div className="mb-1 font-heading text-[11px] font-semibold text-faint">옛 프로젝트 단위 hook</div>
+                <div className="mb-1 font-heading text-[11px] font-semibold text-faint">프로젝트 훅 정리·보호 규칙 적용</div>
                 <ul className="font-mono text-[12px]">{asking.plan.unwire.map((u) => <li key={u}>{u}</li>)}</ul>
               </section>
             )}
