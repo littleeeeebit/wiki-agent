@@ -23,6 +23,7 @@ import http.client
 import json
 import os
 import secrets
+import socket
 import sqlite3
 import subprocess
 import sys
@@ -128,7 +129,7 @@ def ask(query: str, project: str | Path | None, timeout: float, k: int = 8,
 
 
 def retrieve(request: dict, project: str | Path | None, timeout: float, wait: float = 0.0,
-             start: bool = True) -> dict | None:
+             start: bool = True, cancel: threading.Event | None = None) -> dict | None:
     """The daemon's RetrievalResult for a RetrievalRequest (`retrieval`), or
     `None` — no answer, as for `ask`, and a request naming a generation the
     daemon no longer reads is no answer too.
@@ -140,7 +141,7 @@ def retrieve(request: dict, project: str | Path | None, timeout: float, wait: fl
 
     answer, _started = call("/retrieve", {"request": request, "hub": str(HUB),
                                           "project": str(project) if project else None, "wait": wait},
-                            timeout, wait, start)
+                            timeout, wait, start, cancel)
     return answer if (answer or {}).get("schema_version") == retrieval.RESULT else None
 
 
@@ -255,7 +256,7 @@ def local_index(project: str | Path | None, hub: Path | None = None, vectors: bo
 
 
 def call(path: str, body: dict, timeout: float, wait: float = 0.0,
-         start: bool = True) -> tuple[dict | None, bool]:
+         start: bool = True, cancel: threading.Event | None = None) -> tuple[dict | None, bool]:
     """`(the daemon's JSON answer or None, whether this started a daemon)`.
 
     No state file means no connection attempt at all: a refused connection to
@@ -268,7 +269,7 @@ def call(path: str, body: dict, timeout: float, wait: float = 0.0,
     and is abandoned at the deadline.
     """
 
-    if os.environ.get("WIKI_SEARCH") == "off":
+    if os.environ.get("WIKI_SEARCH") == "off" or cancel is not None and cancel.is_set():
         return None, False
     try:
         state = json.loads(state_path().read_text(encoding="utf-8"))
@@ -285,15 +286,35 @@ def call(path: str, body: dict, timeout: float, wait: float = 0.0,
         # spawn left to a thread the join gave up on dies with the caller.
         conn.connect()
     except OSError:
+        conn.close()
         # Nothing listening: the daemon died and left its file behind.
         if start:
             spawn()
         return None, start
+    if cancel is not None and (cancel.is_set() or time.monotonic() >= deadline):
+        conn.close()
+        return None, False
     answer: list = []
     worker = threading.Thread(
         target=lambda: answer.append(exchange(conn, token, path, body, deadline, wait, start)),
         daemon=True)
-    worker.start()
+    try:
+        worker.start()
+    except BaseException:
+        conn.close()
+        raise
+    if cancel is not None:
+        while worker.is_alive() and time.monotonic() < deadline + wait and not cancel.is_set():
+            worker.join(min(0.05, max(0.0, deadline + wait - time.monotonic())))
+        if worker.is_alive():
+            try:
+                if conn.sock is not None:
+                    conn.sock.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            conn.close()
+            worker.join()
+        return answer[0] if answer and not cancel.is_set() and time.monotonic() <= deadline + wait else (None, False)
     worker.join(max(0.0, deadline - time.monotonic()) + wait)
     return answer[0] if answer else (None, False)
 
@@ -311,6 +332,8 @@ def exchange(conn: http.client.HTTPConnection, token: str, path: str, body: dict
             # get it back, and the question is not sent to a stranger.
             return None, False
         if health.get("version") != version():
+            if not start:
+                return None, False
             conn.request("POST", "/quit", body=b"{}", headers={"X-Wiki-Token": token})
             conn.getresponse().read()
             if start:

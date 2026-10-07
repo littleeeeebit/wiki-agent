@@ -83,10 +83,10 @@ def jev(tmp_path, monkeypatch):
 
     monkeypatch.setattr(decisions, "LOGS", tmp_path / "actions")
     monkeypatch.setattr(decisions, "_claimed", {})
-    retrieved = []
+    retrieved, shadow_retrieved = [], []
 
     def prepare(query, project, state="", **kw):
-        retrieved.append({"query": query, "budget": kw.get("budget"), "calls": kw["budget"].used["calls"],
+        (shadow_retrieved if kw.get("context_only") else retrieved).append({"query": query, "budget": kw.get("budget"), "calls": kw["budget"].used["calls"],
                           "require": kw.get("require"), "cause": kw.get("cause")})
         return DOSSIER
 
@@ -95,7 +95,7 @@ def jev(tmp_path, monkeypatch):
     monkeypatch.setattr(decisions.knowledge, "english", lambda texts, seconds: [
         {"status": "original_english", "text": t} if language(t) == "en" else {"status": "unavailable", "text": None}
         for t in texts])
-    mode.retrieved = retrieved
+    mode.retrieved, mode.shadow_retrieved = retrieved, shadow_retrieved
     return mode
 
 

@@ -103,8 +103,8 @@
     },
     "tool/main/knowledge.py": {
       "dup": 0,
-      "lines": 3800,
-      "reason": "baseline at adoption"
+      "lines": 3811,
+      "reason": "Review shadow reuses scoped preparation with a context-only, non-starting daemon read and forwards owned normalization cancellation."
     },
     "tool/main/loop.py": {
       "dup": 0,
@@ -258,8 +258,8 @@
     },
     "tool/translate/__init__.py": {
       "dup": 12,
-      "lines": 1288,
-      "reason": "baseline at adoption"
+      "lines": 1308,
+      "reason": "Review shadow normalization admits and collects batches on the caller's thread, sharing its deadline and avoiding shared caching of private context."
     },
     "tool/trigger_audit.py": {
       "dup": 0,

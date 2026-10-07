@@ -238,7 +238,7 @@ def session_of(path: Path) -> str | None:
     return chat.id if chat else None
 
 
-def normalized(state: dict, seconds: float) -> tuple[dict | None, str]:
+def normalized(state: dict, seconds: float, *, cancel: threading.Event | None = None) -> tuple[dict | None, str]:
     """`state` with every prose string in English, and the normalization's
     version; `None` when any has no English — Jev reads English only, and
     untranslated prose is never sent in its place."""
@@ -263,7 +263,7 @@ def normalized(state: dict, seconds: float) -> tuple[dict | None, str]:
         return value
 
     walk(state, "")
-    outcomes = knowledge.english(texts, seconds) if texts else []
+    outcomes = knowledge.english(texts, seconds, **({"cancel": cancel} if cancel is not None else {})) if texts else []
     if any(o["status"] not in knowledge.evidence.USABLE for o in outcomes):
         return None, ""
     version = "|".join(sorted({str(o.get("version") or o["status"]) for o in outcomes}))

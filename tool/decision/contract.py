@@ -243,6 +243,9 @@ def checked(req: dict, res: dict) -> dict:
         raise ValueError("the result names a candidate that was not offered")
     if res["status"] in ("decided", "uncertain") and set(res["answers"]) != set(req["questions"]):
         raise ValueError("the answers are not the questions asked")
+    if res["status"] in ("decided", "uncertain") and not all(
+            shaped(req["questions"][name]["question"], answer) for name, answer in res["answers"].items()):
+        raise ValueError("malformed_answer")
     if res["status"] not in ("decided", "uncertain") and res["answers"]:
         raise ValueError("a failed decision carries answers")
     return res

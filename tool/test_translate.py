@@ -85,6 +85,24 @@ def soon() -> float:
     return time.monotonic() + 5
 
 
+def test_owned_normalization_cancels_between_batches_without_threads_or_shared_cache(monkeypatch):
+    cancel = threading.Event()
+    calls = []
+
+    def response(system, batch, seconds):
+        calls.append((threading.current_thread(), seconds))
+        cancel.set()
+        return _rewrites_all_prose(system, batch, seconds)
+
+    monkeypatch.setattr(T, "_ask", response)
+    before = set(threading.enumerate())
+    out = T.english([f"취소되면 멈춘다 {i}" for i in range(T.BATCH + 1)], soon(), cancel=cancel)
+    assert len(calls) == 1 and calls[0][0] == threading.current_thread()
+    assert set(threading.enumerate()) == before and out[-1]["status"] == "unavailable"
+    with sqlite3.connect(T.CACHE) as db:
+        assert db.execute("SELECT count(*) FROM shots").fetchone()[0] == 0
+
+
 def ko(text: str, deadline: float | None = None) -> str:
     return T.translate([text], T.KO_EN, soon() if deadline is None else deadline)[0]
 

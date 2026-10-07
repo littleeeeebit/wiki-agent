@@ -321,7 +321,8 @@ def profile_of(spec: dict) -> dict:
             "artifact_root": spec.get("artifact_root")}
 
 
-profiled = review_contract.profile_fields
+def profiled(repo: Path, block: dict) -> dict:
+    return review_contract.profile_fields(repo, block)
 
 
 def fields(repo: Path, block, gate: str, accepted: dict | None = None) -> dict:

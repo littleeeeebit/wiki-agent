@@ -556,7 +556,8 @@ def translate(texts: list[str], direction: str, deadline: float) -> list[str]:
 
 
 def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
-              held: dict[str, str] | None = None, asked: dict[int, str] | None = None) -> list[tuple[str, str]]:
+              held: dict[str, str] | None = None, asked: dict[int, str] | None = None,
+              cancel: threading.Event | None = None) -> list[tuple[str, str]]:
     """`(text, status)` per input. The status is `skipped` (nothing of the
     source language), `cached`, `translated`, or why the original came back:
     `retired`, `no_key`, `limit`, `request_failed`, `spans_broken`, `deadline`,
@@ -572,7 +573,7 @@ def _outcomes(texts: list[str], direction: str, deadline: float, accept=None,
     if not texts:
         return []
     try:
-        return _translate(list(texts), direction, deadline, accept, held, asked)
+        return _translate(list(texts), direction, deadline, accept, held, asked, cancel)
     except Exception:
         # The callers are hooks part-way through assembling an injection. Their
         # own entry-point guard would catch this and pass the turn, which costs
@@ -586,7 +587,8 @@ LINE_ITEM = re.compile(r"\n(?=[ \t]*(?:[-*+][ \t]|\d+[.)][ \t]|\|))")
 
 
 def _translate(texts: list[str], direction: str, deadline: float, accept=None,
-               held: dict[str, str] | None = None, asked: dict[int, str] | None = None) -> list[tuple[str, str]]:
+               held: dict[str, str] | None = None, asked: dict[int, str] | None = None,
+               cancel: threading.Event | None = None) -> list[tuple[str, str]]:
     keep, fixed, version = glossary()
     if direction == EN_KO:
         version += "/x" + examples()[1]   # the examples are part of en->ko's prompt; ko->en keys stay as they were
@@ -641,6 +643,8 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
         got: dict[int, tuple[str, str]] = {}
 
         def request(group: list[int]) -> None:
+            if cancel is not None and (cancel.is_set() or time.monotonic() >= deadline):
+                return
             # A request for the shared cache reads on past the caller's
             # deadline, on this thread, and caches what lands then. A held
             # (private) text has no shared cache to land in, so it does not.
@@ -651,7 +655,8 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
             # A list item or table row an item: asked for a list as one string, the translator answered an
             # item per line, and a reply of the wrong length is no reply. Wrapped prose stays whole.
             split = [LINE_ITEM.split(masked[j][0]) for j in group]
-            answer = _ask(system, [piece for pieces in split for piece in pieces], seconds)
+            answer = _ask(system, [piece for pieces in split for piece in pieces],
+                          max(0.0, deadline - time.monotonic()) if cancel is not None else seconds)
             if answer is None:
                 return
             back = iter(answer)
@@ -687,7 +692,18 @@ def _translate(texts: list[str], direction: str, deadline: float, accept=None,
         # costs its batch, never every passage of the turn.
         groups = [list(range(n, min(n + BATCH, len(wanted)))) for n in range(0, len(wanted), BATCH)
                   ] if seconds > 0 else []
-        workers = [threading.Thread(target=request, args=(g,), daemon=True) for g in groups]
+        workers = [] if cancel is not None else [threading.Thread(target=request, args=(g,), daemon=True) for g in groups]
+        if cancel is not None:
+            # Owned normalization admits and collects one batch at a time.
+            # Private source text never enters the shared translation cache.
+            for group in groups:
+                if cancel.is_set() or time.monotonic() >= deadline:
+                    break
+                request(group)
+            for i in wanted:
+                if i in got:
+                    out[i] = got[i]
+            workers = []
         for worker in workers:
             worker.start()
         for worker in workers:
@@ -842,7 +858,8 @@ def version() -> str:
     return f"{MODEL}/p{PROMPT_VERSION}/g{glossary()[2]}/e{ENGLISH_VERSION}"
 
 
-def english(texts: list[str], deadline: float, held: dict[str, dict] | None = None) -> list[dict]:
+def english(texts: list[str], deadline: float, held: dict[str, dict] | None = None,
+            cancel: threading.Event | None = None) -> list[dict]:
     """English normalization with its outcome, one dict per input.
 
     `translate` returns the original on every failure, so its string cannot
@@ -882,10 +899,13 @@ def english(texts: list[str], deadline: float, held: dict[str, dict] | None = No
     langs = [language(text, keep) for text in texts]
     korean = [i for i, lang in enumerate(langs) if lang == "ko"]
     version = f"{MODEL}/p{PROMPT_VERSION}/g{glossary_version}/e{ENGLISH_VERSION}"
+    if cancel is not None and held is None:
+        held = {}
     usable = None if held is None else {t: o["text"] for t, o in held.items()
                                         if o.get("status") == "translated" and o.get("version") == version}
     asked: dict[int, str] = {}
-    done = dict(zip(korean, _outcomes([texts[i] for i in korean], KO_EN, deadline, accept, usable, asked)))
+    done = dict(zip(korean, _outcomes([texts[i] for i in korean], KO_EN, deadline, accept, usable, asked,
+                                    cancel=cancel)))
     at = {i: n for n, i in enumerate(korean)}
     out = []
     for i, text in enumerate(texts):
