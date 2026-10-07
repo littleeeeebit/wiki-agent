@@ -552,8 +552,8 @@ def main():
                     page.set_viewport_size({"width": 1440, "height": 900})
                     page.get_by_role("button", name="설정", exact=True).click()
                     page.get_by_role("button", name="외부 연결 켜기", exact=True).click()
-                    page.get_by_role("button", name="연결 링크 만들기", exact=True).wait_for(timeout=65000)
-                    page.get_by_role("button", name="연결 링크 만들기", exact=True).click()
+                    # The first click must produce a QR without a second pairing click.
+                    page.get_by_role("textbox", name="휴대폰 연결 링크", exact=True).wait_for(timeout=180000)
                     link = page.get_by_role("textbox", name="휴대폰 연결 링크", exact=True).input_value()
                     phone = browser.new_page(viewport={"width": 400, "height": 800})
                     phone.on("pageerror", lambda error: errors.append(str(error)))

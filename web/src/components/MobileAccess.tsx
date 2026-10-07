@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import { Btn } from '@/components/Modal'
@@ -97,11 +97,28 @@ export function MobileSettings() {
   const [working, setWorking] = useState(false)
   const [fault, setFault] = useState('')
   const [installation, setInstallation] = useState<InstallState>(installState)
+  const pairWhenReady = useRef(false)
+  const connectionRequest = useRef(0)
   useEffect(() => {
     let stale = false
-    const read = () => {
+    const read = async () => {
+      const request = connectionRequest.current
       setNow(Date.now())
-      return status().then((value) => { if (!stale) setInfo(value) }).catch(() => {})
+      try {
+        const value = await status()
+        if (stale || request !== connectionRequest.current) return
+        setInfo(value)
+        if (value.enabled && pairWhenReady.current) {
+          pairWhenReady.current = false
+          const made = await api.mobileLink()
+          if (!stale && request === connectionRequest.current) {
+            setLink(made.link)
+            setExpires(Date.now() + made.seconds * 1000)
+          }
+        }
+      } catch (error) {
+        if (!stale && request === connectionRequest.current) setFault(String(error instanceof Error ? error.message : error))
+      }
     }
     void Promise.resolve().then(read)
     const timer = window.setInterval(read, 2000)
@@ -123,11 +140,12 @@ export function MobileSettings() {
   return <section aria-label="휴대폰 연결" className="space-y-3">
     <h3 className="font-heading text-[14px] font-semibold">휴대폰</h3>
     <p className="text-[14px] leading-relaxed text-muted-foreground">PC에서 작업을 실행하고 휴대폰 앱이나 브라우저에서 대화·변경 사항·승인을 이어갑니다. 모바일 데이터와 다른 Wi-Fi에서도 연결됩니다.</p>
+    <p className="text-[14px] leading-relaxed text-muted-foreground">외부 연결을 켜고 휴대폰 카메라로 연결 QR을 스캔하세요. 별도 설치 없이 브라우저에서 바로 사용할 수 있습니다.</p>
     {info?.local ? <>
-      <p role="status" className="text-[14px]">{info.starting ? '외부 연결을 여는 중…' : info.enabled ? '외부 연결 켜짐' : '외부 연결 꺼짐'}</p>
+      <p role="status" className="text-[14px]">{info.starting ? info.progress || '외부 연결을 여는 중…' : info.enabled ? '외부 연결 켜짐' : '외부 연결 꺼짐'}</p>
       <div className="space-y-2 rounded-md border border-border bg-background p-3">
-        <h4 className="font-heading text-[14px] font-semibold">1. Android 앱 설치</h4>
-        {!info.apk_available ? <p className="text-[14px] leading-relaxed text-muted-foreground">설치 파일이 아직 준비되지 않았습니다. PC에서 APK를 빌드한 뒤 다시 확인하세요.</p>
+        <h4 className="font-heading text-[14px] font-semibold">Android 앱 설치 (선택)</h4>
+        {!info.apk_available ? <p className="text-[14px] leading-relaxed text-muted-foreground">Android 설치 파일이 없습니다. 아래 연결 QR로 브라우저에서 바로 사용할 수 있습니다.</p>
           : info.enabled && info.origin ? <>
             <figure className="space-y-2 text-[14px]">
               <QRCodeSVG value={`${info.origin}/mobile-install`} size={232} marginSize={4} level="M" role="img"
@@ -137,17 +155,25 @@ export function MobileSettings() {
             <Btn onClick={() => void act(() => navigator.clipboard.writeText(`${info.origin}/mobile-install`))}>설치 링크 복사</Btn>
           </> : <p className="text-[14px] leading-relaxed text-muted-foreground">외부 연결을 켜면 휴대폰 카메라로 스캔할 설치 QR이 표시됩니다.</p>}
       </div>
-      <h4 className="font-heading text-[14px] font-semibold">2. PC 연결</h4>
+      <h4 className="font-heading text-[14px] font-semibold">PC 연결</h4>
       <div className="flex flex-wrap gap-3">
-        {!info.enabled && <Btn disabled={working || info.starting} onClick={() => void act(async () => setInfo(await api.startMobile()))}>
+        {!info.enabled && <Btn disabled={working || info.starting} onClick={() => void act(async () => {
+          connectionRequest.current++
+          pairWhenReady.current = true
+          setLink('')
+          setInfo(await api.startMobile())
+        })}>
           외부 연결 켜기
         </Btn>}
         {info.enabled && <Btn tone="primary" disabled={working} onClick={() => void act(async () => {
+          pairWhenReady.current = false
           const made = await api.mobileLink()
           setLink(made.link)
           setExpires(Date.now() + made.seconds * 1000)
         })}>연결 링크 만들기</Btn>}
         {(info.enabled || info.starting) && <Btn disabled={working} onClick={() => void act(async () => {
+          connectionRequest.current++
+          pairWhenReady.current = false
           setInfo(await api.stopMobile())
           setLink('')
         })}>연결 끄기 · 기기 해제</Btn>}

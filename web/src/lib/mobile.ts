@@ -25,7 +25,7 @@ export const setRemote = (value: boolean) => {
 }
 
 export type MobileStatus = {
-  local: boolean; paired?: boolean; enabled?: boolean; starting?: boolean; origin?: string; error?: string; apk_available?: boolean
+  local: boolean; paired?: boolean; enabled?: boolean; starting?: boolean; origin?: string; error?: string; progress?: string; apk_available?: boolean
 }
 
 type InstallPrompt = Event & {
