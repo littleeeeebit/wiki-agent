@@ -1293,14 +1293,16 @@ def step(loop: Loop) -> bool:
     paths = changed(path, base_oid, head)
     profile = effective(spec, paths)
     contract = review_contract.select(repo, path, spec, profile, paths, head, base_oid)
-    contract["shadow"] = review_contract.observe_shadow(repo, path, spec, paths, contract, loop.halt)
+    observation = review_contract.observe_shadow(repo, path, spec, paths, contract, loop.halt)
     if loop.halt.is_set():
         return False
-    if contract["shadow"]["status"] == "stale":
+    if observation["status"] == "stale":
+        return True
+    contract = review_contract.store(repo, path, spec, review_contract.compose(contract, observation))
+    if contract is None:
         return True
     problem = review_contract.ready(repo, path, spec, contract)
     if problem:
-        change(loop, review_contract=contract)
         return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem)
     last = rounds[-1] if rounds else None
     again = spec.get("review_again", False)
@@ -1318,6 +1320,8 @@ def step(loop: Loop) -> bool:
     spec = change(loop, f"리뷰 R{n}", review_again=False)
     if spec is None:
         return False
+    if (contract := review_contract.store(repo, path, spec, contract)) is None:
+        return True
     chat = cell(spec, path)
     kept = folder(spec["repo"], pr)
     kept.mkdir(parents=True, exist_ok=True)
@@ -1407,21 +1411,22 @@ def step(loop: Loop) -> bool:
     if verification.cloud(spec) or contract["flows"]:
         record["local_verification_digest"] = verification.evidence_identity(spec)
     moved = pr_head(repo, pr)
-    if moved != (head, base):
-        # Someone pushed or changed the base while it was read: the verdict
-        # is about code that is no longer the pull request. Kept, not counted,
-        # and without items: it neither raises nor resolves a finding.
-        for name in (f"round-{n}.md", f"round-{n}-result.md"):
-            if (kept / name).exists():
-                (kept / name).replace(kept / name.replace(f"round-{n}", f"round-{n}-stale-{head[:7]}"))
-        return change(loop, rounds=[*kept_rounds(spec), {**record, "stale": True}]) is not None
+    with specs._files:
+        refreshed = review_contract.store(repo, path, spec, contract)
+        if moved != (head, base) or refreshed is None:
+            # A moved PR or changed input snapshot keeps a stale, uncounted verdict.
+            for name in (f"round-{n}.md", f"round-{n}-result.md"):
+                if (kept / name).exists():
+                    (kept / name).replace(kept / name.replace(f"round-{n}", f"round-{n}-stale-{head[:7]}"))
+            current = specs.load(loop.repo, loop.sid)
+            return current is not None and change(loop, rounds=[*kept_rounds(current), {**record, "stale": True}]) is not None
 
-    deferred = list(spec.get("deferred") or [])
-    for f in parsed["findings"]:
-        if f["grade"] == "P2" and not any(same(f["head"], d) for d in deferred):
-            deferred.append(f["head"])
-    record["items"] = identified(spec, parsed["findings"])
-    spec = change(loop, rounds=[*kept_rounds(spec), record], deferred=deferred)
+        deferred = list(spec.get("deferred") or [])
+        for f in parsed["findings"]:
+            if f["grade"] == "P2" and not any(same(f["head"], d) for d in deferred):
+                deferred.append(f["head"])
+        record["items"] = identified(spec, parsed["findings"])
+        spec = change(loop, rounds=[*kept_rounds(spec), record], deferred=deferred)
     if spec is None:
         return False
     if parsed["verdict"] == "allow":

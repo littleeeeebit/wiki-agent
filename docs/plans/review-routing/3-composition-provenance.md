@@ -9,17 +9,22 @@ requirements with non-authoritative recommendations. Explain each selected
 criterion, evidence kind and flow through validated inputs, not a fluent but
 unverifiable model rationale.
 
-## Current implementation and target
+## Implemented contract
 
-V1 unions profile floors, explicit declarations, preservation requirements and
-registered-flow kinds. It stores the aggregate contract/digest in each round,
-and stores Jev's observation separately. It has no per-item origin ledger or
-counterfactual candidate union. Therefore this stage is partially implemented.
+`tool/main/review_contract.py` now selects a v2 contract, records the grounds of
+every mandatory item and owns the shared dependency rules. The pure
+`review_audit.py` helper composes the audit union and supplies a redacted legacy
+or current view; it has no transport, registry, collector or dispatch authority.
+The existing loop and spec store persist both compositions before readiness and
+in the reviewed round.
 
-Extend `review_contract.py` and existing round persistence; do not add another
-decision engine or mutable registry. Introduce a versioned contract only when
-the new schema is implemented. Documents below describe the target v2, not
-fields that already exist in v1.
+Top-level `criteria`, `evidence`, resolved `flows`, `problems` and `digest` retain
+their execution meaning. `enforced` and `candidate` use sorted stable IDs;
+`items` retains separate ground scopes and all valid origins. `enforced_digest`
+aliases `digest`. `candidate_digest` binds the frozen observation, union, grounds,
+unresolved candidates and rejection dispositions. No shadow field enters the
+execution digest. Archived v1 records remain readable with unavailable provenance;
+their old digest cannot approve a newly composed v2 contract.
 
 ## Two contracts, one execution authority
 
@@ -60,9 +65,15 @@ candidate in shadow mode. Mandatory unavailable dependencies are enforced
 preparation problems. Any later activation must route an admitted requirement
 through stage 4; it cannot silently ignore an inconvenient missing collector.
 
+The current schema has neither a native collector nor admitted representative
+measurement coverage. Desktop and performance selections therefore retain an
+explicit unresolved item; mandatory selections block preparation, while optional
+shadow selections remain audit data. This stage does not supply those collectors
+or infer measurement sufficiency from a correctness assertion.
+
 ## Per-item provenance schema
 
-Proposed contract extension:
+The v2 extension, abbreviated here to show its shape:
 
 ```json
 {
@@ -73,12 +84,12 @@ Proposed contract extension:
     {
       "id": "criteria:async",
       "membership": ["enforced", "candidate"],
-      "grounds": [{"origin": "spec", "rule_id": "F05", "locator": "review.criteria", "input_digest": "<spec-signature>"}]
+      "grounds": [{"origin": "spec", "scope": "enforced", "rule_id": "F05", "locator": "review.criteria", "input_digest": "<spec-signature>"}]
     },
     {
       "id": "evidence:api",
       "membership": ["candidate"],
-      "grounds": [{"origin": "jev-shadow", "request_id": "<id>", "basis_refs": ["<validated-ref>"]}]
+      "grounds": [{"origin": "jev-shadow", "scope": "candidate", "request_id": "<id>", "basis_refs": ["<validated-ref>"]}]
     }
   ],
   "unresolved": [{"item_id": "evidence:api", "scope": "candidate", "reason": "no registered API flow"}]
@@ -123,6 +134,16 @@ next spec revision. Use the existing spec owner/lock and round store, not direct
 edits to raw metadata. On restart, recompute current obligations; reuse a record
 only under matching identities and the existing readiness rules.
 
+`store()` recomputes the mandatory contract under the spec owner's lock before
+publication and dispatch. It refuses a changed spec birth/revision, head/base,
+manifest, frozen inputs, rubric/catalog or superseded attempt. Optional catalog
+changes mark only the audit observation stale. The offered flow IDs, kinds,
+impact paths, environments and assertion IDs must still match the registered
+catalog. Observation completion also rechecks frozen/rubric/catalog digests within
+the shared shadow budget. Round publication shares the same lock with its final
+snapshot check; a revision made while the reviewer runs produces an uncounted
+stale round rather than approval of the replacement requirements.
+
 ## Rendering and diagnostics
 
 Extend the existing composed-contract instruction section. Render enforced
@@ -163,9 +184,37 @@ obtain the explicit rollout decision. Historical synthetic scores are insufficie
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | Existing union | Deterministic obligations and aggregate digest | Done |
-| 2 | Ground each item | Versioned origin ledger and validated source references | Not started |
-| 3 | Candidate composition | Audit-only dependency closure, rejections and diagnostics | Not started |
-| 4 | Verify | Identity, replay and legacy migration checks | Not started |
+| 2 | Ground each item | Versioned origin ledger and validated source references | Done — scoped v2 origins, stable item IDs, multiple grounds and offered-reference validation |
+| 3 | Candidate composition | Audit-only dependency closure, rejections and diagnostics | Done — replayed choices, dependency closure, separate audit identity and unresolved scopes |
+| 4 | Verify | Identity, replay and legacy migration checks | Done — integration and final focused regressions passed on 2026-10-07 |
+
+## Implementation verification
+
+Recorded on 2026-10-07 against this implementation working tree. The broader
+invocation started before the final catalog-validation, observation-copy and
+missing-version hardening; focused reruns cover those subsequent changes.
+These invocations overlap and are not a unique-test sum.
+
+| Check | Result |
+| --- | --- |
+| `test_review_contract.py`, `test_loop.py`, `test_local_verification.py`, `test_specs.py`, `test_review_routing.py` | 285 passed; temporary Git, controlled model/reviewer/GitHub replies and isolated HTTP API |
+| Final catalog/closure/identity/legacy selection in `test_review_contract.py` | 18 passed; invalid catalogs, audit-only flow dispatch, stale snapshots and legacy rendering |
+| Observation-copy and malformed-catalog rerun | 4 passed; independent frozen input snapshot and command/assertion/kind rejection |
+| Final legacy rerun | 2 passed; digest equality without a schema version cannot reuse v2 approval |
+| `test_agent_decisions.py`, `test_review_routing.py` | 32 passed; existing decision ownership and separate-process replay remain compatible |
+| Ruff, wiki lint, diff whitespace and UTF-8 without BOM | Passed |
+| Repository debt gate | Failed only on five existing findings in `chat_session.py`, `work.py`, `test_agent.py`, `test_loop.py` and `desktop_browser.py`; no limit was widened |
+
+Candidate flow additions never called the collector or widened reviewer tools.
+An actual registered mandatory API flow still used its existing evidence owner.
+Spec revisions during review produced a stale round followed by review of the
+current revision. Off/on, probability variation, optional defer and unsupported
+grounds preserved the execution contract. Native and representative measurement
+coverage remained unresolved rather than receiving substituted proof.
+
+No paid Jev request, human semantic evaluation, actual independent reviewer or
+native-host interaction was part of these checks. Collector implementation remains
+stage 4 work; this completion does not activate recommendations.
 
 ## Rollback
 
