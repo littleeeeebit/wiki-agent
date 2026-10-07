@@ -806,15 +806,15 @@ def stop(loop: Loop | None, repo: str, sid: str, why: Why, detail: str = "", sou
     return False
 
 
-def gh_json(repo: Path, args: list[str]) -> dict:
-    done = specs.sh(["gh", *args], repo, 60)
+def gh_json(repo: Path, args: list[str], timeout: float = 60) -> dict:
+    done = specs.sh(["gh", *args], repo, timeout)
     if done.returncode:
         raise RuntimeError(f"gh {args[0]} {args[1]} 실패 — {specs.said(done)}")
     return json.loads(done.stdout)
 
 
-def pr_head(repo: Path, n: int) -> tuple[str, str]:
-    view = gh_json(repo, ["pr", "view", str(n), "--json", "headRefOid,baseRefName"])
+def pr_head(repo: Path, n: int, *, timeout: float = 60) -> tuple[str, str]:
+    view = gh_json(repo, ["pr", "view", str(n), "--json", "headRefOid,baseRefName"], timeout)
     return view["headRefOid"], view["baseRefName"]
 
 

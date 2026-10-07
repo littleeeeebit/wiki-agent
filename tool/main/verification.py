@@ -98,9 +98,23 @@ def within(root: Path, relative: str) -> Path:
     return file
 
 
-def manifest(path: Path) -> tuple[Manifest, str]:
+def manifest(path: Path, *, budget=None) -> tuple[Manifest, str]:
+    def tracked(ref):
+        if budget is not None:
+            budget.check()
+        try:
+            done = specs.sh(["git", "ls-files", "--error-unmatch", "--", ref], path,
+                            timeout=budget.left() if budget is not None else 60)
+        except subprocess.TimeoutExpired:
+            if budget is not None:
+                budget.check()
+            raise
+        if budget is not None:
+            budget.check()
+        return done
+
     file = within(path, MANIFEST)
-    if specs.sh(["git", "ls-files", "--error-unmatch", "--", MANIFEST], path).returncode:
+    if tracked(MANIFEST).returncode:
         raise ValueError("verification.json 을 저장소에 커밋해야 한다")
     data = file.read_bytes()
     parsed = Manifest.model_validate_json(data)
@@ -113,8 +127,7 @@ def manifest(path: Path) -> tuple[Manifest, str]:
             raise ValueError(f"{flow.id}: 검증 항목 id 또는 영향 경로를 확인한다")
     for ref in parsed.contracts:
         file = within(path, ref)
-        tracked = specs.sh(["git", "ls-files", "--error-unmatch", "--", ref], path)
-        if not file.is_file() or tracked.returncode:
+        if not file.is_file() or tracked(ref).returncode:
             raise ValueError(f"저장소에 커밋된 API·데이터 명세가 필요하다: {ref}")
     return parsed, sha(data)
 

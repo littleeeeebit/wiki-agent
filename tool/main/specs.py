@@ -1113,15 +1113,24 @@ def merge_base(path: Path, base: str, rev: str = "HEAD") -> str:
     return "" if done.returncode else done.stdout.strip()
 
 
-def current_merge_base(path: Path, base: str, rev: str = "HEAD") -> str:
+def current_merge_base(path: Path, base: str, rev: str = "HEAD", *, budget=None) -> str:
     """`merge_base` after fetching `base` now: what a final result is bound to
     and checked against. A base that moved onto the branch's own commits
     changes it, and the last fetch would not show that. Empty when the fetch
     fails — a base that cannot be read proves nothing."""
 
-    if sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], path, 120).returncode:
+    if budget is not None:
+        budget.check()
+    if sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], path,
+          budget.left() if budget is not None else 120).returncode:
         return ""
-    return merge_base(path, base, rev)
+    if budget is not None:
+        budget.check()
+    done = sh(["git", "merge-base", f"origin/{base}", rev], path,
+              budget.left() if budget is not None else 60)
+    if budget is not None:
+        budget.check()
+    return "" if done.returncode else done.stdout.strip()
 
 
 def selected(repo: Path, path: Path, base: str, gate_cmd: str) -> dict:

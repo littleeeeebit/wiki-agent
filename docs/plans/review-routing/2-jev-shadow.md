@@ -34,10 +34,15 @@ contract digest, enforced obligations, collection and dispatch remain unchanged.
 Earlier synchronization/gate/Cloud failures still belong to their existing owners;
 they do not produce a contextual request before a safe diff is available.
 
-Limits are 15 seconds shared by preparation/normalization/decision, one Jev call,
+Limits are 15 seconds shared by preparation/normalization/decision/identity checks, one Jev call,
 eight retrieved chunks, 24,000 context characters, 32 grounds and 16 catalog flows.
-Oversized context produces unavailable advice, never a weaker baseline. Local
-retrieval uses at most two seconds, stops its socket worker on cancellation and
+Oversized context produces unavailable advice, never a weaker baseline. Context
+size is checked again after normalization, before building the request.
+Manifest tracked-file queries and final Git/GitHub identity checks use the remaining
+shared deadline. Final identity refreshes the base and compares both its tip and
+merge base, so an independently advanced base is stale even if the merge base
+did not move. A failed refresh records unavailable advice, not an endless stale retry.
+Local retrieval uses at most two seconds, stops its socket worker on cancellation and
 does not replace an incompatible running daemon. Owned normalization processes
 batches on the caller's thread, checks cancellation between batches and uses the
 remaining deadline; an in-flight synchronous translation finishes before the
@@ -217,6 +222,28 @@ also exposed an eager profile-helper alias in the spec import cycle; dispatch no
 resolves that helper at call time. No new paid Jev request, human label review,
 actual independent reviewer or native-host interaction is represented by these
 checks. Stage 2 remains in progress until its semantic evaluation exit is met.
+
+## Independent review repair
+
+ORCA's independent 5.6 sol reviewer inspected PR #92 at `334663f` and reported
+three P1 findings: normalization could expand past the context ceiling, the
+base-tip identity was not refreshed, and manifest Git queries used independent
+60-second limits. The reviewer ran 94 focused checks successfully; that did not
+establish the missing boundary guarantees.
+
+The repair rechecks normalized context before request creation, compares refreshed
+base tip and merge base, and passes the same remaining budget through manifest
+queries and terminal identity checks. Existing helper callers retain their defaults.
+Seven focused regression cases passed, including a real sleeping subprocess
+reaped at its half-second manifest deadline. The broader contract/routing/local
+verification/spec invocation finished with 121 passed and two failures from a
+test double that omitted production call-budget accounting. After correcting
+that double, both failed cases passed in a focused rerun. These overlapping runs
+are not a unique-test sum or a claim that the broad invocation was green.
+
+Ruff, wiki lint, diff whitespace and UTF-8 without BOM passed. The debt gate
+still reports only the five pre-existing findings listed above. Independent
+review of the repaired head and the final gate remain separate checks.
 
 ## Rollback
 

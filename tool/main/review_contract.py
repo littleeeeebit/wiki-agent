@@ -319,7 +319,7 @@ def shadow_context(repo: Path, path: Path, spec: dict, paths: list[str] | None,
     catalog, manifest_status, digest = [], "absent", ""
     if (path / verification.MANIFEST).exists():
         try:
-            manifest, digest = verification.manifest(path)
+            manifest, digest = verification.manifest(path, budget=budget)
             catalog = [{k: f.model_dump()[k] for k in ("id", "title", "kind", "paths", "environments", "assertions")}
                        for f in manifest.flows]
             manifest_status = "validated"
@@ -329,6 +329,10 @@ def shadow_context(repo: Path, path: Path, spec: dict, paths: list[str] | None,
                     json.dumps(flow, ensure_ascii=False))
         except (OSError, ValueError):
             manifest_status = "invalid"
+    budget.check()
+    base_tip = specs.sh(["git", "rev-parse", f"origin/{spec['pr']['base']}"], path, timeout=budget.left())
+    if base_tip.returncode:
+        raise ValueError("base_identity_unavailable")
     budget.check()
     query_text = verification.redact("\n".join([spec.get("goal") or "", *(spec.get("done") or []),
                                                 *(paths or [])]), settings)[:3000]
@@ -356,6 +360,7 @@ def shadow_context(repo: Path, path: Path, spec: dict, paths: list[str] | None,
              "baseline": {k: contract[k] for k in ("profile", "criteria", "evidence", "problems")},
              "selected_flows": [f["id"] for f in contract["flows"]],
              "registered_flows": catalog, "manifest": {"status": manifest_status, "digest": digest},
+             "base_identity": {"merge_base": contract["base_oid"], "tip": base_tip.stdout.strip()},
              "grounds": grounds, "observations": {"receipts": receipts, "retrieval": {
                  "status": "unavailable" if any(r.get("baseline") == "retrieval_unavailable"
                                                 for r in dossier.get("limits") or []) else "ungraded",
@@ -420,7 +425,7 @@ def replay_shadow(record: dict) -> dict:
             "recommendations": shadow_recommendations(req, res, decision.Policy(policy["version"], policy["rules"]))}
 
 
-def shadow(spec: dict, paths: list[str] | None, contract: dict, halt) -> dict:
+def shadow(spec: dict, paths: list[str] | None, contract: dict, halt, *, budget=None) -> dict:
     """One bounded observation, owned by the round; no detached background work."""
     from . import channels
 
@@ -433,7 +438,7 @@ def shadow(spec: dict, paths: list[str] | None, contract: dict, halt) -> dict:
         return {**out, "reason": "disabled_or_cancelled"}
     if cfg.problem or not cfg.key:
         return {**out, "status": "unavailable", "reason": cfg.problem or "missing_key"}
-    budget = Budget(**SHADOW_LIMITS, cancel=halt)
+    budget = budget or Budget(**SHADOW_LIMITS, cancel=halt)
     try:
         enabled = settings_file.pick(settings_file.entries(decision.env_file()), "WIKI_REVIEW_SHADOW", "on")[0]
         if enabled != "on":
@@ -445,7 +450,7 @@ def shadow(spec: dict, paths: list[str] | None, contract: dict, halt) -> dict:
         settings = verification.redaction(verification.local(repo), path)
         state, grounds = shadow_context(repo, path, spec, paths, contract, cfg, budget, settings)
         out.update(context_refs=[g["id"] for g in grounds], grounds=grounds,
-                   preparation=state["observations"], manifest=state["manifest"])
+                   preparation=state["observations"], manifest=state["manifest"], base_identity=state["base_identity"])
         budget.check(budget.call_seconds)
         state_en, normalization = decisions.normalized(state, max(0, budget.left() - budget.call_seconds), cancel=halt)
         budget.check()
@@ -454,6 +459,8 @@ def shadow(spec: dict, paths: list[str] | None, contract: dict, halt) -> dict:
         # Normalization changes prose, never which original ground an answer names.
         for original, normalized in zip(grounds, state_en["grounds"]):
             normalized["id"] = original["id"]
+        if len(json.dumps(state_en, ensure_ascii=False)) > CONTEXT_CHARS:
+            raise ValueError("normalized_context_too_large")
         questions, prompt_version = shadow_questions(state_en)
         req = decision.request("action", state_en, questions, allowed=["add", "skip", *out["context_refs"]], model=cfg.model,
                                prompt_version=prompt_version, policy_version=POLICY.version,
@@ -486,6 +493,7 @@ def observe_shadow(repo: Path, path: Path, spec: dict, paths: list[str] | None, 
     from . import loop, specs
 
     attempt = uuid.uuid4().hex
+    budget = Budget(**SHADOW_LIMITS, cancel=halt)
     pending = {"attempt_id": attempt, "round": len(loop.counted(spec)) + 1,
                "input_identity": contract["digest"], "status": "preparing", "mode": "shadow"}
     with specs._files:
@@ -497,7 +505,8 @@ def observe_shadow(repo: Path, path: Path, spec: dict, paths: list[str] | None, 
         attempts = [{**r, "status": "aborted", "reason": "preparation_interrupted"}
                     if r["status"] == "preparing" else r for r in attempts]
         specs.update(spec["repo"], spec["id"], review_shadow_attempts=[*attempts, pending])
-    observation = {**shadow(spec, paths, contract, halt), "attempt_id": attempt, "round": pending["round"]}
+    observation = {**shadow(spec, paths, contract, halt, budget=budget),
+                   "attempt_id": attempt, "round": pending["round"]}
     with specs._files:
         now = specs.load(spec["repo"], spec["id"])
         if now is None or now["history"][0] != spec["history"][0]:
@@ -506,14 +515,31 @@ def observe_shadow(repo: Path, path: Path, spec: dict, paths: list[str] | None, 
         stale = signature(now) != signature(spec)
         if observation.get("request") and not halt.is_set():
             try:
-                head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
-                remote_head, remote_base = loop.pr_head(repo, spec["pr"]["number"])
-                digest = verification.manifest(path)[1] if (path / verification.MANIFEST).exists() else ""
-                identity.update(head=head, pr_head=remote_head, base=remote_base, manifest_digest=digest)
+                budget.check()
+                head = specs.sh(["git", "rev-parse", "HEAD"], path, timeout=budget.left()).stdout.strip()
+                budget.check()
+                remote_head, remote_base = loop.pr_head(repo, spec["pr"]["number"], timeout=budget.left())
+                merge_base = specs.current_merge_base(path, remote_base, remote_head, budget=budget)
+                if not merge_base:
+                    raise ValueError("base_identity_unavailable")
+                budget.check()
+                tip = specs.sh(["git", "rev-parse", f"origin/{remote_base}"], path, timeout=budget.left()).stdout.strip()
+                budget.check()
+                digest = verification.manifest(path, budget=budget)[1] if (path / verification.MANIFEST).exists() else ""
+                budget.check()
+                identity.update(head=head, pr_head=remote_head, base=remote_base,
+                                base_identity={"merge_base": merge_base, "tip": tip}, manifest_digest=digest)
                 stale |= (head != contract["head"] or (remote_head, remote_base) != (
-                    contract["head"], spec["pr"]["base"]) or digest != observation["manifest"]["digest"])
+                    contract["head"], spec["pr"]["base"]) or digest != observation["manifest"]["digest"]
+                    or identity["base_identity"] != observation["base_identity"])
+            except (Cancelled, Exhausted) as exc:
+                observation.update(status="cancelled" if isinstance(exc, Cancelled) else "exhausted", reason=str(exc))
+            except subprocess.TimeoutExpired:
+                observation.update(status="exhausted" if not budget.left() else "unavailable",
+                                   reason="identity_check_timeout")
             except (OSError, ValueError, RuntimeError):
                 observation.update(status="unavailable", reason="identity_check_unavailable")
+            observation["budget"] = budget.record()
         if stale:
             observation.update(status="stale", reason="input_changed", observed_identity={
                 **identity})

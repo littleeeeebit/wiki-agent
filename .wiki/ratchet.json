@@ -128,13 +128,13 @@
     },
     "tool/main/specs.py": {
       "dup": 0,
-      "lines": 1463,
-      "reason": "Existing spec cards validate and dispatch refactoring controllers; shared mutation validation prevents changing or archiving a started request."
+      "lines": 1473,
+      "reason": "Retain spec validation and add remaining-budget fetch/merge-base identity checks for shadow observations; ordinary callers keep their existing timeouts."
     },
     "tool/main/verification.py": {
       "dup": 12,
-      "lines": 805,
-      "reason": "baseline at adoption"
+      "lines": 818,
+      "reason": "Manifest tracked-file validation shares the shadow deadline and checks cancellation between Git queries; ordinary verification retains its existing limits."
     },
     "tool/main/work.py": {
       "dup": 0,

@@ -417,3 +417,118 @@ def test_preparation_exhaustion_sends_no_recommendation_request(world):
     assert record["status"] == "exhausted" and record["reason"] == "deadline"
     assert record["budget"]["used"]["calls"] == 0
     send.assert_not_called()
+
+
+def test_normalization_expansion_cannot_exceed_sent_context_ceiling(world):
+    spec = pr_spec(world, "expanded", 1, "code.py")
+
+    def normalize(state, *args, **kwargs):
+        assert len(json.dumps(state, ensure_ascii=False)) < contract.CONTEXT_CHARS
+        return {**state, "goal": "x" * (contract.CONTEXT_CHARS + 1)}, "test"
+
+    with patch.object(decision, "config", return_value=decision.Config("active", "test", "default", key="test")), \
+         patch.object(knowledge, "prepare", return_value={"evidence": [], "limits": []}), \
+         patch.object(contract.decisions, "normalized", side_effect=normalize), patch.object(decision, "evaluate") as send:
+        record = contract.shadow(spec, ["code.py"], selected(world, spec), threading.Event())
+    assert record["status"] == "unavailable" and record["reason"] == "normalized_context_too_large"
+    assert record["budget"]["used"]["calls"] == 0
+    send.assert_not_called()
+
+
+def test_shadow_rechecks_moved_base_tip_even_when_merge_base_is_unchanged(world):
+    spec = pr_spec(world, "moved-base", 1, "code.py")
+    baseline = selected(world, spec)
+
+    def reply(cfg, state, qs, *rest):
+        other = world.hub.elsewhere()
+        git(other, "checkout", "-B", "main", "origin/main")
+        commit(other, "independent.txt")
+        git(other, "push", "origin", "main")
+        return shadow_answers(qs)
+
+    with patch.object(decision, "config", return_value=decision.Config("active", "test", "default", key="test")), \
+         patch.object(knowledge, "prepare", return_value={"evidence": [], "limits": []}), \
+         patch.object(contract.decisions, "normalized", side_effect=lambda s, _, **kw: (s, "test")), \
+         patch.object(decision, "evaluate", side_effect=reply):
+        record = contract.observe_shadow(world.repo, Path(spec["worktree"]), spec, ["code.py"], baseline, threading.Event())
+    assert record["status"] == "stale" and record["reason"] == "input_changed"
+    original, observed = record["base_identity"], record["observed_identity"]["base_identity"]
+    assert original["merge_base"] == observed["merge_base"] == baseline["base_oid"]
+    assert original["tip"] != observed["tip"]
+    assert specs.load(spec["repo"], spec["id"])["review_shadow_attempts"][-1] == record
+    assert not Reviewer.made and not Worker.made
+
+
+@pytest.mark.parametrize("outcome", ["deadline", "cancel"])
+def test_manifest_queries_share_remaining_budget_and_stop_between_contracts(cloud_world, outcome):
+    world = cloud_world
+    budget = contract.Budget(**contract.SHADOW_LIMITS)
+    real, timeouts = specs.sh, []
+
+    def query(args, cwd, timeout=60):
+        timeouts.append(timeout)
+        done = real(args, cwd, timeout)
+        if outcome == "cancel":
+            budget.cancel.set()
+        elif len(timeouts) == 1:
+            budget.deadline -= 1
+        else:
+            budget.deadline = budget.started - 1
+        return done
+
+    with patch.object(specs, "sh", side_effect=query), pytest.raises(
+            contract.Cancelled if outcome == "cancel" else contract.Exhausted):
+        verification.manifest(world.repo, budget=budget)
+    assert all(0 < timeout <= contract.SHADOW_LIMITS["seconds"] for timeout in timeouts)
+    assert len(timeouts) == (1 if outcome == "cancel" else 2)
+    if outcome == "deadline":
+        assert timeouts[1] < timeouts[0]
+
+
+def test_slow_manifest_git_is_reaped_at_shared_deadline_without_a_request(cloud_world):
+    world = cloud_world
+    spec = pr_spec(world, "slow-manifest", 1, "change.py")
+    baseline = selected(world, spec)
+    real = specs.sh
+    budget = contract.Budget(seconds=0.5, calls=1, candidates=8)
+
+    def query(args, cwd, timeout=60):
+        if args[:2] == ["git", "ls-files"]:
+            return real([sys.executable, "-c", "import time; time.sleep(60)"], cwd, timeout)
+        return real(args, cwd, timeout)
+
+    with patch.object(decision, "config", return_value=decision.Config("active", "test", "default", key="test")), \
+         patch.object(specs, "sh", side_effect=query), patch.object(decision, "evaluate") as send:
+        record = contract.shadow(spec, [], baseline, threading.Event(), budget=budget)
+    assert record["status"] == "exhausted" and record["reason"] == "deadline"
+    assert record["budget"]["elapsed_ms"] < 2000
+    send.assert_not_called()
+
+
+@pytest.mark.parametrize("outcome", ["deadline", "cancel"])
+def test_terminal_identity_checks_share_the_preparation_budget(world, outcome):
+    spec = pr_spec(world, "identity-budget", 1, "code.py")
+    baseline, halt, budgets = selected(world, spec), threading.Event(), []
+
+    def reply(cfg, state, qs, trace, budget, stage):
+        budget.call()
+        budgets.append(budget)
+        return shadow_answers(qs)
+
+    def identity(repo, n, *, timeout):
+        assert timeout <= budgets[0].left() + 0.01
+        if outcome == "deadline":
+            budgets[0].deadline = budgets[0].started - 1
+            raise subprocess.TimeoutExpired("gh", timeout)
+        halt.set()
+        return baseline["head"], "main"
+
+    with patch.object(decision, "config", return_value=decision.Config("active", "test", "default", key="test")), \
+         patch.object(knowledge, "prepare", return_value={"evidence": [], "limits": []}), \
+         patch.object(contract.decisions, "normalized", side_effect=lambda s, _, **kw: (s, "test")), \
+         patch.object(decision, "evaluate", side_effect=reply), patch.object(loop, "pr_head", side_effect=identity):
+        record = contract.observe_shadow(world.repo, Path(spec["worktree"]), spec, ["code.py"], baseline, halt)
+    assert record["status"] == ("exhausted" if outcome == "deadline" else "cancelled")
+    assert record["budget"]["used"]["calls"] == 1
+    assert specs.load(spec["repo"], spec["id"])["review_shadow_attempts"][-1] == record
+    assert record["request"] and record["result"] and not Reviewer.made
