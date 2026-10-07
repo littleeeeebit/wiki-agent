@@ -42,6 +42,10 @@ class Host:
         Host.made.append(self)
 
     def say(self, text, halt=None):
+        if "Audit and clean up test bloat" in self.rest.get("system", ""):
+            yield Event("done", '```refactor-cleanup\n{"deferred": []}\n```',
+                        {"tokens": {"in": 10, "out": 5}}, self.id)
+            return
         if not self.rest.get("write"):   # the read-only audit: one L2 step on the module
             plan = '{"steps": [{"tier": "L2", "goal": "Split big.py by value range", "files": ["big.py"]}]}'
             yield Event("done", f"Plan.\n\n```refactor-plan\n{plan}\n```", {"tokens": {"in": 7, "out": 3}}, self.id)
@@ -116,7 +120,8 @@ def test_cleanup_freezes_then_stacks_a_reviewed_step(selected):
 
         last = run["steps"][0]   # published, then stopped before its checkpoint and its review request
         specs.update("proj", last["spec"], state=f"PR #{last['pr']}", rounds=[])
-        refactor.update("proj", rid, phase="steps", state="stopped", steps=[{**last, "state": "adopted"}])
+        refactor.update("proj", rid, phase="steps", state="stopped",
+                        steps=[{**last, "state": "adopted"}, *run["steps"][1:]])
         kicks = kicked[:]
         kicked.clear()
         prs = len([c for c in remote.calls if c[:3] == ["gh", "pr", "create"]])
@@ -150,13 +155,15 @@ def test_cleanup_freezes_then_stacks_a_reviewed_step(selected):
     assert again["id"] == rid, "the same request is the same run"
     assert [h["path"] for h in run["hotspots"]] == ["big.py"]
     tests, step = run["tests"]["spec"], run["steps"][0]["spec"]
-    assert kicks == [tests, step], "both tiers are covered by the request: review starts itself"
+    ratchet = run["steps"][-1]["spec"]
+    assert kicks == [tests, step, ratchet], "production and baseline PRs are reviewed; unchanged tests need no PR"
     creates = [c for c in remote.calls if c[:3] == ["gh", "pr", "create"]]
-    assert [(c[c.index("--head") + 1], c[c.index("--base") + 1]) for c in creates] == [(tests, "main"), (step, tests)]
+    assert [(c[c.index("--head") + 1], c[c.index("--base") + 1]) for c in creates] == [
+        (tests, "main"), (step, tests), (ratchet, step)]
     assert _git(selected, "show", "--name-only", "--format=", tested_at) == "test_big.py", "the test PR holds tests only"
     frozen = (refactor_profile.STORE / "project" / step / "frozen.json").read_text(encoding="utf-8")
     assert '"tests": [\n    "test_big.py"' in frozen
-    assert run["spent"]["calls"] == 1 and run["spent"]["tokens"] == 15
+    assert run["spent"]["calls"] == 2 and run["spent"]["tokens"] == 30
 
 
 def test_a_restart_stops_a_running_run_and_a_code_edit_is_refused(selected):
@@ -299,7 +306,7 @@ def test_restructure_holds_the_repository_until_the_person_approves(selected):
         assert api.post(f"/api/refactors/{rid}/approve").status_code == 200
         run = finished(api, rid)
     assert run["state"] == "done", run.get("stopped")
-    assert run["spent"]["tokens"] == 25, "the audit and the test turn are both charged"
+    assert run["spent"]["tokens"] == 40, "the audit, characterization and cleanup turns are all charged"
     specs.checkout_idle(selected)
     pruned = {"id": "pruned-by-merge", "rev": 2, "state": "머지됨", "pr": {"number": 7},
               "rounds": [{"verdict": "allow", "head": head}]}
@@ -444,8 +451,9 @@ def test_full_plans_first_and_steps_only_after_the_plan_merges(selected):
         api.post(f"/api/refactors/{rid}/resume")
         run = finished(api, rid)
     assert run["state"] == "done", run.get("stopped")
-    assert [(s["n"], s["tier"]) for s in run["steps"]] == [(1, "L1"), (2, "L0"), (3, "L0")], "the stages that merged"
-    assert run["spent"]["calls"] == 2 + 2 and run["spent"]["tokens"] == 10 + 15 + 100, "the planner once"
+    assert [(s["n"], s["tier"]) for s in run["steps"]] == [
+        (1, "L1"), (2, "L0"), (3, "L0"), (4, "L1"), (5, "L0")], "merged production stages, cleanup and ratchet"
+    assert run["spent"]["calls"] == 2 + 2 + 1 and run["spent"]["tokens"] == 10 + 15 + 100 + 15, "the planner once"
     assert run["spent"]["seconds"] >= 40, "the planner's time is the run's"
 
     refactor.update("proj", rid, spent={"seconds": 600, "calls": 9, "tokens": 100_000})   # nothing left

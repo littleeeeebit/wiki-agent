@@ -126,6 +126,10 @@ def listing() -> dict:
         if run.done:
             continue
         spec = by_path.get(path)
+        if any(s.get("worktree") == path and s.get("workspace_mode") == "branch" for s in tasks.values()):
+            spec = specs.owner(Path(path))
+            if spec and spec["repo"] != name:
+                spec = None
         # A session outside this project's task list must belong to one of
         # its actual worktrees; a sibling repository's cell never leaks here.
         if spec is None:

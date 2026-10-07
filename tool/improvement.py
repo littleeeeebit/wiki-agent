@@ -20,7 +20,7 @@ import threading
 import time
 from pathlib import Path, PurePosixPath
 
-from common.process import background_options
+from common.process import background_options, resumed
 
 HUB = Path(__file__).resolve().parents[1]
 STORE = HUB / "raw" / "improvement"
@@ -92,8 +92,7 @@ def execute(argv: list[str], path: Path, data: bytes | None, seconds: float | No
         try:
             if process_helpers:
                 job = process_helpers._contained(proc)
-                if os.name == "nt" and process_helpers._nt.NtResumeProcess(int(proc._handle)):
-                    raise OSError("could not resume the refactoring adapter")
+                resumed(proc)
             deadline = time.monotonic() + seconds if seconds is not None else float("inf")
             while True:
                 if halt and halt.is_set():

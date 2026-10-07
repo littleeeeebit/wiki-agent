@@ -30,6 +30,8 @@ from common.process import background_options  # noqa: E402
 
 RATCHET = ".wiki/ratchet.json"
 CAPS = {"new_file_max_lines": 800, "test_file_max_lines": 1500}
+ARTIFACT_BYTES = 256 * 1024
+ARTIFACTS = frozenset(".snap .json .txt .csv .html .xml .yaml .yml".split())
 CODE = frozenset(".py .pyi .ts .tsx .js .jsx .mjs .cjs .vue .svelte .swift .kt .kts .java .scala .go .rs .rb .php "
                  ".cs .c .h .cc .cpp .hpp .m .mm .dart .lua .sh .ps1".split())
 WINDOW = 6          # significant lines in a row that count as one duplicated block
@@ -187,6 +189,14 @@ def load(file: Path, text: str | None = None) -> dict:
         if not (isinstance(e, dict) and all(isinstance(e.get(k), int) and e[k] >= 0 for k in ("lines", "dup"))
                 and isinstance(e.get("reason", ""), str)):
             raise ValueError(f"{RATCHET}: {rel} 항목은 lines·dup 정수와 reason 문자열이다")
+    artifacts = data.get("test_artifacts", {})
+    if not isinstance(artifacts, dict) or type(data.get("artifact_max_bytes", ARTIFACT_BYTES)) is not int \
+            or data.get("artifact_max_bytes", ARTIFACT_BYTES) <= 0:
+        raise ValueError(f"{RATCHET}: 테스트 자료 기준이 유효하지 않다")
+    for rel, entry in artifacts.items():
+        if not isinstance(entry, dict) or not all(type(entry.get(k)) is int and entry[k] >= 0 for k in ("lines", "bytes")) \
+                or not isinstance(entry.get("reason", ""), str):
+            raise ValueError(f"{RATCHET}: {rel} 테스트 자료 기준이 유효하지 않다")
     return {"exclude": [], "reason": "", **data}
 
 
@@ -212,7 +222,7 @@ def base_of(root: Path, base: str | None) -> str:
     return ""
 
 
-def loosened(old: dict, new: dict) -> list[str]:
+def loosened(old: dict, new: dict, live_artifacts: set[str] | None = None) -> list[str]:
     """Raises from `old` to `new` that carry no new reason."""
 
     problems = []
@@ -226,6 +236,22 @@ def loosened(old: dict, new: dict) -> list[str]:
     wider = any(new[c] > old[c] for c in CAPS) or set(new["exclude"]) - set(old["exclude"])
     if wider and (not new["reason"].strip() or new["reason"] == old["reason"]):
         problems.append(f"{RATCHET}: 상한이나 exclude 를 넓혔는데 새 최상위 reason 이 없다")
+    if "test_artifacts" in old:
+        for rel, previous in old["test_artifacts"].items():
+            if rel not in new.get("test_artifacts", {}) and (live_artifacts is None or rel in live_artifacts) \
+                    and (new.get("artifact_max_bytes", ARTIFACT_BYTES) > previous["bytes"]
+                         or new["test_file_max_lines"] > previous["lines"]) \
+                    and (not new["reason"].strip() or new["reason"] == old["reason"]):
+                problems.append(f"{rel}: 남아 있는 테스트 자료의 보호를 삭제했는데 새 reason 이 없다")
+        for rel, entry in new.get("test_artifacts", {}).items():
+            previous = old["test_artifacts"].get(rel, {"bytes": old.get("artifact_max_bytes", ARTIFACT_BYTES),
+                                                       "lines": old["test_file_max_lines"]})
+            if any(entry[k] > previous[k] for k in ("bytes", "lines")) and (
+                    not entry.get("reason", "").strip() or entry.get("reason") == previous.get("reason")):
+                problems.append(f"{rel}: 테스트 자료 기준을 올렸는데 새 reason 이 없다")
+        if "test_artifacts" not in new or new.get("artifact_max_bytes", ARTIFACT_BYTES) > old.get("artifact_max_bytes", ARTIFACT_BYTES):
+            if not new["reason"].strip() or new["reason"] == old["reason"]:
+                problems.append(f"{RATCHET}: 테스트 자료 보호를 완화했는데 새 reason 이 없다")
     return problems
 
 
@@ -243,6 +269,13 @@ def check(root: Path, base: str | None = None) -> tuple[list[str], str]:
             problems.append(f"{rel}: {m['lines']}줄 — 기준 {lines}줄을 넘었다")
         if m["dup"] > dup:
             problems.append(f"{rel}: 중복 {m['dup']}줄 — 기준 {dup}줄을 넘었다")
+    if "test_artifacts" in ratchet:
+        for rel, measured in sorted(artifacts(root, ratchet["exclude"]).items()):
+            entry = ratchet["test_artifacts"].get(rel, {"bytes": ratchet.get("artifact_max_bytes", ARTIFACT_BYTES),
+                                                       "lines": ratchet["test_file_max_lines"]})
+            for metric in ("bytes", "lines"):
+                if measured[metric] > entry[metric]:
+                    problems.append(f"{rel}: 테스트 자료 {metric} {measured[metric]} — 기준 {entry[metric]}을 넘었다")
     oid = base_of(root, base)
     if not oid:
         return problems, "base 를 읽지 못해 기준 완화 검사는 건너뛰었다"
@@ -250,7 +283,7 @@ def check(root: Path, base: str | None = None) -> tuple[list[str], str]:
         old = git(root, "show", f"{oid}:{RATCHET}")
     except ValueError:
         return problems, ""   # adopted in this change: nothing to loosen from
-    return problems + loosened(load(file, old), ratchet), ""
+    return problems + loosened(load(file, old), ratchet, set(artifacts(root, ratchet["exclude"]))), ""
 
 
 def write(file: Path, ratchet: dict) -> None:
@@ -271,7 +304,32 @@ def init(root: Path) -> dict:
         if m["lines"] > lines or m["dup"] > dup:
             ratchet["files"][rel] = {"lines": m["lines"], "dup": m["dup"], "reason": "baseline at adoption"}
     write(file, ratchet)
-    return ratchet
+    track_artifacts(root)
+    return load(file)
+
+
+def artifacts(root: Path, exclude: list[str] | None = None) -> dict[str, dict]:
+    """Fixture/snapshot budgets count bytes too, including formats outside CODE."""
+    result = {}
+    for rel in git(root, "ls-files", "-z", "--cached", "--others", "--exclude-standard").split("\0"):
+        path = root / rel
+        if not rel or not TEST.search(rel.lower()) or path.suffix.lower() not in ARTIFACTS \
+                or any(fnmatchcase(rel, g) for g in exclude or []) or path.is_symlink() or not path.is_file() \
+                or root.resolve() not in path.resolve().parents:
+            continue
+        value = path.read_bytes()
+        result[rel] = {"bytes": len(value), "lines": len(value.splitlines())}
+    return result
+
+
+def track_artifacts(root: Path) -> None:
+    """Explicit first adoption only; existing budgets are never reset to growth."""
+    file = root / RATCHET
+    ratchet = load(file)
+    if "test_artifacts" not in ratchet:
+        entries = {rel: {**value, "reason": "baseline at test-artifact adoption"}
+                   for rel, value in artifacts(root, ratchet["exclude"]).items()}
+        write(file, {**ratchet, "test_artifacts": entries, "artifact_max_bytes": ARTIFACT_BYTES})
 
 
 def tighten(root: Path) -> list[str]:
@@ -293,8 +351,18 @@ def tighten(root: Path) -> list[str]:
         cap = limit(rel, {**ratchet, "files": {}})[0]
         if lowered["lines"] > cap or lowered["dup"]:
             files[rel] = lowered
-    if files != ratchet["files"]:
-        write(file, {**ratchet, "files": files})
+    updated = {**ratchet, "files": files}
+    if "test_artifacts" in ratchet:
+        current = artifacts(root, ratchet["exclude"])
+        updated["test_artifacts"] = {
+            rel: {**entry, **{k: min(entry[k], current[rel][k]) for k in ("bytes", "lines")}}
+            for rel, entry in ratchet["test_artifacts"].items() if rel in current}
+        for rel, measured in current.items():
+            if rel not in ratchet["test_artifacts"] and measured["bytes"] <= ratchet.get("artifact_max_bytes", ARTIFACT_BYTES) \
+                    and measured["lines"] <= ratchet["test_file_max_lines"]:
+                updated["test_artifacts"][rel] = {**measured, "reason": "baseline at test-artifact adoption"}
+    if updated != ratchet:
+        write(file, updated)
     return [RATCHET] if git(root, "status", "--porcelain", "--", RATCHET).strip() else []
 
 

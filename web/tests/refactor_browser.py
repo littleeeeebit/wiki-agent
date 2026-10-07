@@ -150,6 +150,27 @@ def main():
             output = ROOT / "artifacts"
             output.mkdir(exist_ok=True)
             page.screenshot(path=str(output / "refactor-conversation.png"), full_page=True)
+            run.update(phase="test_cleanup", steps=[{"n": 1, "tier": "L1", "files": ["tests/test_orders.py"],
+                "goal": "Clean up tests without weakening assertions", "state": "done", "spec": None, "kind": "test_cleanup",
+                "before": {"bytes": 1000, "lines": 100}, "after": {"bytes": 500, "lines": 50},
+                "deferred": ["Structural changes need mutation evidence"]}])
+            expect(status.get_by_role("status")).to_have_text("실행 중 · 테스트 정리·검증")
+            status.get_by_text("단계·사용량 상세", exact=True).click()
+            expect(status.get_by_text("테스트 100 → 50줄", exact=False)).to_be_visible()
+            expect(status.get_by_text("Structural changes need mutation evidence", exact=True)).to_be_visible()
+            run.update(phase="ratchet", steps=[{**run["steps"][0], "kind": "ratchet", "action": "adopted", "checked": True}])
+            expect(status.get_by_role("status")).to_have_text("실행 중 · 부채 기준선 생성·강화")
+            expect(status.get_by_text("PR 머지 전에는 기본 브랜치에 미적용", exact=False)).to_be_visible()
+            run.update(state="continued", continuation={"spec": "refactor-tests", "state": "PR #26",
+                "running": True, "fault": None, "pr": {"number": 26, "url": "https://example.test/pr/26"}})
+            expect(status.get_by_role("status")).to_have_text("에이전트 작업으로 전환 · 에이전트 실행 중")
+            expect(status.get_by_role("link", name="PR #26", exact=True)).to_have_attribute("href", "https://example.test/pr/26")
+            for label in ("재개", "멈추기", "저장소 놓기", "승인"):
+                expect(status.get_by_role("button", name=label, exact=True)).to_have_count(0)
+            run["continuation"].update(running=False, state="머지됨")
+            expect(status.get_by_role("status")).to_have_text("에이전트 작업으로 전환 · 머지됨")
+            assert actions == ["cancel", "resume"], "polling never dispatches the old automatic controller"
+            run.pop("continuation")
             run.update(state="stopped", stopped={"reason": "scope", "detail": "Public migration is required"},
                 scope_change={"reason": "Two independent contracts must change", "questions": [
                     {"header": "API", "question": "Change the public API?", "options": [

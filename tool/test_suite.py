@@ -29,6 +29,7 @@ def test_suite_reads_history_and_live_cells_only_for_the_selected_repository(tmp
     spec = {"id": "task", "repo": "project", "state": "고치는 중 R1", "worktree": str(repo),
             "pr": {"number": 1}, "workspace_mode": "branch"}
     monkeypatch.setattr(specs, "listing", lambda name: [spec] if name == "project" else [])
+    monkeypatch.setattr(specs, "owner", lambda path: spec if path == repo else None)
     append(work.LOGS / "project/task.jsonl",
            {"role": "user", "ts": 10, "text": "Run the checks"},
            {"role": "assistant", "ts": 11, "turn": "previous", "text": "Checks passed", "model": "work-model"})
@@ -81,6 +82,31 @@ def test_suite_reads_history_and_live_cells_only_for_the_selected_repository(tmp
     assert next(r for r in cells if r["id"] == "primary-history")["path"] == str(repo)
     assert not any("private" in r["text"] for r in cells)
     assert web.get("/api/suite", headers={"X-Project": "other"}).status_code == 409
+
+
+def test_live_branch_owner_wins_over_historical_tasks_in_the_same_checkout(tmp_path, monkeypatch):
+    repo = tmp_path / "project"
+    repo.mkdir()
+    current = {"id": "refactor-tests", "repo": "project", "worktree": str(repo),
+               "workspace_mode": "branch", "state": "작업 중", "pr": {"number": 26}}
+    old = {**current, "id": "old-task", "state": "머지됨", "pr": {"number": 1}}
+    monkeypatch.setattr(query, "_project", "project")
+    monkeypatch.setattr(channels, "repo_for", lambda _: repo)
+    monkeypatch.setattr(specs, "listing", lambda _: [current, old])
+    monkeypatch.setattr(specs, "owner", lambda _: current)
+    monkeypatch.setattr(suite, "worktrees", lambda _: [{"path": repo}])
+    monkeypatch.setattr(knowledge, "running", lambda _: [])
+    monkeypatch.setattr(query, "recall", lambda _: [])
+    monkeypatch.setattr(loop, "_review_runs", {})
+    monkeypatch.setattr(loop, "REVIEW", tmp_path / "reviews")
+    run = work.Run(SimpleNamespace(id="current-cell", model="work-model", path=repo))
+    monkeypatch.setattr(work, "_runs", {str(repo): run})
+    rows = client().get("/api/suite").json()["rows"]
+    active = next(r for r in rows if r["id"] == run.turn)
+    assert (active["task"], active["target"], active["pr"]) == (current["id"], current["id"], 26)
+    monkeypatch.setattr(specs, "owner", lambda _: None)
+    detached = next(r for r in client().get("/api/suite").json()["rows"] if r["id"] == run.turn)
+    assert detached["task"] is None and detached["pr"] is None
 
 
 @pytest.mark.parametrize("failure", ["record", "feed"])

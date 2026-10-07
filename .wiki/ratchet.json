@@ -138,8 +138,8 @@
     },
     "tool/main/work.py": {
       "dup": 0,
-      "lines": 1057,
-      "reason": "baseline at adoption"
+      "lines": 1060,
+      "reason": "Allow the three-line refactor ownership handoff at ordinary turn start. The pre-existing six-line excess is not adopted by this change."
     },
     "tool/markdown_emphasis.py": {
       "dup": 17,
