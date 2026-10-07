@@ -206,11 +206,9 @@ def close(items: dict, scope: str, flows: list[dict]) -> None:
 
 def coverage(selection: dict, flows: list[dict], preservation_inputs: dict | None) -> list[dict]:
     missing = []
-    for kind in sorted(set(selection["evidence"]) & {"api", "browser"}):
+    for kind in sorted(set(selection["evidence"]) & {"api", "browser", "desktop"}):
         if not any(f["kind"] == kind or kind == "api" and f["kind"] == "browser" for f in flows):
             missing.append({"item_id": "evidence:" + kind, "reason": "no registered " + kind + " flow"})
-    if "desktop" in selection["evidence"]:
-        missing.append({"item_id": "evidence:desktop", "reason": "native collector unavailable"})
     if "differential" in selection["evidence"] and not preservation_inputs:
         missing.append({"item_id": "evidence:differential", "reason": "owner-frozen preservation inputs unavailable"})
     if "performance" in selection["criteria"]:
@@ -249,7 +247,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 problems.append("고정된 동작 보존 테스트가 바뀌었거나 기준선을 확인하지 못했다")
         except (OSError, ValueError, KeyError, TypeError):
             problems.append("동작 보존 명세를 확인하지 못했다")
-    if verification.cloud(spec) or explicit["flows"] or evidence & {"api", "browser"}:
+    if verification.cloud(spec) or explicit["flows"] or evidence & {"api", "browser", "desktop"}:
         try:
             contract, manifest_digest = verification.manifest(path)
             catalog = {f.id: f for f in contract.flows}
@@ -261,7 +259,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
             # Cloud's complete major-flow floor remains unchanged. Explicit local
             # flows only require their registered receipts, never grant execution.
             chosen = list(catalog) if verification.cloud(spec) else list(explicit["flows"])
-            if evidence & {"api", "browser"} and not chosen:
+            if evidence & {"api", "browser", "desktop"} and not chosen:
                 from . import specs
 
                 mapped = paths and all(any(fnmatchcase(p, g) for f in contract.flows for g in f.paths)
@@ -316,13 +314,13 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 "reason": "cloud full catalog" if verification.cloud(spec) else "explicit registered IDs"
                 if explicit["flows"] else "mapped impact" if mapped else "shared/unmapped/unknown impact: full catalog"})
     close(items, "enforced", flows)
+    if profile == "plan" and flows:
+        problems.append("계획 문서는 미래 프로그램의 실행 검증을 시작하지 않는다 — 현재 산출물의 수락 범위를 확인한다")
     selection = selected_sets(items, "enforced")
     criteria, evidence = set(selection["criteria"]), set(selection["evidence"])
-    for kind in sorted(evidence & {"api", "browser"}):
+    for kind in sorted(evidence & {"api", "browser", "desktop"}):
         if not any(f["kind"] == kind or kind == "api" and f["kind"] == "browser" for f in flows):
             problems.append(f"{kind}: 필요한 동작을 검증하는 등록 흐름이 없다")
-    if "desktop" in evidence:
-        problems.append("네이티브 호스트 증거 검증 경로가 아직 없다 — 오프라인·브라우저 검사로 대체하지 않는다")
     if "performance" in criteria:
         problems.append("performance: 대표 측정 범위가 없다 — 정확성 검사 통과로 대체하지 않는다")
     out = {"version": VERSION, "head": head, "base_oid": base_oid, "base": (spec.get("pr") or {}).get("base"),
