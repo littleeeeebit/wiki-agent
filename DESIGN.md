@@ -134,9 +134,9 @@ tools are collapsed in the task list. Live diff counts remain visible, but
 the diff itself starts collapsed on phones. Stop and session permission
 revocation remain visible while applicable.
 
-The center is slightly wider than the right because at 1280px, the conversation header (three focuses, two models, clear context) must fit on one line. If they were the same width, it would be `520px` and the header would need `574px`. Clear context is therefore an icon on both sides, and the names are in `aria-label` and `title`.
+The center is slightly wider than the right to give the conversation more reading space. Desktop conversation and agent toolbars wrap their controls to the available pane width and grow from a `44px` minimum height. Focus tabs, document scope, model choices, planning and clear context remain reachable on 16:10 screens and scaled desktop windows. Clear context is an icon on both sides, with its name in `aria-label` and `title`.
 
-The headers of the three sides have the same height (`44px`, `h-11`). They only state what is being viewed. The tab line is `36px` (`h-9`). Settings have been moved to a modal via the gear icon — since translation and theme are things you don't touch again once set, there is no reason to use rail space.
+The title headers of the three sides have the same height (`44px`, `h-11`). They only state what is being viewed. The tab line is `36px` (`h-9`). Settings have been moved to a modal via the gear icon — since translation and theme are things you don't touch again once set, there is no reason to use rail space.
 
 ## Color
 

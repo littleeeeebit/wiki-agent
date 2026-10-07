@@ -190,6 +190,16 @@
     button:active:not(:disabled) { filter: brightness(0.9); }
 }
 
+/* Desktop toolbars wrap to their pane width, including scaled 16:10 windows. */
+html[data-mobile-layout="desktop"] {
+    .query-toolbar, .agent-toolbar {
+        height: auto; min-height: 44px; flex-wrap: wrap; padding-block: 8px;
+    }
+    .query-toolbar > nav, .query-options, .agent-options {
+        min-width: 0; flex-wrap: wrap; flex-shrink: 1;
+    }
+}
+
 /* Shared mobile chrome; desktop keeps its existing breakpoint rules. */
 html[data-mobile-layout="portrait"],
 html[data-mobile-client="remote"][data-mobile-layout="landscape"] {
