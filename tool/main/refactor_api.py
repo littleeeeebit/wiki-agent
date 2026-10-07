@@ -18,7 +18,7 @@ from pydantic import BaseModel
 import debt
 import improvement
 
-from . import refactor, specs
+from . import refactor, refactor_continuation, specs
 from .query import _lock, current_repo
 
 router = APIRouter()
@@ -62,13 +62,13 @@ def scanned() -> dict:
 @router.get("/api/refactors")
 def runs() -> dict:
     repo = current_repo()
-    return {"repo": repo.name, "runs": refactor.listing(repo.name)}
+    return {"repo": repo.name, "runs": [refactor_continuation.view(r) for r in refactor.listing(repo.name)]}
 
 
 @router.get("/api/refactors/{rid}")
 def status(rid: str) -> dict:
     repo = current_repo()
-    run = mine(repo, rid)
+    run = refactor_continuation.view(mine(repo, rid))
     with _lock:
         worker = refactor._workers.get((repo.name, rid))
         return {**run, "spent": worker.spent()} if worker else run
@@ -118,7 +118,8 @@ def begun(repo: Path, body: Start, sid: str | None = None) -> dict:
                "done": body.done, "out": body.out, "spec": sid,
                "reviewer": body.reviewer.model_dump() if body.reviewer else None,
                "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "scan", "state": "running",
-               "stopped": None, "hotspots": [], "steps": [], "tests": None, "created": now, "updated": now}
+               "stopped": None, "hotspots": [], "steps": [], "tests": None, "finish_version": 1,
+               "created": now, "updated": now}
         improvement.atomic(refactor.file_of(repo.name, rid), run)
     refactor.launch(repo, run)
     return refactor.load(repo.name, rid)
@@ -153,6 +154,7 @@ def cancel(rid: str) -> dict:
     repo = current_repo()
     mine(repo, rid)
     with refactor._launching:
+        refactor_continuation.guard(mine(repo, rid))
         with _lock:
             w = refactor._workers.get((repo.name, rid))
         if w is not None:
@@ -169,6 +171,7 @@ def approve(rid: str) -> dict:
 
     repo = current_repo()
     run = mine(repo, rid)
+    refactor_continuation.guard(run)
     waiting = [s["spec"] for s in run["steps"] if s["state"] == "awaiting"]
     if not waiting:
         raise HTTPException(409, "승인을 기다리는 단계가 없다")
@@ -185,6 +188,7 @@ def approve(rid: str) -> dict:
 def resume(rid: str) -> dict:
     repo = current_repo()
     run = mine(repo, rid)
+    refactor_continuation.guard(run)
     if run.get("scope_change"):
         raise HTTPException(409, "목적·모드 변경은 대화에서 선택하고 새 명세로 시작해라")
     if run["state"] != "stopped":

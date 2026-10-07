@@ -31,8 +31,9 @@ from agent import ChatSession
 from common import errorlog, worktree_home
 from common.budget import Budget, Cancelled
 
-from . import loop, planning, runtime, specs, work
+from . import loop, planning, refactor_continuation, refactor_finish, runtime, specs, work
 from .query import ROOT, _lock, current_repo, hold
+from .refactor_continuation import recover as recover
 
 RUNS = ROOT / "raw" / "refactor" / "runs"
 MODES = {"cleanup": {"tiers": ("L0", "L1")}, "restructure": {"tiers": ("L0", "L1", "L2")},
@@ -418,6 +419,7 @@ def reviewed(w: Worker, sid: str) -> None:
     """Wait until review allows `sid`."""
 
     waited(w, lambda: live(w, sid)["state"] in REVIEWED)
+    refactor_finish.reviewed(w, sid)
 
 
 def head_of(repo: Path, spec: dict) -> str:
@@ -454,10 +456,6 @@ def approved(w: Worker, sid: str) -> bool:
     spec = live(w, sid)
     given = (load(w.repo.name, w.rid).get("approved") or {}).get(sid)
     return given is not None and given == mark(w.repo, spec)
-
-
-def body(goal: str, lines: list[str]) -> str:
-    return "\n".join(["## 변경 요약", "", goal, "", "## 확인", "", *[f"- {line}" for line in lines], ""])
 
 
 def purpose(run: dict) -> str:
@@ -661,15 +659,17 @@ def characterized(w: Worker, run: dict, sid: str) -> None:
         run = w.note(tests=t)
     if not t.get("pr"):
         t["pr"] = published(w, sid, where, t["base"], f"Characterization tests for {', '.join(files)}",
-                            body("Pin today's behaviour before refactoring.", [f"`{f}`" for f in t["tests"]]), "L0")
+                            refactor_finish.body("Pin today's behaviour before refactoring.", [f"`{f}`" for f in t["tests"]]), "L0")
         w.note(tests=t)
 
 
 def stepped(w: Worker, run: dict) -> dict:
+    if (steps := refactor_finish.schedule(run)) != run["steps"]:
+        run = w.note(steps=steps)
     previous = run["tests"]["spec"]
     for k, step in enumerate(run["steps"]):
         if step["state"] == "done":
-            previous = step["spec"]
+            previous = step["spec"] or step["base"]
             continue
         sid = step["spec"] or specs.unique(w.repo, f"refactor-{w.rid}-{step['n']}")
         if not step["spec"]:
@@ -688,16 +688,21 @@ def stepped(w: Worker, run: dict) -> dict:
             if step["tier"] in BLOCKING:
                 blocked(w, sid, True)
             if step["state"] == "pending":
+                if step.get("kind"):
+                    w.note(phase=step["kind"])
                 adopted = competed(w, run, step, sid, where)
+                run = load(w.repo.name, w.rid)
+                step = run["steps"][k]
+                if adopted.get("unchanged"):
+                    run = refactor_finish.unchanged(w, run, k, sid)
+                    continue
                 git(where, "merge", "--ff-only", adopted["commit"])
-                run["steps"][k] = step = {**step, "state": "adopted", "handoff": adopted["branch"]}
+                run["steps"][k] = step = {**step, "state": "adopted", "handoff": adopted.get("branch")}
                 run = w.note(steps=run["steps"])
             if step["state"] == "adopted":
                 if step.get("handoff"):   # only after the checkpoint: until then a resume needs it to re-adopt
                     specs.sh(["git", "branch", "-D", step["handoff"]], where)
-                n = published(w, sid, where, previous, step["goal"], body(step["goal"], [
-                    "Frozen characterization tests pass on every candidate considered.",
-                    "Selected by the largest drop in debt (`tool/refactor_profile.py`)."]), step["tier"])
+                n = published(w, sid, where, previous, step["goal"], refactor_finish.summary(step), step["tier"])
                 run["steps"][k] = step = {**step, "state": "published", "pr": n}
                 run = w.note(steps=run["steps"])
         reviewed(w, sid)
@@ -716,6 +721,8 @@ def stepped(w: Worker, run: dict) -> dict:
 def competed(w: Worker, run: dict, step: dict, sid: str, where: Path) -> dict:
     """Run the step from `where` and record its usage."""
 
+    if step.get("kind"):
+        return refactor_finish.candidate(w, run, step, where)
     config = refactor_profile.STORE / run["scope"] / sid / "experiment.json"
     try:
         if not config.exists():
@@ -752,7 +759,8 @@ def competed(w: Worker, run: dict, step: dict, sid: str, where: Path) -> dict:
     return result
 
 
-PHASES = {"scan": scan, "audit": audited, "plan": staged, "tests": frozen, "steps": stepped}
+PHASES = {"scan": scan, "audit": audited, "plan": staged, "tests": frozen, "steps": stepped,
+          "test_cleanup": stepped, "ratchet": stepped}
 
 
 def drive(w: Worker) -> None:
@@ -779,21 +787,12 @@ def launch(repo: Path, run: dict) -> None:
     with _launching, _lock:
         if runtime.stopping.is_set():
             raise HTTPException(503, "서버가 종료 중이다")
+        refactor_continuation.guard(load(repo.name, run["id"]))
         if (repo.name, run["id"]) in _workers:
             raise HTTPException(409, "이 리펙터링은 이미 돌고 있다")
         w = _workers[(repo.name, run["id"])] = Worker(repo, run)
     update(repo.name, run["id"], state="running", stopped=None)
     threading.Thread(target=drive, args=(w,), daemon=True).start()
-
-
-def recover() -> None:
-    """At startup: a run the last server left running is stopped, never replayed."""
-
-    for folder in RUNS.glob("*"):
-        for run in listing(folder.name):
-            if run["state"] == "running":
-                update(folder.name, run["id"], state="stopped",
-                       stopped={"reason": "restart", "detail": "서버가 다시 시작됐다 — [재개] 로 잇는다", "ts": time.time()})
 
 
 def close_all() -> None:

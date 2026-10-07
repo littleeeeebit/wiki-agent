@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 import debt
 from main import specs
 
@@ -129,3 +131,62 @@ def test_final_gate_runs_the_ratchet_and_keeps_shell_out_of_the_base(tmp_path, m
     _write(root, {"a.py": _lines(801, "a")})
     done = subprocess.run(debt.command(), shell=True, cwd=root, capture_output=True, text=True, encoding="utf-8")
     assert done.returncode == 1 and "래칫 실패" in done.stdout
+
+
+def test_snapshot_budgets_count_bytes_even_when_the_file_is_one_line(tmp_path):
+    root = _repo(tmp_path, {"tests/result.snap": "expected line\n" * 8, "tests/data.json": '{"expected": 1}\n'})
+    baseline = debt.init(root)
+    assert set(baseline["test_artifacts"]) == {"tests/result.snap", "tests/data.json"}
+    _commit_as_base(root)
+    _write(root, {"tests/result.snap": "x" * 200})
+    problems, _ = debt.check(root, "main")
+    assert any("result.snap" in p and "bytes" in p for p in problems), "one-line formatting cannot hide growth"
+    debt.track_artifacts(root)
+    assert debt.load(root / debt.RATCHET)["test_artifacts"] == baseline["test_artifacts"]
+    debt.tighten(root)
+    entry = debt.load(root / debt.RATCHET)["test_artifacts"]["tests/result.snap"]
+    assert entry["bytes"] == baseline["test_artifacts"]["tests/result.snap"]["bytes"] and entry["lines"] == 1
+    _write(root, {"tests/new.snap": "z" * (debt.ARTIFACT_BYTES + 1)})
+    assert any("new.snap" in p for p in debt.check(root)[0])
+    _write(root, {"tests/small.snap": "new regression case\n"})
+    debt.tighten(root)
+    entries = debt.load(root / debt.RATCHET)["test_artifacts"]
+    assert "tests/small.snap" in entries and "tests/new.snap" not in entries
+    assert any("new.snap" in p for p in debt.check(root)[0]), "tightening cannot adopt an over-cap new artifact"
+
+
+def test_artifact_adoption_is_explicit_and_budget_relaxation_needs_a_new_reason(tmp_path):
+    root = _repo(tmp_path, {"tests/result.snap": "original\n"})
+    baseline = debt.init(root)
+    legacy = {k: v for k, v in baseline.items() if k not in ("test_artifacts", "artifact_max_bytes")}
+    debt.write(root / debt.RATCHET, legacy)
+    _commit_as_base(root)
+    debt.tighten(root)
+    assert "test_artifacts" not in debt.load(root / debt.RATCHET), "ordinary legacy merges do not silently adopt a policy"
+    debt.track_artifacts(root)
+    _commit_as_base(root)
+    baseline = debt.load(root / debt.RATCHET)
+    baseline["test_artifacts"]["tests/result.snap"]["bytes"] += 1
+    debt.write(root / debt.RATCHET, baseline)
+    assert any("reason" in p for p in debt.check(root, "main")[0])
+    baseline["test_artifacts"]["tests/result.snap"]["reason"] = "Agreed new regression observation"
+    debt.write(root / debt.RATCHET, baseline)
+    assert debt.check(root, "main")[0] == []
+    baseline.pop("test_artifacts")
+    debt.write(root / debt.RATCHET, baseline)
+    assert any("보호" in p for p in debt.check(root, "main")[0])
+    baseline["test_artifacts"] = {}
+    debt.write(root / debt.RATCHET, baseline)
+    assert any("보호" in p for p in debt.check(root, "main")[0]), "dropping a live entry must not reset its byte limit"
+
+
+def test_artifact_budgets_reject_malformed_entries_and_drop_deleted_files(tmp_path):
+    root = _repo(tmp_path, {"tests/data.json": "{}\n"})
+    baseline = debt.init(root)
+    (root / "tests/data.json").unlink()
+    debt.tighten(root)
+    assert debt.load(root / debt.RATCHET)["test_artifacts"] == {}
+    baseline["test_artifacts"]["tests/data.json"]["bytes"] = "unbounded"
+    debt.write(root / debt.RATCHET, baseline)
+    with pytest.raises(ValueError):
+        debt.check(root)

@@ -123,6 +123,32 @@ Plans
 and status are in
 [the refactor plan](plans/refactor/0-overview.md).
 
+New runs finish with test-only cleanup and ratchet steps through
+`main/refactor_finish.py`. Default cleanup keeps Python syntax trees and
+decoded JSON fixture values identical; other artifacts stay byte-identical.
+Structural test changes require a repository-owned `test_quality_cmd` with
+unchanged test results and per-mutant verdicts, plus frozen
+`test_quality_files` controls. The steps keep size/verification receipts,
+publish real changes for ordinary review, and record no-change audits without
+empty PRs. The final step adopts a missing baseline or only tightens an existing
+one, after cleanup and before merge. It also adopts byte/line budgets for test
+fixtures and snapshots, which the source-only scanner did not cover. Merge
+preparation only lowers adopted budgets. Old runs retain their original contract.
+Research and the quality-command contract are in
+[verified test cleanup](research/refactoring-test-cleanup.md).
+
+An ordinary Agent turn on a stopped refactor task transfers execution to that
+task. `main/refactor_continuation.py` preserves the task identity across
+restarts; the refactoring card follows its live execution, specification and
+PR instead of showing the old timeout as its current state. The automatic
+steps remain historical and cannot be resumed, approved or cancelled through
+the old controller. The task's own Agent and Review controls own continuation;
+no candidate selection or review result is inferred from its code changes.
+Older stopped runs are recognized only from later instructions in their exact
+task record, then checkpointed on startup. A deleted or replaced task leaves
+the automatic controller blocked. Suite resolves shared checkouts by their
+current branch owner, so a merged task cannot label another task's live run.
+
 Claude background execution stays within the work turn until task lifecycle
 events settle and the provider's follow-up result arrives. `_drain` forwards
 task start/progress/update/notification, elapsed tool progress and bounded raw

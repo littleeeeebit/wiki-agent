@@ -873,6 +873,9 @@ def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = N
     turn's thread decides what is sent, and records it (`run_turn`)."""
 
     run = run or Run(chat)
+    from . import refactor_continuation
+
+    refactor_continuation.take(path)
     try:
         run.diff_base = diff_git(path, "rev-parse", "HEAD").strip()
     except (OSError, RuntimeError, subprocess.TimeoutExpired):

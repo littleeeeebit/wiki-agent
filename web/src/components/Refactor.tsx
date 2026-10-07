@@ -11,15 +11,19 @@ export const REFACTOR_MODE: Record<RefactorMode, string> = {
 type Hotspot = { path: string; lines: number; dup: number; block: number; churn: number; cap: number; debt: number }
 type Scan = { repo: string; rows: Hotspot[]; scope: string }
 type Run = {
-  id: string; mode: RefactorMode; state: 'running' | 'stopped' | 'done'; phase: string; created: number
+  id: string; mode: RefactorMode; state: 'running' | 'stopped' | 'done' | 'continued'; phase: string; created: number
   goal?: string; done?: string[]; out?: string[]; spec?: string; plan?: string; spent: { seconds: number; calls: number; tokens: number; unknown?: boolean }
-  steps: { n: number; tier: string; files: string[]; goal: string; state: string; spec: string | null; pr?: number }[]
+  steps: { n: number; tier: string; files: string[]; goal: string; state: string; spec: string | null; pr?: number;
+    kind?: 'test_cleanup' | 'ratchet'; before?: { bytes: number; lines: number }; after?: { bytes: number; lines: number };
+    deferred?: string[]; action?: string; checked?: boolean; unchanged?: boolean }[]
   tests: { spec: string; pr?: number } | null; stopped: { reason: string; detail: string } | null
   scope_change?: api.ChoiceQuestion | { questions: api.ChoiceQuestion[] }
+  continuation?: { spec: string; state: string; running: boolean; fault: string | null; pr: { number: number; url: string } | null }
 }
-const STATE = { running: '실행 중', stopped: '멈춤', done: '리뷰·승인 완료' }
+const STATE = { running: '실행 중', stopped: '멈춤', done: '리뷰·승인 완료', continued: '에이전트 작업으로 전환' }
 const PHASE: Record<string, string> = { scan: '대상 조사', audit: '범위·단계 검토', plan: '계획 PR 머지 대기',
-  tests: '현재 동작을 고정하는 테스트', steps: '단계 PR 진행', done: '단계 완료' }
+  tests: '현재 동작을 고정하는 테스트', steps: '단계 PR 진행', test_cleanup: '테스트 정리·검증',
+  ratchet: '부채 기준선 생성·강화', done: '단계 완료' }
 const STEP: Record<string, string> = { pending: '대기', adopted: '후보 채택', published: 'PR 리뷰 중',
   awaiting: '승인 대기', done: '리뷰 통과' }
 const box = 'not-prose rounded-md border border-border bg-card p-3 text-[12.5px]'
@@ -107,27 +111,35 @@ export function RefactorStatus({ repo, id, specs, korean, onSay, onChanged }: {
     {!run && !fault && <p role="status">실행 상태를 읽는 중…</p>}
     {run && <>
       <div className="flex flex-wrap items-center gap-2 font-heading text-[13px] font-semibold">
-        <span>{REFACTOR_MODE[run.mode]}</span><span role="status">{STATE[run.state]} · {PHASE[run.phase] ?? run.phase}</span>
+        <span>{REFACTOR_MODE[run.mode]}</span><span role="status">{STATE[run.state]} · {run.continuation
+          ? run.continuation.running ? '에이전트 실행 중' : run.continuation.state : PHASE[run.phase] ?? run.phase}</span>
       </div>
       {run.goal && <p className="mt-2 break-words text-[13.5px]">{shown[0]}</p>}
+      {run.continuation && <div className="mt-2">
+        <p>이어서 진행한 작업 · <span className="font-mono">{run.continuation.spec}</span> · {run.continuation.pr &&
+          <a href={run.continuation.pr.url} target="_blank" rel="noreferrer" className="text-primary">PR #{run.continuation.pr.number}</a>}</p>
+        <p className="mt-1 text-muted-foreground">해당 작업의 Agent·Review에서 계속한다. 이전 자동 단계는 다시 실행하지 않는다.</p>
+        {run.continuation.fault && <p role="alert" className="mt-1 text-destructive">{run.continuation.fault}</p>}
+      </div>}
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {run.state === 'running' && <Btn disabled={working} onClick={() => void act('cancel')}>멈추기</Btn>}
         {run.state === 'stopped' && <Btn disabled={working} onClick={() => void act('cancel')}>저장소 놓기</Btn>}
         {run.state === 'stopped' && !run.scope_change && <Btn disabled={working} onClick={() => void act('resume')}>재개</Btn>}
-        {run.steps.some((s) => s.state === 'awaiting') && <Btn tone="primary" disabled={working} onClick={() => void act('approve')}>승인</Btn>}
+        {run.state !== 'continued' && run.steps.some((s) => s.state === 'awaiting') && <Btn tone="primary" disabled={working} onClick={() => void act('approve')}>승인</Btn>}
       </div>
-      {run.stopped && <p className="mt-2 whitespace-pre-wrap break-words text-destructive">{run.stopped.detail || run.stopped.reason}</p>}
-      {!!questions.length && <Questions korean={korean} disabled={working} questions={questions.map((q) => ({
+      {run.state !== 'continued' && run.stopped && <p className="mt-2 whitespace-pre-wrap break-words text-destructive">{run.stopped.detail || run.stopped.reason}</p>}
+      {run.state !== 'continued' && !!questions.length && <Questions korean={korean} disabled={working} questions={questions.map((q) => ({
         question: q.question, header: q.header, multiSelect: q.multi, options: q.options.map((o) => ({ label: o.label, description: o.note, preview: o.preview })),
       }))} onSubmit={(answers) => onSay(`Refactoring ${id} stopped because the agreed scope must change.\n`
         + `Agreed request: ${JSON.stringify({ goal: run.goal, mode: run.mode, done: run.done, out: run.out })}\n`
         + `Stopped reason: ${run.stopped?.detail ?? ''}\nScope change: ${JSON.stringify(run.scope_change)}\nMy choices:\n`
         + questions.map((q, i) => `${i + 1}. ${q.header ? `[${q.header}] ` : ''}${q.question}\nAnswer: ${answers[i]}`).join('\n')
         + '\nReconsider the specification before starting a replacement run.')} />}
-      {run.tests && <p className="mt-2">현재 동작 고정 · {pr(run.tests.spec, run.tests.pr) || '테스트 작성 중'}</p>}
-      {run.plan && <p className="mt-2">계획 · {pr(run.plan) || run.plan}</p>}
-      <ol className="mt-2 space-y-1">{run.steps.map((s) => <li key={s.n}>
-        {s.n}. [{s.tier}] {STEP[s.state] ?? s.state} {pr(s.spec, s.pr)}
+      {run.state !== 'continued' && run.tests && <p className="mt-2">현재 동작 고정 · {pr(run.tests.spec, run.tests.pr) || '테스트 작성 중'}</p>}
+      {run.state !== 'continued' && run.plan && <p className="mt-2">계획 · {pr(run.plan) || run.plan}</p>}
+      {run.state !== 'continued' && <ol className="mt-2 space-y-1">{run.steps.map((s) => <li key={s.n}>
+        {s.n}. [{s.tier}] {s.kind === 'test_cleanup' ? '테스트 정리 · ' : s.kind === 'ratchet' ? '기준선 갱신 · ' : ''}
+        {s.unchanged ? '변경 없음 · 검증 완료' : STEP[s.state] ?? s.state} {pr(s.spec, s.pr)}
         {!['L0', 'L1'].includes(s.tier) && s.pr && specs.find((p) => p.id === s.spec)?.state === `PR #${s.pr}` &&
           <Btn className="ml-2" disabled={working} onClick={async () => {
             setWorking(true)
@@ -135,15 +147,19 @@ export function RefactorStatus({ repo, id, specs, korean, onSay, onChanged }: {
             catch (err) { setFault(String(err)) }
             finally { setWorking(false) }
           }}>리뷰 시작</Btn>}
-      </li>)}</ol>
+      </li>)}</ol>}
       <details className="mt-3 text-muted-foreground"><summary className="cursor-pointer">단계·사용량 상세</summary>
         {!!run.done?.length && <div className="mt-2">완료 조건<ul>{run.done.map((s, i) => <li key={i}>· {translated(s)}</li>)}</ul></div>}
         {!!run.out?.length && <div className="mt-2">범위에서 제외<ul>{run.out.map((s, i) => <li key={i}>· {translated(s)}</li>)}</ul></div>}
-        <p className="mt-2">작업 시간 {Math.round(run.spent.seconds)}초 · 호출 {run.spent.calls} · 확인된 토큰 {run.spent.tokens.toLocaleString()}
+        <p className="mt-2">{run.continuation ? '이전 자동 작업 시간' : '작업 시간'} {Math.round(run.spent.seconds)}초 · 호출 {run.spent.calls} · 확인된 토큰 {run.spent.tokens.toLocaleString()}
           {run.spent.unknown && ' · 일부 토큰 사용량은 알 수 없음'}</p>
         <p className="mt-1">시작 {new Date(run.created * 1000).toLocaleString('ko-KR')}</p>
         <ol className="mt-2 space-y-2">{run.steps.map((s, i) => <li key={s.n} className="break-words">
           {s.n}. {shown[i + 1]}<span className="block break-all font-mono text-[11.5px]">{s.files.join(', ')}</span>
+          {s.before && s.after && <p>테스트 {s.before.lines.toLocaleString()} → {s.after.lines.toLocaleString()}줄 ·
+            {' '}{s.before.bytes.toLocaleString()} → {s.after.bytes.toLocaleString()}바이트</p>}
+          {s.kind === 'ratchet' && s.checked && <p>기준선 {s.action === 'adopted' ? '생성' : s.action === 'tightened' ? '강화' : '유지'} · 검사 통과 · PR 머지 전에는 기본 브랜치에 미적용</p>}
+          {!!s.deferred?.length && <ul>{s.deferred.map((reason, n) => <li key={n}>{reason}</li>)}</ul>}
         </li>)}</ol>
       </details>
       {run.state === 'done' && <p className="mt-2 text-muted-foreground">단계의 리뷰·승인이 끝났다. 각 PR의 머지는 직접 진행한다.</p>}
