@@ -268,7 +268,7 @@ def examine(path: Path, then=None) -> bool:
             data, _ = adapter_of(path)
             agents = hosts(data)
             results = {host: probe(path, host) for host in agents}
-            keep(name, probe=results, trust=trusted(interpreter()) if "codex" in agents else None)
+            keep(name, probe=results, trust=trusted(interpreter(data)) if "codex" in agents else None)
         finally:
             with _records:
                 _probing.discard(name)
@@ -282,12 +282,12 @@ def examine(path: Path, then=None) -> bool:
 
 # -- Moving the machine to this hub -------------------------------------------
 
-def interpreter() -> str:
+def interpreter(data: dict | None = None) -> str:
     """The hooks' interpreter as installed: the one the user-level commands
     already name, so a server started under another Python does not read as
     a hub that has to move."""
 
-    for host in hosts():
+    for host in hosts(data):
         for file in apply.user_files(host):
             try:
                 groups = (apply.read_json(file).get("hooks") or {}).values()
@@ -302,12 +302,12 @@ def interpreter() -> str:
     return sys.executable
 
 
-def _snapshot() -> tuple[dict, list, list, str]:
+def _snapshot(data: dict | None = None) -> tuple[dict, list, list, str]:
     """`hub()`'s answer with the plan, links and interpreter it was read
     from, so `move` writes the very thing whose digest it checked."""
 
-    python = interpreter()
-    agents = hosts()
+    python = interpreter(data)
+    agents = hosts(data)
     try:
         if not agents:
             raise ValueError("Claude Code 또는 Codex CLI를 설치하고 새 터미널에서 앱을 실행하세요.")
@@ -326,19 +326,19 @@ def _snapshot() -> tuple[dict, list, list, str]:
              "digest": digest(json.dumps(shown, sort_keys=True, ensure_ascii=False).encode())}, plan, found, python)
 
 
-def hub() -> dict:
+def hub(data: dict | None = None) -> dict:
     """What moving the machine's wiring to this hub changes, every line of
     it, and a digest of exactly that list. `needed` is false when nothing."""
 
-    return _snapshot()[0]
+    return _snapshot(data)[0]
 
 
-def move(confirmed: str) -> dict:
+def move(confirmed: str, data: dict | None = None) -> dict:
     """Write what `hub()` showed, only if it is still exactly that. Every
     repository's test was of the old wiring, so the records drop them."""
 
     with _moving:
-        now, plan, found, python = _snapshot()
+        now, plan, found, python = _snapshot(data)
         if now["refused"]:
             raise HTTPException(409, f"허브를 옮길 수 없다 — {now['refused']}")
         if now["digest"] != confirmed:
@@ -602,7 +602,7 @@ def plan(name: str) -> dict:
     path = repo_of(name)
     exists = (path / ADAPTER).exists()
     data, _ = adapter_of(path)
-    return {"hub": hub(), "agents": hosts(data),
+    return {"hub": hub(data), "agents": hosts(data),
             "adapter": None if exists else guess(path), "unwire": unwire(path, write=False),
             "survey": survey.estimate(path) if survey.settings()["survey"] else None}
 
@@ -615,10 +615,10 @@ def connect(name: str, body: Connect) -> dict:
     data, _ = adapter_of(path)
     if not hosts(data):
         raise HTTPException(409, "이 프로젝트에 사용할 Claude Code 또는 Codex CLI를 PATH에서 찾지 못했다")
-    if hub()["needed"]:
+    if hub(data)["needed"]:
         if not body.hub:
             raise HTTPException(409, "허브 이전을 먼저 확인받아야 한다")
-        move(body.hub)
+        move(body.hub, data)
     write_adapter(path)
     unwire(path)
     go_on = None

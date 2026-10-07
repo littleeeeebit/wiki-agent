@@ -219,12 +219,9 @@ def home(tmp_path, monkeypatch):
     `Path.is_junction` is taken away: 3.11, which the README supports, has none."""
 
     monkeypatch.delattr(Path, "is_junction", raising=False)
-    home = Path(apply._HOME)
-    for kept in (home / ".claude", home / ".codex"):
-        if kept.exists():
-            import shutil
-
-            shutil.rmtree(kept)
+    home = tmp_path / "home"
+    monkeypatch.setattr(apply, "_HOME", str(home))
+    monkeypatch.setenv("WIKI_USER_HOME", str(home))
     old = tmp_path / "old-hub"
     (old / "tool").mkdir(parents=True)
     (old / "tool/hook.py").write_text("", encoding="utf-8")
@@ -350,6 +347,30 @@ def test_connection_probe_does_not_start_an_uninstalled_cli(tmp_path, hosts, mon
     if not hosts:
         assert connect.hub()["refused"]
         assert connect.status(repo, ALL)["state"] == "일부"
+
+
+@pytest.mark.parametrize("host", ["claude", "codex"])
+def test_connection_hub_respects_the_adapter_when_both_clis_are_installed(tmp_path, home, host):
+    machine, _old, trusts = home
+    repo = _repo(tmp_path)
+    (repo / ".wiki").mkdir()
+    (repo / connect.ADAPTER).write_text(f'agents = ["{host}"]\n[slots]\ngate_cmd = "make test"\n',
+                                       encoding="utf-8")
+    other = "codex" if host == "claude" else "claude"
+    (machine / setup_agents.SETTINGS[other]).parent.mkdir(parents=True, exist_ok=True)
+    (machine / setup_agents.SETTINGS[other]).write_text("broken unrelated host config", encoding="utf-8")
+    web = client()
+    with patch.object(chat_channels, "WORKSPACE", tmp_path), patch.object(chat, "_project", "proj"):
+        shown = web.get("/api/connect/proj/plan").json()
+        assert shown["agents"] == shown["hub"]["agents"] == [host]
+        assert not shown["hub"]["refused"], shown
+        assert {Path(line["file"]) for line in shown["hub"]["lines"]} == set(apply.user_files(host))
+        done = web.post("/api/connect/proj", json={"hub": shown["hub"]["digest"]}, headers={"x-project": "proj"})
+        assert done.status_code == 200, done.text
+    assert apply.user_wired(host)
+    assert trusts == ([True] if host == "codex" else [])
+    assert (machine / setup_agents.SETTINGS[other]).read_text(encoding="utf-8") == "broken unrelated host config"
+    assert not (repo / setup_agents.SETTINGS[other]).exists()
 
 
 # -- the survey --------------------------------------------------------------------------
