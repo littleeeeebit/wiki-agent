@@ -120,7 +120,9 @@ ground for a legacy record which never had one.
 
 Use separate execution and audit identities. The enforced digest binds spec,
 head/base, deterministic rule versions, selected flows and requirements, manifest,
-frozen inputs and enforced rubric content. Receipt identity remains separate until
+frozen inputs, enforced rubric content and the definitions of selected criteria
+and evidence (`facet_digest`). The full candidate catalog (`catalog_digest`)
+binds only the audit identity. Receipt identity remains separate until
 collection and is bound at review dispatch/approval.
 
 Shadow answers, probability variation and candidate-only additions do not change
@@ -136,7 +138,7 @@ only under matching identities and the existing readiness rules.
 
 `store()` recomputes the mandatory contract under the spec owner's lock before
 publication and dispatch. It refuses a changed spec birth/revision, head/base,
-manifest, frozen inputs, rubric/catalog or superseded attempt. Optional catalog
+manifest, frozen inputs, enforced rubric/facet definitions or superseded attempt. Optional catalog
 changes mark only the audit observation stale. The offered flow IDs, kinds,
 impact paths, environments and assertion IDs must still match the registered
 catalog. Observation completion also rechecks frozen/rubric/catalog digests within
@@ -201,6 +203,8 @@ These invocations overlap and are not a unique-test sum.
 | Final catalog/closure/identity/legacy selection in `test_review_contract.py` | 18 passed; invalid catalogs, audit-only flow dispatch, stale snapshots and legacy rendering |
 | Observation-copy and malformed-catalog rerun | 4 passed; independent frozen input snapshot and command/assertion/kind rejection |
 | Final legacy rerun | 2 passed; digest equality without a schema version cannot reuse v2 approval |
+| PR #93 round 1 identity repair | 21 passed; selected facet definitions invalidate enforcement, unselected catalog changes stale only the audit |
+| Identity repair dispatch/receipt consumers | 4 passed; registered local API receipts, instruction/approval, candidate-only dispatch and spec change during review |
 | `test_agent_decisions.py`, `test_review_routing.py` | 32 passed; existing decision ownership and separate-process replay remain compatible |
 | Ruff, wiki lint, diff whitespace and UTF-8 without BOM | Passed |
 | Repository debt gate | Failed only on five existing findings in `chat_session.py`, `work.py`, `test_agent.py`, `test_loop.py` and `desktop_browser.py`; no limit was widened |
@@ -212,9 +216,11 @@ current revision. Off/on, probability variation, optional defer and unsupported
 grounds preserved the execution contract. Native and representative measurement
 coverage remained unresolved rather than receiving substituted proof.
 
-No paid Jev request, human semantic evaluation, actual independent reviewer or
-native-host interaction was part of these checks. Collector implementation remains
-stage 4 work; this completion does not activate recommendations.
+No paid Jev request, human semantic evaluation or native-host interaction was part
+of these checks. The independent GPT-5.6-Sol PR #93 review reproduced an unselected
+catalog invalidation in round 1; the repair splits enforced facet definitions from
+the audit catalog and adds both selected/unselected regressions. Collector
+implementation remains stage 4 work; this completion does not activate recommendations.
 
 ## Rollback
 

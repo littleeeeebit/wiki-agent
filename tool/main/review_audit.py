@@ -87,7 +87,7 @@ def compose(contract: dict, observation: dict | None = None) -> dict:
         row["grounds"].sort(key=lambda g: json.dumps(g, sort_keys=True))
     out["unresolved"] = sorted(unresolved, key=lambda r: (r["scope"], r["item_id"] or "", r["reason"]))
     out["dispositions"] = dispositions
-    out["candidate_digest"] = verification.sha({"enforced_digest": out["digest"], "candidate": out["candidate"],
+    out["candidate_digest"] = verification.sha({"enforced_digest": out["digest"], "catalog_digest": out["catalog_digest"], "candidate": out["candidate"],
             "items": out["items"], "unresolved": out["unresolved"], "dispositions": dispositions, "observation": record})
     return out
 

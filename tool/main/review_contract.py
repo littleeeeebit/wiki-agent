@@ -333,9 +333,11 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
            "diff_digest": diff["input_digest"], "closure_version": CLOSURE_VERSION,
            "prose_exemption": exemption,
            "rubric_digest": verification.sha({k: RUBRIC[k] for k in ("plan", "code") if k in criteria}),
-           "catalog_digest": verification.sha({"criteria": CRITERIA, "evidence": EVIDENCE})}
+           "facet_digest": verification.sha({"criteria": {k: CRITERIA[k] for k in sorted(criteria & CRITERIA.keys())},
+                                              "evidence": {k: EVIDENCE[k] for k in sorted(evidence)}})}
     out["digest"] = verification.sha(out)
     out["enforced_digest"] = out["digest"]
+    out["catalog_digest"] = verification.sha({"criteria": CRITERIA, "evidence": EVIDENCE})
     out["enforced"] = selection
     out["items"] = list(items.values())
     out["enforced_rejections"] = rejections
@@ -387,6 +389,8 @@ def store(repo: Path, path: Path, spec: dict, contract: dict) -> dict | None:
             return None
         if observation.get("request") and observation["status"] in ("decided", "uncertain"):
             try:
+                if current["catalog_digest"] != contract["catalog_digest"]:
+                    raise ValueError("candidate_catalog_changed_before_publication")
                 manifest, digest = verification.manifest(path) if (path / verification.MANIFEST).exists() else (None, "")
                 if digest != observation["manifest"]["digest"]:
                     raise ValueError("manifest_changed_before_publication")

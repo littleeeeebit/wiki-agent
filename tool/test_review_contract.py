@@ -692,10 +692,10 @@ def test_mandatory_performance_and_browser_dependencies_remain_preparation_probl
     assert_grounded(result)
 
 
-@pytest.mark.parametrize("changed", ["head", "spec", "manifest", "rubric", "catalog"])
+@pytest.mark.parametrize("changed", ["head", "spec", "manifest", "rubric", "catalog", "evidence"])
 def test_mandatory_snapshot_changes_cannot_be_persisted(cloud_world, changed):
     world = cloud_world
-    spec = pr_spec(world, "snapshot", 1, "change.py", review={"flows": ["health"]})
+    spec = pr_spec(world, "snapshot", 1, "change.py", review={"flows": ["health"], "criteria": ["async"]})
     baseline = selected(world, spec)
     path = Path(spec["worktree"])
     if changed == "head":
@@ -706,11 +706,30 @@ def test_mandatory_snapshot_changes_cannot_be_persisted(cloud_world, changed):
         data = copy.deepcopy(world.contract)
         data["flows"][0]["title"] = "Revised flow"
         (path / verification.MANIFEST).write_text(json.dumps(data), encoding="utf-8")
-    with patch.dict(contract.RUBRIC if changed == "rubric" else contract.CRITERIA,
+    with patch.dict(contract.RUBRIC if changed == "rubric" else contract.EVIDENCE if changed == "evidence" else contract.CRITERIA,
                     {"code": "Changed rubric"} if changed == "rubric" else {"async": "Changed catalog"}
-                    if changed == "catalog" else {}):
+                    if changed == "catalog" else {"offline": "Changed mandatory evidence"} if changed == "evidence" else {}):
         assert contract.store(world.repo, path, spec, baseline) is None
     assert "review_contract" not in specs.load(spec["repo"], spec["id"])
+
+
+@pytest.mark.parametrize("axis,name", [("criteria", "async"), ("evidence", "desktop")])
+def test_unselected_catalog_changes_stale_only_audit_and_preserve_approval(world, axis, name):
+    spec = pr_spec(world, "optional-catalog", 1, "code.py")
+    baseline = selected(world, spec)
+    composed = contract.compose(baseline, audit_record(baseline, [axis + ":" + name]))
+    catalog = contract.CRITERIA if axis == "criteria" else contract.EVIDENCE
+    with patch.dict(catalog, {name: catalog[name] + " changed"}):
+        current = selected(world, spec)
+        assert current["enforced"] == baseline["enforced"] and current["digest"] == baseline["digest"]
+        assert current["catalog_digest"] != baseline["catalog_digest"]
+        assert current["candidate_digest"] != baseline["candidate_digest"]
+        fresh = contract.store(world.repo, Path(spec["worktree"]), spec, composed)
+    assert fresh["shadow"]["status"] == "stale"
+    assert fresh["shadow"]["reason"] == "candidate_catalog_changed_before_publication"
+    assert fresh["candidate"] == fresh["enforced"] and fresh["digest"] == baseline["digest"]
+    assert contract.matches(spec, {"review_contract": baseline}, fresh)
+    assert not contract.ready(world.repo, Path(spec["worktree"]), spec, fresh)
 
 
 def test_legacy_records_render_unavailable_provenance_and_require_review_for_schema_change(world):
