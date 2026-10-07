@@ -248,6 +248,13 @@ Registered runtime observations are supplied to ordinary read-only reviewers wit
 configured private values redacted. Missing setup, missing receipts and changed
 execution identity remain distinct preparation reasons.
 
+PR #91's independent review caught a production/fixture mismatch: the refactor
+owner stores `start_head`, but the initial selector read `start` and its test
+invented that key. Real production stages therefore stopped during preparation.
+The repair uses `start_head`; its regression now derives those fields from the
+actual `refactor.spec_for` constructor before exercising round/final preservation.
+Passing a hand-authored fixture alone did not establish caller compatibility.
+
 The production shadow asks only about additional facets, never readiness. One
 bounded call belongs to the round rather than a detached thread; mode off sends
 nothing. Outage, uncertainty or cancellation cannot waive a floor. Answers,

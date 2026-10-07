@@ -8,6 +8,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import decision
@@ -99,8 +100,11 @@ def test_local_api_receipts_are_not_substituted_by_offline_gate_and_stale_receip
 def test_refactor_round_and_final_gate_rerun_frozen_checks_and_protect_tests(world, monkeypatch):
     commit(world.repo, "test_behavior.py", "print('preserved')\n")
     git(world.repo, "push", "origin", "main")
-    spec = pr_spec(world, "refactor-step", 1, "a.py", start=git(world.repo, "rev-parse", "HEAD"),
-                   refactor={"run": "r1"})
+    origin = refactor.spec_for(SimpleNamespace(repo=world.repo, hub=False), {"id": "r1", "role": {}},
+                              "refactor-origin", "Preserve behavior", "main", git(world.repo, "rev-parse", "HEAD"),
+                              world.repo)
+    spec = pr_spec(world, "refactor-step", 1, "a.py", **{k: origin[k] for k in ("start_head", "refactor")})
+    assert "start" not in spec
     folder = world.tmp / "frozen/project/refactor-step"
     folder.mkdir(parents=True)
     file = folder / "frozen.json"
@@ -113,8 +117,12 @@ def test_refactor_round_and_final_gate_rerun_frozen_checks_and_protect_tests(wor
         done = looped(spec["id"])
     assert done["state"] == "머지 가능"
     assert done["rounds"][0]["review_contract"]["criteria"] == ["code", "refactor"]
+    assert done["rounds"][0]["review_contract"]["preservation"]["baseline"] == origin["start_head"]
     assert "preserve" in done["gate"]["cmd"]
     assert "preserve" in done["validation"]["final"]["command"]
+    for invalid in (None, "", "HEAD", "f" * 40):
+        assert selected(world, {**done, "start_head": invalid})["problems"]
+    assert selected(world, {k: v for k, v in done.items() if k != "start_head"})["problems"]
     path = Path(done["worktree"])
     old_command = contract.preservation_command(done)
     file.write_text(json.dumps({"tests": ["test_behavior.py"], "test_argv": ["python", "test_behavior.py"],

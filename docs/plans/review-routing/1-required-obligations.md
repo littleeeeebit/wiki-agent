@@ -95,6 +95,14 @@ failure. For a production step, compare every protected test path between the
 step baseline and reviewed head with literal Git pathspecs. An empty test set,
 changed protected test or failed comparison cannot prove preservation.
 
+The production baseline field is `start_head`, written by `refactor.spec_for`.
+Independent review of PR #91 found that the first selector read `start` while
+its passing fixture supplied that non-production key. The repair uses the owner's
+actual field, and the regression now obtains origin fields from `spec_for` before
+exercising the mapped round, final gate and protected-test checks. A missing or
+invalid baseline remains a preparation failure; do not accept a moving reference
+or invent a baseline to recover the task.
+
 The round and final-gate command reruns the existing `refactor_profile preserve`
 operation with the frozen specification's SHA-256. The command identity changes
 when frozen inputs change; the executable rejects an obsolete digest before
@@ -134,6 +142,11 @@ This used the working tree based on `ecf04cc4156a1c98694b9897637cfccef600b97e`,
 not a committed production release. The suite combines temporary Git fixtures,
 controlled reviewer replies and a real isolated local HTTP API. It does not run
 an actual independent reviewer or native desktop acceptance.
+
+That initial green run missed the production baseline-field mismatch described
+above. It is historical test evidence, not proof that the original fixture covered
+the real constructor. The repaired constructor-based regression reproduced the
+review finding before the selector change and must pass on the repair head.
 
 Covered boundaries include invalid declarations, plan/executable Markdown,
 legacy prose, explicit runtime/host/preservation preparation failures, refactor

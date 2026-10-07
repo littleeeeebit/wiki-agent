@@ -180,10 +180,13 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
         try:
             frozen_digest = verification.sha(frozen.read_bytes())
             tests = json.loads(frozen.read_text(encoding="utf-8"))["tests"]
-            preservation_inputs = {"baseline": spec["start"], "tests": tests}
+            baseline = spec["start_head"]
+            if not isinstance(baseline, str) or len(baseline) != 40 or set(baseline) - set("0123456789abcdef"):
+                raise ValueError("Invalid refactoring baseline")
+            preservation_inputs = {"baseline": baseline, "tests": tests}
             from . import specs
 
-            protected = specs.sh(["git", "--literal-pathspecs", "diff", "--exit-code", spec["start"], head, "--", *tests], path)
+            protected = specs.sh(["git", "--literal-pathspecs", "diff", "--exit-code", baseline, head, "--", *tests], path)
             if not tests or protected.returncode:
                 problems.append("고정된 동작 보존 테스트가 바뀌었거나 기준선을 확인하지 못했다")
         except (OSError, ValueError, KeyError, TypeError):
