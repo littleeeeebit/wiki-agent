@@ -2,6 +2,7 @@
 # ruff: noqa: F811 — borrowed fixtures are named by the tests that use them
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -85,3 +86,23 @@ def test_live_continuation_status_uses_the_current_branch_owner(selected):
         _git(selected, "switch", spec["id"])
         active.finish()
         assert not api.get(f"/api/refactors/{saved['id']}").json()["continuation"]["running"]
+
+
+def test_legacy_hub_continuations_use_the_linked_tree_record_and_exact_path(selected):
+    with patch.object(refactor, "scope_of", return_value="hub"):
+        api, saved, spec = stopped(selected)
+    assert "workspace_mode" not in spec
+    path = Path(spec["worktree"])
+    file = work.record(path)
+    assert file.parent.name == f"{selected.name}-worktrees"
+    later = saved["stopped"]["ts"] + 1
+    wrong = {"role": "user", "ts": later, "text": "Another tree", "path": str(path.with_name("unrelated"))}
+    file.write_text(json.dumps(wrong) + "\n", encoding="utf-8")
+    assert api.get(f"/api/refactors/{saved['id']}").json()["state"] == "stopped"
+    file.write_text(json.dumps({**wrong, "path": str(path), "text": "Continue the hub task"}) + "\n", encoding="utf-8")
+    assert api.get(f"/api/refactors/{saved['id']}").json()["state"] == "continued"
+    assert api.post(f"/api/refactors/{saved['id']}/resume").status_code == 409
+    refactor.recover()
+    assert refactor.load(selected.name, saved["id"])["continuation"]["spec"] == spec["id"]
+    file.unlink()
+    assert api.get(f"/api/refactors/{saved['id']}").json()["state"] == "continued"

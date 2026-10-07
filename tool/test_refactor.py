@@ -489,6 +489,8 @@ def test_the_hub_refactors_in_linked_worktrees_and_never_switches_its_own_checko
         assert _git(Path(spec["worktree"]), "branch", "--show-current") == sid
     assert (refactor_profile.STORE / "hub" / run["steps"][0]["spec"] / "frozen.json").exists()
     assert not (refactor_profile.STORE / "project").exists(), "hub records stay under the hub's scope"
+    cleanup = run["steps"][-2]
+    assert cleanup["unchanged"] and not (worktree_home(selected) / f"refactor-{rid}-{cleanup['n']}").exists()
 
 
 def test_a_hub_l2_admission_holds_the_selected_checkout_and_reuses_only_its_own_tree(selected):

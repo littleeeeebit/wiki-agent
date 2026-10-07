@@ -7,8 +7,9 @@ from pathlib import Path
 import debt
 import refactor_profile
 from wiki import slots_for
+from workspace import remove
 
-from . import maintenance, refactor, specs
+from . import loop, maintenance, refactor, specs, work
 
 PROMPT = (
     "Audit and clean up test bloat after production refactoring. Touch only the listed test files and fixtures. "
@@ -44,7 +45,27 @@ def summary(step: dict) -> str:
 
 
 def unchanged(w, run: dict, index: int, sid: str) -> dict:
-    specs.update(w.repo.name, sid, state="정리됨", worktree=None)
+    step, path = run["steps"][index], refactor.place(w, sid)
+    if refactor.git(path, "branch", "--show-current") != sid \
+            or refactor.git(path, "rev-parse", "HEAD") != step["verified_head"] \
+            or refactor.git(path, "status", "--porcelain"):
+        raise refactor.Stop("cleanup_changed", "변경 없는 단계의 작업 폴더가 바뀌었다 — 소유권을 유지한다")
+    work.forget(path)
+    notes = []
+    if w.hub:
+        try:
+            notes.append(remove(w.repo, path, keep_branch=True))
+        except (ValueError, RuntimeError) as exc:
+            raise refactor.Stop("cleanup_checkout", str(exc)) from exc
+        if path.exists():
+            raise refactor.Stop("cleanup_checkout", "작업 폴더가 남았다 — 정리를 확인한 뒤 재개해라")
+    else:
+        refactor.switched(w, step["base"], step["verified_head"])
+    base_path = refactor.place(w, step["base"]) if w.hub else w.repo
+    comparison = base_path if base_path.exists() else w.repo
+    prune = loop.local_pruned if w.hub else loop._local_pruned  # The project checkout is already held by the caller.
+    notes.append(prune(comparison, sid, step["verified_head"]))
+    specs.update(w.repo.name, sid, state="정리됨", worktree=None, cleanup=notes)
     run["steps"][index] = {**run["steps"][index], "state": "done", "spec": None}
     return w.note(steps=run["steps"])
 
@@ -100,7 +121,7 @@ def equivalent(name: str, old: bytes, new: bytes) -> bool:
         return True
     try:
         if name.endswith(".py"):
-            return ast.dump(ast.parse(old), include_attributes=False) == ast.dump(ast.parse(new), include_attributes=False)
+            return ast.dump(ast.parse(old, type_comments=True), include_attributes=False) == ast.dump(ast.parse(new, type_comments=True), include_attributes=False)
         if name.endswith(".json"):
             def pairs(items):
                 if len(dict(items)) != len(items):

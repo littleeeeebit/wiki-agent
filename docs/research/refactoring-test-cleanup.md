@@ -28,8 +28,13 @@ start either on a run already transferred to an ordinary Agent task.
 The default cleanup permits equivalent Python syntax and lossless JSON fixture
 formatting. Python's full syntax tree must remain identical, including assertions,
 test names, decorators and expected values. Other files remain byte-identical.
+Type comments and type-ignore directives are parsed into that comparison too;
+deleting a semantic comment is not lossless cleanup.
 The model audits bloated fixtures and reports deferred structural changes; a
 no-change audit is recorded explicitly, without an empty PR.
+No-change steps return a shared checkout to their base or remove their verified
+linked checkout before clearing ownership. Existing expected-head branch cleanup
+guards preserve later commits and branches still used by another checkout.
 
 Structural test refactoring requires the connected repository's existing
 `test_quality_cmd` in its adapter slots. Freeze its command before editing.

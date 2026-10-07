@@ -29,10 +29,14 @@ def task(run: dict) -> dict | None:
         # Older sessions predate the handoff checkpoint. Read their exact task
         # record, never another branch's record in the same checkout.
         file = work.LOGS / run["repo"] / f"{sid}.jsonl"
+        linked = spec.get("workspace_mode") != "branch" and spec.get("worktree")
+        if linked:
+            file = work.record(Path(linked))
         cutoff = max(birth, run["created"], (run.get("stopped") or {}).get("ts", float("inf")))
         from .suite import records
 
-        if any(r.get("role") == "user" and r.get("ts", 0) > cutoff for r in records(file, work.LOGS)):
+        if any(r.get("role") == "user" and r.get("ts", 0) > cutoff and (not linked or r.get("path") == linked)
+               for r in records(file, work.LOGS)):
             return spec
     return None
 

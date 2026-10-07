@@ -34,7 +34,6 @@ from common.budget import Budget, Cancelled
 from . import loop, planning, refactor_continuation, refactor_finish, runtime, specs, work
 from .query import ROOT, _lock, current_repo, hold
 from .refactor_continuation import recover as recover
-from .refactor_finish import body
 
 RUNS = ROOT / "raw" / "refactor" / "runs"
 MODES = {"cleanup": {"tiers": ("L0", "L1")}, "restructure": {"tiers": ("L0", "L1", "L2")},
@@ -660,7 +659,7 @@ def characterized(w: Worker, run: dict, sid: str) -> None:
         run = w.note(tests=t)
     if not t.get("pr"):
         t["pr"] = published(w, sid, where, t["base"], f"Characterization tests for {', '.join(files)}",
-                            body("Pin today's behaviour before refactoring.", [f"`{f}`" for f in t["tests"]]), "L0")
+                            refactor_finish.body("Pin today's behaviour before refactoring.", [f"`{f}`" for f in t["tests"]]), "L0")
         w.note(tests=t)
 
 

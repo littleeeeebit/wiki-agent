@@ -3,6 +3,8 @@
 
 import json
 import subprocess
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -187,7 +189,62 @@ def test_quality_and_equivalence_fail_closed():
     assert refactor_finish.equivalent("tests/ui.snap", b"expect text", b"expect") is False
     assert refactor_finish.equivalent("test_a.py", b"assert x == 1\n", b"assert True\n") is False
     assert refactor_finish.equivalent("test_a.py", b"assert x == 1\n", b"# kept\nassert (x == 1)\n") is True
+    assert not refactor_finish.equivalent("test_a.py", b"x = []  # type: list[int]\n", b"x = []\n")
+    assert not refactor_finish.equivalent("test_a.py", b"x = missing  # type: ignore[name-defined]\n", b"x = missing\n")
+    assert not refactor_finish.equivalent("test_a.py", b"x = missing  # type: ignore[name-defined]\n",
+                                          b"x = missing  # type: ignore\n")
+    assert not refactor_finish.equivalent("test_a.py", b"def f(x):  # type: (int) -> int\n    return x\n",
+                                          b"def f(x):\n    return x\n")
     w = SimpleNamespace(halt=None)
     with patch.object(refactor_finish.refactor_profile, "sh", return_value=subprocess.CompletedProcess([], 0, "{}", "")), \
             pytest.raises(refactor.Stop, match="test_quality"):
         refactor_finish.quality(w, "runner", None)
+
+
+def test_the_finishing_module_can_be_imported_without_loading_its_controller_first():
+    done = subprocess.run([sys.executable, "-c", "from main.refactor_finish import equivalent"],
+                          cwd=Path(refactor.__file__).parents[1], capture_output=True, text=True, encoding="utf-8")
+    assert done.returncode == 0, done.stderr
+
+
+def test_unchanged_project_ratchet_returns_the_checkout_and_preserves_unverified_work(selected):
+    w, run = worker(selected, "ratchet")
+    debt.init(selected)
+    _git(selected, "add", "-f", debt.RATCHET)
+    _git(selected, "commit", "-qm", "adopt baseline")
+    _git(selected, "switch", "-c", "finish")
+    refactor.spec_for(w, run, "finish", "Audit baseline", "main", _git(selected, "rev-parse", "HEAD"), selected)
+    result = refactor_finish.candidate(w, run, run["steps"][0], selected)
+    assert result["unchanged"]
+    run = refactor.load(selected.name, run["id"])
+    (selected / "important.txt").write_text("Unverified work\n", encoding="utf-8")
+    with pytest.raises(refactor.Stop, match="cleanup_changed"):
+        refactor_finish.unchanged(w, run, 0, "finish")
+    assert _git(selected, "branch", "--show-current") == "finish"
+    assert refactor.specs.load(selected.name, "finish")["worktree"] == str(selected)
+    assert (selected / "important.txt").is_file()
+    (selected / "important.txt").unlink()
+    with refactor.owning(selected):
+        refactor_finish.unchanged(w, run, 0, "finish")
+    assert _git(selected, "branch", "--show-current") == "main"
+    assert refactor_finish.specs.load(selected.name, "finish")["worktree"] is None
+    assert "refs/heads/finish" not in _git(selected, "show-ref")
+
+
+def test_unchanged_hub_audit_removes_only_its_verified_checkout_and_empty_branch(selected):
+    w, run = worker(selected)
+    run = refactor.update(selected.name, run["id"], scope="hub")
+    w = refactor.Worker(selected, run)
+    head = _git(selected, "rev-parse", "HEAD")
+    path = refactor.switched(w, "finish", "main")
+    refactor.spec_for(w, run, "finish", "Audit tests", "main", head, path)
+    with patch.object(refactor, "turn", return_value='```refactor-cleanup\n{"deferred": []}\n```'):
+        assert refactor_finish.candidate(w, run, run["steps"][0], path)["unchanged"]
+    run = refactor.load(selected.name, run["id"])
+    with refactor.owning(path):
+        refactor_finish.unchanged(w, run, 0, "finish")
+    assert not path.exists()
+    assert "refs/heads/finish" not in _git(selected, "show-ref")
+    assert str(path).replace("\\", "/") not in _git(selected, "worktree", "list", "--porcelain")
+    assert _git(selected, "branch", "--show-current") == "main" and _git(selected, "rev-parse", "HEAD") == head
+    assert refactor.specs.load(selected.name, "finish")["worktree"] is None
