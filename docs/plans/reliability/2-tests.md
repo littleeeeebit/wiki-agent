@@ -356,6 +356,53 @@ the preserved cases plus the debt cleanup's fixture-startup regression case.
 Independent review and the final full gate are still required for this combined
 revision; the earlier unsuccessful full receipts remain historical evidence.
 
+### Follow-up: fresh runtime Git reads
+
+The reviewed `95233d5` full gate subsequently completed with 1,735 passed,
+19 failed, four skipped and exit 1. The debt gate passed. These failures remain
+blocking; neither source approval nor a focused pass replaces that receipt.
+
+One real external-owner API loop was traced without changing its 30 s wait.
+Its first loop step made 12 manifest-tracking queries taking 3.42 s, across
+six validations. The failed step stopped during verification, so this is not
+a complete successful-drive profile. Before refactoring, the bounded target
+was one fresh index query per manifest validation and no prompt-only fetch
+when the round already supplies an immutable merge-base/head pair.
+
+Manifest validation now reads a NUL-delimited index snapshot once per call,
+retaining literal-path membership, file/scope validation and budget checks.
+It never reuses that snapshot across selection, publication, execution or
+merge boundaries. Checkout proof also combines clean-state and HEAD checks
+in one fresh branch-aware status query, instead of two processes per call.
+Prompt statistics use supplied commit IDs; callers without a merge-base retain
+the fetching fallback. Remote-base freshness, collector execution, cancellation,
+final-gate identity and merge guards are not removed or cached.
+
+The real-Git regression checks verify one query per manifest/proof, spaced
+and Korean paths, literal brackets, removed index entries, outside paths,
+staged/untracked source changes, moved and detached HEADs, rename records,
+missing status identity and command failure. Existing deadline/cancellation
+tests now bind to the single index read and still require interruption.
+Collection is 1,760 cases: the previous 1,758 plus two new regression cases.
+No wait, dependency, ratchet ceiling or sibling checkout changes were made.
+
+Both repair probes passed the two new checks but the external-owner loop
+still timed out: the first probe was two passed/one failed in 50.48 s, and
+the checkout-batching probe was two passed/one failed in 86.00 s; both naturally
+exited 1. Git call counts are reduced, but uncontrolled host timings and
+different stop phases do not demonstrate an end-to-end speed improvement.
+The affected safety selection naturally exited 1 with 40 passed, two failed
+and 41 deselected in 382.99 s. The unchanged moved-base shadow case observed
+`exhausted` rather than reaching its expected `stale` result; the native
+read-only handoff case exceeded the unchanged 30 s loop wait. Passing
+deadline/cancellation and mandatory-snapshot checks do not erase those two
+failures or establish live acceptance. Ruff, wiki lint and the unchanged
+debt gate passed. The final full gate has not been retried. Independent
+review and a successful current-head final receipt remain required.
+
+The parser follows Git's documented
+[porcelain v2 branch headers and NUL-delimited records](https://git-scm.com/docs/git-status#_porcelain_format_version_2).
+
 ## Steps
 
 | # | Step | Deliverable | Status |

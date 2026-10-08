@@ -469,7 +469,7 @@ def test_shadow_rechecks_moved_base_tip_even_when_merge_base_is_unchanged(world)
 
 
 @pytest.mark.parametrize("outcome", ["deadline", "cancel"])
-def test_manifest_queries_share_remaining_budget_and_stop_between_contracts(cloud_world, outcome):
+def test_manifest_index_query_uses_remaining_budget_and_stops_after_read(cloud_world, outcome):
     world = cloud_world
     budget = contract.Budget(**contract.SHADOW_LIMITS)
     real, timeouts = specs.sh, []
@@ -479,8 +479,6 @@ def test_manifest_queries_share_remaining_budget_and_stop_between_contracts(clou
         done = real(args, cwd, timeout)
         if outcome == "cancel":
             budget.cancel.set()
-        elif len(timeouts) == 1:
-            budget.deadline -= 1
         else:
             budget.deadline = budget.started - 1
         return done
@@ -489,9 +487,7 @@ def test_manifest_queries_share_remaining_budget_and_stop_between_contracts(clou
             contract.Cancelled if outcome == "cancel" else contract.Exhausted):
         verification.manifest(world.repo, budget=budget)
     assert all(0 < timeout <= contract.SHADOW_LIMITS["seconds"] for timeout in timeouts)
-    assert len(timeouts) == (1 if outcome == "cancel" else 2)
-    if outcome == "deadline":
-        assert timeouts[1] < timeouts[0]
+    assert len(timeouts) == 1
 
 
 def test_slow_manifest_git_is_reaped_at_shared_deadline_without_a_request(cloud_world):
