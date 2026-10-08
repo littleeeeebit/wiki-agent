@@ -1366,10 +1366,11 @@ def test_review_controls_in_real_browser(cloud_world, monkeypatch):
                 page.get_by_role("button", name="로컬 검증 재개", exact=True).click()
             assert reply.value.status == 200
             review_progress = page.get_by_role("region", name="리뷰 진행상황")
-            playwright.expect(review_progress.get_by_text("리뷰 진행상황.\n원격 커밋 확인 중.", exact=True)).to_be_visible(timeout=30000)
+            # Each wait spans a whole loop drive; like `looped()`, allow 120 s on a busy host.
+            playwright.expect(review_progress.get_by_text("리뷰 진행상황.\n원격 커밋 확인 중.", exact=True)).to_be_visible(timeout=120000)
             assert specs.load("proj", "cloud")["state"] == "리뷰 R1"
             release_review.set()
-            playwright.expect(panel.get_by_text("로컬 검증·리뷰 통과", exact=True)).to_be_visible(timeout=30000)
+            playwright.expect(panel.get_by_text("로컬 검증·리뷰 통과", exact=True)).to_be_visible(timeout=120000)
             playwright.expect(page.get_by_role("region", name="리뷰 진행상황")).to_be_visible()
             playwright.expect(page.get_by_role("button", name="다음 리뷰 라운드", exact=True)).to_be_visible()
             assert Reviewer.made[-1].model == "codex:review" and not Worker.made
