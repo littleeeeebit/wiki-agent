@@ -155,6 +155,11 @@ probes now pass their fixture-owned directory to their child hook; parallel test
 no longer write the same repository probe folder. The default worker ceiling was
 reduced to four instead of increasing every wait again.
 
+With four workers the full gate then took 1,623.23 seconds (27m03s) on PR 97,
+over the 20-minute target. The ceiling is back at eight, bounded by the CPU
+count. The shared loop waits now allow 120 seconds. The final gate runs while
+no other checkout's full suite shares the host.
+
 ## Actual Cloud incident and Jev audit
 
 The running service used the other `PycharmProjects/wiki-agent` checkout, not this

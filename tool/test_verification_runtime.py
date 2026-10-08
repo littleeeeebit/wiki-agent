@@ -21,10 +21,10 @@ from test_loop import (  # noqa: F401
 
 
 def test_only_whole_suite_requests_default_to_parallel_workers(monkeypatch):
-    monkeypatch.setattr(os, "cpu_count", lambda: 8)
+    monkeypatch.setattr(os, "cpu_count", lambda: 16)
     option = SimpleNamespace(keyword="", markexpr="")
     config = SimpleNamespace(args=[str(Path(__file__).parent)], option=option, getoption=lambda *_: False)
-    assert pytest_xdist_auto_num_workers(config) == 4
+    assert pytest_xdist_auto_num_workers(config) == 8
     option.keyword = "one_case"
     assert pytest_xdist_auto_num_workers(config) == 0
     option.keyword, option.markexpr = "", "integration"

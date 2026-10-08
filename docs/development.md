@@ -23,7 +23,8 @@ Building the map against real projects can pull in those projects' paths and
 state, so the result is not added to the public copy. Regenerate the map file
 with the `python tool/graph.py` command above.
 
-Full `python -m pytest -q tool` runs use up to four isolated pytest-xdist workers.
+Full `python -m pytest -q tool` runs use up to eight isolated pytest-xdist workers.
+Run the final gate while no other checkout's full suite shares the host.
 Focused files, `-k`, `-m` and `--lf` stay serial by default; `-n 0` explicitly
 selects serial diagnosis and a numeric `-n` explicitly selects a worker count.
 Install `requirements-dev.txt` before running; the configuration requires xdist.

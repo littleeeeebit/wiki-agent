@@ -15,7 +15,7 @@ import pytest
 def pytest_xdist_auto_num_workers(config):
     full = any(Path(arg.split("::", 1)[0]).resolve() == Path(__file__).resolve().parent for arg in config.args)
     focused = config.option.keyword or config.option.markexpr or config.getoption("lf", False)
-    return min(4, os.cpu_count() or 1) if full and not focused else 0
+    return min(8, os.cpu_count() or 1) if full and not focused else 0
 
 
 # Windows applications can export TMPDIR pointing at their own shared scratch
