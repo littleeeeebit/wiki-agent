@@ -344,8 +344,17 @@ Actual manifest tracking, collector receipts, persistence freshness and reviewer
 dispatch remain real Git/process/HTTP integration tests. The affected contract,
 routing and audit modules passed all 83 cases in 386.55 s. No production code,
 test wait budget, final-gate identity or ratchet ceiling changes in this cleanup.
-The earlier failed full receipt and five inherited ratchet violations remain
-blockers; focused passes cannot replace a passing final gate on the reviewed HEAD.
+At that revision, the earlier failed full receipt and five inherited ratchet
+violations remained blockers; scoped passes did not replace a successful final gate.
+
+The published debt-cleanup commit `7e83d3a` was subsequently integrated into
+this branch as `3498707`, without changing sibling checkouts or any ceiling.
+The combined source passed the debt gate, 167 affected integration cases and
+all four affected browser scripts. The synchronization script retained a
+Windows connection-reset warning during shutdown. Collection is now 1,758:
+the preserved cases plus the debt cleanup's fixture-startup regression case.
+Independent review and the final full gate are still required for this combined
+revision; the earlier unsuccessful full receipts remain historical evidence.
 
 ## Steps
 
