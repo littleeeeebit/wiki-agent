@@ -256,9 +256,10 @@ def test_a_response_that_lands_after_the_deadline_is_not_adopted(
     costs the caller its whole injection, not just the translation.
     """
 
-    gave_up = threading.Event()
+    asked, gave_up = threading.Event(), threading.Event()
 
     def slow(_system: str, batch: list[str], _seconds: float) -> list[str]:
+        asked.set()
         gave_up.wait(10)   # it lands only once the caller has stopped waiting
         return ["EN"] * len(batch)
 
@@ -266,6 +267,7 @@ def test_a_response_that_lands_after_the_deadline_is_not_adopted(
     assert T.translate(["훅이 조용히 죽는다"], T.KO_EN, time.monotonic() + 0.5) == [
         "훅이 조용히 죽는다"
     ]
+    assert asked.wait(120)   # the worker looks `_ask` up when it calls; swap it only after
     gave_up.set()
 
     # It was still cached: the work was done and the next turn should have it.
