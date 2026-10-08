@@ -6,7 +6,7 @@ How the parts fit and which document answers what is in
 ```powershell
 python -m pip install -r requirements-dev.txt
 python -m ruff check tool
-python -m pytest -q tool -n auto
+python -m pytest -q tool
 python tool/lint.py --check
 python tool/debt.py check
 npm --prefix web ci
@@ -374,7 +374,7 @@ agents = ["claude", "codex"]
 
 [slots]
 review_dir = "artifacts/review"
-gate_cmd = "python -m pytest tool -n auto"
+gate_cmd = "python -m pytest tool"
 live_cmd = "open a new Claude Code session and a new Codex session, and confirm the hooks actually run"
 server_stop = "close the wiki-agent window (tool/app.cmd), or Ctrl+C in the terminal that ran python tool/main"
 scratch_dirs = "artifacts/"
