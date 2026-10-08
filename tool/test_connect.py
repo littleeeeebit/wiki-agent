@@ -44,6 +44,8 @@ def git(cwd: Path, *args: str) -> str:
 def records(tmp_path):
     which = shutil.which
     with patch.object(connect, "RECORDS", tmp_path / "connect"), \
+         patch.object(connect, "PROBES", tmp_path / "connect" / "probe"), \
+         patch.dict(os.environ, {"WIKI_PROBE_ROOT": str(tmp_path / "connect" / "probe")}), \
          patch.object(survey, "RATES", tmp_path / "connect" / "survey" / "rates.json"), \
          patch.object(shutil, "which", side_effect=lambda name: name if name in connect.HOSTS else which(name)):
         yield

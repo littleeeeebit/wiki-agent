@@ -1,5 +1,4 @@
-"""Approved local evidence for Cloud and explicitly declared review flows.
-Cloud failures never dispatch a local implementation session."""
+"""Approved local evidence; Cloud failures never dispatch local implementation."""
 
 from __future__ import annotations
 
@@ -7,7 +6,6 @@ import hashlib
 import json
 import os
 import re
-import shutil
 import shlex
 import subprocess
 import sys
@@ -27,7 +25,9 @@ import native_verification
 
 from common.settings import unquote
 from common import process
-from . import query, specs
+from common.budget import Budget, Cancelled, Exhausted
+from . import query, runtime, specs
+from .runtime import prepare
 
 MANIFEST = "verification.json"
 LOCAL = ".wiki/verification.local.json"
@@ -194,8 +194,7 @@ def documents(path: Path, base_oid: str, head: str) -> bool:
         contract, _ = manifest(path)
     except (OSError, ValueError):
         return False
-    # Prose is an explicit repository-owned designation. Unclassified Markdown,
-    # API/data contracts and mapped runtime inputs always require local checks.
+    # Only repository-designated prose is exempt; contracts/runtime inputs are not.
     return not done.returncode and bool(paths) and all(
         any(fnmatchcase(p, g) for g in contract.prose_paths)
         and p not in contract.contracts
@@ -208,8 +207,7 @@ def documents(path: Path, base_oid: str, head: str) -> bool:
 def hidden_values(settings: dict) -> list[str]:
     values = list(settings.get("redact_values") or [])
     try:
-        # Redact every assignment, including duplicate keys: project-specific
-        # dotenv loaders may choose a different duplicate than the hub reader.
+        # Redact duplicates too: project dotenv loaders may choose another value.
         for line in Path(settings["env_file"]).read_text(encoding="utf-8").splitlines():
             if "=" in line and not line.lstrip().startswith("#"):
                 value = unquote(line.split("=", 1)[1].strip())
@@ -250,11 +248,7 @@ def sanitize(value, settings: dict):
 
 
 def clean_evidence(data: dict, settings: dict) -> dict:
-    """Public assertion ids/expectations and HTTP metadata keep their types.
-
-    Only observation text, URLs and browser descriptions can contain private
-    runtime values; redacting serialized JSON would corrupt booleans and ids.
-    """
+    """Redact private runtime prose/URLs without corrupting assertion ids or JSON types."""
     if not data:
         return {}
     kept = {"observations": [{**{k: r[k] for k in ("id", "expected", "pass")},
@@ -263,8 +257,6 @@ def clean_evidence(data: dict, settings: dict) -> dict:
                          for r in data.get("requests", [])],
             "actions": sanitize(data.get("actions", []), settings)}
     if data.get("native"):
-        # Registered ids/build hashes/environment labels remain protocol
-        # metadata. Only free observation text may contain runtime secrets.
         native = data["native"]
         kept["native"] = {**native, "actions": [{**a, "actual": redact(a["actual"], settings)}
                                                for a in native["actions"]]}
@@ -336,8 +328,7 @@ def receipt(output: str, flow: Flow, head: str, settings: dict,
                 not isinstance(a, dict) or not all(isinstance(a.get(k), str) and a[k].strip()
                                                  for k in ("action", "expected", "actual")) for a in actions):
             raise ValueError("입력·클릭·이동과 실제 화면 반영의 증거가 없다")
-    # Keep only the evidence schema; unknown fields cannot smuggle credentials
-    # into a PR comment or the review instruction.
+    # Exclude unknown fields that could smuggle credentials into shared evidence.
     kept = {"observations": [{k: r[k] for k in ("id", "expected", "actual", "pass")} for r in rows],
             "requests": [{k: r[k] for k in ("method", "url", "status")} for r in requests],
             "actions": [{k: a[k] for k in ("action", "expected", "actual")} for a in actions]}
@@ -362,11 +353,10 @@ def reusable(record: dict, flow: Flow, head: str, fingerprint: str, path: Path) 
     if delta.returncode:
         return ""
     files = delta.stdout.splitlines()
-    # An unmapped path or shared dependency invalidates every flow. Configured
-    # paths are repository-owned impact declarations, not a model's guess.
+    # Unmapped/shared inputs invalidate all repository-declared flow impacts.
     all_paths = [g for f in manifest(path)[0].flows for g in f.paths]
     if any(any(fnmatchcase(p, g) or fnmatchcase(p.rsplit("/", 1)[-1], g) for g in specs.SHARED)
-           or not any(fnmatchcase(p, g) for g in all_paths) for p in files):
+           or p != ".gitignore" and not any(fnmatchcase(p, g) for g in all_paths) for p in files):
         return ""
     if any(fnmatchcase(p, g) for p in files for g in flow.paths):
         return ""
@@ -427,7 +417,7 @@ def pending(repo: Path, spec: dict, head: str, reason: str, state: str = "waitin
     try:
         result = status(repo, head, "pending", "Local verification required; " + state)
         spec = keep(spec, published={"head": head, "state": "pending", "id": result.get("id")})
-    except (RuntimeError, ValueError, OSError, subprocess.SubprocessError):
+    except (RuntimeError, ValueError, OSError, Cancelled, Exhausted, subprocess.SubprocessError):
         pass  # Saved pending locally; publication failure never grants a pass.
     return spec
 
@@ -435,8 +425,7 @@ def pending(repo: Path, spec: dict, head: str, reason: str, state: str = "waitin
 def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: list[str], kind: str = "failed") -> dict:
     record = (specs.load(spec["repo"], spec["id"]) or spec).get("local_verification") or {}
     settings = local(repo)
-    # The managed copy is what the check loaded. Keep its values redacted even
-    # if the external source disappears between the observation and retention.
+    # Redact the loaded managed copy even if its external source disappears.
     copied = {**settings, "env_file": str(Path(spec["worktree"]) / ".env")}
     reason = redact(redact(reason, settings), copied)
     attempts = [*record.get("failure_attempts", []), {
@@ -474,8 +463,7 @@ def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: li
         history = seen.setdefault(issue, [])
         if head not in history:
             history.append(head)
-    # First occurrence is the initial failure; the next two distinct heads are
-    # two repair cycles. Retrying the same commit does not consume a cycle.
+    # Two distinct repaired heads count as two cycles; same-head retries do not.
     state = "reanalysis" if any(len(v) >= 3 for v in seen.values()) else "waiting_cloud"
     if kind == "unstable":
         state = "unstable"
@@ -525,39 +513,22 @@ def private_file(path: Path, relative: str) -> Path:
     return file
 
 
-def prepare(repo: Path, path: Path, settings: dict) -> None:
-    source = Path(settings["env_file"])
-    if not source.is_absolute() or not source.is_file():
-        raise ValueError("로컬 .env 의 절대 경로를 설정해야 한다")
-    content = source.read_bytes()
-    content.decode("utf-8")
-    if content.startswith(b"\xef\xbb\xbf"):
-        raise ValueError("로컬 .env 는 BOM 없는 UTF-8 이어야 한다")
-    destination = private_file(path, ".env")
-    copied = private_file(path, ".wiki/verification.env.sha256")
-    owned = destination.is_file() and copied.is_file() and copied.read_text(encoding="utf-8").strip() == sha(destination.read_bytes())
-    changed = False
-    if destination.exists() and destination.read_bytes() != source.read_bytes():
-        if not owned:
-            raise ValueError("검증 폴더에 다른 .env 가 있다 — 사용자가 확인해야 한다")
-        shutil.copyfile(source, destination)
-        changed = True
-    if not destination.exists():
-        shutil.copyfile(source, destination)
-        changed = True
-    if owned or changed:
-        copied.parent.mkdir(parents=True, exist_ok=True)
-        copied.write_text(sha(destination.read_bytes()) + "\n", encoding="utf-8")
-    if os.name != "nt":
-        destination.chmod(0o600)
-
-
 def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: threading.Event,
             *, flow_ids: list[str] | None = None, enforced_digest: str = "") -> dict:
+    with runtime.verification_scope(halt, specs.GATE_SECONDS) as budget:
+        try:
+            result = _execute(repo, spec, path, head, base_oid, halt, flow_ids=flow_ids, enforced_digest=enforced_digest)
+        except Exhausted:
+            result = pending(repo, spec, head, "로컬 검증 전체 시간 제한을 넘었다 — 완료된 증거를 보존했다")
+        except Cancelled:
+            result = pending(repo, spec, head, "로컬 검증이 중단되었다", "interrupted")
+        return keep(result, budget=budget.record())
+
+
+def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: threading.Event,
+             *, flow_ids: list[str] | None = None, enforced_digest: str = "") -> dict:
     """Run missing flows once, retaining evidence and impact-based reuse reasons."""
-
     from . import review_contract
-
     binding = review_contract.signature(spec)
     fresh = specs.load(spec["repo"], spec["id"])
     if fresh is None or review_contract.signature(fresh) != binding:
@@ -578,8 +549,8 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
     catalog = {f.id for f in contract.flows}
     if flow_ids is not None and (len(flow_ids) != len(set(flow_ids)) or set(flow_ids) - catalog):
         raise ValueError("등록되지 않거나 중복된 검증 흐름이다")
-    if cloud(spec) and flow_ids is not None and set(flow_ids) != catalog:
-        raise ValueError("Cloud 검증은 모든 등록 흐름을 실행해야 한다")
+    if cloud(spec) and flow_ids is not None and set(flow_ids) != catalog and not enforced_digest:
+        raise ValueError("Cloud 선택 검증은 현재 Jev 계약이 필요하다")
     selected = [f for f in contract.flows if flow_ids is None or f.id in flow_ids]
     if enforced_digest:
         from . import loop
@@ -601,37 +572,46 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
     prepare(repo, path, settings)
     settings = redaction(settings, path)
     previous_record = spec.get("local_verification") or {}
-    previous = previous_record.get("flows", [])
+    previous = [*previous_record.get("excluded_flows", []), *previous_record.get("flows", [])]
     researched = bool((spec.get("local_verification") or {}).get("research_note"))
-    old = {f["id"]: f for f in previous}
+    old = {f["id"]: runtime.completed_receipt(f) for f in previous}
+    reuse_only = previous_record.get("spec_signature") == binding and all(f.kind != "desktop" and reusable(
+        old.get(f.id, {}), f, head, signature(repo, path, f, settings), path) for f in selected)
     rows = []
-    artifact = Path(tempfile.gettempdir()) / "wiki-agent-verification" / sha(
+    scratch = Path(os.environ.get("TEMP") or tempfile.gettempdir()) if os.name == "nt" else Path(tempfile.gettempdir())
+    artifact = scratch / "wiki-agent-verification" / sha(
         {"repo": str(repo.resolve()), "task": spec["id"]}) / uuid.uuid4().hex
     if artifact.resolve() == path.resolve() or path.resolve() in artifact.resolve().parents:
         raise ValueError("검증 아티팩트는 소스 폴더 밖에 저장해야 한다")
     artifact.mkdir(parents=True, exist_ok=False)
     spec = keep(spec, state="running", head=head, base_oid=base_oid, document_only=False,
                 spec_signature=binding, enforced_digest=enforced_digest, owner=spec.get("implementation_environment", "local"),
-                artifact_dir=str(artifact), outcome="running", reason="", finished_at=None, research_note="")
+                artifact_dir=str(artifact), outcome="running", reason="", finished_at=None, research_note="",
+                started_at=time.time() - runtime.verification_budget.get().record()["elapsed_ms"] / 1000,
+                deadline_at=time.time() + runtime.verification_budget.get().left(),
+                excluded_flows=[r for r in previous if r["id"] not in {f.id for f in selected}])
     spec = keep(spec, execution_environment_digest=failure_environment(repo, path, spec))
     env = {**os.environ, "WIKI_VERIFICATION_HEAD": head, "WIKI_VERIFICATION_ENVIRONMENT": settings["environment_id"],
            "WIKI_VERIFICATION_SCOPE": settings["test_scope"], "WIKI_VERIFICATION_BROWSER": settings["browser_tool"],
-           "WIKI_VERIFICATION_ARTIFACTS": str(artifact)}
-    setup_ok = False
-    owned_jobs = []
+           "WIKI_VERIFICATION_ARTIFACTS": str(artifact), "TMPDIR": str(scratch)}
+    total = runtime.verification_budget.get()
+    reserve = min(runtime.CLEANUP_SECONDS, total.left() / 2)
+    budget, owned_jobs = Budget(seconds=max(0, total.left() - reserve), calls=None, candidates=0), []
     try:
         if halt.is_set():
             return keep(spec, state="interrupted", outcome="interrupted", reason="로컬 검증이 중단되었다")
-        if settings["setup"]:
-            code, out, cut = specs.gate(settings["setup"], path, halt, env=env, owned_jobs=owned_jobs)
+        if settings["setup"] and not reuse_only:
+            code, out, cut = specs.gate(settings["setup"], path, halt, env=env, owned_jobs=owned_jobs,
+                                        timeout=budget.left())
             if halt.is_set():
                 return keep(spec, state="interrupted", outcome="interrupted", reason="로컬 검증이 중단되었다")
             if code != 0:
+                budget.check()
                 raise ValueError("테스트 환경 준비 실패: " + redact(cut or out[-4000:], settings))
-        setup_ok = True
         for flow in selected:
             if halt.is_set():
                 break
+            budget.check()
             fingerprint = signature(repo, path, flow, settings)
             before = old.get(flow.id, {})
             reuse = reusable(before, flow, head, fingerprint, path) if previous_record.get("spec_signature") == binding else ""
@@ -647,14 +627,13 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
                 rows.append({**before, "head": head, "reuse_reason": reuse})
                 keep(spec, flows=rows)
                 continue
-            # Persist the unfinished row before dispatch. A restart retains
-            # completed flows but can never turn this row into a pass.
             attempts = list(before.get("attempts", []))
             if before.get("head"):
                 attempts.append({k: v for k, v in before.items() if k != "attempts"})
             row = {"id": flow.id, "title": flow.title, "kind": flow.kind, "head": head, "executed_head": head,
-                   "signature": fingerprint, "command": flow.command, "ok": False, "finished_at": None,
-                   "reason": "끝나지 않았다", "evidence": {}, "reuse_reason": "", "attempts": attempts, "blocked": False}
+                   "signature": fingerprint, "command": flow.command, "ok": False,
+                   "finished_at": None, "started_at": time.time(), "reason": "끝나지 않았다", "evidence": {},
+                   "reuse_reason": "", "attempts": attempts, "blocked": False}
             keep(spec, flows=[*rows, row])
             command = flow.command
             flow_artifact = artifact / flow.id
@@ -670,7 +649,11 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
                 env["WIKI_VERIFICATION_NATIVE_REQUEST"] = str(request_file)
                 argv = [sys.executable, str(Path(native_verification.__file__).resolve())]
                 command = subprocess.list2cmdline(argv) if os.name == "nt" else shlex.join(argv)
-            verdict = specs.judge(path, [command], halt, env=env)
+            verdict = specs.judge(path, [command], halt, env=env, timeout=min(runtime.FLOW_SECONDS, budget.left()))
+            if verdict.get("code") is None and not halt.is_set():
+                row.update(reason="선택 흐름 실행 시간 제한을 넘었다", log=redact(verdict["tail"], settings),
+                           finished_at=time.time(), blocked=True, elapsed_seconds=verdict.get("elapsed_seconds"))
+                return pending(repo, keep(spec, flows=[*rows, row]), head, row["reason"])
             if halt.is_set():
                 row.update(reason="로컬 검증이 중단되었다", log=redact(verdict["tail"], settings))
                 return keep(spec, state="interrupted", outcome="interrupted", flows=[*rows, row], reason=row["reason"])
@@ -686,11 +669,9 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
                 return pending(repo, spec, head, str(exc))
             except (ValueError, KeyError, TypeError) as exc:
                 evidence, failed, ok, reason = {}, [f"{flow.id}/evidence"], False, str(exc)
-            # Retain the observed result before re-reading fallible prerequisites.
-            # Until environment confirmation, a successful observation is not a pass.
             reason = redact(reason, settings)
             row.update(observed_ok=ok, blocked=ok, reason=reason, evidence=evidence, failures=failed,
-                       evidence_digest=sha(evidence),
+                       evidence_digest=sha(evidence), elapsed_seconds=verdict.get("elapsed_seconds"),
                        code=verdict.get("code"), log=redact(verdict["tail"], settings), finished_at=time.time())
             rows.append(row)
             spec = keep(spec, flows=rows)
@@ -699,9 +680,9 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
                     raise ValueError("검사 중 로컬 환경이 바뀌었다")
                 fresh = specs.load(spec["repo"], spec["id"])
                 if fresh is None or review_contract.signature(fresh) != binding or checkout_proven(path, head) \
-                        or specs.current_merge_base(path, spec["pr"]["base"], head) != base_oid:
+                        or specs.current_merge_base(path, spec["pr"]["base"], head, budget=budget) != base_oid:
                     raise ValueError("검사 중 명세·커밋·base 가 바뀌었다")
-                if manifest(path)[1] != digest:
+                if manifest(path, budget=budget)[1] != digest:
                     raise ValueError("검사 중 검증 명세가 바뀌었다")
             except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as exc:
                 row.update(blocked=ok, reason=str(exc))
@@ -721,20 +702,23 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
             spec = keep(spec, flows=rows)
             if unstable:
                 return return_to_cloud(repo, spec, head, row["reason"], [f"{flow.id}/intermittent"], "unstable")
+            if not ok:
+                break
         if halt.is_set():
             return keep(spec, state="interrupted", outcome="interrupted", reason="로컬 검증이 중단되었다", flows=rows)
+    except Exhausted:
+        return pending(repo, spec, head, "로컬 검증 전체 실행 시간 제한을 넘었다 — 완료된 증거를 보존했다")
     finally:
         try:
-            if settings["cleanup"]:
-                code, out, cut = specs.gate(settings["cleanup"], path, threading.Event(), env=env, timeout=30)
+            if settings["cleanup"] and not reuse_only:
+                code, out, cut = specs.gate(settings["cleanup"], path, threading.Event(), env=env,
+                                           timeout=min(runtime.CLEANUP_SECONDS, total.left()))
                 if code != 0:
                     keep(spec, state="waiting_environment", reason="테스트 정리 실패: " + redact(cut or out[-4000:], settings))
                     raise ValueError("테스트 데이터·서버 정리를 확인해야 한다")
         finally:
             for job in owned_jobs:
                 process.terminated(job)
-    if not setup_ok:
-        raise ValueError("테스트 환경을 준비하지 못했다")
     failed = [i for r in rows if not r["ok"] for i in r.get("failures") or [f"{r['id']}/runtime"]]
     if failed:
         return return_to_cloud(repo, spec, head, "주요 사용자 흐름 검증 실패", failed)
@@ -742,7 +726,9 @@ def execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt: 
             or specs.current_merge_base(path, spec["pr"]["base"], head) != base_oid or manifest(path)[1] != digest \
             or failure_environment(repo, path, spec) != spec["local_verification"]["execution_environment_digest"]:
         return pending(repo, spec, head, "검증·정리 중 명세·소스·환경이 바뀌었다")
-    return keep(spec, state="runtime_passed", outcome="success", flows=rows, repair_heads=[], finished_at=time.time())
+    total.check()
+    return keep(spec, state="runtime_passed", outcome="success", flows=rows, repair_heads=[], finished_at=time.time(),
+                budget=total.record())
 
 
 def checkout_proven(path: Path, head: str) -> str:
@@ -776,6 +762,12 @@ def proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str, *, flow
         return "로컬 검증 뒤 작업 명세가 바뀌었다"
     if record.get("document_only"):
         return "" if not flow_ids and documents(path, base_oid, head) else "실행 검증을 제외할 수 없는 변경이다"
+    if cloud(spec) and flow_ids is None and spec.get("review_inspection"):
+        from . import review_inspection
+        chosen = review_inspection.current(repo, path, spec, head, base_oid)
+        if not chosen.get("inspection_selected") or chosen["problems"]:
+            return "현재 Jev 검증 선택을 다시 준비해야 한다"
+        flow_ids = [f["id"] for f in chosen["flows"]]
     settings = local(repo)
     try:
         contract, digest = manifest(path)
@@ -823,16 +815,21 @@ def failure_environment(repo: Path, path: Path, spec: dict) -> str:
 
 
 def uninvestigated(repo: Path, path: Path, spec: dict, head: str) -> list[dict]:
+    from . import review_inspection
+
     record = spec.get("local_verification") or {}
     attempts = record.get("failure_attempts", [])
     investigated = {i for note in record.get("research", []) for i in note.get("failure_attempts", [])}
     environment = failure_environment(repo, path, spec)
     unresolved = [row for i, row in enumerate(attempts)
                   if i not in investigated and row["head"] == head and row["environment_digest"] in (None, environment)]
-    if unresolved:
-        return unresolved
-    # Records made before attempt fingerprints existed are not proof that a
-    # failing identity changed; require investigation rather than assume it did.
+    contract = review_inspection.current(repo, path, spec, head, record["base_oid"]) if record.get("enforced_digest") else {}
+    excluded = {r["id"] for r in record.get("excluded_flows", [])} if contract.get("inspection_selected") \
+        and contract.get("digest") == record.get("enforced_digest") else set()
+    unresolved = [{**r, "failures": [f for f in r["failures"] if f.split("/", 1)[0] not in excluded]} for r in unresolved]
+    if remaining := [r for r in unresolved if r["failures"]]:
+        return remaining
+    # Legacy failures without fingerprints require investigation too.
     if not attempts and any(head in heads for heads in record.get("failures", {}).values()) \
             and not any(note.get("head") == head for note in record.get("research", [])):
         return [{"failures": [issue for issue, heads in record["failures"].items() if head in heads],
@@ -862,11 +859,15 @@ def merge_proven(repo: Path, path: Path, spec: dict, head: str, base_oid: str) -
 
 def publish(repo: Path, spec: dict, head: str, base: str) -> dict:
     if not cloud(spec):
-        # Local verification settings also enable status publication for ordinary
-        # tasks. They do not opt those tasks into Cloud's protection prerequisite.
+        # Ordinary status publication does not add Cloud's protection prerequisite.
         status(repo, head, "success", "Local implementation: existing review and final gate passed")
         return spec
-    unresolved = uninvestigated(repo, Path(spec["worktree"]), spec, head)
+    from . import review_contract
+
+    path = Path(spec["worktree"])
+    if problem := review_contract.merge_problem(repo, path, spec, head, specs.current_merge_base(path, base, head)):
+        raise ValueError(problem)
+    unresolved = uninvestigated(repo, path, spec, head)
     if unresolved:
         reason = "같은 커밋·환경에서 실패 후 통과 — 원인 확인 필요"
         return_to_cloud(repo, spec, head, reason + "\n\n" + "\n\n".join(r["reason"] for r in unresolved),
@@ -966,8 +967,7 @@ def configure_protection(body: ProtectionRequest) -> dict:
     repo = query.current_repo()
     endpoint = f"repos/{{owner}}/{{repo}}/branches/{quote(body.base, safe='')}/protection"
     with _configuration:
-        # An unreadable rule is not permission to replace it. Read branch
-        # ownership before creating a first rule or extending an existing one.
+        # An unreadable rule cannot be replaced; read ownership before creating or extending one.
         try:
             marker = private_file(repo, ".wiki/verification.protection.json")
             branch = github(repo, endpoint.removesuffix("/protection"))

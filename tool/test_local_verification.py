@@ -1,8 +1,4 @@
-"""Cloud-to-local verification with real Git, commands and a local HTTP API.
-
-GitHub and the reviewer are stand-ins; no production credentials or datasets
-are used. The assertions exercise dispatch and merge boundaries, not just parsers.
-"""
+"""Real Git/API review boundaries; GitHub and Jev are isolated stand-ins."""
 
 import json
 import os
@@ -17,10 +13,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
+import decision
 from agent.chat_session import Event
 from common import process
-from main import loop, specs, verification
+from fixtures.review_decision import normalized, transport
+from main import decisions, loop, specs, verification
 from main import app as main_app
 from test_loop import (  # noqa: F401 — shared temporary Git/GitHub fixtures
     Reviewer, Worker, client, commit, git, looped, no_machine_settings,
@@ -123,7 +120,10 @@ def cloud_world(git_world):  # noqa: F811 — pytest injects the imported fixtur
     (repo / verification.LOCAL).write_text(json.dumps(settings), encoding="utf-8")
     hub = GitHub(world)
     world.failed, world.missing, world.env, world.settings, world.contract, world.github = failed, missing, env, settings, manifest, hub
-    with patch.object(specs, "sh", hub):
+    with patch.object(specs, "sh", hub), \
+         patch.object(decision, "config", return_value=decision.Config("active", "fixture-jev", "fixture", key="fixture")), \
+         patch.object(decisions, "normalized", side_effect=normalized), \
+         patch.object(decisions, "transport", side_effect=transport):
         try:
             yield world
         finally:
@@ -151,35 +151,20 @@ def repair_cloud(world, spec, name="repair.py"):
 
 
 @pytest.mark.parametrize("owner", ["local", "external"])
-def test_ordinary_api_is_collected_automatically_for_read_only_review(cloud_world, owner):
-    world = cloud_world
-    spec = pr_spec(world, "automatic-api", 1, "change.py", implementation_environment=owner,
-                   review={"flows": ["health"]})
-    done = looped(spec["id"])
-    assert done["state"] == "머지 가능", done.get("stopped")
-    row = done["local_verification"]["flows"][0]
-    assert row["ok"] and row["evidence"]["requests"][0]["status"] == 200
-    assert Reviewer.made[0].tools == loop.REVIEW_TOOLS and not Worker.made
-    assert '"status": 200' in (world.tmp / "review/proj/1/round-1.md").read_text(encoding="utf-8")
-    assert not verification.proven(world.repo, Path(spec["worktree"]), done, row["head"],
-                                   done["local_verification"]["base_oid"], flow_ids=["health"])
-    changed = {**done, "rev": done["rev"] + 1}
-    assert verification.proven(world.repo, Path(spec["worktree"]), changed, row["head"],
-                               done["local_verification"]["base_oid"], flow_ids=["health"])
+@pytest.mark.parametrize("review", [{"flows": ["health"]}, {"evidence": ["api"]}, {"evidence": ["browser"]},
+                                    {"evidence": ["desktop"]}])
+def test_runtime_declarations_do_not_gate_local_or_external_work(cloud_world, owner, review):
+    """Runtime receipts gate only Claude Cloud work; a failing flow is never run here."""
 
-
-@pytest.mark.parametrize("owner", ["local", "external"])
-def test_ordinary_failure_returns_only_to_its_implementation_owner(cloud_world, owner):
     world = cloud_world
-    spec = pr_spec(world, "owner-failure", 1, "change.py", implementation_environment=owner,
-                   review={"flows": ["health"]})
+    spec = pr_spec(world, "local-runtime", 1, "change.py", implementation_environment=owner, review=review)
     world.failed.touch()
     done = looped(spec["id"])
-    assert done["state"] == "멈춤" and not Reviewer.made
-    assert bool(Worker.made) is (owner == "local")
-    assert done["local_verification"]["failure_attempts"][0]["evidence"][0]["requests"][0]["status"] == 200
-    assert not done["local_verification"].get("delivery")
-    assert "private-api-key" not in json.dumps(done)
+    assert done["state"] == "머지 가능", done.get("stopped")
+    assert done["rounds"][0]["review_contract"]["evidence"] == ["offline"] and "local_verification" not in done
+    assert Reviewer.made[0].tools == loop.REVIEW_TOOLS and not Worker.made
+    assert "## Registered runtime evidence" not in (world.tmp / "review/proj/1/round-1.md").read_text(encoding="utf-8")
+    assert specs.view(world.repo, done)["unproven"] == ""
 
 
 def test_selected_subset_unknown_ids_and_stale_contract_stop_before_setup(cloud_world, monkeypatch):
@@ -206,11 +191,9 @@ def test_selected_subset_unknown_ids_and_stale_contract_stop_before_setup(cloud_
     assert [row["id"] for row in done["local_verification"]["flows"]] == ["health"]
 
 
-@pytest.mark.parametrize("owner", ["local", "external", "claude-cloud"])
-def test_setup_cancellation_is_interrupted_in_executor_and_loop(cloud_world, monkeypatch, owner):
+def test_setup_cancellation_is_interrupted_in_executor_and_loop(cloud_world, monkeypatch):
     world = cloud_world
-    spec = cloud_spec(world, review={"flows": ["health"]}) if owner == "claude-cloud" else pr_spec(
-        world, "setup-cancel", 1, "change.py", implementation_environment=owner, review={"flows": ["health"]})
+    spec = cloud_spec(world, review={"flows": ["health"]})
     path, head = Path(spec["worktree"]), spec["pr"]["head"]
     base = specs.current_merge_base(path, "main", head)
     world.settings["setup"] = "cancelled setup"
@@ -353,14 +336,14 @@ def test_automatic_browser_collects_actual_save_reload_api_observations(cloud_wo
     settings = {**world.settings, "allowed_origins": [f"http://127.0.0.1:{port}"],
                 "manifest_digest": verification.manifest(world.repo)[1]}
     (world.repo / verification.LOCAL).write_text(json.dumps(settings), encoding="utf-8")
-    spec = pr_spec(world, "automatic-browser", 1, "change.py", review={"flows": ["save-reload"]})
+    spec = cloud_spec(world, "automatic-browser", review={"flows": ["save-reload"]})
     done = looped(spec["id"])
     assert done["state"] == "머지 가능", done.get("stopped")
     evidence = done["local_verification"]["flows"][0]["evidence"]
     assert evidence["observations"][0]["actual"] == "saved-fixture" and evidence["actions"]
     assert any(row["method"] == "POST" and row["status"] == 201 for row in evidence["requests"])
     assert sum(row["method"] == "GET" and row["status"] == 200 for row in evidence["requests"]) >= 2
-    assert Reviewer.made[0].tools == loop.REVIEW_TOOLS
+    assert Reviewer.made[0].tools == loop.CLOUD_TOOLS
 
 
 def test_cloud_runs_real_api_and_independent_review_without_a_local_writer(cloud_world):

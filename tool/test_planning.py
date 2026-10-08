@@ -196,7 +196,7 @@ def test_shutdown_tracks_the_planner_until_its_accepted_handoff_finishes(checkou
 
     def handoff(*args):
         entered.set()
-        assert release.wait(20)
+        assert release.wait(120)
         original(*args)
 
     def close():
@@ -214,11 +214,11 @@ def test_shutdown_tracks_the_planner_until_its_accepted_handoff_finishes(checkou
         sid = answer.json()["id"]
         closer = None
         try:
-            assert entered.wait(20)
+            assert entered.wait(120)
             assert ("proj", sid) in planning._workers, "The planner disappeared before completing handoff"
             closer = threading.Thread(target=close, daemon=True)
             closer.start()
-            assert closing.wait(10) and not finished.wait(.2)
+            assert closing.wait(120) and not finished.wait(.2)
         finally:
             release.set()
             if closer:
@@ -653,7 +653,7 @@ def test_cancel_keeps_the_research_and_resume_goes_on_from_there(checkout):
     Host.replies = [sources, slow_outline, outline, stage(1), stage(2)]
     with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", GitHub()):
         sid = web.post("/api/plans", json=request()).json()["id"]
-        assert entered.wait(10)
+        assert entered.wait(120)
         assert web.post(f"/api/plans/{sid}/cancel").status_code == 200
         spec = settled(sid, "stopped")
         assert spec["planning"]["stopped"]["reason"] == "cancelled" and spec["planning"]["source_manifest"]

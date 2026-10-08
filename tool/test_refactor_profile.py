@@ -15,6 +15,14 @@ import pytest
 import improvement
 import refactor_profile
 
+
+@pytest.fixture
+def tmp_path(tmp_path_factory):
+    # As in `test_improvement`: xdist's `popen-gwN` level pushed the experiment
+    # checkouts past `git worktree`'s 215 characters.
+    return tmp_path_factory.mktemp("t")
+
+
 BLOCK = "".join(f"    total = total + w * {i}\n" for i in range(1, 6))
 CALC = (f"def area(w, h):\n    total = h\n{BLOCK}    return total\n\n\n"
         f"def volume(w, h):\n    total = h\n{BLOCK}    return total * 2\n")

@@ -23,6 +23,22 @@ Building the map against real projects can pull in those projects' paths and
 state, so the result is not added to the public copy. Regenerate the map file
 with the `python tool/graph.py` command above.
 
+Full `python -m pytest -q tool` runs use up to eight isolated pytest-xdist workers.
+Run the final gate while no other checkout's full suite shares the host.
+Focused files, `-k`, `-m` and `--lf` stay serial by default; `-n 0` explicitly
+selects serial diagnosis and a numeric `-n` explicitly selects a worker count.
+Install `requirements-dev.txt` before running; the configuration requires xdist.
+The scheduler balances cases with differing duration without dropping tests.
+Small worker queues let a failed run stop after its first failure. Use
+`--maxfail=0` when diagnosing every failure in one run.
+
+On Windows, the test process uses `TEMP` for temporary repositories instead of
+an inherited application-specific `TMPDIR`. Explicit pytest `--basetemp` still
+selects the fixture root. Use `--durations=25` to profile setup, call and teardown
+separately; avoid simultaneous full suites competing for the same machine.
+See [verification runtime diagnosis](research/verification-runtime.md) for the
+measured regression and the review runner's shared deadline.
+
 The automatic checks use a temporary project. Real users' conversation records
 are not test input. They confirm settings merging, reinstalling, paths with
 Korean characters and spaces, and settings separation between same-named

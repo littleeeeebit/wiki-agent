@@ -6,6 +6,24 @@ the tests start as subprocesses see the same empty home.
 
 import os
 import tempfile
+from pathlib import Path
+
+import pytest
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_auto_num_workers(config):
+    full = any(Path(arg.split("::", 1)[0]).resolve() == Path(__file__).resolve().parent for arg in config.args)
+    focused = config.option.keyword or config.option.markexpr or config.getoption("lf", False)
+    return min(8, os.cpu_count() or 1) if full and not focused else 0
+
+
+# Windows applications can export TMPDIR pointing at their own shared scratch
+# folder. Keep test Git repositories in the user's native temporary directory;
+# pytest's explicit --basetemp still takes precedence for its fixtures.
+if os.name == "nt" and os.environ.get("TEMP"):
+    os.environ["TMPDIR"] = os.environ["TEMP"]
+    tempfile.tempdir = None
 
 os.environ["WIKI_USER_HOME"] = tempfile.mkdtemp(prefix="wiki-home-")
 

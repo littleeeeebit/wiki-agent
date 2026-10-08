@@ -18,7 +18,7 @@ from main import knowledge, loop, refactor, review_contract as contract, specs, 
 from test_loop import (  # noqa: F401 — shared temporary Git/GitHub fixtures
     Reviewer, Worker, client, commit, git, looped, no_machine_settings, order, pr_spec, template, world,
 )
-from test_local_verification import cloud_world, git_world  # noqa: F401 — local API fixtures
+from test_local_verification import cloud_spec, cloud_world, git_world  # noqa: F401 — local API fixtures
 
 
 def selected(world, spec):
@@ -46,9 +46,9 @@ def test_closed_declarations_and_executable_markdown_keep_code_floor(world):
     assert result["criteria"] == ["plan"] and result["evidence"] == ["offline"]
 
 
-@pytest.mark.parametrize("kind", ["api", "browser", "desktop", "differential"])
-def test_missing_runtime_or_preservation_proof_blocks_before_reviewer(world, kind):
-    pr_spec(world, "missing", 1, review={"evidence": [kind]})
+@pytest.mark.parametrize("review", [{"evidence": ["differential"]}, {"criteria": ["performance"]}])
+def test_missing_preservation_or_measurement_proof_blocks_before_reviewer(world, review):
+    pr_spec(world, "missing", 1, review=review)
     spec = looped("missing")
     assert spec["state"] == "멈춤" and spec["stopped"]["reason"] == loop.Why.PREPARATION.value
     assert spec["review_contract"]["problems"] and not Reviewer.made and not Worker.made
@@ -66,35 +66,6 @@ def test_contract_is_in_instruction_and_changed_obligations_invalidate_approval(
     assert specs.view(world.repo, done)["unproven"] == ""
     changed = {**done, "review": {"criteria": ["security", "async", "data"]}}
     assert "다시" in specs.view(world.repo, changed)["unproven"]
-
-
-def test_local_api_receipts_are_not_substituted_by_offline_gate_and_stale_receipts_fail(cloud_world):
-    world = cloud_world
-    spec = pr_spec(world, "local-api", 1, "change.py", review={"flows": ["health"]})
-    result = selected(world, spec)
-    path, head, base = Path(spec["worktree"]), result["head"], result["base_oid"]
-    assert result["evidence"] == ["api", "offline"]
-    assert contract.ready(world.repo, path, spec, result)
-    # Exercise the already-approved executor explicitly, not reviewer permissions.
-    spec = verification.execute(world.repo, spec, path, head, base, threading.Event())
-    assert not contract.ready(world.repo, path, spec, result)
-    assert spec["local_verification"]["flows"][0]["evidence"]["requests"][0]["status"] == 200
-    done = looped(spec["id"])
-    assert done["state"] == "머지 가능" and Reviewer.made[0].tools == loop.REVIEW_TOOLS
-    instruction = order(world, 1, 1)
-    assert "## Registered runtime evidence" in instruction and '"status": 200' in instruction
-    assert "private-api-key" not in instruction
-    assert specs.view(world.repo, done)["unproven"] == ""
-    modified = copy.deepcopy(done)
-    modified["local_verification"]["head"] = "stale"
-    assert contract.ready(world.repo, path, modified, result)
-    assert "실행 증거" in specs.view(world.repo, modified)["unproven"]
-    modified = copy.deepcopy(done)
-    modified["local_verification"]["flows"][0]["head"] = "stale"
-    assert contract.ready(world.repo, path, modified, result)
-    world.settings["revisions"]["api"] = "2"
-    (world.repo / verification.LOCAL).write_text(json.dumps(world.settings), encoding="utf-8")
-    assert contract.ready(world.repo, path, done, result)
 
 
 @pytest.mark.parametrize("verification_world", ["world", "cloud_world"])
@@ -123,8 +94,7 @@ def test_refactor_round_and_final_gate_rerun_frozen_checks_and_protect_tests(req
     assert done["rounds"][0]["review_contract"]["preservation"]["baseline"] == origin["start_head"]
     assert "preserve" in done["gate"]["cmd"]
     assert "preserve" in done["validation"]["final"]["command"]
-    if verification_world == "cloud_world":
-        assert done["local_verification"]["flows"][0]["evidence"]["requests"][0]["status"] == 200
+    assert "local_verification" not in done   # a local refactor's declared flows are not run
     for invalid in (None, "", "HEAD", "f" * 40):
         assert selected(world, {**done, "start_head": invalid})["problems"]
     assert selected(world, {k: v for k, v in done.items() if k != "start_head"})["problems"]
@@ -358,7 +328,7 @@ def test_cancel_and_stale_preparation_are_persisted_without_review_dispatch(worl
 
 
 def test_blocked_readiness_keeps_shadow_and_aborted_attempts(world):
-    spec = pr_spec(world, "blocked-shadow", 1, "code.py", review={"evidence": ["desktop"]})
+    spec = pr_spec(world, "blocked-shadow", 1, "code.py", review={"criteria": ["performance"]})
     specs.update(spec["repo"], spec["id"], review_shadow_attempts=[{
         "attempt_id": "interrupted", "round": 1, "input_identity": "old", "status": "preparing"}])
     with patch.object(decision, "config", return_value=decision.Config("off", "test", "default")):
@@ -582,7 +552,7 @@ def assert_grounded(result):
 
 def test_v2_multiple_grounds_stable_order_and_replay_do_not_mutate_baseline(cloud_world):
     world = cloud_world
-    spec = pr_spec(world, "v2-origins", 1, "change.py", review={"flows": ["health", "health"], "evidence": ["api"]})
+    spec = cloud_spec(world, "v2-origins", review={"flows": ["health", "health"], "evidence": ["api"]})
     result = selected(world, spec)
     assert result["version"] == 2 and result["enforced"] == result["candidate"]
     assert_grounded(result)
@@ -604,7 +574,8 @@ def test_v2_multiple_grounds_stable_order_and_replay_do_not_mutate_baseline(clou
 
 
 def test_mandatory_performance_and_browser_dependencies_remain_preparation_problems(world):
-    spec = pr_spec(world, "mandatory-coverage", 1, "code.py", review={"criteria": ["performance"], "evidence": ["browser"]})
+    spec = pr_spec(world, "mandatory-coverage", 1, "code.py", implementation_environment="claude-cloud",
+                   review={"criteria": ["performance"], "evidence": ["browser"]})
     result = selected(world, spec)
     assert result["enforced"]["evidence"] == ["api", "browser", "offline"]
     missing = {r["item_id"] for r in result["unresolved"] if r["scope"] == "enforced"}
@@ -616,7 +587,7 @@ def test_mandatory_performance_and_browser_dependencies_remain_preparation_probl
 @pytest.mark.parametrize("changed", ["head", "spec", "manifest", "rubric", "catalog", "evidence"])
 def test_mandatory_snapshot_changes_cannot_be_persisted(cloud_world, changed):
     world = cloud_world
-    spec = pr_spec(world, "snapshot", 1, "change.py", review={"flows": ["health"], "criteria": ["async"]})
+    spec = cloud_spec(world, "snapshot", review={"flows": ["health"], "criteria": ["async"]})
     baseline = selected(world, spec)
     path = Path(spec["worktree"])
     if changed == "head":
@@ -722,9 +693,9 @@ def test_superseded_attempt_cannot_overwrite_newer_contract(world):
 
 def test_unknown_explicit_flow_has_rejection_with_spec_locator(cloud_world):
     world = cloud_world
-    spec = pr_spec(world, "unknown-required", 1, "change.py", review={"flows": ["invented"]})
+    spec = cloud_spec(world, "unknown-required", review={"flows": ["invented"]})
     result = selected(world, spec)
-    assert result["problems"] and result["enforced"]["flows"] == []
+    assert result["problems"] and "invented" not in result["enforced"]["flows"]
     rejection = next(r for r in result["dispositions"] if r["candidate_id"] == "flow:invented")
     assert rejection["origin"] == "spec" and rejection["locator"] == "review.flows"
     assert rejection["disposition"] == "rejected"

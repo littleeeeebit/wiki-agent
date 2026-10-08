@@ -1,11 +1,9 @@
 """The review loop: rounds between a read-only review cell and the work cell,
 the stops and what `[계속]` does for each, the pull request list and `adopt`,
 and `[머지]` through the cleanup.
-
 Both cells are stand-ins. GitHub is a stand-in behind `specs.sh`; git is real,
 against a bare origin, so pushes, the squash merge and the lease on deleting
-the remote branch all run through git itself.
-"""
+the remote branch all run through git itself."""
 
 import asyncio
 import json
@@ -28,6 +26,7 @@ from agent.chat_session import Event
 from main import channels as chat_channels
 from main import app as main_app
 from main import loop, specs, work
+from main.specs import sh as git_command
 from main import maintenance
 from main import query as chat
 from test_main import _repo, client, no_machine_settings  # noqa: F401 — the fixture is autouse
@@ -40,8 +39,9 @@ INTEGRATION_WAIT = 120  # Completion ceiling, not a product performance or timeo
 
 
 def git(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True,
-                          encoding="utf-8").stdout.strip()
+    done = git_command(["git", "-C", str(cwd), *args], cwd)
+    done.check_returncode()
+    return done.stdout.strip()
 
 
 def commit(path: Path, name: str, text: str = "x\n") -> str:
@@ -460,7 +460,7 @@ def test_merge_progress_is_readable_while_the_merge_request_is_waiting(world):
 
     def scan(root, **kwargs):
         reached.set()
-        assert release.wait(15)
+        assert release.wait(120)
 
     def merge():
         responses.append(client().post(f"/api/specs/{spec['id']}/merge", json={"head": specs.approved(ready)["head"]}))
@@ -469,7 +469,7 @@ def test_merge_progress_is_readable_while_the_merge_request_is_waiting(world):
         worker = threading.Thread(target=merge)
         worker.start()
         try:
-            assert reached.wait(15), [response.text for response in responses]
+            assert reached.wait(120), [response.text for response in responses]
             rows = client().get("/api/specs").json()["specs"]
             visible = next(row for row in rows if row["id"] == spec["id"])["merge_progress"]
             assert visible["state"] == "running" and ".omm" in visible["stage"]
@@ -1076,7 +1076,7 @@ def test_the_next_review_waits_for_a_complete_correction_and_published_head(worl
 
     def finish_repair(path, halt):
         entered.set()
-        assert release.wait(15), "The fixture did not finish the correction"
+        assert release.wait(120), "The fixture did not finish the correction"
         return fixed((finding, "fixed"), (other, "fixed"))(path, halt)
 
     Reviewer.replies = [deny(finding, other), allow]
@@ -1141,7 +1141,7 @@ def test_same_line_findings_need_separate_correction_reports_before_the_next_rev
 
     def complete(_path, _halt):
         entered.set()
-        assert release.wait(15)
+        assert release.wait(120)
         return report(findings)
 
     Worker.replies = [report(["[P1] a.py:10 — this location" if ambiguous else findings[0]]), complete]
@@ -1238,7 +1238,7 @@ sys.stdin.read()
     monkeypatch.setattr(chat_session, "cli_command", lambda name: [name])
     monkeypatch.setattr(chat_session.subprocess, "Popen", spawn)
     monkeypatch.setattr(chat_session, "TURN_TIMEOUT", 2)
-    complete = looped(spec["id"])
+    complete = looped(spec["id"], seconds=30 * (corrections + 1))
     assert complete["state"] == "머지 가능" and len(complete["rounds"]) == corrections + 1
     assert len({r["head"] for r in complete["rounds"]}) == corrections + 1
     assert all(r.get("disposition") for r in complete["rounds"][:-1])
@@ -1459,7 +1459,7 @@ def test_shutdown_keeps_late_review_handoffs_pending_for_the_next_owner(world, p
 
     def held_step(_loop):
         entered.set()
-        assert release.wait(15)
+        assert release.wait(120)
         return False
 
     async def shutdown():
@@ -1496,7 +1496,7 @@ def test_shutdown_drains_an_accepted_work_callback_before_releasing_ownership(wo
 
     def callback():
         entered.set()
-        assert release.wait(20)
+        assert release.wait(120)
         loop.kick("proj", spec["id"])
 
     original_close = work.close_all
@@ -1509,7 +1509,7 @@ def test_shutdown_drains_an_accepted_work_callback_before_releasing_ownership(wo
         async with main_app.lifespan(main_app.app):
             path = Path(spec["worktree"])
             runs.append(work.begin(path, work.session(path, "codex:test", "high"), "accepted", lambda: None))
-            assert requested.wait(15)
+            assert requested.wait(120)
 
     def own():
         try:
@@ -1526,9 +1526,9 @@ def test_shutdown_drains_an_accepted_work_callback_before_releasing_ownership(wo
         owner = threading.Thread(target=own, daemon=True)
         owner.start()
         try:
-            assert entered.wait(15) and runs[0].done
+            assert entered.wait(120) and runs[0].done
             requested.set()
-            assert closing.wait(15)
+            assert closing.wait(120)
             assert not finished.wait(.2), "Ownership was released before the accepted callback finished"
             with pytest.raises(RuntimeError, match="이미 실행 중"):
                 with server_owner(specs.SPECS.parent):
@@ -1548,7 +1548,7 @@ def test_a_second_server_cannot_stop_another_servers_live_review(world):
 
     def reviewing(first, text):
         entered.set()
-        assert release.wait(30), "The fixture did not release the reviewer"
+        assert release.wait(120), "The fixture did not release the reviewer"
         return allow(first, text)
 
     child = '''import asyncio, sys
@@ -1571,7 +1571,7 @@ asyncio.run(run())
                 spec = pr_spec(world, "server-owned", 7)
                 Reviewer.replies = [reviewing]
                 loop.kick("proj", spec["id"])
-                assert entered.wait(10)
+                assert entered.wait(120)
                 before = specs.load("proj", spec["id"])
                 try:
                     duplicate = subprocess.run([sys.executable, "-X", "utf8", "-c", child, str(specs.SPECS)],

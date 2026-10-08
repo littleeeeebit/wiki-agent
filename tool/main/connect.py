@@ -216,7 +216,7 @@ def probe(path: Path, host: str) -> dict:
     trail = PROBES / f"{nonce}.jsonl"
     detail = ""
     try:
-        env = environment({"WIKI_PROBE": nonce})
+        env = environment({"WIKI_PROBE": nonce, "WIKI_PROBE_ROOT": str(PROBES.resolve())})
         args = command(host)
         if host == "codex":
             skills = skill_config(path, env)

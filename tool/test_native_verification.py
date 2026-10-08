@@ -11,7 +11,7 @@ import pytest
 
 import native_verification as native
 from main import loop, review_contract, verification
-from test_local_verification import cloud_world, git_world  # noqa: F401
+from test_local_verification import cloud_spec, cloud_world, git_world  # noqa: F401
 from test_loop import Reviewer, Worker, client, commit, git, looped, pr_spec, template, no_machine_settings  # noqa: F401
 
 
@@ -52,10 +52,10 @@ def test_actual_native_window_event_identity_and_read_only_handoff(cloud_world):
                            "executable": sys.executable, "executable_sha256": native.digest(Path(sys.executable)),
                            "ownership": "launch-disposable", "desktop": "attempt-owned", "profile": "isolated-test-profile"}}
     (world.repo / verification.LOCAL).write_text(json.dumps(settings), encoding="utf-8")
-    spec = pr_spec(world, "native-acceptance", 1, "change.py", review={"flows": ["native-save"]})
+    spec = cloud_spec(world, "native-acceptance", 1, "change.py", review={"flows": ["native-save"]})
     done = looped(spec["id"])
     assert done["state"] == "머지 가능", done.get("stopped")
-    assert Reviewer.made[0].tools == loop.REVIEW_TOOLS and not Worker.made
+    assert Reviewer.made[0].tools == loop.CLOUD_TOOLS and not Worker.made
     record = done["local_verification"]
     row = record["flows"][0]
     evidence = row["evidence"]
@@ -90,7 +90,7 @@ def test_actual_native_window_event_identity_and_read_only_handoff(cloud_world):
     git(world.repo, "push", "origin", "main")
     settings["manifest_digest"] = verification.manifest(world.repo)[1]
     (world.repo / verification.LOCAL).write_text(json.dumps(settings), encoding="utf-8")
-    negative = pr_spec(world, "native-wrong-selector", 2, "negative.py", review={"flows": ["native-save"]})
+    negative = cloud_spec(world, "native-wrong-selector", 2, "negative.py", review={"flows": ["native-save"]})
     refused = client().put(f"/api/verification/config?sid={negative['id']}", json={**settings, "version": 1, "native": None})
     assert refused.status_code == 400
     reviewers = len(Reviewer.made)
@@ -108,7 +108,7 @@ def test_actual_native_window_event_identity_and_read_only_handoff(cloud_world):
     git(world.repo, "push", "origin", "main")
     settings["manifest_digest"] = verification.manifest(world.repo)[1]
     (world.repo / verification.LOCAL).write_text(json.dumps(settings), encoding="utf-8")
-    negative = pr_spec(world, "native-wrong-focus", 3, "focus.py", review={"flows": ["native-save"]})
+    negative = cloud_spec(world, "native-wrong-focus", 3, "focus.py", review={"flows": ["native-save"]})
     stopped = looped(negative["id"])
     assert stopped["state"] == "멈춤" and len(Reviewer.made) == reviewers
     row = stopped["local_verification"]["flows"][0]

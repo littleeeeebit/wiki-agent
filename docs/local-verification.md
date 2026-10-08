@@ -4,10 +4,12 @@ Claude Code Cloud implements from the repository. A separate local reviewer
 checks the resulting commit with this machine's test API, dataset and browser
 configuration. Cloud does not receive `.env`, credentials or private datasets.
 The existing `plan`, `code` and `mixed` profiles still determine review criteria.
-Locally implemented tasks keep their existing review and final gate. An authorized
-review loop also collects enforced registered flows for local and external tasks.
-Their reviewers stay read-only. Failure returns to the existing local work session
-or external correction path; shadow advice never selects executable flows.
+Locally implemented and external tasks keep their existing review and final gate.
+Registered runtime flows gate only Claude Code Cloud work, which cannot run the
+local `.env`. A local or external task's `review.flows` and its `api`, `browser`
+and `desktop` evidence are not collected and do not hold review or merge. Jev
+selects a Cloud task's registered checks before collection and judges their
+measured receipts. The independent reviewer remains separate.
 
 The Cloud review cell also executes verification commands and creates test
 scripts, fixtures and receipts. Codex uses `workspace-write` with
@@ -60,9 +62,35 @@ list covers the repository's major behavior and the changed requirements.
 Paths use `fnmatch` patterns: `*` crosses directories. Include shared
 dependencies and supporting test scripts in every flow they affect. A path
 not covered by any flow, an unreadable diff or a shared dependency file
-invalidates every flow. A first review executes all major flows. Later
-commits execute affected flows and record the exact reason for carrying
-unaffected results forward. Renames include the removed and added paths.
+invalidates reuse of every flow. Jev receives the complete applicable catalog,
+current acceptance, changed paths and bounded excerpts from every changed file
+before execution. Only supported run/skip choices become the enforced selection.
+Explicitly required flows cannot be skipped. Shared path matches and previous
+failures are context for Jev, rather than an instruction to execute the whole
+catalog. An unrelated excluded failure remains in the verification history.
+Later commits still need a fresh selection and current proof; unaffected receipts
+carry their exact reuse reasons. Renames include the removed and added paths.
+
+Selection and receipt judgment each have a 15-second preparation/decision budget
+and one batched Jev call. They require active Jev and a configured key. Missing
+keys, failed English normalization, oversized context, uncertainty and unsupported
+decisions leave preparation pending; they never fall back to executing the entire
+catalog or a host-model decision. Source-code literals are masked rather than
+translated into different selectors. Every candidate has one closed decision,
+saved with its offered grounds, exact request, result, model, policy and budget
+under `review_inspection` through the specification owner.
+Selection questions include each flow's assertions, required flag and previous
+outcome. Path matches supply context; concrete task behavior determines relevance.
+One additional closed choice per required API/browser/native evidence type picks
+the closest registered flow; a browser receipt also supplies API evidence. These
+choices share the same batch and cannot waive an explicitly required flow.
+Supporting grounds can coexist; choosing one ground is not a second approval gate.
+
+After actual execution, code validates receipt identities and assertions before
+Jev assesses each selected flow's observations. A judgment cannot supply a missing
+request, turn a failed assertion into a pass, waive cleanup, or authorize merge.
+Changed head, acceptance, catalog or evidence invalidates the applicable decision.
+The existing offline/frozen checks, independent reviewer and final gate remain.
 
 ## Local setup
 
@@ -107,9 +135,9 @@ local execution settings and dependency locks also invalidate evidence.
 
 ## Registered local and Windows native collection
 
-Local and external tasks use the same approved manifest and local settings.
-After the existing offline and frozen-preservation checks, the authorized loop
-collects only its enforced flow IDs. A plan-only artifact cannot launch the future
+This collection runs for Claude Code Cloud tasks only; local and external tasks
+skip it. After the existing offline and frozen-preservation checks, the
+authorized loop collects only its enforced flow IDs. A plan-only artifact cannot launch the future
 application. The existing final gate still runs after independent review.
 
 Execution binds receipts to the specification, head/base, selected contract,
@@ -117,9 +145,32 @@ manifest, commands and environment. Setup and flow attempts are persisted before
 dispatch. `WIKI_VERIFICATION_ARTIFACTS` points to an attempt directory under the
 system temporary directory, outside the source checkout. Keep logs and fixture
 records there. Cleanup has a 30-second bound; its failure holds readiness.
+On Windows, attempts and child processes use the user's native `TEMP`; an
+inherited application's `TMPDIR` cannot redirect verification scratch work.
 Windows setup processes stay in owned kill-on-close jobs until cleanup finishes.
 Cancellation kills owned process trees. Restart never reuses unfinished proof or
 kills a process by a stale recorded PID.
+
+Preparation, selection, setup, collection, judgment and cleanup share a 19-minute
+deadline per local-verification attempt. Each selected command consumes the
+remaining shared allowance. Cleanup reserves up to 30
+seconds inside that deadline. Exhaustion preserves observations and leaves verification
+pending; it never supplies a pass. Collection stops at the first confirmed failed
+flow and still cleans up. Later flows remain unverified until a subsequent attempt.
+Flow records include start time and elapsed execution seconds for diagnosis.
+A collection consisting entirely of reusable receipts skips setup and cleanup, while
+a changed specification, manifest or environment still invalidates reuse.
+On a changed head, the declared impact paths decide whether completed proof
+remains valid. An unmapped root `.gitignore` change alone does not invalidate it;
+a flow that explicitly declares `.gitignore` still reruns. Other unmapped or
+shared inputs invalidate reuse. Interrupted attempts retain the last completed
+receipt and the interruption history. A confirmed failure cannot revive an older pass.
+
+Project runners should put common expensive preparation in the approved `setup`
+command and consume its outputs from each flow. The service treats commands as
+opaque and cannot safely infer that repeated builds or database snapshots are
+interchangeable. Any shared output must still be measured against the reviewed
+head by the project's receipt script.
 
 Native flows require manifest version `2`, local settings version `2` and the
 fixed `wiki-agent-native` command. Version `1` remains valid for API, browser and
@@ -150,7 +201,7 @@ Example native flow, inside the version-2 manifest:
 }
 ```
 
-The Review tab shows setup for ordinary tasks once collection is pending. Inspect
+The Review tab shows setup for a Cloud task once collection is pending. Inspect
 the complete native target/actions and approve the application, executable path,
 SHA-256 and disposable profile. Its saved `native` object also contains
 `version: 1`, `host: "windows-win32"`, `ownership: "launch-disposable"` and
@@ -289,7 +340,7 @@ summaries; the app retains detailed local receipts and logs.
 Failed or stale runs cannot manufacture a pass. Retrying the same failing
 commit does not consume a cloud repair cycle. Cloud verification never dispatches
 a local implementation session, commits fixes or pushes changes back to cloud.
-Ordinary failures use their existing implementation owner. A user authorizes the
+A user authorizes the
 review loop explicitly. Unchanged failures and same-identity fail-then-pass
 observations require correction or recorded investigation before completion.
 
@@ -324,8 +375,7 @@ GitHub's required commit status blocks new heads even before the local app
 has seen them. Protection applies repository-wide, so the app publishes the
 same status after a local implementation's existing review and final gate;
 it does not add cloud runtime checks or a protection-setup prerequisite to
-ordinary local/other-environment review. Required registered local flows still
-need current receipts. Saving local execution settings
+ordinary local/other-environment review. Saving local execution settings
 enables status publication on ordinary tasks, including unprotected branches.
 GitHub still applies any configured protections when the person requests merge.
 
