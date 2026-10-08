@@ -72,11 +72,14 @@ carry their exact reuse reasons. Renames include the removed and added paths.
 Selection and receipt judgment each have a 15-second preparation/decision budget
 and one batched Jev call. They require active Jev and a configured key. Missing
 keys, failed English normalization, oversized context, uncertainty and unsupported
-grounds leave preparation pending; they never fall back to executing the entire
+decisions leave preparation pending; they never fall back to executing the entire
 catalog or a host-model decision. Source-code literals are masked rather than
-translated into different selectors. Every candidate has a closed decision and
-ground question, saved with the exact request, result, model, policy and budget
+translated into different selectors. Every candidate has one closed decision,
+saved with its offered grounds, exact request, result, model, policy and budget
 under `review_inspection` through the specification owner.
+Selection questions include the flow's required flag and exact matching changed
+paths. They ask whether to execute the check, separately from judging its outcome.
+Supporting grounds can coexist; choosing one ground is not a second approval gate.
 
 After actual execution, code validates receipt identities and assertions before
 Jev assesses each selected flow's observations. A judgment cannot supply a missing

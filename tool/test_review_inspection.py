@@ -29,8 +29,6 @@ def routing(calls, *, skip=(), judgment="covered"):
         calls.append((phase, copy.deepcopy(state)))
         answers = evaluate(state, questions, trace, budget, stage)
         for cid in questions:
-            if cid.startswith("basis:"):
-                continue
             choice = "skip" if cid in skip else "run" if phase == "selection" else judgment
             offered = questions[cid]["criteria"]
             answers[cid] = {"choice": choice, "confidence": 1.0,
@@ -67,7 +65,12 @@ def test_fifteen_flows_are_selected_in_one_call_then_actual_api_evidence_is_judg
     audit = done["review_inspection"]
     for phase in ("selection", "judgment"):
         assert audit[phase]["engine"] == "jev" and audit[phase]["budget"]["used"]["calls"] == 1
+        assert set(audit[phase]["request"]["questions"]) == {f["id"] for f in audit[phase]["request"]["state_en"]["flows"]}
         assert len(json.dumps(audit[phase]["request"]).encode()) < 90000
+    health = next(f for f in calls[0][1]["flows"] if f["id"] == "health")
+    assert health["changed_paths"] and not health["required"]
+    question = audit["selection"]["request"]["questions"]["health"]["question"]["instructions"]
+    assert json.dumps({k: health[k] for k in ("required", "changed_paths")}) in question
     assert not verification.merge_proven(world.repo, Path(done["worktree"]), done,
                                          done["pr"]["head"], done["local_verification"]["base_oid"])
     changed = copy.deepcopy(done)
@@ -90,6 +93,23 @@ def test_missing_jev_stops_before_any_expensive_collection(cloud_world, monkeypa
     assert done["review_inspection"]["selection"]["reason"] == "missing_key"
 
 
+def test_uncertain_selection_still_stops_before_collection(cloud_world, monkeypatch):
+    calls = []
+    def uncertain(state, questions, trace, budget, stage):
+        answers = routing(calls)(state, questions, trace, budget, stage)
+        for answer in answers.values():
+            answer.update(choice="defer", confidence=1.0,
+                          probabilities={key: float(key == "defer") for key in answer["probabilities"]})
+        return answers
+    cloud_spec(cloud_world)
+    monkeypatch.setattr(decisions, "transport", lambda cfg: uncertain)
+    monkeypatch.setattr(verification, "execute", lambda *a, **k: pytest.fail("Uncertain selection must not execute"))
+    done = looped("cloud")
+    assert done["state"] == "멈춤" and not Reviewer.made
+    assert done["review_inspection"]["selection"]["status"] == "uncertain"
+    assert [stage for stage, _ in calls] == ["selection"]
+
+
 @pytest.mark.parametrize("required", ["explicit", "failed", "prior-head-failure"])
 def test_jev_cannot_skip_explicit_requirements_or_known_failures(cloud_world, monkeypatch, required):
     world, calls = cloud_world, []
@@ -104,6 +124,7 @@ def test_jev_cannot_skip_explicit_requirements_or_known_failures(cloud_world, mo
     done = looped("cloud")
     assert done["state"] == "멈춤" and not Reviewer.made
     assert next(iter(skip)) in calls[0][1]["required"]["flows"]
+    assert next(f for f in calls[0][1]["flows"] if f["id"] in skip)["required"]
 
 
 def test_uncertain_evidence_judgment_keeps_receipts_and_blocks_review(cloud_world, monkeypatch):

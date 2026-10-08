@@ -252,3 +252,35 @@ The integrated routing/runtime regression run passed all 20 cases in 127.97 seco
 with four workers; its report is `raw/review-evidence/p0-deployed-focused.xml`.
 The real entrypoint also loaded successfully with `python tool/main --help`.
 No second full suite was started alongside the existing unrelated gate.
+
+## Jev selection uncertainty correction
+
+The initial deployed selection returned low confidence for every question in
+1,691 ms. It mixed execution selection with evidence judgment, made each flow
+locate itself in the entire catalog, and required a second confident choice
+between acceptance and diff even when both supported execution.
+
+`review-inspection-2` separates selection and judgment and asks one question per
+flow. Each selection question contains its required flag and exact changed paths
+matching the registered patterns. The complete catalog still binds identity;
+pattern lists are replaced by their observed matches in the decision context to
+avoid duplication. Offered acceptance and diff remain frozen with the request.
+Confidence and margin thresholds remain 0.6 and 0.2. Required and failed flows
+cannot be skipped; uncertain decisions and unproved receipts still block review.
+
+An initial compact audit still left eight flows uncertain in 301 ms. Including
+each flow's scope facts directly in its question resolved the actual 15-flow
+catalog in one live `jev-1.13.0` call: 323 ms, 13,755 reported tokens, confidence
+0.98–1.0, all selected for execution. Every flow had a matching changed path.
+This is successful selection evidence, not passing runtime proof. The exact live
+request and response are retained only in the machine's native temporary folder;
+no active task record, product check, reviewer or merge was dispatched by the audit.
+
+The production frozen-result validator accepted all 15 live selections, including
+the three prior failures. The final routing and contract regression run passed
+89 cases in 194.69 seconds with four workers. The correction was integrated into
+the launcher checkout; a fresh process verified `review-inspection-2`, unchanged
+thresholds, and identical runtime and test files. Ruff, wiki lint and the debt
+ratchet passed there. Restarting the app and continuing the stopped review
+prepares a new selection because the policy version invalidates the old one.
+No full suite or complete project verification was rerun for this prompt repair.
