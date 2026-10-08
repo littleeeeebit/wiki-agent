@@ -63,6 +63,13 @@ def repository(path: Path) -> Path:
 
 
 @pytest.fixture
+def tmp_path(tmp_path_factory):
+    # Experiment checkouts sit under a 64-hex owner key; with xdist's `popen-gwN`
+    # level the test-named directory pushed them past `git worktree`'s 215 characters.
+    return tmp_path_factory.mktemp("t")
+
+
+@pytest.fixture
 def world(tmp_path):
     hub = repository(tmp_path / "hub")
     repo = repository(tmp_path / "left" / "project")

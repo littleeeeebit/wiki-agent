@@ -1,4 +1,6 @@
 -r requirements-chat.txt
 pytest>=8,<10
+# The gate runs the suite across all cores (`-n auto`, docs/development.md).
+pytest-xdist>=3.5,<4
 httpx>=0.27,<1
 ruff>=0.9,<1
