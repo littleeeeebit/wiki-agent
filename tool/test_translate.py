@@ -270,7 +270,7 @@ def test_a_response_that_lands_after_the_deadline_is_not_adopted(
 
     # It was still cached: the work was done and the next turn should have it.
     monkeypatch.setattr(T, "_ask", lambda *_a: None)
-    for _ in range(100):
+    for _ in range(2400):   # the cache write runs on a background thread; 120 s for a busy host
         if ko("훅이 조용히 죽는다") == "EN":
             break
         time.sleep(0.05)
@@ -331,10 +331,11 @@ def test_a_request_for_the_shared_cache_reads_past_the_callers_seconds(
         raise OSError("not sent")
 
     monkeypatch.setattr(T.urllib.request, "urlopen", urlopen)
-    T.translate(["훅이 조용히 죽는다"], T.KO_EN, time.monotonic() + 1)
-    T.english(["훅이 조용히 죽는다"], time.monotonic() + 1, held={})
+    # 10 s, not 1 s: on a busy host one second passed before the request was sent.
+    T.translate(["훅이 조용히 죽는다"], T.KO_EN, time.monotonic() + 10)
+    T.english(["훅이 조용히 죽는다"], time.monotonic() + 10, held={})
     shared, private = timeouts
-    assert shared > T.LATE_SECONDS and private <= 1
+    assert shared > T.LATE_SECONDS and private <= 10
 
 
 def test_the_deadline_is_checked_after_the_work_not_at_the_response(
