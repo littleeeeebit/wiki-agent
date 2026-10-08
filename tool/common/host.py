@@ -6,6 +6,8 @@ from pathlib import Path
 import re
 import tomllib
 
+from . import python_environment
+
 INSTRUCTIONS = (
     "This session runs inside wiki-agent. The app owns task metadata, PR association, "
     "review dispatch, reviewer sessions and loop state. Implementation sessions use done-report "
@@ -22,7 +24,7 @@ INSTRUCTIONS = (
 
 
 def environment(extra: dict | None = None) -> dict:
-    return {**{k: v for k, v in {**os.environ, **(extra or {})}.items()
+    return {**{k: v for k, v in python_environment({**os.environ, **(extra or {})}).items()
                if not k.upper().startswith("ORCA_")}, "WIKI_AGENT_MANAGED": "1"}
 
 

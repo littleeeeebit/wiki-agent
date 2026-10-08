@@ -7,8 +7,6 @@ Uses the existing synthetic mobile fixture; never opens a user's app.
 import json
 import socket
 import sys
-import threading
-import time
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
@@ -16,6 +14,7 @@ from playwright.sync_api import sync_playwright
 import uvicorn
 
 from mobile_browser import ROOT, fixture
+from browser_fixture import start
 
 
 def main():
@@ -36,12 +35,7 @@ def main():
     sock = socket.socket()
     sock.bind(("127.0.0.1", 0))
     server = uvicorn.Server(uvicorn.Config(fake, log_level="error", timeout_graceful_shutdown=1))
-    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
-    thread.start()
-    for _ in range(100):
-        if server.started:
-            break
-        time.sleep(0.05)
+    thread = start(server, sock)
     failures = []
     try:
         with sync_playwright() as p:

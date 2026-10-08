@@ -33,8 +33,7 @@ from pydantic import BaseModel
 
 import debt
 import translate
-from common import errorlog, worktree_home
-from common import process
+from common import errorlog, process, python_environment, worktree_home
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
@@ -1005,7 +1004,7 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
     and a stop that came while a fast gate ran still cuts it: the stop is
     read after the gate ends, not only while it waits."""
 
-    proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+    proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=python_environment(env), stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
                             start_new_session=os.name != "nt",
                             **{**process.background_options(), "creationflags":
@@ -1190,7 +1189,7 @@ def digest(repo: Path, path: Path, cmd: str) -> str:
 
     found = {f.relative_to(path).as_posix(): sha(f) for pattern in LOCKS for f in sorted(path.glob(pattern))}
     adapter = adapter_path(repo.name, repo)
-    shown = {"cmd": cmd, "python": sys.version, "adapter": sha(adapter) if adapter else "", "files": found}
+    shown = {"cmd": cmd, "python": (sys.version, sys.executable), "adapter": sha(adapter) if adapter else "", "files": found}
     return hashlib.sha256(json.dumps(shown, sort_keys=True).encode()).hexdigest()
 
 

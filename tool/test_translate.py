@@ -73,6 +73,10 @@ def _isolate(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(T, "ENV", tmp_path / "absent.env")
     monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-used")
     monkeypatch.delenv("TRANSLATE_MONTHLY_USD", raising=False)
+    # Deadline tests start with a ready cache, not untimed schema setup.
+    cache = T._store()
+    assert cache is not None
+    cache.close()
     before = set(threading.enumerate())
     yield
     # A group the caller stopped waiting for still finishes; it must do so

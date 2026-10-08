@@ -29,6 +29,7 @@ from fastapi.staticfiles import StaticFiles  # noqa: E402
 from main import app, knowledge, loop, mobile, query, work  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 import uvicorn  # noqa: E402
+from browser_fixture import start  # noqa: E402
 
 
 def listener(application, **options):
@@ -36,13 +37,7 @@ def listener(application, **options):
     sock.bind(("127.0.0.1", 0))
     server = uvicorn.Server(uvicorn.Config(application, log_level="error", proxy_headers=False,
                                           ws="wsproto", timeout_graceful_shutdown=1, **options))
-    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
-    thread.start()
-    for _ in range(100):
-        if server.started:
-            return server, thread, sock
-        time.sleep(.05)
-    raise RuntimeError("Fixture server did not start")
+    return server, start(server, sock), sock
 
 
 def main():

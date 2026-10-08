@@ -402,11 +402,11 @@ def shrinking(rounds: list[dict]) -> bool:
     return len(c) < 3 or c[2] < c[1] or c[1] < c[0]
 
 
-def shortstat(path: Path, base: str, head: str) -> str:
-    fetched = specs.sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], path, 120)
-    if fetched.returncode:
+def shortstat(path: Path, base: str, head: str, base_oid: str = "") -> str:
+    if not base_oid and (fetched := specs.sh(
+            ["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], path, 120)).returncode:
         return f"(could not fetch `{base}`: {specs.said(fetched)})"
-    done = specs.sh(["git", "diff", "--shortstat", f"origin/{base}...{head}"], path)
+    done = specs.sh(["git", "diff", "--shortstat", *([base_oid, head] if base_oid else [f"origin/{base}...{head}"])], path)
     return (done.stdout.strip() or "(no change)") if not done.returncode else f"(failed: {specs.said(done)})"
 
 
@@ -453,7 +453,7 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
         + ("changing tracked implementation files · accessing production data · reading or printing `.env`/secrets"
          if verification.cloud(spec) else "installing packages · editing any file"), "",
         "## What changed", "",
-        f"- `git diff --shortstat {base}...{head[:7]}`: {shortstat(path, base, head)}",
+        f"- `git diff --shortstat {base}...{head[:7]}`: {shortstat(path, base, head, base_oid)}",
     ]
     if last:
         out.append(f"- Since round {last['n']}: `{last['head'][:7]}..{head[:7]}`")
@@ -1261,7 +1261,7 @@ def step(loop: Loop) -> bool:
         return stop(loop, loop.repo, loop.sid, Why.NO_REPO, f"`{spec['repo']}` 가 작업 공간에 없다")
     path = Path(spec.get("worktree") or "")
     try:
-        listed = {row["path"] for row in worktrees(repo)}
+        listed = {row["path"] for row in worktrees(repo, details=False)}
     except ValueError as exc:
         return stop(loop, loop.repo, loop.sid, Why.NO_REPO, str(exc))
     if not spec.get("worktree") or path.resolve() not in listed:
@@ -2348,7 +2348,7 @@ def unlinked(repo: Path, branch: str) -> dict | None:
 def attach(repo: Path, spec: dict, view: dict, environment: str) -> dict:
     """Server-owned metadata adoption; preserve requirements and task identity."""
     path = Path(spec["worktree"]).resolve()
-    if path not in {row["path"].resolve() for row in worktrees(repo)}:
+    if path not in {row["path"].resolve() for row in worktrees(repo, details=False)}:
         raise HTTPException(409, "명세의 작업 폴더가 이 저장소에 속하지 않는다")
     release = hold(work._busy, _lock, str(path), "작업이 실행 중이다. 끝난 뒤 리뷰를 시작하세요")
     try:

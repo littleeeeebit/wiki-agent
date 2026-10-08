@@ -312,6 +312,193 @@ committed.
 | Unknown path, shared file, malformed map or no merge base runs full; a shared source selects every consumer; renames and deletions count | `test_round_checks_follow_the_changed_paths_and_widen_when_unsure` |
 | Same unchanged identity reuses results | `test_a_mapped_round_then_the_full_gate_once_and_the_same_identity_reuses_both` |
 
+### Follow-up: pure shadow-audit setup
+
+On 2026-10-08, 20 parameterized cases in `test_review_contract.py` created
+temporary Git PRs even though their assertions only exercise composition,
+frozen-request replay, provenance and non-authoritative candidate identity.
+Seven also started an HTTP server. The measured baseline was 94.38 s, including
+260 Git subprocess calls taking 87.65 s in total. Before changing setup, the
+target was zero subprocess launches for these cases, without removing a case,
+parameter or logical assertion.
+
+The cases now live in `test_review_audit.py`, using synthetic spec/head/catalog
+inputs and the real selection/composition functions. A subprocess guard fails
+if this unit group starts a process. Existing audit-record and provenance helpers
+are reused. The same 20 cases passed in 0.42 s with zero subprocess calls;
+AST comparison preserved their assertions and parametrization, apart from the
+fixture path arguments. Full collection remains 1,757 cases. These are warm,
+same-host PowerShell runs with the same tracing plugin and `-p no:cacheprovider`,
+Python 3.13.9, pytest 8.3.5, Windows 11 build 26200 and an i7-12700F reporting
+eight logical processors. Plugin autoload was unchanged; no xdist workers were
+requested. Concurrent host workload was not controlled. This is a scoped setup
+comparison, not a full-suite speed claim.
+
+| Unit group, all cases retained | Integration witness retained in `test_review_contract.py` |
+| --- | --- |
+| Candidate closure, rejection and identity variants | `test_v2_multiple_grounds_stable_order_and_replay_do_not_mutate_baseline`; `test_mandatory_snapshot_changes_cannot_be_persisted` |
+| Registered flow closure and assertion origins | `test_shadow_registered_flow_is_persisted_and_rendered_without_a_collector_or_extra_review_tools`; `test_local_api_receipts_are_not_substituted_by_offline_gate_and_stale_receipts_fail` |
+| Malformed command/assertion/kind catalog | `test_offered_catalog_changes_are_audit_rejections_without_execution_effects`; `test_changed_candidate_manifest_rejects_only_audit_union_and_preserves_approval` |
+
+Actual manifest tracking, collector receipts, persistence freshness and reviewer
+dispatch remain real Git/process/HTTP integration tests. The affected contract,
+routing and audit modules passed all 83 cases in 386.55 s. No production code,
+test wait budget, final-gate identity or ratchet ceiling changes in this cleanup.
+At that revision, the earlier failed full receipt and five inherited ratchet
+violations remained blockers; scoped passes did not replace a successful final gate.
+
+The published debt-cleanup commit `7e83d3a` was subsequently integrated into
+this branch as `3498707`, without changing sibling checkouts or any ceiling.
+The combined source passed the debt gate, 167 affected integration cases and
+all four affected browser scripts. The synchronization script retained a
+Windows connection-reset warning during shutdown. Collection is now 1,758:
+the preserved cases plus the debt cleanup's fixture-startup regression case.
+Independent review and the final full gate are still required for this combined
+revision; the earlier unsuccessful full receipts remain historical evidence.
+
+### Follow-up: fresh runtime Git reads
+
+The reviewed `95233d5` full gate subsequently completed with 1,735 passed,
+19 failed, four skipped and exit 1. The debt gate passed. These failures remain
+blocking; neither source approval nor a focused pass replaces that receipt.
+
+One real external-owner API loop was traced without changing its 30 s wait.
+Its first loop step made 12 manifest-tracking queries taking 3.42 s, across
+six validations. The failed step stopped during verification, so this is not
+a complete successful-drive profile. Before refactoring, the bounded target
+was one fresh index query per manifest validation and no prompt-only fetch
+when the round already supplies an immutable merge-base/head pair.
+
+Manifest validation now reads a NUL-delimited index snapshot once per call,
+retaining literal-path membership, file/scope validation and budget checks.
+It never reuses that snapshot across selection, publication, execution or
+merge boundaries. Checkout proof also combines clean-state and HEAD checks
+in one fresh branch-aware status query, instead of two processes per call.
+Prompt statistics use supplied commit IDs; callers without a merge-base retain
+the fetching fallback. Remote-base freshness, collector execution, cancellation,
+final-gate identity and merge guards are not removed or cached.
+
+The real-Git regression checks verify one query per manifest/proof, spaced
+and Korean paths, literal brackets, removed index entries, outside paths,
+staged/untracked source changes, moved and detached HEADs, rename records,
+missing status identity and command failure. Existing deadline/cancellation
+tests now bind to the single index read and still require interruption.
+Collection is 1,760 cases: the previous 1,758 plus two new regression cases.
+No wait, dependency, ratchet ceiling or sibling checkout changes were made.
+
+Both repair probes passed the two new checks but the external-owner loop
+still timed out: the first probe was two passed/one failed in 50.48 s, and
+the checkout-batching probe was two passed/one failed in 86.00 s; both naturally
+exited 1. Git call counts are reduced, but uncontrolled host timings and
+different stop phases do not demonstrate an end-to-end speed improvement.
+The affected safety selection naturally exited 1 with 40 passed, two failed
+and 41 deselected in 382.99 s. The unchanged moved-base shadow case observed
+`exhausted` rather than reaching its expected `stale` result; the native
+read-only handoff case exceeded the unchanged 30 s loop wait. Passing
+deadline/cancellation and mandatory-snapshot checks do not erase those two
+failures or establish live acceptance. Ruff, wiki lint and the unchanged
+debt gate passed. The final full gate has not been retried. Independent
+review and a successful current-head final receipt remain required.
+
+After round 9, an additional real-Git witness showed that resolving contract
+paths could accept an untracked directory alias to a tracked contract.
+Membership now uses lexical path normalization, not symlink resolution;
+`within()` still checks actual filesystem containment separately. The new
+witness failed before this one-line correction. The affected manifest/index
+selection then passed nine cases in 88.29 s, with natural exit 0 and 53
+deselected. It adds one case, so current collection is 1,761. This correctness
+correction invalidates round-9 source
+approval for the new head; the timing and safety failures above remain open.
+
+Round 10 found a P1 in that normalization: collapsing `alias/../api.md`
+can compare a tracked lexical path with a different in-repository file after
+directory-link traversal. The Windows real-Git witness accepted this ambiguous
+declaration before repair; it does not establish the POSIX-specific target
+substitution as a Windows runtime observation. Membership now uses
+`Path(ref).as_posix()`, which retains `..` instead of collapsing it. Such a
+reference cannot match an index entry; `./` remains supported. The same alias
+witness now covers both direct and parent-traversal references, adding one
+parameter case for a total collection of 1,762. Timing blockers remain open.
+The ten-case manifest/checkout/prompt selection passed in 29.50 s, natural
+exit 0, with 53 deselected. That selection does not rerun the timed-out loop
+or the failed native/shadow acceptance cases, and is not a speed comparison.
+
+The parser follows Git's documented
+[porcelain v2 branch headers and NUL-delimited records](https://git-scm.com/docs/git-status#_porcelain_format_version_2).
+
+### Follow-up: membership reads and shadow fixture preparation
+
+Full subprocess attribution on `3a665fb` exposed work missed by the earlier
+`specs.sh`-only trace. One external API probe failed: its partial loop step
+took 40.37 s, including 57 real Git processes taking 15.80 s. The test reported
+one failure in 153.27 s and eventually exited 1 after process shutdown.
+An eight-worker full suite and another focused suite were concurrently active
+on the host; neither was changed. This is not a controlled timing comparison.
+
+A second diagnostic added phase attribution without changing commands or waits.
+The external API case passed in 43.71 s and naturally exited 0. Its completed
+step took 27.43 s, with 83 real Git processes taking 25.41 s. Redaction and
+runtime digest work each totalled below 0.04 s; they are not optimization targets.
+The pass does not erase the preceding failure or establish timing stability.
+
+Before the membership repair, the bounded target was two fresh Git reads per
+path-only listing: checkout identity and the registered worktree list. Loop
+membership and PR attachment do not consume the listing's dirty/merged fields,
+so they now omit those expensive status and commit-tree calculations. Default
+UI and deletion callers retain all fields and their existing safety checks.
+The existing real-Git worktree test checks a dirty task's unchanged default
+listing and requires exactly two reads for membership, rejecting any status,
+merge-base or tree query there. No registration, checkout, collector, final-gate
+or merge identity check is cached or removed.
+
+The moved-base shadow witness also prepared a competing clone and commit inside
+the fake provider's real 15 s decision budget. That setup now precedes the
+observation; the actual push remains inside the provider reply, after the input
+snapshot. Its merge-base, changed-tip, persisted stale-result and no-dispatch
+assertions remain unchanged. The scoped repair passed in 15.79 s with natural
+exit 0. At that revision production decision limits and every test wait were
+unchanged. These results are scoped diagnostics, not a full final receipt.
+
+The combined worktree/API/native/shadow selection then exited 1 with 18 passed
+and one failed in 219.43 s. Both ordinary API owners passed. Native acceptance
+reached handoff, but its wrong-focus negative found a save event before the
+later focus rejection. The fixture created its competing window inside the
+focus callback, after exposing the main target. A startup/reentrant-focus race
+is the repair hypothesis, not a demonstrated Windows API defect. The competing
+window is now created and shown before the main target; its focus callback
+redirects to that prepared window. The collector, focus guards, real event and
+unchanged no-event assertion remain. Microsoft's
+[SetFocus contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setfocus)
+documents focus notifications; [AttachThreadInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-attachthreadinput)
+shares the two threads' input state. Neither source proves the observed race's
+exact interleaving. The first fixture-repair run reported one pass and one
+failure in 66.46 s and naturally exited 1: it hit the earlier 30 s loop wait,
+so it did not reach or validate the repaired negative.
+
+The normal completion waits now share a bounded 120 s synchronization ceiling.
+This intentionally revises the earlier no-wait-change constraint: a completed
+API step already spends 25.41 s in real Git, and the earlier failed diagnostic
+showed additional host-dependent latency. These tests assert final state,
+ownership and identity, not a 30 s product performance guarantee. Explicit
+timeout/negative waits and production budgets remain unchanged. Planning
+completion reuses the same helper instead of its ten-second poll-count loop;
+the browser's completion assertions and paused fake reviewer use that ceiling
+too. Existing 60 s loop overrides use the shared default. No case, logical
+assertion or expected result is removed. Increased synchronization tolerance is
+not reported as a runtime optimization or stability proof. A new affected
+selection and independent review remain required before the final full gate.
+
+That serial selection finished with 41 passed, one existing Starlette warning,
+392.40 s and natural exit 0. It includes all 19 previous full-suite failures,
+actual Chromium and Win32 acceptance (including wrong-focus/no-event), both
+alias regressions, registration/adoption ownership, targeted/final/restart/reuse
+guards and the unchanged production deadline/cancellation witnesses. The earlier
+17 worktree checks also passed in the 18-pass/one-failure selection above; the
+path-only two-read guard is one of them. Current collection remains 1,762.
+Ruff, wiki lint, strict UTF-8-without-BOM and the unchanged debt gate pass.
+These focused working-tree receipts do not establish a full-suite pass, overall
+speed improvement, or independent approval for this new revision.
+
 ## Steps
 
 | # | Step | Deliverable | Status |

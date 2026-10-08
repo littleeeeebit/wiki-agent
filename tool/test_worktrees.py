@@ -34,7 +34,7 @@ def repo(tmp_path, monkeypatch):
     return path
 
 
-def test_create_puts_the_worktree_beside_the_repo(repo):
+def test_create_puts_the_worktree_beside_the_repo(repo, monkeypatch):
     path = create(repo, "fix-login")
     assert path == (repo.parent / "demo-worktrees" / "fix-login").resolve()
     assert git(path, "branch", "--show-current").strip() == "fix-login"
@@ -42,6 +42,17 @@ def test_create_puts_the_worktree_beside_the_repo(repo):
     assert worktrees(repo) == [{"path": path, "branch": "fix-login", "dirty": False, "merged": True}]
     (path / "a.txt").write_text("x")
     assert worktrees(repo)[0]["dirty"]
+    real, calls = subprocess.run, []
+
+    def read(args, *rest, **kwargs):
+        calls.append(args)
+        assert not any(arg in ("status", "merge-base", "ls-tree") for arg in args)
+        return real(args, *rest, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", read)
+    assert list_workspaces(repo, details=False) == [
+        {"path": repo.resolve(), "branch": "main"}, {"path": path, "branch": "fix-login"}]
+    assert len(calls) == 2  # Fresh checkout identity and Git's registered worktree list.
 
 
 def test_create_refuses_bad_names_and_worktrees(repo):
