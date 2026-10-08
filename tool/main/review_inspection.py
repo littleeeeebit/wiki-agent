@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from fnmatch import fnmatchcase
 from pathlib import Path
 
@@ -214,6 +215,13 @@ def assess(repo: Path, path: Path, spec: dict, contract: dict, halt) -> dict:
         "grounds": [{"id": f["id"], "locator": "Measured receipt for " + f["id"],
                      "text": "See this flow's measured requests, actions and observations in state.flows."}
                     for f in contract["flows"]]}
+    # Measured control names and quoted filenames are literals, not prose to translate.
+    for flow in state["flows"]:
+        for key in ("observations", "actions"):
+            for row in flow["evidence"][key]:
+                for name in set(re.findall(r"'([^'\n]+\.[A-Za-z0-9]{1,10})'", row["actual"])):
+                    row["actual"] = row["actual"].replace(name, f"`{name}`")
+                row["actual"] = re.sub(r"([ᄀ-ᇿ㄰-㆏가-힯]+)(?= shown\b)", r"`\1`", row["actual"])
     total = runtime.verification_budget.get()
     observation = ask(repo, state, ids, "judgment", halt, Budget(
         **{**LIMITS, "seconds": min(LIMITS["seconds"], total.left()) if total else LIMITS["seconds"]}, cancel=halt))

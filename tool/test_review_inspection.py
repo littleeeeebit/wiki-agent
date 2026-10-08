@@ -11,6 +11,7 @@ import decision
 import pytest
 
 from fixtures.review_decision import evaluate
+from common.language import language
 from main import decisions, review_inspection, specs, verification
 from test_local_verification import cloud_spec, cloud_world, git_world  # noqa: F401
 from test_loop import Reviewer, Worker, commit, git, looped, no_machine_settings, template  # noqa: F401
@@ -168,6 +169,31 @@ def test_shared_path_overlap_does_not_force_the_catalog_or_repeat_cached_setup(c
     refreshed = verification.execute(world.repo, done, Path(done["worktree"]), done["pr"]["head"],
         contract["base_oid"], threading.Event(), flow_ids=["health"], enforced_digest=contract["digest"])
     assert refreshed["local_verification"]["state"] == "runtime_passed"
+
+
+def test_korean_control_literal_does_not_translate_english_observation(cloud_world, monkeypatch):
+    world, seen = cloud_world, []
+    runner = world.repo / "verify.py"
+    suffix = "; 질문하기 shown; suggested name '한영대학.hwp'; managed source '한영대학.hwp'"
+    runner.write_text(runner.read_text(encoding="utf-8").replace("str(payload)", f"str(payload) + {suffix!r}"), encoding="utf-8")
+    commit(world.repo, "control-literal.txt")
+    git(world.repo, "push", "origin", "main")
+    original = decisions.normalized
+
+    def inspected(state, *args, **kwargs):
+        if state["flows"] and "evidence" in state["flows"][0]:
+            actual = state["flows"][0]["evidence"]["observations"][0]["actual"]
+            assert "`질문하기` shown" in actual and language(actual) == "en"
+            assert actual.count("`한영대학.hwp`") == 2
+            seen.append(actual)
+        return original(state, *args, **kwargs)
+
+    monkeypatch.setattr(decisions, "normalized", inspected)
+    cloud_spec(world)
+    done = looped("cloud")
+    assert done["state"] == "머지 가능" and seen
+    actual = done["local_verification"]["flows"][0]["evidence"]["observations"][0]["actual"]
+    assert actual.endswith(suffix) and "`" not in actual
 
 
 def test_uncertain_evidence_judgment_keeps_receipts_and_blocks_review(cloud_world, monkeypatch):

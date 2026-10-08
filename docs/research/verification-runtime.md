@@ -322,7 +322,7 @@ decided selection. Its passing receipt matched commit, environment and evidence
 identity. A clean temporary clone reused that receipt with command dispatch
 forbidden. Receipt judgment stopped pending at English normalization:
 `protected_changed` affected the English sign-in observation containing a Korean
-UI label. This is a separate unresolved evidence-preparation blocker, not a
+UI label. This exposed a separate evidence-preparation blocker, not a
 passing live review. The original checkout also contained an untracked
 `.runtime.zip`, which correctly prevented certifying its cleanliness.
 
@@ -338,5 +338,15 @@ checkout smoke cases passed in 35.58 seconds. Fresh imports in the actual
 launcher checkout verified policy v3, 1,140 total seconds, 180 seconds per command,
 and matching tested source files. Ruff, wiki lint, diff checks, UTF-8 without BOM
 and the launcher's debt ratchet passed. This verifies deployment for the next
-restart; it does not resolve the live translation blocker or certify all product
-flows.
+restart; it does not certify all product flows.
+
+The translation blocker was subsequently resolved by protecting measured control
+names before `shown` and quoted filenames as literals in the judgment input.
+The stored observations remain unchanged; Korean prose still requires English
+normalization. Literal names must not be translated into different controls or
+files. The regression passed in 19.25 seconds and the failed-receipt rejection
+check remained passing. A fresh live Jev judgment over the reused actual receipt
+decided `covered` in one call; collection and readiness completed in 3.23 seconds,
+with command dispatch forbidden. Selection stayed at one of 15 checks. This is
+isolated selection, receipt-reuse and judgment evidence, not a dispatched live
+review or a new execution of the historical failing verifier scenario.
