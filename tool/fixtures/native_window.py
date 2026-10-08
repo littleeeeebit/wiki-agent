@@ -34,7 +34,7 @@ def window_proc(hwnd, message, wp, lp):
         u.SetActiveWindow(other)
         u.SetFocus(other)
         return 0
-    if message == 0x0111 and wp & 0xFFFF == 1:
+    if message == 0x0111 and wp & 0xFFFF == 1 and wp >> 16 == 0 and lp == u.GetDlgItem(hwnd, 1):
         u.SetWindowTextW(u.GetDlgItem(hwnd, 2), "Saved")
         with Path(os.environ["WIKI_NATIVE_EVENTS"]).open("a", encoding="utf-8") as file:
             file.write(json.dumps({"pid": os.getpid(), "hwnd": int(hwnd), "control_id": 1,

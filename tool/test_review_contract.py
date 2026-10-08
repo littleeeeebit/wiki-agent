@@ -14,7 +14,7 @@ from unittest.mock import patch
 import decision
 import pytest
 import refactor_profile
-from main import knowledge, loop, refactor, review_contract as contract, specs, verification
+from main import knowledge, loop, refactor, review_inspection, review_contract as contract, specs, verification
 from test_loop import (  # noqa: F401 — shared temporary Git/GitHub fixtures
     Reviewer, Worker, client, commit, git, looped, no_machine_settings, order, pr_spec, template, world,
 )
@@ -77,6 +77,8 @@ def test_local_api_receipts_are_not_substituted_by_offline_gate_and_stale_receip
     assert contract.ready(world.repo, path, spec, result)
     # Exercise the already-approved executor explicitly, not reviewer permissions.
     spec = verification.execute(world.repo, spec, path, head, base, threading.Event())
+    spec, result = review_inspection.prepare(world.repo, path, spec, result, threading.Event())
+    spec = review_inspection.assess(world.repo, path, spec, result, threading.Event())
     assert not contract.ready(world.repo, path, spec, result)
     assert spec["local_verification"]["flows"][0]["evidence"]["requests"][0]["status"] == 200
     done = looped(spec["id"])

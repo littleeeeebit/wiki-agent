@@ -35,6 +35,16 @@ Shadow recommendations enter an audit-only candidate contract. They do not chang
 the enforced contract, trigger collection or authorize review. Later activation
 requires its own evaluated policy and explicit rollout decision.
 
+On 2026-10-08 the user explicitly required Jev to select checks and judge evidence
+after a Cloud review spent hours collecting every registered flow before its first
+round. The P0 path in `main/review_inspection.py` therefore runs before collection,
+with closed registered IDs, grounded choices and bounded batch calls. It preserves
+explicit obligations, measured receipt validation and independent review. Missing
+or uncertain Jev decisions stop pending instead of reverting to the full catalog.
+The older optional facet shadow and its human-label work remain separate; this
+change does not claim that policy calibration or production semantic acceptance
+is complete. See [the incident evidence](../../research/verification-runtime.md).
+
 ## Steps
 
 | # | Stage | Deliverable | Status |

@@ -1,11 +1,9 @@
 """The review loop: rounds between a read-only review cell and the work cell,
 the stops and what `[계속]` does for each, the pull request list and `adopt`,
 and `[머지]` through the cleanup.
-
 Both cells are stand-ins. GitHub is a stand-in behind `specs.sh`; git is real,
 against a bare origin, so pushes, the squash merge and the lease on deleting
-the remote branch all run through git itself.
-"""
+the remote branch all run through git itself."""
 
 import asyncio
 import json
@@ -28,6 +26,7 @@ from agent.chat_session import Event
 from main import channels as chat_channels
 from main import app as main_app
 from main import loop, specs, work
+from main.specs import sh as git_command
 from main import maintenance
 from main import query as chat
 from test_main import _repo, client, no_machine_settings  # noqa: F401 — the fixture is autouse
@@ -39,8 +38,9 @@ FINAL = f"{GATE} && {debt.command()}"   # the final gate ends with the debt ratc
 
 
 def git(cwd: Path, *args: str) -> str:
-    return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True,
-                          encoding="utf-8").stdout.strip()
+    done = git_command(["git", "-C", str(cwd), *args], cwd)
+    done.check_returncode()
+    return done.stdout.strip()
 
 
 def commit(path: Path, name: str, text: str = "x\n") -> str:
@@ -1238,7 +1238,7 @@ sys.stdin.read()
     monkeypatch.setattr(chat_session, "cli_command", lambda name: [name])
     monkeypatch.setattr(chat_session.subprocess, "Popen", spawn)
     monkeypatch.setattr(chat_session, "TURN_TIMEOUT", 2)
-    complete = looped(spec["id"])
+    complete = looped(spec["id"], seconds=30 * (corrections + 1))
     assert complete["state"] == "머지 가능" and len(complete["rounds"]) == corrections + 1
     assert len({r["head"] for r in complete["rounds"]}) == corrections + 1
     assert all(r.get("disposition") for r in complete["rounds"][:-1])

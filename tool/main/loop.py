@@ -1,19 +1,11 @@
 """loop — a pull request's review rounds, from the first to `[머지]`.
 
-`operator/codex-review-loop`, run between two sessions of this program instead
-of two terminals. The review cell is independent of the work cell: ordinary
-review is read-only, while Cloud review can execute and create verification
-artifacts. The work cell is the implementation session from `work`. A round:
-the server writes the instruction into the hub, the review cell answers, the
-server parses the answer, and a refusal goes to the work cell as one turn,
-then through the gate and up. After the final gate, it merges the reviewed
-head only after the person clicks `[머지]`, then cleans up.
-Otherwise it stops only for a reason in `Why`.
-
-A loop carries its repository: its spec names the project, the path is found
-from that name each round, and nothing here reads the selected project. What
-reaches the screen is read by a person and stays Korean; what the cells read
-is English.
+Ordinary reviewers are read-only; Cloud reviewers can create verification
+artifacts. Review cells remain independent of implementation cells. Refusals
+return through the implementation owner's checks before another review.
+After the final gate, only the person's merge request merges the reviewed head.
+Each loop owns its repository, independently of the selected screen project.
+Screen messages are Korean; instructions to cells are English.
 """
 
 from __future__ import annotations
@@ -1211,22 +1203,21 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
         if (view["headRefOid"], view["baseRefName"]) != (head, base):
             raise ValueError("인계를 읽는 동안 PR 이 바뀌었다 — 다시 시작한다")
         transfer = verification.handoff(view["body"], head)
-        # The handoff already comes from the PR cloud can read. Preserve its
-        # public commit and commands; runtime observation payloads are redacted.
+        # Preserve the public PR handoff; runtime observations are redacted separately.
         spec = specs.update(loop.repo, loop.sid, cloud_handoff=transfer,
                             pr={**spec["pr"], "head": head, "base": base})
         record = spec.get("local_verification") or {}
         if record.get("needs_research") and not record.get("research_note"):
             raise ValueError("재분석 원인·근거·다음 실험을 적고 로컬 검증을 재개한다")
-        verification.pending(repo, spec, head, "로컬 검증을 시작한다", "running")
         verification.protection(repo, base)
         base_oid = specs.current_merge_base(path, base, head)
         if not base_oid:
             raise ValueError("검증할 base 를 읽지 못했다")
-        spec = verification.execute(repo, spec, path, head, base_oid, loop.halt)
+        from . import review_inspection
+        spec = review_inspection.collect(repo, path, spec, head, base_oid, loop.halt)
         if loop.halt.is_set():
             return False
-        if spec["local_verification"]["state"] != "runtime_passed":
+        if spec["local_verification"]["state"] not in ("runtime_passed", "verified"):
             why = Why.EXTERNAL if spec["local_verification"]["state"] == "waiting_cloud" else Why.PREPARATION
             return stop(loop, loop.repo, loop.sid, why, spec["local_verification"]["reason"])
         chosen = specs.for_round(repo, path, spec, base)
@@ -1298,7 +1289,12 @@ def step(loop: Loop) -> bool:
     paths = changed(path, base_oid, head)
     profile = effective(spec, paths)
     contract = review_contract.select(repo, path, spec, profile, paths, head, base_oid)
-    observation = review_contract.observe_shadow(repo, path, spec, paths, contract, loop.halt)
+    from . import review_inspection
+    try:
+        spec, contract = review_inspection.prepare(repo, path, spec, contract, loop.halt)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        return stop(loop, loop.repo, loop.sid, Why.PREPARATION, str(exc))
+    observation = {"status": "not_asked", "reason": "active_inspection"} if contract["flows"] else review_contract.observe_shadow(repo, path, spec, paths, contract, loop.halt)
     if loop.halt.is_set():
         return False
     if observation["status"] == "stale":
@@ -1358,6 +1354,10 @@ def step(loop: Loop) -> bool:
                 return True
             if result["state"] != "runtime_passed":
                 return stop(loop, loop.repo, loop.sid, Why.PREPARATION, result["reason"])
+    try:
+        spec = review_inspection.assess(repo, path, spec, contract, loop.halt)
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        return stop(loop, loop.repo, loop.sid, Why.PREPARATION, str(exc))
     problem = review_contract.ready(repo, path, spec, contract)
     if problem:
         return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem)

@@ -145,7 +145,7 @@ def probed(nonce: str, host: str, script: str, raw: bytes, printed: str) -> None
             context = json.loads(printed)["hookSpecificOutput"]["additionalContext"]
         except (ValueError, KeyError, TypeError):
             context = ""
-        folder = HERE.parent / "raw/connect/probe"
+        folder = Path(os.environ["WIKI_PROBE_ROOT"]) if os.environ.get("WIKI_PROBE_ROOT") else HERE.parent / "raw/connect/probe"
         folder.mkdir(parents=True, exist_ok=True)
         with open(folder / f"{nonce}.jsonl", "a", encoding="utf-8") as fh:
             fh.write(json.dumps({"host": host, "event": event, "script": script,

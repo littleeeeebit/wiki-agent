@@ -1,0 +1,143 @@
+"""Jev routes real execution; its judgment cannot manufacture measured proof."""
+
+# ruff: noqa: F811 — pytest injects imported fixtures by name.
+
+import copy
+import json
+import threading
+from pathlib import Path
+
+import decision
+import pytest
+
+from fixtures.review_decision import evaluate
+from main import decisions, review_inspection, specs, verification
+from test_local_verification import cloud_spec, cloud_world, git_world  # noqa: F401
+from test_loop import Reviewer, Worker, commit, git, looped, no_machine_settings, template  # noqa: F401
+
+
+def test_diff_context_includes_late_code_instead_of_only_the_first_large_document():
+    text = "diff --git a/README.md b/README.md\n" + "x" * 15000 + "\ndiff --git a/app.py b/app.py\n+changed code"
+    context = review_inspection.diff_context(text)
+    assert "a/app.py" in context["text"] and "+changed code" in context["text"]
+    assert context["files"] == 2 and context["truncated"] and len(context["text"]) <= 10000
+
+
+def routing(calls, *, skip=(), judgment="covered"):
+    def inspect(state, questions, trace, budget, stage):
+        phase = "selection" if "run" in next(iter(questions.values()))["criteria"] else "judgment"
+        calls.append((phase, copy.deepcopy(state)))
+        answers = evaluate(state, questions, trace, budget, stage)
+        for cid in questions:
+            if cid.startswith("basis:"):
+                continue
+            choice = "skip" if cid in skip else "run" if phase == "selection" else judgment
+            offered = questions[cid]["criteria"]
+            answers[cid] = {"choice": choice, "confidence": 1.0,
+                            "probabilities": {key: float(key == choice) for key in offered}}
+        return answers
+    return inspect
+
+
+def catalog(world, count=15):
+    world.contract["flows"] += [{**world.contract["flows"][0], "id": f"unrelated-{i}",
+        "title": f"Unrelated inventory {i}", "paths": [f"inventory-{i}/**"],
+        "command": "python -c \"raise RuntimeError('unselected flow ran')\""} for i in range(count - 1)]
+    (world.repo / verification.MANIFEST).write_text(json.dumps(world.contract), encoding="utf-8")
+    commit(world.repo, "catalog.txt")
+    git(world.repo, "push", "origin", "main")
+    world.settings["manifest_digest"] = verification.manifest(world.repo)[1]
+    (world.repo / verification.LOCAL).write_text(json.dumps(world.settings), encoding="utf-8")
+    return {f["id"] for f in world.contract["flows"] if f["id"] != "health"}
+
+
+def test_fifteen_flows_are_selected_in_one_call_then_actual_api_evidence_is_judged(cloud_world, monkeypatch):
+    world, calls = cloud_world, []
+    skip = catalog(world)
+    monkeypatch.setattr(decisions, "transport", lambda cfg: routing(calls, skip=skip))
+    cloud_spec(world)
+    done = looped("cloud")
+    assert done["state"] == "머지 가능", done.get("stopped")
+    assert [phase for phase, _ in calls] == ["selection", "judgment"]
+    assert len(calls[0][1]["flows"]) == 15 and len(calls[1][1]["flows"]) == 1
+    assert all("command" not in row for row in calls[0][1]["flows"])
+    assert [row["id"] for row in done["local_verification"]["flows"]] == ["health"]
+    assert calls[1][1]["flows"][0]["evidence"]["requests"][0]["status"] == 200
+    assert Reviewer.made and not Worker.made
+    audit = done["review_inspection"]
+    for phase in ("selection", "judgment"):
+        assert audit[phase]["engine"] == "jev" and audit[phase]["budget"]["used"]["calls"] == 1
+        assert len(json.dumps(audit[phase]["request"]).encode()) < 90000
+    assert not verification.merge_proven(world.repo, Path(done["worktree"]), done,
+                                         done["pr"]["head"], done["local_verification"]["base_oid"])
+    changed = copy.deepcopy(done)
+    changed["local_verification"]["flows"][0]["evidence"]["observations"][0]["actual"] = "Different observation"
+    contract = review_inspection.current(world.repo, Path(done["worktree"]), changed, done["pr"]["head"],
+                                         done["local_verification"]["base_oid"])
+    assert review_inspection.judgment_problem(changed, contract)
+    changed["rev"] += 1
+    assert not review_inspection.current(world.repo, Path(done["worktree"]), changed, done["pr"]["head"],
+                                         done["local_verification"]["base_oid"])["inspection_selected"]
+
+
+def test_missing_jev_stops_before_any_expensive_collection(cloud_world, monkeypatch):
+    world = cloud_world
+    cloud_spec(world)
+    monkeypatch.setattr(decision, "config", lambda *args: decision.Config("off", "fixture-jev", "fixture"))
+    monkeypatch.setattr(verification, "execute", lambda *a, **k: pytest.fail("Missing Jev must not run the catalog"))
+    done = looped("cloud")
+    assert done["state"] == "멈춤" and not Reviewer.made and not Worker.made
+    assert done["review_inspection"]["selection"]["reason"] == "missing_key"
+
+
+@pytest.mark.parametrize("required", ["explicit", "failed", "prior-head-failure"])
+def test_jev_cannot_skip_explicit_requirements_or_known_failures(cloud_world, monkeypatch, required):
+    world, calls = cloud_world, []
+    skip = catalog(world, 2)
+    extra = {"review": {"flows": list(skip)}} if required == "explicit" else {}
+    spec = cloud_spec(world, **extra)
+    if required != "explicit":
+        failed_head = "f" * 40 if required == "prior-head-failure" else spec["pr"]["head"]
+        verification.keep(spec, flows=[{"id": next(iter(skip)), "head": failed_head, "ok": False}])
+    monkeypatch.setattr(decisions, "transport", lambda cfg: routing(calls, skip=skip))
+    monkeypatch.setattr(verification, "execute", lambda *a, **k: pytest.fail("Rejected selection must not execute"))
+    done = looped("cloud")
+    assert done["state"] == "멈춤" and not Reviewer.made
+    assert next(iter(skip)) in calls[0][1]["required"]["flows"]
+
+
+def test_uncertain_evidence_judgment_keeps_receipts_and_blocks_review(cloud_world, monkeypatch):
+    world, calls = cloud_world, []
+    cloud_spec(world)
+    monkeypatch.setattr(decisions, "transport", lambda cfg: routing(calls, judgment="defer"))
+    done = looped("cloud")
+    assert done["state"] == "멈춤" and not Reviewer.made
+    assert done["local_verification"]["flows"][0]["evidence"]["requests"][0]["status"] == 200
+    assert done["review_inspection"]["judgment"]["status"] == "uncertain"
+
+
+def test_jev_cannot_judge_a_failed_receipt_into_a_pass(cloud_world, monkeypatch):
+    world, calls = cloud_world, []
+    spec = cloud_spec(world)
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    base = specs.current_merge_base(path, "main", head)
+    spec, contract = review_inspection.prepare(world.repo, path, spec,
+        review_inspection.current(world.repo, path, spec, head, base), threading.Event())
+    world.failed.write_text("fail", encoding="utf-8")
+    spec = verification.execute(world.repo, spec, path, head, base, threading.Event(),
+                                flow_ids=["health"], enforced_digest=contract["digest"])
+    monkeypatch.setattr(decisions, "transport", lambda cfg: routing(calls))
+    with pytest.raises(ValueError):
+        review_inspection.assess(world.repo, path, spec, contract, threading.Event())
+    assert not calls and spec["local_verification"]["state"] == "waiting_cloud"
+
+
+def test_frozen_selection_tampering_is_not_accepted(cloud_world):
+    world = cloud_world
+    spec = cloud_spec(world)
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    base = specs.current_merge_base(path, "main", head)
+    spec, contract = review_inspection.prepare(world.repo, path, spec,
+        review_inspection.current(world.repo, path, spec, head, base), threading.Event())
+    spec["review_inspection"]["selection"]["result"]["answers"]["health"]["choice"] = "skip"
+    assert review_inspection.selected(spec, contract["inspection_identity"], contract["inspection_catalog"]) is None

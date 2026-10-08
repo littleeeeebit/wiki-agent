@@ -1,8 +1,4 @@
-"""Cloud-to-local verification with real Git, commands and a local HTTP API.
-
-GitHub and the reviewer are stand-ins; no production credentials or datasets
-are used. The assertions exercise dispatch and merge boundaries, not just parsers.
-"""
+"""Real Git/API review boundaries; GitHub and Jev are isolated stand-ins."""
 
 import json
 import os
@@ -17,10 +13,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
-
+import decision
 from agent.chat_session import Event
 from common import process
-from main import loop, specs, verification
+from fixtures.review_decision import normalized, transport
+from main import decisions, loop, specs, verification
 from main import app as main_app
 from test_loop import (  # noqa: F401 — shared temporary Git/GitHub fixtures
     Reviewer, Worker, client, commit, git, looped, no_machine_settings,
@@ -123,7 +120,10 @@ def cloud_world(git_world):  # noqa: F811 — pytest injects the imported fixtur
     (repo / verification.LOCAL).write_text(json.dumps(settings), encoding="utf-8")
     hub = GitHub(world)
     world.failed, world.missing, world.env, world.settings, world.contract, world.github = failed, missing, env, settings, manifest, hub
-    with patch.object(specs, "sh", hub):
+    with patch.object(specs, "sh", hub), \
+         patch.object(decision, "config", return_value=decision.Config("active", "fixture-jev", "fixture", key="fixture")), \
+         patch.object(decisions, "normalized", side_effect=normalized), \
+         patch.object(decisions, "transport", side_effect=transport):
         try:
             yield world
         finally:

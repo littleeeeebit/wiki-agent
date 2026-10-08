@@ -327,15 +327,10 @@ def profiled(repo: Path, block: dict) -> dict:
 
 
 def fields(repo: Path, block, gate: str, accepted: dict | None = None) -> dict:
-    """The fields a person settles, checked. `ValueError` says what is wrong.
-
-    The gate is always the first done item: checking that the agent put it
-    there would leave a way to miss it, so it cannot be left out at all.
-
-    `accepted` is a verified answer's evidence, by the id the draft cited it
-    under (stage 7 of `docs/plans/jev/`): the card's grounds are then only
-    what an accepted claim cited, each with its source revision. Grounds are
-    facts; the goal and the decisions stay proposals a person approves."""
+    """Validate settled fields, raising `ValueError`; always put the gate first.
+    `accepted` maps cited draft IDs to stage-7 verified evidence and revisions.
+    Grounds contain only accepted claims; goals and decisions remain proposals
+    requiring human approval."""
 
     if not isinstance(block, dict):
         raise ValueError("명세는 JSON 객체여야 한다")
@@ -436,12 +431,10 @@ def approved(spec: dict) -> dict | None:
 
 
 def view(repo: Path, spec: dict) -> dict:
-    """The spec as the screen reads it. `unproven` is `proven`'s own answer
-    for the approved head in `머지 가능`, so the screen never judges a result
-    by itself: empty only while the final gate stands for the current command
-    and environment; `None` in every other state, where `[머지]` is not shown.
-    The base is the last fetched tip; `merge` refreshes it before acting.
-    An unreadable worktree stops that spec, not the listing."""
+    """Expose `proven`'s answer for the approved ready head and current command
+    and environment; other states have `unproven=None` and no merge action.
+    The base is last fetched; merge refreshes it before acting. An unreadable
+    worktree stops that spec without breaking the listing."""
 
     allowed = approved(spec)
     unproven = None
@@ -590,9 +583,24 @@ def answered(repo: Path, found: list[dict], source: dict, accepted: dict | None 
 # -- What the candidates are made of ----------------------------------------
 
 def sh(args: list[str], cwd: Path, timeout: float = 60) -> subprocess.CompletedProcess:
-    """Every `git` and `gh` this module runs. One seam, so a test can stand in
-    for GitHub and the remote."""
+    """Shared Git/GitHub seam; Windows files keep timeouts off pipe EOF."""
 
+    if os.name == "nt":
+        scratch = os.environ.get("TEMP") or tempfile.gettempdir()
+        with tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace", dir=scratch) as out, \
+                tempfile.TemporaryFile("w+", encoding="utf-8", errors="replace", dir=scratch) as err:
+            try:
+                done = subprocess.run(args, cwd=cwd, stdout=out, stderr=err, timeout=timeout,
+                                      stdin=subprocess.DEVNULL, **process.background_options())
+            except subprocess.TimeoutExpired as exc:
+                out.seek(0)
+                err.seek(0)
+                exc.stdout, exc.stderr = out.read(), err.read()
+                raise
+            out.seek(0)
+            err.seek(0)
+            done.stdout, done.stderr = out.read(), err.read()
+            return done
     return subprocess.run(args, cwd=cwd, capture_output=True, text=True, encoding="utf-8",
                           errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
 
@@ -1000,11 +1008,12 @@ def kill(proc: subprocess.Popen) -> None:
 
 def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
          *, timeout: float | None = None, owned_jobs: list | None = None) -> tuple[int | None, str, str]:
-    """Run the gate in `cwd`, a shell string as the adapter wrote it:
-    `(exit code, output, why it was cut)`. A stop of the turn stops it too,
-    and a stop that came while a fast gate ran still cuts it: the stop is
-    read after the gate ends, not only while it waits."""
+    """Run the adapter's shell command as `(code, output, cut reason)`.
+    Check cancellation and the deadline during execution and after completion."""
 
+    if halt.is_set() or (timeout is not None and timeout <= 0):
+        return None, "", "사람이 멈춤" if halt.is_set() else "검증 실행 시간 제한을 넘었다"
+    deadline, cut = time.monotonic() + (GATE_SECONDS if timeout is None else timeout), ""
     proc = subprocess.Popen(cmd, shell=True, cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
                             start_new_session=os.name != "nt",
@@ -1017,11 +1026,11 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
             proc.communicate()
             raise OSError("Cannot own the verification process tree")
         process.resumed(proc)
-        deadline, cut = time.monotonic() + (GATE_SECONDS if timeout is None else timeout), ""
         while True:
             try:
-                out, _ = proc.communicate(timeout=1)
-                cut = cut or ("사람이 멈춤" if halt.is_set() else "")
+                out, _ = proc.communicate(timeout=1 if cut else max(0.01, min(1, deadline - time.monotonic())))
+                cut = cut or ("사람이 멈춤" if halt.is_set() else
+                              "검증 실행 시간 제한을 넘었다" if time.monotonic() > deadline else "")
                 return (None if cut else proc.returncode), out, cut
             except subprocess.TimeoutExpired:
                 if cut:
@@ -1039,16 +1048,14 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
             process.terminated(job)
 
 
-def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None, env: dict | None = None) -> dict:
-    """The server's own check of a done report: nothing uncommitted, and the
-    commands pass again in the worktree, in order, stopping at the first
-    failure. What the agent said is not evidence. The review loop checks
-    every head it sends for review the same way.
+def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None, env: dict | None = None,
+          *, timeout: float | None = None) -> dict:
+    """Check a clean HEAD with one shared command deadline, stopping on failure.
+    Read HEAD and status before and after: commands that change either fail.
+    The server verifies reports and review rounds through this same boundary."""
 
-    HEAD and the status are read before and after: a command that commits or
-    leaves a file behind fails, whatever it exited with — what passed must be
-    what goes up. `cmd` joins the commands for the screens that show one."""
-
+    started = time.monotonic()
+    deadline = started + (GATE_SECONDS if timeout is None else timeout)
     cmd = " && ".join(cmds)
     status = sh(["git", "status", "--porcelain"], path)
     head = sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
@@ -1059,7 +1066,7 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
     code, out, cut = None, "", ""
     for one in cmds:
         noted(f"게이트 · {one}")
-        code, out, cut = gate(one, path, halt, env=env) if env is not None else gate(one, path, halt)
+        code, out, cut = gate(one, path, halt, env=env, timeout=deadline - time.monotonic())
         if code != 0:
             break
     after = sh(["git", "status", "--porcelain"], path)
@@ -1068,7 +1075,8 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
     ok = code == 0 and not moved
     reason = "" if ok else cut or (f"게이트가 {code} 로 끝났다" if code != 0 else moved)
     return {"ok": ok, "reason": reason, "cmd": cmd, "commands": cmds, "code": code,
-            "tail": "\n".join(out.splitlines()[-TAIL:]), "head": head, "ts": time.time()}
+            "tail": "\n".join(out.splitlines()[-TAIL:]), "head": head, "ts": time.time(),
+            "elapsed_seconds": round(time.monotonic() - started, 3)}
 
 
 # -- Which checks a head needs ----------------------------------------------
@@ -1151,12 +1159,9 @@ def current_merge_base(path: Path, base: str, rev: str = "HEAD", *, budget=None)
 
 def selected(repo: Path, path: Path, base: str, gate_cmd: str) -> dict:
     """`{base_oid, commands, selection}` for the worktree's HEAD.
-
-    Every path changed since the merge base, both names of a rename and a
-    deletion's too, must match some registered check's `paths`; the union of
-    the matches runs. No merge base, a malformed map, an unmapped path or a
-    shared file selects the full gate instead: an uncertain impact widens.
-    `*` crosses `/` here (`fnmatch`), which only ever widens a match."""
+    Union checks matching every changed path, including both rename names and
+    deletions. Missing base, malformed maps, unmapped or shared paths select
+    the full gate. `fnmatch` stars cross `/`, conservatively widening matches."""
 
     oid = merge_base(path, base)
     full = {"base_oid": oid, "commands": [gate_cmd], "selection": "full"}
@@ -1305,11 +1310,9 @@ def existing_pr(path: Path, branch: str, base: str) -> tuple[int, str] | None:
 
 
 def pull_request(path: Path, branch: str, base: str, title: str, body: str) -> tuple[int, str]:
-    """`(number, url)` of the pull request from `branch` into `base`: the one
-    already open, else a new one. A create that failed or timed out is not
-    tried again — the list is read once more, since GitHub may have made it
-    before the answer was lost. Reused PRs receive the current title and body.
-    `RuntimeError` says why publication could not complete."""
+    """Return an existing or new PR's `(number, url)`; refresh reused metadata.
+    Never retry a failed/timed-out create: re-list because its reply may be lost.
+    Raise `RuntimeError` when publication cannot complete."""
 
     found = existing_pr(path, branch, base)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".md", delete=False) as fh:
@@ -1342,12 +1345,9 @@ def pull_request(path: Path, branch: str, base: str, title: str, body: str) -> t
 
 
 def opened(repo: Path, path: Path, run, spec: dict):
-    """Push, and open the pull request as the person's `gh`. The next turn to
-    start, when the spec came from a plan row that now says done.
-
-    A stop of the turn is read right before each thing that leaves this
-    machine, the push and the pull request: the gate passing earlier is no
-    leave to publish after a person said stop."""
+    """Push and open a PR as the person's `gh`; find the next completed plan row.
+    Check cancellation immediately before push and PR publication: an earlier
+    passing gate never authorizes publication after a person stops the turn."""
 
     sid, branch = spec["id"], branch_of(spec)
     if run.halt.is_set():

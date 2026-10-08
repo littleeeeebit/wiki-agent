@@ -15,6 +15,7 @@ import decision
 import search
 import translate
 from main import knowledge
+from common.budget import Budget
 from search import cache_dir, evidence
 from search import daemon as searchd
 from test_decision_flow import answering, found
@@ -358,12 +359,16 @@ def shots(text: str) -> int:
 
 
 def test_a_private_memorys_english_is_kept_beside_it_and_goes_with_it(private_korean, monkeypatch):
+    # Exercise privacy, not the production latency ceiling, under concurrent disk I/O.
+    monkeypatch.setattr(knowledge, "NORMALIZE_SECONDS", 30)
     hub, repo = private_korean
     index = index_of(hub, repo)
     memory = by_path(index)[".wiki/memory/push.md"][0]
     seen = []
     jev(monkeypatch, [index.search("푸시", 1)[0]], seen)
-    knowledge.prepare("Push?", repo, cfg=ACTIVE, cache=None)
+    result = knowledge.prepare("Push?", repo, cfg=ACTIVE, cache=None,
+                               budget=Budget(seconds=60, calls=6, candidates=40))
+    assert result["status"] == "ready", result
     assert next(s["passages"] for s in seen if "passages" in s)[0]["text"] == "# Push\n\nPush without asking."
     assert shots(memory["text"]) == 0 and shots("푸시") == 0, "a private memory's English reached the shared cache"
     store = search.evidence_store(repo)

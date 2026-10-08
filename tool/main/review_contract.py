@@ -274,6 +274,13 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 evidence = {"offline", *explicit["evidence"]}
         except (OSError, ValueError):
             problems.append("등록된 검증 명세를 준비해야 한다")
+    from . import review_inspection
+
+    inspection_catalog, inspection_paths = list(flows), sorted(set(paths)) if paths is not None else None
+    inspection_identity = review_inspection.identity(spec, head, base_oid, manifest_digest, inspection_paths, flows)
+    inspection_selected = review_inspection.selected(spec, inspection_identity, flows) if flows else None
+    if inspection_selected is not None:
+        flows = [f for f in flows if f["id"] in inspection_selected]
     items = {}
     asked = {"asked_profile": spec.get("review_profile") or "code", "effective_profile": profile,
              "artifact_root": spec.get("artifact_root"), "input_digest": signature(spec)}
@@ -311,7 +318,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 else "F10" if explicit["flows"] else "F11", "flow_id": flow["id"],
                 "assertions": [a["id"] for a in flow["assertions"]], "input_digest": manifest_digest,
                 "impact_paths": sorted({p for p in paths or [] if any(fnmatchcase(p, g) for g in flow["paths"])}),
-                "reason": "cloud full catalog" if verification.cloud(spec) else "explicit registered IDs"
+                "reason": "Jev grounded selection" if inspection_selected is not None else "cloud full catalog" if verification.cloud(spec) else "explicit registered IDs"
                 if explicit["flows"] else "mapped impact" if mapped else "shared/unmapped/unknown impact: full catalog"})
     close(items, "enforced", flows)
     if profile == "plan" and flows:
@@ -329,7 +336,8 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
            "manifest_digest": manifest_digest, "frozen_digest": frozen_digest, "preservation": preservation_inputs,
            "problems": problems,
            "diff_digest": diff["input_digest"], "closure_version": CLOSURE_VERSION,
-           "prose_exemption": exemption,
+           "prose_exemption": exemption, "inspection_identity": inspection_identity,
+           "inspection_selected": inspection_selected is not None,
            "rubric_digest": verification.sha({k: RUBRIC[k] for k in ("plan", "code") if k in criteria}),
            "facet_digest": verification.sha({"criteria": {k: CRITERIA[k] for k in sorted(criteria & CRITERIA.keys())},
                                               "evidence": {k: EVIDENCE[k] for k in sorted(evidence)}})}
@@ -337,6 +345,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
     out["enforced_digest"] = out["digest"]
     out["catalog_digest"] = verification.sha({"criteria": CRITERIA, "evidence": EVIDENCE})
     out["enforced"] = selection
+    out["inspection_catalog"], out["inspection_paths"] = inspection_catalog, inspection_paths
     out["items"] = list(items.values())
     out["enforced_rejections"] = rejections
     out["unresolved"] = [{**r, "scope": "enforced"} for r in coverage(selection, flows, preservation_inputs)]
@@ -356,8 +365,10 @@ def ready(repo: Path, path: Path, spec: dict, contract: dict) -> str:
             return "격리된 검증 환경의 로컬 설정을 준비해야 한다"
         if settings["manifest_digest"] != contract["manifest_digest"]:
             return "등록 검증 명세가 바뀌었다 — 로컬 설정에서 실행 범위를 다시 확인해야 한다"
+        from . import review_inspection
+
         return verification.proven(repo, path, spec, contract["head"], contract["base_oid"],
-                                   flow_ids=[f["id"] for f in contract["flows"]])
+                                   flow_ids=[f["id"] for f in contract["flows"]]) or review_inspection.judgment_problem(spec, contract)
     return ""
 
 
@@ -489,10 +500,8 @@ def shadow_context(repo: Path, path: Path, spec: dict, paths: list[str] | None,
             catalog = [{k: f.model_dump()[k] for k in ("id", "title", "kind", "paths", "environments", "assertions")}
                        for f in manifest.flows]
             manifest_status = "validated"
-            for flow in catalog:
-                add("flow", {"manifest": verification.MANIFEST, "flow": flow["id"],
-                             "assertions": [a["id"] for a in flow["assertions"]]}, digest,
-                    json.dumps(flow, ensure_ascii=False))
+            add("flow", {"manifest": verification.MANIFEST, "flows": [f["id"] for f in catalog]}, digest,
+                "The validated catalog and assertions are in state.registered_flows.")
         except (OSError, ValueError):
             manifest_status = "invalid"
     budget.check()

@@ -7,7 +7,8 @@ The existing `plan`, `code` and `mixed` profiles still determine review criteria
 Locally implemented tasks keep their existing review and final gate. An authorized
 review loop also collects enforced registered flows for local and external tasks.
 Their reviewers stay read-only. Failure returns to the existing local work session
-or external correction path; shadow advice never selects executable flows.
+or external correction path. Jev selects registered checks before collection and
+judges their measured receipts. The independent reviewer remains separate.
 
 The Cloud review cell also executes verification commands and creates test
 scripts, fixtures and receipts. Codex uses `workspace-write` with
@@ -60,9 +61,28 @@ list covers the repository's major behavior and the changed requirements.
 Paths use `fnmatch` patterns: `*` crosses directories. Include shared
 dependencies and supporting test scripts in every flow they affect. A path
 not covered by any flow, an unreadable diff or a shared dependency file
-invalidates every flow. A first review executes all major flows. Later
-commits execute affected flows and record the exact reason for carrying
-unaffected results forward. Renames include the removed and added paths.
+invalidates reuse of every flow. Jev receives the complete applicable catalog,
+current acceptance, changed paths and bounded excerpts from every changed file
+before execution. Only supported run/skip choices become the enforced selection.
+Explicitly required flows and outstanding failed or unfinished flows cannot be
+skipped, including across a repair head.
+Later commits still need a fresh selection and current proof; unaffected receipts
+carry their exact reuse reasons. Renames include the removed and added paths.
+
+Selection and receipt judgment each have a 15-second preparation/decision budget
+and one batched Jev call. They require active Jev and a configured key. Missing
+keys, failed English normalization, oversized context, uncertainty and unsupported
+grounds leave preparation pending; they never fall back to executing the entire
+catalog or a host-model decision. Source-code literals are masked rather than
+translated into different selectors. Every candidate has a closed decision and
+ground question, saved with the exact request, result, model, policy and budget
+under `review_inspection` through the specification owner.
+
+After actual execution, code validates receipt identities and assertions before
+Jev assesses each selected flow's observations. A judgment cannot supply a missing
+request, turn a failed assertion into a pass, waive cleanup, or authorize merge.
+Changed head, acceptance, catalog or evidence invalidates the applicable decision.
+The existing offline/frozen checks, independent reviewer and final gate remain.
 
 ## Local setup
 
@@ -117,9 +137,26 @@ manifest, commands and environment. Setup and flow attempts are persisted before
 dispatch. `WIKI_VERIFICATION_ARTIFACTS` points to an attempt directory under the
 system temporary directory, outside the source checkout. Keep logs and fixture
 records there. Cleanup has a 30-second bound; its failure holds readiness.
+On Windows, attempts and child processes use the user's native `TEMP`; an
+inherited application's `TMPDIR` cannot redirect verification scratch work.
 Windows setup processes stay in owned kill-on-close jobs until cleanup finishes.
 Cancellation kills owned process trees. Restart never reuses unfinished proof or
 kills a process by a stale recorded PID.
+
+Setup and flow commands share one 20-minute execution allowance per collection
+attempt; each flow receives only the remaining time. Cleanup retains its separate
+30-second allowance. Exhaustion preserves observations and leaves verification
+pending; it never supplies a pass. Collection stops at the first confirmed failed
+flow and still cleans up. Later flows remain unverified until a subsequent attempt.
+Flow records include start time and elapsed execution seconds for diagnosis.
+An unchanged Cloud review reuses current evidence without rerunning setup, while
+a changed head, specification, manifest or environment still invalidates reuse.
+
+Project runners should put common expensive preparation in the approved `setup`
+command and consume its outputs from each flow. The service treats commands as
+opaque and cannot safely infer that repeated builds or database snapshots are
+interchangeable. Any shared output must still be measured against the reviewed
+head by the project's receipt script.
 
 Native flows require manifest version `2`, local settings version `2` and the
 fixed `wiki-agent-native` command. Version `1` remains valid for API, browser and

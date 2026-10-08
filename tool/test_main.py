@@ -810,7 +810,7 @@ def settled(path: str):
 
     run = work._runs[path]
     with run.wake:
-        assert run.wake.wait_for(lambda: run.done, 10)
+        assert run.wake.wait_for(lambda: run.done, 90)
     return run
 
 

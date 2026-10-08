@@ -1,10 +1,7 @@
 """decisions — Jev at the choices this server owns (stage 8 of `docs/plans/jev/`).
 
 Three owner functions ask Jev which code-owned operation runs next:
-
-    work.start    the first turn `specs.start` sends (`work.run_turn`): send
-                  it, gather evidence first, or ask the person for an input
-                  code found missing
+    work.start    send the first turn, gather evidence or ask for missing input
     specs.check   `specs._check` once the required gate passed: run one more
                   registered check, or open the pull request on the gate
     loop.fix      `loop.step` at a refused round: send the findings, or
@@ -118,6 +115,9 @@ HOST = ("Tool selection inside a Claude or Codex session is the host's own plann
 # Jev question kinds it rests on — a point with none is not Jev's — and `policy` names which policy holds them.
 ADMITTED = "code: `admit` checks repository, spec revision, HEAD, session, expiry, the candidate and idempotency"
 OWNERS = [
+    *({"point": p, "owner": "jev", "allowed_operations": [], "kinds": ("action",), "policy": "review-inspection-1",
+       "authority": "code validates current-head registered flows and measured receipts; uncertainty stops pending; no host fallback"}
+      for p in ("review.selection", "review.judgment")),
     *({"point": p, "owner": "jev", "allowed_operations": POINTS[p]["operations"], "authority": ADMITTED,
        "kinds": ("action",), "policy": "action"} for p in ("work.start", "specs.check", "loop.fix")),
     {"point": "specs.candidates", "owner": "jev", "allowed_operations": [], "kinds": ("action",), "policy": "action",

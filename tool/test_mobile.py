@@ -45,7 +45,10 @@ def test_install_download_precedes_pairing_without_opening_private_files(compani
     desktop, phone = browsers()
     apk = tmp_path / "wiki-agent.apk"
     payload = b"synthetic-apk-download"
-    with patch.object(mobile, "APK", apk):
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "mobile-install.html").write_bytes((app.ROOT / "web/public/mobile-install.html").read_bytes())
+    with patch.object(mobile, "APK", apk), patch.object(app, "DIST", dist):
         assert not desktop.get("/api/mobile/status").json()["apk_available"]
         assert phone.get("/mobile-install").status_code == 404
         assert phone.get("/mobile-install.apk").status_code == 404
