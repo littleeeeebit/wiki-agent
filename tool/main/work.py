@@ -256,9 +256,8 @@ def changes(path: str, file: str = "", preview: bool = True) -> dict:
 
 
 def record(path: Path) -> Path:
-    """One file per worktree, under its `<repo>-worktrees` folder's name. A
-    task name is only unique within its repository, and the project selection
-    can change while a turn is still being written."""
+    """Use the owning task's log, or the legacy repository worktree folder.
+    Task names repeat across repositories; a project switch cannot redirect writes."""
 
     from . import specs
 
@@ -376,12 +375,7 @@ def clear(body: Removal) -> dict:
             time.sleep(0.2)
     try:
         path = ours(body.path, repo)
-        with _lock:
-            chat = _sessions.pop(body.path, None)
-            _runs.pop(body.path, None)
-            _queued.pop(body.path, None)
-        if chat:
-            chat.close()
+        forget(path)
         try:
             text = remove(repo, path, force=body.force)
         except (ValueError, RuntimeError) as exc:

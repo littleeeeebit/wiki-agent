@@ -12,8 +12,6 @@ from pathlib import Path
 import socket
 import sys
 import tempfile
-import threading
-import time
 import xml.etree.ElementTree as ET
 from unittest.mock import patch
 
@@ -22,6 +20,7 @@ from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from playwright.sync_api import sync_playwright
 import uvicorn
+from browser_fixture import start
 
 ROOT = Path(__file__).resolve().parents[2]
 APK_FIXTURE = b"synthetic-apk-download" + bytes(range(256)) * 8192
@@ -427,12 +426,7 @@ def main():
         mobile.companion.port = sock.getsockname()[1]
         server = uvicorn.Server(uvicorn.Config(fake, log_level="error", proxy_headers=False, ws="wsproto",
                                               timeout_graceful_shutdown=1))
-        thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
-        thread.start()
-        for _ in range(100):
-            if server.started:
-                break
-            time.sleep(0.05)
+        thread = start(server, sock)
         try:
             with sync_playwright() as p:
                 browser = p.chromium.launch()

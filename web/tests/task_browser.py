@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, StreamingResponse
 from playwright.sync_api import expect, sync_playwright
 import uvicorn
+from browser_fixture import start
 
 from mobile_browser import ROOT, app, fixture, mobile
 from main import architecture, loop, work
@@ -245,12 +246,7 @@ def main():
     mobile.companion.port = sock.getsockname()[1]
     base = f"http://127.0.0.1:{sock.getsockname()[1]}"
     server = uvicorn.Server(uvicorn.Config(fake, log_level="error", ws="wsproto", timeout_graceful_shutdown=1))
-    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
-    thread.start()
-    for _ in range(100):
-        if server.started:
-            break
-        time.sleep(0.05)
+    thread = start(server, sock)
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch()

@@ -216,7 +216,7 @@ reliability desktop matrix retains its own additional requirements.
 | 1 | Existing validation | Registered receipt checks and sanitized ordinary-loop handoff | Done — current focused suite |
 | 2 | Generalize execution | Shared selected-flow collection and owner-specific failure routing | Done — automatic isolated API/browser collection, selected-flow approval and local/external/Cloud ownership implemented |
 | 3 | Native collection | Versioned target contract, native runner and receipt validator | Done — Windows Win32 owned desktop/target, measured build/control/event receipts and configuration approval implemented; actual native fixture exercised |
-| 4 | Verify end to end | Local/API/browser/native identity, lifecycle and handoff evidence | In progress — actual fixtures passed; initial full suite 1,743 passed and 4 skipped; review repairs passed focused checks; final repository gate held by five pre-existing ratchet violations |
+| 4 | Verify end to end | Local/API/browser/native identity, lifecycle and handoff evidence | In progress — actual fixtures passed; initial full suite 1,743 passed and 4 skipped; review repairs passed focused checks; follow-up cleanup clears the five ratchet violations, but a passing full final gate on the reviewed revision remains required |
 
 ## Migration and rollback
 
@@ -298,12 +298,13 @@ The negative test intentionally modifies `observations.json` afterward and
 confirms readiness and merge eligibility are revoked. The snapshot documents
 the earlier successful observation; that tampered attempt is not current proof.
 
-The final repository gate is still held by baseline violations in
+At implementation time the final repository gate was held by baseline violations in
 `tool/agent/chat_session.py` (1,360 lines; ceiling 1,291), `tool/main/work.py`
 (1,066; 1,060), `tool/test_agent.py` (1,221; 1,010), `tool/test_loop.py`
 (2,374; 2,328) and `web/tests/desktop_browser.py` (6 duplicate lines; ceiling 0).
-These files and their ceilings were not changed by this stage. Stage completion
-remains open until that gate passes on the reviewed revision.
+These files and their ceilings were not changed by the original stage PR.
+The follow-up cleanup below clears those violations without changing their ceilings.
+Stage completion remains open until the full final gate passes on the reviewed revision.
 
 ### PR 95 — first independent review and focused repairs
 
@@ -330,5 +331,58 @@ these repair checks are scoped results for the changed paths. The 13 source
 files changed from the original base have combined SHA-256
 `acb67f6cfacd510bb82869f8a7ecb7bd63c437f9c4722f02fd2f96b2565053ee`
 using the same path/NUL/bytes/NUL algorithm. The five baseline debt violations
-remain unchanged. The repaired revision requires independent review before
-approval.
+remained unchanged in that revision. GPT-5.6-Sol subsequently allowed the repaired
+head `8255ae726ecf48c8c24c7bf5e69cbe35dd98b28b`, merged in PR 95 as
+`73adf12caf9598dc541c54e723ea0ffce6ee61e9`.
+
+### Follow-up — clear the five repository debt violations
+
+The cleanup leaves `.wiki/ratchet.json` byte-identical to PR 95. Screen event
+types and rendering helpers move to `agent/chat_events.py`; session ownership
+and provider dispatch stay in `chat_session.py`. Worktree removal reuses the
+existing `work.forget()` cleanup instead of repeating its lock/session handling.
+Provider event tests and review progress/ownership tests move to separate modules
+while retaining their original fixtures, test names, decorators and assertions.
+The duplicated Codex handshake becomes a shared fixture prefix; all 16 original
+provider fixture scripts expand to byte-identical strings.
+
+The desktop, mobile, task and synchronization fixtures share a server startup
+helper, preserving each caller's server configuration and bound socket. Startup
+failure now closes that fixture's socket and requests its server's shutdown;
+normal shutdown remains with the existing caller. A runnable regression checks
+success ownership and timeout cleanup.
+
+| Existing violation | Before | After | Existing ceiling |
+| --- | --- | --- | --- |
+| `tool/agent/chat_session.py` lines | 1,360 | 1,288 | 1,291 |
+| `tool/main/work.py` lines | 1,066 | 1,060 | 1,060 |
+| `tool/test_agent.py` lines | 1,221 | 928 | 1,010 |
+| `tool/test_loop.py` lines | 2,374 | 2,261 | 2,328 |
+| `web/tests/desktop_browser.py` duplicated lines | 6 | 0 | 0 |
+
+AST comparison retains all 49 original agent-test definitions, 122 loop-test
+definitions and 12 session definitions, including class bodies, decorators,
+assertions and type comments. Collection retains the original 1,752 cases and
+adds one startup regression. `python tool/debt.py check` and Ruff pass with the
+unchanged ratchet. The initial focused command
+`python -m pytest -q tool/test_browser_fixture.py tool/test_agent.py tool/test_agent_events.py tool/test_loop_progress.py --tb=short`
+passes 63 cases. A fresh frontend build and `desktop_browser.py`,
+`mobile_browser.py`, `task_browser.py` and `mobile_sync.py` all exit zero.
+The synchronization run also emits a Windows Proactor connection-reset callback
+during transport shutdown; its application assertions still pass.
+
+The broader command
+`python -m pytest -q tool/test_main.py tool/test_loop.py tool/test_agent_panel.py tool/test_sessions.py tool/test_chat_setup.py --tb=short`
+passes 231 cases and fails one in 1,829.41 seconds. The unchanged
+`test_merge_rechecks_conflict_when_base_moves_without_changing_merge_base`
+exceeds its unchanged 30-second loop wait. Its first standalone retry also fails
+(89.27 seconds); a clean original-commit control passes (43.16 seconds), and a
+later unchanged-current-source standalone retry passes (32.87 seconds).
+These results retain the first failures, not a claim that timing instability
+was repaired. No wait budget, assertion or expected value was changed.
+
+These scoped results do not replace a full final gate. PR 95's last full run
+passed 1,746 cases and skipped four, but failed the Cloud repair loop's 30-second
+wait and the search response test. Separate unchanged-source reruns passed and
+exited zero; the first failures remain recorded in the PR and local evidence.
+The stage is not marked complete from those retries or from debt cleanup alone.
