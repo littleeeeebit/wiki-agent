@@ -71,16 +71,22 @@ def test_review_git_reads_batch_checkout_proof_and_pin_prompt_statistics(tmp_pat
             assert verification.checkout_proven(tmp_path, head)
 
 
-def test_manifest_rejects_untracked_directory_alias_to_a_tracked_contract(tmp_path):
+@pytest.mark.parametrize("reference", ["alias/api.md", "alias/../api.md"])
+def test_manifest_rejects_untracked_directory_alias_to_a_tracked_contract(tmp_path, reference):
     git(tmp_path, "init")
     target = tmp_path / "contracts"
     target.mkdir()
     (target / "api.md").write_text("contract\n", encoding="utf-8")
-    manifest = {"version": 1, "contracts": ["alias/api.md"], "flows": [{"id": "health", "title": "Health",
+    (tmp_path / "api.md").write_text("tracked root contract\n", encoding="utf-8")
+    manifest = {"version": 1, "contracts": [reference], "flows": [{"id": "health", "title": "Health",
                 "kind": "command", "command": "python check.py", "paths": ["*.py"],
                 "assertions": [{"id": "healthy", "expected": "healthy"}]}]}
     (tmp_path / verification.MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
     git(tmp_path, "add", ".")
+    if ".." in reference:
+        target = tmp_path / "real" / "deep"
+        target.mkdir(parents=True)
+        (target.parent / "api.md").write_text("untracked contract\n", encoding="utf-8")
     alias = tmp_path / "alias"
     try:
         os.symlink(target, alias, target_is_directory=True)
@@ -91,7 +97,8 @@ def test_manifest_rejects_untracked_directory_alias_to_a_tracked_contract(tmp_pa
         except (ImportError, OSError):
             pytest.skip("Directory links unavailable")
     try:
-        with pytest.raises(ValueError, match="alias/api.md"):
+        assert (tmp_path / reference).is_file()
+        with pytest.raises(ValueError, match=reference):
             verification.manifest(tmp_path)
     finally:
         alias.unlink() if alias.is_symlink() else alias.rmdir()

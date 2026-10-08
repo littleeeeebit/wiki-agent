@@ -410,6 +410,19 @@ deselected. It adds one case, so current collection is 1,761. This correctness
 correction invalidates round-9 source
 approval for the new head; the timing and safety failures above remain open.
 
+Round 10 found a P1 in that normalization: collapsing `alias/../api.md`
+can compare a tracked lexical path with a different in-repository file after
+directory-link traversal. The Windows real-Git witness accepted this ambiguous
+declaration before repair; it does not establish the POSIX-specific target
+substitution as a Windows runtime observation. Membership now uses
+`Path(ref).as_posix()`, which retains `..` instead of collapsing it. Such a
+reference cannot match an index entry; `./` remains supported. The same alias
+witness now covers both direct and parent-traversal references, adding one
+parameter case for a total collection of 1,762. Timing blockers remain open.
+The ten-case manifest/checkout/prompt selection passed in 29.50 s, natural
+exit 0, with 53 deselected. That selection does not rerun the timed-out loop
+or the failed native/shadow acceptance cases, and is not a speed comparison.
+
 The parser follows Git's documented
 [porcelain v2 branch headers and NUL-delimited records](https://git-scm.com/docs/git-status#_porcelain_format_version_2).
 
