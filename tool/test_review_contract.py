@@ -607,87 +607,6 @@ def test_v2_multiple_grounds_stable_order_and_replay_do_not_mutate_baseline(clou
     assert_grounded(composed)
 
 
-@pytest.mark.parametrize("added,criteria,evidence", [
-    ("criteria:refactor", ["code", "refactor"], ["differential", "offline"]),
-    ("evidence:differential", ["code", "refactor"], ["differential", "offline"]),
-    ("evidence:browser", ["code"], ["api", "browser", "offline"]),
-    ("evidence:desktop", ["code"], ["desktop", "offline"]),
-    ("criteria:performance", ["code", "performance"], ["offline"]),
-])
-def test_shadow_closure_is_grounded_unresolved_and_never_enforced(world, added, criteria, evidence):
-    spec = pr_spec(world, "candidate-closure", 1, "code.py")
-    baseline = selected(world, spec)
-    result = contract.compose(baseline, audit_record(baseline, [added]))
-    assert result["candidate"]["criteria"] == criteria and result["candidate"]["evidence"] == evidence
-    assert result["enforced"] == baseline["enforced"] and result["digest"] == baseline["digest"]
-    assert result["unresolved"] and all(r["scope"] == "candidate" for r in result["unresolved"])
-    assert not contract.ready(world.repo, Path(spec["worktree"]), spec, result)
-    assert contract.matches(spec, {"review_contract": baseline}, result)
-    assert_grounded(result)
-
-
-@pytest.mark.parametrize("kind", ["api", "browser", "command", "desktop"])
-def test_candidate_registered_flow_closure_and_assertion_origins(cloud_world, kind):
-    world = cloud_world
-    spec = pr_spec(world, "candidate-flow", 1, "change.py")
-    baseline = selected(world, spec)
-    flow = {k: v for k, v in world.contract["flows"][0].items() if k != "command"}
-    flow["kind"] = kind
-    observation = audit_record(baseline, ["flow:health"], flows=[flow])
-    # Candidate manifest identity is an audit input even without mandatory runtime declarations.
-    observation["request"]["state_en"]["manifest"]["digest"] = verification.manifest(Path(spec["worktree"]))[1]
-    observation["context_digest"] = verification.sha(observation["request"]["state_en"])
-    observation["frozen_digest"] = verification.sha({"request": observation["request"], "result": observation["result"]})
-    result = contract.compose(baseline, observation)
-    expected = {"browser": ["api", "browser", "offline"], "api": ["api", "offline"],
-                "desktop": ["desktop", "offline"], "command": ["offline"]}[kind]
-    assert result["candidate"]["flows"] == ["health"] and result["candidate"]["evidence"] == expected
-    assert result["flows"] == [] and result["enforced"]["flows"] == [] and not result["problems"]
-    row = next(r for r in result["items"] if r["id"] == "flow:health")
-    assert any(g.get("assertions") == ["healthy"] for g in row["grounds"])
-    assert_grounded(result)
-
-
-@pytest.mark.parametrize("mode", ["unsupported", "defer", "uncertain", "stale", "tampered", "unknown", "source"])
-def test_candidate_rejections_preserve_mandatory_floor_and_reasons(world, mode):
-    spec = pr_spec(world, "reject-candidate", 1, "code.py", review={"criteria": ["security"]})
-    baseline = selected(world, spec)
-    rec = audit_record(baseline, ["criteria:async"], choice=decision.DEFER if mode == "defer" else "add",
-                       confidence=0.4 if mode == "uncertain" else 0.9,
-                       unsupported=["criteria:async"] if mode == "unsupported" else [])
-    if mode == "stale":
-        rec["status"] = "stale"
-    elif mode == "tampered":
-        rec["request"]["state_en"]["grounds"][0]["id"] = "ground:invented"
-    elif mode == "source":
-        rec["request"]["state_en"]["grounds"][0]["id"] = "ground:other"
-        rec["context_digest"] = verification.sha(rec["request"]["state_en"])
-        rec["frozen_digest"] = verification.sha({"request": rec["request"], "result": rec["result"]})
-    elif mode == "unknown":
-        # A self-consistent frozen request is still not authority to register a candidate.
-        rec["request"]["questions"]["criteria:invented"] = rec["request"]["questions"].pop("criteria:async")
-        rec["request"]["questions"]["basis:criteria:invented"] = rec["request"]["questions"].pop("basis:criteria:async")
-        for key in ("answers", "verdicts"):
-            rec["result"][key]["criteria:invented"] = rec["result"][key].pop("criteria:async")
-            rec["result"][key]["basis:criteria:invented"] = rec["result"][key].pop("basis:criteria:async")
-        rec["frozen_digest"] = verification.sha({"request": rec["request"], "result": rec["result"]})
-    result = contract.compose(baseline, rec)
-    assert result["candidate"] == result["enforced"] == baseline["enforced"]
-    assert result["digest"] == baseline["digest"] and result["dispositions"]
-    assert any(r["reason"] for r in result["dispositions"])
-    assert all(r["scope"] == "candidate" for r in result["unresolved"])
-
-
-def test_candidate_probability_and_optional_defer_do_not_change_execution_identity(world):
-    spec = pr_spec(world, "audit-identity", 1, "code.py")
-    baseline = selected(world, spec)
-    results = [contract.compose(baseline, audit_record(baseline, ["criteria:async"], **kw))
-               for kw in ({}, {"confidence": 0.8}, {"choice": decision.DEFER}, {"choice": "skip"})]
-    assert {r["digest"] for r in results} == {baseline["digest"]}
-    assert len({r["candidate_digest"] for r in results}) == 4
-    assert all(not contract.ready(world.repo, Path(spec["worktree"]), spec, r) for r in results)
-
-
 def test_mandatory_performance_and_browser_dependencies_remain_preparation_problems(world):
     spec = pr_spec(world, "mandatory-coverage", 1, "code.py", review={"criteria": ["performance"], "evidence": ["browser"]})
     result = selected(world, spec)
@@ -881,21 +800,3 @@ def test_offered_catalog_changes_are_audit_rejections_without_execution_effects(
     assert current["shadow"]["status"] == "stale" and current["candidate"] == current["enforced"]
     assert current["digest"] == baseline["digest"] and not current["problems"]
     assert not contract.ready(world.repo, Path(spec["worktree"]), spec, current)
-
-
-@pytest.mark.parametrize("malformed", ["command", "assertions", "kind"])
-def test_malformed_offered_catalog_is_rejected_before_dependency_closure(cloud_world, malformed):
-    world = cloud_world
-    spec = pr_spec(world, "malformed-audit", 1, "change.py")
-    baseline = selected(world, spec)
-    flow = copy.deepcopy(world.contract["flows"][0])
-    flow.pop("command")
-    observation = audit_record(baseline, ["flow:health"], flows=[flow])
-    flow[malformed] = {"command": "unregistered execution", "assertions": [*flow["assertions"], *flow["assertions"]],
-                       "kind": "invented"}[malformed]
-    observation["context_digest"] = verification.sha(observation["request"]["state_en"])
-    observation["frozen_digest"] = verification.sha({"request": observation["request"], "result": observation["result"]})
-    result = contract.compose(baseline, observation)
-    assert result["candidate"] == result["enforced"] == baseline["enforced"]
-    assert result["digest"] == baseline["digest"] and result["dispositions"][-1]["disposition"] == "rejected"
-    assert result["dispositions"][-1]["reason"] == "invalid offered flow catalog"

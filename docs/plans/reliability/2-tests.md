@@ -312,6 +312,41 @@ committed.
 | Unknown path, shared file, malformed map or no merge base runs full; a shared source selects every consumer; renames and deletions count | `test_round_checks_follow_the_changed_paths_and_widen_when_unsure` |
 | Same unchanged identity reuses results | `test_a_mapped_round_then_the_full_gate_once_and_the_same_identity_reuses_both` |
 
+### Follow-up: pure shadow-audit setup
+
+On 2026-10-08, 20 parameterized cases in `test_review_contract.py` created
+temporary Git PRs even though their assertions only exercise composition,
+frozen-request replay, provenance and non-authoritative candidate identity.
+Seven also started an HTTP server. The measured baseline was 94.38 s, including
+260 Git subprocess calls taking 87.65 s in total. Before changing setup, the
+target was zero subprocess launches for these cases, without removing a case,
+parameter or logical assertion.
+
+The cases now live in `test_review_audit.py`, using synthetic spec/head/catalog
+inputs and the real selection/composition functions. A subprocess guard fails
+if this unit group starts a process. Existing audit-record and provenance helpers
+are reused. The same 20 cases passed in 0.42 s with zero subprocess calls;
+AST comparison preserved their assertions and parametrization, apart from the
+fixture path arguments. Full collection remains 1,757 cases. These are warm,
+same-host PowerShell runs with the same tracing plugin and `-p no:cacheprovider`,
+Python 3.13.9, pytest 8.3.5, Windows 11 build 26200 and an i7-12700F reporting
+eight logical processors. Plugin autoload was unchanged; no xdist workers were
+requested. Concurrent host workload was not controlled. This is a scoped setup
+comparison, not a full-suite speed claim.
+
+| Unit group, all cases retained | Integration witness retained in `test_review_contract.py` |
+| --- | --- |
+| Candidate closure, rejection and identity variants | `test_v2_multiple_grounds_stable_order_and_replay_do_not_mutate_baseline`; `test_mandatory_snapshot_changes_cannot_be_persisted` |
+| Registered flow closure and assertion origins | `test_shadow_registered_flow_is_persisted_and_rendered_without_a_collector_or_extra_review_tools`; `test_local_api_receipts_are_not_substituted_by_offline_gate_and_stale_receipts_fail` |
+| Malformed command/assertion/kind catalog | `test_offered_catalog_changes_are_audit_rejections_without_execution_effects`; `test_changed_candidate_manifest_rejects_only_audit_union_and_preserves_approval` |
+
+Actual manifest tracking, collector receipts, persistence freshness and reviewer
+dispatch remain real Git/process/HTTP integration tests. The affected contract,
+routing and audit modules passed all 83 cases in 386.55 s. No production code,
+test wait budget, final-gate identity or ratchet ceiling changes in this cleanup.
+The earlier failed full receipt and five inherited ratchet violations remain
+blockers; focused passes cannot replace a passing final gate on the reviewed HEAD.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
