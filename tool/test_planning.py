@@ -23,6 +23,7 @@ from fastapi import HTTPException
 from agent.chat_session import Event
 from main import loop, planning, specs, work
 from test_main import client, no_machine_settings, until  # noqa: F401 — the fixture is autouse
+from test_loop import waited
 from test_specs import KICKED, Remote, repo  # noqa: F401 — `repo` is a fixture
 
 USAGE = {"in": 10, "out": 5}
@@ -177,7 +178,7 @@ def settled(sid: str, *phases: str) -> dict:
 
     # A read can miss the file while a save swaps it in: the spec that answered is kept.
     seen: list = []
-    until(lambda: seen.append(done()) or seen[-1] is not None)
+    waited(lambda: seen.append(done()) or seen[-1] is not None)
     return seen[-1]
 
 

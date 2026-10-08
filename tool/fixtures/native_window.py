@@ -26,13 +26,9 @@ k.GetModuleHandleW.argtypes, k.GetModuleHandleW.restype = (w.LPCWSTR,), w.HMODUL
 def window_proc(hwnd, message, wp, lp):
     if message == 0x0007 and "--wrong-focus" in sys.argv:
         other = getattr(window_proc, "other", None)
-        if not other:
-            other = u.CreateWindowExW(0, "STATIC", "Other owned test window", 0x00CF0000,
-                                      200, 200, 200, 100, None, None, instance, None)
-            window_proc.other = other
-        u.ShowWindow(other, 5)
-        u.SetActiveWindow(other)
-        u.SetFocus(other)
+        if other:
+            u.SetActiveWindow(other)
+            u.SetFocus(other)
         return 0
     if message == 0x0111 and wp & 0xFFFF == 1:
         u.SetWindowTextW(u.GetDlgItem(hwnd, 2), "Saved")
@@ -65,6 +61,14 @@ if not hwnd:
     raise ctypes.WinError(ctypes.get_last_error())
 u.CreateWindowExW(0, "BUTTON", "Save", 0x50010000, 20, 20, 100, 35, hwnd, 1, instance, None)
 u.CreateWindowExW(0, "STATIC", "Unsaved", 0x50000000, 20, 70, 200, 30, hwnd, 2, instance, None)
+if "--wrong-focus" in sys.argv:
+    # Prepare the negative target before exposing the main window to the collector.
+    other = u.CreateWindowExW(0, "STATIC", "Other owned test window", 0x00CF0000,
+                              200, 200, 200, 100, None, None, instance, None)
+    if not other:
+        raise ctypes.WinError(ctypes.get_last_error())
+    window_proc.other = other
+    u.ShowWindow(other, 5)
 u.ShowWindow(hwnd, 5)
 msg = w.MSG()
 while u.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:

@@ -426,6 +426,79 @@ or the failed native/shadow acceptance cases, and is not a speed comparison.
 The parser follows Git's documented
 [porcelain v2 branch headers and NUL-delimited records](https://git-scm.com/docs/git-status#_porcelain_format_version_2).
 
+### Follow-up: membership reads and shadow fixture preparation
+
+Full subprocess attribution on `3a665fb` exposed work missed by the earlier
+`specs.sh`-only trace. One external API probe failed: its partial loop step
+took 40.37 s, including 57 real Git processes taking 15.80 s. The test reported
+one failure in 153.27 s and eventually exited 1 after process shutdown.
+An eight-worker full suite and another focused suite were concurrently active
+on the host; neither was changed. This is not a controlled timing comparison.
+
+A second diagnostic added phase attribution without changing commands or waits.
+The external API case passed in 43.71 s and naturally exited 0. Its completed
+step took 27.43 s, with 83 real Git processes taking 25.41 s. Redaction and
+runtime digest work each totalled below 0.04 s; they are not optimization targets.
+The pass does not erase the preceding failure or establish timing stability.
+
+Before the membership repair, the bounded target was two fresh Git reads per
+path-only listing: checkout identity and the registered worktree list. Loop
+membership and PR attachment do not consume the listing's dirty/merged fields,
+so they now omit those expensive status and commit-tree calculations. Default
+UI and deletion callers retain all fields and their existing safety checks.
+The existing real-Git worktree test checks a dirty task's unchanged default
+listing and requires exactly two reads for membership, rejecting any status,
+merge-base or tree query there. No registration, checkout, collector, final-gate
+or merge identity check is cached or removed.
+
+The moved-base shadow witness also prepared a competing clone and commit inside
+the fake provider's real 15 s decision budget. That setup now precedes the
+observation; the actual push remains inside the provider reply, after the input
+snapshot. Its merge-base, changed-tip, persisted stale-result and no-dispatch
+assertions remain unchanged. The scoped repair passed in 15.79 s with natural
+exit 0. At that revision production decision limits and every test wait were
+unchanged. These results are scoped diagnostics, not a full final receipt.
+
+The combined worktree/API/native/shadow selection then exited 1 with 18 passed
+and one failed in 219.43 s. Both ordinary API owners passed. Native acceptance
+reached handoff, but its wrong-focus negative found a save event before the
+later focus rejection. The fixture created its competing window inside the
+focus callback, after exposing the main target. A startup/reentrant-focus race
+is the repair hypothesis, not a demonstrated Windows API defect. The competing
+window is now created and shown before the main target; its focus callback
+redirects to that prepared window. The collector, focus guards, real event and
+unchanged no-event assertion remain. Microsoft's
+[SetFocus contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setfocus)
+documents focus notifications; [AttachThreadInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-attachthreadinput)
+shares the two threads' input state. Neither source proves the observed race's
+exact interleaving. The first fixture-repair run reported one pass and one
+failure in 66.46 s and naturally exited 1: it hit the earlier 30 s loop wait,
+so it did not reach or validate the repaired negative.
+
+The normal completion waits now share a bounded 120 s synchronization ceiling.
+This intentionally revises the earlier no-wait-change constraint: a completed
+API step already spends 25.41 s in real Git, and the earlier failed diagnostic
+showed additional host-dependent latency. These tests assert final state,
+ownership and identity, not a 30 s product performance guarantee. Explicit
+timeout/negative waits and production budgets remain unchanged. Planning
+completion reuses the same helper instead of its ten-second poll-count loop;
+the browser's completion assertions and paused fake reviewer use that ceiling
+too. Existing 60 s loop overrides use the shared default. No case, logical
+assertion or expected result is removed. Increased synchronization tolerance is
+not reported as a runtime optimization or stability proof. A new affected
+selection and independent review remain required before the final full gate.
+
+That serial selection finished with 41 passed, one existing Starlette warning,
+392.40 s and natural exit 0. It includes all 19 previous full-suite failures,
+actual Chromium and Win32 acceptance (including wrong-focus/no-event), both
+alias regressions, registration/adoption ownership, targeted/final/restart/reuse
+guards and the unchanged production deadline/cancellation witnesses. The earlier
+17 worktree checks also passed in the 18-pass/one-failure selection above; the
+path-only two-read guard is one of them. Current collection remains 1,762.
+Ruff, wiki lint, strict UTF-8-without-BOM and the unchanged debt gate pass.
+These focused working-tree receipts do not establish a full-suite pass, overall
+speed improvement, or independent approval for this new revision.
+
 ## Steps
 
 | # | Step | Deliverable | Status |

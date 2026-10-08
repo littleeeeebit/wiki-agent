@@ -446,12 +446,12 @@ def test_normalization_expansion_cannot_exceed_sent_context_ceiling(world):
 
 def test_shadow_rechecks_moved_base_tip_even_when_merge_base_is_unchanged(world):
     spec = pr_spec(world, "moved-base", 1, "code.py")
+    other = world.hub.elsewhere()
+    git(other, "checkout", "-B", "main", "origin/main")
+    commit(other, "independent.txt")
     baseline = selected(world, spec)
 
     def reply(cfg, state, qs, *rest):
-        other = world.hub.elsewhere()
-        git(other, "checkout", "-B", "main", "origin/main")
-        commit(other, "independent.txt")
         git(other, "push", "origin", "main")
         return shadow_answers(qs)
 

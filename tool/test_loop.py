@@ -36,6 +36,7 @@ from workspace import adopt, create
 
 GATE = "python gate.py"
 FINAL = f"{GATE} && {debt.command()}"   # the final gate ends with the debt ratchet
+INTEGRATION_WAIT = 120  # Completion ceiling, not a product performance or timeout contract.
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -50,7 +51,7 @@ def commit(path: Path, name: str, text: str = "x\n") -> str:
     return git(path, "rev-parse", "HEAD")
 
 
-def waited(test, seconds: float = 30) -> None:
+def waited(test, seconds: float = INTEGRATION_WAIT) -> None:
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         if test():
@@ -706,7 +707,7 @@ def test_review_attach_refuses_a_busy_or_wrong_checkout_without_changing_metadat
     assert not loop._loops
 
 
-def looped(name: str, seconds: float = 30) -> dict:
+def looped(name: str, seconds: float = INTEGRATION_WAIT) -> dict:
     """Start the spec's loop and wait until it has stopped driving."""
 
     loop.kick("proj", name)
@@ -918,7 +919,7 @@ def test_a_stale_round_neither_raises_nor_repeats_a_finding(world):
     Worker.replies = [fixed((finding, "fixed")), fixed((finding, "fixed"))]
     # Several reviews and two real Git repair/push cycles take almost 30s
     # on this Windows host; leave startup margin without weakening assertions.
-    spec = looped("fix-s", seconds=60)
+    spec = looped("fix-s")
     assert spec["state"] == "머지 가능"
     assert [r.get("stale", False) for r in spec["rounds"]] == [True, False, False, False]
     assert "items" not in spec["rounds"][0]
