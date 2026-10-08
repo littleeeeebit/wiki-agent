@@ -350,3 +350,39 @@ decided `covered` in one call; collection and readiness completed in 3.23 second
 with command dispatch forbidden. Selection stayed at one of 15 checks. This is
 isolated selection, receipt-reuse and judgment evidence, not a dispatched live
 review or a new execution of the historical failing verifier scenario.
+
+## Recovering proof after an interrupted corpus preparation
+
+The subsequent real attempt selected only `consultant-answer` but stopped at
+180.933 seconds with an empty browser log. Its new head
+`df2e628943de1615241000d5406544d7dc047035` only added `/.runtime.zip` to the
+root `.gitignore`. The matching successful receipt from `cf628f1` remained
+behind two interrupted attempts with the same command/environment signature.
+The runner considered the ignore file an unmapped execution input and looked
+only at the latest interrupted row, so it discarded reusable proof twice.
+
+The three-minute command cap introduced above was an implementation mistake.
+The user requested a complete attempt under 20 minutes, not a three-minute
+command cap. Read-only diagnosis measured a 2,995,861,183-byte source database;
+the aborted attempt had an 865,636,352-byte dump and no browser/build log. The
+project runner copies this corpus before browser setup. Ending the copy earlier
+did not improve verification throughput.
+
+Commands now consume the remaining shared 19-minute allowance, including the
+existing cleanup reserve. The runner recovers the latest completed receipt
+behind incomplete attempts while retaining every interruption. A completed
+failure takes precedence over any older pass. Root `.gitignore` changes retain
+proof unless the flow explicitly declares that file; all other unknown/shared
+inputs and changed environment identities still invalidate reuse.
+
+An isolated audit used the actual current task, clean project checkout and
+production Jev configuration. It selected one of 15 flows, reused the original
+completed receipt, preserved both interruptions and obtained a decided judgment
+with an empty readiness problem in 23.903 seconds. Command dispatch was forbidden:
+no database copy, web build, browser flow or independent review was started.
+The real task file remained byte-for-byte unchanged. Four new regressions passed
+in 30.83 seconds, covering this ignore-only commit, interrupted history, explicit
+ignore-file impact, unknown inputs and precedence of confirmed failures.
+Two existing receipt/restart regressions also passed. The two-worker budget
+probe exhausted its two-second test cleanup reserve; rerunning that exact case
+serially passed. The production cleanup allowance remains 30 seconds.

@@ -357,7 +357,7 @@ def reusable(record: dict, flow: Flow, head: str, fingerprint: str, path: Path) 
     # Unmapped/shared inputs invalidate all repository-declared flow impacts.
     all_paths = [g for f in manifest(path)[0].flows for g in f.paths]
     if any(any(fnmatchcase(p, g) or fnmatchcase(p.rsplit("/", 1)[-1], g) for g in specs.SHARED)
-           or not any(fnmatchcase(p, g) for g in all_paths) for p in files):
+           or p != ".gitignore" and not any(fnmatchcase(p, g) for g in all_paths) for p in files):
         return ""
     if any(fnmatchcase(p, g) for p in files for g in flow.paths):
         return ""
@@ -575,7 +575,7 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
     previous_record = spec.get("local_verification") or {}
     previous = [*previous_record.get("excluded_flows", []), *previous_record.get("flows", [])]
     researched = bool((spec.get("local_verification") or {}).get("research_note"))
-    old = {f["id"]: f for f in previous}
+    old = {f["id"]: runtime.completed_receipt(f) for f in previous}
     reuse_only = previous_record.get("spec_signature") == binding and all(f.kind != "desktop" and reusable(
         old.get(f.id, {}), f, head, signature(repo, path, f, settings), path) for f in selected)
     rows = []

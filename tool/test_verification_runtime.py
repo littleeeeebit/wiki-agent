@@ -39,6 +39,21 @@ def test_only_whole_suite_requests_default_to_parallel_workers(monkeypatch):
     assert pytest_xdist_auto_num_workers(config) == 1
 
 
+@pytest.mark.parametrize("blocked,finished", [(True, 2), (False, None), (False, 2)])
+def test_incomplete_attempt_can_recover_a_receipt_but_confirmed_failure_cannot(blocked, finished):
+    passed = {"ok": True, "finished_at": 1, "head": "old", "evidence": {"seen": True}}
+    latest = {"ok": False, "blocked": blocked, "finished_at": finished, "head": "new", "attempts": [passed]}
+    result = runtime.completed_receipt(latest)
+    if blocked or finished is None:
+        assert result["ok"] and result["evidence"] == passed["evidence"]
+        assert result["attempts"][-1] == {k: v for k, v in latest.items() if k != "attempts"}
+    else:
+        assert result == latest and not result["ok"]
+        interrupted = {**latest, "blocked": True, "attempts": [passed, {k: v for k, v in latest.items() if k != "attempts"}]}
+        assert not runtime.completed_receipt(interrupted)["ok"]
+    assert runtime.FLOW_SECONDS == runtime.LOCAL_SECONDS
+
+
 def test_stopped_or_spent_gate_never_starts_a_process(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: pytest.fail("Spent work must not start"))
     halt = threading.Event()

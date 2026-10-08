@@ -16,8 +16,22 @@ from common.budget import Budget
 
 
 stopping = threading.Event()
-LOCAL_SECONDS, FLOW_SECONDS, CLEANUP_SECONDS = 19 * 60, 180, 30
+LOCAL_SECONDS, CLEANUP_SECONDS = 19 * 60, 30
+FLOW_SECONDS = LOCAL_SECONDS
 verification_budget = ContextVar("verification_budget", default=None)
+
+
+def completed_receipt(record):
+    """Recover completed evidence behind interruptions, retaining every attempt."""
+    history = [*record.get("attempts", []), record]
+    for row in reversed(history):
+        if row.get("blocked") or "finished_at" in row and row["finished_at"] is None:
+            continue
+        if row is record:
+            return record
+        return {**row, "attempts": [*record.get("attempts", []),
+                                   {k: v for k, v in record.items() if k != "attempts"}]}
+    return record
 
 
 @contextmanager

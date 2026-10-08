@@ -171,6 +171,40 @@ def test_shared_path_overlap_does_not_force_the_catalog_or_repeat_cached_setup(c
     assert refreshed["local_verification"]["state"] == "runtime_passed"
 
 
+def test_ignore_only_commit_reuses_receipt_behind_timeout_without_preparing_corpus(cloud_world, monkeypatch):
+    world = cloud_world
+    spec = cloud_spec(world)
+    done = looped("cloud")
+    path, old = Path(done["worktree"]), done["pr"]["head"]
+    passed = done["local_verification"]["flows"][0]
+    ignore = path / ".gitignore"
+    ignore.write_text(ignore.read_text(encoding="utf-8") + "/.runtime.zip\n", encoding="utf-8")
+    git(path, "add", ".gitignore")
+    git(path, "commit", "-m", "Ignore a local archive")
+    head = git(path, "rev-parse", "HEAD")
+    spec = specs.update(spec["repo"], spec["id"], pr={**done["pr"], "head": head})
+    interrupted = {**passed, "head": head, "executed_head": head, "ok": False, "blocked": True,
+                   "evidence": {}, "finished_at": 2, "attempts": [passed]}
+    spec = verification.keep(spec, state="waiting_environment", head=head, flows=[interrupted])
+    base = done["local_verification"]["base_oid"]
+    spec, contract = review_inspection.prepare(world.repo, path, spec,
+        review_inspection.current(world.repo, path, spec, head, base), threading.Event())
+    monkeypatch.setattr(specs, "gate", lambda *a, **k: pytest.fail("Valid historical proof must not prepare or execute again"))
+    done = verification.execute(world.repo, spec, path, head, base, threading.Event(),
+        flow_ids=["health"], enforced_digest=contract["digest"])
+    row = done["local_verification"]["flows"][0]
+    assert row["ok"] and row["head"] == head and row["executed_head"] == old
+    assert row["evidence"] == passed["evidence"] and row["attempts"][-1]["blocked"]
+    assert not verification.proven(world.repo, path, done, head, base, flow_ids=["health"])
+    flow = verification.manifest(path)[0].flows[0]
+    explicit = flow.model_copy(update={"paths": [".gitignore"]})
+    assert not verification.reusable(row, explicit, head, row["signature"], path)
+    (path / "unmapped-input").write_text("changed", encoding="utf-8")
+    git(path, "add", "unmapped-input")
+    git(path, "commit", "-m", "Change an unmapped input")
+    assert not verification.reusable(row, flow, git(path, "rev-parse", "HEAD"), row["signature"], path)
+
+
 def test_korean_control_literal_does_not_translate_english_observation(cloud_world, monkeypatch):
     world, seen = cloud_world, []
     runner = world.repo / "verify.py"

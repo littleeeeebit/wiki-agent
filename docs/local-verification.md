@@ -151,14 +151,19 @@ Cancellation kills owned process trees. Restart never reuses unfinished proof or
 kills a process by a stale recorded PID.
 
 Preparation, selection, setup, collection, judgment and cleanup share a 19-minute
-deadline per local-verification attempt. A selected command receives at most
-three minutes, bounded by the remaining deadline. Cleanup reserves up to 30
+deadline per local-verification attempt. Each selected command consumes the
+remaining shared allowance. Cleanup reserves up to 30
 seconds inside that deadline. Exhaustion preserves observations and leaves verification
 pending; it never supplies a pass. Collection stops at the first confirmed failed
 flow and still cleans up. Later flows remain unverified until a subsequent attempt.
 Flow records include start time and elapsed execution seconds for diagnosis.
 A collection consisting entirely of reusable receipts skips setup and cleanup, while
-a changed head, specification, manifest or environment still invalidates reuse.
+a changed specification, manifest or environment still invalidates reuse.
+On a changed head, the declared impact paths decide whether completed proof
+remains valid. An unmapped root `.gitignore` change alone does not invalidate it;
+a flow that explicitly declares `.gitignore` still reruns. Other unmapped or
+shared inputs invalidate reuse. Interrupted attempts retain the last completed
+receipt and the interruption history. A confirmed failure cannot revive an older pass.
 
 Project runners should put common expensive preparation in the approved `setup`
 command and consume its outputs from each flow. The service treats commands as
