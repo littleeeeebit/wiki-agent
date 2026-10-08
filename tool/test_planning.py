@@ -165,7 +165,6 @@ def git(path, *args) -> str:
     return subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True, text=True,
                           encoding="utf-8").stdout.strip()
 
-
 def settled(sid: str, *phases: str) -> dict:
     """The spec once its worker let go — and, at `handoff`, once the hand-off
     that runs after that is written too."""
