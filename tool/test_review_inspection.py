@@ -29,6 +29,8 @@ def routing(calls, *, skip=(), judgment="covered"):
         calls.append((phase, copy.deepcopy(state)))
         answers = evaluate(state, questions, trace, budget, stage)
         for cid in questions:
+            if cid.startswith("coverage:"):
+                continue
             choice = "skip" if cid in skip else "run" if phase == "selection" else judgment
             offered = questions[cid]["criteria"]
             answers[cid] = {"choice": choice, "confidence": 1.0,
@@ -70,7 +72,7 @@ def test_fifteen_flows_are_selected_in_one_call_then_actual_api_evidence_is_judg
     health = next(f for f in calls[0][1]["flows"] if f["id"] == "health")
     assert health["changed_paths"] and not health["required"]
     question = audit["selection"]["request"]["questions"]["health"]["question"]["instructions"]
-    assert json.dumps({k: health[k] for k in ("required", "changed_paths")}) in question
+    assert json.dumps({k: health[k] for k in ("required", "title", "assertions", "previous_outcome")}) in question
     assert not verification.merge_proven(world.repo, Path(done["worktree"]), done,
                                          done["pr"]["head"], done["local_verification"]["base_oid"])
     changed = copy.deepcopy(done)
@@ -110,21 +112,62 @@ def test_uncertain_selection_still_stops_before_collection(cloud_world, monkeypa
     assert [stage for stage, _ in calls] == ["selection"]
 
 
-@pytest.mark.parametrize("required", ["explicit", "failed", "prior-head-failure"])
-def test_jev_cannot_skip_explicit_requirements_or_known_failures(cloud_world, monkeypatch, required):
+def test_jev_cannot_skip_an_explicitly_required_flow(cloud_world, monkeypatch):
     world, calls = cloud_world, []
     skip = catalog(world, 2)
-    extra = {"review": {"flows": list(skip)}} if required == "explicit" else {}
-    spec = cloud_spec(world, **extra)
-    if required != "explicit":
-        failed_head = "f" * 40 if required == "prior-head-failure" else spec["pr"]["head"]
-        verification.keep(spec, flows=[{"id": next(iter(skip)), "head": failed_head, "ok": False}])
+    cloud_spec(world, review={"flows": list(skip)})
     monkeypatch.setattr(decisions, "transport", lambda cfg: routing(calls, skip=skip))
     monkeypatch.setattr(verification, "execute", lambda *a, **k: pytest.fail("Rejected selection must not execute"))
     done = looped("cloud")
     assert done["state"] == "멈춤" and not Reviewer.made
     assert next(iter(skip)) in calls[0][1]["required"]["flows"]
     assert next(f for f in calls[0][1]["flows"] if f["id"] in skip)["required"]
+
+
+@pytest.mark.parametrize("old_head", [None, "f" * 40])
+def test_jev_can_exclude_an_unrelated_failure_without_erasing_it(cloud_world, monkeypatch, old_head):
+    world, calls = cloud_world, []
+    skip = catalog(world, 2)
+    spec = cloud_spec(world)
+    failed = {"id": next(iter(skip)), "head": old_head or spec["pr"]["head"], "ok": False,
+              "reason": "Known unrelated failure", "evidence": {}}
+    attempt = {"head": failed["head"], "environment_digest": None, "failures": [failed["id"] + "/known"],
+               "reason": failed["reason"]}
+    verification.keep(spec, flows=[failed], failure_attempts=[attempt])
+    monkeypatch.setattr(decisions, "transport", lambda cfg: routing(calls, skip=skip))
+    done = looped("cloud")
+    assert done["state"] == "머지 가능"
+    assert failed in done["local_verification"]["excluded_flows"]
+    assert done["local_verification"]["failure_attempts"] == [attempt]
+    assert not verification.uninvestigated(world.repo, Path(done["worktree"]), done, done["pr"]["head"])
+    assert [r["id"] for r in done["local_verification"]["flows"]] == ["health"]
+    offered = next(f for f in calls[0][1]["flows"] if f["id"] in skip)
+    assert not offered["required"] and offered["previous_outcome"] == "failed_or_incomplete"
+
+
+def test_shared_path_overlap_does_not_force_the_catalog_or_repeat_cached_setup(cloud_world, monkeypatch):
+    world, calls = cloud_world, []
+    skip = catalog(world)
+    for flow in world.contract["flows"]:
+        flow["paths"] = world.contract["flows"][0]["paths"]
+    (world.repo / verification.MANIFEST).write_text(json.dumps(world.contract), encoding="utf-8")
+    commit(world.repo, "shared-paths.txt")
+    git(world.repo, "push", "origin", "main")
+    world.settings["manifest_digest"] = verification.manifest(world.repo)[1]
+    (world.repo / verification.LOCAL).write_text(json.dumps(world.settings), encoding="utf-8")
+    cloud_spec(world, review={"evidence": ["api"]})
+    monkeypatch.setattr(decisions, "transport", lambda cfg: routing(calls, skip=skip))
+    done = looped("cloud")
+    assert done["state"] == "머지 가능"
+    assert all(f["changed_paths"] for f in calls[0][1]["flows"])
+    assert [r["id"] for r in done["local_verification"]["flows"]] == ["health"]
+    assert set(done["review_inspection"]["selection"]["request"]["questions"]) == {"coverage:api", "health", *skip}
+    monkeypatch.setattr(specs, "gate", lambda *a, **k: pytest.fail("Cached selected proof must not rerun setup or commands"))
+    contract = review_inspection.current(world.repo, Path(done["worktree"]), done, done["pr"]["head"],
+                                          done["local_verification"]["base_oid"])
+    refreshed = verification.execute(world.repo, done, Path(done["worktree"]), done["pr"]["head"],
+        contract["base_oid"], threading.Event(), flow_ids=["health"], enforced_digest=contract["digest"])
+    assert refreshed["local_verification"]["state"] == "runtime_passed"
 
 
 def test_uncertain_evidence_judgment_keeps_receipts_and_blocks_review(cloud_world, monkeypatch):

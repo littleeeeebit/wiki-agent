@@ -9,12 +9,18 @@ from pathlib import Path
 import decision
 from common.budget import Budget, Cancelled, Exhausted
 
-from . import decisions, review_contract, specs, verification
+from . import decisions, review_contract, runtime, specs, verification
 
-POLICY = decision.Policy("review-inspection-2", {"action": {"confidence": 0.6, "margin": 0.2}})
+POLICY = decision.Policy("review-inspection-3", {"action": {"confidence": 0.6, "margin": 0.2}})
 LIMITS = {"seconds": 15, "calls": 1, "candidates": 0}
-PROMPT = {"selection": "Select checks to execute, without judging whether they pass. A required flow or "
-          "a flow with changed_paths must run. Skip only a flow unrelated to the change and acceptance.",
+PROMPT = {"selection": "Select the smallest set of checks that proves the current task's acceptance. "
+          "A required flow must run. Path overlap is candidate context, NOT proof of behavioral relevance: "
+          "shared settings, service, runner and support files must not select the whole catalog. "
+          "Include only flows whose concrete assertions test behavior this task changes or explicitly preserves. "
+          "Cover required.evidence using the fewest appropriate flows: a browser receipt also covers API. "
+          "Existing passed receipts can be reused; run means include in required proof, not repeat execution. "
+          "A previous failure remains recorded but does not require rerunning an unrelated check. "
+          "Do not substitute a broad whole-repository suite for a missing task-specific check.",
           "judgment": "Judge this flow's measured receipt against all its assertions. Covered means every "
           "assertion is observed; insufficient means acceptance is not proved. Never invent observations."}
 
@@ -40,19 +46,25 @@ def choices(record: dict, binding: str, ids: list[str], options: set[str]) -> di
     """Replay the typed result; summaries and model confidence alone grant nothing."""
     try:
         req, res = record["request"], record["result"]
+        coverage = ["coverage:" + kind for kind in req["state_en"].get("required", {}).get("evidence", [])
+                    if kind in {"api", "browser", "desktop"}] if options == {"run", "skip"} else []
         if (record["input_identity"] != binding or req["state_en"]["input_identity"] != binding
                 or req["policy_version"] != POLICY.version or res["status"] != "decided"
                 or verification.sha({"request": req, "result": res}) != record["frozen_digest"]
-                or set(req["questions"]) != set(ids)):
+                or set(req["questions"]) != set(ids) | set(coverage)):
             return None
         decision.checked(req, res)
         out = {}
-        for cid in ids:
+        for cid in [*ids, *coverage]:
+            offered = options if cid in ids else set(req["questions"][cid]["question"]["criteria"]) - {decision.DEFER}
             if res["verdicts"][cid] != "yes" or decision.verdict(POLICY, "action", res["answers"][cid]) != "yes" \
-                    or res["answers"][cid]["choice"] not in options:
+                    or res["answers"][cid]["choice"] not in offered:
                 return None
             out[cid] = res["answers"][cid]["choice"]
-        return out
+        picked = {out[cid] for cid in coverage}
+        if picked - set(ids):
+            return None
+        return {cid: "run" if cid in picked else out[cid] for cid in ids}
     except (KeyError, TypeError, ValueError):
         return None
 
@@ -63,8 +75,6 @@ def selected(spec: dict, binding: str, flows: list[dict]) -> list[str] | None:
     if rows is None:
         return None
     required = set(review_contract.declared(spec.get("review"))["flows"])
-    record = spec.get("local_verification") or {}
-    required.update(r["id"] for r in record.get("flows", []) if not r.get("ok"))
     chosen = [cid for cid, action in rows.items() if action == "run"]
     return chosen if chosen and required <= set(chosen) else None
 
@@ -88,17 +98,28 @@ def ask(repo: Path, state: dict, ids: list[str], stage: str, halt, budget: Budge
             raise ValueError("normalization_failed")
         if len(json.dumps(state_en, ensure_ascii=False)) > 32000:
             raise ValueError("normalized_context_too_large")
-        options = {"run": "required is true, changed_paths is nonempty, or acceptance explicitly requests this flow.",
-                   "skip": "required is false, changed_paths is empty, and acceptance does not request this flow."} if stage == "selection" else {
+        options = {"run": "Include this flow in the minimum proof of acceptance and required evidence kinds; reuse valid receipts.",
+                   "skip": "Outside this task, unnecessarily broad, or another selected flow covers the same evidence kind."} if stage == "selection" else {
             "covered": "Observed evidence proves every assertion.", "insufficient": "Evidence does not prove acceptance."}
         questions = {}
         for cid in ids:
             flow = next(f for f in state_en["flows"] if f["id"] == cid)
-            scope = json.dumps({k: flow[k] for k in ("required", "changed_paths")}) if stage == "selection" else ""
+            scope = json.dumps({k: flow[k] for k in ("required", "title", "assertions", "previous_outcome")}) if stage == "selection" else ""
             questions[cid] = {"decision": "action", "candidate": None, "question": decision.choice(
                 f"{PROMPT[stage]} Decide only for flow {cid} in state.flows. Its scope facts: {scope}.",
                 {**options, decision.DEFER: "Insufficient grounds to decide."})}
-        req = decision.request("action", state_en, questions, allowed=list(options), model=cfg.model,
+        if stage == "selection":
+            for kind in state_en["required"]["evidence"]:
+                if kind not in {"api", "browser", "desktop"}:
+                    continue
+                offered = {f["id"]: f["title"] for f in state_en["flows"] if f["kind"] == kind
+                           or kind == "api" and f["kind"] == "browser"}
+                questions["coverage:" + kind] = {"decision": "action", "candidate": None, "question": decision.choice(
+                    f"The spec requires {kind} evidence. Choose ONE registered flow closest to the current acceptance, "
+                    "preferring existing passing receipts. This covers the declared evidence kind without running "
+                    "every flow of that kind. Defer if no offered flow can supply it.",
+                    {**offered, decision.DEFER: "No appropriate registered evidence."})}
+        req = decision.request("action", state_en, questions, allowed=[*options, *ids], model=cfg.model,
                                prompt_version=POLICY.version + ":" + stage, policy_version=POLICY.version,
                                normalization_version=normalization, budget=budget)
         if len(json.dumps(req, ensure_ascii=False).encode("utf-8")) > 90000:
@@ -124,7 +145,8 @@ def prepare(repo: Path, path: Path, spec: dict, contract: dict, halt) -> tuple[d
     cfg = decision.config(repo)
     if contract.get("inspection_selected") and saved.get("model") == cfg.model and cfg.mode == "active" and cfg.key and not cfg.problem:
         return spec, contract
-    budget = Budget(**LIMITS, cancel=halt)
+    total = runtime.verification_budget.get()
+    budget = Budget(**{**LIMITS, "seconds": min(LIMITS["seconds"], total.left()) if total else LIMITS["seconds"]}, cancel=halt)
     diff = specs.sh(["git", "diff", "--no-ext-diff", "--no-textconv", "--unified=3",
                      contract["base_oid"], contract["head"], "--"], path, timeout=min(2, budget.left()))
     if diff.returncode:
@@ -136,10 +158,12 @@ def prepare(repo: Path, path: Path, spec: dict, contract: dict, halt) -> tuple[d
         {"id": "diff", "locator": "Actual reviewed diff; bounded excerpts from every changed file",
          **diff_context(diff.stdout)}]
     required = review_contract.declared(spec.get("review"))
-    required["flows"] = sorted(set(required["flows"]) | {r["id"] for r in (
-        spec.get("local_verification") or {}).get("flows", []) if not r.get("ok")})
+    saved = spec.get("local_verification") or {}
+    previous = {r["id"]: r for r in [*saved.get("excluded_flows", []), *saved.get("flows", [])]}
     for flow in flows:
         flow["required"] = flow["id"] in required["flows"]
+        before = previous.get(flow["id"], {})
+        flow["previous_outcome"] = "passed" if before.get("ok") else "failed_or_incomplete" if before else "not_run"
         patterns = flow.pop("paths")
         flow["changed_paths"] = [p for p in contract["inspection_paths"] or []
                                  if any(fnmatchcase(p, pattern) for pattern in patterns)]
@@ -161,7 +185,7 @@ def prepare(repo: Path, path: Path, spec: dict, contract: dict, halt) -> tuple[d
     current = review_contract.select(repo, path, spec, review_contract.effective(spec, paths), paths,
                                      contract["head"], contract["base_oid"])
     if not current.get("inspection_selected"):
-        raise ValueError("Jev 검증 선택 대기 — " + (observation.get("reason") or "필수·실패 흐름이 빠졌다"))
+        raise ValueError("Jev 검증 선택 대기 — " + (observation.get("reason") or "명시된 필수 흐름 또는 근거 선택이 빠졌다"))
     return spec, current
 
 
@@ -190,7 +214,9 @@ def assess(repo: Path, path: Path, spec: dict, contract: dict, halt) -> dict:
         "grounds": [{"id": f["id"], "locator": "Measured receipt for " + f["id"],
                      "text": "See this flow's measured requests, actions and observations in state.flows."}
                     for f in contract["flows"]]}
-    observation = ask(repo, state, ids, "judgment", halt, Budget(**LIMITS, cancel=halt))
+    total = runtime.verification_budget.get()
+    observation = ask(repo, state, ids, "judgment", halt, Budget(
+        **{**LIMITS, "seconds": min(LIMITS["seconds"], total.left()) if total else LIMITS["seconds"]}, cancel=halt))
     with specs._files:
         fresh = specs.load(spec["repo"], spec["id"])
         if fresh is None or review_contract.signature(fresh) != contract["spec_signature"] \
@@ -204,6 +230,18 @@ def assess(repo: Path, path: Path, spec: dict, contract: dict, halt) -> dict:
 
 
 def collect(repo: Path, path: Path, spec: dict, head: str, base: str, halt) -> dict:
+    with runtime.verification_scope(halt) as budget:
+        try:
+            spec = _collect(repo, path, spec, head, base, halt)
+            budget.check()
+            return spec
+        except Exhausted as exc:
+            reason = "로컬 검증 전체 시간 제한을 넘었다 — 완료된 증거를 보존했다"
+            verification.pending(repo, spec, head, reason)
+            raise ValueError(reason) from exc
+
+
+def _collect(repo: Path, path: Path, spec: dict, head: str, base: str, halt) -> dict:
     contract = current(repo, path, spec, head, base)
     spec, contract = prepare(repo, path, spec, contract, halt)
     if contract["problems"]:

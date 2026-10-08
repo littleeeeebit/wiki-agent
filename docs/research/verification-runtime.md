@@ -289,3 +289,54 @@ thresholds, and identical runtime and test files. Ruff, wiki lint and the debt
 ratchet passed there. Restarting the app and continuing the stopped review
 prepares a new selection because the policy version invalidates the old one.
 No full suite or complete project verification was rerun for this prompt repair.
+
+## Task-scoped selection and the complete local deadline
+
+The second deployment still selected all 15 flows because its prompt treated
+shared path matches as execution obligations. It also forced historical failures
+back into the current selection. Neither rule establishes relevance to the
+current embedding/settings task. The latest user instruction requires Jev to
+choose necessary checks and the complete local verification to take under
+20 minutes; this supersedes those selection rules.
+
+`review-inspection-3` supplies concrete assertions and previous outcomes in each
+flow's question. Explicitly required flow ids remain mandatory. Shared paths and
+prior failures supply context; they do not force unrelated flows to run. Closed
+coverage questions choose one appropriate registered flow per declared runtime
+evidence type in the same batch. Browser proof also covers API. Excluded failures
+remain in history; only a current, replay-validated selection can exclude those
+registered failures from the current merge check. Unknown and selected failures
+still hold readiness.
+
+The service now shares a 19-minute deadline across metadata preparation, Jev
+selection, setup, execution, judgment and cleanup. A selected command gets at most
+180 seconds. Cleanup reserves up to 30 seconds inside the complete deadline.
+Timeout remains incomplete evidence. Reusable receipts skip setup and cleanup.
+The subprocess runner captures output in a native temporary file: an inherited
+stdout handle in a background setup child no longer delays the parent until EOF.
+Windows job ownership still controls those children.
+
+A live audit of the actual 15-flow task selected only `consultant-answer` in one
+361 ms Jev call. A subsequent isolated production preparation reproduced a
+decided selection. Its passing receipt matched commit, environment and evidence
+identity. A clean temporary clone reused that receipt with command dispatch
+forbidden. Receipt judgment stopped pending at English normalization:
+`protected_changed` affected the English sign-in observation containing a Korean
+UI label. This is a separate unresolved evidence-preparation blocker, not a
+passing live review. The original checkout also contained an untracked
+`.runtime.zip`, which correctly prevented certifying its cleanliness.
+
+The initial focused routing/runtime run passed 22 cases in 318.40 seconds.
+Regression checks cover a shared-path catalog selecting one flow, preserving
+excluded failure history, cached setup avoidance, inherited deadlines, owned
+background stdout and a 30-second flow stopped at its short test deadline.
+No active task record, project verification command or reviewer was dispatched
+by the audits. The historical full-suite failures above remain diagnostic evidence.
+The broader focused regression run passed 93 cases with one skip in 880.42
+seconds. Five Cloud routing follow-ups passed in 204.23 seconds; five launcher
+checkout smoke cases passed in 35.58 seconds. Fresh imports in the actual
+launcher checkout verified policy v3, 1,140 total seconds, 180 seconds per command,
+and matching tested source files. Ruff, wiki lint, diff checks, UTF-8 without BOM
+and the launcher's debt ratchet passed. This verifies deployment for the next
+restart; it does not resolve the live translation blocker or certify all product
+flows.

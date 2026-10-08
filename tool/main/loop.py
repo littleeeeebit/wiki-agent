@@ -1,12 +1,5 @@
-"""loop — a pull request's review rounds, from the first to `[머지]`.
-
-Ordinary reviewers are read-only; Cloud reviewers can create verification
-artifacts. Review cells remain independent of implementation cells. Refusals
-return through the implementation owner's checks before another review.
-After the final gate, only the person's merge request merges the reviewed head.
-Each loop owns its repository, independently of the selected screen project.
-Screen messages are Korean; instructions to cells are English.
-"""
+"""Independent review follows implementation checks; the person requests merge
+only after the reviewed head passes its final gate."""
 
 from __future__ import annotations
 
@@ -29,6 +22,7 @@ from pydantic import BaseModel
 import translate
 from agent import ChatSession
 from common import errorlog, worktree_home
+from common.budget import Budget, Cancelled, Exhausted
 from workspace import adopt, base_branch, folder_for, merged, remove, worktrees
 
 from . import channels, connect, decisions, query, review_contract, runtime, specs, verification, work
@@ -53,8 +47,7 @@ LOOPING = re.compile(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+")
 
 
 class Why(str, enum.Enum):
-    """Every reason a loop stops. The table of the stage 4 plan, and nothing
-    else: a stop for a reason not here is a `ValueError`."""
+    """Only the stage 4 stop reasons are admitted; unknown reasons raise ValueError."""
 
     CAP = "라운드 상한"
     GATE = "게이트"
@@ -122,14 +115,8 @@ def bare(line: str) -> str:
 
 
 def parse(text: str, n: int, pr: int, head: str, known: set[str] = frozenset()) -> dict:
-    """`{verdict, findings, counts, identity}`, or `ValueError` saying what is off.
-
-    The first line names the round, the pull request and the head it read; the
-    last is the verdict. A finding is a line opening `[P0|P1|P2] path:line`,
-    and the lines under it are its body. A `finding-meta` block gives each
-    finding its `meta`, checked against `known`, the ids this spec has; an
-    A finding without metadata or with a limited entry has no identity;
-    validated sibling identities remain usable."""
+    """Parse round/head, findings and verdict; validate metadata against known ids.
+    Missing or limited metadata leaves that finding without identity."""
 
     metas = re.findall(FENCE.format(META), text, re.M | re.S)
     text = re.sub(FENCE.format(META) + r"[ \t]*\r?\n?", "", text, flags=re.M | re.S)
@@ -179,10 +166,7 @@ def parse(text: str, n: int, pr: int, head: str, known: set[str] = frozenset()) 
 
 
 def described(meta, count: int, known: set[str]) -> list[dict]:
-    """The `finding-meta` entries in finding order, or `ValueError`: one per
-    finding by ordinal. Full entries name a component/invariant and an
-    `existing_id` only ever given by the server; limited entries carry only
-    the ordinal and their flag."""
+    """Validate one full or limited metadata entry per finding ordinal; ids are server-owned."""
 
     if not isinstance(meta, list) or not all(isinstance(m, dict) for m in meta):
         raise ValueError("`finding-meta` 는 객체의 목록이어야 한다")
@@ -289,11 +273,8 @@ def _norm(text: str) -> str:
 
 
 def identified(spec: dict, findings: list[dict]) -> list[dict]:
-    """The round's findings as it keeps them, each with its id: the validated
-    `existing_id` first, then an exact component and invariant, else a new
-    id — with `possible` naming a known finding of the same component, to be
-    settled by the reviewer next round. Equal counts never make two one. A
-    finding without meta has no id."""
+    """Match validated ids, then component/invariant; retain possible matches.
+    Equal counts never merge identities; findings without metadata have no id."""
 
     known = issues(spec)
     out = []
@@ -1194,7 +1175,10 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
     release = wait_hold(loop, path)
     if release is None:
         return False
+    budget = Budget(seconds=runtime.LOCAL_SECONDS, calls=None, candidates=0, cancel=loop.halt)
+    token = runtime.verification_budget.set(budget)
     try:
+        spec = verification.keep(spec, started_at=time.time(), deadline_at=time.time() + budget.left())
         sync_review(spec, path, head)
         spec = verification.deliver(repo, spec, head)
         if (spec.get("local_verification") or {}).get("delivery"):
@@ -1235,9 +1219,10 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
         if pr_head(repo, spec["pr"]["number"]) != (head, base):
             raise ValueError("로컬 검증 중 PR 커밋·base 가 바뀌었다")
         return True
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+    except (OSError, ValueError, RuntimeError, Cancelled, Exhausted, subprocess.SubprocessError) as exc:
         return cloud_stop(loop, repo, spec, head, str(exc))
     finally:
+        runtime.verification_budget.reset(token)
         release()
 
 
@@ -1274,36 +1259,43 @@ def step(loop: Loop) -> bool:
     if not ship(loop, spec, repo, path, head, base):
         return False
     spec = specs.load(loop.repo, loop.sid)
-    head, base = pr_head(repo, pr)
-    if (spec.get("gate") or {}).get("head") != head:
-        # A remote push after synchronization needs its own checks before review.
-        return True
-    preview = merge_preview(path, head, base)
-    if not preview["ok"]:
-        return resolve_merge(loop, spec, repo, path, preview, base)
-    if verification.cloud(spec):
-        problem = verification.proven(repo, path, spec, head, specs.current_merge_base(path, base, head))
-        if problem:
-            return cloud_stop(loop, repo, spec, head, problem)
-    base_oid = specs.current_merge_base(path, base, head)
-    paths = changed(path, base_oid, head)
-    profile = effective(spec, paths)
-    contract = review_contract.select(repo, path, spec, profile, paths, head, base_oid)
-    from . import review_inspection
-    try:
-        spec, contract = review_inspection.prepare(repo, path, spec, contract, loop.halt)
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
-        return stop(loop, loop.repo, loop.sid, Why.PREPARATION, str(exc))
-    observation = {"status": "not_asked", "reason": "active_inspection"} if contract["flows"] else review_contract.observe_shadow(repo, path, spec, paths, contract, loop.halt)
-    if loop.halt.is_set():
-        return False
-    if observation["status"] == "stale":
-        return True
-    contract = review_contract.store(repo, path, spec, review_contract.compose(contract, observation))
-    if contract is None:
-        return True
+    seconds = min(runtime.LOCAL_SECONDS, max(0, spec["local_verification"]["deadline_at"] - time.time())) if verification.cloud(spec) else runtime.LOCAL_SECONDS
+    inspection_budget = Budget(seconds=seconds, calls=None, candidates=0, cancel=loop.halt)
+    with runtime.verification_scope(loop.halt, budget=inspection_budget):
+        from . import review_inspection
+        try:
+            head, base = pr_head(repo, pr)
+            if (spec.get("gate") or {}).get("head") != head:
+                return True
+            preview = merge_preview(path, head, base)
+            if not preview["ok"]:
+                return resolve_merge(loop, spec, repo, path, preview, base)
+            if verification.cloud(spec):
+                problem = verification.proven(repo, path, spec, head, specs.current_merge_base(path, base, head))
+                if problem:
+                    return cloud_stop(loop, repo, spec, head, problem)
+            base_oid = specs.current_merge_base(path, base, head)
+            paths = changed(path, base_oid, head)
+            profile = effective(spec, paths)
+            contract = review_contract.select(repo, path, spec, profile, paths, head, base_oid)
+            spec, contract = review_inspection.prepare(repo, path, spec, contract, loop.halt)
+        except (OSError, ValueError, RuntimeError, Cancelled, Exhausted, subprocess.SubprocessError) as exc:
+            return stop(loop, loop.repo, loop.sid, Why.PREPARATION, str(exc))
+        observation = {"status": "not_asked", "reason": "active_inspection"} if contract["flows"] else review_contract.observe_shadow(repo, path, spec, paths, contract, loop.halt)
+        if loop.halt.is_set():
+            return False
+        if observation["status"] == "stale":
+            return True
+        contract = review_contract.store(repo, path, spec, review_contract.compose(contract, observation))
+        if contract is None:
+            return True
     if not verification.cloud(spec) and contract["flows"] and not contract["problems"]:
-        if review_contract.ready(repo, path, spec, contract):
+        try:
+            with runtime.verification_scope(loop.halt, budget=inspection_budget):
+                problem = verification.proven(repo, path, spec, head, base_oid, flow_ids=contract["enforced"]["flows"])
+        except (Cancelled, Exhausted) as exc:
+            return stop(loop, loop.repo, loop.sid, Why.PREPARATION, str(exc))
+        if problem:
             release = wait_hold(loop, path)
             if release is None:
                 return False
@@ -1311,28 +1303,34 @@ def step(loop: Loop) -> bool:
                 saved = spec.get("local_verification") or {}
                 if saved.get("needs_research") and not saved.get("research_note"):
                     raise ValueError("재분석 원인·근거·다음 실험을 적고 로컬 검증을 재개한다")
-                if saved.get("state") == "failed" and saved.get("head") == head \
+                if saved.get("state") == "failed" and any(not r.get("ok") and r["id"] in contract["enforced"]["flows"]
+                                                         for r in saved.get("flows", [])) and saved.get("head") == head \
                         and saved.get("spec_signature") == review_contract.signature(spec) \
                         and saved.get("execution_environment_digest") == verification.failure_environment(repo, path, spec) \
                         and not saved.get("research_note"):
                     verification.keep(spec, needs_research=True)
                     raise ValueError("같은 커밋·환경에서 이미 실패했다 — 수정 또는 원인 확인 후 재개한다")
                 spec = verification.pending(repo, spec, head, "등록된 실행 증거를 수집한다", "running")
-                spec = verification.execute(repo, spec, path, head, base_oid, loop.halt,
-                                            flow_ids=contract["enforced"]["flows"],
-                                            enforced_digest=contract["enforced_digest"])
-            except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+                with runtime.verification_scope(loop.halt, budget=inspection_budget):
+                    spec = verification.execute(repo, spec, path, head, base_oid, loop.halt,
+                                                flow_ids=contract["enforced"]["flows"],
+                                                enforced_digest=contract["enforced_digest"])
+            except (OSError, ValueError, RuntimeError, Cancelled, Exhausted, subprocess.SubprocessError) as exc:
                 verification.pending(repo, spec, head, str(exc))
                 return stop(loop, loop.repo, loop.sid, Why.PREPARATION, str(exc))
             finally:
                 release()
             if loop.halt.is_set():
                 return False
-            if pr_head(repo, spec["pr"]["number"]) != (head, base) \
-                    or review_contract.signature(specs.load(loop.repo, loop.sid) or {}) != contract["spec_signature"]:
-                return True
-            if problem := verification.checkout_proven(path, head):
-                return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem)
+            try:
+                with runtime.verification_scope(loop.halt, budget=inspection_budget):
+                    if pr_head(repo, spec["pr"]["number"]) != (head, base) \
+                            or review_contract.signature(specs.load(loop.repo, loop.sid) or {}) != contract["spec_signature"]:
+                        return True
+                    if problem := verification.checkout_proven(path, head):
+                        return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem)
+            except (Cancelled, Exhausted) as exc:
+                return stop(loop, loop.repo, loop.sid, Why.PREPARATION, str(exc))
             result = spec["local_verification"]
             if result["state"] == "failed":
                 reason = result["reason"] + "\n" + "\n".join(
@@ -1355,10 +1353,12 @@ def step(loop: Loop) -> bool:
             if result["state"] != "runtime_passed":
                 return stop(loop, loop.repo, loop.sid, Why.PREPARATION, result["reason"])
     try:
-        spec = review_inspection.assess(repo, path, spec, contract, loop.halt)
-    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        with runtime.verification_scope(loop.halt, budget=inspection_budget):
+            spec = review_inspection.assess(repo, path, spec, contract, loop.halt)
+            problem = review_contract.ready(repo, path, spec, contract)
+            inspection_budget.check()
+    except (OSError, ValueError, RuntimeError, Cancelled, Exhausted, subprocess.SubprocessError) as exc:
         return stop(loop, loop.repo, loop.sid, Why.PREPARATION, str(exc))
-    problem = review_contract.ready(repo, path, spec, contract)
     if problem:
         return stop(loop, loop.repo, loop.sid, Why.PREPARATION, problem)
     last = rounds[-1] if rounds else None
@@ -2399,8 +2399,7 @@ def prs() -> dict:
 
 
 def minimal(repo: Path, view: dict, path: Path, gate: str) -> dict:
-    """A spec for a pull request that came without one: its title is the
-    goal, its `변경 이유` the decisions, the gate the only done item."""
+    """Adopt a PR's title as goal, its change reasons as decisions, and its gate as done."""
 
     reasons = re.search(r"^## 변경 이유[ \t]*$(.*?)(?=^## |\Z)", view.get("body") or "", re.M | re.S)
     decided = [{"what": " ".join(line[2:].split()), "why": "", "rejected": ""}

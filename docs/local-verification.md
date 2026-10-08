@@ -64,8 +64,9 @@ not covered by any flow, an unreadable diff or a shared dependency file
 invalidates reuse of every flow. Jev receives the complete applicable catalog,
 current acceptance, changed paths and bounded excerpts from every changed file
 before execution. Only supported run/skip choices become the enforced selection.
-Explicitly required flows and outstanding failed or unfinished flows cannot be
-skipped, including across a repair head.
+Explicitly required flows cannot be skipped. Shared path matches and previous
+failures are context for Jev, rather than an instruction to execute the whole
+catalog. An unrelated excluded failure remains in the verification history.
 Later commits still need a fresh selection and current proof; unaffected receipts
 carry their exact reuse reasons. Renames include the removed and added paths.
 
@@ -77,8 +78,11 @@ catalog or a host-model decision. Source-code literals are masked rather than
 translated into different selectors. Every candidate has one closed decision,
 saved with its offered grounds, exact request, result, model, policy and budget
 under `review_inspection` through the specification owner.
-Selection questions include the flow's required flag and exact matching changed
-paths. They ask whether to execute the check, separately from judging its outcome.
+Selection questions include each flow's assertions, required flag and previous
+outcome. Path matches supply context; concrete task behavior determines relevance.
+One additional closed choice per required API/browser/native evidence type picks
+the closest registered flow; a browser receipt also supplies API evidence. These
+choices share the same batch and cannot waive an explicitly required flow.
 Supporting grounds can coexist; choosing one ground is not a second approval gate.
 
 After actual execution, code validates receipt identities and assertions before
@@ -146,13 +150,14 @@ Windows setup processes stay in owned kill-on-close jobs until cleanup finishes.
 Cancellation kills owned process trees. Restart never reuses unfinished proof or
 kills a process by a stale recorded PID.
 
-Setup and flow commands share one 20-minute execution allowance per collection
-attempt; each flow receives only the remaining time. Cleanup retains its separate
-30-second allowance. Exhaustion preserves observations and leaves verification
+Preparation, selection, setup, collection, judgment and cleanup share a 19-minute
+deadline per local-verification attempt. A selected command receives at most
+three minutes, bounded by the remaining deadline. Cleanup reserves up to 30
+seconds inside that deadline. Exhaustion preserves observations and leaves verification
 pending; it never supplies a pass. Collection stops at the first confirmed failed
 flow and still cleans up. Later flows remain unverified until a subsequent attempt.
 Flow records include start time and elapsed execution seconds for diagnosis.
-An unchanged Cloud review reuses current evidence without rerunning setup, while
+A collection consisting entirely of reusable receipts skips setup and cleanup, while
 a changed head, specification, manifest or environment still invalidates reuse.
 
 Project runners should put common expensive preparation in the approved `setup`

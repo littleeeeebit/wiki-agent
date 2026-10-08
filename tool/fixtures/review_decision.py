@@ -22,7 +22,8 @@ def evaluate(state, questions, trace, budget, stage):
     answers = {}
     for name, question in questions.items():
         offered = question["criteria"]
-        choice = "run" if "run" in offered else "covered"
+        choice = next(k for k in offered if k != decision.DEFER) if name.startswith("coverage:") else \
+            "run" if "run" in offered else "covered"
         answers[name] = {"choice": choice, "confidence": 1.0,
                          "probabilities": {key: float(key == choice) for key in offered}}
     return answers
