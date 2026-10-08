@@ -27,6 +27,14 @@ def companion(tmp_path):
         state.stop()
 
 
+def test_served_apk_survives_the_after_merge_scratch_cleanup():
+    import tomllib
+    adapter = tomllib.loads((app.ROOT / ".wiki/adapter.toml").read_text(encoding="utf-8"))
+    rel = mobile.APK.relative_to(app.ROOT).as_posix()
+    for scratch in adapter["slots"]["scratch_dirs"].split(","):
+        assert not rel.startswith(scratch.strip().rstrip("/") + "/"), "after-merge would delete the served APK"
+
+
 def browsers():
     desktop = TestClient(app.app, base_url="http://127.0.0.1:8787", headers={"X-Project": "fixture"})
     phone = TestClient(app.app, base_url="https://fixture.trycloudflare.com", headers={

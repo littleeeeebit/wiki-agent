@@ -33,7 +33,8 @@ HOST = "mobile.wiki-agent.invalid"
 COOKIE = "__Host-wiki-mobile"
 LOCAL = {"127.0.0.1", "localhost"}
 LIFETIME = 30 * 24 * 60 * 60
-APK = channels.WIKI / "artifacts" / "wiki-agent.apk"
+# Not under artifacts/: after-merge clears that scratch directory (scratch_dirs).
+APK = channels.WIKI / "raw" / "android" / "wiki-agent.apk"
 router = APIRouter(prefix="/api/mobile")
 
 
