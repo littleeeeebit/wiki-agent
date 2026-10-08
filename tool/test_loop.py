@@ -919,7 +919,7 @@ def test_a_stale_round_neither_raises_nor_repeats_a_finding(world):
     Worker.replies = [fixed((finding, "fixed")), fixed((finding, "fixed"))]
     # Several reviews and two real Git repair/push cycles take almost 30s
     # on this Windows host; leave startup margin without weakening assertions.
-    spec = looped("fix-s", seconds=60)
+    spec = looped("fix-s")
     assert spec["state"] == "머지 가능"
     assert [r.get("stale", False) for r in spec["rounds"]] == [True, False, False, False]
     assert "items" not in spec["rounds"][0]

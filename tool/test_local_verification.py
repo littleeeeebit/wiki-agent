@@ -856,14 +856,14 @@ def test_final_failure_survives_missing_environment_until_same_head_investigatio
         return verdict
 
     monkeypatch.setattr(specs, "judge", fail_final)
-    first = looped("cloud", seconds=60)
+    first = looped("cloud")
     record = first["local_verification"]
     assert record["state"] == "waiting_environment" and not record.get("failures")
     assert record["failure_attempts"][0]["environment_digest"] is None
     assert "Retain this observation" in record["failure_attempts"][0]["reason"]
     assert "private-api-key" not in json.dumps(record)
     removed.write_bytes(original)
-    retried = looped("cloud", seconds=60)
+    retried = looped("cloud")
     assert retried["local_verification"]["state"] == "unstable"
     assert retried["local_verification"]["needs_research"]
     assert world.github.statuses[-1][1] == "pending"
@@ -906,7 +906,7 @@ def test_a_cloud_push_during_execution_cannot_create_a_review_or_failure_cycle(c
         return verdict
 
     monkeypatch.setattr(specs, "judge", moved)
-    record = looped("cloud", seconds=60)["local_verification"]
+    record = looped("cloud")["local_verification"]
     assert record["state"] == "waiting_environment" and "바뀌었다" in record["reason"]
     assert not record.get("failures") and not Reviewer.made and world.github.statuses[-1][1] == "pending"
 
@@ -930,7 +930,7 @@ def test_flow_observation_survives_missing_post_command_environment(cloud_world,
         return verdict
 
     monkeypatch.setattr(specs, "judge", disappear)
-    interrupted = looped("cloud", seconds=60)["local_verification"]
+    interrupted = looped("cloud")["local_verification"]
     row = interrupted["flows"][0]
     assert interrupted["state"] == "waiting_environment" and not interrupted.get("failures")
     assert row["finished_at"] is not None and row["observed_ok"] is passed
@@ -938,7 +938,7 @@ def test_flow_observation_survives_missing_post_command_environment(cloud_world,
     assert "private-api-key" not in json.dumps(interrupted)
     world.env.write_bytes(original)
     world.failed.unlink(missing_ok=True)
-    resumed = looped("cloud", seconds=60)["local_verification"]
+    resumed = looped("cloud")["local_verification"]
     assert resumed["state"] == ("verified" if passed else "unstable")
     assert bool(resumed.get("needs_research")) is not passed
 
@@ -995,7 +995,7 @@ def test_common_env_values_do_not_change_public_protocol_metadata(cloud_world):
     world.env.write_text(world.env.read_text(encoding="utf-8") +
                          "FLAG=1\nZERO=0\nDEBUG=true\nCODE=200\nHTTP_METHOD=GET\n", encoding="utf-8")
     cloud_spec(world)
-    spec = looped("cloud", seconds=60)
+    spec = looped("cloud")
     head = spec["pr"]["head"]
     assert spec["state"] == "머지 가능" and spec["cloud_handoff"]["head"] == head
     evidence = spec["local_verification"]["flows"][0]["evidence"]
@@ -1047,7 +1047,7 @@ def test_failure_text_stays_private_after_both_env_files_disappear(cloud_world, 
         Reviewer.replies = [fail_review]
     else:
         monkeypatch.setattr(specs, "judge", fail_gate)
-    first = looped("cloud", seconds=60)
+    first = looped("cloud")
     assert first["local_verification"]["state"] == "waiting_environment"
     assert "private-api-key" not in json.dumps(first)
     assert "Retain this observation" in json.dumps(first["local_verification"]["failure_attempts"])
@@ -1059,7 +1059,7 @@ def test_failure_text_stays_private_after_both_env_files_disappear(cloud_world, 
         assert "private-api-key" not in report
         assert loop.parse(report, 1, first["pr"]["number"], first["pr"]["head"])["findings"][0]["meta"]["component"] == "api route"
     world.env.write_bytes(original)
-    retried = looped("cloud", seconds=60)
+    retried = looped("cloud")
     assert retried["local_verification"]["state"] == "unstable"
     assert "private-api-key" not in json.dumps(retried) and "private-api-key" not in str(world.hub.comments)
 
@@ -1073,7 +1073,7 @@ def test_private_reviewer_identity_is_rejected_without_losing_the_failure(cloud_
         meta = [{"ordinal": 1, "component": "api route", "invariant": "route stays healthy"}]
         Reviewer.replies = [deny("[P1] change.py:1 — Retain the actual failure\n"
                                  "```finding-meta\n" + json.dumps(meta) + "\n```")]
-        spec = looped("cloud", seconds=60)
+        spec = looped("cloud")
         assert spec["rounds"][0]["items"][0]["id"] == "F1"
         repair_cloud(world, spec)
     path = Path(spec["worktree"])
@@ -1094,7 +1094,7 @@ def test_private_reviewer_identity_is_rejected_without_losing_the_failure(cloud_
                     "```finding-meta\n" + json.dumps([meta]) + "\n```")(first + " — private-api-key", text)
 
     Reviewer.replies = [respond]
-    first = looped("cloud", seconds=60)
+    first = looped("cloud")
     number = 2 if field == "existing_id" else 1
     report = (loop.folder("proj", first["pr"]["number"]) / f"round-{number}-result.md").read_text(encoding="utf-8")
     assert "private-api-key" not in json.dumps(first) and "private-api-key" not in report
@@ -1108,7 +1108,7 @@ def test_private_reviewer_identity_is_rejected_without_losing_the_failure(cloud_
     world.env.write_bytes(original)
     prompt = loop.instruction(first, path, number + 1, row["head"], "main", True)
     assert "private-api-key" not in prompt
-    resumed = looped("cloud", seconds=60)
+    resumed = looped("cloud")
     assert resumed["local_verification"]["state"] == "unstable" and resumed["local_verification"]["needs_research"]
 
 
@@ -1118,7 +1118,7 @@ def test_mixed_identity_report_preserves_known_recurrence_through_two_repairs(cl
     clean = {"ordinal": 1, "component": "api route", "invariant": "route stays healthy"}
     Reviewer.replies = [deny("[P1] change.py:1 — Same known failure\n"
                              "```finding-meta\n" + json.dumps([clean]) + "\n```")]
-    spec = looped("cloud", seconds=60)
+    spec = looped("cloud")
     heads = [spec["rounds"][-1]["head"]]
     results = []
     for name in ("repair-one.py", "repair-two.py"):
@@ -1128,7 +1128,7 @@ def test_mixed_identity_report_preserves_known_recurrence_through_two_repairs(cl
         Reviewer.replies = [deny("[P1] change.py:1 — Same known failure\n"
                                  "[P1] extra.py:2 — Another independent failure\n"
                                  "```finding-meta\n" + json.dumps(meta) + "\n```")]
-        spec = looped("cloud", seconds=60)
+        spec = looped("cloud")
         row = spec["rounds"][-1]
         heads.append(row["head"])
         report = (loop.folder("proj", spec["pr"]["number"]) / f"round-{row['n']}-result.md").read_text(encoding="utf-8")
@@ -1162,11 +1162,11 @@ def test_passing_round_gate_source_loss_never_reaches_review_prompt(cloud_world,
         return verdict
 
     monkeypatch.setattr(specs, "judge", lose_source)
-    interrupted = looped("cloud", seconds=60)
+    interrupted = looped("cloud")
     assert interrupted["local_verification"]["state"] == "waiting_environment" and not Reviewer.made
     assert "private-api-key" not in json.dumps(interrupted)
     world.env.write_bytes(original)
-    resumed = looped("cloud", seconds=60)
+    resumed = looped("cloud")
     assert resumed["state"] == "머지 가능"
     order = loop.folder("proj", resumed["pr"]["number"]) / "round-1.md"
     assert "private-api-key" not in order.read_text(encoding="utf-8")
