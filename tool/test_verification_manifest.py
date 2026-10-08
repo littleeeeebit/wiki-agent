@@ -1,6 +1,7 @@
 """Fresh Git index validation and immutable review prompt statistics."""
 
 import json
+import os
 import subprocess
 from unittest.mock import patch
 
@@ -68,3 +69,29 @@ def test_review_git_reads_batch_checkout_proof_and_pin_prompt_statistics(tmp_pat
     for code, output in ((1, ""), (0, "# branch.head main\0")):
         with patch.object(specs, "sh", return_value=subprocess.CompletedProcess([], code, output, "")):
             assert verification.checkout_proven(tmp_path, head)
+
+
+def test_manifest_rejects_untracked_directory_alias_to_a_tracked_contract(tmp_path):
+    git(tmp_path, "init")
+    target = tmp_path / "contracts"
+    target.mkdir()
+    (target / "api.md").write_text("contract\n", encoding="utf-8")
+    manifest = {"version": 1, "contracts": ["alias/api.md"], "flows": [{"id": "health", "title": "Health",
+                "kind": "command", "command": "python check.py", "paths": ["*.py"],
+                "assertions": [{"id": "healthy", "expected": "healthy"}]}]}
+    (tmp_path / verification.MANIFEST).write_text(json.dumps(manifest), encoding="utf-8")
+    git(tmp_path, "add", ".")
+    alias = tmp_path / "alias"
+    try:
+        os.symlink(target, alias, target_is_directory=True)
+    except OSError:
+        try:
+            import _winapi
+            _winapi.CreateJunction(str(target), str(alias))
+        except (ImportError, OSError):
+            pytest.skip("Directory links unavailable")
+    try:
+        with pytest.raises(ValueError, match="alias/api.md"):
+            verification.manifest(tmp_path)
+    finally:
+        alias.unlink() if alias.is_symlink() else alias.rmdir()

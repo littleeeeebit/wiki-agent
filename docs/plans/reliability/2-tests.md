@@ -400,6 +400,16 @@ failures or establish live acceptance. Ruff, wiki lint and the unchanged
 debt gate passed. The final full gate has not been retried. Independent
 review and a successful current-head final receipt remain required.
 
+After round 9, an additional real-Git witness showed that resolving contract
+paths could accept an untracked directory alias to a tracked contract.
+Membership now uses lexical path normalization, not symlink resolution;
+`within()` still checks actual filesystem containment separately. The new
+witness failed before this one-line correction. The affected manifest/index
+selection then passed nine cases in 88.29 s, with natural exit 0 and 53
+deselected. It adds one case, so current collection is 1,761. This correctness
+correction invalidates round-9 source
+approval for the new head; the timing and safety failures above remain open.
+
 The parser follows Git's documented
 [porcelain v2 branch headers and NUL-delimited records](https://git-scm.com/docs/git-status#_porcelain_format_version_2).
 

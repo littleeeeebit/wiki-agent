@@ -158,7 +158,7 @@ def manifest(path: Path, *, budget=None) -> tuple[Manifest, str]:
     for ref in parsed.contracts:
         check()
         file = within(path, ref)
-        if not file.is_file() or file.resolve().relative_to(path.resolve()).as_posix() not in tracked:
+        if not file.is_file() or Path(os.path.normpath(ref)).as_posix() not in tracked:
             raise ValueError(f"저장소에 커밋된 API·데이터 명세가 필요하다: {ref}")
     check()
     return parsed, sha(data)
