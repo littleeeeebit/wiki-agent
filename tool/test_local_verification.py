@@ -21,7 +21,7 @@ from main import decisions, loop, specs, verification
 from main import app as main_app
 from test_loop import (  # noqa: F401 — shared temporary Git/GitHub fixtures
     Reviewer, Worker, client, commit, git, looped, no_machine_settings,
-    deny, pr_spec, template, waited, world as git_world,
+    deny, pr_spec, template, waited, INTEGRATION_WAIT, world as git_world,
 )
 
 
@@ -1195,7 +1195,7 @@ def test_review_controls_in_real_browser(cloud_world, monkeypatch):
 
     def visible_review(chat, text, halt=None):
         yield Event("progress", "Reviewer progress.\nChecking the remote head.")
-        assert release_review.wait(120)
+        assert release_review.wait(INTEGRATION_WAIT)
         for event in say(chat, text, halt):
             if event.kind == "done":
                 yield Event("progress", event.text)
@@ -1349,10 +1349,10 @@ def test_review_controls_in_real_browser(cloud_world, monkeypatch):
                 page.get_by_role("button", name="로컬 검증 재개", exact=True).click()
             assert reply.value.status == 200
             review_progress = page.get_by_role("region", name="리뷰 진행상황")
-            playwright.expect(review_progress.get_by_text("리뷰 진행상황.\n원격 커밋 확인 중.", exact=True)).to_be_visible(timeout=120000)
+            playwright.expect(review_progress.get_by_text("리뷰 진행상황.\n원격 커밋 확인 중.", exact=True)).to_be_visible(timeout=INTEGRATION_WAIT * 1000)
             assert specs.load("proj", "cloud")["state"] == "리뷰 R1"
             release_review.set()
-            playwright.expect(panel.get_by_text("로컬 검증·리뷰 통과", exact=True)).to_be_visible(timeout=120000)
+            playwright.expect(panel.get_by_text("로컬 검증·리뷰 통과", exact=True)).to_be_visible(timeout=INTEGRATION_WAIT * 1000)
             playwright.expect(page.get_by_role("region", name="리뷰 진행상황")).to_be_visible()
             playwright.expect(page.get_by_role("button", name="다음 리뷰 라운드", exact=True)).to_be_visible()
             assert Reviewer.made[-1].model == "codex:review" and not Worker.made

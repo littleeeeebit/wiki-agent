@@ -132,22 +132,19 @@ def within(root: Path, relative: str) -> Path:
 
 
 def manifest(path: Path, *, budget=None) -> tuple[Manifest, str]:
-    def tracked(ref):
-        if budget is not None:
-            budget.check()
-        try:
-            done = specs.sh(["git", "ls-files", "--error-unmatch", "--", ref], path,
-                            timeout=budget.left() if budget is not None else 60)
-        except subprocess.TimeoutExpired:
-            if budget is not None:
-                budget.check()
-            raise
-        if budget is not None:
-            budget.check()
-        return done
+    check = budget.check if budget is not None else lambda: None
+    check()
+    try:
+        done = specs.sh(["git", "ls-files", "-z"], path,
+                        timeout=budget.left() if budget is not None else 60)
+    except subprocess.TimeoutExpired:
+        check()
+        raise
+    check()
+    tracked = set(done.stdout.split("\0")) if not done.returncode else set()  # Fresh per validation, never cached.
 
     file = within(path, MANIFEST)
-    if tracked(MANIFEST).returncode:
+    if MANIFEST not in tracked:
         raise ValueError("verification.json 을 저장소에 커밋해야 한다")
     data = file.read_bytes()
     parsed = Manifest.model_validate_json(data)
@@ -159,9 +156,11 @@ def manifest(path: Path, *, budget=None) -> tuple[Manifest, str]:
         if len({a.id for a in flow.assertions}) != len(flow.assertions) or any(not p for p in flow.paths):
             raise ValueError(f"{flow.id}: 검증 항목 id 또는 영향 경로를 확인한다")
     for ref in parsed.contracts:
+        check()
         file = within(path, ref)
-        if not file.is_file() or tracked(ref).returncode:
+        if not file.is_file() or Path(ref).as_posix() not in tracked:
             raise ValueError(f"저장소에 커밋된 API·데이터 명세가 필요하다: {ref}")
+    check()
     return parsed, sha(data)
 
 
@@ -734,11 +733,12 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
 
 def checkout_proven(path: Path, head: str) -> str:
     """Execution artifacts are outside source; never accept a locally altered implementation."""
-    status = specs.sh(["git", "status", "--porcelain"], path)
-    current = specs.sh(["git", "rev-parse", "HEAD"], path)
-    if current.returncode or current.stdout.strip() != head:
+    status = specs.sh(["git", "status", "--porcelain=v2", "--branch", "-z"], path)
+    rows = status.stdout.split("\0")
+    current = next((r.removeprefix("# branch.oid ") for r in rows if r.startswith("# branch.oid ")), "")
+    if status.returncode or not current or current != head:
         return "리뷰 실행이 검증 대상 커밋을 바꿨다 — 사용자 확인 필요"
-    if status.returncode or status.stdout.strip():
+    if any(r and not r.startswith("# ") for r in rows):
         return "리뷰 실행 뒤 소스 폴더에 변경이 있다 — 검증 파일은 지정된 아티팩트 폴더에 저장해야 한다"
     return ""
 

@@ -33,8 +33,7 @@ from pydantic import BaseModel
 
 import debt
 import translate
-from common import errorlog, worktree_home
-from common import process
+from common import errorlog, process, python_environment, worktree_home
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
@@ -1017,7 +1016,7 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
     """Run the adapter's shell command as `(code, output, cut reason)`.
     Check cancellation and the deadline during execution and after completion."""
 
-    return runtime.gate(cmd, cwd, halt, env, GATE_SECONDS if timeout is None else timeout, owned_jobs, kill)
+    return runtime.gate(cmd, cwd, halt, python_environment(env), GATE_SECONDS if timeout is None else timeout, owned_jobs, kill)
 
 
 def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None, env: dict | None = None,
@@ -1167,7 +1166,7 @@ def digest(repo: Path, path: Path, cmd: str) -> str:
 
     found = {f.relative_to(path).as_posix(): sha(f) for pattern in LOCKS for f in sorted(path.glob(pattern))}
     adapter = adapter_path(repo.name, repo)
-    shown = {"cmd": cmd, "python": sys.version, "adapter": sha(adapter) if adapter else "", "files": found}
+    shown = {"cmd": cmd, "python": (sys.version, sys.executable), "adapter": sha(adapter) if adapter else "", "files": found}
     return hashlib.sha256(json.dumps(shown, sort_keys=True).encode()).hexdigest()
 
 

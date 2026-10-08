@@ -187,8 +187,8 @@ def merged(repo: Path, branch: str) -> bool:
                for path in old.keys() | ours.keys() if old.get(path) != ours.get(path))
 
 
-def worktrees(repo: Path) -> list[dict]:
-    """The selected checkout and legacy task trees: path, branch, dirty, merged."""
+def worktrees(repo: Path, *, details: bool = True) -> list[dict]:
+    """The selected checkout and legacy task trees; enrich only for status consumers."""
 
     top, _, _ = checkout(Path(repo))
     if not top or Path(top) != Path(repo).resolve():
@@ -203,8 +203,9 @@ def worktrees(repo: Path) -> list[dict]:
             row["branch"] = line[7:].removeprefix("refs/heads/")
         elif not line and row:
             if row["path"] == repo or row["path"].parent == root:
-                row["dirty"] = bool(_git(row["path"], "status", "--porcelain").stdout.strip())
-                row["merged"] = row["path"] != repo and merged(repo, row["branch"])
+                if details:
+                    row["dirty"] = bool(_git(row["path"], "status", "--porcelain").stdout.strip())
+                    row["merged"] = row["path"] != repo and merged(repo, row["branch"])
                 rows.append(row)
             row = {}
     return rows

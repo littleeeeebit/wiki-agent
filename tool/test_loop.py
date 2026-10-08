@@ -35,6 +35,7 @@ from workspace import adopt, create
 
 GATE = "python gate.py"
 FINAL = f"{GATE} && {debt.command()}"   # the final gate ends with the debt ratchet
+INTEGRATION_WAIT = 120  # Completion ceiling, not a product performance or timeout contract.
 
 
 def git(cwd: Path, *args: str) -> str:
@@ -50,8 +51,7 @@ def commit(path: Path, name: str, text: str = "x\n") -> str:
     return git(path, "rev-parse", "HEAD")
 
 
-# A loop drive runs ~180 git processes; 30s left no headroom on a busy host.
-def waited(test, seconds: float = 120) -> None:
+def waited(test, seconds: float = INTEGRATION_WAIT) -> None:
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         if test():
@@ -707,7 +707,7 @@ def test_review_attach_refuses_a_busy_or_wrong_checkout_without_changing_metadat
     assert not loop._loops
 
 
-def looped(name: str, seconds: float = 120) -> dict:
+def looped(name: str, seconds: float = INTEGRATION_WAIT) -> dict:
     """Start the spec's loop and wait until it has stopped driving."""
 
     loop.kick("proj", name)

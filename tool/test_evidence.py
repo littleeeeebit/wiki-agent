@@ -8,6 +8,7 @@ import os
 import sqlite3
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -592,7 +593,33 @@ def translator(monkeypatch, tmp_path):
     monkeypatch.setattr(translate, "CACHE", tmp_path / "translate.sqlite3")
     monkeypatch.setattr(translate, "api_key", lambda: "test-key")
     monkeypatch.setattr(translate, "_ask", lambda system, batch, seconds: [answers.get(b, b) for b in batch])
+    # Schema initialization is fixture setup, not the fake model's request budget.
+    cache = translate._store()
+    assert cache is not None
+    cache.close()
     return answers
+
+
+def test_translator_initializes_cache_before_the_request_budget(monkeypatch, request):
+    now = 0.0
+    open_store = translate._store
+
+    def cold_store(path=None):
+        nonlocal now
+        cold = not (path or translate.CACHE).exists()
+        db = open_store(path)
+        if cold:
+            now += 6   # Schema setup exceeds the request's five-second budget.
+        return db
+
+    monkeypatch.setattr(translate, "time", SimpleNamespace(
+        monotonic=lambda: now, strftime=time.strftime, gmtime=time.gmtime))
+    monkeypatch.setattr(translate, "_store", cold_store)
+    answers = request.getfixturevalue("translator")
+    answers["원문이 이긴다."] = "The original wins."
+
+    out = translate.english(["원문이 이긴다."], now + 5)[0]
+    assert (out["status"], out["text"]) == ("translated", "The original wins.")
 
 
 def test_english_outcomes_say_what_happened(translator):
