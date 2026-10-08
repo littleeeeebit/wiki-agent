@@ -4,11 +4,12 @@ Claude Code Cloud implements from the repository. A separate local reviewer
 checks the resulting commit with this machine's test API, dataset and browser
 configuration. Cloud does not receive `.env`, credentials or private datasets.
 The existing `plan`, `code` and `mixed` profiles still determine review criteria.
-Locally implemented tasks keep their existing review and final gate. An authorized
-review loop also collects enforced registered flows for local and external tasks.
-Their reviewers stay read-only. Failure returns to the existing local work session
-or external correction path. Jev selects registered checks before collection and
-judges their measured receipts. The independent reviewer remains separate.
+Locally implemented and external tasks keep their existing review and final gate.
+Registered runtime flows gate only Claude Code Cloud work, which cannot run the
+local `.env`. A local or external task's `review.flows` and its `api`, `browser`
+and `desktop` evidence are not collected and do not hold review or merge. Jev
+selects a Cloud task's registered checks before collection and judges their
+measured receipts. The independent reviewer remains separate.
 
 The Cloud review cell also executes verification commands and creates test
 scripts, fixtures and receipts. Codex uses `workspace-write` with
@@ -134,9 +135,9 @@ local execution settings and dependency locks also invalidate evidence.
 
 ## Registered local and Windows native collection
 
-Local and external tasks use the same approved manifest and local settings.
-After the existing offline and frozen-preservation checks, the authorized loop
-collects only its enforced flow IDs. A plan-only artifact cannot launch the future
+This collection runs for Claude Code Cloud tasks only; local and external tasks
+skip it. After the existing offline and frozen-preservation checks, the
+authorized loop collects only its enforced flow IDs. A plan-only artifact cannot launch the future
 application. The existing final gate still runs after independent review.
 
 Execution binds receipts to the specification, head/base, selected contract,
@@ -200,7 +201,7 @@ Example native flow, inside the version-2 manifest:
 }
 ```
 
-The Review tab shows setup for ordinary tasks once collection is pending. Inspect
+The Review tab shows setup for a Cloud task once collection is pending. Inspect
 the complete native target/actions and approve the application, executable path,
 SHA-256 and disposable profile. Its saved `native` object also contains
 `version: 1`, `host: "windows-win32"`, `ownership: "launch-disposable"` and
@@ -339,7 +340,7 @@ summaries; the app retains detailed local receipts and logs.
 Failed or stale runs cannot manufacture a pass. Retrying the same failing
 commit does not consume a cloud repair cycle. Cloud verification never dispatches
 a local implementation session, commits fixes or pushes changes back to cloud.
-Ordinary failures use their existing implementation owner. A user authorizes the
+A user authorizes the
 review loop explicitly. Unchanged failures and same-identity fail-then-pass
 observations require correction or recorded investigation before completion.
 
@@ -374,8 +375,7 @@ GitHub's required commit status blocks new heads even before the local app
 has seen them. Protection applies repository-wide, so the app publishes the
 same status after a local implementation's existing review and final gate;
 it does not add cloud runtime checks or a protection-setup prerequisite to
-ordinary local/other-environment review. Required registered local flows still
-need current receipts. Saving local execution settings
+ordinary local/other-environment review. Saving local execution settings
 enables status publication on ordinary tasks, including unprotected branches.
 GitHub still applies any configured protections when the person requests merge.
 

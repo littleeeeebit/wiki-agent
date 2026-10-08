@@ -219,6 +219,11 @@ def coverage(selection: dict, flows: list[dict], preservation_inputs: dict | Non
 def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | None,
            head: str, base_oid: str) -> dict:
     explicit = declared(spec.get("review"))
+    if not verification.cloud(spec):
+        # Runtime receipts gate only Claude Cloud work (#58), which cannot run the
+        # local `.env`. Local and external work is gated by review and the final gate.
+        explicit = {**explicit, "flows": [],
+                    "evidence": [e for e in explicit["evidence"] if e not in ("api", "browser", "desktop")]}
     criteria = {"plan", "code"} if profile == "mixed" else {profile}
     criteria.update(explicit["criteria"])
     evidence = {"offline", *explicit["evidence"]}
@@ -247,7 +252,7 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 problems.append("고정된 동작 보존 테스트가 바뀌었거나 기준선을 확인하지 못했다")
         except (OSError, ValueError, KeyError, TypeError):
             problems.append("동작 보존 명세를 확인하지 못했다")
-    if verification.cloud(spec) or explicit["flows"] or evidence & {"api", "browser", "desktop"}:
+    if verification.cloud(spec):
         try:
             contract, manifest_digest = verification.manifest(path)
             catalog = {f.id: f for f in contract.flows}
@@ -256,19 +261,9 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
                 problems.append("등록되지 않은 검증 흐름: " + ", ".join(sorted(unknown)))
                 rejections = [{"candidate_id": "flow:" + cid, "origin": "spec", "disposition": "rejected",
                                "reason": "unknown registered flow", "locator": "review.flows"} for cid in sorted(unknown)]
-            # Cloud's complete major-flow floor remains unchanged. Explicit local
-            # flows only require their registered receipts, never grant execution.
-            chosen = list(catalog) if verification.cloud(spec) else list(explicit["flows"])
-            if evidence & {"api", "browser", "desktop"} and not chosen:
-                from . import specs
-
-                mapped = paths and all(any(fnmatchcase(p, g) for f in contract.flows for g in f.paths)
-                                      and not any(fnmatchcase(p, g) or fnmatchcase(p.rsplit("/", 1)[-1], g)
-                                                  for g in specs.SHARED) for p in paths)
-                chosen = [f.id for f in contract.flows if any(fnmatchcase(p, g) for p in paths for g in f.paths)] \
-                    if mapped else list(catalog)  # Unreadable, shared or unmapped impact widens.
+            chosen = list(catalog)  # Cloud's complete major-flow floor remains unchanged.
             flows = [catalog[i].model_dump() for i in sorted(set(chosen)) if i in catalog]
-            if verification.cloud(spec) and verification.documents(path, base_oid, head):
+            if verification.documents(path, base_oid, head):
                 exemption = True
                 flows = []  # Existing, repository-declared prose exemption.
                 evidence = {"offline", *explicit["evidence"]}
