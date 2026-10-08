@@ -50,7 +50,8 @@ def commit(path: Path, name: str, text: str = "x\n") -> str:
     return git(path, "rev-parse", "HEAD")
 
 
-def waited(test, seconds: float = 30) -> None:
+# A loop drive runs ~180 git processes; 30s left no headroom on a busy host.
+def waited(test, seconds: float = 120) -> None:
     end = time.monotonic() + seconds
     while time.monotonic() < end:
         if test():
@@ -706,7 +707,7 @@ def test_review_attach_refuses_a_busy_or_wrong_checkout_without_changing_metadat
     assert not loop._loops
 
 
-def looped(name: str, seconds: float = 30) -> dict:
+def looped(name: str, seconds: float = 120) -> dict:
     """Start the spec's loop and wait until it has stopped driving."""
 
     loop.kick("proj", name)
