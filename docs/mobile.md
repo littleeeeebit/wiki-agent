@@ -162,7 +162,7 @@ merely by reloading the web screen: install the new APK in place.
 USB installation remains an alternative:
 
 ```powershell
-adb install -r artifacts/wiki-agent.apk
+adb install -r raw/android/wiki-agent.apk
 ```
 
 The build script creates and reuses a local RSA-3072 signing key under

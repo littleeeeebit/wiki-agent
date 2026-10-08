@@ -29,10 +29,15 @@ def companion(tmp_path):
 
 def test_served_apk_survives_the_after_merge_scratch_cleanup():
     import tomllib
-    adapter = tomllib.loads((app.ROOT / ".wiki/adapter.toml").read_text(encoding="utf-8"))
+    from main import connect
+    # The written default, plus this checkout's untracked adapter when it has one.
+    scratch = [connect.guess(app.ROOT)["scratch_dirs"]]
+    local = app.ROOT / ".wiki/adapter.toml"
+    if local.is_file():
+        scratch.append(tomllib.loads(local.read_text(encoding="utf-8"))["slots"]["scratch_dirs"])
     rel = mobile.APK.relative_to(app.ROOT).as_posix()
-    for scratch in adapter["slots"]["scratch_dirs"].split(","):
-        assert not rel.startswith(scratch.strip().rstrip("/") + "/"), "after-merge would delete the served APK"
+    for entry in ",".join(scratch).split(","):
+        assert not rel.startswith(entry.strip().rstrip("/") + "/"), "after-merge would delete the served APK"
 
 
 def browsers():
