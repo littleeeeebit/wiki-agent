@@ -243,6 +243,9 @@ def collect(repo: Path, path: Path, spec: dict, head: str, base: str, halt) -> d
             spec = _collect(repo, path, spec, head, base, halt)
             budget.check()
             return spec
+        except Cancelled:
+            # The caller handles a halt; what `execute` recorded (`interrupted`) stands.
+            return specs.load(spec["repo"], spec["id"]) or spec
         except Exhausted as exc:
             reason = "로컬 검증 전체 시간 제한을 넘었다 — 완료된 증거를 보존했다"
             verification.pending(repo, spec, head, reason)
