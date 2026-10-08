@@ -386,3 +386,9 @@ ignore-file impact, unknown inputs and precedence of confirmed failures.
 Two existing receipt/restart regressions also passed. The two-worker budget
 probe exhausted its two-second test cleanup reserve; rerunning that exact case
 serially passed. The production cleanup allowance remains 30 seconds.
+That serial probe and the existing environment-change/setup-reuse regression
+passed together in 181.95 seconds. The actual launcher checkout received
+`45209a7`; fresh imports confirmed the tested source files and the shared
+1,140-second allowance. Its Ruff, wiki lint, debt ratchet, diff and UTF-8/BOM
+checks passed. Existing concurrent launcher changes were preserved. This
+installation takes effect on restart; the running server was not replaced.
