@@ -143,9 +143,11 @@ def prepare(repo: Path, path: Path, spec: dict, contract: dict, halt) -> tuple[d
         patterns = flow.pop("paths")
         flow["changed_paths"] = [p for p in contract["inspection_paths"] or []
                                  if any(fnmatchcase(p, pattern) for pattern in patterns)]
-    state = verification.sanitize({"input_identity": binding, "paths": contract["inspection_paths"],
-        "flows": flows, "grounds": grounds, "required": required,
-        "head": contract["head"], "base": contract["base_oid"]}, settings)
+    # Only the prose grounds can carry runtime values. Redacting identities, paths and
+    # registered ids would let a short `.env` value such as `1` break the replay binding.
+    state = {"input_identity": binding, "paths": contract["inspection_paths"],
+             "flows": flows, "grounds": verification.sanitize(grounds, settings), "required": required,
+             "head": contract["head"], "base": contract["base_oid"]}
     observation = ask(repo, state, [f["id"] for f in flows], "selection", halt, budget)
     with specs._files:
         fresh = specs.load(spec["repo"], spec["id"])
@@ -181,12 +183,13 @@ def assess(repo: Path, path: Path, spec: dict, contract: dict, halt) -> dict:
     binding = verification.sha({"selection": contract["digest"], "evidence": verification.evidence_identity(spec)})
     rows = {r["id"]: r for r in spec["local_verification"]["flows"]}
     settings = verification.redaction(verification.local(repo), path)
-    state = verification.sanitize({"input_identity": binding,
+    # `clean_evidence` already redacts the measured text; the rest is protocol metadata.
+    state = {"input_identity": binding,
         "flows": [{"id": f["id"], "assertions": f["assertions"], "evidence": verification.clean_evidence(
             rows[f["id"]]["evidence"], settings)} for f in contract["flows"]],
         "grounds": [{"id": f["id"], "locator": "Measured receipt for " + f["id"],
                      "text": "See this flow's measured requests, actions and observations in state.flows."}
-                    for f in contract["flows"]]}, settings)
+                    for f in contract["flows"]]}
     observation = ask(repo, state, ids, "judgment", halt, Budget(**LIMITS, cancel=halt))
     with specs._files:
         fresh = specs.load(spec["repo"], spec["id"])
