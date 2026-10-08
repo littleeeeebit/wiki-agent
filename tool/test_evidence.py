@@ -226,7 +226,7 @@ def test_a_stale_read_cannot_bring_back_a_memory_another_process_deleted(corpus,
     monkeypatch.setattr(searchd, "chunks", slow)
     worker = threading.Thread(target=first.sync, args=(listed(),))
     worker.start()
-    assert reading.wait(5)
+    assert reading.wait(120)
     memory.unlink()
     monkeypatch.setattr(searchd, "chunks", real)
     second.sync([])

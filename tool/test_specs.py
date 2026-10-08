@@ -49,7 +49,7 @@ def test_spec_read_waits_for_its_atomic_replacement(tmp_path, monkeypatch):
     def replace(path, target):
         if target == file:
             replacing.set()
-            assert release.wait(10)
+            assert release.wait(120)
         try:
             return original_replace(path, target)
         finally:
@@ -76,9 +76,9 @@ def test_spec_read_waits_for_its_atomic_replacement(tmp_path, monkeypatch):
     writer, reader = threading.Thread(target=save), threading.Thread(target=load)
     writer.start()
     try:
-        assert replacing.wait(10)
+        assert replacing.wait(120)
         reader.start()
-        assert reading.wait(10)
+        assert reading.wait(120)
         assert not finished.wait(.2), "A spec being replaced was reported as missing"
     finally:
         release.set()

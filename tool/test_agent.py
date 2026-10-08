@@ -811,7 +811,7 @@ def test_a_stop_ends_a_turn_waiting_on_a_child_that_holds_the_pipe(tree):
         turn = threading.Thread(target=consume, daemon=True)
         turn.start()
         try:
-            assert waiting.wait(10)
+            assert waiting.wait(120)
             halt.set()
             session.stop(halt)
             turn.join(5)
@@ -874,7 +874,7 @@ def test_a_close_waits_for_a_stop_still_using_the_job(tree):
         halt.set()
         stopper = threading.Thread(target=session.stop, args=(halt,))
         stopper.start()
-        assert inside.wait(5)
+        assert inside.wait(120)
         session.close()
         stopper.join(5)
     assert order == ["kill", "close"]

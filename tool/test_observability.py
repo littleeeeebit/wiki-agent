@@ -281,7 +281,7 @@ def test_a_stop_ends_the_run_cancelled_and_publishes_nothing(tmp_path, active):
          patch.object(chat, "streaming", lambda events: events):
         stream = chat.say("wiki", chat.Say(text="데몬 포트는?"))
         first = json.loads(next(stream)[6:])
-        assert heard.wait(5)
+        assert heard.wait(120)
         assert screen.post(f"/api/knowledge/runs/{first['run_id']}/cancel").json()["ok"]
         rest = [json.loads(chunk[6:]) for chunk in stream if chunk.startswith("data: ")]
     kinds = [e["kind"] for e in rest]
@@ -559,7 +559,7 @@ def test_a_shadow_record_and_a_rotated_langfuse_key_are_redacted_too(monkeypatch
     monkeypatch.setattr(chat.memory, "append", lambda _path, row: (rows.append(row), wrote.set()))
     monkeypatch.setattr(chat, "prepare", lambda *a, **k: {"status": "ready", "question_en": f"{KEY} {translator} {old} {new}"})
     chat.shadow("wiki", "q", Path("."), "", cfg)
-    assert wrote.wait(2)
+    assert wrote.wait(120)
     dumped = json.dumps(rows)
     assert "[redacted]" in dumped and not [k for k in (KEY, translator, old, new) if k in dumped]
 

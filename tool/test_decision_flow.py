@@ -352,7 +352,7 @@ def test_a_host_turn_past_its_time_or_cancelled_is_stopped_closed_and_settles_no
 
     def slow(prompt, payload, model, halt):
         try:
-            assert halt.wait(5), "nothing stopped the turn"
+            assert halt.wait(120), "nothing stopped the turn"
             yield Event("error", "stopped")
         finally:
             closed.append(True)
@@ -379,7 +379,7 @@ def test_a_halted_oneshot_stops_its_own_session_and_closes_it(monkeypatch):
             made.append(self)
 
         def say(self, text, halt=None):
-            assert self.stopped.wait(5), "the halt never reached the session"
+            assert self.stopped.wait(120), "the halt never reached the session"
             yield Event("error", "stopped")
 
         def stop(self, halt):

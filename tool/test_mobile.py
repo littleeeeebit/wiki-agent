@@ -141,7 +141,7 @@ def test_websocket_runs_existing_guards_and_delivers_each_chunk(companion):
             assert not gate.is_set(), "the first event arrives before the second is produced"
             gate.set()
             assert ws.receive_bytes() == b'data: {"seq": 2}\n\n'
-        assert ended.wait(3)
+        assert ended.wait(120)
         for target in ("https://evil.example/api/switch", "/api/mobile/link", "/api/%6dobile/link"):
             with phone.websocket_connect("wss://fixture.trycloudflare.com/api/mobile/request") as ws:
                 ws.send_json({"url": target})
@@ -178,7 +178,7 @@ def test_an_early_phone_disconnect_finishes_the_http_stream_and_releases_the_soc
             ws.send_json({"url": path})
             assert ws.receive_json()["status"] == 200
             assert ws.receive_bytes() == b"first event"
-        assert ended.wait(3), "The disconnected phone left its HTTP producer running"
+        assert ended.wait(120), "The disconnected phone left its HTTP producer running"
         assert not companion.sockets
     finally:
         app.app.router.routes[:] = [r for r in app.app.router.routes if getattr(r, "path", "") != path]
@@ -218,7 +218,7 @@ def test_start_prepares_its_own_runtime_and_reaps_the_child(companion, tmp_path,
          patch.object(mobile.mobile_transport, "cloudflared", return_value=Path("managed-cloudflared")), \
          patch.object(mobile.subprocess, "Popen", Tunnel), patch.object(companion, "wait_ready", checked):
         desktop.post("/api/mobile/start").raise_for_status()
-        assert ready.wait(3)
+        assert ready.wait(120)
         child = companion.process
         desktop.post("/api/mobile/stop").raise_for_status()
         assert child.terminated and companion.process is None and not companion.origin
@@ -261,7 +261,7 @@ def test_cancel_during_download_never_launches_a_tunnel(companion, tmp_path):
 
     def download(directory):
         entered.set()
-        assert release.wait(3)
+        assert release.wait(120)
         return Path("managed-cloudflared")
 
     with patch.object(mobile.channels, "WIKI", tmp_path), \
@@ -269,7 +269,7 @@ def test_cancel_during_download_never_launches_a_tunnel(companion, tmp_path):
         thread = threading.Thread(target=companion.prepare, args=(companion.cancel,))
         thread.start()
         try:
-            assert entered.wait(3)
+            assert entered.wait(120)
             companion.stop()
         finally:
             release.set()

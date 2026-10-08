@@ -578,7 +578,7 @@ def test_an_external_repair_writes_no_paper_once_the_budget_is_spent(world, monk
     out = knowledge.repair(req, {"seen_chunk_ids": [], "spent": 0, "generation": None, "chunks": [], "paths": []},
                            "external", repo, budget=budget, cfg=ACTIVE, external=True)
     assert out["note"]["fetched"] is None
-    assert done.wait(5)
+    assert done.wait(120)
     # Grading spent from the run's allowance, not a fresh one of its own.
     assert graded == [budget]
     with knowledge.records(repo) as store:

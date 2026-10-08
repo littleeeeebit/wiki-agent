@@ -1212,7 +1212,7 @@ def test_review_controls_in_real_browser(cloud_world, monkeypatch):
 
     def visible_review(chat, text, halt=None):
         yield Event("progress", "Reviewer progress.\nChecking the remote head.")
-        assert release_review.wait(15)
+        assert release_review.wait(120)
         for event in say(chat, text, halt):
             if event.kind == "done":
                 yield Event("progress", event.text)

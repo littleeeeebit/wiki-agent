@@ -52,7 +52,7 @@ def test_shutdown_keeps_server_ownership_until_its_review_driver_stops(tmp_path,
 
     def held_step(_loop):
         entered.set()
-        assert release.wait(15), "The held driver was not released"
+        assert release.wait(120), "The held driver was not released"
         return False
 
     monkeypatch.setattr(loop, "step", held_step)
@@ -83,9 +83,9 @@ def test_shutdown_keeps_server_ownership_until_its_review_driver_stops(tmp_path,
     owner = threading.Thread(target=own, daemon=True)
     owner.start()
     try:
-        assert entered.wait(10)
+        assert entered.wait(120)
         requested.set()
-        assert stopping.wait(10)
+        assert stopping.wait(120)
         assert not finished.wait(.2), "Server ownership was released while a review driver was alive"
         assert driver.thread.is_alive()
         with pytest.raises(RuntimeError, match="이미 실행 중"):

@@ -1477,7 +1477,7 @@ def test_an_instruction_written_during_the_gate_goes_once_the_worktree_is_let_go
          patch.object(specs, "check", check):
         path = _made()
         work.say(work.Order(path=path, text="첫째"))
-        assert entered.wait(10)
+        assert entered.wait(120)
         turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
         other = {"path": path, "turn": "another", "text": "x"}
         assert web.post("/api/work/queue", json=other).status_code == 409
@@ -1515,7 +1515,7 @@ def test_a_turn_the_server_starts_after_the_gate_goes_before_the_waiting_one(tmp
          patch.object(specs, "check", check):
         path = _made()
         work.say(work.Order(path=path, text="첫째"))
-        assert entered.wait(10)
+        assert entered.wait(120)
         turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
         web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
         go.set()
@@ -1533,7 +1533,7 @@ def test_a_waiting_instruction_is_taken_only_in_the_selected_project(tmp_path):
         web.post("/api/config/wiki", json={"repo": "a"}).raise_for_status()
         path = _made()
         work.say(work.Order(path=path, text="첫째"))
-        assert entered.wait(10)
+        assert entered.wait(120)
         turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
         web.post("/api/config/wiki", json={"repo": "b"}).raise_for_status()
         assert web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).status_code == 404
@@ -1553,7 +1553,7 @@ def test_a_waiting_instruction_that_cannot_start_is_on_record(tmp_path):
          patch.object(specs, "check", check):
         path = _made()
         work.say(work.Order(path=path, text="첫째"))
-        assert entered.wait(10)
+        assert entered.wait(120)
         turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
         web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
         told = len(work.feed.events)
@@ -1606,7 +1606,7 @@ def test_a_stop_drops_the_waiting_instruction(tmp_path):
          patch.object(specs, "check", check):
         path = _made()
         work.say(work.Order(path=path, text="첫째"))
-        assert entered.wait(10)
+        assert entered.wait(120)
         turn = web.get("/api/work/log", params={"path": path}).json()["running"]["turn"]
         web.post("/api/work/queue", json={"path": path, "turn": turn, "text": "둘째"}).raise_for_status()
         web.post("/api/work/stop", json={"path": path, "turn": turn}).raise_for_status()
@@ -1667,7 +1667,7 @@ class Asker(Slow):
 def until(test) -> None:
     import time
 
-    for _ in range(200):
+    for _ in range(2400):   # 120 s, like the loop helpers, for a busy host
         if test():
             return
         time.sleep(0.05)

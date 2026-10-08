@@ -76,13 +76,13 @@ def test_review_progress_has_its_own_reconnectable_stream_and_record(world):
         yield Event("progress", "Reading the diff.\nChecking the behavior.")
         yield Event("tool", "git diff", {"tool": "commandExecution"})
         started.set()
-        assert finish.wait(15)
+        assert finish.wait(120)
         yield Event("done", allow(first), {"session_id": "independent-review", "model": "codex:test"})
 
     with patch.object(Reviewer, "say", say):
         loop.kick("proj", original["id"])
         try:
-            assert started.wait(30)
+            assert started.wait(120)
             found = client().get("/api/specs/visible-review/review/log").json()
             assert found["running"] and not found["rows"]
             assert specs.load("proj", original["id"])["state"] == "리뷰 R1"

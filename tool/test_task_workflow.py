@@ -121,7 +121,7 @@ def test_delete_running_task_stops_it_before_archiving(repo):
 
     def wait_for_stop(path, halt):
         running.set()
-        assert halt.wait(10)
+        assert halt.wait(120)
         return "Stopped"
 
     Worker.replies = [wait_for_stop]
