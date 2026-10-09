@@ -1031,7 +1031,10 @@ def test_failure_text_stays_private_after_both_env_files_disappear(cloud_world, 
     else:
         monkeypatch.setattr(specs, "judge", fail_gate)
     first = looped("cloud")
-    assert first["local_verification"]["state"] == "waiting_environment"
+    verified = first["local_verification"]
+    # A loaded gate once ended here without failure_attempts; keep the reason it reached.
+    assert verified["state"] == "waiting_environment" and "failure_attempts" in verified, \
+        (verified.get("state"), verified.get("reason"))
     assert "private-api-key" not in json.dumps(first)
     assert "Retain this observation" in json.dumps(first["local_verification"]["failure_attempts"])
     if failure == "review":

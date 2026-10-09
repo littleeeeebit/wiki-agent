@@ -460,7 +460,9 @@ def test_manifest_index_query_uses_remaining_budget_and_stops_after_read(cloud_w
     assert len(timeouts) == 1
 
 
-def test_slow_manifest_git_is_reaped_at_shared_deadline_without_a_request(cloud_world):
+# A diff timed out at the deadline used to surface as unavailable/TimeoutExpired.
+@pytest.mark.parametrize("slow", ["ls-files", "diff"])
+def test_slow_manifest_git_is_reaped_at_shared_deadline_without_a_request(cloud_world, slow):
     world = cloud_world
     spec = pr_spec(world, "slow-manifest", 1, "change.py")
     baseline = selected(world, spec)
@@ -468,7 +470,7 @@ def test_slow_manifest_git_is_reaped_at_shared_deadline_without_a_request(cloud_
     budget = contract.Budget(seconds=0.5, calls=1, candidates=8)
 
     def query(args, cwd, timeout=60):
-        if args[:2] == ["git", "ls-files"]:
+        if args[:2] == ["git", slow]:
             return real([sys.executable, "-c", "import time; time.sleep(60)"], cwd, timeout)
         return real(args, cwd, timeout)
 
@@ -476,7 +478,9 @@ def test_slow_manifest_git_is_reaped_at_shared_deadline_without_a_request(cloud_
          patch.object(specs, "sh", side_effect=query), patch.object(decision, "evaluate") as send:
         record = contract.shadow(spec, [], baseline, threading.Event(), budget=budget)
     assert record["status"] == "exhausted" and record["reason"] == "deadline"
-    assert record["budget"]["elapsed_ms"] < 2000
+    # Reaped at the deadline, not after the 60-second sleep. A loaded Windows
+    # gate took about 6 s to start and kill the stand-in, so 2 s was flaky.
+    assert record["budget"]["elapsed_ms"] < 30_000
     send.assert_not_called()
 
 

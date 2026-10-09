@@ -170,7 +170,7 @@ def test_verification_stops_after_first_failure_and_still_cleans_up(cloud_world)
 def test_setup_and_flows_share_budget_and_cleanup_runs_after_timeout(cloud_world, monkeypatch, setup_seconds):  # noqa: F811
     world = cloud_world
     runner = world.repo / "verify.py"
-    runner.write_text("import time; time.sleep(3.5)\n" + runner.read_text(encoding="utf-8"), encoding="utf-8")
+    runner.write_text("import time; time.sleep(8)\n" + runner.read_text(encoding="utf-8"), encoding="utf-8")
     marker = world.tmp / "cleaned"
     settings = {**world.settings, "setup": subprocess.list2cmdline([sys.executable, "-c", f"import time; time.sleep({setup_seconds})"]),
                 "cleanup": subprocess.list2cmdline([sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"])}
@@ -179,8 +179,11 @@ def test_setup_and_flows_share_budget_and_cleanup_runs_after_timeout(cloud_world
     spec = pr_spec(world, "budget", 1, "change.py")
     path, head = Path(spec["worktree"]), spec["pr"]["head"]
     base = specs.current_merge_base(path, "main", head)
-    monkeypatch.setattr(specs, "GATE_SECONDS", 10)
-    monkeypatch.setattr(runtime, "CLEANUP_SECONDS", 2)
+    # A 2-second cleanup reserve could not start Python on a loaded gate. With
+    # 20 s and a 10 s reserve, flows still get at most 10 s: 3.5 s setup plus an
+    # 8 s runner overruns them, and a 12 s setup overruns them alone.
+    monkeypatch.setattr(specs, "GATE_SECONDS", 20)
+    monkeypatch.setattr(runtime, "CLEANUP_SECONDS", 10)
     record = verification.execute(world.repo, spec, path, head, base, threading.Event())["local_verification"]
     assert record["state"] == "waiting_environment" and "시간 제한" in record["reason"]
     assert not any(r.get("ok") for r in record.get("flows", [])) and marker.exists()

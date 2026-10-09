@@ -482,8 +482,12 @@ def shadow_context(repo: Path, path: Path, spec: dict, paths: list[str] | None,
     for i, text in enumerate(spec.get("done") or []):
         add("spec", {"spec": spec.get("id"), "field": f"done/{i}", "requirement": f"R{i}"}, sig, text)
     budget.check()
-    diff = specs.sh(["git", "diff", "--no-ext-diff", "--no-textconv", "--unified=3",
-                     contract["base_oid"], contract["head"], "--"], path, timeout=max(0.1, min(2, budget.left())))
+    try:
+        diff = specs.sh(["git", "diff", "--no-ext-diff", "--no-textconv", "--unified=3",
+                         contract["base_oid"], contract["head"], "--"], path, timeout=max(0.1, min(2, budget.left())))
+    except subprocess.TimeoutExpired:
+        budget.check()  # A timeout at the shared deadline is exhaustion, not an unavailable observation.
+        raise
     if diff.returncode:
         raise ValueError("diff_unavailable")
     add("diff", {"head": contract["head"], "base": contract["base_oid"], "paths": paths},
