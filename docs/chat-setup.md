@@ -94,8 +94,11 @@ rail lists the new commits. It never interrupts: "나중에" hides that version
 only, and a failed check shows nothing. "업데이트" fast-forwards a clean `main`
 checkout and, when the pull changed them, reinstalls `requirements-chat.txt`,
 reruns `npm ci` and rebuilds the screen. The running app keeps its old code,
-so the card then asks you to close the window and reopen it with
-`tool/app.cmd` (`tool/app.command`), which also rebuilds the window. Another
+so the card then offers "다시 시작". It asks about running tasks and review
+loops the way closing the window does, closes the window, stops the server and
+runs `tool/app.cmd` (`tool/app.command`), which rebuilds the window when the
+pull changed it and opens it again. In a browser tab the card says to reopen
+the app with that launcher instead. Another
 branch, uncommitted tracked changes or a diverged `main` disable the button;
 pull by hand then. A paired phone sees the card but cannot update.
 

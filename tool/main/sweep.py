@@ -43,7 +43,7 @@ def owed(path: Path, base: str) -> bool:
 
 
 def section(report: dict | None) -> list[str]:
-    """The PR body's 테스트 정리 section, for the reviewer."""
+    """The PR body's `테스트 정리` section, for the reviewer."""
 
     if not report:
         return []

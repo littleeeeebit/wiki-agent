@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { get, json, post } from '@/lib/api'
+import { leave } from '@/lib/leave'
 import { Btn } from '@/components/Modal'
 
 /** `origin/main` against the build this server loaded (`tool/main/update.py`). */
@@ -8,6 +10,8 @@ type UpdateState = { state: 'current' | 'unknown' | 'available' | 'ready'; runni
 const getUpdate = () => get('/api/update').then((r) => json<UpdateState>(r, '업데이트 확인'))
 const applyUpdate = () => post('/api/update').then((r) => json<UpdateState>(r, '업데이트'))
 
+/** In the app window the card restarts it; a browser tab can only say how. */
+const WINDOW = '__TAURI_INTERNALS__' in window
 const RESTART = navigator.userAgent.includes('Windows') ? 'tool\\app.cmd' : 'tool/app.command'
 
 function hidden(): string {
@@ -47,6 +51,17 @@ export function UpdateCard() {
       setBusy(false)
     }
   }
+  // The shell runs the launcher once the server is down (`restart` in main.rs).
+  const restart = async () => {
+    if (!leave()) return
+    setBusy(true)
+    try {
+      await invoke('restart')
+    } catch (err) {
+      setBusy(false)
+      setError(String(err instanceof Error ? err.message : err))
+    }
+  }
   return <div aria-label="업데이트" className="shrink-0 border-t border-sidebar-border p-3 text-[12.5px] leading-relaxed">
     <details>
       <summary className="cursor-pointer font-heading text-[11px] font-semibold text-st-ready">
@@ -54,7 +69,10 @@ export function UpdateCard() {
         <span className="rail-folded min-[1280px]:hidden">업데이트</span>
       </summary>
       <div className="mt-2 space-y-2">
-        {ready ? <p>받은 업데이트({data.remote})는 앱을 다시 열면 적용됩니다. 창을 닫고 <code className="font-mono text-[12px]">{RESTART}</code> 로 다시 여세요.</p> : <>
+        {ready ? WINDOW ? <>
+          <p>받은 업데이트({data.remote})는 다시 시작하면 적용됩니다.</p>
+          <Btn tone="primary" disabled={busy} onClick={() => void restart()}>{busy ? '다시 시작하는 중…' : '다시 시작'}</Btn>
+        </> : <p>받은 업데이트({data.remote})는 앱을 다시 열면 적용됩니다. 창을 닫고 <code className="font-mono text-[12px]">{RESTART}</code> 로 다시 여세요.</p> : <>
           <p className="text-muted-foreground">실행 중 <span className="font-mono">{data.running}</span> → origin/main <span className="font-mono">{data.remote}</span></p>
           <ul className="max-h-40 space-y-1 overflow-y-auto">
             {data.commits?.map((c) => <li key={c.sha} className="flex gap-2"><span className="shrink-0 font-mono text-[10.5px] text-muted-foreground">{c.sha}</span><span className="min-w-0">{c.subject}</span></li>)}

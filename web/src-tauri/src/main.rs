@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -24,6 +24,9 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, State, Url, WebviewUrl, Webvi
 const BOOT: Duration = Duration::from_secs(40);
 
 struct Sidecar(Mutex<Option<Child>>);
+
+/// Set by `restart`: open the window again once this one is gone.
+struct Relaunch(AtomicBool);
 
 struct Pty {
     writer: Box<dyn Write + Send>,
@@ -146,6 +149,28 @@ fn stop_sidecar(app: &AppHandle) {
     let _ = child.kill();
 }
 
+/// The update card's restart. The page has already asked about running work;
+/// `exit` does not ask again.
+#[tauri::command]
+fn restart(app: AppHandle, relaunch: State<Relaunch>) {
+    relaunch.0.store(true, Ordering::SeqCst);
+    app.exit(0);
+}
+
+/// Run once the server is down, so the new one starts clean: the launcher
+/// rebuilds the shell when the pull changed it and opens the window again. Its
+/// console stays open only when that fails.
+fn relaunch(root: &Path) {
+    let launched = if cfg!(windows) {
+        Command::new("cmd").arg("/c").arg(root.join("tool").join("app.cmd")).current_dir(root).spawn()
+    } else {
+        Command::new("sh").arg(root.join("tool").join("app.command")).current_dir(root).spawn()
+    };
+    if let Err(err) = launched {
+        eprintln!("다시 띄우지 못했다: {err}");
+    }
+}
+
 // -- The terminal ---------------------------------------------------------
 //
 // A shell for the person, in the worktree they picked. Output goes out as
@@ -249,7 +274,8 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(Ptys::default())
         .manage(Sidecar(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url])
+        .manage(Relaunch(AtomicBool::new(false)))
+        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url, restart])
         .setup(move |app| {
             let (child, port) = spawn_sidecar(&root, &log)?;
             app.state::<Sidecar>().0.lock().unwrap().replace(child);
@@ -265,6 +291,9 @@ fn main() {
                 let _ = pty.child.kill();
             }
             stop_sidecar(app);
+            if app.state::<Relaunch>().0.load(Ordering::SeqCst) {
+                relaunch(&repo());
+            }
         }
     });
 }
