@@ -133,6 +133,24 @@ def test_a_commit_made_after_the_check_keeps_the_branch(repo, monkeypatch):
     assert git(repo, "log", "-1", "--format=%s", "late").strip() == "late work"
 
 
+def test_a_branch_checked_out_after_the_removal_is_kept(repo, monkeypatch):
+    """`update-ref` would delete a branch the original checkout just switched to, leaving it no HEAD."""
+
+    wt = importlib.import_module("workspace.worktrees")
+    path = create(repo, "taken")
+    real = wt._git
+
+    def racing(where, *args):
+        done = real(where, *args)
+        if args[:2] == ("worktree", "remove") and not done.returncode:
+            git(repo, "switch", "-q", "taken")
+        return done
+
+    monkeypatch.setattr(wt, "_git", racing)
+    assert "남겼다" in remove(repo, path)
+    assert git(repo, "rev-parse", "--abbrev-ref", "HEAD").strip() == "taken"
+
+
 def test_a_squash_that_main_reverted_is_not_merged(repo):
     """The patch is in HEAD's history but not in HEAD: deleting loses it."""
 

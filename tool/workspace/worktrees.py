@@ -244,7 +244,11 @@ def remove(repo: Path, path: Path, force: bool = False, *, keep_branch: bool = F
         return "작업트리를 지웠다" + left
     if not row["merged"]:
         return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 머지되지 않아 남겼다" + left
-    # Only the commit `merged` judged: one made after the check keeps the branch.
+    # Only the commit `merged` judged, and never a branch a checkout stands on
+    # now: `update-ref` skips the refusal `branch -D` makes for that.
+    trees = _git(repo, "worktree", "list", "--porcelain")
+    if trees.returncode or f"branch refs/heads/{row['branch']}" in trees.stdout.splitlines():
+        return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 다른 체크아웃이 쓰고 있어 남겼다" + left
     done = _git(repo, "update-ref", "-d", f"refs/heads/{row['branch']}", row["head"])
     if done.returncode:
         return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 확인 뒤 바뀌어 남겼다" + left
