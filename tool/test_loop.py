@@ -2101,6 +2101,18 @@ def test_a_gate_repair_without_its_test_cleanup_stops_the_loop(world):
     assert spec["state"] == "멈춤" and "test-cleanup" in spec["stopped"]["detail"]
     assert spec["state"] != "머지 가능"
 
+    def resumed():
+        client().post("/api/specs/fix-f3/resume", json={}).raise_for_status()
+        waited(lambda: not loop._loops)
+        return specs.load("proj", "fix-f3")
+    Worker.replies = ["다 했다", "그래도 없다"]
+    spec = resumed()
+    assert "stopped because" in Worker.made[-1].heard[-2], "the resumed loop asks before it checks anything"
+    assert spec["state"] == "멈춤" and spec["cleanup_owed"], "the commits from before the stop still owe it"
+    Worker.replies = [CLEANED + "정리했다"]
+    spec = resumed()
+    assert spec["state"] == "머지 가능" and not spec["cleanup_owed"] and spec["test_cleanup"]["audited"]
+
 
 def test_the_original_moves_only_when_clean_on_the_base(world):
     (world.repo / "mine.txt").write_text("사람의 것", encoding="utf-8")

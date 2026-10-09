@@ -910,7 +910,8 @@ def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     if spec.get("planning"):    # a plan's revision writes documents only
         return turn(loop, spec, path, text)
     return sweep.held(path, text, lambda t: turn(loop, spec, path, t), lambda answer: block("test-cleanup", answer),
-                      lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), lambda fields: change(loop, **fields))
+                      lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), lambda fields: change(loop, **fields),
+                      (specs.load(loop.repo, loop.sid) or spec).get("cleanup_owed", ""))
 
 
 def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
@@ -1255,6 +1256,8 @@ def step(loop: Loop) -> bool:
     if spec.get("workspace_mode") == "branch" and \
             specs.sh(["git", "branch", "--show-current"], path).stdout.strip() != specs.branch_of(spec):
         return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE, "작업 브랜치를 다시 연 뒤 리뷰를 계속해라")
+    if spec.get("cleanup_owed"):    # resumed from a missing cleanup report: nothing ships before it is given
+        return told(loop, spec, path, sweep.RESUMED) is not None
     rounds, pr = counted(spec), spec["pr"]["number"]
     n = len(rounds) + 1
     head, base = pr_head(repo, pr)

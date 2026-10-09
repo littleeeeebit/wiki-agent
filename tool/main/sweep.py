@@ -21,6 +21,8 @@ REPAIR = ("When the repair changes code, run the test cleanup pass your instruct
 OWED = ("Your commits in that turn change code, and the answer has no valid `test-cleanup` block. Run the test "
         "cleanup pass your instructions describe, rerun the checks, commit and push, then answer again with the "
         "`test-cleanup` block and everything the previous request asked you to end with.")
+RESUMED = ("The loop stopped because your repair commits change code and no valid `test-cleanup` block was given. "
+           "Nothing is checked or reviewed until it is.")
 
 
 def valid(value) -> bool:
@@ -60,30 +62,38 @@ def unreported(path: Path, reviewed: str, report) -> str:
         "코드를 고쳤지만 테스트 정리 보고(`test-cleanup`)가 없거나 형식이 틀렸다"
 
 
-def held(path: Path, text: str, turn, report, stop, keep) -> str | None:
+def held(path: Path, text: str, turn, report, stop, keep, owing: str = "") -> str | None:
     """A repair turn held to the cleanup every implementation owes: when its
     commits change code, a valid `test-cleanup` block is asked for once more,
     then the loop stops. The valid report replaces the stored one.
 
+    The stop leaves `cleanup_owed`, the HEAD before the repair, on the spec;
+    the resumed turn passes it back as `owing` and is measured from there, so
+    commits made before the stop still owe the report until one is given.
+
     `turn(text)` runs one turn and returns its answer, `None` when stopped;
     `report(answer)` reads the block; `stop(why)` and `keep(fields)` are the loop's."""
 
-    try:
-        before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True,
-                                encoding="utf-8", errors="replace", timeout=60).stdout.strip()
-    except (OSError, subprocess.SubprocessError):
-        before = ""    # unknown: any commit the turn makes is taken to owe the report
+    before = owing
+    if not before:
+        try:
+            before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True,
+                                    encoding="utf-8", errors="replace", timeout=60).stdout.strip()
+        except (OSError, subprocess.SubprocessError):
+            before = ""    # unknown: any commit the turn makes is taken to owe the report
     answer = turn(f"{text}\n\n{REPAIR}")
     for last in (False, True):
         missing = answer is not None and unreported(path, before, report(answer))
         if not missing:
             break
         if last:
+            keep({"cleanup_owed": before})
             stop(missing)
             return None
         answer = turn(OWED)
-    if answer is not None and valid(found := report(answer)):
-        keep({"test_cleanup": found})
+    if answer is not None:
+        found = report(answer)
+        keep({"cleanup_owed": "", **({"test_cleanup": found} if valid(found) else {})})
     return answer
 
 
