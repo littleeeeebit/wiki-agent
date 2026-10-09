@@ -11,7 +11,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant};
@@ -24,9 +24,6 @@ use tauri::{AppHandle, Emitter, Manager, RunEvent, State, Url, WebviewUrl, Webvi
 const BOOT: Duration = Duration::from_secs(40);
 
 struct Sidecar(Mutex<Option<Child>>);
-
-/// Set by `restart`: open the window again once this one is gone.
-struct Relaunch(AtomicBool);
 
 struct Pty {
     writer: Box<dyn Write + Send>,
@@ -150,25 +147,30 @@ fn stop_sidecar(app: &AppHandle) {
 }
 
 /// The update card's restart. The page has already asked about running work;
-/// `exit` does not ask again.
+/// `exit` does not ask again. The launcher starts first and waits for this
+/// process to go, then rebuilds the shell when the pull changed it and opens
+/// the window again: a relaunch left to the end of shutdown never ran when
+/// the shutdown was cut short, and the shell cannot be relinked while it runs.
 #[tauri::command]
-fn restart(app: AppHandle, relaunch: State<Relaunch>) {
-    relaunch.0.store(true, Ordering::SeqCst);
-    app.exit(0);
-}
-
-/// Run once the server is down, so the new one starts clean: the launcher
-/// rebuilds the shell when the pull changed it and opens the window again. Its
-/// console stays open only when that fails.
-fn relaunch(root: &Path) {
-    let launched = if cfg!(windows) {
-        Command::new("cmd").arg("/c").arg(root.join("tool").join("app.cmd")).current_dir(root).spawn()
-    } else {
-        Command::new("sh").arg(root.join("tool").join("app.command")).current_dir(root).spawn()
+fn restart(app: AppHandle) -> Result<(), String> {
+    let tool = repo().join("tool");
+    let pid = std::process::id();
+    #[cfg(windows)]
+    let launched = {
+        use std::os::windows::process::CommandExt;
+        // `start` gives it a console of its own, so its message and pause
+        // work as they do on a double-click. `cmd /c`, not the `.cmd` itself,
+        // which `start` would leave open behind `cmd /k`; `.\` because cmd
+        // may be told not to look in the current folder.
+        Command::new("cmd")
+            .raw_arg(format!("/c start \"\" /d \"{}\" cmd /c .\\app.cmd --after {pid}", tool.display()))
+            .spawn()
     };
-    if let Err(err) = launched {
-        eprintln!("다시 띄우지 못했다: {err}");
-    }
+    #[cfg(not(windows))]
+    let launched = Command::new("sh").arg(tool.join("app.command")).args(["--after", &pid.to_string()]).spawn();
+    launched.map_err(|err| format!("다시 띄우지 못했다: {err}"))?;
+    app.exit(0);
+    Ok(())
 }
 
 // -- The terminal ---------------------------------------------------------
@@ -274,7 +276,6 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(Ptys::default())
         .manage(Sidecar(Mutex::new(None)))
-        .manage(Relaunch(AtomicBool::new(false)))
         .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url, restart])
         .setup(move |app| {
             let (child, port) = spawn_sidecar(&root, &log)?;
@@ -291,9 +292,6 @@ fn main() {
                 let _ = pty.child.kill();
             }
             stop_sidecar(app);
-            if app.state::<Relaunch>().0.load(Ordering::SeqCst) {
-                relaunch(&repo());
-            }
         }
     });
 }

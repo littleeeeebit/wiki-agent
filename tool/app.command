@@ -19,6 +19,12 @@ halt() {
 
 cd "$(dirname "$0")/.." || exit 1
 
+# The update card's restart starts this before the window it closes has gone.
+# Wait for it: its server holds the wiki's lock until then.
+if [ "$1" = --after ]; then
+  while kill -0 "$2" 2>/dev/null; do sleep 1; done
+fi
+
 if [ ! -f web/dist/index.html ]; then
   halt "Run: python3 tool/setup_chat.py install --agent both
 See docs/chat-setup.md."

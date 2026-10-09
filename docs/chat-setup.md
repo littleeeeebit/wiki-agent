@@ -95,9 +95,10 @@ only, and a failed check shows nothing. "업데이트" fast-forwards a clean `ma
 checkout and, when the pull changed them, reinstalls `requirements-chat.txt`,
 reruns `npm ci` and rebuilds the screen. The running app keeps its old code,
 so the card then offers "다시 시작". It asks about running tasks and review
-loops the way closing the window does, closes the window, stops the server and
-runs `tool/app.cmd` (`tool/app.command`), which rebuilds the window when the
-pull changed it and opens it again. In a browser tab the card says to reopen
+loops the way closing the window does, starts `tool/app.cmd`
+(`tool/app.command`) and closes the window. The launcher waits until the old
+window and its server are gone, rebuilds the window when the pull changed it
+and opens it again. In a browser tab the card says to reopen
 the app with that launcher instead. Another
 branch, uncommitted tracked changes or a diverged `main` disable the button;
 pull by hand then. A paired phone sees the card but cannot update.
