@@ -77,6 +77,26 @@ def test_prose_is_found_with_no_blank_line_between_heading_and_body() -> None:
     assert _what("## 결론\n붙어 있는 본문입니다.\n\n둘째 문단.") == "붙어 있는 본문입니다."
 
 
+def _why(body: str, **pr) -> str:
+    line = next(ln for ln in record({**PR, **pr, "body": body}, 0)[1].splitlines() if ln.startswith("Why."))
+    return line[len("Why."):].strip()
+
+
+def test_a_test_plan_is_never_the_reason() -> None:
+    """PR #99's record read its `검증` section as the reason; #97's, a table."""
+
+    assert _why("## Summary\n\nAdds X.\n\n## Test plan\n\npytest -q passed") == NO_WHY
+    assert _why("## 변경 요약\n\nX 추가.\n\n## 확인\n\n- 통과") == NO_WHY
+    assert _why("Adds X.\n\n| 항목 | 전 | 후 |\n\npytest 통과") == NO_WHY
+    assert _why("## 배경\n\n게이트가 흔들렸다.\n\n## 원인과 변경\n\n시한 분류.\n\n## 검증\n\n16/16 통과") \
+        == "게이트가 흔들렸다. 시한 분류."
+    assert _why("## Why\n\nBecause Y.\n\n## Verification\n\nok") == "Because Y."
+
+
+def test_a_commit_message_keeps_its_rest_as_the_reason() -> None:
+    assert _why("Adds X.\n\nBecause Y.", headRefName="", sha="abc123") == "Because Y."
+
+
 def test_a_body_of_nothing_but_headings_records_no_summary() -> None:
     """With no prose left after the headings are stripped, it invents none."""
     assert NO_WHAT in _record("## 제목뿐\n\n### 또 제목뿐")

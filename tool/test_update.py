@@ -58,6 +58,7 @@ def test_offers_pulls_and_waits_for_restart(checkouts):
     assert git(local, "log", "-1", "--format=%s") == "second"
     assert update.steps(["web/src/App.tsx"])[0][0] == "npm run build"
     assert update.steps(["tool/main/app.py"]) == []
+    assert update.steps(["requirements-hooks.txt"])[0][0] == "pip install"   # included by requirements-chat.txt
 
 
 def test_a_failed_preparation_keeps_the_button_and_is_retried(checkouts, tmp_path, monkeypatch):

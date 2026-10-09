@@ -1335,6 +1335,9 @@ def opened(repo: Path, path: Path, run, spec: dict):
         return failed(run, spec, "사람이 멈춤 — push 는 했고 PR 은 만들지 않았다")
     note(run, "PR 을 한국어로 옮기는 중")
     shown = korean(spec)
+    # Translating can take a minute; a stop pressed meanwhile still holds.
+    if run.halt.is_set():
+        return failed(run, spec, "사람이 멈춤 — push 는 했고 PR 은 만들지 않았다")
     try:
         n, url = pull_request(path, branch, base.stdout.strip(), shown["goal"], body_of(shown))
     except RuntimeError as exc:

@@ -539,6 +539,14 @@ def test_a_stop_publishes_nothing_even_after_a_fast_gate_passed(repo):
         assert remote.pushes() == 1 and not remote.created()
         assert "PR 은 만들지 않았다" in specs.load("proj", sid)["fault"]
 
+        # The stop comes while the PR text is translated: still no pull request.
+        remote.on_push, real, Worker.replies = (lambda: None), specs.korean, [passing]
+        with patch.object(specs, "korean", lambda spec: (halts[-1].set(), real(spec))[1]):
+            sid = made(repo, spec_block(slug="stop-translating"))[0]["id"]
+            started(web, sid)
+        assert remote.pushes() == 2 and not remote.created()
+        assert "PR 은 만들지 않았다" in specs.load("proj", sid)["fault"]
+
 
 ENGLISH_PLAN = ("# Plan\n\n## Requirements\n\n| # | Need | Status |\n| --- | --- | --- |\n"
                 "| 2 | Other table | Complete — PR #7 |\n\n"

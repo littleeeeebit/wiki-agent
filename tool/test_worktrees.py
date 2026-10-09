@@ -1,5 +1,6 @@
 """Worktrees an agent writes in: made beside the repo, listed, cleared safely."""
 
+import importlib
 import subprocess
 import sys
 
@@ -39,7 +40,8 @@ def test_create_puts_the_worktree_beside_the_repo(repo, monkeypatch):
     assert path == (repo.parent / "demo-worktrees" / "fix-login").resolve()
     assert git(path, "branch", "--show-current").strip() == "fix-login"
     # nothing on it yet, so nothing would be lost
-    assert worktrees(repo) == [{"path": path, "branch": "fix-login", "dirty": False, "merged": True}]
+    head = git(repo, "rev-parse", "HEAD").strip()
+    assert worktrees(repo) == [{"path": path, "branch": "fix-login", "head": head, "dirty": False, "merged": True}]
     (path / "a.txt").write_text("x")
     assert worktrees(repo)[0]["dirty"]
     real, calls = subprocess.run, []
@@ -51,7 +53,7 @@ def test_create_puts_the_worktree_beside_the_repo(repo, monkeypatch):
 
     monkeypatch.setattr(subprocess, "run", read)
     assert list_workspaces(repo, details=False) == [
-        {"path": repo.resolve(), "branch": "main"}, {"path": path, "branch": "fix-login"}]
+        {"path": repo.resolve(), "branch": "main", "head": head}, {"path": path, "branch": "fix-login", "head": head}]
     assert len(calls) == 2  # Fresh checkout identity and Git's registered worktree list.
 
 
@@ -111,6 +113,24 @@ def test_remove_deletes_a_squash_merged_branch(repo):
     assert worktrees(repo)[0]["merged"]
     assert "브랜치 squashed 를 지웠다" in remove(repo, path)
     assert not git(repo, "branch", "--list", "squashed").strip()
+
+
+def test_a_commit_made_after_the_check_keeps_the_branch(repo, monkeypatch):
+    """An outside CLI commits between the merged check and the deletion."""
+
+    wt = importlib.import_module("workspace.worktrees")
+    path = create(repo, "late")
+    real = wt._git
+
+    def racing(where, *args):
+        if args[:2] == ("worktree", "remove"):
+            git(path, "commit", "-q", "--allow-empty", "-m", "late work")
+        return real(where, *args)
+
+    monkeypatch.setattr(wt, "_git", racing)
+    assert worktrees(repo)[0]["merged"]
+    assert "남겼다" in remove(repo, path)
+    assert git(repo, "log", "-1", "--format=%s", "late").strip() == "late work"
 
 
 def test_a_squash_that_main_reverted_is_not_merged(repo):
