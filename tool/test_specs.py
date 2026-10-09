@@ -20,7 +20,7 @@ from agent import chat_session
 from agent.chat_session import Event
 from main import channels as chat_channels
 from main import query as chat
-from main import loop, specs, work
+from main import loop, specs, sweep, work
 from test_main import _repo, client, no_machine_settings, parse, settled, until  # noqa: F401 — the fixture is autouse
 
 PASS = "git --version"
@@ -153,9 +153,12 @@ class Remote:
         return any(c[:3] == ["gh", "pr", "create"] for c in self.calls)
 
 
-def report(*passes: bool) -> str:
+SWEPT = "```test-cleanup\n" + json.dumps({"audited": ["test_a.py"], "removed": []}) + "\n```\n\n"
+
+
+def report(*passes: bool, sweep: str = SWEPT) -> str:
     items = [{"item": f"항목 {i}", "pass": p, "evidence": f"ran {i} · ok"} for i, p in enumerate(passes)]
-    return "다 했다.\n\n```done-report\n" + json.dumps(items, ensure_ascii=False) + "\n```"
+    return "다 했다.\n\n" + sweep + "```done-report\n" + json.dumps(items, ensure_ascii=False) + "\n```"
 
 
 class Worker:
@@ -438,6 +441,63 @@ def test_a_passing_report_is_not_believed_over_a_failing_gate_or_an_uncommitted_
         path = started(web, sid)
         assert specs.load("proj", sid)["gate"] is None and not remote.created()
         assert any("통과하지 못했거나" in s["text"] for s in work.recall(Path(path))[-1]["steps"])
+
+
+def test_a_code_task_is_asked_once_for_its_test_cleanup_then_stopped(repo):
+    web = client()
+    remote = Remote()
+    removed = {"audited": ["test_a.py"], "removed": [{"test": "test_a.py::test_v1", "reason": "v1 route is gone"}]}
+    Worker.replies = [report(True, True, sweep=""), report(True, True, sweep="```test-cleanup\n" + json.dumps(removed) + "\n```\n")]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
+            patch.object(specs, "korean", side_effect=lambda spec: spec):
+        sid = made(repo, spec_block(slug="swept"))[0]["id"]
+        path = started(web, sid)
+        until(lambda: specs.load("proj", sid)["state"].startswith("PR #"))
+        settled(path)
+        assert Worker.made[-1].heard[-1] == sweep.PROMPT
+        assert specs.load("proj", sid)["test_cleanup"] == removed
+        assert "test_a.py::test_v1" in remote.body and "v1 route is gone" in remote.body
+
+        Worker.replies = [report(True, True, sweep=""), report(True, True, sweep="")]
+        sid = made(repo, spec_block(slug="unswept"))[0]["id"]
+        started(web, sid)
+        until(lambda: specs.load("proj", sid).get("fault"))
+        spec = specs.load("proj", sid)
+        assert "test-cleanup" in spec["fault"] and spec["state"] == "작업 중" and not spec["sweep_asked"]
+    assert sweep.valid({"audited": [], "removed": [], "reason": "docs only"})
+    assert not sweep.valid({"audited": [], "removed": []})
+    assert not sweep.valid({"audited": ["t.py"], "removed": [{"test": "t.py::x"}]})
+
+
+def test_a_repair_owes_its_cleanup_through_renames_and_an_unreadable_head(tmp_path):
+    def git(*args):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-C", str(tmp_path), *args],
+                              check=True, capture_output=True, text=True, encoding="utf-8").stdout.strip()
+    git("init", "-q")
+    git("config", "core.quotePath", "true")
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "app.py").write_text("x = 1\n")
+    (tmp_path / "docs" / "메모.md").write_text("# 메모\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-qm", "app")
+    base = git("rev-parse", "HEAD")
+    git("mv", "docs/메모.md", "docs/notes.md")
+    git("commit", "-qm", "rename a document")
+    assert not sweep.owed(tmp_path, base), "a quoted non-ASCII document name is still a document"
+    git("mv", "app.py", "docs/retired.md")
+    git("commit", "-qm", "retire")
+    assert sweep.owed(tmp_path, base), "the deleted source side of a rename still owes the report"
+
+    kept, stopped = {}, []
+    def held(answer, owing=""):
+        return sweep.held(tmp_path, "Repair", lambda text: answer, lambda a: a if isinstance(a, dict) else None,
+                          stopped.append, kept.update, owing)
+    with patch.object(sweep.subprocess, "run", side_effect=OSError("HEAD unreadable")):
+        assert held("committed, no report") is None and kept["cleanup_owed"] == sweep.UNKNOWN
+        assert held("disposition only", kept["cleanup_owed"]) is None and len(stopped) == 2, "still owed on resume"
+        cleaned = {"audited": ["test_app.py"], "removed": []}
+        assert held(cleaned, kept["cleanup_owed"]) == cleaned
+    assert kept == {"cleanup_owed": "", "test_cleanup": cleaned}
 
 
 def test_a_stop_publishes_nothing_even_after_a_fast_gate_passed(repo):

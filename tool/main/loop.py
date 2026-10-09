@@ -25,7 +25,7 @@ from common import errorlog, worktree_home
 from common.budget import Budget, Cancelled, Exhausted
 from workspace import adopt, base_branch, folder_for, merged, remove, worktrees
 
-from . import channels, connect, decisions, query, review_contract, runtime, specs, verification, work
+from . import channels, connect, decisions, query, review_contract, runtime, specs, sweep, verification, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
 
 REVIEW = ROOT / "raw" / "review"
@@ -904,6 +904,17 @@ def ask(loop: Loop, chat: ChatSession, text: str) -> str:
 
 
 def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
+    """A repair turn of the work cell (`turn`) — review, gate, merge conflict,
+    local verification — held to its test cleanup (`sweep.held`)."""
+
+    if spec.get("planning"):    # a plan's revision writes documents only
+        return turn(loop, spec, path, text)
+    return sweep.held(path, text, lambda t: turn(loop, spec, path, t), lambda answer: block("test-cleanup", answer),
+                      lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), lambda fields: change(loop, **fields),
+                      (specs.load(loop.repo, loop.sid) or spec).get("cleanup_owed", ""))
+
+
+def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     """One turn of the work cell, as a person's turn would run: every write it
     asks for waits on a person. Its final answer; `None` when stopped.
 
@@ -1245,6 +1256,8 @@ def step(loop: Loop) -> bool:
     if spec.get("workspace_mode") == "branch" and \
             specs.sh(["git", "branch", "--show-current"], path).stdout.strip() != specs.branch_of(spec):
         return stop(loop, loop.repo, loop.sid, Why.NO_WORKTREE, "작업 브랜치를 다시 연 뒤 리뷰를 계속해라")
+    if spec.get("cleanup_owed"):    # resumed from a missing cleanup report: nothing ships before it is given
+        return told(loop, spec, path, sweep.RESUMED) is not None
     rounds, pr = counted(spec), spec["pr"]["number"]
     n = len(rounds) + 1
     head, base = pr_head(repo, pr)

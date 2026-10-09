@@ -8,6 +8,7 @@ import type { Options, Pr } from '@/lib/api'
 import type { Elsewhere, Group, Phase, Task } from '@/lib/tasks'
 import { cn } from '@/lib/utils'
 import { ProviderUsage } from '@/components/ProviderUsage'
+import { UpdateCard } from '@/components/UpdateCard'
 
 /** What the middle pane shows. */
 export type View = 'chat' | 'map' | 'architecture' | 'suite' | 'projects'
@@ -221,6 +222,7 @@ export function TaskRail(props: Props) {
         )}
       </nav>
 
+      <UpdateCard />
       <ProviderUsage />
 
       {menu && (

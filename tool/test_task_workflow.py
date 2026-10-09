@@ -12,7 +12,7 @@ from fastapi import HTTPException
 from agent import ChatSession
 from main import loop, specs, survey, work
 from test_main import client, no_machine_settings, settled  # noqa: F401
-from test_specs import PASS, Remote, Worker, made, repo as repository_fixture, spec_block, started
+from test_specs import PASS, SWEPT, Remote, Worker, made, repo as repository_fixture, spec_block, started
 from workspace import create, worktrees
 
 repo = repository_fixture
@@ -158,7 +158,7 @@ def test_active_spec_revision_records_old_requirements_and_refreshes_agent(repo)
         assert "Do not push" not in chat.system and "Pushing the task branch" in chat.system
         # After a planner hands off, revised implementation must still publish.
         specs.update(repo.name, sid, planning={"phase": "handoff"})
-        Worker.replies = ["```done-report\n" + json.dumps([
+        Worker.replies = [SWEPT + "```done-report\n" + json.dumps([
             {"item": PASS, "pass": True}, {"item": "Check the edge case", "pass": True}]) + "\n```"]
         with patch.object(specs, "sh", Remote()), patch.object(specs, "korean", side_effect=lambda value: value):
             assert web.post("/api/work/say", json={"path": str(repo), "text": "Finish the revised task"}).status_code == 200
@@ -172,7 +172,7 @@ def test_agent_spec_update_and_completion_open_or_reuse_pr(repo):
     change = {"rev": 1, "reason": "The discovered edge case needs a different check",
               "goal": "Handle an edge case", "out": [], "done": ["Edge case passes"]}
     report = [{"item": PASS, "pass": True}, {"item": "Edge case passes", "pass": True}]
-    Worker.replies = ["```spec-update\n" + json.dumps(change) + "\n```\n\n```done-report\n"
+    Worker.replies = ["```spec-update\n" + json.dumps(change) + "\n```\n\n" + SWEPT + "```done-report\n"
                       + json.dumps(report) + "\n```"]
     with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
          patch.object(specs, "korean", side_effect=lambda spec: spec):

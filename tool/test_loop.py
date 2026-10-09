@@ -207,22 +207,26 @@ def keep(*kept):
     return "고른 것.\n\n```p2-keep\n" + json.dumps(list(kept), ensure_ascii=False) + "\n```"
 
 
-def fixed(*entries, name=None, broken=False):
-    """A work cell's reply: a commit, and a disposition of `(finding, action)`."""
+CLEANED = '```test-cleanup\n{"audited": ["test_fix.py"], "removed": []}\n```\n\n'
+
+
+def fixed(*entries, name=None, broken=False, cleanup=CLEANED):
+    """A work cell's reply: a commit, its test cleanup report, and a
+    disposition of `(finding, action)`."""
 
     def reply(path, halt):
         commit(path, name or f"fix-{uuid.uuid4().hex[:6]}.txt")
         if broken:
             commit(path, "broken")
         items = [{"finding": f, "action": a, "evidence": "ran it"} for f, a in entries]
-        return "고쳤다.\n\n```disposition\n" + json.dumps(items, ensure_ascii=False) + "\n```"
+        return "고쳤다.\n\n" + cleanup + "```disposition\n" + json.dumps(items, ensure_ascii=False) + "\n```"
     return reply
 
 
-def unbroken(path, halt):
+def unbroken(path, halt, cleanup=CLEANED):
     (path / "broken").unlink()
     git(path, "commit", "-qam", "unbreak")
-    return "게이트를 고쳤다"
+    return cleanup + "게이트를 고쳤다"
 
 
 @pytest.fixture(scope="session")
@@ -1162,6 +1166,24 @@ def test_same_line_findings_need_separate_correction_reports_before_the_next_rev
     assert world.hub.head(7) == spec["pr"]["head"]
 
 
+def test_a_code_repair_owes_its_test_cleanup_report_before_the_next_review(world):
+    spec = pr_spec(world, "repair-cleanup", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [fixed((finding, "fixed"), cleanup=""), fixed((finding, "fixed"))]
+    complete = looped(spec["id"])
+    assert complete["state"] == "머지 가능" and len(complete["rounds"]) == 2
+    assert "test-cleanup" in Worker.made[-1].heard[0], "the repair turn asks for the report"
+    assert "test-cleanup" in Worker.made[-1].heard[1], "a missing report is asked for once more"
+    assert complete["test_cleanup"] == {"audited": ["test_fix.py"], "removed": []}
+
+    spec = pr_spec(world, "repair-no-cleanup", 8)
+    Reviewer.replies = [deny(finding)]
+    Worker.replies = [fixed((finding, "fixed"), cleanup=""), fixed((finding, "fixed"), cleanup="")]
+    stopped = looped(spec["id"])
+    assert stopped["state"] == "멈춤" and "test-cleanup" in stopped["stopped"]["detail"]
+
+
 @pytest.mark.parametrize("action", ["disagree", "not-reproduced"])
 def test_evidence_backed_correction_without_a_code_change_can_be_reviewed(world, action):
     spec = pr_spec(world, "repair-no-change", 7)
@@ -1223,7 +1245,8 @@ for turn in range(int(sys.argv[3])):
     Path("repair.txt").write_text(f"Fixed {turn}", encoding="utf-8")
     subprocess.run(["git", "add", "repair.txt"], check=True, capture_output=True)
     subprocess.run(["git", "commit", "-qm", "Repair"], check=True, capture_output=True)
-    answer = "```disposition\\n" + json.dumps([{"finding": sys.argv[1], "action": "fixed", "evidence": "All checks collected"}]) + "\\n```"
+    answer = ("```test-cleanup\\n" + json.dumps({"audited": ["test_repair.py"], "removed": []}) + "\\n```\\n"
+              "```disposition\\n" + json.dumps([{"finding": sys.argv[1], "action": "fixed", "evidence": "All checks collected"}]) + "\\n```")
     say({"type": "result", "origin": {"kind": "human"}, "result": answer, "session_id": "fixture-cli"})
 sys.stdin.read()
 '''
@@ -1719,7 +1742,7 @@ def integrate_conflict(path, halt):
     (path / "collision.txt").write_text("upstream behavior\ntask behavior\n", encoding="utf-8")
     git(path, "add", "collision.txt")
     git(path, "commit", "-qm", "Integrate both behaviors")
-    return "Integrated the current base; ready for new checks and review."
+    return CLEANED + "Integrated the current base; ready for new checks and review."
 
 
 def test_conflicting_base_is_repaired_before_review_and_preserves_both_sides(world):
@@ -2063,6 +2086,32 @@ def test_a_failed_final_gate_goes_to_repair_and_a_new_review(world):
     assert "python gate.py" in Worker.made[-1].heard[0] and "failed" in Worker.made[-1].heard[0]
     assert spec["state"] == "머지 가능" and spec["rounds"][0]["head"] == broken and len(spec["rounds"]) == 2
     assert spec["validation"]["final"]["ok"] and spec["validation"]["final"]["head"] == world.hub.head(7) != broken
+    assert "test-cleanup" in Worker.made[-1].heard[0], "a gate repair is asked for its cleanup too"
+
+
+def test_a_gate_repair_without_its_test_cleanup_stops_the_loop(world):
+    mapped(world, "*")
+    path = Path(pr_spec(world, "fix-f3", 7, gate=None)["worktree"])
+    commit(path, "broken")
+    git(path, "push", "-q", "origin", "fix-f3")
+    Reviewer.replies = [allow, allow]
+    Worker.replies = [lambda p, h: unbroken(p, h, cleanup=""), "아직 없다"]
+    spec = looped("fix-f3")
+    assert "test-cleanup" in Worker.made[-1].heard[1], "asked for once more"
+    assert spec["state"] == "멈춤" and "test-cleanup" in spec["stopped"]["detail"]
+    assert spec["state"] != "머지 가능"
+
+    def resumed():
+        client().post("/api/specs/fix-f3/resume", json={}).raise_for_status()
+        waited(lambda: not loop._loops)
+        return specs.load("proj", "fix-f3")
+    Worker.replies = ["다 했다", "그래도 없다"]
+    spec = resumed()
+    assert "stopped because" in Worker.made[-1].heard[-2], "the resumed loop asks before it checks anything"
+    assert spec["state"] == "멈춤" and spec["cleanup_owed"], "the commits from before the stop still owe it"
+    Worker.replies = [CLEANED + "정리했다"]
+    spec = resumed()
+    assert spec["state"] == "머지 가능" and not spec["cleanup_owed"] and spec["test_cleanup"]["audited"]
 
 
 def test_the_original_moves_only_when_clean_on_the_base(world):

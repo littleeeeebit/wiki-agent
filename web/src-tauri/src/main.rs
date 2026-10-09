@@ -146,6 +146,33 @@ fn stop_sidecar(app: &AppHandle) {
     let _ = child.kill();
 }
 
+/// The update card's restart. The page has already asked about running work;
+/// `exit` does not ask again. The launcher starts first and waits for this
+/// process to go, then rebuilds the shell when the pull changed it and opens
+/// the window again: a relaunch left to the end of shutdown never ran when
+/// the shutdown was cut short, and the shell cannot be relinked while it runs.
+#[tauri::command]
+fn restart(app: AppHandle) -> Result<(), String> {
+    let tool = repo().join("tool");
+    let pid = std::process::id();
+    #[cfg(windows)]
+    let launched = {
+        use std::os::windows::process::CommandExt;
+        // `start` gives it a console of its own, so its message and pause
+        // work as they do on a double-click. `cmd /c`, not the `.cmd` itself,
+        // which `start` would leave open behind `cmd /k`; `.\` because cmd
+        // may be told not to look in the current folder.
+        Command::new("cmd")
+            .raw_arg(format!("/c start \"\" /d \"{}\" cmd /c .\\app.cmd --after {pid}", tool.display()))
+            .spawn()
+    };
+    #[cfg(not(windows))]
+    let launched = Command::new("sh").arg(tool.join("app.command")).args(["--after", &pid.to_string()]).spawn();
+    launched.map_err(|err| format!("다시 띄우지 못했다: {err}"))?;
+    app.exit(0);
+    Ok(())
+}
+
 // -- The terminal ---------------------------------------------------------
 //
 // A shell for the person, in the worktree they picked. Output goes out as
@@ -249,7 +276,7 @@ fn main() {
         .plugin(tauri_plugin_notification::init())
         .manage(Ptys::default())
         .manage(Sidecar(Mutex::new(None)))
-        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url])
+        .invoke_handler(tauri::generate_handler![pty_open, pty_write, pty_resize, pty_close, open_url, restart])
         .setup(move |app| {
             let (child, port) = spawn_sidecar(&root, &log)?;
             app.state::<Sidecar>().0.lock().unwrap().replace(child);

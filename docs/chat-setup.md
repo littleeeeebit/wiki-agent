@@ -86,6 +86,28 @@ Only the terminal is omitted, and the rest is the same. To exit, use `Ctrl+C`.
 If only Codex is installed, the actual model queried during installation is selected by default. If both are installed, Claude is the default.
 To select a different CLI on the screen, that CLI must also be installed and logged in.
 
+### Updates
+
+The server checks GitHub's `origin/main` against the commit it started from,
+at most once an hour. When `main` has moved on, a card at the bottom of the
+rail lists the new commits. It never interrupts: "나중에" hides that version
+only, and a failed check shows nothing. The server keeps that answer in
+`raw/update-later`, because the window's page gets a new port, and so new
+browser storage, every time it opens. "업데이트" fast-forwards a clean `main`
+checkout. Then, for whatever changed since the running build, it reinstalls
+`requirements-chat.txt`, reruns `npm ci` and rebuilds the screen. If one of
+those fails, the card shows why and keeps its button, and pressing it again
+retries them. A pull made by hand is prepared the same way. The running app
+keeps its old code, so once that preparation has passed the card offers
+"다시 시작". It asks about running tasks and review
+loops the way closing the window does, starts `tool/app.cmd`
+(`tool/app.command`) and closes the window. The launcher waits until the old
+window and its server are gone, rebuilds the window when the pull changed it
+and opens it again. In a browser tab the card says to reopen
+the app with that launcher instead. Another
+branch, uncommitted tracked changes or a diverged `main` disable the button;
+pull by hand then. A paired phone sees the card but cannot update.
+
 To use a different project folder or port just once when using a browser, run as follows:
 
 ```bash

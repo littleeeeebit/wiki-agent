@@ -20,6 +20,7 @@ import { Terminal, closed } from '@/components/Terminal'
 import * as api from '@/lib/api'
 import type { Channel, LoopRow, LoopSettings, Options, Peek as PeekData, Pr, RunSummary, Spec, Switch, Worktree } from '@/lib/api'
 import { LOOPING, elsewhere, phase, tasks as taskList } from '@/lib/tasks'
+import { leave, running as leaving } from '@/lib/leave'
 import { cn } from '@/lib/utils'
 import { useWork } from '@/lib/work'
 import { notify, requestNotifications } from '@/lib/notifications'
@@ -363,11 +364,11 @@ export default function App() {
   useEffect(() => {
     if (running < runningNow.current) readSpecs()
     runningNow.current = running
+    leaving.turns = running
   }, [running, readSpecs])
   // A loop dies with the server too; it is counted with the turns.
-  const loopsNow = useRef(0)
   useEffect(() => {
-    loopsNow.current = loopRows.filter((l) => LOOPING.test(l.state)).length
+    leaving.loops = loopRows.filter((l) => LOOPING.test(l.state)).length
   }, [loopRows])
   useEffect(() => {
     if (!('__TAURI_INTERNALS__' in window)) return
@@ -375,12 +376,7 @@ export default function App() {
     let gone = false
     import('@tauri-apps/api/window').then(({ getCurrentWindow }) =>
       getCurrentWindow().onCloseRequested((event) => {
-        const n = runningNow.current
-        const loops = loopsNow.current
-        const what = [n && `도는 작업 ${n}개`, loops && `리뷰 루프 ${loops}개`].filter(Boolean).join('와 ')
-        if (what && !window.confirm(`${what}가 멈춘다. 다시 띄우면 루프는 [계속] 으로 잇는다. 닫을까?`)) {
-          event.preventDefault()
-        }
+        if (!leave()) event.preventDefault()
       }),
     ).then((unlisten) => {
       if (gone) unlisten()

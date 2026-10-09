@@ -34,7 +34,7 @@ from fastapi.exceptions import RequestValidationError
 import translate
 from common import errorlog
 
-from . import architecture, channels, connect, improvements, loop, mobile, planning, query, refactor, refactor_api, runtime, specs, suite, survey, verification, work
+from . import architecture, channels, connect, improvements, loop, mobile, planning, query, refactor, refactor_api, runtime, specs, suite, survey, update, verification, work
 from .runtime import server_owner
 
 # On Windows `mimetypes` reads the registry, where `.js` is commonly
@@ -101,6 +101,7 @@ app.include_router(improvements.router)
 app.include_router(connect.router)
 app.include_router(verification.router)
 app.include_router(mobile.router)
+app.include_router(update.router)
 
 @app.exception_handler(StarletteHTTPException)
 async def http_error(request: Request, exc: StarletteHTTPException):

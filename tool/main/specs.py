@@ -38,7 +38,7 @@ from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
 
-from . import channels, query, review_contract, runtime, work
+from . import channels, query, review_contract, runtime, sweep, work
 from .decisions import extra_check, recommend, registered
 from .query import ROOT, _lock, current_repo, hold, project
 
@@ -64,7 +64,7 @@ STATE = re.compile(r"정리됨|작업 중|PR #\d+|리뷰 대기|리뷰 R\d+|고�
 
 # A named block at the end of an answer: a fenced block whose info string is
 # its name. A block cut off before its closing fence is not one.
-BLOCK = re.compile(r"^```(candidates|choices|spec|spec-update|done-report)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
+BLOCK = re.compile(r"^```(candidates|choices|spec|spec-update|done-report|test-cleanup)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 
 # `path:line` or `path:line-line` as an answer cites it.
 LINE = re.compile(r":\d+(?:[-–]\d+)?$")
@@ -1214,6 +1214,7 @@ def valid(items) -> bool:
         isinstance(i, dict) and isinstance(i.get("item"), str) and isinstance(i.get("pass"), bool) for i in items)
 
 
+
 def body_of(spec: dict) -> str:
     """The pull request's body. The section names are the ones
     `harvest.record` reads: `변경 요약` becomes the record's what, and
@@ -1235,7 +1236,7 @@ def body_of(spec: dict) -> str:
         lines += ["- [ ] 전체 게이트 — 리뷰가 허용한 커밋에서 머지 전에 돈다"]
     lines += [f"- [x] Jev 가 고른 추가 확인 — `{c['cmd']}` · 통과" for c in spec.get("checks") or []
               if c["ok"] and c.get("head") == spec["gate"].get("head")]
-    lines.append("")
+    lines += ["", *sweep.section(spec.get("test_cleanup"))]
     grounds = spec["grounds"]
     cited = ", ".join(f"`{g}`" for g in grounds["pages"] + grounds["files"]) or "없음"
     lines += ["## 명세", "", f"`raw/specs/{spec['repo']}/{spec['id']}.json` · 근거: {cited}", ""]
@@ -1445,6 +1446,15 @@ def _check(path: Path, run, final: str):
     spec = update(spec["repo"], spec["id"], report=items)
     if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
         return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
+    cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)
+    if sweep.valid(cleanup):
+        spec = update(spec["repo"], spec["id"], test_cleanup=cleanup, sweep_asked=False)
+    elif sweep.owed(path, (base := local_base(spec, path)) and f"origin/{base}"):    # asked once; a second miss stops
+        update(spec["repo"], spec["id"], sweep_asked=not spec.get("sweep_asked"))
+        if spec.get("sweep_asked"):
+            return failed(run, spec, "테스트 정리 보고(`test-cleanup`)가 없거나 형식이 틀렸다 — 정리 후 다시 완료 보고해야 한다")
+        note(run, "테스트 정리 단계를 요청한다")
+        return lambda: again(path, run.chat, sweep.PROMPT, spec)
     # The checks this change maps to, not the whole gate: that runs once the
     # review allows the exact head (`loop.finalized`).
     verdict, record = rounded(repo, path, spec, local_base(spec, path), run.halt, lambda text: note(run, text))

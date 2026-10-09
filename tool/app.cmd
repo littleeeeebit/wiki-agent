@@ -15,6 +15,7 @@ rem closed by itself". It did that once.
 setlocal
 chcp 65001 >nul
 set "ROOT=%~dp0.."
+if "%~1"=="--after" call :after %2
 
 if not exist "%ROOT%\web\dist\index.html" (
   echo Run: python "%~dp0setup_chat.py" install --agent both
@@ -33,6 +34,17 @@ where cargo >nul 2>nul || set "CARGO=%USERPROFILE%\.cargo\bin\cargo.exe"
 if errorlevel 1 goto :halt
 start "" "%ROOT%\web\src-tauri\target\release\wiki-agent.exe"
 exit /b 0
+
+rem The update card's restart starts this before the window it closes has
+rem gone. Wait for it: its server holds the wiki's lock until then, and the
+rem window's exe cannot be rebuilt while it runs. System32 by full path: Git
+rem puts its own find and timeout ahead of them on PATH.
+:after
+echo Waiting for the closing window...
+:waiting
+tasklist /FI "PID eq %1" /NH | "%SystemRoot%\System32\find.exe" "%1" >nul || exit /b 0
+"%SystemRoot%\System32\PING.EXE" -n 2 127.0.0.1 >nul
+goto :waiting
 
 :halt
 echo.
