@@ -91,10 +91,15 @@ To select a different CLI on the screen, that CLI must also be installed and log
 The server checks GitHub's `origin/main` against the commit it started from,
 at most once an hour. When `main` has moved on, a card at the bottom of the
 rail lists the new commits. It never interrupts: "나중에" hides that version
-only, and a failed check shows nothing. "업데이트" fast-forwards a clean `main`
-checkout and, when the pull changed them, reinstalls `requirements-chat.txt`,
-reruns `npm ci` and rebuilds the screen. The running app keeps its old code,
-so the card then offers "다시 시작". It asks about running tasks and review
+only, and a failed check shows nothing. The server keeps that answer in
+`raw/update-later`, because the window's page gets a new port, and so new
+browser storage, every time it opens. "업데이트" fast-forwards a clean `main`
+checkout. Then, for whatever changed since the running build, it reinstalls
+`requirements-chat.txt`, reruns `npm ci` and rebuilds the screen. If one of
+those fails, the card shows why and keeps its button, and pressing it again
+retries them. A pull made by hand is prepared the same way. The running app
+keeps its old code, so once that preparation has passed the card offers
+"다시 시작". It asks about running tasks and review
 loops the way closing the window does, starts `tool/app.cmd`
 (`tool/app.command`) and closes the window. The launcher waits until the old
 window and its server are gone, rebuilds the window when the pull changed it

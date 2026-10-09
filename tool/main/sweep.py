@@ -16,6 +16,10 @@ PROMPT = ("Before this task is done, run the test cleanup pass your instructions
           "end with both the `test-cleanup` block and the `done-report` block.")
 
 
+REPAIR = ("When the repair changes code, run the test cleanup pass your instructions describe and also end with "
+          "the `test-cleanup` block.")
+
+
 def valid(value) -> bool:
     """A `test-cleanup` report: the test files audited and each removed test with its reason.
     Auditing nothing needs a reason."""
@@ -28,18 +32,35 @@ def valid(value) -> bool:
         and bool(value["audited"] or str(value.get("reason") or "").strip())
 
 
-def owed(path: Path, base: str) -> bool:
-    """Did the task branch change anything but documents? Unknown counts as yes."""
+def owed(path: Path, since: str) -> bool:
+    """Did the commits after `since` change anything but documents? Unknown
+    counts as yes. `since` is the task's base for its first report and the
+    reviewed head for a review correction."""
 
-    if not base:
+    if not since:
         return True
     try:
-        done = subprocess.run(["git", "diff", "--name-only", f"origin/{base}...HEAD"], cwd=path, capture_output=True,
+        done = subprocess.run(["git", "diff", "--name-only", f"{since}...HEAD"], cwd=path, capture_output=True,
                               text=True, encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         return True
     return bool(done.returncode) or any(not (n.endswith(".md") or n.startswith((".wiki/", "docs/")))
                                         for n in done.stdout.splitlines())
+
+
+def unreported(path: Path, reviewed: str, report) -> str:
+    """Why a review correction is not finished on cleanup, or "". A repair can
+    make tests dead too: commits after the reviewed head that change code owe a
+    fresh report."""
+
+    return "" if valid(report) or not owed(path, reviewed) else \
+        "코드를 고쳤지만 테스트 정리 보고(`test-cleanup`)가 없거나 형식이 틀렸다"
+
+
+def kept(report) -> dict:
+    """The spec field a valid report replaces; nothing for a missing one."""
+
+    return {"test_cleanup": report} if valid(report) else {}
 
 
 def section(report: dict | None) -> list[str]:

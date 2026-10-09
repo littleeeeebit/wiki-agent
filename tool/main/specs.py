@@ -1449,7 +1449,7 @@ def _check(path: Path, run, final: str):
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)
     if sweep.valid(cleanup):
         spec = update(spec["repo"], spec["id"], test_cleanup=cleanup, sweep_asked=False)
-    elif sweep.owed(path, local_base(spec, path)):    # asked once; a second miss stops visibly
+    elif sweep.owed(path, (base := local_base(spec, path)) and f"origin/{base}"):    # asked once; a second miss stops
         update(spec["repo"], spec["id"], sweep_asked=not spec.get("sweep_asked"))
         if spec.get("sweep_asked"):
             return failed(run, spec, "테스트 정리 보고(`test-cleanup`)가 없거나 형식이 틀렸다 — 정리 후 다시 완료 보고해야 한다")
