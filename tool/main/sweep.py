@@ -21,6 +21,7 @@ REPAIR = ("When the repair changes code, run the test cleanup pass your instruct
 OWED = ("Your commits in that turn change code, and the answer has no valid `test-cleanup` block. Run the test "
         "cleanup pass your instructions describe, rerun the checks, commit and push, then answer again with the "
         "`test-cleanup` block and everything the previous request asked you to end with.")
+UNKNOWN = "?"    # a repair baseline git could not read; never a ref name
 RESUMED = ("The loop stopped because your repair commits change code and no valid `test-cleanup` block was given. "
            "Nothing is checked or reviewed until it is.")
 
@@ -42,11 +43,12 @@ def owed(path: Path, since: str) -> bool:
     counts as yes. `since` is the task's base for its first report and the
     reviewed head for a review correction."""
 
-    if not since:
+    if since in ("", UNKNOWN):
         return True
     try:
-        done = subprocess.run(["git", "diff", "--name-only", f"{since}...HEAD"], cwd=path, capture_output=True,
-                              text=True, encoding="utf-8", errors="replace", timeout=60)
+        # Without rename detection a source renamed into a document shows its deleted side too.
+        done = subprocess.run(["git", "diff", "--no-renames", "--name-only", f"{since}...HEAD"], cwd=path,
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         return True
     return bool(done.returncode) or any(not (n.endswith(".md") or n.startswith((".wiki/", "docs/")))
@@ -77,10 +79,12 @@ def held(path: Path, text: str, turn, report, stop, keep, owing: str = "") -> st
     before = owing
     if not before:
         try:
-            before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True,
-                                    encoding="utf-8", errors="replace", timeout=60).stdout.strip()
+            done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True,
+                                  encoding="utf-8", errors="replace", timeout=60)
+            before = "" if done.returncode else done.stdout.strip()
         except (OSError, subprocess.SubprocessError):
-            before = ""    # unknown: any commit the turn makes is taken to owe the report
+            before = ""
+        before = before or UNKNOWN    # owes the report whatever the turn commits, and survives a stop as owed
     answer = turn(f"{text}\n\n{REPAIR}")
     for last in (False, True):
         missing = answer is not None and unreported(path, before, report(answer))

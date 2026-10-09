@@ -469,6 +469,32 @@ def test_a_code_task_is_asked_once_for_its_test_cleanup_then_stopped(repo):
     assert not sweep.valid({"audited": ["t.py"], "removed": [{"test": "t.py::x"}]})
 
 
+def test_a_repair_owes_its_cleanup_through_renames_and_an_unreadable_head(tmp_path):
+    def git(*args):
+        return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-C", str(tmp_path), *args],
+                              check=True, capture_output=True, text=True).stdout.strip()
+    git("init", "-q")
+    (tmp_path / "app.py").write_text("x = 1\n")
+    git("add", "app.py")
+    git("commit", "-qm", "app")
+    base = git("rev-parse", "HEAD")
+    (tmp_path / "docs").mkdir()
+    git("mv", "app.py", "docs/retired.md")
+    git("commit", "-qm", "retire")
+    assert sweep.owed(tmp_path, base), "the deleted source side of a rename still owes the report"
+
+    kept, stopped = {}, []
+    def held(answer, owing=""):
+        return sweep.held(tmp_path, "Repair", lambda text: answer, lambda a: a if isinstance(a, dict) else None,
+                          stopped.append, kept.update, owing)
+    with patch.object(sweep.subprocess, "run", side_effect=OSError("HEAD unreadable")):
+        assert held("committed, no report") is None and kept["cleanup_owed"] == sweep.UNKNOWN
+        assert held("disposition only", kept["cleanup_owed"]) is None and len(stopped) == 2, "still owed on resume"
+        cleaned = {"audited": ["test_app.py"], "removed": []}
+        assert held(cleaned, kept["cleanup_owed"]) == cleaned
+    assert kept == {"cleanup_owed": "", "test_cleanup": cleaned}
+
+
 def test_a_stop_publishes_nothing_even_after_a_fast_gate_passed(repo):
     import threading
 
