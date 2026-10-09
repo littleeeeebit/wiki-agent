@@ -46,13 +46,14 @@ def owed(path: Path, since: str) -> bool:
     if since in ("", UNKNOWN):
         return True
     try:
-        # Without rename detection a source renamed into a document shows its deleted side too.
-        done = subprocess.run(["git", "diff", "--no-renames", "--name-only", f"{since}...HEAD"], cwd=path,
+        # Without rename detection a source renamed into a document shows its deleted side too;
+        # `-z` keeps non-ASCII names literal instead of quoted.
+        done = subprocess.run(["git", "diff", "--no-renames", "--name-only", "-z", f"{since}...HEAD"], cwd=path,
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60)
     except (OSError, subprocess.SubprocessError):
         return True
     return bool(done.returncode) or any(not (n.endswith(".md") or n.startswith((".wiki/", "docs/")))
-                                        for n in done.stdout.splitlines())
+                                        for n in done.stdout.split("\0") if n)
 
 
 def unreported(path: Path, reviewed: str, report) -> str:

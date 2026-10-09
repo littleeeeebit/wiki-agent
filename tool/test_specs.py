@@ -472,13 +472,18 @@ def test_a_code_task_is_asked_once_for_its_test_cleanup_then_stopped(repo):
 def test_a_repair_owes_its_cleanup_through_renames_and_an_unreadable_head(tmp_path):
     def git(*args):
         return subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@example.com", "-C", str(tmp_path), *args],
-                              check=True, capture_output=True, text=True).stdout.strip()
+                              check=True, capture_output=True, text=True, encoding="utf-8").stdout.strip()
     git("init", "-q")
+    git("config", "core.quotePath", "true")
+    (tmp_path / "docs").mkdir()
     (tmp_path / "app.py").write_text("x = 1\n")
-    git("add", "app.py")
+    (tmp_path / "docs" / "메모.md").write_text("# 메모\n", encoding="utf-8")
+    git("add", ".")
     git("commit", "-qm", "app")
     base = git("rev-parse", "HEAD")
-    (tmp_path / "docs").mkdir()
+    git("mv", "docs/메모.md", "docs/notes.md")
+    git("commit", "-qm", "rename a document")
+    assert not sweep.owed(tmp_path, base), "a quoted non-ASCII document name is still a document"
     git("mv", "app.py", "docs/retired.md")
     git("commit", "-qm", "retire")
     assert sweep.owed(tmp_path, base), "the deleted source side of a rename still owes the report"
