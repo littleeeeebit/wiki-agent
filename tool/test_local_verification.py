@@ -17,7 +17,7 @@ import decision
 from agent.chat_session import Event
 from common import process
 from fixtures.review_decision import normalized, transport
-from main import decisions, loop, specs, verification
+from main import decisions, loop, review_inspection, specs, verification
 from main import app as main_app
 from test_loop import (  # noqa: F401 — shared temporary Git/GitHub fixtures
     Reviewer, Worker, client, commit, git, looped, no_machine_settings,
@@ -123,7 +123,8 @@ def cloud_world(git_world):  # noqa: F811 — pytest injects the imported fixtur
     with patch.object(specs, "sh", hub), \
          patch.object(decision, "config", return_value=decision.Config("active", "fixture-jev", "fixture", key="fixture")), \
          patch.object(decisions, "normalized", side_effect=normalized), \
-         patch.object(decisions, "transport", side_effect=transport):
+         patch.object(decisions, "transport", side_effect=transport), \
+         patch.object(review_inspection, "DIFF_SECONDS", 30):  # 2 s timed out on a loaded gate, before any injected failure
         try:
             yield world
         finally:
