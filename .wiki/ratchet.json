@@ -108,8 +108,8 @@
     },
     "tool/main/loop.py": {
       "dup": 0,
-      "lines": 2618,
-      "reason": "Stage 4 adds enforced-flow collection, owner-specific recovery, research resume and current-evidence checks to the existing authorized loop."
+      "lines": 2627,
+      "reason": "Every repair turn (review, gate, merge conflict, local verification) passes through `told`, which now holds it to its test cleanup; the policy lives in `sweep.held`, the loop keeps only the wrapper."
     },
     "tool/main/planning.py": {
       "dup": 18,

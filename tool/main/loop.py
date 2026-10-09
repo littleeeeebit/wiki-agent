@@ -502,7 +502,7 @@ def fixing(n: int, findings: list[dict], said: str) -> str:
         f"Review round {n} refused the merge (`{said}`) and found the following. For each finding: "
         "reproduce it first. Fix it where it "
         "points, and count separately the other places the same rule applies to. If you do not agree, "
-        f"say why with evidence rather than changing the code. {sweep.REPAIR} Commit and push the task branch. "
+        "say why with evidence rather than changing the code. Commit and push the task branch. "
         "The server also synchronizes the branch before the next review.\n\n"
         "End the answer with a fenced block whose info string is `disposition`, holding a JSON list with "
         "one entry per finding, in order: `{\"finding\": \"<its first line, copied>\", \"id\": \"<its id, "
@@ -904,6 +904,16 @@ def ask(loop: Loop, chat: ChatSession, text: str) -> str:
 
 
 def told(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
+    """A repair turn of the work cell (`turn`) — review, gate, merge conflict,
+    local verification — held to its test cleanup (`sweep.held`)."""
+
+    if spec.get("planning"):    # a plan's revision writes documents only
+        return turn(loop, spec, path, text)
+    return sweep.held(path, text, lambda t: turn(loop, spec, path, t), lambda answer: block("test-cleanup", answer),
+                      lambda why: stop(loop, loop.repo, loop.sid, Why.FORMAT, why), lambda fields: change(loop, **fields))
+
+
+def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     """One turn of the work cell, as a person's turn would run: every write it
     asks for waits on a person. Its final answer; `None` when stopped.
 
@@ -1550,7 +1560,6 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
             if not problem and any(d["action"] == "fixed" for d in disposition):
                 if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == head:
                     problem = "고쳤다고 보고했지만 검토한 HEAD 뒤의 수정 커밋이 없다"
-            problem = problem or sweep.unreported(path, head, block("test-cleanup", answer))
         except RuntimeError as exc:
             if loop.halt.is_set():
                 return False
@@ -1564,7 +1573,7 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
                 "commit and push the repair, then return the required disposition for every finding. "
                 "Use not-reproduced or disagree with evidence when no code change is needed.\n\n" + text)
     finished = {**latest, "disposition": disposition, "items": completed}
-    spec = change(loop, rounds=[finished if r is latest else r for r in kept_rounds(spec)], **sweep.kept(block("test-cleanup", answer)))
+    spec = change(loop, rounds=[finished if r is latest else r for r in kept_rounds(spec)])
     if spec is None:
         return False
     before = rounds[-2].get("disposition") if len(rounds) > 1 else None

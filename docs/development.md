@@ -304,7 +304,14 @@ audited and each test it removed, with the reason. A report without one gets
 one follow-up turn asking for the cleanup; a second miss stops the task with a
 fault. The accepted report goes into the PR body under 테스트 정리, and code
 review grades a deleted live test P1 and a dead test left behind P2.
-`python -m pytest -q tool/test_specs.py -k cleanup` checks the follow-up.
+Repairs owe the same report: every repair turn the review loop sends (a
+refused review, a failed gate, a merge conflict, a failed local verification)
+goes through `loop.told`. When that turn's commits change code, it needs a
+valid `test-cleanup` block, asked for once more before the loop stops, and the
+report replaces the stored one (`sweep.held`).
+`python -m pytest -q tool/test_specs.py -k cleanup` checks the follow-up, and
+`python -m pytest -q tool/test_loop.py -n 0 -k "code_repair_owes or gate_repair"`
+checks the repairs.
 The app's update card is described in [chat setup](chat-setup.md#updates);
 `tool/test_update.py` checks it against a temporary origin.
 

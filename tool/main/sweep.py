@@ -18,6 +18,9 @@ PROMPT = ("Before this task is done, run the test cleanup pass your instructions
 
 REPAIR = ("When the repair changes code, run the test cleanup pass your instructions describe and also end with "
           "the `test-cleanup` block.")
+OWED = ("Your commits in that turn change code, and the answer has no valid `test-cleanup` block. Run the test "
+        "cleanup pass your instructions describe, rerun the checks, commit and push, then answer again with the "
+        "`test-cleanup` block and everything the previous request asked you to end with.")
 
 
 def valid(value) -> bool:
@@ -57,10 +60,31 @@ def unreported(path: Path, reviewed: str, report) -> str:
         "코드를 고쳤지만 테스트 정리 보고(`test-cleanup`)가 없거나 형식이 틀렸다"
 
 
-def kept(report) -> dict:
-    """The spec field a valid report replaces; nothing for a missing one."""
+def held(path: Path, text: str, turn, report, stop, keep) -> str | None:
+    """A repair turn held to the cleanup every implementation owes: when its
+    commits change code, a valid `test-cleanup` block is asked for once more,
+    then the loop stops. The valid report replaces the stored one.
 
-    return {"test_cleanup": report} if valid(report) else {}
+    `turn(text)` runs one turn and returns its answer, `None` when stopped;
+    `report(answer)` reads the block; `stop(why)` and `keep(fields)` are the loop's."""
+
+    try:
+        before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=path, capture_output=True, text=True,
+                                encoding="utf-8", errors="replace", timeout=60).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        before = ""    # unknown: any commit the turn makes is taken to owe the report
+    answer = turn(f"{text}\n\n{REPAIR}")
+    for last in (False, True):
+        missing = answer is not None and unreported(path, before, report(answer))
+        if not missing:
+            break
+        if last:
+            stop(missing)
+            return None
+        answer = turn(OWED)
+    if answer is not None and valid(found := report(answer)):
+        keep({"test_cleanup": found})
+    return answer
 
 
 def section(report: dict | None) -> list[str]:

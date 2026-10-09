@@ -223,10 +223,10 @@ def fixed(*entries, name=None, broken=False, cleanup=CLEANED):
     return reply
 
 
-def unbroken(path, halt):
+def unbroken(path, halt, cleanup=CLEANED):
     (path / "broken").unlink()
     git(path, "commit", "-qam", "unbreak")
-    return "게이트를 고쳤다"
+    return cleanup + "게이트를 고쳤다"
 
 
 @pytest.fixture(scope="session")
@@ -1742,7 +1742,7 @@ def integrate_conflict(path, halt):
     (path / "collision.txt").write_text("upstream behavior\ntask behavior\n", encoding="utf-8")
     git(path, "add", "collision.txt")
     git(path, "commit", "-qm", "Integrate both behaviors")
-    return "Integrated the current base; ready for new checks and review."
+    return CLEANED + "Integrated the current base; ready for new checks and review."
 
 
 def test_conflicting_base_is_repaired_before_review_and_preserves_both_sides(world):
@@ -2086,6 +2086,20 @@ def test_a_failed_final_gate_goes_to_repair_and_a_new_review(world):
     assert "python gate.py" in Worker.made[-1].heard[0] and "failed" in Worker.made[-1].heard[0]
     assert spec["state"] == "머지 가능" and spec["rounds"][0]["head"] == broken and len(spec["rounds"]) == 2
     assert spec["validation"]["final"]["ok"] and spec["validation"]["final"]["head"] == world.hub.head(7) != broken
+    assert "test-cleanup" in Worker.made[-1].heard[0], "a gate repair is asked for its cleanup too"
+
+
+def test_a_gate_repair_without_its_test_cleanup_stops_the_loop(world):
+    mapped(world, "*")
+    path = Path(pr_spec(world, "fix-f3", 7, gate=None)["worktree"])
+    commit(path, "broken")
+    git(path, "push", "-q", "origin", "fix-f3")
+    Reviewer.replies = [allow, allow]
+    Worker.replies = [lambda p, h: unbroken(p, h, cleanup=""), "아직 없다"]
+    spec = looped("fix-f3")
+    assert "test-cleanup" in Worker.made[-1].heard[1], "asked for once more"
+    assert spec["state"] == "멈춤" and "test-cleanup" in spec["stopped"]["detail"]
+    assert spec["state"] != "머지 가능"
 
 
 def test_the_original_moves_only_when_clean_on_the_base(world):

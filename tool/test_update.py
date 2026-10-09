@@ -84,6 +84,25 @@ def test_a_failed_preparation_keeps_the_button_and_is_retried(checkouts, tmp_pat
     assert "requirements-chat.txt" in ran[-1] and "error" not in update.status()
 
 
+def test_a_missing_npm_is_a_failed_step_not_a_lost_card(checkouts, monkeypatch):
+    local, other = checkouts
+
+    def missing(name):
+        raise FileNotFoundError(f"{name} not found")
+    monkeypatch.setattr(update, "cli_command", missing)
+    (other / "web").mkdir()
+    (other / "web" / "App.tsx").write_text("x\n")
+    git(other, "add", "web/App.tsx")
+    git(other, "commit", "-q", "-m", "screen")
+    git(other, "push", "-q", "origin", "HEAD:main")
+
+    failed = update.apply()
+    assert failed["state"] == "available" and failed["error"].startswith("npm run build 실패")
+    assert update.status(force=True)["state"] == "available", "the check after the pull never resolves npm"
+    monkeypatch.setattr(update, "cli_command", lambda name: [sys.executable, "-c", "pass"])
+    assert update.apply()["state"] == "ready"
+
+
 def test_later_is_kept_by_the_server_across_windows(checkouts):
     local, other = checkouts
     git(other, "commit", "-q", "--allow-empty", "-m", "second")

@@ -128,10 +128,12 @@ def apply() -> dict:
         head = git("rev-parse", "HEAD").stdout.strip()
         for name, cwd, command in steps(changed(STARTED, head)):
             try:
+                if command[0] == "npm":    # resolved here, so a missing npm is a failed step, not a lost card
+                    command = [*cli_command("npm"), *command[1:]]
                 done = subprocess.run(command, cwd=cwd, capture_output=True, text=True,
                                       encoding="utf-8", errors="replace", timeout=900)
                 why = ((done.stderr or done.stdout).strip()[-500:] or f"종료 코드 {done.returncode}") if done.returncode else ""
-            except (OSError, subprocess.SubprocessError) as exc:
+            except (OSError, ValueError, subprocess.SubprocessError) as exc:
                 why = str(exc)
             if why:
                 _failed = f"{name} 실패 — {why}"
@@ -143,16 +145,17 @@ def apply() -> dict:
 
 
 def steps(paths: list[str]) -> list[tuple[str, object, list[str]]]:
-    """What a pull that changed `paths` still needs before a restart can use it."""
+    """What a pull that changed `paths` still needs before a restart can use it.
+    Only names npm: the status check asks this without resolving any program."""
 
     found = []
     if "requirements-chat.txt" in paths:
         found.append(("pip install", WIKI, [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements-chat.txt"]))
     if "web/package-lock.json" in paths:
-        found.append(("npm ci", WIKI / "web", [*cli_command("npm"), "ci"]))
+        found.append(("npm ci", WIKI / "web", ["npm", "ci"]))
     if any(p.startswith("web/") and not p.startswith("web/src-tauri/") for p in paths):
         # The old build's hashed chunks stay; this open window still imports them.
-        found.append(("npm run build", WIKI / "web", [*cli_command("npm"), "run", "build"]))
+        found.append(("npm run build", WIKI / "web", ["npm", "run", "build"]))
     return found
 
 
