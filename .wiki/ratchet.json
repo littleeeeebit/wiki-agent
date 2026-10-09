@@ -3,8 +3,8 @@
   "files": {
     "tool/agent/chat_session.py": {
       "dup": 0,
-      "lines": 1291,
-      "reason": "baseline at adoption"
+      "lines": 1294,
+      "reason": "A finished answer no longer waits forever for follow-ups the CLI already took in during the turn (queue `remove`): with no task left running, a short silence ends the turn with that answer, so the worktree is released and the review loop starts."
     },
     "tool/apply.py": {
       "dup": 6,
@@ -108,8 +108,8 @@
     },
     "tool/main/loop.py": {
       "dup": 0,
-      "lines": 2630,
-      "reason": "Every repair turn (review, gate, merge conflict, local verification) passes through `told`, which now holds it to its test cleanup, and a resumed loop asks for a cleanup still owed before anything ships; the policy lives in `sweep.held`, the loop keeps only the wrapper and that check."
+      "lines": 2637,
+      "reason": "The poller takes `_landing` without waiting and retries the next minute: a clicked merge holds it through its minutes-long `.omm` analysis, and waiting on it stalled every repository's loop reattach and cleanup."
     },
     "tool/main/planning.py": {
       "dup": 18,

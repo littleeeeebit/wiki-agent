@@ -718,6 +718,26 @@ sys.stdin.read()
     assert [e.text for e in events if e.kind == "done"] == ["Finished"]
 
 
+def test_completions_the_turn_took_in_owe_no_followup(tree):
+    # Claude 2.1.296: a background task that ends before the answer is read
+    # inside the turn (queue `remove`), and no follow-up comes. Waiting for one
+    # kept the worktree held and the review loop stalled until a person stopped it.
+    fixture = '''import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_backgrounded": True})
+say({"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"})
+say({"type": "result", "origin": {"kind": "human"}, "result": "Fixed and pushed", "session_id": "cli-1"})
+sys.stdin.read()
+'''
+    session = ChatSession(tree, write=True, bypass=True)
+    with patch.object(chat_session, "FOLLOWUP_GRACE", .3), patch.object(chat_session, "TURN_TIMEOUT", 30):
+        started = time.monotonic()
+        _, events = run(session, fixture, tree)
+    assert time.monotonic() - started < 10
+    assert events[-1].kind == "done" and events[-1].text == "Fixed and pushed" and not events[-1].meta["error"]
+
+
 def test_a_background_task_silent_past_the_turn_timeout_is_still_awaited(tree):
     # A suite that prints nothing for ten minutes once tripped the turn's clock:
     # the CLI was killed and the task orphaned. Its own end closes the wait.
