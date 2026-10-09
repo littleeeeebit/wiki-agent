@@ -143,8 +143,8 @@ reconnect against real record/feed producers over a loopback-only TLS relay;
 its model is stubbed and it never publishes user data. `tool/test_sync.py`
 checks identifier-only invalidations and feed replay/restart cursors.
 The Android build runs release pairing-link tests and lint, then verifies
-signing, alignment and permissions before writing `artifacts/wiki-agent.apk`
-and `artifacts/wiki-agent.aab`. Signing-key ownership, Galaxy installation
+signing, alignment and permissions before writing `raw/android/wiki-agent.apk`
+and `raw/android/wiki-agent.aab`. Signing-key ownership, Galaxy installation
 protection, prerequisites and device acceptance are in the same mobile guide.
 
 The agent pane reads `GET /api/work/diff?path=…` every second during a turn

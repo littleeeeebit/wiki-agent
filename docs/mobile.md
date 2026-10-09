@@ -125,8 +125,10 @@ run the parser tests with:
 powershell -ExecutionPolicy Bypass -File tool/build_android.ps1
 ```
 
-The outputs are the ignored local release artifacts `artifacts/wiki-agent.apk`
-and `artifacts/wiki-agent.aab`. Version 0.1.4 targets API 36, retains the
+The outputs are the ignored local release files `raw/android/wiki-agent.apk`
+and `raw/android/wiki-agent.aab`. They are runtime data, not scratch: on
+2026-10-09 the after-merge cleanup of `artifacts/` (`scratch_dirs`) deleted the
+served APK, so the installation QR vanished and its page returned 404. Version 0.1.4 targets API 36, retains the
 Android 8 minimum, disables debugging and signs the APK with v2 and v3 schemes.
 Android 15 on Galaxy S21 meets these requirements; a higher target API does
 not require the phone to run that newer OS. The build runs release parser
@@ -160,7 +162,7 @@ merely by reloading the web screen: install the new APK in place.
 USB installation remains an alternative:
 
 ```powershell
-adb install -r artifacts/wiki-agent.apk
+adb install -r raw/android/wiki-agent.apk
 ```
 
 The build script creates and reuses a local RSA-3072 signing key under
@@ -212,9 +214,10 @@ in [Android's target API requirements](https://developer.android.com/google/play
 
 Before the screenshot, a classification review was selected prematurely.
 An appeal is not established as necessary by this unfamiliar-developer warning.
-The local, unsubmitted draft at `artifacts/play-protect-appeal.txt` retains
-candidate APK hashes, signing certificates and declared permissions if an
-actual classification issue needs investigation later. The phone's actual
+A local, unsubmitted draft at `artifacts/play-protect-appeal.txt` held
+candidate APK hashes, signing certificates and declared permissions; the same
+2026-10-09 scratch cleanup deleted it, so regenerate those values from the
+current APK if an actual classification issue needs investigation later. The phone's actual
 file hash remains unverified. Its served branch, commit, frontend bundle and
 launcher worktree are unknown; the screenshot does not identify them. Google's
 [appeal form](https://support.google.com/googleplay/android-developer/contact/protectappeals)

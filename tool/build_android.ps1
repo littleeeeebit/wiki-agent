@@ -79,12 +79,14 @@ try {
         }
     }
 
-    $artifact = Join-Path $repo 'artifacts/wiki-agent.apk'
+    # Runtime data, not scratch: after-merge clears artifacts/ and the server serves this file.
+    $artifact = Join-Path $repo 'raw/android/wiki-agent.apk'
+    $bundle = Join-Path $repo 'raw/android/wiki-agent.aab'
     New-Item (Split-Path -Parent $artifact) -ItemType Directory -Force | Out-Null
     Copy-Item $built $artifact -Force
-    Copy-Item (Join-Path $repo 'android/app/build/outputs/bundle/release/app-release.aab') (Join-Path $repo 'artifacts/wiki-agent.aab') -Force
+    Copy-Item (Join-Path $repo 'android/app/build/outputs/bundle/release/app-release.aab') $bundle -Force
     Write-Host "APK: $artifact"
-    Write-Host "AAB: $(Join-Path $repo 'artifacts/wiki-agent.aab')"
+    Write-Host "AAB: $bundle"
 } finally {
     $env:WIKI_ANDROID_KEYSTORE = $previousKeystore
     $env:WIKI_ANDROID_KEY_PASSWORD = $previousPassword
