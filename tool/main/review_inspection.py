@@ -14,6 +14,7 @@ from . import decisions, review_contract, runtime, specs, verification
 
 POLICY = decision.Policy("review-inspection-3", {"action": {"confidence": 0.6, "margin": 0.2}})
 LIMITS = {"seconds": 15, "calls": 1, "candidates": 0}
+DIFF_SECONDS = 2
 PROMPT = {"selection": "Select the smallest set of checks that proves the current task's acceptance. "
           "A required flow must run. Path overlap is candidate context, NOT proof of behavioral relevance: "
           "shared settings, service, runner and support files must not select the whole catalog. "
@@ -149,7 +150,7 @@ def prepare(repo: Path, path: Path, spec: dict, contract: dict, halt) -> tuple[d
     total = runtime.verification_budget.get()
     budget = Budget(**{**LIMITS, "seconds": min(LIMITS["seconds"], total.left()) if total else LIMITS["seconds"]}, cancel=halt)
     diff = specs.sh(["git", "diff", "--no-ext-diff", "--no-textconv", "--unified=3",
-                     contract["base_oid"], contract["head"], "--"], path, timeout=min(2, budget.left()))
+                     contract["base_oid"], contract["head"], "--"], path, timeout=min(DIFF_SECONDS, budget.left()))
     if diff.returncode:
         raise ValueError("Jev 검증 선택 대기 — 변경 코드를 읽지 못했다")
     settings = verification.redaction(verification.local(repo), path)

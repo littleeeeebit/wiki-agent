@@ -17,7 +17,7 @@ import decision
 from agent.chat_session import Event
 from common import process
 from fixtures.review_decision import normalized, transport
-from main import decisions, loop, specs, verification
+from main import decisions, loop, review_inspection, specs, verification
 from main import app as main_app
 from test_loop import (  # noqa: F401 — shared temporary Git/GitHub fixtures
     Reviewer, Worker, client, commit, git, looped, no_machine_settings,
@@ -123,7 +123,8 @@ def cloud_world(git_world):  # noqa: F811 — pytest injects the imported fixtur
     with patch.object(specs, "sh", hub), \
          patch.object(decision, "config", return_value=decision.Config("active", "fixture-jev", "fixture", key="fixture")), \
          patch.object(decisions, "normalized", side_effect=normalized), \
-         patch.object(decisions, "transport", side_effect=transport):
+         patch.object(decisions, "transport", side_effect=transport), \
+         patch.object(review_inspection, "DIFF_SECONDS", 30):  # 2 s timed out on a loaded gate, before any injected failure
         try:
             yield world
         finally:
@@ -1031,7 +1032,10 @@ def test_failure_text_stays_private_after_both_env_files_disappear(cloud_world, 
     else:
         monkeypatch.setattr(specs, "judge", fail_gate)
     first = looped("cloud")
-    assert first["local_verification"]["state"] == "waiting_environment"
+    verified = first["local_verification"]
+    # A loaded gate once ended here without failure_attempts; keep the reason it reached.
+    assert verified["state"] == "waiting_environment" and "failure_attempts" in verified, \
+        (verified.get("state"), verified.get("reason"))
     assert "private-api-key" not in json.dumps(first)
     assert "Retain this observation" in json.dumps(first["local_verification"]["failure_attempts"])
     if failure == "review":
