@@ -297,6 +297,17 @@ portrait phones also have a Suite header button. `test_suite.py` checks project
 isolation and live-to-history transitions; `web/tests/task_browser.py` checks
 filters, polling, details, task links, recovery from read errors and mobile fit.
 
+Every implementation ends with a test cleanup pass (`tool/prompts/work-spec.md`).
+A task whose branch changes anything beyond Markdown, `.wiki/` and `docs/`
+must send a `test-cleanup` block with its `done-report`: the test files it
+audited and each test it removed, with the reason. A report without one gets
+one follow-up turn asking for the cleanup; a second miss stops the task with a
+fault. The accepted report goes into the PR body under 테스트 정리, and code
+review grades a deleted live test P1 and a dead test left behind P2.
+`python -m pytest -q tool/test_specs.py -k cleanup` checks the follow-up.
+The app's update card is described in [chat setup](chat-setup.md#updates);
+`tool/test_update.py` checks it against a temporary origin.
+
 An idle task's requirements can be edited in its spec panel. During a turn,
 later instructions can be recorded through a `spec-update` block before the
 completion report. Revisions preserve prior requirements and invalidate old

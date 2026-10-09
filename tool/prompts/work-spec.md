@@ -29,6 +29,23 @@ The person's later instructions update the assignment as work progresses.
   offline; acceptance involving deployed state/authentication needs actual
   isolated API evidence. Native-host acceptance needs desktop evidence.
   Refactoring preservation uses the frozen refactoring workflow checks.
+- Every implementation ends with a test cleanup pass, after the code is final
+  and before the completion report. Audit the tests this task added or changed
+  and the tests that exercise code it changed or removed. Delete or fold:
+  tests of code paths, flags, routes or formats the current pipeline no longer
+  has; intermediate TDD tests a later, stronger test of the same behaviour
+  supersedes; duplicates asserting the same observation as another test; skips
+  and xfails whose reason no longer holds. Keep every test that guards current
+  behaviour or a regression that can still happen; never delete a test to make
+  it pass or to weaken a check. Rerun the gate, commit, then add a
+  `test-cleanup` fenced JSON block before the `done-report`:
+
+  ```test-cleanup
+  {"audited": ["tests/test_x.py"], "removed": [{"test": "tests/test_x.py::test_old", "reason": "covers the removed v1 route"}]}
+  ```
+
+  `removed` may be empty. With nothing to audit, give `"audited": []` and a
+  `"reason"`. A task that changes only documents may omit the block.
 - To say you are done, end the answer with a `done-report` block: a fenced
   code block whose info string is `done-report`, holding a JSON list with one
   entry per item of `done`, in order:
