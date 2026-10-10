@@ -1498,6 +1498,9 @@ class Grounding:
         and the evidence it may cite — the new evidence when retrieval ran."""
 
         last = self.generations[-1]
+        if self.analysis and not last.get("analysis"):
+            # A return to retrieval moved the answer to synthesis: the synthesis brief, over the new evidence.
+            return self.brief()
         if last.get("analysis"):
             return (f"Your answer could not be published: {last['problem']}. Write the whole answer again. "
                     f"Cite only these evidence ids: {', '.join(self.ids) or 'none — there is no evidence'}.")
@@ -1994,7 +1997,7 @@ def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict], body: str |
         # Provenance and verification belong to the run details, not the answer's prose.
         return re.sub(r"[ \t]*" + CITED.pattern, "", body).strip()
     if plain:
-        return "\n\n".join(c["text_en"].strip() for c in claims.values())
+        return "\n\n".join(re.sub(r"[ \t]*" + CITED.pattern, "", c["text_en"]).strip() for c in claims.values())
     parts: list[str] = []
     if v["status"] == "verification_unavailable":
         parts.append(f"Unverified answer: verification was unavailable ({v['reason']}), and this answer is shown "
@@ -2114,7 +2117,7 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
         gen["fallback"] = fell
         yield {"progress": "attribute"}
         step("attribute", "recorded", claims=checks(gen))
-    if synthesized and all(g["draft"] is None for g in job.generations):
+    if job.analysis and all(g["draft"] is None for g in job.generations):
         raise RuntimeError("The host returned no usable answer")
     out = job.published()
     v = out["verified"]

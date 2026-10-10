@@ -869,6 +869,16 @@ def test_the_route_keeps_jev_s_word_on_whether_a_question_is_about_progress(scor
     assert "progress" in world.asked[0][2] and out["progress"] == progress
 
 
+def test_an_uncertain_progress_is_never_settled_by_the_host(monkeypatch):
+    # PR #112 review round 1: the host's no turned Jev's uncertainty into a claim check of a progress question.
+    asked = []
+    monkeypatch.setattr(knowledge, "host_decides", lambda state, questions, stage, cancel=None, model="":
+                        asked.append(list(questions)) or {"answers": {}, "model": "host", "elapsed_ms": 1})
+    world = World(answering(progress=0.5), [found([chunk("port", "The port is 8791.")])])
+    out = run(world, query="How many tasks are complete?", fallback=True)
+    assert asked == [] and out["progress"] == "uncertain"
+
+
 def test_an_analysis_is_searched_even_where_jev_would_answer_directly():
     # Review round 1 (P0): `retrieve=no` took the direct route, and an analysis went out unsearched and uncited.
     world = World(answering(route=0.05, analysis=0.95), [found([chunk("port", "The port is 8791.")])])
