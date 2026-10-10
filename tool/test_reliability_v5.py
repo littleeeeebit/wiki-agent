@@ -4,6 +4,7 @@ ones. No network."""
 
 import json
 from collections import Counter
+from types import SimpleNamespace
 from pathlib import Path
 
 from eval import compare, dataset, report
@@ -89,3 +90,30 @@ def test_per_class_routing_gates_fail_what_a_pooled_rate_would_pass():
     assert lost["request_classification"] == "fail"
     assert {k: v for k, v in lost.items() if k != "request_classification"} == dict.fromkeys(
         ("analysis_recall", "fact_specificity", "material_classification"), "pass")
+
+
+def test_the_grader_reads_what_the_answering_host_read_beside_the_dossier(monkeypatch):
+    """Since #59 the answering host may read the repository with its own tools. A claim resting on a page it
+    read, outside the retrieved dossier, is graded against that page, not as unsupported."""
+
+    import agent
+    from agent import Event
+
+    page = "The third quarter had four incidents; three were caused by configuration changes."
+    chat = SimpleNamespace(say=lambda message: iter([
+        Event("tool", "Read · incidents-q3.md", {"tool": "Read"}),
+        Event("tool", page, {"tool": "tool_result", "tool_use_id": "t1"}),
+        Event("done", "Four incidents.", {"cost_usd": 0.01})]))
+    read: list[str] = []
+    assert compare.host_turn(chat, "q", read) == ("Four incidents.", 0.01) and read == [page]
+
+    sent = {}
+
+    def oneshot(prompt, payload, model):
+        sent.update(payload)
+        yield Event("done", '{"parts": {}, "claims": [], "abstained": false, "forbidden": []}', {})
+
+    monkeypatch.setattr(agent, "oneshot", oneshot)
+    unit = {"text": "q", "intent": {"parts": [], "forbidden": [], "abstain": False, "evidence": []}}
+    compare.graded(unit, {"evidence": []}, {"text": "Four incidents.", "read": read}, {}, "")
+    assert sent["read_passages"] == [page] and sent["retrieved_passages"] == []

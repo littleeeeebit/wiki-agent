@@ -49,6 +49,9 @@ def drafting(chat: ChatSession, spent: dict):
         for ev in chat.say(message):
             if ev.kind == "error" or (ev.kind == "done" and ev.meta.get("error")):
                 raise RuntimeError(ev.text or "the host turn failed")
+            # What the host read with its own tools, beside the dossier: a grade rests on it too.
+            if ev.kind == "tool" and ev.meta.get("tool") == "tool_result":
+                spent.setdefault("read", []).append(ev.text)
             if ev.kind == "done":
                 spent["turns"] = spent.get("turns", 0) + 1
                 spent["cost_usd"] = spent.get("cost_usd", 0) + (ev.meta.get("cost_usd") or 0)

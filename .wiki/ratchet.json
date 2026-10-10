@@ -48,8 +48,8 @@
     },
     "tool/eval/answers.py": {
       "dup": 14,
-      "lines": 150,
-      "reason": "baseline at adoption"
+      "lines": 153,
+      "reason": "drafting records what the host read with its own tools, which the grader now reads (v5 calibration)"
     },
     "tool/eval/baseline.py": {
       "dup": 7,
@@ -58,8 +58,8 @@
     },
     "tool/eval/compare.py": {
       "dup": 6,
-      "lines": 766,
-      "reason": "baseline at adoption"
+      "lines": 771,
+      "reason": "answers and grades carry what the host read beside the dossier (v5 calibration)"
     },
     "tool/eval/decisions.py": {
       "dup": 8,

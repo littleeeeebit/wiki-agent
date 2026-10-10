@@ -400,10 +400,12 @@ def brief(d: dict) -> str:
     return "\n".join(lines) if d["evidence"] else "No evidence was retrieved for this question."
 
 
-def host_turn(chat, message: str) -> tuple[str, float]:
+def host_turn(chat, message: str, read: list[str]) -> tuple[str, float]:
     for ev in chat.say(message):
         if ev.kind == "error" or (ev.kind == "done" and ev.meta.get("error")):
             raise RuntimeError(ev.text or "the host turn failed")
+        if ev.kind == "tool" and ev.meta.get("tool") == "tool_result":
+            read.append(ev.text)
         if ev.kind == "done":
             return ev.text, ev.meta.get("cost_usd") or 0.0
     raise RuntimeError("the host turn ended without an answer")
@@ -421,8 +423,9 @@ def answered(unit: dict, d: dict, repo: Path, jev: bool, cfg: decision.Config, m
     started = time.monotonic()
     try:
         if not jev:
-            text, usd = host_turn(chat, f"{unit['text']}\n\n{brief(d)}")
-            return {"status": "answered", "text": text, "host_usd": usd, "host_turns": 1,
+            read: list[str] = []
+            text, usd = host_turn(chat, f"{unit['text']}\n\n{brief(d)}", read)
+            return {"status": "answered", "text": text, "read": read, "host_usd": usd, "host_turns": 1,
                     "elapsed_ms": round((time.monotonic() - started) * 1000), "accepted": None, "fabricated": [],
                     "verified": None, "remembered": memory.verification({"role": "assistant"})}
         spent: dict = {}
@@ -436,7 +439,7 @@ def answered(unit: dict, d: dict, repo: Path, jev: bool, cfg: decision.Config, m
         v = out["verified"]
         gens = out["record"]["generations"]
         judged = [g[k] for g in gens for k in ("decision", "rejoined") if g.get(k)]
-        return {"status": v["status"], "reason": v["reason"], "text": out["text"],
+        return {"status": v["status"], "reason": v["reason"], "text": out["text"], "read": spent.get("read", []),
                 # As published, and as a memory of this turn would label it (`memory.verification`).
                 "verified": v["verified"], "degraded": v["degraded"], "host_checked": v.get("host_checked"),
                 "remembered": memory.verification({"role": "assistant", "verification": v}),
@@ -460,15 +463,17 @@ def invented(v: dict, gens: list[dict]) -> list[str]:
     return [c["cite"] for c in v["citations"] if c["evidence_id"] not in held]
 
 
-def graded(unit: dict, d: dict, text: str, data: dict, model: str) -> dict:
+def graded(unit: dict, d: dict, answer: dict, data: dict, model: str) -> dict:
     from agent import oneshot
 
     intent = unit["intent"]
-    payload = {"question": unit["text"], "answer": text,
+    payload = {"question": unit["text"], "answer": answer["text"],
                "parts": [{"id": p["id"], "ask": p["ask"], "reference": p["reference"]} for p in intent["parts"]],
                "forbidden": intent["forbidden"], "abstention_expected": intent["abstain"],
                "reference_passages": [dataset.passage(data, g[0])[1] for g in intent["evidence"]],
                "retrieved_passages": [" ".join(e["original_text"].split())[:1500] for e in d["evidence"]],
+               # What the answering host read with its own tools: since #59 it may read beyond the dossier.
+               "read_passages": answer.get("read") or [],
                # Front matter sits above the text a passage holds: which record replaces which.
                "records": list(knowledge.lineages(dict(enumerate(d["evidence"]))).values())}
     reply, usd = "", 0.0
@@ -533,7 +538,7 @@ def run_arms(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict) 
                     if opts["level"] == "answer" and not fault:
                         try:
                             row["answer"] = answered(unit, d, c.repo, arm["jev"], cfg_, opts["model"])
-                            row["grade"] = graded(unit, d, row["answer"]["text"], data, opts["grader"])
+                            row["grade"] = graded(unit, d, row["answer"], data, opts["grader"])
                         except Exception as exc:  # noqa: BLE001 — a failed turn is a recorded failure, not a stop
                             row["answer_error"] = f"{type(exc).__name__}: {exc}"[:300]
                 cost = ledger_cost(kept)
