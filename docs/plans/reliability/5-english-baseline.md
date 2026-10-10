@@ -617,6 +617,87 @@ python tool/eval/report.py raw/eval/jev/reliability-heldout-clean raw/eval/jev/r
 
 A batch that stops at its threshold resumes when the same command runs again.
 
+## v5 — enough cases to decide (design, not run)
+
+The 2026-10-10 re-judgment left four gates inconclusive because they rest on
+too few cases, not because a case failed. v5 adds cases; it does not change a
+target, and it is a new version, so v4 stays the record it is.
+
+### How many
+
+With a 95% Wilson interval, the held-out cases a 0.90 lower bound needs:
+
+| Misses allowed | Cases needed |
+| --- | --- |
+| 0 | 35 |
+| 1 | 53 |
+| 2 | 69 |
+| 3 | 84 |
+
+v5 plans for one miss per gate: 54 held-out fixtures per action point and at
+least 54 fresh intents in each routing cohort. Zero misses (35)
+would be cheaper but turns any single slip into an inconclusive stage again.
+
+### Action fixtures
+
+A fresh `eval/jev/reliability-v5/actions.json` in the `jev-action-fixtures/1`
+schema, written without reference to v2's, with labels kept balanced as v2's
+are. Per point: 12 calibration and 54 held-out.
+
+| Point | Held-out labels |
+| --- | --- |
+| `work.start` | 18 dispatch, 18 evidence, 18 clarify |
+| `specs.check` | 11 each of `check:unit`, `check:docs-links`, `check:web-lint`, `check:schema`, `none` (55) |
+| `loop.fix` | 27 fix, 27 context |
+
+### Routing: a balanced cohort and per-class gates
+
+v4's routing cohort is 66 held-out intents, of which 3 are analysis and 63
+fact. Answering "fact" every time would score 0.955, so the single
+accuracy says little about recognising analysis; v4's runs got all 3 right
+and called 2 fact intents analysis. Segment classification is similar: 57 of
+the 66 are one segment that is a request.
+
+v5 judges each class on its own. That changes the gates (gates file version
+5); the owner approved it on 2026-10-10, with one miss allowed per gate.
+Both segment gates score an intent's complete labelled segment vector,
+requests included:
+
+| Gate | Cohort (fresh held-out, `route_expected`) | Target |
+| --- | --- | --- |
+| `analysis_recall` | intents labelled analysis | lower bound ≥ 0.90 |
+| `fact_specificity` | intents labelled fact | lower bound ≥ 0.90 |
+| `material_classification` | intents with at least one material segment | lower bound ≥ 0.90 |
+| `request_classification` | intents of two or more segments, every one a request | lower bound ≥ 0.90 |
+
+The design's first review added `request_classification`: with only the
+first three, a router could drop the first request of every request-only
+multipart query and still score 1.0 on all of them. Keeping
+`analysis_routing` and `segment_classification` and only adding cases was
+cheaper and was declined: a gate that a constant answer passes cannot show
+that the router tells the two apart.
+
+Acceptance rests on fresh intents only, across the existing families, with
+the pages they name, labelled before any v5 run: at least 54 analysis and 54
+fact, and among them at least 54 with a material segment and 54 request-only
+multipart, so at least 108. v4's held-out half was revealed, so it cannot carry
+the next generalization claim (see the exit protocol above). It becomes the
+regression set: run beside v5 and reported under v4's gates, but counted in
+no acceptance interval.
+
+### Process
+
+1. Draft the fixtures and intents, freeze them with the gates, and record
+   hashes, as for v2–v4.
+2. Label review by the reviewer cell (gpt-6.1-sol) until a round finds
+   nothing, before any held-out run. A model review, at the owner's direction,
+   as before.
+3. Calibration, then held-out: arms, answers, repetition and actions, on the
+   current code. v4's spending scaled to the larger set is roughly USD 20.
+4. Report with the Wilson intervals. Every mandatory gate passing closes
+   step 3 and gives PR 9 its English baseline; a failure gets a diagnosis and
+   a next version, never an edited gate.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -624,6 +705,7 @@ A batch that stops at its threshold resumes when the same command runs again.
 | 1 | Freeze | Freeze new English labels, versions and gates | Done |
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
+| 4 | v5 | Enough held-out cases for the rate gates, per-class routing | Not started — design above |
 
 ## Sources
 
