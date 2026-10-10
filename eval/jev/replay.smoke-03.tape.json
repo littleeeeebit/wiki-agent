@@ -12,7 +12,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     }
    ],
    "calls": 0,
@@ -30,7 +31,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "## Rota\n\nThe Atlas team is on call every Tuesday and handles incidents for everything it owns.",
@@ -42,7 +44,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "# Ports\n\nThe search daemon listens on port 8791. The chat server listens on port 8787.",
@@ -54,7 +57,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "# Decision: translation cache in the checkout\n\nThe translation cache is stored as a SQLite file inside the repository checkout.",
@@ -66,7 +70,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "# Decision: translation cache moved\n\nThis supersedes the 2025 cache decision. The translation cache is now stored under the user cache folder, never inside the checkout.",
@@ -78,7 +83,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "# Login decision\n\nThe user decided to keep password login and add passkeys later.",
@@ -90,7 +96,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "# Atlas team",
@@ -102,7 +109,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "Owners",
@@ -114,7 +122,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "Atlas team > Rota",
@@ -126,7 +135,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "Ports",
@@ -138,7 +148,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "Decision: translation cache in the checkout",
@@ -150,7 +161,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "Decision: translation cache moved",
@@ -162,7 +174,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "Login decision",
@@ -174,7 +187,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "Atlas team",
@@ -186,7 +200,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     }
    ],
    "calls": 0,
@@ -204,7 +219,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "# Review before merge\n\nRule. Every pull request receives one independent review round before it is merged. The author's own checks are not a review.",
@@ -216,7 +232,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "One retry budget",
@@ -228,7 +245,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     },
     {
      "text": "Review before merge",
@@ -240,7 +258,8 @@
      "glossary_version": "d2d068ff5886",
      "version": "e1",
      "spans": null,
-     "cached": false
+     "cached": false,
+     "request": null
     }
    ],
    "calls": 0,
@@ -253,25 +272,27 @@
    "value": {
     "answers": {
      "retrieve": 0.96,
-     "analysis": 0.07,
-     "source_hub": 0.38,
+     "analysis": 0.06,
+     "progress": 0.07,
+     "source_hub": 0.35,
      "source_documents": 0.64,
-     "source_memory": 0.61
+     "source_memory": 0.58
     },
     "model": "jev-1.13.0",
     "usage": {
-     "input_tokens": 578,
-     "output_tokens": 88
-    }
+     "input_tokens": 669,
+     "output_tokens": 104
+    },
+    "sent": true
    },
    "calls": 1,
-   "tokens": 666
+   "tokens": 773
   },
   {
    "value": {
     "answers": {
-     "useful_p0": 0.92,
-     "conflict_p0": 0.07,
+     "useful_p0": 0.93,
+     "conflict_p0": 0.06,
      "redirect_p0": 0.02,
      "useful_p1": 0.92,
      "conflict_p1": 0.08,
@@ -280,24 +301,24 @@
      "conflict_p2": 0.04,
      "redirect_p2": 0.02,
      "useful_p3": 0.02,
-     "conflict_p3": 0.03,
+     "conflict_p3": 0.04,
      "redirect_p3": 0.02,
      "useful_p4": 0.02,
      "conflict_p4": 0.04,
-     "redirect_p4": 0.03,
+     "redirect_p4": 0.04,
      "useful_p5": 0.02,
      "conflict_p5": 0.03,
-     "redirect_p5": 0.03,
-     "useful_p6": 0.16,
+     "redirect_p5": 0.02,
+     "useful_p6": 0.14,
      "conflict_p6": 0.05,
      "redirect_p6": 0.02,
-     "coverage_r0": 0.62,
+     "coverage_r0": 0.58,
      "repair": {
       "choice": "defer",
-      "confidence": 0.29,
+      "confidence": 0.18,
       "probabilities": {
-       "defer": 0.65,
-       "sources": 0.35
+       "sources": 0.41,
+       "defer": 0.59
       }
      }
     },
@@ -305,7 +326,8 @@
     "usage": {
      "input_tokens": 2012,
      "output_tokens": 443
-    }
+    },
+    "sent": true
    },
    "calls": 1,
    "tokens": 2455
@@ -315,22 +337,24 @@
     "answers": {
      "useful_p2": 0.02,
      "conflict_p2": 0.04,
-     "redirect_p2": 0.11,
+     "redirect_p2": 0.1,
      "useful_p3": 0.02,
      "conflict_p3": 0.03,
-     "redirect_p3": 0.08,
-     "coverage_r0": 0.6
+     "redirect_p3": 0.06,
+     "coverage_r0": 0.64
     },
     "model": "jev-1.13.0",
     "usage": {
      "input_tokens": 949,
      "output_tokens": 134
-    }
+    },
+    "sent": true
    },
    "calls": 1,
    "tokens": 1083
   }
  ],
+ "fallback": [],
  "rounds": [
   {
    "value": {
@@ -358,9 +382,9 @@
       ],
       "text": "# Owners\n\nThe ingest pipeline is owned by the Atlas team.",
       "completeness": "whole",
-      "chunk_id": "d2b125fb5ebec6b4b579ba56de95a1f6f33076c23052fd6ffa7fbd6237f49a21",
-      "source_id": "b0b9e3d314b105698ff8bbe7c5a7390908b9dbcf0dc832cdb210ee20b15591ae",
-      "repo_id": "e616823980d34ce6edd1b9e9bf89f8af3c3d6389847c64f25e4edd70e192d3e2",
+      "chunk_id": "bfc69e72dd4bd7394c5b0e3b0ff3b8f9c755536e68bf98dcc47c5d4ca8513cb9",
+      "source_id": "77e3522c302ce22ca0e6bbe0cb61c58f94bc20b121f0cd093af1d0d1557af50b",
+      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
       "revision": "cba91557fde56a0c52500a15e750b2c6a8f2c297a70a2b61db3bdab770be19f1",
       "kind": "document",
       "visibility": "repository",
@@ -372,6 +396,7 @@
       },
       "coverage": "full_text",
       "record": null,
+      "audiences": null,
       "lane": "rrf",
       "duplicates": []
      },
@@ -386,9 +411,9 @@
       ],
       "text": "## Rota\n\nThe Atlas team is on call every Tuesday and handles incidents for everything it owns.",
       "completeness": "whole",
-      "chunk_id": "f31a06005aa5ea88e4d569017e27711af47fd0d0337525ab4ce46efa41daa843",
-      "source_id": "528eafd3e6e5642a74794b5007f382e211bf5fb2c60bf7fc9c0f17f3510c239f",
-      "repo_id": "e616823980d34ce6edd1b9e9bf89f8af3c3d6389847c64f25e4edd70e192d3e2",
+      "chunk_id": "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
+      "source_id": "030cef620ce4599876618439f982e9579d2d8e2c39592f5b6e09f394ffa70044",
+      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
       "revision": "365edf17431839844b3a76ec8cd737f372fb0cc662016f28db91edadbc06ce28",
       "kind": "document",
       "visibility": "repository",
@@ -400,6 +425,7 @@
       },
       "coverage": "full_text",
       "record": null,
+      "audiences": null,
       "lane": "rrf",
       "duplicates": []
      },
@@ -413,9 +439,9 @@
       ],
       "text": "# Ports\n\nThe search daemon listens on port 8791. The chat server listens on port 8787.",
       "completeness": "whole",
-      "chunk_id": "7efb5a793a5d9267add0b0ee68a3b6154c040666de43bfcfaa73052ae2ae7838",
-      "source_id": "a4a64785a0798b65dbd35669e889352eebd774234fc3598b7c35ac87690de83f",
-      "repo_id": "e616823980d34ce6edd1b9e9bf89f8af3c3d6389847c64f25e4edd70e192d3e2",
+      "chunk_id": "4ba68687493896dcc10ee3cbebae6f4d3823dd4f8cac9c482cdd3f3d5067fa7f",
+      "source_id": "c4a724f338756085801dfd082f55a95e7f3d68ef425a4248593003ba752c0b71",
+      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
       "revision": "49236a8535538a3651097462d9eba2005f33c2d1d1198c96df94cda32b65c592",
       "kind": "document",
       "visibility": "repository",
@@ -427,6 +453,7 @@
       },
       "coverage": "full_text",
       "record": null,
+      "audiences": null,
       "lane": "rrf",
       "duplicates": []
      },
@@ -440,9 +467,9 @@
       ],
       "text": "# Decision: translation cache in the checkout\n\nThe translation cache is stored as a SQLite file inside the repository checkout.",
       "completeness": "whole",
-      "chunk_id": "aaa71c697521504d54ca328a11fb3fdf02f8a7de9c2daef2ea33904f4c5b14d1",
-      "source_id": "2f1ce062ef52c1c2ffcc335e176bf829c4cf512457b28a772977f7d807aec669",
-      "repo_id": "e616823980d34ce6edd1b9e9bf89f8af3c3d6389847c64f25e4edd70e192d3e2",
+      "chunk_id": "8834ff0d0c49ac24b161883bd6c4ead41228f71ef8c5bb6ef680dc7152394643",
+      "source_id": "3b3893281d8adbcb930e3e3873d6e03be1bb8864049ca1806aad79da6ed99c78",
+      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
       "revision": "5a5b0ea1f986ede755c74bfe84e93d3fae0c026e3e1ec2a0c39f1e232d86e5c8",
       "kind": "document",
       "visibility": "repository",
@@ -454,6 +481,7 @@
       },
       "coverage": "full_text",
       "record": null,
+      "audiences": null,
       "lane": "rrf",
       "duplicates": []
      },
@@ -467,9 +495,9 @@
       ],
       "text": "# Decision: translation cache moved\n\nThis supersedes the 2025 cache decision. The translation cache is now stored under the user cache folder, never inside the checkout.",
       "completeness": "whole",
-      "chunk_id": "90946dfd3d9472197c721351d585db8b6f7e9a9ec24728f6ad3003012772ddc5",
-      "source_id": "b7cb7dcdb3e0c5254fff57b062dc329799277e25bb4616b2a542e048b07c5673",
-      "repo_id": "e616823980d34ce6edd1b9e9bf89f8af3c3d6389847c64f25e4edd70e192d3e2",
+      "chunk_id": "f4ed1e4352afbd41cfe347b36e8089a1f685069e8e407a18cdacc591ef96802e",
+      "source_id": "f5e774b48ffaadf2f0e03c6c5d7425225cda267b8759f9b7ad6e90f70214b546",
+      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
       "revision": "2e46051fbf1307f63a107e5c071455a059aeb64a55c0dad087d6878671c38160",
       "kind": "document",
       "visibility": "repository",
@@ -481,6 +509,7 @@
       },
       "coverage": "full_text",
       "record": null,
+      "audiences": null,
       "lane": "rrf",
       "duplicates": []
      },
@@ -494,9 +523,9 @@
       ],
       "text": "# Login decision\n\nThe user decided to keep password login and add passkeys later.",
       "completeness": "whole",
-      "chunk_id": "9a8d14782eabac4f656db77993e2c31804cab62009f10fe5d397ff3b434b9dd3",
-      "source_id": "abd8054c21a7071642dfe60d3ff8717f7f3e6a845c10171e32b43d70e2fae52f",
-      "repo_id": "e616823980d34ce6edd1b9e9bf89f8af3c3d6389847c64f25e4edd70e192d3e2",
+      "chunk_id": "31d69508d085655ef24547f900908d8199afe021570947dbfd51b99250947e16",
+      "source_id": "a85489f04e26e522774ed2f37f69cb4849c2be595045b982c6b5992379328827",
+      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
       "revision": "2bdfcad178468234ed64936fde19d984c398756db2d5d0492ae7586980071dd3",
       "kind": "memory",
       "visibility": "private",
@@ -508,6 +537,7 @@
       },
       "coverage": "full_text",
       "record": null,
+      "audiences": null,
       "lane": "rrf",
       "duplicates": []
      },
@@ -521,9 +551,9 @@
       ],
       "text": "# Atlas team",
       "completeness": "whole",
-      "chunk_id": "525b76311dcc00824f51f087cc7d5f14d8b5eff52af05fb4ae2acce53535ad58",
-      "source_id": "528eafd3e6e5642a74794b5007f382e211bf5fb2c60bf7fc9c0f17f3510c239f",
-      "repo_id": "e616823980d34ce6edd1b9e9bf89f8af3c3d6389847c64f25e4edd70e192d3e2",
+      "chunk_id": "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926",
+      "source_id": "030cef620ce4599876618439f982e9579d2d8e2c39592f5b6e09f394ffa70044",
+      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
       "revision": "365edf17431839844b3a76ec8cd737f372fb0cc662016f28db91edadbc06ce28",
       "kind": "document",
       "visibility": "repository",
@@ -535,12 +565,13 @@
       },
       "coverage": "full_text",
       "record": null,
+      "audiences": null,
       "lane": "graph",
       "duplicates": []
      }
     ],
     "scores": {
-     "d2b125fb5ebec6b4b579ba56de95a1f6f33076c23052fd6ffa7fbd6237f49a21": {
+     "bfc69e72dd4bd7394c5b0e3b0ff3b8f9c755536e68bf98dcc47c5d4ca8513cb9": {
       "rrf": {
        "rank": 1,
        "score": 0.01639
@@ -552,7 +583,7 @@
       "cos": null,
       "graph": null
      },
-     "f31a06005aa5ea88e4d569017e27711af47fd0d0337525ab4ce46efa41daa843": {
+     "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de": {
       "rrf": {
        "rank": 2,
        "score": 0.01613
@@ -564,7 +595,7 @@
       "cos": null,
       "graph": null
      },
-     "7efb5a793a5d9267add0b0ee68a3b6154c040666de43bfcfaa73052ae2ae7838": {
+     "4ba68687493896dcc10ee3cbebae6f4d3823dd4f8cac9c482cdd3f3d5067fa7f": {
       "rrf": {
        "rank": 3,
        "score": 0.01587
@@ -576,7 +607,7 @@
       "cos": null,
       "graph": null
      },
-     "aaa71c697521504d54ca328a11fb3fdf02f8a7de9c2daef2ea33904f4c5b14d1": {
+     "8834ff0d0c49ac24b161883bd6c4ead41228f71ef8c5bb6ef680dc7152394643": {
       "rrf": {
        "rank": 4,
        "score": 0.01562
@@ -588,7 +619,7 @@
       "cos": null,
       "graph": null
      },
-     "90946dfd3d9472197c721351d585db8b6f7e9a9ec24728f6ad3003012772ddc5": {
+     "f4ed1e4352afbd41cfe347b36e8089a1f685069e8e407a18cdacc591ef96802e": {
       "rrf": {
        "rank": 5,
        "score": 0.01538
@@ -600,7 +631,7 @@
       "cos": null,
       "graph": null
      },
-     "9a8d14782eabac4f656db77993e2c31804cab62009f10fe5d397ff3b434b9dd3": {
+     "31d69508d085655ef24547f900908d8199afe021570947dbfd51b99250947e16": {
       "rrf": {
        "rank": 6,
        "score": 0.01515
@@ -612,7 +643,7 @@
       "cos": null,
       "graph": null
      },
-     "525b76311dcc00824f51f087cc7d5f14d8b5eff52af05fb4ae2acce53535ad58": {
+     "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926": {
       "rrf": null,
       "bm25": null,
       "cos": null,
@@ -628,19 +659,19 @@
     "paths": [
      {
       "lane": "graph",
-      "seed": "f31a06005aa5ea88e4d569017e27711af47fd0d0337525ab4ce46efa41daa843",
-      "to": "525b76311dcc00824f51f087cc7d5f14d8b5eff52af05fb4ae2acce53535ad58",
+      "seed": "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
+      "to": "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926",
       "hops": 1,
       "status": "discovered",
       "steps": [
        {
-        "node": "f31a06005aa5ea88e4d569017e27711af47fd0d0337525ab4ce46efa41daa843",
+        "node": "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
         "node_kind": "chunk"
        },
        {
-        "node": "525b76311dcc00824f51f087cc7d5f14d8b5eff52af05fb4ae2acce53535ad58",
+        "node": "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926",
         "node_kind": "chunk",
-        "edge_id": "ffc963ceb65fdd95fa66a35a04d66ec63939b3ec724c03f7774b6f877047810f",
+        "edge_id": "3fb79b21dde8fcdf263ae35913a710974a8f72f489e10f51df9f8970538323c4",
         "kind": "next_chunk",
         "reverse": true,
         "origin": "deterministic",
@@ -664,16 +695,17 @@
     "missing_sources": [],
     "truncated": [],
     "seen_chunk_ids": [
-     "d2b125fb5ebec6b4b579ba56de95a1f6f33076c23052fd6ffa7fbd6237f49a21",
-     "f31a06005aa5ea88e4d569017e27711af47fd0d0337525ab4ce46efa41daa843",
-     "7efb5a793a5d9267add0b0ee68a3b6154c040666de43bfcfaa73052ae2ae7838",
-     "aaa71c697521504d54ca328a11fb3fdf02f8a7de9c2daef2ea33904f4c5b14d1",
-     "90946dfd3d9472197c721351d585db8b6f7e9a9ec24728f6ad3003012772ddc5",
-     "9a8d14782eabac4f656db77993e2c31804cab62009f10fe5d397ff3b434b9dd3",
-     "525b76311dcc00824f51f087cc7d5f14d8b5eff52af05fb4ae2acce53535ad58"
+     "bfc69e72dd4bd7394c5b0e3b0ff3b8f9c755536e68bf98dcc47c5d4ca8513cb9",
+     "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
+     "4ba68687493896dcc10ee3cbebae6f4d3823dd4f8cac9c482cdd3f3d5067fa7f",
+     "8834ff0d0c49ac24b161883bd6c4ead41228f71ef8c5bb6ef680dc7152394643",
+     "f4ed1e4352afbd41cfe347b36e8089a1f685069e8e407a18cdacc591ef96802e",
+     "31d69508d085655ef24547f900908d8199afe021570947dbfd51b99250947e16",
+     "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926"
     ],
     "spent": 7,
-    "elapsed_ms": 0.46
+    "audiences": null,
+    "elapsed_ms": 0.5
    },
    "calls": 0,
    "tokens": 0
@@ -690,7 +722,7 @@
     "requests": [
      {
       "schema_version": "retrieval-request/1",
-      "repo_id": "e616823980d34ce6edd1b9e9bf89f8af3c3d6389847c64f25e4edd70e192d3e2",
+      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
       "query_original": "Who is on call for the ingest pipeline?",
       "query_en": "Who is on call for the ingest pipeline?",
       "source_allowlist": [
@@ -699,7 +731,7 @@
       "filters": {},
       "generation": 1,
       "limit": 8,
-      "deadline": 1790591062.462304,
+      "deadline": 1791670999.71213,
       "graph_budget": {
        "seeds": 8,
        "hops": 2,
@@ -707,13 +739,13 @@
       },
       "max_candidates": 23,
       "seen_chunk_ids": [
-       "d2b125fb5ebec6b4b579ba56de95a1f6f33076c23052fd6ffa7fbd6237f49a21",
-       "f31a06005aa5ea88e4d569017e27711af47fd0d0337525ab4ce46efa41daa843",
-       "7efb5a793a5d9267add0b0ee68a3b6154c040666de43bfcfaa73052ae2ae7838",
-       "aaa71c697521504d54ca328a11fb3fdf02f8a7de9c2daef2ea33904f4c5b14d1",
-       "90946dfd3d9472197c721351d585db8b6f7e9a9ec24728f6ad3003012772ddc5",
-       "9a8d14782eabac4f656db77993e2c31804cab62009f10fe5d397ff3b434b9dd3",
-       "525b76311dcc00824f51f087cc7d5f14d8b5eff52af05fb4ae2acce53535ad58"
+       "bfc69e72dd4bd7394c5b0e3b0ff3b8f9c755536e68bf98dcc47c5d4ca8513cb9",
+       "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
+       "4ba68687493896dcc10ee3cbebae6f4d3823dd4f8cac9c482cdd3f3d5067fa7f",
+       "8834ff0d0c49ac24b161883bd6c4ead41228f71ef8c5bb6ef680dc7152394643",
+       "f4ed1e4352afbd41cfe347b36e8089a1f685069e8e407a18cdacc591ef96802e",
+       "31d69508d085655ef24547f900908d8199afe021570947dbfd51b99250947e16",
+       "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926"
       ],
       "spent": 7,
       "round": 2,
@@ -747,9 +779,9 @@
         ],
         "text": "# One retry budget\n\nRule. A loop shares one deadline, one call count and one token ceiling across all of its steps. A step's own limit never multiplies the total.",
         "completeness": "whole",
-        "chunk_id": "4a7d1b8d303ae3fcfb3ab03702f87604dca3de57ccdf798b06c0f97fbf69f419",
-        "source_id": "b2cbe51c50e02e9d63f914a5272294079a8873c79075c0489bbfee602331db0b",
-        "repo_id": "0bb7e2814523302d427414aaed7ce58eea21f82d4e67d302fb88dcfc68efb018",
+        "chunk_id": "027a04f4e2111a320da2f1a0bdfd293cf674650487e711ea9dd30eb78c49bda9",
+        "source_id": "99ad37ef8447882d167ab29644d31e75c29311f0dba6c0c10c4d07a5b8a5b1cf",
+        "repo_id": "97f06033596c8d22197567862fe4091e1c6c9f038d3625a540ad92802c922303",
         "revision": "4fa5c2c87772b5cc1d058c0fa054d0dc614cab191c205eb2f70316bef39d7162",
         "kind": "rule",
         "visibility": "shared",
@@ -761,6 +793,11 @@
         },
         "coverage": "full_text",
         "record": null,
+        "audiences": [
+         "product",
+         "hooks",
+         "jev"
+        ],
         "lane": "rrf",
         "duplicates": []
        },
@@ -774,9 +811,9 @@
         ],
         "text": "# Review before merge\n\nRule. Every pull request receives one independent review round before it is merged. The author's own checks are not a review.",
         "completeness": "whole",
-        "chunk_id": "f520400ff105f3ac3e736960220ab7d1904a50b31d951ed36703c677ee583bcc",
-        "source_id": "0566cc91c1532fabaf0fc341b00eef8ccf9431b9d9a89e1aba1290ec679e31d1",
-        "repo_id": "0bb7e2814523302d427414aaed7ce58eea21f82d4e67d302fb88dcfc68efb018",
+        "chunk_id": "95b7a1daf769a51f24b2bec3bbe6af6797eb0a42e28a910a4e49be5f792c5d3b",
+        "source_id": "9fc73d4fcf495ea9ed0304a6c35afdba9a43571041116648e62c60859094d1f5",
+        "repo_id": "97f06033596c8d22197567862fe4091e1c6c9f038d3625a540ad92802c922303",
         "revision": "e28d8de9f01e8c1a34efcb5641d72c671135018c898cd9b746225c5f6e98099d",
         "kind": "rule",
         "visibility": "shared",
@@ -788,12 +825,17 @@
         },
         "coverage": "full_text",
         "record": null,
+        "audiences": [
+         "product",
+         "hooks",
+         "jev"
+        ],
         "lane": "rrf",
         "duplicates": []
        }
       ],
       "scores": {
-       "4a7d1b8d303ae3fcfb3ab03702f87604dca3de57ccdf798b06c0f97fbf69f419": {
+       "027a04f4e2111a320da2f1a0bdfd293cf674650487e711ea9dd30eb78c49bda9": {
         "rrf": {
          "rank": 1,
          "score": 0.01639
@@ -805,7 +847,7 @@
         "cos": null,
         "graph": null
        },
-       "f520400ff105f3ac3e736960220ab7d1904a50b31d951ed36703c677ee583bcc": {
+       "95b7a1daf769a51f24b2bec3bbe6af6797eb0a42e28a910a4e49be5f792c5d3b": {
         "rrf": {
          "rank": 2,
          "score": 0.01613
@@ -829,18 +871,19 @@
       "missing_sources": [],
       "truncated": [],
       "seen_chunk_ids": [
-       "d2b125fb5ebec6b4b579ba56de95a1f6f33076c23052fd6ffa7fbd6237f49a21",
-       "f31a06005aa5ea88e4d569017e27711af47fd0d0337525ab4ce46efa41daa843",
-       "7efb5a793a5d9267add0b0ee68a3b6154c040666de43bfcfaa73052ae2ae7838",
-       "aaa71c697521504d54ca328a11fb3fdf02f8a7de9c2daef2ea33904f4c5b14d1",
-       "90946dfd3d9472197c721351d585db8b6f7e9a9ec24728f6ad3003012772ddc5",
-       "9a8d14782eabac4f656db77993e2c31804cab62009f10fe5d397ff3b434b9dd3",
-       "525b76311dcc00824f51f087cc7d5f14d8b5eff52af05fb4ae2acce53535ad58",
-       "4a7d1b8d303ae3fcfb3ab03702f87604dca3de57ccdf798b06c0f97fbf69f419",
-       "f520400ff105f3ac3e736960220ab7d1904a50b31d951ed36703c677ee583bcc"
+       "bfc69e72dd4bd7394c5b0e3b0ff3b8f9c755536e68bf98dcc47c5d4ca8513cb9",
+       "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
+       "4ba68687493896dcc10ee3cbebae6f4d3823dd4f8cac9c482cdd3f3d5067fa7f",
+       "8834ff0d0c49ac24b161883bd6c4ead41228f71ef8c5bb6ef680dc7152394643",
+       "f4ed1e4352afbd41cfe347b36e8089a1f685069e8e407a18cdacc591ef96802e",
+       "31d69508d085655ef24547f900908d8199afe021570947dbfd51b99250947e16",
+       "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926",
+       "027a04f4e2111a320da2f1a0bdfd293cf674650487e711ea9dd30eb78c49bda9",
+       "95b7a1daf769a51f24b2bec3bbe6af6797eb0a42e28a910a4e49be5f792c5d3b"
       ],
       "spent": 9,
-      "elapsed_ms": 0.41
+      "audiences": null,
+      "elapsed_ms": 0.44
      }
     ]
    },
@@ -910,12 +953,15 @@
    "documents",
    "memory"
   ],
-  "repo_id": "e616823980d34ce6edd1b9e9bf89f8af3c3d6389847c64f25e4edd70e192d3e2",
+  "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
   "graph": true,
   "model": "jev-1.13.0",
   "live": true,
   "external": false,
-  "required": false
+  "required": false,
+  "audiences": null,
+  "cause": null,
+  "fallback": false
  },
  "limits": {
   "seconds": 15.0,
@@ -924,7 +970,7 @@
   "tokens": null
  },
  "policy": {
-  "version": "fitted-1897947726f7",
+  "version": "fitted-9f69ae0ac177",
   "rules": {
    "route": {
     "no": 0.25,
@@ -955,6 +1001,10 @@
     "yes": 0.8
    },
    "analysis": {
+    "no": 0.2,
+    "yes": 0.8
+   },
+   "progress": {
     "no": 0.2,
     "yes": 0.8
    },
@@ -993,6 +1043,7 @@
   "dataset": "b6f269f0d9542d3e9f8c8fd5cc982dd51697f2fb3bf9393160b250b07007d91a"
  },
  "prompt_version": "afa145931e76393e",
+ "behavior": "836c5936b1b26baf",
  "transitions": [
   {
    "from": "normalize",
@@ -1016,7 +1067,7 @@
    "budget": {
     "calls": 1,
     "candidates": 0,
-    "tokens": 666
+    "tokens": 773
    }
   },
   {
@@ -1030,7 +1081,7 @@
    "budget": {
     "calls": 1,
     "candidates": 0,
-    "tokens": 666
+    "tokens": 773
    }
   },
   {
@@ -1040,7 +1091,7 @@
    "budget": {
     "calls": 1,
     "candidates": 0,
-    "tokens": 666
+    "tokens": 773
    }
   },
   {
@@ -1052,7 +1103,7 @@
    "budget": {
     "calls": 2,
     "candidates": 7,
-    "tokens": 3121
+    "tokens": 3228
    }
   },
   {
@@ -1070,7 +1121,7 @@
    "budget": {
     "calls": 2,
     "candidates": 7,
-    "tokens": 3121
+    "tokens": 3228
    }
   },
   {
@@ -1082,7 +1133,7 @@
    "budget": {
     "calls": 2,
     "candidates": 7,
-    "tokens": 3121
+    "tokens": 3228
    }
   },
   {
@@ -1096,7 +1147,7 @@
    "budget": {
     "calls": 2,
     "candidates": 7,
-    "tokens": 3121
+    "tokens": 3228
    }
   },
   {
@@ -1106,7 +1157,7 @@
    "budget": {
     "calls": 2,
     "candidates": 7,
-    "tokens": 3121
+    "tokens": 3228
    }
   },
   {
@@ -1118,7 +1169,7 @@
    "budget": {
     "calls": 3,
     "candidates": 9,
-    "tokens": 4204
+    "tokens": 4311
    }
   },
   {
@@ -1131,8 +1182,25 @@
    "budget": {
     "calls": 3,
     "candidates": 9,
-    "tokens": 4204
+    "tokens": 4311
    }
   }
- ]
+ ],
+ "calls": {
+  "calls": 3,
+  "provider_calls": 3,
+  "cache_hits": 0,
+  "cost_usd_known": 0,
+  "cost_unknown": 3,
+  "tokens": {
+   "input": 3630,
+   "output": 681
+  },
+  "by_purpose": {
+   "route": 1,
+   "source_select": 1,
+   "grade": 2,
+   "sufficiency": 2
+  }
+ }
 }
