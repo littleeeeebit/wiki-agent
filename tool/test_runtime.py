@@ -116,8 +116,9 @@ def test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_prov
         monkeypatch.setattr(getattr(app, name), "close_all", lambda n=name: order.append(n))
     monkeypatch.setattr(app.chat_session, "end_all", lambda: order.append("end_all"))
     app.close_turns()
-    assert sorted(order[:5]) == ["loop", "planning", "query", "refactor", "work"]
-    assert order[5:] == ["end_all", "join", "join", "join"]
+    # A query's stdin close waits on a prompt write its stalled provider blocks: it closes after the kill.
+    assert sorted(order[:4]) == ["loop", "planning", "refactor", "work"]
+    assert order[4:] == ["end_all", "query", "join", "join", "join"]
 
 
 def test_a_shutdown_ends_running_turns_before_it_waits_for_their_streams(monkeypatch):

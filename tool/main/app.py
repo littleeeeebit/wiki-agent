@@ -94,13 +94,15 @@ def close_turns() -> None:
     no registry holds, such as a query's explanation, included. Safe to call again."""
 
     runtime.stopping.set()
-    # Every workflow is marked stopped before any other provider dies, so a turn
-    # that `end_all` kills reads as a restart, not a failure; joins come last.
+    # Every workflow is marked stopped, and kills its own providers, before any
+    # other provider dies, so a turn `end_all` kills reads as a restart, not a
+    # failure. Queries keep no workflow and close only after their providers
+    # are dead: closing stdin waits on a prompt write a stalled provider blocks.
     threads = [*loop.close_all(wait=False), *planning.close_all(wait=False)]
     refactor.close_all()
-    query.close_all()
     threads += work.close_all(wait=False)
     chat_session.end_all()
+    query.close_all()
     for thread in threads:
         thread.join()
 
