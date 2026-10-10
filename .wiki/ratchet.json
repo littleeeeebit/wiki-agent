@@ -3,8 +3,8 @@
   "files": {
     "tool/agent/chat_session.py": {
       "dup": 0,
-      "lines": 1301,
-      "reason": "A finished answer no longer waits forever for follow-ups the CLI already took in during the turn (queue `remove`): with no task left running, a short idle silence ends the turn with that answer, so the worktree is released and the review loop starts. Only idle frames keep that answer, a zero-turn placeholder returns to the ordinary wait, the expiry applies only to the result it retries, and the expired turn's process is retired so a late frame never answers the next prompt. Merged with #101's app-owned approval ids (three lines)."
+      "lines": 1342,
+      "reason": "Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`)."
     },
     "tool/apply.py": {
       "dup": 6,
@@ -183,8 +183,8 @@
     },
     "tool/test_agent.py": {
       "dup": 46,
-      "lines": 1029,
-      "reason": "The follow-up grace needs its failure cases pinned: a phantom wait across two prompts on a real stand-in process, idle traffic, request start, a zero-turn placeholder and an unread steer at expiry. Merged with #101's approval-id tests."
+      "lines": 1055,
+      "reason": "A server going down must end a one-off explanation's provider, which no registry holds, and start no new one until reopened; pinned on a real stand-in process whose child holds the pipe."
     },
     "tool/test_agent_decisions.py": {
       "dup": 12,

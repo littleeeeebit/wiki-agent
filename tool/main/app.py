@@ -33,6 +33,7 @@ from fastapi.exception_handlers import http_exception_handler, request_validatio
 from fastapi.exceptions import RequestValidationError
 
 import translate
+from agent import chat_session
 from common import errorlog
 from common import settings as settings_file
 
@@ -84,12 +85,16 @@ async def lifespan(_: FastAPI):
             poll_thread.join()
             mobile.companion.stop()
             close_turns()
+            # Every request has finished by now; a server started again in this process may start providers.
+            chat_session.reopen()
 
 
 def close_turns() -> None:
-    """Every running turn ended and its provider gone. Safe to call again."""
+    """Every running turn ended and its provider gone, and none starts: one
+    no registry holds, such as a query's explanation, included. Safe to call again."""
 
     runtime.stopping.set()
+    chat_session.end_all()
     loop.close_all()
     planning.close_all()
     refactor.close_all()
