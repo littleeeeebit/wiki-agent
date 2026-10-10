@@ -62,6 +62,7 @@ DECLINED = "The person declined this."
 
 BOOT_TIMEOUT = 120.0   # the first turn is slow: hooks, and loading
 TURN_TIMEOUT = 600.0
+FOLLOWUP_GRACE = 30.0   # an answer's wait for a follow-up with no task left running; one owed starts at once
 
 # What `app-server` answers `thread/resume` for a thread it cannot find
 # (`-32600`, CLI 0.156.0). Only these start a new conversation.
@@ -869,7 +870,7 @@ class ChatSession:
         notified = set()
         followups = 0
         foreground_result_seen = False
-        replay_human = None
+        replay_human, held, expired = None, None, False   # held: an answer kept back for follow-ups
         proc = self._proc
         while True:
             # A background task runs silent for as long as it needs — a test
@@ -878,14 +879,18 @@ class ChatSession:
             # clock killed the CLI at 600s and orphaned the task. The process
             # is looked at directly: a child holding its stdout keeps the
             # pipe's end, and so `__closed__`, from ever coming.
-            unbounded = foreground_result_seen and background
+            unbounded, expired = foreground_result_seen and background, False
             try:
-                ev = self._events.get(timeout=1.0 if unbounded else deadline)
+                ev = self._events.get(timeout=1.0 if unbounded else FOLLOWUP_GRACE if held else deadline)
             except queue.Empty:
                 if unbounded:
                     if proc is not None and proc.poll() is None:
                         continue
                     ev = {"type": "__closed__"}
+                # Silent with nothing running: the turn took those completions in
+                # (queue `remove`, 2.1.296); waiting held the worktree and the review.
+                elif held is not None:
+                    ev, followups, expired = held, 0, True
                 # The CLI is silent because it waits on a person. Not a hang.
                 elif self._pending:
                     continue
@@ -893,9 +898,10 @@ class ChatSession:
                     self.close()
                     yield Event("error", f"{deadline:.0f}초 안에 답이 없다.")
                     return
-            deadline = TURN_TIMEOUT
-
-            kind = ev.get("type")
+            deadline, kind = TURN_TIMEOUT, ev.get("type")
+            # Anything but idle traffic may start the follow-up (`status: requesting` comes first).
+            if kind not in ("rate_limit_event", "keep_alive"):
+                held = None
             if kind == "user" and ev.get("isReplay"):
                 replay_human = not ev.get("isSynthetic")
             if kind == "__closed__":
@@ -1164,7 +1170,7 @@ class ChatSession:
                             followups = max(0, followups - 1)
                         foreground_result_seen = True
                     replay_human = None
-                    if background or followups or (injected and ev.get("num_turns") == 0):
+                    if not expired and (background or followups or (injected and ev.get("num_turns") == 0)):
                         # Not after a steer: its replay says only that it was
                         # read, not answered, and closing would lose it. A steer
                         # landing after this check is still unread, so
@@ -1175,6 +1181,8 @@ class ChatSession:
                                 and not self._steered and self._closing()):
                             yield Event("tool", f"Background · waiting for {max(len(background), followups)} "
                                                 "follow-up(s)", {"tool": "background"})
+                            # A zero-turn placeholder promises a combined answer: the ordinary wait.
+                            held = None if background or (injected and ev.get("num_turns") == 0) else ev
                             continue
                         # The work is reported closed, yet tasks still run: left
                         # over, and holding the turn would keep the review from
@@ -1188,6 +1196,8 @@ class ChatSession:
                 if not self._closing():
                     # A steered message still owns a later provider result.
                     continue
+                if expired:   # an unresolved turn's process and queue never answer the next prompt; it resumes
+                    self.close()
                 usage = ev.get("usage") or {}
                 self.usage = {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
                               "cost_usd": ev.get("total_cost_usd"), "scope": "turn"}
