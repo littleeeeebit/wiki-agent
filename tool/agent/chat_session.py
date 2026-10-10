@@ -361,14 +361,12 @@ class ChatSession:
             cmd, cwd=str(self.repo), env=self._env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
-            errors="replace", bufsize=1, creationflags=SUSPENDED,
+            errors="replace", bufsize=1, creationflags=SUSPENDED, start_new_session=os.name != "nt",
         )
-        # The CLI's background shells outlive it on Windows — even its own
-        # `stop_task` leaves the shell's child running (2.1.291). Whatever
-        # ends this process ends them through the job (`stop`, `close`).
-        # Started suspended, so nothing it starts escapes the job.
-        # ponytail: Windows only; elsewhere the CLI's exit is trusted. Start
-        # it in its own session and `killpg` if orphans show up there.
+        # The CLI's background shells outlive it — even its own `stop_task`
+        # leaves the shell's child running (2.1.291). Whatever ends this
+        # process ends them through the job, or elsewhere its process group
+        # (`stop`, `close`). Started suspended, so nothing escapes the job.
         job = contained(proc)
         # Published as a pair under `_halting`, which `stop` holds while it
         # uses the job: a closed handle's number goes to the next job made.

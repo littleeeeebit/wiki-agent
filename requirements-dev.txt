@@ -2,4 +2,5 @@
 pytest>=8,<10
 pytest-xdist>=3.8,<4
 httpx>=0.27,<1
-ruff>=0.9,<1
+# Exact: a newer release changes what `ruff check tool` reports on the same source.
+ruff==0.12.0

@@ -33,6 +33,7 @@ from fastapi.exceptions import RequestValidationError
 
 import translate
 from common import errorlog
+from common import settings as settings_file
 
 from . import architecture, channels, connect, improvements, loop, mobile, planning, query, refactor, refactor_api, runtime, specs, suite, survey, update, verification, work
 from .runtime import server_owner
@@ -223,15 +224,7 @@ def flip(body: Switch) -> dict:
         raise HTTPException(400, "번역 모드를 선택하세요")
     mode = body.mode or ("full" if body.translate else "off")
     # The loop's settings share the file; they are kept.
-    try:
-        saved = json.loads(SWITCH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        saved = {}
-    saved = {**(saved if isinstance(saved, dict) else {}), "translate": mode != "off", "translation_mode": mode}
-    SWITCH.parent.mkdir(parents=True, exist_ok=True)
-    temporary = SWITCH.with_suffix(".tmp")
-    temporary.write_text(json.dumps(saved, ensure_ascii=False) + "\n", encoding="utf-8")
-    temporary.replace(SWITCH)
+    settings_file.saved(SWITCH, {"translate": mode != "off", "translation_mode": mode})
     work.feed.put({"kind": "sync"})
     return switch()
 

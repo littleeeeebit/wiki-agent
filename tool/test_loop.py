@@ -23,6 +23,7 @@ import pytest
 import debt
 from agent import chat_session
 from agent.chat_session import Event
+from common import settings as settings_file
 from main import channels as chat_channels
 from main import app as main_app
 from main import loop, specs, work
@@ -2309,3 +2310,19 @@ def test_a_switch_leaves_the_loop_and_its_approvals_where_they_are(world, tmp_pa
         assert web.post("/api/work/say", json={"path": path, "text": "새 지시"}).status_code == 404
     spec = specs.load("proj", "fix-s")
     assert spec["state"] == "머지 가능" and [r["verdict"] for r in spec["rounds"]] == ["deny", "allow"]
+
+
+def test_the_loop_settings_and_the_translation_switch_written_at_once_both_survive(tmp_path):
+    path, start, failed = tmp_path / "main.json", threading.Barrier(2), []
+
+    def write(key):
+        start.wait()
+        try:
+            for n in range(100):
+                settings_file.saved(path, {key: n})
+        except OSError as exc:
+            failed.append(exc)
+
+    writers = [threading.Thread(target=write, args=(key,)) for key in ("rounds", "translate")]
+    [w.start() for w in writers], [w.join() for w in writers]
+    assert not failed and json.loads(path.read_text(encoding="utf-8")) == {"rounds": 99, "translate": 99}

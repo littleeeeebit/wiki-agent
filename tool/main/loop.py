@@ -22,6 +22,7 @@ from pydantic import BaseModel
 import translate
 from agent import ChatSession
 from common import errorlog, worktree_home
+from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
 from workspace import adopt, base_branch, folder_for, merged, remove, worktrees
 
@@ -89,15 +90,7 @@ def settings(defaults: dict = DEFAULTS) -> dict:
 def store(**changes) -> None:
     """Merged into what is there: the translation switch lives in the same file."""
 
-    try:
-        saved = json.loads(_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        saved = {}
-    saved = {**(saved if isinstance(saved, dict) else {}), **changes}
-    _file().parent.mkdir(parents=True, exist_ok=True)
-    temporary = _file().with_suffix(".tmp")
-    temporary.write_text(json.dumps(saved, ensure_ascii=False) + "\n", encoding="utf-8")
-    temporary.replace(_file())
+    settings_file.saved(_file(), changes)
 
 
 # -- A round's result --------------------------------------------------------
