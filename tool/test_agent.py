@@ -719,38 +719,51 @@ sys.stdin.read()
 
 
 def test_completions_the_turn_took_in_owe_no_followup(tree):
-    # Claude 2.1.296: a background task that ends before the answer is read
-    # inside the turn (queue `remove`), and no follow-up comes. Waiting for one
-    # kept the worktree held and the review loop stalled until a person stopped it.
-    fixture = '''import json, sys
+    # 2.1.296 reads completions before the answer inside the turn (queue `remove`): waiting held the
+    # worktree. The expired turn's process goes, so a late frame never answers the next prompt.
+    fixture = '''import json, sys, time
 say = lambda m: print(json.dumps(m), flush=True)
 sys.stdin.readline()
+if "--resume" in sys.argv:
+    say({"type": "result", "origin": {"kind": "human"}, "result": "Fresh second answer", "session_id": "cli-1"})
+    sys.stdin.read()
+say({"type": "system", "subtype": "init", "session_id": "cli-1"})
 say({"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_backgrounded": True})
 say({"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"})
 say({"type": "result", "origin": {"kind": "human"}, "result": "Fixed and pushed", "session_id": "cli-1"})
+time.sleep(1)
+say({"type": "result", "origin": {"kind": "task-notification"}, "result": "Late follow-up", "session_id": "cli-1"})
 sys.stdin.read()
 '''
-    session = ChatSession(tree, write=True, bypass=True)
-    with patch.object(chat_session, "FOLLOWUP_GRACE", .3), patch.object(chat_session, "TURN_TIMEOUT", 30):
-        started = time.monotonic()
-        _, events = run(session, fixture, tree)
-    assert time.monotonic() - started < 10
-    assert events[-1].kind == "done" and events[-1].text == "Fixed and pushed" and not events[-1].meta["error"]
+    session, real_popen = ChatSession(tree, write=True, bypass=True), subprocess.Popen
+    try:
+        with patch.object(chat_session.subprocess, "Popen", lambda command, **kw: real_popen(
+                [sys.executable, "-X", "utf8", "-c", fixture, *command[1:]], **kw)), \
+             patch.object(chat_session, "cli_command", side_effect=lambda name: [name]), \
+             patch.object(chat_session, "FOLLOWUP_GRACE", .3), patch.object(chat_session, "TURN_TIMEOUT", 30):
+            started = time.monotonic()
+            first = list(session.say("Fix it"))
+            assert time.monotonic() - started < 10 and not session.alive
+            time.sleep(1.2)
+            second = list(session.say("Second unrelated prompt"))
+    finally:
+        session.close()
+    assert (first[-1].kind, first[-1].text, [e.text for e in second if e.kind == "done"]) == (
+        "done", "Fixed and pushed", ["Fresh second answer"]) and not first[-1].meta["error"]
 
 
 class Scripted:
-    """A provider queue read in order; `None` is a read that times out. A
-    `LATE` event comes only to a read that waits longer than the grace."""
+    """A provider queue in order: `None` times a read out; a `late` event reaches only a read past the grace."""
 
     def __init__(self, messages):
         self.messages = list(messages)
 
     def get(self, timeout):
-        event = self.messages[0]
-        if event is None or (event.get("late") and timeout <= chat_session.FOLLOWUP_GRACE):
-            self.messages.pop(0) if event is None else None
+        if (self.messages[0] or {}).get("late") and timeout <= chat_session.FOLLOWUP_GRACE:
             raise chat_session.queue.Empty
-        return self.messages.pop(0)
+        if (event := self.messages.pop(0)) is None:
+            raise chat_session.queue.Empty
+        return event
 
 
 TOOK_IN = [{"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_backgrounded": True},
@@ -759,13 +772,12 @@ TOOK_IN = [{"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_
 LATE = {"type": "result", "origin": {"kind": "task-notification"}, "result": "Combined follow-up", "late": True}
 
 
+# Idle traffic keeps the answer; 2.1.296 starts a follow-up with `status: requesting`, and a zero-turn
+# placeholder promises a batch's combined answer, which may come after the grace.
 @pytest.mark.parametrize("after, answer", [
     ([{"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}}, None], "Fixed and pushed"),
-    # 2.1.296 starts a follow-up with `status: requesting`; its first token may come after the grace.
     ([{"type": "system", "subtype": "status", "status": "requesting"}, LATE], "Combined follow-up"),
-    # A zero-turn placeholder promises the combined answer of a batch.
-    ([{"type": "result", "origin": {"kind": "task-notification"}, "result": "", "num_turns": 0}, LATE],
-     "Combined follow-up"),
+    ([{"type": "result", "origin": {"kind": "task-notification"}, "result": "", "num_turns": 0}, LATE], "Combined follow-up"),
 ])
 def test_the_kept_answer_yields_only_to_a_real_follow_up(tree, after, answer):
     session = ChatSession(tree, write=True, bypass=True)
@@ -776,15 +788,12 @@ def test_the_kept_answer_yields_only_to_a_real_follow_up(tree, after, answer):
 
 
 def test_an_expired_grace_does_not_skip_a_steered_turns_later_waits(tree):
-    # The grace ran out while a steer was unread: the turn went on, and its next
-    # interim result, with a task still running, must not end it.
-    session, events = ChatSession(tree, write=True, bypass=True), []
-    session.session_id, session._open = "cli-1", True
-    session._events = Scripted([{"type": "user", "isReplay": True}, *TOOK_IN, None, {"type": "user", "isReplay": True},
-                                {"type": "system", "subtype": "task_started", "task_id": "bg-2", "is_backgrounded": True},
-                                {"type": "result", "origin": {"kind": "human"}, "result": "Still waiting for bg-2"},
-                                {"type": "system", "subtype": "task_notification", "task_id": "bg-2", "status": "completed"},
-                                {"type": "result", "origin": {"kind": "task-notification"}, "result": "Steered work done"}])
+    # The grace ran out while a steer was unread: the next interim result, a task still running, must not end it.
+    session, events, replay = ChatSession(tree, write=True, bypass=True), [], {"type": "user", "isReplay": True}
+    started, ended = ({**e, "task_id": "bg-2"} for e in TOOK_IN[:2])
+    session.session_id, session._open, session._events = "cli-1", True, Scripted([
+        replay, *TOOK_IN, None, replay, started, {**TOOK_IN[2], "result": "Still waiting for bg-2"}, ended,
+        {**LATE, "result": "Steered work done", "late": False}])
     with patch.object(chat_session, "FOLLOWUP_GRACE", .01), patch.object(session, "_send", return_value=True), \
          patch.object(session, "close"):
         for event in session._drain():

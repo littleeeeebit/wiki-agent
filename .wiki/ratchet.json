@@ -3,8 +3,8 @@
   "files": {
     "tool/agent/chat_session.py": {
       "dup": 0,
-      "lines": 1296,
-      "reason": "A finished answer no longer waits forever for follow-ups the CLI already took in during the turn (queue `remove`): with no task left running, a short silence ends the turn with that answer, so the worktree is released and the review loop starts. The kept answer survives status traffic and zero-turn placeholders, and the expiry applies only to the result it retries."
+      "lines": 1298,
+      "reason": "A finished answer no longer waits forever for follow-ups the CLI already took in during the turn (queue `remove`): with no task left running, a short idle silence ends the turn with that answer, so the worktree is released and the review loop starts. Only idle frames keep that answer, a zero-turn placeholder returns to the ordinary wait, the expiry applies only to the result it retries, and the expired turn's process is retired so a late frame never answers the next prompt."
     },
     "tool/apply.py": {
       "dup": 6,
@@ -183,8 +183,8 @@
     },
     "tool/test_agent.py": {
       "dup": 46,
-      "lines": 1010,
-      "reason": "baseline at adoption"
+      "lines": 1013,
+      "reason": "The follow-up grace needs its failure cases pinned: a phantom wait across two prompts on a real stand-in process, idle traffic, request start, a zero-turn placeholder and an unread steer at expiry."
     },
     "tool/test_agent_decisions.py": {
       "dup": 12,

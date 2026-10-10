@@ -168,7 +168,9 @@ nothing: with no task left running, 30 seconds after the answer with only idle
 traffic (`rate_limit_event`, `keep_alive`) ends the turn with that answer. Any
 other frame may start the follow-up — 2.1.296 sends `status: requesting` first —
 and a zero-turn placeholder promises a batch's combined answer; both return to
-the ordinary wait. Before, the turn stayed open, held its
+the ordinary wait. A turn ended this way retires its provider process, as a
+closing answer does, so a late frame never answers the next prompt; that
+prompt resumes the conversation. Before, the turn stayed open, held its
 worktree and stalled the review loop until a person stopped it.
 While a background task is alive after the
 answer, no turn clock applies: its end, or the process's, ends the wait. An

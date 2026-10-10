@@ -1193,6 +1193,8 @@ class ChatSession:
                 if not self._closing():
                     # A steered message still owns a later provider result.
                     continue
+                if expired:   # an unresolved turn's process and queue never answer the next prompt; it resumes
+                    self.close()
                 usage = ev.get("usage") or {}
                 self.usage = {"input_tokens": usage.get("input_tokens"), "output_tokens": usage.get("output_tokens"),
                               "cost_usd": ev.get("total_cost_usd"), "scope": "turn"}
