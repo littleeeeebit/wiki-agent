@@ -640,7 +640,8 @@ retrieval 28.7 / 6.06 (285 fallback turns), repetition 3.4 / 0.54, actions
   classification scores an intent's two arms as a ratio: analysis-82 failed
   in both and none-35 in B, 1.5 misses against one allowed. Answer support and added latency are not measured. Fact specificity's misses are
   the advice-phrased family, the one diagnosis the data now supports. The
-  default answer path (#59) is the open question for the answer gates.
+  default answer path (#59) is the open question for the answer gates; its
+  options are in [answer-path.md](answer-path.md).
 
 ### English baseline for PR 9
 
