@@ -446,8 +446,8 @@ def test_a_rule_for_ask_or_analysis_is_fitted_only_for_the_text_it_was_fitted_on
 
 def test_the_behavior_digest_moves_with_any_instruction(monkeypatch):
     before = knowledge.behavior()
-    assert set(before["hashes"]) == {"prompts", "ask", "analysis", "grounding", "normalization", "graph_extraction",
-                                     "fallback"}
+    assert set(before["hashes"]) == {"prompts", "ask", "analysis", "progress", "grounding", "normalization",
+                                     "graph_extraction", "fallback"}
     monkeypatch.setattr(knowledge, "ASK", knowledge.ASK + " ")
     monkeypatch.setitem(knowledge.KIND_VERSIONS, "ask", "changed")
     assert knowledge.behavior()["digest"] != before["digest"]
