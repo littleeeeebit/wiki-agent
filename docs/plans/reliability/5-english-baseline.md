@@ -221,8 +221,10 @@ for PR 9. Rollback restores prior policy references without deleting failed runs
 ## Results
 
 Four frozen sets, all English input over English evidence, all under gates v3
-(`gates.json` byte-identical across them). The runs live under `raw/eval/jev/`,
-which git ignores; the reproduction commands below rebuild them.
+(`gates.json` byte-identical across them), and a fifth under gates v5, which
+splits routing per class (see "v5 — enough cases to decide"). The runs live
+under `raw/eval/jev/`, which git ignores; the reproduction commands below
+rebuild them.
 
 ### v1 — `eval/jev/reliability/` at 8588d03
 
@@ -499,6 +501,82 @@ Host spending per batch: retrieval 3.7 min / USD 0.44, answers 42.9 / 8.85
 (one batch), repetition 1.6 / 0.22, actions 0.2 / 0.02. The calibration
 answers were 45.0 / 9.30. Jev's cost has no dated price, as in v2.
 
+### v5 — `eval/jev/reliability-v5/` at 21dff77
+
+Frozen after label review r5 (see "Frozen"). The calibration is
+recorded under "Calibration at bc838d8"; after the grader fix (#109) its
+answers ran again, complete, as `reliability-v5-calibration-answers-2` at
+21dff77: unsupported claim rate A 0.192 (500 claims), D 0.218 (496), answer
+support -0.134, coverage D−A 0.0. Graded against what the host read, the
+ordinary answer path gains nothing from Jev on support. A read files in 63 of
+66 rows and D in 20 of 72.
+
+The held-out answers were therefore not run, at the owner's direction: answer
+support would fail on calibration's evidence, and the open question is the
+default answer path (#59), not this set. Answer support and added latency are
+`not_measured`, which leaves the stage open.
+
+Held-out runs: `reliability-v5-heldout`, `reliability-v5-repeat`,
+`reliability-v5-actions`. The report is `reliability-v5-report.json`. Rates
+take the 95% Wilson interval; routing counts each intent once over B and D.
+
+| Gate | Target | Value | Result |
+| --- | --- | --- | --- |
+| Deterministic integrity | 0 | 0 | pass |
+| Graph benefit | 0.10 | 0.417 [0.25, 0.5] | pass |
+| Overall recall | ≥ -0.02 | 0.031 [-0.004, 0.066] | pass |
+| Answer support | 0.25 | — | not_measured |
+| Decision quality | 0.90 | 0.963 | pass |
+| Added latency | ≤ 10 s | — | not_measured |
+| Operating ceiling | 0 | 0 | pass |
+| Analysis recall | 0.90 | 1.0 [0.934, 1.0], n=54 | pass |
+| Fact specificity | 0.90 | 0.889 [0.796, 0.943], n=72 | inconclusive |
+| Material classification | 0.90 | 0.973 [0.892, 0.994], n=56 | inconclusive |
+| Request-only multipart classification | 0.90 | 1.0 [0.936, 1.0], n=56 | pass |
+| Work-start choice | 0.90 | 0.944 [0.849, 0.981], n=54 | inconclusive |
+| Check choice | 0.90 | 1.0 [0.935, 1.0], n=55 | pass |
+| Review-fix choice | 0.90 | 0.944 [0.849, 0.981], n=54 | inconclusive |
+
+The misses, each in both arms unless named:
+- Fact specificity, 8 of 72 routed as analysis: the six facts phrased as
+  advice (analysis-85 to 90, among them "What should I do if I accidentally
+  commit an API key?"), and pasted-40, start-33, start-35 and fix-31, each a
+  lookup asked as "how should I" or "which should". This is v3's and v4's
+  family again, now enough cases to fail the gate's margin.
+- Material classification, 2 of 56: analysis-82 ("Board question: …") kept
+  the quoted question as a request; none-35 did in B only.
+- Work start, 3 of 54: v5ws25, 27 and 29, dispatch chosen as evidence at
+  0.62 to 0.70, though each spec carried the change.
+- Review fix, 3 of 54: v5lf42 and 55, context chosen as fix (the
+  configuration the other services read, and the status shape the other
+  health checks report), and v5lf60, a disputed finding that proposes a
+  remedy, uncertain at 0.53 and settled by the host as fix.
+
+Retrieval, held out (B and D include the six injected-failure intents):
+
+| Arm | n | Recall | Candidate recall | Bridge recall | p95 s | Host USD |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 126 | 0.847 [0.785, 0.904] | 0.847 | 0.417 | 0.02 | 0 |
+| B | 132 | 0.838 [0.775, 0.896] | 0.838 | 0.417 | 19.7 | 3.14 |
+| C | 126 | 0.847 [0.785, 0.904] | 0.868 | 0.417 | 0.03 | 0 |
+| D | 132 | 0.850 [0.783, 0.908] | 0.850 | 0.833 | 20.3 | 2.92 |
+
+- Retrieval p95 rose from v4's 5 s to 20 s. Jev left 173 of 425 coverage
+  questions in B, and 172 of 413 in D, uncertain, and the host settled them;
+  on v4's held-out half it was 6 of 75, and on this calibration 4 of 83.
+  Between calibration (bc838d8) and held-out (21dff77) only the grader and
+  the session's result capture changed, not retrieval; the questions and
+  pages did. Why the fresh pages leave coverage uncertain is not diagnosed.
+- Failure and cancellation: 12 of 12 as expected.
+- Repetition: status the same in 8 of 8 groups; evidence the same, in order,
+  in none (B and D), the same first three in 4 (B) and 3 (D), the same set in
+  5 (B) and 4 (D). The differences sit in the last places of the list.
+
+Host spending per batch: calibration retrieval 3.8 min / USD 0.37, actions
+0.6 / 0.09, answers 39.8 / 8.20, answers again 43.0 / 8.58; held-out
+retrieval 28.7 / 6.06 (285 fallback turns), repetition 3.4 / 0.54, actions
+3.0 / 0.45. USD 24.29 in all; Jev's cost has no dated price.
+
 ### Limits
 
 - Latency passes on v4 at 5.48 s. It failed on v3, narrowly, at 10.76 s
@@ -549,6 +627,12 @@ answers were 45.0 / 9.30. Jev's cost has no dated price, as in v2.
   2026-10-10 re-judgment above makes routing and the three action gates
   inconclusive, so the exit is not met. The v4 labels were reviewed by a model
   (gpt-6.1-sol), not a human, at the repository owner's direction.
+- Exit on v5: not met. Analysis recall, request-only multipart and check
+  choice pass; fact specificity, material classification, work start and
+  review fix are inconclusive, each one to two misses past the margin; answer
+  support and added latency are not measured. Fact specificity's misses are
+  the advice-phrased family, the one diagnosis the data now supports. The
+  default answer path (#59) is the open question for the answer gates.
 
 ### English baseline for PR 9
 
@@ -564,6 +648,21 @@ commit and the options recorded in each `run.json`: `cache cold`, `method
 hybrid`, `k 8`, the default model and grader. Running the same commands at a
 later commit measures a different manifest. Rebuilding a report from the
 recorded folders works at any commit.
+
+v5, from a clean checkout of 21dff77. Calibration retrieval, actions and the
+first answers ran at bc838d8; the first answers are superseded by the second.
+An `--estimate` writes the folder's manifest, so estimate into a scratch
+folder, or delete the estimate's `run.json` before a run at another commit:
+
+```text
+python tool/eval/compare.py raw/eval/jev/reliability-v5-calibration --dataset eval/jev/reliability-v5/intents.json --split calibration --languages en
+python tool/eval/compare.py raw/eval/jev/reliability-v5-calibration-actions --experiment actions --dataset eval/jev/reliability-v5/intents.json --actions eval/jev/reliability-v5/actions.json --split calibration
+python tool/eval/compare.py raw/eval/jev/reliability-v5-calibration-answers-2 --dataset eval/jev/reliability-v5/intents.json --split calibration --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-v5-heldout --dataset eval/jev/reliability-v5/intents.json --split held_out --languages en
+python tool/eval/compare.py raw/eval/jev/reliability-v5-repeat --dataset eval/jev/reliability-v5/intents.json --split held_out --languages en --arms B D --repeat 3 --ids analysis-31 analysis-32 analysis-34 pasted-31 pasted-36 route-36 memory-35 conflict-35
+python tool/eval/compare.py raw/eval/jev/reliability-v5-actions --experiment actions --dataset eval/jev/reliability-v5/intents.json --actions eval/jev/reliability-v5/actions.json --split held_out
+python tool/eval/report.py raw/eval/jev/reliability-v5-heldout raw/eval/jev/reliability-v5-repeat raw/eval/jev/reliability-v5-actions --out raw/eval/jev/reliability-v5-report.json
+```
 
 v4, from a clean checkout of a0e88d3. The calibration answers ran at 02fab78,
 whose behavior manifest is the same; a rerun there needs its own checkout. The
@@ -617,7 +716,7 @@ python tool/eval/report.py raw/eval/jev/reliability-heldout-clean raw/eval/jev/r
 
 A batch that stops at its threshold resumes when the same command runs again.
 
-## v5 — enough cases to decide (design, not run)
+## v5 — enough cases to decide (design)
 
 The 2026-10-10 re-judgment left four gates inconclusive because they rest on
 too few cases, not because a case failed. v5 adds cases; it does not change a
@@ -698,7 +797,7 @@ no acceptance interval.
    step 3 and gives PR 9 its English baseline; a failure gets a diagnosis and
    a next version, never an edited gate.
 
-### Frozen, not run
+### Frozen
 
 `eval/jev/reliability-v5/`, frozen 2026-10-10 after review r5 (two full-set
 rounds by gpt-6.1-sol; the second found nothing); `tool/test_reliability_v5.py`
@@ -759,7 +858,7 @@ half.
 | 1 | Freeze | Freeze new English labels, versions and gates | Done |
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
-| 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — frozen after label review r5; calibration run, the grader given what the host read; calibration answers again, then held-out |
+| 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers not run pending the default answer path |
 
 ## Sources
 
