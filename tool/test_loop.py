@@ -1504,7 +1504,8 @@ def test_shutdown_keeps_late_review_handoffs_pending_for_the_next_owner(world, p
         with patch.object(loop, "step", held_step), patch.object(loop, "poll", lambda *_: None), \
              patch.object(main_app.planning, "recover", lambda: None), \
              patch.object(main_app.survey, "recover", lambda: None), \
-             patch.object(getattr(main_app, producer), "close_all", lambda: loop.kick("proj", spec["id"])):
+             patch.object(getattr(main_app, producer), "close_all",
+                          lambda wait=True: [loop.kick("proj", spec["id"])][:0]):
             asyncio.run(shutdown())
         assert not loop._loops and not entered.is_set(), "A shutdown handoff started a late review driver"
         assert specs.load("proj", spec["id"])["state"] == "리뷰 대기"
@@ -1535,9 +1536,9 @@ def test_shutdown_drains_an_accepted_work_callback_before_releasing_ownership(wo
 
     original_close = work.close_all
 
-    def close():
+    def close(wait=True):
         closing.set()
-        original_close()
+        return original_close(wait)
 
     async def server():
         async with main_app.lifespan(main_app.app):

@@ -9,6 +9,7 @@ holds it.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import mimetypes
 import os
@@ -32,7 +33,9 @@ from fastapi.exception_handlers import http_exception_handler, request_validatio
 from fastapi.exceptions import RequestValidationError
 
 import translate
+from agent import chat_session
 from common import errorlog
+from common import settings as settings_file
 
 from . import architecture, channels, connect, improvements, loop, mobile, planning, query, refactor, refactor_api, runtime, specs, suite, survey, update, verification, work
 from .runtime import server_owner
@@ -81,11 +84,45 @@ async def lifespan(_: FastAPI):
             poll_stop.set()
             poll_thread.join()
             mobile.companion.stop()
-            loop.close_all()
-            planning.close_all()
-            refactor.close_all()
-            query.close_all()
-            work.close_all()
+            close_turns()
+            # Every request has finished by now; a server started again in this process may start providers.
+            chat_session.reopen()
+
+
+def close_turns() -> None:
+    """Every running turn ended and its provider gone, and none starts: one
+    no registry holds, such as a query's explanation, included. Safe to call again."""
+
+    runtime.stopping.set()
+    # Every workflow is marked stopped, and kills its own providers, before any
+    # other provider dies, so a turn `end_all` kills reads as a restart, not a
+    # failure. Queries keep no workflow and close only after their providers
+    # are dead: closing stdin waits on a prompt write a stalled provider blocks.
+    threads = [*loop.close_all(wait=False), *planning.close_all(wait=False)]
+    refactor.close_all()
+    threads += work.close_all(wait=False)
+    chat_session.end_all()
+    query.close_all()
+    for thread in threads:
+        thread.join()
+
+
+def ended_first(server) -> None:
+    """`server`'s shutdown ends the running turns before it waits for open
+    responses. Providers lead their own process group, so Ctrl+C never reaches
+    them, and a stream waiting on a turn would hold that wait forever. The wait
+    stays unbounded: a merge request in progress finishes while this server
+    still owns the hub."""
+
+    drain = server.shutdown
+
+    async def shutdown(sockets=None):
+        for listener in server.servers:
+            listener.close()
+        await asyncio.to_thread(close_turns)
+        await drain(sockets)
+
+    server.shutdown = shutdown
 
 
 app = FastAPI(title="wiki-agent", lifespan=lifespan)
@@ -223,15 +260,7 @@ def flip(body: Switch) -> dict:
         raise HTTPException(400, "번역 모드를 선택하세요")
     mode = body.mode or ("full" if body.translate else "off")
     # The loop's settings share the file; they are kept.
-    try:
-        saved = json.loads(SWITCH.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        saved = {}
-    saved = {**(saved if isinstance(saved, dict) else {}), "translate": mode != "off", "translation_mode": mode}
-    SWITCH.parent.mkdir(parents=True, exist_ok=True)
-    temporary = SWITCH.with_suffix(".tmp")
-    temporary.write_text(json.dumps(saved, ensure_ascii=False) + "\n", encoding="utf-8")
-    temporary.replace(SWITCH)
+    settings_file.saved(SWITCH, {"translate": mode != "off", "translation_mode": mode})
     work.feed.put({"kind": "sync"})
     return switch()
 
@@ -556,6 +585,7 @@ def main() -> int:
 
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning",
                                         proxy_headers=False, ws="wsproto", ws_max_size=100_000))
+    ended_first(server)
     if args.exit_with_stdin:
         # The pipe is read through a private copy, and fd 0 becomes devnull.
         # On Windows a synchronous read pending on the handle a child would
