@@ -149,7 +149,7 @@ def steps(paths: list[str]) -> list[tuple[str, object, list[str]]]:
     Only names npm: the status check asks this without resolving any program."""
 
     found = []
-    if "requirements-chat.txt" in paths:
+    if {"requirements-chat.txt", "requirements-hooks.txt"} & set(paths):   # chat includes hooks with `-r`
         found.append(("pip install", WIKI, [sys.executable, "-m", "pip", "install", "-q", "-r", "requirements-chat.txt"]))
     if "web/package-lock.json" in paths:
         found.append(("npm ci", WIKI / "web", ["npm", "ci"]))
