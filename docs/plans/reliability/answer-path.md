@@ -130,37 +130,42 @@ protects progress answers.
 ## Calibration result at fa395e3
 
 B as implemented on `feat/answer-path-b`, run as
-`reliability-v5-calibration-answers-b` (A and D, English). The run stopped
-at its USD 10 ceiling after 128 of 138 rows (44 minutes, USD 10.00): the
-fact intents `fix-09` and `fix-12` and the injected-failure rows were not
-reached, so the fact cohort is 55 of 57.
+`reliability-v5-calibration-answers-b` (A and D, English) in two batches at
+the same commit: the first stopped at its USD 10 ceiling after 128 of 138
+rows, the second ran the last 10 (46 minutes and USD 10.68 in all).
 
 | Fact rows | A | D under B |
 | --- | --- | --- |
-| Rows | 55 | 55 |
-| Claims | 350 | 175 |
-| Unsupported | 59 (0.169) | 6 (0.034) |
+| Rows | 57 | 57 |
+| Claims | 361 | 182 |
+| Unsupported | 59 (0.163) | 6 (0.033) |
 | `answer.status` abstained | 0 | 0 |
-| Grader abstained | 0 | 0 |
-| Coverage | 0.991 | 0.982 |
+| Grader abstained | 0 | 1 |
+| Coverage | 0.991 | 0.974 |
 
-Against the adoption rule, all four hold on the 55 rows: the unsupported
-rate is under 0.10, nothing is recorded `abstained`, the grader found no
-unanswered fact question in either arm, and coverage is 0.009 under A's.
-The purpose decision said no on 54 of the 55 fact rows and uncertain on
-`memory-08`, which was synthesized. Two fact rows fell back
-(`bridge-10`, `bridge-11`, both v4 abstentions), as did five of the six
-abstain intents; those five published no unsupported claim. Analysis rows
-were synthesized as before (D 15 of 44 unsupported, A 7 of 30).
+Three of the four adoption checks hold: the unsupported rate is under 0.10,
+nothing is recorded `abstained`, and coverage is 0.017 under A's. The
+fourth does not: the grader found D's `fix-12` answer unanswered and none of
+A's. That row fell back to synthesis, and the synthesis said no project rule
+on byte-order marks was found: D's retrieval did not reach
+`hub/craft/utf8-files.md`, which A found with its own search. The same row
+was grader-abstained under synthesis in `reliability-v5-calibration-answers-2`,
+so the miss is retrieval's, not B's, but the rule as written is not met.
 
-Latency is the cost. Added latency, D's answer p95 over A's, is 17.64 s
-(D 33.30, A 15.66) against the gate's 10 s; it was 6.25 s for v4's
-calibration and −3.37 s for `reliability-v5-calibration-answers-2`. Verified
-single-turn rows have a median of 14.7 s against A's 8.8 s; 13 of 64 D rows
-took a second host turn (6 repairs, median 31.0 s; 7 fallbacks, median
-17.9 s). A's own p95 moved from 24.09 s to 15.66 s between the two v5 runs,
-so the gap is partly the host's variance, but the held-out added-latency
-gate is at risk.
+The purpose decision said no on 56 of the 57 fact rows and uncertain on
+`memory-08`, which was synthesized. Three fact rows fell back (`bridge-10`,
+`bridge-11`, `fix-12`, all v4 abstentions), as did five of the six abstain
+intents; those five published no unsupported claim. Analysis rows were
+synthesized as before (D 15 of 44 unsupported, A 7 of 30).
+
+Latency is the cost. Added latency, D's answer p95 over A's, is 16.73 s
+(D 33.91, A 17.18) against the gate's 10 s; it was 6.25 s for v4's
+calibration and −3.37 s for `reliability-v5-calibration-answers-2`. In the
+first batch, verified single-turn rows had a median of 14.7 s against A's
+8.8 s, and 13 of 64 D rows took a second host turn (6 repairs, median
+31.0 s; 7 fallbacks, median 17.9 s). A's own p95 moved from 24.09 s to
+17.18 s between the two v5 runs, so the gap is partly the host's variance,
+but the held-out added-latency gate is at risk.
 
 ## Sources
 
