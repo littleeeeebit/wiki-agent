@@ -302,7 +302,11 @@ def after_route(row: dict) -> str | None:
 
 def routing_report(rows: list[dict], data: dict, cohort: dict, cfg: dict) -> dict:
     """Analysis/fact routing and request/material classification on the
-    routing cohort, each row against its intent's labels. A row the route
+    routing cohort, each row against its intent's labels, and the same two
+    per class (v5): analysis recall and fact specificity over the intents
+    labelled each way; material and request-only multipart classification
+    over the intents with a material segment and those of two or more
+    segments all requests, each on the whole segment vector. A row the route
     never reached, or whose English or segments are not the stored ones,
     is unscorable — never counted right."""
 
@@ -310,7 +314,8 @@ def routing_report(rows: list[dict], data: dict, cohort: dict, cfg: dict) -> dic
     want = {(i["id"], a) for i in data["intents"] if i["split"] == cohort["split"]
             and i.get("route_expected") is cohort["route_expected"] for a in cohort["arms"]}
     got = {(r["intent"], r["arm"]): r for r in rows if r["rep"] == 0 and (r["intent"], r["arm"]) in want}
-    scored: dict[str, list] = {"analysis_routing": [], "segment_classification": []}
+    scored: dict[str, list] = {"analysis_routing": [], "segment_classification": [], "analysis_recall": [],
+                               "fact_specificity": [], "material_classification": [], "request_classification": []}
     unscorable, mistakes = [], defaultdict(lambda: {"rows": 0, "mistakes": 0})
     for (iid, arm), r in sorted(got.items()):
         i = intents[iid]
@@ -321,9 +326,16 @@ def routing_report(rows: list[dict], data: dict, cohort: dict, cfg: dict) -> dic
                 or [s["text"] for s in segments] != [s["text"] for s in i["route_segments"]]):
             unscorable.append(r["key"])
             continue
-        scored["analysis_routing"].append({"intent": iid, "v": float(r.get("analysis") is i["analysis"])})
-        scored["segment_classification"].append(
-            {"intent": iid, "v": float([s["ask"] for s in segments] == [s["ask"] for s in i["route_segments"]])})
+        analysis = {"intent": iid, "v": float(r.get("analysis") is i["analysis"])}
+        asks = [s["ask"] for s in i["route_segments"]]
+        vector = {"intent": iid, "v": float([s["ask"] for s in segments] == asks)}
+        scored["analysis_routing"].append(analysis)
+        scored["analysis_recall" if i["analysis"] else "fact_specificity"].append(analysis)
+        scored["segment_classification"].append(vector)
+        if not all(asks):
+            scored["material_classification"].append(vector)
+        elif len(asks) > 1:
+            scored["request_classification"].append(vector)
     out = {"cohort": len(want), "missing": len(want) - len(got), "unscorable": len(unscorable),
            "unscorable_rows": unscorable[:20], "route_mistakes": dict(mistakes)}
     for name, pairs in scored.items():

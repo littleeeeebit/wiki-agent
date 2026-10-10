@@ -698,6 +698,25 @@ no acceptance interval.
    step 3 and gives PR 9 its English baseline; a failure gets a diagnosis and
    a next version, never an edited gate.
 
+### Drafted, not frozen
+
+`eval/jev/reliability-v5/`, review r5 pending; `tool/test_reliability_v5.py`
+holds the counts below.
+- `intents.json`: v4's 72 calibration intents verbatim, v4's corpus whole,
+  and 132 held-out intents with 132 pages only they name. The families are
+  v4's: analysis 60 (54 analysis, 6 facts phrased as advice), pasted 12,
+  failure 6, the other nine 6 each. Routing cohorts: 54 analysis, 72 fact,
+  56 with a material segment, 56 request-only multipart.
+- `actions.json`: 199 fixtures, 12 calibration and 54 held out per point
+  (`specs.check` 55), labels balanced.
+- `gates.json`: version 5, v4's gates with routing replaced by the four
+  per-class gates; `report.routing_report` scores all four.
+
+Each new page was checked against v4's corpus by TF-IDF similarity, and
+topics whose facts an existing page already stated, or contradicted, were
+replaced. One near miss is kept on purpose: `repo/docs/release.md` names CLI
+build targets, which do not answer the missing intent about build agents.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -705,7 +724,7 @@ no acceptance interval.
 | 1 | Freeze | Freeze new English labels, versions and gates | Done |
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
-| 4 | v5 | Enough held-out cases for the rate gates, per-class routing | Not started — design above |
+| 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — fixtures, intents and gates drafted; label review next |
 
 ## Sources
 
