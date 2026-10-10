@@ -114,7 +114,7 @@ def test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_prov
             type("Thread", (), {"join": lambda self: order.append("join")})()])
     for name in ("refactor", "query"):
         monkeypatch.setattr(getattr(app, name), "close_all", lambda n=name: order.append(n))
-    monkeypatch.setattr(app.chat_session, "end_all", lambda: order.append("end_all"))
+    monkeypatch.setattr(app.agent, "end_all", lambda: order.append("end_all"))
     app.close_turns()
     assert sorted(order[:4]) == ["loop", "planning", "refactor", "work"]
     assert order[4:] == ["end_all", "query", "join", "join", "join"]

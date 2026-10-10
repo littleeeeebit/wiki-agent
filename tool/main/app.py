@@ -33,7 +33,7 @@ from fastapi.exception_handlers import http_exception_handler, request_validatio
 from fastapi.exceptions import RequestValidationError
 
 import translate
-from agent import chat_session
+import agent
 from common import errorlog
 from common import settings as settings_file
 
@@ -86,7 +86,7 @@ async def lifespan(_: FastAPI):
             mobile.companion.stop()
             close_turns()
             # Every request has finished by now; a server started again in this process may start providers.
-            chat_session.reopen()
+            agent.reopen()
 
 
 def close_turns() -> None:
@@ -101,7 +101,7 @@ def close_turns() -> None:
     threads = [*loop.close_all(wait=False), *planning.close_all(wait=False)]
     refactor.close_all()
     threads += work.close_all(wait=False)
-    chat_session.end_all()
+    agent.end_all()
     query.close_all()
     for thread in threads:
         thread.join()

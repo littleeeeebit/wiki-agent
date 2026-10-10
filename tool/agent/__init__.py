@@ -7,11 +7,13 @@ own `session_id` and `parent_id`; `ChatSession.answer` answers an approval.
 """
 
 from .chat_local import ROOT, SETTINGS, CodexServer, claude_usage, cli_command, codex_usage, settings
-from .chat_session import ChatSession, Event, explain, oneshot
+from .chat_session import ChatSession, Event, end_all, explain, oneshot, reopen
 
 __all__ = (
     # a session and its events
     "ChatSession", "Event", "explain", "oneshot",
+    # every provider, at server shutdown and start
+    "end_all", "reopen",
     # finding the CLIs, and the chat's local settings
     "CodexServer", "cli_command", "codex_usage", "claude_usage", "settings", "ROOT", "SETTINGS",
 )
