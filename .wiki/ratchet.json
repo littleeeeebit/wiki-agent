@@ -3,8 +3,8 @@
   "files": {
     "tool/agent/chat_session.py": {
       "dup": 0,
-      "lines": 1294,
-      "reason": "A finished answer no longer waits forever for follow-ups the CLI already took in during the turn (queue `remove`): with no task left running, a short silence ends the turn with that answer, so the worktree is released and the review loop starts."
+      "lines": 1296,
+      "reason": "A finished answer no longer waits forever for follow-ups the CLI already took in during the turn (queue `remove`): with no task left running, a short silence ends the turn with that answer, so the worktree is released and the review loop starts. The kept answer survives status traffic and zero-turn placeholders, and the expiry applies only to the result it retries."
     },
     "tool/apply.py": {
       "dup": 6,

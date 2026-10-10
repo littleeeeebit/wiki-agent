@@ -876,7 +876,7 @@ class ChatSession:
             # clock killed the CLI at 600s and orphaned the task. The process
             # is looked at directly: a child holding its stdout keeps the
             # pipe's end, and so `__closed__`, from ever coming.
-            unbounded = foreground_result_seen and background
+            unbounded, expired = foreground_result_seen and background, False
             try:
                 ev = self._events.get(timeout=1.0 if unbounded else FOLLOWUP_GRACE if held else deadline)
             except queue.Empty:
@@ -895,9 +895,10 @@ class ChatSession:
                     self.close()
                     yield Event("error", f"{deadline:.0f}초 안에 답이 없다.")
                     return
-            deadline, held = TURN_TIMEOUT, None
-
-            kind = ev.get("type")
+            deadline, kind = TURN_TIMEOUT, ev.get("type")
+            # A new model turn or task activity means a follow-up really comes; status traffic does not.
+            if kind in ("user", "assistant", "stream_event", "control_request") or str(ev.get("subtype")).startswith("task_"):
+                held = None
             if kind == "user" and ev.get("isReplay"):
                 replay_human = not ev.get("isSynthetic")
             if kind == "__closed__":
@@ -1177,7 +1178,8 @@ class ChatSession:
                                 and not self._steered and self._closing()):
                             yield Event("tool", f"Background · waiting for {max(len(background), followups)} "
                                                 "follow-up(s)", {"tool": "background"})
-                            held = None if background else ev
+                            # A zero-turn placeholder is not an answer: the one kept stays.
+                            held = None if background else held if injected and ev.get("num_turns") == 0 else ev
                             continue
                         # The work is reported closed, yet tasks still run: left
                         # over, and holding the turn would keep the review from

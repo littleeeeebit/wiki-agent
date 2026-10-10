@@ -164,8 +164,9 @@ Older unattributed results use replayed human/synthetic boundaries and count
 each task's follow-up independently. Only a task that ran to its end owes one;
 a stopped or killed task does not. A completion the turn itself read before its
 answer is consumed in the turn (the transcript's queue `remove`) and owes
-nothing: with no task left running, 30 seconds of provider silence after the
-answer ends the turn with that answer. Before, the turn stayed open, held its
+nothing: with no task left running, 30 seconds after the answer without a new
+model turn or task event ends the turn with that answer. Status traffic and a
+zero-turn placeholder result do not replace it. Before, the turn stayed open, held its
 worktree and stalled the review loop until a person stopped it.
 While a background task is alive after the
 answer, no turn clock applies: its end, or the process's, ends the wait. An

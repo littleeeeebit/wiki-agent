@@ -738,6 +738,55 @@ sys.stdin.read()
     assert events[-1].kind == "done" and events[-1].text == "Fixed and pushed" and not events[-1].meta["error"]
 
 
+class Scripted:
+    """A provider queue read in order; `None` is a read that times out."""
+
+    def __init__(self, messages):
+        self.messages = iter(messages)
+
+    def get(self, timeout):
+        event = next(self.messages)
+        if event is None:
+            raise chat_session.queue.Empty
+        return event
+
+
+TOOK_IN = [{"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_backgrounded": True},
+           {"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"},
+           {"type": "result", "origin": {"kind": "human"}, "result": "Fixed and pushed"}]
+
+
+@pytest.mark.parametrize("after", [
+    [{"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}}, None],   # status keeps the answer
+    [{"type": "result", "origin": {"kind": "task-notification"}, "result": "", "num_turns": 0}, None],  # placeholder
+])
+def test_the_kept_answer_survives_status_traffic_and_placeholders(tree, after):
+    session = ChatSession(tree, write=True, bypass=True)
+    session.session_id, session._open, session._events = "cli-1", True, Scripted(TOOK_IN + after)
+    with patch.object(chat_session, "FOLLOWUP_GRACE", .01), patch.object(session, "close"):
+        events = list(session._drain())
+    assert events[-1].kind == "done" and events[-1].text == "Fixed and pushed"
+
+
+def test_an_expired_grace_does_not_skip_a_steered_turns_later_waits(tree):
+    # The grace ran out while a steer was unread: the turn went on, and its next
+    # interim result, with a task still running, must not end it.
+    session, events = ChatSession(tree, write=True, bypass=True), []
+    session.session_id, session._open = "cli-1", True
+    session._events = Scripted([{"type": "user", "isReplay": True}, *TOOK_IN, None, {"type": "user", "isReplay": True},
+                                {"type": "system", "subtype": "task_started", "task_id": "bg-2", "is_backgrounded": True},
+                                {"type": "result", "origin": {"kind": "human"}, "result": "Still waiting for bg-2"},
+                                {"type": "system", "subtype": "task_notification", "task_id": "bg-2", "status": "completed"},
+                                {"type": "result", "origin": {"kind": "task-notification"}, "result": "Steered work done"}])
+    with patch.object(chat_session, "FOLLOWUP_GRACE", .01), patch.object(session, "_send", return_value=True), \
+         patch.object(session, "close"):
+        for event in session._drain():
+            events.append(event)
+            if "waiting for" in event.text and sum("waiting for" in e.text for e in events) == 1:
+                assert session.steer("One more thing")
+    assert [e.text for e in events if e.kind == "done"] == ["Steered work done"]
+
+
 def test_a_background_task_silent_past_the_turn_timeout_is_still_awaited(tree):
     # A suite that prints nothing for ten minutes once tripped the turn's clock:
     # the CLI was killed and the task orphaned. Its own end closes the wait.
