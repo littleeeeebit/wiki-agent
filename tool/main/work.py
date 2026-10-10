@@ -57,7 +57,7 @@ _provider_usage: dict = {}
 _provider_usage_lock = threading.Lock()
 
 
-def close_all() -> None:
+def close_all(wait: bool = True) -> list[threading.Thread]:
     with _lock:
         alive = list(_sessions.values())
         _sessions.clear()
@@ -68,9 +68,10 @@ def close_all() -> None:
         run.chat.stop(run.halt)
     for chat in alive:
         chat.close()
-    for thread, _ in turns:
-        if thread is not threading.current_thread():
-            thread.join()
+    threads = [thread for thread, _ in turns if thread is not threading.current_thread()]
+    for thread in threads if wait else []:
+        thread.join()
+    return threads
 
 
 def ours(path: str, repo: Path | None = None) -> Path:

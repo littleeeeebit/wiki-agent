@@ -8,6 +8,7 @@ job only; the caller keeps spawning, pipes, cancellation and reaping.
 """
 
 import os
+import signal
 import subprocess
 import sys
 
@@ -51,12 +52,20 @@ def resumed(proc: subprocess.Popen) -> None:
 def contained(proc: subprocess.Popen):
     """A Windows job holding `proc` and all it starts; closing it, or this
     process dying, kills them all. `taskkill /T` cannot find a descendant
-    whose parent already exited; the job can. None elsewhere or on failure.
+    whose parent already exited; the job can. None on failure.
     Start `proc` with `SUSPENDED` and resume it after this: a child it starts
-    before the assignment stays outside the job."""
+    before the assignment stays outside the job.
+
+    Elsewhere, `proc`'s process group when it leads one (`start_new_session`):
+    its children stay in it after `proc` exits, so `killpg` still reaches them.
+    ponytail: a child that starts its own session leaves the group; a cgroup
+    would hold it, if that shows up."""
 
     if os.name != "nt":
-        return None
+        try:
+            return proc.pid if os.getpgid(proc.pid) == proc.pid else None
+        except OSError:
+            return None
     job = _k32.CreateJobObjectW(None, None)
     limits = _Limits(flags=0x2000)   # JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
     if job and _k32.SetInformationJobObject(job, 9, ctypes.byref(limits), ctypes.sizeof(limits)) \
@@ -70,8 +79,13 @@ def contained(proc: subprocess.Popen):
 def killed(job) -> None:
     """Every process still in `job` killed; the job stays open for its owner."""
 
-    if job:
+    if job and os.name == "nt":
         _k32.TerminateJobObject(job, 1)
+    elif job:
+        try:
+            os.killpg(job, signal.SIGKILL)
+        except OSError:   # the group is gone already
+            pass
 
 
 def terminated(job) -> None:
@@ -79,4 +93,5 @@ def terminated(job) -> None:
 
     if job:
         killed(job)
-        _k32.CloseHandle(job)
+        if os.name == "nt":
+            _k32.CloseHandle(job)

@@ -251,7 +251,9 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         if (stale || asked !== clears.current) return
         const restored = rows.map(toMsg)
         const live = inFlight.current.get(slot(active))
-        if (live && (!live.runId || restored.at(-1)?.runId !== live.runId)) restored.push(live)
+        // The question's row carries the run id too: only a recorded answer
+        // of this run means the stream has nothing left to show.
+        if (live && !restored.some((m) => m.role !== 'user' && m.runId && m.runId === live.runId)) restored.push(live)
         // Never replace an answer this client is streaming. Its completion
         // invalidates the record again, so updates received meanwhile land.
         setMessages((prev) => live && prev.at(-1) === live ? prev : restored)

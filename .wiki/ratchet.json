@@ -3,8 +3,8 @@
   "files": {
     "tool/agent/chat_session.py": {
       "dup": 0,
-      "lines": 1291,
-      "reason": "baseline at adoption"
+      "lines": 1342,
+      "reason": "Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`)."
     },
     "tool/apply.py": {
       "dup": 6,
@@ -108,8 +108,8 @@
     },
     "tool/main/loop.py": {
       "dup": 0,
-      "lines": 2630,
-      "reason": "Every repair turn (review, gate, merge conflict, local verification) passes through `told`, which now holds it to its test cleanup, and a resumed loop asks for a cleanup still owed before anything ships; the policy lives in `sweep.held`, the loop keeps only the wrapper and that check."
+      "lines": 2637,
+      "reason": "The poller takes `_landing` without waiting and retries the next minute: a clicked merge holds it through its minutes-long `.omm` analysis, and waiting on it stalled every repository's loop reattach and cleanup."
     },
     "tool/main/planning.py": {
       "dup": 18,
@@ -138,8 +138,8 @@
     },
     "tool/main/work.py": {
       "dup": 0,
-      "lines": 1060,
-      "reason": "Allow the three-line refactor ownership handoff at ordinary turn start. The pre-existing six-line excess is not adopted by this change."
+      "lines": 1061,
+      "reason": "`close_all(wait=False)` returns the turn threads instead of joining them, so shutdown marks every workflow stopped, then ends the providers no registry holds, then joins."
     },
     "tool/markdown_emphasis.py": {
       "dup": 17,
@@ -183,8 +183,8 @@
     },
     "tool/test_agent.py": {
       "dup": 46,
-      "lines": 1010,
-      "reason": "baseline at adoption"
+      "lines": 1055,
+      "reason": "A server going down must end a one-off explanation's provider, which no registry holds, and start no new one until reopened; pinned on a real stand-in process whose child holds the pipe."
     },
     "tool/test_agent_decisions.py": {
       "dup": 12,
@@ -238,8 +238,8 @@
     },
     "tool/test_runtime.py": {
       "dup": 7,
-      "lines": 102,
-      "reason": "baseline at adoption"
+      "lines": 150,
+      "reason": "A shutdown must end running turns before it waits for their streams (providers lead their own process group, so Ctrl+C reaches none), pinned on a real uvicorn server, and must mark every workflow stopped before it ends the remaining providers; both sit with the ownership-at-shutdown test they complement."
     },
     "tool/test_sessions.py": {
       "dup": 12,

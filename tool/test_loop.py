@@ -1457,20 +1457,31 @@ def test_automatic_dispatch_preserves_a_new_user_stop_and_a_start_failure_can_be
     assert looped(spec["id"])["state"] == "머지 가능"
 
 
-def test_poller_reattaches_an_active_loop_without_a_driver_and_stops_on_shutdown(world):
+@pytest.mark.parametrize("merging", [False, True])
+def test_poller_reattaches_an_active_loop_without_a_driver_and_stops_on_shutdown(world, merging):
     spec = pr_spec(world, "orphaned-review", 7)
     specs.update("proj", spec["id"], state="리뷰 R1")
     Reviewer.replies = [allow]
-    halt = threading.Event()
+    halt, holding, release = threading.Event(), threading.Event(), threading.Event()
+    if merging:
+        # A clicked merge holds `_landing` through its `.omm` analysis; the poller waited
+        # on it at a newer merged spec's cleanup and reattached no loop. Released only after.
+        time.sleep(.01)
+        merged = pr_spec(world, "merged-cleanup", 8)
+        specs.update("proj", merged["id"], state="머지됨", cleanup_complete=False, merge={"base": "main", "commit": ""})
+        threading.Thread(target=lambda: (loop._landing.acquire(), holding.set(), release.wait(INTEGRATION_WAIT),
+                                         loop._landing.release()), daemon=True).start()
+        assert holding.wait(5)
     with patch.object(loop, "POLL", .02):
         thread = threading.Thread(target=loop.poll, args=(halt,), daemon=True)
         thread.start()
         try:
-            waited(lambda: specs.load("proj", spec["id"])["state"] == "머지 가능")
+            waited(lambda: specs.load("proj", spec["id"])["state"] == "머지 가능", 20)
             assert len(Reviewer.made) == 1 and len(Reviewer.made[0].heard) == 1
         finally:
             halt.set()
-            thread.join(2)
+            release.set()
+            thread.join(5)
         assert not thread.is_alive()
         waited(lambda: not loop._loops)
 
@@ -1493,7 +1504,8 @@ def test_shutdown_keeps_late_review_handoffs_pending_for_the_next_owner(world, p
         with patch.object(loop, "step", held_step), patch.object(loop, "poll", lambda *_: None), \
              patch.object(main_app.planning, "recover", lambda: None), \
              patch.object(main_app.survey, "recover", lambda: None), \
-             patch.object(getattr(main_app, producer), "close_all", lambda: loop.kick("proj", spec["id"])):
+             patch.object(getattr(main_app, producer), "close_all",
+                          lambda wait=True: [loop.kick("proj", spec["id"])][:0]):
             asyncio.run(shutdown())
         assert not loop._loops and not entered.is_set(), "A shutdown handoff started a late review driver"
         assert specs.load("proj", spec["id"])["state"] == "리뷰 대기"
@@ -1524,9 +1536,9 @@ def test_shutdown_drains_an_accepted_work_callback_before_releasing_ownership(wo
 
     original_close = work.close_all
 
-    def close():
+    def close(wait=True):
         closing.set()
-        original_close()
+        return original_close(wait)
 
     async def server():
         async with main_app.lifespan(main_app.app):

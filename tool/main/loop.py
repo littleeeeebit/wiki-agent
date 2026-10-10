@@ -22,6 +22,7 @@ from pydantic import BaseModel
 import translate
 from agent import ChatSession
 from common import errorlog, worktree_home
+from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
 from workspace import adopt, base_branch, folder_for, merged, remove, worktrees
 
@@ -89,15 +90,7 @@ def settings(defaults: dict = DEFAULTS) -> dict:
 def store(**changes) -> None:
     """Merged into what is there: the translation switch lives in the same file."""
 
-    try:
-        saved = json.loads(_file().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        saved = {}
-    saved = {**(saved if isinstance(saved, dict) else {}), **changes}
-    _file().parent.mkdir(parents=True, exist_ok=True)
-    temporary = _file().with_suffix(".tmp")
-    temporary.write_text(json.dumps(saved, ensure_ascii=False) + "\n", encoding="utf-8")
-    temporary.replace(_file())
+    settings_file.saved(_file(), changes)
 
 
 # -- A round's result --------------------------------------------------------
@@ -601,7 +594,7 @@ def close_cell(repo: str, pr: int) -> None:
         chat.close()
 
 
-def close_all() -> None:
+def close_all(wait: bool = True) -> list[threading.Thread]:
     with _lock:
         alive = list(_cells.values())
         _cells.clear()
@@ -611,9 +604,10 @@ def close_all() -> None:
         loop.stop()
     for chat in alive:
         chat.close()
-    for loop in loops:
-        if loop.thread is not None and loop.thread is not threading.current_thread():
-            loop.thread.join()
+    threads = [lp.thread for lp in loops if lp.thread is not None and lp.thread is not threading.current_thread()]
+    for thread in threads if wait else []:
+        thread.join()
+    return threads
 
 
 # -- One loop -------------------------------------------------------------------
@@ -1955,24 +1949,31 @@ def poll(halt: threading.Event | None = None) -> None:
                                 verification.pending(path, spec, head, problem, "waiting_review")
                         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
                             verification.pending(path, spec, allowed["head"], "현재 검증 상태를 확인하지 못했다", "waiting_review")
-                if spec["state"] == "머지 대기":
-                    try:
-                        landed(path, spec)
-                    except Exception as exc:   # the next minute tries again
-                        errorlog.record("merge-poll", exc, repo=repo.name, spec=spec["id"])
-                elif spec["state"] == "머지됨" and not spec.get("cleanup_complete"):
-                    try:
-                        if spec.get("merge"):
-                            finish(path, spec, spec["merge"]["base"], spec["merge"].get("commit", ""), "")
-                        elif spec.get("pr"):
+                # A clicked merge holds `_landing` through its minutes-long `.omm` analysis;
+                # waiting here stalled every repository's loop reattach. Next minute retries.
+                if not _landing.acquire(blocking=False):
+                    continue
+                try:
+                    if spec["state"] == "머지 대기":
+                        try:
                             landed(path, spec)
-                    except Exception as exc:
-                        errorlog.record("cleanup-retry", exc, repo=repo.name, spec=spec["id"])
-                elif spec["state"] == "머지 가능" and spec.get("merge_request"):
-                    with _lock:
-                        running = (repo.name, spec["id"]) in _loops
-                    if not running:
-                        requested_merge(path, spec)
+                        except Exception as exc:   # the next minute tries again
+                            errorlog.record("merge-poll", exc, repo=repo.name, spec=spec["id"])
+                    elif spec["state"] == "머지됨" and not spec.get("cleanup_complete"):
+                        try:
+                            if spec.get("merge"):
+                                finish(path, spec, spec["merge"]["base"], spec["merge"].get("commit", ""), "")
+                            elif spec.get("pr"):
+                                landed(path, spec)
+                        except Exception as exc:
+                            errorlog.record("cleanup-retry", exc, repo=repo.name, spec=spec["id"])
+                    elif spec["state"] == "머지 가능" and spec.get("merge_request"):
+                        with _lock:
+                            running = (repo.name, spec["id"]) in _loops
+                        if not running:
+                            requested_merge(path, spec)
+                finally:
+                    _landing.release()
 
 
 # -- The screen ----------------------------------------------------------------------
