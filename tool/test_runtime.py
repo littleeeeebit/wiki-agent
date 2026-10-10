@@ -106,7 +106,7 @@ def test_shutdown_keeps_server_ownership_until_its_review_driver_stops(tmp_path,
 
 
 def test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_providers(monkeypatch):
-    # A review whose provider died first read the death as a format failure, which recovery skips.
+    # Marked before killed, or a review saves a format stop; queries close after, or stdin blocks on a stalled write.
     order = []
     monkeypatch.setattr(runtime, "stopping", threading.Event())
     for name in ("loop", "planning", "work"):
@@ -116,7 +116,6 @@ def test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_prov
         monkeypatch.setattr(getattr(app, name), "close_all", lambda n=name: order.append(n))
     monkeypatch.setattr(app.chat_session, "end_all", lambda: order.append("end_all"))
     app.close_turns()
-    # A query's stdin close waits on a prompt write its stalled provider blocks: it closes after the kill.
     assert sorted(order[:4]) == ["loop", "planning", "refactor", "work"]
     assert order[4:] == ["end_all", "query", "join", "join", "join"]
 
