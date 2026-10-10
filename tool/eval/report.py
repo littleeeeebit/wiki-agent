@@ -9,9 +9,10 @@ hash; runs whose manifests differ, or two runs of one kind (`arms/retrieval`,
 the run it names. Runs from before the manifest read `eval/jev/intents.json`
 and `eval/jev/gates.json`, as they always did.
 
-Every rate names its denominator. Intervals are 95% percentile intervals from
-resampling intents — an intent's repetitions move together, never counted
-as independent evidence. A gate
+Every rate names its denominator. A rate judged against a target takes a 95%
+Wilson score interval over intents; every other interval is a 95% percentile
+interval from resampling intents. Either way an intent's repetitions move
+together, never counted as independent evidence. A gate
 reads `pass`, `fail`, `inconclusive` (the interval does not settle it, or
 its cohort holds a row that cannot be scored), `not_measured` (its run is
 missing or lacks a row of its cohort), or `provisional` — a pass on labels

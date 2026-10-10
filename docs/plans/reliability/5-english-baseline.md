@@ -462,8 +462,8 @@ The same v4 runs, re-reported (`reliability-v4-report-wilson.json`):
 Every other gate is unchanged. Under the exit rule above, inconclusive results
 leave the stage open: the action gates need roughly 35 held-out fixtures each,
 and routing a few more cases or a larger margin. The same audit (K2) changed
-the duplicate key to the original text, with only line endings and trailing
-spaces set aside; arms A and C on v4's held-out half gave identical rows before
+the duplicate key to the original text, with only line endings, trailing
+spaces and blank edge lines set aside; arms A and C on v4's held-out half gave identical rows before
 and after (`k2-check-before`, `k2-check-after`).
 
 Retrieval, held out. The n column is as in v2: B and D include the six
