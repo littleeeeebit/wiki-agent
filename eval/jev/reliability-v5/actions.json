@@ -1,0 +1,3844 @@
+{
+ "schema": "jev-action-fixtures/1",
+ "id": "reliability-actions-v5",
+ "version": 5,
+ "frozen": "2026-10-10",
+ "description": "Reliability PR 5's fifth action set (docs/plans/reliability/5-english-baseline.md, v5): fixtures written fresh, without reference to earlier sets, so each rate gate can decide with one miss. Per point 12 calibration and 54 held out (specs.check 55: 11 per label), labels balanced. Labels mean what they mean in the first set.",
+ "labels": {
+  "author": "model-drafted (claude-opus-5-5, reliability PR 5)",
+  "reviewed_by": "gpt-6.1-sol",
+  "reviewed_at": "2026-10-10",
+  "reviews": {
+   "r5": {
+    "kind": "model",
+    "by": "gpt-6.1-sol",
+    "at": "2026-10-10",
+    "note": "The fresh held-out half, the pages only it names and the fresh action fixtures, a model review at the repository owner's direction: two full-set rounds by gpt-6.1-sol before any v5 held-out run (round 1: work-start file locators that gave the label away, a status-code rule that contradicted the input-validation rule replaced, a meeting that contradicted the written stand-up decision, an ambiguous connection count, an unsupported first-step reference replaced, two bridge targets that shared words with their queries; the remaining work-start and review-fix surface cues broken with them; round 2: nothing found). Approved inputs: intents 45d2814a, actions f7db1f43."
+   }
+  }
+ },
+ "gate": "python -m pytest -q",
+ "fixtures": [
+  {
+   "id": "v5ws01",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws01",
+    "goal": "Fix the misspelling 'recieve' in the mailer's error message",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/mailer.py:41 spells 'receive'"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/mailer.py:41"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws02",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws02",
+    "goal": "Set the default page size to 50",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "DEFAULT_PAGE_SIZE in src/api/pagination.py is 50",
+     "tests/test_pagination.py expects 50 items for a request without a size"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/pagination.py:1",
+      "tests/test_pagination.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws03",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws03",
+    "goal": "Map a missing project in GET /projects/{id} to 404 instead of 500",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /projects/unknown returns 404",
+     "tests/test_projects.py covers an unknown id"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/projects.py:58",
+      "tests/test_projects.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws04",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws04",
+    "goal": "Rename _calc() in src/billing/totals.py to compute_subtotal() and update its two callers",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/billing/totals.py defines compute_subtotal() and no _calc()",
+     "src/billing/invoice.py and src/billing/quote.py call compute_subtotal()"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/billing/totals.py:1",
+      "src/billing/invoice.py:1",
+      "src/billing/quote.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws05",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws05",
+    "goal": "Pick the cache lifetime for the catalogue responses in src/api/catalogue.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /catalogue responses carry the chosen lifetime",
+     "tests/test_catalogue.py checks the Cache-Control header"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/catalogue.py:57"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws06",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws06",
+    "goal": "Log account deletions for audit",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "deleting an account writes an audit entry",
+     "tests/test_accounts.py checks the entry"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/accounts/delete.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws07",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws07",
+    "goal": "Version the public export API",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the export endpoints are served under the chosen versioning scheme",
+     "tests/test_export_api.py covers one versioned route"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/export.py:12",
+      "src/api/routes.py:30"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws08",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws08",
+    "goal": "Handle jobs whose scheduled slot passed while the scheduler was down",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a job whose slot passed during downtime is handled as chosen",
+     "tests/test_scheduler.py covers a missed slot"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/scheduler/run.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws09",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws09",
+    "goal": "Make the dashboard faster",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/Dashboard.tsx:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws10",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws10",
+    "goal": "Clean up the billing module",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/billing/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws11",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws11",
+    "goal": "Improve the onboarding emails",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws12",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws12",
+    "goal": "Fix the flaky tests",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "tests/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws13",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws13",
+    "goal": "Add a docstring to parse_duration() in src/timeutil.py naming its accepted units: s, m and h",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "parse_duration() in src/timeutil.py has a docstring naming s, m and h"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/timeutil.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws14",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws14",
+    "goal": "Make src/cli.py exit with status 2 when the --config path does not exist",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/cli.py exits 2 for a missing --config file",
+     "tests/test_cli.py covers a missing --config path"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/cli.py:18",
+      "tests/test_cli.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws15",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws15",
+    "goal": "Pick ISO 8601 UTC for export timestamps",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "every timestamp src/export/rows.py writes ends in Z",
+     "tests/test_export_rows.py checks one row"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/export/rows.py:1",
+      "tests/test_export_rows.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Exports write ISO 8601 UTC timestamps with a trailing Z (decided 2026-08-02)"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws16",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws16",
+    "goal": "Remove the unused import of os from src/cache/keys.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/cache/keys.py does not import os"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/cache/keys.py:3"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws17",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws17",
+    "goal": "Set the HTTP client timeout in src/net/client.py to 10 seconds, down from 30",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "TIMEOUT_SECONDS in src/net/client.py is 10",
+     "tests/test_client.py asserts the 10-second timeout"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/net/client.py:1",
+      "tests/test_client.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws18",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws18",
+    "goal": "Add a created_at column after email to the CSV that src/reports/users.py writes",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the CSV header row is id,name,email,created_at",
+     "tests/test_users_report.py checks the header row"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/reports/users.py:44",
+      "tests/test_users_report.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws19",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws19",
+    "goal": "Choose three retries, two seconds apart, for the webhook POST",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/hooks/sender.py retries a failed POST up to three times, two seconds apart",
+     "a 4xx response is not retried",
+     "tests/test_sender.py covers a retried POST and a 404"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/hooks/sender.py:1",
+      "tests/test_sender.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Webhook sends retry 5xx and timeouts only, never 4xx"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws20",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws20",
+    "goal": "Pick alphabetical order for the names in the GET /tags response",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /tags returns names in ascending order",
+     "tests/test_tags.py covers two tags stored out of order"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/tags.py:22",
+      "tests/test_tags.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws21",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws21",
+    "goal": "Replace the hard-coded '/tmp/cache' in src/cache/disk.py with tempfile.gettempdir()",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/cache/disk.py contains no '/tmp/cache'",
+     "tests/test_disk_cache.py passes with tempfile.gettempdir() patched"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/cache/disk.py:1",
+      "tests/test_disk_cache.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws22",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws22",
+    "goal": "Make slugify() collapse consecutive hyphens into one",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "slugify('a--b') returns 'a-b'",
+     "tests/test_text.py covers 'a--b'"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/text.py:51",
+      "tests/test_text.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws23",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws23",
+    "goal": "Name the worker's queue-depth gauge jobs_queue_depth",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/worker/metrics.py registers a gauge named jobs_queue_depth",
+     "tests/test_worker_metrics.py reads jobs_queue_depth"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/worker/metrics.py:1",
+      "tests/test_worker_metrics.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Metric names are <component>_<quantity> in snake case"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws24",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws24",
+    "goal": "Make mean() raise ValueError('empty sample') for an empty list",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "mean([]) raises ValueError with the message 'empty sample'",
+     "tests/test_stats.py covers mean([])"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/stats.py:8",
+      "tests/test_stats.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws25",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws25",
+    "goal": "Add a --limit option, default 100, to the list subcommand in src/cli.py",
+    "out": [
+     "paging past the limit"
+    ],
+    "done": [
+     "python -m pytest -q",
+     "list --limit 5 prints at most five rows",
+     "list without --limit prints at most 100 rows"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/cli.py:1",
+      "tests/test_cli.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws26",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws26",
+    "goal": "Set the session cookie to SameSite=Lax",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the session cookie is set with SameSite=Lax",
+     "tests/test_session.py checks the attribute"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/web/session.py:33",
+      "tests/test_session.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Session cookies are SameSite=Lax, Secure and HttpOnly (security review, July)"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws27",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws27",
+    "goal": "Delete legacy_hash() from src/auth/hashing.py; nothing calls it",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/auth/hashing.py has no legacy_hash()",
+     "no file under src/ mentions legacy_hash"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/auth/hashing.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws28",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws28",
+    "goal": "Fix last_page() in src/api/pagination.py so 40 items at 20 per page is 2 pages, not 3",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "last_page(40, 20) returns 2",
+     "tests/test_pagination.py covers an exact multiple"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/pagination.py:31",
+      "tests/test_pagination.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws29",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws29",
+    "goal": "Log the request id at debug level when the middleware's handle() starts",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "handle() logs request_id at debug before calling the next handler",
+     "tests/test_middleware.py captures the line"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/middleware.py:1",
+      "tests/test_middleware.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws30",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws30",
+    "goal": "Trim surrounding whitespace from the sign-up email before it is validated",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "validate_signup() accepts ' a@b.co ' as 'a@b.co'",
+     "tests/test_signup.py covers the padded address"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/accounts/signup.py:27",
+      "tests/test_signup.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws31",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws31",
+    "goal": "Set the minimum password length in src/accounts/signup.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "sign-up rejects a password shorter than the chosen length",
+     "tests/test_signup.py covers the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/accounts/signup.py:42"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws32",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws32",
+    "goal": "Pick the error response body for the billing endpoints in src/api/billing.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "every billing error returns the chosen body shape",
+     "tests/test_billing_errors.py checks one 400 and one 404"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/billing.py:88"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws33",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws33",
+    "goal": "Add rate limiting to GET /search in src/api/search.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /search answers 429 above the limit",
+     "tests/test_search_limits.py covers the limit"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/search.py:41",
+      "tests/test_search_limits.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws34",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws34",
+    "goal": "Store generated image thumbnails",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "thumbnails are written to the chosen store",
+     "tests/test_thumbnails.py checks one write"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/media/thumbnails.py:18"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws35",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws35",
+    "goal": "Name the feature flag for the new checkout flow",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the new checkout flow is behind the named flag",
+     "tests/test_checkout.py runs with the flag on and off"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/checkout/flow.py:5"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws36",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws36",
+    "goal": "Purge deleted projects after a retention period",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a deleted project is purged after the chosen period",
+     "tests/test_purge.py covers the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/projects/purge.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Deleted projects are hidden from every list at once"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws37",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws37",
+    "goal": "Write the v1 webhooks' deprecation notice in docs/webhooks.md",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "docs/webhooks.md carries the notice",
+     "the notice gives the removal date"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "docs/webhooks.md:12"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws38",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws38",
+    "goal": "Add structured logging to src/payments/worker.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the payment worker logs in the chosen structure",
+     "tests/test_payment_worker.py parses one log line"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/payments/worker.py:55"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws39",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws39",
+    "goal": "Retry failed email sends",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a failed send is retried under the chosen policy",
+     "tests/test_mailer.py covers one retried send"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/mailer.py:80"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws40",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws40",
+    "goal": "Map the importer's failures to exit codes",
+    "out": [
+     "a progress bar"
+    ],
+    "done": [
+     "python -m pytest -q",
+     "each importer failure exits with its chosen code",
+     "tests/test_importer_cli.py covers two failures"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/importer/cli.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws41",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws41",
+    "goal": "Schedule the daily digest in a fixed time zone",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the digest goes out at the chosen local time",
+     "tests/test_digest.py checks the send time"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/digest/schedule.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws42",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws42",
+    "goal": "Add tracing to the database calls in src/orders/db.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "each database call in src/orders/db.py emits a span",
+     "tests/test_orders_tracing.py counts the spans"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/orders/db.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "The order service keeps its own database"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws43",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws43",
+    "goal": "Limit the size of uploaded attachments",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "an attachment above the chosen size is rejected with 413",
+     "tests/test_attachments.py covers the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/attachments.py:12"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws44",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws44",
+    "goal": "Generate IDs for new invoices",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "new invoices get IDs in the chosen format",
+     "tests/test_invoice_ids.py checks one ID"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/billing/invoice.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Invoices are numbered per customer account"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws45",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws45",
+    "goal": "Limit what the public profile endpoint returns",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /profiles/{id} returns only the chosen fields",
+     "tests/test_profiles.py checks the field set"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/profiles.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws46",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws46",
+    "goal": "Add a health check for the cache dependency",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /health reports the cache the way the other dependencies are reported",
+     "tests/test_health.py covers a cache outage"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/health.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws47",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws47",
+    "goal": "Break ties between search results with equal scores",
+    "out": [
+     "changing how scores are computed"
+    ],
+    "done": [
+     "python -m pytest -q",
+     "tied results come back in the chosen order",
+     "tests/test_search_ties.py covers two tied results"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/search/rank.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws48",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws48",
+    "goal": "Record feature usage counts for the analytics dashboard",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "usage counts are stored where the dashboard reads them",
+     "tests/test_usage.py checks one count"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/analytics/usage.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws49",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws49",
+    "goal": "Make search better",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/search/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws50",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws50",
+    "goal": "Sort out the logging",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws51",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws51",
+    "goal": "Update the docs",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "docs/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws52",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws52",
+    "goal": "Make the API more consistent",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws53",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws53",
+    "goal": "Harden the login flow",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/auth/login.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws54",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws54",
+    "goal": "Reduce memory use",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws55",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws55",
+    "goal": "Refactor the worker",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/worker/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws56",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws56",
+    "goal": "Polish the settings page",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/Settings.tsx:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws57",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws57",
+    "goal": "Fix the export",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/export/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws58",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws58",
+    "goal": "Make deployments safer",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws59",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws59",
+    "goal": "Simplify the configuration",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/config.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws60",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws60",
+    "goal": "Improve the error messages",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws61",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws61",
+    "goal": "Speed up the importer",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/importer/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws62",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws62",
+    "goal": "Tidy the database layer",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/db/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws63",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws63",
+    "goal": "Make notifications less noisy",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/notify/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws64",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws64",
+    "goal": "Modernise the CLI",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/cli.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws65",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws65",
+    "goal": "Handle the edge cases in the parser",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/parser.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws66",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws66",
+    "goal": "Make the reports look nicer",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/reports/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc01",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Make parse_size() in src/units.py accept a lowercase 'k' suffix",
+   "criteria": [
+    "Make parse_size() in src/units.py accept a lowercase 'k' suffix is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/units.py"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc02",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Close the database cursor on the error path in src/db/query.py",
+   "criteria": [
+    "Close the database cursor on the error path in src/db/query.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/db/query.py"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc03",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Add a --quiet flag to src/tools/sync.py",
+   "criteria": [
+    "Add a --quiet flag to src/tools/sync.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/tools/sync.py",
+    "src/tools/output.py"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc04",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Move the troubleshooting section of docs/setup.md to docs/troubleshooting.md",
+   "criteria": [
+    "Move the troubleshooting section of docs/setup.md to docs/troubleshooting.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/setup.md",
+    "docs/troubleshooting.md"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc05",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Rename the heading 'Quick start' to 'Getting started' in docs/index.md",
+   "criteria": [
+    "Rename the heading 'Quick start' to 'Getting started' in docs/index.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/index.md"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc06",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Fix three misspellings in docs/api/auth.md",
+   "criteria": [
+    "Fix three misspellings in docs/api/auth.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/api/auth.md"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc07",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Show the user's avatar in the top bar",
+   "criteria": [
+    "Show the user's avatar in the top bar is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/TopBar.tsx",
+    "web/src/avatar.ts"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc08",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Debounce the search box by 300 ms",
+   "criteria": [
+    "Debounce the search box by 300 ms is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/SearchBox.tsx"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc09",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Add an example with an empty 'items' list to the order schema",
+   "criteria": [
+    "Add an example with an empty 'items' list to the order schema is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/order.json",
+    "schemas/examples/order-empty.json"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc10",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Make 'currency' an enum of ISO codes in the price schema",
+   "criteria": [
+    "Make 'currency' an enum of ISO codes in the price schema is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/price.json"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc11",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Run the release workflow on tags only",
+   "criteria": [
+    "Run the release workflow on tags only is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    ".github/workflows/release.yml"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc12",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Add the platform team as owners of deploy/",
+   "criteria": [
+    "Add the platform team as owners of deploy/ is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "CODEOWNERS"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc13",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Handle a missing 'Content-Type' header in src/api/parse.py",
+   "criteria": [
+    "Handle a missing 'Content-Type' header in src/api/parse.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/api/parse.py"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc14",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Make retry_delay() in src/net/backoff.py cap at 60 seconds",
+   "criteria": [
+    "Make retry_delay() in src/net/backoff.py cap at 60 seconds is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/net/backoff.py"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc15",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Split the long function build_report() in src/reports/build.py into three helpers",
+   "criteria": [
+    "Split the long function build_report() in src/reports/build.py into three helpers is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/reports/build.py"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc16",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Store the last sync time in src/sync/state.py",
+   "criteria": [
+    "Store the last sync time in src/sync/state.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/sync/state.py",
+    "src/sync/run.py"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc17",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Reject negative quantities in src/orders/validate.py",
+   "criteria": [
+    "Reject negative quantities in src/orders/validate.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/orders/validate.py"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc18",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Use a set for the seen-ids lookup in src/dedupe.py",
+   "criteria": [
+    "Use a set for the seen-ids lookup in src/dedupe.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/dedupe.py"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc19",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Return an empty list instead of None from find_tags() in src/tags.py",
+   "criteria": [
+    "Return an empty list instead of None from find_tags() in src/tags.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/tags.py"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc20",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Add type hints to src/money.py",
+   "criteria": [
+    "Add type hints to src/money.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/money.py"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc21",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Fix the leap-year check in src/calendar_util.py",
+   "criteria": [
+    "Fix the leap-year check in src/calendar_util.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/calendar_util.py"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc22",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Read the worker count from WORKERS in src/settings.py",
+   "criteria": [
+    "Read the worker count from WORKERS in src/settings.py is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/settings.py",
+    "src/worker/pool.py"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc23",
+   "point": "specs.check",
+   "label": "check:unit",
+   "goal": "Log a warning when src/importer/csv_reader.py skips a malformed row",
+   "criteria": [
+    "Log a warning when src/importer/csv_reader.py skips a malformed row is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "src/importer/csv_reader.py"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc24",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Split docs/operations.md into docs/operations/backup.md and docs/operations/restore.md",
+   "criteria": [
+    "Split docs/operations.md into docs/operations/backup.md and docs/operations/restore.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/operations.md",
+    "docs/operations/backup.md",
+    "docs/operations/restore.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc25",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Link the glossary from every page in docs/guides/",
+   "criteria": [
+    "Link the glossary from every page in docs/guides/ is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/guides/first-steps.md",
+    "docs/guides/teams.md",
+    "docs/guides/billing.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc26",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Rename docs/faq.md to docs/questions.md",
+   "criteria": [
+    "Rename docs/faq.md to docs/questions.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/faq.md",
+    "docs/questions.md",
+    "docs/index.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc27",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Correct the port number in docs/deploy.md",
+   "criteria": [
+    "Correct the port number in docs/deploy.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/deploy.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc28",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Add a page describing the export format",
+   "criteria": [
+    "Add a page describing the export format is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/export-format.md",
+    "docs/index.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc29",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Reorder the sections of docs/contributing.md",
+   "criteria": [
+    "Reorder the sections of docs/contributing.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/contributing.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc30",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Remove the outdated page docs/legacy/v1-api.md",
+   "criteria": [
+    "Remove the outdated page docs/legacy/v1-api.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/legacy/v1-api.md",
+    "docs/api/index.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc31",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Add anchors for each error code in docs/errors.md",
+   "criteria": [
+    "Add anchors for each error code in docs/errors.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/errors.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc32",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Update the screenshots' captions in docs/tour.md",
+   "criteria": [
+    "Update the screenshots' captions in docs/tour.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/tour.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc33",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Merge docs/limits.md into docs/quotas.md",
+   "criteria": [
+    "Merge docs/limits.md into docs/quotas.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/limits.md",
+    "docs/quotas.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc34",
+   "point": "specs.check",
+   "label": "check:docs-links",
+   "goal": "Document the new --since flag in docs/cli.md",
+   "criteria": [
+    "Document the new --since flag in docs/cli.md is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "docs/cli.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc35",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Disable the submit button while the form is saving",
+   "criteria": [
+    "Disable the submit button while the form is saving is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/forms/OrderForm.tsx"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc36",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Add a hook that reads the user's locale",
+   "criteria": [
+    "Add a hook that reads the user's locale is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/hooks/useLocale.ts"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc37",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Show an empty state on the projects page",
+   "criteria": [
+    "Show an empty state on the projects page is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/pages/Projects.tsx"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc38",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Format prices with Intl.NumberFormat",
+   "criteria": [
+    "Format prices with Intl.NumberFormat is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/format.ts",
+    "web/src/Price.tsx"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc39",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Keep the sidebar collapsed after a reload",
+   "criteria": [
+    "Keep the sidebar collapsed after a reload is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/Sidebar.tsx",
+    "web/src/storage.ts"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc40",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Add keyboard navigation to the results list",
+   "criteria": [
+    "Add keyboard navigation to the results list is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/ResultsList.tsx"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc41",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Retry a failed fetch once in the API client",
+   "criteria": [
+    "Retry a failed fetch once in the API client is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/api/client.ts"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc42",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Type the props of the Modal component",
+   "criteria": [
+    "Type the props of the Modal component is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/Modal.tsx"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc43",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Show the build number in the footer",
+   "criteria": [
+    "Show the build number in the footer is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/Footer.tsx",
+    "web/src/build.ts"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc44",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Close the menu when the user presses Escape",
+   "criteria": [
+    "Close the menu when the user presses Escape is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/Menu.tsx"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc45",
+   "point": "specs.check",
+   "label": "check:web-lint",
+   "goal": "Highlight the matched text in search suggestions",
+   "criteria": [
+    "Highlight the matched text in search suggestions is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/src/Suggestions.tsx"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc46",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Allow an optional 'note' string on the refund schema",
+   "criteria": [
+    "Allow an optional 'note' string on the refund schema is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/refund.json"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc47",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Limit 'tags' to ten entries in the project schema",
+   "criteria": [
+    "Limit 'tags' to ten entries in the project schema is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/project.json"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc48",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Add an example of a cancelled shipment",
+   "criteria": [
+    "Add an example of a cancelled shipment is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/examples/shipment-cancelled.json"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc49",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Require 'email' to match the email format in the contact schema",
+   "criteria": [
+    "Require 'email' to match the email format in the contact schema is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/contact.json"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc50",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Split the address object out of the customer schema",
+   "criteria": [
+    "Split the address object out of the customer schema is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/customer.json",
+    "schemas/address.json"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc51",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Rename 'qty' to 'quantity' in the line item schema and its examples",
+   "criteria": [
+    "Rename 'qty' to 'quantity' in the line item schema and its examples is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/line-item.json",
+    "schemas/examples/line-item.json"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc52",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Forbid additional properties in the webhook event schema",
+   "criteria": [
+    "Forbid additional properties in the webhook event schema is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/webhook-event.json"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc53",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Add a minimum of 0 to 'amount' in the payment schema",
+   "criteria": [
+    "Add a minimum of 0 to 'amount' in the payment schema is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/payment.json"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc54",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Describe each field of the invoice schema",
+   "criteria": [
+    "Describe each field of the invoice schema is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/invoice.json"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc55",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Fix the date example in the event schema's examples",
+   "criteria": [
+    "Fix the date example in the event schema's examples is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/examples/event-signup.json"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc56",
+   "point": "specs.check",
+   "label": "check:schema",
+   "goal": "Make 'priority' default to 'normal' in the ticket schema",
+   "criteria": [
+    "Make 'priority' default to 'normal' in the ticket schema is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "schemas/ticket.json"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc57",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Build the container from a slimmer base image",
+   "criteria": [
+    "Build the container from a slimmer base image is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "Dockerfile"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc58",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Ignore the local coverage directory",
+   "criteria": [
+    "Ignore the local coverage directory is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    ".gitignore"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc59",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Run the nightly backup script with compression",
+   "criteria": [
+    "Run the nightly backup script with compression is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "scripts/backup.sh"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc60",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Raise the deployment's replica count to three",
+   "criteria": [
+    "Raise the deployment's replica count to three is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "deploy/k8s/deployment.yaml"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc61",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Add a template for bug reports",
+   "criteria": [
+    "Add a template for bug reports is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    ".github/ISSUE_TEMPLATE/bug.md"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc62",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Keep the build context smaller",
+   "criteria": [
+    "Keep the build context smaller is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    ".dockerignore"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc63",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Set four-space indentation for Python files in the editor settings",
+   "criteria": [
+    "Set four-space indentation for Python files in the editor settings is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    ".editorconfig"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc64",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Disallow crawling of /admin",
+   "criteria": [
+    "Disallow crawling of /admin is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "web/public/robots.txt"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc65",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Add a make target that runs the formatter",
+   "criteria": [
+    "Add a make target that runs the formatter is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "Makefile"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc66",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Raise the proxy's request body limit",
+   "criteria": [
+    "Raise the proxy's request body limit is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "nginx/site.conf"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5sc67",
+   "point": "specs.check",
+   "label": "none",
+   "goal": "Update the copyright year",
+   "criteria": [
+    "Update the copyright year is done"
+   ],
+   "checks": {
+    "docs-links": "checks that every Markdown link and heading under docs/ resolves",
+    "unit": "runs the Python unit tests under src/",
+    "web-lint": "lints the TypeScript under web/src/",
+    "schema": "validates every JSON schema under schemas/ against its examples"
+   },
+   "changed_files": [
+    "LICENSE"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf01",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/units.py:22 - parse_size('1.5k') returns 1 because we cast the value with int() before scaling"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf02",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P2] src/report.py:61 - the loop variable `i` is never used; iterate over the rows directly"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf03",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/db/query.py:40 - the cursor is not closed when execute() raises"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf04",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/cli.py:12 - the --help text says 'defualt'"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf05",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 3,
+   "findings": [
+    "[P1] src/cache/keys.py:9 - keys are built with str(dict), whose order is not stable before Python 3.7; sort the items first"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf06",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P1] src/stats.py:15 - median() of an even-length list returns the upper middle value instead of the mean of the two"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf07",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/users.py:48 - the response uses snake_case keys, not the casing the API style guide sets"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf08",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/db/migrations/0042.py:1 - the column is dropped in the same release that stops writing it, against the migration process"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf09",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/worker/jobs.py:77 - errors are printed instead of going through the project's logging setup"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf10",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 3,
+   "findings": [
+    "[P1] src/billing/round.py:20 - amounts are rounded half up; use banker's rounding"
+   ],
+   "disputed": [
+    "[P1] src/billing/round.py:20 - amounts are rounded half up; use banker's rounding"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf11",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/auth/tokens.py:31 - token lifetime is 24 hours; make it one hour"
+   ],
+   "disputed": [
+    "[P1] src/auth/tokens.py:31 - token lifetime is 24 hours; make it one hour"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf12",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/api/errors.py:12 - this error body does not follow the documented error format"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf13",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/parse.py:33 - a missing Content-Type raises KeyError"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf14",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/net/backoff.py:14 - the delay doubles without a cap and overflows after 60 attempts; cap it with min()"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf15",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P2] src/tags.py:8 - find_tags() returns None for no matches while its docstring promises a list"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf16",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/orders/validate.py:19 - `if qty < 0 or qty > MAX` lets qty == 0 through, but the comment above states the rule that zero is invalid"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf17",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P1] src/dedupe.py:11 - `seen` is a list, so each lookup is linear and the job is quadratic on 10^6 ids"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf18",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/calendar_util.py:5 - is_leap(1900) returns True; centuries need the 400 rule"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf19",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/money.py:40 - the None check is written `== None`"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf20",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 3,
+   "findings": [
+    "[P1] src/importer/csv_reader.py:52 - the file is opened without newline='', so quoted fields with line breaks split into two rows"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf21",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/sync/state.py:27 - the state file is written in place; a crash mid-write leaves it truncated. Write to a temporary file and rename"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf22",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P2] src/settings.py:18 - int(os.environ['WORKERS']) raises KeyError when the variable is unset; fall back to the default of 4 that the docstring states"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf23",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/reports/build.py:140 - the totals row sums the 'price' column instead of 'amount'"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf24",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/text.py:51 - slugify() strips accented letters entirely; normalise with unicodedata.normalize('NFKD') first"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf25",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P2] src/api/pagination.py:31 - `math.floor` should be `math.ceil`; 41 items at 20 per page shows two pages"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf26",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/hooks/sender.py:70 - the response body is read after the connection is returned to the shared pool"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf27",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/timeutil.py:30 - parse_duration('90m') returns 90 seconds; the 'm' branch multiplies by 1"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf28",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P2] src/reports/users.py:44 - the header has 'emial'"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf29",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/worker/pool.py:61 - the thread pool is never shut down, so the process hangs on exit; call shutdown() in the finally block"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf30",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 3,
+   "findings": [
+    "[P1] src/cache/disk.py:20 - two processes can write the same entry at once; open with O_EXCL and skip on FileExistsError"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf31",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/export/rows.py:33 - the CSV writer is created without quoting, so a comma inside a name shifts every later column"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf32",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/api/middleware.py:22 - the debug line formats the whole request object; log request.id only"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf33",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P1] src/auth/hashing.py:40 - passwords are compared with ==, which leaks timing"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf34",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/search/rank.py:66 - scores are sorted ascending, so the worst match comes first"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf35",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/stats.py:30 - variance() divides by n - 1 but its docstring says population variance; divide by n"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf36",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P1] src/media/thumbnails.py:18 - the opened image is never closed"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf37",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/digest/schedule.py:12 - the next run is computed from datetime.now() without a time zone while the stored time we compare it with is aware; comparing them raises TypeError"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf38",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/payments/worker.py:9 - the constant RETRY_LIMT is misspelt and shadows nothing"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf39",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 3,
+   "findings": [
+    "[P1] src/importer/cli.py:27 - an empty input file exits 0 after printing 'no rows'; the --strict flag documented in its help should make it exit 1"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf40",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/orders.py:52 - the list endpoint pages with offset and limit, not the pagination the rest of the API uses; switch it over"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf41",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/db/migrations/0051.py:1 - the index is created without the online option our database changes require"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf42",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/notify/email.py:14 - the sender address is hard-coded instead of coming from the configuration the other services read"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf43",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/profiles.py:30 - the endpoint returns the email address, which the privacy decision keeps out of public responses; drop it"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf44",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/billing/invoice.py:77 - invoice ids are random UUIDs"
+   ],
+   "disputed": [
+    "[P1] src/billing/invoice.py:77 - invoice ids are random UUIDs"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf45",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 3,
+   "findings": [
+    "[P1] src/orders/db.py:90 - this write is outside a transaction"
+   ],
+   "disputed": [
+    "[P1] src/orders/db.py:90 - this write is outside a transaction"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf46",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/worker/metrics.py:15 - the metric name does not follow the metrics naming scheme"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf47",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/api/search.py:41 - the endpoint has no rate limit, which every public endpoint is meant to have"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf48",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/accounts/delete.py:18 - deletion removes the row immediately rather than following the retention rule"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf49",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P2] src/payments/worker.py:55 - log lines are free text"
+   ],
+   "disputed": [
+    "[P2] src/payments/worker.py:55 - log lines are free text"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf50",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/attachments.py:12 - the upload limit is 100 MB, above what the platform allows; lower it to that limit"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf51",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 3,
+   "findings": [
+    "[P1] src/web/session.py:33 - the cookie is not marked Secure"
+   ],
+   "disputed": [
+    "[P1] src/web/session.py:33 - the cookie is not marked Secure"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf52",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/export/api.py:8 - the route is not versioned the way every other public route is"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf53",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/storage/purge.py:21 - projects are purged after 7 days"
+   ],
+   "disputed": [
+    "[P1] src/storage/purge.py:21 - projects are purged after 7 days"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf54",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/checkout/flow.py:5 - the new flow ships without the feature flag that customer-facing changes need"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf55",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/api/health.py:30 - the cache check answers 'down' as a string while the other checks report a status object"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf56",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/importer/cli.py:40 - the exit codes do not match the table the other command-line tools share"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf57",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/net/client.py:9 - the client sets its own timeout instead of the shared default"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf58",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 3,
+   "findings": [
+    "[P1] src/search/rank.py:70 - ties are broken by insertion order; break them by id"
+   ],
+   "disputed": [
+    "[P1] src/search/rank.py:70 - ties are broken by insertion order; break them by id"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf59",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/analytics/usage.py:12 - usage counts are written to the primary database, not where analytics data is meant to go"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf60",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/mailer.py:80 - a failed send is retried forever; cap it at five attempts"
+   ],
+   "disputed": [
+    "[P1] src/mailer.py:80 - a failed send is retried forever; cap it at five attempts"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf61",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/accounts/signup.py:27 - the password minimum is 6 characters, below the security baseline"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf62",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] web/src/api/client.ts:15 - dates are sent as local-time strings rather than in the format the API contract fixes"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf63",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/orders/db.py:12 - the service opens its own connection pool instead of the shared one"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf64",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/billing.py:64 - the 400 body is a bare string; it should take the error shape the API guidelines set"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf65",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 3,
+   "findings": [
+    "[P2] src/digest/schedule.py:8 - the digest is scheduled in UTC"
+   ],
+   "disputed": [
+    "[P2] src/digest/schedule.py:8 - the digest is scheduled in UTC"
+   ],
+   "split": "held_out",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf66",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/projects/purge.py:3 - this module under src/projects merged without the second reviewer the ownership rules ask for there"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r5"
+  }
+ ]
+}
