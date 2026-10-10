@@ -426,7 +426,7 @@
    "repo/docs/object-store-growth.md": "# Object store growth\n\nThe object store grows 2 TB a month. 60% of it is debug logs kept forever, which nobody reads after 30 days.\n",
    "repo/docs/sms-vendors.md": "# SMS vendors\n\nVendor A charges $0.010 a message with 97% delivery; Vendor B charges $0.007 with 91% delivery. A one-time code that fails to arrive leads to a support ticket 20% of the time.\n",
    "repo/docs/endpoint-usage.md": "# Endpoint usage\n\nOf 180 API endpoints, 45 had no calls in the last 90 days. Each still needs security patches.\n",
-   "repo/docs/meeting-load.md": "# Meeting load\n\nEngineers spend 11 of 40 hours a week in meetings. The daily stand-up of 14 people takes 35 minutes.\n",
+   "repo/docs/meeting-load.md": "# Meeting load\n\nEngineers spend 11 of 40 hours a week in meetings. The weekly planning meeting has 14 people and takes 2 hours.\n",
    "repo/docs/export-errors.md": "# Server errors\n\n72% of last week's 5xx errors came from POST /exports, which times out for accounts with more than 50,000 rows.\n",
    "repo/docs/onboarding-days.md": "# Onboarding time\n\nNew engineers take 9 days to ship a first change; 5 of those days are spent waiting for access.\n",
    "repo/docs/product-cache.md": "# Product cache\n\nThe product cache answers 40% of requests. Entries expire after 60 seconds, and product data changes about twice a day.\n",
@@ -445,7 +445,7 @@
    "repo/docs/log-bill.md": "# Log volume\n\nThe services write 3 TB of logs a day; 2.4 TB are debug lines from the payments service, left on since an incident in May.\n",
    "repo/docs/retry-passes.md": "# CI retries\n\n12 tests cause 80% of the CI runs that fail and then pass on retry. All 12 call an external sandbox API.\n",
    "repo/docs/take-home.md": "# Hiring pipeline\n\n60% of candidates drop out between the take-home task and the interview. The task takes about 8 hours.\n",
-   "repo/docs/connection-limit.md": "# Database connections\n\nThe database allows 500 connections. 40 service instances each open a pool of 20, and a deploy briefly runs old and new instances side by side.\n",
+   "repo/docs/connection-limit.md": "# Database connections\n\nThe database allows 500 connections. 20 service instances normally run, each holding 20 connections. During a deploy, old and new instances run side by side, 40 in all.\n",
    "repo/docs/event-archive.md": "# Event archive\n\nThe event archive costs $9,000 a month. Reads of events older than 90 days are 0.5% of all reads.\n",
    "repo/docs/store-review.md": "# Mobile releases\n\nApp store review adds 2 days to each mobile release. 70% of mobile fixes are text or layout changes.\n",
    "repo/docs/ci-scope.md": "# CI scope\n\nEvery pull request runs all 14 service test suites. 80% of pull requests touch only one service.\n",
@@ -468,7 +468,7 @@
    "repo/docs/thumbnail-timing.md": "# Thumbnails\n\nThumbnails are generated on first view, which takes 2.5 s. 90% of images are viewed within a minute of upload.\n",
    "repo/docs/reset-flood.md": "# Reset emails\n\nOne IP address requested 12,000 password reset emails yesterday. The reset endpoint has no rate limit.\n",
    "hub/craft/leaked-keys.md": "# Leaked keys\n\nRule. A leaked key is revoked first, then rotated, then reported in #security.\n",
-   "repo/docs/library-licences.md": "# Adding a library\n\nA new third-party library needs a licence check by the legal bot before it is merged.\n",
+   "repo/docs/night-access.md": "# Night access\n\nStaff who need the office after 22:00 ask security for a night pass by 17:00 the same day.\n",
    "repo/docs/sabbaticals.md": "# Sabbaticals\n\nAfter five years, employees can take a paid four-week sabbatical, agreed with their manager three months ahead.\n",
    "hub/craft/screenshot-redaction.md": "# Screenshots in tickets\n\nRule. Customer names and emails are blurred in screenshots before they are attached to any ticket, internal or external.\n",
    "repo/docs/broken-equipment.md": "# Broken equipment\n\nBroken desk equipment is reported in the IT portal. IT replaces monitors within two working days.\n",
@@ -486,7 +486,7 @@
    "repo/docs/newsletter-schedule.md": "# Newsletter\n\nThe customer newsletter goes out on the first Tuesday of each month at 10:00 CET.\n",
    "repo/docs/seat-transfers.md": "# Seat transfers\n\nA paid seat can be moved to another person at any time; the new person keeps the seat's billing date.\n",
    "hub/craft/log-line-fields.md": "# Log line fields\n\nRule. Every log line carries the service, request_id and level fields.\n",
-   "hub/craft/validation-status.md": "# Status codes\n\nRule. A validation failure returns 422; 400 is kept for a request whose syntax is malformed.\n",
+   "hub/craft/shell-scripts.md": "# Shell scripts\n\nRule. Shell scripts start with set -euo pipefail and pass shellcheck in CI.\n",
    "hub/craft/locale-strings.md": "# User-facing strings\n\nRule. User-facing strings live in the locale files under i18n/, keyed by screen and purpose; none are hard-coded.\n",
    "hub/craft/percent-values.md": "# Percentages\n\nRule. Percentages are stored as basis points in an integer column, so 12.5% is 1250.\n",
    "hub/craft/migration-names.md": "# Migration files\n\nRule. Migration files are named YYYYMMDDHHMM_<verb>_<object>.sql.\n",
@@ -504,17 +504,17 @@
    "repo/.wiki/decisions/2025-09-01-070-terraform.md": "# Terraform\n\nDecision. Infrastructure is written for Terraform 1.5.\n",
    "repo/.wiki/decisions/2026-04-10-071-opentofu.md": "---\nsupersedes: [2025-09-01-070-terraform]\n---\n\n# OpenTofu\n\nDecision. Infrastructure moves to OpenTofu 1.8; Terraform is no longer used.\n",
    "repo/docs/health-benefits.md": "# Health benefits\n\nHealth benefits are administered by [Carewell](vendors/carewell.md).\n",
-   "repo/docs/vendors/carewell.md": "# Carewell\n\n## Claims\n\nClaims go to claims@carewell.example within 90 days of treatment.\n",
+   "repo/docs/vendors/carewell.md": "# Carewell\n\n## Reimbursement\n\nReimbursement requests go to refunds@carewell.example within 90 days of treatment.\n",
    "repo/docs/shuttle-bus.md": "# Shuttle bus\n\nThe staff shuttle is run by [Roadline](vendors/roadline.md).\n",
    "repo/docs/vendors/roadline.md": "# Roadline\n\n## Lost property\n\nItems left on a bus are kept at the Roadline depot for 30 days.\n",
    "repo/docs/office-cleaning.md": "# Office cleaning\n\nThe offices are cleaned by [Sparkle Services](vendors/sparkle-services.md).\n",
-   "repo/docs/vendors/sparkle-services.md": "# Sparkle Services\n\n## Schedule\n\nCrews come on Tuesday and Friday evenings.\n",
+   "repo/docs/vendors/sparkle-services.md": "# Sparkle Services\n\n## Visits\n\nCrews visit on Tuesdays and Fridays after 19:00.\n",
    "repo/docs/contract-review.md": "# Contract review\n\nContracts are reviewed by [Hart & Pell](vendors/hart-pell.md).\n",
-   "repo/docs/vendors/hart-pell.md": "# Hart & Pell\n\n## Turnaround\n\nStandard reviews come back within five business days.\n",
+   "repo/docs/vendors/hart-pell.md": "# Hart & Pell\n\n## Turnaround\n\nStandard turnaround is five business days.\n",
    "repo/docs/team-merch.md": "# Team merchandise\n\nTeam merchandise is ordered from [Threadworks](vendors/threadworks.md).\n",
-   "repo/docs/vendors/threadworks.md": "# Threadworks\n\n## Ordering\n\nOrders need at least 25 items and ship in three weeks.\n",
+   "repo/docs/vendors/threadworks.md": "# Threadworks\n\n## Purchasing\n\nEach purchase must cover at least 25 items; delivery takes three weeks.\n",
    "repo/docs/pen-tests.md": "# Penetration tests\n\nAnnual penetration tests are run by [Redline Security](vendors/redline-security.md).\n",
-   "repo/docs/vendors/redline-security.md": "# Redline Security\n\n## Booking\n\nTests are booked at least six weeks ahead.\n",
+   "repo/docs/vendors/redline-security.md": "# Redline Security\n\n## Notice\n\nRedline needs six weeks' notice to schedule an engagement.\n",
    "repo/.wiki/memory/2026-09-02-csv-separator.md": "# CSV separator\n\nThe user prefers exported CSV files to use semicolons as separators.\n",
    "repo/.wiki/memory/2026-08-21-review-hours.md": "# Review hours\n\nThe user asked not to get review requests after 18:00, and to get a daily summary at 09:00 instead.\n",
    "repo/.wiki/memory/2026-09-14-chart-colours.md": "# Chart colours\n\nThe user asked for charts to use the colour-blind safe palette and to drop red-green pairs.\n",
@@ -4295,7 +4295,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a recommendation that weighs 11 of 40 hours in meetings and the 35-minute stand-up of 14 people"
+     "reference": "a recommendation that weighs 11 of 40 hours in meetings and the 2-hour planning meeting of 14 people"
     }
    ],
    "forbidden": [],
@@ -4322,7 +4322,7 @@
    ],
    "verification": "unverified_analysis",
    "sources": {
-    "repo/docs/meeting-load.md": "8cb7154f9159c035edaecf979b6f8eb1c9a90cfbba57f866336dd4152f9afa0f"
+    "repo/docs/meeting-load.md": "a4ae1ae65741e308ef69927e00ae692487acc926ce3481725b1b19df1828b4da"
    },
    "review": "r5"
   },
@@ -5188,7 +5188,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a diagnosis that 40 instances at 20 is 800 connections during a deploy, over the 500 allowed"
+     "reference": "a diagnosis that 400 connections normally become 800 during a deploy, over the 500 allowed"
     }
    ],
    "forbidden": [],
@@ -5215,7 +5215,7 @@
    ],
    "verification": "unverified_analysis",
    "sources": {
-    "repo/docs/connection-limit.md": "6017b73f0a15a26a7682b9da185d29a4c2f9049619dbb3ef93522a40cf4a462f"
+    "repo/docs/connection-limit.md": "921df952615d72783e38ab174f5cc731d32dc432199d2f7e0b81596e42448edb"
    },
    "review": "r5"
   },
@@ -6273,18 +6273,18 @@
    "category": "analysis",
    "split": "held_out",
    "variants": {
-    "en": "I want to add a new library. What do I need to do first?"
+    "en": "I need to work in the office late tonight. What should I do?"
    },
    "evidence": [
     [
-     "repo/docs/library-licences.md"
+     "repo/docs/night-access.md"
     ]
    ],
    "parts": [
     {
      "id": "q0",
-     "ask": "the first step",
-     "reference": "a licence check by the legal bot"
+     "ask": "the step",
+     "reference": "ask security for a night pass by 17:00"
     }
    ],
    "forbidden": [],
@@ -6293,7 +6293,7 @@
    "analysis": false,
    "route_segments": [
     {
-     "text": "I want to add a new library. What do I need to do first?",
+     "text": "I need to work in the office late tonight. What should I do?",
      "ask": true
     }
    ],
@@ -6306,7 +6306,7 @@
    ],
    "verification": "verified",
    "sources": {
-    "repo/docs/library-licences.md": "cfe99ae5ae3ff2265b319b204d3d5d0ecbcd75ea8a66deb1576a51ccda59e74c"
+    "repo/docs/night-access.md": "79a5c575984efc0119bf64e9d3183e1d2abb9539730a9274f2fe40f8ca743056"
    },
    "review": "r5"
   },
@@ -7367,23 +7367,23 @@
    "category": "routing",
    "split": "held_out",
    "variants": {
-    "en": "Which status code do our rules use for a validation failure? When is 400 used?"
+    "en": "How must our shell scripts start under our rules? Which linter do they have to pass?"
    },
    "evidence": [
     [
-     "hub/craft/validation-status.md"
+     "hub/craft/shell-scripts.md"
     ]
    ],
    "parts": [
     {
      "id": "q0",
-     "ask": "the code",
-     "reference": "422"
+     "ask": "the start",
+     "reference": "set -euo pipefail"
     },
     {
      "id": "q1",
-     "ask": "400",
-     "reference": "for malformed syntax"
+     "ask": "the linter",
+     "reference": "shellcheck"
     }
    ],
    "forbidden": [],
@@ -7392,11 +7392,11 @@
    "analysis": false,
    "route_segments": [
     {
-     "text": "Which status code do our rules use for a validation failure?",
+     "text": "How must our shell scripts start under our rules?",
      "ask": true
     },
     {
-     "text": "When is 400 used?",
+     "text": "Which linter do they have to pass?",
      "ask": true
     }
    ],
@@ -7409,7 +7409,7 @@
    ],
    "verification": "verified",
    "sources": {
-    "hub/craft/validation-status.md": "23280e22fe137bfa418d1618499755a8fc6aeb76bca12187e337153f87634701"
+    "hub/craft/shell-scripts.md": "ab30eb2026803bdecb9bac6912823952e41f9b7cbf60438eab39a4d13ae50ddf"
    },
    "review": "r5"
   },
@@ -8123,14 +8123,14 @@
      "repo/docs/health-benefits.md"
     ],
     [
-     "repo/docs/vendors/carewell.md#Claims"
+     "repo/docs/vendors/carewell.md#Reimbursement"
     ]
    ],
    "parts": [
     {
      "id": "q0",
      "ask": "the answer",
-     "reference": "claims@carewell.example"
+     "reference": "refunds@carewell.example"
     }
    ],
    "forbidden": [],
@@ -8154,7 +8154,7 @@
    "verification": "verified",
    "sources": {
     "repo/docs/health-benefits.md": "b61e390139b4307c4a08045b6685d432d7a6cf295195a22755b7fffc481bfb21",
-    "repo/docs/vendors/carewell.md": "5511c9cb3ac0e2db22f8594e6f165ef94ee54a2f51b35a4fa0ce70426ae003fa"
+    "repo/docs/vendors/carewell.md": "9289dba3e5fc0d3bbc2ff469dd6f3cf57961d48391760dc14641202fd50a69b3"
    },
    "review": "r5"
   },
@@ -8210,21 +8210,21 @@
    "category": "bridge",
    "split": "held_out",
    "variants": {
-    "en": "On which evenings are our offices cleaned?"
+    "en": "On which days are our offices cleaned?"
    },
    "evidence": [
     [
      "repo/docs/office-cleaning.md"
     ],
     [
-     "repo/docs/vendors/sparkle-services.md#Schedule"
+     "repo/docs/vendors/sparkle-services.md#Visits"
     ]
    ],
    "parts": [
     {
      "id": "q0",
      "ask": "the answer",
-     "reference": "Tuesday and Friday"
+     "reference": "Tuesdays and Fridays, after 19:00"
     }
    ],
    "forbidden": [],
@@ -8234,7 +8234,7 @@
    "analysis": false,
    "route_segments": [
     {
-     "text": "On which evenings are our offices cleaned?",
+     "text": "On which days are our offices cleaned?",
      "ask": true
     }
    ],
@@ -8248,7 +8248,7 @@
    "verification": "verified",
    "sources": {
     "repo/docs/office-cleaning.md": "c7de32e55f38dd28a5997ad862b58f0d080568005b539e30dd838760040fb085",
-    "repo/docs/vendors/sparkle-services.md": "306bb6f3b939aaa1e6081397d6a1140158048f6b965ab1f93c0c0e8eadec68f5"
+    "repo/docs/vendors/sparkle-services.md": "1bab19bd8fd6055b9b83fafa735e7a358245dd0208d7608846c995fa26b06ac4"
    },
    "review": "r5"
   },
@@ -8271,7 +8271,7 @@
     {
      "id": "q0",
      "ask": "the answer",
-     "reference": "within five business days"
+     "reference": "five business days"
     }
    ],
    "forbidden": [],
@@ -8295,7 +8295,7 @@
    "verification": "verified",
    "sources": {
     "repo/docs/contract-review.md": "d30fa10c94a09b15e04c977646be3ac4e07b6764badaf4432c250155e24e272c",
-    "repo/docs/vendors/hart-pell.md": "7e4e46d2bfaaaae8b0325c82ca494d8110f3f9ff175bbedbc0503c8b3b8f240e"
+    "repo/docs/vendors/hart-pell.md": "4d13520cff1fd67460ff2a646c56fb954cac38bf3c2bfc2622d2bf0808d1df98"
    },
    "review": "r5"
   },
@@ -8311,7 +8311,7 @@
      "repo/docs/team-merch.md"
     ],
     [
-     "repo/docs/vendors/threadworks.md#Ordering"
+     "repo/docs/vendors/threadworks.md#Purchasing"
     ]
    ],
    "parts": [
@@ -8346,7 +8346,7 @@
    "verification": "verified",
    "sources": {
     "repo/docs/team-merch.md": "4ea6d3e8b15991d84007f6b3875262339ff245128ae3259cc0089f7a486ad6e5",
-    "repo/docs/vendors/threadworks.md": "72360a38e98fc570daa8b33f0debaddd6e4ced6ab288215ece7538d4aad4864e"
+    "repo/docs/vendors/threadworks.md": "c7633d525c7c91f234ac3eaf26b7ca2ec5da35f8af1ceba5c3a7f302de7e7121"
    },
    "review": "r5"
   },
@@ -8362,14 +8362,14 @@
      "repo/docs/pen-tests.md"
     ],
     [
-     "repo/docs/vendors/redline-security.md#Booking"
+     "repo/docs/vendors/redline-security.md#Notice"
     ]
    ],
    "parts": [
     {
      "id": "q0",
      "ask": "the answer",
-     "reference": "at least six weeks"
+     "reference": "six weeks' notice"
     }
    ],
    "forbidden": [],
@@ -8397,7 +8397,7 @@
    "verification": "verified",
    "sources": {
     "repo/docs/pen-tests.md": "57e402ce0566e622526618e81a7b35e8f7e703be47d76d0d17c6c53ed371d58c",
-    "repo/docs/vendors/redline-security.md": "c51a82b47fd46b4fdc004b014a772820b1aeac8abd724dbceead89581dcd12fc"
+    "repo/docs/vendors/redline-security.md": "90f870b8ad48ccb64d8a7f0f854a156604561fef0cf623355f6d142ac51fccfb"
    },
    "review": "r5"
   },

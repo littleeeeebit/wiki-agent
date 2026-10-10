@@ -25,7 +25,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws01",
-    "goal": "Fix the misspelling 'recieve' in the error message at src/mailer.py:41",
+    "goal": "Fix the misspelling 'recieve' in the mailer's error message",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -49,7 +49,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws02",
-    "goal": "Change the default page size in src/api/pagination.py from 20 to 50",
+    "goal": "Set the default page size to 50",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -59,7 +59,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/api/pagination.py:7",
+      "src/api/pagination.py:1",
       "tests/test_pagination.py:1"
      ],
      "rules": []
@@ -75,7 +75,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws03",
-    "goal": "Return 404 instead of 500 from GET /projects/{id} when the project does not exist",
+    "goal": "Map a missing project in GET /projects/{id} to 404 instead of 500",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -111,9 +111,9 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/billing/totals.py:14",
-      "src/billing/invoice.py:40",
-      "src/billing/quote.py:22"
+      "src/billing/totals.py:1",
+      "src/billing/invoice.py:1",
+      "src/billing/quote.py:1"
      ],
      "rules": []
     },
@@ -128,7 +128,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws05",
-    "goal": "Pick the cache lifetime for the product catalogue responses",
+    "goal": "Pick the cache lifetime for the catalogue responses in src/api/catalogue.py",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -138,7 +138,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/api/catalogue.py:1"
+      "src/api/catalogue.py:57"
      ],
      "rules": []
     },
@@ -153,7 +153,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws06",
-    "goal": "Add audit logging to account deletion",
+    "goal": "Log account deletions for audit",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -188,7 +188,8 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/api/export.py:1"
+      "src/api/export.py:12",
+      "src/api/routes.py:30"
      ],
      "rules": []
     },
@@ -203,7 +204,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws08",
-    "goal": "Choose what the scheduler does with jobs whose slot passed while it was down",
+    "goal": "Handle jobs whose scheduled slot passed while the scheduler was down",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -327,7 +328,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/timeutil.py:30"
+      "src/timeutil.py:1"
      ],
      "rules": []
     },
@@ -368,7 +369,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws15",
-    "goal": "Write export timestamps in src/export/rows.py as ISO 8601 UTC",
+    "goal": "Pick ISO 8601 UTC for export timestamps",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -378,7 +379,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/export/rows.py:25",
+      "src/export/rows.py:1",
       "tests/test_export_rows.py:1"
      ],
      "rules": []
@@ -422,7 +423,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws17",
-    "goal": "Lower the HTTP client timeout in src/net/client.py from 30 to 10 seconds",
+    "goal": "Set the HTTP client timeout in src/net/client.py to 10 seconds, down from 30",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -432,7 +433,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/net/client.py:9",
+      "src/net/client.py:1",
       "tests/test_client.py:1"
      ],
      "rules": []
@@ -474,7 +475,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws19",
-    "goal": "Retry the webhook POST in src/hooks/sender.py up to three times, two seconds apart",
+    "goal": "Choose three retries, two seconds apart, for the webhook POST",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -485,7 +486,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/hooks/sender.py:61",
+      "src/hooks/sender.py:1",
       "tests/test_sender.py:1"
      ],
      "rules": []
@@ -505,7 +506,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws20",
-    "goal": "Sort the names in the GET /tags response alphabetically",
+    "goal": "Pick alphabetical order for the names in the GET /tags response",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -541,7 +542,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/cache/disk.py:12",
+      "src/cache/disk.py:1",
       "tests/test_disk_cache.py:1"
      ],
      "rules": []
@@ -557,7 +558,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws22",
-    "goal": "Make slugify() in src/text.py collapse consecutive hyphens into one",
+    "goal": "Make slugify() collapse consecutive hyphens into one",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -583,7 +584,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws23",
-    "goal": "Export the worker's queue depth as the gauge jobs_queue_depth from src/worker/metrics.py",
+    "goal": "Name the worker's queue-depth gauge jobs_queue_depth",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -593,7 +594,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/worker/metrics.py:15",
+      "src/worker/metrics.py:1",
       "tests/test_worker_metrics.py:1"
      ],
      "rules": []
@@ -613,7 +614,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws24",
-    "goal": "Make mean() in src/stats.py raise ValueError('empty sample') for an empty list",
+    "goal": "Make mean() raise ValueError('empty sample') for an empty list",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -651,7 +652,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/cli.py:72",
+      "src/cli.py:1",
       "tests/test_cli.py:1"
      ],
      "rules": []
@@ -667,7 +668,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws26",
-    "goal": "Set the session cookie in src/web/session.py to SameSite=Lax",
+    "goal": "Set the session cookie to SameSite=Lax",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -707,7 +708,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/auth/hashing.py:88"
+      "src/auth/hashing.py:1"
      ],
      "rules": []
     },
@@ -748,7 +749,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws29",
-    "goal": "Log the request id at debug level at the start of handle() in src/api/middleware.py",
+    "goal": "Log the request id at debug level when the middleware's handle() starts",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -758,7 +759,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/api/middleware.py:19",
+      "src/api/middleware.py:1",
       "tests/test_middleware.py:1"
      ],
      "rules": []
@@ -774,7 +775,7 @@
    "label": "dispatch",
    "spec": {
     "slug": "v5ws30",
-    "goal": "Trim surrounding whitespace from the email field before validate_signup() in src/accounts/signup.py checks it",
+    "goal": "Trim surrounding whitespace from the sign-up email before it is validated",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -800,7 +801,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws31",
-    "goal": "Set the minimum password length for the sign-up form",
+    "goal": "Set the minimum password length in src/accounts/signup.py",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -810,7 +811,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/accounts/signup.py:1"
+      "src/accounts/signup.py:42"
      ],
      "rules": []
     },
@@ -825,7 +826,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws32",
-    "goal": "Pick the error response body for the new billing endpoints",
+    "goal": "Pick the error response body for the billing endpoints in src/api/billing.py",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -835,7 +836,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/api/billing.py:1"
+      "src/api/billing.py:88"
      ],
      "rules": []
     },
@@ -850,7 +851,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws33",
-    "goal": "Add rate limiting to the public search endpoint",
+    "goal": "Add rate limiting to GET /search in src/api/search.py",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -860,7 +861,8 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/api/search.py:1"
+      "src/api/search.py:41",
+      "tests/test_search_limits.py:1"
      ],
      "rules": []
     },
@@ -875,7 +877,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws34",
-    "goal": "Choose where image thumbnails are stored",
+    "goal": "Store generated image thumbnails",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -885,7 +887,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/media/thumbnails.py:1"
+      "src/media/thumbnails.py:18"
      ],
      "rules": []
     },
@@ -910,7 +912,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/checkout/flow.py:1"
+      "src/checkout/flow.py:5"
      ],
      "rules": []
     },
@@ -925,7 +927,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws36",
-    "goal": "Decide how long deleted projects are kept before they are purged",
+    "goal": "Purge deleted projects after a retention period",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -939,7 +941,11 @@
      ],
      "rules": []
     },
-    "decisions": []
+    "decisions": [
+     {
+      "what": "Deleted projects are hidden from every list at once"
+     }
+    ]
    },
    "split": "held_out",
    "review": "r5"
@@ -950,7 +956,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws37",
-    "goal": "Write the deprecation notice for the v1 webhooks",
+    "goal": "Write the v1 webhooks' deprecation notice in docs/webhooks.md",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -960,7 +966,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "docs/webhooks.md:1"
+      "docs/webhooks.md:12"
      ],
      "rules": []
     },
@@ -975,7 +981,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws38",
-    "goal": "Add structured logging to the payment worker",
+    "goal": "Add structured logging to src/payments/worker.py",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -985,7 +991,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/payments/worker.py:1"
+      "src/payments/worker.py:55"
      ],
      "rules": []
     },
@@ -1000,7 +1006,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws39",
-    "goal": "Pick the retry policy for failed email sends",
+    "goal": "Retry failed email sends",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -1010,7 +1016,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/mailer.py:1"
+      "src/mailer.py:80"
      ],
      "rules": []
     },
@@ -1026,7 +1032,9 @@
    "spec": {
     "slug": "v5ws40",
     "goal": "Map the importer's failures to exit codes",
-    "out": [],
+    "out": [
+     "a progress bar"
+    ],
     "done": [
      "python -m pytest -q",
      "each importer failure exits with its chosen code",
@@ -1050,7 +1058,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws41",
-    "goal": "Choose the time zone the daily digest is scheduled in",
+    "goal": "Schedule the daily digest in a fixed time zone",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -1075,7 +1083,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws42",
-    "goal": "Add tracing to the order service's database calls",
+    "goal": "Add tracing to the database calls in src/orders/db.py",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -1089,7 +1097,11 @@
      ],
      "rules": []
     },
-    "decisions": []
+    "decisions": [
+     {
+      "what": "The order service keeps its own database"
+     }
+    ]
    },
    "split": "held_out",
    "review": "r5"
@@ -1100,7 +1112,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws43",
-    "goal": "Set the maximum size for uploaded attachments",
+    "goal": "Limit the size of uploaded attachments",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -1110,7 +1122,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/api/attachments.py:1"
+      "src/api/attachments.py:12"
      ],
      "rules": []
     },
@@ -1125,7 +1137,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws44",
-    "goal": "Pick the ID format for new invoices",
+    "goal": "Generate IDs for new invoices",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -1139,7 +1151,11 @@
      ],
      "rules": []
     },
-    "decisions": []
+    "decisions": [
+     {
+      "what": "Invoices are numbered per customer account"
+     }
+    ]
    },
    "split": "held_out",
    "review": "r5"
@@ -1150,7 +1166,7 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws45",
-    "goal": "Choose which fields the public profile endpoint returns",
+    "goal": "Limit what the public profile endpoint returns",
     "out": [],
     "done": [
      "python -m pytest -q",
@@ -1200,8 +1216,10 @@
    "label": "evidence",
    "spec": {
     "slug": "v5ws47",
-    "goal": "Decide the order of search results whose scores tie",
-    "out": [],
+    "goal": "Break ties between search results with equal scores",
+    "out": [
+     "changing how scores are computed"
+    ],
     "done": [
      "python -m pytest -q",
      "tied results come back in the chosen order",
@@ -3016,7 +3034,7 @@
    "label": "fix",
    "round": 1,
    "findings": [
-    "[P1] src/units.py:22 - parse_size('1.5k') returns 1 because the value is cast with int() before scaling"
+    "[P1] src/units.py:22 - parse_size('1.5k') returns 1 because we cast the value with int() before scaling"
    ],
    "disputed": [],
    "split": "calibration",
@@ -3040,7 +3058,7 @@
    "label": "fix",
    "round": 1,
    "findings": [
-    "[P1] src/db/query.py:40 - the cursor is not closed when execute() raises; use a `with` block"
+    "[P1] src/db/query.py:40 - the cursor is not closed when execute() raises"
    ],
    "disputed": [],
    "split": "calibration",
@@ -3088,7 +3106,7 @@
    "label": "context",
    "round": 1,
    "findings": [
-    "[P1] src/api/users.py:48 - the response uses snake_case keys, not the casing our API style uses"
+    "[P1] src/api/users.py:48 - the response uses snake_case keys, not the casing the API style guide sets"
    ],
    "disputed": [],
    "split": "calibration",
@@ -3124,10 +3142,10 @@
    "label": "context",
    "round": 3,
    "findings": [
-    "[P1] src/billing/round.py:20 - amounts are rounded half up"
+    "[P1] src/billing/round.py:20 - amounts are rounded half up; use banker's rounding"
    ],
    "disputed": [
-    "[P1] src/billing/round.py:20 - amounts are rounded half up"
+    "[P1] src/billing/round.py:20 - amounts are rounded half up; use banker's rounding"
    ],
    "split": "calibration",
    "review": "r5"
@@ -3138,10 +3156,10 @@
    "label": "context",
    "round": 2,
    "findings": [
-    "[P1] src/auth/tokens.py:31 - token lifetime is 24 hours"
+    "[P1] src/auth/tokens.py:31 - token lifetime is 24 hours; make it one hour"
    ],
    "disputed": [
-    "[P1] src/auth/tokens.py:31 - token lifetime is 24 hours"
+    "[P1] src/auth/tokens.py:31 - token lifetime is 24 hours; make it one hour"
    ],
    "split": "calibration",
    "review": "r5"
@@ -3152,7 +3170,7 @@
    "label": "context",
    "round": 1,
    "findings": [
-    "[P2] src/api/errors.py:12 - this error body does not follow the agreed error format"
+    "[P2] src/api/errors.py:12 - this error body does not follow the documented error format"
    ],
    "disputed": [],
    "split": "calibration",
@@ -3164,7 +3182,7 @@
    "label": "fix",
    "round": 1,
    "findings": [
-    "[P1] src/api/parse.py:33 - a missing Content-Type raises KeyError; use headers.get()"
+    "[P1] src/api/parse.py:33 - a missing Content-Type raises KeyError"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3200,7 +3218,7 @@
    "label": "fix",
    "round": 1,
    "findings": [
-    "[P1] src/orders/validate.py:19 - `if qty < 0 or qty > MAX` lets qty == 0 through, but the comment above says zero is invalid"
+    "[P1] src/orders/validate.py:19 - `if qty < 0 or qty > MAX` lets qty == 0 through, but the comment above states the rule that zero is invalid"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3212,7 +3230,7 @@
    "label": "fix",
    "round": 2,
    "findings": [
-    "[P1] src/dedupe.py:11 - `seen` is a list, so each lookup is linear and the job is quadratic on 10^6 ids; make it a set"
+    "[P1] src/dedupe.py:11 - `seen` is a list, so each lookup is linear and the job is quadratic on 10^6 ids"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3236,7 +3254,7 @@
    "label": "fix",
    "round": 1,
    "findings": [
-    "[P2] src/money.py:40 - `== None`; use `is None`"
+    "[P2] src/money.py:40 - the None check is written `== None`"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3320,7 +3338,7 @@
    "label": "fix",
    "round": 1,
    "findings": [
-    "[P1] src/hooks/sender.py:70 - the response body is read after the connection is returned to the pool"
+    "[P1] src/hooks/sender.py:70 - the response body is read after the connection is returned to the shared pool"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3404,7 +3422,7 @@
    "label": "fix",
    "round": 2,
    "findings": [
-    "[P1] src/auth/hashing.py:40 - passwords are compared with ==; use hmac.compare_digest()"
+    "[P1] src/auth/hashing.py:40 - passwords are compared with ==, which leaks timing"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3416,7 +3434,7 @@
    "label": "fix",
    "round": 1,
    "findings": [
-    "[P1] src/search/rank.py:66 - scores are sorted ascending, so the worst match comes first; pass reverse=True"
+    "[P1] src/search/rank.py:66 - scores are sorted ascending, so the worst match comes first"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3440,7 +3458,7 @@
    "label": "fix",
    "round": 2,
    "findings": [
-    "[P1] src/media/thumbnails.py:18 - the opened image is never closed; use `with Image.open(...)`"
+    "[P1] src/media/thumbnails.py:18 - the opened image is never closed"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3452,7 +3470,7 @@
    "label": "fix",
    "round": 1,
    "findings": [
-    "[P1] src/digest/schedule.py:12 - the next run is computed from datetime.now() without a time zone while the stored time is aware; comparing them raises TypeError"
+    "[P1] src/digest/schedule.py:12 - the next run is computed from datetime.now() without a time zone while the stored time we compare it with is aware; comparing them raises TypeError"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3464,7 +3482,7 @@
    "label": "fix",
    "round": 1,
    "findings": [
-    "[P2] src/payments/worker.py:9 - the constant RETRY_LIMT is misspelt and shadows nothing; rename it RETRY_LIMIT"
+    "[P2] src/payments/worker.py:9 - the constant RETRY_LIMT is misspelt and shadows nothing"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3488,7 +3506,7 @@
    "label": "context",
    "round": 1,
    "findings": [
-    "[P1] src/api/orders.py:52 - the list endpoint pages with offset and limit, not the pagination the rest of the API uses"
+    "[P1] src/api/orders.py:52 - the list endpoint pages with offset and limit, not the pagination the rest of the API uses; switch it over"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3524,7 +3542,7 @@
    "label": "context",
    "round": 1,
    "findings": [
-    "[P1] src/api/profiles.py:30 - the endpoint returns the email address, which the privacy decision keeps out of public responses"
+    "[P1] src/api/profiles.py:30 - the endpoint returns the email address, which the privacy decision keeps out of public responses; drop it"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3564,7 +3582,7 @@
    "label": "context",
    "round": 1,
    "findings": [
-    "[P2] src/worker/metrics.py:15 - the metric name does not follow the naming convention"
+    "[P2] src/worker/metrics.py:15 - the metric name does not follow the metrics naming scheme"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3614,7 +3632,7 @@
    "label": "context",
    "round": 1,
    "findings": [
-    "[P1] src/api/attachments.py:12 - the upload limit is 100 MB, above what the platform allows"
+    "[P1] src/api/attachments.py:12 - the upload limit is 100 MB, above what the platform allows; lower it to that limit"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3640,7 +3658,7 @@
    "label": "context",
    "round": 1,
    "findings": [
-    "[P2] src/export/api.py:8 - the route is not versioned the way the other public routes are"
+    "[P2] src/export/api.py:8 - the route is not versioned the way every other public route is"
    ],
    "disputed": [],
    "split": "held_out",
@@ -3714,10 +3732,10 @@
    "label": "context",
    "round": 3,
    "findings": [
-    "[P1] src/search/rank.py:70 - ties are broken by insertion order"
+    "[P1] src/search/rank.py:70 - ties are broken by insertion order; break them by id"
    ],
    "disputed": [
-    "[P1] src/search/rank.py:70 - ties are broken by insertion order"
+    "[P1] src/search/rank.py:70 - ties are broken by insertion order; break them by id"
    ],
    "split": "held_out",
    "review": "r5"
@@ -3740,10 +3758,10 @@
    "label": "context",
    "round": 2,
    "findings": [
-    "[P1] src/mailer.py:80 - a failed send is retried forever"
+    "[P1] src/mailer.py:80 - a failed send is retried forever; cap it at five attempts"
    ],
    "disputed": [
-    "[P1] src/mailer.py:80 - a failed send is retried forever"
+    "[P1] src/mailer.py:80 - a failed send is retried forever; cap it at five attempts"
    ],
    "split": "held_out",
    "review": "r5"
@@ -3790,7 +3808,7 @@
    "label": "context",
    "round": 1,
    "findings": [
-    "[P1] src/api/billing.py:64 - the 400 body is a bare string, not the error shape the API guidelines set"
+    "[P1] src/api/billing.py:64 - the 400 body is a bare string; it should take the error shape the API guidelines set"
    ],
    "disputed": [],
    "split": "held_out",
