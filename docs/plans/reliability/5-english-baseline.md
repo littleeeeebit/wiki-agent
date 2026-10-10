@@ -698,9 +698,10 @@ no acceptance interval.
    step 3 and gives PR 9 its English baseline; a failure gets a diagnosis and
    a next version, never an edited gate.
 
-### Drafted, not frozen
+### Frozen, not run
 
-`eval/jev/reliability-v5/`, review r5 pending; `tool/test_reliability_v5.py`
+`eval/jev/reliability-v5/`, frozen 2026-10-10 after review r5 (two full-set
+rounds by gpt-6.1-sol; the second found nothing); `tool/test_reliability_v5.py`
 holds the counts below.
 - `intents.json`: v4's 72 calibration intents verbatim, v4's corpus whole,
   and 132 held-out intents with 132 pages only they name. The families are
@@ -717,6 +718,14 @@ topics whose facts an existing page already stated, or contradicted, were
 replaced. One near miss is kept on purpose: `repo/docs/release.md` names CLI
 build targets, which do not answer the missing intent about build agents.
 
+Round 1 of the label review found that work-start file locators gave every
+label away (`:1` only on evidence fixtures), so locators, goal paths and
+choosing verbs were spread over both labels, and review-fix remedies and
+rule-sounding words over theirs. No single surface rule now predicts more
+than 25 of 44 work-start or 38 of 66 review-fix labels, except "disputed",
+which means context by the decision prompt itself. Every bridge target shares
+no content word with its query, and graph-off retrieval misses all six.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -724,7 +733,7 @@ build targets, which do not answer the missing intent about build agents.
 | 1 | Freeze | Freeze new English labels, versions and gates | Done |
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
-| 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — fixtures, intents and gates drafted; label review next |
+| 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — fixtures, intents and gates frozen after label review r5; calibration and held-out runs next |
 
 ## Sources
 

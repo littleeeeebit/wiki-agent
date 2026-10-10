@@ -2,18 +2,18 @@
  "schema": "jev-action-fixtures/1",
  "id": "reliability-actions-v5",
  "version": 5,
- "frozen": null,
+ "frozen": "2026-10-10",
  "description": "Reliability PR 5's fifth action set (docs/plans/reliability/5-english-baseline.md, v5): fixtures written fresh, without reference to earlier sets, so each rate gate can decide with one miss. Per point 12 calibration and 54 held out (specs.check 55: 11 per label), labels balanced. Labels mean what they mean in the first set.",
  "labels": {
   "author": "model-drafted (claude-opus-5-5, reliability PR 5)",
-  "reviewed_by": null,
-  "reviewed_at": null,
+  "reviewed_by": "gpt-6.1-sol",
+  "reviewed_at": "2026-10-10",
   "reviews": {
    "r5": {
     "kind": "model",
     "by": "gpt-6.1-sol",
-    "at": null,
-    "note": "Draft: label review pending, at the repository owner's direction."
+    "at": "2026-10-10",
+    "note": "The fresh held-out half, the pages only it names and the fresh action fixtures, a model review at the repository owner's direction: two full-set rounds by gpt-6.1-sol before any v5 held-out run (round 1: work-start file locators that gave the label away, a status-code rule that contradicted the input-validation rule replaced, a meeting that contradicted the written stand-up decision, an ambiguous connection count, an unsupported first-step reference replaced, two bridge targets that shared words with their queries; the remaining work-start and review-fix surface cues broken with them; round 2: nothing found). Approved inputs: intents 45d2814a, actions f7db1f43."
    }
   }
  },

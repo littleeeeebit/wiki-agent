@@ -2,12 +2,12 @@
  "schema": "jev-reliability-intents/1",
  "id": "reliability-intents-v5",
  "version": 5,
- "frozen": null,
+ "frozen": "2026-10-10",
  "description": "Reliability PR 5's fifth English set (docs/plans/reliability/5-english-baseline.md, v5): the 72 calibration intents of `eval/jev/reliability/intents.json` verbatim (review r1), and 132 held-out intents written fresh (review r5) over v4's corpus plus pages only they name. The held-out half is sized for per-class routing gates: at least 54 analysis and 54 fact intents, and among them at least 54 with a material segment and 54 of two or more segments, all requests. No earlier page is edited. Fields mean what they mean in the first set.",
  "labels": {
   "author": "model-drafted (claude-opus-5-5, reliability PR 5)",
-  "reviewed_by": null,
-  "reviewed_at": null,
+  "reviewed_by": "gpt-6.1-sol",
+  "reviewed_at": "2026-10-10",
   "reviews": {
    "r1": {
     "kind": "model",
@@ -18,8 +18,8 @@
    "r5": {
     "kind": "model",
     "by": "gpt-6.1-sol",
-    "at": null,
-    "note": "Draft: label review pending, at the repository owner's direction."
+    "at": "2026-10-10",
+    "note": "The fresh held-out half, the pages only it names and the fresh action fixtures, a model review at the repository owner's direction: two full-set rounds by gpt-6.1-sol before any v5 held-out run (round 1: work-start file locators that gave the label away, a status-code rule that contradicted the input-validation rule replaced, a meeting that contradicted the written stand-up decision, an ambiguous connection count, an unsupported first-step reference replaced, two bridge targets that shared words with their queries; the remaining work-start and review-fix surface cues broken with them; round 2: nothing found). Approved inputs: intents 45d2814a, actions f7db1f43."
    }
   }
  },
