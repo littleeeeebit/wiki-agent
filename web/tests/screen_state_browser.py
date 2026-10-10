@@ -6,6 +6,7 @@ Serves web/dist with the synthetic fixture and stubs the Tauri IPC, counting
 `pty_open`/`pty_close`; never opens a user's app or a real shell.
 """
 
+import asyncio
 import sys
 
 from fastapi import FastAPI, Request
@@ -56,6 +57,15 @@ def run_retry(page):
     page.get_by_text("결과", exact=True).first.wait_for()
 
 
+def run_unmount(page, asked):
+    # A reply still on its way when the view goes must not start the polling again.
+    page.get_by_text("근거와 판단 보기").nth(1).click()
+    page.wait_for_timeout(300)
+    page.get_by_role("navigation", name="초점").get_by_role("button", name="다음 작업").click()
+    page.wait_for_timeout(4500)
+    assert asked.count("knowledge/runs/run-y") == 1, f"an unmounted view kept polling: {asked}"
+
+
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     fake, asked = FastAPI(), []
@@ -67,8 +77,13 @@ def main():
             if len(asked) == 1:
                 return JSONResponse({"detail": "transient"}, status_code=500)
             return {"schema_version": 1, "run_id": "run-x", "done": True, "outcome": "answered", "notes": []}
+        if path == "knowledge/runs/run-y":
+            asked.append(path)
+            await asyncio.sleep(1)
+            return {"schema_version": 1, "run_id": "run-y", "done": False, "notes": []}
         if path.startswith("log/"):
-            return [{"role": "assistant", "text": "Synthetic answer with a run.", "ts": 1, "run_id": "run-x"}]
+            return [{"role": "assistant", "text": "Synthetic answer with a run.", "ts": 1, "run_id": "run-x"},
+                    {"role": "assistant", "text": "An answer still being explained.", "ts": 2, "run_id": "run-y"}]
         return {"local": True} if path == "mobile/status" else fixture(path, request.method)
 
     fake.mount("/", StaticFiles(directory=ROOT / "web/dist", html=True))
@@ -78,11 +93,13 @@ def main():
         page = page_of(browser, errors, viewport={"width": 1440, "height": 900})
         page.goto(f"http://127.0.0.1:{port}")
         run_retry(page)
-        assert len(asked) == 2, asked
+        assert asked == ["knowledge/runs/run-x"] * 2, asked
+        run_unmount(page, asked)
         terminal_theme(page)
         browser.close()
     assert not errors, errors
-    print("PASS: run details recover after a failure; a theme change keeps the shell and repaints it")
+    print("PASS: run details recover after a failure and stop asking once gone; "
+          "a theme change keeps the shell and repaints it")
 
 
 if __name__ == "__main__":

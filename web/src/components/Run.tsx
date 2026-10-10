@@ -48,8 +48,12 @@ export function RunDetails({ runId, onPeek, onMapRun }: {
   const [fault, setFault] = useState('')
   const asked = useRef(false)
   const timer = useRef(0)
-  // Leaving the view stops the asking.
-  useEffect(() => () => window.clearTimeout(timer.current), [])
+  const gone = useRef(false)
+  // Leaving the view stops the asking, a reply still on its way included.
+  useEffect(() => {
+    gone.current = false
+    return () => { gone.current = true; window.clearTimeout(timer.current) }
+  }, [])
   // The answer is out before the run ends (the plain explanation is still
   // being written), so a run not done yet is asked again until it is.
   const load = () => {
@@ -57,8 +61,10 @@ export function RunDetails({ runId, onPeek, onMapRun }: {
     asked.current = true
     setFault('')
     const once = () => api.getRun(runId)
-      .then((r) => (r.done && r.outcome ? setRun(r) : void (timer.current = window.setTimeout(once, 1500))))
+      .then((r) => gone.current ? undefined
+        : r.done && r.outcome ? setRun(r) : void (timer.current = window.setTimeout(once, 1500)))
       .catch((err) => {
+        if (gone.current) return
         asked.current = false   // a failure is not final: opening it again asks again
         setFault(String(err instanceof Error ? err.message : err))
       })
