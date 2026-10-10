@@ -198,7 +198,9 @@ def worktrees(repo: Path, *, details: bool = True) -> list[dict]:
     rows, row = [], {}
     for line in [*_git(repo, "worktree", "list", "--porcelain").stdout.splitlines(), ""]:
         if line.startswith("worktree "):
-            row = {"path": Path(line[9:]).resolve(), "branch": ""}
+            row = {"path": Path(line[9:]).resolve(), "branch": "", "head": ""}
+        elif line.startswith("HEAD "):
+            row["head"] = line[5:]
         elif line.startswith("branch "):
             row["branch"] = line[7:].removeprefix("refs/heads/")
         elif not line and row:
@@ -242,7 +244,13 @@ def remove(repo: Path, path: Path, force: bool = False, *, keep_branch: bool = F
         return "작업트리를 지웠다" + left
     if not row["merged"]:
         return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 머지되지 않아 남겼다" + left
-    done = _git(repo, "branch", "-D", row["branch"])
+    # Only the commit `merged` judged, and never a branch a checkout stands on
+    # now: `update-ref` skips the refusal `branch -D` makes for that.
+    trees = _git(repo, "worktree", "list", "--porcelain")
+    if trees.returncode or f"branch refs/heads/{row['branch']}" in trees.stdout.splitlines():
+        return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 다른 체크아웃이 쓰고 있어 남겼다" + left
+    done = _git(repo, "update-ref", "-d", f"refs/heads/{row['branch']}", row["head"])
     if done.returncode:
-        return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 지우지 못했다: {done.stderr.strip()}" + left
+        return f"작업트리를 지웠다. 브랜치 {row['branch']} 는 확인 뒤 바뀌어 남겼다" + left
+    _git(repo, "config", "--remove-section", f"branch.{row['branch']}")
     return f"작업트리와 브랜치 {row['branch']} 를 지웠다" + left

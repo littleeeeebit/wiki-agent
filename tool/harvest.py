@@ -101,9 +101,18 @@ def prs(repo: Path, limit: int) -> list[dict]:
         return []
 
 
-def section(body: str, name: str) -> str:
-    hit = re.search(rf"^##+\s*{name}\s*$(.*?)(?=^##\s|\Z)", body, re.M | re.S)
-    return hit.group(1).strip() if hit else ""
+# Headings that name a reason, and headings that report the checks run.
+WHY_HEADING = re.compile(r"이유|근거|원인|배경|문제|왜|\b(why|motivation|rationale|reasons?|background|causes?|"
+                         r"problems?)\b", re.I)
+CHECK_HEADING = re.compile(r"검증|확인|테스트|리뷰|검토|\b(tests?|test plan|verification|verified|evidence|"
+                           r"reviews?|checks?)\b", re.I)
+
+
+def sections(body: str) -> list[tuple[str, str]]:
+    """`(heading, text)` for each `##` section, in order; deeper headings stay in their text."""
+
+    parts = re.split(r"^##(?!#)[ \t]*(.+?)[ \t]*$", body, flags=re.M)
+    return [(parts[i], parts[i + 1].strip()) for i in range(1, len(parts) - 1, 2)]
 
 
 def _prose(block: str) -> str:
@@ -193,23 +202,29 @@ def record(pr: dict, deadline: float) -> tuple[str, str]:
     # the whole body. The record for PR #95 came out exactly like that.
     body = str(pr.get("body") or "").replace("\r\n", "\n").replace("\r", "\n")
 
-    what = squeeze(section(body, "변경 요약"), MAX_WHAT)
-    why = squeeze(section(body, "변경 이유"), MAX_WHY)
-    if not (what or why):
-        # A commit message with no section headings. The first paragraph is
-        # the what and the rest is the why.
-        #
-        # A heading line is not material. Almost every PR body in these
-        # repositories opens with a markdown heading, so taking the first
-        # block as it stands makes the record read `무엇. ## 결론`. Records
-        # 131 to 135 on 2026-09-10 all went out that way. Only the heading
-        # *line* is stripped rather than the block, because with no blank line
-        # between heading and body the two are one block and dropping it would
-        # take the body with it.
-        blocks = [_prose(b) for b in body.split("\n\n")]
-        blocks = [b for b in blocks if b]
-        what = squeeze(blocks[0], MAX_WHAT) if blocks else ""
-        why = squeeze(" ".join(blocks[1:]), MAX_WHY) if len(blocks) > 1 else ""
+    # PR bodies here head their sections a dozen ways (`변경 요약`, `배경`,
+    # `원인과 변경`, `Summary`, ...). A reason comes only from a heading that
+    # names one; a heading that reports checks run is never the reason.
+    found = sections(body)
+    told = [text for head, text in found if not CHECK_HEADING.search(head) and not WHY_HEADING.search(head)]
+    why = squeeze(" ".join(text for head, text in found
+                           if WHY_HEADING.search(head) and not CHECK_HEADING.search(head)), MAX_WHY)
+    # The what is the first paragraph of the first section that tells what
+    # changed, else of the body.
+    #
+    # A heading line is not material. Almost every PR body in these
+    # repositories opens with a markdown heading, so taking the first
+    # block as it stands makes the record read `무엇. ## 결론`. Records
+    # 131 to 135 on 2026-09-10 all went out that way. Only the heading
+    # *line* is stripped rather than the block, because with no blank line
+    # between heading and body the two are one block and dropping it would
+    # take the body with it.
+    blocks = [b for b in map(_prose, (told[0] if told else body).split("\n\n")) if b]
+    what = squeeze(blocks[0], MAX_WHAT) if blocks else ""
+    if not found and not branch and len(blocks) > 1:
+        # A commit message with no headings: the rest is the why, by
+        # convention. A PR body's rest is as often its test plan.
+        why = squeeze(" ".join(blocks[1:]), MAX_WHY)
     domain, trig = triggers_for(title, branch or title)
     title, what, why = translate.translate([title, what, why], translate.KO_EN, deadline)
 

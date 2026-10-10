@@ -647,10 +647,13 @@ class ChatSession:
             self._send(reply(True))
             return Event("approval", text, {"id": key, "tool": tool, "input": args, "answer": "allow",
                                             "by": "session"})
+        # The app's id, not the CLI's: Codex renumbers per process, so a stale card would answer a new question.
+        request, key = key, uuid.uuid4().hex
         self._pending[key] = (self._proc, reply, rule)
         if tool in QUESTIONS:
             self._asks[key] = len(args.get("questions") or [])
-        return Event("approval", text, {"id": key, "tool": tool, "input": args, "session": rule is not None})
+        return Event("approval", text, {"id": key, "request": request, "tool": tool, "input": args,
+                                        "session": rule is not None})
 
     def _codex_asks(self, rid, method: str, params: dict) -> Event | None:
         """A request from `app-server`. Two kinds are approvals; the rest are

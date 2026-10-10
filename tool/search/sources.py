@@ -91,11 +91,11 @@ def listing(hub: Path, project: Path | None) -> list[Path]:
                                  for part in p.relative_to(project).parts[:-1]))
     # Decisions (`harvest`), module pages (`main.survey`) and the memories a
     # cleared conversation left (`main.memory`): often git-ignored, so the
-    # listing above can miss them. Not the memories' transcripts.
+    # listing above can miss them. Never their transcripts, which git lists too where `.wiki/` is not ignored.
     for folder in ("decisions", "modules", "memory"):
-        mine += [p for p in sorted((project / ".wiki" / folder).glob("*.md")) if not p.name.endswith(".raw.md")]
+        mine += sorted((project / ".wiki" / folder).glob("*.md"))
     seen = {p.resolve() for p in files}
-    candidates = files + [p for p in dict.fromkeys(mine) if p.resolve() not in seen]
+    candidates = files + [p for p in dict.fromkeys(mine) if p.resolve() not in seen and not p.resolve().name.endswith(".raw.md")]
     private = (hub / "raw" / "improvement").resolve()
     selected = project.resolve()
     # A Git outage must not make another project's experimental checkout

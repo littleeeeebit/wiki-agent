@@ -110,6 +110,17 @@ def test_ignored_decisions_modules_and_memories_are_listed_but_not_transcripts(r
     index.close()
 
 
+def test_a_transcript_git_lists_is_still_left_out(repo):
+    """Where `.wiki/` is tracked, `git ls-files` names the transcript itself."""
+
+    hub, path = repo
+    (path / ".gitignore").write_text("", encoding="utf-8")
+    git(path, "add", "-f", ".")
+    git(path, "commit", "-q", "-m", "track the wiki")
+    assert ".wiki/memory/login.raw.md" in git(path, "ls-files")
+    assert not [p for p in sources.listing(hub, path) if p.name.endswith(".raw.md")]
+
+
 def test_the_listing_git_opens_no_window_and_is_otherwise_unchanged(repo, monkeypatch):
     # The detached daemon has no console; this `git`, run from it while
     # indexing, opened a Windows Terminal window (reliability PR 1 capture).

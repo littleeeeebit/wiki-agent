@@ -154,8 +154,9 @@ def test_claude_write_asks_and_the_answer_reaches_it(tree):
     assert command[command.index("--permission-mode") + 1] == "default"
     approvals = [e for e in events if e.kind == "approval"]
     # the second is outside the worktree: refused unasked, and on record as such
-    assert [(e.meta["id"], e.meta["tool"], e.meta.get("by")) for e in approvals] == [
-        ("r1", "Write", None), ("r2", "Edit", "outside")]
+    # A person answers the app's id; one answered unasked keeps the CLI's.
+    assert [(e.meta["id"] in ("r1", "r2"), e.meta["tool"], e.meta.get("by")) for e in approvals] == [
+        (False, "Write", None), (True, "Edit", "outside")]
     assert approvals[1].meta["answer"] == "deny"
     assert events[-1].kind == "done" and events[-1].text == "allow,deny"
     assert {(e.session_id, e.parent_id) for e in events} == {(session.id, "coordinator")}
@@ -174,8 +175,8 @@ def test_codex_write_runs_app_server_and_answers_by_id(tree):
     assert command[:4] == ["codex", "app-server", "--enable", "default_mode_request_user_input"]
     approvals = [e for e in events if e.kind == "approval"]
     # the command ran in a cwd outside the worktree: declined unasked
-    assert [(e.meta["id"], e.meta["tool"], e.meta.get("by")) for e in approvals] == [
-        ("100", "fileChange", None), ("101", "command", "outside")]
+    assert [(e.meta["id"] in ("100", "101"), e.meta["tool"], e.meta.get("by")) for e in approvals] == [
+        (False, "fileChange", None), (True, "command", "outside")]
     assert events[-1].kind == "done" and events[-1].text == "accept,decline,True"
     assert events[-1].meta["session_id"] == "th-1"
 
@@ -189,6 +190,21 @@ def test_writes_open_in_repository_roots_and_refuse_non_repositories(tree, tmp_p
         ChatSession(path)  # reading there is fine
     with pytest.raises(ValueError):
         ChatSession(tmp_path, write=True)
+
+
+def test_a_card_from_before_a_restart_cannot_answer_the_next_question(tree):
+    """Codex numbers requests afresh per process: request 0 before and after a restart are two questions."""
+
+    session = ChatSession(tree, write=True)
+    sent = []
+    session._proc = type("Proc", (), {"stdin": type("In", (), {"write": sent.append, "flush": lambda s: None})()})()
+    ask = lambda tag: session._approval("0", lambda allow, answers=(): {"to": tag}, "command",  # noqa: E731
+                                        {"command": tag}, tag, "")
+    old = ask("old").meta["id"]
+    session._pending.clear()   # what `close` does on a restart
+    new = ask("new").meta["id"]
+    assert old != new and not session.answer(old, True)
+    assert session.answer(new, True) and json.loads(sent[-1]) == {"to": "new"}
 
 
 def test_a_late_answer_never_reaches_the_next_process(tree):
@@ -291,8 +307,8 @@ def test_allowed_for_the_session_is_asked_no_more(tree):
     asked = []
 
     def answer(event):
-        asked.append(event.meta["id"])
-        allow, scope = choices[event.meta["id"]]
+        asked.append(event.meta["request"])
+        allow, scope = choices[event.meta["request"]]
         assert session.answer(event.meta["id"], allow, scope)
 
     _, events = run(session, CLAUDE_ASKS, tree, answer)
@@ -313,7 +329,7 @@ def test_a_codex_command_is_allowed_only_in_the_same_cwd(tree):
     asked = []
 
     def answer(event):
-        asked.append(event.meta["id"])
+        asked.append(event.meta["request"])
         assert session.answer(event.meta["id"], True, "session")
 
     _, events = run(session, CODEX_ASKS, tree, answer)

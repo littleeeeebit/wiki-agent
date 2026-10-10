@@ -216,7 +216,7 @@ def test_full_access_answers_execution_permissions_but_preserves_product_questio
         question = chat._codex_asks(3, "item/tool/requestUserInput",
                                    {"questions": [{"id": "choice", "question": "Which output?"}]})
         assert question.kind == "approval" and "answer" not in question.meta
-        assert "3" in chat._pending
+        assert question.meta["request"] == "3" and question.meta["id"] in chat._pending
 
 
 def test_branch_switches_wait_for_review_and_survey_but_restart_releases_survey(repo):

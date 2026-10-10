@@ -303,8 +303,10 @@ One window, four areas: the project and its worktrees on the left, the wiki
 query in the middle, the selected worktree's agent and a shell in it on the
 right. "→ 작업" under an answer puts a draft instruction — the question, the
 answer, what it cited, the rules it matched — in the agent's box; the person
-writes the last line. The agent writes only inside a worktree, and every write
-waits on the screen for 허용 or 거절. The Korean translation switch is one for
+writes the last line. Implementation sessions run with full access on a task
+branch in the selected checkout — no write waits for 허용; only the agent's
+questions about the intended result wait for an answer
+([details](docs/development.md)). The Korean translation switch is one for
 the whole app, and off means no request leaves.
 
 Choose the project, the model and the reasoning effort. The chosen CLI has to
@@ -354,20 +356,21 @@ The project is shared by all three focuses of the query — next task, wiki and
 retrospect — and by the worktree list. The next-task focus gathers
 the open plan rows, open pull requests, recent decisions and lint warnings
 into candidates, asks back with options, and ends in a task spec card; its
-[시작] makes a worktree whose session gets the spec as its system prompt, and
+[시작] switches the checkout to a new task branch (`git switch -c`, no new
+worktree) whose session gets the spec as its system prompt, and
 the server opens the pull request only after the gate passes again there.
 
 Review is not a focus any more; it is a loop. Once a spec's pull request is up
 (and its plan-row commit pushed, when it has one), a read-only review cell in
-that worktree — Codex's default model at effort `high` unless the rail's
+that checkout — Codex's default model at effort `high` unless the rail's
 settings say otherwise — reviews it round by round, in the format of
 `operator/codex-review-loop`. A refusal goes to the work cell as one turn; the
-server runs the gate and pushes, and the next round follows. Writes still wait
-for 허용. The loop ends at `머지 가능`, where the review tab's [머지] squashes
+server runs the gate and pushes, and the next round follows. The loop ends at
+`머지 가능`, where the review tab's [머지] squashes
 the pull request bound to the head the review allowed; after it lands, the
 server comments the P2 worth keeping, fast-forwards the original checkout only
-when it stands clean on the base, and removes the worktree, its branch and the
-remote branch. Otherwise a loop stops only for a reason in the stage 4 plan's
+when it stands clean on the base, and deletes the task branch (only at the
+head the review allowed; a linked worktree goes with it) and the remote branch. Otherwise a loop stops only for a reason in the stage 4 plan's
 table, and [계속] takes it on. "리뷰 루프 (N)" on the rail takes pull requests
 opened without a spec, and stopped loops. Round files live in the hub under
 `raw/review/<repo>/<pr>/`. A loop carries its repository, so switching projects
@@ -389,7 +392,7 @@ model and effort validation. `tool/test_specs.py` confirms the next-task
 focus: a spec with an empty goal is refused, the gate stays the first done item
 and an adapter is required; slugs are tidied and a taken one gets a number; a
 save from a stale card is refused; blocks leave the answer and a broken one is
-an error; [시작 ▸] makes the worktree first; the work session gets the spec as
+an error; [시작 ▸] prepares the task branch first; the work session gets the spec as
 its system prompt; a passing report is not believed over a failing gate; a
 passing gate opens the pull request and the plan row follows; the PR body has
 the sections harvest reads; and a result line is shown once. `tool/test_loop.py`
@@ -429,7 +432,7 @@ through to its decision record:
 3. Edit one line under "완료 조건 — 한 줄에 하나", press "저장", then press
    "시작 ▸".
 4. The work session works to the spec and ends with a `done-report`; the
-   server runs the gate again in the worktree.
+   server runs the gate again on the task branch.
 5. The pull request goes up with its `## 변경 이유` section holding the spec's
    decisions, and its result line appears in the conversation.
 6. If the spec came from a plan row, the commit that sets that row to
