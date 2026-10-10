@@ -538,11 +538,12 @@ take the 95% Wilson interval; routing counts each intent once over B and D.
 | Review-fix choice | 0.90 | 0.944 [0.849, 0.981], n=54 | inconclusive |
 
 The misses, each in both arms unless named:
-- Fact specificity, 8 of 72 routed as analysis: the six facts phrased as
-  advice (analysis-85 to 90, among them "What should I do if I accidentally
-  commit an API key?"), and pasted-40, start-33, start-35 and fix-31, each a
-  lookup asked as "how should I" or "which should". This is v3's and v4's
-  family again, now enough cases to fail the gate's margin.
+- Fact specificity, 8 of 72 routed as analysis: four of the six facts
+  phrased as advice (analysis-85, 86, 89 and 90, among them "What should I do
+  if I accidentally commit an API key?"; 87 and 88 were routed right), and
+  pasted-40, start-33, start-35 and fix-31, each a lookup asked with "how",
+  "when" or "which" and "should". This is v3's and v4's family again; 72 cases
+  allow two misses, and eight is six past that.
 - Material classification, 2 of 56: analysis-82 ("Board question: …") kept
   the quoted question as a request; none-35 did in B only.
 - Work start, 3 of 54: v5ws25, 27 and 29, dispatch chosen as evidence at
@@ -550,7 +551,8 @@ The misses, each in both arms unless named:
 - Review fix, 3 of 54: v5lf42 and 55, context chosen as fix (the
   configuration the other services read, and the status shape the other
   health checks report), and v5lf60, a disputed finding that proposes a
-  remedy, uncertain at 0.53 and settled by the host as fix.
+  remedy: Jev was uncertain at 0.53, the host fallback settled nothing, and
+  the point's baseline, fix, was taken.
 
 Retrieval, held out (B and D include the six injected-failure intents):
 
@@ -562,15 +564,18 @@ Retrieval, held out (B and D include the six injected-failure intents):
 | D | 132 | 0.850 [0.783, 0.908] | 0.850 | 0.833 | 20.3 | 2.92 |
 
 - Retrieval p95 rose from v4's 5 s to 20 s. Jev left 173 of 425 coverage
-  questions in B, and 172 of 413 in D, uncertain, and the host settled them;
-  on v4's held-out half it was 6 of 75, and on this calibration 4 of 83.
+  questions in B, and 172 of 413 in D, uncertain; the host settled 167 and
+  163 of them, leaving 6 and 9 unresolved. On v4's held-out half it was 6 of
+  75 (arm D), and on this calibration 4 of 83 (arm B).
   Between calibration (bc838d8) and held-out (21dff77) only the grader and
   the session's result capture changed, not retrieval; the questions and
   pages did. Why the fresh pages leave coverage uncertain is not diagnosed.
 - Failure and cancellation: 12 of 12 as expected.
 - Repetition: status the same in 8 of 8 groups; evidence the same, in order,
   in none (B and D), the same first three in 4 (B) and 3 (D), the same set in
-  5 (B) and 4 (D). The differences sit in the last places of the list.
+  5 (B) and 4 (D). The lists hold 8 to 27 items; the first place that
+  differs is the second in two groups of each arm, the third or fourth in
+  most others.
 
 Host spending per batch: calibration retrieval 3.8 min / USD 0.37, actions
 0.6 / 0.09, answers 39.8 / 8.20, answers again 43.0 / 8.58; held-out
@@ -629,8 +634,9 @@ retrieval 28.7 / 6.06 (285 fallback turns), repetition 3.4 / 0.54, actions
   (gpt-6.1-sol), not a human, at the repository owner's direction.
 - Exit on v5: not met. Analysis recall, request-only multipart and check
   choice pass; fact specificity, material classification, work start and
-  review fix are inconclusive, each one to two misses past the margin; answer
-  support and added latency are not measured. Fact specificity's misses are
+  review fix are inconclusive. Their allowances under the Wilson rule are two
+  misses in 72 and one in 56 or 54; they missed 8, 2, 3 and 3, so six, one,
+  two and two past. Answer support and added latency are not measured. Fact specificity's misses are
   the advice-phrased family, the one diagnosis the data now supports. The
   default answer path (#59) is the open question for the answer gates.
 
@@ -649,14 +655,19 @@ hybrid`, `k 8`, the default model and grader. Running the same commands at a
 later commit measures a different manifest. Rebuilding a report from the
 recorded folders works at any commit.
 
-v5, from a clean checkout of 21dff77. Calibration retrieval, actions and the
-first answers ran at bc838d8; the first answers are superseded by the second.
-An `--estimate` writes the folder's manifest, so estimate into a scratch
-folder, or delete the estimate's `run.json` before a run at another commit:
+v5. An `--estimate` writes the folder's manifest, so estimate into a scratch
+folder, or delete the estimate's `run.json` before a run at another commit.
+Calibration retrieval and actions, from a clean checkout of bc838d8 (the
+first calibration answers ran there too, superseded by the second):
 
 ```text
 python tool/eval/compare.py raw/eval/jev/reliability-v5-calibration --dataset eval/jev/reliability-v5/intents.json --split calibration --languages en
 python tool/eval/compare.py raw/eval/jev/reliability-v5-calibration-actions --experiment actions --dataset eval/jev/reliability-v5/intents.json --actions eval/jev/reliability-v5/actions.json --split calibration
+```
+
+The rest, from a clean checkout of 21dff77:
+
+```text
 python tool/eval/compare.py raw/eval/jev/reliability-v5-calibration-answers-2 --dataset eval/jev/reliability-v5/intents.json --split calibration --languages en --arms A D --level answer
 python tool/eval/compare.py raw/eval/jev/reliability-v5-heldout --dataset eval/jev/reliability-v5/intents.json --split held_out --languages en
 python tool/eval/compare.py raw/eval/jev/reliability-v5-repeat --dataset eval/jev/reliability-v5/intents.json --split held_out --languages en --arms B D --repeat 3 --ids analysis-31 analysis-32 analysis-34 pasted-31 pasted-36 route-36 memory-35 conflict-35
