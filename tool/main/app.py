@@ -9,6 +9,7 @@ holds it.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import mimetypes
 import os
@@ -82,11 +83,36 @@ async def lifespan(_: FastAPI):
             poll_stop.set()
             poll_thread.join()
             mobile.companion.stop()
-            loop.close_all()
-            planning.close_all()
-            refactor.close_all()
-            query.close_all()
-            work.close_all()
+            close_turns()
+
+
+def close_turns() -> None:
+    """Every running turn ended and its provider gone. Safe to call again."""
+
+    runtime.stopping.set()
+    loop.close_all()
+    planning.close_all()
+    refactor.close_all()
+    query.close_all()
+    work.close_all()
+
+
+def ended_first(server) -> None:
+    """`server`'s shutdown ends the running turns before it waits for open
+    responses. Providers lead their own process group, so Ctrl+C never reaches
+    them, and a stream waiting on a turn would hold that wait forever. The wait
+    stays unbounded: a merge request in progress finishes while this server
+    still owns the hub."""
+
+    drain = server.shutdown
+
+    async def shutdown(sockets=None):
+        for listener in server.servers:
+            listener.close()
+        await asyncio.to_thread(close_turns)
+        await drain(sockets)
+
+    server.shutdown = shutdown
 
 
 app = FastAPI(title="wiki-agent", lifespan=lifespan)
@@ -547,12 +573,9 @@ def main() -> int:
         )
         return 1
 
-    # Providers lead their own process group, so Ctrl+C never reaches them and an
-    # open event stream would wait on their turn forever; the bounded drain lets
-    # the lifespan cleanup below end them.
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning",
-                                        proxy_headers=False, ws="wsproto", ws_max_size=100_000,
-                                        timeout_graceful_shutdown=5))
+                                        proxy_headers=False, ws="wsproto", ws_max_size=100_000))
+    ended_first(server)
     if args.exit_with_stdin:
         # The pipe is read through a private copy, and fd 0 becomes devnull.
         # On Windows a synchronous read pending on the handle a child would

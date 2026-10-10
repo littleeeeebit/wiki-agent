@@ -335,7 +335,6 @@ def test_fixed_origin_cli_normalizes_browser_origins_and_rejects_invalid_urls(co
             pair(desktop, phone)
             assert phone.get("/api/switch").status_code == 200
         assert server.return_value.run.call_count == len(valid)
-        assert server.call_args.args[0].timeout_graceful_shutdown, "Ctrl+C must reach the lifespan cleanup"
         server.reset_mock()
         for raw in ("https://example.com:bad", "https://example.com:65536", "https://example.com:0",
                     "https://[broken]", "http://example.com", "https://example.com/path",

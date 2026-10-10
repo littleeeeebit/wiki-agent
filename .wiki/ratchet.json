@@ -238,8 +238,8 @@
     },
     "tool/test_runtime.py": {
       "dup": 7,
-      "lines": 102,
-      "reason": "baseline at adoption"
+      "lines": 135,
+      "reason": "A shutdown must end running turns before it waits for their streams (providers lead their own process group, so Ctrl+C reaches none), pinned on a real uvicorn server; the test sits with the ownership-at-shutdown test it complements."
     },
     "tool/test_sessions.py": {
       "dup": 12,

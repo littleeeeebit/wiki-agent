@@ -2,11 +2,14 @@
 
 from pathlib import Path
 import asyncio
+import http.client
+import socket
 import subprocess
 import sys
 import threading
 
 import pytest
+import uvicorn
 
 from main.runtime import server_owner
 from main import app, loop, runtime, specs
@@ -100,3 +103,33 @@ def test_shutdown_keeps_server_ownership_until_its_review_driver_stops(tmp_path,
     assert not owner.is_alive() and not driver.thread.is_alive() and not errors
     with server_owner(specs.SPECS.parent):
         pass
+
+
+def test_a_shutdown_ends_running_turns_before_it_waits_for_their_streams(monkeypatch):
+    # Ctrl+C reaches no provider, which leads its own group; an unbounded drain keeps a merge request owned.
+    ended = threading.Event()
+    monkeypatch.setattr(app, "close_turns", ended.set)
+
+    async def turn_stream(scope, receive, send):
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        while not ended.is_set():
+            await send({"type": "http.response.body", "body": b"data: running\n\n", "more_body": True})
+            await asyncio.sleep(0.05)
+        await send({"type": "http.response.body", "body": b""})
+
+    server, sock = uvicorn.Server(uvicorn.Config(turn_stream, lifespan="off", log_level="error")), socket.socket()
+    sock.bind(("127.0.0.1", 0))
+    app.ended_first(server)
+    thread = threading.Thread(target=server.run, kwargs={"sockets": [sock]}, daemon=True)
+    thread.start()
+    try:
+        client = http.client.HTTPConnection(*sock.getsockname(), timeout=10)
+        client.request("GET", "/")
+        assert client.getresponse().readline().startswith(b"data:")
+        server.should_exit = True
+        thread.join(10)
+        assert ended.is_set() and not thread.is_alive()
+    finally:
+        ended.set()
+        thread.join(10)
+        sock.close()
