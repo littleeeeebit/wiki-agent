@@ -1078,17 +1078,17 @@ def held(path: Path):
     return hold(work._busy, _lock, str(path), "그 작업트리를 다른 요청이 쓰고 있다", kind="turn")
 
 
-def close_all() -> None:
-    """At shutdown: each worker stops its turn — the planner's process goes —
-    and records the stop as a restart, which `[재개]` takes on."""
+def close_all(wait: bool = True) -> list[threading.Thread]:
+    """At shutdown each worker records a restart for `[재개]`; its threads, joined unless `wait` is false."""
 
     with _lock:
         running = list(_workers.values())
     for worker in running:
         worker.cancel("restart")
-    for worker in running:
-        if worker.thread is not None:
-            worker.thread.join()
+    threads = [w.thread for w in running if w.thread is not None]
+    for thread in threads if wait else []:
+        thread.join()
+    return threads
 
 
 def recover() -> None:

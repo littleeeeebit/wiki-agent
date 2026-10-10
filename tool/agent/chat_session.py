@@ -27,6 +27,7 @@ import queue
 import tempfile
 import time
 import uuid
+import weakref
 from collections import deque
 from pathlib import Path
 
@@ -104,6 +105,31 @@ def our_worktree(repo: Path) -> bool:
 def _blocks(message: dict) -> list[dict]:
     content = (message or {}).get("content")
     return content if isinstance(content, list) else []
+
+
+# Every session with a provider running, whoever made it — a one-off explanation
+# belongs to no registry — and whether new providers may start.
+_live: weakref.WeakSet = weakref.WeakSet()
+_live_lock = threading.Lock()
+_ending = False
+
+
+def end_all() -> None:
+    """The server is going down: every provider ends, its turn with an error,
+    and none starts until `reopen`. Providers lead their own process group,
+    so Ctrl+C reaches none of them."""
+
+    global _ending
+    with _live_lock:
+        _ending, live = True, list(_live)
+    for chat in live:
+        chat.end()
+
+
+def reopen() -> None:
+    global _ending
+    with _live_lock:
+        _ending = False
 
 
 class ChatSession:
@@ -362,19 +388,25 @@ class ChatSession:
             cmd, cwd=str(self.repo), env=self._env,
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=subprocess.PIPE, text=True, encoding="utf-8",
-            errors="replace", bufsize=1, creationflags=SUSPENDED,
+            errors="replace", bufsize=1, creationflags=SUSPENDED, start_new_session=os.name != "nt",
         )
-        # The CLI's background shells outlive it on Windows — even its own
-        # `stop_task` leaves the shell's child running (2.1.291). Whatever
-        # ends this process ends them through the job (`stop`, `close`).
-        # Started suspended, so nothing it starts escapes the job.
-        # ponytail: Windows only; elsewhere the CLI's exit is trusted. Start
-        # it in its own session and `killpg` if orphans show up there.
+        # The CLI's background shells outlive it — even its own `stop_task`
+        # leaves the shell's child running (2.1.291). Whatever ends this
+        # process ends them through the job, or elsewhere its process group
+        # (`stop`, `close`). Started suspended, so nothing escapes the job.
         job = contained(proc)
         # Published as a pair under `_halting`, which `stop` holds while it
         # uses the job: a closed handle's number goes to the next job made.
         with self._halting:
             self._proc, self._job = proc, job
+        # Registered after the process exists: `end_all` either lists it or was first and refuses it.
+        with _live_lock:
+            refused = _ending
+            if not refused:
+                _live.add(self)
+        if refused:
+            self.close()
+            raise OSError("서버가 꺼지는 중이라 새 세션을 시작하지 않는다")
         try:
             resumed(self._proc)
         except OSError:
@@ -744,13 +776,22 @@ class ChatSession:
         """
 
         with self._halting:
-            proc = self._proc if self._halt is halt else None
-            if proc is not None:
-                # Its whole tree: a background child holding the stdout pipe
-                # would otherwise keep the turn waiting after the stop.
-                killed(self._job)
-                if proc.poll() is None:
-                    proc.kill()
+            if self._halt is halt:
+                self._kill()
+
+    def end(self) -> None:
+        """Whatever turn is running ends, from another thread (`end_all`)."""
+
+        with self._halting:
+            self._kill()
+
+    def _kill(self) -> None:
+        if self._proc is not None:
+            # Its whole tree: a background child holding the stdout pipe
+            # would otherwise keep the turn waiting after the stop.
+            killed(self._job)
+            if self._proc.poll() is None:
+                self._proc.kill()
 
     def close(self) -> None:
         # Taken from `stop` under its lock: once here, no stop still holds

@@ -921,6 +921,32 @@ def test_a_stop_ends_a_turn_waiting_on_a_child_that_holds_the_pipe(tree):
             session.close()
 
 
+def test_a_server_going_down_ends_every_provider_and_starts_none_until_reopened(tree):
+    # A one-off explanation's session belongs to no registry, and Ctrl+C reaches no provider's group.
+    events, waiting = [], threading.Event()
+    real_popen = subprocess.Popen
+    with patch.object(chat_session.subprocess, "Popen", lambda _, **kw: real_popen(
+            [sys.executable, "-X", "utf8", "-c", HOLDS_PIPE.replace("EXIT", "sys.stdin.read()")], **kw)), \
+         patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+        def consume():
+            for event in chat_session.oneshot("chat-explain.md", {"q": "go"}):
+                events.append(event)
+                if "waiting for" in event.text:
+                    waiting.set()
+
+        turn = threading.Thread(target=consume, daemon=True)
+        turn.start()
+        try:
+            assert waiting.wait(120)
+            chat_session.end_all()
+            turn.join(5)
+            assert not turn.is_alive() and events[-1].kind == "error"
+            with pytest.raises(OSError):
+                list(chat_session.oneshot("chat-explain.md", {"q": "again"}))
+        finally:
+            chat_session.reopen()
+
+
 def test_a_provider_that_exits_while_its_child_holds_the_pipe_ends_the_turn(tree):
     with patch.object(chat_session, "TURN_TIMEOUT", 30):
         started = time.monotonic()
