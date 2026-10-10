@@ -34,3 +34,13 @@ def served(app):
         server.should_exit = True
         thread.join(timeout=5)
         sock.close()
+
+
+def page_of(browser, errors: list, **options):
+    """A page that records uncaught errors in `errors` and never fetches web fonts."""
+
+    page = browser.new_page(**options)
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    for fonts in ("https://fonts.googleapis.com/**", "https://fonts.gstatic.com/**"):
+        page.route(fonts, lambda route: route.abort())
+    return page

@@ -82,7 +82,7 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onS
                 )}
                 {m.cancelled ? <p role="status" className="text-[12.5px] text-muted-foreground">⏹ 멈춤 · 멈춘 질문은 아무것도 싣지 않는다</p>
                   : m.error && <p role="alert" className="text-[12.5px] text-destructive">{m.error}</p>}
-                {!m.pending && m.runId && <RunDetails runId={m.runId} onPeek={(p, l) => onPeek(p, l, m.runId)} onMapRun={onMapRun} />}
+                {!m.pending && m.runId && <RunDetails key={m.runId} runId={m.runId} onPeek={(p, l) => onPeek(p, l, m.runId)} onMapRun={onMapRun} />}
                 {blocks && m.blocks && m.blocks.length > 0 && blocks(m)}
                 {!m.pending && (m.ms != null || m.marked) && (
                   <Foot m={m} onMark={(k) => onMark(i, k)} />
