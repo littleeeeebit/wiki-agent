@@ -1457,20 +1457,31 @@ def test_automatic_dispatch_preserves_a_new_user_stop_and_a_start_failure_can_be
     assert looped(spec["id"])["state"] == "머지 가능"
 
 
-def test_poller_reattaches_an_active_loop_without_a_driver_and_stops_on_shutdown(world):
+@pytest.mark.parametrize("merging", [False, True])
+def test_poller_reattaches_an_active_loop_without_a_driver_and_stops_on_shutdown(world, merging):
     spec = pr_spec(world, "orphaned-review", 7)
     specs.update("proj", spec["id"], state="리뷰 R1")
     Reviewer.replies = [allow]
-    halt = threading.Event()
+    halt, holding, release = threading.Event(), threading.Event(), threading.Event()
+    if merging:
+        # A clicked merge holds `_landing` through its `.omm` analysis; the poller waited
+        # on it at a newer merged spec's cleanup and reattached no loop. Released only after.
+        time.sleep(.01)
+        merged = pr_spec(world, "merged-cleanup", 8)
+        specs.update("proj", merged["id"], state="머지됨", cleanup_complete=False, merge={"base": "main", "commit": ""})
+        threading.Thread(target=lambda: (loop._landing.acquire(), holding.set(), release.wait(INTEGRATION_WAIT),
+                                         loop._landing.release()), daemon=True).start()
+        assert holding.wait(5)
     with patch.object(loop, "POLL", .02):
         thread = threading.Thread(target=loop.poll, args=(halt,), daemon=True)
         thread.start()
         try:
-            waited(lambda: specs.load("proj", spec["id"])["state"] == "머지 가능")
+            waited(lambda: specs.load("proj", spec["id"])["state"] == "머지 가능", 20)
             assert len(Reviewer.made) == 1 and len(Reviewer.made[0].heard) == 1
         finally:
             halt.set()
-            thread.join(2)
+            release.set()
+            thread.join(5)
         assert not thread.is_alive()
         waited(lambda: not loop._loops)
 

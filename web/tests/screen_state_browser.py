@@ -73,10 +73,10 @@ def main():
 
     fake.mount("/", StaticFiles(directory=ROOT / "web/dist", html=True))
     errors = []
-    with served(fake) as base, sync_playwright() as p:
+    with served(fake) as port, sync_playwright() as p:
         browser = p.chromium.launch()
         page = page_of(browser, errors, viewport={"width": 1440, "height": 900})
-        page.goto(base)
+        page.goto(f"http://127.0.0.1:{port}")
         run_retry(page)
         assert len(asked) == 2, asked
         terminal_theme(page)

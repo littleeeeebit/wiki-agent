@@ -333,6 +333,9 @@ deletion across reload, plus file citations and link dispatch using synthetic da
 `python web/tests/screen_state_browser.py` checks that a theme change repaints
 the terminal without reopening its shell (stubbed `pty_open`/`pty_close`) and
 that run details recover from a failed read with 다시 읽기.
+`python web/tests/focus_switch_browser.py` checks that an answer still streaming
+keeps its progress after a switch to another focus and back; the record's
+question row carries the run id, so only a recorded answer of that run replaces it.
 
 Refactoring is a conversation focus immediately after Next Task. Its header
 selects quick cleanup, module restructure or full refactoring. Entry scans the
