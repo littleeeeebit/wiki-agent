@@ -167,6 +167,10 @@ first batch, verified single-turn rows had a median of 14.7 s against A's
 17.18 s between the two v5 runs, so the gap is partly the host's variance,
 but the held-out added-latency gate is at risk.
 
+The owner adopted B on 2026-10-11 with the fourth check unmet, because the
+row fails the same way without B. The held-out answers decide answer support
+and added latency.
+
 ## Sources
 
 - R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
