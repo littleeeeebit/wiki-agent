@@ -635,7 +635,7 @@ With a 95% Wilson interval, the held-out cases a 0.90 lower bound needs:
 | 3 | 84 |
 
 v5 plans for one miss per gate: 54 held-out fixtures per action point and at
-least 54 cases on each side of each routing measurement. Zero misses (35)
+least 54 fresh intents in each routing cohort. Zero misses (35)
 would be cheaper but turns any single slip into an inconclusive stage again.
 
 ### Action fixtures
@@ -659,22 +659,31 @@ and called 2 fact intents analysis. Segment classification is similar: 57 of
 the 66 are one segment that is a request.
 
 v5 judges each class on its own. That changes the gates (gates file version
-5); the owner approved it on 2026-10-10, with one miss allowed per gate:
+5); the owner approved it on 2026-10-10, with one miss allowed per gate.
+Both segment gates score an intent's complete labelled segment vector,
+requests included:
 
-| Gate | Cohort (held-out, `route_expected`) | Target |
+| Gate | Cohort (fresh held-out, `route_expected`) | Target |
 | --- | --- | --- |
 | `analysis_recall` | intents labelled analysis | lower bound ≥ 0.90 |
 | `fact_specificity` | intents labelled fact | lower bound ≥ 0.90 |
 | `material_classification` | intents with at least one material segment | lower bound ≥ 0.90 |
+| `request_classification` | intents of two or more segments, every one a request | lower bound ≥ 0.90 |
 
-Keeping `analysis_routing` and `segment_classification` and only adding cases
-was cheaper and was declined: a gate that a constant answer passes cannot
-show that the router tells the two apart.
+The design's first review added `request_classification`: with only the
+first three, a router could drop the first request of every request-only
+multipart query and still score 1.0 on all of them. Keeping
+`analysis_routing` and `segment_classification` and only adding cases was
+cheaper and was declined: a gate that a constant answer passes cannot show
+that the router tells the two apart.
 
-The intent set is v4's plus fresh held-out intents: at least 54 analysis and 54
-with a material segment, across the existing families, with the pages they
-name. v4's held-out half was revealed but nothing was tuned on it, so it
-stays held out; the fresh cases are labelled before any v5 run.
+Acceptance rests on fresh intents only, across the existing families, with
+the pages they name, labelled before any v5 run: at least 54 analysis and 54
+fact, and among them at least 54 with a material segment and 54 request-only
+multipart, so at least 108. v4's held-out half was revealed, so it cannot carry
+the next generalization claim (see the exit protocol above). It becomes the
+regression set: run beside v5 and reported under v4's gates, but counted in
+no acceptance interval.
 
 ### Process
 
