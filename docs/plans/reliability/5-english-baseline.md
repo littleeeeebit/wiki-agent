@@ -447,6 +447,25 @@ Held-out runs: `reliability-v4-heldout`, `reliability-v4-answers`,
 | Request/material classification | 0.90 | 1.0 | pass |
 | Work start / check / review fix | 0.90 | 1.0 / 1.0 / 1.0 (n=6 each) | pass |
 
+Re-judged 2026-10-10 (external audit, Q1). The table above is as recorded. Its
+rate intervals came from a percentile bootstrap, which collapses to [1, 1] when
+every case succeeds, so six of six passed a 0.90 lower-bound gate. A rate now
+takes a 95% Wilson interval: all-success needs about 35 cases to clear 0.90.
+The same v4 runs, re-reported (`reliability-v4-report-wilson.json`):
+
+| Gate | Wilson interval | Result |
+| --- | --- | --- |
+| Analysis/fact routing | 0.970 [0.896, 0.992], n=66 | inconclusive |
+| Request/material classification | 1.0 [0.945, 1.0] | pass |
+| Work start / check / review fix | 1.0 [0.610, 1.0] (n=6 each) | inconclusive |
+
+Every other gate is unchanged. Under the exit rule above, inconclusive results
+leave the stage open: the action gates need roughly 35 held-out fixtures each,
+and routing a few more cases or a larger margin. The same audit (K2) changed
+the duplicate key to the original text, with only line endings, trailing
+spaces and blank edge lines set aside; arms A and C on v4's held-out half gave identical rows before
+and after (`k2-check-before`, `k2-check-after`).
+
 Retrieval, held out. The n column is as in v2: B and D include the six
 injected-failure intents.
 
@@ -525,9 +544,10 @@ answers were 45.0 / 9.30. Jev's cost has no dated price, as in v2.
 - The action gates rest on six held-out fixtures per point, and the fallback's
   host is the evaluation's default model; a different chat model shifts both
   host-checked answers and latency.
-- Exit: on v4 every mandatory gate passes, on labels reviewed before the
-  held-out run and with the analysis path measured, which is what the
-  decision protocol requires. The v4 labels were reviewed by a model
+- Exit: on v4 every mandatory gate passed as first recorded, on labels
+  reviewed before the held-out run and with the analysis path measured. The
+  2026-10-10 re-judgment above makes routing and the three action gates
+  inconclusive, so the exit is not met. The v4 labels were reviewed by a model
   (gpt-6.1-sol), not a human, at the repository owner's direction.
 
 ### English baseline for PR 9
@@ -603,7 +623,7 @@ A batch that stops at its threshold resumes when the same command runs again.
 | --- | --- | --- | --- |
 | 1 | Freeze | Freeze new English labels, versions and gates | Done |
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
-| 3 | Publish | Publish current baseline and unresolved limits | Done — v4 baseline; every mandatory gate passes (latency 5.48 s) |
+| 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 
 ## Sources
 

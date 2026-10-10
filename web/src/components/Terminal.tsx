@@ -10,9 +10,8 @@ import { useParagraphOverlay } from '@/lib/overlay'
 const shell = '__TAURI_INTERNALS__' in window
 
 /** Every close started in a folder, until its shell has exited. Removing a
- *  worktree waits on all of them — the one just deselected, and the ones a
- *  theme change replaced — as Windows will not delete a folder a shell still
- *  stands in. */
+ *  worktree waits on all of them — the one just deselected among them — as
+ *  Windows will not delete a folder a shell still stands in. */
 const closing = new Map<string, Promise<unknown>>()
 export const closed = (cwd: string) => closing.get(cwd) ?? Promise.resolve()
 
@@ -34,8 +33,8 @@ export function Terminal({ cwd, theme, on }: { cwd: string; theme: string; on: b
   const terminal = useRef<XTerm | null>(null)
   const [fault, setFault] = useState('')
   const [selection, setSelection] = useState('')
-  const [approved, setApproved] = useState<{ cwd: string; theme: string; text: string } | null>(null)
-  const confirmed = approved?.cwd === cwd && approved.theme === theme ? approved.text : ''
+  const [approved, setApproved] = useState<{ cwd: string; text: string } | null>(null)
+  const confirmed = approved?.cwd === cwd ? approved.text : ''
   const shown = useParagraphOverlay(confirmed, on)
 
   useEffect(() => {
@@ -95,7 +94,17 @@ export function Terminal({ cwd, theme, on }: { cwd: string; theme: string; on: b
       closing.set(cwd, Promise.all([closing.get(cwd), close]))
       term.dispose()
     }
-  }, [cwd, theme])
+  }, [cwd])
+
+  // A theme change repaints the shell, never replaces it. The app sets the
+  // theme's classes in its own effect, which runs after this child's, so the
+  // palette is read a frame later.
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      if (terminal.current) terminal.current.options.theme = colors()
+    })
+    return () => cancelAnimationFrame(frame)
+  }, [theme])
 
   return (
     <section aria-label="터미널" className="flex h-full min-h-0 flex-col bg-card">
@@ -124,7 +133,7 @@ export function Terminal({ cwd, theme, on }: { cwd: string; theme: string; on: b
                 <textarea value={selection} rows={3} onChange={(e) => setSelection(e.target.value)}
                   className="mt-1 w-full rounded border border-border bg-background p-2 font-mono text-[12px]" />
               </label>
-              <button type="button" className="text-[12px] text-primary" onClick={() => setApproved({ cwd, theme, text: selection })}>
+              <button type="button" className="text-[12px] text-primary" onClick={() => setApproved({ cwd, text: selection })}>
                 확인한 내용 번역</button>
             </>}
             {confirmed && <p className="mt-2 whitespace-pre-wrap break-words text-[12.5px] leading-relaxed">{shown}</p>}

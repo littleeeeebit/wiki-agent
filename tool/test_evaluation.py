@@ -129,16 +129,16 @@ def test_the_report_resamples_intents_and_judges_the_frozen_gates(ran):
     verdicts = {g["id"]: g["verdict"] for g in got["gates"]}
     assert verdicts["integrity"] == "pass" and verdicts["operating_ceiling"] == "pass"
     assert verdicts["graph_benefit"] == "not_measured", "no D arm ran"
-    # Same resamples, same seed: the same interval.
+    # Same resamples, same seed: the same interval. A rate takes Wilson's: the bootstrap put 6/6 at [1, 1].
     groups = [(1.0, 1.0), (0.0, 1.0), (1.0, 2.0)]
     assert report.boot(groups, report.ratio, 200, 1, 0.95) == report.boot(groups, report.ratio, 200, 1, 0.95)
+    assert [report.at_least(report.wilson([(1.0, 1.0)] * n + [(0.0, 1.0)] * miss, 0.95), 0.90)
+            for n, miss in ((6, 0), (22, 0), (40, 0), (5, 5))] == ["inconclusive"] * 2 + ["pass", "fail"]
 
 
-@pytest.mark.parametrize("measured, verdict", [
-    ({"value": 0.2, "low": 0.05, "high": 0.3}, "pass"),
-    ({"value": 0.2, "low": -0.02, "high": 0.4}, "inconclusive"),
-    ({"value": 0.0, "low": -0.03, "high": 0.05}, "fail"),
-])
+@pytest.mark.parametrize("measured, verdict", [({"value": 0.2, "low": 0.05, "high": 0.3}, "pass"),
+                                               ({"value": 0.2, "low": -0.02, "high": 0.4}, "inconclusive"),
+                                               ({"value": 0.0, "low": -0.03, "high": 0.05}, "fail")])
 def test_an_improvement_the_interval_does_not_support_is_inconclusive(measured, verdict):
     assert report.improvement(measured, 0.10) == verdict
 
