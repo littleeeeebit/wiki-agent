@@ -153,7 +153,8 @@ CALL = "call-record/1"
 PURPOSES = ("route", "source_select", "grade", "sufficiency", "support", "normalize", "decompose", "draft",
             "explain", "graph_extract", "research")
 # The purpose of each Jev question kind (`decision.policy.KINDS`).
-PURPOSE_OF = {"route": "route", "analysis": "route", "ask": "route", "action": "route", "source": "source_select",
+PURPOSE_OF = {"route": "route", "analysis": "route", "progress": "route", "ask": "route", "action": "route",
+              "source": "source_select",
               "useful": "grade", "conflict": "grade", "redirect": "grade", "coverage": "sufficiency",
               "repair": "sufficiency", "relation": "support", "answers": "support", "faithful": "support"}
 

@@ -98,13 +98,13 @@
     },
     "tool/main/decisions.py": {
       "dup": 0,
-      "lines": 824,
-      "reason": "baseline at adoption"
+      "lines": 825,
+      "reason": "Answer path B: answer.support's authority names the ordinary-answer check and its fallback."
     },
     "tool/main/knowledge.py": {
       "dup": 0,
-      "lines": 3811,
-      "reason": "Review shadow reuses scoped preparation with a context-only, non-starting daemon read and forwards owned normalization cancellation."
+      "lines": 3852,
+      "reason": "Answer path B (answer-path.md): the progress route question, the ordinary-answer check policy, plain rendering and the synthesis fallback."
     },
     "tool/main/loop.py": {
       "dup": 0,
@@ -193,8 +193,8 @@
     },
     "tool/test_decision_flow.py": {
       "dup": 7,
-      "lines": 1433,
-      "reason": "baseline at adoption"
+      "lines": 1443,
+      "reason": "Answer path B: the fake Jev answers the progress question, and the route keeps its verdict."
     },
     "tool/test_edit_as_diff.py": {
       "dup": 11,

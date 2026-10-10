@@ -123,10 +123,10 @@ OWNERS = [
     {"point": "specs.candidates", "owner": "jev", "allowed_operations": [], "kinds": ("action",), "policy": "action",
      "authority": "a recommendation only: the person chooses the goal"},
     {"point": "query.route", "owner": "jev", "allowed_operations": ["retrieve_evidence", "summarize_result"],
-     "kinds": ("route", "source", "analysis", "ask"), "policy": "retrieval",
+     "kinds": ("route", "source", "analysis", "progress", "ask"), "policy": "retrieval",
      "authority": "code: budgets, sources available, the explicit-request rule, direct-answer restrictions"},
     {"point": "query.retrieval_required", "owner": "code", "allowed_operations": ["retrieve_evidence"],
-     "kinds": ("source", "analysis", "ask"), "policy": "retrieval",
+     "kinds": ("source", "analysis", "progress", "ask"), "policy": "retrieval",
      "authority": "an admitted action or an answer's return to retrieval requires retrieval; Jev is not asked "
                   "whether to retrieve, only which sources and what the question asks"},
     {"point": "query.evidence", "owner": "jev", "allowed_operations": ["retrieve_evidence", "summarize_result"],
@@ -135,7 +135,8 @@ OWNERS = [
                   "grants no execution permission"},
     {"point": "answer.support", "owner": "jev", "allowed_operations": ["summarize_result"],
      "kinds": ("relation", "answers", "faithful"), "policy": "claims",
-     "authority": "explicit verify_claims checks only; ordinary answers use host synthesis without this gate"},
+     "authority": "explicit verify_claims checks, and ordinary answers Jev is sure are not about progress; an "
+                  "ordinary answer it leaves unanswered falls back to host synthesis, published unverified"},
     {"point": "deterministic", "owner": "code", "allowed_operations": list(OPERATIONS), "kinds": (), "policy": None,
      "authority": "the next step when only one is offered, an exhausted budget, a stale or duplicate proposal, "
                   "the round cap and merge conditions"},

@@ -373,7 +373,7 @@ def dossier_row(d: dict, names: dict, label, allowed: set[str]) -> dict:
     return {"status": d["status"], "reason": d["reason"], "direct": d["direct"], "sources": d["sources"],
             "normalization": d.get("normalization"), "question_en": d.get("question_en"),
             # The route's own reading: analysis or fact, and each segment a request or supplied material.
-            "analysis": d.get("analysis"), "route_segments": d.get("route_segments"),
+            "analysis": d.get("analysis"), "progress": d.get("progress"), "route_segments": d.get("route_segments"),
             "evidence": [names.get(e["chunk_id"]) or label(e) for e in d["evidence"]],
             "lanes": [e.get("lane") for e in d["evidence"]],
             # Retrieved but past k: held as candidates, not handed to the answer.

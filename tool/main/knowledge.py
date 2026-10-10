@@ -201,10 +201,16 @@ ANALYSIS = ("Does the query ask the assistant for analysis it works out itself, 
             "an assessment, an opinion or advice, rather than for facts the repository's sources state? "
             "A calculation, a conversion, a count, a sort or a rewording of text the query itself gives is "
             "not analysis: it has one right result.")
-# Each of the two bound to its own digest: a rule fitted for one text of it is not fitted for another
+# Asked beside ANALYSIS (answer-path.md, option B): a progress answer interprets live repository observations,
+# which no retrieved passage states, so only a sure no lets an ordinary answer be verified claim by claim.
+PROGRESS = ("Does the query ask about this repository's own progress, such as what is done, in progress or next, "
+            "which current observations of the repository answer, rather than for facts the repository's sources "
+            "state?")
+# Each bound to its own digest: a rule fitted for one text of it is not fitted for another
 # (`decision.policy`'s `kind_versions`, reliability PR 4).
 KIND_VERSIONS = {"ask": hashlib.sha256(ASK.encode()).hexdigest()[:16],
-                 "analysis": hashlib.sha256(ANALYSIS.encode()).hexdigest()[:16]}
+                 "analysis": hashlib.sha256(ANALYSIS.encode()).hexdigest()[:16],
+                 "progress": hashlib.sha256(PROGRESS.encode()).hexdigest()[:16]}
 REPAIRS = {
     "context": "Read the sections next to a passage that was cut off or read only in part.",
     "sources": "Search the enabled sources not searched yet: {rest}.",
@@ -269,7 +275,8 @@ def route_questions(available: list[str], parts: list[str] = (), retrieve: bool 
     requires is not Jev's to judge again (reliability PR 4)."""
 
     questions = {"retrieve": {"decision": "route", "candidate": None, "question": decision.noul(PROMPTS["route"])},
-                 "analysis": {"decision": "analysis", "candidate": None, "question": decision.noul(ANALYSIS)}}
+                 "analysis": {"decision": "analysis", "candidate": None, "question": decision.noul(ANALYSIS)},
+                 "progress": {"decision": "progress", "candidate": None, "question": decision.noul(PROGRESS)}}
     if not retrieve:
         del questions["retrieve"]
     for s in available:
@@ -330,7 +337,7 @@ def manifest(cfg: decision.Config) -> dict:
     claims = decision.policy(cfg.model, HUB / decision.claims.ARTIFACT, prompt_version=decision.claims.VERSION)
     return {"schema_version": MANIFEST, **behavior(), "model": cfg.model,
             "policies": {"retrieval": fitted(retrieval_, ("route", "source", "useful", "conflict", "redirect",
-                                                          "coverage", "repair", "ask", "analysis")),
+                                                          "coverage", "repair", "ask", "analysis", "progress")),
                          "claims": fitted(claims, ("relation", "answers", "faithful"))}}
 
 
@@ -465,7 +472,8 @@ class Flow:
         self.dossier = {
             "schema_version": DOSSIER, "status": None, "reason": None, "question_en": None, "direct": False,
             "restrictions": [], "audiences": audiences or None,
-            "sources": [], "evidence": [], "requirements": [], "material": [], "analysis": False, "split": None,
+            "sources": [], "evidence": [], "requirements": [], "material": [], "analysis": False, "progress": None,
+            "split": None,
             "route_segments": None, "missing": [],
             "conflicts": [], "untrusted": [],
             "reads": [], "limits": [], "repairs": [], "transitions": [], "decisions": [], "trace": [],
@@ -739,6 +747,8 @@ class Flow:
             self.dossier["material"] = [{"id": r["id"], "text": r["text"]} for r in self.requirements if r not in kept]
             self.requirements = kept
         self.dossier["analysis"] = verdicts.get("analysis") == "yes"
+        # The verdict as given: `Grounding` verifies an ordinary answer only on a sure no.
+        self.dossier["progress"] = verdicts.get("progress")
         # An analysis is published unchecked, so it is at least searched and cited (invariant 5): never direct.
         if not required and verdicts["retrieve"] == "no" and not self.dossier["analysis"]:
             self.dossier.update(direct=True, restrictions=DIRECT)
@@ -1144,6 +1154,7 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
         ending.update(output={"status": dossier["status"], "reason": dossier["reason"],
                               "requirements": dossier["requirements"], "material": dossier.get("material"),
                               "missing": dossier["missing"], "analysis": dossier.get("analysis"),
+                              "progress": dossier.get("progress"),
                               "evidence": [{"cite": cite(e), "text_en": e.get("text_en"),
                                             "translation": e.get("translation"), "judgment": e.get("judgment")}
                                            for e in dossier["evidence"]]},
@@ -1410,8 +1421,9 @@ class Grounding:
 
     def __init__(self, dossier: dict, cfg: decision.Config, cancel: threading.Event | None = None,
                  cache: decision.Cache | None = DECISIONS, evaluate=None, said: str = "", *,
-                 verify_claims: bool = False):
+                 verify_claims: bool | None = None):
         self.cfg, self.cache = cfg, cache
+        # True or False is the caller's; None is an ordinary answer, whose dossier decides (`rebase`).
         self.verify_claims = verify_claims
         # Whether what Jev leaves uncertain about a claim goes to the host model (`falls_back`).
         self.fallback = falls_back(cfg)
@@ -1440,7 +1452,10 @@ class Grounding:
 
     def rebase(self, dossier: dict) -> None:
         self.dossier = dossier
-        self.analysis = not self.verify_claims or bool(dossier.get("analysis"))
+        # An ordinary answer is checked claim by claim only when Jev was sure it is not about progress
+        # (answer-path.md, option B): uncertain or unavailable keeps #59's synthesis.
+        verify = dossier.get("progress") == "no" if self.verify_claims is None else self.verify_claims
+        self.analysis = not verify or bool(dossier.get("analysis"))
         self.ids = {f"e{i + 1}": e for i, e in enumerate(dossier.get("evidence") or [])}
         self.ids.update({f"m{i + 1}": material(m) for i, m in enumerate(dossier.get("material") or [])})
         back ={e["chunk_id"]: eid for eid, e in self.ids.items()}
@@ -1919,7 +1934,8 @@ class Grounding:
         used = list(dict.fromkeys([*(e for cid in shown for e in claims[cid]["evidence_ids"]),
                                    *gen.get("citations", [])]))
         reason = (unavailable or next((f"budget:{c['reason']}" for c in checks.values() if c["reason"] == "budget"),
-                                      None) or (f"draft:{gen['problem']}" if gen["problem"] else None))
+                                      None) or (f"draft:{gen['problem']}" if gen["problem"] else None)
+                  or (f"fallback:{gen['fallback']}" if gen.get("fallback") else None))
         verified = {
             "schema_version": VERIFIED, "run_id": self.run_id, "status": status, "reason": reason,
             "verified": not unavailable and not gen.get("analysis") and not host_checked, "degraded": baseline,
@@ -1947,7 +1963,8 @@ class Grounding:
             verified["next"] = "Check Jev with `python tool/jev_probe.py --live`, then ask again."
         elif missing:
             verified["next"] = (f"Search further for: {missing[0]['text']} — or say more precisely what you need.")
-        return {"verified": verified, "text": rendered(verified, {c: claims[c] for c in shown}, ids, body),
+        return {"verified": verified, "text": rendered(verified, {c: claims[c] for c in shown}, ids, body,
+                                                       plain=self.verify_claims is None),
                 "rest": gen["rest"], "evidence_ids": gen["evidence_ids"], "record": self.record()}
 
     def record(self) -> dict:
@@ -1960,10 +1977,14 @@ class Grounding:
                 "allowance_left": {"calls": self.calls, "tokens": self.tokens}}
 
 
-def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict], body: str | None = None) -> str:
+def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict], body: str | None = None,
+             plain: bool = False) -> str:
     """The published answer, written by code from accepted claims and the
     verification's limits — or an analysis as its host wrote it, each
-    citation mark written out. English: the Korean overlay renders it."""
+    citation mark written out. English: the Korean overlay renders it.
+
+    `plain` is an ordinary answer's: the accepted claims as prose, with no
+    marks or notices (#59); status and sources are in the run details."""
 
     def cited(eids: list[str]) -> str:
         where = [cite(ids[e]) for e in eids]
@@ -1972,6 +1993,8 @@ def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict], body: str |
     if body is not None:
         # Provenance and verification belong to the run details, not the answer's prose.
         return re.sub(r"[ \t]*" + CITED.pattern, "", body).strip()
+    if plain:
+        return "\n\n".join(c["text_en"].strip() for c in claims.values())
     parts: list[str] = []
     if v["status"] == "verification_unavailable":
         parts.append(f"Unverified answer: verification was unavailable ({v['reason']}), and this answer is shown "
@@ -2008,12 +2031,17 @@ def rendered(v: dict, claims: dict[str, dict], ids: dict[str, dict], body: str |
 
 def grounded(question: str, project: str | Path | None, state: str, dossier: dict, generate,
              cfg: decision.Config, cancel: threading.Event | None = None, cache: decision.Cache | None = DECISIONS,
-             evaluate=None, said: str = "", run: Run | None = None, *, verify_claims: bool = False):
-    """Synthesize an answer over retrieved evidence and publish its provenance.
+             evaluate=None, said: str = "", run: Run | None = None, *, verify_claims: bool | None = None):
+    """Answer over retrieved evidence and publish its provenance.
 
-    Ordinary answers use the host's judgment, even when retrieval coverage is
-    uncertain. Explicit claim-verification checks opt in with `verify_claims`;
-    a synthesized answer is never labelled independently verified.
+    An ordinary answer (`verify_claims` None) is checked claim by claim when
+    Jev is sure the question is not about the repository's progress and is
+    not analysis; otherwise it is the host's synthesis, as it is when the
+    check leaves the question unanswered (`abstained` or
+    `verification_unavailable`) — one more turn, never a refusal
+    (answer-path.md, option B). `verify_claims` True or False is the
+    caller's own choice, without that fallback. A synthesized answer is never
+    labelled independently verified.
 
     A generator. It yields `{"progress": step}` — draft, attribute, repair,
     or explicit verification/retrieval — and returns the publication:
@@ -2073,7 +2101,20 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
         step(stage, "recorded" if job.analysis else "checked", claims=checks(verified(run, job, text)))
         for record in job.called[sent:] if run is not None else ():
             run.called(record)
-    if job.analysis and all(g["draft"] is None for g in job.generations):
+    synthesized = job.analysis
+    fell = job.published()["verified"]["status"] if job.verify_claims is None and not synthesized else None
+    if fell in ("abstained", "verification_unavailable") and not job.cancel.is_set():
+        # Nothing shown answered the question: an ordinary answer synthesizes instead of refusing (#59).
+        # Should this turn be unusable too, the checked generation before it is what is published.
+        job.analysis = True
+        yield {"progress": "draft"}
+        step("draft", "fallback", after=fell)
+        text = yield from generate(job.brief())
+        gen = verified(run, job, text)
+        gen["fallback"] = fell
+        yield {"progress": "attribute"}
+        step("attribute", "recorded", claims=checks(gen))
+    if synthesized and all(g["draft"] is None for g in job.generations):
         raise RuntimeError("The host returned no usable answer")
     out = job.published()
     v = out["verified"]
