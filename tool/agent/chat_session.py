@@ -145,8 +145,10 @@ class ChatSession:
                  isolated: bool = False, write: bool = False,
                  parent_id: str | None = None, bypass: bool = False,
                  verification: Path | None = None, env: dict | None = None,
-                 fast: bool = False) -> None:
+                 fast: bool = False, results: list[str] | None = None) -> None:
         self.repo = Path(repo)
+        # Every tool result as the host received it, whole: a caller grading what the host read passes a list.
+        self.results = results
         if verification is not None and not our_worktree(self.repo):
             raise ValueError(f"쓰기 세션은 workspace 가 만든 작업트리에서만 연다: {self.repo}")
         if write:
@@ -1050,6 +1052,12 @@ class ChatSession:
                     item = ev["item"]
                     yield Event("tool", str(item.get("command") or item.get("tool") or item["type"])[:120],
                                 {"tool": item["type"]})
+                elif (kind == "item.completed" and self.results is not None
+                      and ev.get("item", {}).get("type") in ("command_execution", "mcp_tool_call")):
+                    item = ev["item"]
+                    blocks = (item.get("result") or {}).get("content") or []
+                    self.results.append(str(item.get("aggregated_output") or "\n".join(
+                        str(b.get("text") or "") for b in blocks if isinstance(b, dict))))
                 elif kind == "turn.completed":
                     usage = ev.get("usage") or {}
                     yield Event("done", final, {
@@ -1195,6 +1203,8 @@ class ChatSession:
                         content = block.get("content") or ""
                         if isinstance(content, list):
                             content = "\n".join(str(b.get("text") or "") for b in content if isinstance(b, dict))
+                        if self.results is not None:
+                            self.results.append(str(content))
                         yield Event("tool", str(content)[:4000],
                                     {"tool": "tool_result", "tool_use_id": block.get("tool_use_id")})
 

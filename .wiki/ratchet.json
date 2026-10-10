@@ -3,8 +3,8 @@
   "files": {
     "tool/agent/chat_session.py": {
       "dup": 0,
-      "lines": 1342,
-      "reason": "Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`)."
+      "lines": 1352,
+      "reason": "Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`). Then a caller grading what the host read passes `results`, and both providers keep every tool result there whole: a tool event shows only 4000 characters, and Codex `exec` sends no result event (v5 calibration, PR #109)."
     },
     "tool/apply.py": {
       "dup": 6,
@@ -48,8 +48,8 @@
     },
     "tool/eval/answers.py": {
       "dup": 14,
-      "lines": 153,
-      "reason": "drafting records what the host read with its own tools, which the grader now reads (v5 calibration)"
+      "lines": 150,
+      "reason": "baseline at adoption"
     },
     "tool/eval/baseline.py": {
       "dup": 7,
@@ -58,7 +58,7 @@
     },
     "tool/eval/compare.py": {
       "dup": 6,
-      "lines": 771,
+      "lines": 769,
       "reason": "answers and grades carry what the host read beside the dossier (v5 calibration)"
     },
     "tool/eval/decisions.py": {

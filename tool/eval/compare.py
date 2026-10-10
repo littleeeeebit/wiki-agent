@@ -400,12 +400,10 @@ def brief(d: dict) -> str:
     return "\n".join(lines) if d["evidence"] else "No evidence was retrieved for this question."
 
 
-def host_turn(chat, message: str, read: list[str]) -> tuple[str, float]:
+def host_turn(chat, message: str) -> tuple[str, float]:
     for ev in chat.say(message):
         if ev.kind == "error" or (ev.kind == "done" and ev.meta.get("error")):
             raise RuntimeError(ev.text or "the host turn failed")
-        if ev.kind == "tool" and ev.meta.get("tool") == "tool_result":
-            read.append(ev.text)
         if ev.kind == "done":
             return ev.text, ev.meta.get("cost_usd") or 0.0
     raise RuntimeError("the host turn ended without an answer")
@@ -418,13 +416,13 @@ def answered(unit: dict, d: dict, repo: Path, jev: bool, cfg: decision.Config, m
     from eval.answers import drafting
     from main import channels
 
+    read: list[str] = []   # every tool result the host received, whole: the grader reads it too
     chat = ChatSession(repo, tools="Read,Glob,Grep", system=channels.ANSWER_PROMPT, model=model or None,
-                       isolated=True)
+                       isolated=True, results=read)
     started = time.monotonic()
     try:
         if not jev:
-            read: list[str] = []
-            text, usd = host_turn(chat, f"{unit['text']}\n\n{brief(d)}", read)
+            text, usd = host_turn(chat, f"{unit['text']}\n\n{brief(d)}")
             return {"status": "answered", "text": text, "read": read, "host_usd": usd, "host_turns": 1,
                     "elapsed_ms": round((time.monotonic() - started) * 1000), "accepted": None, "fabricated": [],
                     "verified": None, "remembered": memory.verification({"role": "assistant"})}
@@ -439,7 +437,7 @@ def answered(unit: dict, d: dict, repo: Path, jev: bool, cfg: decision.Config, m
         v = out["verified"]
         gens = out["record"]["generations"]
         judged = [g[k] for g in gens for k in ("decision", "rejoined") if g.get(k)]
-        return {"status": v["status"], "reason": v["reason"], "text": out["text"], "read": spent.get("read", []),
+        return {"status": v["status"], "reason": v["reason"], "text": out["text"], "read": read,
                 # As published, and as a memory of this turn would label it (`memory.verification`).
                 "verified": v["verified"], "degraded": v["degraded"], "host_checked": v.get("host_checked"),
                 "remembered": memory.verification({"role": "assistant", "verification": v}),

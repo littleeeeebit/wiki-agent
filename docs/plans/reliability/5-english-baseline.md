@@ -734,7 +734,10 @@ Routing was right on every calibration row (B and D, 132 of 132); actions
 context labels the model sent as fix).
 
 Answer support fell to 0.141 (A unsupported 0.307, D 0.264) against v4's
-0.736 on the same 72 intents (A 0.423, D 0.112). The cause is #59, after v4
+0.736 on the same 72 intents (A 0.423, D 0.112). The cohort is incomplete:
+`memory-07:en:A:0` has an `answer_error` (WinError 32 while closing the
+grading session) and no grade, so the figure is a diagnostic over 65 A and
+66 D rows, not acceptance evidence. The cause is #59, after v4
 ran at a0e88d3: ordinary answers now synthesize as `unverified`, and the
 claim validator runs only with `verify_claims=True`. The runner's arm D
 follows the product path, so it no longer withholds unestablished claims;
@@ -743,8 +746,11 @@ product path. Part of the drop is the grader's: the answering host may read
 the repository with Read, Glob and Grep, while the grader saw only the
 dossier, so a true claim from a page the host read was graded unsupported
 (roughly 11 of D's 132 and 23 of A's 142). The grader now receives
-`read_passages`, what the host's tools returned; calibration answers run
-again before the held-out half.
+`read_passages`: every tool result the host received, whole, collected by the
+session itself for both providers (`ChatSession(results=...)`), since a tool
+event shows only the first 4000 characters and Codex `exec` sent no result
+event at all. Calibration answers run again, complete, before the held-out
+half.
 
 ## Steps
 
