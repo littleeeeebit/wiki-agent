@@ -547,8 +547,12 @@ def main() -> int:
         )
         return 1
 
+    # Providers lead their own process group, so Ctrl+C never reaches them and an
+    # open event stream would wait on their turn forever; the bounded drain lets
+    # the lifespan cleanup below end them.
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning",
-                                        proxy_headers=False, ws="wsproto", ws_max_size=100_000))
+                                        proxy_headers=False, ws="wsproto", ws_max_size=100_000,
+                                        timeout_graceful_shutdown=5))
     if args.exit_with_stdin:
         # The pipe is read through a private copy, and fd 0 becomes devnull.
         # On Windows a synchronous read pending on the handle a child would
