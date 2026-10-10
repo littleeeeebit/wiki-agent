@@ -50,7 +50,7 @@ def test_shutdown_keeps_server_ownership_until_its_review_driver_stops(tmp_path,
     for module in (app.planning, app.survey):
         monkeypatch.setattr(module, "recover", lambda: None)
     for module in (app.planning, app.query, app.work):
-        monkeypatch.setattr(module, "close_all", lambda: None)
+        monkeypatch.setattr(module, "close_all", lambda wait=True: [])
     monkeypatch.setattr(app.mobile.companion, "stop", lambda: None)
 
     def held_step(_loop):
@@ -103,6 +103,21 @@ def test_shutdown_keeps_server_ownership_until_its_review_driver_stops(tmp_path,
     assert not owner.is_alive() and not driver.thread.is_alive() and not errors
     with server_owner(specs.SPECS.parent):
         pass
+
+
+def test_shutdown_marks_every_workflow_stopped_before_it_ends_the_remaining_providers(monkeypatch):
+    # A review whose provider died first read the death as a format failure, which recovery skips.
+    order = []
+    monkeypatch.setattr(runtime, "stopping", threading.Event())
+    for name in ("loop", "planning", "work"):
+        monkeypatch.setattr(getattr(app, name), "close_all", lambda wait=True, n=name: order.append(n) or [
+            type("Thread", (), {"join": lambda self: order.append("join")})()])
+    for name in ("refactor", "query"):
+        monkeypatch.setattr(getattr(app, name), "close_all", lambda n=name: order.append(n))
+    monkeypatch.setattr(app.chat_session, "end_all", lambda: order.append("end_all"))
+    app.close_turns()
+    assert sorted(order[:5]) == ["loop", "planning", "query", "refactor", "work"]
+    assert order[5:] == ["end_all", "join", "join", "join"]
 
 
 def test_a_shutdown_ends_running_turns_before_it_waits_for_their_streams(monkeypatch):

@@ -138,8 +138,8 @@
     },
     "tool/main/work.py": {
       "dup": 0,
-      "lines": 1060,
-      "reason": "Allow the three-line refactor ownership handoff at ordinary turn start. The pre-existing six-line excess is not adopted by this change."
+      "lines": 1061,
+      "reason": "`close_all(wait=False)` returns the turn threads instead of joining them, so shutdown marks every workflow stopped, then ends the providers no registry holds, then joins."
     },
     "tool/markdown_emphasis.py": {
       "dup": 17,
@@ -238,8 +238,8 @@
     },
     "tool/test_runtime.py": {
       "dup": 7,
-      "lines": 135,
-      "reason": "A shutdown must end running turns before it waits for their streams (providers lead their own process group, so Ctrl+C reaches none), pinned on a real uvicorn server; the test sits with the ownership-at-shutdown test it complements."
+      "lines": 150,
+      "reason": "A shutdown must end running turns before it waits for their streams (providers lead their own process group, so Ctrl+C reaches none), pinned on a real uvicorn server, and must mark every workflow stopped before it ends the remaining providers; both sit with the ownership-at-shutdown test they complement."
     },
     "tool/test_sessions.py": {
       "dup": 12,

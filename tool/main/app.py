@@ -94,12 +94,15 @@ def close_turns() -> None:
     no registry holds, such as a query's explanation, included. Safe to call again."""
 
     runtime.stopping.set()
-    chat_session.end_all()
-    loop.close_all()
-    planning.close_all()
+    # Every workflow is marked stopped before any other provider dies, so a turn
+    # that `end_all` kills reads as a restart, not a failure; joins come last.
+    threads = [*loop.close_all(wait=False), *planning.close_all(wait=False)]
     refactor.close_all()
     query.close_all()
-    work.close_all()
+    threads += work.close_all(wait=False)
+    chat_session.end_all()
+    for thread in threads:
+        thread.join()
 
 
 def ended_first(server) -> None:

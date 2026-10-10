@@ -594,7 +594,7 @@ def close_cell(repo: str, pr: int) -> None:
         chat.close()
 
 
-def close_all() -> None:
+def close_all(wait: bool = True) -> list[threading.Thread]:
     with _lock:
         alive = list(_cells.values())
         _cells.clear()
@@ -604,9 +604,10 @@ def close_all() -> None:
         loop.stop()
     for chat in alive:
         chat.close()
-    for loop in loops:
-        if loop.thread is not None and loop.thread is not threading.current_thread():
-            loop.thread.join()
+    threads = [lp.thread for lp in loops if lp.thread is not None and lp.thread is not threading.current_thread()]
+    for thread in threads if wait else []:
+        thread.join()
+    return threads
 
 
 # -- One loop -------------------------------------------------------------------
