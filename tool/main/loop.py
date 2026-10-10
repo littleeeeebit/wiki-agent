@@ -1948,24 +1948,31 @@ def poll(halt: threading.Event | None = None) -> None:
                                 verification.pending(path, spec, head, problem, "waiting_review")
                         except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
                             verification.pending(path, spec, allowed["head"], "현재 검증 상태를 확인하지 못했다", "waiting_review")
-                if spec["state"] == "머지 대기":
-                    try:
-                        landed(path, spec)
-                    except Exception as exc:   # the next minute tries again
-                        errorlog.record("merge-poll", exc, repo=repo.name, spec=spec["id"])
-                elif spec["state"] == "머지됨" and not spec.get("cleanup_complete"):
-                    try:
-                        if spec.get("merge"):
-                            finish(path, spec, spec["merge"]["base"], spec["merge"].get("commit", ""), "")
-                        elif spec.get("pr"):
+                # A clicked merge holds `_landing` through its minutes-long `.omm` analysis;
+                # waiting here stalled every repository's loop reattach. Next minute retries.
+                if not _landing.acquire(blocking=False):
+                    continue
+                try:
+                    if spec["state"] == "머지 대기":
+                        try:
                             landed(path, spec)
-                    except Exception as exc:
-                        errorlog.record("cleanup-retry", exc, repo=repo.name, spec=spec["id"])
-                elif spec["state"] == "머지 가능" and spec.get("merge_request"):
-                    with _lock:
-                        running = (repo.name, spec["id"]) in _loops
-                    if not running:
-                        requested_merge(path, spec)
+                        except Exception as exc:   # the next minute tries again
+                            errorlog.record("merge-poll", exc, repo=repo.name, spec=spec["id"])
+                    elif spec["state"] == "머지됨" and not spec.get("cleanup_complete"):
+                        try:
+                            if spec.get("merge"):
+                                finish(path, spec, spec["merge"]["base"], spec["merge"].get("commit", ""), "")
+                            elif spec.get("pr"):
+                                landed(path, spec)
+                        except Exception as exc:
+                            errorlog.record("cleanup-retry", exc, repo=repo.name, spec=spec["id"])
+                    elif spec["state"] == "머지 가능" and spec.get("merge_request"):
+                        with _lock:
+                            running = (repo.name, spec["id"]) in _loops
+                        if not running:
+                            requested_merge(path, spec)
+                finally:
+                    _landing.release()
 
 
 # -- The screen ----------------------------------------------------------------------

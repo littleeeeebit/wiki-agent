@@ -89,7 +89,9 @@ One app server owns a hub's persisted workflows. Startup holds an OS lock on
 `raw/server.lock` before recovering interrupted tasks; a second server cannot
 mark the first server's live review as stopped. Startup resumes active loops
 and previous restart stops after recovery; explicit user stops and blockers
-remain stopped. The poller reattaches active states without a driver. Shutdown
+remain stopped. The poller reattaches active states without a driver; while a
+clicked merge holds the landing lock through its `.omm` analysis, it skips that
+minute's merge and cleanup work instead of waiting, so reattachment continues. Shutdown
 gates new driver creation, stops watchers and review drivers, and drains work
 callbacks and planning handoffs before releasing ownership. Accepted late
 review handoffs stay queued for the next owner's startup recovery.
@@ -160,7 +162,17 @@ settle execution even without `task_notification`. Child text never replaces the
 answer. Raw tool output remains outside automatic translation.
 Older unattributed results use replayed human/synthetic boundaries and count
 each task's follow-up independently. Only a task that ran to its end owes one;
-a stopped or killed task does not. While a background task is alive after the
+a stopped or killed task does not. A completion the turn itself read before its
+answer is consumed in the turn (the transcript's queue `remove`) and owes
+nothing: with no task left running, 30 seconds after the answer with only idle
+traffic (`rate_limit_event`, `keep_alive`) ends the turn with that answer. Any
+other frame may start the follow-up — 2.1.296 sends `status: requesting` first —
+and a zero-turn placeholder promises a batch's combined answer; both return to
+the ordinary wait. A turn ended this way retires its provider process, as a
+closing answer does, so a late frame never answers the next prompt; that
+prompt resumes the conversation. Before, the turn stayed open, held its
+worktree and stalled the review loop until a person stopped it.
+While a background task is alive after the
 answer, no turn clock applies: its end, or the process's, ends the wait. An
 answer that closes the work — a `done-report` or a fix round's `disposition` —
 ends the turn even with tasks still running, so the review can start; those
