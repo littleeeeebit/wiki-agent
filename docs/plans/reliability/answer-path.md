@@ -23,19 +23,26 @@ before #59; v5 at 21dff77, graded against what the host read (#109):
 | v5 | A | fact | 57 | 403 | 88 | 0.218 | 0 |
 | v4 | D | analysis | 3 | 41 | 13 | 0.317 | 0 |
 | v5 | D | analysis | 3 | 45 | 15 | 0.333 | 0 |
+| v5 | A | analysis | 3 | 37 | 0 | 0 | 0 |
 | v4 | D | abstain | 6 | 6 | 0 | 0 | 6 |
 | v5 | D | abstain | 6 | 50 | 8 | 0.160 | 6 |
+| v5 | A | abstain | 6 | 60 | 8 | 0.133 | 6 |
 
 What it shows:
 - Fact questions are 57 of 66 rows and carry the whole difference. With the
   validator, D published a third as many fact claims and a quarter of the
   unsupported rate; without it, D is A.
 - Analysis answers were synthesized in both runs (`Grounding.analysis` is
-  true for an analysis dossier even with `verify_claims`), and their rate did
-  not move. This design leaves them alone.
-- The validator's cost was abstention: 5 of 57 fact questions answered with
-  nothing, and on the abstain intents D now adds 50 claims around a correct
-  "not found".
+  true for an analysis dossier even with `verify_claims`), and D's rate did
+  not move. A's was 0 on the same three rows. This design leaves them alone.
+- The validator's cost was abstention: 5 of 57 fact questions were recorded
+  `abstained` and left their question unanswered (`direct-01`, `bridge-07`,
+  `bridge-10`, `bridge-11`, `fix-12`). Four of the five still published
+  accepted claims; `bridge-11` states that exports use the cold bucket but
+  not which cipher secures them. The validator abstains when no requested part
+  is answered by a shown claim (`Grounding.published` in `knowledge.py`),
+  not only when every claim is rejected. On the abstain intents D now adds 50
+  claims around a correct "not found".
 
 Two measurement caveats:
 - Arm A has always had Read, Glob and Grep (`compare.answered`), and before
@@ -60,37 +67,68 @@ From the #59 record (`.wiki/decisions/2026-10-01-059-fix-wiki-answer-synthesis.m
 | Option | What changes | Expected effect | Cost and risk |
 | --- | --- | --- | --- |
 | A. Restore v4 | `verify_claims=True` for ordinary conversation | Fact rate near v4's 0.05 | Reintroduces whole-answer abstention (5/57), against constraint 1 |
-| B. Verify facts, never abstain | Fact-routed answers go through the validator; accepted claims are rendered as plain prose under #59's presentation; when no claim survives, the synthesis is published as `unverified` with its stated limit instead of abstaining | Fact rate between v4 and today; no new refusals | Jev calls per fact answer (v4 added latency 5.48 s, inside the 10 s gate); the fallback reopens a path to unsupported claims, bounded to answers where nothing verified |
+| B. Verify facts, never abstain | Answers B's purpose rule (below) sends to verification go through the validator; accepted claims are rendered as plain prose under #59's presentation; when the outcome would be `abstained` or `verification_unavailable`, one synthesis turn over the same dossier is published as `unverified` instead | Fact rate between v4 and today; no fact question recorded `abstained` | Jev calls per verified answer (v4 added latency 5.48 s, inside the 10 s gate) and a second host turn on each fallback; the fallback reopens a path to unsupported claims, bounded to answers where no shown claim answered the question |
 | C. Grounded drafting only | The drafting prompt asks for only what the passages state, each sentence citing an id; no Jev check | Unknown; cheapest | Self-reported grounding is what the validator exists to check |
-| D. Keep synthesis, change the gate | Answer support becomes non-inferiority of D to A | Passes today's behavior | Gives up the answer-side claim of Jev; a gate change needs a new gate version and the owner's decision |
+| D. Keep synthesis, change the gate | Answer support becomes non-inferiority of D to A | Undetermined until a margin is chosen: on `reliability-v5-calibration-answers-2` D's unsupported rate is 0.218 (108/496) against A's 0.192 (96/500) overall, a loss of 0.026, and 0.212 against 0.218 on facts | Gives up the answer-side claim of Jev; needs a margin, a cohort (all rows or facts) and whether the margin binds the point estimate or the interval, in a new gate version, by the owner's decision |
 
 B follows the post-hoc attribution pattern: draft freely, then check each
 atomic claim against retrieved evidence and revise what fails, rather than
 refusing up front (RARR, R1; atomic claim scoring, R2; citation evaluation,
 R3). It keeps constraints 1–4: no whole refusal, nothing in the body,
-progress and analysis answers untouched, and only validator-accepted claims
-are ever marked verified.
+progress and analysis answers synthesized as today, and only
+validator-accepted claims are ever marked verified.
+
+### Which answers B verifies
+
+The fallback's trigger is the validator's own outcome, not an empty claim
+list: four of v4's five abstentions had accepted claims that answered no
+requested part. The fallback body cannot come from the verified draft,
+which is structured claims under `answer-draft.md`; it is one more host turn
+under `answer-analysis.md`, the path an analysis dossier takes today.
+
+A dossier carries no purpose. A progress question that asks for a count or
+a status routes as a fact question (`ANALYSIS` excludes counts), and
+`Grounding.rebase` reads only `verify_claims` and the analysis flag.
+Verified, it would be drafted under `answer-draft.md`, which cites only
+retrieved evidence, so the repository observations #59 supplies
+(`jev_search.repository_state`) could ground nothing: the boundary #59
+removed. B therefore adds one purpose decision asked beside `ANALYSIS`, as a
+Jev kind with its own digest: does the query ask about this repository's own
+progress (what is done, in progress or next), which current repository
+observations answer, rather than for facts its sources state? Only a sure no
+is verified; yes, uncertain or an unavailable decision synthesizes as today.
+It is one decision in `knowledge`, not a list of question expressions.
+
+The policy lives in `grounded`, decided from the dossier, so every caller
+gets it: ordinary conversation (`tool/main/query.py`, `tool/jev_search.py`)
+and arm D (`tool/eval/compare.py`, which calls `grounded` itself). The
+calibration then measures the production policy. An explicit
+`verify_claims=True` keeps its current meaning for the callers that pass it.
 
 ## Recommendation
 
 B, decided by a calibration experiment before any held-out spending:
-1. Implement B behind the existing switch: ordinary conversation passes
-   `verify_claims=True` only for fact-routed dossiers, and the no-claim case
-   publishes the synthesis as `unverified` instead of abstaining.
+1. Implement B: the purpose decision, the policy in `grounded`, and the
+   synthesis fallback on an `abstained` or `verification_unavailable`
+   outcome.
 2. Run the calibration answers again (A and D, about USD 9) and compare with
    `reliability-v5-calibration-answers-2`.
 3. Adopt when, on the 57 fact rows: D's unsupported rate is at most 0.10, no
-   fact question is answered with nothing, and D's coverage is within 0.05 of
-   A's. Otherwise record the result and take D.
+   D row has `answer.status` `abstained`, D's grader-abstained rows are no
+   more than A's, and D's coverage is within 0.05 of A's. Report how many
+   fact rows the purpose decision sent to synthesis. Otherwise record the
+   result and bring the options back to the owner.
 4. Then the held-out answers (about USD 18) for answer support and added
    latency on v5.
 
-Not decided here: whether analysis answers need any check (both arms 0.33
-on three rows is too few to act on), and how progress answers (constraint 3)
-should be evaluated at all.
+Not decided here: whether analysis answers need any check (three rows, D
+0.333 and A 0, are too few to act on), and how progress answers (constraint
+3) should be evaluated at all. v5 has no progress intents, so the experiment
+measures what the purpose decision costs fact answers, not whether it
+protects progress answers.
 
 ## Sources
 
-- R1: Gao et al., [RARR: Researching and Revising What Language Models Say](https://arxiv.org/abs/2210.08726), 2022.
-- R2: Min et al., [FActScore: Fine-grained Atomic Evaluation of Factual Precision](https://arxiv.org/abs/2305.14251), 2023.
+- R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
+- R2: Min et al., [FActScore: Fine-grained Atomic Evaluation of Factual Precision in Long Form Text Generation](https://arxiv.org/abs/2305.14251), 2023.
 - R3: Gao et al., [Enabling Large Language Models to Generate Text with Citations](https://arxiv.org/abs/2305.14627), 2023.
