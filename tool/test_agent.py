@@ -739,33 +739,40 @@ sys.stdin.read()
 
 
 class Scripted:
-    """A provider queue read in order; `None` is a read that times out."""
+    """A provider queue read in order; `None` is a read that times out. A
+    `LATE` event comes only to a read that waits longer than the grace."""
 
     def __init__(self, messages):
-        self.messages = iter(messages)
+        self.messages = list(messages)
 
     def get(self, timeout):
-        event = next(self.messages)
-        if event is None:
+        event = self.messages[0]
+        if event is None or (event.get("late") and timeout <= chat_session.FOLLOWUP_GRACE):
+            self.messages.pop(0) if event is None else None
             raise chat_session.queue.Empty
-        return event
+        return self.messages.pop(0)
 
 
 TOOK_IN = [{"type": "system", "subtype": "task_started", "task_id": "bg-1", "is_backgrounded": True},
            {"type": "system", "subtype": "task_notification", "task_id": "bg-1", "status": "completed"},
            {"type": "result", "origin": {"kind": "human"}, "result": "Fixed and pushed"}]
+LATE = {"type": "result", "origin": {"kind": "task-notification"}, "result": "Combined follow-up", "late": True}
 
 
-@pytest.mark.parametrize("after", [
-    [{"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}}, None],   # status keeps the answer
-    [{"type": "result", "origin": {"kind": "task-notification"}, "result": "", "num_turns": 0}, None],  # placeholder
+@pytest.mark.parametrize("after, answer", [
+    ([{"type": "rate_limit_event", "rate_limit_info": {"status": "allowed"}}, None], "Fixed and pushed"),
+    # 2.1.296 starts a follow-up with `status: requesting`; its first token may come after the grace.
+    ([{"type": "system", "subtype": "status", "status": "requesting"}, LATE], "Combined follow-up"),
+    # A zero-turn placeholder promises the combined answer of a batch.
+    ([{"type": "result", "origin": {"kind": "task-notification"}, "result": "", "num_turns": 0}, LATE],
+     "Combined follow-up"),
 ])
-def test_the_kept_answer_survives_status_traffic_and_placeholders(tree, after):
+def test_the_kept_answer_yields_only_to_a_real_follow_up(tree, after, answer):
     session = ChatSession(tree, write=True, bypass=True)
     session.session_id, session._open, session._events = "cli-1", True, Scripted(TOOK_IN + after)
     with patch.object(chat_session, "FOLLOWUP_GRACE", .01), patch.object(session, "close"):
         events = list(session._drain())
-    assert events[-1].kind == "done" and events[-1].text == "Fixed and pushed"
+    assert [e.text for e in events if e.kind == "done"] == [answer]
 
 
 def test_an_expired_grace_does_not_skip_a_steered_turns_later_waits(tree):

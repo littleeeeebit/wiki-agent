@@ -896,8 +896,8 @@ class ChatSession:
                     yield Event("error", f"{deadline:.0f}초 안에 답이 없다.")
                     return
             deadline, kind = TURN_TIMEOUT, ev.get("type")
-            # A new model turn or task activity means a follow-up really comes; status traffic does not.
-            if kind in ("user", "assistant", "stream_event", "control_request") or str(ev.get("subtype")).startswith("task_"):
+            # Anything but idle traffic may start the follow-up (`status: requesting` comes first).
+            if kind not in ("rate_limit_event", "keep_alive"):
                 held = None
             if kind == "user" and ev.get("isReplay"):
                 replay_human = not ev.get("isSynthetic")
@@ -1178,8 +1178,8 @@ class ChatSession:
                                 and not self._steered and self._closing()):
                             yield Event("tool", f"Background · waiting for {max(len(background), followups)} "
                                                 "follow-up(s)", {"tool": "background"})
-                            # A zero-turn placeholder is not an answer: the one kept stays.
-                            held = None if background else held if injected and ev.get("num_turns") == 0 else ev
+                            # A zero-turn placeholder promises a combined answer: the ordinary wait.
+                            held = None if background or (injected and ev.get("num_turns") == 0) else ev
                             continue
                         # The work is reported closed, yet tasks still run: left
                         # over, and holding the turn would keep the review from
