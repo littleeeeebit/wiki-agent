@@ -553,6 +553,12 @@ def test_the_allowance_counts_candidates_not_the_ids_of_their_identical_twins(wo
     index.close()
 
 
+def test_chunks_differing_in_case_or_indentation_are_not_twins():
+    keys = [retrieval.text_key({"text": t}) for t in
+            ("env: production\n", "env: PRODUCTION\n", "if a:\n    b\n", "if a:\nb\n", "env: production  \r\n")]
+    assert keys[0] != keys[1] and keys[2] != keys[3] and keys[4] == keys[0]
+
+
 def test_an_external_repair_writes_no_paper_once_the_budget_is_spent(world, monkeypatch):
     hub, repo = world
     from common.budget import Budget

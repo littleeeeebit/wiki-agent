@@ -52,6 +52,24 @@ def boot(groups: list, stat, resamples: int, seed: int, confidence: float) -> di
             "high": round(got[min(len(got) - 1, int((1 - cut) * len(got)))], 4), "n": len(groups)}
 
 
+def wilson(groups: list[tuple[float, float]], confidence: float) -> dict:
+    """A success rate over `groups` of `(successes, trials)` and its Wilson
+    score interval, for a gate that compares a rate with a target. A percentile
+    bootstrap cannot do that: six successes out of six resample to [1, 1]
+    every time, while the true rate could be as low as 0.54. `n` is the number
+    of groups, so a group of several trials counts once — conservative for
+    clustered rows, exact where each group is one trial."""
+
+    point, n = ratio(groups), len(groups)
+    if point is None:
+        return {"value": None, "low": None, "high": None, "n": n, "method": "wilson"}
+    z = statistics.NormalDist().inv_cdf(1 - (1 - confidence) / 2)
+    centre, half = (point + z * z / (2 * n)) / (1 + z * z / n), \
+        z / (1 + z * z / n) * (point * (1 - point) / n + z * z / (4 * n * n)) ** 0.5
+    return {"value": round(point, 4), "low": round(max(0.0, centre - half), 4),
+            "high": round(min(1.0, centre + half), 4), "n": n, "method": "wilson"}
+
+
 def ratio(pairs: list[tuple[float, float]]) -> float | None:
     den = sum(d for _n, d in pairs)
     return sum(n for n, _d in pairs) / den if den else None
@@ -264,8 +282,7 @@ def actions_report(rows: list[dict], cfg: dict | None = None) -> dict:
     if cfg:
         for point, p in points.items():
             groups = [(float(r["selected"] == r["label"]), 1.0) for r in rows if r["point"] == point]
-            p["interval"] = {**boot(groups, ratio, cfg["resamples"], cfg["seed"], cfg["confidence"]),
-                             "denominator": len(groups)}
+            p["interval"] = {**wilson(groups, cfg["confidence"]), "denominator": len(groups)}
     n = len(rows)
     return {"fixtures": n, "selected_right_rate": round(sum(p["selected_right"] for p in points.values()) / n, 4)
             if n else None, "points": dict(points),
@@ -310,8 +327,8 @@ def routing_report(rows: list[dict], data: dict, cohort: dict, cfg: dict) -> dic
            "unscorable_rows": unscorable[:20], "route_mistakes": dict(mistakes)}
     for name, pairs in scored.items():
         counted = by_intent(pairs, lambda x: x["v"])
-        out[name] = ({**boot(list(counted.values()), ratio, cfg["resamples"], cfg["seed"], cfg["confidence"]),
-                      "denominator": len(pairs)} if counted else None)
+        out[name] = {**wilson(list(counted.values()), cfg["confidence"]), "denominator": len(pairs)} \
+            if counted else None
     return out
 
 

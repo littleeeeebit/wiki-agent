@@ -103,9 +103,11 @@ def normal(text: str) -> str:
 
 
 def text_key(chunk: dict) -> str:
-    """What makes two chunks one candidate: the same text, whitespace and case aside."""
+    """What makes two chunks one candidate: the same text. Only line endings and
+    trailing spaces are set aside; case, indentation and inner spacing change
+    meaning in code and configuration (`production` is not `PRODUCTION`)."""
 
-    return evidence.digest(normal(chunk["text"]))
+    return evidence.digest("\n".join(line.rstrip() for line in str(chunk["text"]).splitlines()).strip())
 
 
 # ---- the contracts ----------------------------------------------------------------
