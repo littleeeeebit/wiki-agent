@@ -4,6 +4,7 @@ ones. No network."""
 
 import json
 from collections import Counter
+from types import SimpleNamespace
 from pathlib import Path
 
 from eval import compare, dataset, report
@@ -89,3 +90,53 @@ def test_per_class_routing_gates_fail_what_a_pooled_rate_would_pass():
     assert lost["request_classification"] == "fail"
     assert {k: v for k, v in lost.items() if k != "request_classification"} == dict.fromkeys(
         ("analysis_recall", "fact_specificity", "material_classification"), "pass")
+
+
+def test_the_grader_reads_what_the_answering_host_read_beside_the_dossier(monkeypatch):
+    """Since #59 the answering host may read the repository with its own tools. A claim resting on a page it
+    read, outside the retrieved dossier, is graded against that page, not as unsupported."""
+
+    import agent
+    from agent import ChatSession, Event
+
+    claim = "The third quarter had four incidents; three were caused by configuration changes."
+    page = "x" * 4100 + "\n" + claim   # past the 4000 characters a tool event shows
+    # Each provider's own events, as the session reads them: the result is kept whole, a preview is not kept.
+    events = {"": [{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": "r1",
+                                                             "content": [{"type": "text", "text": page}]}]}},
+                   {"type": "result", "result": claim}],
+              "codex:test": [{"type": "item.started", "item": {"id": "r1", "type": "command_execution",
+                                                                "command": "cat incidents-q3.md"}},
+                             {"type": "item.completed", "item": {"id": "r1", "type": "command_execution",
+                                                                 "aggregated_output": page, "exit_code": 0}},
+                             {"type": "item.completed", "item": {"id": "r2", "type": "mcp_tool_call",
+                                                                 "result": {"content": [{"type": "text",
+                                                                                         "text": claim}]}}},
+                             {"type": "item.completed", "item": {"type": "agent_message", "text": claim}},
+                             {"type": "turn.completed", "usage": {}}]}
+    for model, sent_events in events.items():
+        read: list[str] = []
+        chat = ChatSession(Path.cwd(), model=model or None, isolated=True, results=read)
+        try:
+            for ev in sent_events:
+                chat._events.put(ev)
+            assert compare.host_turn(SimpleNamespace(say=lambda _m: chat._drain()), "q")[0] == claim
+        finally:
+            chat.close()
+        assert read == ([page] if not model else [page, claim]), model
+
+    made = {}
+    monkeypatch.setattr(agent, "ChatSession", lambda *a, **k: made.update(k) or SimpleNamespace(
+        say=lambda _m: iter([Event("done", claim, {})]), close=lambda: None))
+    assert compare.answered({"text": "q"}, {"evidence": []}, Path.cwd(), False, None, "")["read"] is made["results"]
+
+    sent = {}
+
+    def oneshot(prompt, payload, model):
+        sent.update(payload)
+        yield Event("done", '{"parts": {}, "claims": [], "abstained": false, "forbidden": []}', {})
+
+    monkeypatch.setattr(agent, "oneshot", oneshot)
+    unit = {"text": "q", "intent": {"parts": [], "forbidden": [], "abstain": False, "evidence": []}}
+    compare.graded(unit, {"evidence": []}, {"text": claim, "read": [page]}, {}, "")
+    assert sent["read_passages"] == [page] and sent["retrieved_passages"] == []

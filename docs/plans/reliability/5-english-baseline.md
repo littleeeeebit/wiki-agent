@@ -726,6 +726,32 @@ than 25 of 44 work-start or 38 of 66 review-fix labels, except "disputed",
 which means context by the decision prompt itself. Every bridge target shares
 no content word with its query, and graph-off retrieval misses all six.
 
+### Calibration at bc838d8
+
+Retrieval, actions and A/D answers on the calibration split, USD 8.66.
+Routing was right on every calibration row (B and D, 132 of 132); actions
+12/12 work-start, 12/12 check choice, 9/12 review-fix (two uncertain, both
+context labels the model sent as fix).
+
+Answer support fell to 0.141 (A unsupported 0.307, D 0.264) against v4's
+0.736 on the same 72 intents (A 0.423, D 0.112). The cohort is incomplete:
+`memory-07:en:A:0` has an `answer_error` (WinError 32 while closing the
+grading session) and no grade, so the figure is a diagnostic over 65 A and
+66 D rows, not acceptance evidence. The cause is #59, after v4
+ran at a0e88d3: ordinary answers now synthesize as `unverified`, and the
+claim validator runs only with `verify_claims=True`. The runner's arm D
+follows the product path, so it no longer withholds unestablished claims;
+D's claims rose from 179 to 501. The owner chose to keep measuring the
+product path. Part of the drop is the grader's: the answering host may read
+the repository with Read, Glob and Grep, while the grader saw only the
+dossier, so a true claim from a page the host read was graded unsupported
+(roughly 11 of D's 132 and 23 of A's 142). The grader now receives
+`read_passages`: every tool result the host received, whole, collected by the
+session itself for both providers (`ChatSession(results=...)`), since a tool
+event shows only the first 4000 characters and Codex `exec` sent no result
+event at all. Calibration answers run again, complete, before the held-out
+half.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -733,7 +759,7 @@ no content word with its query, and graph-off retrieval misses all six.
 | 1 | Freeze | Freeze new English labels, versions and gates | Done |
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
-| 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — fixtures, intents and gates frozen after label review r5; calibration and held-out runs next |
+| 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — frozen after label review r5; calibration run, the grader given what the host read; calibration answers again, then held-out |
 
 ## Sources
 
