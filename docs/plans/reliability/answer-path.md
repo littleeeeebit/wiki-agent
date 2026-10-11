@@ -403,6 +403,113 @@ both, and judged on latency, answer support and coverage. For answer
 support in v5, S3: the failed result stands. The gate's cohort and the
 treatment of analysis inference are set for v6 before its held-out run.
 
+## L1 answers at 01702da
+
+L1 (#118) was measured on the full calibration answers
+(`raw/eval/jev/reliability-v5-calibration-answers-l1`, USD 9.50, 38.7
+minutes) and then the full held-out answers
+(`raw/eval/jev/reliability-v5-heldout-answers-l1`, three batches, USD 21.19,
+89.2 minutes). Each is compared with the last run of the same split: b3
+(ebbe420) for calibration and ac90615 for held-out. In `tool/` and `eval/`,
+both differ from 01702da in L1 alone, so a difference is L1's or the runs'
+own variation.
+
+L1 was designed from the held-out run's diagnosis, so this second held-out
+run is no longer an unseen test of it. It shows what L1 changes on the same
+rows; it does not replace v5's recorded held-out result, which stays failed.
+A clean test of the answer path is v6's held-out run.
+
+### Calibration
+
+| Run | Added latency (s) | D p95 | A p95 | Answer support | D unsupported | A unsupported |
+| --- | --- | --- | --- | --- | --- | --- |
+| b3 | 11.073 | 30.798 | 19.725 | 0.319 | 0.0963 (n=218) | 0.1414 (n=474) |
+| L1 | 4.398 | 20.612 | 16.214 | 0.5795 | 0.0756 (n=238) | 0.1798 (n=484) |
+
+Rows on both sides of L1's path became faster, and these runs do not
+separate their shares. Among b3's slowest D rows were fact rows whose answer
+step ran long (`fix-03` 36.2 s of 40.9 s total, `fix-12` 26.5 of 30.8,
+`adv-09` 21.2 of 32.1); L1 does not touch them, and in the L1 run each took
+22 s or less in total. L1 changes only rows the route marks analysis, and
+calibration has three; one of them, `analysis-03`, was b3's second-slowest D
+row at 34.0 s and took 18.3 s under L1. Putting only these three L1 rows in
+place of b3's lowers b3's D p95 from 30.798 to 25.472 s; with b3's A p95
+held fixed, that lowers added latency by 5.3 s, against the observed 6.7 s
+fall in added latency. That mix carries those rows' own run variation, so it
+bounds nothing either way.
+
+| Row | Retrieval / set aside, b3 (s) | Retrieval / set aside, L1 (s) | Status b3 → L1 | Evidence b3 → L1 | Unsupported b3 → L1 |
+| --- | --- | --- | --- | --- | --- |
+| `analysis-02` | 6.4 / 5.1 | 3.0 / 0.0 | ready → partial | 10 → 4 | 0/11 → 1/7 |
+| `analysis-03` | 15.3 / 14.5 | 1.0 / 0.0 | ready → partial | 16 → 17 | 7/16 → 2/11 |
+| `analysis-06` | 4.8 / 3.8 | 5.6 / 4.6 | partial → partial | 16 → 16 | 4/12 → 2/15 |
+
+Coverage went to the host 4 times in 11 on these rows in b3 and 0 in 13
+under L1; `analysis-06` still sets 4.6 s aside, for its route's progress
+question. `analysis-02` kept 4 passages where b3 kept 10, the loss
+of evidence protection the design expected. The grader marked every part
+answered in both runs. The 57 fact rows are unchanged: unsupported 8/147
+(0.054) in b3 and 9/165 (0.055) under L1. The route marked no calibration
+fact row analysis in either run.
+
+### Held-out
+
+| Run | Added latency (s) | D p95 | A p95 | D p50 | A p50 | Answer support | D unsupported | A unsupported |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ac90615 | 17.49 (fail) | 42.592 | 25.102 | 17.334 | 11.932 | 0.093 (fail) | 0.1579 (n=741) | 0.1741 (n=919) |
+| L1 | 0.283 (pass) | 22.320 | 22.037 | 14.550 | 12.931 | 0.2301 (fail) | 0.1412 (n=765) | 0.1834 (n=954) |
+
+The route marked the same 62 rows analysis in both runs (54 analysis
+intents and 8 fact intents). Paired by intent, their medians:
+
+| Per row (s) | ac90615 | L1 | Paired difference |
+| --- | --- | --- | --- |
+| Retrieval | 15.17 | 3.26 | −12.44 |
+| Set aside for host turns | 13.89 | 1.51 | −12.48 |
+| Answer step | 13.87 | 14.16 | −0.26 |
+| Total | 28.68 | 17.04 | −11.46 |
+
+Coverage on these rows went to the host 188 times in 319 at ac90615 and 0
+in 362 under L1. What is still set aside is the route's progress (27 turns),
+route (3) and ask (2) questions. The fall in retrieval follows the fall in
+set-aside time, which is L1's mechanism; the gate value is one rerun's
+outcome, not L1's exact effect, since A's p95 also moved, from 25.102 to
+22.037 s. The cost is the one the design named: of the 54 analysis rows, 13
+ended `ready` at ac90615 and 2 under L1, and 51 ran three rounds where 43
+had. The evidence kept by the 54 had a median of 21 passages at ac90615 and
+20 under L1 (19 and 18 over all 62), and the median paired difference is 0
+in both cohorts. The grader's coverage of the 54 is 0.972 in both runs.
+
+By intent class, answer support:
+
+| Rows | D, ac90615 | D, L1 | A, ac90615 | A, L1 |
+| --- | --- | --- | --- | --- |
+| Analysis | 82/500 (0.164) | 86/513 (0.168) | 76/472 (0.161) | 88/490 (0.180) |
+| Other | 35/241 (0.145) | 22/252 (0.087) | 84/447 (0.188) | 87/464 (0.188) |
+
+D's analysis intents have a similar rate in both runs. The pooled value,
+0.093 then 0.230, moved with all four cells, most with A's analysis rows (12
+more unsupported claims) and D's other rows (13 fewer). Of D's other rows,
+the 8 fact intents the route marks analysis take L1's path: their
+unsupported claims fell from 13/55 to 7/53, and their coverage, which went
+to the host once in 14 at ac90615, was asked differently under L1
+(`start-35` asked three times, then six). The 58 fact rows L1 does not touch
+went from 18/158 to 15/173. One rerun neither attributes the pooled
+improvement to L1 nor rules L1 out of it. Neither run passes the 0.25
+target. S3 stands: v5's answer-support result is failed, and v6
+sets the gate's cohort and the treatment of analysis inference before its
+held-out run.
+
+### Reading
+
+L1 removes the host coverage turns from analysis rows, and in this rerun
+the held-out latency gap closed with them. The analysis intents' unsupported
+rate (0.164, then 0.168) and the grader's coverage (0.972 both) were
+similar; one rerun does not establish that they are equal. What L1 gives up
+is the `ready` status: an analysis now ends `partial` by the round limit
+where a host turn used to accept its coverage. These runs do not separate
+what that status changes in synthesis.
+
 ## Sources
 
 - R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
