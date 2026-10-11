@@ -302,7 +302,7 @@ gates failed:
 Answer seconds are retrieval and the answer step together, at the report's
 percentile. Of the 126 graded intents, 54 (43%) are analysis, against 3 of
 66 (5%) in calibration. Analysis answers are synthesized and never checked,
-so they carry D's unsupported rate to A's. On fact rows alone D is 25.5%
+so they carry D's unsupported rate to A's. On fact rows alone D is 25.6%
 below A, at the target, though its 0.146 is far above calibration's 0.054.
 Its 31 unsupported claims split by path: 13 in 47 verified answers (44
 complete, 3 partial), 5 in 11 that fell back to synthesis, and 13 in 8
@@ -310,8 +310,8 @@ published unverified with no fallback.
 
 D's analysis rows spend a median 17.6 s retrieving (32.4 s at most); 43 of
 54 run three rounds and 40 end at the round limit. The host fallback turns
-the budget sets aside take a median 16.5 s of it, and Jev's own time
-1.1 s: the judge's coverage questions fell to the host 187 of 305 times on
+the budget sets aside take a median 16.5 s of it, and the rest, local
+retrieval and Jev's requests, a median 1.1 s: the judge's coverage questions fell to the host 187 of 305 times on
 analysis rows, against 4 of 99 on fact rows, and the route's progress 27 of
 54. Subtracting the set-aside time from the analysis rows alone gives
 −3.23 s of added latency; that is arithmetic on recorded times, not a
