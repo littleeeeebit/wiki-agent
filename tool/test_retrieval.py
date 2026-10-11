@@ -109,17 +109,20 @@ def test_the_seeds_are_ranked_per_chunk_so_one_document_gives_two_sections(world
 def test_every_allowed_source_gets_a_floor_before_the_cut_and_an_empty_one_gives_it_back(world):
     hub, repo = world
     index = index_of(hub, repo)
-    # Five document sections match better than the memory; four slots, twice the sources, still hold it.
+    # Five document sections match better than the memory; four slots still hold it.
     query = "ranker dense lists circular page pipeline"
-    result = ask(index, query, graph=None, limit=4, sources=["documents", "memory"])
+    result = ask(index, query, graph=None, limit=4)
     assert result["coverage"]["memory"] == {"candidates": 1, "floor": 1, "selected": 1}
     assert len(result["chunks"]) == 4
     (memory,) = [c for c in result["chunks"] if c["kind"] == "memory"]
     assert result["scores"][memory["chunk_id"]]["rrf"]["rank"] > 4
-    # Fewer slots than twice the sources have no floor: rank alone fills them.
-    fewer = ask(index, query, graph=None, limit=3, sources=["documents", "memory"])
-    assert fewer["coverage"]["memory"] == {"candidates": 1, "floor": 0, "selected": 0}
-    assert [c["kind"] for c in fewer["chunks"]] == ["document"] * 3
+    # A repair round holds it in slots twice the sources; in fewer, rank alone fills them.
+    for limit, held in ((4, 1), (3, 0)):
+        req = retrieval.request(evidence.repo_id(repo), query, sources=["documents", "memory"], limit=limit,
+                                graph=None)
+        repair = retrieval.run(index.snapshot(), {**req, "round": 2})
+        assert repair["coverage"]["memory"] == {"candidates": 1, "floor": held, "selected": held}
+        assert len(repair["chunks"]) == limit
     # A source that is not allowed is not ranked at all, however well it matches.
     narrow = ask(index, query, graph=None, limit=4, sources=["documents"])
     assert {c["kind"] for c in narrow["chunks"]} == {"document"}

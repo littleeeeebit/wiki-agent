@@ -13,9 +13,10 @@ Stage 5 of `docs/plans/jev/`.
    see is ranked: sources, filters and visibility come before the cut.
 3. The lanes are fused by reciprocal rank per chunk, not per page, so two
    sections of one document can both be kept.
-4. Each allowed source gets a floor of the seed slots, together at most half
-   of them; a source with nothing gives its floor back to the rest. Fewer
-   slots than twice the sources, as a subquery's share of a round, have no
+4. Each allowed source gets a floor of the seed slots, together about half
+   of them, and in round 1 at least one while there is a slot for each; a
+   source with nothing gives its floor back to the rest. A repair round
+   with fewer slots than twice the sources, as a subquery's share, has no
    floor: rank alone fills them.
 5. The best seeds start a walk over adopted graph edges (`expand`) within
    hops, a fan-out per visited node and one candidate allowance.
@@ -303,9 +304,11 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
     slots = max(0, min(req["limit"], allowance))
     names = req["source_allowlist"]
     groups = {name: [i for i in ranked if name in covers[text_key(chunks[i])]] for name in names}
-    # A floor of one per source in four slots spent them all on each source's best, however poor: a
-    # subquery's second-ranked document lost to an unrelated paper (analysis-03, reliability v5).
+    # In a repair round, a floor of one per source in four slots spent them all on each source's best, however
+    # poor: a subquery's second-ranked document lost to an unrelated paper (analysis-03, reliability v5).
     floor = slots // (2 * len(names))
+    if req["round"] == 1 and slots >= len(names):
+        floor = max(1, floor)
     picked = {i for name in names for i in groups[name][:floor]}
     for i in ranked:
         if len(picked) >= slots:

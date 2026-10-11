@@ -244,11 +244,12 @@ of the same corpus, with no request sent:
 The second cause ended every v5 run's `analysis-03` and `analysis-06`, and
 the held-out `analysis-56`, `-69` and `-78`, in `retrieval_unavailable`;
 the graded answers were still `answered`. `merged` now counts a chunk two
-siblings returned once. Seed slots fewer than twice the sources now have
-no floor, so a subquery's four slots go by rank, and its round 2 returns
-`traffic.md`. Round 1 at k = 8 keeps the floor it had with up to four
-sources (four, two, one and one for one to four); with all five families
-allowed, it now has none. `fix-12` needs a different query wording, which no repair now
+siblings returned once. A repair round's seed slots fewer than twice the
+sources now have no floor, so a subquery's four slots go by rank, and its
+round 2 returns `traffic.md`. Round 1 keeps its floor unchanged, at least
+one per source while there is a slot for each, since dropping it would
+leave a low-ranked source out of grading once all five families are
+allowed at k = 8. `fix-12` needs a different query wording, which no repair now
 proposes; it is left open.
 
 ## Sources
