@@ -164,9 +164,19 @@ def arms_report(rows: list[dict], data: dict, opts: dict, cfg: dict) -> dict:
             if "claims" in v:
                 claims[r["intent"]][0] += v["claims"][0]
                 claims[r["intent"]][1] += v["claims"][1]
-        if claims:
-            entry["unsupported_claim_rate"] = {**boot([tuple(c) for c in claims.values()], ratio, B, seed, conf),
-                                               "denominator": sum(c[1] for c in claims.values())}
+        # Pooled, and by the intent's label (gates v6, G2: answer support reads the non-analysis intents;
+        # the analysis intents' rates are reported beside it).
+        for key, keep in (("", lambda i: True), ("_analysis", lambda i: i.get("analysis")),
+                          ("_other", lambda i: not i.get("analysis"))):
+            kept = [tuple(c) for iid, c in claims.items() if keep(intents[iid])]
+            if kept:
+                entry[f"unsupported_claim_rate{key}"] = {**boot(kept, ratio, B, seed, conf),
+                                                         "denominator": sum(c[1] for c in kept)}
+            counted = by_intent([{"intent": r["intent"], "v": v.get("coverage")} for r, v in pairs
+                                 if keep(intents[r["intent"]])], lambda x: x["v"])
+            if key and counted:
+                entry[f"coverage{key}"] = {**boot(list(counted.values()), ratio, B, seed, conf),
+                                           "denominator": int(sum(d for _n, d in counted.values()))}
         seconds = [v["seconds"] for _r, v in pairs]
         entry["seconds"] = {"p50": percentile(seconds, 0.5), "p95": percentile(seconds, 0.95)}
         answer_seconds = [v["answer_seconds"] for _r, v in pairs if "answer_seconds" in v]
@@ -204,11 +214,14 @@ def arms_report(rows: list[dict], data: dict, opts: dict, cfg: dict) -> dict:
                     conf)
 
     for a, b in (("A", "D"), ("A", "B"), ("A", "C"), ("B", "D"), ("C", "D")):
-        for name, keep in (("recall", lambda i: True), ("bridge_recall", lambda i: "bridged" in i),
-                           ("coverage", lambda i: True)):
+        for key, name, keep in (("recall", "recall", lambda i: True),
+                                ("bridge_recall", "bridge_recall", lambda i: "bridged" in i),
+                                ("coverage", "coverage", lambda i: True),
+                                ("coverage_other", "coverage", lambda i: not i.get("analysis")),
+                                ("coverage_analysis", "coverage", lambda i: i.get("analysis"))):
             got = paired(a, b, name, keep)
             if got:
-                out["differences"][f"{name}_{b}_minus_{a}"] = got
+                out["differences"][f"{key}_{b}_minus_{a}"] = got
     return out
 
 
@@ -440,6 +453,13 @@ def at_least(d: dict | None, target: float) -> str:
     return "pass" if d["low"] >= target else "fail" if d["high"] < target else "inconclusive"
 
 
+def scope(gate: dict) -> str:
+    """The suffix of the rate and coverage a gate reads: `_other` for a gate
+    that names `"intents": "non_analysis"` (gates v6, G2), none otherwise."""
+
+    return {"non_analysis": "_other"}[gate["intents"]] if "intents" in gate else ""
+
+
 def judge(gates: dict, found: dict, reviewed: bool) -> list[dict]:
     """Each gate's result on what was measured. A gate that names its run
     (reliability PR 5) reads that run's report and no other, and its cohort
@@ -478,15 +498,22 @@ def judge(gates: dict, found: dict, reviewed: bool) -> list[dict]:
             detail = diffs["recall_D_minus_A"]
             verdict = ("pass" if detail["low"] is not None and detail["low"] >= g["target"] else
                        "fail" if detail["high"] is not None and detail["high"] < g["target"] else "inconclusive")
-        elif g["id"] == "answer_support" and all("unsupported_claim_rate" in table.get(a, {}) for a in "AD"):
-            a, d = table["A"]["unsupported_claim_rate"]["value"], table["D"]["unsupported_claim_rate"]["value"]
-            cov = diffs.get("coverage_D_minus_A") or {}
+        elif g["id"] == "answer_support" and all(
+                f"unsupported_claim_rate{scope(g)}" in table.get(a, {}) for a in "AD"):
+            rate = f"unsupported_claim_rate{scope(g)}"
+            a, d = table["A"][rate]["value"], table["D"][rate]["value"]
+            cov = diffs.get(f"coverage{scope(g)}_D_minus_A") or {}
             # Coverage may fall short of A's by `coverage_margin`, read at the interval's lower end
             # (version 3); without one, any shortfall of the point estimate fails (versions 1 and 2).
             margin = g.get("coverage_margin")
             lower = (cov.get("low") is not None and cov["low"] < margin if margin is not None else
                      cov.get("value") is not None and cov["value"] < 0)
-            detail = {"A": a, "D": d, "coverage_D_minus_A": cov, "coverage_margin": margin}
+            detail = {"A": a, "D": d, "coverage_D_minus_A": cov, "coverage_margin": margin,
+                      **({"intents": g["intents"], "analysis": {
+                          "unsupported_claim_rate": {x: table[x].get("unsupported_claim_rate_analysis") for x in "AD"},
+                          "coverage": {x: table[x].get("coverage_analysis") for x in "AD"},
+                          "coverage_D_minus_A": diffs.get("coverage_analysis_D_minus_A")}}
+                         if "intents" in g else {})}
             if a != 0:
                 value = round((a - d) / a, 4)
             supported = d == 0 if a == 0 else value >= g["target"]

@@ -1009,8 +1009,37 @@ recall on fresh analysis intents. The probe kept only the analysis answer.
 The same request asks retrieve, progress, source and ask questions, whose
 texts are unchanged but which Jev reads beside the new one, and other
 production settings (a current state, a narrower source set, retrieval
-already required) change its input; neither is measured here, and v6's
-runs measure them.
+already required) change its input; neither is measured here. v6's runs
+measure the sibling questions on fresh requests in the benchmark's setting
+only: no v6 intent carries a current state, a narrower source set or a
+caller-required retrieval, and the arms harness passes none, so those
+settings stay outside v6 and need their own measurement.
+
+### Draft set
+
+`eval/jev/reliability-v6/intents.json` keeps v5's 72 calibration intents
+verbatim and adds 138 fresh held-out intents (review r6), with pages only
+they name over v5's corpus, no earlier page edited. The analysis family has
+66: 36 request-only multipart and 18 with material, all analysis, and 12
+routine cases a standing policy covers, labelled fact (4 single, 4
+multipart, 4 with material). The other families keep v5's sizes: 12 pasted
+and 6 each for the rest, the failure family's faults 2 cancelled, 2
+exhausted and 2 unavailable. Among the 132 routed intents: 54 analysis, 78
+fact, 58 with a material segment, 59 request-only multipart.
+`eval/jev/reliability-v6/gates.json` is v5's gates with G2. Under A3 v6
+has no action fixtures, so its action gates and decision quality are
+not_measured, and v5's action results stand. `tool/test_reliability_v6.py`
+pins these counts. Two review rounds by gpt-6.1-sol (r6) preceded the
+freeze on 2026-10-11. Round 1 found three problems, all fixed:
+- Two analysis intents asked a separate cost question with no answer part.
+  Each now has one, and thirteen other analysis references now cover a
+  second request.
+- The report did not show the analysis intents' coverage beside G2. It
+  now does.
+- This page claimed v6 measures other production settings. That claim is
+  narrowed above.
+
+Round 2 found nothing. No v6 held-out case has been run.
 
 ## Steps
 
@@ -1020,7 +1049,7 @@ runs measure them.
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
-| 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases; fresh intents, gates v6 and their review next |
+| 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); calibration and held-out runs next, on the owner's approval of their cost |
 
 ## Sources
 
