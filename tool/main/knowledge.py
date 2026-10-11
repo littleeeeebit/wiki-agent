@@ -1065,7 +1065,7 @@ class Flow:
 
 def merged(before: dict, results: list[dict | None]) -> dict:
     """Sibling rounds as one: their chunks and paths together, every seen id,
-    and what each spent of the allowance added up."""
+    and what they spent of the allowance, a chunk two of them returned once."""
 
     done = [r for r in results if r]
     if not done:
@@ -1077,7 +1077,7 @@ def merged(before: dict, results: list[dict | None]) -> dict:
             "audiences": done[0].get("audiences") and {
                 **done[0]["audiences"], "unclassified": sum(c.get("audiences") is None for c in chunks)},
             "seen_chunk_ids": list(dict.fromkeys(i for r in done for i in r["seen_chunk_ids"])),
-            "spent": before["spent"] + sum(r["spent"] - before["spent"] for r in done)}
+            "spent": before["spent"] + len(chunks)}
 
 
 def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,

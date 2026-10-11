@@ -116,6 +116,13 @@ def test_every_allowed_source_gets_a_floor_before_the_cut_and_an_empty_one_gives
     assert len(result["chunks"]) == 4
     (memory,) = [c for c in result["chunks"] if c["kind"] == "memory"]
     assert result["scores"][memory["chunk_id"]]["rrf"]["rank"] > 4
+    # A repair round holds it in slots twice the sources; in fewer, rank alone fills them.
+    for limit, held in ((4, 1), (3, 0)):
+        req = retrieval.request(evidence.repo_id(repo), query, sources=["documents", "memory"], limit=limit,
+                                graph=None)
+        repair = retrieval.run(index.snapshot(), {**req, "round": 2})
+        assert repair["coverage"]["memory"] == {"candidates": 1, "floor": held, "selected": held}
+        assert len(repair["chunks"]) == limit
     # A source that is not allowed is not ranked at all, however well it matches.
     narrow = ask(index, query, graph=None, limit=4, sources=["documents"])
     assert {c["kind"] for c in narrow["chunks"]} == {"document"}
@@ -481,6 +488,22 @@ def test_sibling_subqueries_split_what_is_left_of_the_allowance(world):
     assert len(subs) == 2 and note["rejected"] == [{"subquery": "beta page", "reason": "no_allowance"}]
     got = [c["chunk_id"] for s in subs for c in retrieval.run(index.snapshot(), s)["chunks"]]
     assert len(first["chunks"]) + len(set(got)) <= 3 and all(s["max_candidates"] == 2 for s in subs)
+    index.close()
+
+
+def test_a_chunk_two_siblings_both_return_is_spent_once_and_the_next_round_runs(world):
+    hub, repo = world
+    index = index_of(hub, repo)
+    req = retrieval.request(evidence.repo_id(repo), "circular alpha", sources=["documents"], limit=2, graph=None)
+    first = retrieval.run(index.snapshot(), req)
+    subs, _ = retrieval.repair(req, first, "subqueries", subqueries=["ranker merges lexical", "merges lexical lists"])
+    results = [retrieval.run(index.snapshot(), s) for s in subs]
+    assert set.intersection(*({c["chunk_id"] for c in r["chunks"]} for r in results))
+    both = knowledge.merged(first, results)
+    assert both["spent"] == first["spent"] + len(both["chunks"]) <= len(both["seen_chunk_ids"])
+    # Counted twice, the next round's spent passed its seen ids and every request of it was refused.
+    after, _ = retrieval.repair({**req, "round": 2}, both, "subqueries", subqueries=["dense lists per section"])
+    assert retrieval.problems(after[0]) == [] and retrieval.run(index.snapshot(), after[0])["chunks"]
     index.close()
 
 
