@@ -193,8 +193,8 @@
     },
     "tool/test_decision_flow.py": {
       "dup": 7,
-      "lines": 1454,
-      "reason": "Answer path B: the fake Jev answers the progress question, the route keeps its verdict, and the host's settlement of an uncertain one is kept."
+      "lines": 1467,
+      "reason": "Answer path L1: an analysis's uncertain coverage is not sent to the host, a non-analysis's still is; beside the progress settlement it mirrors."
     },
     "tool/test_edit_as_diff.py": {
       "dup": 11,

@@ -588,10 +588,13 @@ class Flow:
                 raise failed[0] if failed else rebuilt(out["error"])
             return out["answers"]
 
+        # An analysis is synthesized unverified, and the host settling its coverage took a median 16.5 s of a
+        # held-out analysis row's 17.6 s retrieval (answer-path.md, L1): its judge requests fall back to no one.
+        host = self.fallback and not (kind == "judge" and self.dossier["analysis"])
         # A replay reads every decision from the tape, the cached ones too.
         res = decision.checked(req, decision.decide(req, evaluate, self.budget, trace, self.pol,
                                                     None if self.replay is not None else self.cache,
-                                                    self.host if self.fallback else None))
+                                                    self.host if host else None))
         if record := tracing.jev_call(req, {**res, "cached": True} if replayed.get("cached") else res):
             self.called(record)
         if record := tracing.fallback_call(req, res):

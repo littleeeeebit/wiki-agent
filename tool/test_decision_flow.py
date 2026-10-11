@@ -880,6 +880,19 @@ def test_the_host_may_settle_an_uncertain_progress(monkeypatch, host, progress):
     assert asked == [["progress"]] and out["progress"] == progress
 
 
+@pytest.mark.parametrize("analysis, settled", [(0.95, False), (0.05, True)])
+def test_only_a_non_analysis_lets_the_host_settle_an_uncertain_coverage(monkeypatch, analysis, settled):
+    # answer-path.md, L1: the host's coverage turns took most of a held-out analysis row's retrieval.
+    asked = []
+    monkeypatch.setattr(knowledge, "host_decides", lambda state, questions, stage, cancel=None, model="":
+                        asked.append(list(questions)) or {"answers": {q: "yes" for q in questions},
+                                                          "model": "host", "elapsed_ms": 1})
+    out = run(World(answering(coverage=0.5, analysis=analysis), [found([chunk("port", "The port is 8791.")])]),
+              query="Which port does the daemon use?", fallback=True)
+    assert any(q.startswith("coverage_") for a in asked for q in a) is settled
+    assert (out["status"] == "ready") is settled
+
+
 def test_an_analysis_is_searched_even_where_jev_would_answer_directly():
     # Review round 1 (P0): `retrieve=no` took the direct route, and an analysis went out unsearched and uncited.
     world = World(answering(route=0.05, analysis=0.95), [found([chunk("port", "The port is 8791.")])])
