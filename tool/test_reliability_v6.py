@@ -31,6 +31,8 @@ def test_the_sixth_set_holds_out_fresh_cases_for_the_changed_route_and_answers()
     assert sorted(i["fault"]["kind"] for i in held if i.get("fault")) == \
         ["cancelled"] * 2 + ["exhausted"] * 2 + ["unavailable"] * 2
     assert not (V6 / "actions.json").exists(), "A3: v6 measures the answer path and routing only"
+    gates = json.loads((V6 / "gates.json").read_text(encoding="utf-8"))
+    assert data["frozen"] == gates["frozen"] == data["labels"]["reviews"]["r6"]["at"] == "2026-10-11"
 
 
 def test_gates_v6_judge_answer_support_on_the_non_analysis_intents_and_latency_on_all():

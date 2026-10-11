@@ -1029,7 +1029,17 @@ fact, 58 with a material segment, 59 request-only multipart.
 `eval/jev/reliability-v6/gates.json` is v5's gates with G2. Under A3 v6
 has no action fixtures, so its action gates and decision quality are
 not_measured, and v5's action results stand. `tool/test_reliability_v6.py`
-pins these counts. Neither file is frozen: the label review comes first.
+pins these counts. Two review rounds by gpt-6.1-sol (r6) preceded the
+freeze on 2026-10-11. Round 1 found three problems, all fixed:
+- Two analysis intents asked a separate cost question with no answer part.
+  Each now has one, and thirteen other analysis references now cover a
+  second request.
+- The report did not show the analysis intents' coverage beside G2. It
+  now does.
+- This page claimed v6 measures other production settings. That claim is
+  narrowed above.
+
+Round 2 found nothing. No v6 held-out case has been run.
 
 ## Steps
 
@@ -1039,7 +1049,7 @@ pins these counts. Neither file is frozen: the label review comes first.
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
-| 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents drafted (Draft set); label review and freeze next |
+| 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); calibration and held-out runs next, on the owner's approval of their cost |
 
 ## Sources
 

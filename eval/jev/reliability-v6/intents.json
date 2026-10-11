@@ -2,12 +2,12 @@
  "schema": "jev-reliability-intents/1",
  "id": "reliability-intents-v6",
  "version": 6,
- "frozen": null,
+ "frozen": "2026-10-11",
  "description": "Reliability PR 5's sixth English set (docs/plans/reliability/5-english-baseline.md, v6): the 72 calibration intents of `eval/jev/reliability/intents.json` verbatim (review r1), and 138 held-out intents written fresh (review r6) over v5's corpus plus pages only they name, to test the answer path and the route as changed on v5's results. As in v5, at least 54 analysis and 54 fact intents, and among them at least 54 with a material segment and 54 of two or more segments, all requests; at least 12 of the facts are what to do in a routine case a standing policy covers. No earlier page is edited. Fields mean what they mean in the first set.",
  "labels": {
   "author": "model-drafted (claude-opus-5-5, reliability PR 5)",
-  "reviewed_by": null,
-  "reviewed_at": null,
+  "reviewed_by": "gpt-6.1-sol",
+  "reviewed_at": "2026-10-11",
   "reviews": {
    "r1": {
     "kind": "model",
@@ -18,8 +18,8 @@
    "r6": {
     "kind": "model",
     "by": "gpt-6.1-sol",
-    "at": null,
-    "note": "Pending: the fresh held-out half and the pages only it names, for a model review by gpt-6.1-sol at the repository owner's direction before any v6 held-out run."
+    "at": "2026-10-11",
+    "note": "The fresh held-out half and the pages only it names, a model review at the repository owner's direction: two full-set rounds by gpt-6.1-sol before any v6 held-out run (round 1: two analysis intents whose separate cost questions had no answer part, given one each, and thirteen analysis references widened to cover a second request; analysis coverage reported beside G2; the claim that v6 measures other production settings narrowed; round 2: nothing found). Approved inputs: intents 5ea14fa8, gates 29c624a7."
    }
   }
  },
