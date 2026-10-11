@@ -433,8 +433,9 @@ step ran long (`fix-03` 36.2 s of 40.9 s total, `fix-12` 26.5 of 30.8,
 22 s or less in total. L1 changes only rows the route marks analysis, and
 calibration has three; one of them, `analysis-03`, was b3's second-slowest D
 row at 34.0 s and took 18.3 s under L1. Putting only these three L1 rows in
-place of b3's lowers b3's D p95 from 30.798 to 25.472 s, 5.3 s of the
-observed 6.7 s fall; that mix carries those rows' own run variation, so it
+place of b3's lowers b3's D p95 from 30.798 to 25.472 s; with b3's A p95
+held fixed, that lowers added latency by 5.3 s, against the observed 6.7 s
+fall in added latency. That mix carries those rows' own run variation, so it
 bounds nothing either way.
 
 | Row | Retrieval / set aside, b3 (s) | Retrieval / set aside, L1 (s) | Status b3 → L1 | Evidence b3 → L1 | Unsupported b3 → L1 |
