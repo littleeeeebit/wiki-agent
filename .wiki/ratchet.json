@@ -103,8 +103,8 @@
     },
     "tool/main/knowledge.py": {
       "dup": 0,
-      "lines": 3856,
-      "reason": "Answer path B (answer-path.md): the progress route question, the ordinary-answer check policy, plain rendering, the synthesis fallback, the synthesis brief after a rebase that leaves verification, and no host turn in an ordinary answer's claim check."
+      "lines": 3859,
+      "reason": "Answer path L1 (answer-path.md): an analysis question's judge requests ask the host nothing, beside B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
     },
     "tool/main/loop.py": {
       "dup": 0,
