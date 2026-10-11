@@ -343,7 +343,7 @@ conflict, redirect and repair are code's (`CODE_SETTLES`). The route sets
 | --- | --- | --- | --- |
 | L1 | No host fallback in a judge request when the route marked the question analysis | Removes the coverage turns, 187 of the 305 analysis coverage questions | An uncertain coverage stays uncertain, which changes the evidence the synthesis reads (below), and reaches the fact questions the route marks analysis |
 | L2 | L1, and drop progress from the route's host turn once Jev says analysis yes | Also removes most of the 27 progress turns on analysis rows | `decision.decide` asks every uncertain question in one host turn; this needs the route to withhold progress, a change to a shared contract |
-| L3 | One retrieval round for analysis questions | Fewer rounds, but Jev's rounds take about 1 s; the time is in the host turns, not the rounds | Less evidence: the 40 rows at the round limit had recall 0.85 after three rounds |
+| L3 | One retrieval round for analysis questions | Fewer rounds, but retrieval outside the host's turns takes about 1 s per question across all its rounds; what removing rounds saves is left to measurement | Less evidence: the 40 rows at the round limit had recall 0.85 after three rounds |
 
 L1 is the smallest change that reaches the cause. The bound computed above,
 −3.23 s with all set-aside time removed from analysis rows, includes the
