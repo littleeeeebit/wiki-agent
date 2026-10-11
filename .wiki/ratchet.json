@@ -193,8 +193,8 @@
     },
     "tool/test_decision_flow.py": {
       "dup": 7,
-      "lines": 1517,
-      "reason": "v7 F2: a host answer after its reasoning, or in a fence, still settles; text with no single answer that ends it, two answers or a cut-off wrapper, still fails. Before that, answer path L1: an analysis's uncertain coverage is not sent to the host, a non-analysis's still is, and a tape from before L1 replays its host settlement; beside the progress settlement it mirrors."
+      "lines": 1530,
+      "reason": "v7 F2: a host answer after its reasoning, or in a fence, still settles; two answers, a cut-off object or array, or prose holding a bracket settles nothing, in parsed and in host_decides. Before that, answer path L1: an analysis's uncertain coverage is not sent to the host, a non-analysis's still is, and a tape from before L1 replays its host settlement; beside the progress settlement it mirrors."
     },
     "tool/test_edit_as_diff.py": {
       "dup": 11,

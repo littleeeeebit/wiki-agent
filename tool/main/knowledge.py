@@ -3320,19 +3320,19 @@ def parsed(answer: str):
     try:
         return json.loads(fenced.group(1) if fenced else body)
     except json.JSONDecodeError:
-        # One answer after the prose: the first whole object outside any open brace, with nothing after it but a
-        # closing fence. A second answer, or one inside a cut-off object, settles nothing (review r1).
+        # One answer after prose that holds no bracket: the first `{` or `[` opens it, and only a closing fence
+        # may follow. Prose with a bracket, a second answer, or a cut-off one settles nothing (review r1–r2):
+        # where an answer starts inside unparsed text cannot be told without parsing that text as JSON.
         tail = re.sub(r"\s*```\s*$", "", body)
-        for at in (m.start() for m in re.finditer(r"\{", tail)):
-            if tail.count("{", 0, at) != tail.count("}", 0, at):
-                continue
+        start = re.search(r"[{\[]", tail)
+        if start:
             try:
-                got, end = json.JSONDecoder().raw_decode(tail, at)
+                got, end = json.JSONDecoder().raw_decode(tail, start.start())
             except json.JSONDecodeError:
-                continue
-            if tail[end:].strip():
-                break
-            return got
+                pass
+            else:
+                if not tail[end:].strip():
+                    return got
         raise
 
 

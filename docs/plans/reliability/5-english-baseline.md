@@ -1300,14 +1300,18 @@ after M3's sizing was corrected in review.
 ### Implementation, calibrated on revealed cases
 
 F2: `knowledge.parsed` still reads bare JSON or a fenced block first.
-Failing that, it reads one answer after prose. That answer is the first
-whole JSON object outside any open brace, with nothing after it except a
-closing fence. Some text still fails:
-- text with no such object;
+Failing that, it reads one answer after prose that holds no `{` or `[`.
+The first of those opens the answer, and only a closing fence may follow
+it. Some text still fails:
 - a second answer after the first;
-- an inner object of a cut-off one.
+- an inner object of a cut-off object or array;
+- prose holding a bracket, since only parsing that prose as JSON could
+  show where the answer starts.
 
-Its four readers share the change.
+Its four readers share the change. The action re-probe below ran on an
+earlier version of this fix, which also accepted brackets in prose. The
+one host text captured, v5lf60's, has none. Whether the other host turns
+had any was not recorded.
 
 W and F replace the two prompts in `decisions.PROMPTS` with the wording
 above. The revealed work-start and review-fix fixtures of v1, v2 and v5,
