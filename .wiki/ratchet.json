@@ -103,8 +103,8 @@
     },
     "tool/main/knowledge.py": {
       "dup": 0,
-      "lines": 3863,
-      "reason": "Answer path L1 (answer-path.md): an analysis question's judge requests ask the host nothing, a policy in the behavior digest and on the tape, so an older tape replays its own; beside B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
+      "lines": 3866,
+      "reason": "v6 route change (5-english-baseline.md): the ANALYSIS question says what to do in a routine case is the policy that covers it, a fact, and why; beside L1's analysis judge policy, B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
     },
     "tool/main/loop.py": {
       "dup": 0,
