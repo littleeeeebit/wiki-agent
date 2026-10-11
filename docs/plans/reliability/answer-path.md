@@ -252,6 +252,29 @@ leave a low-ranked source out of grading once all five families are
 allowed at k = 8. `fix-12` needs a different query wording, which no repair now
 proposes; it is left open.
 
+Measured at ebbe420 as `reliability-v5-calibration-answers-b3`, the same
+138 rows (41 minutes, USD 9.65):
+
+| | b2 (d83b98c) | b3 (ebbe420) |
+| --- | --- | --- |
+| D fact unsupported | 10/168 (0.060) | 8/147 (0.054) |
+| A fact unsupported | 68/387 (0.176) | 60/385 (0.156) |
+| D fact coverage | 0.982 | 0.974 |
+| D mean recall, 57 rows with expected evidence | 0.974 | 0.982 |
+| D retrieval seconds p50 / p95 | 0.57 / 6.94 | 0.56 / 6.94 |
+| Host answer seconds p95, D / A | 16.5 / 16.9 | 20.4 / 19.7 |
+| Added latency | 3.48 s | 11.07 s |
+
+Only `analysis-03` and `analysis-06` took another path. `analysis-03` now
+retrieves `traffic.md`, reaches recall 1.0 and ends `ready`. `analysis-06`
+ends at the round limit (`rounds`) instead of `retrieval_unavailable`.
+Both are still graded answered. The added latency rose above the 10 s gate,
+but not through retrieval: its seconds are unchanged, and the rows that set
+D's p95 took the same path as in b2. `fix-03`'s one host turn took 36.2 s
+against 9.7 s, and `adv-09` and `fix-12` slowed the same way. The host
+answer time rose in both arms, so the 11.07 s is variance in the host's tail
+on 66 rows. The gate is judged on the held-out cohort.
+
 ## Sources
 
 - R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
