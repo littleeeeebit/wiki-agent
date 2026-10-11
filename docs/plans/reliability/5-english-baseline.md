@@ -603,9 +603,11 @@ Calibration answers, `reliability-v6-calibration-answers` (not gated):
 Read as G2 reads held-out, that is a reduction of 0.65 and 4.2 s added.
 
 Held-out runs: `reliability-v6-heldout`, `reliability-v6-heldout-answers`,
-`reliability-v6-repeat`. The report is `reliability-v6-report.json`. Rates
-take the 95% Wilson interval, and routing counts each intent once over B
-and D.
+`reliability-v6-repeat`. The report is `reliability-v6-report.json`. The
+four routing rate gates take the 95% Wilson interval and count each intent
+once over B and D. The other rates (recall, bridge recall, coverage,
+unsupported claims) and the paired differences take a 95% bootstrap
+interval resampled by intent.
 
 | Gate | Target | Value | Result |
 | --- | --- | --- | --- |
@@ -657,9 +659,17 @@ Retrieval, held out (B and D include the six injected-failure intents):
 | C | 132 | 0.896 [0.838, 0.942] | 0.917 | 0.417 | 0.03 | 0 |
 | D | 138 | 0.897 [0.841, 0.944] | 0.897 | 0.833 | 9.1 | 0.42 |
 
-- Retrieval p95 fell from v5's 20 s to 7–9 s. Jev left 7 of 467 coverage
-  questions in D uncertain, against 172 of 413 on v5's held-out. That
-  follows retrieval's change (#114), not diagnosed further here.
+- Retrieval p95 fell from v5's 20 s to 7–9 s (B 7.2 s, D 9.1 s, against
+  19.7 s and 20.3 s). This is an observation, not attributed: the two runs
+  differ in cases, corpus, route behavior and fallback policy, and #114's
+  paired calibration left retrieval p95 unchanged ([answer-path.md](answer-path.md)).
+- Coverage questions sent to the host fallback were 7 of 467 in D, against
+  172 of 413 on v5's held-out. That counts fallbacks, not every uncertain
+  Jev verdict: under L1 an analysis row's coverage questions get no host
+  fallback. The 337 coverage questions of D's analysis-routed rows sent
+  none, though 40 of those rows still end with a requirement marked
+  uncertain (analysis-91: r0 at 0.23). The counters do not give the total
+  uncertainty.
 - Failure and cancellation: 12 of 12 as expected.
 - Repetition: status was the same in 8 of 8 groups. Evidence was the same,
   in order, in 3 (B) and 2 (D).
