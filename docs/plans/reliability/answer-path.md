@@ -403,6 +403,101 @@ both, and judged on latency, answer support and coverage. For answer
 support in v5, S3: the failed result stands. The gate's cohort and the
 treatment of analysis inference are set for v6 before its held-out run.
 
+## L1 answers at 01702da
+
+L1 (#118) was measured on the full calibration answers
+(`raw/eval/jev/reliability-v5-calibration-answers-l1`, USD 9.50, 38.7
+minutes) and then the full held-out answers
+(`raw/eval/jev/reliability-v5-heldout-answers-l1`, three batches, USD 21.19,
+89.2 minutes). Each is compared with the last run of the same split: b3
+(ebbe420) for calibration and ac90615 for held-out. In `tool/` and `eval/`,
+both differ from 01702da in L1 alone, so a difference is L1's or the runs'
+own variation.
+
+L1 was designed from the held-out run's diagnosis, so this second held-out
+run is no longer an unseen test of it. It shows what L1 changes on the same
+rows; it does not replace v5's recorded held-out result, which stays failed.
+A clean test of the answer path is v6's held-out run.
+
+### Calibration
+
+| Run | Added latency (s) | D p95 | A p95 | Answer support | D unsupported | A unsupported |
+| --- | --- | --- | --- | --- | --- | --- |
+| b3 | 11.073 | 30.798 | 19.725 | 0.319 | 0.0963 (n=218) | 0.1414 (n=474) |
+| L1 | 4.398 | 20.612 | 16.214 | 0.5795 | 0.0756 (n=238) | 0.1798 (n=484) |
+
+Most of the drop in added latency is not L1's. b3's slowest D rows were fact
+rows whose answer step ran long (`fix-03` 40.9 s, `fix-12` 30.8 s, `adv-09`
+32.1 s, with 4–11 s of retrieval); in the L1 run they took 22 s or less. L1
+changes only rows the route marks analysis, and calibration has three:
+
+| Row | Retrieval / set aside, b3 (s) | Retrieval / set aside, L1 (s) | Status b3 → L1 | Evidence b3 → L1 | Unsupported b3 → L1 |
+| --- | --- | --- | --- | --- | --- |
+| `analysis-02` | 6.4 / 5.1 | 3.0 / 0.0 | ready → partial | 10 → 4 | 0/11 → 1/7 |
+| `analysis-03` | 15.3 / 14.5 | 1.0 / 0.0 | ready → partial | 16 → 17 | 7/16 → 2/11 |
+| `analysis-06` | 4.8 / 3.8 | 5.6 / 4.6 | partial → partial | 16 → 16 | 4/12 → 2/15 |
+
+Coverage went to the host 4 times in 11 on these rows in b3 and 0 in 13
+under L1; `analysis-06` still sets 4.6 s aside for its route's analysis and
+progress questions. `analysis-02` kept 4 passages where b3 kept 10, the loss
+of evidence protection the design expected. The grader marked every part
+answered in both runs. The 57 fact rows are unchanged: unsupported 8/147
+(0.054) in b3 and 9/165 (0.055) under L1. The route marked no calibration
+fact row analysis in either run.
+
+### Held-out
+
+| Run | Added latency (s) | D p95 | A p95 | D p50 | A p50 | Answer support | D unsupported | A unsupported |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| ac90615 | 17.49 (fail) | 42.592 | 25.102 | 17.334 | 11.932 | 0.093 (fail) | 0.1579 (n=741) | 0.1741 (n=919) |
+| L1 | 0.283 (pass) | 22.320 | 22.037 | 14.550 | 12.931 | 0.2301 (fail) | 0.1412 (n=765) | 0.1834 (n=954) |
+
+The latency change is L1's. The route marked the same 62 rows analysis in
+both runs (54 analysis intents and 8 fact intents). Paired by intent, their
+medians:
+
+| Per row (s) | ac90615 | L1 | Paired difference |
+| --- | --- | --- | --- |
+| Retrieval | 15.17 | 3.26 | −12.44 |
+| Set aside for host turns | 13.89 | 1.51 | −12.48 |
+| Answer step | 13.87 | 14.16 | −0.26 |
+| Total | 28.68 | 17.04 | −11.46 |
+
+Coverage on these rows went to the host 188 times in 319 at ac90615 and 0
+in 362 under L1. What is still set aside is the route's progress (27 turns),
+route (3) and ask (2) questions. The cost is the one the design named: of
+the 54 analysis rows, 13 ended `ready` at ac90615 and 2 under L1, and 51 ran
+three rounds where 43 had. The median evidence kept did not move (19 and
+18 passages, paired difference 0), and the grader's coverage of analysis
+rows is 0.972 in both.
+
+The answer-support change is not L1's. By intent class:
+
+| Rows | D, ac90615 | D, L1 | A, ac90615 | A, L1 |
+| --- | --- | --- | --- | --- |
+| Analysis | 82/500 (0.164) | 86/513 (0.168) | 76/472 (0.161) | 88/490 (0.180) |
+| Other | 35/241 (0.145) | 22/252 (0.087) | 84/447 (0.188) | 87/464 (0.188) |
+
+D's analysis rows are where they were. The pooled value rose from 0.093 to
+0.230 because A's analysis rows gained 12 unsupported claims and D's other
+rows lost 13. Of D's other rows, only the 8 fact intents the route marks
+analysis take L1's path, and their coverage went to the host once in 14 at
+ac90615; their unsupported claims fell from 13/55 to 7/53, and those of the
+58 fact rows L1 does not touch from 18/158 to 15/173. Neither run passes
+the 0.25 target. S3 stands: v5's answer-support result is failed, and v6
+sets the gate's cohort and the treatment of analysis inference before its
+held-out run.
+
+### Reading
+
+L1 removes the host coverage turns from analysis rows and with them almost
+all of the held-out latency gap; the analysis answers it produces are as
+supported as before by the grader's count, and as covered. What it gives up
+is the `ready` status: an analysis now ends `partial` by the round limit
+where a host turn used to accept its coverage. These runs do not separate
+what that status changes in synthesis; by the grader's count, support and
+coverage did not move.
+
 ## Sources
 
 - R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
