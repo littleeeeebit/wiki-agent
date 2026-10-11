@@ -26,7 +26,8 @@ PROVISIONAL_VERSION = "provisional-1"
 ARTIFACT = Path("eval") / "jev" / "policy.json"
 
 # `ask`: is a part of the query asked of the assistant, or material pasted with it (`main.knowledge.ASK`).
-NOUL = ("route", "source", "useful", "conflict", "redirect", "coverage", "ask", "analysis")
+# `progress`: does the query ask about the repository's own progress (`main.knowledge.PROGRESS`).
+NOUL = ("route", "source", "useful", "conflict", "redirect", "coverage", "ask", "analysis", "progress")
 # `action` is stage 8's: which code-owned operation an owner function runs next (`main.decisions`).
 CHOICE = ("repair", "relation", "answers", "faithful", "action")
 KINDS = NOUL + CHOICE
@@ -34,7 +35,8 @@ KINDS = NOUL + CHOICE
 # (`decision.contract.decide`; reliability PR 5, v3): an uncertain source is searched, an uncertain useful or
 # conflict passage stays evidence (a conflict to weigh), an uncertain redirect is flagged untrusted, and an
 # uncertain repair takes code's order. The host could only narrow or reorder these, never unblock an answer,
-# and asking it cost a turn of about five seconds on most runs.
+# and asking it cost a turn of about five seconds on most runs. `progress` stays the host's to settle: its no
+# is what sent ten calibration fact answers to the claim check (answer-path.md, the owner's choice).
 CODE_SETTLES = ("source", "useful", "conflict", "redirect", "repair")
 
 # ponytail: the prototype's uncalibrated thresholds; `tool/eval/policy.py` replaces them per kind.

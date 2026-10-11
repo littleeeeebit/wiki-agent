@@ -189,6 +189,73 @@ def test_an_old_format_is_repaired_without_jev_budget_and_empty_output_is_a_fail
         answer(d, ["", ""], Judge(), verify_claims=False)
 
 
+# -- an ordinary answer (docs/plans/reliability/answer-path.md, option B) -------------------
+
+@pytest.mark.parametrize("progress, analysis, checked", [
+    ("no", False, True), ("yes", False, False), ("uncertain", False, False), (None, False, False),
+    ("no", True, False)])
+def test_an_ordinary_answer_is_checked_only_when_jev_is_sure_it_is_not_about_progress(progress, analysis, checked):
+    d = {**dossier([]), "progress": progress, "analysis": analysis}
+    assert knowledge.Grounding(d, CFG, cache=None, evaluate=Judge()).analysis is not checked
+    # An explicit caller's choice is its own: progress does not move it.
+    assert knowledge.Grounding(d, CFG, cache=None, evaluate=Judge(), verify_claims=True).analysis is analysis
+    assert knowledge.Grounding(d, CFG, cache=None, evaluate=Judge(), verify_claims=False).analysis is True
+
+
+def test_a_checked_ordinary_answer_is_plain_prose_with_its_sources_in_the_record(tmp_path):
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    out, _events, messages = answer({**dossier([ports]), "progress": "no"},
+                                    [draft(claim("c1", "The search daemon listens on port 8791."))], Judge(),
+                                    verify_claims=None)
+    v = out["verified"]
+    assert v["status"] == "complete" and v["verified"] is True and len(messages) == 1
+    assert out["text"] == "The search daemon listens on port 8791."
+    assert [c["path"] for c in v["citations"]] == ["docs/ports.md"]
+    # A claim's own internal mark stays out of the prose too (PR #112 review round 1).
+    sentence = "The search daemon listens on port 8791."
+    out, _events, _ = answer({**dossier([ports]), "progress": "no"},
+                             [draft(claim("c1", sentence + " [e1]", quotes=[sentence]))], Judge(), verify_claims=None)
+    assert out["verified"]["status"] == "complete" and out["text"] == sentence
+
+
+def test_a_return_to_retrieval_that_moves_to_synthesis_asks_for_synthesis(tmp_path, monkeypatch):
+    # PR #112 review round 1: the repair asked for an answer-draft block that synthesis then rejected.
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    monkeypatch.setattr(knowledge, "falls_back", lambda cfg: False)
+    monkeypatch.setattr(knowledge, "prepare", lambda *a, **k: {**dossier([ports], calls_left=3), "progress": "yes"})
+    before = {**dossier([], direct=True, calls_left=6), "progress": "no"}
+    out, _events, messages = answer(before, [draft(unresolved=["r0"]), "Port 8791 is configured [e1]."], Judge(),
+                                    verify_claims=None)
+    synthesis = (Path(knowledge.__file__).resolve().parents[1] / "prompts" / knowledge.ANALYSIS_PROMPT)
+    assert messages[1].startswith(synthesis.read_text(encoding="utf-8")) and "docs/ports.md" in messages[1]
+    assert out["verified"]["status"] == "unverified" and out["text"] == "Port 8791 is configured."
+
+
+def test_no_usable_draft_after_the_synthesis_fallback_is_the_host_s_failure(tmp_path):
+    # PR #112 review round 1: two empty turns were published as an empty abstention.
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    with pytest.raises(RuntimeError, match="no usable answer"):
+        answer({**dossier([ports], calls_left=0), "progress": "no"}, ["", ""], Judge(), verify_claims=None)
+
+
+@pytest.mark.parametrize("judge, fell", [(lambda: Judge({"c1": ("contradicts", 0.95)}), "abstained"),
+                                         (lambda: Judge(fail="unavailable"), "verification_unavailable")])
+def test_an_ordinary_answer_the_check_leaves_unanswered_falls_back_to_synthesis(tmp_path, judge, fell):
+    # v4's abstentions: a fact question the check left unanswered was answered with nothing.
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    checked = draft(claim("c1", "The search daemon listens on port 8791."))
+    out, _events, messages = answer({**dossier([ports]), "progress": "no"},
+                                    [checked, "The daemon listens on port 8791 [e1]."], judge(), verify_claims=None)
+    v = out["verified"]
+    assert v["status"] == "unverified" and v["verified"] is False and v["reason"] == f"fallback:{fell}"
+    assert out["text"] == "The daemon listens on port 8791." and len(messages) == 2
+    synthesis = (Path(knowledge.__file__).resolve().parents[1] / "prompts" / knowledge.ANALYSIS_PROMPT)
+    assert messages[1].startswith(synthesis.read_text(encoding="utf-8"))
+    # An explicit check keeps its abstention: the fallback is the ordinary answer's.
+    out, _events, messages = answer({**dossier([ports]), "progress": "no"}, [checked], judge(), verify_claims=True)
+    assert out["verified"]["status"] == fell and len(messages) == 1
+
+
 def test_a_supported_claim_is_published_complete_with_its_citation(tmp_path):
     ports = item(tmp_path, "docs/ports.md", PORTS)
     judge = Judge()

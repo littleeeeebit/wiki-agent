@@ -56,7 +56,7 @@ def english(texts, seconds, owners=None):
 
 
 def answering(route=0.9, sources=None, useful=0.9, conflict=0.0, redirect=0.0, coverage=0.9, repair="defer",
-              confidence=0.9, offered_only=True, ask=0.9, analysis=0.05):
+              confidence=0.9, offered_only=True, ask=0.9, analysis=0.05, progress=0.05):
     """A fake Jev: each question kind answered by a number or a function of its
     name. Its repair is `defer` where `repair` is not offered, unless told to
     name it anyway."""
@@ -71,6 +71,8 @@ def answering(route=0.9, sources=None, useful=0.9, conflict=0.0, redirect=0.0, c
                 out[name] = value(route, name)
             elif name == "analysis":
                 out[name] = value(analysis, name)
+            elif name == "progress":
+                out[name] = value(progress, name)
             elif name.startswith("source_"):
                 out[name] = (sources or {}).get(name[7:], 0.9)
             elif name == "repair":
@@ -857,6 +859,25 @@ def test_jev_tells_a_request_for_analysis_from_a_question_of_fact(score, analysi
     out = run(world, query=PASTED)
     assert world.asked[0][0] == "route" and "analysis" in world.asked[0][2]
     assert out["analysis"] is analysis and out["evidence"], "an analysis still searches"
+
+
+@pytest.mark.parametrize("score, progress", [(0.93, "yes"), (0.5, "uncertain"), (0.05, "no")])
+def test_the_route_keeps_jev_s_word_on_whether_a_question_is_about_progress(score, progress):
+    # answer-path.md, option B: only a sure no lets an ordinary answer be checked claim by claim.
+    world = World(answering(progress=score), [found([chunk("port", "The port is 8791.")])])
+    out = run(world, query="Which port does the daemon use?")
+    assert "progress" in world.asked[0][2] and out["progress"] == progress
+
+
+@pytest.mark.parametrize("host, progress", [({"progress": "no"}, "no"), ({}, "uncertain")])
+def test_the_host_may_settle_an_uncertain_progress(monkeypatch, host, progress):
+    # PR #112: the owner kept the host's word here; it sent ten calibration fact answers to the claim check.
+    asked = []
+    monkeypatch.setattr(knowledge, "host_decides", lambda state, questions, stage, cancel=None, model="":
+                        asked.append(list(questions)) or {"answers": host, "model": "host", "elapsed_ms": 1})
+    out = run(World(answering(progress=0.5), [found([chunk("port", "The port is 8791.")])]),
+              query="Which port does the daemon use?", fallback=True)
+    assert asked == [["progress"]] and out["progress"] == progress
 
 
 def test_an_analysis_is_searched_even_where_jev_would_answer_directly():
