@@ -1300,9 +1300,14 @@ after M3's sizing was corrected in review.
 ### Implementation, calibrated on revealed cases
 
 F2: `knowledge.parsed` still reads bare JSON or a fenced block first.
-Failing that, it takes the first JSON object that runs to the end of the
-text, a closing fence allowed. Text with no such object still fails. Its
-four readers share the change.
+Failing that, it reads one answer after prose. That answer is the first
+whole JSON object outside any open brace, with nothing after it except a
+closing fence. Some text still fails:
+- text with no such object;
+- a second answer after the first;
+- an inner object of a cut-off one.
+
+Its four readers share the change.
 
 W and F replace the two prompts in `decisions.PROMPTS` with the wording
 above. The revealed work-start and review-fix fixtures of v1, v2 and v5,
@@ -1322,17 +1327,25 @@ v3–v6: 132 with a material segment and 123 request-only. Each `ASK` draft
 was scored by Jev alone, under the route's thresholds (no at 0.2 or below,
 yes at 0.8 or above) and `Flow.route`'s rule for which segments are kept.
 A case whose vector turns on an uncertain segment goes to the host, which
-reads the same `ASK`. Those cases were then run through `decision.decide`
-with the host fallback.
+reads the same `ASK`. Those cases were run again through
+`decision.decide`, with the host fallback, so Jev judged them a second
+time first.
 
-| `ASK` | Material, settled by Jev | Material, host | Request, settled by Jev | Request, host |
+| `ASK` | Material, settled by Jev | Material, run again with the host | Request, settled by Jev | Request, run again |
 | --- | --- | --- | --- | --- |
 | Before | 122 right | 6 of 10 right | 123 right | 0 |
 | Adopted | 114 right | 18 of 18 right | 123 right | 0 |
 
-Before the change, the host answered yes for the quoted question in
-analysis-73, analysis-82 and analysis-136, and for the quoted task in
-start-36. Those are the misses recorded on v5 and v6. The adopted wording
+Before the change, this probe's second pass marked four quoted parts as
+asked:
+- the quoted questions in analysis-73, analysis-82 and analysis-136;
+- the quoted task in start-36.
+
+These are probe results, not a replay of earlier runs. The held-out misses
+recorded earlier were analysis-82 and none-35 on v5, and analysis-136 and
+none-42 on v6. They have the same shape. In this probe, none-35 and
+none-42 were right before the change, and analysis-73 and start-36 had
+been right on v5. The adopted wording
 adds "or a question someone else asked that the user quotes, even when the
 user then asks about the same subject". Jev still scores no quoted question
 at 0.2 or below. It does score them lower, and the host settles them.
@@ -1341,10 +1354,13 @@ Four other drafts were rejected. Each one either asked whether a question
 was in "the user's own words", or added the clause as a sentence of its
 own. Every one lowered Jev's confidence in the person's own question too,
 so between 25 and 51 cases went to the host, with up to 4 of them
-request-only. The adopted wording costs 8 more host calls than before on
-these cases, about USD 0.12 at the USD 0.013–0.015 a priced call cost
-(3 of the 18 reported no price). The host ran once per
-case, and a fresh set must test both the wording and the host.
+request-only. On these cases the adopted wording leaves 8 more cases
+uncertain than before. If each costs a host call, that is about USD 0.12
+more, at the USD 0.011–0.018 a priced call cost here. This is an
+estimate. The probe did not record whether each second pass reached the
+host, so 3 of the 18 with no price may have settled on Jev's second
+judgment or may have gone unpriced. Each case ran once, and a fresh set
+must test both the wording and the host.
 
 ## Steps
 

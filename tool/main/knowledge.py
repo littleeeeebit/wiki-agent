@@ -3320,15 +3320,19 @@ def parsed(answer: str):
     try:
         return json.loads(fenced.group(1) if fenced else body)
     except json.JSONDecodeError:
-        # The first object that runs to the end, a closing fence allowed: the answer, after the prose.
+        # One answer after the prose: the first whole object outside any open brace, with nothing after it but a
+        # closing fence. A second answer, or one inside a cut-off object, settles nothing (review r1).
         tail = re.sub(r"\s*```\s*$", "", body)
         for at in (m.start() for m in re.finditer(r"\{", tail)):
+            if tail.count("{", 0, at) != tail.count("}", 0, at):
+                continue
             try:
                 got, end = json.JSONDecoder().raw_decode(tail, at)
             except json.JSONDecodeError:
                 continue
-            if not tail[end:].strip():
-                return got
+            if tail[end:].strip():
+                break
+            return got
         raise
 
 

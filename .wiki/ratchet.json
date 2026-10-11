@@ -103,8 +103,8 @@
     },
     "tool/main/knowledge.py": {
       "dup": 0,
-      "lines": 3882,
-      "reason": "v7 F2 and M1 (5-english-baseline.md): parsed reads a host answer that follows its reasoning, and ASK names a quoted question someone else asked as material. Before that, v6 route change (5-english-baseline.md): the ANALYSIS question says what to do in a routine case is the policy that covers it, a fact, and why; beside L1's analysis judge policy, B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
+      "lines": 3886,
+      "reason": "v7 F2 and M1 (5-english-baseline.md): parsed reads one host answer that follows its reasoning, never a second or an inner one, and ASK names a quoted question someone else asked as material. Before that, v6 route change (5-english-baseline.md): the ANALYSIS question says what to do in a routine case is the policy that covers it, a fact, and why; beside L1's analysis judge policy, B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
     },
     "tool/main/loop.py": {
       "dup": 0,
@@ -193,8 +193,8 @@
     },
     "tool/test_decision_flow.py": {
       "dup": 7,
-      "lines": 1513,
-      "reason": "v7 F2: a host answer after its reasoning, or in a fence, still settles; text with no answer that ends it still fails. Before that, answer path L1: an analysis's uncertain coverage is not sent to the host, a non-analysis's still is, and a tape from before L1 replays its host settlement; beside the progress settlement it mirrors."
+      "lines": 1517,
+      "reason": "v7 F2: a host answer after its reasoning, or in a fence, still settles; text with no single answer that ends it, two answers or a cut-off wrapper, still fails. Before that, answer path L1: an analysis's uncertain coverage is not sent to the host, a non-analysis's still is, and a tape from before L1 replays its host settlement; beside the progress settlement it mirrors."
     },
     "tool/test_edit_as_diff.py": {
       "dup": 11,

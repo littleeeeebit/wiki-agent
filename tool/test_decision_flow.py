@@ -332,8 +332,12 @@ def test_a_host_answer_after_its_reasoning_is_still_its_answer(monkeypatch, text
     assert knowledge.host_decides({}, {"x": decision.noul("?")}, "route")["answers"] == {"x": "yes"}
 
 
-@pytest.mark.parametrize("text", ['{"answers": {"x": "yes"}} and then more', "no answer at all", '{"answers": '])
-def test_text_with_no_answer_that_ends_it_still_fails_to_parse(text):
+@pytest.mark.parametrize("text", ['{"answers": {"x": "yes"}} and then more', "no answer at all", '{"answers": ',
+                                  '{"answers": {"x": "no"}}\n{"answers": {"x": "yes"}}',
+                                  'At first {"answers": {"x": "no"}}, but:\n{"answers": {"x": "yes"}}',
+                                  '{"wrapper": {"answers": {"x": "yes"}}'])
+def test_text_with_no_single_answer_that_ends_it_still_fails_to_parse(text):
+    # Review r1: two answers, or an inner one of a cut-off object, are not the host's answer.
     with pytest.raises(json.JSONDecodeError):
         knowledge.parsed(text)
 
