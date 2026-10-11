@@ -5,10 +5,32 @@ the answer path changed on v5's results, with answer support judged on the inten
 import json
 from pathlib import Path
 
-from eval import report
+from eval import dataset, report
+from test_reliability_v5 import strata
 
 JEV = Path(__file__).resolve().parents[1] / "eval" / "jev"
 V6 = JEV / "reliability-v6"
+
+
+def test_the_sixth_set_holds_out_fresh_cases_for_the_changed_route_and_answers():
+    data = dataset.load(V6 / "intents.json")
+    assert dataset.invalid(data) == [] and dataset.unresolved(data) == [] and dataset.frozen(data) == []
+    earlier = [dataset.load(JEV / f"reliability{v}" / "intents.json") for v in ("", "-v2", "-v3", "-v4", "-v5")]
+    assert [i for i in data["intents"] if i["split"] == "calibration"] == \
+        [i for i in earlier[-1]["intents"] if i["split"] == "calibration"]
+    held = [i for i in data["intents"] if i["split"] == "held_out"]
+    assert all(i["review"] == "r6" for i in held)
+    assert not {i["variants"]["en"] for i in held} & {i["variants"]["en"] for d in earlier for i in d["intents"]}
+    assert not {i["id"] for i in held} & {i["id"] for d in earlier for i in d["intents"]}
+    old_pages, new_pages = dataset.pages(earlier[-1]), dataset.pages(data)
+    assert {n: new_pages.get(n) for n in old_pages} == old_pages
+    # v5's sizing: one miss each still clears a 0.90 Wilson lower bound at 53.
+    assert all(len(c) >= 54 for c in strata(data).values())
+    # The route change's family: what to do in a routine case a standing policy covers, a fact.
+    assert sum(i["category"] == "analysis" and not i["analysis"] for i in held) >= 12
+    assert sorted(i["fault"]["kind"] for i in held if i.get("fault")) == \
+        ["cancelled"] * 2 + ["exhausted"] * 2 + ["unavailable"] * 2
+    assert not (V6 / "actions.json").exists(), "A3: v6 measures the answer path and routing only"
 
 
 def test_gates_v6_judge_answer_support_on_the_non_analysis_intents_and_latency_on_all():
