@@ -314,6 +314,18 @@ def test_a_claim_jev_is_unsure_of_goes_to_the_host_and_is_never_called_verified(
         assert "(host-checked)" not in out["text"] and not v["claims"]
 
 
+def test_an_ordinary_answer_never_asks_the_host_about_a_claim(tmp_path, isolated, monkeypatch):
+    # answer-path.md, latency: these host turns were most of B's added latency; synthesis answers instead.
+    isolated.write_text("WIKI_JEV_FALLBACK=host\n", encoding="utf-8")
+    monkeypatch.setattr(knowledge, "host_decides", lambda *a, **k: pytest.fail("asked the host about a claim"))
+    ports = item(tmp_path, "docs/ports.md", PORTS)
+    out, _events, messages = answer({**dossier([ports]), "progress": "no"},
+                                    [draft(claim("c1", "The search daemon listens on port 8791.")),
+                                     "The daemon listens on port 8791."], Judge(verdicts={"c1": ("supports", 0.5)}),
+                                    verify_claims=None)
+    assert out["verified"]["reason"] == "fallback:abstained" and len(messages) == 2
+
+
 def test_the_generator_is_told_the_question_its_evidence_ids_conflicts_and_missing_requirements(tmp_path):
     ports = item(tmp_path, "docs/ports.md", PORTS)
     injected = item(tmp_path, "docs/notes.md", INJECTED)
