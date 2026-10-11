@@ -1366,6 +1366,52 @@ host, so 3 of the 18 with no price may have settled on Jev's second
 judgment or may have gone unpriced. Each case ran once, and a fresh set
 must test both the wording and the host.
 
+### Draft set (v7)
+
+`eval/jev/reliability-v7/intents.json` keeps v6's 72 calibration intents
+verbatim. It adds 139 fresh held-out intents (review r7), with pages only
+they name over v6's corpus; no earlier page is edited. No held-out wording
+or id appears in v1–v6, so none of the segments that calibrated `ASK` comes
+back.
+- The analysis family has 67 intents:
+  - 55 labelled analysis: 20 with material and 35 request-only multipart;
+  - 12 routine cases a standing policy covers, labelled fact: 4 single,
+    4 multipart and 4 with material.
+- The other families keep v6's sizes: 12 pasted and 6 each for the rest.
+  The failure family's faults are 2 cancelled, 2 exhausted and
+  2 unavailable.
+
+Among the 133 routed intents there are:
+- 55 analysis and 78 fact;
+- 60 with a material segment, 17 of them a question someone else asked,
+  quoted. Each family holds some of the 17: 8 analysis, 4 pasted, 1 advice,
+  2 missing, 1 adversarial and 1 routing;
+- 58 request-only multipart.
+
+`eval/jev/reliability-v7/actions.json` keeps v5's calibration fixtures for
+work start and review fix verbatim. It adds 54 fresh held-out fixtures for
+each point: work start has 18 per label, and review fix has 27 per label.
+- Work start's evidence fixtures vary how they name what is still to
+  decide. v5's all read "the chosen …".
+- Some dispatch fixtures name no files, since W says naming none is no
+  reason to gather evidence.
+- Review fix spreads rounds, severities and disputed findings across both
+  labels.
+
+No goal, finding or id repeats an earlier set's.
+
+`eval/jev/reliability-v7/gates.json` is v6's gates unchanged. v7 has no
+check-choice fixtures, so that gate stays not_measured and v5's result
+stands. `tool/test_reliability_v7.py` pins these counts and the freshness.
+
+The estimates, which spend nothing:
+- held-out retrieval: 544 rows, about 1.09M Jev tokens;
+- answers, A and D: 272 rows, about USD 19 of host turns;
+- actions: 108 rows, about 0.15M Jev tokens.
+
+With calibration answers this matches the design's USD 33. No v7 case has
+been run, and the set waits for its label review.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -1375,7 +1421,7 @@ must test both the wording and the host.
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
-| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation); fresh set next |
+| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); fresh set drafted (Draft set (v7)), label review next |
 
 ## Sources
 
