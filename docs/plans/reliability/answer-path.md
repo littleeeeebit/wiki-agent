@@ -324,6 +324,59 @@ well as #114's retrieval changes, so the rise to 17.6 s is observed, not
 attributed. The three rows that ended `retrieval_unavailable` there end at
 the round limit here.
 
+## Analysis path
+
+Both failed gates come from analysis questions, a class calibration barely
+held. This section weighs what to change; nothing here is decided.
+
+### Latency
+
+`Flow.ask` hands the host to `decision.decide` for every request. Of a
+judge request's kinds only coverage is the host's to settle; useful,
+conflict, redirect and repair are code's (`CODE_SETTLES`). The route sets
+`dossier["analysis"]` before any judge request.
+
+| Option | Change | Effect | Cost |
+| --- | --- | --- | --- |
+| L1 | No host fallback in a judge request when the route marked the question analysis | Removes the coverage turns, 187 of the 305 analysis coverage questions | An uncertain coverage stays uncertain: the requirement counts as missing, repair runs on with Jev alone (about 1 s a round), and more analysis dossiers end `partial` |
+| L2 | L1, and drop progress from the route's host turn once Jev says analysis yes | Also removes most of the 27 progress turns on analysis rows | `decision.decide` asks every uncertain question in one host turn; this needs the route to withhold progress, a change to a shared contract |
+| L3 | One retrieval round for analysis questions | Fewer rounds, but Jev's rounds take about 1 s; the time is in the host turns, not the rounds | Less evidence: the 40 rows at the round limit had recall 0.85 after three rounds |
+
+L1 is the smallest change that reaches the cause. The bound computed above,
+−3.23 s with all set-aside time removed from analysis rows, includes the
+route's turn, so L1 alone saves less; how much is measured, not assumed. An
+analysis answer is synthesized and published unverified either way, so a
+coverage the host would have settled changes the brief's missing list, not
+what is checked.
+
+### Answer support
+
+Pooled, D needs at most 0.131 unsupported (A's 0.174 less 25%) and has
+0.158, 117 of 741 claims. Fact rows pass alone; analysis rows hold 82 of
+the 117, at A's rate. In a sample of 14 of those 82, about 3 state a
+repository fact (for example "No breakdown of the misses was recorded");
+the rest are inference ("A freeze makes each later release bigger"),
+outside knowledge ("A /24 is a block of 256 adjacent IP addresses") or
+arithmetic over given figures. A's analysis answers, with no retrieval
+of their own, are unsupported at the same rate, 0.161.
+
+| Option | Change | Effect | Cost |
+| --- | --- | --- | --- |
+| S1 | Check an analysis answer's repository-fact premises as fact claims are checked, and drop or mark the unsupported | Reaches the few premises that state repository facts | Telling a premise from inference is a new classification; most unsupported claims are inference, which it leaves alone |
+| S2 | A stricter synthesis brief: separate stated facts, each from a passage, from reasoning, and keep outside knowledge out unless asked | Fewer outside-knowledge claims | A prompt change, measured only by another run; the grader may still count inference as unsupported |
+| S3 | Leave analysis answers as they are; record the pooled gate as failed in v5 | No change | v6 must decide whether a pooled unsupported rate is the right gate for a cohort that is 43% analysis; a gate is not changed after its held-out run |
+
+Bringing analysis to 0.12 (about 22 fewer unsupported claims) would pass
+the pooled target with fact rows unchanged. The sample suggests neither S1
+nor S2 reliably reaches that, since most of those claims are inference the
+grader cannot support from passages.
+
+### Recommendation
+
+L1 now, measured on the calibration answers and then held-out analysis
+rows, and S3 for answer support in v5, with the gate's cohort and the
+treatment of analysis inference set for v6 before its held-out run.
+
 ## Sources
 
 - R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
