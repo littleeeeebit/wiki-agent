@@ -893,25 +893,35 @@ held-out D's analysis rate matched A's: 0.164 against 0.161 at ac90615,
 0.168 against 0.180 under L1. On the other intents D was 22.7% below A at
 ac90615 and 53.4% below under L1. The 8 fact intents the route sent to
 analysis carried 13 of D's 31 unsupported fact claims at ac90615, published
-unverified: a routing miss costs support directly.
+unverified on that path; how many a right route would have avoided is for
+the route change's own measurement.
 
 | Option | Gate | Effect | Cost |
 | --- | --- | --- | --- |
 | G1 | v5's pooled gate, unchanged | No gate change | Its value depends on the cohort's analysis share, which the routing gates set |
-| G2 | The gate reads intents labelled fact or abstain, by label, not by route; analysis intents are reported beside it with their own rates, ungated | It measures what verification can change, and an intent the route wrongly sends to analysis still counts against it | A gate change, chosen after v5's results; only v6's fresh held-out run can show it is not fitted to them |
+| G2 | Answer support alone narrows: both its unsupported-claim rate and its coverage interval read intents labelled fact or abstain, by label, not by route, with the target (0.25), the coverage margin (−0.20) and the complete-cohort rule unchanged. Added latency and integrity keep the whole answer workload, analysis included. Analysis intents' unsupported and coverage rates are reported beside the gate, ungated | It measures what verification can change, and an intent the route wrongly sends to analysis still counts against it | A gate change, chosen after v5's results; a fresh held-out run tests whether it generalizes, but cannot make the choice independent of them. A v6 pass claims less: support on fact and abstain answers only |
 | G3 | Analysis claims are graded as repository-fact premises or inference, and premises count | Reaches the analysis claims a passage can support | A new grader classification with its own label review; unmeasured (answer-path.md, S1) |
+
+Narrowing added latency with answer support would remove the problem L1
+addresses instead of testing it: rebuilt from ac90615's recorded rows,
+added latency is 17.49 s over every graded intent and 2.37 s over the fact
+and abstain intents alone.
 
 ### Route: advice the repository states
 
 The `ANALYSIS` route question names advice as analysis. The fact intents it
 misses are advice the repository states, "What should I do if I
 accidentally commit an API key?" among them, the same family in v3, v4 and
-v5, recorded and not tuned. v5 missed 8 of 72. At that rate no number of
-cases passes fact specificity's 0.90 lower bound, so the gate cannot pass
-without a route change.
+v5, recorded and not tuned. v5 missed 8 of 72 (0.889 [0.796, 0.943]). If
+that rate persists, adding cases alone will not lift the lower bound to
+0.90; fresh cases need not keep it, but three versions have missed the same
+family.
 
-The change: reword `ANALYSIS` so that a procedure or recommendation the
-repository's sources state is a fact, not analysis. Every v3–v5 case is
+The change to test: reword `ANALYSIS` so that a procedure or recommendation
+the repository's sources state is a fact, not analysis. The current text
+already contrasts the assistant's own working-out with facts the sources
+state, and names advice on the analysis side; whether a sharper line helps
+is what the change measures, with analysis recall protected. Every v3–v5 case is
 revealed and may be used to calibrate it, and analysis recall must hold on
 v5's 54 analysis intents. No fitted policy rule exists for the `analysis`
 kind (`eval/jev/policy.json`), so the new question's digest unbinds nothing.
@@ -921,13 +931,15 @@ It is its own PR, reviewed and measured on calibration before v6 freezes.
 
 Work start and review fix each missed 3 of 54. The cases a 0.90 lower bound
 needs, by misses allowed, extend v5's table: 4 misses 99, 5 113, 6 127, 8
-153. At v5's rate of 3 in 54, the expected lower bound reaches 0.90 near
-166 fixtures per point.
+153, 9 166. A fixed allowance is not a fixed rate: if each fixture misses
+with v5's 3/54, 166 fixtures pass about 56% of the time, and an 80% chance
+of passing needs about 300 (binomial, as a sizing illustration, not a
+forecast).
 
 | Option | Work | Cost |
 | --- | --- | --- |
-| A1 | Write and review about 166 fresh fixtures per point for the two points | Label review of about 330 fixtures; runs are cheap (v5's 163 cost USD 0.45) |
-| A2 | Diagnose the six misses and change the two decisions as their own versioned policy change, then 54 fresh fixtures per point | Two diagnoses and changes before v6 |
+| A1 | Write and review about 300 fresh fixtures per point for the two points, unchanged decisions | Label review of about 600 fixtures; runs are cheap (v5's 163 cost USD 0.45) |
+| A2 | Diagnose the six misses and change the two decisions as their own versioned policy change, then 54 fresh fixtures per point, which allow one miss | Two diagnoses and changes before v6, each needing to do better than v5's three misses, not only to be new |
 | A3 | Leave both at v5's inconclusive result; v6 measures the answer path and routing only | The stage's exit stays unmet until a later version settles them |
 
 ### Held-out set
@@ -938,8 +950,9 @@ regression data. Per v5's sizing, one miss allowed per routing gate: at
 least 54 fact intents, of which at least 12 are advice the repository
 states; 54 analysis intents, since a reworded route question needs fresh
 analysis recall; and the material and request-only multipart cohorts at 54
-each, drawn from the same intents. Under G2 the answer gate reads the fact
-and abstain intents, v5's scale.
+each, drawn from the same intents. Under G2 answer support reads the fact
+and abstain intents, v5's scale; the answer run still covers every intent,
+since added latency reads them all.
 
 v5's held-out spending, to scale from: retrieval USD 6.06, answers 24.83
 (D's analysis rows cost about USD 0.17 each), repetition 0.54, actions 0.45;
