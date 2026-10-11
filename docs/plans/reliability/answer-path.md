@@ -189,15 +189,18 @@ and added latency.
 
 ## Latency
 
-Where D's time went in `reliability-v5-calibration-answers-b`, from each
-row's call counts (no row records per-step time; a least-squares fit of
-answer time on them, R² 0.55): about 7.3 s per drafting turn, 4.5 s per
-host decision turn and 1.1 s per Jev claim check. 46 of 66 D rows sent a
-claim decision Jev left uncertain to the host (111 questions, 98 settled),
-for 120 host turns in the claim checks. Removing those turns at 4.5 s each
-would put added latency near 7.1 s; removing the repair turn as well, near
-1.8 s; removing only the repair turn, near 14.8 s. These are estimates from
-the fit, not measurements.
+Where D's time went in `reliability-v5-calibration-answers-b`. No row
+records per-step time, so this is observational. Of D's 225 host turns, 81
+drafted answers, 66 graded them after the answer (outside the measured
+time), 25 settled retrieval decisions and 53 settled claim decisions. 46 of
+66 D rows sent a claim decision Jev left uncertain to the host (111
+questions, 98 settled; questions in one request share a turn). A
+least-squares fit of the answer step's own time (retrieval excluded) on
+drafting turns and claim-stage host turns gives about 7.3 s for each
+(R² 0.65). Subtracting the claim-stage turns at that rate would put added
+latency near 8.1 s; also removing the repair turn, near 4.2 s; removing only
+the repair turn, near 14.8 s. These are estimates from the fit, not
+measurements, and they hold the rest of each answer fixed.
 
 The owner chose to drop the host from an ordinary answer's claim checks: a
 claim Jev leaves uncertain is withheld, and a question left unanswered falls
