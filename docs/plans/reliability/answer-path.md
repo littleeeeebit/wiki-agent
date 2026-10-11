@@ -187,6 +187,24 @@ The owner adopted B on 2026-10-11 with the fourth check unmet, because the
 row fails the same way without B. The held-out answers decide answer support
 and added latency.
 
+## Latency
+
+Where D's time went in `reliability-v5-calibration-answers-b`, from each
+row's call counts (no row records per-step time; a least-squares fit of
+answer time on them, R² 0.55): about 7.3 s per drafting turn, 4.5 s per
+host decision turn and 1.1 s per Jev claim check. 46 of 66 D rows sent a
+claim decision Jev left uncertain to the host (111 questions, 98 settled),
+for 120 host turns in the claim checks. Removing those turns at 4.5 s each
+would put added latency near 7.1 s; removing the repair turn as well, near
+1.8 s; removing only the repair turn, near 14.8 s. These are estimates from
+the fit, not measurements.
+
+The owner chose to drop the host from an ordinary answer's claim checks: a
+claim Jev leaves uncertain is withheld, and a question left unanswered falls
+back to synthesis. 26 D rows published host-settled claims, so coverage may
+fall and the fallback rate rise; the calibration answers are measured again
+on that change before the held-out answers.
+
 ## Sources
 
 - R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
