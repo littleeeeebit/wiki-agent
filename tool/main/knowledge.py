@@ -1425,8 +1425,9 @@ class Grounding:
         self.cfg, self.cache = cfg, cache
         # True or False is the caller's; None is an ordinary answer, whose dossier decides (`rebase`).
         self.verify_claims = verify_claims
-        # Whether what Jev leaves uncertain about a claim goes to the host model (`falls_back`).
-        self.fallback = falls_back(cfg)
+        # Whether what Jev leaves uncertain about a claim goes to the host (`falls_back`): never for an ordinary
+        # answer, whose synthesis fallback costs less than those turns did (answer-path.md, latency).
+        self.fallback = falls_back(cfg) and verify_claims is not None
         # What the conversation itself supplied — the question and its context: all a direct_text may restate.
         self.said = said
         self.cancel = cancel or threading.Event()

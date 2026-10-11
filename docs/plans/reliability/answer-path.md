@@ -187,6 +187,49 @@ The owner adopted B on 2026-10-11 with the fourth check unmet, because the
 row fails the same way without B. The held-out answers decide answer support
 and added latency.
 
+## Latency
+
+Where D's time went in `reliability-v5-calibration-answers-b`. No row
+records per-step time, so this is observational. Of D's 225 host turns, 81
+drafted answers, 66 graded them after the answer (outside the measured
+time), 25 settled retrieval decisions and 53 settled claim decisions. 46 of
+66 D rows sent a claim decision Jev left uncertain to the host (111
+questions, 98 settled; questions in one request share a turn). A
+least-squares fit of the answer step's own time (retrieval excluded) on
+drafting turns and claim-stage host turns gives about 7.3 s for each
+(R² 0.65). Subtracting the claim-stage turns at that rate would put added
+latency near 8.1 s; also removing the repair turn, near 4.2 s; removing only
+the repair turn, near 14.8 s. These are estimates from the fit, not
+measurements, and they hold the rest of each answer fixed.
+
+The owner chose to drop the host from an ordinary answer's claim checks: a
+claim Jev leaves uncertain is withheld, and a question left unanswered falls
+back to synthesis. 26 D rows published host-settled claims, so coverage may
+fall and the fallback rate rise; the calibration answers are measured again
+on that change before the held-out answers.
+
+Measured at d83b98c as `reliability-v5-calibration-answers-b2`, all 138
+rows in one batch (39 minutes, USD 9.48):
+
+| Fact rows | A | D, no host in claim checks |
+| --- | --- | --- |
+| Rows | 57 | 57 |
+| Claims | 387 | 168 |
+| Unsupported | 68 (0.176) | 10 (0.060) |
+| `answer.status` abstained | 0 | 0 |
+| Grader abstained | 0 | 1 |
+| Coverage | 0.991 | 0.982 |
+
+Added latency fell from 16.73 s to 3.48 s (D p95 20.42, A 16.93); D's
+median answer time is 10.8 s against A's 8.7 s. No D row was host-checked.
+Five fact rows fell back to synthesis (`direct-01`, `bridge-10`,
+`bridge-11`, `adv-05`, `fix-12`), as did five of the six abstain intents.
+The unsupported rate rose from 0.033 to 0.060; 7 of the 10 unsupported
+claims are in `route-05` and `pasted-04`, whose progress verdict stayed
+uncertain this run and which were synthesized. The grader-abstained row is
+`fix-12` again, the same retrieval miss. Three of the four adoption checks
+hold, as before.
+
 ## Sources
 
 - R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
