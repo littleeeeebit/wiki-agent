@@ -190,10 +190,13 @@ PROMPT_VERSION = hashlib.sha256(json.dumps(PROMPTS, sort_keys=True).encode()).he
 # pasted for the assistant to work on is not a requirement evidence must meet.
 # Kept out of PROMPTS, whose digest the fitted `eval/jev/policy.json` is bound
 # to: its text is in every question and so in every cache key, and its
-# thresholds stay provisional until it is fitted.
+# thresholds stay provisional until it is fitted. A question someone else asked,
+# quoted, is material too (v7 M1): the host read it as a request beside the
+# person's own on the same subject.
 ASK = ("Is query part {id} something the user asks the assistant to answer or do, a question or a request, "
        "rather than material the user supplied for it to work on, such as a pasted notice, document or message, "
-       "or instructions written for someone else?")
+       "instructions written for someone else, or a question someone else asked that the user quotes, "
+       "even when the user then asks about the same subject?")
 # Asked on every route, beside it and for the same reason kept out of PROMPTS: an analysis — a comparison, a
 # judgment, advice — is the assistant's own working-out, which no passage states, so checking it claim by claim
 # withheld it step after step. Only a sure yes skips that check; uncertain keeps it (invariant 2). What to do
@@ -3309,11 +3312,24 @@ def subqueries(question: str, budget: Budget, model: str = "") -> list:
 
 
 def parsed(answer: str):
-    """A model's JSON answer, a code fence around it allowed."""
+    """A model's JSON answer, a code fence around it allowed, and prose
+    before it: a host turn that explains first still answered (v7, F2)."""
 
     body = answer.strip()
     fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", body, re.S)
-    return json.loads(fenced.group(1) if fenced else body)
+    try:
+        return json.loads(fenced.group(1) if fenced else body)
+    except json.JSONDecodeError:
+        # The first object that runs to the end, a closing fence allowed: the answer, after the prose.
+        tail = re.sub(r"\s*```\s*$", "", body)
+        for at in (m.start() for m in re.finditer(r"\{", tail)):
+            try:
+                got, end = json.JSONDecoder().raw_decode(tail, at)
+            except json.JSONDecodeError:
+                continue
+            if not tail[end:].strip():
+                return got
+        raise
 
 
 # ---- runs (stage 9 of `docs/plans/jev/`) -------------------------------------------

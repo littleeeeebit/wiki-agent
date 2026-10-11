@@ -1297,6 +1297,55 @@ changes the measure after seeing the failures. The owner decides.
 The owner chose M1 with W, F and F2 on 2026-10-12. M1 was confirmed
 after M3's sizing was corrected in review.
 
+### Implementation, calibrated on revealed cases
+
+F2: `knowledge.parsed` still reads bare JSON or a fenced block first.
+Failing that, it takes the first JSON object that runs to the end of the
+text, a closing fence allowed. Text with no such object still fails. Its
+four readers share the change.
+
+W and F replace the two prompts in `decisions.PROMPTS` with the wording
+above. The revealed work-start and review-fix fixtures of v1, v2 and v5,
+168 once duplicates are removed, were replayed through
+`decisions.propose`:
+
+| Prompts | Work start | Review fix | Host fallbacks that failed to parse |
+| --- | --- | --- | --- |
+| Before | 81 of 84 | 78 of 84 | 2 of 47 |
+| W, F and F2 | 84 of 84 | 83 of 84 | 0 of 35 |
+
+The one miss left, v5lf09 (context, Jev chose fix at 0.64), was missed
+before too. v5ws05 and v5ws31 stay evidence.
+
+M1 was calibrated on the 255 distinct multi-segment route intents of
+v3–v6: 132 with a material segment and 123 request-only. Each `ASK` draft
+was scored by Jev alone, under the route's thresholds (no at 0.2 or below,
+yes at 0.8 or above) and `Flow.route`'s rule for which segments are kept.
+A case whose vector turns on an uncertain segment goes to the host, which
+reads the same `ASK`. Those cases were then run through `decision.decide`
+with the host fallback.
+
+| `ASK` | Material, settled by Jev | Material, host | Request, settled by Jev | Request, host |
+| --- | --- | --- | --- | --- |
+| Before | 122 right | 6 of 10 right | 123 right | 0 |
+| Adopted | 114 right | 18 of 18 right | 123 right | 0 |
+
+Before the change, the host answered yes for the quoted question in
+analysis-73, analysis-82 and analysis-136, and for the quoted task in
+start-36. Those are the misses recorded on v5 and v6. The adopted wording
+adds "or a question someone else asked that the user quotes, even when the
+user then asks about the same subject". Jev still scores no quoted question
+at 0.2 or below. It does score them lower, and the host settles them.
+
+Four other drafts were rejected. Each one either asked whether a question
+was in "the user's own words", or added the clause as a sentence of its
+own. Every one lowered Jev's confidence in the person's own question too,
+so between 25 and 51 cases went to the host, with up to 4 of them
+request-only. The adopted wording costs 8 more host calls than before on
+these cases, about USD 0.12 at the USD 0.013–0.015 a priced call cost
+(3 of the 18 reported no price). The host ran once per
+case, and a fresh set must test both the wording and the host.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -1306,7 +1355,7 @@ after M3's sizing was corrected in review.
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
-| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; F2 diagnosed |
+| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation); fresh set next |
 
 ## Sources
 
