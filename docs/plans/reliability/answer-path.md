@@ -285,8 +285,8 @@ them. The gate is judged on the held-out cohort.
 
 `reliability-v5-heldout-answers`, 258 rows in three batches (USD 24.83;
 the estimate of USD 18 assumed calibration's cost per row, and D's analysis
-rows cost USD 0.176 each). `tool/eval/report.py` judges both answer gates
-failed:
+rows cost USD 0.174 on average). `tool/eval/report.py` judges both answer
+gates failed:
 
 | Gate | Target | Value |
 | --- | --- | --- |
@@ -295,24 +295,34 @@ failed:
 
 | Class | Rows | A unsupported | D unsupported | D answer seconds p50 / p95 | A answer seconds p50 / p95 |
 | --- | --- | --- | --- | --- | --- |
-| Fact | 66 | 79/404 (0.196) | 31/213 (0.146) | 11.0 / 19.3 | 8.1 / 18.3 |
-| Analysis | 54 | 76/472 (0.161) | 82/500 (0.164) | 32.3 / 43.5 | 15.9 / 26.6 |
-| Abstain | 6 | 5/43 | 4/28 | 20.7 / 21.2 | 11.6 / 11.7 |
+| Fact | 66 | 79/404 (0.196) | 31/213 (0.146) | 10.7 / 20.0 | 8.1 / 19.2 |
+| Analysis | 54 | 76/472 (0.161) | 82/500 (0.164) | 31.4 / 43.5 | 15.8 / 26.6 |
+| Abstain | 6 | 5/43 | 4/28 | 15.4 / 22.6 | 10.2 / 12.8 |
 
-The held-out cohort is 41% analysis, against 5% in calibration, and
-analysis answers are synthesized and never checked, so they carry D's
-unsupported rate to A's. On fact rows alone D is 25.5% below A, at the
-target, though its 0.146 is far above calibration's 0.054: of its 31
-unsupported claims, 12 are in 44 checked answers, 5 in 11 that fell back to
-synthesis, and 13 in 8 published unverified with no fallback.
+Answer seconds are retrieval and the answer step together, at the report's
+percentile. Of the 126 graded intents, 54 (43%) are analysis, against 3 of
+66 (5%) in calibration. Analysis answers are synthesized and never checked,
+so they carry D's unsupported rate to A's. On fact rows alone D is 25.5%
+below A, at the target, though its 0.146 is far above calibration's 0.054.
+Its 31 unsupported claims split by path: 13 in 47 verified answers (44
+complete, 3 partial), 5 in 11 that fell back to synthesis, and 13 in 8
+published unverified with no fallback.
 
-D's analysis rows spend a median 18.0 s retrieving (32.4 s at most): 40
-of 54 run all three rounds. That time is what A never spends, and it sets
-the added latency. It is not new with #114: the retrieval-only held-out run
-before it took a median 13.4 s on the same rows, with 37 of 54 at the round
-limit, and the turns the budget sets aside rose from 12.0 to 16.9 s
-between the two runs. #114 turned the three rows that ended
-`retrieval_unavailable` into `rounds`.
+D's analysis rows spend a median 17.6 s retrieving (32.4 s at most); 43 of
+54 run three rounds and 40 end at the round limit. The host fallback turns
+the budget sets aside take a median 16.5 s of it, and Jev's own time
+1.1 s: the judge's coverage questions fell to the host 187 of 305 times on
+analysis rows, against 4 of 99 on fact rows, and the route's progress 27 of
+54. Subtracting the set-aside time from the analysis rows alone gives
+−3.23 s of added latency; that is arithmetic on recorded times, not a
+measurement of a run without those turns.
+
+The retrieval-only held-out run at 21dff77 took a median 13.1 s on the same
+rows, with 37 of 54 at the round limit and 11.9 s set aside. Between the
+two runs, routing gained the progress question and its host fallback as
+well as #114's retrieval changes, so the rise to 17.6 s is observed, not
+attributed. The three rows that ended `retrieval_unavailable` there end at
+the round limit here.
 
 ## Sources
 
