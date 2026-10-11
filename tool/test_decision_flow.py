@@ -317,6 +317,44 @@ def test_the_host_s_answer_is_read_only_for_the_questions_asked(monkeypatch):
     assert out["answers"] == {"x": "yes"} and out["cost_usd"] == 0.03 and out["model"] == "host-model"
 
 
+@pytest.mark.parametrize("text", [
+    'The finding was disputed in an earlier round, so the rule says gather context.\n\n{"answers": {"x": "yes"}}',
+    'Reasoning first.\n```json\n{"answers": {"x": "yes"}}\n```',
+    '```json\n{"answers": {"x": "yes"}}\n```'])
+def test_a_host_answer_after_its_reasoning_is_still_its_answer(monkeypatch, text):
+    # v7 F2: the probe's host explained first, and the answer it gave was thrown away.
+    from agent.chat_session import Event
+
+    def turn(prompt, payload, model, halt):
+        yield Event("done", text, {})
+
+    monkeypatch.setattr(knowledge, "oneshot", turn)
+    assert knowledge.host_decides({}, {"x": decision.noul("?")}, "route")["answers"] == {"x": "yes"}
+
+
+@pytest.mark.parametrize("text", ['{"answers": {"x": "yes"}} and then more', "no answer at all", '{"answers": ',
+                                  '{"answers": {"x": "no"}}\n{"answers": {"x": "yes"}}',
+                                  'At first {"answers": {"x": "no"}}, but:\n{"answers": {"x": "yes"}}',
+                                  '{"wrapper": {"answers": {"x": "yes"}}',
+                                  '{"wrapper": "}", "nested": {"answers": {"x": "yes"}}',
+                                  '[{"answers": {"x": "yes"}}',
+                                  'Reasoning }\n{"answers": "{"}\n{"answers": {"x": "yes"}}',
+                                  'Reasoning {first}.\n{"answers": {"x": "yes"}}'])
+def test_text_with_no_single_answer_that_ends_it_settles_nothing(monkeypatch, text):
+    # Review r1–r2: two answers, or an inner one of a cut-off object or array, are not the host's answer; nor is
+    # one after prose holding a bracket, which only parsing that prose as JSON could place.
+    from agent.chat_session import Event
+
+    def turn(prompt, payload, model, halt):
+        yield Event("done", text, {})
+
+    with pytest.raises(json.JSONDecodeError):
+        knowledge.parsed(text)
+    monkeypatch.setattr(knowledge, "oneshot", turn)
+    out = knowledge.host_decides({}, {"x": decision.noul("?")}, "route")
+    assert out["answers"] == {} and out["error"].startswith("JSONDecodeError")
+
+
 def test_a_failed_host_turn_settles_nothing_and_keeps_the_price_it_reported(monkeypatch):
     from agent.chat_session import Event
 

@@ -78,16 +78,20 @@ DEFERRED = "None of these clearly; leave it to the server's usual step."
 PROMPTS = {
     "work.start": "An agent is about to start work on the specification in the state. Which step should come "
                   "first? Choose to ask the person only when a missing input the state lists is needed to know "
-                  "when the work is done. Choose to gather evidence when the work depends on repository facts, "
-                  "rules or past decisions that the specification's grounds do not already name. Choose to send "
-                  "the turn when the specification already carries what the work needs.",
+                  "when the work is done. Choose to send the turn when the specification already states the "
+                  "change to make, the behavior, values or decisions it requires, so that no repository fact, "
+                  "rule or past decision is still needed to decide it, even when its grounds name no pages or "
+                  "rules. Choose to gather evidence when the work still leaves something to decide that depends "
+                  "on repository facts, rules or past decisions the specification's grounds do not already name.",
     "specs.check": "The repository's required gate passed on this change. Which registered check, by its "
                    "description, examines the files this change touched? Choose none when no registered check "
                    "examines any of them.",
     "loop.fix": "A review refused the merge with the findings in the state. Which step makes it more likely that "
                 "the fixing agent settles every finding this round? Choose to gather context when a finding turns "
-                "on a rule, a recorded decision or a document of the repository, or was disputed in an earlier "
-                "round; choose to send the findings as they are when each already says what to change.",
+                "on a rule, a recorded decision, a document or a convention of the repository, including a "
+                "finding that appeals to how other parts of the repository do something, or when it was disputed "
+                "in an earlier round, even if it proposes a remedy. Choose to send the findings as they are when "
+                "each already says what to change and needs nothing beyond the finding itself.",
     "specs.candidates": "Which proposed next task do the materials in the state support best, as the one most "
                         "worth doing now? Choose defer when none clearly stands out.",
 }

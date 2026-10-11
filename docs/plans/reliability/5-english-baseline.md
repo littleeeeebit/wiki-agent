@@ -1297,6 +1297,75 @@ changes the measure after seeing the failures. The owner decides.
 The owner chose M1 with W, F and F2 on 2026-10-12. M1 was confirmed
 after M3's sizing was corrected in review.
 
+### Implementation, calibrated on revealed cases
+
+F2: `knowledge.parsed` still reads bare JSON or a fenced block first.
+Failing that, it reads one answer after prose that holds no `{` or `[`.
+The first of those opens the answer, and only a closing fence may follow
+it. Some text still fails:
+- a second answer after the first;
+- an inner object of a cut-off object or array;
+- prose holding a bracket, since only parsing that prose as JSON could
+  show where the answer starts.
+
+Its four readers share the change. The action re-probe below ran on an
+earlier version of this fix, which also accepted brackets in prose. The
+one host text captured, v5lf60's, has none. Whether the other host turns
+had any was not recorded.
+
+W and F replace the two prompts in `decisions.PROMPTS` with the wording
+above. The revealed work-start and review-fix fixtures of v1, v2 and v5,
+168 once duplicates are removed, were replayed through
+`decisions.propose`:
+
+| Prompts | Work start | Review fix | Host fallbacks that failed to parse |
+| --- | --- | --- | --- |
+| Before | 81 of 84 | 78 of 84 | 2 of 47 |
+| W, F and F2 | 84 of 84 | 83 of 84 | 0 of 35 |
+
+The one miss left, v5lf09 (context, Jev chose fix at 0.64), was missed
+before too. v5ws05 and v5ws31 stay evidence.
+
+M1 was calibrated on the 255 distinct multi-segment route intents of
+v3–v6: 132 with a material segment and 123 request-only. Each `ASK` draft
+was scored by Jev alone, under the route's thresholds (no at 0.2 or below,
+yes at 0.8 or above) and `Flow.route`'s rule for which segments are kept.
+A case whose vector turns on an uncertain segment goes to the host, which
+reads the same `ASK`. Those cases were run again through
+`decision.decide`, with the host fallback, so Jev judged them a second
+time first.
+
+| `ASK` | Material, settled by Jev | Material, run again with the host | Request, settled by Jev | Request, run again |
+| --- | --- | --- | --- | --- |
+| Before | 122 right | 6 of 10 right | 123 right | 0 |
+| Adopted | 114 right | 18 of 18 right | 123 right | 0 |
+
+Before the change, this probe's second pass marked four quoted parts as
+asked:
+- the quoted questions in analysis-73, analysis-82 and analysis-136;
+- the quoted task in start-36.
+
+These are probe results, not a replay of earlier runs. The held-out misses
+recorded earlier were analysis-82 and none-35 on v5, and analysis-136 and
+none-42 on v6. They have the same shape. In this probe, none-35 and
+none-42 were right before the change, and analysis-73 and start-36 had
+been right on v5. The adopted wording
+adds "or a question someone else asked that the user quotes, even when the
+user then asks about the same subject". Jev still scores no quoted question
+at 0.2 or below. It does score them lower, and the host settles them.
+
+Four other drafts were rejected. Each one either asked whether a question
+was in "the user's own words", or added the clause as a sentence of its
+own. Every one lowered Jev's confidence in the person's own question too,
+so between 25 and 51 cases went to the host, with up to 4 of them
+request-only. On these cases the adopted wording leaves 8 more cases
+uncertain than before. If each costs a host call, that is about USD 0.12
+more, at the USD 0.011–0.018 a priced call cost here. This is an
+estimate. The probe did not record whether each second pass reached the
+host, so 3 of the 18 with no price may have settled on Jev's second
+judgment or may have gone unpriced. Each case ran once, and a fresh set
+must test both the wording and the host.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -1306,7 +1375,7 @@ after M3's sizing was corrected in review.
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
-| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; F2 diagnosed |
+| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation); fresh set next |
 
 ## Sources
 
