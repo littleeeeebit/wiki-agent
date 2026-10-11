@@ -1176,10 +1176,10 @@ someone else asked, quoted, and followed by the person's own request.
 
 | Set | Material rows (B and D) | Quoted questions among them | Misses |
 | --- | --- | --- | --- |
-| v3 | 14 | 0 | 0 |
-| v4 | 18 | 0 | 0 |
-| v5 | 114 | 12 | 3 |
-| v6 | 118 | 12 | 3 |
+| v3 | 12 | 0 | 0 |
+| v4 | 12 | 0 | 0 |
+| v5 | 112 | 12 | 3 |
+| v6 | 116 | 12 | 3 |
 
 The misses are listed below.
 - v5:
@@ -1189,7 +1189,7 @@ The misses are listed below.
   - analysis-136 ("Board question: …"), in both arms.
   - none-42 ("Prospect asks: …"), in D.
 
-All 240 rows without a quoted question were right, and 18 of the 24 with
+All 228 rows without a quoted question were right, and 18 of the 24 with
 one. The `ASK` question names
 pasted notices, documents and messages, and instructions written for
 someone else, but not a question someone else asked. When the person then
@@ -1202,7 +1202,7 @@ what the person wants answered; in none-42 it is not.
 | --- | --- | --- | --- |
 | M1 | Reword `ASK` so that a question quoted from someone else is material, even when the person's own request is about the same subject. Calibrate it, as #121 did, on every revealed v3–v6 segment, with request classification protected | Targets the one recorded shape | A wording fitted to six revealed rows; a fresh set must test it |
 | M2 | Relabel: a forwarded question that the person's own request asks the assistant to answer counts as a request | Removes the disagreement by convention | A label change chosen after the failures, which moves the measure, not the router |
-| M3 | Neither; more material cases | Nothing changes | At v6's miss rate the bound stays near 0.90; cases alone do not settle it |
+| M3 | Neither; more material cases, with forwarded questions kept at their share | The router is unchanged; the gate may settle on sample size alone. At v6's rate (113 of 116 rows, 0.974) the Wilson lower bound reaches 0.921 at 100 intents, and 97 of 100 gives 0.916. These figures are sizing assumptions, not forecasts | Repairs nothing, and fresh cases may miss at another rate. It needs no answer run, since the router does not change |
 
 ### Action points: A2
 
@@ -1234,13 +1234,25 @@ The six v5 misses fall into three patterns. The fixtures are in
     nothing is not diagnosed.
 
 The changes to test:
-- W: sharpen the work-start prompt. A specification whose goal names the
-  files and whose criteria say how to check it carries what the work
-  needs.
+- W: sharpen the work-start prompt. A specification that already states
+  the behavior or decision required carries what the work needs, when no
+  unresolved repository fact, rule or convention is needed to choose it.
+  Naming files and checks alone does not override the evidence condition.
+  v5ws05 (pick the catalogue's cache lifetime) and v5ws31 (choose the
+  minimum password length) name both, and stay evidence. They are kept as
+  counterexamples during calibration.
 - F: sharpen the review-fix prompt. A finding that appeals to how other
   parts of the repository do something turns on a convention, even when
   it proposes a remedy.
-- F2: diagnose v5lf60's unsettled fallback.
+- F2: diagnose v5lf60's unsettled fallback. Replayed at 6b8149b, the
+  host's turn answered `context`, the label, but put a sentence before
+  the JSON object ("The finding was disputed in an earlier round, so the
+  rule says gather context."). `knowledge.parsed` takes bare JSON or a
+  fenced block only, so the turn failed with `JSONDecodeError` and
+  settled nothing. The fallback prompt asks for no prose, and the host
+  did not comply. The fix belongs in `parsed`, which the host fallback,
+  the answer grader and two other readers share. The recorded rows keep
+  fallback counts only, so how often this happened before is not known.
 
 The revealed fixtures calibrate W and F, with the other labels protected:
 
@@ -1282,6 +1294,9 @@ reviewed. Then a fresh v7 set with its label review, and the runs above
 on the owner's approval of their cost. M2 is not recommended, because it
 changes the measure after seeing the failures. The owner decides.
 
+The owner chose M1 with W, F and F2 on 2026-10-12. M1 was confirmed
+after M3's sizing was corrected in review.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -1291,7 +1306,7 @@ changes the measure after seeing the failures. The owner decides.
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
-| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); the owner's choice next |
+| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; F2 diagnosed |
 
 ## Sources
 
