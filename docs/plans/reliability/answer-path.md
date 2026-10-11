@@ -324,6 +324,85 @@ well as #114's retrieval changes, so the rise to 17.6 s is observed, not
 attributed. The three rows that ended `retrieval_unavailable` there end at
 the round limit here.
 
+## Analysis path
+
+Analysis questions, a class calibration barely held, are the largest part
+of both failures but not all of answer support's: without them, the fact
+and abstain rows still give D 35/241 against A's 84/447, 22.7% below, short
+of 25%. That is a diagnostic split, not a proposal to change the v5 gate.
+This section weighs what to change; nothing here is decided.
+
+### Latency
+
+`Flow.ask` hands the host to `decision.decide` for every request. Of a
+judge request's kinds only coverage is the host's to settle; useful,
+conflict, redirect and repair are code's (`CODE_SETTLES`). The route sets
+`dossier["analysis"]` before any judge request.
+
+| Option | Change | Effect | Cost |
+| --- | --- | --- | --- |
+| L1 | No host fallback in a judge request when the route marked the question analysis | Removes the coverage turns, 187 of the 305 analysis coverage questions | An uncertain coverage stays uncertain, which changes the evidence the synthesis reads (below), and reaches the fact questions the route marks analysis |
+| L2 | L1, and drop progress from the route's host turn once Jev says analysis yes | Also removes most of the 27 progress turns on analysis rows | `decision.decide` asks every uncertain question in one host turn; this needs the route to withhold progress, a change to a shared contract |
+| L3 | One retrieval round for analysis questions | Fewer rounds, but retrieval outside the host's turns takes about 1 s per question across all its rounds; what removing rounds saves is left to measurement | Less evidence: the 40 rows at the round limit had recall 0.85 after three rounds |
+
+L1 is the smallest change that reaches the cause. The bound computed above,
+−3.23 s with all set-aside time removed from analysis rows, includes the
+route's turn, so L1 alone saves less; how much is measured, not assumed.
+
+An analysis answer is published unverified either way, but L1 changes what
+it is written from. A coverage yes keeps the passages it judged from being
+dropped and holds them past k (`Flow.judge`, `rested`); left uncertain, they
+can be dropped, the requirement counts as missing, and repair runs on,
+retrieving other passages and sources. The synthesis brief carries the
+evidence, the retrieval status and the missing requirements
+(`Grounding.view`), so all three can differ, and answer support and
+coverage must be measured, not only latency.
+
+The route's flag, not the intent's label, decides L1. In the held-out run
+it marked eight fact intents analysis: `analysis-85`, `-86`, `-89`, `-90`,
+`pasted-40`, `start-33`, `start-35` and `fix-31`. `start-35` ends `ready`
+today with one of its three coverage questions settled by the host; under
+L1 that one stays uncertain. These rows lose the host's coverage too, so a
+measurement of analysis intents alone cannot show L1 is safe.
+
+### Answer support
+
+Pooled, D needs at most 0.131 unsupported (A's 0.174 less 25%) and has
+0.158, 117 of 741 claims. Analysis rows hold 82 of the 117, and A's
+analysis answers are unsupported at nearly the same rate, 0.161 against
+0.164.
+
+Fourteen of the 82, drawn with `random.seed(1)` and `random.sample` over
+the claims in record order, read as follows (intent and claim index):
+
+| Reading | Claims |
+| --- | --- |
+| A repository fact | `analysis-79` 3, `analysis-65` 4, `analysis-47` 3 ("No breakdown of the misses was recorded.") |
+| Inference | `analysis-42` 9, `analysis-37` 5, `analysis-54` 12 ("A freeze makes each later release bigger, which can add risk."), `analysis-41` 10, `analysis-74` 8, `analysis-65` 8 |
+| Outside knowledge | `analysis-74` 11, `analysis-71` 1 ("A /24 is a block of 256 adjacent IP addresses.") |
+| Arithmetic over given figures | `analysis-68` 5, `analysis-40` 4, `analysis-34` 4 |
+
+The reading is one reviewer's, of one small sample; it describes these 14,
+not the 82.
+
+| Option | Change | Effect | Cost |
+| --- | --- | --- | --- |
+| S1 | Check an analysis answer's repository-fact premises as fact claims are checked, and drop or mark the unsupported | Reaches premises that state repository facts | Telling a premise from inference is a new classification; inference it leaves alone |
+| S2 | A stricter synthesis brief: separate stated facts, each from a passage, from reasoning, and keep outside knowledge out unless asked | Fewer outside-knowledge claims | A prompt change, measured only by another run; the grader may still count inference as unsupported |
+| S3 | Leave analysis answers as they are; record the pooled gate as failed in v5 | No change | v6 must decide whether a pooled unsupported rate is the right gate for a cohort that is 43% analysis; a gate is not changed after its held-out run |
+
+Bringing analysis to 0.12 (about 22 fewer unsupported claims) would pass
+the pooled target with the other rows unchanged. Neither S1 nor S2 has been
+measured.
+
+### Recommendation
+
+L1, measured on the full calibration answers and then the full held-out
+answer cohort, so that the fact intents the route marks analysis are in
+both, and judged on latency, answer support and coverage. For answer
+support in v5, S3: the failed result stands. The gate's cohort and the
+treatment of analysis inference are set for v6 before its held-out run.
+
 ## Sources
 
 - R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
