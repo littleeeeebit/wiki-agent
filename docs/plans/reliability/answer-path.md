@@ -98,7 +98,10 @@ progress (what is done, in progress or next), which current repository
 observations answer, rather than for facts its sources state? Only a sure no
 is verified, Jev's own or the host's where the route's host fallback settles
 what Jev left uncertain; yes, uncertain or an unavailable decision
-synthesizes as today.
+synthesizes as today. A wrong no on a progress question is the risk: the
+check then leaves the question unanswered and falls back to synthesis, or
+publishes the parts it verified without the repository observations. v5 has
+no progress intents to measure either.
 It is one decision in `knowledge`, not a list of question expressions.
 
 The policy lives in `grounded`, decided from the dossier, so every caller
