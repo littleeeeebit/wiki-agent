@@ -196,11 +196,14 @@ ASK = ("Is query part {id} something the user asks the assistant to answer or do
        "or instructions written for someone else?")
 # Asked on every route, beside it and for the same reason kept out of PROMPTS: an analysis — a comparison, a
 # judgment, advice — is the assistant's own working-out, which no passage states, so checking it claim by claim
-# withheld it step after step. Only a sure yes skips that check; uncertain keeps it (invariant 2).
+# withheld it step after step. Only a sure yes skips that check; uncertain keeps it (invariant 2). What to do
+# in a routine case is the policy that covers it, a fact: v3–v5 sent such lookups to analysis, unverified.
 ANALYSIS = ("Does the query ask the assistant for analysis it works out itself, such as a comparison, a judgment, "
-            "an assessment, an opinion or advice, rather than for facts the repository's sources state? "
-            "A calculation, a conversion, a count, a sort or a rewording of text the query itself gives is "
-            "not analysis: it has one right result.")
+            "an assessment, an opinion, or a plan or diagnosis for a particular problem the team faces, rather "
+            "than for facts the repository's sources state? A calculation, a conversion, a count, a sort or a "
+            "rewording of text the query itself gives is not analysis: it has one right result. Nor is asking "
+            "what to do, or how, in a routine situation that a standing policy, procedure or convention would "
+            "cover: that answer is a fact the sources state.")
 # Asked beside ANALYSIS (answer-path.md, option B): a progress answer interprets live repository observations,
 # which no retrieved passage states, so only the route's sure no (Jev's or the host's) lets one be checked.
 PROGRESS = ("Does the query ask about this repository's own progress, such as what is done, in progress or next, "

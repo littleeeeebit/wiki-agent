@@ -966,6 +966,38 @@ PR, before v6 freezes. A3 for the action points, so v6 stays on the answer
 path; A2 follows as its own version. The owner decides each, since G2 and
 the route change alter what a v6 pass means.
 
+The owner chose all three on 2026-10-11: G2, the route change as its own
+PR, and A3.
+
+### Route change, calibrated on revealed cases
+
+A probe sends the route request as `Flow.route` builds it, with the
+`ANALYSIS` text swapped, for every v3–v5 intent with `route_expected`,
+deduplicated by English text: 324 cases, 63 analysis and 261 fact, all
+revealed. Jev answers each; a score of 0.8 or more is yes, as the
+provisional policy has it, and a score between 0.2 and 0.8 is uncertain,
+which production sends to the host. The probe reproduces v5's held-out
+misses: all 8 fact intents score at least 0.82 with today's text. Its
+scripts, wordings and results are in `raw/eval/jev/route-probe-v6/`; Jev
+only cost about 290,000 input tokens per wording, and the host turns below
+USD 0.84 in all.
+
+| Wording | Analysis answered yes | Facts answered yes | Facts uncertain |
+| --- | --- | --- | --- |
+| Today's | 63/63 | 12/261 | 44 |
+| V1: advice that a rule or convention covers is a fact | 51/63 | 0/261 | 21 |
+| V2: advice that no source states | 62/63 | 6/261 | 35 |
+| V3: a plan or diagnosis for the team's own problem is analysis; what to do in a routine case a standing policy would cover is a fact | 63/63 | 0/261 | 27 |
+| V4: V3's line, under the word advice | 61/63 | 0/261 | 30 |
+
+With the host settling the uncertain ones, as production does, today's
+text sends 13 of 261 facts to analysis (the host adds `start-30`); V3's
+host turns answered no to all 27, so V3 sends none. Its margins are narrow:
+the lowest analysis scores 0.81 and the highest fact 0.77 (`start-35`).
+V3 is fitted to exactly these cases, so the numbers show it separates them,
+not that it generalizes; that is v6's held-out question, beside analysis
+recall on fresh analysis intents.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -974,7 +1006,7 @@ the route change alter what a v6 pass means.
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
-| 5 | v6 | Fresh held-out test of the changed answer path | Not started — design above; answer-support cohort, route change and action scope await the owner |
+| 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases; fresh intents, gates v6 and their review next |
 
 ## Sources
 
