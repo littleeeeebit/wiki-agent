@@ -357,8 +357,8 @@ the 117, at A's rate. In a sample of 14 of those 82, about 3 state a
 repository fact (for example "No breakdown of the misses was recorded");
 the rest are inference ("A freeze makes each later release bigger"),
 outside knowledge ("A /24 is a block of 256 adjacent IP addresses") or
-arithmetic over given figures. A's analysis answers, with no retrieval
-of their own, are unsupported at the same rate, 0.161.
+arithmetic over given figures. A's analysis answers are unsupported at
+nearly the same rate, 0.161.
 
 | Option | Change | Effect | Cost |
 | --- | --- | --- | --- |
