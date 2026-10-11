@@ -13,8 +13,10 @@ Stage 5 of `docs/plans/jev/`.
    see is ranked: sources, filters and visibility come before the cut.
 3. The lanes are fused by reciprocal rank per chunk, not per page, so two
    sections of one document can both be kept.
-4. Each allowed source gets a floor of the seed slots; a source with nothing
-   gives its floor back to the rest.
+4. Each allowed source gets a floor of the seed slots, together at most half
+   of them; a source with nothing gives its floor back to the rest. Fewer
+   slots than twice the sources, as a subquery's share of a round, have no
+   floor: rank alone fills them.
 5. The best seeds start a walk over adopted graph edges (`expand`) within
    hops, a fan-out per visited node and one candidate allowance.
 6. What the walk reaches is a chunk of the snapshot, returned with its own
@@ -301,7 +303,9 @@ def run(index, req: dict, cancel: threading.Event | None = None) -> dict:
     slots = max(0, min(req["limit"], allowance))
     names = req["source_allowlist"]
     groups = {name: [i for i in ranked if name in covers[text_key(chunks[i])]] for name in names}
-    floor = max(1, slots // (2 * len(names))) if slots >= len(names) else 0
+    # A floor of one per source in four slots spent them all on each source's best, however poor: a
+    # subquery's second-ranked document lost to an unrelated paper (analysis-03, reliability v5).
+    floor = slots // (2 * len(names))
     picked = {i for name in names for i in groups[name][:floor]}
     for i in ranked:
         if len(picked) >= slots:

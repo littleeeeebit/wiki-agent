@@ -109,13 +109,17 @@ def test_the_seeds_are_ranked_per_chunk_so_one_document_gives_two_sections(world
 def test_every_allowed_source_gets_a_floor_before_the_cut_and_an_empty_one_gives_it_back(world):
     hub, repo = world
     index = index_of(hub, repo)
-    # Five document sections match better than the memory; four slots still hold it.
+    # Five document sections match better than the memory; four slots, twice the sources, still hold it.
     query = "ranker dense lists circular page pipeline"
-    result = ask(index, query, graph=None, limit=4)
+    result = ask(index, query, graph=None, limit=4, sources=["documents", "memory"])
     assert result["coverage"]["memory"] == {"candidates": 1, "floor": 1, "selected": 1}
     assert len(result["chunks"]) == 4
     (memory,) = [c for c in result["chunks"] if c["kind"] == "memory"]
     assert result["scores"][memory["chunk_id"]]["rrf"]["rank"] > 4
+    # Fewer slots than twice the sources have no floor: rank alone fills them.
+    fewer = ask(index, query, graph=None, limit=3, sources=["documents", "memory"])
+    assert fewer["coverage"]["memory"] == {"candidates": 1, "floor": 0, "selected": 0}
+    assert [c["kind"] for c in fewer["chunks"]] == ["document"] * 3
     # A source that is not allowed is not ranked at all, however well it matches.
     narrow = ask(index, query, graph=None, limit=4, sources=["documents"])
     assert {c["kind"] for c in narrow["chunks"]} == {"document"}
@@ -481,6 +485,22 @@ def test_sibling_subqueries_split_what_is_left_of_the_allowance(world):
     assert len(subs) == 2 and note["rejected"] == [{"subquery": "beta page", "reason": "no_allowance"}]
     got = [c["chunk_id"] for s in subs for c in retrieval.run(index.snapshot(), s)["chunks"]]
     assert len(first["chunks"]) + len(set(got)) <= 3 and all(s["max_candidates"] == 2 for s in subs)
+    index.close()
+
+
+def test_a_chunk_two_siblings_both_return_is_spent_once_and_the_next_round_runs(world):
+    hub, repo = world
+    index = index_of(hub, repo)
+    req = retrieval.request(evidence.repo_id(repo), "circular alpha", sources=["documents"], limit=2, graph=None)
+    first = retrieval.run(index.snapshot(), req)
+    subs, _ = retrieval.repair(req, first, "subqueries", subqueries=["ranker merges lexical", "merges lexical lists"])
+    results = [retrieval.run(index.snapshot(), s) for s in subs]
+    assert set.intersection(*({c["chunk_id"] for c in r["chunks"]} for r in results))
+    both = knowledge.merged(first, results)
+    assert both["spent"] == first["spent"] + len(both["chunks"]) <= len(both["seen_chunk_ids"])
+    # Counted twice, the next round's spent passed its seen ids and every request of it was refused.
+    after, _ = retrieval.repair({**req, "round": 2}, both, "subqueries", subqueries=["dense lists per section"])
+    assert retrieval.problems(after[0]) == [] and retrieval.run(index.snapshot(), after[0])["chunks"]
     index.close()
 
 

@@ -230,6 +230,26 @@ uncertain this run and which were synthesized. The grader-abstained row is
 `fix-12` again, the same retrieval miss. Three of the four adoption checks
 hold, as before.
 
+## Retrieval misses
+
+In `-b2`, 6 of D's 63 rows with expected evidence lacked some of it. Four
+are fault rows, by design. The other two were reproduced on a local index
+of the same corpus, with no request sent:
+
+| Intent | Cause | Ranks in round 1 |
+| --- | --- | --- |
+| `fix-12` | The question says "BOM"; `hub/craft/utf8-files.md` says only "UTF-8 without a byte-order mark". A subquery round searches the requirement, here the question itself, so it misses the same way. | BM25 82, e5 45, RRF 48; "byte-order mark rule for text files" ranks it 1 in both |
+| `analysis-03` | `repo/docs/traffic.md` ranks 7 at k = 8, but each of four sources' floor took a slot. Round 2's two subqueries got four slots each, and the floors took all four, leaving out `traffic.md`, ranked 2 in the documents. Both subqueries returned `papers/splade.md`; `merged` counted it twice, so round 3's `spent` passed its seen ids. Every round-3 request was refused as invalid, and `bounded` reported the error as `retrieval_unavailable`. | RRF 7 |
+
+The second cause ended every v5 run's `analysis-03` and `analysis-06`, and
+the held-out `analysis-56`, `-69` and `-78`, in `retrieval_unavailable`;
+the graded answers were still `answered`. `merged` now counts a chunk two
+siblings returned once. Seed slots fewer than twice the sources now have
+no floor, so a subquery's four slots go by rank, and its round 2 returns
+`traffic.md`. Round 1 at k = 8 with up to four sources keeps its floor of
+one. `fix-12` needs a different query wording, which no repair now
+proposes; it is left open.
+
 ## Sources
 
 - R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
