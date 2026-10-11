@@ -971,8 +971,10 @@ PR, and A3.
 
 ### Route change, calibrated on revealed cases
 
-A probe sends the route request as `Flow.route` builds it, with the
-`ANALYSIS` text swapped, for every v3–v5 intent with `route_expected`,
+A probe sends the route request as `Flow.route` builds it for the
+benchmark's setting (original English, empty current state, no omitted
+context, the four source families, retrieval not required by the caller),
+with the `ANALYSIS` text swapped, for every v3–v5 intent with `route_expected`,
 deduplicated by English text: 324 cases, 63 analysis and 261 fact, all
 revealed. Jev answers each; a score of 0.8 or more is yes, as the
 provisional policy has it, and a score between 0.2 and 0.8 is uncertain,
@@ -990,13 +992,25 @@ USD 0.84 in all.
 | V3: a plan or diagnosis for the team's own problem is analysis; what to do in a routine case a standing policy would cover is a fact | 63/63 | 0/261 | 27 |
 | V4: V3's line, under the word advice | 61/63 | 0/261 | 30 |
 
-With the host settling the uncertain ones, as production does, today's
-text sends 13 of 261 facts to analysis (the host adds `start-30`); V3's
-host turns answered no to all 27, so V3 sends none. Its margins are narrow:
+A second stage sends each initially uncertain case through
+`decision.decide` with the host fallback, as production does; it asks Jev
+afresh, and the host only what that answer leaves uncertain. Today's text
+then sends 13 of 261 facts to analysis: `start-30`, 0.78 at first, scored
+yes on the second Jev answer, with no host turn. The host was asked about
+analysis in 39 of its 44 cases and said no each time; two stayed uncertain
+after failed host turns (`memory-03`, `fix-30`), which production reads as
+not analysis. Under V3 the host was asked in 26 of 27 and said no each
+time, and the second Jev answer settled `memory-27` as no, so V3 sends
+none. Its margins are narrow:
 the lowest analysis scores 0.81 and the highest fact 0.77 (`start-35`).
 V3 is fitted to exactly these cases, so the numbers show it separates them,
 not that it generalizes; that is v6's held-out question, beside analysis
-recall on fresh analysis intents.
+recall on fresh analysis intents. The probe kept only the analysis answer.
+The same request asks retrieve, progress, source and ask questions, whose
+texts are unchanged but which Jev reads beside the new one, and other
+production settings (a current state, a narrower source set, retrieval
+already required) change its input; neither is measured here, and v6's
+runs measure them.
 
 ## Steps
 
