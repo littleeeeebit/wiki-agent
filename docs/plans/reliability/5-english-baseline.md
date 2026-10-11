@@ -586,6 +586,110 @@ Host spending per batch: calibration retrieval 3.8 min / USD 0.37, actions
 retrieval 28.7 / 6.06 (285 fallback turns), repetition 3.4 / 0.54, actions
 3.0 / 0.45. USD 24.29 in all; Jev's cost has no dated price.
 
+### v6 — `eval/jev/reliability-v6/` at 103521c
+
+Frozen after label review r6 (see "Draft set"). Every run is at 103521c,
+the merge of the frozen set, with the route change (#121) and L1 in place.
+v6 has no action fixtures (A3), so decision quality and the three action
+gates are not_measured, and v5's action results stand.
+
+Calibration answers, `reliability-v6-calibration-answers` (not gated):
+
+| Arm | Coverage | Unsupported, fact and abstain | Unsupported, all | Answer p95 s |
+| --- | --- | --- | --- | --- |
+| A | 0.992 | 0.180 | 0.191 | 17.2 |
+| D | 0.970 | 0.063 | 0.106 | 21.4 |
+
+Read as G2 reads held-out, that is a reduction of 0.65 and 4.2 s added.
+
+Held-out runs: `reliability-v6-heldout`, `reliability-v6-heldout-answers`,
+`reliability-v6-repeat`. The report is `reliability-v6-report.json`. The
+four routing rate gates take the 95% Wilson interval and count each intent
+once over B and D. The other rates (recall, bridge recall, coverage,
+unsupported claims) and the paired differences take a 95% bootstrap
+interval resampled by intent.
+
+| Gate | Target | Value | Result |
+| --- | --- | --- | --- |
+| Deterministic integrity | 0 | 0 | pass |
+| Graph benefit | 0.10 | 0.417 [0.25, 0.5] | pass |
+| Overall recall | ≥ -0.02 | 0.029 [-0.008, 0.075] | pass |
+| Answer support (G2: fact and abstain intents) | 0.25 | 0.359 | pass |
+| Decision quality | 0.90 | — | not_measured |
+| Added latency | ≤ 10 s | 4.33 s | pass |
+| Operating ceiling | 0 | 0 | pass |
+| Analysis recall | 0.90 | 1.0 [0.934, 1.0], n=54 | pass |
+| Fact specificity | 0.90 | 0.987 [0.931, 0.998], n=78 | pass |
+| Material classification | 0.90 | 0.974 [0.895, 0.994], n=58 | inconclusive |
+| Request-only multipart classification | 0.90 | 1.0 [0.939, 1.0], n=59 | pass |
+| Work-start, check and review-fix choice | 0.90 | — | not_measured |
+
+Answers, held out (132 graded intents, none failed, cohort complete):
+
+| Arm | Coverage | Unsupported, fact and abstain | Unsupported, analysis | Unsupported, all | Answer p95 s |
+| --- | --- | --- | --- | --- | --- |
+| A | 0.968 | 0.185 (470 claims) | 0.187 (460) | 0.186 | 22.0 |
+| D | 0.968 | 0.119 (253) | 0.147 (468) | 0.137 | 26.3 |
+
+- Answer support is (0.185 − 0.119) / 0.185 = 0.359. D's coverage on the
+  fact and abstain intents is 0.026 below A's, interval [-0.074, 0.016],
+  inside the -0.20 margin.
+- The analysis intents, reported beside the gate and not gated: D's
+  unsupported rate is 0.147 against A's 0.187, and its coverage is 0.037
+  above A's, interval [0.0, 0.083].
+- The pass does not rest on G2 alone. Over all 132 intents, the pooled gate
+  v5 used gives (0.186 − 0.137) / 0.186 = 0.262, with a coverage
+  difference of 0.0 [-0.032, 0.032].
+
+The routing misses, each in both arms unless named:
+- Fact specificity, 1 of 78: start-40 ("How should the new download handle
+  large results?") was routed as analysis. All 12 routine cases that a
+  standing policy covers were routed as facts.
+- Material classification, 2 of 58: analysis-136 ("Board question: …")
+  kept the quoted question as a request, and none-42 ("Prospect asks: …")
+  did in D only. v5 missed the same shape (analysis-82, none-35). With two
+  misses in 58 the lower bound stays under 0.90.
+
+Retrieval, held out (B and D include the six injected-failure intents):
+
+| Arm | n | Recall | Candidate recall | Bridge recall | p95 s | Host USD |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 132 | 0.896 [0.838, 0.942] | 0.896 | 0.417 | 0.03 | 0 |
+| B | 138 | 0.877 [0.821, 0.929] | 0.877 | 0.417 | 7.2 | 0.83 |
+| C | 132 | 0.896 [0.838, 0.942] | 0.917 | 0.417 | 0.03 | 0 |
+| D | 138 | 0.897 [0.841, 0.944] | 0.897 | 0.833 | 9.1 | 0.42 |
+
+- Retrieval p95 fell from v5's 20 s to 7–9 s (B 7.2 s, D 9.1 s, against
+  19.7 s and 20.3 s). This is an observation, not attributed: the two runs
+  differ in cases, corpus, route behavior and fallback policy, and #114's
+  paired calibration left retrieval p95 unchanged ([answer-path.md](answer-path.md)).
+- Coverage questions sent to the host fallback were 7 of 467 in D, against
+  172 of 413 on v5's held-out. That counts fallbacks, not every uncertain
+  Jev verdict: under L1 an analysis row's coverage questions get no host
+  fallback. The 337 coverage questions of D's analysis-routed rows sent
+  none, though 40 of those rows still end with a requirement marked
+  uncertain (analysis-91: r0 at 0.23). The counters do not give the total
+  uncertainty.
+- Failure and cancellation: 12 of 12 as expected.
+- Repetition: status was the same in 8 of 8 groups. Evidence was the same,
+  in order, in 3 (B) and 2 (D).
+
+Host spending per batch:
+- Calibration answers: 39.1 min, USD 9.37.
+- Held-out retrieval: 13.5 + 0.5 min, USD 1.25 (Jev's token ceiling
+  stopped the first batch at 506 of 540 rows).
+- Held-out answers: 46.3 + 40.0 + 4.9 min, USD 21.34 (two batches stopped
+  at the USD 10 ceiling).
+- Repetition: 3.1 min, USD 0.22.
+
+USD 32.18 in all. Jev's cost has no dated price.
+
+Exit on v6: both answer gates pass on fresh intents, and so do three of
+the four routing gates. Material classification stays inconclusive, as it
+was on v5. The work-start and review-fix choices stay at v5's inconclusive
+result (A3). The stage's exit is therefore still not met. What remains is
+the material cohort and the two action points.
+
 ### Limits
 
 - Latency passes on v4 at 5.48 s. It failed on v3, narrowly, at 10.76 s
@@ -662,6 +766,19 @@ commit and the options recorded in each `run.json`: `cache cold`, `method
 hybrid`, `k 8`, the default model and grader. Running the same commands at a
 later commit measures a different manifest. Rebuilding a report from the
 recorded folders works at any commit.
+
+v6, from a clean checkout of 103521c:
+
+```text
+python tool/eval/compare.py raw/eval/jev/reliability-v6-calibration-answers --dataset eval/jev/reliability-v6/intents.json --split calibration --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-v6-heldout --dataset eval/jev/reliability-v6/intents.json --split held_out --languages en --arms A B C D
+python tool/eval/compare.py raw/eval/jev/reliability-v6-heldout-answers --dataset eval/jev/reliability-v6/intents.json --split held_out --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-v6-repeat --dataset eval/jev/reliability-v6/intents.json --split held_out --languages en --arms B D --repeat 3 --ids analysis-91 analysis-92 analysis-94 pasted-43 pasted-48 route-42 memory-41 conflict-41
+python tool/eval/report.py raw/eval/jev/reliability-v6-heldout raw/eval/jev/reliability-v6-heldout-answers raw/eval/jev/reliability-v6-repeat --out raw/eval/jev/reliability-v6-report.json
+```
+
+A batch stopped at a ceiling resumes when its command runs again on the
+same folder.
 
 v5. An `--estimate` writes the folder's manifest, so estimate into a scratch
 folder, or delete the estimate's `run.json` before a run at another commit.
@@ -1049,7 +1166,7 @@ Round 2 found nothing. No v6 held-out case has been run.
 | 2 | Run | Run calibration, held-out comparison and repetitions | Done |
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
-| 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); calibration and held-out runs next, on the owner's approval of their cost |
+| 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
 
 ## Sources
 
