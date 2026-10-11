@@ -123,12 +123,14 @@ class World:
 
 
 def run(world, query="What did the team decide about the port?", k=8, budget=None, live=True, normalize=english,
-        available=SOURCES, external=False, tape=None, brief="", cache=None, divide=None, fallback=False, host=""):
+        available=SOURCES, external=False, tape=None, brief="", cache=None, divide=None, fallback=False, host="",
+        analysis_judge=knowledge.ANALYSIS_JUDGE_FALLBACK):
     budget = budget or Budget(seconds=30, calls=6, candidates=40)
     flow = knowledge.Flow(query, brief, k, omitted=None, available=list(available), repo_id=REPO, graph=True,
                           model=MODEL, live=live, budget=budget, pol=POLICY, evaluate=world.evaluate,
                           normalize=normalize, divide=divide, first=world.first, mend=world.mend,
-                          external=external, tape=tape, cache=cache, fallback=fallback, host=host)
+                          external=external, tape=tape, cache=cache, fallback=fallback, host=host,
+                          analysis_judge_fallback=analysis_judge)
     return flow.run()
 
 
@@ -891,6 +893,29 @@ def test_only_a_non_analysis_lets_the_host_settle_an_uncertain_coverage(monkeypa
               query="Which port does the daemon use?", fallback=True)
     assert any(q.startswith("coverage_") for a in asked for q in a) is settled
     assert (out["status"] == "ready") is settled
+
+
+def test_a_tape_from_before_l1_replays_its_analysis_coverage_from_the_host(monkeypatch):
+    # PR #118 review: the policy is in the behavior digest, and an older tape names none, so it keeps its own.
+    monkeypatch.setattr(knowledge, "host_decides", lambda state, questions, stage, cancel=None, model="":
+                        {"answers": {q: "yes" for q in questions}, "model": "host", "elapsed_ms": 1})
+    world, tape = World(answering(coverage=0.5, analysis=0.95), [found([chunk("port", "The port is 8791.")])]), \
+        knowledge.Tape()
+    out = run(world, query="Which port does the daemon use?", tape=tape, fallback=True, analysis_judge=True)
+    inputs = {"query": "Which port does the daemon use?", "brief": "", "k": 8, "omitted": None,
+              "available": SOURCES, "repo_id": REPO, "graph": True, "model": MODEL, "live": True,
+              "external": False, "fallback": True}
+    recorded = {**json.loads(json.dumps(tape.data)), "limits": {"calls": 6, "candidates": 40, "tokens": None},
+                "policy": POLICY.record(), "prompt_version": knowledge.PROMPT_VERSION, "inputs": inputs,
+                "transitions": knowledge.steps(out)}
+    monkeypatch.setattr(knowledge, "host_decides", lambda *a, **k: pytest.fail("a replay asked the host"))
+    assert out["status"] == "ready" and knowledge.replay(recorded)["matches"]
+    # Read under L1, its coverage stays uncertain and asks for a round the tape never recorded.
+    with pytest.raises(knowledge.TapeEnd):
+        knowledge.replay({**recorded, "inputs": {**inputs, "analysis_judge_fallback": False}})
+    before = knowledge.behavior()["hashes"]["fallback"]
+    monkeypatch.setattr(knowledge, "ANALYSIS_JUDGE_FALLBACK", True)
+    assert knowledge.behavior()["hashes"]["fallback"] != before
 
 
 def test_an_analysis_is_searched_even_where_jev_would_answer_directly():
