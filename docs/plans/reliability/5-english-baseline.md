@@ -1158,6 +1158,130 @@ freeze on 2026-10-11. Round 1 found three problems, all fixed:
 
 Round 2 found nothing. No v6 held-out case has been run.
 
+## v7 — material and the two action points (design)
+
+v6 left three parts of the exit open:
+- material classification, inconclusive at 2 misses in 58;
+- work start, still at v5's 3 misses in 54;
+- review fix, also still at v5's 3 misses in 54.
+
+Every other gate passed on fresh cases. v7 is designed to settle these
+three. The answer path is not changed, unless a change below alters
+what it reads.
+
+### Material: a forwarded question
+
+Every material miss recorded on a held-out set is one shape: a question
+someone else asked, quoted, and followed by the person's own request.
+
+| Set | Material rows (B and D) | Quoted questions among them | Misses |
+| --- | --- | --- | --- |
+| v3 | 14 | 0 | 0 |
+| v4 | 18 | 0 | 0 |
+| v5 | 114 | 12 | 3 |
+| v6 | 118 | 12 | 3 |
+
+The misses are listed below.
+- v5:
+  - analysis-82 ("Board question: …"), in both arms.
+  - none-35 ("Customer asks: …"), in B.
+- v6:
+  - analysis-136 ("Board question: …"), in both arms.
+  - none-42 ("Prospect asks: …"), in D.
+
+All 240 rows without a quoted question were right, and 18 of the 24 with
+one. The `ASK` question names
+pasted notices, documents and messages, and instructions written for
+someone else, but not a question someone else asked. When the person then
+asks about that question's subject, the router counts the quoted question
+as a request too. A miss adds the quoted question as one more requirement
+that the evidence is checked against. In analysis-136 that is close to
+what the person wants answered; in none-42 it is not.
+
+| Option | Change | Effect | Cost |
+| --- | --- | --- | --- |
+| M1 | Reword `ASK` so that a question quoted from someone else is material, even when the person's own request is about the same subject. Calibrate it, as #121 did, on every revealed v3–v6 segment, with request classification protected | Targets the one recorded shape | A wording fitted to six revealed rows; a fresh set must test it |
+| M2 | Relabel: a forwarded question that the person's own request asks the assistant to answer counts as a request | Removes the disagreement by convention | A label change chosen after the failures, which moves the measure, not the router |
+| M3 | Neither; more material cases | Nothing changes | At v6's miss rate the bound stays near 0.90; cases alone do not settle it |
+
+### Action points: A2
+
+The six v5 misses fall into three patterns. The fixtures are in
+`eval/jev/reliability-v5/actions.json`, and the rows are in
+`reliability-v5-actions`.
+
+- Work start, 3 of 54: v5ws25, 27 and 29, labelled dispatch.
+  - Each specification names its files and has concrete acceptance
+    criteria, with no rules or decisions. Examples: "Add a --limit option,
+    default 100, to the list subcommand in src/cli.py", and "Delete
+    legacy_hash() from src/auth/hashing.py; nothing calls it".
+  - Jev chose evidence at 0.62, 0.70 and 0.66. The prompt sends the turn
+    "when the specification already carries what the work needs"; Jev
+    read these specifications as depending on repository facts the
+    grounds did not name.
+- Review fix, convention findings: v5lf42 and 55, labelled context.
+  - Each finding points at how the rest of the repository does it: "the
+    configuration the other services read", and "the other checks report
+    a status object".
+  - Jev chose fix at 0.72 and 0.89. The prompt sends the findings as they
+    are "when each already says what to change"; Jev read them as saying
+    so.
+- Review fix, the disputed finding: v5lf60, labelled context.
+  - The finding was disputed in round 1, and the prompt names an earlier
+    dispute as a reason for context.
+  - Jev was uncertain at 0.53. The host fallback was asked once and
+    settled nothing, so the baseline, fix, was taken. Why it settled
+    nothing is not diagnosed.
+
+The changes to test:
+- W: sharpen the work-start prompt. A specification whose goal names the
+  files and whose criteria say how to check it carries what the work
+  needs.
+- F: sharpen the review-fix prompt. A finding that appeals to how other
+  parts of the repository do something turns on a convention, even when
+  it proposes a remedy.
+- F2: diagnose v5lf60's unsettled fallback.
+
+The revealed fixtures calibrate W and F, with the other labels protected:
+
+| Set | Work start | Review fix |
+| --- | --- | --- |
+| v1 | 12 | 12 |
+| v2 | 12 | 12 |
+| v5 | 66 | 66 |
+
+No fitted action policy exists (`eval/jev/action-policy.json`), so a new
+prompt digest unbinds nothing. v5's 163 action fixtures cost USD 0.45 to
+run.
+
+### Set and cost
+
+A fresh v7 set has two parts.
+- Intents:
+  - at least 54 with a material segment, at least 12 of them a forwarded
+    question;
+  - enough request-only multipart, analysis and fact intents to keep
+    request classification, analysis recall and fact specificity measured
+    under the reworded `ASK`.
+- Action fixtures: 54 fresh ones for work start and 54 for review fix,
+  each split evenly between its labels.
+
+Gates are v6's. The answer run belongs in v7 only if M1 is chosen: a
+changed `ASK` changes which segments the evidence is checked against.
+
+Estimated cost, from v6's spending:
+- Retrieval: about USD 1.3.
+- Actions: under USD 1.
+- Answers, if run: about USD 21.
+- Calibration answers: about USD 9.
+
+### Recommendation
+
+M1, with W, F and F2, as one PR, calibrated on revealed cases and
+reviewed. Then a fresh v7 set with its label review, and the runs above
+on the owner's approval of their cost. M2 is not recommended, because it
+changes the measure after seeing the failures. The owner decides.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -1167,6 +1291,7 @@ Round 2 found nothing. No v6 held-out case has been run.
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
+| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); the owner's choice next |
 
 ## Sources
 
