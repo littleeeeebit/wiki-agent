@@ -103,8 +103,8 @@
     },
     "tool/main/knowledge.py": {
       "dup": 0,
-      "lines": 3856,
-      "reason": "Answer path B (answer-path.md): the progress route question, the ordinary-answer check policy, plain rendering, the synthesis fallback, the synthesis brief after a rebase that leaves verification, and no host turn in an ordinary answer's claim check."
+      "lines": 3863,
+      "reason": "Answer path L1 (answer-path.md): an analysis question's judge requests ask the host nothing, a policy in the behavior digest and on the tape, so an older tape replays its own; beside B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
     },
     "tool/main/loop.py": {
       "dup": 0,
@@ -193,8 +193,8 @@
     },
     "tool/test_decision_flow.py": {
       "dup": 7,
-      "lines": 1454,
-      "reason": "Answer path B: the fake Jev answers the progress question, the route keeps its verdict, and the host's settlement of an uncertain one is kept."
+      "lines": 1492,
+      "reason": "Answer path L1: an analysis's uncertain coverage is not sent to the host, a non-analysis's still is, and a tape from before L1 replays its host settlement; beside the progress settlement it mirrors."
     },
     "tool/test_edit_as_diff.py": {
       "dup": 11,

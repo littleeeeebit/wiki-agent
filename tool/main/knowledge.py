@@ -220,6 +220,8 @@ REPAIRS = {
 }
 # The order code tries repairs in when Jev defers or is not confident.
 REPAIR_ORDER = ("context", "sources", "bridge", "subqueries", "external")
+# answer-path.md, L1: whether an analysis question's judge requests (its coverage) may go to the host.
+ANALYSIS_JUDGE_FALLBACK = False
 DIRECT = ["Answer only from current_state and the conversation; state no repository fact, decision or file "
           "content that current_state does not contain.",
           "If the answer turns out to need one, search first."]
@@ -317,7 +319,7 @@ def behavior() -> dict:
                                                   knowledge_graph.STRUCTURE]),
               # Who settles what Jev leaves uncertain, and what it is told (reliability PR 5, v2).
               "fallback": tracing.digest([fallback_mode(), read(FALLBACK_PROMPT), FALLBACK_SECONDS,
-                                          decision.CODE_SETTLES])}
+                                          decision.CODE_SETTLES, ANALYSIS_JUDGE_FALLBACK])}
     return {"hashes": hashes, "digest": tracing.digest(hashes)}
 
 
@@ -438,11 +440,11 @@ class Flow:
                  cache: decision.Cache | None = None, required: bool = False,
                  external: bool = False, tape: Tape | None = None, replay: Tape | None = None, emit=None,
                  audiences: list[str] | None = None, cause: dict | None = None, fallback: bool = False,
-                 host: str = ""):
+                 host: str = "", analysis_judge_fallback: bool = ANALYSIS_JUDGE_FALLBACK):
         self.emit = emit
         # Whether what Jev leaves uncertain goes to the host model (`host_decides`, through `outside`),
         # and which model that is (`decision.Config.host`); a replay reads its word off the tape instead.
-        self.fallback, self.host_model = fallback, host
+        self.fallback, self.host_model, self.analysis_judge = fallback, host, analysis_judge_fallback
         # The admitted action that required this retrieval (`prepare`'s `cause`), if one did.
         self.cause = cause
         # The audience scope a caller chose (reliability PR 3): every round of the run keeps it in `filters`.
@@ -588,10 +590,13 @@ class Flow:
                 raise failed[0] if failed else rebuilt(out["error"])
             return out["answers"]
 
+        # An analysis is synthesized unverified, and host fallback turns took a median 16.5 s of a held-out
+        # analysis row's 17.6 s retrieval (answer-path.md, L1): its judge requests fall back to no one.
+        host = self.fallback and (self.analysis_judge or not (kind == "judge" and self.dossier["analysis"]))
         # A replay reads every decision from the tape, the cached ones too.
         res = decision.checked(req, decision.decide(req, evaluate, self.budget, trace, self.pol,
                                                     None if self.replay is not None else self.cache,
-                                                    self.host if self.fallback else None))
+                                                    self.host if host else None))
         if record := tracing.jev_call(req, {**res, "cached": True} if replayed.get("cached") else res):
             self.called(record)
         if record := tracing.fallback_call(req, res):
@@ -1132,7 +1137,7 @@ def prepare(query: str, project: str | Path | None, state: str = "", k: int = 8,
     inputs = {"query": query, "brief": brief, "k": k, "omitted": omitted, "available": available(root, cfg.disabled),
               "repo_id": evidence.repo_id(root or HUB), "graph": graph_enabled(), "model": cfg.model,
               "live": live, "external": external, "required": require, "audiences": audiences, "cause": cause,
-              "fallback": falls_back(cfg)}
+              "fallback": falls_back(cfg), "analysis_judge_fallback": ANALYSIS_JUDGE_FALLBACK}
     flow = Flow(**inputs, host=cfg.host, budget=budget, pol=pol, cache=cache if live else None, tape=tape,
                 emit=run.step if run is not None else None,
                 evaluate=watched(run, "jev", functools.partial(decision.evaluate, cfg)),
@@ -1199,8 +1204,10 @@ def replay(tape: dict) -> dict:
     budget = Budget(seconds=3600.0, calls=limits["calls"], candidates=limits["candidates"], tokens=limits["tokens"])
     r = tape["policy"]
     pol = decision.Policy(r["version"], r["rules"], tuple(r["fitted"]), r["source"], r["problem"])
-    # `divide` is never called in a replay; set, it lets the recorded split be read back.
-    dossier = Flow(**tape["inputs"], budget=budget, pol=pol, replay=Tape(tape), divide=lambda *_: None).run()
+    # `divide` is never called in a replay; set, it lets the recorded split be read back. A tape from before
+    # L1 names no analysis judge policy: its analysis coverage went to the host, as it is read back.
+    dossier = Flow(**{"analysis_judge_fallback": True, **tape["inputs"]}, budget=budget, pol=pol,
+                   replay=Tape(tape), divide=lambda *_: None).run()
     again = steps(dossier)
     # A tape from before the manifest names no behavior: whether it changed is unknown, not no.
     recorded = tape.get("behavior")
