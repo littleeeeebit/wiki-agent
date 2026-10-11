@@ -3963,7 +3963,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a judgement that connecting the bot to order status would reach 60% of what it cannot resolve today"
+     "reference": "a judgement on keeping a bot that resolves 18%, and that connecting it to order status would reach 60% of what it cannot resolve today"
     }
    ],
    "forbidden": [],
@@ -4057,7 +4057,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a recommendation to stream or drop the 140 MB of videos 12% watch, which brings the app under 150 MB"
+     "reference": "a recommendation to stream or drop the 140 MB of videos 12% watch, which brings the app under 150 MB, worth it since installs fall above 150 MB"
     }
    ],
    "forbidden": [],
@@ -4152,6 +4152,11 @@
      "id": "q0",
      "ask": "a recommendation with its reasoning",
      "reference": "a judgement that weighs $700 a month saved against six engineer-weeks of migration"
+    },
+    {
+     "id": "q1",
+     "ask": "the payback",
+     "reference": "the page gives no cost for an engineer-week, so the payback cannot be computed from it; it is the migration's cost divided by $700 a month"
     }
    ],
    "forbidden": [],
@@ -4292,7 +4297,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a recommendation to make offers before August, given 2 of 8 accepted October offers"
+     "reference": "a diagnosis that offers arrived in October, after other companies' August deadlines, so 2 of 8 accepted, and a recommendation to make offers before August"
     }
    ],
    "forbidden": [],
@@ -4386,7 +4391,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a judgement that 85% of Business customers pay $150 more mainly for single sign-on"
+     "reference": "a judgement that 85% of Business customers pay $150 more mainly for single sign-on, with a change such as single sign-on on Pro or a tier between"
     }
    ],
    "forbidden": [],
@@ -4480,7 +4485,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a recommendation that weighs 31-hour waits on 22% of tickets, mostly Asia-Pacific, against weekend cover"
+     "reference": "a recommendation that weighs 31-hour waits on 22% of tickets, mostly Asia-Pacific, against options such as weekend cover in Asia-Pacific hours"
     }
    ],
    "forbidden": [],
@@ -4574,7 +4579,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a recommendation to process the independent accounts in parallel, since one at a time takes 26 hours"
+     "reference": "a judgement that one account at a time, already 26 hours, will not keep up with growth, and to process the independent accounts in parallel"
     }
    ],
    "forbidden": [],
@@ -4668,7 +4673,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a diagnosis that breaking changes in every release cost two weeks per upgrade, so 7 of 12 teams stay behind"
+     "reference": "a diagnosis that breaking changes in every release cost two weeks per upgrade, so 7 of 12 teams stay behind, and to batch breaking changes or ease migrations"
     }
    ],
    "forbidden": [],
@@ -4762,7 +4767,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a recommendation that weighs $50 hardware keys against the phone objection of most of the 66%"
+     "reference": "a recommendation of one approach that weighs $50 hardware keys against the phone objection of most of the 66%"
     }
    ],
    "forbidden": [],
@@ -4997,7 +5002,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a judgement that 11 TB unopened costs about $250 a month, weighed against the effort of a clean-up"
+     "reference": "a judgement that 11 TB unopened costs about $250 a month, weighed against the effort, with a way to archive or delete it"
     }
    ],
    "forbidden": [],
@@ -5044,7 +5049,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a diagnosis that the machine-translated text, named in 60% of reviews, drags 2.9 below 4.4"
+     "reference": "a diagnosis that the machine-translated text, named in 60% of reviews, drags 2.9 below 4.4, and to have the Japanese text translated by people"
     }
    ],
    "forbidden": [],
@@ -5374,6 +5379,11 @@
      "id": "q0",
      "ask": "a recommendation with its reasoning",
      "reference": "a recommendation for separate or resettable demo accounts, since shared changes broke 7 of 50 demos"
+    },
+    {
+     "id": "q1",
+     "ask": "the cheapest option",
+     "reference": "the page gives no costs for the options, so it cannot rank them by price without assumptions"
     }
    ],
    "forbidden": [],
@@ -5514,7 +5524,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a diagnosis that the hourly reconciliation job on the primary from 14:00 caused the rise"
+     "reference": "a diagnosis that the hourly reconciliation job on the primary from 14:00 caused the rise, and to move it off the primary or back to nightly"
     }
    ],
    "forbidden": [],
@@ -5561,7 +5571,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a diagnosis that the silent 100,000-row cap cut 210,000 rows in half"
+     "reference": "a diagnosis that the silent 100,000-row cap cut 210,000 rows in half, and to tell the customer and deliver the full export"
     }
    ],
    "forbidden": [],
@@ -5957,7 +5967,7 @@
     {
      "id": "q0",
      "ask": "a recommendation with its reasoning",
-     "reference": "a diagnosis that free-tier usage, tripled against 20% paid growth, pushed hosting to 27% of revenue"
+     "reference": "a diagnosis that free-tier usage, tripled against 20% paid growth, pushed hosting to 27% of revenue, and to limit the free tier's cost"
     }
    ],
    "forbidden": [],

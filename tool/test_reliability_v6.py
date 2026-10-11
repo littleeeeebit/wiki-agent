@@ -57,8 +57,33 @@ def test_gates_v6_judge_answer_support_on_the_non_analysis_intents_and_latency_o
 
     got = {g["id"]: g for g in report.judge(gates, found(35), reviewed=True)}
     assert got["answer_support"]["verdict"] == "fail" and got["answer_support"]["value"] == 0.2272
-    assert got["answer_support"]["detail"]["analysis"]["D"]["denominator"] == 500, "analysis is reported beside"
+    assert got["answer_support"]["detail"]["analysis"]["unsupported_claim_rate"]["D"]["denominator"] == 500, \
+        "analysis is reported beside"
     assert got["added_latency"]["value"] == 17.5 and got["added_latency"]["verdict"] == "fail", "latency reads all"
     assert {g["id"]: g["verdict"] for g in report.judge(gates, found(20), reviewed=True)}["answer_support"] == "pass"
     assert {g["id"]: g["verdict"] for g in report.judge(v5, found(20), reviewed=True)}["answer_support"] == "fail", \
         "v5 reads the pooled rate, and its pooled coverage interval"
+
+
+def test_the_report_splits_coverage_and_support_by_the_intents_label():
+    # Review round 1: G2 reports the analysis intents' coverage beside the gate, not only their support.
+    data = dataset.load(V6 / "intents.json")
+    gates = json.loads((V6 / "gates.json").read_text(encoding="utf-8"))
+    analysis, fact = "analysis-91", "pasted-43"
+    graded = {(analysis, "A"): ({"q0": "answered"}, [True]), (analysis, "D"): ({}, [False]),
+              (fact, "A"): ({"q0": "answered"}, [False, True]), (fact, "D"): ({"q0": "answered"}, [True, True])}
+    rows = [{"intent": iid, "arm": arm, "rep": 0, "language": "en", "evidence": [], "sources": [], "direct": False,
+             "rejected": [], "status": "ready", "reason": "", "elapsed_ms": 0, "leaks": [], "breaches": [],
+             "grade": {"parts": parts, "claims": [{"supported": s} for s in claims], "forbidden": []}}
+            for (iid, arm), (parts, claims) in graded.items()]
+    found = report.arms_report(rows, data, {"k": 8}, gates)
+    arms, diffs = found["arms"], found["differences"]
+    assert (arms["A"]["coverage_analysis"]["value"], arms["D"]["coverage_analysis"]["value"]) == (1.0, 0.0)
+    assert (arms["A"]["coverage_other"]["value"], arms["D"]["coverage_other"]["value"]) == (1.0, 1.0)
+    assert diffs["coverage_analysis_D_minus_A"]["value"] == -1.0 and diffs["coverage_other_D_minus_A"]["value"] == 0
+    assert arms["D"]["unsupported_claim_rate_analysis"]["value"] == 1.0
+    assert arms["D"]["unsupported_claim_rate_other"]["value"] == 0.0
+    detail = next(g for g in report.judge(gates, {"answers": found, "answer_cohort": {
+        "cohort": 2, "missing": 0, "incomplete": 0}}, reviewed=True) if g["id"] == "answer_support")["detail"]
+    assert detail["analysis"]["coverage"]["D"]["value"] == 0.0
+    assert detail["analysis"]["coverage_D_minus_A"]["value"] == -1.0

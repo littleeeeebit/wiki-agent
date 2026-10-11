@@ -164,13 +164,19 @@ def arms_report(rows: list[dict], data: dict, opts: dict, cfg: dict) -> dict:
             if "claims" in v:
                 claims[r["intent"]][0] += v["claims"][0]
                 claims[r["intent"]][1] += v["claims"][1]
-        # Pooled, and by the intent's label (gates v6, G2: answer support reads the non-analysis intents).
+        # Pooled, and by the intent's label (gates v6, G2: answer support reads the non-analysis intents;
+        # the analysis intents' rates are reported beside it).
         for key, keep in (("", lambda i: True), ("_analysis", lambda i: i.get("analysis")),
                           ("_other", lambda i: not i.get("analysis"))):
             kept = [tuple(c) for iid, c in claims.items() if keep(intents[iid])]
             if kept:
                 entry[f"unsupported_claim_rate{key}"] = {**boot(kept, ratio, B, seed, conf),
                                                          "denominator": sum(c[1] for c in kept)}
+            counted = by_intent([{"intent": r["intent"], "v": v.get("coverage")} for r, v in pairs
+                                 if keep(intents[r["intent"]])], lambda x: x["v"])
+            if key and counted:
+                entry[f"coverage{key}"] = {**boot(list(counted.values()), ratio, B, seed, conf),
+                                           "denominator": int(sum(d for _n, d in counted.values()))}
         seconds = [v["seconds"] for _r, v in pairs]
         entry["seconds"] = {"p50": percentile(seconds, 0.5), "p95": percentile(seconds, 0.95)}
         answer_seconds = [v["answer_seconds"] for _r, v in pairs if "answer_seconds" in v]
@@ -211,7 +217,8 @@ def arms_report(rows: list[dict], data: dict, opts: dict, cfg: dict) -> dict:
         for key, name, keep in (("recall", "recall", lambda i: True),
                                 ("bridge_recall", "bridge_recall", lambda i: "bridged" in i),
                                 ("coverage", "coverage", lambda i: True),
-                                ("coverage_other", "coverage", lambda i: not i.get("analysis"))):
+                                ("coverage_other", "coverage", lambda i: not i.get("analysis")),
+                                ("coverage_analysis", "coverage", lambda i: i.get("analysis"))):
             got = paired(a, b, name, keep)
             if got:
                 out["differences"][f"{key}_{b}_minus_{a}"] = got
@@ -502,8 +509,10 @@ def judge(gates: dict, found: dict, reviewed: bool) -> list[dict]:
             lower = (cov.get("low") is not None and cov["low"] < margin if margin is not None else
                      cov.get("value") is not None and cov["value"] < 0)
             detail = {"A": a, "D": d, "coverage_D_minus_A": cov, "coverage_margin": margin,
-                      **({"intents": g["intents"],
-                          "analysis": {x: table[x].get("unsupported_claim_rate_analysis") for x in "AD"}}
+                      **({"intents": g["intents"], "analysis": {
+                          "unsupported_claim_rate": {x: table[x].get("unsupported_claim_rate_analysis") for x in "AD"},
+                          "coverage": {x: table[x].get("coverage_analysis") for x in "AD"},
+                          "coverage_D_minus_A": diffs.get("coverage_analysis_D_minus_A")}}
                          if "intents" in g else {})}
             if a != 0:
                 value = round((a - d) / a, 4)

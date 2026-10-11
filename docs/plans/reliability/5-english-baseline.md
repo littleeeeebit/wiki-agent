@@ -1009,8 +1009,11 @@ recall on fresh analysis intents. The probe kept only the analysis answer.
 The same request asks retrieve, progress, source and ask questions, whose
 texts are unchanged but which Jev reads beside the new one, and other
 production settings (a current state, a narrower source set, retrieval
-already required) change its input; neither is measured here, and v6's
-runs measure them.
+already required) change its input; neither is measured here. v6's runs
+measure the sibling questions on fresh requests in the benchmark's setting
+only: no v6 intent carries a current state, a narrower source set or a
+caller-required retrieval, and the arms harness passes none, so those
+settings stay outside v6 and need their own measurement.
 
 ### Draft set
 
