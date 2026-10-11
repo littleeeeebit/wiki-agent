@@ -35,9 +35,9 @@ KINDS = NOUL + CHOICE
 # (`decision.contract.decide`; reliability PR 5, v3): an uncertain source is searched, an uncertain useful or
 # conflict passage stays evidence (a conflict to weigh), an uncertain redirect is flagged untrusted, and an
 # uncertain repair takes code's order. The host could only narrow or reorder these, never unblock an answer,
-# and asking it cost a turn of about five seconds on most runs. An uncertain progress keeps the ordinary answer
-# synthesized: only Jev's own sure no may send it to the claim check (answer-path.md, option B).
-CODE_SETTLES = ("source", "useful", "conflict", "redirect", "repair", "progress")
+# and asking it cost a turn of about five seconds on most runs. `progress` stays the host's to settle: its no
+# is what sent ten calibration fact answers to the claim check (answer-path.md, the owner's choice).
+CODE_SETTLES = ("source", "useful", "conflict", "redirect", "repair")
 
 # ponytail: the prototype's uncalibrated thresholds; `tool/eval/policy.py` replaces them per kind.
 PROVISIONAL: dict[str, dict] = {

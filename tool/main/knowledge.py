@@ -202,7 +202,7 @@ ANALYSIS = ("Does the query ask the assistant for analysis it works out itself, 
             "A calculation, a conversion, a count, a sort or a rewording of text the query itself gives is "
             "not analysis: it has one right result.")
 # Asked beside ANALYSIS (answer-path.md, option B): a progress answer interprets live repository observations,
-# which no retrieved passage states, so only a sure no lets an ordinary answer be verified claim by claim.
+# which no retrieved passage states, so only the route's sure no (Jev's or the host's) lets one be checked.
 PROGRESS = ("Does the query ask about this repository's own progress, such as what is done, in progress or next, "
             "which current observations of the repository answer, rather than for facts the repository's sources "
             "state?")
@@ -1452,7 +1452,7 @@ class Grounding:
 
     def rebase(self, dossier: dict) -> None:
         self.dossier = dossier
-        # An ordinary answer is checked claim by claim only when Jev was sure it is not about progress
+        # An ordinary answer is checked claim by claim only when the route was sure it is not about progress
         # (answer-path.md, option B): uncertain or unavailable keeps #59's synthesis.
         verify = dossier.get("progress") == "no" if self.verify_claims is None else self.verify_claims
         self.analysis = not verify or bool(dossier.get("analysis"))
@@ -2038,7 +2038,7 @@ def grounded(question: str, project: str | Path | None, state: str, dossier: dic
     """Answer over retrieved evidence and publish its provenance.
 
     An ordinary answer (`verify_claims` None) is checked claim by claim when
-    Jev is sure the question is not about the repository's progress and is
+    the route is sure the question is not about the repository's progress and is
     not analysis; otherwise it is the host's synthesis, as it is when the
     check leaves the question unanswered (`abstained` or
     `verification_unavailable`) — one more turn, never a refusal

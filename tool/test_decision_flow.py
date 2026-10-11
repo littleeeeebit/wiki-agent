@@ -869,14 +869,15 @@ def test_the_route_keeps_jev_s_word_on_whether_a_question_is_about_progress(scor
     assert "progress" in world.asked[0][2] and out["progress"] == progress
 
 
-def test_an_uncertain_progress_is_never_settled_by_the_host(monkeypatch):
-    # PR #112 review round 1: the host's no turned Jev's uncertainty into a claim check of a progress question.
+@pytest.mark.parametrize("host, progress", [({"progress": "no"}, "no"), ({}, "uncertain")])
+def test_the_host_may_settle_an_uncertain_progress(monkeypatch, host, progress):
+    # PR #112: the owner kept the host's word here; it sent ten calibration fact answers to the claim check.
     asked = []
     monkeypatch.setattr(knowledge, "host_decides", lambda state, questions, stage, cancel=None, model="":
-                        asked.append(list(questions)) or {"answers": {}, "model": "host", "elapsed_ms": 1})
-    world = World(answering(progress=0.5), [found([chunk("port", "The port is 8791.")])])
-    out = run(world, query="How many tasks are complete?", fallback=True)
-    assert asked == [] and out["progress"] == "uncertain"
+                        asked.append(list(questions)) or {"answers": host, "model": "host", "elapsed_ms": 1})
+    out = run(World(answering(progress=0.5), [found([chunk("port", "The port is 8791.")])]),
+              query="Which port does the daemon use?", fallback=True)
+    assert asked == [["progress"]] and out["progress"] == progress
 
 
 def test_an_analysis_is_searched_even_where_jev_would_answer_directly():

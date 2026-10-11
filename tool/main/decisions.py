@@ -135,7 +135,7 @@ OWNERS = [
                   "grants no execution permission"},
     {"point": "answer.support", "owner": "jev", "allowed_operations": ["summarize_result"],
      "kinds": ("relation", "answers", "faithful"), "policy": "claims",
-     "authority": "explicit verify_claims checks, and ordinary answers Jev is sure are not about progress; an "
+     "authority": "explicit verify_claims checks, and ordinary answers the route is sure are not about progress; an "
                   "ordinary answer it leaves unanswered falls back to host synthesis, published unverified"},
     {"point": "deterministic", "owner": "code", "allowed_operations": list(OPERATIONS), "kinds": (), "policy": None,
      "authority": "the next step when only one is offered, an exhausted budget, a stale or duplicate proposal, "

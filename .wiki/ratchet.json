@@ -193,8 +193,8 @@
     },
     "tool/test_decision_flow.py": {
       "dup": 7,
-      "lines": 1453,
-      "reason": "Answer path B: the fake Jev answers the progress question, the route keeps its verdict, and the host never settles an uncertain one."
+      "lines": 1454,
+      "reason": "Answer path B: the fake Jev answers the progress question, the route keeps its verdict, and the host's settlement of an uncertain one is kept."
     },
     "tool/test_edit_as_diff.py": {
       "dup": 11,

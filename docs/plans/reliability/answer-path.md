@@ -96,7 +96,9 @@ removed. B therefore adds one purpose decision asked beside `ANALYSIS`, as a
 Jev kind with its own digest: does the query ask about this repository's own
 progress (what is done, in progress or next), which current repository
 observations answer, rather than for facts its sources state? Only a sure no
-is verified; yes, uncertain or an unavailable decision synthesizes as today.
+is verified, Jev's own or the host's where the route's host fallback settles
+what Jev left uncertain; yes, uncertain or an unavailable decision
+synthesizes as today.
 It is one decision in `knowledge`, not a list of question expressions.
 
 The policy lives in `grounded`, decided from the dossier, so every caller
@@ -153,7 +155,18 @@ was grader-abstained under synthesis in `reliability-v5-calibration-answers-2`,
 so the miss is retrieval's, not B's, but the rule as written is not met.
 
 The purpose decision said no on 56 of the 57 fact rows and uncertain on
-`memory-08`, which was synthesized. Three fact rows fell back (`bridge-10`,
+`memory-08`, which was synthesized. Ten of those 56 were Jev's uncertain
+verdict settled no by the host through the route's fallback (`route-05`,
+`memory-02`, `memory-03`, `memory-09`, `memory-11`, `adv-05`, `adv-08`,
+`analysis-10`, `pasted-04`, `start-11`; 25 claims, none unsupported).
+Review round 1 of #112 kept `progress` from the host as a departure from
+"only a sure no"; the owner chose to keep the host's settlement instead, so
+the measured path is the current one. Had those ten been synthesized, their
+synthesis in `reliability-v5-calibration-answers-2` (15 of 76 unsupported)
+would put the fact rate near 0.09; that is an estimate across two runs, not
+a measurement. The other round 1 repairs (the brief after a rebase, the
+no-usable-answer guard, marks in checked prose) change no recorded row: no D
+answer carried an evidence mark or was published empty. Three fact rows fell back (`bridge-10`,
 `bridge-11`, `fix-12`, all v4 abstentions), as did five of the six abstain
 intents; those five published no unsupported claim. Analysis rows were
 synthesized as before (D 15 of 44 unsupported, A 7 of 30).
