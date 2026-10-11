@@ -262,18 +262,24 @@ Measured at ebbe420 as `reliability-v5-calibration-answers-b3`, the same
 | D fact coverage | 0.982 | 0.974 |
 | D mean recall, 57 rows with expected evidence | 0.974 | 0.982 |
 | D retrieval seconds p50 / p95 | 0.57 / 6.94 | 0.56 / 6.94 |
-| Host answer seconds p95, D / A | 16.5 / 16.9 | 20.4 / 19.7 |
+| Answer-step seconds p95, D / A | 16.5 / 16.9 | 20.4 / 19.7 |
 | Added latency | 3.48 s | 11.07 s |
 
 Only `analysis-03` and `analysis-06` took another path. `analysis-03` now
 retrieves `traffic.md`, reaches recall 1.0 and ends `ready`. `analysis-06`
 ends at the round limit (`rounds`) instead of `retrieval_unavailable`.
-Both are still graded answered. The added latency rose above the 10 s gate,
-but not through retrieval: its seconds are unchanged, and the rows that set
-D's p95 took the same path as in b2. `fix-03`'s one host turn took 36.2 s
-against 9.7 s, and `adv-09` and `fix-12` slowed the same way. The host
-answer time rose in both arms, so the 11.07 s is variance in the host's tail
-on 66 rows. The gate is judged on the held-out cohort.
+Both are still graded answered. The added latency rose above the 10 s gate.
+The answer step is the whole `grounded` flow, drafting and Jev's claim
+checks together; the records hold no host time apart from it. Its p95 rose
+in both arms. `fix-03`'s answer step took 36.2 s against 9.7 s, with one
+draft turn and two verification batches in each run, so the host is a
+likely but unmeasured cause. Retrieval's p95 is unchanged, but rows moved:
+`adv-09` from 6.9 to 10.9 s, `analysis-03` from 11.6 to 15.3 s, and
+`fix-12`, D's p95 row in both runs, from 3.9 to 4.3 s with other evidence.
+Pairing each row's b3 retrieval with its b2 answer step gives 6.18 s of
+added latency, and the reverse pairing 8.42 s, so the rows' pairing matters
+and neither stage is ruled out. One batch per revision cannot separate
+them. The gate is judged on the held-out cohort.
 
 ## Sources
 
