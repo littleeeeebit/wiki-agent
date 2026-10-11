@@ -997,9 +997,9 @@ A second stage sends each initially uncertain case through
 afresh, and the host only what that answer leaves uncertain. Today's text
 then sends 13 of 261 facts to analysis: `start-30`, 0.78 at first, scored
 yes on the second Jev answer, with no host turn. The host was asked about
-analysis in 39 of its 44 cases and said no each time; two stayed uncertain
-after failed host turns (`memory-03`, `fix-30`), which production reads as
-not analysis. Under V3 the host was asked in 26 of 27 and said no each
+analysis in 39 of its 44 cases: it said no in 37, and its turn failed in 2
+(`memory-03`, `fix-30`), which stayed uncertain and which production reads
+as not analysis. Under V3 the host was asked in 26 of 27 and said no each
 time, and the second Jev answer settled `memory-27` as no, so V3 sends
 none. Its margins are narrow:
 the lowest analysis scores 0.81 and the highest fact 0.77 (`start-35`).
