@@ -205,6 +205,28 @@ back to synthesis. 26 D rows published host-settled claims, so coverage may
 fall and the fallback rate rise; the calibration answers are measured again
 on that change before the held-out answers.
 
+Measured at d83b98c as `reliability-v5-calibration-answers-b2`, all 138
+rows in one batch (39 minutes, USD 9.48):
+
+| Fact rows | A | D, no host in claim checks |
+| --- | --- | --- |
+| Rows | 57 | 57 |
+| Claims | 387 | 168 |
+| Unsupported | 68 (0.176) | 10 (0.060) |
+| `answer.status` abstained | 0 | 0 |
+| Grader abstained | 0 | 1 |
+| Coverage | 0.991 | 0.982 |
+
+Added latency fell from 16.73 s to 3.48 s (D p95 20.42, A 16.93); D's
+median answer time is 10.8 s against A's 8.7 s. No D row was host-checked.
+Five fact rows fell back to synthesis (`direct-01`, `bridge-10`,
+`bridge-11`, `adv-05`, `fix-12`), as did five of the six abstain intents.
+The unsupported rate rose from 0.033 to 0.060; 7 of the 10 unsupported
+claims are in `route-05` and `pasted-04`, whose progress verdict stayed
+uncertain this run and which were synthesized. The grader-abstained row is
+`fix-12` again, the same retrieval miss. Three of the four adoption checks
+hold, as before.
+
 ## Sources
 
 - R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
