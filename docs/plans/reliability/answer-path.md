@@ -281,6 +281,39 @@ added latency, and the reverse pairing 8.42 s, so the rows' pairing matters
 and neither stage is ruled out. One batch per revision cannot separate
 them. The gate is judged on the held-out cohort.
 
+## Held-out answers at ac90615
+
+`reliability-v5-heldout-answers`, 258 rows in three batches (USD 24.83;
+the estimate of USD 18 assumed calibration's cost per row, and D's analysis
+rows cost USD 0.176 each). `tool/eval/report.py` judges both answer gates
+failed:
+
+| Gate | Target | Value |
+| --- | --- | --- |
+| Answer support, D below A | 0.25 | 0.093 |
+| Added latency | 10.0 s | 17.49 s |
+
+| Class | Rows | A unsupported | D unsupported | D answer seconds p50 / p95 | A answer seconds p50 / p95 |
+| --- | --- | --- | --- | --- | --- |
+| Fact | 66 | 79/404 (0.196) | 31/213 (0.146) | 11.0 / 19.3 | 8.1 / 18.3 |
+| Analysis | 54 | 76/472 (0.161) | 82/500 (0.164) | 32.3 / 43.5 | 15.9 / 26.6 |
+| Abstain | 6 | 5/43 | 4/28 | 20.7 / 21.2 | 11.6 / 11.7 |
+
+The held-out cohort is 41% analysis, against 5% in calibration, and
+analysis answers are synthesized and never checked, so they carry D's
+unsupported rate to A's. On fact rows alone D is 25.5% below A, at the
+target, though its 0.146 is far above calibration's 0.054: of its 31
+unsupported claims, 12 are in 44 checked answers, 5 in 11 that fell back to
+synthesis, and 13 in 8 published unverified with no fallback.
+
+D's analysis rows spend a median 18.0 s retrieving (32.4 s at most): 40
+of 54 run all three rounds. That time is what A never spends, and it sets
+the added latency. It is not new with #114: the retrieval-only held-out run
+before it took a median 13.4 s on the same rows, with 37 of 54 at the round
+limit, and the turns the budget sets aside rose from 12.0 to 16.9 s
+between the two runs. #114 turned the three rows that ended
+`retrieval_unavailable` into `rounds`.
+
 ## Sources
 
 - R1: Gao et al., [RARR: Researching and Revising What Language Models Say, Using Language Models](https://arxiv.org/abs/2210.08726), 2022.
