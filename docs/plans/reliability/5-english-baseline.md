@@ -1787,7 +1787,7 @@ repository (`raw/eval/jev/v8-draft/`).
       fixtures), and the test-wording rule 36 (40 on v7).
     - Between dispatch and evidence (36 fixtures), no single cue among
       wording, test lines, digits, quotes, criteria count and length does
-      better than 28. The best pair of cues reaches 28; on v7 it reaches
+      better than 26 (27 on v7). The best pair of cues reaches 28; on v7 it reaches
       30.
     - These are offline checks of the data, not measurements of Jev.
   - Decisions appear in two dispatch and two evidence fixtures, and
