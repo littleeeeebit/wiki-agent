@@ -66,7 +66,10 @@ def test_gates_v8_are_v7_s_but_for_what_the_ceiling_counts():
     assert "50 ms" in new["about"]
 
 
-def test_the_draft_carries_no_review_of_its_own_yet():
-    actions = load(V8, "actions")
-    assert "r8" not in actions["labels"]["reviews"]
-    assert actions["labels"]["reviewed_by"] is None and actions["labels"]["reviewed_at"] is None
+def test_the_set_is_frozen_on_one_date_after_review_r8():
+    intents, actions, gates = load(V8, "intents"), load(V8, "actions"), load(V8, "gates")
+    r8 = actions["labels"]["reviews"]["r8"]
+    assert (r8["kind"], r8["by"]) == ("model", "gpt-6.1-sol") and "f99c80f" in r8["note"]
+    assert actions["labels"]["reviewed_by"] == "gpt-6.1-sol"
+    assert intents["frozen"] == actions["frozen"] == gates["frozen"] == r8["at"] == \
+        actions["labels"]["reviewed_at"] == "2026-10-12"

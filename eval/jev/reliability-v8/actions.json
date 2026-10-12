@@ -6,14 +6,20 @@
  "description": "Reliability PR 5's eighth action set (docs/plans/reliability/5-english-baseline.md, v8): v5's calibration fixtures for work start verbatim (review r5), and 54 held-out work-start fixtures written fresh (review r8), 18 per label, each label with 9 naming no files, 5 naming files and 4 a directory, to test the work-start prompt changed on v7's results (W2). Review fix and check choice have no v8 fixtures; their earlier results stand. Labels mean what they mean in the first set.",
  "labels": {
   "author": "model-drafted (claude-opus-5-5, reliability PR 5)",
-  "reviewed_by": null,
-  "reviewed_at": null,
+  "reviewed_by": "gpt-6.1-sol",
+  "reviewed_at": "2026-10-12",
   "reviews": {
    "r5": {
     "kind": "model",
     "by": "gpt-6.1-sol",
     "at": "2026-10-10",
     "note": "The fresh held-out half, the pages only it names and the fresh action fixtures, a model review at the repository owner's direction: two full-set rounds by gpt-6.1-sol before any v5 held-out run (round 1: work-start file locators that gave the label away, a status-code rule that contradicted the input-validation rule replaced, a meeting that contradicted the written stand-up decision, an ambiguous connection count, an unsupported first-step reference replaced, two bridge targets that shared words with their queries; the remaining work-start and review-fix surface cues broken with them; round 2: nothing found). Approved inputs: intents 45d2814a, actions f7db1f43."
+   },
+   "r8": {
+    "kind": "model",
+    "by": "gpt-6.1-sol",
+    "at": "2026-10-12",
+    "note": "The 54 fresh held-out work-start fixtures, a model review at the repository owner's direction: four rounds by gpt-6.1-sol before any v8 run, no label changed. Round 1: four goals that kept a revealed case's target and situation under new words, replaced with seven more of the same kind, and \"our\" only in evidence criteria, a rule on which labelled all 54, now on both sides. Round 2: two more near-variants replaced, and a final \"tests check/cover\" criterion only in evidence, now six on each side, with evidence given a third criterion so the count is no cue. Round 3: the plan's cue check had no stated scope; it now lists its twelve cues and method. Round 4: nothing found. Approved at f99c80f; sha256 of the approved files: intents 2320b66a, actions 26868f1e, gates abc752fb."
    }
   }
  },

@@ -1821,8 +1821,7 @@ repository (`raw/eval/jev/v8-draft/`).
 - `gates.json`: v7's, except the operating ceiling's description, which
   states C1.
 - `tool/test_reliability_v8.py` fixes the counts, the shape balance,
-  freshness, the gates' single difference, and that the draft carries no
-  review of its own.
+  freshness, the gates' single difference, and the freeze after review r8.
 
 Estimates from `--estimate`:
 - Actions: 54 rows, about 76,000 Jev tokens, no host turn counted.
@@ -1830,7 +1829,9 @@ Estimates from `--estimate`:
 - Host turns from fallbacks are not estimated. v7's held-out actions cost
   USD 0.18 and its retrieval USD 1.27.
 
-The labels need review r8 before the set is frozen and run.
+Frozen on 2026-10-12 after label review r8: four rounds by gpt-6.1-sol, no
+label changed, approved at f99c80f. `labels.reviews.r8` in `actions.json`
+records what each round found.
 
 ## Steps
 
@@ -1842,7 +1843,7 @@ The labels need review r8 before the set is frozen and run.
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
 | 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); 139 fresh held-out intents and 108 action fixtures reviewed (r7) and frozen on 2026-10-12 (Draft set (v7)); run at 511313e (Results, v7): material classification, review fix and both answer gates pass; work start inconclusive at 51 of 54; operating ceiling fails on one row 4 ms past its deadline |
-| 7 | v8 | Work start and the operating ceiling | In progress — designed (v8 design); owner chose W2, C1 and T; implemented, W2 calibrated on 138 revealed fixtures (Implementation (v8)); 54 fresh work-start fixtures drafted (Draft set (v8)), review r8 next |
+| 7 | v8 | Work start and the operating ceiling | In progress — designed (v8 design); owner chose W2, C1 and T; implemented, W2 calibrated on 138 revealed fixtures (Implementation (v8)); 54 fresh work-start fixtures frozen after review r8 (Draft set (v8)); runs next |
 
 ## Sources
 
