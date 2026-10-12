@@ -189,6 +189,29 @@ def test_a_literal_is_a_whole_token():
     assert korean.lost(swapped, [["first file"]], ["tool/x.py"]) == ["lost literal 'tool/x.py'"]
 
 
+def test_a_literal_only_in_a_hyphenated_word_is_uncertain_not_lost():
+    # The algorithm kept, or another version: a hyphen cannot tell them apart, so neither is settled.
+    for literal, text in (("HMAC-SHA256", "Use HMAC-SHA256-based signatures."),
+                          ("Kestrel", "A Kestrel-based ingest gateway."), ("v1.13.0", "It is v1.13.0-beta.")):
+        assert meaning.found(literal, text) == "joined"
+        problems = meaning.check({"require": [], "forbid": [], "literals": [literal]},
+                                 {"status": "translated", "text": text})
+        assert [p.split(" (")[0] for p in problems] == [f"uncertain literal {literal!r}"]
+    assert meaning.found("HMAC-SHA256", "It uses HMAC-SHA256-based and HMAC-SHA256 signing.") == "present"
+    assert meaning.found("30", "It is 300 or 30-ish.") == "joined" and meaning.found("30", "It is 300.") == "absent"
+    assert korean.status(korean.lost("Use HMAC-SHA256-based signatures.", [["signature"]], ["HMAC-SHA256"])) \
+        == "uncertain"
+    assert korean.status(korean.lost("Use HMAC-SHA1-based signatures.", [["signature"]], ["HMAC-SHA256"])) == "lost"
+    # The same English in every arm: no loss, no defect — the check is unsettled, not the translation.
+    data, pairs = world(84)
+    pairs["pairs"][0]["meaning"] = {"require": [["signature"]], "forbid": [], "literals": ["HMAC-SHA256"]}
+    english = "Use HMAC-SHA256-based signatures."
+    rows = every(data, **{f"p00:{a}": row("p00", a, question_en=english) for a in "ABCD"})
+    got = korean.paired_report(rows, data, pairs, [], 8, CFG)
+    assert verdicts(got)["literals"] == "inconclusive" and got["questions"]["p00:B"]["status"] == "uncertain"
+    assert got["repetition"]["divergent"] == {} and verdicts(got)["paired_recall"] == "pass"
+
+
 def test_a_block_the_index_cut_reads_on_and_separate_blocks_do_not():
     english = [{"text": "According to all these rules, the system"}, {"text": "never runs on Windows."}]
     require = [["system"], ["never runs"], ["windows"]]

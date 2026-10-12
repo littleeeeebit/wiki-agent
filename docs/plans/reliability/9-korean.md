@@ -419,6 +419,11 @@ Order step 2, with fake hosts only:
       character follows it; `,` and `:` do only between digits. A full
       stop, a clause's comma, a scheme (`mailto:`) or a label (`Port:`)
       does not. `meaning.check` uses the same rule.
+    - A literal found only inside a word a hyphen joins is `uncertain`, not
+      lost. `HMAC-SHA256-based` keeps the algorithm, while `v1.13.0-beta`
+      is another version, and a hyphen cannot tell them apart. An uncertain
+      question or fact unit leaves Literals inconclusive and settles no
+      cause; only a definite loss is a translation defect.
     - A section's chunks are joined in line order. The index cuts a block
       too long for one chunk at its lines (`partial`); the next part of that
       block, on the very next line, reads on as the same paragraph. Any

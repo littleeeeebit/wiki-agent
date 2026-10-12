@@ -378,20 +378,34 @@ def lost(text: str, require: list[list[str]], literals: list[str]) -> list[str]:
     """What a unit lost in `text`: empty when one sentence meets every
     `require` group (any phrase, any case) and holds every literal exactly.
     A negation and what it negates in two sentences do not pass; a literal
-    counts only as a whole token (`30` is not in `300`)."""
+    counts only as a whole token (`30` is not in `300`), and one found only
+    in a hyphenated word is uncertain (`status`). The closest sentence is
+    named: fewest definite losses, then fewest uncertain ones."""
 
-    from eval.meaning import present
+    from eval.meaning import literal_problem
 
     best = None
     for said in sentences(text) or [""]:
         low = said.lower()
         missing = [f"none of {g}" for g in require if not any(p.lower() in low for p in g)] + \
-                  [f"lost literal {x!r}" for x in literals if not present(x, said)]
+                  [p for x in literals if (p := literal_problem(x, said))]
         if not missing:
             return []
-        if best is None or len(missing) < len(best):
+        if best is None or rank(missing) < rank(best):
             best = missing
     return best
+
+
+def rank(missing: list[str]) -> tuple[int, int]:
+    unsure = sum(m.startswith("uncertain") for m in missing)
+    return len(missing) - unsure, unsure
+
+
+def status(missing: list[str]) -> str:
+    """A check's outcome from what it found missing: `held`, `lost` when
+    anything is definitely lost, else `uncertain` — never a translation defect."""
+
+    return "held" if not missing else "uncertain" if all(m.startswith("uncertain") for m in missing) else "lost"
 
 
 def joined(chunks: list[dict], outcomes: list[dict]) -> str:
@@ -426,26 +440,27 @@ def facts(pairs: dict, chunks: list[dict], label, english) -> list[dict]:
             outcomes = english(got) if got else []
             failed = [o.get("reason") or o["status"] for o in outcomes if o["status"] not in evidence.USABLE]
             if not got or failed:
-                status, missing = "not_normalized", failed or ["no chunk of this section"]
+                outcome, missing = "not_normalized", failed or ["no chunk of this section"]
             else:
                 missing = lost(joined(got, outcomes), f["require"], f["literals"])
-                status = "lost" if missing else "held"
+                outcome = status(missing)
             out.append({"page": page, "id": f["id"], "section": f["section"], "sentence": f["sentence"],
-                        "status": status, "missing": missing})
+                        "status": outcome, "missing": missing})
     return out
 
 
 def question(meaning: dict, row: dict) -> dict:
     """The meaning labels against a Korean question's normalized English as
-    the row recorded it. Not normalized is its own outcome, never a pass."""
+    the row recorded it. Not normalized is its own outcome, never a pass;
+    a literal found only in a hyphenated word is uncertain."""
 
     from eval import meaning as labels
 
-    status = (row.get("normalization") or {}).get("query")
-    if status not in evidence.USABLE or not row.get("question_en"):
-        return {"status": "not_normalized", "normalization": status}
+    normalized = (row.get("normalization") or {}).get("query")
+    if normalized not in evidence.USABLE or not row.get("question_en"):
+        return {"status": "not_normalized", "normalization": normalized}
     wrong = labels.check(meaning, {"status": "translated", "text": row["question_en"]})
-    return {"status": "lost" if wrong else "held", "missing": wrong}
+    return {"status": status(wrong), "missing": wrong}
 
 
 # -- the paired report --------------------------------------------------------------------
