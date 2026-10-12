@@ -2,12 +2,12 @@
  "schema": "jev-reliability-intents/1",
  "id": "reliability-intents-v7",
  "version": 7,
- "frozen": null,
+ "frozen": "2026-10-12",
  "description": "Reliability PR 5's seventh English set (docs/plans/reliability/5-english-baseline.md, v7): the 72 calibration intents of `eval/jev/reliability/intents.json` verbatim (review r1), and held-out intents written fresh (review r7) over v6's corpus plus pages only they name, to test the reworded ASK, the work-start and review-fix prompts and the answer path. At least 54 analysis and 54 fact intents, and among them at least 54 with a material segment, at least 12 of them a question someone else asked, quoted, and 54 of two or more segments, all requests. No earlier page is edited. Fields mean what they mean in the first set.",
  "labels": {
   "author": "model-drafted (claude-opus-5-5, reliability PR 5)",
-  "reviewed_by": null,
-  "reviewed_at": null,
+  "reviewed_by": "gpt-6.1-sol",
+  "reviewed_at": "2026-10-12",
   "reviews": {
    "r1": {
     "kind": "model",
@@ -24,8 +24,8 @@
    "r7": {
     "kind": "model",
     "by": "gpt-6.1-sol",
-    "at": null,
-    "note": "pending"
+    "at": "2026-10-12",
+    "note": "The fresh held-out half, the pages only it names and the fresh action fixtures, a model review at the repository owner's direction: three full-set rounds by gpt-6.1-sol before any v7 held-out run (round 1: held-out answers that preserved pages contradicted or answered outside the labelled evidence, found with a scan of every new page, moved to subjects no v6 page covers (66 questions, 4 pages reworded), a self-contradicting renewals page, work-start file locators that gave the label away, an attempts count stated two ways, and top-level review marks the unreviewed draft carried; round 2: a cost share the taxi page gave only for rides, and lesson lengths the e-learning page stated two ways; round 3: nothing found). Approved at 83f64ce; sha256 of the approved files: intents f37a5af2, actions 7b553bf0, gates 902a5543."
    }
   }
  },

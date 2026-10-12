@@ -1419,7 +1419,16 @@ The estimates, which spend nothing:
 - actions: 108 rows, about 0.15M Jev tokens.
 
 With calibration answers this matches the design's USD 33. No v7 case has
-been run, and the set waits for its label review.
+been run.
+
+Label review r7 took three full-set rounds by gpt-6.1-sol:
+- round 1 brought the rewrites above, the locator mix, v7ws18's attempt
+  count and the cleared top-level review marks;
+- round 2 found a taxi page that gave the late shift's share of rides, not
+  of cost, and an e-learning page that stated lesson lengths two ways;
+- round 3 found nothing.
+
+The set, the action fixtures and the gates are frozen on 2026-10-12.
 
 ## Steps
 
@@ -1430,7 +1439,7 @@ been run, and the set waits for its label review.
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
-| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); fresh set drafted (Draft set (v7)); label review round 1 refused, fixes in review |
+| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); 139 fresh held-out intents and 108 action fixtures reviewed (r7) and frozen on 2026-10-12 (Draft set (v7)); run next |
 
 ## Sources
 

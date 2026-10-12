@@ -2,7 +2,7 @@
  "schema": "jev-gates/1",
  "id": "reliability-gates-v7",
  "version": 7,
- "frozen": null,
+ "frozen": "2026-10-12",
  "copied_from": {
   "path": "eval/jev/reliability-v6/gates.json",
   "version": 6,

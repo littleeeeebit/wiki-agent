@@ -72,4 +72,5 @@ def test_gates_v7_are_v6s_and_the_set_is_frozen_on_one_date():
     data = json.loads((V7 / "intents.json").read_text(encoding="utf-8"))
     actions = json.loads((V7 / "actions.json").read_text(encoding="utf-8"))
     assert data["frozen"] == gates["frozen"] == actions["frozen"] == data["labels"]["reviews"]["r7"]["at"] == \
-        actions["labels"]["reviews"]["r7"]["at"] == data["labels"]["reviewed_at"] == actions["labels"]["reviewed_at"]
+        actions["labels"]["reviews"]["r7"]["at"] == data["labels"]["reviewed_at"] == actions["labels"]["reviewed_at"] == \
+        "2026-10-12"
