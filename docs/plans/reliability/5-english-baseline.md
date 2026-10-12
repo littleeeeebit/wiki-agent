@@ -846,13 +846,16 @@ Work start: 52 of 54.
 - All 9 dispatch fixtures that name no files fell to the host, as W2's
   calibration predicted: Jev is unsure on them and the host settles them.
   The host chose dispatch on 7 and evidence on 2.
-- Both misses are that shape, sent to evidence by the host:
-  - v8ws04: show a comment's time in the reader's time zone as HH:MM,
-    at 0.51.
-  - v8ws06: retry a failed SMS send once, 30 seconds later, at 0.38. Its
-    criterion cites "our SMS retry rule" while stating the values, one of
-    the counterexamples review r8 asked for (round 1). The host read the
-    cited rule as something to look up.
+- Both misses are that shape, settled as evidence by the host. The
+  confidence given is Jev's, before the fallback:
+  - v8ws04: show a comment's time in the reader's time zone as HH:MM.
+    Jev chose dispatch at 0.51, and the host chose evidence.
+  - v8ws06: retry a failed SMS send once, 30 seconds later. Jev chose
+    evidence at 0.38, and the host chose evidence too.
+    - Its criterion cites "our SMS retry rule" while stating the values.
+      It is one of the counterexamples review r8 asked for (round 1).
+    - The rows do not record the host's reasons. That the cited rule
+      sent it to evidence is a guess.
 - So v7's open shape remains: a dispatch specification that names no files
   and sends neither Jev nor the host to dispatch every time. v7 missed 3 of
   5 such fixtures (Jev chose evidence); v8 missed 2 of 9 (the host chose
@@ -870,9 +873,14 @@ overshoot.
 Phase times (T), from the rows' `decision_ms`:
 - Route decisions: 278, p50 0.23 s, p95 5.2 s, at most 11.2 s.
 - Judge decisions: 495, p50 0.21 s, p95 0.28 s, at most 7.8 s.
-- All 115 route decisions over 2 s include a host fallback, on the
-  analysis question. The host's time is in `aside_ms`, not counted
-  against the deadline.
+- All 115 route decisions over 2 s include a host fallback. A route
+  request asks several questions at once, and the host settled some of
+  them:
+  - By question, these rows fell back on route 23 times, analysis 31,
+    progress 43, ask 30 and coverage 1.
+  - One row can fall back on more than one question, so these counts do
+    not add up to 115.
+  - The host's time is in `aside_ms`, not counted against the deadline.
 
 Retrieval, held out, revealed intents (not claimed):
 
@@ -893,10 +901,12 @@ Retrieval, held out, revealed intents (not claimed):
 
 Spending:
 - Actions: 1.6 min, USD 0.20, 14 host turns.
-- Retrieval: 13.8 + 0.1 min, USD 1.27. Jev used about 2.0 million tokens,
-  about twice the estimate (753 requests, not 556). Jev's token ceiling
-  stopped the first batch at 262 of 278 rows, and the same command ran the
-  other 16.
+- Retrieval: 13.8 + 0.1 min, USD 1.27.
+  - Jev made 761 requests, using 2,019,293 tokens. The estimate was 556
+    requests and about 1.1 million tokens.
+  - Jev's token ceiling stopped the first batch at 262 of 278 rows (753
+    requests, 2,002,503 tokens). The same command ran the other 16 rows
+    (8 requests).
 - USD 1.46 in all. Jev's cost has no dated price.
 
 Exit on v8: the operating ceiling passes on this run, but its rows never
