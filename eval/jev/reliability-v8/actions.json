@@ -324,7 +324,8 @@
     "done": [
      "python -m pytest -q",
      "every page title ends with ' - Acme Cloud'",
-     "no page title ends with ' | Acme'"
+     "no page title ends with ' | Acme'",
+     "tests check one page title"
     ],
     "grounds": {
      "pages": [],
@@ -370,7 +371,8 @@
     "done": [
      "python -m pytest -q",
      "a 5,001-row file is rejected with that message",
-     "a 5,000-row file imports"
+     "a 5,000-row file imports",
+     "tests cover both sizes"
     ],
     "grounds": {
      "pages": [],
@@ -393,7 +395,8 @@
     "done": [
      "python -m pytest -q",
      "a comment posted at 14:05 UTC shows 16:05 to a reader in Europe/Berlin in summer",
-     "the UTC timestamp stays"
+     "the UTC timestamp stays",
+     "tests/test_comment_times.py checks one comment"
     ],
     "grounds": {
      "pages": [],
@@ -509,7 +512,8 @@
     "done": [
      "python -m pytest -q",
      "a user with marketing_opt_out true receives no digest",
-     "other users still receive it"
+     "other users still receive it",
+     "tests cover both kinds of user"
     ],
     "grounds": {
      "pages": [],
@@ -584,7 +588,7 @@
     "done": [
      "python -m pytest -q",
      "an account with no invoices sees 'No invoices yet'",
-     "an account with invoices sees the table"
+     "an account with invoices sees the same table as before"
     ],
     "grounds": {
      "pages": [],
@@ -609,7 +613,8 @@
     "done": [
      "python -m pytest -q",
      "a signed-in client's 120th request in a minute succeeds",
-     "its 121st answers 429"
+     "its 121st answers 429",
+     "tests/test_limits.py covers the boundary"
     ],
     "grounds": {
      "pages": [],
@@ -638,7 +643,8 @@
     "done": [
      "python -m pytest -q",
      "GET /v1/ping answers 404",
-     "GET /v2/ping is unchanged"
+     "GET /v2/ping is unchanged",
+     "tests check that no other route changed"
     ],
     "grounds": {
      "pages": [],
@@ -690,7 +696,8 @@
     "done": [
      "python -m pytest -q",
      "cleanup --dry-run lists the files it would delete, one path per line as our CLI conventions require",
-     "after cleanup --dry-run every file is still there"
+     "after cleanup --dry-run every file is still there",
+     "tests/test_cleanup.py covers --dry-run"
     ],
     "grounds": {
      "pages": [],
@@ -717,7 +724,8 @@
     "done": [
      "python -m pytest -q",
      "the export of 12 October 2026 is written to exports/2026-10-12.csv",
-     "exports/latest.csv is no longer written"
+     "exports/latest.csv is no longer written",
+     "tests cover one export"
     ],
     "grounds": {
      "pages": [],
@@ -741,17 +749,18 @@
    "label": "dispatch",
    "spec": {
     "slug": "v8ws18",
-    "goal": "Trim leading and trailing spaces from usernames before saving them",
+    "goal": "Make the '/' key focus the search box",
     "out": [],
     "done": [
      "python -m pytest -q",
-     "' ada ' is saved as 'ada'",
-     "a username with no surrounding spaces is saved unchanged"
+     "pressing / outside a text field focuses the search box",
+     "typing / inside a text field still types a slash",
+     "tests cover both cases"
     ],
     "grounds": {
      "pages": [],
      "files": [
-      "src/accounts/"
+      "web/src/search/"
      ],
      "rules": []
     },
@@ -771,6 +780,7 @@
     "done": [
      "python -m pytest -q",
      "a customer cannot redeem more coupons than the promotion terms allow",
+     "a customer under the cap redeems a coupon normally",
      "tests cover the boundary"
     ],
     "grounds": {
@@ -796,7 +806,8 @@
     "done": [
      "python -m pytest -q",
      "import errors use the error body our other APIs return",
-     "tests check one error"
+     "a valid import answers 201",
+     "tests/test_import_api.py checks one error"
     ],
     "grounds": {
      "pages": [],
@@ -819,7 +830,7 @@
     "done": [
      "python -m pytest -q",
      "a slow tax call fails at the same timeout the other external calls use",
-     "tests cover a slow call"
+     "tests/test_tax_client.py covers a slow call"
     ],
     "grounds": {
      "pages": [],
@@ -842,7 +853,7 @@
     "done": [
      "python -m pytest -q",
      "price lookup cache keys are built like the existing cache keys",
-     "tests check one key"
+     "a second lookup for the same product and currency is served from the cache"
     ],
     "grounds": {
      "pages": [],
@@ -865,6 +876,7 @@
     "done": [
      "python -m pytest -q",
      "passwords weaker than our security policy allows are rejected",
+     "a password the rule accepts signs up normally",
      "tests cover the boundary"
     ],
     "grounds": {
@@ -888,7 +900,7 @@
     "done": [
      "python -m pytest -q",
      "the bucket is created in the region where customer data has to stay",
-     "tests check the configuration"
+     "no other bucket changes"
     ],
     "grounds": {
      "pages": [],
@@ -911,7 +923,7 @@
     "done": [
      "python -m pytest -q",
      "converted prices are rounded the way checkout already rounds them",
-     "tests check one price"
+     "tests/test_currency_switcher.py checks one price"
     ],
     "grounds": {
      "pages": [],
@@ -934,7 +946,7 @@
     "done": [
      "python -m pytest -q",
      "the admin console signs out a session after the same idle time the main app allows",
-     "tests cover the boundary"
+     "an active admin session is not signed out"
     ],
     "grounds": {
      "pages": [],
@@ -957,6 +969,7 @@
     "done": [
      "python -m pytest -q",
      "the job runs inside the maintenance window the operations team agreed",
+     "the job logs when it starts and ends",
      "tests check the schedule"
     ],
     "grounds": {
@@ -980,7 +993,7 @@
     "done": [
      "python -m pytest -q",
      "responses carry the version under the header name and format the web API already sends",
-     "tests check one response"
+     "tests/test_mobile_api.py checks one response"
     ],
     "grounds": {
      "pages": [],
@@ -1005,7 +1018,7 @@
     "done": [
      "python -m pytest -q",
      "checkout errors appear in every language the product supports, a list this request does not give",
-     "tests check one language"
+     "the form's layout does not change"
     ],
     "grounds": {
      "pages": [],
@@ -1030,7 +1043,7 @@
     "done": [
      "python -m pytest -q",
      "a deleted comment is hidden from readers and kept as long as deleted posts are kept",
-     "tests cover one deleted comment"
+     "the other comments in the thread stay visible"
     ],
     "grounds": {
      "pages": [],
@@ -1059,6 +1072,7 @@
     "done": [
      "python -m pytest -q",
      "reset requests beyond the rate our abuse policy allows answer 429",
+     "requests under that rate still send the reset email",
      "tests cover the boundary"
     ],
     "grounds": {
@@ -1084,7 +1098,7 @@
     "done": [
      "python -m pytest -q",
      "a shared link stops working after the period our sharing rules set",
-     "tests cover the boundary"
+     "tests/test_share.py covers the boundary"
     ],
     "grounds": {
      "pages": [],
@@ -1109,7 +1123,7 @@
     "done": [
      "python -m pytest -q",
      "avatars are stored in the same place and under the same size limit as other user uploads",
-     "tests cover one upload"
+     "an avatar over that limit is refused"
     ],
     "grounds": {
      "pages": [],
@@ -1134,6 +1148,7 @@
     "done": [
      "python -m pytest -q",
      "uploads are backed up on the schedule and to the location our backup policy names",
+     "a failed backup raises an alert",
      "tests check the job"
     ],
     "grounds": {
@@ -1163,7 +1178,8 @@
     "done": [
      "python -m pytest -q",
      "the constraint is added the way our migration rules require for a table that already holds data",
-     "tests cover a duplicate address"
+     "duplicate rows found during the migration are reported",
+     "tests/test_customers.py covers a duplicate address"
     ],
     "grounds": {
      "pages": [],
@@ -1189,6 +1205,7 @@
     "done": [
      "python -m pytest -q",
      "a paid invoice emits an event named and shaped like the existing billing events",
+     "an unpaid invoice emits nothing",
      "tests check one event"
     ],
     "grounds": {
@@ -1272,7 +1289,7 @@
    "label": "clarify",
    "spec": {
     "slug": "v8ws40",
-    "goal": "Rethink the onboarding flow",
+    "goal": "Rework the print layouts",
     "out": [],
     "done": [
      "python -m pytest -q"
