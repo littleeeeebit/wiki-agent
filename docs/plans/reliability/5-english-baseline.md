@@ -1580,9 +1580,10 @@ v7 left two parts of the exit open:
 - work start, inconclusive at 3 misses in 54;
 - the operating ceiling, failed on one row 4 ms past its deadline.
 
-Every other gate passed on fresh cases in v7. v8 is designed to settle
-these two. The route, the answer path and the review-fix prompt are not
-changed, so their v7 results stand.
+Every other gate measured on v7 passed on fresh cases. Check choice was
+not_measured on v7, and v5's result for it stands. v8 is designed to
+settle these two. The route, the answer path and the review-fix prompt are
+not changed, so their v7 results stand.
 
 ### Work start: a specification that names no files
 
@@ -1640,15 +1641,30 @@ their deadline, call or token allowance". A run stopped at the deadline
 is the allowance enforced, not exceeded.
 
 - C1: a deadline breach is time past the deadline beyond a grace of
-  0.25 s, five of `bounded`'s polls. The report also gives the largest
+  0.05 s, one of `bounded`'s polls. The report also gives the largest
   overshoot over all rows, so the margin stays visible. v7's figure, a
   fail, is recorded and not re-judged.
+  - The grace is an allowance the owner chose, not a measured bound.
+    `bounded` waits `min(0.05, left)` at a time, so its last wait ends at
+    the deadline. What follows it, the thread's wake-up and the transition,
+    has no recorded distribution; v7's one case took 4 ms.
+  - C1 is a new definition of the counter, not the old one enforced. It is
+    stated in v8's gates, with their version. The budget's deadline does
+    not move.
   - C1 is chosen after a failure was seen. M2 was rejected for that reason
     in v7's design. The difference is that M2 changed a label to fit a
-    miss, while C1 aligns the counter with what the gate says it counts,
-    and leaves every overshoot in the record.
-  - A run that overran by more than the grace, a step that ignores its
-    deadline, still fails the gate.
+    miss. C1 changes what the counter allows, and leaves every overshoot
+    in the record.
+  - Call, candidate and token breaches are counted as before.
+  - The implementation's checks: a run just inside and just outside the
+    grace, host time set aside before the comparison, and call, candidate
+    and token breaches that still count.
+- What C1 measures is the caller's time. `bounded` abandons work still
+  running at the deadline in a daemon thread, and its docstring records
+  that such work runs to its own end. The row's time stops when the caller
+  returns, so a step that ignores its deadline inside abandoned work is
+  not seen by this gate. That limit stands as it was; v8 does not claim
+  it.
 - T: record each phase's time. The dossier already keeps `elapsed_ms` on
   every transition and decision. `dossier_row` keeps the transition names
   only, so why none-44's retrieval returned nothing for over 9 s cannot be
@@ -1663,7 +1679,12 @@ placed in a phase.
 
 - Action fixtures: 54 fresh work-start fixtures, 18 per label, with the
   same file-naming mix in each label. At least 9 per label name no files,
-  so the shape that missed is tested at scale.
+  so the shape that missed is tested on more cases.
+  - The gate passes at 53 of 54 (Wilson lower bound 0.902). At 52 it is
+    inconclusive.
+  - The no-file subgroup is reported, not gated: its counts per label and
+    how many Jev decided and the host settled. Nine of nine gives a lower
+    bound of 0.70, so the subgroup cannot show 0.90 alone.
 - Review fix is not changed and is not rerun.
 - Retrieval: the ceiling is an operational gate, so v7's held-out intents
   are rerun under C1 and T for the ceiling, integrity and the injected
@@ -1673,8 +1694,13 @@ placed in a phase.
 - Gates: v7's, with C1 stated in the ceiling's description.
 
 Estimated cost, from v7's spending:
-- Actions: under USD 0.2.
+- W2's calibration: 138 revealed fixtures, before and after, 276
+  evaluations. At v7's work-start host spending (USD 0.165 for 54 rows),
+  about USD 0.85. Each further draft tried costs about half of that again.
+  The new wording's fallback rate is not known.
+- The held-out actions: under USD 0.2.
 - Retrieval: about USD 1.3.
+- Jev's cost has no dated price.
 
 ### Recommendation
 
