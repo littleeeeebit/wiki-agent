@@ -1774,7 +1774,8 @@ repository (`raw/eval/jev/v8-draft/`).
       goals that kept an earlier case's target and situation under new
       words: four in round 1, seven more of the same kind, and two in
       round 2.
-  - Simple surface rules separate the labels no better than on v7.
+  - No surface rule checked labels them all. Overall, the cues checked
+    separate v8 about as well as v7, and one pair separates it better.
     - Round 1 found "our" only in evidence criteria. Round 2 found a final
       "tests check/cover" criterion only there too. Either rule labelled
       all 54 from wording alone.
@@ -1785,11 +1786,30 @@ repository (`raw/eval/jev/v8-draft/`).
       name a test file or state a behaviour.
     - Of the 54, the "our" rule now labels 38 correctly (43 on v7's
       fixtures), and the test-wording rule 36 (40 on v7).
-    - Between dispatch and evidence (36 fixtures), no single cue among
-      wording, test lines, digits, quotes, criteria count and length does
-      better than 26 (27 on v7). The best pair of cues reaches 28; on v7 it reaches
-      30.
-    - These are offline checks of the data, not measurements of Jev.
+    - Between dispatch and evidence (36 fixtures), twelve yes/no cues were
+      checked. "Criteria" means `done` without its gate command.
+      - criteria match `\bour\b|operations team agreed`;
+      - the last criterion starts with "tests check" or "tests cover";
+      - a criterion names a path under `tests/`;
+      - criteria match `existing|same|already|other|like the|allow|agreed|has to`;
+      - criteria hold a digit;
+      - criteria hold a quote;
+      - there are three or more criteria;
+      - the last criterion is under five words;
+      - the goal is over ten words;
+      - files are named;
+      - decisions are given;
+      - out-of-scope items are given.
+    - A cue, or a pair of cues, predicts the majority label of each
+      combination of its values, and the score counts the fixtures it gets
+      right.
+      - The best single cue is the goal's length: 31 on v8, 32 on v7.
+        Dispatch goals state their values, so they run longer, in every set.
+      - The best pair scores 32 on v8 and 33 on v7.
+      - One pair separates v8 better: "our" with three or more criteria
+        scores 29 on v8 and 25 on v7. No pair labels all 36.
+    - These are offline checks of the data, not measurements of Jev, and
+      only of the cues listed.
   - Decisions appear in two dispatch and two evidence fixtures, and
     out-of-scope items in two dispatch and one evidence fixture, so
     neither field points to a label.
