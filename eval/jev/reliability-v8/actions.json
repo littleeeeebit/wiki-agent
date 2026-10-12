@@ -1,0 +1,1603 @@
+{
+ "schema": "jev-action-fixtures/1",
+ "id": "reliability-actions-v8",
+ "version": 8,
+ "frozen": "2026-10-12",
+ "description": "Reliability PR 5's eighth action set (docs/plans/reliability/5-english-baseline.md, v8): v5's calibration fixtures for work start verbatim (review r5), and 54 held-out work-start fixtures written fresh (review r8), 18 per label, each label with 9 naming no files, 5 naming files and 4 a directory, to test the work-start prompt changed on v7's results (W2). Review fix and check choice have no v8 fixtures; their earlier results stand. Labels mean what they mean in the first set.",
+ "labels": {
+  "author": "model-drafted (claude-opus-5-5, reliability PR 5)",
+  "reviewed_by": null,
+  "reviewed_at": null,
+  "reviews": {
+   "r5": {
+    "kind": "model",
+    "by": "gpt-6.1-sol",
+    "at": "2026-10-10",
+    "note": "The fresh held-out half, the pages only it names and the fresh action fixtures, a model review at the repository owner's direction: two full-set rounds by gpt-6.1-sol before any v5 held-out run (round 1: work-start file locators that gave the label away, a status-code rule that contradicted the input-validation rule replaced, a meeting that contradicted the written stand-up decision, an ambiguous connection count, an unsupported first-step reference replaced, two bridge targets that shared words with their queries; the remaining work-start and review-fix surface cues broken with them; round 2: nothing found). Approved inputs: intents 45d2814a, actions f7db1f43."
+   }
+  }
+ },
+ "gate": "python -m pytest -q",
+ "fixtures": [
+  {
+   "id": "v5ws01",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws01",
+    "goal": "Fix the misspelling 'recieve' in the mailer's error message",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/mailer.py:41 spells 'receive'"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/mailer.py:41"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws02",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws02",
+    "goal": "Set the default page size to 50",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "DEFAULT_PAGE_SIZE in src/api/pagination.py is 50",
+     "tests/test_pagination.py expects 50 items for a request without a size"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/pagination.py:1",
+      "tests/test_pagination.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws03",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws03",
+    "goal": "Map a missing project in GET /projects/{id} to 404 instead of 500",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /projects/unknown returns 404",
+     "tests/test_projects.py covers an unknown id"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/projects.py:58",
+      "tests/test_projects.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws04",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws04",
+    "goal": "Rename _calc() in src/billing/totals.py to compute_subtotal() and update its two callers",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/billing/totals.py defines compute_subtotal() and no _calc()",
+     "src/billing/invoice.py and src/billing/quote.py call compute_subtotal()"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/billing/totals.py:1",
+      "src/billing/invoice.py:1",
+      "src/billing/quote.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws05",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws05",
+    "goal": "Pick the cache lifetime for the catalogue responses in src/api/catalogue.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /catalogue responses carry the chosen lifetime",
+     "tests/test_catalogue.py checks the Cache-Control header"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/catalogue.py:57"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws06",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws06",
+    "goal": "Log account deletions for audit",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "deleting an account writes an audit entry",
+     "tests/test_accounts.py checks the entry"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/accounts/delete.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws07",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws07",
+    "goal": "Version the public export API",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the export endpoints are served under the chosen versioning scheme",
+     "tests/test_export_api.py covers one versioned route"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/export.py:12",
+      "src/api/routes.py:30"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws08",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws08",
+    "goal": "Handle jobs whose scheduled slot passed while the scheduler was down",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a job whose slot passed during downtime is handled as chosen",
+     "tests/test_scheduler.py covers a missed slot"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/scheduler/run.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws09",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws09",
+    "goal": "Make the dashboard faster",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/Dashboard.tsx:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws10",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws10",
+    "goal": "Clean up the billing module",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/billing/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws11",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws11",
+    "goal": "Improve the onboarding emails",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws12",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws12",
+    "goal": "Fix the flaky tests",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "tests/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v8ws01",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws01",
+    "goal": "Change the page title suffix from ' | Acme' to ' - Acme Cloud'",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "every page title ends with ' - Acme Cloud'",
+     "no page title ends with ' | Acme'"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws02",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws02",
+    "goal": "Shorten the lifetime of password reset links from 24 hours to 2 hours",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a reset link 3 hours old is refused",
+     "a reset link 1 hour old still works"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws03",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws03",
+    "goal": "Reject CSV imports of more than 5,000 rows with the message 'File too large: 5,000 rows at most'",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a 5,001-row file is rejected with that message",
+     "a 5,000-row file imports"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws04",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws04",
+    "goal": "Show each comment's time in the reader's own time zone as HH:MM beside the UTC timestamp",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a comment posted at 14:05 UTC shows 16:05 to a reader in Europe/Berlin in summer",
+     "the UTC timestamp stays"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws05",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws05",
+    "goal": "Ask for confirmation before deleting a project, with the text 'Delete this project permanently?'",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "clicking Delete shows a dialog with that text",
+     "Cancel keeps the project"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws06",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws06",
+    "goal": "Retry a failed SMS send once, 30 seconds later",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a failed send is tried again once, 30 s after the failure",
+     "a second failure is logged and not retried"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws07",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws07",
+    "goal": "Sort the team members list by last name, then by first name",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "Ada Byron is listed before Alan Turing",
+     "two members named Smith are ordered by first name"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws08",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws08",
+    "goal": "Show a 'Last updated' date under each help article, written like 12 October 2026",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "an article changed on 2026-10-12 shows 'Last updated 12 October 2026'",
+     "articles never changed show no date"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws09",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws09",
+    "goal": "Skip the daily digest for users whose marketing_opt_out flag is true",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a user with marketing_opt_out true receives no digest",
+     "other users still receive it"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws10",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws10",
+    "goal": "Rename the configuration key MAX_WORKERS to WORKER_LIMIT, reading MAX_WORKERS with a deprecation warning when WORKER_LIMIT is unset",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "WORKER_LIMIT sets the worker count",
+     "MAX_WORKERS alone still works and logs a deprecation warning"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/config.py:21"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws11",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws11",
+    "goal": "Return 409 instead of 400 when POST /tags names a tag that already exists",
+    "out": [
+     "changing which tag names are allowed"
+    ],
+    "done": [
+     "python -m pytest -q",
+     "POST /tags with an existing name answers 409 with body {\"error\": \"tag exists\"}",
+     "tests/test_tags.py covers it"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/tags.py:52"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws12",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws12",
+    "goal": "Show the message 'No invoices yet' when the invoices table has no rows",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "an account with no invoices sees 'No invoices yet'",
+     "an account with invoices sees the table"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/InvoiceTable.tsx:64"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws13",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws13",
+    "goal": "Raise the API rate limit for signed-in clients from 60 to 120 requests a minute",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a signed-in client's 120th request in a minute succeeds",
+     "its 121st answers 429"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/limits.py:9"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Signed-in clients get 120 requests a minute (decided 2026-09-30)"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws14",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws14",
+    "goal": "Remove the deprecated GET /v1/ping endpoint",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /v1/ping answers 404",
+     "GET /v2/ping is unchanged"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/ping.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws15",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws15",
+    "goal": "Move the date helpers from src/util/time.py into the package src/util/dates/, keeping their names",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "every caller imports the helpers from src.util.dates",
+     "src/util/time.py no longer exists",
+     "the tests pass unchanged"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/util/dates/",
+      "src/util/time.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws16",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws16",
+    "goal": "Add a --dry-run flag to the cleanup command that prints what it would delete and deletes nothing",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "cleanup --dry-run lists the files it would delete",
+     "after cleanup --dry-run every file is still there"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/cli/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws17",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws17",
+    "goal": "Write the nightly export to exports/YYYY-MM-DD.csv instead of exports/latest.csv",
+    "out": [
+     "deleting old exports"
+    ],
+    "done": [
+     "python -m pytest -q",
+     "the export of 12 October 2026 is written to exports/2026-10-12.csv",
+     "exports/latest.csv is no longer written"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/jobs/export/"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Nightly exports keep one file per day (decided 2026-10-01)"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws18",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v8ws18",
+    "goal": "Mark the session cookie Secure and SameSite=Lax",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the session cookie carries Secure and SameSite=Lax",
+     "sign-in still works over HTTPS"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/web/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws19",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws19",
+    "goal": "Delete uploaded logs after their retention period",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "uploaded logs older than the retention our data policy sets are deleted",
+     "tests cover the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws20",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws20",
+    "goal": "Choose the error format for the new import API",
+    "out": [
+     "changing the errors of existing APIs"
+    ],
+    "done": [
+     "python -m pytest -q",
+     "import errors use the error body our other APIs return",
+     "tests check one error"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws21",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws21",
+    "goal": "Add a timeout to calls to the tax service",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "calls give up after the timeout our client guidelines set for external services",
+     "tests cover a slow call"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws22",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws22",
+    "goal": "Name the metrics the new scheduler emits",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the scheduler's metrics follow our metric naming convention",
+     "tests check one metric name"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws23",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws23",
+    "goal": "Enforce a password strength rule at sign-up",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "passwords weaker than our security policy allows are rejected",
+     "tests cover the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws24",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws24",
+    "goal": "Pick the region for the new analytics bucket",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the bucket is created in the region our data residency decision requires",
+     "tests check the configuration"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws25",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws25",
+    "goal": "Add structured logging to the payment webhook handler",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "each log line carries the fields our logging standard requires",
+     "tests check one line"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws26",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws26",
+    "goal": "Set the default page size of the new contacts endpoint",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /contacts returns the default page size our API guidelines set",
+     "tests check it"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws27",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws27",
+    "goal": "Schedule the database vacuum job",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the job runs inside the maintenance window the operations team agreed",
+     "tests check the schedule"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws28",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws28",
+    "goal": "Add a version header to the mobile API's responses",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "responses carry the version under the header name and format our versioning rule sets",
+     "tests check one response"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/mobile/api.py:14"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws29",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws29",
+    "goal": "Translate the error messages of the checkout form",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "checkout errors appear in each language the product supports, through our translation files",
+     "tests check one language"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/Checkout.tsx:88"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws30",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws30",
+    "goal": "Let readers delete comments, keeping deleted comments hidden for a while",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a deleted comment is hidden from readers and kept for the period our retention rule sets",
+     "tests cover one deleted comment"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/comments/store.py:40"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Comments are moderated before they appear (decided 2026-09-12)"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws31",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws31",
+    "goal": "Throttle the password reset endpoint",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "reset requests beyond the rate our abuse policy allows answer 429",
+     "tests cover the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/auth/reset.py:61"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws32",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws32",
+    "goal": "Make shared document links expire",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a shared link stops working after the period our sharing rules set",
+     "tests cover the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/docs/share.py:23"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws33",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws33",
+    "goal": "Add a health check to the search indexer",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the indexer answers health checks on the path and port our services use",
+     "tests check one answer"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/indexer/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws34",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws34",
+    "goal": "Back up the uploads bucket",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "uploads are backed up on the schedule and to the location our backup policy names",
+     "tests check the job"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "ops/backup/"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Backups run from the ops scheduler (decided 2026-08-02)"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws35",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws35",
+    "goal": "Add a unique constraint on customer email addresses",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the constraint is added the way our migration rules require for a table that already holds data",
+     "tests cover a duplicate address"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/db/migrations/",
+      "src/customers/store.py:31"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws36",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v8ws36",
+    "goal": "Emit an event when an invoice is paid",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a paid invoice emits an event named and shaped by our event conventions",
+     "tests check one event"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/billing/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws37",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws37",
+    "goal": "Improve the email templates",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws38",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws38",
+    "goal": "Make the API faster",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws39",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws39",
+    "goal": "Sort out the error handling",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws40",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws40",
+    "goal": "Tidy up the settings page",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws41",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws41",
+    "goal": "Modernise the build",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws42",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws42",
+    "goal": "Fix the flaky behaviour",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws43",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws43",
+    "goal": "Improve accessibility",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws44",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws44",
+    "goal": "Make the dashboard clearer",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws45",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws45",
+    "goal": "Reduce the support load",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws46",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws46",
+    "goal": "Rework the pricing logic",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/billing/pricing.py:15"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws47",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws47",
+    "goal": "Improve the signup page",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/Signup.tsx:9"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws48",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws48",
+    "goal": "Clean up the configuration",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/config.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws49",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws49",
+    "goal": "Make the exports more robust",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/jobs/export.py:30"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws50",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws50",
+    "goal": "Speed up the test run",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "tests/conftest.py:2"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws51",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws51",
+    "goal": "Improve the admin reports",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/reports/admin/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws52",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws52",
+    "goal": "Revisit the caching",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/cache/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws53",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws53",
+    "goal": "Update the mobile screens",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "mobile/src/screens/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  },
+  {
+   "id": "v8ws54",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v8ws54",
+    "goal": "Make the notifications less noisy",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/notifications/",
+      "web/src/notify/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r8"
+  }
+ ]
+}
