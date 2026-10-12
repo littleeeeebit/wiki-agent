@@ -1,0 +1,2439 @@
+{
+ "schema": "jev-action-fixtures/1",
+ "id": "reliability-actions-v7",
+ "version": 7,
+ "frozen": "2026-10-12",
+ "description": "Reliability PR 5's seventh action set (docs/plans/reliability/5-english-baseline.md, v7): v5's calibration fixtures for work start and review fix verbatim (review r5), and 54 held-out fixtures for each written fresh (review r7), labels balanced (work start 18 per label, review fix 27 per label), to test the prompts changed on v5's results. Check choice has no v7 fixtures; v5's result stands. Labels mean what they mean in the first set.",
+ "labels": {
+  "author": "model-drafted (claude-opus-5-5, reliability PR 5)",
+  "reviewed_by": "gpt-6.1-sol",
+  "reviewed_at": "2026-10-12",
+  "reviews": {
+   "r5": {
+    "kind": "model",
+    "by": "gpt-6.1-sol",
+    "at": "2026-10-10",
+    "note": "The fresh held-out half, the pages only it names and the fresh action fixtures, a model review at the repository owner's direction: two full-set rounds by gpt-6.1-sol before any v5 held-out run (round 1: work-start file locators that gave the label away, a status-code rule that contradicted the input-validation rule replaced, a meeting that contradicted the written stand-up decision, an ambiguous connection count, an unsupported first-step reference replaced, two bridge targets that shared words with their queries; the remaining work-start and review-fix surface cues broken with them; round 2: nothing found). Approved inputs: intents 45d2814a, actions f7db1f43."
+   },
+   "r7": {
+    "kind": "model",
+    "by": "gpt-6.1-sol",
+    "at": "2026-10-12",
+    "note": "The fresh held-out half, the pages only it names and the fresh action fixtures, a model review at the repository owner's direction: three full-set rounds by gpt-6.1-sol before any v7 held-out run (round 1: held-out answers that preserved pages contradicted or answered outside the labelled evidence, found with a scan of every new page, moved to subjects no v6 page covers (66 questions, 4 pages reworded), a self-contradicting renewals page, work-start file locators that gave the label away, an attempts count stated two ways, and top-level review marks the unreviewed draft carried; round 2: a cost share the taxi page gave only for rides, and lesson lengths the e-learning page stated two ways; round 3: nothing found). Approved at 83f64ce; sha256 of the approved files: intents f37a5af2, actions 7b553bf0, gates 902a5543."
+   }
+  }
+ },
+ "gate": "python -m pytest -q",
+ "fixtures": [
+  {
+   "id": "v5ws01",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws01",
+    "goal": "Fix the misspelling 'recieve' in the mailer's error message",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/mailer.py:41 spells 'receive'"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/mailer.py:41"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws02",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws02",
+    "goal": "Set the default page size to 50",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "DEFAULT_PAGE_SIZE in src/api/pagination.py is 50",
+     "tests/test_pagination.py expects 50 items for a request without a size"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/pagination.py:1",
+      "tests/test_pagination.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws03",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws03",
+    "goal": "Map a missing project in GET /projects/{id} to 404 instead of 500",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /projects/unknown returns 404",
+     "tests/test_projects.py covers an unknown id"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/projects.py:58",
+      "tests/test_projects.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws04",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v5ws04",
+    "goal": "Rename _calc() in src/billing/totals.py to compute_subtotal() and update its two callers",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "src/billing/totals.py defines compute_subtotal() and no _calc()",
+     "src/billing/invoice.py and src/billing/quote.py call compute_subtotal()"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/billing/totals.py:1",
+      "src/billing/invoice.py:1",
+      "src/billing/quote.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws05",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws05",
+    "goal": "Pick the cache lifetime for the catalogue responses in src/api/catalogue.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /catalogue responses carry the chosen lifetime",
+     "tests/test_catalogue.py checks the Cache-Control header"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/catalogue.py:57"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws06",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws06",
+    "goal": "Log account deletions for audit",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "deleting an account writes an audit entry",
+     "tests/test_accounts.py checks the entry"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/accounts/delete.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws07",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws07",
+    "goal": "Version the public export API",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the export endpoints are served under the chosen versioning scheme",
+     "tests/test_export_api.py covers one versioned route"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/export.py:12",
+      "src/api/routes.py:30"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws08",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v5ws08",
+    "goal": "Handle jobs whose scheduled slot passed while the scheduler was down",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a job whose slot passed during downtime is handled as chosen",
+     "tests/test_scheduler.py covers a missed slot"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/scheduler/run.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws09",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws09",
+    "goal": "Make the dashboard faster",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/Dashboard.tsx:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws10",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws10",
+    "goal": "Clean up the billing module",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/billing/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws11",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws11",
+    "goal": "Improve the onboarding emails",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5ws12",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v5ws12",
+    "goal": "Fix the flaky tests",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "tests/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf01",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/units.py:22 - parse_size('1.5k') returns 1 because we cast the value with int() before scaling"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf02",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P2] src/report.py:61 - the loop variable `i` is never used; iterate over the rows directly"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf03",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/db/query.py:40 - the cursor is not closed when execute() raises"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf04",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/cli.py:12 - the --help text says 'defualt'"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf05",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 3,
+   "findings": [
+    "[P1] src/cache/keys.py:9 - keys are built with str(dict), whose order is not stable before Python 3.7; sort the items first"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf06",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P1] src/stats.py:15 - median() of an even-length list returns the upper middle value instead of the mean of the two"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf07",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/users.py:48 - the response uses snake_case keys, not the casing the API style guide sets"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf08",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/db/migrations/0042.py:1 - the column is dropped in the same release that stops writing it, against the migration process"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf09",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/worker/jobs.py:77 - errors are printed instead of going through the project's logging setup"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf10",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 3,
+   "findings": [
+    "[P1] src/billing/round.py:20 - amounts are rounded half up; use banker's rounding"
+   ],
+   "disputed": [
+    "[P1] src/billing/round.py:20 - amounts are rounded half up; use banker's rounding"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf11",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/auth/tokens.py:31 - token lifetime is 24 hours; make it one hour"
+   ],
+   "disputed": [
+    "[P1] src/auth/tokens.py:31 - token lifetime is 24 hours; make it one hour"
+   ],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v5lf12",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/api/errors.py:12 - this error body does not follow the documented error format"
+   ],
+   "disputed": [],
+   "split": "calibration",
+   "review": "r5"
+  },
+  {
+   "id": "v7ws01",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws01",
+    "goal": "Rename the --verbose flag of the export command to --debug in src/cli/export.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "export --debug prints the debug lines export --verbose printed",
+     "export --verbose is rejected as unknown"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/cli/export.py:12"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws02",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws02",
+    "goal": "Return 404 instead of 500 when GET /teams/{id} names a missing team",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /teams/999 answers 404 with body {\"error\": \"team not found\"}",
+     "tests/test_teams.py covers it"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/teams.py:40",
+      "tests/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws03",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws03",
+    "goal": "Raise the upload size limit from 10 MB to 25 MB",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a 24 MB upload succeeds",
+     "a 26 MB upload is rejected with 413"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws04",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws04",
+    "goal": "Add a created_by column to the projects table, nullable, filled from the session user on insert",
+    "out": [
+     "backfilling old rows"
+    ],
+    "done": [
+     "python -m pytest -q",
+     "new projects store the creating user's id",
+     "existing rows keep created_by NULL"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/db/migrations/",
+      "src/projects/store.py:88"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws05",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws05",
+    "goal": "Show prices on the invoice page with two decimals and a thousands separator",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "1234.5 shows as 1,234.50",
+     "0 shows as 0.00"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/Invoice.tsx:30"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws06",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws06",
+    "goal": "Send the weekly summary email at 08:00 Europe/Berlin on Mondays",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the scheduler entry fires at 08:00 Europe/Berlin each Monday",
+     "tests/test_schedule.py checks the entry"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/jobs/"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Weekly summaries use Europe/Berlin (decided 2026-07-01)"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws07",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws07",
+    "goal": "Cap search page size at 50 results; a larger page parameter is clamped to 50",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "page_size=80 returns 50 results",
+     "page_size=20 returns 20"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/search/api.py:61"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws08",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws08",
+    "goal": "Remove the unused helper format_legacy_date() from src/util/dates.py",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "format_legacy_date no longer exists",
+     "nothing else changes"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/util/dates.py:140"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws09",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws09",
+    "goal": "Log a warning, not an error, when a webhook delivery gets a 410 response",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a 410 delivery logs at WARNING",
+     "other failures still log at ERROR"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws10",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws10",
+    "goal": "Make the 'Save' button on the profile form disabled until a field changes",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the button is disabled on load",
+     "editing any field enables it"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/ProfileForm.tsx:77",
+      "web/src/forms/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws11",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws11",
+    "goal": "Store session tokens hashed with SHA-256 instead of in plain text",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the sessions table holds only SHA-256 hashes",
+     "sign-in still works",
+     "existing sessions are invalidated"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/auth/sessions.py:22"
+     ],
+     "rules": []
+    },
+    "decisions": [
+     {
+      "what": "Session tokens are stored hashed (decided 2026-08-19)"
+     }
+    ]
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws12",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws12",
+    "goal": "Add a 'Copy link' button beside each report title that copies the report URL",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "clicking it puts the report URL on the clipboard",
+     "a toast says Link copied"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws13",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws13",
+    "goal": "Change the default sort of the orders list to newest first",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the orders list opens sorted by created_at descending",
+     "the sort control still switches order"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/orders/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws14",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws14",
+    "goal": "Return the total count in an X-Total-Count header on GET /invoices",
+    "out": [
+     "changing the body"
+    ],
+    "done": [
+     "python -m pytest -q",
+     "GET /invoices sets X-Total-Count to the number of matching invoices",
+     "tests/test_invoices.py checks it"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/invoices.py:30",
+      "tests/test_invoices.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws15",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws15",
+    "goal": "Time out calls to the geocoding service after 3 seconds and return no coordinates",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a call slower than 3 s returns None",
+     "a fast call returns coordinates"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws16",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws16",
+    "goal": "Trim leading and trailing whitespace from email addresses at sign-up",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "\" a@b.example \" is stored as \"a@b.example\"",
+     "tests/test_signup.py covers it"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/accounts/signup.py:31",
+      "tests/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws17",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws17",
+    "goal": "Hide the beta badge on the dashboard for accounts created after 1 October 2026",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "accounts created on or after 1 October 2026 see no badge",
+     "older accounts still see it"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws18",
+   "point": "work.start",
+   "label": "dispatch",
+   "spec": {
+    "slug": "v7ws18",
+    "goal": "Use the existing retry_with_backoff() helper for the S3 uploads in src/storage/s3.py, at most three attempts in total",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a failed upload is tried at most three times in total through retry_with_backoff()",
+     "tests cover one retried upload"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/storage/s3.py:50",
+      "src/util/retry.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws19",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws19",
+    "goal": "Add an audit log entry when an admin changes a user's role",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "each role change writes an audit entry in the format the audit log already uses",
+     "tests/test_roles.py checks one entry"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/admin/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws20",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws20",
+    "goal": "Set how long password reset links stay valid",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a reset link stops working after the required period",
+     "tests/test_reset.py covers the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/auth/reset.py:18"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws21",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws21",
+    "goal": "Add pagination to GET /audit-events",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /audit-events pages the way our other list endpoints page",
+     "tests/test_audit_events.py covers two pages"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/audit_events.py:10",
+      "src/api/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws22",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws22",
+    "goal": "Choose where the new reporting service keeps its secrets",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the service reads its secrets from the approved store",
+     "no secret appears in the repository"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws23",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws23",
+    "goal": "Add a currency field to the price model",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "prices carry a currency in the representation our money handling uses",
+     "tests/test_prices.py checks one"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/catalog/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws24",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws24",
+    "goal": "Lock an account after repeated failed sign-ins",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "an account locks after the number of failures our security policy allows",
+     "tests cover the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/auth/signin.py:44"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws25",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws25",
+    "goal": "Add request IDs to the API's responses",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "every response carries a request ID under the header name the other services use",
+     "tests/test_request_ids.py checks one response"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws26",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws26",
+    "goal": "Delete closed support tickets' attachments after the retention period",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "attachments of closed tickets are deleted once the retention period has passed",
+     "tests/test_ticket_cleanup.py covers the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/support/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws27",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws27",
+    "goal": "Add a metrics endpoint to the billing worker",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the worker exposes metrics on the port and path our services expose them on",
+     "tests check the endpoint"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/billing/worker.py:3"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws28",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws28",
+    "goal": "Version the public events API",
+    "out": [
+     "changing event payloads"
+    ],
+    "done": [
+     "python -m pytest -q",
+     "the events API is versioned in the scheme the other public APIs use",
+     "tests/test_events_api.py checks it"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/api/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws29",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws29",
+    "goal": "Choose the queue for the new thumbnail jobs",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "thumbnail jobs run on the queue the platform team designated for media work",
+     "tests check one enqueue"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws30",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws30",
+    "goal": "Add a maximum length to project names",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "names longer than the product's naming limit are rejected",
+     "tests/test_projects.py covers the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/projects/validate.py:12"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws31",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws31",
+    "goal": "Encrypt the exported backups",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "backups are encrypted with the algorithm and key handling our security standard requires",
+     "tests/test_backup.py checks one encrypted file"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/backup/export.py:20"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws32",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws32",
+    "goal": "Add a feature flag around the new search ranking",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the new ranking runs only when its flag is on, named by our flag naming rule",
+     "tests run both ways"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws33",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws33",
+    "goal": "Expire inactive API tokens",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "a token unused for the agreed period stops working",
+     "tests/test_tokens.py covers the boundary"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws34",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws34",
+    "goal": "Add an index for the slow customer lookup",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "the lookup uses an index named and created the way our migrations do it",
+     "the query plan uses the index"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/db/migrations/",
+      "src/customers/lookup.py:19"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws35",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws35",
+    "goal": "Report the new payments dependency in the service health check",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "GET /health reports payments in the same shape as the existing dependencies",
+     "tests cover an outage"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/health.py:1"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws36",
+   "point": "work.start",
+   "label": "evidence",
+   "spec": {
+    "slug": "v7ws36",
+    "goal": "Set the cache lifetime for product pages",
+    "out": [],
+    "done": [
+     "python -m pytest -q",
+     "product pages are cached for the lifetime the performance budget allows",
+     "tests check the header"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/web/cache.py:8"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws37",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws37",
+    "goal": "Make the admin area easier to use",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/admin/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws38",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws38",
+    "goal": "Improve the reliability of the sync job",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/sync/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws39",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws39",
+    "goal": "Tighten up security",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws40",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws40",
+    "goal": "Rework the invoice templates",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "templates/invoices/base.html:3"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws41",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws41",
+    "goal": "Make the mobile layout better",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/mobile/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws42",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws42",
+    "goal": "Optimise the database",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/db/queries.py:40"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws43",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws43",
+    "goal": "Clean up the test suite",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "tests/conftest.py:9"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws44",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws44",
+    "goal": "Fix the notifications",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws45",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws45",
+    "goal": "Upgrade the frontend",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/package.json:5"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws46",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws46",
+    "goal": "Improve the import experience",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/importer/cli.py:24"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws47",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws47",
+    "goal": "Make the logs more useful",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws48",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws48",
+    "goal": "Sort out permissions",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/auth/permissions.py:57"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws49",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws49",
+    "goal": "Make onboarding smoother",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "web/src/onboarding/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws50",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws50",
+    "goal": "Reduce the cloud bill",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws51",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws51",
+    "goal": "Update the payment flow",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/payments/",
+      "web/src/Checkout.tsx:18"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws52",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws52",
+    "goal": "Improve the search results",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/search/rank.py:12"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws53",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws53",
+    "goal": "Make the reports faster",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [
+      "src/reports/"
+     ],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7ws54",
+   "point": "work.start",
+   "label": "clarify",
+   "spec": {
+    "slug": "v7ws54",
+    "goal": "Simplify the deployment",
+    "out": [],
+    "done": [
+     "python -m pytest -q"
+    ],
+    "grounds": {
+     "pages": [],
+     "files": [],
+     "rules": []
+    },
+    "decisions": []
+   },
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf01",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/users.py:58 - the handler returns before closing the database cursor; close it in a finally block"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf02",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/billing/invoice.py:120 - total sums the line amounts as floats; sum Decimal values"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf03",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/cli/main.py:14 - the --help text says --out but the option is --output; fix the text"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf04",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P1] src/sync/worker.py:77 - a KeyError when the payload has no 'id'; skip such payloads and log them"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf05",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] web/src/Cart.tsx:42 - the quantity input accepts negative numbers; set min=1"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf06",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/util/text.py:9 - slugify() lowercases after replacing spaces, so 'A B' gives 'a-b' but 'A  B' gives 'a--b'; collapse repeated spaces first"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf07",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 3,
+   "findings": [
+    "[P1] src/orders/cancel.py:33 - cancelling an already cancelled order refunds it twice; return early when the status is cancelled"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf08",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/auth/reset.py:61 - the reset token is compared with ==; use hmac.compare_digest"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf09",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P2] src/reports/csv.py:25 - the header row is written twice when the report is empty; write it once"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf10",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/storage/s3.py:90 - the file handle is never closed on upload failure; use a with block"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf11",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/search.py:30 - an empty query string raises IndexError; return an empty result list"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf12",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] tests/test_dates.py:12 - the test asserts on today's date and fails after midnight; freeze the clock"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf13",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P1] src/notify/email.py:48 - the recipient list is mutated while iterating; iterate over a copy"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf14",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/importer/rows.py:19 - the row counter starts at 0, so error messages name the wrong line; start it at 1"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf15",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] web/src/Header.tsx:8 - the logo image has no alt text; add alt=\"Home\""
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf16",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 3,
+   "findings": [
+    "[P1] src/jobs/digest.py:66 - the digest is sent even when it has no items; skip sending then"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf17",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/payments/webhook.py:21 - the signature check runs after the body is parsed; verify the raw body first"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf18",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/config.py:40 - PORT is read as a string and compared with an int; convert it with int()"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf19",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P1] src/projects/delete.py:15 - deleting a project leaves its members rows; delete them in the same transaction"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf20",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/cache/keys.py:7 - the cache key omits the locale, so users see other languages' pages; add the locale to the key"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf21",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] README.md:30 - the install command names the old package name wiki-tools; use wiki-agent"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf22",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 2,
+   "findings": [
+    "[P1] src/api/upload.py:52 - the temporary file is left behind when validation fails; delete it in a finally block"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf23",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] src/auth/session.py:88 - logout clears the cookie but not the server-side session; delete the session row too"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf24",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/util/retry.py:12 - the backoff doubles from 0 so the first retry waits 0 s; start at 0.5 s"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf25",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 3,
+   "findings": [
+    "[P1] src/export/xlsx.py:101 - dates are written as text; write them as Excel dates"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf26",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P1] web/src/Login.tsx:60 - the submit button can be clicked twice and sends two requests; disable it while the request runs"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf27",
+   "point": "loop.fix",
+   "label": "fix",
+   "round": 1,
+   "findings": [
+    "[P2] src/models/user.py:22 - __repr__ prints the password hash; leave it out"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf28",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/teams.py:12 - the new endpoint names its fields in camelCase; the API's field naming is decided elsewhere, follow it"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf29",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/jobs/cleanup.py:30 - the job keeps deleted files for 7 days, not the retention our policy sets; use that period"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf30",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P2] src/web/errors.py:44 - this error page doesn't look like the others; make it match"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf31",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/payments/refund.py:70 - refunds over the approval threshold must go through the review step our finance rules describe; this one skips it"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf32",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/search/index.py:18 - the new index builder logs in a different format from the rest of the services; align it"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf33",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/auth/password.py:9 - the hashing parameters differ from what the security standard requires; use the standard's parameters"
+   ],
+   "disputed": [
+    "[P1] src/auth/password.py:9 - the hashing parameters differ from what the security standard requires; use the standard's parameters"
+   ],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf34",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/cli/export.py:3 - the new command's flags don't follow the conventions of our other commands"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf35",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 3,
+   "findings": [
+    "[P1] src/billing/tax.py:55 - tax is rounded per line; round per invoice"
+   ],
+   "disputed": [
+    "[P1] src/billing/tax.py:55 - tax is rounded per line; round per invoice"
+   ],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf36",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/orders.py:91 - the endpoint returns all orders at once; page it like the other list endpoints"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf37",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/db/migrations/0042_add_index.py:1 - this migration isn't written the way our migration guide asks"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf38",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/notify/sms.py:27 - sending SMS outside the quiet hours we agreed with customers; respect them"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf39",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] docs/api/teams.md:1 - the new page doesn't follow the documentation template"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf40",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/storage/paths.py:14 - user uploads are stored under the user's email; the decision on storage keys says otherwise"
+   ],
+   "disputed": [
+    "[P1] src/storage/paths.py:14 - user uploads are stored under the user's email; the decision on storage keys says otherwise"
+   ],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf41",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/health.py:20 - the health response shape differs from the other services'; match theirs"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf42",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/jobs/retry.py:8 - the retry limit here is higher than our job guidelines allow"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf43",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 3,
+   "findings": [
+    "[P2] src/reports/summary.py:40 - totals should exclude refunded orders"
+   ],
+   "disputed": [
+    "[P2] src/reports/summary.py:40 - totals should exclude refunded orders"
+   ],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf44",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] web/src/Settings.tsx:5 - the new settings page uses its own colours instead of the design system's tokens"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf45",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/auth/tokens.py:33 - access tokens live longer than the security decision allows"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf46",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/importer/validate.py:61 - an unknown column should be skipped with a warning, not rejected"
+   ],
+   "disputed": [
+    "[P1] src/importer/validate.py:61 - an unknown column should be skipped with a warning, not rejected"
+   ],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf47",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] src/cli/main.py:70 - exit codes here don't match the ones our other tools use"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf48",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/errors.py:12 - this error body doesn't follow the error format the API guide sets"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf49",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/billing/currency.py:8 - amounts are kept as floats here, unlike the rest of the money code"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf50",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/events/publish.py:24 - event names don't follow the naming the events catalogue uses"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf51",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 3,
+   "findings": [
+    "[P1] src/sync/conflicts.py:50 - the last writer should not win here; keep both versions"
+   ],
+   "disputed": [
+    "[P1] src/sync/conflicts.py:50 - the last writer should not win here; keep both versions"
+   ],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf52",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P2] tests/test_orders.py:1 - the test sets up data by hand instead of using the fixtures the other tests share"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf53",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 1,
+   "findings": [
+    "[P1] src/api/upload.py:11 - the allowed file types differ from the upload policy"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  },
+  {
+   "id": "v7lf54",
+   "point": "loop.fix",
+   "label": "context",
+   "round": 2,
+   "findings": [
+    "[P1] src/config/defaults.py:30 - the default timeout disagrees with what the operations runbook documents"
+   ],
+   "disputed": [],
+   "split": "held_out",
+   "review": "r7"
+  }
+ ]
+}
