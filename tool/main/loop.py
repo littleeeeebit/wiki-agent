@@ -1541,8 +1541,8 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
                               [f["head"] for f in serious if any(same(f["head"], a) for a in against)],
                               fixing(n, serious, record.get("said") or "The merge was refused.")
                               + (recovery.briefed(spec, researched) if researched else ""))
-    # The research page's own commit is not the fix: a fix is a commit after it.
-    unfixed = researched["active"]["page_commit"] if researched else head
+    # A research page's own commit is not the fix: a fix is a commit after them.
+    unfixed = {head, *(s["active"]["page_commit"] for s in researched)}
     if text is None:
         # Refused at the execution boundary three times over: the worktree went, or its
         # state kept moving under the loop. Stopped with the reason, never sent regardless.
@@ -1570,7 +1570,7 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
                                    for d in disposition):
                 problem = "발견별 처리 보고에 근거가 없다"
             if not problem and any(d["action"] == "fixed" for d in disposition):
-                if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == unfixed:
+                if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() in unfixed:
                     problem = "고쳤다고 보고했지만 검토한 HEAD 뒤의 수정 커밋이 없다"
             if not problem and researched:
                 problem = recovery.unrecorded(path, researched)
@@ -1587,12 +1587,10 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
                 "commit and push the repair, then return the required disposition for every finding. "
                 "Use not-reproduced or disagree with evidence when no code change is needed.\n\n" + text)
     finished = {**latest, "disposition": disposition, "items": completed}
-    spec = change(loop, rounds=[finished if r is latest else r for r in kept_rounds(spec)])
+    spec = change(loop, rounds=[finished if r is latest else r for r in kept_rounds(spec)],
+                  **({"recovery": recovery.finished(spec, researched, path)} if researched else {}))
     if spec is None:
         return False
-    if researched:
-        recovery.finished(loop, researched, path)
-        spec = specs.load(loop.repo, loop.sid) or spec
     before = rounds[-2].get("disposition") if len(rounds) > 1 else None
     stuck = disputed(before, disposition)
     if stuck:

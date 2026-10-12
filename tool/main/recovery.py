@@ -60,34 +60,35 @@ def _fixed(record: dict, fid: str) -> bool:
     return any(f.get("id") == fid and f.get("disposition") == "fixed" for f in serious(record))
 
 
-def trigger(rounds: list[dict], state: dict) -> dict | None:
-    """The issue the last counted round requires research for, or `None`.
-    `rounds` are the counted rounds; the last is the refusal about to be
-    corrected. Stale rounds never reach here, P2 is never serious, and a
-    finding without a validated id never matches another."""
+def trigger(rounds: list[dict], state: dict) -> list[dict]:
+    """Every issue the last counted round requires research for, in the
+    round's order. `rounds` are the counted rounds; the last is the refusal
+    about to be corrected. Stale rounds never reach here, P2 is never
+    serious, and a finding without a validated id never matches another."""
 
     last = rounds[-1]
     n = last["n"]
     ruled = {k for k, s in state.items() if s.get("phase") == "ruled"}
+    out: dict[str, dict] = {}
     for f in serious(last):
         fid = f.get("id")
-        if not fid or fid in ruled:
+        if not fid or fid in ruled or fid in out:
             continue
         if len(rounds) >= 2 and _fixed(rounds[-2], fid):
-            return {"issue": fid, "kind": "repeat", "rounds": [rounds[-2]["n"], n],
-                    "heads": [rounds[-2]["head"], last["head"]]}
-        if (len(rounds) >= 3 and _fixed(rounds[-3], fid)
+            out[fid] = {"issue": fid, "kind": "repeat", "rounds": [rounds[-2]["n"], n],
+                        "heads": [rounds[-2]["head"], last["head"]]}
+        elif (len(rounds) >= 3 and _fixed(rounds[-3], fid)
                 and not any(g.get("id") == fid for g in rounds[-2].get("items") or [])
                 and any(g.get("id") != fid for g in serious(rounds[-2]))):
-            return {"issue": fid, "kind": "oscillation", "rounds": [r["n"] for r in rounds[-3:]],
-                    "heads": [r["head"] for r in rounds[-3:]]}
+            out[fid] = {"issue": fid, "kind": "oscillation", "rounds": [r["n"] for r in rounds[-3:]],
+                        "heads": [r["head"] for r in rounds[-3:]]}
     if n >= BACKSTOP:
         for f in serious(last):
             key = f.get("id") or UNNAMED
             done = any(a.get("status") == "fixed" for a in (state.get(key) or {}).get("attempts", []))
-            if key not in ruled and not done:
-                return {"issue": key, "kind": "backstop", "rounds": [n], "heads": [last["head"]]}
-    return None
+            if key not in ruled and key not in out and not done:
+                out[key] = {"issue": key, "kind": "backstop", "rounds": [n], "heads": [last["head"]]}
+    return list(out.values())
 
 
 def observed(spec: dict, last: dict) -> dict | None:
@@ -124,57 +125,89 @@ def limited(limits) -> dict:
         value = limits.get(key)
         if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
             raise ValueError(f"리서치 한도 `{key}` 는 0 보다 큰 유한한 수여야 한다")
+        if kind is int and not float(value).is_integer():
+            raise ValueError(f"리서치 한도 `{key}` 는 양의 정수여야 한다")
         out[key] = kind(value)
     return out
 
 
 # -- The barrier ---------------------------------------------------------------------------
 
-def _save(repo: str, sid: str, key: str, s: dict) -> None:
+def _save(repo: str, sid: str, issues: dict) -> None:
     with specs._files:
         if (spec := specs.load(repo, sid)) is not None:
-            specs.update(repo, sid, recovery={**(spec.get("recovery") or {}), key: s})
+            specs.update(repo, sid, recovery={**(spec.get("recovery") or {}), **issues})
 
 
-def halt(lp, key: str, s: dict, phase: str, detail: str) -> None:
+def halt(lp, issues: dict, phase: str, detail: str) -> None:
+    """Stop the loop for `issues` (id -> state), each left in `phase`."""
+
     from . import loop  # `loop` imports this module lazily
 
-    s["phase"] = phase
-    _save(lp.repo, lp.sid, key, s)
-    loop.stop(lp, lp.repo, lp.sid, loop.Why.RECOVERY, f"{key} · {detail}")
+    for s in issues.values():
+        s["phase"] = phase
+    _save(lp.repo, lp.sid, issues)
+    loop.stop(lp, lp.repo, lp.sid, loop.Why.RECOVERY, f"{', '.join(issues)} · {detail}")
 
 
-def prepared(lp, spec: dict, path: Path) -> dict | None:
-    """Before the correction of the last counted round: `{}` when no research
-    is owed, the issue's state with its committed page when it is done, or
-    `None` after stopping with the reason. Never an ordinary fix past this
-    while research is owed."""
+UNKNOWN = "호스트가 사용량을 알려 주지 않았다 — 0 으로 치지 않는다. 지금 쓴 양을 하한으로 받아들이면 [계속] 한다"
+
+
+def spendable(lp, key: str, s: dict) -> bool:
+    """The issue's spend so far is known, or accepted as a lower bound, and
+    within its limits; otherwise stopped. Checked before a turn goes out and
+    again before the fix it would lead to."""
+
+    if s["spent"].get("unknown") and not s["spent"].get("accepted"):
+        halt(lp, {key: s}, "unknown", UNKNOWN)
+        return False
+    if s["spent"]["tokens"] > s["limits"]["tokens"]:
+        halt(lp, {key: s}, "budget", f"리서치가 토큰 한도를 넘었다 ({s['spent']['tokens']}/{s['limits']['tokens']}) — "
+                                     "페이지는 남았다. 한도를 늘려 [계속] 한다")
+        return False
+    return True
+
+
+def prepared(lp, spec: dict, path: Path) -> list[dict] | None:
+    """Before the correction of the last counted round: the states of every
+    issue it owes research for, each with its committed page — `[]` when it
+    owes none — or `None` after stopping with the reason. No ordinary fix
+    goes out past this while any of them is owed."""
 
     from . import loop
 
     rounds = loop.counted(spec)
     record = rounds[-1]
     state = {k: dict(v) for k, v in (spec.get("recovery") or {}).items()}
-    key = next((k for k, s in state.items() if (s.get("active") or {}).get("round") == record["n"]
-                and s["active"]["head"] == record["head"]), None)
-    if key is None:
-        t = trigger(rounds, state)
-        if t is None:
-            return {}
-        key = t["issue"]
-        s = state.get(key) or fresh(key)
-        s["trigger"] = {**t, "evidence": [f"[{f['grade']}] {f['head']}" for f in serious(record)
-                                          if (f.get("id") or UNNAMED) == key]}
-        if s["cycles_started"] >= CYCLES:
-            halt(lp, key, s, "exhausted",
-                 f"리서치 {CYCLES}번 뒤에도 같은 발견으로 거절됐다 ({t['kind']}, 라운드 {t['rounds']}). "
-                 "목표·제약을 고치거나, 페이지의 다른 방안을 고르거나, 이 발견을 미루는 것을 적어 [계속] 한다")
-            return None
+
+    def claimed(s: dict) -> bool:
+        a = s.get("active") or {}
+        return a.get("round") == record["n"] and a.get("head") == record["head"]
+
+    owed = {t["issue"]: t for t in trigger(rounds, state)}
+    keys = list(dict.fromkeys([*owed, *(k for k, s in state.items() if claimed(s))]))
+    new = [k for k in keys if not claimed(state.get(k) or {})]
+    for k in new:
+        s = state[k] = state.get(k) or fresh(k)
+        s["trigger"] = {**owed[k], "evidence": [f"[{f['grade']}] {f['head']}" for f in serious(record)
+                                                if (f.get("id") or UNNAMED) == k]}
+    spent = {k: state[k] for k in new if state[k]["cycles_started"] >= CYCLES}
+    if spent:
+        halt(lp, spent, "exhausted", f"리서치 {CYCLES}번 뒤에도 같은 발견으로 거절됐다 (라운드 {record['n']}). "
+             "목표·제약을 고치거나, 페이지의 다른 방안을 고르거나, 이 발견을 미루는 것을 적어 [계속] 한다")
+        return None
+    missing = {}
+    for k in new:
         try:
-            s["limits"] = limited(s["limits"])
+            state[k]["limits"] = limited(state[k]["limits"])
         except ValueError as exc:
-            halt(lp, key, s, "limits", f"{t['kind']} 발동 (라운드 {t['rounds']}) — {exc}")
-            return None
+            missing[k], why = state[k], exc
+    if missing:
+        kinds = ", ".join(f"{k} {state[k]['trigger']['kind']}" for k in missing)
+        halt(lp, missing, "limits", f"{kinds} 발동 (라운드 {record['n']}) — {why}")
+        return None
+    for k in new:
+        s = state[k]
         if s.get("active"):   # an earlier round's cycle whose fix never went out still counts
             s["attempts"] = [*s.get("attempts", []), {**s["active"], "status": "abandoned", "outcome": None}]
         # The claim: the cycle counts from here, across restarts.
@@ -182,22 +215,20 @@ def prepared(lp, spec: dict, path: Path) -> dict | None:
         s["active"] = {"cycle": s["cycles_started"], "round": record["n"], "head": record["head"],
                        "status": "researching", "inflight": False, "started": time.time()}
         s["phase"] = "researching"
-        _save(lp.repo, lp.sid, key, s)
-    else:
-        s = state[key]
-    a = s["active"]
-    if a["status"] == "researching":
-        if a.get("inflight"):
-            # A restart cut the turn after it was sent: its spend is not known, and never zero.
-            s["spent"]["unknown"] = True
-            a["inflight"] = False
-        if s["spent"].get("unknown") and not s["spent"].get("accepted"):
-            halt(lp, key, s, "unknown", "호스트가 사용량을 알려 주지 않았다 — 0 으로 치지 않는다. "
-                                        "지금 쓴 양을 하한으로 받아들이면 [계속] 한다")
+    if new:
+        _save(lp.repo, lp.sid, {k: state[k] for k in new})
+    for k in keys:
+        s = state[k]
+        if s["active"]["status"] == "researching":
+            if s["active"].get("inflight"):
+                # A restart cut the turn after it was sent: its spend is not known, and never zero.
+                s["spent"] = {**s["spent"], "unknown": True, "accepted": False}
+                s["active"]["inflight"] = False
+            if not spendable(lp, k, s) or not research(lp, spec, path, k, s):
+                return None
+        if not spendable(lp, k, s):
             return None
-        if not research(lp, spec, path, key, s):
-            return None
-    return s
+    return [state[k] for k in keys]
 
 
 # -- The research turn ---------------------------------------------------------------------
@@ -295,7 +326,7 @@ def rendered(spec: dict, key: str, s: dict, found: dict) -> str:
 
 def charge(lp, key: str, s: dict, **spent) -> None:
     s["spent"] = {**s["spent"], **spent}
-    _save(lp.repo, lp.sid, key, s)
+    _save(lp.repo, lp.sid, {key: s})
 
 
 def research(lp, spec: dict, path: Path, key: str, s: dict) -> bool:
@@ -315,7 +346,7 @@ def research(lp, spec: dict, path: Path, key: str, s: dict) -> bool:
         try:
             budget.call()
         except Exhausted as exc:
-            halt(lp, key, s, "budget", f"리서치 한도를 다 썼다 ({exc}) — 한도를 늘려 [계속] 한다")
+            halt(lp, {key: s}, "budget", f"리서치 한도를 다 썼다 ({exc}) — 한도를 늘려 [계속] 한다")
             return False
         except Cancelled:
             return False
@@ -339,6 +370,7 @@ def research(lp, spec: dict, path: Path, key: str, s: dict) -> bool:
         timer.start()
         try:
             final, failed, meta, _, web = planning.consume(path, run, text)
+            cut = run.halt.is_set()   # the turn's own stop (`/api/work/stop`), the deadline's too
         finally:
             timer.cancel()
             run.finish()
@@ -349,31 +381,34 @@ def research(lp, spec: dict, path: Path, key: str, s: dict) -> bool:
         if known:
             budget.charge({"input_tokens": tokens["in"], "output_tokens": tokens["out"]})
         s["active"]["inflight"] = False
+        unknown = s["spent"].get("unknown") or not known
         charge(lp, key, s, seconds=round(s["spent"]["seconds"] + time.monotonic() - started, 1),
-               tokens=s["spent"]["tokens"] + (tokens["in"] + tokens["out"] if known else 0),
-               unknown=s["spent"].get("unknown") or not known)
+               tokens=s["spent"]["tokens"] + (tokens["in"] + tokens["out"] if known else 0), unknown=unknown,
+               # A lower bound accepted before covers the turns before; this one's missing usage is new.
+               accepted=bool(s["spent"].get("accepted")) and known)
         if lp.halt.is_set():
             return False
         if expired.is_set():
-            halt(lp, key, s, "deadline", "리서치 시간 한도에 닿아 턴을 끊었다 — 한도를 늘려 [계속] 한다")
+            halt(lp, {key: s}, "deadline", "리서치 시간 한도에 닿아 턴을 끊었다 — 한도를 늘려 [계속] 한다")
+            return False
+        if cut:
+            halt(lp, {key: s}, "host", "리서치 턴을 멈췄다 — [계속] 하면 같은 사이클의 리서치를 다시 돈다")
             return False
         if failed:
-            halt(lp, key, s, "host", f"리서치 턴이 실패했다 — {failed}")
+            halt(lp, {key: s}, "host", f"리서치 턴이 실패했다 — {failed}")
             return False
         if not web:
-            halt(lp, key, s, "web_unavailable", "이 턴에 웹 검색·가져오기가 한 번도 돌지 않았다 — 웹 도구가 없는 호스트다")
+            halt(lp, {key: s}, "web_unavailable", "이 턴에 웹 검색·가져오기가 한 번도 돌지 않았다 — 웹 도구가 없는 호스트다")
             return False
         try:
             found = read(final, path)
             break
         except ValueError as exc:
             if attempt:
-                halt(lp, key, s, "format", f"리서치 답을 읽지 못했다 — {exc}")
+                halt(lp, {key: s}, "format", f"리서치 답을 읽지 못했다 — {exc}")
                 return False
-            if not known:
-                # No second turn on an allowance whose spend is not known.
-                halt(lp, key, s, "unknown", "호스트가 사용량을 알려 주지 않았다 — 0 으로 치지 않는다")
-                return False
+            if not spendable(lp, key, s):
+                return False   # no second turn on a spend not known, or already over
             text = (f"Your answer could not be read: {exc}\n\nAnswer again, ending with exactly the "
                     "`recovery-research` block.")
     rel = page_of(spec, key, s["active"]["cycle"])
@@ -387,7 +422,7 @@ def research(lp, spec: dict, path: Path, key: str, s: dict) -> bool:
         planning.committed(path, [rel], f"docs: research {key} before fixing it again (cycle {s['active']['cycle']})")
         commit = planning.head_of(path)
     except (OSError, RuntimeError) as exc:
-        halt(lp, key, s, "page", f"리서치 페이지를 쓰거나 커밋하지 못했다 — {exc}")
+        halt(lp, {key: s}, "page", f"리서치 페이지를 쓰거나 커밋하지 못했다 — {exc}")
         return False
     finally:
         release()
@@ -395,78 +430,89 @@ def research(lp, spec: dict, path: Path, key: str, s: dict) -> bool:
                        experiment=found["experiment"], sources=[x["url"] for x in found["sources"]],
                        page_sha256=planning.sha(content))
     s["phase"] = "fixing"
-    _save(lp.repo, lp.sid, key, s)
+    _save(lp.repo, lp.sid, {key: s})
     return True
 
 
 # -- Around the fix ------------------------------------------------------------------------
 
-def briefed(spec: dict, s: dict) -> str:
+def briefed(spec: dict, researched: list[dict]) -> str:
     """What the correction turn is told of the research it must build on."""
 
-    a, t = s["active"], s["trigger"]
-    where = ("Return the page as a `plan-file` block with its `## Result` section filled."
-             if spec.get("planning") else "Commit the page together with the fix.")
-    return (f"\n\nBefore this correction the server required research on `{s['issue_id']}` ({t['kind']}, rounds "
-            f"{t['rounds']}), cycle {a['cycle']} of {CYCLES}. The research page is `{a['page']}`, committed at "
-            f"`{a['page_commit'][:7]}`; read it first. Hypothesis: {a['hypothesis']}\nProposed experiment: "
-            f"{a['experiment']}\nRun the experiment, then fix. Replace the line under `## Result` in `{a['page']}` "
-            f"with what you observed, naming the tests and the commit. {where} The page stays a draft: do not "
-            "present it as verified.")
+    where = ("Return each page as a `plan-file` block with its `## Result` section filled."
+             if spec.get("planning") else "Commit the pages together with the fix.")
+    out = [f"\n\nBefore this correction the server required research on {len(researched)} recurring finding(s). "
+           "Read each page first, run its experiment, then fix. Replace the line under `## Result` in each page "
+           f"with what you observed, naming the tests and the commit. {where} The pages stay drafts: do not "
+           "present them as verified."]
+    for s in researched:
+        a, t = s["active"], s["trigger"]
+        out.append(f"\n- `{s['issue_id']}` ({t['kind']}, rounds {t['rounds']}), cycle {a['cycle']} of {CYCLES}: "
+                   f"`{a['page']}`, committed at `{a['page_commit'][:7]}`. Hypothesis: {a['hypothesis']} "
+                   f"Proposed experiment: {a['experiment']}")
+    return "".join(out)
 
 
-def unrecorded(path: Path, s: dict) -> str:
-    """Why the correction did not record the research result, or `""`."""
+def unrecorded(path: Path, researched: list[dict]) -> str:
+    """Why the correction did not record every research result, or `""`."""
 
-    page = s["active"]["page"]
-    shown = specs.sh(["git", "show", f"HEAD:{page}"], path)
-    if shown.returncode:
-        return f"리서치 페이지 `{page}` 가 수정 커밋에 없다"
-    body = shown.stdout.split("## Result", 1)[-1].split("\n## ", 1)[0]
-    if "## Result" not in shown.stdout or PENDING in body or not body.strip():
-        return f"리서치 페이지 `{page}` 의 Result 에 관찰한 결과를 적지 않았다"
+    for s in researched:
+        page = s["active"]["page"]
+        shown = specs.sh(["git", "show", f"HEAD:{page}"], path)
+        if shown.returncode:
+            return f"리서치 페이지 `{page}` 가 수정 커밋에 없다"
+        body = shown.stdout.split("## Result", 1)[-1].split("\n## ", 1)[0]
+        if "## Result" not in shown.stdout or PENDING in body or not body.strip():
+            return f"리서치 페이지 `{page}` 의 Result 에 관찰한 결과를 적지 않았다"
     return ""
 
 
-def finished(lp, s: dict, path: Path) -> None:
-    """The researched fix went out: the attempt is kept, its outcome comes
-    from the next round."""
+def finished(spec: dict, researched: list[dict], path: Path) -> dict:
+    """The recovery state once the researched fix went out: each attempt kept,
+    its outcome left to the next round. Saved with the round's disposition in
+    one write, so a restart never sees the fix done and the attempt open."""
 
-    a = {**s["active"], "status": "fixed", "fix_head": planning.head_of(path), "outcome": None,
-         "spent": dict(s["spent"])}
-    s["attempts"] = [*s.get("attempts", []), a]
-    s["active"] = None
-    s["phase"] = "fixed"
-    _save(lp.repo, lp.sid, s["issue_id"], s)
+    state = dict(spec.get("recovery") or {})
+    head = planning.head_of(path)
+    for r in researched:
+        s = state[r["issue_id"]]
+        a = {**s["active"], "status": "fixed", "fix_head": head, "outcome": None, "spent": dict(s["spent"])}
+        state[r["issue_id"]] = {**s, "attempts": [*s.get("attempts", []), a], "active": None, "phase": "fixed"}
+    return state
+
+
+STOPS = ("limits", "budget", "deadline", "unknown", "exhausted", "host", "web_unavailable", "format", "page")
 
 
 def resumed(spec: dict, limits: dict | None, note: str) -> dict:
-    """`[계속]` of a recovery stop: the person's limits, accepted spend, or
-    ruling. The changed spec fields, or `ValueError`."""
+    """`[계속]` of a recovery stop, for every issue it stopped: the person's
+    limits, accepted spend, or ruling. The changed spec fields, or
+    `ValueError`."""
 
-    state = {k: dict(v) for k, v in (spec.get("recovery") or {}).items()}
-    key = next((k for k, s in state.items() if s.get("phase") in
-                ("limits", "budget", "deadline", "unknown", "exhausted", "host", "web_unavailable", "format", "page")),
-               None)
-    if key is None:
+    state = {k: {**v, "spent": dict(v["spent"])} for k, v in (spec.get("recovery") or {}).items()}
+    stopped = [k for k, s in state.items() if s.get("phase") in STOPS]
+    if not stopped:
         raise ValueError("멈춘 재조사가 없다")
-    s = state[key]
     fields: dict = {}
-    if s["phase"] == "exhausted":
+    if exhausted := [k for k in stopped if state[k]["phase"] == "exhausted"]:
         if not note:
             raise ValueError("목표·제약 변경, 다른 방안, 미룸 중 정한 것을 적어야 잇는다")
-        s["phase"], s["ruling"] = "ruled", note
-        fields["rulings"] = [*(spec.get("rulings") or []), f"{key}: {note}"]
-    else:
+        for k in exhausted:
+            state[k].update(phase="ruled", ruling=note)
+        fields["rulings"] = [*(spec.get("rulings") or []), *(f"{k}: {note}" for k in exhausted)]
+    for k in stopped:
+        s = state[k]
+        if s["phase"] == "ruled":
+            continue
         if limits is not None or s["phase"] in ("limits", "budget", "deadline"):
             given = limited(limits)
-            if any(given[k] <= s["spent"][k] for k in given):
-                raise ValueError("새 한도는 이미 쓴 양보다 커야 한다")
+            if any(given[x] <= s["spent"][x] for x in given):
+                raise ValueError(f"`{k}` 의 새 한도는 이미 쓴 양보다 커야 한다")
             s["limits"] = given
         if s["phase"] == "unknown":
             s["spent"]["accepted"] = True    # the spend so far stands as a lower bound
-        s["phase"] = "researching" if s.get("active") else "required"
-    state[key] = s
+        a = s.get("active")
+        s["phase"] = ("fixing" if a["status"] == "researched" else "researching") if a else "required"
     return {**fields, "recovery": state}
 
 

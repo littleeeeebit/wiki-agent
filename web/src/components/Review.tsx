@@ -500,7 +500,10 @@ const PHASE: Record<string, string> = {
 type LimitsDraft = { seconds: string; calls: string; tokens: string }
 
 const parsedLimits = (d: LimitsDraft): api.ResearchLimits => ({ seconds: Number(d.seconds), calls: Number(d.calls), tokens: Number(d.tokens) })
-const limitsOk = (d: LimitsDraft) => Object.values(parsedLimits(d)).every((v) => Number.isFinite(v) && v > 0)
+const limitsOk = (d: LimitsDraft) => {
+  const l = parsedLimits(d)
+  return Number.isFinite(l.seconds) && l.seconds > 0 && [l.calls, l.tokens].every((v) => Number.isInteger(v) && v > 0)
+}
 
 function LimitsInput({ value, onChange, spent }: { value: LimitsDraft; onChange: (v: LimitsDraft) => void; spent: api.Recovery['spent'] }) {
   const fields: [keyof LimitsDraft, string, number][] = [['seconds', '초', spent.seconds], ['calls', '호출', spent.calls], ['tokens', '토큰', spent.tokens]]

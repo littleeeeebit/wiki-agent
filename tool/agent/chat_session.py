@@ -54,6 +54,9 @@ READ_TOOLS = "Bash,Read,Glob,Grep"
 # `AskUserQuestion` always does: its approval is the person's answer.
 WRITE_TOOLS = "Bash,Read,Glob,Grep,Edit,Write,AskUserQuestion"
 ASK_FREE = "Read,Glob,Grep"
+# A Codex session given exactly these reads, or these and the web, is `source_only`.
+SOURCE_TOOLS = {"Read", "Glob", "Grep"}
+WEB_TOOLS = {"WebSearch", "WebFetch"}
 # The two hosts' question tools. Their approval carries the answers.
 QUESTIONS = {"AskUserQuestion", "requestUserInput"}
 # Claude's tools that name the file they write.
@@ -296,8 +299,14 @@ class ChatSession:
 
     @property
     def source_only(self) -> bool:
+        """Sources through the server's read tools only: no shell, connectors or
+        edits. Research (`searching`) keeps Codex's own web search on as well."""
         return (self.app and not self.write and self.verification is None
-                and set(self.tools.split(",")) == {"Read", "Glob", "Grep"})
+                and set(self.tools.split(",")) in (SOURCE_TOOLS, SOURCE_TOOLS | WEB_TOOLS))
+
+    @property
+    def searching(self) -> bool:
+        return self.source_only and WEB_TOOLS <= set(self.tools.split(","))
 
     # -- Lifetime -----------------------------------------------------------
 
@@ -355,7 +364,8 @@ class ChatSession:
                     cmd += ["--disable", feature]
                 if self.source_only:
                     cmd += ["--disable", "shell_tool", "--disable", "unified_exec", "--disable", "browser_use",
-                            "-c", 'web_search="disabled"', "-c", "tools.view_image=false"]
+                            "-c", f'web_search="{"live" if self.searching else "disabled"}"',
+                            "-c", "tools.view_image=false"]
                 else:
                     cmd += ["--enable", "shell_tool", "--enable", "unified_exec"]
                     if os.name == "nt":
