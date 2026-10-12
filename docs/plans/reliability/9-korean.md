@@ -153,6 +153,13 @@ An intent belongs to one group only, and a pair reuses the intent's reviewed
 English wording, evidence groups, parts and labels unchanged. A new English
 intent goes through the same label review as the Korean side.
 
+A live pair's intent has at least one evidence group and at least one part.
+Recall and coverage then apply to every pair, and both gates read all 84.
+That excludes v8's `direct` intents with no evidence (direct-01, 03, 05 and
+43–48) and its `none` intents (none-02, 06, 07, 10–12 and 43–48), which also
+have no parts. They have no file to twin either. A missing value in an
+eligible pair is therefore always a failure or a gap, never a normal N/A.
+
 Allocation is fixed, so an intent with several traits lands in one place.
 Groups fill in this order: conflicting evidence, pasted documents, analysis
 versus facts, names and identifiers, multi-part requests, negation and
@@ -283,19 +290,29 @@ size follows from it rather than the other way round.
 
 A pair is divergent when any arm differs from A at repetition 0 in recall,
 coverage, answer status, verification status or transitions taken, or when
-its question's meaning labels or one of its twins' fact units fail. A pair is at the
-boundary when A itself has partial recall or partial coverage. Divergent and
+its question's meaning labels or one of its twins' fact units fail. A pair
+is at the boundary when A itself has partial recall or partial coverage. Divergent and
 boundary pairs are the candidates for two more runs.
 
-Attribution follows steps 1–5 above, in order, with traces and original spans
-kept:
-1. A fails: controller or baseline issue.
-2. A meaning label or fact unit fails: translation defect. This is decided
-   from the labels, regardless of repetitions.
-3. Meaning holds but the evidence handed over differs: evidence or index.
-4. Meaning holds and the difference appears in one or two of three runs:
-   stochastic or threshold variation, not a translator defect.
-5. Anything else, a missing repetition, or a pair not repeated: unresolved.
+Attribution uses steps 1–5 above, with traces and original spans kept. The
+checks run in this order, and the first that applies decides:
+1. A fails at repetition 0: controller or baseline issue (step 1).
+2. A meaning label or fact unit fails: translation defect (step 2). This is
+   decided from the labels, regardless of repetitions.
+3. The pair was not repeated, or a repetition of A or of the arm is missing:
+   unresolved (step 5).
+4. The difference from A appears in one or two of the three runs:
+   stochastic or threshold variation, not a translator defect (step 4).
+5. The difference appears in all three runs and the evidence handed over
+   differs in all three: evidence or index (step 3). For C and D this is the
+   KO index. B shares A's index, so for B the report names it an effect of
+   the normalized question's wording on retrieval.
+6. Anything else, such as a difference in all three runs with the same
+   evidence: unresolved (step 5).
+
+A single differing set of evidence labels is an observation, not a cause.
+Only a difference that persists over the repetitions is attributed to the
+index or the wording.
 
 A's two extra runs are shared by all arms of the pair. The shared
 translation cache fixes each normalization, so repetitions measure the
@@ -304,8 +321,8 @@ controller's and host's variation, not the translator's.
 Repetition is not part of the base run's approval. After the base run, the
 report lists the divergent and boundary pairs with the cost of repeating them,
 and repetition runs only after a second approval. A pair not repeated is
-reported as unresolved (not repeated), unless step 1 or 2 already classified
-it.
+reported as unresolved (not repeated), unless check 1 or 2 already classified
+it. Unresolved is not evidence of equivalence or of a sound translation.
 
 ### Translation failure
 
