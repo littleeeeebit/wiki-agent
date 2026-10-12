@@ -32,12 +32,16 @@ SECONDS = 120.0
 
 
 def present(literal: str, text: str) -> bool:
-    """Whether `literal` is in `text` as a whole token: `30` is not in `300`,
-    `3.05` or `1,300`, and `PR` is not in `PRs`."""
+    """Whether `literal` is in `text` as a whole token, never part of a longer
+    number, name, path or version: `30` is not in `300`, `3.05`, `1,300` or
+    `09:30`; `PR` is not in `PRs`; `tool/x.py` is not in `tool/x.py.bak` or
+    `other/tool/x.py`; `v1.13.0` is not in `v1.13.0-beta`. Punctuation that
+    ends a sentence or a clause after it (`tool/x.py.`, `30,`) does not join it."""
 
     word = re.compile(r"\w")
-    before = r"(?<!\w)(?<!\d[.,])" if word.match(literal[:1]) else ""
-    after = r"(?!\w)(?![.,]\d)" if word.match(literal[-1:]) else ""
+    # What continues a token: a word character, or a path, version or time joint followed by one.
+    before = r"(?<![\w/\\\-])(?<![\w][.,:@])" if word.match(literal[:1]) else ""
+    after = r"(?![\w/\\\-])(?![.,:@][\w])" if word.match(literal[-1:]) else ""
     return re.search(before + re.escape(literal) + after, text) is not None
 
 

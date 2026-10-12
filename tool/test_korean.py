@@ -38,8 +38,10 @@ ENGLISH = {"네트워크 포트": "Network ports", "Yousign 전자서명": "E-si
            "사용자는 오류 예산을 백분율이 아니라 그달의 남은 분으로 보여 주기를 원한다.":
                "The user wants error budgets shown as remaining minutes for the month, not as percentages.",
            "사용자는 보고서에서 오류 예산을 어떻게 보여 주길 원했나요?":
-               "How did the user want error budgets shown in reports?"}
-BUDGETS_KO = "# 오류 예산\n\n사용자는 오류 예산을 백분율이 아니라 그달의 남은 분으로 보여 주기를 원한다."
+               "How did the user want error budgets shown in reports?",
+           "답변 단계에서 읽은 문장.": "A sentence the answer read."}
+ANSWER_KO = "답변 단계에서 읽은 문장."
+BUDGETS_KO ="# 오류 예산\n\n사용자는 오류 예산을 백분율이 아니라 그달의 남은 분으로 보여 주기를 원한다."
 BUDGETS = "repo/.wiki/memory/2026-10-02-error-budgets.md"
 
 
@@ -166,6 +168,25 @@ def test_a_literal_is_a_whole_token():
     assert korean.lost("It costs 1,300 EUR or 3.05 units.", [], ["30"]) and korean.lost("PRs.", [], ["PR"])
     assert korean.lost("Wait 30 seconds, not 300.", [], ["30"]) == []
     assert korean.lost("The rate was 4.1%.", [], ["4.1%"]) == [] and korean.lost("See [a](b.md).", [], ["[a](b.md)"]) == []
+    # A path, a version or a time is whole too; the punctuation that ends a sentence does not join it.
+    for literal, longer in (("tool/x.py", "tool/x.py.bak"), ("tool/x.py", "other/tool/x.py"),
+                            ("v1.13.0", "v1.13.0-beta"), ("30", "09:30"), ("x.py", "x.py@2")):
+        assert not meaning.present(literal, f"It is {longer}."), (literal, longer)
+    assert all(meaning.present(x, f"Read {x}. Then {x}, and ({x}).") for x in ("tool/x.py", "v1.13.0", "30"))
+    swapped = "The first file is tool/x.py.bak. The second file is tool/x.py."
+    assert korean.lost(swapped, [["first file"]], ["tool/x.py"]) == ["lost literal 'tool/x.py'"]
+
+
+def test_a_block_the_index_cut_reads_on_and_separate_blocks_do_not():
+    english = [{"text": "According to all these rules, the system"}, {"text": "never runs on Windows."}]
+    require = [["system"], ["never runs"], ["windows"]]
+    cut = [{"line": 3, "end_line": 3, "completeness": "partial"}, {"line": 4, "end_line": 4, "completeness": "partial"}]
+    assert korean.lost(korean.joined(cut, english), require, []) == []
+    # Two blocks, or a partial that does not continue on the next line, stay apart.
+    apart = [{"line": 3, "end_line": 3, "completeness": "whole"}, {"line": 5, "end_line": 5, "completeness": "whole"}]
+    assert korean.lost(korean.joined(apart, english), require, [])
+    gap = [cut[0], {**cut[1], "line": 6, "end_line": 6}]
+    assert korean.lost(korean.joined(gap, english), require, [])
 
 
 def test_meaning_check_reads_literals_exactly():
@@ -356,9 +377,19 @@ def test_a_repetition_must_repeat_its_base_measurement():
         ["corpora", "k", "pairs"]
 
 
-def test_the_question_outcome_is_the_measured_prepare_not_the_priming_one():
-    seen = [("q", {"status": "translated", "cached": False}), ("q", {"status": "translated", "cached": True})]
-    assert korean.translation("q", seen)["question"]["cached"] is True
+def test_the_question_outcome_is_the_measured_prepare_and_every_read_is_kept():
+    seen = [("q", {"status": "translated", "cached": False}), ("q", {"status": "translated", "cached": True}),
+            ("p", {"status": "translated", "text": "One."}), ("q", {"status": "translated", "cached": False}),
+            ("p", {"status": "translated", "text": "Two."})]
+    got = korean.translation("q", seen, asked=3)
+    assert got["question"]["cached"] is True
+    # The answer read `p` twice, as two Englishes: both are listed, and the one not checked is drift.
+    read = got["evidence"]["read"]
+    assert read == sorted([(korean.digest("p"), korean.digest("One.")), (korean.digest("p"), korean.digest("Two."))])
+    data, pairs = world(1)
+    p = korean.Pairs([], data, pairs, [], 8, {korean.digest("p"): korean.digest("One.")})
+    checked_only = [r for r in read if r[1] == korean.digest("One.")]
+    assert p.drifted({"translation": got}) and not p.drifted({"translation": {"evidence": {"read": checked_only}}})
 
 
 # -- translation failure: deterministic fixtures, no network ---------------------------------------
@@ -487,9 +518,13 @@ def ran(tmp_path, monkeypatch, small):
         return {"parts": {p["id"]: "answered" for p in unit["intent"]["parts"]}, "claims": [{"supported": True}],
                 "host_usd": 0.01}
 
-    monkeypatch.setattr(compare, "answered", lambda unit, d, repo, jev, cfg, model: {
-        "status": "verified", "text": "It is 7443.", "verified": True, "fabricated": [], "host_usd": 0.02,
-        "host_turns": 1, "elapsed_ms": 3})
+    def answered(unit, d, repo, jev, cfg, model):
+        # The answer normalizes once more, as grounding's searches do: the row must record what it read.
+        knowledge.english([ANSWER_KO], 5.0)
+        return {"status": "verified", "text": "It is 7443.", "verified": True, "fabricated": [], "host_usd": 0.02,
+                "host_turns": 1, "elapsed_ms": 3}
+
+    monkeypatch.setattr(compare, "answered", answered)
     monkeypatch.setattr(compare, "graded", graded)
     folder = tmp_path / "run"
     args = [str(folder), "--experiment", "pairs", "--pairs", str(path), "--method", "bm25"]
@@ -511,6 +546,7 @@ def test_a_pairs_run_records_both_corpora_the_fact_pass_and_reports_its_gates(ra
     assert asked == {"A": "original_english", "B": "translated", "C": "original_english", "D": "translated"}
     d = next(r for r in rows if r["key"] == "fact-01:D:0")
     assert d["translation"]["question"]["cached"] and d["translation"]["question"]["model"] == translate.MODEL
+    assert korean.digest(ANSWER_KO) in {t for t, _e in d["translation"]["evidence"]["read"]}
     assert next(r for r in rows if r["key"] == "conflict-43:D:0")["grade_turns"] == 2
     facts = json.loads((folder / "facts.json").read_text(encoding="utf-8"))["facts"]
     assert [(f["id"], f["status"]) for f in facts] == [("sign-1", "held"), ("budgets-1", "held"), ("ports-1", "held")]
@@ -562,7 +598,7 @@ def test_a_resumed_batch_reads_the_private_english_that_was_checked(ran, monkeyp
     again = next(r for r in compare.rows(folder, "pairs") if r["key"] == "memory-43:D:0")
     checked = json.loads((folder / "facts.json").read_text(encoding="utf-8"))["english"]
     read = again["translation"]["evidence"]["read"]
-    assert set(read) & set(checked) and report.build([folder])["pairs"]["drifted"] == []
+    assert {t for t, _e in read} & set(checked) and report.build([folder])["pairs"]["drifted"] == []
     # Without the run's private English the batch normalizes afresh, and the report sees the drift.
     (folder / "private.json").unlink()
     (folder / "pairs.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in before

@@ -411,8 +411,15 @@ Order step 2, with fake hosts only:
   - `facts` is the fact-unit pass; `lost` is the one-sentence rule.
     - A sentence ends at its punctuation, a blank line, a heading, a table
       row or a list item; a soft line break inside a paragraph is not an end.
-    - A literal counts only as a whole token: `30` is not found in `300`.
-      `meaning.check` uses the same rule.
+    - A literal counts only as a whole token, never part of a longer
+      number, name, path or version. `30` is not found in `300` or
+      `09:30`, `tool/x.py` not in `tool/x.py.bak`, and `v1.13.0` not in
+      `v1.13.0-beta`. Punctuation that ends a sentence after it does not
+      join it. `meaning.check` uses the same rule.
+    - A section's chunks are joined in line order. The index cuts a block
+      too long for one chunk at its lines (`partial`); the next part of that
+      block, on the very next line, reads on as the same paragraph. Any
+      other two chunks are separate paragraphs.
   - A failed retrieval recalls 0, whatever evidence its fallback kept.
   - `Pairs` reads a run for the gates, divergence, the repetition plan and
     attribution, in the order above.
@@ -435,8 +442,9 @@ Order step 2, with fake hosts only:
   - A row records its corpus and its question's translation outcome
     (status, cached, model, prompt version). The outcome is the measured
     `prepare`'s, not the warm priming call's. The row counts its evidence
-    texts as cached, fresh or failed, and records the digest of each English
-    text it read.
+    texts as cached, fresh or failed. It records every English text read,
+    from priming through the answer and its grade, as text and English
+    digests. A text read twice as two Englishes is listed twice.
   - A row that read other English than the fact pass checked is listed as
     drifted. Any drifted first repetition makes Literals inconclusive. A
     drifted repetition makes its arm's cause

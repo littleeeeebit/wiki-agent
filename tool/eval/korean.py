@@ -351,21 +351,24 @@ def normalizing():
         yield seen
 
 
-def translation(text: str, seen: list[tuple[str, dict]]) -> dict:
+def translation(text: str, seen: list[tuple[str, dict]], asked: int | None = None) -> dict:
     """How a pairs row's question and evidence came to English: the question's
     outcome — status, cached or fresh, the translator's model and prompt
     version — and how many evidence texts were cached, fresh or failed, with
-    the digest of each English text read (`read`, by the text's digest).
-    The question is the measured `prepare`'s, the last: a warm run primes first."""
+    every English text read, from priming to the grade, as `[text digest,
+    English digest]` (`read`; a text read twice as two Englishes is listed
+    twice). The question is the measured `prepare`'s — the last of the first
+    `asked` normalizations: a warm run primes first, and the answer may
+    normalize more after it."""
 
-    asked = next((o for t, o in reversed(seen) if t == text), None)
+    question = next((o for t, o in reversed(seen[:asked]) if t == text), None)
     rest = [(t, o) for t, o in seen if t != text and o["status"] != "original_english"]
-    return {"question": {k: asked.get(k) for k in ("status", "reason", "cached", "model", "prompt_version", "version")}
-            if asked else None,
+    return {"question": {k: question.get(k) for k in ("status", "reason", "cached", "model", "prompt_version",
+                                                      "version")} if question else None,
             "evidence": {"cached": sum(bool(o.get("cached")) for _t, o in rest),
                          "fresh": sum(o["status"] == "translated" and not o.get("cached") for _t, o in rest),
                          "failed": sum(o["status"] not in evidence.USABLE for _t, o in rest),
-                         "read": {digest(t): digest(o.get("text")) for t, o in rest}}}
+                         "read": sorted({(digest(t), digest(o.get("text"))) for t, o in rest})}}
 
 
 # -- what is checked without a host -----------------------------------------------------
@@ -390,6 +393,21 @@ def lost(text: str, require: list[list[str]], literals: list[str]) -> list[str]:
     return best
 
 
+def joined(chunks: list[dict], outcomes: list[dict]) -> str:
+    """A section's English from its chunks in line order. Chunks hold whole
+    blocks, apart from a block too long for one, which the index cuts at its
+    lines (`partial`): the next part of that block, starting on the very next
+    line, goes on as the same paragraph; anything else starts a new one."""
+
+    out, last = "", None
+    for c, o in zip(chunks, outcomes):
+        goes_on = last is not None and last.get("completeness") == c.get("completeness") == "partial" \
+            and c.get("line") is not None and c.get("line") == (last.get("end_line") or -2) + 1
+        out += ("\n" if goes_on else "\n\n" if last is not None else "") + o["text"]
+        last = c
+    return out
+
+
 def facts(pairs: dict, chunks: list[dict], label, english) -> list[dict]:
     """Every twin's fact units against the English its section normalizes to,
     whether or not retrieval ever reaches it. `chunks` are the KO index's,
@@ -402,14 +420,14 @@ def facts(pairs: dict, chunks: list[dict], label, english) -> list[dict]:
     out = []
     for page, twin in sorted(pairs["twins"].items()):
         for f in twin["facts"]:
-            got = by_section.get(f"{page}#{twin['headings'][f['section']]}", [])
+            got = sorted(by_section.get(f"{page}#{twin['headings'][f['section']]}", []),
+                         key=lambda c: c.get("line") or 0)
             outcomes = english(got) if got else []
             failed = [o.get("reason") or o["status"] for o in outcomes if o["status"] not in evidence.USABLE]
             if not got or failed:
                 status, missing = "not_normalized", failed or ["no chunk of this section"]
             else:
-                # A chunk ends where its paragraph does: joined, they never run into one sentence.
-                missing = lost("\n\n".join(o["text"] for o in outcomes), f["require"], f["literals"])
+                missing = lost(joined(got, outcomes), f["require"], f["literals"])
                 status = "lost" if missing else "held"
             out.append({"page": page, "id": f["id"], "section": f["section"], "sentence": f["sentence"],
                         "status": status, "missing": missing})
@@ -482,8 +500,8 @@ class Pairs:
     def drifted(self, row: dict | None) -> bool:
         """Whether a row read English, for a text the fact pass checked, other than what it checked."""
 
-        read = (((row or {}).get("translation") or {}).get("evidence") or {}).get("read") or {}
-        return any(t in self.checked and self.checked[t] != e for t, e in read.items())
+        read = (((row or {}).get("translation") or {}).get("evidence") or {}).get("read") or []
+        return any(t in self.checked and self.checked[t] != e for t, e in read)
 
     def missing(self) -> list[str]:
         return sorted(f"{i}:{a}" for (i, a), s in self.score.items() if s.get("missing"))

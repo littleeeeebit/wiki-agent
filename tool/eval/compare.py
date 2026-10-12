@@ -566,12 +566,10 @@ def measure(folder: Path, opts: dict, data: dict, corpus: dict, ceiling: Ceiling
                             knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache_, k=opts["k"])
                         started = time.monotonic()
                         d = knowledge.prepare(unit["text"], c.repo, cfg=cfg_, cache=cache_, k=opts["k"])
-                        elapsed = round((time.monotonic() - started) * 1000)
+                        elapsed, asked = round((time.monotonic() - started) * 1000), len(seen)
                     row = {"key": unit["key"], "intent": unit["intent"]["id"], "language": unit["language"],
                            "arm": unit["arm"], "rep": unit["rep"], "cache": opts["cache"], "at": now(),
                            "elapsed_ms": elapsed, **dossier_row(d, names, label, allowed)}
-                    if "corpus" in unit:
-                        row |= {"corpus": unit["corpus"], "translation": korean.translation(unit["text"], seen)}
                     if fault:
                         row["fault"] = {"kind": fault["kind"], "phase": fault["phase"], "raised": raised}
                     grade_usd = 0.0
@@ -592,6 +590,8 @@ def measure(folder: Path, opts: dict, data: dict, corpus: dict, ceiling: Ceiling
                                 row["grade_turns"] = turn + 1
                                 if "error" not in row["grade"]:
                                     break
+                    if "corpus" in unit:
+                        row |= {"corpus": unit["corpus"], "translation": korean.translation(unit["text"], seen, asked)}
                 cost = ledger_cost(kept)
                 cost["host_usd"] += (row.get("answer") or {}).get("host_usd", 0.0) + grade_usd
                 cost["host_turns"] += (row.get("answer") or {}).get("host_turns", 0) + row.get("grade_turns", 0)
