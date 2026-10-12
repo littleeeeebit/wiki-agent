@@ -1711,6 +1711,48 @@ approval of their cost.
 
 The owner chose W2, C1 and T on 2026-10-12.
 
+### Implementation, calibrated on revealed cases (v8)
+
+W2 changes the dispatch clause of `decisions.PROMPTS["work.start"]` to
+"even when its grounds name no files, pages or rules: finding where in
+the code to make the change is part of the work, not something left to
+decide". The evidence clause is unchanged.
+
+Every revealed work-start fixture, 138 in all, was replayed once through
+`decisions.propose` with the new wording (`raw/eval/jev/action-probe-v8`).
+The figures before it are read from runs of the same prompt:
+`action-probe-v7/wf2` for v1, v2 and v5, and `reliability-v7-actions` for
+v7.
+
+| Prompt | v1, v2 and v5 (84) | v7 held-out (54) | Fell to the host |
+| --- | --- | --- | --- |
+| Before | 84 right | 51 right | 17 and 11 |
+| W2 | 84 right | 54 right | 10 and 13 |
+
+- v7ws03, v7ws12 and v7ws17 now fall to the host, at 0.43, 0.33 and 0.28,
+  and the host chose dispatch. v7ws09 and v7ws15 do the same at 0.41 and
+  0.40. W2 makes Jev unsure on a specification that names no files; it
+  does not make Jev choose dispatch itself. The host carries these cases.
+- The counterexamples hold. v7's five no-file evidence fixtures stay with
+  Jev at 0.80–0.95, and v5ws05 at 0.74. v5ws31 fell to the host at 0.59
+  and was right.
+- Each fixture ran once, on revealed cases. A fresh set must test it.
+
+C1: `compare.breaches` counts a deadline breach only past
+`DEADLINE_GRACE_MS`, 50 ms. `compare.overshoot_ms` gives the time past
+the deadline, less the host's. The report's operating-ceiling detail
+gives the largest over all rows. A row keeps the breaches counted when it
+ran, so v7's report rebuilt at this commit still fails, with a largest
+overshoot of 4 ms. Calls, candidates and tokens keep no grace.
+
+T: each row keeps `transition_at_ms`, when each transition happened since
+the run began, and `decision_ms`, each decision request's own time with
+its kind. The host's share is still the budget's `aside_ms`.
+
+Tests: the grace's edge (15,050 ms passes, 15,051 ms breaches), host time
+set aside first, the other limits without grace, and the transition times
+of a recorded run.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -1721,7 +1763,7 @@ The owner chose W2, C1 and T on 2026-10-12.
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
 | 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); 139 fresh held-out intents and 108 action fixtures reviewed (r7) and frozen on 2026-10-12 (Draft set (v7)); run at 511313e (Results, v7): material classification, review fix and both answer gates pass; work start inconclusive at 51 of 54; operating ceiling fails on one row 4 ms past its deadline |
-| 7 | v8 | Work start and the operating ceiling | In progress — designed (v8 design); owner chose W2, C1 and T |
+| 7 | v8 | Work start and the operating ceiling | In progress — designed (v8 design); owner chose W2, C1 and T; implemented, W2 calibrated on 138 revealed fixtures (Implementation (v8)); fresh fixtures next |
 
 ## Sources
 

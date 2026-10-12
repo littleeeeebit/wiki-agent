@@ -80,8 +80,10 @@ PROMPTS = {
                   "first? Choose to ask the person only when a missing input the state lists is needed to know "
                   "when the work is done. Choose to send the turn when the specification already states the "
                   "change to make, the behavior, values or decisions it requires, so that no repository fact, "
-                  "rule or past decision is still needed to decide it, even when its grounds name no pages or "
-                  "rules. Choose to gather evidence when the work still leaves something to decide that depends "
+                  "rule or past decision is still needed to decide it, even when its grounds name no files, "
+                  "pages or rules: finding where in the code to make the change is part of the work, not "
+                  "something left to decide. Choose to gather evidence when the work still leaves something to "
+                  "decide that depends "
                   "on repository facts, rules or past decisions the specification's grounds do not already name.",
     "specs.check": "The repository's required gate passed on this change. Which registered check, by its "
                    "description, examines the files this change touched? Choose none when no registered check "

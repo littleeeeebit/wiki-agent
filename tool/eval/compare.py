@@ -80,6 +80,8 @@ ARMS = {"A": {"jev": False, "graph": False}, "B": {"jev": True, "graph": False},
 ACTIONS = HUB / "eval" / "jev" / "actions.json"
 # Stage 1's ceiling for one automated live evaluation. Jev's price is unknown, so its tokens are the ceiling.
 CEILING = {"minutes": 60.0, "usd": 10.0, "jev_tokens": 2_000_000}
+# Time past its deadline a run the deadline stopped may take to end: one of `knowledge.bounded`'s polls.
+DEADLINE_GRACE_MS = 50.0
 # For `--estimate`, from the calibration split's runs (`raw/eval/jev/compare-calibration`, `fixed-calibration`):
 # 500 Jev requests for 240 live rows, 991,902 tokens; 54 fixed-candidate requests, 204,705 tokens. Host answer
 # turns from stage 7's samples (`raw/eval/jev/answers-smoke-*`): USD 0.018-0.039. Actions: stage 6's rate, unmeasured.
@@ -347,15 +349,25 @@ def host_spent(records) -> dict:
     return {"host_usd": sum(known), "host_turns": len(ran), "host_unknown": len(ran) - len(known)}
 
 
+def overshoot_ms(budget: dict) -> float:
+    """How far the run's own time went past its deadline, in ms; 0 inside it."""
+
+    # The host fallback's own time is not the run's (`Budget.aside`); latency still counts all of it.
+    return max(0.0, budget["elapsed_ms"] - budget.get("aside_ms", 0) - budget["limits"]["seconds"] * 1000)
+
+
 def breaches(budget: dict) -> list[str]:
-    """Whatever a run spent beyond the allowance it was given."""
+    """Whatever a run spent beyond the allowance it was given. A run its own
+    deadline stopped ends a moment past it; up to `DEADLINE_GRACE_MS` of that
+    is the deadline enforced, an allowance the owner chose (v8, C1), not a
+    measured bound. It counts the caller's time only: work `bounded` abandoned
+    runs on unseen."""
 
     used, limits = budget["used"], budget["limits"]
     out = [n for n in ("calls", "candidates") if used[n] > limits[n]]
     if limits.get("tokens") is not None and used["tokens"] > limits["tokens"]:
         out.append("tokens")
-    # The host fallback's own time is not the run's (`Budget.aside`); latency still counts all of it.
-    if budget["elapsed_ms"] - budget.get("aside_ms", 0) > limits["seconds"] * 1000:
+    if overshoot_ms(budget) > DEADLINE_GRACE_MS:
         out.append("deadline")
     return out
 
@@ -386,6 +398,10 @@ def dossier_row(d: dict, names: dict, label, allowed: set[str]) -> dict:
             "leaks": [e["chunk_id"] for e in d["evidence"] if e.get("repo_id") not in allowed],
             "breaches": breaches(d["budget"]), "budget": d["budget"],
             "transitions": [t["to"] for t in d.get("transitions", [])],
+            # Where the time went (v8, T): each transition's time since the run began, and each
+            # decision request's own; the host's share is the budget's `aside_ms`.
+            "transition_at_ms": [t.get("elapsed_ms") for t in d.get("transitions", [])],
+            "decision_ms": [{"kind": x.get("kind"), "ms": x.get("elapsed_ms")} for x in d.get("decisions", [])],
             "fallback": fallbacks(kinds_of(d.get("decisions", [])))}
 
 

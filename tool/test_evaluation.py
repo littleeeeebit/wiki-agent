@@ -98,6 +98,10 @@ def test_the_free_arms_record_resume_and_refuse_other_options(ran):
     rows = compare.rows(folder, "arms")
     assert len(rows) == 6 and {r["arm"] for r in rows} == {"A", "C"}
     assert all(r["leaks"] == [] and r["breaches"] == [] and r["cost"]["jev_requests"] == 0 for r in rows)
+    # Each transition keeps when it happened (v8, T), in order and inside the row's time.
+    assert all(len(r["transition_at_ms"]) == len(r["transitions"]) > 0 and r["transition_at_ms"] ==
+               sorted(r["transition_at_ms"]) and r["transition_at_ms"][-1] <= r["elapsed_ms"] + 1 for r in rows)
+    assert all(r["decision_ms"] == [] for r in rows), "Jev is off in A and C"
     bridge = next(r for r in rows if r["key"] == "bridge-01:en:C:0")
     # The walk reached the rota page; with nothing graded it waits past k and is not handed over.
     assert "repo/docs/teams/atlas.md#Rota" in bridge["beyond_k"]
@@ -568,6 +572,22 @@ def test_the_host_s_own_time_is_not_a_deadline_breach():
         ["deadline"]
     assert compare.breaches({"limits": limits, "used": used, "elapsed_ms": 16_000}) == ["deadline"], \
         "a record from before the fallback keeps its reading"
+
+
+def test_a_run_its_deadline_stopped_is_not_a_breach_within_one_poll():
+    limits = {"seconds": 15.0, "calls": 6, "candidates": 40, "tokens": 100}
+    used = {"calls": 1, "candidates": 0, "tokens": 0}
+    budget = lambda elapsed, aside=0: {"limits": limits, "used": used, "elapsed_ms": elapsed, "aside_ms": aside}
+    # v7's none-44 in B: stopped 4 ms late.
+    assert compare.breaches(budget(15_004)) == [] and compare.overshoot_ms(budget(15_004)) == 4
+    assert compare.breaches(budget(15_050)) == [], "the grace's edge is inside it"
+    assert compare.breaches(budget(15_051)) == ["deadline"]
+    assert compare.breaches(budget(25_051, aside=10_000)) == ["deadline"], "host time is set aside first"
+    assert compare.breaches(budget(25_050, aside=10_000)) == []
+    assert compare.overshoot_ms(budget(14_000)) == 0
+    over = {"calls": 7, "candidates": 41, "tokens": 101}
+    assert compare.breaches({"limits": limits, "used": over, "elapsed_ms": 15_004}) == \
+        ["calls", "candidates", "tokens"], "the other limits keep no grace"
 
 
 def test_the_reliability_actions_read_their_own_fixtures(tmp_path, monkeypatch):
