@@ -769,12 +769,16 @@ Actions, `reliability-v7-actions` (108 held-out fixtures):
   The three misses are dispatch fixtures chosen as evidence: v7ws03
   (upload limit from 10 MB to 25 MB), v7ws12 ('Copy link' button) and
   v7ws17 (hide the beta badge for accounts created after 1 October 2026).
-  - None of the three names files or decisions. The other two dispatch
-    fixtures that name no files (v7ws09, v7ws15) were right, so naming none
-    does not decide it alone.
-  - Jev chose evidence at 0.62, 0.73 and 0.72. The host was asked once on
-    each and settled none (fallback asked 1, settled 0), so Jev's choice
-    stood.
+  - None of the three names files or decisions.
+  - Jev chose evidence itself, at 0.62, 0.73 and 0.72. None fell to the
+    host (fallback asked 1, fell 0; no host turn).
+  - Of the 18 dispatch fixtures, Jev decided 7 itself: 4 right and these
+    3 wrong. The other 11 fell to the host under Jev's threshold, and the
+    host chose dispatch on all 11.
+  - Those 11 include the other two dispatch fixtures that name no files,
+    v7ws09 and v7ws15, at 0.51 and 0.53. So Jev itself was either unsure
+    or wrong on all five fixtures that name no files; only the host got
+    them right.
 - Clarify 18 of 18, evidence 18 of 18, fix 27 of 27, context 27 of 27.
   Decision quality over both points is 0.972.
 
@@ -802,12 +806,13 @@ Host spending per batch:
 - Calibration answers: 38.2 min, USD 9.61.
 - Held-out retrieval: 15.9 + 0.1 min, USD 1.27 (Jev's token ceiling
   stopped the first batch at 522 of 544 rows).
-- Held-out answers: 47.9 + 19.9 + 25.4 min, USD 21.04 (the first batch
+- Held-out answers: 47.9 + 19.9 + 25.4 min, USD 21.03 (the first batch
   stopped at the USD 10 ceiling; the third is the rerun).
 - Repetition: 1.9 min, USD 0.09.
 - Actions: 1.3 min, USD 0.18.
 
-USD 32.19 in all. Jev's cost has no dated price.
+USD 32.18 in all, summed from each batch's recorded cost and rounded
+once. Jev's cost has no dated price.
 
 Exit on v7: material classification passes on fresh intents, and so do
 review fix, both answer gates and the other three routing gates. Two
