@@ -174,8 +174,9 @@ write lands inside its artifact root.
   `recovery.prepared` before `decisions.fix_turn`, and `prepared` researches
   every issue the round owes, one page each, before the one correction turn.
   Jev's own fix choices are unchanged and `decisions.VERSION` stays as it was.
-- After a valid answer, a spend that is unknown or over the token limit still
-  stops before the fix; the page is kept and `[계속]` goes on to the fix.
+- After a valid answer, a spend that is unknown, or over its token or seconds
+  limit once the session has closed, still stops before the fix; the page is
+  kept and `[계속]` goes on to the fix.
 - On Codex, a session with exactly `Read,Glob,Grep,WebSearch,WebFetch` is
   `source_only` like the review cell (no shell, connectors or edits), with
   Codex's web search on. PR 7's planner uses the same tool list and gets the

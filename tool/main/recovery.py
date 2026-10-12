@@ -161,9 +161,10 @@ def spendable(lp, key: str, s: dict) -> bool:
     if s["spent"].get("unknown") and not s["spent"].get("accepted"):
         halt(lp, {key: s}, "unknown", UNKNOWN)
         return False
-    if s["spent"]["tokens"] > s["limits"]["tokens"]:
-        halt(lp, {key: s}, "budget", f"리서치가 토큰 한도를 넘었다 ({s['spent']['tokens']}/{s['limits']['tokens']}) — "
-                                     "페이지는 남았다. 한도를 늘려 [계속] 한다")
+    # Usage and the time a closing session took are known only after the turn: either may pass its limit.
+    over = [f"{k} {s['spent'][k]}/{s['limits'][k]}" for k in ("seconds", "tokens") if s["spent"][k] > s["limits"][k]]
+    if over:
+        halt(lp, {key: s}, "budget", f"리서치가 한도를 넘었다 ({', '.join(over)}) — 한도를 늘려 [계속] 한다")
         return False
     return True
 

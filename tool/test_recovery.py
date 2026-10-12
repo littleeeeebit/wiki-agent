@@ -10,6 +10,7 @@ review loop runs as in `test_loop.py`, whose fixtures are borrowed.
 
 import json
 import threading
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -282,11 +283,21 @@ def test_failed_research_never_falls_through_to_a_fix(world, reply, phase):
     assert not Worker.made
 
 
-@pytest.mark.parametrize("usage, phase", [(None, "unknown"), ({"in": 900, "out": 200}, "budget")])
-def test_a_good_answer_past_its_spend_keeps_its_page_and_stops_before_the_fix(world, usage, phase):
-    lp, spec = correcting(world, f"over-{phase}", {"F1": {**recovery.fresh("F1"), "limits": {**LIMITS, "tokens": 1000}}})
+def slow_close(self):
+    time.sleep(0.6)   # the timer is cancelled already: only the spend recorded afterwards shows it
+    self.closed = True
+
+
+@pytest.mark.parametrize("usage, limits, close, phase", [
+    (None, {**LIMITS, "tokens": 1000}, Host.close, "unknown"),
+    ({"in": 900, "out": 200}, {**LIMITS, "tokens": 1000}, Host.close, "budget"),
+    ({"in": 1, "out": 1}, {**LIMITS, "seconds": 0.5}, slow_close, "budget")])
+def test_a_good_answer_past_its_spend_keeps_its_page_and_stops_before_the_fix(world, usage, limits, close, phase):
+    name = f"over-{phase}-{'slow' if close is slow_close else 'fast'}"
+    lp, spec = correcting(world, name, {"F1": {**recovery.fresh("F1"), "limits": limits}})
     Host.replies = [(researched(), True, usage)]
-    got, after = prepared(lp, spec)
+    with patch.object(Host, "close", close):
+        got, after = prepared(lp, spec)
     s = after["recovery"]["F1"]
     assert got is None and s["phase"] == phase and s["active"]["status"] == "researched"
     assert git(Path(spec["worktree"]), "log", "-1", "--format=%s").startswith("docs: research F1"), "the page stays"
