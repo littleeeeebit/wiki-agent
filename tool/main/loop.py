@@ -62,6 +62,7 @@ class Why(str, enum.Enum):
     LEFT_QUEUE = "머지 대기에서 빠짐"
     PREPARATION = "로컬 검증 준비"
     EXTERNAL = "외부 수정 대기"
+    RECOVERY = "반복 발견 재조사"   # `recovery`: research owed before another fix
 
 
 router = APIRouter()
@@ -1490,7 +1491,11 @@ def step(loop: Loop) -> bool:
             if f["grade"] == "P2" and not any(same(f["head"], d) for d in deferred):
                 deferred.append(f["head"])
         record["items"] = identified(spec, parsed["findings"])
-        spec = change(loop, rounds=[*kept_rounds(spec), record], deferred=deferred)
+        from . import recovery
+
+        outcomes = recovery.observed(spec, record)   # a researched fix's result is the next counted round
+        spec = change(loop, rounds=[*kept_rounds(spec), record], deferred=deferred,
+                      **({"recovery": outcomes} if outcomes else {}))
     if spec is None:
         return False
     if parsed["verdict"] == "allow":
@@ -1520,6 +1525,13 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
     spec = change(loop, f"고치는 중 R{n}")
     if spec is None:
         return False
+    from . import recovery  # `recovery` imports `planning`, which imports this module
+
+    # The barrier: a recurring finding is researched before any correction goes out.
+    researched = recovery.prepared(loop, spec, path)
+    if researched is None:
+        return False
+    spec = specs.load(loop.repo, loop.sid) or spec
     serious = [f for f in record.get("items") or [] if f["grade"] != "P2"]
     # Jev may gather the context the findings touch first. The verdict, the
     # cap and the merge conditions above are settled; this only shapes the turn.
@@ -1527,7 +1539,10 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
                if d["action"] == "disagree"]
     text = decisions.fix_turn(loop, spec, repo, path, n, head, serious,
                               [f["head"] for f in serious if any(same(f["head"], a) for a in against)],
-                              fixing(n, serious, record.get("said") or "The merge was refused."))
+                              fixing(n, serious, record.get("said") or "The merge was refused.")
+                              + (recovery.briefed(spec, researched) if researched else ""))
+    # The research page's own commit is not the fix: a fix is a commit after it.
+    unfixed = researched["active"]["page_commit"] if researched else head
     if text is None:
         # Refused at the execution boundary three times over: the worktree went, or its
         # state kept moving under the loop. Stopped with the reason, never sent regardless.
@@ -1555,8 +1570,10 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
                                    for d in disposition):
                 problem = "발견별 처리 보고에 근거가 없다"
             if not problem and any(d["action"] == "fixed" for d in disposition):
-                if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == head:
+                if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == unfixed:
                     problem = "고쳤다고 보고했지만 검토한 HEAD 뒤의 수정 커밋이 없다"
+            if not problem and researched:
+                problem = recovery.unrecorded(path, researched)
         except RuntimeError as exc:
             if loop.halt.is_set():
                 return False
@@ -1573,6 +1590,9 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
     spec = change(loop, rounds=[finished if r is latest else r for r in kept_rounds(spec)])
     if spec is None:
         return False
+    if researched:
+        recovery.finished(loop, researched, path)
+        spec = specs.load(loop.repo, loop.sid) or spec
     before = rounds[-2].get("disposition") if len(rounds) > 1 else None
     stuck = disputed(before, disposition)
     if stuck:
@@ -1614,6 +1634,11 @@ def recover() -> list[tuple[str, str]]:
                 if LOOPING.fullmatch(spec["state"]):
                     if (spec.get("local_verification") or {}).get("state") == "running":
                         verification.keep(spec, state="interrupted", reason="서버 재시작 — 자동 재개 대기")
+                    from . import recovery
+
+                    if (marked := recovery.interrupted(spec)) is not None:
+                        # A research turn cut mid-flight: its spend is unknown, and the cycle still counts.
+                        specs.update(repo.name, spec["id"], recovery=marked)
                     stop(None, repo.name, spec["id"], Why.RESTART)
                     resume.append((repo.name, spec["id"]))
                 elif spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == Why.RESTART.value:
@@ -2176,9 +2201,10 @@ def settle(sid: str, body: Settle) -> dict:
 
 class Resume(BaseModel):
     note: str = ""
+    limits: dict | None = None   # a recovery stop's research limits: seconds, calls, tokens
 
 
-def proceed(repo: Path, spec: dict, note: str) -> dict:
+def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> dict:
     """`[계속]`, as the table says for each reason."""
 
     sid = spec["id"]
@@ -2186,6 +2212,15 @@ def proceed(repo: Path, spec: dict, note: str) -> dict:
         why = Why((spec.get("stopped") or {}).get("reason"))
     except ValueError as exc:
         raise HTTPException(409, "멈춘 이유를 모른다") from exc
+    if why is Why.RECOVERY:
+        from . import recovery
+
+        with specs._files:
+            try:
+                fields = recovery.resumed(specs.load(repo.name, sid) or spec, limits, note)
+            except ValueError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            specs.update(repo.name, sid, **fields)
     if why is Why.WRONG_BASE:
         raise HTTPException(409, "이어 가지 않는다 — [받아들임] 이나 [다시 PR] 로 끝낸다")
     if spec.get("local_verification"):
@@ -2263,7 +2298,7 @@ def resume(sid: str, body: Resume) -> dict:
     repo, spec = mine(sid)
     if spec["state"] != "멈춤":
         raise HTTPException(409, "멈춘 명세만 잇는다")
-    return proceed(repo, spec, body.note.strip())
+    return proceed(repo, spec, body.note.strip(), body.limits)
 
 
 @router.post("/api/specs/{sid}/review")

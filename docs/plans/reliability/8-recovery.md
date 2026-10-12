@@ -160,9 +160,33 @@ write lands inside its artifact root.
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Barrier | Detect recurrence and gate ordinary fix dispatch | Not started |
-| 2 | Research page | Research and preserve evidence in the same PR | Not started |
-| 3 | Escalation | Verify two-cycle escalation and restart behavior | Not started |
+| 1 | Barrier | Detect recurrence and gate ordinary fix dispatch | Done — `recovery.trigger`, `recovery.prepared` called from `loop.corrected` before `decisions.fix_turn` |
+| 2 | Research page | Research and preserve evidence in the same PR | Done — `recovery.research`, `recovery-research.md`, page committed before the fix, `unrecorded` |
+| 3 | Escalation | Verify two-cycle escalation and restart behavior | Done — `CYCLES`, `resumed`, `interrupted`; live host research left to PR 10 |
+
+## Implementation notes
+
+- `tool/main/recovery.py` holds the trigger, the barrier and the research turn.
+  State is the spec's additive `recovery` field, one entry per issue id, written
+  under `specs._files`. Findings without a server id share the backstop issue
+  `unidentified`; they never match each other for A-A or A-B-A.
+- The barrier is code, not a Jev candidate list. `loop.corrected` asks
+  `recovery.prepared` before `decisions.fix_turn`, so no correction is sent while
+  research is owed. Jev's own fix choices are unchanged and `decisions.VERSION`
+  stays as it was.
+- Missing limits stop with `반복 발견 재조사`; `[계속]` takes `limits`
+  (`POST /api/specs/{id}/resume`). The same stop covers spent limits, a deadline,
+  an unknown spend (`unknown` replaces `budget_unknown`), missing web tools, a
+  malformed answer after one retry, a page that could not be committed, and two
+  exhausted cycles, which resume only with a note that becomes a ruling.
+- The research turn is a separate read-only `ChatSession` on the work cell's
+  model. Its page is committed by the server under the worktree hold, so the
+  fix's HEAD check compares against the page commit and the fix must fill the
+  page's `## Result` before the next review.
+- A cycle abandoned before its fix went out stays in `attempts` as `abandoned`
+  and still counts. An outcome (`cleared` or `repeated`) is written by the next
+  counted round, an allow included.
+- Tests: `tool/test_recovery.py`.
 
 ## Sources
 
