@@ -229,9 +229,12 @@ class Ceiling:
         self.spent["host_turns"] += cost.get("host_turns") or 0
         self.spent["rows"] += 1
 
-    def record(self, stopped: str | None) -> dict:
-        return {"ended": now(), "minutes": round((time.monotonic() - self.started) / 60, 2),
-                **{k: round(v, 4) if isinstance(v, float) else v for k, v in self.spent.items()},
+    def record(self, stopped: str | None, since: tuple[float, dict] | None = None) -> dict:
+        """What was spent since `since` (`(monotonic, spent)`, the start by default)."""
+
+        at, spent = since or (self.started, dict.fromkeys(self.spent, 0))
+        return {"ended": now(), "minutes": round((time.monotonic() - at) / 60, 2),
+                **{k: round(v - spent[k], 4) if isinstance(v, float) else v - spent[k] for k, v in self.spent.items()},
                 "limits": self.limits, "stopped": stopped}
 
 
@@ -241,6 +244,8 @@ def batch(folder: Path, run: dict, experiment: str, units: list, work, ceiling: 
     done = {r["key"] for r in rows(folder, experiment)}
     todo = [u for u in units if u["key"] not in done]
     started, stopped, ran = now(), None, 0
+    # One ceiling may span two batches (a pairs run's two corpora): each records only its own.
+    since = (time.monotonic(), dict(ceiling.spent))
     for unit in todo:
         if stopped := ceiling.over():
             break
@@ -248,8 +253,7 @@ def batch(folder: Path, run: dict, experiment: str, units: list, work, ceiling: 
         append(folder, experiment, row)
         ceiling.add(row)
         ran += 1
-    # One ceiling may span two batches (a pairs run's two corpora): what is left is this batch's.
-    run["batches"].append({"started": started, **ceiling.record(stopped), "left": len(todo) - ran})
+    run["batches"].append({"started": started, **ceiling.record(stopped, since), "left": len(todo) - ran})
     write(folder / "run.json", run)
     return run["batches"][-1]
 
@@ -796,14 +800,7 @@ def main(argv: list[str] | None = None) -> int:
         paths = {"dataset": args.dataset, "gates": args.dataset.parent / "gates.json", "actions": args.actions}
     opts = {"split": args.split, "ids": sorted(args.ids) if args.ids else None}
     if args.experiment == "pairs":
-        plan = json.loads(args.plan.read_text(encoding="utf-8"))["pairs"]["repetition"]["plan"] if args.plan else None
-        # Both corpora by hash, and which arm read which (v1, The English control).
-        opts |= {"pairs": {"path": named(args.pairs), "version": pairs["version"], "sha256": sha(args.pairs.read_bytes())},
-                 "arms": args.arms, "inputs": {a: list(korean.ARMS[a]) for a in args.arms},
-                 "corpora": {"EN": dataset.snapshot(data)["sha256"],
-                             "KO": dataset.snapshot(korean.ko_corpus(data, pairs))["sha256"]},
-                 "level": "answer", "reps": [1, 2] if plan else [0], "plan": plan, "regrade": 1,
-                 "cache": args.cache, "method": args.method, "k": args.k, "model": args.model, "grader": args.grader}
+        opts = korean.options(args, opts, pairs, data)
     elif args.experiment == "arms":
         opts |= {"arms": args.arms, "languages": args.languages, "level": args.level, "repeat": args.repeat,
                  "cache": args.cache, "method": args.method, "k": args.k, "model": args.model,

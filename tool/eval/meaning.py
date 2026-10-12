@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -30,17 +31,27 @@ RAW = ROOT / "raw" / "eval" / "jev"
 SECONDS = 120.0
 
 
+def present(literal: str, text: str) -> bool:
+    """Whether `literal` is in `text` as a whole token: `30` is not in `300`,
+    `3.05` or `1,300`, and `PR` is not in `PRs`."""
+
+    word = re.compile(r"\w")
+    before = r"(?<!\w)(?<!\d[.,])" if word.match(literal[:1]) else ""
+    after = r"(?!\w)(?![.,]\d)" if word.match(literal[-1:]) else ""
+    return re.search(before + re.escape(literal) + after, text) is not None
+
+
 def check(case: dict, outcome: dict) -> list[str]:
     """What is wrong with one case's English. Empty means it passes.
     `literals`, where a case has them (reliability PR 9's pairs), must appear
-    exactly as written: a number, a name, a path."""
+    exactly as written, as whole tokens: a number, a name, a path."""
 
     if outcome["status"] != "translated":
         return [f"status {outcome['status']} ({outcome.get('reason')})"]
     text = outcome["text"].lower()
     wrong = [f"none of {group}" for group in case["require"] if not any(p.lower() in text for p in group)]
     wrong += [f"has {phrase!r}" for phrase in case["forbid"] if phrase.lower() in text]
-    return wrong + [f"lost literal {x!r}" for x in case.get("literals", []) if x not in outcome["text"]]
+    return wrong + [f"lost literal {x!r}" for x in case.get("literals", []) if not present(x, outcome["text"])]
 
 
 def run(manifest: Path) -> dict:

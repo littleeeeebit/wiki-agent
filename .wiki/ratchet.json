@@ -58,8 +58,8 @@
     },
     "tool/eval/compare.py": {
       "dup": 6,
-      "lines": 837,
-      "reason": "reliability PR 9: one measure() runs both arms and pairs, and a failed grade is retried and kept apart from a failed answer; the pairs logic itself lives in tool/eval/korean.py"
+      "lines": 834,
+      "reason": "reliability PR 9: one measure() runs both arms and pairs, a failed grade is retried and kept apart from a failed answer, and a batch records only its own spending; the pairs logic and options live in tool/eval/korean.py"
     },
     "tool/eval/decisions.py": {
       "dup": 8,

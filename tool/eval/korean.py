@@ -42,17 +42,21 @@ ARMS = {"A": ("en", "EN"), "B": ("ko", "EN"), "C": ("en", "KO"), "D": ("ko", "KO
 FACT_SECONDS = 120.0
 OVERLAY_SECONDS = 60.0
 HANGUL = re.compile(r"[가-힣]")
-SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+# A sentence ends at its punctuation; a soft line break inside it is not an end.
+SENTENCE = re.compile(r"(?<=[.!?])\s+")
+# Lines that are a block of their own (a heading, a table row) or start one (a list item, a quote).
+OWN_LINE, STARTS = re.compile(r"#|\|"), re.compile(r"[-*+]\s|\d+[.)]\s|>")
 
 
 # -- the set --------------------------------------------------------------------
 
 def load(path: Path = PAIRS) -> tuple[dict, dict]:
-    """The pair file and the dataset it pairs, both valid, or `ValueError`."""
+    """The pair file and the dataset it pairs, both valid and the set whole
+    (seven groups of twelve: the frozen cohort), or `ValueError`."""
 
     pairs = json.loads(path.read_text(encoding="utf-8"))
     data = dataset.load(HUB / pairs["dataset"]["path"])
-    problems = invalid(pairs, data)
+    problems = invalid(pairs, data) or allocation(pairs, data)
     if problems:
         raise ValueError(f"{path}: " + "; ".join(problems[:5]))
     return pairs, data
@@ -113,7 +117,22 @@ def invalid(pairs: dict, data: dict) -> list[str]:
 
 
 def sentences(text: str) -> list[str]:
-    return [s.strip() for s in SENTENCE.split(text) if s.strip()]
+    """`text`'s sentences: a blank line, a heading, a table row, a list item
+    or a quote ends one; a soft line break inside a paragraph does not."""
+
+    blocks, piece = [], []
+    for line in text.split("\n"):
+        s = line.strip()
+        if not s or OWN_LINE.match(s) or STARTS.match(s):
+            blocks.append(" ".join(piece))
+            piece = []
+            if OWN_LINE.match(s):
+                blocks.append(s)
+                continue
+        if s:
+            piece.append(s)
+    blocks.append(" ".join(piece))
+    return [s.strip() for b in blocks for s in SENTENCE.split(b) if s.strip()]
 
 
 def mapped(english: str, twin: dict) -> list[str]:
@@ -127,6 +146,10 @@ def mapped(english: str, twin: dict) -> list[str]:
     en, ko = dataset.sections(english), dataset.sections(twin["text"])
     want = [" > ".join(heads.get(h, f"<{h} unmapped>") for h in path.split(" > ")) for path, _b in en]
     out = [] if want == [path for path, _b in ko] else [f"sections {[p for p, _b in ko]} are not {want}"]
+    # A chunk is named by its page and last heading, so a fact's section must be the only one of its name.
+    for sections in (en, ko):
+        leaves = [path.split(" > ")[-1] for path, _b in sections]
+        out += [f"two sections named {name!r}" for name in sorted({x for x in leaves if leaves.count(x) > 1})]
     body = {path.split(" > ")[-1]: b for path, b in ko}
     ids = [f.get("id") for f in twin.get("facts", [])]
     if len(ids) != len(set(ids)) or not all(isinstance(x, str) and x for x in ids):
@@ -184,6 +207,37 @@ def relabel(pairs: dict):
 
 # -- running the pairs (`compare.py --experiment pairs`) ------------------------------------
 
+def options(args, opts: dict, pairs: dict, data: dict) -> dict:
+    """A pairs run's options from `compare.py`'s arguments: both corpora by
+    hash, and which arm read which (v1, The English control). With `--plan`
+    (a report's JSON) it repeats that report's base run, refused when it
+    would measure anything else."""
+
+    from eval import compare
+
+    made = json.loads(args.plan.read_text(encoding="utf-8")) if args.plan else None
+    plan = made["pairs"]["repetition"]["plan"] if made else None
+    opts = {**opts, "pairs": {"path": compare.named(args.pairs), "version": pairs["version"],
+                              "sha256": compare.sha(args.pairs.read_bytes())},
+            "arms": args.arms, "inputs": {a: list(ARMS[a]) for a in args.arms},
+            "corpora": {"EN": dataset.snapshot(data)["sha256"], "KO": dataset.snapshot(ko_corpus(data, pairs))["sha256"]},
+            "level": "answer", "reps": [1, 2] if plan else [0], "plan": plan, "regrade": 1,
+            "cache": args.cache, "method": args.method, "k": args.k, "model": args.model, "grader": args.grader}
+    if made:
+        base = made["runs"]["pairs"]
+        if wrong := differ(opts, base["options"]):
+            raise SystemExit(f"--plan's run measured something else ({', '.join(wrong)})")
+        opts["base"] = base["folder"]
+    return opts
+
+
+def differ(opts: dict, base: dict) -> list[str]:
+    """The options in which a repetition run is not its base run's measurement:
+    every one but the repetitions, the plan and the base itself."""
+
+    return sorted(k for k in set(opts) | set(base) if k not in ("reps", "plan", "base") and opts.get(k) != base.get(k))
+
+
 def units(pairs: dict, data: dict, opts: dict) -> list[dict]:
     """Each pair through each arm, all on the product path: the question in
     the arm's language, read against the arm's corpus. A repetition run
@@ -201,26 +255,65 @@ def units(pairs: dict, data: dict, opts: dict) -> list[dict]:
             for rep in opts["reps"]]
 
 
+def digest(text: str | None) -> str | None:
+    return evidence.digest(text)[:16] if text is not None else None
+
+
 def run(folder: Path, opts: dict, data: dict, ceiling, record: dict) -> dict:
     """The EN corpus's units, then the KO corpus's, each on its own index.
     Before the KO units, once per run, every twin's fact units are checked
-    against the English their sections normalize to (`facts.json`): what
-    the KO arms read is then the cached English that was checked."""
+    against the English their sections normalize to (`facts.json`, with the
+    digest of each English text it checked): what the KO arms read is then
+    the cached English that was checked, and each row records the digests it
+    read so the report can tell. A private source's English lives in its
+    index's evidence store, which goes with each batch's scratch, so the run
+    keeps it (`private.json`) and puts it back in every later batch's store —
+    a repetition's from its base run's — instead of normalizing it afresh."""
 
     from eval import compare
     from main import knowledge
 
+    import search
+
     pairs = json.loads((HUB / opts["pairs"]["path"]).read_text(encoding="utf-8"))
     todo = units(pairs, data, opts)
     done = {r["key"] for r in compare.rows(folder, "pairs")}
-    checked = folder / "facts.json"
+    checked, kept = folder / "facts.json", folder / "private.json"
+    base = Path(opts["base"]) if opts.get("base") else None
+    private: dict[str, dict] = {}
+    for source in (base / "private.json" if base else None, kept):
+        if source and source.exists():
+            private |= json.loads(source.read_text(encoding="utf-8"))["english"]
 
-    def fact_pass(c, index) -> None:
+    def ready(c, index) -> None:
+        store = search.evidence_store(c.repo)
+        try:
+            for x in index.chunks:
+                if x["visibility"] == "private":
+                    texts = (x["text"], " > ".join(x["heading_path"]))
+                    store.keep_english(x["source_id"], [(t, private[t]) for t in texts if t in private])
+        finally:
+            store.close()
+        if name != "KO" or opts["reps"] != [0] or checked.exists():
+            return
+        made: dict[str, str | None] = {}
+
         def english(chunks: list[dict]) -> list[dict]:
             owners = [(x["source_id"],) if x["visibility"] == "private" else () for x in chunks]
-            return knowledge.english([x["text"] for x in chunks], FACT_SECONDS, owners, project=c.repo)
+            out = knowledge.english([x["text"] for x in chunks], FACT_SECONDS, owners, project=c.repo)
+            made.update({digest(x["text"]): digest(o["text"]) for x, o in zip(chunks, out)})
+            return out
 
-        compare.write(checked, {"at": compare.now(), "facts": facts(pairs, index.chunks, c.label, english)})
+        found = facts(pairs, index.chunks, c.label, english)
+        compare.write(checked, {"at": compare.now(), "facts": found, "english": made})
+
+    real = knowledge.english
+
+    def keeping(texts, seconds, owners=None, project=None, cancel=None):
+        out = real(texts, seconds, owners, project, cancel)
+        private.update({t: o for t, o, w in zip(texts, out, owners or [()] * len(texts))
+                        if w and o["status"] == "translated"})
+        return out
 
     last = {"left": 0}
     for name, corpus in (("EN", data), ("KO", ko_corpus(data, pairs))):
@@ -228,9 +321,15 @@ def run(folder: Path, opts: dict, data: dict, ceiling, record: dict) -> dict:
         first = name == "KO" and opts["reps"] == [0] and not checked.exists()
         if ceiling.over() or (not first and all(u["key"] in done for u in mine)):
             continue
-        last = compare.measure(folder, opts, data, corpus, ceiling, record, "pairs", mine,
-                               rename=relabel(pairs) if name == "KO" else None, before=fact_pass if first else None,
-                               health=f"graph_health_{name}")
+        try:
+            with patch.object(knowledge, "english", keeping):
+                last = compare.measure(folder, opts, data, corpus, ceiling, record, "pairs", mine,
+                                       rename=relabel(pairs) if name == "KO" else None, before=ready,
+                                       health=f"graph_health_{name}")
+        finally:
+            # This run's own private texts, beside its rows, never in the translator's shared cache.
+            if private:
+                compare.write(kept, {"english": private})
     return last
 
 
@@ -255,15 +354,18 @@ def normalizing():
 def translation(text: str, seen: list[tuple[str, dict]]) -> dict:
     """How a pairs row's question and evidence came to English: the question's
     outcome — status, cached or fresh, the translator's model and prompt
-    version — and how many evidence texts were cached, fresh or failed."""
+    version — and how many evidence texts were cached, fresh or failed, with
+    the digest of each English text read (`read`, by the text's digest).
+    The question is the measured `prepare`'s, the last: a warm run primes first."""
 
-    asked = next((o for t, o in seen if t == text), None)
-    rest = [o for t, o in seen if t != text and o["status"] != "original_english"]
+    asked = next((o for t, o in reversed(seen) if t == text), None)
+    rest = [(t, o) for t, o in seen if t != text and o["status"] != "original_english"]
     return {"question": {k: asked.get(k) for k in ("status", "reason", "cached", "model", "prompt_version", "version")}
             if asked else None,
-            "evidence": {"cached": sum(bool(o.get("cached")) for o in rest),
-                         "fresh": sum(o["status"] == "translated" and not o.get("cached") for o in rest),
-                         "failed": sum(o["status"] not in evidence.USABLE for o in rest)}}
+            "evidence": {"cached": sum(bool(o.get("cached")) for _t, o in rest),
+                         "fresh": sum(o["status"] == "translated" and not o.get("cached") for _t, o in rest),
+                         "failed": sum(o["status"] not in evidence.USABLE for _t, o in rest),
+                         "read": {digest(t): digest(o.get("text")) for t, o in rest}}}
 
 
 # -- what is checked without a host -----------------------------------------------------
@@ -271,13 +373,16 @@ def translation(text: str, seen: list[tuple[str, dict]]) -> dict:
 def lost(text: str, require: list[list[str]], literals: list[str]) -> list[str]:
     """What a unit lost in `text`: empty when one sentence meets every
     `require` group (any phrase, any case) and holds every literal exactly.
-    A negation and what it negates in two sentences do not pass."""
+    A negation and what it negates in two sentences do not pass; a literal
+    counts only as a whole token (`30` is not in `300`)."""
+
+    from eval.meaning import present
 
     best = None
     for said in sentences(text) or [""]:
         low = said.lower()
         missing = [f"none of {g}" for g in require if not any(p.lower() in low for p in g)] + \
-                  [f"lost literal {x!r}" for x in literals if x not in said]
+                  [f"lost literal {x!r}" for x in literals if not present(x, said)]
         if not missing:
             return []
         if best is None or len(missing) < len(best):
@@ -303,7 +408,8 @@ def facts(pairs: dict, chunks: list[dict], label, english) -> list[dict]:
             if not got or failed:
                 status, missing = "not_normalized", failed or ["no chunk of this section"]
             else:
-                missing = lost("\n".join(o["text"] for o in outcomes), f["require"], f["literals"])
+                # A chunk ends where its paragraph does: joined, they never run into one sentence.
+                missing = lost("\n\n".join(o["text"] for o in outcomes), f["require"], f["literals"])
                 status = "lost" if missing else "held"
             out.append({"page": page, "id": f["id"], "section": f["section"], "sentence": f["sentence"],
                         "status": status, "missing": missing})
@@ -328,16 +434,16 @@ def question(meaning: dict, row: dict) -> dict:
 def scored(row: dict | None, intent: dict, k: int) -> dict:
     """A row's recall and coverage under the frozen cohort's rules: a missing
     row is missing; a failed answer covers nothing; an answer whose grade is
-    missing is unscorable; a retrieval that failed still scores its evidence,
-    which is none."""
+    missing is unscorable; a retrieval that failed recalls nothing, whatever
+    evidence its fallback kept (that stays in the row, for diagnosis)."""
 
     from eval import report
 
     if row is None:
         return {"missing": True}
     got = report.values(row, intent, k)
-    out = {"recall": got["recall"], "claims": got.get("claims"),
-           "failed_retrieval": row["status"] in ("unavailable", "exhausted", "cancelled")}
+    failed = row["status"] in ("unavailable", "exhausted", "cancelled")
+    out = {"recall": 0.0 if failed else got["recall"], "claims": got.get("claims"), "failed_retrieval": failed}
     if "answer_error" in row:
         out["coverage"] = 0.0
     elif "coverage" in got:
@@ -358,8 +464,9 @@ class Pairs:
     """One pairs run read for its gates: the first repetition of every pair
     and arm, scored once, and the checks that need no host."""
 
-    def __init__(self, rows: list[dict], data: dict, pairs: dict, fact_rows: list[dict] | None, k: int):
-        self.k, self.pairs, self.facts = k, pairs, fact_rows
+    def __init__(self, rows: list[dict], data: dict, pairs: dict, fact_rows: list[dict] | None, k: int,
+                 checked: dict | None = None):
+        self.k, self.pairs, self.facts, self.checked = k, pairs, fact_rows, checked or {}
         self.intents = {i["id"]: i for i in data["intents"]}
         self.by_pair = {p["intent"]: p for p in pairs["pairs"]}
         self.ids = sorted(self.by_pair)
@@ -371,6 +478,12 @@ class Pairs:
         for f in fact_rows or []:
             if f["status"] != "held":
                 self.pages[f["page"]].add(f["status"])
+
+    def drifted(self, row: dict | None) -> bool:
+        """Whether a row read English, for a text the fact pass checked, other than what it checked."""
+
+        read = (((row or {}).get("translation") or {}).get("evidence") or {}).get("read") or {}
+        return any(t in self.checked and self.checked[t] != e for t, e in read.items())
 
     def missing(self) -> list[str]:
         return sorted(f"{i}:{a}" for (i, a), s in self.score.items() if s.get("missing"))
@@ -437,6 +550,9 @@ class Pairs:
         for i, arms in sorted(self.divergence()["divergent"].items()):
             for x in arms:
                 cause = self.settled(i, x)
+                if cause is None and any(self.drifted(runs.get((i, a, n))) for a in ("A", x) for n in range(3)):
+                    # A run that read other English than was checked is not the same measurement.
+                    cause = "unresolved_normalization_changed"
                 if cause is None:
                     got = [(runs.get((i, "A", n)), runs.get((i, x, n))) for n in range(3)]
                     if not any(runs.get((i, x, n)) for n in (1, 2)):
@@ -482,8 +598,10 @@ class Pairs:
             return "pass" if all(d["low"] >= targets[f"paired_{metric}"] for d in ds) else "fail"
 
         checks = list(self.questions.values()) + list(self.facts or [])
+        drifted = sorted(r["key"] for r in self.first.values() if self.drifted(r))
         literals = ("fail" if any(c["status"] == "lost" for c in checks) else
-                    "inconclusive" if self.facts is None or missing or any(c["status"] != "held" for c in checks)
+                    "inconclusive" if self.facts is None or missing or drifted
+                    or any(c["status"] != "held" for c in checks)
                     else "pass")
         fabricated, unsupported, ungraded = [], [], []
         for (i, a), r in sorted(self.first.items()):
@@ -516,16 +634,18 @@ class Pairs:
                                                 if s.get("failed_retrieval")),
                      "failed_answers": sorted(r["key"] for r in self.first.values() if "answer_error" in r),
                      "differences": differences, "questions": self.questions, "facts": self.facts,
+                     "drifted": drifted,
                      "integrity": {"fabricated": fabricated, "unsupported_verified": unsupported,
                                    "ungraded_verified": ungraded}}
 
 
 def paired_report(rows: list[dict], data: dict, pairs: dict, fact_rows: list[dict] | None, k: int, cfg: dict,
-                  repeats: list[dict] | None = None) -> dict:
+                  repeats: list[dict] | None = None, checked: dict | None = None) -> dict:
     """The gates on the frozen cohort, the repetition candidates with their
-    cost, and — when repetitions ran — each divergent arm's cause."""
+    cost, and — when repetitions ran — each divergent arm's cause. `checked`
+    is the fact pass's English by digest (`facts.json`'s `english`)."""
 
-    p = Pairs(rows, data, pairs, fact_rows, k)
+    p = Pairs(rows, data, pairs, fact_rows, k, checked)
     gates, detail = p.gates({**cfg, "dataset_labels": data["labels"]})
     return {**detail, "repetition": p.repetition(rows),
             "attribution": p.attribution(repeats) if repeats is not None else None, "gates": gates}
@@ -554,12 +674,16 @@ def paragraphs(text: str) -> list[str]:
     return out
 
 
-def shape(text: str) -> tuple[int, int]:
-    """Table rows and list items: the layout a rendering must keep."""
+def shape(text: str) -> tuple[tuple, tuple]:
+    """The layout a rendering must keep: each table row's cell count, and
+    each list item's indent and kind (bullet or number)."""
 
     lines = text.splitlines()
-    return (sum(line.lstrip().startswith("|") for line in lines),
-            sum(bool(re.match(r"\s*(?:[-*+]|\d+[.)])\s", line)) for line in lines))
+    cells = tuple(len(re.split(r"(?<!\\)\|", line.strip().strip("|"))) for line in lines
+                  if line.lstrip().startswith("|"))
+    items = tuple((len(m.group(1)), m.group(2)[0].isdigit()) for line in lines
+                  if (m := re.match(r"(\s*)([-*+]|\d+[.)])\s", line)))
+    return cells, items
 
 
 def overlaid(text: str, rendered: list[tuple[str, str]]) -> dict:
@@ -572,8 +696,11 @@ def overlaid(text: str, rendered: list[tuple[str, str]]) -> dict:
 
     keep = translate.glossary()[0]
     shown = ("translated", "cached", "skipped")
+    split = paragraphs(text)
+    # A paragraph the rendering never returned is shown as nothing: it is broken, not skipped.
+    rendered = list(rendered) + [(None, "missing")] * (len(split) - len(rendered))
     out = []
-    for original, (made, status) in zip(paragraphs(text), rendered):
+    for original, (made, status) in zip(split, rendered):
         if status not in shown:
             out.append({"status": status, "kept_original": made == original, "problems": []})
             continue

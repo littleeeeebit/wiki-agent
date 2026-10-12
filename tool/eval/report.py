@@ -634,12 +634,20 @@ def build(folders: list[Path]) -> dict:
             opts = run["options"]
             pairs = json.loads(unchanged(opts["pairs"]["path"], opts["pairs"]["sha256"], "pair file")
                                .read_text(encoding="utf-8"))
+            # The frozen cohort is the whole set, never what one run happened to read.
+            if wrong := korean.allocation(pairs, data):
+                raise SystemExit(f"{opts['pairs']['path']} is not the whole set: {'; '.join(wrong)}")
             reviews.append(pairs["labels"])
             facts = folder / "facts.json"
+            checked = json.loads(facts.read_text(encoding="utf-8")) if facts.exists() else {}
             repeat = runs.get("pairs/repeat")
+            if repeat and (differ := korean.differ(repeat[1]["options"], opts)):
+                raise SystemExit(f"{repeat[0]} does not repeat {folder}'s measurement ({', '.join(differ)})")
             found["pairs"] = korean.paired_report(
-                rows, data, pairs, json.loads(facts.read_text(encoding="utf-8"))["facts"] if facts.exists() else None,
-                opts["k"], gates, compare.rows(repeat[0], "pairs") if repeat else None)
+                rows, data, pairs, checked.get("facts"), opts["k"], gates,
+                compare.rows(repeat[0], "pairs") if repeat else None, checked.get("english"))
+            if repeat and repeat[1]["options"]["plan"] != found["pairs"]["repetition"]["plan"]:
+                raise SystemExit(f"{repeat[0]} ran a plan that is not {folder}'s")
         elif name == "fixed":
             found["fixed"] = fixed_report(rows, data)
         else:
@@ -713,7 +721,8 @@ def markdown(report: dict) -> str:
             statuses[c["status"]] += 1
         rep = pairs["repetition"]
         lines += ["", f"Meaning checks (questions and fact units): {dict(statuses) or 'none'}"
-                  f"{'' if pairs['facts'] is not None else '; fact pass not run'}",
+                  f"{'' if pairs['facts'] is not None else '; fact pass not run'}; "
+                  f"{len(pairs['drifted'])} rows read English other than was checked",
                   f"Repetition candidates: {len(rep['divergent'])} divergent, {len(rep['boundary'])} boundary; "
                   f"plan {rep['rows']} rows, about USD {rep['host_usd']} — needs its own approval", ""]
         if pairs["attribution"] is not None:

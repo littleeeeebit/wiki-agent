@@ -401,31 +401,57 @@ Order step 2, with fake hosts only:
   - `load` and `invalid` validate `eval/jev/korean/pairs.json`
     (`jev-korean-pairs/1`) against its dataset by hash. The checks cover
     eligibility, `input.ko`, the meaning schema, each twin's heading map and
-    fact units, and a recorded review.
-  - `--check` adds the seven groups of twelve and each group's calibration
-    count. Whether the order of `GROUPS` was followed stays with the set
-    review.
+    fact units, and a recorded review. A twin may not have two sections of
+    one name, since a chunk is named by its page and last heading.
+  - `load` also refuses a set that is not seven groups of twelve, so a run
+    and a report always read the whole frozen cohort. `--check` prints each
+    group's calibration count. Whether the order of `GROUPS` was followed
+    stays with the set review.
   - `ko_corpus` swaps the twins in; `relabel` maps a KO heading back.
   - `facts` is the fact-unit pass; `lost` is the one-sentence rule.
+    - A sentence ends at its punctuation, a blank line, a heading, a table
+      row or a list item; a soft line break inside a paragraph is not an end.
+    - A literal counts only as a whole token: `30` is not found in `300`.
+      `meaning.check` uses the same rule.
+  - A failed retrieval recalls 0, whatever evidence its fallback kept.
   - `Pairs` reads a run for the gates, divergence, the repetition plan and
     attribution, in the order above.
   - `overlay <run-dir>` sends arm A's answers through the display path, a
     paragraph at a time as `web/src/lib/overlay.ts` splits them, and writes
-    `overlay.json`.
+    `overlay.json`. A table must keep each row's cell count, and a list each
+    item's indent and kind. A paragraph the rendering never returned counts
+    as broken.
 - `compare.py --experiment pairs` runs the EN corpus's units, then the KO
   corpus's, each on its own index.
   - Before the first KO unit it writes `facts.json`, the fact pass over the
     KO index's chunks. That pass uses `knowledge.english`, as `judge` does,
     with 120 seconds per call, so the arms read the cached English that was
-    checked.
+    checked. It records the digest of each English text it checked.
+  - A private source's English lives in its index's evidence store, which
+    goes with each batch's scratch. The run keeps it in `private.json`
+    beside its rows, never in the translator's shared cache. Every later
+    batch puts it back into its new store, and so does a repetition, from
+    its base run.
   - A row records its corpus and its question's translation outcome
-    (status, cached, model, prompt version), and counts its evidence texts
-    as cached, fresh or failed.
+    (status, cached, model, prompt version). The outcome is the measured
+    `prepare`'s, not the warm priming call's. The row counts its evidence
+    texts as cached, fresh or failed, and records the digest of each English
+    text it read.
+  - A row that read other English than the fact pass checked is listed as
+    drifted. Any drifted first repetition makes Literals inconclusive. A
+    drifted repetition makes its arm's cause
+    `unresolved_normalization_changed`.
   - A failed grade is no longer recorded as a failed answer. A pairs run
     grades once more.
+  - When the two corpora share one ceiling, each batch records only its own
+    spending.
   - `--plan <report.json>` runs the report's repetition plan, repetitions 1
     and 2. That run's options name it `pairs/repeat`, and the report reads
-    it for attribution.
+    it for attribution. The run is refused, and the report refuses it, when
+    any option other than the repetitions, the plan and the base run
+    differs from the base run's (the pair file, the corpora, arms, k,
+    method, models, cache). The report also refuses a plan that is not the
+    base run's.
 - `meaning.check` reads `literals`.
 - `eval/jev/korean/gates.json` holds the four gates (v1), frozen.
 - `tool/test_korean.py` covers this with no network:

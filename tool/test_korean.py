@@ -33,10 +33,25 @@ ENGLISH = {"네트워크 포트": "Network ports", "Yousign 전자서명": "E-si
            "DocuSign 계정은 2026-06-30 에 닫혔다.": "The DocuSign account was closed on 2026-06-30.",
            "Kestrel 수집 게이트웨이는 어느 포트에서 수신하나요?": "Which port does the Kestrel ingest gateway listen on?",
            "지금 어떤 전자서명 도구를 쓰나요? 예전 계정은 언제 닫혔나요?":
-               "Which e-signature tool do we use now? When was the old account closed?"}
+               "Which e-signature tool do we use now? When was the old account closed?",
+           "오류 예산": "Error budgets",
+           "사용자는 오류 예산을 백분율이 아니라 그달의 남은 분으로 보여 주기를 원한다.":
+               "The user wants error budgets shown as remaining minutes for the month, not as percentages.",
+           "사용자는 보고서에서 오류 예산을 어떻게 보여 주길 원했나요?":
+               "How did the user want error budgets shown in reports?"}
+BUDGETS_KO = "# 오류 예산\n\n사용자는 오류 예산을 백분율이 아니라 그달의 남은 분으로 보여 주기를 원한다."
+BUDGETS = "repo/.wiki/memory/2026-10-02-error-budgets.md"
 
 
-def pair_file(tmp_path: Path, **change) -> Path:
+@pytest.fixture
+def small(monkeypatch):
+    """The test pair files as a whole set: their groups, one pair each."""
+
+    monkeypatch.setattr(korean, "GROUPS", ("conflict", "names", "negation"))
+    monkeypatch.setattr(korean, "PER_GROUP", 1)
+
+
+def pair_file(tmp_path: Path, memory: bool = False, **change) -> Path:
     """Two pairs over v8 — a name and a conflict — with their twins, and the gates beside them."""
 
     pairs = {"schema": korean.SCHEMA, "version": 1,
@@ -55,6 +70,14 @@ def pair_file(tmp_path: Path, **change) -> Path:
                            "text": SIGN_KO, "headings": {"E-signatures in Yousign": "Yousign 전자서명"},
                            "facts": [{"id": "sign-1", "section": "E-signatures in Yousign", "sentence": 2,
                                       "require": [["closed"]], "literals": ["2026-06-30"]}]}}}
+    if memory:
+        # A private source: its English lives in the index's evidence store, never the translator's cache.
+        pairs["pairs"].append({"intent": "memory-43", "group": "negation", "input": {"ko": list(ENGLISH)[11]},
+                               "meaning": {"require": [["error budget"]], "forbid": [], "literals": []},
+                               "review": "k1"})
+        pairs["twins"][BUDGETS] = {"text": BUDGETS_KO, "headings": {"Error budgets": "오류 예산"},
+                                   "facts": [{"id": "budgets-1", "section": "Error budgets", "sentence": 0,
+                                              "require": [["minutes"], ["not as percent"]], "literals": []}]}
     for key, value in change.items():
         pairs[key] = value
     folder = tmp_path / "korean"
@@ -73,7 +96,12 @@ def v8():
 # -- the set --------------------------------------------------------------------------
 
 def test_a_pair_file_validates_and_counts_its_groups(tmp_path, v8):
-    pairs, data = korean.load(pair_file(tmp_path))
+    path = pair_file(tmp_path)
+    # Two pairs are not the frozen cohort: the run and the report refuse them.
+    with pytest.raises(ValueError, match="pairs, not 12"):
+        korean.load(path)
+    pairs = json.loads(path.read_text(encoding="utf-8"))
+    data = v8
     assert korean.invalid(pairs, data) == []
     assert korean.allocation(pairs, data) == [f"{g}: {int(g in ('names', 'conflict'))} pairs, not 12"
                                               for g in korean.GROUPS]
@@ -96,8 +124,16 @@ def test_an_ineligible_or_ill_formed_pair_is_named(tmp_path, v8):
     assert "fact-01: repo/docs/ports.md has no twin" in korean.invalid(pairs, v8)
 
 
-def test_the_ko_corpus_swaps_only_the_twins_and_its_labels_map_back(tmp_path, v8):
-    pairs, data = korean.load(pair_file(tmp_path))
+def test_a_fact_section_must_be_the_only_one_of_its_name():
+    english = "# Install\n\n## Windows\n\n### Setup\n\nNever use customer passwords.\n\n## Linux\n\n### Setup\n\nRun it."
+    twin = {"text": "# 설치\n\n## Windows\n\n### 설정\n\n고객 비밀번호를 쓰지 않는다.\n\n## Linux\n\n### 설정\n\n실행한다.",
+            "headings": {"Install": "설치", "Windows": "Windows", "Linux": "Linux", "Setup": "설정"},
+            "facts": [{"id": "s-1", "section": "Setup", "sentence": 0, "require": [["never"]], "literals": []}]}
+    assert korean.mapped(english, twin) == ["two sections named 'Setup'", "two sections named '설정'"]
+
+
+def test_the_ko_corpus_swaps_only_the_twins_and_its_labels_map_back(tmp_path, v8, small):
+    pairs, data = korean.load(pair_file(tmp_path, memory=True))
     ko = korean.ko_corpus(data, pairs)
     changed = {n for n, t in dataset.pages(ko).items() if dataset.pages(data)[n] != t}
     assert changed == set(pairs["twins"]) and data["corpus"]["files"]["repo/docs/ports.md"] != PORTS_KO
@@ -117,6 +153,19 @@ def test_a_negation_must_stay_in_its_own_sentence():
     assert korean.lost("It runs on Windows. It does not run on Linux.", require, [])
     assert korean.lost("Port 7443 is used.", [], ["7443"]) == []
     assert korean.lost("Port 7444 is used.", [], ["7443"]) == ["lost literal '7443'"]
+    # A soft line break is not a sentence's end; a blank line, a heading or a list item is.
+    assert korean.lost("It does not run\non Windows.", require, []) == []
+    assert korean.lost("It does not run\n\non Windows.", require, [])
+    assert korean.lost("- It does not run\n- on Windows", require, [])
+    assert korean.sentences("# Title\nBody one. Body\ntwo.\n| a | b |") == ["# Title", "Body one.", "Body two.",
+                                                                         "| a | b |"]
+
+
+def test_a_literal_is_a_whole_token():
+    assert korean.lost("The timeout is 300 seconds.", [], ["30"]) == ["lost literal '30'"]
+    assert korean.lost("It costs 1,300 EUR or 3.05 units.", [], ["30"]) and korean.lost("PRs.", [], ["PR"])
+    assert korean.lost("Wait 30 seconds, not 300.", [], ["30"]) == []
+    assert korean.lost("The rate was 4.1%.", [], ["4.1%"]) == [] and korean.lost("See [a](b.md).", [], ["[a](b.md)"]) == []
 
 
 def test_meaning_check_reads_literals_exactly():
@@ -124,10 +173,12 @@ def test_meaning_check_reads_literals_exactly():
     assert meaning.check(case, {"status": "translated", "text": "Retry after 30 seconds."}) == []
     assert meaning.check(case, {"status": "translated", "text": "Retry after 20 seconds."}) == ["lost literal '30'"]
     assert meaning.check({"require": [], "forbid": []}, {"status": "translated", "text": "x"}) == []
+    assert meaning.check(case, {"status": "translated", "text": "Retry after 300 seconds."}) == ["lost literal '30'"]
 
 
-def test_fact_units_are_checked_whether_or_not_retrieval_reaches_them(tmp_path):
-    pairs, _data = korean.load(pair_file(tmp_path))
+def test_fact_units_are_checked_whether_or_not_retrieval_reaches_them(tmp_path, small):
+    pairs, _data = korean.load(pair_file(tmp_path, memory=True))
+    del pairs["twins"][BUDGETS]
     chunks = [{"label": "repo/docs/ports.md#네트워크 포트", "text": PORTS_KO},
               {"label": "repo/.wiki/decisions/2026-05-04-085-yousign.md#Yousign 전자서명", "text": SIGN_KO}]
 
@@ -191,6 +242,10 @@ def test_eighty_four_pairs_tolerate_one_lost_pair_and_not_two():
     two = korean.paired_report(every(data, **{f"p0{i}:C": row(f"p0{i}", "C", found=False) for i in (0, 1)}),
                                data, pairs, [], 8, CFG)
     assert two["differences"]["recall_C_minus_A"]["low"] == -0.0595 and verdicts(two)["paired_recall"] == "fail"
+    # A failed retrieval recalls nothing, whatever evidence its fallback kept.
+    failed = korean.paired_report(every(data, **{f"p0{i}:C": row(f"p0{i}", "C", status="unavailable") for i in (0, 1)}),
+                                  data, pairs, [], 8, CFG)
+    assert failed["failed_retrieval"] == ["p00:C", "p01:C"] and verdicts(failed)["paired_recall"] == "fail"
     assert verdicts(one)["literals"] == "pass" and verdicts(one)["integrity"] == "pass"
 
 
@@ -277,6 +332,33 @@ def test_the_overlay_splits_as_the_screen_does_and_finds_what_a_rendering_broke(
     refused = korean.overlaid(answer, [("Port 7443 serves it [repo/docs/ports.md].", "meaning_changed"),
                                        ("```\nrun x\n\nrun y\n```", "skipped"), ("- 하나\n- 둘", "translated")])
     assert refused["refused"] == 1 and refused["broken"] == []
+    # A table that lost a column, or a paragraph never returned, is broken.
+    table = "| name | value |\n| --- | --- |\n| retry | 30 |"
+    merged = korean.overlaid(table, [("| 이름 값 |\n| --- |\n| retry 30 |", "translated")])
+    assert merged["broken"] == [0] and merged["detail"][0]["problems"] == ["table or list layout changed"]
+    assert korean.overlaid(answer, [("포트 7443 이 [repo/docs/ports.md] 를 맡는다.", "translated")])["broken"] == [1, 2]
+
+
+def test_a_batch_records_its_own_spending_when_two_share_a_ceiling(tmp_path):
+    ceiling, run = compare.Ceiling(60, 10, 10_000), {"batches": []}
+    (tmp_path / "x").mkdir()
+    for key, usd in (("en", 0.10), ("ko", 0.20)):
+        compare.batch(tmp_path / "x", run, "pairs", [{"key": key}], lambda u, usd=usd: {"key": u["key"],
+                                                                                       "cost": {"host_usd": usd}},
+                      ceiling)
+    assert [(b["usd"], b["rows"], b["left"]) for b in run["batches"]] == [(0.1, 1, 0), (0.2, 1, 0)]
+
+
+def test_a_repetition_must_repeat_its_base_measurement():
+    base = {"pairs": {"sha256": "a"}, "corpora": {"KO": "k"}, "k": 8, "reps": [0], "plan": None}
+    assert korean.differ({**base, "reps": [1, 2], "plan": {"p": ["C"]}, "base": "run"}, base) == []
+    assert korean.differ({**base, "pairs": {"sha256": "b"}, "k": 1, "corpora": {"KO": "x"}}, base) == \
+        ["corpora", "k", "pairs"]
+
+
+def test_the_question_outcome_is_the_measured_prepare_not_the_priming_one():
+    seen = [("q", {"status": "translated", "cached": False}), ("q", {"status": "translated", "cached": True})]
+    assert korean.translation("q", seen)["question"]["cached"] is True
 
 
 # -- translation failure: deterministic fixtures, no network ---------------------------------------
@@ -370,10 +452,10 @@ def test_the_working_transport_does_translate(isolated):
 # -- one pairs run, end to end, with stand-ins ----------------------------------------------------
 
 @pytest.fixture
-def ran(tmp_path, monkeypatch):
+def ran(tmp_path, monkeypatch, small):
     from test_decision_flow import answering
 
-    path = pair_file(tmp_path)
+    path = pair_file(tmp_path, memory=True)
     env = tmp_path / "jev.env"
     env.write_text("TYPESAFE_API_KEY=test-key\nWIKI_JEV_MODE=active\n", encoding="utf-8")
     monkeypatch.setenv("JEV_ENV", str(env))
@@ -418,7 +500,8 @@ def ran(tmp_path, monkeypatch):
 def test_a_pairs_run_records_both_corpora_the_fact_pass_and_reports_its_gates(ran):
     folder, args = ran
     rows = compare.rows(folder, "pairs")
-    assert sorted(r["key"] for r in rows) == sorted(f"{i}:{a}:0" for i in ("conflict-43", "fact-01") for a in "ABCD")
+    assert sorted(r["key"] for r in rows) == sorted(f"{i}:{a}:0" for i in ("conflict-43", "fact-01", "memory-43")
+                                                    for a in "ABCD")
     assert {r["arm"]: r["corpus"] for r in rows} == {"A": "EN", "B": "EN", "C": "KO", "D": "KO"}
     # A KO twin's chunk is named by its English heading, as the labels are; no Korean heading is a label.
     sign = next(r for r in rows if r["key"] == "conflict-43:D:0")
@@ -430,7 +513,7 @@ def test_a_pairs_run_records_both_corpora_the_fact_pass_and_reports_its_gates(ra
     assert d["translation"]["question"]["cached"] and d["translation"]["question"]["model"] == translate.MODEL
     assert next(r for r in rows if r["key"] == "conflict-43:D:0")["grade_turns"] == 2
     facts = json.loads((folder / "facts.json").read_text(encoding="utf-8"))["facts"]
-    assert [(f["id"], f["status"]) for f in facts] == [("sign-1", "held"), ("ports-1", "held")]
+    assert [(f["id"], f["status"]) for f in facts] == [("sign-1", "held"), ("budgets-1", "held"), ("ports-1", "held")]
     run = json.loads((folder / "run.json").read_text(encoding="utf-8"))
     assert set(run["options"]["corpora"]) == {"EN", "KO"} and run["options"]["inputs"]["C"] == ["en", "KO"]
     assert run["manifest"]["gates"].endswith("korean/gates.json")
@@ -440,7 +523,51 @@ def test_a_pairs_run_records_both_corpora_the_fact_pass_and_reports_its_gates(ra
     # BM25 over an English question does not reach a Korean twin: the recall it loses is measured, not hidden.
     lows = [got["pairs"]["differences"][f"recall_{a}_minus_A"]["low"] for a in "BCD"]
     assert judged["paired_recall"] == ("pass" if min(lows) >= -0.05 else "fail")
-    assert got["pairs"]["missing"] == [] and set(got["pairs"]["repetition"]["divergent"]) <= {"fact-01", "conflict-43"}
-    assert "Pairs cohort: 8 rows" in report.markdown(got)
+    assert got["pairs"]["missing"] == [] and got["pairs"]["drifted"] == []
+    assert set(got["pairs"]["repetition"]["divergent"]) <= {"fact-01", "conflict-43", "memory-43"}
+    assert "Pairs cohort: 12 rows" in report.markdown(got)
     # Resuming records nothing twice.
-    assert compare.main(args) == 0 and len(compare.rows(folder, "pairs")) == 8
+    assert compare.main(args) == 0 and len(compare.rows(folder, "pairs")) == 12
+
+
+def test_a_repetition_runs_and_is_read_only_as_its_base_measurement(ran, tmp_path):
+    folder, args = ran
+    made = tmp_path / "report.json"
+    made.write_text(json.dumps(report.build([folder]), ensure_ascii=False), encoding="utf-8")
+    again = tmp_path / "again"
+    with pytest.raises(SystemExit, match=r"measured something else \(k\)"):
+        compare.main([str(again), *args[1:], "--plan", str(made), "--k", "4"])
+    assert compare.main([str(again), *args[1:], "--plan", str(made)]) == 0
+    run = json.loads((again / "run.json").read_text(encoding="utf-8"))
+    assert run["options"]["reps"] == [1, 2] and run["options"]["base"] == folder.as_posix()
+    assert report.build([folder, again])["pairs"]["attribution"] is not None
+    run["options"]["k"] = 4
+    (again / "run.json").write_text(json.dumps(run), encoding="utf-8")
+    with pytest.raises(SystemExit, match=r"does not repeat .* \(k\)"):
+        report.build([folder, again])
+
+
+def test_a_resumed_batch_reads_the_private_english_that_was_checked(ran, monkeypatch):
+    folder, args = ran
+    kept = json.loads((folder / "private.json").read_text(encoding="utf-8"))["english"]
+    sentence = list(ENGLISH)[10]
+    assert any(sentence in text for text in kept)
+    # The translator would now say otherwise; a new batch's scratch store must not ask it.
+    monkeypatch.setattr(translate, "_ask", lambda system, batch, seconds, same_length=True: [
+        "The user wants error budgets as a percentage." if sentence in item else item for item in batch])
+    before = compare.rows(folder, "pairs")
+    (folder / "pairs.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in before
+                                                if r["key"] != "memory-43:D:0"), encoding="utf-8")
+    assert compare.main(args) == 0
+    again = next(r for r in compare.rows(folder, "pairs") if r["key"] == "memory-43:D:0")
+    checked = json.loads((folder / "facts.json").read_text(encoding="utf-8"))["english"]
+    read = again["translation"]["evidence"]["read"]
+    assert set(read) & set(checked) and report.build([folder])["pairs"]["drifted"] == []
+    # Without the run's private English the batch normalizes afresh, and the report sees the drift.
+    (folder / "private.json").unlink()
+    (folder / "pairs.jsonl").write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in before
+                                                if r["key"] != "memory-43:D:0"), encoding="utf-8")
+    assert compare.main(args) == 0
+    got = report.build([folder])
+    assert got["pairs"]["drifted"] == ["memory-43:D:0"]
+    assert {g["id"]: g["verdict"] for g in got["gates"]}["literals"] == "inconclusive"
