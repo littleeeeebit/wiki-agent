@@ -1758,6 +1758,81 @@ Tests: the grace's edge (15,050 ms passes, 15,051 ms breaches), host time
 set aside first, the other limits without grace, the largest overshoot
 read from a later repetition, and the transition times of a recorded run.
 
+### Draft set (v8)
+
+`eval/jev/reliability-v8/`, built by a generator kept out of the
+repository (`raw/eval/jev/v8-draft/`).
+
+- `actions.json`: v5's 12 calibration work-start fixtures verbatim, and
+  54 held-out work-start fixtures written fresh (`v8ws01`–`54`, review
+  `r8`).
+  - 18 per label. Each label has 9 that name no files, 5 that name files
+    and 4 that name a directory.
+  - No id or goal of an earlier set comes back, and no goal shares more
+    than half its words with an earlier one.
+    - Word overlap does not prove a case is new. Review r8 replaced 13
+      goals that kept an earlier case's target and situation under new
+      words: four in round 1, seven more of the same kind, and two in
+      round 2.
+  - No surface rule checked labels them all. Overall, the cues checked
+    separate v8 about as well as v7, and one pair separates it better.
+    - Round 1 found "our" only in evidence criteria. Round 2 found a final
+      "tests check/cover" criterion only there too. Either rule labelled
+      all 54 from wording alone.
+    - Both now appear on both sides. Nine evidence fixtures point at a
+      repository fact without "our", and five dispatch fixtures cite a
+      rule whose value they already state. Test criteria are spread across
+      both labels: six of each end in "tests check/cover", and others
+      name a test file or state a behaviour.
+    - Of the 54, the "our" rule now labels 38 correctly (43 on v7's
+      fixtures), and the test-wording rule 36 (40 on v7).
+    - Between dispatch and evidence (36 fixtures), twelve yes/no cues were
+      checked. "Criteria" means `done` without its gate command.
+      - criteria match `\bour\b|operations team agreed`;
+      - the last criterion starts with "tests check" or "tests cover";
+      - a criterion names a path under `tests/`;
+      - criteria match `existing|same|already|other|like the|allow|agreed|has to`;
+      - criteria hold a digit;
+      - criteria hold a quote;
+      - there are three or more criteria;
+      - the last criterion is under five words;
+      - the goal is over ten words;
+      - files are named;
+      - decisions are given;
+      - out-of-scope items are given.
+    - A cue, or a pair of cues, predicts the majority label of each
+      combination of its values, and the score counts the fixtures it gets
+      right.
+      - The best single cue is the goal's length: 31 on v8, 32 on v7.
+        Dispatch goals state their values, so they run longer, in every set.
+      - The best pair scores 32 on v8 and 33 on v7.
+      - One pair separates v8 better: "our" with three or more criteria
+        scores 29 on v8 and 25 on v7. No pair labels all 36.
+    - These are offline checks of the data, not measurements of Jev, and
+      only of the cues listed.
+  - Decisions appear in two dispatch and two evidence fixtures, and
+    out-of-scope items in two dispatch and one evidence fixture, so
+    neither field points to a label.
+  - A dispatch fixture states the change and every value. An evidence
+    fixture leaves a value or choice to the repository's rules, facts or
+    decisions. A clarify fixture has no criteria beyond the gate.
+- `intents.json`: v7's intents, pages and labels verbatim, all revealed.
+  Their retrieval reruns in arms B and D for the operational gates only.
+- `gates.json`: v7's, except the operating ceiling's description, which
+  states C1.
+- `tool/test_reliability_v8.py` fixes the counts, the shape balance,
+  freshness, the gates' single difference, and the freeze after review r8.
+
+Estimates from `--estimate`:
+- Actions: 54 rows, about 76,000 Jev tokens, no host turn counted.
+- Retrieval, B and D: 278 rows, about 1.1 million Jev tokens.
+- Host turns from fallbacks are not estimated. v7's held-out actions cost
+  USD 0.18 and its retrieval USD 1.27.
+
+Frozen on 2026-10-12 after label review r8: four rounds by gpt-6.1-sol, no
+label changed, approved at f99c80f. `labels.reviews.r8` in `actions.json`
+records what each round found.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -1768,7 +1843,7 @@ read from a later repetition, and the transition times of a recorded run.
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
 | 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); 139 fresh held-out intents and 108 action fixtures reviewed (r7) and frozen on 2026-10-12 (Draft set (v7)); run at 511313e (Results, v7): material classification, review fix and both answer gates pass; work start inconclusive at 51 of 54; operating ceiling fails on one row 4 ms past its deadline |
-| 7 | v8 | Work start and the operating ceiling | In progress — designed (v8 design); owner chose W2, C1 and T; implemented, W2 calibrated on 138 revealed fixtures (Implementation (v8)); fresh fixtures next |
+| 7 | v8 | Work start and the operating ceiling | In progress — designed (v8 design); owner chose W2, C1 and T; implemented, W2 calibrated on 138 revealed fixtures (Implementation (v8)); 54 fresh work-start fixtures frozen after review r8 (Draft set (v8)); runs next |
 
 ## Sources
 
