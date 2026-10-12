@@ -1574,6 +1574,117 @@ Label review r7 took three full-set rounds by gpt-6.1-sol:
 
 The set, the action fixtures and the gates are frozen on 2026-10-12.
 
+## v8 — work start and the operating ceiling (design)
+
+v7 left two parts of the exit open:
+- work start, inconclusive at 3 misses in 54;
+- the operating ceiling, failed on one row 4 ms past its deadline.
+
+Every other gate passed on fresh cases in v7. v8 is designed to settle
+these two. The route, the answer path and the review-fix prompt are not
+changed, so their v7 results stand.
+
+### Work start: a specification that names no files
+
+The 18 dispatch fixtures of v7, by how Jev decided them
+(`reliability-v7-actions`):
+
+| Fixtures | Jev decided, right | Jev decided, wrong | Fell to the host, all right |
+| --- | --- | --- | --- |
+| 13 that name files | 4 (0.61–0.67) | 0 | 9 (0.25–0.58) |
+| 5 that name none | 0 | 3 (0.62–0.73) | 2 (0.51, 0.53) |
+
+- Every miss is a specification that names no files. Jev chose evidence
+  for each: v7ws03 (raise the upload limit from 10 MB to 25 MB), v7ws12
+  (a 'Copy link' button) and v7ws17 (hide the beta badge for accounts
+  created after 1 October 2026). Each states the change and its values.
+  None says where the code is.
+- The two others that name no files, v7ws09 and v7ws15, were right only
+  because the host settled them.
+- The five evidence fixtures that name no files were right at 0.85–0.97.
+  Each leaves a value to the repository: "the approved store", "the header
+  name the other services use", "the queue the platform team designated",
+  "our flag naming rule", "the agreed period".
+
+The prompt sends the turn when the specification states what the work
+requires, "even when its grounds name no pages or rules". Files are not
+in that clause. Jev appears to read an unstated location as a repository
+fact still to be gathered. That is a reading of the rows, not a tested
+cause.
+
+- W2: add files to that clause, and say that finding where to make the
+  change is part of the work. The evidence condition is unchanged: a
+  value or choice the specification leaves to the repository's facts,
+  rules or decisions.
+- Calibration: replay every revealed work-start fixture through
+  `decisions.propose`, before and after, as v7 did. That is v1, v2 and v5
+  (84 distinct) and v7's held-out 54, now revealed. Evidence and clarify
+  are protected. The five no-file evidence fixtures of v7, and v5ws05 and
+  v5ws31, are the counterexamples to watch.
+- The 9 dispatch fixtures that name files but fell to the host are
+  recorded. W2 is not aimed at them.
+
+### Operating ceiling: a run its deadline stopped
+
+none-44 in B made one Jev call, the route, and then waited in retrieval.
+`knowledge.bounded` polls every 50 ms. It abandoned the retrieval when
+the budget's deadline passed, and the run ended `exhausted/deadline` at
+15.004 s, with no candidates.
+
+`compare.breaches` counts a deadline breach whenever the run's time,
+less the host's, exceeds its seconds. A run that its own deadline stops
+therefore always counts, by the poll and the transition. The call and
+candidate limits are not counted that way: the budget refuses the next
+call, so `used` never passes the limit. The gate describes "runs over
+their deadline, call or token allowance". A run stopped at the deadline
+is the allowance enforced, not exceeded.
+
+- C1: a deadline breach is time past the deadline beyond a grace of
+  0.25 s, five of `bounded`'s polls. The report also gives the largest
+  overshoot over all rows, so the margin stays visible. v7's figure, a
+  fail, is recorded and not re-judged.
+  - C1 is chosen after a failure was seen. M2 was rejected for that reason
+    in v7's design. The difference is that M2 changed a label to fit a
+    miss, while C1 aligns the counter with what the gate says it counts,
+    and leaves every overshoot in the record.
+  - A run that overran by more than the grace, a step that ignores its
+    deadline, still fails the gate.
+- T: record each phase's time. The dossier already keeps `elapsed_ms` on
+  every transition and decision. `dossier_row` keeps the transition names
+  only, so why none-44's retrieval returned nothing for over 9 s cannot be
+  read back. Langfuse here runs in v4 events_only mode, where the public
+  trace endpoints are unavailable. T adds those times to each row, beside
+  the existing fields.
+
+Why the retrieval stalled is not known. With T, the next stall can be
+placed in a phase.
+
+### Set and cost
+
+- Action fixtures: 54 fresh work-start fixtures, 18 per label, with the
+  same file-naming mix in each label. At least 9 per label name no files,
+  so the shape that missed is tested at scale.
+- Review fix is not changed and is not rerun.
+- Retrieval: the ceiling is an operational gate, so v7's held-out intents
+  are rerun under C1 and T for the ceiling, integrity and the injected
+  failures. Their labels are revealed, so routing gates from this run are
+  not claimed; v7's stand.
+- No answer run: the answer path is unchanged.
+- Gates: v7's, with C1 stated in the ceiling's description.
+
+Estimated cost, from v7's spending:
+- Actions: under USD 0.2.
+- Retrieval: about USD 1.3.
+
+### Recommendation
+
+W2, C1 and T in one PR, with W2 calibrated on revealed fixtures and C1
+and T checked against v7's recorded rows. Then 54 fresh work-start
+fixtures with their label review, and the two runs above on the owner's
+approval of their cost.
+
+The owner chose W2, C1 and T on 2026-10-12.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
@@ -1584,6 +1695,7 @@ The set, the action fixtures and the gates are frozen on 2026-10-12.
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
 | 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); 139 fresh held-out intents and 108 action fixtures reviewed (r7) and frozen on 2026-10-12 (Draft set (v7)); run at 511313e (Results, v7): material classification, review fix and both answer gates pass; work start inconclusive at 51 of 54; operating ceiling fails on one row 4 ms past its deadline |
+| 7 | v8 | Work start and the operating ceiling | In progress — designed (v8 design); owner chose W2, C1 and T |
 
 ## Sources
 
