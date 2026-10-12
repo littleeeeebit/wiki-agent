@@ -821,6 +821,103 @@ three misses one shape: dispatch specifications that name no files or
 decisions, sent to evidence. The operating ceiling fails on one row that
 stopped 4 ms past its deadline.
 
+### v8 — `eval/jev/reliability-v8/` at 67239d7
+
+Frozen after label review r8 (see "Draft set (v8)"). Every run is at
+67239d7, the merge of the frozen set, with W2, C1 and T in place. v8 has
+work-start fixtures only and no answer run. So check choice, review fix and
+both answer gates are not_measured on v8, and their earlier results stand.
+The retrieval run reuses v7's revealed intents for the operational gates;
+its routing values are recorded below but not claimed.
+
+Runs: `reliability-v8-actions` and `reliability-v8-heldout` (arms B and D).
+The report is `reliability-v8-report.json`.
+
+| Gate | Target | Value | Result |
+| --- | --- | --- | --- |
+| Deterministic integrity | 0 | 0 | pass |
+| Operating ceiling (C1) | 0 | 0, largest overshoot 0 ms | pass |
+| Work-start choice | 0.90 | 0.963 [0.875, 0.990], n=54 | inconclusive |
+| Decision quality | 0.90 | 0.963 | pass |
+
+Work start: 52 of 54.
+- Jev decided 40 fixtures itself and was right on all 40. The other 14
+  fell to the host, which was right on 12.
+- All 9 dispatch fixtures that name no files fell to the host, as W2's
+  calibration predicted: Jev is unsure on them and the host settles them.
+  The host chose dispatch on 7 and evidence on 2.
+- Both misses are that shape, settled as evidence by the host. The
+  confidence given is Jev's, before the fallback:
+  - v8ws04: show a comment's time in the reader's time zone as HH:MM.
+    Jev chose dispatch at 0.51, and the host chose evidence.
+  - v8ws06: retry a failed SMS send once, 30 seconds later. Jev chose
+    evidence at 0.38, and the host chose evidence too.
+    - Its criterion cites "our SMS retry rule" while stating the values.
+      It is one of the counterexamples review r8 asked for (round 1).
+    - The rows do not record the host's reasons. That the cited rule
+      sent it to evidence is a guess.
+- So v7's open shape remains: a dispatch specification that names no files
+  and sends neither Jev nor the host to dispatch every time. v7 missed 3 of
+  5 such fixtures (Jev chose evidence); v8 missed 2 of 9 (the host chose
+  evidence).
+- Clarify 18 of 18 and evidence 18 of 18. Jev decided all 18 clarify, 17
+  evidence and 5 dispatch.
+
+Operating ceiling: no row breached, and no row came near the deadline. A
+row's own time, elapsed less what the host took, was at most 2.75 s
+against 15 s (v7: 15.004 s on none-44). No run was stopped by its
+deadline, so C1's grace was never applied. The pass shows this run stayed
+inside its allowances. It does not show the 50 ms grace bounds a real
+overshoot.
+
+Phase times (T), from the rows' `decision_ms`:
+- Route decisions: 278, p50 0.23 s, p95 5.2 s, at most 11.2 s.
+- Judge decisions: 495, p50 0.21 s, p95 0.28 s, at most 7.8 s.
+- All 115 route decisions over 2 s include a host fallback on a question
+  of the route request. A route request asks several questions at once
+  (route, analysis, progress, source, ask), and the host settled some of
+  them.
+  - Rows that fell back on each kind: route 23, analysis 31, progress 43
+    and ask 30.
+  - A row can fall back on more than one kind, so the rows do not add up
+    to 115. A row can also fall back on two questions of one kind: eight
+    rows did so on ask, so 38 ask questions fell back.
+  - One of the 115, start-48 in B, also fell back on coverage, a question
+    of its later judge request, not of the route request.
+  - The host's time is in `aside_ms`, not counted against the deadline.
+
+Retrieval, held out, revealed intents (not claimed):
+
+| Arm | n | Recall | Bridge recall | p95 s | Host USD |
+| --- | --- | --- | --- | --- | --- |
+| B | 139 | 0.925 [0.882, 0.965] | 0.417 | 7.7 | 0.91 |
+| D | 139 | 0.945 [0.906, 0.984] | 0.833 | 6.6 | 0.36 |
+
+- Failure and cancellation: 12 of 12 as expected.
+- Routing on the same intents, same code paths as v7, moved within the run
+  to run variation:
+  - Material classification is 0.958 here, against v7's 0.983. pasted-55
+    missed again in both arms. analysis-163 ('Finance question: "Why did
+    the office energy bill jump 40% this winter?" …') kept its quoted
+    question as a request in both arms. start-48 did so in B.
+  - Analysis recall, fact specificity and request-only multipart were 1.0,
+    as on v7.
+
+Spending:
+- Actions: 1.6 min, USD 0.20, 14 host turns.
+- Retrieval: 13.8 + 0.1 min, USD 1.27.
+  - Jev made 761 requests, using 2,019,293 tokens. The estimate was 556
+    requests and about 1.1 million tokens.
+  - Jev's token ceiling stopped the first batch at 262 of 278 rows (753
+    requests, 2,002,503 tokens). The same command ran the other 16 rows
+    (8 requests).
+- USD 1.46 in all. Jev's cost has no dated price.
+
+Exit on v8: the operating ceiling passes on this run, but its rows never
+neared the deadline, so the grace is untested. Work start stays
+inconclusive at 52 of 54, one short of a pass. Both misses are dispatch
+specifications that name no files, now settled by the host as evidence.
+
 ### Limits
 
 - Latency passes on v4 at 5.48 s. It failed on v3, narrowly, at 10.76 s
@@ -897,6 +994,15 @@ commit and the options recorded in each `run.json`: `cache cold`, `method
 hybrid`, `k 8`, the default model and grader. Running the same commands at a
 later commit measures a different manifest. Rebuilding a report from the
 recorded folders works at any commit.
+
+v8, from a clean checkout of 67239d7. The retrieval command ran twice; the
+second ran the 16 rows Jev's token ceiling left (Results, v8):
+
+```text
+python tool/eval/compare.py raw/eval/jev/reliability-v8-actions --experiment actions --dataset eval/jev/reliability-v8/intents.json --actions eval/jev/reliability-v8/actions.json --split held_out
+python tool/eval/compare.py raw/eval/jev/reliability-v8-heldout --dataset eval/jev/reliability-v8/intents.json --split held_out --languages en --arms B D
+python tool/eval/report.py raw/eval/jev/reliability-v8-heldout raw/eval/jev/reliability-v8-actions --out raw/eval/jev/reliability-v8-report.json
+```
 
 v7, from a clean checkout of 511313e. The held-out answers' third batch
 reran the 89 rows the host's session limit failed, after they were moved
@@ -1843,7 +1949,7 @@ records what each round found.
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
 | 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); 139 fresh held-out intents and 108 action fixtures reviewed (r7) and frozen on 2026-10-12 (Draft set (v7)); run at 511313e (Results, v7): material classification, review fix and both answer gates pass; work start inconclusive at 51 of 54; operating ceiling fails on one row 4 ms past its deadline |
-| 7 | v8 | Work start and the operating ceiling | In progress — designed (v8 design); owner chose W2, C1 and T; implemented, W2 calibrated on 138 revealed fixtures (Implementation (v8)); 54 fresh work-start fixtures frozen after review r8 (Draft set (v8)); runs next |
+| 7 | v8 | Work start and the operating ceiling | In progress — designed (v8 design); owner chose W2, C1 and T; implemented, W2 calibrated on 138 revealed fixtures (Implementation (v8)); 54 fresh work-start fixtures frozen after review r8 (Draft set (v8)); run at 67239d7 (Results, v8): operating ceiling passes but no row neared the deadline, work start inconclusive at 52 of 54 |
 
 ## Sources
 
