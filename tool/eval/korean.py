@@ -354,12 +354,11 @@ def normalizing():
 def translation(text: str, seen: list[tuple[str, dict]], asked: int | None = None) -> dict:
     """How a pairs row's question and evidence came to English: the question's
     outcome — status, cached or fresh, the translator's model and prompt
-    version — and how many evidence texts were cached, fresh or failed, with
-    every English text read, from priming to the grade, as `[text digest,
-    English digest]` (`read`; a text read twice as two Englishes is listed
-    twice). The question is the measured `prepare`'s — the last of the first
-    `asked` normalizations: a warm run primes first, and the answer may
-    normalize more after it."""
+    version — and how many evidence texts were cached, fresh or failed.
+    `read` lists every English text read, from priming to the grade, as
+    `[text digest, English digest]`; a text read as two Englishes is there twice.
+    The question is the measured `prepare`'s, the last of the first `asked`
+    normalizations: a warm run primes first, and the answer may normalize more."""
 
     question = next((o for t, o in reversed(seen[:asked]) if t == text), None)
     rest = [(t, o) for t, o in seen if t != text and o["status"] != "original_english"]
