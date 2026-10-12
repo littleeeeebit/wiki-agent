@@ -414,8 +414,11 @@ Order step 2, with fake hosts only:
     - A literal counts only as a whole token, never part of a longer
       number, name, path or version. `30` is not found in `300` or
       `09:30`, `tool/x.py` not in `tool/x.py.bak`, and `v1.13.0` not in
-      `v1.13.0-beta`. Punctuation that ends a sentence after it does not
-      join it. `meaning.check` uses the same rule.
+      `v1.13.0-beta`. What joins a token is named per character: a word
+      character, `/`, `\`, `-` and `@` always do; `.` does when a word
+      character follows it; `,` and `:` do only between digits. A full
+      stop, a clause's comma, a scheme (`mailto:`) or a label (`Port:`)
+      does not. `meaning.check` uses the same rule.
     - A section's chunks are joined in line order. The index cuts a block
       too long for one chunk at its lines (`partial`); the next part of that
       block, on the very next line, reads on as the same paragraph. Any

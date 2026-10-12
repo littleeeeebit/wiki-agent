@@ -173,6 +173,18 @@ def test_a_literal_is_a_whole_token():
                             ("v1.13.0", "v1.13.0-beta"), ("30", "09:30"), ("x.py", "x.py@2")):
         assert not meaning.present(literal, f"It is {longer}."), (literal, longer)
     assert all(meaning.present(x, f"Read {x}. Then {x}, and ({x}).") for x in ("tool/x.py", "v1.13.0", "30"))
+    # Every literal shape the set uses, in every context a sentence puts it: found.
+    shapes = ("7443", "2026", "Personio", "HMAC-SHA256", "X-Signature", "[Brewline](vendors/brewline.md)",
+              "security@kestrel.example", "4.1%", "09:12", "2,000", "eu-west", "tests/", "role=img",
+              "aria-hidden=true", "SameSite=Lax", "=VLOOKUP(A2,Rates!A:B,2)")
+    contexts = ("{x}", "It is {x}.", "({x})", '"{x}"', "`{x}`", "{x}, then", "{x}'s", "Port: {x}; next",
+                "[Report](mailto:{x})", "Port:{x}")
+    assert [(x, c) for x in shapes for c in contexts if not meaning.present(x, c.format(x=x))] == []
+    # And never inside a longer token.
+    for literal, longer in (("2026", "20261"), ("2,000", "12,000"), ("09:12", "09:12:30"), ("eu-west", "eu-west-2"),
+                            ("security@kestrel.example", "it.security@kestrel.example"), ("7443", "7443.5"),
+                            ("Personio", "PersonioX"), ("2", "2,000"), ("12", "09:12")):
+        assert not meaning.present(literal, f"It is {longer}."), (literal, longer)
     swapped = "The first file is tool/x.py.bak. The second file is tool/x.py."
     assert korean.lost(swapped, [["first file"]], ["tool/x.py"]) == ["lost literal 'tool/x.py'"]
 
@@ -390,6 +402,12 @@ def test_the_question_outcome_is_the_measured_prepare_and_every_read_is_kept():
     p = korean.Pairs([], data, pairs, [], 8, {korean.digest("p"): korean.digest("One.")})
     checked_only = [r for r in read if r[1] == korean.digest("One.")]
     assert p.drifted({"translation": got}) and not p.drifted({"translation": {"evidence": {"read": checked_only}}})
+    # A failed read and a successful one of the same text, in either order: both kept, and no drift from the failure.
+    for order in ((None, "One."), ("One.", None)):
+        mixed = korean.translation("q", [("p", {"status": "translated" if e else "unavailable", "text": e})
+                                         for e in order], asked=0)["evidence"]
+        assert mixed["read"] == [(korean.digest("p"), korean.digest("One.")), (korean.digest("p"), None)][::-1]
+        assert mixed["failed"] == 1 and not p.drifted({"translation": {"evidence": mixed}})
 
 
 # -- translation failure: deterministic fixtures, no network ---------------------------------------

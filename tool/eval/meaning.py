@@ -16,7 +16,6 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
-import re
 import sys
 import time
 from pathlib import Path
@@ -31,18 +30,45 @@ RAW = ROOT / "raw" / "eval" / "jev"
 SECONDS = 120.0
 
 
+def word(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
+def joins(text: str, k: int, step: int, edge: str) -> bool:
+    """Whether `text[k]`, beside a literal's `edge` character (`step` points
+    away from it), carries the literal's token on. A word character, `/`,
+    `\\`, `-` and `@` always do: a longer name, path, version or address.
+    `.` does when a word character follows it (`x.py.bak`, `1.13.0`), not
+    when it ends a sentence. `,` and `:` do only between digits (`1,300`,
+    `09:30`); a clause's comma, a scheme (`mailto:`) or a label (`Port:`)
+    does not."""
+
+    c = text[k]
+    far = text[k + step] if 0 <= k + step < len(text) else ""
+    if word(c) or c in "/\\-@":
+        return True
+    if c == ".":
+        return bool(far) and word(far)
+    return c in ",:" and edge.isdigit() and far.isdigit()
+
+
 def present(literal: str, text: str) -> bool:
     """Whether `literal` is in `text` as a whole token, never part of a longer
-    number, name, path or version: `30` is not in `300`, `3.05`, `1,300` or
-    `09:30`; `PR` is not in `PRs`; `tool/x.py` is not in `tool/x.py.bak` or
-    `other/tool/x.py`; `v1.13.0` is not in `v1.13.0-beta`. Punctuation that
-    ends a sentence or a clause after it (`tool/x.py.`, `30,`) does not join it."""
+    number, name, path or version (`joins`): `30` is not in `300`, `3.05`,
+    `1,300` or `09:30`; `PR` is not in `PRs`; `tool/x.py` is not in
+    `tool/x.py.bak` or `other/tool/x.py`; `v1.13.0` is not in `v1.13.0-beta`.
+    It is in `tool/x.py.`, `(30,`, `Port:7443` and `mailto:a@b.example`. An
+    edge that is not a word character (`%`, `)`, `/`) is checked by nothing."""
 
-    word = re.compile(r"\w")
-    # What continues a token: a word character, or a path, version or time joint followed by one.
-    before = r"(?<![\w/\\\-])(?<![\w][.,:@])" if word.match(literal[:1]) else ""
-    after = r"(?![\w/\\\-])(?![.,:@][\w])" if word.match(literal[-1:]) else ""
-    return re.search(before + re.escape(literal) + after, text) is not None
+    start = 0
+    while (i := text.find(literal, start)) >= 0:
+        start, j = i + 1, i + len(literal)
+        if word(literal[0]) and i > 0 and joins(text, i - 1, -1, literal[0]):
+            continue
+        if word(literal[-1]) and j < len(text) and joins(text, j, 1, literal[-1]):
+            continue
+        return True
+    return False
 
 
 def check(case: dict, outcome: dict) -> list[str]:

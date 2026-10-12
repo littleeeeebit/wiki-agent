@@ -367,7 +367,9 @@ def translation(text: str, seen: list[tuple[str, dict]], asked: int | None = Non
             "evidence": {"cached": sum(bool(o.get("cached")) for _t, o in rest),
                          "fresh": sum(o["status"] == "translated" and not o.get("cached") for _t, o in rest),
                          "failed": sum(o["status"] not in evidence.USABLE for _t, o in rest),
-                         "read": sorted({(digest(t), digest(o.get("text"))) for t, o in rest})}}
+                         # A failed read has no English (None): kept, and sorted beside the text's others.
+                         "read": sorted({(digest(t), digest(o.get("text"))) for t, o in rest},
+                                        key=lambda p: (p[0], p[1] or ""))}}
 
 
 # -- what is checked without a host -----------------------------------------------------
@@ -497,10 +499,12 @@ class Pairs:
                 self.pages[f["page"]].add(f["status"])
 
     def drifted(self, row: dict | None) -> bool:
-        """Whether a row read English, for a text the fact pass checked, other than what it checked."""
+        """Whether a row read English, for a text the fact pass checked, other
+        than what it checked. A failed read gave no English to the row: it is
+        counted as failed, not as drift."""
 
         read = (((row or {}).get("translation") or {}).get("evidence") or {}).get("read") or []
-        return any(t in self.checked and self.checked[t] != e for t, e in read)
+        return any(e is not None and t in self.checked and self.checked[t] != e for t, e in read)
 
     def missing(self) -> list[str]:
         return sorted(f"{i}:{a}" for (i, a), s in self.score.items() if s.get("missing"))
