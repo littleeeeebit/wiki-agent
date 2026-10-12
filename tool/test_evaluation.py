@@ -590,6 +590,17 @@ def test_a_run_its_deadline_stopped_is_not_a_breach_within_one_poll():
         ["calls", "candidates", "tokens"], "the other limits keep no grace"
 
 
+def test_the_largest_overshoot_reads_every_repetition(ran):
+    rows = compare.rows(ran[0], "arms")
+    first = rows[0]
+    late = {**first, "rep": 1, "budget": {**first["budget"], "elapsed_ms": 16_000, "aside_ms": 0}}
+    cfg = {"resamples": 10, "seed": 1, "confidence": 0.95}
+    table = report.arms_report(rows + [late], dataset.load(), {"k": 8}, cfg)["arms"]
+    assert table[first["arm"]]["max_overshoot_ms"] == 16_000 - first["budget"]["limits"]["seconds"] * 1000
+    assert table[first["arm"]]["rows"] == len([r for r in rows if r["arm"] == first["arm"]]), \
+        "the quality figures still read the first repetition"
+
+
 def test_the_reliability_actions_read_their_own_fixtures(tmp_path, monkeypatch):
     env = tmp_path / "jev.env"
     env.write_text("TYPESAFE_API_KEY=test-key\nWIKI_JEV_MODE=active\n", encoding="utf-8")

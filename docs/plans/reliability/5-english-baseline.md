@@ -1741,17 +1741,22 @@ v7.
 C1: `compare.breaches` counts a deadline breach only past
 `DEADLINE_GRACE_MS`, 50 ms. `compare.overshoot_ms` gives the time past
 the deadline, less the host's. The report's operating-ceiling detail
-gives the largest over all rows. A row keeps the breaches counted when it
-ran, so v7's report rebuilt at this commit still fails, with a largest
-overshoot of 4 ms. Calls, candidates and tokens keep no grace.
+gives the largest over all rows, every repetition's included. A row keeps
+the breaches counted when it ran, so v7's report rebuilt at this commit
+still fails, with a largest overshoot of 4 ms. Calls, candidates and
+tokens keep no grace.
+
+The breach count itself reads each arm's first repetition only, as it
+did before v8; C1 does not change that. On v7, no row of a later
+repetition has a breach.
 
 T: each row keeps `transition_at_ms`, when each transition happened since
 the run began, and `decision_ms`, each decision request's own time with
 its kind. The host's share is still the budget's `aside_ms`.
 
 Tests: the grace's edge (15,050 ms passes, 15,051 ms breaches), host time
-set aside first, the other limits without grace, and the transition times
-of a recorded run.
+set aside first, the other limits without grace, the largest overshoot
+read from a later repetition, and the transition times of a recorded run.
 
 ## Steps
 
