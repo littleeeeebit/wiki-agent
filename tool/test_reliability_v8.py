@@ -4,6 +4,7 @@ grace (C1). No network."""
 
 import hashlib
 import json
+import re
 from pathlib import Path
 
 JEV = Path(__file__).resolve().parents[1] / "eval" / "jev"
@@ -18,6 +19,10 @@ def load(folder: Path, name: str) -> dict:
 def shape(f: dict) -> str:
     files = f["spec"]["grounds"]["files"]
     return "dir" if any(p.endswith("/") for p in files) else "file" if files else "none"
+
+
+def words(goal: str) -> set:
+    return set(re.findall(r"[a-z]+", goal.lower())) - {"the", "a", "an", "of", "to", "for", "and", "in", "on"}
 
 
 def test_the_eighth_set_reruns_v7_s_intents_unchanged():
@@ -43,6 +48,9 @@ def test_the_eighth_action_set_holds_out_54_fresh_work_start_fixtures():
             seen += json.loads(path.read_text(encoding="utf-8"))["fixtures"]
     assert not {f["id"] for f in held} & {f["id"] for f in seen}
     assert not {f["spec"]["goal"] for f in held} & {f["spec"]["goal"] for f in seen if "spec" in f}
+    # Nor an earlier goal reworded: same target, same situation (review r8, round 1).
+    earlier = [words(f["spec"]["goal"]) for f in seen if "spec" in f]
+    assert not [f["id"] for f in held for e in earlier if len(words(f["spec"]["goal"]) & e) * 2 > len(words(f["spec"]["goal"]) | e)]
 
 
 def test_gates_v8_are_v7_s_but_for_what_the_ceiling_counts():

@@ -346,7 +346,7 @@
     "out": [],
     "done": [
      "python -m pytest -q",
-     "a reset link 3 hours old is refused",
+     "a reset link 3 hours old is refused, under the 2-hour limit our security policy now sets",
      "a reset link 1 hour old still works"
     ],
     "grounds": {
@@ -416,7 +416,7 @@
     "done": [
      "python -m pytest -q",
      "clicking Delete shows a dialog with that text",
-     "Cancel keeps the project"
+     "Cancel keeps the project, the same as closing the dialog"
     ],
     "grounds": {
      "pages": [],
@@ -438,7 +438,7 @@
     "out": [],
     "done": [
      "python -m pytest -q",
-     "a failed send is tried again once, 30 s after the failure",
+     "a failed send is tried again once, 30 s after the failure, as our SMS retry rule says",
      "a second failure is logged and not retried"
     ],
     "grounds": {
@@ -462,7 +462,8 @@
     "done": [
      "python -m pytest -q",
      "Ada Byron is listed before Alan Turing",
-     "two members named Smith are ordered by first name"
+     "two members named Smith are ordered by first name",
+     "the existing name filter still works"
     ],
     "grounds": {
      "pages": [],
@@ -484,7 +485,7 @@
     "out": [],
     "done": [
      "python -m pytest -q",
-     "an article changed on 2026-10-12 shows 'Last updated 12 October 2026'",
+     "an article changed on 2026-10-12 shows 'Last updated 12 October 2026', the date format our style guide uses",
      "articles never changed show no date"
     ],
     "grounds": {
@@ -531,7 +532,7 @@
     "done": [
      "python -m pytest -q",
      "WORKER_LIMIT sets the worker count",
-     "MAX_WORKERS alone still works and logs a deprecation warning"
+     "MAX_WORKERS alone still works for existing deployments and logs a deprecation warning"
     ],
     "grounds": {
      "pages": [],
@@ -557,7 +558,7 @@
     ],
     "done": [
      "python -m pytest -q",
-     "POST /tags with an existing name answers 409 with body {\"error\": \"tag exists\"}",
+     "POST /tags with an existing name answers 409 with body {\"error\": \"tag exists\"}, as our API guidelines reserve 409 for conflicts",
      "tests/test_tags.py covers it"
     ],
     "grounds": {
@@ -688,7 +689,7 @@
     "out": [],
     "done": [
      "python -m pytest -q",
-     "cleanup --dry-run lists the files it would delete",
+     "cleanup --dry-run lists the files it would delete, one path per line as our CLI conventions require",
      "after cleanup --dry-run every file is still there"
     ],
     "grounds": {
@@ -740,17 +741,17 @@
    "label": "dispatch",
    "spec": {
     "slug": "v8ws18",
-    "goal": "Mark the session cookie Secure and SameSite=Lax",
+    "goal": "Trim leading and trailing spaces from usernames before saving them",
     "out": [],
     "done": [
      "python -m pytest -q",
-     "the session cookie carries Secure and SameSite=Lax",
-     "sign-in still works over HTTPS"
+     "' ada ' is saved as 'ada'",
+     "a username with no surrounding spaces is saved unchanged"
     ],
     "grounds": {
      "pages": [],
      "files": [
-      "src/web/"
+      "src/accounts/"
      ],
      "rules": []
     },
@@ -765,11 +766,11 @@
    "label": "evidence",
    "spec": {
     "slug": "v8ws19",
-    "goal": "Delete uploaded logs after their retention period",
+    "goal": "Cap how many coupons a customer can redeem",
     "out": [],
     "done": [
      "python -m pytest -q",
-     "uploaded logs older than the retention our data policy sets are deleted",
+     "a customer cannot redeem more coupons than the promotion terms allow",
      "tests cover the boundary"
     ],
     "grounds": {
@@ -817,7 +818,7 @@
     "out": [],
     "done": [
      "python -m pytest -q",
-     "calls give up after the timeout our client guidelines set for external services",
+     "a slow tax call fails at the same timeout the other external calls use",
      "tests cover a slow call"
     ],
     "grounds": {
@@ -836,12 +837,12 @@
    "label": "evidence",
    "spec": {
     "slug": "v8ws22",
-    "goal": "Name the metrics the new scheduler emits",
+    "goal": "Pick the cache key format for the new price lookups",
     "out": [],
     "done": [
      "python -m pytest -q",
-     "the scheduler's metrics follow our metric naming convention",
-     "tests check one metric name"
+     "price lookup cache keys are built like the existing cache keys",
+     "tests check one key"
     ],
     "grounds": {
      "pages": [],
@@ -886,7 +887,7 @@
     "out": [],
     "done": [
      "python -m pytest -q",
-     "the bucket is created in the region our data residency decision requires",
+     "the bucket is created in the region where customer data has to stay",
      "tests check the configuration"
     ],
     "grounds": {
@@ -905,12 +906,12 @@
    "label": "evidence",
    "spec": {
     "slug": "v8ws25",
-    "goal": "Add structured logging to the payment webhook handler",
+    "goal": "Round converted prices in the new currency switcher",
     "out": [],
     "done": [
      "python -m pytest -q",
-     "each log line carries the fields our logging standard requires",
-     "tests check one line"
+     "converted prices are rounded the way checkout already rounds them",
+     "tests check one price"
     ],
     "grounds": {
      "pages": [],
@@ -928,12 +929,12 @@
    "label": "evidence",
    "spec": {
     "slug": "v8ws26",
-    "goal": "Set the default page size of the new contacts endpoint",
+    "goal": "Sign out idle sessions in the new admin console",
     "out": [],
     "done": [
      "python -m pytest -q",
-     "GET /contacts returns the default page size our API guidelines set",
-     "tests check it"
+     "the admin console signs out a session after the same idle time the main app allows",
+     "tests cover the boundary"
     ],
     "grounds": {
      "pages": [],
@@ -978,7 +979,7 @@
     "out": [],
     "done": [
      "python -m pytest -q",
-     "responses carry the version under the header name and format our versioning rule sets",
+     "responses carry the version under the header name and format the web API already sends",
      "tests check one response"
     ],
     "grounds": {
@@ -1003,7 +1004,7 @@
     "out": [],
     "done": [
      "python -m pytest -q",
-     "checkout errors appear in each language the product supports, through our translation files",
+     "checkout errors appear in every language the product supports, a list this request does not give",
      "tests check one language"
     ],
     "grounds": {
@@ -1028,7 +1029,7 @@
     "out": [],
     "done": [
      "python -m pytest -q",
-     "a deleted comment is hidden from readers and kept for the period our retention rule sets",
+     "a deleted comment is hidden from readers and kept as long as deleted posts are kept",
      "tests cover one deleted comment"
     ],
     "grounds": {
@@ -1103,17 +1104,17 @@
    "label": "evidence",
    "spec": {
     "slug": "v8ws33",
-    "goal": "Add a health check to the search indexer",
+    "goal": "Store the avatars uploaded on the new profile page",
     "out": [],
     "done": [
      "python -m pytest -q",
-     "the indexer answers health checks on the path and port our services use",
-     "tests check one answer"
+     "avatars are stored in the same place and under the same size limit as other user uploads",
+     "tests cover one upload"
     ],
     "grounds": {
      "pages": [],
      "files": [
-      "src/indexer/"
+      "src/profile/"
      ],
      "rules": []
     },
@@ -1187,7 +1188,7 @@
     "out": [],
     "done": [
      "python -m pytest -q",
-     "a paid invoice emits an event named and shaped by our event conventions",
+     "a paid invoice emits an event named and shaped like the existing billing events",
      "tests check one event"
     ],
     "grounds": {
@@ -1271,7 +1272,7 @@
    "label": "clarify",
    "spec": {
     "slug": "v8ws40",
-    "goal": "Tidy up the settings page",
+    "goal": "Rethink the onboarding flow",
     "out": [],
     "done": [
      "python -m pytest -q"
@@ -1313,7 +1314,7 @@
    "label": "clarify",
    "spec": {
     "slug": "v8ws42",
-    "goal": "Fix the flaky behaviour",
+    "goal": "Do something about the time zone problems",
     "out": [],
     "done": [
      "python -m pytest -q"
@@ -1355,7 +1356,7 @@
    "label": "clarify",
    "spec": {
     "slug": "v8ws44",
-    "goal": "Make the dashboard clearer",
+    "goal": "Freshen up the landing page",
     "out": [],
     "done": [
      "python -m pytest -q"
@@ -1443,7 +1444,7 @@
    "label": "clarify",
    "spec": {
     "slug": "v8ws48",
-    "goal": "Clean up the configuration",
+    "goal": "Rework the retry logic",
     "out": [],
     "done": [
      "python -m pytest -q"
@@ -1451,7 +1452,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/config.py:1"
+      "src/net/retry.py:1"
      ],
      "rules": []
     },
@@ -1581,7 +1582,7 @@
    "label": "clarify",
    "spec": {
     "slug": "v8ws54",
-    "goal": "Make the notifications less noisy",
+    "goal": "Make the quota warnings friendlier",
     "out": [],
     "done": [
      "python -m pytest -q"
@@ -1589,8 +1590,8 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/notifications/",
-      "web/src/notify/"
+      "src/quota/",
+      "web/src/quota/"
      ],
      "rules": []
     },

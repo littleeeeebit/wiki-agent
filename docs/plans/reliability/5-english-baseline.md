@@ -1768,7 +1768,16 @@ repository (`raw/eval/jev/v8-draft/`).
   `r8`).
   - 18 per label. Each label has 9 that name no files, 5 that name files
     and 4 that name a directory.
-  - No id or goal of an earlier set comes back.
+  - No id or goal of an earlier set comes back, and no goal shares more
+    than half its words with an earlier one. Review r8 round 1 found
+    four goals that kept an earlier case's target and situation under new
+    words, so those were replaced. Five more of the same kind were
+    replaced too.
+  - Wording does not give a label away. Round 1 found that "our" appeared
+    only in evidence criteria, so a rule on words alone labelled all 54.
+    Now nine evidence fixtures point at a repository fact without it, and
+    five dispatch fixtures cite a rule whose value they already state.
+    That rule now labels 39 correctly, against 43 on v7's fixtures.
   - Decisions appear in two dispatch and two evidence fixtures, and
     out-of-scope items in two dispatch and one evidence fixture, so
     neither field points to a label.
