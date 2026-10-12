@@ -42,7 +42,8 @@ retain the comparison dataset and English baseline.
 
 Require PR 5's baseline manifest hash and passing report; refuse execution if the
 current code/policy/source versions differ without a new English control run.
-Create `eval/jev/reliability/meaning-pairs.json` with:
+Create the pair file (v1 below names it `eval/jev/korean/pairs.json` and fixes
+its schema) with:
 
 ```json
 {
@@ -108,10 +109,292 @@ translation fixture plus the frozen English regression subset after a fix.
 If controller code changes, rerun/version PR 5 first. Rollback the translator
 change independently of retained experiment records.
 
+## v1 — the paired experiment (design)
+
+This section settles what the blueprint above leaves open, so the
+implementation, the set and the run can follow it without new choices.
+
+### The English control
+
+The blueprint requires PR 5's baseline. PR 5 closed with the routing and
+answer gates passed on some sets and work start inconclusive at 52 of 54
+(v8). Its recorded baseline for this PR, `reliability-v4` at a0e88d3, ran on
+code that has since changed: the answer path (#114 onward), PR 6's review
+profiles, PR 7's planner and PR 8's recovery. A run on today's code is
+therefore not the measurement the v4 report describes.
+
+Arm A is that control. It runs in the same run directory as arms B–D, at the
+same commit, with the same controller, policies and index settings. A and B
+share the EN corpus's index, and C and D share the KO corpus's (below). The
+manifest records both snapshots and which arm read which. Every claim in this
+PR is a paired difference against arm A. No claim is an absolute rate held
+against PR 5's gates. The report records the v4 and v8 manifests as context.
+It records A's own recall beside v8's, so a drift of A from v8 is visible.
+It does not interpret that drift. v8 has no answer run, so A's coverage has
+nothing in v8 to compare with. Per attribution step 1, a pair whose arm A
+fails is classified as a controller or baseline issue.
+
+### Pairs
+
+There are seven live groups of 12 pairs each (84 pairs) and one fault group:
+
+| Group | Source of the English intent |
+| --- | --- |
+| Negation and exclusions | v8 intents whose question or answer turns on "not", "except", "only", "never"; new ones if fewer than 12 |
+| Numbers and units | v8 intents with a number, unit, size or duration in the reference; new ones to reach 12 |
+| Names and identifiers | v8 intents whose reference names a path, flag, port, service or version |
+| Pasted documents | v8 `pasted` intents |
+| Multi-part requests | v8 intents with two or more `parts` |
+| Conflicting evidence | v8 `conflict` intents |
+| Analysis versus facts | v8 intents with `analysis: true` (6) and fact intents with `analysis: false` phrased as advice (6) |
+| Translation failure | deterministic fault fixtures, below; not a live group |
+
+An intent belongs to one group only, and a pair reuses the intent's reviewed
+English wording, evidence groups, parts and labels unchanged. A new English
+intent goes through the same label review as the Korean side.
+
+A live pair's intent has at least one evidence group and at least one part.
+Recall and coverage then apply to every pair, and both gates read all 84.
+That excludes v8's `direct` intents with no evidence (direct-01, 03, 05 and
+43–48) and its `none` intents (none-02, 06, 07, 10–12 and 43–48), which also
+have no parts. They have no file to twin either. A missing value in an
+eligible pair is therefore always a failure or a gap, never a normal N/A.
+
+Allocation is fixed, so an intent with several traits lands in one place.
+Groups fill in this order: conflicting evidence, pasted documents, analysis
+versus facts, names and identifiers, multi-part requests, negation and
+exclusions, numbers and units. The scarce types come first. Within a group,
+v8's held-out intents are taken before calibration ones. An intent goes to the
+first group in that order whose trait it has and that still has room. Conflict
+and names cannot fill 12 from held-out intents alone, so they take calibration
+intents. The set review checks the final assignment against these rules.
+
+Each pair adds:
+- `input.ko`: a natural Korean wording of the same question, with the same
+  negations, exclusions, names, numbers, units and pasted text. Pasted text
+  keeps its original language where a person would paste it as is (logs,
+  code, English error text).
+- `meaning`, labels on the normalized English of the question, as
+  `{"require": [[...]], "forbid": [...], "literals": [...]}`. `require` and
+  `forbid` are `tool/eval/meaning.py`'s existing fields. `literals` is new:
+  strings that must appear exactly (numbers, names, paths). `check` is
+  extended to read it.
+- `sources`: for every file the intent's evidence names, a Korean twin at the
+  same path. Each twin carries a heading map from each English heading to its
+  Korean one, so a `file#Heading` label resolves in both corpora. It also
+  carries `facts`, the twin's fact units. A fact unit names one Korean
+  sentence by its section and position, with `require` groups (a negation
+  with what it negates, a number with its unit) and `literals`. Each `require`
+  group must be met within one sentence of that unit's normalized English. A
+  negation and its object in different sentences do not pass. A plain
+  `translate.kept` check does not suffice: "does not run on Windows" keeps
+  "Windows" and "run" after losing "not".
+- `review`: who reviewed it, which round, and when. Interpreting results
+  requires this field.
+
+Sources keep their paths, so a file-level label is the same in both corpora.
+Only a section label needs the heading map. That is the blueprint's shared
+`source_fact` identity, at the granularity the scorer already uses. A file
+label counts any section of the file, so it is coarse. It does not stand in
+for the fact units, which carry the meaning check.
+
+### Two corpora
+
+The EN corpus is v8's corpus at 67239d7. The KO corpus is the same corpus with
+the pair files swapped for their Korean twins, about 100 files at the v8
+corpus's one to two files per intent. Every other file stays English. So the
+KO corpus measures Korean evidence among English neighbors, which is a mixed
+repository. It does not measure an all-Korean one. That limit is stated in
+the results, not hidden.
+
+Each corpus gets one index for the whole run, built once like the
+`arms` experiment's.
+
+The evidence literal check runs on the KO corpus build, not on what an answer
+happened to cite. Every twin section goes through the same evidence
+normalization the index uses, and each fact unit is checked against its
+sentence of the result. A lost fact therefore counts whether or not retrieval
+reached it. A unit whose sentence was not normalized (failed, limited, or
+missing from the output) is not a pass. It is listed, and the Literals gate is
+inconclusive until it is resolved. The run reads its normalized text from the
+same translation cache, so the checked English is the English the arms saw.
+
+### Arms
+
+All four arms run the product path that `compare.py`'s arm D runs: the Jev
+controller, the graph lane and claim verification, at `--level answer`.
+
+| Arm | Question | Corpus |
+| --- | --- | --- |
+| A | `input.en` | EN |
+| B | `input.ko` | EN |
+| C | `input.en` | KO |
+| D | `input.ko` | KO |
+
+The same independent grading session grades every arm against the pair's
+English parts. The translator's cache is shared on disk, as in the existing
+runs; each row records whether its translation was cached or fresh, and the
+translator's model and prompt version. Latency and spend are read with that
+in mind: a cached row pays nothing for translation.
+
+A row records:
+- the question as given, its normalized English, and the normalization status;
+- the meaning-label result for the question (B, D);
+- the transitions taken;
+- the evidence labels handed over (mapped through the heading map);
+- sufficiency, answer status, citations and grading;
+- latency, and host, translator and Jev spend.
+
+`report.py`'s per-intent paired bootstrap (`paired`, 2000 resamples, 95%,
+fixed seed) reads the arm letters unchanged. It gives the B−A, C−A and D−A
+differences, and D against B and C for interaction.
+
+### Gates
+
+The owner selected these gates in the blueprint. They are frozen in
+`eval/jev/korean/gates.json` before the run. Any later change is a new
+version before its measurement.
+
+| Gate | Pass when |
+| --- | --- |
+| Literals | No required negation or literal is lost in any reviewed pair's translated question (B, D) or twin fact unit (KO corpus) |
+| Integrity | No fabricated accepted citation, and no answer published as verified with a claim the grader finds unsupported, in any arm |
+| Recall | For B−A, C−A and D−A, the lower end of the paired difference in evidence recall is at least −0.05 |
+| Coverage | The same, for answer coverage |
+
+A translation that failed is not a lost literal. It is its own outcome,
+counted and listed. It is a defect only if it was marked translated or
+continued as if normalized. But a question or fact unit that was not
+normalized is not a success either. Until it is normalized and checked, the
+Literals gate is inconclusive, not passed.
+
+The cohort is frozen before the run: all 84 pairs in all four arms, at the
+first run (repetition 0). The paired gates read that cohort and nothing else.
+Today `report.by_intent` and `report.paired` drop rows whose value is `None`.
+The implementation must not let a missing row shrink the cohort:
+- a retrieval error scores recall 0 and is listed;
+- an answer error (no answer published) scores coverage 0 and is listed;
+- a missing grade on a published answer is unscorable. One regrade is
+  allowed; if the grade is still missing, the Coverage gate is inconclusive;
+- a missing row in any arm makes the Recall and Coverage gates
+  inconclusive;
+- an answer published as verified without a grade makes the Integrity gate
+  inconclusive.
+
+In a complete cohort of 84 pairs where no other pair differs, one pair that
+loses all its evidence keeps recall above the margin (lower end −0.036), and
+two do not (−0.060). That is the margin the owner chose, and the set
+size follows from it rather than the other way round.
+
+### Repetition and attribution
+
+A pair is divergent when any arm differs from A at repetition 0 in recall,
+coverage, answer status, verification status or transitions taken, or when
+its question's meaning labels or one of its twins' fact units fail. A pair
+is at the boundary when A itself has partial recall or partial coverage. Divergent and
+boundary pairs are the candidates for two more runs.
+
+Attribution uses steps 1–5 above, with traces and original spans kept. The
+checks run in this order, and the first that applies decides:
+1. A fails at repetition 0: controller or baseline issue (step 1).
+2. A meaning label or fact unit fails: translation defect (step 2). This is
+   decided from the labels, regardless of repetitions.
+3. The pair was not repeated, or a repetition of A or of the arm is missing:
+   unresolved (step 5).
+4. The difference from A appears in one or two of the three runs:
+   stochastic or threshold variation, not a translator defect (step 4).
+5. The difference appears in all three runs and the evidence handed over
+   differs in all three: evidence or index (step 3). For C and D this is the
+   KO index. B shares A's index, so for B the report names it an effect of
+   the normalized question's wording on retrieval.
+6. Anything else, such as a difference in all three runs with the same
+   evidence: unresolved (step 5).
+
+A single differing set of evidence labels is an observation, not a cause.
+Only a difference that persists over the repetitions is attributed to the
+index or the wording.
+
+A's two extra runs are shared by all arms of the pair. The shared
+translation cache fixes each normalization, so repetitions measure the
+controller's and host's variation, not the translator's.
+
+Repetition is not part of the base run's approval. After the base run, the
+report lists the divergent and boundary pairs with the cost of repeating them,
+and repetition runs only after a second approval. A pair not repeated is
+reported as unresolved (not repeated), unless check 1 or 2 already classified
+it. Unresolved is not evidence of equivalence or of a sound translation.
+
+### Translation failure
+
+The fault group needs no network. It covers:
+- the translator raising;
+- the monthly limit at zero;
+- a deadline shorter than the call;
+- a batch returned with the wrong count;
+- protected spans not restored.
+
+Each fixture runs through `knowledge.prepare`'s `normalize` state and through
+evidence normalization. Each must end with an explicit `failed` or `limited`
+status, with English text absent where the status says so (the
+`search.evidence.problems` contract) and a visible fallback. A fixture fails
+if the untranslated text is marked as normalized. These fixtures are tests in
+the implementation PR, not a paid run.
+
+### Output overlay
+
+This is a separate check after the routing results. It runs arm A's answers
+through the Korean display path. Tables, lists, citations, numbers and
+protected names must survive, checked with `translate`'s own `protect`,
+`intact` and `facts`. A refused paragraph stays original with its status. No
+back-translation is used as proof. It sends only the answers, to the
+translator.
+
+### Cost and limits
+
+84 pairs × 4 arms is 336 answer rows. v6's answer run cost USD 21.34 for 270
+rows, so the base run is about USD 26.56 of host spending. The batch runner's
+USD 10 ceiling splits it into about three batches. Repetition is priced
+separately after the base run, from the number of divergent and boundary
+pairs, and needs its own approval.
+
+Translation covers about 84 unique Korean questions (B and D share them),
+the twins' chunks, and 84 overlay answers. That is estimated at under USD 1
+at `gemini-3.1-flash-lite`. It must fit the month's remaining
+`TRANSLATE_MONTHLY_USD` (default 5). The balance is checked when approval is
+asked and again when the run starts. Jev's tokens have no dated price; v8's
+retrieval run used about 2 M for 278 rows, so roughly 3–5 M here. The base
+run needs the owner's approval with this estimate.
+
+### Order
+
+1. This design.
+2. Implementation:
+   - a `pairs` experiment in `compare.py`;
+   - the KO corpus build and heading map;
+   - `meaning.check` extended to `literals`;
+   - the fact-unit pass over every twin's normalized sections;
+   - the gates file;
+   - report aggregation over the frozen cohort, with the missing-value rules
+     above;
+   - the divergence and boundary list with its repetition cost;
+   - the fault-group tests.
+
+   It uses fake hosts only and no paid run.
+3. The set:
+   - `eval/jev/korean/pairs.json` and the Korean twins;
+   - reviewed by the review cell in rounds until no finding remains, as the v4
+     to v8 labels were (a model reviewer, gpt-6.1-sol, at the owner's
+     direction, recorded as such);
+   - then frozen.
+4. The paid base run and its results, recorded here; then repetition, if
+   approved separately.
+5. A fix only where step 4 shows a translation or normalization defect.
+   Every fix is checked on the failing pairs and on arm A again.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Fixtures | Freeze reviewed paired questions and sources | Not started |
+| 1 | Fixtures | Freeze reviewed paired questions and sources | In progress — design (v1) above |
 | 2 | Comparison | Run A–D comparisons and isolate causes | Not started |
 | 3 | Fix | Fix normalization only where evidence supports it | Not started |
