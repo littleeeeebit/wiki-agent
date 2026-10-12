@@ -873,13 +873,17 @@ overshoot.
 Phase times (T), from the rows' `decision_ms`:
 - Route decisions: 278, p50 0.23 s, p95 5.2 s, at most 11.2 s.
 - Judge decisions: 495, p50 0.21 s, p95 0.28 s, at most 7.8 s.
-- All 115 route decisions over 2 s include a host fallback. A route
-  request asks several questions at once, and the host settled some of
-  them:
-  - By question, these rows fell back on route 23 times, analysis 31,
-    progress 43, ask 30 and coverage 1.
-  - One row can fall back on more than one question, so these counts do
-    not add up to 115.
+- All 115 route decisions over 2 s include a host fallback on a question
+  of the route request. A route request asks several questions at once
+  (route, analysis, progress, source, ask), and the host settled some of
+  them.
+  - Rows that fell back on each kind: route 23, analysis 31, progress 43
+    and ask 30.
+  - A row can fall back on more than one kind, so the rows do not add up
+    to 115. A row can also fall back on two questions of one kind: eight
+    rows did so on ask, so 38 ask questions fell back.
+  - One of the 115, start-48 in B, also fell back on coverage, a question
+    of its later judge request, not of the route request.
   - The host's time is in `aside_ms`, not counted against the deadline.
 
 Retrieval, held out, revealed intents (not claimed):
