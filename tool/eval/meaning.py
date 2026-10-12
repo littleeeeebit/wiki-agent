@@ -31,13 +31,16 @@ SECONDS = 120.0
 
 
 def check(case: dict, outcome: dict) -> list[str]:
-    """What is wrong with one case's English. Empty means it passes."""
+    """What is wrong with one case's English. Empty means it passes.
+    `literals`, where a case has them (reliability PR 9's pairs), must appear
+    exactly as written: a number, a name, a path."""
 
     if outcome["status"] != "translated":
         return [f"status {outcome['status']} ({outcome.get('reason')})"]
     text = outcome["text"].lower()
     wrong = [f"none of {group}" for group in case["require"] if not any(p.lower() in text for p in group)]
-    return wrong + [f"has {phrase!r}" for phrase in case["forbid"] if phrase.lower() in text]
+    wrong += [f"has {phrase!r}" for phrase in case["forbid"] if phrase.lower() in text]
+    return wrong + [f"lost literal {x!r}" for x in case.get("literals", []) if x not in outcome["text"]]
 
 
 def run(manifest: Path) -> dict:

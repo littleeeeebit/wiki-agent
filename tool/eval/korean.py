@@ -1,0 +1,637 @@
+"""`python tool/eval/korean.py --check [--pairs <file>]` · `python tool/eval/korean.py overlay <run-dir>`
+
+Reliability PR 9's paired experiment (`docs/plans/reliability/9-korean.md`,
+v1): a reviewed English intent of v8 beside its Korean wording, and each file
+its evidence names beside a Korean twin at the same path. Four arms on the
+product path — A en/EN, B ko/EN, C en/KO, D ko/KO — run in
+`compare.py --experiment pairs`. This module is the set, the KO corpus, the
+checks that need no host, and the report's pair gates and attribution.
+
+`--check` validates the pair file against its dataset: shapes, eligibility,
+heading maps and fact units, and the seven groups of twelve.
+`overlay` sends arm A's answers of a pairs run through the Korean display
+path, a paragraph at a time, as the answer screen does; it sends them to the
+translator and writes `overlay.json` beside the rows.
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import re
+import sys
+import time
+from collections import defaultdict
+from pathlib import Path
+from unittest.mock import patch
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from eval import dataset  # noqa: E402
+from search import HUB, evidence  # noqa: E402
+
+SCHEMA = "jev-korean-pairs/1"
+PAIRS = HUB / "eval" / "jev" / "korean" / "pairs.json"
+# The live groups in allocation order: the scarce types first (v1, Pairs).
+GROUPS = ("conflict", "pasted", "analysis", "names", "multipart", "negation", "numbers")
+PER_GROUP = 12
+# Each arm's question language and corpus. All four run Jev, the graph lane and claim verification.
+ARMS = {"A": ("en", "EN"), "B": ("ko", "EN"), "C": ("en", "KO"), "D": ("ko", "KO")}
+# Long enough for a whole twin section: the fact pass is not a turn, and what it normalizes is cached for the arms.
+FACT_SECONDS = 120.0
+OVERLAY_SECONDS = 60.0
+HANGUL = re.compile(r"[가-힣]")
+SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+# -- the set --------------------------------------------------------------------
+
+def load(path: Path = PAIRS) -> tuple[dict, dict]:
+    """The pair file and the dataset it pairs, both valid, or `ValueError`."""
+
+    pairs = json.loads(path.read_text(encoding="utf-8"))
+    data = dataset.load(HUB / pairs["dataset"]["path"])
+    problems = invalid(pairs, data)
+    if problems:
+        raise ValueError(f"{path}: " + "; ".join(problems[:5]))
+    return pairs, data
+
+
+def files(intent: dict) -> set[str]:
+    return {a.split("#")[0] for g in intent["evidence"] for a in g}
+
+
+def phrases(groups) -> bool:
+    return isinstance(groups, list) and all(isinstance(g, list) and g and all(isinstance(p, str) and p for p in g)
+                                            for g in groups)
+
+
+def strings(items) -> bool:
+    return isinstance(items, list) and all(isinstance(s, str) and s for s in items)
+
+
+def invalid(pairs: dict, data: dict) -> list[str]:
+    """What makes the pair file unusable with `data`, as sentences; empty when nothing does."""
+
+    if pairs.get("schema") != SCHEMA:
+        return [f"schema is not {SCHEMA}"]
+    out = []
+    if dataset.sha((HUB / pairs["dataset"]["path"]).read_bytes()) != pairs["dataset"]["sha256"]:
+        out.append("the dataset is not the one the pairs were made on")
+    intents = {i["id"]: i for i in data["intents"]}
+    seen: set[str] = set()
+    for p in pairs["pairs"]:
+        where, i = p.get("intent"), intents.get(p.get("intent"))
+        if i is None:
+            out.append(f"{where}: no such intent")
+            continue
+        if where in seen:
+            out.append(f"{where}: in two pairs")
+        seen.add(where)
+        if p.get("group") not in GROUPS:
+            out.append(f"{where}: group is one of {GROUPS}")
+        # Recall and coverage apply to every pair, so a missing value is a failure, never a normal N/A.
+        if not i["evidence"] or not i["parts"] or i.get("fault"):
+            out.append(f"{where}: a pair's intent has evidence and parts, and no fault")
+        if not isinstance(p.get("input", {}).get("ko"), str) or not HANGUL.search(p["input"]["ko"]):
+            out.append(f"{where}: input.ko is a Korean wording")
+        m = p.get("meaning") or {}
+        if set(m) != {"require", "forbid", "literals"} or not phrases(m["require"]) or not all(
+                isinstance(m[k], list) and all(isinstance(s, str) and s for s in m[k]) for k in ("forbid", "literals")):
+            out.append(f"{where}: meaning is {{require: [[...]], forbid: [...], literals: [...]}}")
+        if p.get("review") not in (pairs["labels"].get("reviews") or {}):
+            out.append(f"{where}: no recorded review")
+        out += [f"{where}: {page} has no twin" for page in sorted(files(i) - set(pairs["twins"]))]
+    known = dataset.pages(data)
+    for page, twin in sorted(pairs["twins"].items()):
+        if page not in known:
+            out.append(f"{page}: no such page")
+            continue
+        out += [f"{page}: {problem}" for problem in mapped(known[page], twin)]
+    return out
+
+
+def sentences(text: str) -> list[str]:
+    return [s.strip() for s in SENTENCE.split(text) if s.strip()]
+
+
+def mapped(english: str, twin: dict) -> list[str]:
+    """What is wrong with one twin: its sections are the English page's, in
+    order, each heading mapped; and each fact unit names a section and a
+    sentence the twin has."""
+
+    if not isinstance(twin.get("text"), str) or not HANGUL.search(twin["text"]):
+        return ["text is a Korean twin"]
+    heads = twin.get("headings") or {}
+    en, ko = dataset.sections(english), dataset.sections(twin["text"])
+    want = [" > ".join(heads.get(h, f"<{h} unmapped>") for h in path.split(" > ")) for path, _b in en]
+    out = [] if want == [path for path, _b in ko] else [f"sections {[p for p, _b in ko]} are not {want}"]
+    body = {path.split(" > ")[-1]: b for path, b in ko}
+    ids = [f.get("id") for f in twin.get("facts", [])]
+    if len(ids) != len(set(ids)) or not all(isinstance(x, str) and x for x in ids):
+        out.append("fact ids are distinct names")
+    for f in twin.get("facts", []):
+        said = sentences(body.get(heads.get(f.get("section"), ""), ""))
+        if not said or not isinstance(f.get("sentence"), int) or not 0 <= f["sentence"] < len(said):
+            out.append(f"fact {f.get('id')}: names no sentence of a twin section")
+        if not phrases(f.get("require")) or not strings(f.get("literals")) or not (f["require"] or f["literals"]):
+            out.append(f"fact {f.get('id')}: require [[...]] and literals [...], not both empty")
+    if not twin.get("facts"):
+        out.append("no fact unit")
+    return out
+
+
+def allocation(pairs: dict, data: dict) -> list[str]:
+    """Whether the set fills seven groups of twelve. Which group an intent
+    with several traits goes to, and whether a held-out one was passed over
+    for a calibration one, is the set review's, by the order of `GROUPS`
+    (v1, Pairs); `--check` prints each group's calibration count for it."""
+
+    counts = {g: sum(p["group"] == g for p in pairs["pairs"]) for g in GROUPS}
+    return [f"{g}: {n} pairs, not {PER_GROUP}" for g, n in counts.items() if n != PER_GROUP]
+
+
+def calibration(pairs: dict, data: dict) -> dict[str, int]:
+    split = {i["id"]: i["split"] for i in data["intents"]}
+    return {g: sum(split[p["intent"]] == "calibration" for p in pairs["pairs"] if p["group"] == g) for g in GROUPS}
+
+
+def ko_corpus(data: dict, pairs: dict) -> dict:
+    """The KO corpus's dataset: `data` with every twin in place of its page.
+    Every other page stays English, so it measures a mixed repository."""
+
+    out = json.loads(json.dumps(data))
+    for page, twin in pairs["twins"].items():
+        if page.startswith("papers/"):
+            out["corpus"]["papers"][page.removeprefix("papers/")] = twin["text"]
+        else:
+            out["corpus"]["files"][page] = twin["text"]
+    return out
+
+
+def relabel(pairs: dict):
+    """A KO chunk's label as the English labels name it: a twin's Korean heading mapped back."""
+
+    back = {page: {ko: en for en, ko in t["headings"].items()} for page, t in pairs["twins"].items()}
+
+    def label(name: str) -> str:
+        page, _, heading = name.partition("#")
+        return f"{page}#{back.get(page, {}).get(heading, heading)}"
+
+    return label
+
+
+# -- running the pairs (`compare.py --experiment pairs`) ------------------------------------
+
+def units(pairs: dict, data: dict, opts: dict) -> list[dict]:
+    """Each pair through each arm, all on the product path: the question in
+    the arm's language, read against the arm's corpus. A repetition run
+    (`plan`) runs repetitions 1 and 2 of A and the planned arms."""
+
+    intents = {i["id"]: i for i in data["intents"]}
+    plan = opts.get("plan")
+    return [{"key": f"{p['intent']}:{arm}:{rep}", "intent": intents[p["intent"]], "language": lang,
+             "text": p["input"]["ko"] if lang == "ko" else intents[p["intent"]]["variants"]["en"],
+             "arm": arm, "rep": rep, "corpus": corpus, "jev": True, "graph": True}
+            for p in sorted(pairs["pairs"], key=lambda p: p["intent"])
+            if (not opts["ids"] or p["intent"] in opts["ids"]) and (plan is None or p["intent"] in plan)
+            for arm, (lang, corpus) in ARMS.items()
+            if arm in opts["arms"] and (plan is None or arm == "A" or arm in plan[p["intent"]])
+            for rep in opts["reps"]]
+
+
+def run(folder: Path, opts: dict, data: dict, ceiling, record: dict) -> dict:
+    """The EN corpus's units, then the KO corpus's, each on its own index.
+    Before the KO units, once per run, every twin's fact units are checked
+    against the English their sections normalize to (`facts.json`): what
+    the KO arms read is then the cached English that was checked."""
+
+    from eval import compare
+    from main import knowledge
+
+    pairs = json.loads((HUB / opts["pairs"]["path"]).read_text(encoding="utf-8"))
+    todo = units(pairs, data, opts)
+    done = {r["key"] for r in compare.rows(folder, "pairs")}
+    checked = folder / "facts.json"
+
+    def fact_pass(c, index) -> None:
+        def english(chunks: list[dict]) -> list[dict]:
+            owners = [(x["source_id"],) if x["visibility"] == "private" else () for x in chunks]
+            return knowledge.english([x["text"] for x in chunks], FACT_SECONDS, owners, project=c.repo)
+
+        compare.write(checked, {"at": compare.now(), "facts": facts(pairs, index.chunks, c.label, english)})
+
+    last = {"left": 0}
+    for name, corpus in (("EN", data), ("KO", ko_corpus(data, pairs))):
+        mine = [u for u in todo if u["corpus"] == name]
+        first = name == "KO" and opts["reps"] == [0] and not checked.exists()
+        if ceiling.over() or (not first and all(u["key"] in done for u in mine)):
+            continue
+        last = compare.measure(folder, opts, data, corpus, ceiling, record, "pairs", mine,
+                               rename=relabel(pairs) if name == "KO" else None, before=fact_pass if first else None,
+                               health=f"graph_health_{name}")
+    return last
+
+
+@contextlib.contextmanager
+def normalizing():
+    """Every English normalization `knowledge` asks for meanwhile, as `(text, outcome)`."""
+
+    from main import knowledge
+
+    seen: list[tuple[str, dict]] = []
+    real = knowledge.english
+
+    def english(texts, seconds, owners=None, project=None, cancel=None):
+        out = real(texts, seconds, owners, project, cancel)
+        seen.extend(zip(texts, out))
+        return out
+
+    with patch.object(knowledge, "english", english):
+        yield seen
+
+
+def translation(text: str, seen: list[tuple[str, dict]]) -> dict:
+    """How a pairs row's question and evidence came to English: the question's
+    outcome — status, cached or fresh, the translator's model and prompt
+    version — and how many evidence texts were cached, fresh or failed."""
+
+    asked = next((o for t, o in seen if t == text), None)
+    rest = [o for t, o in seen if t != text and o["status"] != "original_english"]
+    return {"question": {k: asked.get(k) for k in ("status", "reason", "cached", "model", "prompt_version", "version")}
+            if asked else None,
+            "evidence": {"cached": sum(bool(o.get("cached")) for o in rest),
+                         "fresh": sum(o["status"] == "translated" and not o.get("cached") for o in rest),
+                         "failed": sum(o["status"] not in evidence.USABLE for o in rest)}}
+
+
+# -- what is checked without a host -----------------------------------------------------
+
+def lost(text: str, require: list[list[str]], literals: list[str]) -> list[str]:
+    """What a unit lost in `text`: empty when one sentence meets every
+    `require` group (any phrase, any case) and holds every literal exactly.
+    A negation and what it negates in two sentences do not pass."""
+
+    best = None
+    for said in sentences(text) or [""]:
+        low = said.lower()
+        missing = [f"none of {g}" for g in require if not any(p.lower() in low for p in g)] + \
+                  [f"lost literal {x!r}" for x in literals if x not in said]
+        if not missing:
+            return []
+        if best is None or len(missing) < len(best):
+            best = missing
+    return best
+
+
+def facts(pairs: dict, chunks: list[dict], label, english) -> list[dict]:
+    """Every twin's fact units against the English its section normalizes to,
+    whether or not retrieval ever reaches it. `chunks` are the KO index's,
+    `label` names one as `dataset.corpus` does, and `english(chunks)`
+    normalizes their texts as the run's `judge` does (the same cache)."""
+
+    by_section = defaultdict(list)
+    for c in chunks:
+        by_section[label(c)].append(c)
+    out = []
+    for page, twin in sorted(pairs["twins"].items()):
+        for f in twin["facts"]:
+            got = by_section.get(f"{page}#{twin['headings'][f['section']]}", [])
+            outcomes = english(got) if got else []
+            failed = [o.get("reason") or o["status"] for o in outcomes if o["status"] not in evidence.USABLE]
+            if not got or failed:
+                status, missing = "not_normalized", failed or ["no chunk of this section"]
+            else:
+                missing = lost("\n".join(o["text"] for o in outcomes), f["require"], f["literals"])
+                status = "lost" if missing else "held"
+            out.append({"page": page, "id": f["id"], "section": f["section"], "sentence": f["sentence"],
+                        "status": status, "missing": missing})
+    return out
+
+
+def question(meaning: dict, row: dict) -> dict:
+    """The meaning labels against a Korean question's normalized English as
+    the row recorded it. Not normalized is its own outcome, never a pass."""
+
+    from eval import meaning as labels
+
+    status = (row.get("normalization") or {}).get("query")
+    if status not in evidence.USABLE or not row.get("question_en"):
+        return {"status": "not_normalized", "normalization": status}
+    wrong = labels.check(meaning, {"status": "translated", "text": row["question_en"]})
+    return {"status": "lost" if wrong else "held", "missing": wrong}
+
+
+# -- the paired report --------------------------------------------------------------------
+
+def scored(row: dict | None, intent: dict, k: int) -> dict:
+    """A row's recall and coverage under the frozen cohort's rules: a missing
+    row is missing; a failed answer covers nothing; an answer whose grade is
+    missing is unscorable; a retrieval that failed still scores its evidence,
+    which is none."""
+
+    from eval import report
+
+    if row is None:
+        return {"missing": True}
+    got = report.values(row, intent, k)
+    out = {"recall": got["recall"], "claims": got.get("claims"),
+           "failed_retrieval": row["status"] in ("unavailable", "exhausted", "cancelled")}
+    if "answer_error" in row:
+        out["coverage"] = 0.0
+    elif "coverage" in got:
+        out["coverage"] = got["coverage"]
+    else:
+        out["unscorable"] = True
+    return out
+
+
+def signature(row: dict, s: dict) -> tuple:
+    """What an arm is compared with A on (v1, Repetition and attribution)."""
+
+    a = row.get("answer") or {}
+    return (s.get("recall"), s.get("coverage"), a.get("status"), a.get("verified"), tuple(row.get("transitions") or []))
+
+
+class Pairs:
+    """One pairs run read for its gates: the first repetition of every pair
+    and arm, scored once, and the checks that need no host."""
+
+    def __init__(self, rows: list[dict], data: dict, pairs: dict, fact_rows: list[dict] | None, k: int):
+        self.k, self.pairs, self.facts = k, pairs, fact_rows
+        self.intents = {i["id"]: i for i in data["intents"]}
+        self.by_pair = {p["intent"]: p for p in pairs["pairs"]}
+        self.ids = sorted(self.by_pair)
+        self.first = {(r["intent"], r["arm"]): r for r in rows if r["rep"] == 0}
+        self.score = {(i, a): scored(self.first.get((i, a)), self.intents[i], k) for i in self.ids for a in ARMS}
+        self.questions = {f"{i}:{a}": question(self.by_pair[i]["meaning"], self.first[(i, a)])
+                          for i in self.ids for a in "BD" if (i, a) in self.first}
+        self.pages = defaultdict(set)
+        for f in fact_rows or []:
+            if f["status"] != "held":
+                self.pages[f["page"]].add(f["status"])
+
+    def missing(self) -> list[str]:
+        return sorted(f"{i}:{a}" for (i, a), s in self.score.items() if s.get("missing"))
+
+    def settled(self, i: str, arm: str) -> str | None:
+        """Attribution's first two checks, which need no repetition: A failed
+        (step 1), or the arm's question or a twin it read lost or never got
+        its meaning (step 2; a translation that failed is apart from a defect)."""
+
+        a = self.score[(i, "A")]
+        if a.get("missing") or a.get("unscorable") or a["failed_retrieval"] or "answer_error" in self.first[(i, "A")] \
+                or a["recall"] == 0 or a["coverage"] == 0:
+            return "controller_or_baseline"
+        found = set()
+        if arm in "BD":
+            found.add(self.questions.get(f"{i}:{arm}", {}).get("status"))
+        if arm in "CD":
+            for page in files(self.intents[i]):
+                found |= self.pages.get(page, set())
+        return "translation_defect" if "lost" in found else "translation_failure" if "not_normalized" in found else None
+
+    def divergence(self) -> dict:
+        """Divergent pairs, with the arms that differ from A at repetition 0
+        or fail a meaning check, and boundary pairs (A's recall or coverage partial)."""
+
+        divergent, boundary = {}, []
+        for i in self.ids:
+            a = self.first.get((i, "A"))
+            arms = [x for x in "BCD" if a is None or (i, x) not in self.first
+                    or signature(self.first[(i, x)], self.score[(i, x)]) != signature(a, self.score[(i, "A")])
+                    or self.settled(i, x) in ("translation_defect", "translation_failure")]
+            if arms:
+                divergent[i] = arms
+            s = self.score[(i, "A")]
+            if any(v is not None and 0 < v < 1 for v in (s.get("recall"), s.get("coverage"))):
+                boundary.append(i)
+        return {"divergent": divergent, "boundary": boundary}
+
+    def repetition(self, rows: list[dict]) -> dict:
+        """What two more runs would take: per candidate pair, the arms that
+        need them (A's are shared), and their cost at the base run's mean
+        host dollars per row. An estimate; repetition needs its own approval."""
+
+        flagged = self.divergence()
+        plan = {}
+        for i in sorted(set(flagged["divergent"]) | set(flagged["boundary"])):
+            arms = [x for x in flagged["divergent"].get(i, "BCD") if self.settled(i, x) is None]
+            if arms:
+                plan[i] = arms
+        n = sum(2 * (1 + len(arms)) for arms in plan.values())
+        spent = [(r.get("cost") or {}).get("host_usd") or 0.0 for r in rows]
+        per_row = sum(spent) / len(spent) if spent else None
+        return {**flagged, "plan": plan, "rows": n, "host_usd": round(n * per_row, 2) if per_row is not None else None}
+
+    def attribution(self, repeats: list[dict]) -> dict:
+        """Each divergent arm's cause, in the order v1 fixes: A failed; meaning
+        lost or never normalized; not repeated or a repetition missing; a
+        difference in one or two of three runs; a difference in all three with
+        different evidence in all three; anything else unresolved."""
+
+        runs = {(r["intent"], r["arm"], r["rep"]): r for r in repeats}
+        runs |= {(i, a, 0): r for (i, a), r in self.first.items()}
+        out = {}
+        for i, arms in sorted(self.divergence()["divergent"].items()):
+            for x in arms:
+                cause = self.settled(i, x)
+                if cause is None:
+                    got = [(runs.get((i, "A", n)), runs.get((i, x, n))) for n in range(3)]
+                    if not any(runs.get((i, x, n)) for n in (1, 2)):
+                        cause = "unresolved_not_repeated"
+                    elif not all(a and b for a, b in got):
+                        cause = "unresolved_missing_repetition"
+                    else:
+                        intent = self.intents[i]
+                        differs = [signature(b, scored(b, intent, self.k)) != signature(a, scored(a, intent, self.k))
+                                   for a, b in got]
+                        apart = [b["evidence"][:self.k] != a["evidence"][:self.k] for a, b in got]
+                        cause = ("variation" if 0 < sum(differs) < 3 else
+                                 ("question_wording" if x == "B" else "evidence_or_index") if all(differs) and all(apart)
+                                 else "unresolved")
+                out[f"{i}:{x}"] = cause
+        return out
+
+    def gates(self, cfg: dict) -> tuple[list[dict], dict]:
+        """The four frozen gates and what each read."""
+
+        from eval import report
+
+        B, seed, conf = cfg["resamples"], cfg["seed"], cfg["confidence"]
+        missing = self.missing()
+        unscorable = sorted(f"{i}:{a}" for (i, a), s in self.score.items() if s.get("unscorable"))
+
+        def diff(arm: str, metric: str) -> dict | None:
+            groups = [((self.score[(i, "A")][metric], 1.0), (self.score[(i, arm)][metric], 1.0)) for i in self.ids
+                      if self.score[(i, "A")].get(metric) is not None and self.score[(i, arm)].get(metric) is not None]
+            return report.boot(groups, lambda g: (report.ratio([x[1] for x in g]) or 0)
+                               - (report.ratio([x[0] for x in g]) or 0), B, seed, conf) if groups else None
+
+        differences = {f"{m}_{a}_minus_A": diff(a, m) for m in ("recall", "coverage") for a in "BCD"}
+        targets = {g["id"]: g.get("target") for g in cfg["gates"]}
+
+        def lower_end(metric: str) -> str:
+            # The cohort is all of it or the gate is not settled: a missing row never shrinks it.
+            if missing or (metric == "coverage" and unscorable):
+                return "inconclusive"
+            ds = [differences[f"{metric}_{a}_minus_A"] for a in "BCD"]
+            if any(d is None or d["low"] is None for d in ds):
+                return "inconclusive"
+            return "pass" if all(d["low"] >= targets[f"paired_{metric}"] for d in ds) else "fail"
+
+        checks = list(self.questions.values()) + list(self.facts or [])
+        literals = ("fail" if any(c["status"] == "lost" for c in checks) else
+                    "inconclusive" if self.facts is None or missing or any(c["status"] != "held" for c in checks)
+                    else "pass")
+        fabricated, unsupported, ungraded = [], [], []
+        for (i, a), r in sorted(self.first.items()):
+            answer = r.get("answer") or {}
+            if answer.get("fabricated"):
+                fabricated.append(r["key"])
+            if answer.get("verified"):
+                claims = self.score[(i, a)].get("claims")
+                (ungraded if claims is None else unsupported if claims[0] else []).append(r["key"])
+        integrity = "fail" if fabricated or unsupported else "inconclusive" if ungraded or missing else "pass"
+        verdicts = {"literals": literals, "integrity": integrity, "paired_recall": lower_end("recall"),
+                    "paired_coverage": lower_end("coverage")}
+        lows = {m: [d["low"] for a in "BCD" if (d := differences[f"{m}_{a}_minus_A"]) and d["low"] is not None]
+                for m in ("recall", "coverage")}
+        # What each gate's verdict read: losses, violations, the lowest of the three lower ends.
+        values = {"literals": sum(c["status"] == "lost" for c in checks),
+                  "integrity": len(fabricated) + len(unsupported),
+                  "paired_recall": min(lows["recall"], default=None),
+                  "paired_coverage": min(lows["coverage"], default=None)}
+        reviewed = all(labels["reviewed_by"] for labels in (cfg["dataset_labels"], self.pairs["labels"]))
+        out = []
+        for g in cfg["gates"]:
+            verdict = verdicts[g["id"]]
+            if verdict == "pass" and not reviewed and g["id"] != "integrity":
+                verdict = "provisional"
+            out.append({"id": g["id"], "label": g["label"], "target": g.get("target"), "value": values[g["id"]],
+                        "verdict": verdict})
+        return out, {"cohort": len(self.ids) * len(ARMS), "missing": missing, "unscorable": unscorable,
+                     "failed_retrieval": sorted(f"{i}:{a}" for (i, a), s in self.score.items()
+                                                if s.get("failed_retrieval")),
+                     "failed_answers": sorted(r["key"] for r in self.first.values() if "answer_error" in r),
+                     "differences": differences, "questions": self.questions, "facts": self.facts,
+                     "integrity": {"fabricated": fabricated, "unsupported_verified": unsupported,
+                                   "ungraded_verified": ungraded}}
+
+
+def paired_report(rows: list[dict], data: dict, pairs: dict, fact_rows: list[dict] | None, k: int, cfg: dict,
+                  repeats: list[dict] | None = None) -> dict:
+    """The gates on the frozen cohort, the repetition candidates with their
+    cost, and — when repetitions ran — each divergent arm's cause."""
+
+    p = Pairs(rows, data, pairs, fact_rows, k)
+    gates, detail = p.gates({**cfg, "dataset_labels": data["labels"]})
+    return {**detail, "repetition": p.repetition(rows),
+            "attribution": p.attribution(repeats) if repeats is not None else None, "gates": gates}
+
+
+# -- the output overlay --------------------------------------------------------------------
+
+def paragraphs(text: str) -> list[str]:
+    """An answer's paragraphs as the answer screen splits them (`web/src/lib/overlay.ts`):
+    at blank lines, never inside a ``` or ~~~ fence."""
+
+    out, piece, fence = [], [], ""
+    for line in text.split("\n"):
+        m = re.match(r"\s*(`{3,}|~{3,})", line)
+        mark = m.group(1) if m else ""
+        if mark and (not fence or (mark[0] == fence[0] and len(mark) >= len(fence))):
+            fence = "" if fence else mark
+        if not fence and not mark and not line.strip():
+            if piece:
+                out.append("\n".join(piece))
+            piece = []
+        else:
+            piece.append(line)
+    if piece:
+        out.append("\n".join(piece))
+    return out
+
+
+def shape(text: str) -> tuple[int, int]:
+    """Table rows and list items: the layout a rendering must keep."""
+
+    lines = text.splitlines()
+    return (sum(line.lstrip().startswith("|") for line in lines),
+            sum(bool(re.match(r"\s*(?:[-*+]|\d+[.)])\s", line)) for line in lines))
+
+
+def overlaid(text: str, rendered: list[tuple[str, str]]) -> dict:
+    """One answer's overlay judged: each paragraph shown in Korean keeps its
+    protected spans (citations, paths, code, names), its numbers and
+    identifiers, and its table and list layout; a refused paragraph stays the
+    original with its status. No back-translation is read."""
+
+    import translate
+
+    keep = translate.glossary()[0]
+    shown = ("translated", "cached", "skipped")
+    out = []
+    for original, (made, status) in zip(paragraphs(text), rendered):
+        if status not in shown:
+            out.append({"status": status, "kept_original": made == original, "problems": []})
+            continue
+        problems = []
+        if translate.by_kind(made, keep) != translate.by_kind(original, keep):
+            problems.append("protected spans changed")
+        if translate.facts(original, keep) - translate.facts(made, keep) - set(translate.spelled(made, original)):
+            problems.append("a number or identifier lost")
+        if shape(made) != shape(original):
+            problems.append("table or list layout changed")
+        out.append({"status": status, "problems": problems})
+    return {"paragraphs": len(out), "refused": sum(p["status"] not in shown for p in out),
+            "broken": [n for n, p in enumerate(out) if p["problems"] or (p["status"] not in shown
+                                                                         and not p["kept_original"])],
+            "detail": out}
+
+
+def overlay(folder: Path) -> dict:
+    """Arm A's first answers of a pairs run, through the display path."""
+
+    import translate
+
+    from eval import compare
+
+    got = {}
+    for row in compare.rows(folder, "pairs"):
+        text = (row.get("answer") or {}).get("text")
+        if row["arm"] == "A" and row["rep"] == 0 and text:
+            parts = paragraphs(text)
+            got[row["key"]] = overlaid(text, translate.checked(parts, translate.EN_KO,
+                                                               time.monotonic() + OVERLAY_SECONDS))
+    out = {"answers": len(got), "broken": sorted(k for k, v in got.items() if v["broken"]),
+           "refused_paragraphs": sum(v["refused"] for v in got.values()), "rows": got}
+    (folder / "overlay.json").write_text(json.dumps(out, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+    return out
+
+
+def main(argv: list[str] | None = None) -> int:
+    sys.stdout.reconfigure(encoding="utf-8")
+    parser = argparse.ArgumentParser(prog="python tool/eval/korean.py", description="Reliability PR 9's pairs")
+    parser.add_argument("--pairs", type=Path, default=PAIRS)
+    parser.add_argument("--check", action="store_true", help="validate the pair file and its seven groups of twelve")
+    parser.add_argument("command", nargs="?", choices=("overlay",))
+    parser.add_argument("run_dir", nargs="?", type=Path)
+    args = parser.parse_args(argv)
+    if args.command == "overlay":
+        if not args.run_dir:
+            parser.error("overlay needs a pairs run directory")
+        got = overlay(args.run_dir)
+        print(json.dumps({k: got[k] for k in ("answers", "broken", "refused_paragraphs")}, ensure_ascii=False))
+        return 0
+    pairs, data = load(args.pairs)
+    wrong = allocation(pairs, data)
+    print("\n".join(wrong) or f"{len(pairs['pairs'])} pairs, {len(pairs['twins'])} twins; calibration intents "
+                              f"per group {calibration(pairs, data)}; reviewed by "
+                              f"{pairs['labels']['reviewed_by'] or 'nobody yet'}")
+    return 1 if wrong else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -180,15 +180,18 @@ Each pair adds:
   strings that must appear exactly (numbers, names, paths). `check` is
   extended to read it.
 - `sources`: for every file the intent's evidence names, a Korean twin at the
-  same path. Each twin carries a heading map from each English heading to its
-  Korean one, so a `file#Heading` label resolves in both corpora. It also
-  carries `facts`, the twin's fact units. A fact unit names one Korean
-  sentence by its section and position, with `require` groups (a negation
-  with what it negates, a number with its unit) and `literals`. Each `require`
-  group must be met within one sentence of that unit's normalized English. A
-  negation and its object in different sentences do not pass. A plain
-  `translate.kept` check does not suffice: "does not run on Windows" keeps
-  "Windows" and "run" after losing "not".
+  same path. The file keeps twins in one top-level `twins` map by path,
+  since two intents can cite one file. Each twin carries a heading map from
+  each English heading to its Korean one, so a `file#Heading` label resolves
+  in both corpora. It also carries `facts`, the twin's fact units. A fact
+  unit names one Korean sentence by its section and position, with `require`
+  groups (a negation with what it negates, a number with its unit) and
+  `literals`. A translation may merge or split sentences, so the position
+  names the unit and does not align it: the unit holds when one sentence of
+  its section's normalized English meets every `require` group and holds
+  every literal. A negation and its object in different sentences do not
+  pass. A plain `translate.kept` check does not suffice: "does not run on
+  Windows" keeps "Windows" and "run" after losing "not".
 - `review`: who reviewed it, which round, and when. Interpreting results
   requires this field.
 
@@ -391,10 +394,56 @@ run needs the owner's approval with this estimate.
 5. A fix only where step 4 shows a translation or normalization defect.
    Every fix is checked on the failing pairs and on arm A again.
 
+### Implementation (v1)
+
+Order step 2, with fake hosts only:
+- `tool/eval/korean.py` holds the set and every check that needs no host:
+  - `load` and `invalid` validate `eval/jev/korean/pairs.json`
+    (`jev-korean-pairs/1`) against its dataset by hash. The checks cover
+    eligibility, `input.ko`, the meaning schema, each twin's heading map and
+    fact units, and a recorded review.
+  - `--check` adds the seven groups of twelve and each group's calibration
+    count. Whether the order of `GROUPS` was followed stays with the set
+    review.
+  - `ko_corpus` swaps the twins in; `relabel` maps a KO heading back.
+  - `facts` is the fact-unit pass; `lost` is the one-sentence rule.
+  - `Pairs` reads a run for the gates, divergence, the repetition plan and
+    attribution, in the order above.
+  - `overlay <run-dir>` sends arm A's answers through the display path, a
+    paragraph at a time as `web/src/lib/overlay.ts` splits them, and writes
+    `overlay.json`.
+- `compare.py --experiment pairs` runs the EN corpus's units, then the KO
+  corpus's, each on its own index.
+  - Before the first KO unit it writes `facts.json`, the fact pass over the
+    KO index's chunks. That pass uses `knowledge.english`, as `judge` does,
+    with 120 seconds per call, so the arms read the cached English that was
+    checked.
+  - A row records its corpus and its question's translation outcome
+    (status, cached, model, prompt version), and counts its evidence texts
+    as cached, fresh or failed.
+  - A failed grade is no longer recorded as a failed answer. A pairs run
+    grades once more.
+  - `--plan <report.json>` runs the report's repetition plan, repetitions 1
+    and 2. That run's options name it `pairs/repeat`, and the report reads
+    it for attribution.
+- `meaning.check` reads `literals`.
+- `eval/jev/korean/gates.json` holds the four gates (v1), frozen.
+- `tool/test_korean.py` covers this with no network:
+  - the 84-pair margin;
+  - each missing-value rule;
+  - the attribution order;
+  - the five translator faults, through evidence normalization and through
+    `prepare`'s normalize state;
+  - one pairs run end to end with stand-in Jev, translator and host.
+
+  In that run, BM25 over the English question did not reach the Korean
+  twins, and paired recall reads `fail`. The stand-ins measure nothing; the
+  case shows that the loss is reported, not hidden.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Fixtures | Freeze reviewed paired questions and sources | In progress — design (v1) above |
+| 1 | Fixtures | Freeze reviewed paired questions and sources | In progress — design (v1) and implementation above; the set is next |
 | 2 | Comparison | Run A–D comparisons and isolate causes | Not started |
 | 3 | Fix | Fix normalization only where evidence supports it | Not started |

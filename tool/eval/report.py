@@ -31,7 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from eval import compare, dataset  # noqa: E402
+from eval import compare, dataset, korean  # noqa: E402
 from search import HUB  # noqa: E402
 
 GATES = HUB / "eval" / "jev" / "gates.json"
@@ -568,6 +568,8 @@ def improvement(d: dict, target: float) -> str:
 def kind(run: dict) -> str:
     """What a run measured, as the gates name it: `arms/retrieval`, `arms/answer`, `arms/repeat`, `fixed`, `actions`."""
 
+    if run["experiment"] == "pairs":
+        return "pairs" if run["options"]["reps"] == [0] else "pairs/repeat"
     if run["experiment"] != "arms":
         return run["experiment"]
     return "arms/repeat" if run["options"]["repeat"] > 1 else f"arms/{run['options']['level']}"
@@ -610,7 +612,8 @@ def build(folders: list[Path]) -> dict:
         found["runs"][name] = {"folder": folder.as_posix(), "options": run["options"], "versions": run["versions"],
                                "manifest": run.get("manifest"), "batches": run["batches"], "rows": len(rows),
                                "dataset": run["dataset"], "corpus": run["corpus"],
-                               "graph_health": run.get("graph_health")}
+                               "graph_health": run.get("graph_health") or {
+                                   k: v for k, v in run.items() if k.startswith("graph_health_")} or None}
         if name == "arms/retrieval":
             found["arms"] = arms_report(rows, data, run["options"], gates)
             if "routing" in cohorts:
@@ -624,6 +627,19 @@ def build(folders: list[Path]) -> dict:
                 found["answer_cohort"] = answer_cohort(rows, data, cohorts["answer"])
         elif name == "arms/repeat":
             found["repeat"] = arms_report(rows, data, run["options"], gates)
+        elif name == "pairs/repeat":
+            continue
+        elif name == "pairs":
+            # The pairs this run read, by the hash it recorded; the fact pass beside its rows.
+            opts = run["options"]
+            pairs = json.loads(unchanged(opts["pairs"]["path"], opts["pairs"]["sha256"], "pair file")
+                               .read_text(encoding="utf-8"))
+            reviews.append(pairs["labels"])
+            facts = folder / "facts.json"
+            repeat = runs.get("pairs/repeat")
+            found["pairs"] = korean.paired_report(
+                rows, data, pairs, json.loads(facts.read_text(encoding="utf-8"))["facts"] if facts.exists() else None,
+                opts["k"], gates, compare.rows(repeat[0], "pairs") if repeat else None)
         elif name == "fixed":
             found["fixed"] = fixed_report(rows, data)
         else:
@@ -638,10 +654,12 @@ def build(folders: list[Path]) -> dict:
         found.setdefault("fallback", {})[name] = fallback_report(rows)
     # A quality result counts only on reviewed labels: the intents', and the fixtures' when decisions were measured.
     reviewed = all(labels["reviewed_by"] for labels in reviews)
+    # A pairs run's gates are its own four (PR 9), judged on its frozen cohort.
+    judged = found["pairs"].pop("gates") if "pairs" in found else judge(gates, found, reviewed)
     return {"schema": REPORT, "gates_id": gates.get("id", "gates"), "gates_version": gates["version"],
             "labels_reviewed": reviewed, "reviewers": sorted({labels["reviewed_by"] or "nobody" for labels in reviews}),
             "categories": data["categories"], "exclusions": data["exclusions"], **found,
-            "gates": judge(gates, found, reviewed)}
+            "gates": judged}
 
 
 def markdown(report: dict) -> str:
@@ -684,6 +702,25 @@ def markdown(report: dict) -> str:
                          for arm, kinds in arms.items())
         if said:
             lines += [f"Host fallback ({run}), fell/asked per kind: {said}", ""]
+    if pairs := report.get("pairs"):
+        lines += [f"Pairs cohort: {pairs['cohort']} rows, {len(pairs['missing'])} missing, "
+                  f"{len(pairs['unscorable'])} unscorable, {len(pairs['failed_retrieval'])} failed retrievals, "
+                  f"{len(pairs['failed_answers'])} failed answers", "",
+                  "| Difference | Value |", "| --- | --- |"]
+        lines += [f"| {name} | {cell(d)} |" for name, d in pairs["differences"].items()]
+        statuses = defaultdict(int)
+        for c in [*pairs["questions"].values(), *(pairs["facts"] or [])]:
+            statuses[c["status"]] += 1
+        rep = pairs["repetition"]
+        lines += ["", f"Meaning checks (questions and fact units): {dict(statuses) or 'none'}"
+                  f"{'' if pairs['facts'] is not None else '; fact pass not run'}",
+                  f"Repetition candidates: {len(rep['divergent'])} divergent, {len(rep['boundary'])} boundary; "
+                  f"plan {rep['rows']} rows, about USD {rep['host_usd']} — needs its own approval", ""]
+        if pairs["attribution"] is not None:
+            causes = defaultdict(int)
+            for cause in pairs["attribution"].values():
+                causes[cause] += 1
+            lines += [f"Attribution: {dict(causes)}", ""]
     if fixed := report.get("fixed"):
         lines += [f"Fixed candidates ({fixed['rows']} requests, {fixed['failed']} failed): false rejection "
                   f"{fixed['false_rejection']['rate']} of {fixed['false_rejection']['denominator']}, false acceptance "
