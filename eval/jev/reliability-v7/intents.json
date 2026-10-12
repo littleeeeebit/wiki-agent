@@ -719,7 +719,7 @@
    "repo/docs/team-plan-pricing.md": "# Team plan pricing\n\nThe Team plan is 8 EUR per seat, below both main competitors at 12 EUR. Churn on the plan is 1.5% monthly; most churned accounts cite missing features, not price.",
    "repo/docs/trade-show-booth.md": "# Trade show booth\n\nWe attend one trade show a year. The booth is built fresh by a local contractor for 38,000 EUR and thrown away afterwards; a reusable modular booth is quoted at 30,000 EUR once, plus 4,000 EUR a show for shipping and setup.",
    "repo/docs/billing-module.md": "# Billing module\n\nBilling changes ship with the monolith's releases. The billing team waits on unrelated changes about twice a month, and billing shares the main database with everything else.",
-   "repo/docs/e-learning.md": "# E-learning completion\n\nOf staff who start the data-handling module, 35% finish it. Each of its lessons is a 25-minute video that restarts from the beginning if paused; the module's two five-minute lessons are finished by over 90%.",
+   "repo/docs/e-learning.md": "# E-learning completion\n\nOf staff who start the data-handling module, 35% finish it. Ten of its twelve lessons are 25-minute videos that restart from the beginning if paused; its other two lessons, five minutes each, are finished by over 90%.",
    "repo/docs/office-fridays.md": "# Office on Fridays\n\nBadge data shows about 8 people in the office on Fridays against 60 midweek. Keeping it open on Fridays costs about 1,200 EUR a week in cleaning, heating and reception.",
    "repo/docs/incident-reviews.md": "# Incident reviews\n\nOf 31 action items from incident reviews this year, 9 were completed. Items have no owner or due date, and nobody checks them after the meeting.",
    "repo/docs/next-region.md": "# Next region\n\nWaitlist sign-ups: Germany 4,100, Japan 900, Brazil 2,300. The product is already translated into German; Japanese and Portuguese translations are not started.",
@@ -731,7 +731,7 @@
    "repo/docs/analytics-build-buy.md": "# Analytics: build or buy\n\nThe vendor costs 60,000 EUR a year. Building in-house is estimated at two engineers for six months plus ongoing upkeep; the team has no data engineers today.",
    "repo/docs/team-invites.md": "# Team invites\n\nInviting a teammate is only possible from the admin settings page, three menus deep; 70% of new admins never open it in their first week.",
    "repo/docs/status-page-hosting.md": "# Status page\n\nThe status page is hosted on the same infrastructure as the product, so during the last two outages it was down too and customers could not see updates.",
-   "repo/docs/late-taxis.md": "# Late-night taxis\n\nLate-night taxis cost 6,000 EUR a month. 80% of the rides take the support team home after its 23:00 shift end, and they are booked one person at a time even when several people go the same way.",
+   "repo/docs/late-taxis.md": "# Late-night taxis\n\nLate-night taxis cost 6,000 EUR a month. 4,800 EUR of that, 80%, is rides taking the support team home after its 23:00 shift end, booked one person at a time even when several people go the same way.",
    "repo/docs/ie11-usage.md": "# Browser usage\n\nInternet Explorer 11 accounts for 0.4% of sessions, almost all from two customers whose contracts end in March. Supporting it adds a separate build and a week of testing per release.",
    "repo/docs/search-launch.md": "# Search launch\n\nThe new search was released behind a keyboard shortcut only; there is no search box in the interface. 3% of users tried it in the first month.",
    "repo/docs/security-backlog.md": "# Security backlog\n\nThe backlog has 46 items. Two are internet-facing with known exploits; the rest are internal hardening with no known exploit.",
@@ -5420,7 +5420,7 @@
    ],
    "verification": "unverified_analysis",
    "sources": {
-    "repo/docs/e-learning.md": "b782f242686af4e2baa82473e89412b46046f61b0f95a396f738b5fddc870e6c"
+    "repo/docs/e-learning.md": "4ed53b045cf321b0ece4afd492452e879ce47640ee05529b51091fdc2473608a"
    },
    "review": "r7"
   },
@@ -5984,7 +5984,7 @@
    ],
    "verification": "unverified_analysis",
    "sources": {
-    "repo/docs/late-taxis.md": "fe1f10c769d817f0b1950c732e41876586b1de13f83a9c4c673b60c3b5798b4c"
+    "repo/docs/late-taxis.md": "2021381e764370b066c7094c6ecd7f3b790df29ebfa052dda13e999c32b19456"
    },
    "review": "r7"
   },
