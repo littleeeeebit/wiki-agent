@@ -1,4 +1,4 @@
-"""`python tool/eval/korean.py --check [--pairs <file>]` · `python tool/eval/korean.py overlay <run-dir>`
+"""`python tool/eval/korean.py --check [--pairs <file>]`
 
 Reliability PR 9's paired experiment (`docs/plans/reliability/9-korean.md`,
 v1): a reviewed English intent of v8 beside its Korean wording, and each file
@@ -8,10 +8,8 @@ product path — A en/EN, B ko/EN, C en/KO, D ko/KO — run in
 checks that need no host, and the report's pair gates and attribution.
 
 `--check` validates the pair file against its dataset: shapes, eligibility,
-heading maps and fact units, and the seven groups of twelve.
-`overlay` sends arm A's answers of a pairs run through the Korean display
-path, a paragraph at a time, as the answer screen does; it sends them to the
-translator and writes `overlay.json` beside the rows.
+heading maps and fact units, and the seven groups of twelve. The output
+overlay check is `tool/eval/overlay.py`.
 """
 
 from __future__ import annotations
@@ -21,7 +19,6 @@ import contextlib
 import json
 import re
 import sys
-import time
 from collections import defaultdict
 from pathlib import Path
 from unittest.mock import patch
@@ -40,7 +37,6 @@ PER_GROUP = 12
 ARMS = {"A": ("en", "EN"), "B": ("ko", "EN"), "C": ("en", "KO"), "D": ("ko", "KO")}
 # Long enough for a whole twin section: the fact pass is not a turn, and what it normalizes is cached for the arms.
 FACT_SECONDS = 120.0
-OVERLAY_SECONDS = 60.0
 HANGUL = re.compile(r"[가-힣]")
 # A sentence ends at its punctuation; a soft line break inside it is not an end.
 SENTENCE = re.compile(r"(?<=[.!?])\s+")
@@ -533,13 +529,20 @@ class Pairs:
         if a.get("missing") or a.get("unscorable") or a["failed_retrieval"] or "answer_error" in self.first[(i, "A")] \
                 or a["recall"] == 0 or a["coverage"] == 0:
             return "controller_or_baseline"
+        found = self.meaning(i, arm)
+        return "translation_defect" if "lost" in found else "translation_failure" if "not_normalized" in found else None
+
+    def meaning(self, i: str, arm: str) -> set[str]:
+        """The outcomes of every meaning check the arm's run depends on: its
+        question's (B, D) and those of the twins its intent's evidence names (C, D)."""
+
         found = set()
         if arm in "BD":
             found.add(self.questions.get(f"{i}:{arm}", {}).get("status"))
         if arm in "CD":
             for page in files(self.intents[i]):
                 found |= self.pages.get(page, set())
-        return "translation_defect" if "lost" in found else "translation_failure" if "not_normalized" in found else None
+        return found
 
     def divergence(self) -> dict:
         """Divergent pairs, with the arms that differ from A at repetition 0
@@ -578,7 +581,10 @@ class Pairs:
         """Each divergent arm's cause, in the order v1 fixes: A failed; meaning
         lost or never normalized; not repeated or a repetition missing; a
         difference in one or two of three runs; a difference in all three with
-        different evidence in all three; anything else unresolved."""
+        different evidence in all three; anything else unresolved. The causes
+        after the second assume the meaning was kept, so an arm whose run read
+        English other than was checked, or whose meaning check is uncertain,
+        stays unresolved with that reason."""
 
         runs = {(r["intent"], r["arm"], r["rep"]): r for r in repeats}
         runs |= {(i, a, 0): r for (i, a), r in self.first.items()}
@@ -589,6 +595,9 @@ class Pairs:
                 if cause is None and any(self.drifted(runs.get((i, a, n))) for a in ("A", x) for n in range(3)):
                     # A run that read other English than was checked is not the same measurement.
                     cause = "unresolved_normalization_changed"
+                if cause is None and "uncertain" in self.meaning(i, x):
+                    # Every later cause assumes the meaning was kept; until a person settles it, nothing is.
+                    cause = "unresolved_meaning_uncertain"
                 if cause is None:
                     got = [(runs.get((i, "A", n)), runs.get((i, x, n))) for n in range(3)]
                     if not any(runs.get((i, x, n)) for n in (1, 2)):
@@ -687,107 +696,12 @@ def paired_report(rows: list[dict], data: dict, pairs: dict, fact_rows: list[dic
             "attribution": p.attribution(repeats) if repeats is not None else None, "gates": gates}
 
 
-# -- the output overlay --------------------------------------------------------------------
-
-def paragraphs(text: str) -> list[str]:
-    """An answer's paragraphs as the answer screen splits them (`web/src/lib/overlay.ts`):
-    at blank lines, never inside a ``` or ~~~ fence."""
-
-    out, piece, fence = [], [], ""
-    for line in text.split("\n"):
-        m = re.match(r"\s*(`{3,}|~{3,})", line)
-        mark = m.group(1) if m else ""
-        if mark and (not fence or (mark[0] == fence[0] and len(mark) >= len(fence))):
-            fence = "" if fence else mark
-        if not fence and not mark and not line.strip():
-            if piece:
-                out.append("\n".join(piece))
-            piece = []
-        else:
-            piece.append(line)
-    if piece:
-        out.append("\n".join(piece))
-    return out
-
-
-def shape(text: str) -> tuple[tuple, tuple]:
-    """The layout a rendering must keep: each table row's cell count, and
-    each list item's indent and kind (bullet or number)."""
-
-    lines = text.splitlines()
-    cells = tuple(len(re.split(r"(?<!\\)\|", line.strip().strip("|"))) for line in lines
-                  if line.lstrip().startswith("|"))
-    items = tuple((len(m.group(1)), m.group(2)[0].isdigit()) for line in lines
-                  if (m := re.match(r"(\s*)([-*+]|\d+[.)])\s", line)))
-    return cells, items
-
-
-def overlaid(text: str, rendered: list[tuple[str, str]]) -> dict:
-    """One answer's overlay judged: each paragraph shown in Korean keeps its
-    protected spans (citations, paths, code, names), its numbers and
-    identifiers, and its table and list layout; a refused paragraph stays the
-    original with its status. No back-translation is read."""
-
-    import translate
-
-    keep = translate.glossary()[0]
-    shown = ("translated", "cached", "skipped")
-    split = paragraphs(text)
-    # A paragraph the rendering never returned is shown as nothing: it is broken, not skipped.
-    rendered = list(rendered) + [(None, "missing")] * (len(split) - len(rendered))
-    out = []
-    for original, (made, status) in zip(split, rendered):
-        if status not in shown:
-            out.append({"status": status, "kept_original": made == original, "problems": []})
-            continue
-        problems = []
-        if translate.by_kind(made, keep) != translate.by_kind(original, keep):
-            problems.append("protected spans changed")
-        if translate.facts(original, keep) - translate.facts(made, keep) - set(translate.spelled(made, original)):
-            problems.append("a number or identifier lost")
-        if shape(made) != shape(original):
-            problems.append("table or list layout changed")
-        out.append({"status": status, "problems": problems})
-    return {"paragraphs": len(out), "refused": sum(p["status"] not in shown for p in out),
-            "broken": [n for n, p in enumerate(out) if p["problems"] or (p["status"] not in shown
-                                                                         and not p["kept_original"])],
-            "detail": out}
-
-
-def overlay(folder: Path) -> dict:
-    """Arm A's first answers of a pairs run, through the display path."""
-
-    import translate
-
-    from eval import compare
-
-    got = {}
-    for row in compare.rows(folder, "pairs"):
-        text = (row.get("answer") or {}).get("text")
-        if row["arm"] == "A" and row["rep"] == 0 and text:
-            parts = paragraphs(text)
-            got[row["key"]] = overlaid(text, translate.checked(parts, translate.EN_KO,
-                                                               time.monotonic() + OVERLAY_SECONDS))
-    out = {"answers": len(got), "broken": sorted(k for k, v in got.items() if v["broken"]),
-           "refused_paragraphs": sum(v["refused"] for v in got.values()), "rows": got}
-    (folder / "overlay.json").write_text(json.dumps(out, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
-    return out
-
-
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="python tool/eval/korean.py", description="Reliability PR 9's pairs")
     parser.add_argument("--pairs", type=Path, default=PAIRS)
     parser.add_argument("--check", action="store_true", help="validate the pair file and its seven groups of twelve")
-    parser.add_argument("command", nargs="?", choices=("overlay",))
-    parser.add_argument("run_dir", nargs="?", type=Path)
     args = parser.parse_args(argv)
-    if args.command == "overlay":
-        if not args.run_dir:
-            parser.error("overlay needs a pairs run directory")
-        got = overlay(args.run_dir)
-        print(json.dumps({k: got[k] for k in ("answers", "broken", "refused_paragraphs")}, ensure_ascii=False))
-        return 0
     pairs, data = load(args.pairs)
     wrong = allocation(pairs, data)
     print("\n".join(wrong) or f"{len(pairs['pairs'])} pairs, {len(pairs['twins'])} twins; calibration intents "

@@ -14,7 +14,7 @@ import pytest
 
 import decision
 import translate
-from eval import compare, dataset, korean, meaning, report
+from eval import compare, dataset, korean, meaning, overlay, report
 from main import knowledge
 from search import evidence
 
@@ -212,6 +212,26 @@ def test_a_literal_only_in_a_hyphenated_word_is_uncertain_not_lost():
     assert got["repetition"]["divergent"] == {} and verdicts(got)["paired_recall"] == "pass"
 
 
+def test_an_uncertain_meaning_settles_no_cause_after_repetition():
+    data, pairs = world(4)
+    pairs["pairs"][0]["meaning"] = {"require": [["use"]], "forbid": [], "literals": ["v1.13.0"]}
+    # B's question kept the version only inside `v1.13.0-beta`, and B finds nothing three times out of three.
+    base = every(data, **{"p00:B": row("p00", "B", found=False, question_en="Use v1.13.0-beta."),
+                          "p00:D": row("p00", "D", question_en="Use v1.13.0."), "p01:C": row("p01", "C", found=False)})
+    again = [row("p00", "A", n) for n in (1, 2)] + [row("p00", "B", n, found=False) for n in (1, 2)] + \
+            [row("p01", "A", n) for n in (1, 2)] + [row("p01", "C", n, found=False) for n in (1, 2)]
+    # p01's twin has an uncertain fact unit: C's evidence differs three times, and still nothing is settled.
+    facts = [{"page": "repo/docs/p01.md", "status": "uncertain"}]
+    got = korean.paired_report(base, data, pairs, facts, 8, CFG, repeats=again)
+    assert got["questions"]["p00:B"]["status"] == "uncertain" and got["repetition"]["plan"] == {"p00": ["B"],
+                                                                                                 "p01": ["C"]}
+    assert got["attribution"] == {"p00:B": "unresolved_meaning_uncertain", "p01:C": "unresolved_meaning_uncertain"}
+    # A definite loss still comes first.
+    lost = korean.paired_report(base, data, pairs, [{"page": "repo/docs/p01.md", "status": "lost"}], 8, CFG,
+                                repeats=again)
+    assert lost["attribution"]["p01:C"] == "translation_defect"
+
+
 def test_a_block_the_index_cut_reads_on_and_separate_blocks_do_not():
     english = [{"text": "According to all these rules, the system"}, {"text": "never runs on Windows."}]
     require = [["system"], ["never runs"], ["windows"]]
@@ -377,22 +397,22 @@ def test_attribution_follows_the_frozen_order():
 
 def test_the_overlay_splits_as_the_screen_does_and_finds_what_a_rendering_broke():
     answer = "Port 7443 serves it [repo/docs/ports.md].\n\n```\nrun x\n\nrun y\n```\n\n- one\n- two"
-    assert korean.paragraphs(answer) == ["Port 7443 serves it [repo/docs/ports.md].", "```\nrun x\n\nrun y\n```",
-                                         "- one\n- two"]
-    kept = korean.overlaid(answer, [("포트 7443 이 [repo/docs/ports.md] 를 맡는다.", "translated"),
-                                    ("```\nrun x\n\nrun y\n```", "skipped"), ("- 하나\n- 둘", "translated")])
+    assert overlay.paragraphs(answer) == ["Port 7443 serves it [repo/docs/ports.md].", "```\nrun x\n\nrun y\n```",
+                                          "- one\n- two"]
+    kept = overlay.overlaid(answer, [("포트 7443 이 [repo/docs/ports.md] 를 맡는다.", "translated"),
+                                     ("```\nrun x\n\nrun y\n```", "skipped"), ("- 하나\n- 둘", "translated")])
     assert kept["broken"] == [] and kept["refused"] == 0
-    broken = korean.overlaid(answer, [("포트가 그것을 맡는다.", "translated"), ("```\nrun x\n```", "skipped"),
-                                      ("하나, 둘", "translated")])
+    broken = overlay.overlaid(answer, [("포트가 그것을 맡는다.", "translated"), ("```\nrun x\n```", "skipped"),
+                                       ("하나, 둘", "translated")])
     assert broken["broken"] == [0, 1, 2]
-    refused = korean.overlaid(answer, [("Port 7443 serves it [repo/docs/ports.md].", "meaning_changed"),
-                                       ("```\nrun x\n\nrun y\n```", "skipped"), ("- 하나\n- 둘", "translated")])
+    refused = overlay.overlaid(answer, [("Port 7443 serves it [repo/docs/ports.md].", "meaning_changed"),
+                                        ("```\nrun x\n\nrun y\n```", "skipped"), ("- 하나\n- 둘", "translated")])
     assert refused["refused"] == 1 and refused["broken"] == []
     # A table that lost a column, or a paragraph never returned, is broken.
     table = "| name | value |\n| --- | --- |\n| retry | 30 |"
-    merged = korean.overlaid(table, [("| 이름 값 |\n| --- |\n| retry 30 |", "translated")])
+    merged = overlay.overlaid(table, [("| 이름 값 |\n| --- |\n| retry 30 |", "translated")])
     assert merged["broken"] == [0] and merged["detail"][0]["problems"] == ["table or list layout changed"]
-    assert korean.overlaid(answer, [("포트 7443 이 [repo/docs/ports.md] 를 맡는다.", "translated")])["broken"] == [1, 2]
+    assert overlay.overlaid(answer, [("포트 7443 이 [repo/docs/ports.md] 를 맡는다.", "translated")])["broken"] == [1, 2]
 
 
 def test_a_batch_records_its_own_spending_when_two_share_a_ceiling(tmp_path):

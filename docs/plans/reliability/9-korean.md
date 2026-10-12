@@ -430,12 +430,16 @@ Order step 2, with fake hosts only:
       other two chunks are separate paragraphs.
   - A failed retrieval recalls 0, whatever evidence its fallback kept.
   - `Pairs` reads a run for the gates, divergence, the repetition plan and
-    attribution, in the order above.
-  - `overlay <run-dir>` sends arm A's answers through the display path, a
-    paragraph at a time as `web/src/lib/overlay.ts` splits them, and writes
-    `overlay.json`. A table must keep each row's cell count, and a list each
-    item's indent and kind. A paragraph the rendering never returned counts
-    as broken.
+    attribution, in the order above. The causes after step 2 assume the
+    meaning was kept. An arm whose run read English other than was checked
+    stays `unresolved_normalization_changed`. An arm whose meaning check is
+    uncertain stays `unresolved_meaning_uncertain`. Its numbers are still
+    reported.
+- `tool/eval/overlay.py <run-dir>` sends arm A's answers through the display
+  path, a paragraph at a time as `web/src/lib/overlay.ts` splits them, and
+  writes `overlay.json`. A table must keep each row's cell count, and a list
+  each item's indent and kind. A paragraph the rendering never returned
+  counts as broken.
 - `compare.py --experiment pairs` runs the EN corpus's units, then the KO
   corpus's, each on its own index.
   - Before the first KO unit it writes `facts.json`, the fact pass over the
