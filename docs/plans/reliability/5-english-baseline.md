@@ -690,6 +690,137 @@ was on v5. The work-start and review-fix choices stay at v5's inconclusive
 result (A3). The stage's exit is therefore still not met. What remains is
 the material cohort and the two action points.
 
+### v7 — `eval/jev/reliability-v7/` at 511313e
+
+Frozen after label review r7 (see "Draft set (v7)"). Every run is at
+511313e, the merge of the frozen set, with #125's ASK wording, the two
+action prompts and the host fallback's parser in place. v7 has work-start
+and review-fix fixtures only, so check choice is not_measured and v5's
+result stands.
+
+Calibration answers, `reliability-v7-calibration-answers` (not gated):
+
+| Arm | Coverage | Unsupported, fact and abstain | Unsupported, all | Answer p95 s |
+| --- | --- | --- | --- | --- |
+| A | 0.962 | 0.166 | 0.169 | 18.3 |
+| D | 0.970 | 0.055 | 0.073 | 19.4 |
+
+Read as G2 reads held-out, that is a reduction of 0.67 and 1.1 s added.
+
+Held-out runs: `reliability-v7-heldout`, `reliability-v7-heldout-answers`,
+`reliability-v7-repeat`, `reliability-v7-actions`. The report is
+`reliability-v7-report.json`. Intervals are as in v6: 95% Wilson for the
+routing and action rate gates, each intent counted once over B and D; 95%
+bootstrap resampled by intent for the other rates and the paired
+differences.
+
+| Gate | Target | Value | Result |
+| --- | --- | --- | --- |
+| Deterministic integrity | 0 | 0 | pass |
+| Graph benefit | 0.10 | 0.417 [0.25, 0.5] | pass |
+| Overall recall | ≥ -0.02 | 0.037 [0.012, 0.066] | pass |
+| Answer support (G2: fact and abstain intents) | 0.25 | 0.584 | pass |
+| Decision quality | 0.90 | 0.972 | pass |
+| Added latency | ≤ 10 s | 3.94 s | pass |
+| Operating ceiling | 0 | 1 | fail |
+| Analysis recall | 0.90 | 1.0 [0.935, 1.0], n=55 | pass |
+| Fact specificity | 0.90 | 1.0 [0.953, 1.0], n=78 | pass |
+| Material classification | 0.90 | 0.983 [0.911, 0.997], n=60 | pass |
+| Request-only multipart classification | 0.90 | 1.0 [0.938, 1.0], n=58 | pass |
+| Work-start choice | 0.90 | 0.944 [0.849, 0.981], n=54 | inconclusive |
+| Check choice | 0.90 | — | not_measured |
+| Review-fix choice | 0.90 | 1.0 [0.934, 1.0], n=54 | pass |
+
+Answers, held out (133 graded intents, none failed, cohort complete after
+the rerun below):
+
+| Arm | Coverage | Unsupported, fact and abstain | Unsupported, analysis | Unsupported, all | Answer p95 s |
+| --- | --- | --- | --- | --- | --- |
+| A | 0.979 | 0.182 (501 claims) | 0.164 (446) | 0.173 | 17.9 |
+| D | 0.981 | 0.076 (225) | 0.131 (503) | 0.114 | 21.8 |
+
+- Answer support is (0.182 − 0.076) / 0.182 = 0.584. D's coverage on the
+  fact and abstain intents is 0.003 above A's, interval [-0.022, 0.032],
+  inside the -0.20 margin.
+- The analysis intents, reported beside the gate and not gated: D's
+  unsupported rate is 0.131 against A's 0.164, and its coverage equals A's,
+  interval [-0.027, 0.027].
+- Over all 133 intents, the pooled reading gives (0.173 − 0.114) / 0.173 =
+  0.342, with a coverage difference of 0.002 [-0.017, 0.021].
+- 89 rows of the second batch (02:35–02:39 UTC) failed on the host CLI's
+  session limit and were recorded with `answer_error`, which left the
+  cohort incomplete and both answer gates inconclusive. A resume skips any
+  recorded row, so those 89 rows were moved out of `arms.jsonl` (kept
+  beside it as `arms.with-host-limit-errors.jsonl.bak`) and the same
+  command ran them again at the same commit, once the limit had reset. The
+  rerun ran no other row.
+
+Routing missed one intent of 133 in each arm, the same one. In material
+classification, pasted-55 ('Customer asks: "Do you have a loyalty
+programme?" What do loyalty members get?') kept the quoted customer
+question as a request in both B and D. That is the forwarded shape M1
+reworded the ASK for; the other 16 forwarded intents were right in both
+arms. Every analysis, fact and request-only intent was routed as labelled.
+
+Actions, `reliability-v7-actions` (108 held-out fixtures):
+- Review fix: 54 of 54. All 6 findings disputed in an earlier round went
+  to context.
+- Work start: 51 of 54. The interval's lower end, 0.849, is under 0.90.
+  The three misses are dispatch fixtures chosen as evidence: v7ws03
+  (upload limit from 10 MB to 25 MB), v7ws12 ('Copy link' button) and
+  v7ws17 (hide the beta badge for accounts created after 1 October 2026).
+  - None of the three names files or decisions.
+  - Jev chose evidence itself, at 0.62, 0.73 and 0.72. None fell to the
+    host (fallback asked 1, fell 0; no host turn).
+  - Of the 18 dispatch fixtures, Jev decided 7 itself: 4 right and these
+    3 wrong. The other 11 fell to the host under Jev's threshold, and the
+    host chose dispatch on all 11.
+  - Those 11 include the other two dispatch fixtures that name no files,
+    v7ws09 and v7ws15, at 0.51 and 0.53. So Jev itself was either unsure
+    or wrong on all five fixtures that name no files; only the host got
+    them right.
+- Clarify 18 of 18, evidence 18 of 18, fix 27 of 27, context 27 of 27.
+  Decision quality over both points is 0.972.
+
+Operating ceiling: one row breached. none-44 in B ("How many meeting rooms
+does the Porto office have?", an intent the corpus does not answer) ended
+`exhausted/deadline` at 15.004 s against the 15 s deadline, after one Jev
+call (938 tokens). The deadline stopped the run 4 ms late, and the gate
+counts any time past it. Its D row ended `partial` in 1.8 s. v6's
+exhausted rows all stopped on the call limit, inside the allowance.
+
+Retrieval, held out (B and D include the six injected-failure intents):
+
+| Arm | n | Recall | Candidate recall | Bridge recall | p95 s | Host USD |
+| --- | --- | --- | --- | --- | --- | --- |
+| A | 133 | 0.938 [0.897, 0.975] | 0.938 | 0.417 | 0.09 | 0 |
+| B | 139 | 0.925 [0.882, 0.965] | 0.925 | 0.417 | 7.8 | 0.87 |
+| C | 133 | 0.938 [0.897, 0.975] | 0.959 | 0.417 | 0.10 | 0 |
+| D | 139 | 0.945 [0.906, 0.984] | 0.945 | 0.833 | 7.3 | 0.40 |
+
+- Failure and cancellation: 12 of 12 as expected.
+- Repetition: status was the same in 8 of 8 groups. Evidence was the same,
+  in order, in 3 (B) and 2 (D).
+
+Host spending per batch:
+- Calibration answers: 38.2 min, USD 9.61.
+- Held-out retrieval: 15.9 + 0.1 min, USD 1.27 (Jev's token ceiling
+  stopped the first batch at 522 of 544 rows).
+- Held-out answers: 47.9 + 19.9 + 25.4 min, USD 21.03 (the first batch
+  stopped at the USD 10 ceiling; the third is the rerun).
+- Repetition: 1.9 min, USD 0.09.
+- Actions: 1.3 min, USD 0.18.
+
+USD 32.18 in all, summed from each batch's recorded cost and rounded
+once. Jev's cost has no dated price.
+
+Exit on v7: material classification passes on fresh intents, and so do
+review fix, both answer gates and the other three routing gates. Two
+results keep the stage open. Work start is inconclusive at 51 of 54, its
+three misses one shape: dispatch specifications that name no files or
+decisions, sent to evidence. The operating ceiling fails on one row that
+stopped 4 ms past its deadline.
+
 ### Limits
 
 - Latency passes on v4 at 5.48 s. It failed on v3, narrowly, at 10.76 s
@@ -766,6 +897,19 @@ commit and the options recorded in each `run.json`: `cache cold`, `method
 hybrid`, `k 8`, the default model and grader. Running the same commands at a
 later commit measures a different manifest. Rebuilding a report from the
 recorded folders works at any commit.
+
+v7, from a clean checkout of 511313e. The held-out answers' third batch
+reran the 89 rows the host's session limit failed, after they were moved
+out of `arms.jsonl` (Results, v7):
+
+```text
+python tool/eval/compare.py raw/eval/jev/reliability-v7-calibration-answers --dataset eval/jev/reliability-v7/intents.json --split calibration --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-v7-heldout --dataset eval/jev/reliability-v7/intents.json --split held_out --languages en --arms A B C D
+python tool/eval/compare.py raw/eval/jev/reliability-v7-heldout-answers --dataset eval/jev/reliability-v7/intents.json --split held_out --languages en --arms A D --level answer
+python tool/eval/compare.py raw/eval/jev/reliability-v7-repeat --dataset eval/jev/reliability-v7/intents.json --split held_out --languages en --arms B D --repeat 3 --ids analysis-177 analysis-178 analysis-180 pasted-55 pasted-60 route-48 memory-47 conflict-47
+python tool/eval/compare.py raw/eval/jev/reliability-v7-actions --experiment actions --dataset eval/jev/reliability-v7/intents.json --actions eval/jev/reliability-v7/actions.json --split held_out
+python tool/eval/report.py raw/eval/jev/reliability-v7-heldout raw/eval/jev/reliability-v7-heldout-answers raw/eval/jev/reliability-v7-repeat raw/eval/jev/reliability-v7-actions --out raw/eval/jev/reliability-v7-report.json
+```
 
 v6, from a clean checkout of 103521c:
 
@@ -1439,7 +1583,7 @@ The set, the action fixtures and the gates are frozen on 2026-10-12.
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
-| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); 139 fresh held-out intents and 108 action fixtures reviewed (r7) and frozen on 2026-10-12 (Draft set (v7)); run next |
+| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); 139 fresh held-out intents and 108 action fixtures reviewed (r7) and frozen on 2026-10-12 (Draft set (v7)); run at 511313e (Results, v7): material classification, review fix and both answer gates pass; work start inconclusive at 51 of 54; operating ceiling fails on one row 4 ms past its deadline |
 
 ## Sources
 
