@@ -184,6 +184,9 @@ def arms_report(rows: list[dict], data: dict, opts: dict, cfg: dict) -> dict:
             entry["answer_seconds"] = {"p50": percentile(answer_seconds, 0.5), "p95": percentile(answer_seconds, 0.95)}
         entry["integrity"] = sum(v["integrity"] for _r, v in pairs)
         entry["breaches"] = sum(v["breaches"] for _r, v in pairs)
+        # Every repetition's, not the first's alone: an overshoot inside the grace stays visible (v8, C1).
+        entry["max_overshoot_ms"] = max((compare.overshoot_ms(r["budget"]) for r in rows
+                                         if r["arm"] == arm and r.get("budget")), default=0.0)
         entry["failed_answers"] = sum("answer_error" in r or "error" in (r.get("grade") or {}) for r, _v in pairs)
         entry["cost"] = {k: round(sum((r.get("cost") or {}).get(k) or 0 for r, _v in pairs), 4)
                          for k in ("jev_requests", "jev_tokens", "host_turns", "host_usd", "host_unknown")}
@@ -530,6 +533,10 @@ def judge(gates: dict, found: dict, reviewed: bool) -> list[dict]:
             verdict = "pass" if value <= g["target"] else "fail"
         elif g["id"] == "operating_ceiling" and any(tables):
             value = sum(t["breaches"] for tb in tables for t in tb.values())
+            # Every overshoot stays visible, the ones inside the grace too (v8, C1). A row's breaches
+            # were counted when it ran, under the rule of its commit.
+            detail = {"max_overshoot_ms": max((t.get("max_overshoot_ms", 0.0) for tb in tables for t in tb.values()),
+                                              default=0.0)}
             verdict = "pass" if value == 0 else "fail"
         if g.get("cohort") == "answer":
             # v3's statistics hold on a complete cohort only: surviving pairs are not the cohort.
