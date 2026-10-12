@@ -1371,8 +1371,15 @@ must test both the wording and the host.
 `eval/jev/reliability-v7/intents.json` keeps v6's 72 calibration intents
 verbatim. It adds 139 fresh held-out intents (review r7), with pages only
 they name over v6's corpus; no earlier page is edited. No held-out wording
-or id appears in v1–v6, so none of the segments that calibrated `ASK` comes
-back.
+or id appears in v1–v6. The guarantee is about whole wordings: short generic
+requests such as "What would you change?" do recur as segments.
+
+The new pages take subjects no v6 page covers. So no preserved page gives a
+held-out question a different answer, or answers it outside its labelled
+evidence. Label review r7's first round found 7 contradictions and 3
+missing alternatives. A scan of every new page against the corpus then found
+more of both. 66 questions were rewritten on new subjects, and 4 pages
+reworded with their questions kept.
 - The analysis family has 67 intents:
   - 55 labelled analysis: 20 with material and 35 request-only multipart;
   - 12 routine cases a standing policy covers, labelled fact: 4 single,
@@ -1393,10 +1400,12 @@ work start and review fix verbatim. It adds 54 fresh held-out fixtures for
 each point: work start has 18 per label, and review fix has 27 per label.
 - Work start's evidence fixtures vary how they name what is still to
   decide. v5's all read "the chosen …".
-- Some dispatch fixtures name no files, since W says naming none is no
-  reason to gather evidence.
-- Review fix spreads rounds, severities and disputed findings across both
-  labels.
+- Every work-start label has the same mix of file locators. Of each 18,
+  6 name a directory, 7 name only files with a line and 5 name none. W says
+  naming no files is no reason to gather evidence.
+- Review fix spreads rounds and severities across both labels. The 6
+  disputed findings are all context: F sends a finding disputed in an
+  earlier round to context.
 
 No goal, finding or id repeats an earlier set's.
 
@@ -1421,7 +1430,7 @@ been run, and the set waits for its label review.
 | 3 | Publish | Publish current baseline and unresolved limits | In progress — v4 baseline published; re-judged with Wilson intervals, routing and action gates inconclusive (too few fixtures) |
 | 4 | v5 | Enough held-out cases for the rate gates, per-class routing | In progress — held-out retrieval, repetition and actions run (Results, v5): 3 rate gates pass, 4 inconclusive; held-out answers at ac90615 fail both answer gates (answer-path.md) |
 | 5 | v6 | Fresh held-out test of the changed answer path | In progress — owner chose G2, the route change and A3; route change calibrated on revealed cases (#121); gates v6 and 138 fresh held-out intents reviewed (r6) and frozen on 2026-10-11 (Draft set); run at 103521c (Results, v6): both answer gates and three routing gates pass, material classification inconclusive; work start and review fix stay at v5's inconclusive result (A3) |
-| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); fresh set drafted (Draft set (v7)), label review next |
+| 6 | v7 | Material classification and the two action points | In progress — designed (v7 design); owner chose M1 with W, F and F2; implemented and calibrated on revealed cases (Implementation, #125); fresh set drafted (Draft set (v7)); label review round 1 refused, fixes in review |
 
 ## Sources
 

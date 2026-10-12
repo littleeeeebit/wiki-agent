@@ -49,6 +49,11 @@ def test_the_seventh_action_set_holds_out_54_fresh_fixtures_per_changed_point():
     labels = {p: sorted(f["label"] for f in held if f["point"] == p) for p in points}
     assert labels == {"work.start": ["clarify"] * 18 + ["dispatch"] * 18 + ["evidence"] * 18,
                       "loop.fix": ["context"] * 27 + ["fix"] * 27}
+    # How a specification names its files says nothing of its label (review r7, round 1).
+    shapes = {label: sorted("dir" if any(p.endswith("/") for p in f["spec"]["grounds"]["files"])
+                            else "file" if f["spec"]["grounds"]["files"] else "none"
+                            for f in held if f["label"] == label) for label in ("clarify", "dispatch", "evidence")}
+    assert shapes["clarify"] == shapes["dispatch"] == shapes["evidence"]
     seen = []
     for v in EARLIER:
         path = JEV / f"reliability{v}" / "actions.json"
@@ -67,4 +72,4 @@ def test_gates_v7_are_v6s_and_the_set_is_frozen_on_one_date():
     data = json.loads((V7 / "intents.json").read_text(encoding="utf-8"))
     actions = json.loads((V7 / "actions.json").read_text(encoding="utf-8"))
     assert data["frozen"] == gates["frozen"] == actions["frozen"] == data["labels"]["reviews"]["r7"]["at"] == \
-        actions["labels"]["reviews"]["r7"]["at"]
+        actions["labels"]["reviews"]["r7"]["at"] == data["labels"]["reviewed_at"] == actions["labels"]["reviewed_at"]

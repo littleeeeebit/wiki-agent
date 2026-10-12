@@ -6,8 +6,8 @@
  "description": "Reliability PR 5's seventh action set (docs/plans/reliability/5-english-baseline.md, v7): v5's calibration fixtures for work start and review fix verbatim (review r5), and 54 held-out fixtures for each written fresh (review r7), labels balanced (work start 18 per label, review fix 27 per label), to test the prompts changed on v5's results. Check choice has no v7 fixtures; v5's result stands. Labels mean what they mean in the first set.",
  "labels": {
   "author": "model-drafted (claude-opus-5-5, reliability PR 5)",
-  "reviewed_by": "gpt-6.1-sol",
-  "reviewed_at": "2026-10-10",
+  "reviewed_by": null,
+  "reviewed_at": null,
   "reviews": {
    "r5": {
     "kind": "model",
@@ -509,7 +509,7 @@
      "pages": [],
      "files": [
       "src/api/teams.py:40",
-      "tests/test_teams.py:1"
+      "tests/"
      ],
      "rules": []
     },
@@ -610,7 +610,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/jobs/schedule.py:5"
+      "src/jobs/"
      ],
      "rules": []
     },
@@ -712,7 +712,8 @@
     "grounds": {
      "pages": [],
      "files": [
-      "web/src/ProfileForm.tsx:77"
+      "web/src/ProfileForm.tsx:77",
+      "web/src/forms/"
      ],
      "rules": []
     },
@@ -790,7 +791,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/orders/list.py:15"
+      "src/orders/"
      ],
      "rules": []
     },
@@ -842,9 +843,7 @@
     ],
     "grounds": {
      "pages": [],
-     "files": [
-      "src/geo/client.py:9"
-     ],
+     "files": [],
      "rules": []
     },
     "decisions": []
@@ -868,7 +867,8 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/accounts/signup.py:31"
+      "src/accounts/signup.py:31",
+      "tests/"
      ],
      "rules": []
     },
@@ -906,11 +906,11 @@
    "label": "dispatch",
    "spec": {
     "slug": "v7ws18",
-    "goal": "Use the existing retry_with_backoff() helper for the S3 uploads in src/storage/s3.py, three attempts",
+    "goal": "Use the existing retry_with_backoff() helper for the S3 uploads in src/storage/s3.py, at most three attempts in total",
     "out": [],
     "done": [
      "python -m pytest -q",
-     "a failed upload is retried up to three times through retry_with_backoff()",
+     "a failed upload is tried at most three times in total through retry_with_backoff()",
      "tests cover one retried upload"
     ],
     "grounds": {
@@ -942,7 +942,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/admin/roles.py:64"
+      "src/admin/"
      ],
      "rules": []
     },
@@ -992,7 +992,8 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/api/audit_events.py:10"
+      "src/api/audit_events.py:10",
+      "src/api/"
      ],
      "rules": []
     },
@@ -1040,7 +1041,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/catalog/price.py:5"
+      "src/catalog/"
      ],
      "rules": []
     },
@@ -1113,7 +1114,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/support/cleanup.py:1"
+      "src/support/"
      ],
      "rules": []
     },
@@ -1165,7 +1166,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/api/events.py:1"
+      "src/api/"
      ],
      "rules": []
     },
@@ -1285,9 +1286,7 @@
     ],
     "grounds": {
      "pages": [],
-     "files": [
-      "src/auth/tokens.py:71"
-     ],
+     "files": [],
      "rules": []
     },
     "decisions": []
@@ -1452,7 +1451,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "templates/invoices/"
+      "templates/invoices/base.html:3"
      ],
      "rules": []
     },
@@ -1498,7 +1497,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/db/"
+      "src/db/queries.py:40"
      ],
      "rules": []
     },
@@ -1521,7 +1520,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "tests/"
+      "tests/conftest.py:9"
      ],
      "rules": []
     },
@@ -1565,7 +1564,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "web/"
+      "web/package.json:5"
      ],
      "rules": []
     },
@@ -1588,7 +1587,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/importer/cli.py:1"
+      "src/importer/cli.py:24"
      ],
      "rules": []
     },
@@ -1632,7 +1631,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/auth/permissions.py:1"
+      "src/auth/permissions.py:57"
      ],
      "rules": []
     },
@@ -1699,7 +1698,8 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/payments/"
+      "src/payments/",
+      "web/src/Checkout.tsx:18"
      ],
      "rules": []
     },
@@ -1722,7 +1722,7 @@
     "grounds": {
      "pages": [],
      "files": [
-      "src/search/rank.py:1"
+      "src/search/rank.py:12"
      ],
      "rules": []
     },
