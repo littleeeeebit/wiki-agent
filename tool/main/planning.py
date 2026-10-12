@@ -58,7 +58,8 @@ MAX_CONTEXT = 20_000
 MAX_MATERIALS = 30_000
 MAX_FILE = 60_000     # characters in one returned file
 REQUEST = re.compile(r"[A-Za-z0-9-]{8,64}")
-NAME = re.compile(r"0-overview\.md|[1-9]\d?-[a-z0-9][a-z0-9-]{0,40}\.md")
+# A plan file, or a review research page (`recovery.page_of`) the reviser records its result on.
+NAME = re.compile(r"0-overview\.md|[1-9]\d?-[a-z0-9][a-z0-9-]{0,40}\.md|research-[a-z0-9][a-z0-9-]{0,40}-[1-9]\.md")
 EFFORT = re.compile(r"[a-z]{1,16}")
 BLOCK = re.compile(r"^```(plan-questions|plan-sources|plan-outline|plan-file)[ \t]*\r?\n(.*?)^```[ \t]*$",
                    re.M | re.S)

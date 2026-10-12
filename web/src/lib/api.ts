@@ -498,6 +498,21 @@ export type Validation = {
 /** How a person reads a review profile. */
 export const PROFILE_LABEL: Record<ReviewProfile, string> = { plan: '계획', code: '코드', mixed: '계획+코드' }
 
+export type ResearchLimits = { seconds: number; calls: number; tokens: number }
+export type Recovery = {
+  issue_id: string
+  /** required · limits · researching · fixing · fixed · exhausted · ruled, or why research stopped. */
+  phase: string
+  trigger: { issue: string; kind: 'repeat' | 'oscillation' | 'backstop'; rounds: number[]; evidence?: string[] } | null
+  cycles_started: number
+  limits: ResearchLimits | null
+  spent: { seconds: number; calls: number; tokens: number; unknown: boolean; accepted?: boolean }
+  active: { cycle: number; round: number; status: string; page?: string } | null
+  /** `fixed`, or `abandoned` when a later round started a new cycle before its fix went out. */
+  attempts: { cycle: number; round: number; status: 'fixed' | 'abandoned'; page?: string; hypothesis?: string;
+    outcome: { round: number; result: 'repeated' | 'cleared' } | null }[]
+}
+
 export type Spec = {
   cleanup_complete?: boolean
   id: string
@@ -519,6 +534,8 @@ export type Spec = {
   state: string
   /** Why a `멈춤` stopped: one of the stage 4 plan's table. */
   stopped: { reason: string; detail: string } | null
+  /** Research owed before another fix of a recurring finding, by issue id (reliability PR 8). */
+  recovery?: Record<string, Recovery>
   worktree: string | null
   pr: { number: number; url: string; base?: string; head?: string; branch?: string } | null
   report: { item: string; pass: boolean; evidence?: string }[] | null
@@ -658,8 +675,8 @@ export const mergeSpec = (id: string, head: string, owner?: string) =>
   post(`/api/specs/${id}/merge`, { head }, 'POST', owner).then((r) => json<Spec>(r, '머지'))
 export const settleSpec = (id: string, choice: 'accept' | 'reopen', owner?: string) =>
   post(`/api/specs/${id}/settle`, { choice }, 'POST', owner).then((r) => json<Spec>(r, '끝내기'))
-export const resumeSpec = (id: string, note = '', owner?: string) =>
-  post(`/api/specs/${id}/resume`, { note }, 'POST', owner).then((r) => json<Spec>(r, '계속'))
+export const resumeSpec = (id: string, note = '', owner?: string, limits?: ResearchLimits) =>
+  post(`/api/specs/${id}/resume`, limits ? { note, limits } : { note }, 'POST', owner).then((r) => json<Spec>(r, '계속'))
 export const haltSpec = (id: string, owner?: string) => post(`/api/specs/${id}/halt`, undefined, 'POST', owner).then((r) => json<Spec>(r, '멈춤'))
 export const reviewSpec = (id: string, owner: string) => post(`/api/specs/${id}/review`, undefined, 'POST', owner).then((r) => json<Spec>(r, '다음 리뷰 라운드'))
 export const cloudInstructions = (id: string, owner: string) => get(`/api/specs/${id}/cloud-instructions`, owner).then((r) => json<{ text: string }>(r, '클라우드 인계'))

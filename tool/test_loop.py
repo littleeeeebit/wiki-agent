@@ -920,7 +920,10 @@ def test_a_stale_round_neither_raises_nor_repeats_a_finding(world):
 
     Reviewer.replies = [pushed_meanwhile, denied([finding], meta(("a.txt", "value is right"))),
                         denied([finding], meta(("a.txt", "value is right", "F1"))), allow, keep()]
-    Worker.replies = [fixed((finding, "fixed")), fixed((finding, "fixed"))]
+    # Not "fixed" the first time: a fix repeated in the next round is PR 8's research trigger.
+    Worker.replies = ["```disposition\n" + json.dumps([{"finding": finding, "action": "not-reproduced",
+                                                         "evidence": "Ran the trigger; output is correct"}]) + "\n```",
+                      fixed((finding, "fixed"))]
     # Several reviews and two real Git repair/push cycles take almost 30s
     # on this Windows host; leave startup margin without weakening assertions.
     spec = looped("fix-s")

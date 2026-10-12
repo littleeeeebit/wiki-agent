@@ -520,17 +520,20 @@ sys.stdin.read()
 '''
 
 
-def test_codex_source_profile_has_no_shell_connectors_or_permission_dialog(tree):
+@pytest.mark.parametrize("tools, web", [("Read,Glob,Grep", "disabled"),
+                                        ("Read,Glob,Grep,WebSearch,WebFetch", "live")])   # PR 7/8 research
+def test_codex_source_profile_has_no_shell_connectors_or_permission_dialog(tree, tools, web):
     def bounded_call(repo, tool, args):
         if tool == "repo_read" and args == {"path": "source.py"}:
             return "1: safe"
         raise ValueError("not a read tool")
 
-    session = ChatSession(tree, model="codex:m", tools="Read,Glob,Grep", bypass=True)
+    session = ChatSession(tree, model="codex:m", tools=tools, bypass=True)
     with patch.object(read_tools, "call", side_effect=bounded_call):
         command, events = run(session, CODEX_SOURCE, tree)
     for feature in ("shell_tool", "unified_exec", "apps", "plugins", "computer_use", "request_permissions_tool"):
         assert command[command.index(feature) - 1] == "--disable"
+    assert f'web_search="{web}"' in command
     assert not session.bypass and not session._pending
     assert not any(e.kind in {"approval", "error"} for e in events)
     assert events[-1].kind == "done" and events[-1].text == "read safely"

@@ -51,6 +51,7 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
   const [working, setWorking] = useState('')
   const [fault, setFault] = useState('')
   const [note, setNote] = useState('')
+  const [limits, setLimits] = useState({ seconds: '', calls: '', tokens: '' })
   const [file, setFile] = useState<{ title: string; text: string } | null>(null)
   const generation = useRef(0)
   const turns = useReview(spec?.repo ?? '', spec?.id ?? '')
@@ -88,6 +89,9 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
   }
 
   const reason = spec.stopped?.reason ?? ''
+  const recovering = reason === RECOVERY ? Object.values(spec.recovery ?? {}).find((r) => STOPPED.includes(r.phase)) : undefined
+  const needsLimits = !!recovering && ['limits', 'budget', 'deadline'].includes(recovering.phase)
+  const needsRuling = recovering?.phase === 'exhausted'
   const cloud = spec.implementation_environment === 'claude-cloud'
   const analysis = spec.local_verification?.needs_research || ['reanalysis', 'unstable'].includes(spec.local_verification?.state ?? '')
   const rounds = spec.rounds ?? []
@@ -118,6 +122,8 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
 
       {(cloud || spec.local_verification) && <VerificationPanel spec={spec} />}
 
+      {Object.keys(spec.recovery ?? {}).length > 0 && <RecoveryPanel recovery={spec.recovery!} />}
+
       {(spec.merge_progress || working === 'merge') && <MergeProgress spec={spec} pending={working === 'merge'} />}
 
       {spec.state === '멈춤' && spec.stopped && (
@@ -136,14 +142,19 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
             </div>
           ) : (
             <div className="mt-2 space-y-1.5">
-              {(reason === '반론' || analysis) && (
+              {needsLimits && <LimitsInput value={limits} onChange={setLimits} spent={recovering!.spent} />}
+              {(reason === '반론' || analysis || needsRuling) && (
                 <textarea value={note} onChange={(e) => setNote(e.target.value)} rows={2}
-                  aria-label={analysis ? '재분석 근거' : '발견에 대한 판단'}
-                  placeholder={analysis ? '원인 · 근거 · 다음 실험 — 재분석 후 재개한다' : '그 발견에 정한 것 — 다음 라운드 지시에 들어간다'}
+                  aria-label={analysis ? '재분석 근거' : needsRuling ? '반복 발견에 정한 것' : '발견에 대한 판단'}
+                  placeholder={analysis ? '원인 · 근거 · 다음 실험 — 재분석 후 재개한다'
+                    : needsRuling ? '목표·제약 변경, 페이지의 다른 방안, 또는 이 발견을 미룸 — 다음 라운드 지시에 들어간다'
+                    : '그 발견에 정한 것 — 다음 라운드 지시에 들어간다'}
                   className="w-full rounded-md border border-border bg-background px-2 py-1 text-[13.5px]" />
               )}
-              <Btn tone="primary" disabled={!!working || ((reason === '반론' || analysis) && !note.trim())}
-                onClick={() => act('resume', () => api.resumeSpec(spec.id, note.trim(), spec.repo))}>
+              <Btn tone="primary" disabled={!!working || ((reason === '반론' || analysis || needsRuling) && !note.trim())
+                  || (needsLimits && !limitsOk(limits))}
+                onClick={() => act('resume', () => api.resumeSpec(spec.id, note.trim(), spec.repo,
+                  needsLimits ? parsedLimits(limits) : undefined))}>
                 {working === 'resume' ? '…' : reason === '라운드 상한' ? '계속 (+4 라운드)' : cloud ? '로컬 검증 재개' : reason === '외부 수정 대기' ? '수정된 PR 로 다음 라운드' : '계속'}
               </Btn>
             </div>
@@ -474,5 +485,55 @@ function VerificationPanel({ spec }: { spec: Spec }) {
       </details>}
     </details>)}
     {fault && <p role="alert" className="mt-2 whitespace-pre-wrap text-destructive">{fault}</p>}
+  </section>
+}
+
+const RECOVERY = '반복 발견 재조사'
+/** The recovery phases a `[계속]` acts on; the others run or wait for the next round. */
+const STOPPED = ['limits', 'budget', 'deadline', 'unknown', 'exhausted', 'host', 'web_unavailable', 'format', 'page']
+const KIND: Record<string, string> = { repeat: '고쳤다고 한 뒤 같은 발견', oscillation: '사라졌다 다시 나온 발견', backstop: '7라운드 이후 거절' }
+const PHASE: Record<string, string> = {
+  required: '리서치 필요', limits: '한도 입력 대기', researching: '리서치 중', fixing: '리서치 반영 수정 중', fixed: '다음 라운드 대기',
+  exhausted: '두 번 뒤에도 반복 — 결정 대기', ruled: '사람이 정함', budget: '한도 소진', deadline: '시간 한도', unknown: '사용량 모름',
+  host: '리서치 턴 실패', web_unavailable: '웹 도구 없음', format: '답 형식 오류', page: '페이지 기록 실패',
+}
+type LimitsDraft = { seconds: string; calls: string; tokens: string }
+
+const parsedLimits = (d: LimitsDraft): api.ResearchLimits => ({ seconds: Number(d.seconds), calls: Number(d.calls), tokens: Number(d.tokens) })
+const limitsOk = (d: LimitsDraft) => {
+  const l = parsedLimits(d)
+  return Number.isFinite(l.seconds) && l.seconds > 0 && [l.calls, l.tokens].every((v) => Number.isInteger(v) && v > 0)
+}
+
+function LimitsInput({ value, onChange, spent }: { value: LimitsDraft; onChange: (v: LimitsDraft) => void; spent: api.Recovery['spent'] }) {
+  const fields: [keyof LimitsDraft, string, number][] = [['seconds', '초', spent.seconds], ['calls', '호출', spent.calls], ['tokens', '토큰', spent.tokens]]
+  return <fieldset className="grid grid-cols-3 gap-1.5" aria-label="리서치 한도">
+    {fields.map(([key, label, used]) => <label key={key} className="block min-w-0">
+      <span className="block text-faint">{label} · 쓴 양 {used}</span>
+      <input inputMode="numeric" value={value[key]} onChange={(e) => onChange({ ...value, [key]: e.target.value })}
+        className="h-7 w-full min-w-0 rounded-md border border-border bg-background px-2" />
+    </label>)}
+  </fieldset>
+}
+
+/** Recurring findings: what triggered research, the cycle, its pages and what followed. */
+function RecoveryPanel({ recovery }: { recovery: Record<string, api.Recovery> }) {
+  return <section aria-label="반복 발견 재조사" className="mt-3 space-y-2 rounded-md border border-border p-3">
+    <div className="font-heading text-[11px] font-semibold text-faint">반복 발견 재조사</div>
+    {Object.values(recovery).map((r) => {
+      const pages = [...r.attempts.map((a) => ({ page: a.page, note: a.status === 'abandoned' ? ' · 수정 전에 끊김'
+        : a.outcome ? ` · 다음 라운드 ${a.outcome.result === 'cleared' ? '해소' : '반복'}` : '' })),
+        { page: r.active?.page, note: ' · 이번 수정' }].filter((p) => p.page)
+      return <div key={r.issue_id}>
+        <div>
+          <span className="font-mono text-[11.5px]">{r.issue_id}</span> · {PHASE[r.phase] ?? r.phase} · 사이클 {r.cycles_started}/2
+          {r.trigger && <span className="text-faint"> · {KIND[r.trigger.kind] ?? r.trigger.kind} (라운드 {r.trigger.rounds.join(', ')})</span>}
+        </div>
+        {r.trigger?.evidence?.map((e) => <div key={e} className="text-muted-foreground">{e}</div>)}
+        {pages.map((p) => <div key={p.page} className="font-mono text-[11.5px] text-faint">{p.page}{p.note}</div>)}
+        {r.limits && <div className="text-faint">한도 {r.limits.seconds}초 · {r.limits.calls}호출 · {r.limits.tokens}토큰 —
+          쓴 양 {r.spent.seconds}초 · {r.spent.calls}호출 · {r.spent.tokens}토큰{r.spent.unknown ? ' 이상(사용량 모름)' : ''}</div>}
+      </div>
+    })}
   </section>
 }
