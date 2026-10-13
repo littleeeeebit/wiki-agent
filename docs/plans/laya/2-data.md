@@ -109,8 +109,8 @@ The passage kinds' generator is `laya/generate.py` (built 2026-10-13):
   A finished run with no claim (written before claims existed) makes the
   generator refuse to start, since its split's ownership cannot be told.
 - The daemon is asked again before each teacher turn. A question whose own
-  retrieval failed (`prepare` ends `unavailable` before any grade-evidence
-  request) is left unrun with its reason, and the run stops
+  retrieval did not finish (`prepare` ends neither `ready` nor `partial`,
+  as when unavailable or out of budget, before any grade-evidence request) is left unrun with its reason, and the run stops
   (`search_unavailable`) before paying for another turn. An empty retrieval
   is recorded as a run with no candidates.
 - The captured request is checked whole, by whole state and every view. It

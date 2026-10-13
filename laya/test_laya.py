@@ -795,7 +795,8 @@ def test_a_capture_tells_a_failed_retrieval_from_an_empty_one(monkeypatch):
         sys.path.append(str(generate.ROOT / "tool"))
     from main import knowledge
 
-    for status, empty in (("unavailable", False), ("partial", True), ("ready", True)):
+    for status, empty in (("unavailable", False), ("exhausted", False), ("cancelled", False),
+                          ("partial", True), ("ready", True)):
         monkeypatch.setattr(knowledge, "prepare", lambda *a, s=status, **k: {"status": s, "reason": "why"})
         if empty:
             assert generate.captured("q") == []
