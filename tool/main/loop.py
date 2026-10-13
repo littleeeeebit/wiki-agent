@@ -2345,17 +2345,6 @@ def halt_loop(repo: str, sid: str) -> None:
     stop(None, repo, sid, Why.PERSON)
 
 
-def stranded(spec: dict) -> bool:
-    """A pull request that is up but never went into review: the plan row's
-    turn after it failed, so nothing kicked the loop, and neither `[계속]`
-    (not `멈춤`) nor the list (`이미 PR #n`) could. Not while the plan row is
-    still owed: a round started now would review the head without it, and
-    the agent tab's next turn is what commits, pushes and kicks it."""
-
-    return (spec["state"].startswith("PR #") and bool(spec.get("fault"))
-            and spec.get("plan_commit") != "asked")
-
-
 def refusal(row: dict, spec: dict | None) -> str:
     """Why a pull request cannot go into a loop from the list, or ``""``."""
 
@@ -2364,12 +2353,13 @@ def refusal(row: dict, spec: dict | None) -> str:
     if spec is None:
         return ""
     reason = (spec.get("stopped") or {}).get("reason")
-    if stranded(spec):
-        return ""
     if spec["state"] == "머지 가능":
         return ""
-    if spec["state"].startswith("PR #") and spec.get("plan_commit") == "asked":
-        return "계획 행 커밋이 아직이다 — 에이전트 탭에서 행을 고쳐 커밋하게 하면 리뷰로 간다"
+    if spec["state"].startswith("PR #"):
+        # Publication only waits for this request (`specs.reviewed`). Not while
+        # the plan row is owed: a round now would review the head without it.
+        return ("계획 행 커밋이 아직이다 — 에이전트 탭에서 행을 고쳐 커밋하게 하면 리뷰로 간다"
+                if spec.get("plan_commit") == "asked" else "")
     if spec["state"] != "멈춤":
         return f"이미 {spec['state']}"
     if reason == Why.WRONG_BASE.value:
@@ -2390,6 +2380,19 @@ def unlinked(repo: Path, branch: str) -> dict | None:
     if len(matches) > 1:
         raise HTTPException(409, "이 브랜치에 연결할 명세가 여러 개다. 작업 연결을 확인하세요")
     return matches[0] if matches else None
+
+
+def clash(name: str, branch: str) -> str:
+    """Why a pull request without a spec cannot get one named after its branch, or ``""``.
+    Two open pull requests from one branch (another base) land here."""
+
+    sid = folder_for(branch)
+    if not sid or not specs.file_of(name, sid).exists():
+        return ""
+    other = ((specs.load(name, sid) or {}).get("pr") or {}).get("number")
+    if other:
+        return f"명세 `{sid}` 는 이미 PR #{other} 의 것이다 — 같은 브랜치의 PR 이 둘이면 하나를 닫으세요"
+    return f"같은 이름의 명세 `{sid}` 가 이미 있다"
 
 
 def attach(repo: Path, spec: dict, view: dict, environment: str) -> dict:
@@ -2437,7 +2440,8 @@ def prs() -> dict:
     rows = []
     for row in json.loads(done.stdout):
         spec = known.get(row["number"]) or unlinked(repo, row["headRefName"])
-        why = refusal(row, spec if spec and spec.get("pr") else None)
+        why = refusal(row, spec if spec and spec.get("pr") else None) or (
+            "" if spec else clash(name, row["headRefName"]))
         rows.append({"number": row["number"], "title": row["title"], "branch": row["headRefName"],
                      "head": row["headRefOid"], "url": row["url"], "fork": bool(row.get("isCrossRepository")),
                      "spec": spec["id"] if spec else None, "state": spec["state"] if spec else None,
@@ -2504,8 +2508,9 @@ def take(repo: Path, n: int, environment: str = "local") -> str:
         spec = attach(repo, existing, view, environment)
         kick(repo.name, spec["id"])
         return spec["id"]
-    if sid and specs.file_of(repo.name, sid).exists():
-        raise HTTPException(409, f"같은 이름의 명세 `{sid}` 가 이미 있다")
+    why = clash(repo.name, view["headRefName"])
+    if why:
+        raise HTTPException(409, why)
     path = adopted(repo, view["headRefName"], view["headRefOid"], detached=environment != "local")
     with specs._files:
         made = {**minimal(repo, view, path, gate), "id": sid, "implementation_environment": environment}

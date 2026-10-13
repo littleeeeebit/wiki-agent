@@ -1013,10 +1013,22 @@ def test_a_pr_the_plan_row_left_behind_goes_into_review_from_the_list(world):
     spec = specs.load("proj", "fix-p")
     assert spec["state"] == "머지 가능" and spec["fault"] is None
     pr_spec(world, "fix-q", 8)
-    assert loop.refusal({}, specs.load("proj", "fix-q")) == "이미 PR #8", "잘못 없이 도는 PR 은 그대로"
+    assert loop.refusal({}, specs.load("proj", "fix-q")) == "", "a published PR waits for this request (#72)"
     pr_spec(world, "fix-r", 9, fault="계획 행 커밋의 push 실패", plan_commit="asked")
-    assert not loop.stranded(specs.load("proj", "fix-r")), "계획 행이 빠진 머리를 리뷰하지 않는다"
-    assert "계획 행 커밋이 아직" in loop.refusal({}, specs.load("proj", "fix-r"))
+    assert "계획 행 커밋이 아직" in loop.refusal({}, specs.load("proj", "fix-r")), "never the head without the row"
+
+
+def test_two_prs_from_one_branch_name_the_one_that_owns_the_spec(world):
+    """rfg_rag #18 (into dev) and #19 (into main) shared one branch: #19 sat
+    at `이미 PR #19`, and #18 was pickable only to fail on the spec's name."""
+
+    pr_spec(world, "fix-twin", 19)
+    world.hub.open(18, "fix-twin", base="dev")
+    web = client()
+    rows = {r["number"]: r for r in web.get("/api/prs").json()["rows"]}
+    assert rows[19]["pickable"]
+    assert not rows[18]["pickable"] and "PR #19" in rows[18]["why"]
+    assert "PR #19" in web.post("/api/loops", json={"prs": [18]}).json()["results"][0]["error"]
 
 
 def test_deleting_a_worktree_takes_its_unmerged_spec_off_the_rail(world):
