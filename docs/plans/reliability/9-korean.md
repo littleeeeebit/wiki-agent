@@ -490,18 +490,32 @@ Order step 2, with fake hosts only:
 
 Order step 3. `eval/jev/korean/pairs.json` holds the set:
 - 84 pairs, twelve in each group, assigned in the order of `GROUPS`.
-  Calibration intents: conflict 6, names 2, negation 3; every other group
-  takes held-out intents only.
-- 89 twins with 142 fact units. Every page an intent's evidence names has
+  Calibration intents: conflict 6, names 2; every other group takes
+  held-out intents only. Negation is read as the question or the answer
+  turning on a negation or an exclusion ("not", "never", "only", "except",
+  and "no", as in "no data engineers"). Where more held-out intents have a
+  trait than a group has room for, the set takes those whose answer turns
+  on it most directly.
+- 88 twins with 207 fact units. Every page an intent's evidence names has
   a twin, and every other page stays English.
 - Each `input.ko` keeps the question's negations, names, numbers and units.
   Pasted machine or English text (logs, code, tickets, review comments,
   dashboard lines) stays English. A quoted person (a customer, a colleague,
   an old wiki line) is in Korean, as a Korean team would have written it.
 - Each pair's `meaning` labels the normalized English of the question.
-  Phrases list the wordings a faithful translation may choose, such as
-  `"6 years"` beside `"six years"`. A literal is a string that must come
-  through as written, a name, number or pasted span.
+  A literal is a string that must come through as written, a name, number
+  or pasted span. Labels match parts of words, so they follow these rules:
+  - A negation is a phrase with what it negates (`never use`, `not
+    shared`), never a bare `not`, which `notify` contains.
+  - A number goes with its unit (`31 days`), and a date with its day and
+    month in either order. A changed unit or day then fails.
+  - Each independent fact of a sentence is its own unit, so a translation
+    that splits the sentence passes. A negation and its object stay in one
+    unit.
+  - Common faithful wordings are listed beside each other: digits and
+    words, `how often` and `how frequently`, `prohibited` and `may not`.
+  - A question's labels name the asked part. Pasted text that stays
+    English cannot satisfy them.
 - The planted instructions in three pages (children in the office, the
   office gym, the showers) are test data. Their twins keep them,
   translated.
@@ -510,7 +524,9 @@ Order step 3. `eval/jev/korean/pairs.json` holds the set:
 for (`baseline`). Each pair's meaning is checked on its intent's English
 question, and each fact unit on its section of the English page. A label
 that fails there would count a faithful translation as a loss, so the check
-refuses it. The set passes with none.
+refuses it. The set passes with none. `tool/test_korean.py` also holds
+English cases against the set itself: faithful wordings that must pass and
+losses that must fail.
 
 ## Steps
 

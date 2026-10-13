@@ -144,6 +144,46 @@ def test_a_label_that_fails_on_its_english_original_is_named(tmp_path, v8):
     assert korean.baseline(pairs, v8) == ["fact-01: none of ['firewall']"]
 
 
+# Normalized English against the frozen set's labels: True holds (a faithful wording), False loses.
+SET_CASES = [
+    ("q", "conflict-45", "Which HR system do we use? Since when?", False),
+    ("q", "analysis-218", "What should I do if a colleague asks to borrow my login for a year? Is there an alternative?",
+     False),
+    ("q", "analysis-179", "Which of our 2 support tools should we keep? Why?", True),
+    ("q", "bridge-43", "Whom should I contact when the coffee machine malfunctions?", True),
+    ("q", "pasted-60", 'Forum post: "Gift cards expire."\nHow long are gift cards valid?', False),
+    ("f", "2026-02-09-089-personio-1", "Employee records move to Personio from 2 March 2026.", False),
+    ("f", "cctv-1", "CCTV recordings from the office entrances are kept for 31 years, then overwritten.", False),
+    ("f", "colour-contrast-1", "Body text has a contrast ratio of at least 4.5 to 2 against its background.", False),
+    ("f", "image-descriptions-1", "Every image on a web page has no alt text that says what it shows.", False),
+    ("f", "shared-passwords-3", "Delete the message, notify the customer to change the password, and use it.", False),
+    ("f", "finance-sheet-formulas-2", "A formula that reads another sheet names a range rather than whole columns.", True),
+    ("f", "finance-sheet-formulas-2", "Shared finance sheets use XLOOKUP instead of VLOOKUP, and a formula that reads "
+                                      "another sheet reads whole columns.", False),
+    ("f", "showers-2", "Visitors are prohibited from using the showers.", True),
+    ("f", "2026-08-08-012-staging-monthly-1", "Staging is now reset on the first of each month.", True),
+    ("f", "laptop-spills-2", "Switch the laptop off at once. Do not charge it. Bring it to the IT desk the same day.",
+     True),
+    ("f", "laptop-spills-2", "Switch the laptop off at once, charge it, and bring it to the IT desk the same day.", False),
+    ("f", "cookies-2", "A new cookie is listed in the cookie register with its purpose and lifetime. It is set with the "
+                       "Secure and SameSite=Lax flags.", True),
+]
+
+
+@pytest.mark.parametrize("kind,name,english,holds", SET_CASES)
+def test_the_set_labels_hold_on_faithful_wordings_and_fail_on_losses(kind, name, english, holds):
+    from eval import meaning
+
+    pairs, _data = korean.load()
+    if kind == "q":
+        got = meaning.check(next(p["meaning"] for p in pairs["pairs"] if p["intent"] == name),
+                            {"status": "translated", "text": english})
+    else:
+        f = next(f for t in pairs["twins"].values() for f in t["facts"] if f["id"] == name)
+        got = korean.lost(english, f["require"], f["literals"])
+    assert (got == []) is holds, got
+
+
 def test_the_ko_corpus_swaps_only_the_twins_and_its_labels_map_back(tmp_path, v8, small):
     pairs, data = korean.load(pair_file(tmp_path, memory=True))
     ko = korean.ko_corpus(data, pairs)
