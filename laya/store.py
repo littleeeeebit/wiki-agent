@@ -3,9 +3,10 @@
 Journals are append-only JSONL, one record per line, each written with its newline in one
 write. A last line without its newline is a torn record that was never committed: `read`
 leaves it out and the next `append` cuts it off (or ends it, when it is whole), as a
-write-ahead log repairs its tail. A complete line that does not parse is corruption, not
-an interruption, and is raised. Derived files (notebook pages, the index) are replaced
-whole through a temporary file, never left half written.
+write-ahead log repairs its tail. Frames are found in bytes, before any decoding. A
+complete line that does not decode or parse is corruption, not an interruption, and is
+raised. Derived files (notebook pages, the index) are replaced whole through a temporary
+file, never left half written.
 """
 
 import json
@@ -15,15 +16,19 @@ from pathlib import Path
 
 
 def read(path: Path) -> list[dict]:
+    """Every committed record. Frames are found in bytes first, so a tail torn inside a
+    multi-byte character is left out like any other; a committed line is decoded and
+    parsed strictly."""
+
     if not path.exists():
         return []
-    *lines, tail = path.read_text(encoding="utf-8").split("\n")
-    rows = [json.loads(line) for line in lines if line.strip()]
+    *lines, tail = path.read_bytes().split(b"\n")
+    rows = [json.loads(line.decode("utf-8")) for line in lines if line.strip()]
     if tail.strip():
         try:
-            rows.append(json.loads(tail))   # whole but not ended: committed
-        except ValueError:
-            pass                            # torn: never committed
+            rows.append(json.loads(tail.decode("utf-8")))   # whole but not ended: committed
+        except ValueError:                                  # UnicodeDecodeError included
+            pass                                            # torn: never committed
     return rows
 
 
@@ -37,7 +42,7 @@ def append(path: Path, row: dict) -> None:
                 data = f.read()
                 cut = data.rfind(b"\n") + 1
                 try:
-                    json.loads(data[cut:])
+                    json.loads(data[cut:].decode("utf-8"))
                     f.write(b"\n")
                 except ValueError:
                     f.truncate(cut)

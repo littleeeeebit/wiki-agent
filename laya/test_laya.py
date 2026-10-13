@@ -135,6 +135,50 @@ def test_a_torn_last_line_was_never_written_and_corruption_is_raised(tmp_path):
     path.write_text('{"a": 1}\n{"bad\n{"c": 3}\n', encoding="utf-8")
     with pytest.raises(ValueError):
         store.read(path)
+    path.write_bytes(b'{"good": 1}\n{"text": "' + "—".encode()[:1])   # torn inside a character
+    assert store.read(path) == [{"good": 1}]
+    store.append(path, {"next": "—"})
+    assert store.read(path) == [{"good": 1}, {"next": "—"}]
+    path.write_bytes(b'{"good": 1}\n{"text": "\xe2"}\n')   # a committed line that does not decode
+    with pytest.raises(ValueError):
+        store.read(path)
+
+
+def test_a_paid_diagnosis_is_journalled_before_its_page(monkeypatch):
+    import store
+
+    for i in range(notes.PAGE_AT):
+        notes.record("useful", "disagree", round=1, slice="base", state_hash=f"h{i}", source="s", question="q")
+    calls = []
+    original = store.write
+
+    def cut(path, text):
+        if path.name == "disagree--base.md":
+            raise RuntimeError("interrupted before the page")
+        original(path, text)
+
+    monkeypatch.setattr(store, "write", cut)
+    with pytest.raises(RuntimeError):
+        notes.write_pages("useful", lambda *_: calls.append(1) or {"cause": "Paid once.", "next": "Go on."},
+                          log=lambda *_: None, limit=1)
+    monkeypatch.setattr(store, "write", original)
+    notes.write_pages("useful", lambda *_: calls.append(1) or {"cause": "Paid twice."}, log=lambda *_: None)
+    page = (notes.NOTES / "useful" / "disagree--base.md").read_text(encoding="utf-8")
+    assert len(calls) == 1 and "Paid once." in page and "Go on." in page
+
+
+def test_notes_under_the_earlier_short_id_are_not_written_again():
+    h = "0123456789ab" + "0" * 52
+    write(notes.NOTES / "useful" / "ledger.jsonl",
+          [{"id": f"useful-0-disagree-{h[:12]}-useful_p0", "kind": "useful", "round": 0, "category": "disagree",
+            "slice": "base", "state_hash": h, "source": "s", "question": "useful_p0", "answers": []}])
+    write(label.DATA / "useful" / "train.judged.jsonl",
+          [{"state_hash": h, "labelled": 0, "dropped": 1, "by_category": {"disagree": 1}, "row": {},
+            "notes": [{"category": "disagree", "round": 0, "slice": "base", "state_hash": h, "source": "s",
+                       "question": "useful_p0", "intended": None, "state": {}, "answers": []}]}])
+    stats = label.label("useful", "train", 5, ["a", "b"], 0, turn=lambda *_: pytest.fail("no paid call"),
+                        log=lambda *_: None)
+    assert stats["dropped"] == 1 and len(notes.ledger("useful")) == 1
 
 
 def test_a_verdict_torn_mid_write_is_judged_again_from_the_ledger(monkeypatch):

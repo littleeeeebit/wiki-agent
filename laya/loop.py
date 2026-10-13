@@ -115,7 +115,7 @@ def note_errors(kind: str, round: int, rows: list[dict], wrong: set, predicted: 
     under that slice, so its page shows what is left, the rest under `base`. An error already
     noted for this round is not noted again, so a resumed run can call it safely."""
 
-    noted = {n["id"] for n in notes.ledger(kind)}
+    noted = notes.noted(kind)
     for row in rows:
         for name, want in row["expected"].items():
             key = (row["provenance"]["state_hash"], name)

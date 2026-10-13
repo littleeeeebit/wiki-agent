@@ -150,7 +150,7 @@ def label(kind: str, split: str, target: int, labellers: list[str], max_turns: i
     judged_path = folder / f"{split}.judged.jsonl"
     ledger = {(r["state_hash"], r["labeller"]): r for r in read(ledger_path) if "error" not in r}
     written = {r["provenance"]["state_hash"] for r in read(out_path)}
-    noted = {r["id"] for r in notes.ledger(kind)}
+    noted = notes.noted(kind)
 
     def settle(verdict):
         """Write what `verdict` holds and an interruption may have left out. A verdict

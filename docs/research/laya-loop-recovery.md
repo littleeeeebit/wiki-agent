@@ -12,6 +12,7 @@ repeated finding; this page is that research.
 | --- | --- | --- |
 | 2 | Recording each judged state's counts beside the labelled output keeps resumed statistics right | Output written, counts not: agreement over-stated (`30/53` reported, `30/61` true) |
 | 3 | Writing the verdict first and settling output and notes from it closes the gap | A verdict line torn mid-write made every later read fail; a status written to a page before the round's outcome was journalled made the rerun aim the same round number at another slice |
+| 4 (cycle 1 of the research) | One journal per step, torn tails cut, pages replayed | Two places still broke the principle: a tail torn inside a UTF-8 character failed decoding before framing, and a paid diagnosis lived only in its page, so a page cut before replacement paid for it again; note ids of the earlier format were compared as strings |
 
 Each fix closed the gap it was shown and left the next one: the pipeline had
 several files that were each partly authoritative.
@@ -40,12 +41,21 @@ non-repeatable effects, the files are the state. Applied:
 | `<split>.ledger.jsonl` — each labeller turn | the judging of a state not yet journalled |
 | `<split>.judged.jsonl` — each state's verdict, with its labelled row and notes | `<split>.jsonl`, notebook ledger lines (by full-hash id) |
 | `rounds.jsonl` — each round's intent (`started`, before any paid turn) and outcome, with the page status it sets | incumbent splits, stalled features, the next round, every page status (replayed on start) |
+| `notes/<kind>/diagnoses.jsonl` — each paid diagnosis with the error count it saw | a page's Cause, Next and `diagnosed` |
+| `notes/<kind>/ledger.jsonl` — each error, identified by its fields | cluster pages' cases and counts |
 
 `laya/store.py` gives every journal one framing: one JSON record per line,
-written with its newline in one write. A last line without its newline is a
-torn record: `read` leaves it out and `append` truncates it, or ends it when
-it is whole. A complete line that does not parse raises. Pages and the index
-are replaced through a temporary file.
+written with its newline in one write. Frames are found in bytes before any
+decoding, so a tail torn inside a multi-byte character is a torn tail like
+any other. A last line without its newline is a torn record: `read` leaves
+it out and `append` truncates it, or ends it when it is whole. A complete
+line that does not decode or parse raises. Pages and the index are replaced
+through a temporary file and are rebuilt from the journals alone.
+
+A paid call's result is safe once journalled. A call whose turn ended before
+its result was journalled is paid again: R1 notes that an external action
+needs its own record of whether it was done, and a host turn offers none.
+The plan bounds that loss by the turn budget, not by the files.
 
 ## Alternatives
 
@@ -82,6 +92,17 @@ Interruptions injected in `laya/test_laya.py` on 2026-10-13:
 Each rerun finishes with the true counts, one note per error and no extra
 paid turn, and resumes the same round on its own slice. Records written by
 the earlier review rounds' format still resume. All 19 tests pass.
+
+Cycle 2 (after round 4) added three more cases:
+
+- a tail torn inside a UTF-8 character;
+- a committed line that does not decode, which raises;
+- a page cut after its diagnosis was journalled, rebuilt without a second
+  writer call.
+
+Notes stored under the earlier short id are matched by their fields and not
+written again. 21 tests pass. This is the second and last research-and-fix
+cycle that reliability PR 8 allows for this issue.
 
 ## Sources
 

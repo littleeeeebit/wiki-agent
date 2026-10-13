@@ -6,17 +6,20 @@ dropped, what generation got wrong, and what the trained model missed. The noteb
 separate wiki under `laya/notes/` (local only, ignored by Git):
 
 - `<kind>/ledger.jsonl` — one line per error (`record`).
-- `<kind>/<category>--<slice>.md` — one page per cluster of at least `PAGE_AT` errors, its
-  front matter kept by code, its diagnosis written by a model (`write_pages`).
+- `<kind>/diagnoses.jsonl` — every diagnosis a model wrote for a page, with the error
+  count it saw (`write_pages`), journalled before the page shows it.
+- `<kind>/<category>--<slice>.md` — one page per cluster of at least `PAGE_AT` errors.
 - `index.md` — every page, with its status.
 
 A page's status moves `open` -> `targeted` (a round aimed at it) -> `resolved` (a kept round
 brought its errors under the loop's floor), `falsified` (a round aimed at it was not kept),
-or `ambiguous` (its labellers agree on under half of it). Pages are views: the ledger holds
-the errors, and `loop.run` journals every status change in `rounds.jsonl` before making it
-and replays them all when it starts, so an interruption between the two loses nothing.
-The generator reads `brief(kind)`
-before every round: open pages first, never a falsified or ambiguous slice again.
+or `ambiguous` (its labellers agree on under half of it). Pages are views, rebuilt from
+three journals: the ledger holds the errors, `diagnoses.jsonl` the paid diagnoses, and
+`loop.run` journals every status change in `rounds.jsonl` before making it and replays
+them all when it starts, so an interruption loses nothing already paid for. A diagnosis
+whose turn ended before it was journalled is paid again; no local file can prevent that.
+The generator reads `brief(kind)` before every round: open pages first, never a falsified
+or ambiguous slice again.
 """
 
 import json
@@ -73,6 +76,13 @@ def ledger(kind: str) -> list[dict]:
     return store.read(NOTES / kind / "ledger.jsonl")
 
 
+def noted(kind: str) -> set[str]:
+    """The identity of every error in the ledger, computed from its fields, so a line
+    written under an earlier id format still counts as the same error."""
+
+    return {note_id(kind, r["round"], r["category"], r["state_hash"], r["question"]) for r in ledger(kind)}
+
+
 def cluster_name(category: str, slice) -> str:
     return f"{category}--{'base' if slice == 'base' else slug('-'.join(map(str, slice)))}"
 
@@ -104,7 +114,7 @@ def set_status(kind: str, name: str, status: str, round: int, slice="base") -> N
         raise ValueError(status)
     path = NOTES / kind / f"{name}.md"
     if not path.exists():
-        write_page(kind, name, clusters(kind).get(name, []), {}, slice)
+        write_page(kind, name, clusters(kind).get(name, []), slice)
     text = path.read_text(encoding="utf-8")
     text = re.sub(r"^status: .*$", f"status: {status}", text, count=1, flags=re.M)
     text = re.sub(r"^rounds: (.*)$", lambda m: f"rounds: {joined(m.group(1), [round])}", text, count=1, flags=re.M)
@@ -112,20 +122,26 @@ def set_status(kind: str, name: str, status: str, round: int, slice="base") -> N
     write_index()
 
 
-def write_page(kind: str, name: str, rows: list[dict], diagnosis: dict, slice="base") -> Path:
-    """The page for one cluster: front matter and cases by code, diagnosis by the writer.
-    A section the writer did not give keeps what the page said before; `diagnosed` is the
-    count the last diagnosis saw, so a page that grew past it is diagnosed again."""
+def diagnoses(kind: str) -> dict[str, dict]:
+    """Each page's diagnosis from its journal: the latest cause and next (a later one that
+    left a section out keeps the earlier one) and the error count the latest one saw."""
+
+    out: dict[str, dict] = {}
+    for d in store.read(NOTES / kind / "diagnoses.jsonl"):
+        page = out.setdefault(d["page"], {"cause": "", "next": "", "count": 0})
+        page.update({k: d[k] for k in ("cause", "next") if d.get(k)}, count=d["count"])
+    return out
+
+
+def write_page(kind: str, name: str, rows: list[dict], slice="base") -> Path:
+    """The page for one cluster, a view: front matter and cases from the ledger, diagnosis
+    from `diagnoses.jsonl`; `diagnosed` is the count the latest diagnosis saw, so a page
+    that grew past it is diagnosed again."""
 
     path = NOTES / kind / f"{name}.md"
     old = front(path)
-    fresh = isinstance(diagnosis, dict) and bool(str(diagnosis.get("cause") or "").strip())
-    diagnosed = len(rows) if fresh else int(old.get("diagnosed", 0))
-    m = re.search(r"## Cause\n\n(.*?)\n\n## Next\n\n(.*?)\n?\Z", path.read_text(encoding="utf-8"), re.S) \
-        if path.exists() else None
-    before = {"cause": m.group(1), "next": m.group(2)} if m else {}
-    diagnosis = diagnosis if isinstance(diagnosis, dict) else {}
-    diagnosis = {k: str(diagnosis.get(k) or "").strip() or before.get(k, "") for k in ("cause", "next")}
+    diagnosis = diagnoses(kind).get(name, {"cause": "", "next": "", "count": 0})
+    diagnosed = diagnosis["count"]
     first = rows[0] if rows else {"category": name.split("--")[0],
                                   "slice": slice if slice == "base" else list(slice)}
     cases = "\n".join(
@@ -153,25 +169,27 @@ def write_pages(kind: str, writer=None, log=print, limit: int | None = None) -> 
     (`label.writer`), called at most `limit` times; without one, pages get cases and keep
     any diagnosis they had."""
 
-    written, calls = [], 0
+    written, calls, known = [], 0, diagnoses(kind)
     for name, rows in clusters(kind).items():
         path = NOTES / kind / f"{name}.md"
         if len(rows) < PAGE_AT:
             continue
-        can = writer is not None and (limit is None or calls < limit)
+        seen = known.get(name, {}).get("count", 0)
         page = front(path)
-        behind = int(page.get("diagnosed", 0)) != len(rows)
-        if page.get("count") == str(len(rows)) and not (can and behind):
-            continue
-        can = can and behind
-        diagnosis = {}
+        can = writer is not None and (limit is None or calls < limit) and seen != len(rows)
+        if page.get("count") == str(len(rows)) and page.get("diagnosed") == str(seen) and not can:
+            continue   # the page already shows its ledger and its journal
         if can:
             calls += 1
-            diagnosis = writer(PROMPT, {"kind": kind, "category": rows[0]["category"],
-                                        "meaning": CATEGORIES[rows[0]["category"]], "slice": rows[0]["slice"],
-                                        "errors": rows[-SAMPLES:],
-                                        "page": path.read_text(encoding="utf-8") if path.exists() else None})
-        write_page(kind, name, rows, diagnosis)
+            got = writer(PROMPT, {"kind": kind, "category": rows[0]["category"],
+                                  "meaning": CATEGORIES[rows[0]["category"]], "slice": rows[0]["slice"],
+                                  "errors": rows[-SAMPLES:],
+                                  "page": path.read_text(encoding="utf-8") if path.exists() else None})
+            if isinstance(got, dict) and str(got.get("cause") or "").strip():   # journalled before the page
+                store.append(NOTES / kind / "diagnoses.jsonl",
+                             {"page": name, "count": len(rows), "cause": str(got["cause"]).strip(),
+                              "next": str(got.get("next") or "").strip(), "at": time.time()})
+        write_page(kind, name, rows)
         written.append(name)
         log(f"note {kind}/{name}: {len(rows)} errors")
     write_index()
