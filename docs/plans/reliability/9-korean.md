@@ -496,7 +496,7 @@ Order step 3. `eval/jev/korean/pairs.json` holds the set:
   and "no", as in "no data engineers"). Where more held-out intents have a
   trait than a group has room for, the set takes those whose answer turns
   on it most directly.
-- 88 twins with 207 fact units. Every page an intent's evidence names has
+- 88 twins with 210 fact units. Every page an intent's evidence names has
   a twin, and every other page stays English.
 - Each `input.ko` keeps the question's negations, names, numbers and units.
   Pasted machine or English text (logs, code, tickets, review comments,
@@ -504,18 +504,32 @@ Order step 3. `eval/jev/korean/pairs.json` holds the set:
   an old wiki line) is in Korean, as a Korean team would have written it.
 - Each pair's `meaning` labels the normalized English of the question.
   A literal is a string that must come through as written, a name, number
-  or pasted span. Labels match parts of words, so they follow these rules:
+  or pasted span. The checks follow
+  [the research for the set's labels](../../research/korean-set-labels.md)
+  (`korean.missed`, `korean.check`):
+  - A phrase matches inside words, as a stem, but a number in it matches
+    whole: `31 days` is not in `131 days`.
+  - A negation cue (`not`, `never`, `no`, `without`, `n't` and the like)
+    in the same clause, up to five words before a phrase or three after it,
+    governs it. A governed phrase fails a positive label, and it fails as
+    the positive wording in a group of negations (`prohibited`). Limits
+    such as `no more than` and `without delay` are not cues.
+  - A question's `asked` groups are met on its last line. A question that
+    pastes something first asks it there, so pasted words cannot stand in
+    for the asked target.
+
+  The labels follow these rules:
   - A negation is a phrase with what it negates (`never use`, `not
-    shared`), never a bare `not`, which `notify` contains.
+    shared`), never a bare `not` or `no longer`.
   - A number goes with its unit (`31 days`), and a date with its day and
-    month in either order. A changed unit or day then fails.
+    month in either order. A limit goes with its amount (`within 7`), a rate
+    with its unit (`per euro`), and a change with its order (`112% to
+    101%`).
   - Each independent fact of a sentence is its own unit, so a translation
     that splits the sentence passes. A negation and its object stay in one
     unit.
   - Common faithful wordings are listed beside each other: digits and
     words, `how often` and `how frequently`, `prohibited` and `may not`.
-  - A question's labels name the asked part. Pasted text that stays
-    English cannot satisfy them.
 - The planted instructions in three pages (children in the office, the
   office gym, the showers) are test data. Their twins keep them,
   translated.
@@ -526,7 +540,9 @@ question, and each fact unit on its section of the English page. A label
 that fails there would count a faithful translation as a loss, so the check
 refuses it. The set passes with none. `tool/test_korean.py` also holds
 English cases against the set itself: faithful wordings that must pass and
-losses that must fail.
+losses that must fail. A directional sweep over every original sentence
+(changed numbers, dropped and inserted negations) and its residue are on
+the research page.
 
 ## Steps
 

@@ -43,6 +43,15 @@ HANGUL = re.compile(r"[가-힣]")
 SENTENCE = re.compile(r"(?<=[.!?])\s+")
 # Lines that are a block of their own (a heading, a table row) or start one (a list item, a quote).
 OWN_LINE, STARTS = re.compile(r"#|\|"), re.compile(r"[-*+]\s|\d+[.)]\s|>")
+# Polarity, after NegEx (Chapman 2001; docs/research/korean-set-labels.md):
+# a cue, the phrases that hold one but negate nothing, and what ends a cue's clause.
+# A cue governs up to five words after it, or three before it (`deals are not tracked`);
+# a comma, colon or point inside a number ends nothing.
+CUE = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot|unless)\b|n't\b", re.I)
+PSEUDO = re.compile(r"\b(?:no|not) (?:more|less|later|earlier) than\b|\bnot only\b|\bnot exceed|"
+                    r"\bwithout (?:delay|fail)\b|\bno matter\b|\bno doubt\b", re.I)
+CLAUSE = re.compile(r"[;!?\n]|[,.:](?!\d)|\b(?:but|although|though|however|whereas|while|which|except)\b", re.I)
+BEFORE, AFTER = 5, 3
 
 
 # -- the set --------------------------------------------------------------------
@@ -98,9 +107,9 @@ def invalid(pairs: dict, data: dict) -> list[str]:
         if not isinstance(p.get("input", {}).get("ko"), str) or not HANGUL.search(p["input"]["ko"]):
             out.append(f"{where}: input.ko is a Korean wording")
         m = p.get("meaning") or {}
-        if set(m) != {"require", "forbid", "literals"} or not phrases(m["require"]) or not all(
-                isinstance(m[k], list) and all(isinstance(s, str) and s for s in m[k]) for k in ("forbid", "literals")):
-            out.append(f"{where}: meaning is {{require: [[...]], forbid: [...], literals: [...]}}")
+        if set(m) - {"asked"} != {"require", "forbid", "literals"} or not phrases(m["require"]) or \
+                not phrases(m.get("asked", [])) or not all(strings(m[k]) for k in ("forbid", "literals")):
+            out.append(f"{where}: meaning is {{require: [[...]], asked?: [[...]], forbid: [...], literals: [...]}}")
         if p.get("review") not in (pairs["labels"].get("reviews") or {}):
             out.append(f"{where}: no recorded review")
         out += [f"{where}: {page} has no twin" for page in sorted(files(i) - set(pairs["twins"]))]
@@ -383,14 +392,58 @@ def lost(text: str, require: list[list[str]], literals: list[str]) -> list[str]:
 
     best = None
     for said in sentences(text) or [""]:
-        low = said.lower()
-        missing = [f"none of {g}" for g in require if not any(p.lower() in low for p in g)] + \
-                  [p for x in literals if (p := literal_problem(x, said))]
+        missing = missed(said, require) + [p for x in literals if (p := literal_problem(x, said))]
         if not missing:
             return []
         if best is None or rank(missing) < rank(best):
             best = missing
     return best
+
+
+def cued(phrase: str) -> bool:
+    return bool(CUE.search(PSEUDO.sub(" ", phrase)))
+
+
+def denied(text: str, i: int, j: int) -> bool:
+    """Whether a negation cue governs `text[i:j]`: one in the same clause, at
+    most `BEFORE` words before it or `AFTER` words after it."""
+
+    before = PSEUDO.sub(" ", CLAUSE.split(text[:i])[-1]).split()[-BEFORE:]
+    after = PSEUDO.sub(" ", CLAUSE.split(text[j:])[0]).split()[:AFTER]
+    return bool(CUE.search(" ".join(before)) or CUE.search(" ".join(after)))
+
+
+def missed(text: str, require: list[list[str]]) -> list[str]:
+    """The `require` groups `text` does not meet. Phrases match as
+    `meaning.at` does (a number whole).
+    A phrase a cue governs does not meet its group there in two cases:
+    when the label has no negation in it (`does not have alt text` is not `have alt text`),
+    or when it is the positive wording in a group of negations
+    (`does not stay on` is not `no longer switch off`).
+    A label that names the negation holds it in its own phrases (`never autoplay`),
+    and what it negates (`sound`) is not checked for one."""
+
+    from eval.meaning import at
+
+    positive = not any(cued(p) for g in require for p in g)
+    guard = lambda g, p: positive or (not cued(p) and any(cued(q) for q in g))  # noqa: E731
+    return [f"none of {g}" for g in require
+            if not any(not (guard(g, p) and denied(text, i, i + len(p))) for p in g for i in at(p, text))]
+
+
+def check(meaning: dict, text: str) -> list[str]:
+    """A question's meaning labels against its English: `missed`, any
+    `forbid` phrase, and each literal as a whole token. `asked` groups are
+    the asked part and are met on the last line only, where a question that
+    pastes something first asks it: the pasted line's `Shared carts` is not
+    the asked line's `private cart`."""
+
+    from eval.meaning import at, literal_problem
+
+    asked = text.strip().rsplit("\n", 1)[-1]
+    return missed(text, meaning["require"]) + [f"asked {m}" for m in missed(asked, meaning.get("asked", []))] + \
+        [f"has {p!r}" for p in meaning["forbid"] if at(p, text)] + \
+        [p for x in meaning.get("literals", []) if (p := literal_problem(x, text))]
 
 
 def rank(missing: list[str]) -> tuple[int, int]:
@@ -451,11 +504,9 @@ def baseline(pairs: dict, data: dict) -> list[str]:
     intent's English question, and each fact unit on its English section. A
     label that fails there would count a faithful translation as a loss."""
 
-    from eval import meaning as labels
-
     intents, known = {i["id"]: i for i in data["intents"]}, dataset.pages(data)
-    out = [f"{p['intent']}: {m}" for p in pairs["pairs"] for m in labels.check(
-        p["meaning"], {"status": "translated", "text": intents[p["intent"]]["variants"]["en"]})]
+    out = [f"{p['intent']}: {m}" for p in pairs["pairs"]
+           for m in check(p["meaning"], intents[p["intent"]]["variants"]["en"])]
     for page, twin in sorted(pairs["twins"].items()):
         body = {path.split(" > ")[-1]: b for path, b in dataset.sections(known[page])}
         out += [f"{page} fact {f['id']}: {m}" for f in twin["facts"]
@@ -468,12 +519,10 @@ def question(meaning: dict, row: dict) -> dict:
     the row recorded it. Not normalized is its own outcome, never a pass;
     a literal found only in a hyphenated word is uncertain."""
 
-    from eval import meaning as labels
-
     normalized = (row.get("normalization") or {}).get("query")
     if normalized not in evidence.USABLE or not row.get("question_en"):
         return {"status": "not_normalized", "normalization": normalized}
-    wrong = labels.check(meaning, {"status": "translated", "text": row["question_en"]})
+    wrong = check(meaning, row["question_en"])
     return {"status": status(wrong), "missing": wrong}
 
 

@@ -167,17 +167,34 @@ SET_CASES = [
     ("f", "laptop-spills-2", "Switch the laptop off at once, charge it, and bring it to the IT desk the same day.", False),
     ("f", "cookies-2", "A new cookie is listed in the cookie register with its purpose and lifetime. It is set with the "
                        "Secure and SameSite=Lax flags.", True),
+    # Set review round 2: a number is whole, a cue governs the phrase, a condition is bound, the asked line asks.
+    ("q", "analysis-179", "Which of our 12 support tools should we keep? Why?", False),
+    ("f", "2026-02-09-089-personio-1", "Employee records move to Personio from March 12, 2026.", False),
+    ("f", "cctv-1", "CCTV recordings from the office entrances are kept for 131 days, then overwritten.", False),
+    ("f", "affiliate-payouts-4", "Affiliates with any returned orders in a month account for 90%.", False),
+    ("f", "2026-05-05-008-sessions-postgres-2", "Redis is no longer disabled for user sessions.", False),
+    ("f", "image-descriptions-1", "Every image on a web page does not have alt text that says what it shows.", False),
+    ("f", "incident-reviews-2", "Items have no owner but have a due date.", False),
+    ("f", "replacement-parts-2", "Replacement parts arrive after 7 working days.", False),
+    ("f", "loyalty-programme-1", "Loyalty members earn one point per two euros spent.", False),
+    ("f", "nrr-q3-1", "Net revenue retention went from 101% to 112%.", False),
+    ("f", "web-video-1", "Autoplay with sound is prohibited for videos on web pages.", True),
+    ("f", "web-video-1", "Autoplay with sound is not prohibited for videos on web pages.", False),
+    ("q", "analysis-212", "How do I handle a customer's password sent to me by email?", True),
+    ("f", "analytics-build-buy-3", "Building in-house is estimated at two engineers for six months. Ongoing upkeep is "
+                                   "also required.", True),
+    ("q", "route-48", "Spreadsheet formula: =VLOOKUP(A2,Rates!A:B,2)\nWhat do our rules say about reports in shared "
+                      "finance sheets?", False),
+    ("q", "pasted-64", 'Release notes draft: "Shared carts hold up to 20 items."\nHow many items can a private cart '
+                       'hold?', False),
 ]
 
 
 @pytest.mark.parametrize("kind,name,english,holds", SET_CASES)
 def test_the_set_labels_hold_on_faithful_wordings_and_fail_on_losses(kind, name, english, holds):
-    from eval import meaning
-
     pairs, _data = korean.load()
     if kind == "q":
-        got = meaning.check(next(p["meaning"] for p in pairs["pairs"] if p["intent"] == name),
-                            {"status": "translated", "text": english})
+        got = korean.check(next(p["meaning"] for p in pairs["pairs"] if p["intent"] == name), english)
     else:
         f = next(f for t in pairs["twins"].values() for f in t["facts"] if f["id"] == name)
         got = korean.lost(english, f["require"], f["literals"])
@@ -197,6 +214,39 @@ def test_the_ko_corpus_swaps_only_the_twins_and_its_labels_map_back(tmp_path, v8
 
 
 # -- the meaning checks ---------------------------------------------------------------------
+
+def test_a_phrase_with_a_number_matches_the_whole_number():
+    from eval.meaning import at
+
+    assert at("31 days", "kept for 31 days") and not at("31 days", "kept for 131 days")
+    assert not at("March 1", "from March 12") and not at("1 March", "from 11 March") and at("March 1", "March 1, 2026")
+    assert not at("4.5 to 1", "4.5 to 10") and not at("2", "our 12 tools") and at("2", "our 2 tools")
+    # A phrase that does not end in a digit still matches inside a word, as a stem.
+    assert at("reimburs", "Expenses are reimbursed") and at("1 point", "earn 1 point.")
+
+
+def test_a_cue_before_or_after_a_positive_phrase_loses_it():
+    alt = [["every image"], ["has alt text", "have alt text"]]
+    assert korean.lost("Every image has alt text.", alt, []) == []
+    assert korean.lost("Every image does not have alt text.", alt, [])
+    assert korean.lost("Sales deals are not tracked in HubSpot.", [["deal"]], ["HubSpot"])
+    # A cue in another clause, a limit that reads like one, and a number's comma govern nothing.
+    assert korean.lost("Deals are tracked in HubSpot, not in Pipedrive.", [["deal"]], ["HubSpot"]) == []
+    assert korean.lost("Shut it down without delay.", [["shut"], ["without delay"]], []) == []
+    assert korean.lost("The site has 96,000 product pages.", [["product page"]], []) == []
+    assert korean.lost("The site has not 96,000 product pages.", [["product page"]], [])
+    # A label that names the negation: what it negates is not checked, its positive wording is.
+    video = [["never autoplay", "prohibit"], ["sound"]]
+    assert korean.lost("Videos never autoplay with sound.", video, []) == []
+    assert korean.lost("Autoplay with sound is prohibited.", video, []) == []
+    assert korean.lost("Autoplay with sound is not prohibited.", video, [])
+
+
+def test_the_asked_part_is_met_on_the_asked_line():
+    meaning = {"require": [["up to 20"]], "asked": [["shared cart"], ["how many"]], "forbid": [], "literals": []}
+    assert korean.check(meaning, 'Draft: "Shared carts hold up to 20 items."\nHow many items can a shared cart hold?') == []
+    assert korean.check(meaning, 'Draft: "Shared carts hold up to 20 items."\nHow many items can a private cart hold?') \
+        == ["asked none of ['shared cart']"]
 
 def test_a_negation_must_stay_in_its_own_sentence():
     require = [["does not run", "doesn't run"], ["windows"]]

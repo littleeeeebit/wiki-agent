@@ -76,6 +76,21 @@ def found(literal: str, text: str) -> str:
     return out
 
 
+def at(phrase: str, text: str) -> list[int]:
+    """Where `phrase` stands in `text`, any case. A phrase matches inside
+    words (`reimburs`), but an edge that is a digit is a number's edge and
+    takes the whole-token rule: `31 days` is not in `131 days`, `March 1` not
+    in `March 12`, `2` not in `12` (reliability PR 9's set review)."""
+
+    low, want, out, start = text.lower(), phrase.lower(), [], 0
+    while (i := low.find(want, start)) >= 0:
+        start, j = i + 1, i + len(want)
+        if not (want[0].isdigit() and i > 0 and joins(low, i - 1, -1, want[0])) and \
+                not (want[-1].isdigit() and j < len(low) and joins(low, j, 1, want[-1])):
+            out.append(i)
+    return out
+
+
 def present(literal: str, text: str) -> bool:
     return found(literal, text) == "present"
 
@@ -96,9 +111,9 @@ def check(case: dict, outcome: dict) -> list[str]:
 
     if outcome["status"] != "translated":
         return [f"status {outcome['status']} ({outcome.get('reason')})"]
-    text = outcome["text"].lower()
-    wrong = [f"none of {group}" for group in case["require"] if not any(p.lower() in text for p in group)]
-    wrong += [f"has {phrase!r}" for phrase in case["forbid"] if phrase.lower() in text]
+    text = outcome["text"]
+    wrong = [f"none of {group}" for group in case["require"] if not any(at(p, text) for p in group)]
+    wrong += [f"has {phrase!r}" for phrase in case["forbid"] if at(phrase, text)]
     return wrong + [p for x in case.get("literals", []) if (p := literal_problem(x, outcome["text"]))]
 
 
