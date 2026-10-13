@@ -690,6 +690,56 @@ def test_a_run_interrupted_after_its_candidates_keeps_its_request_on_its_split(f
     assert out["have"] == 2 and teacher.turns == [0]
 
 
+def test_a_run_interrupted_after_its_claim_finishes_on_the_claim_not_a_new_capture(folders, monkeypatch):
+    real, captures = generate.append, []
+
+    class Interrupted(BaseException):
+        pass
+
+    def append(path, row):
+        if path.name == "train.candidates.jsonl":
+            raise Interrupted()
+        real(path, row)
+
+    def capture(query):   # the index changed between the interruption and the rerun
+        captures.append(query)
+        return judged("before" if len(captures) == 1 else "after")
+
+    monkeypatch.setattr(generate, "append", append)
+    teacher = Teacher()
+    with pytest.raises(Interrupted):
+        generate.generate("useful", "train", 1, "opus", 1, capture=capture, turn=teacher, log=lambda *_: None)
+    monkeypatch.setattr(generate, "append", real)
+    generate.generate("useful", "train", 1, "opus", 0, capture=capture, turn=teacher, log=lambda *_: None)
+    train = label.read(folders / "data" / "useful" / "train.candidates.jsonl")
+    assert len(captures) == 1 and train[0]["state"]["passages"] == [passage("beforea")]
+    out = generate.generate("useful", "validation", 5, "opus", 0, capture=capture, turn=teacher, log=lambda *_: None)
+    validation = label.read(folders / "data" / "useful" / "validation.candidates.jsonl")
+    assert {r["provenance"]["run"] for r in validation} == {"t0-q1"} and out["have"] == 2
+    assert teacher.turns == [0]
+
+
+def test_a_search_daemon_gone_mid_run_leaves_the_query_and_starts_no_turn(folders):
+    up = [True]
+    teacher = Teacher()
+
+    def turn(model, seed):
+        up[0] = False   # the daemon dies while the teacher writes
+        return teacher(model, seed)
+
+    def capture(query):
+        return judged(query) if up[0] else []   # what `captured` gives with no daemon
+
+    out = generate.generate("useful", "train", 10, "opus", 3, capture=capture, turn=turn, ready=lambda: up[0],
+                            log=lambda *_: None)
+    assert out["stopped"] == "search_unavailable" and teacher.turns == [0] and out["have"] == 0
+    assert label.read(folders / "data" / "useful" / "generate.runs.jsonl") == []
+    up[0] = True
+    out = generate.generate("useful", "train", 10, "opus", 0, capture=capture, turn=turn, ready=lambda: True,
+                            log=lambda *_: None)
+    assert out["have"] == 4 and teacher.turns == [0]            # the paid queries ran on the rerun
+
+
 def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
     import sys
     if str(generate.ROOT / "tool") not in sys.path:

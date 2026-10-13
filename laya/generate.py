@@ -15,7 +15,8 @@ Files under `laya/data/<kind>/`:
   before it asks for more, and starts no turn while one is unsettled.
 - `generate.runs.jsonl` — every query's run: first its claim (the whole requests it
   captured, for its split), then how many candidates it gave, so a rerun never runs a
-  query twice and never splits one request across splits.
+  query twice and never splits one request across splits: a run interrupted after its
+  claim is finished from the claim, not captured again.
 - `<split>.candidates.jsonl` — the candidates, `label.py`'s input.
 
     python laya/generate.py useful train --target 50 --teacher opus --max-turns 3
@@ -213,10 +214,13 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
 
     A run's requests are claimed for its split (`claim`) before any candidate is written,
     so an interruption between the two cannot let a resumed run send the same request's
-    other views to another split. A run claimed by another split is left for that split.
+    other views to another split. A resumed run finishes on what it claimed, never on a
+    fresh capture that may differ; a run claimed by another split is left for that split.
 
     Nothing starts without every gate state's text in the pool, or without the search
-    daemon answering: either would make queries that cannot be checked or captured."""
+    daemon answering: either would make queries that cannot be checked or captured. A
+    query that captures nothing while the daemon has stopped answering is left unrun, and
+    no new turn starts (`search_unavailable`)."""
 
     if kind not in PASSAGE:
         raise ValueError(f"{kind}: the generator writes passage kinds ({', '.join(PASSAGE)}) only")
@@ -228,13 +232,14 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
     if missing:
         raise SystemExit(f"{len(missing)} gate states are not in {gate.POOL.name}; "
                          "run laya/pool.py before generating")
-    if not (ready or searching)():
+    alive = ready or searching
+    if not alive():
         raise SystemExit("the search daemon is not answering; start it before generating")
     near_gate = gate.Near(gated)
-    origins, sides, claimed, done = gate.Near(), [], {}, set()
+    origins, sides, claimed, claims, done = gate.Near(), [], {}, {}, set()
     for r in read(runs):
         if "claim" in r:
-            claimed[r["run"]] = r["split"]
+            claimed[r["run"]], claims[r["run"]] = r["split"], r["claim"]
             for o in r["claim"]:
                 origins.add(o)
                 sides.append(r["split"])
@@ -245,7 +250,9 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
     stats = {"turns": 0, "cost_usd": 0.0, "queries": 0, "kept": 0, "near_gate": 0, "other_split": 0,
              "near_kept": 0}
 
-    def run_queries(entry: dict) -> None:
+    def run_queries(entry: dict) -> bool:
+        """False once the search daemon is found gone; that query is left for a rerun."""
+
         nonlocal have
         for i, q in enumerate(entry["queries"]):
             run = f"t{entry['seed']}-q{i}"
@@ -254,23 +261,28 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
             provenance = {"generator": "laya/generate.py", "prompt_version": entry["prompt_version"],
                           "teacher": entry["model"], "seed": entry["seed"], "pages": entry["pages"],
                           "query": q["text"], "type": q.get("type"), "run": run}
-            try:
-                requests = capture(q["text"])
-            except Exception as error:  # noqa: BLE001 — one query's failed run is recorded, not retried forever
-                append(runs, {"run": run, "split": split, "candidates": 0,
-                              "error": f"{type(error).__name__}: {error}"[:200]})
-                done.add(run)
-                continue
-            asked = sum(kind_of(n) == kind for req in requests for n in req["questions"])
-            kept_requests = []
-            for req in requests:
-                if near_gate.found(whole(req)):
-                    stats["near_gate"] += asked
-                elif any(sides[h] != split for h in origins.found(whole(req))):   # its own claim is this split
-                    stats["other_split"] += asked
-                else:
-                    kept_requests.append(req)
-            if run not in claimed:
+            if run in claimed:   # interrupted after its claim: finish on what it claimed
+                kept_requests = [{"state": o["state"], "questions": {n: v["question"] for n, v in o["questions"].items()}}
+                                 for o in claims[run]]
+            else:
+                try:
+                    requests = capture(q["text"])
+                except Exception as error:  # noqa: BLE001 — one query's failed run is recorded, not retried forever
+                    append(runs, {"run": run, "split": split, "candidates": 0,
+                                  "error": f"{type(error).__name__}: {error}"[:200]})
+                    done.add(run)
+                    continue
+                if not requests and not alive():
+                    return False
+                asked = sum(kind_of(n) == kind for req in requests for n in req["questions"])
+                kept_requests = []
+                for req in requests:
+                    if near_gate.found(whole(req)):
+                        stats["near_gate"] += asked
+                    elif any(sides[h] != split for h in origins.found(whole(req))):
+                        stats["other_split"] += asked
+                    else:
+                        kept_requests.append(req)
                 originals = [whole(req) for req in kept_requests]
                 append(runs, {"run": run, "split": split, "claim": originals})
                 claimed[run] = split
@@ -289,11 +301,16 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
             done.add(run)
             stats["queries"] += 1
             stats["kept"] += kept
+        return True
+
+    def lost() -> dict:
+        log("the search daemon stopped answering; start it and rerun")
+        return {**stats, "have": have, "stopped": "search_unavailable"}
 
     paid = read(ledger)
     for entry in paid:
-        if "queries" in entry:
-            run_queries(entry)
+        if "queries" in entry and not run_queries(entry):
+            return lost()
     open_turns = unsettled(paid)
     if open_turns:
         log(f"teacher turns {open_turns} were sent and never recorded; settle them before a new turn")
@@ -301,6 +318,8 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
     seeds = {e["seed"] for e in paid}
     next_seed = seed
     while have < target and stats["turns"] < max_turns:
+        if not alive():   # it may have gone since the start: no turn is paid for that cannot run
+            return lost()
         while next_seed in seeds:
             next_seed += 1
         append(ledger, {"seed": next_seed, "pending": True, "model": teacher, "prompt_version": prompt_version()})
@@ -311,7 +330,8 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
         stats["cost_usd"] += entry.get("cost_usd") or 0.0
         log(f"turn seed {next_seed}: {len(entry['queries'])} queries, ${entry.get('cost_usd')}"
             + (f", {entry['error']}" if entry.get("error") else ""))
-        run_queries(entry)
+        if not run_queries(entry):
+            return lost()
     return {**stats, "have": have, "stopped": "target" if have >= target else "turn_limit"}
 
 

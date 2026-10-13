@@ -103,8 +103,12 @@ The passage kinds' generator is `laya/generate.py` (built 2026-10-13):
     while a question runs (`loopback_only`). A path the stubs miss (arXiv, a
     URL fetch, the Jev decider) fails there instead of sending.
 - A run's whole requests are claimed for its split (`generate.runs.jsonl`)
-  before any of its candidates is written. A resumed run claimed by
-  another split is left to that split.
+  before any of its candidates is written. A run interrupted after its
+  claim finishes from the claimed requests, never from a new capture that
+  may differ. A resumed run claimed by another split is left to that split.
+- The daemon is asked again before each teacher turn. A question that
+  captures nothing while the daemon has stopped answering is left unrun, and
+  the run stops (`search_unavailable`) before paying for another turn.
 - The captured request is checked whole, by whole state and every view. It
   gives no candidate if it is a near-duplicate of a gate state, or of a
   request whose candidates went to another split.
