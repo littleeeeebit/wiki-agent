@@ -205,6 +205,22 @@ SET_CASES = [
                                  "30 EUR.", False),
     ("f", "2026-02-09-089-personio-1", "Employee records move to Personio from March 1st, 2026.", True),
     ("f", "nrr-q3-1", "Net revenue retention fell from 112% to just 101%.", True),
+    # Round 4: a quoted term in the question, single quotes, a number's point, the answering verb, `or`, spacing.
+    ("q", "pasted-64", 'Release notes draft: "Shared carts hold up to 20 items." How many items can a "shared cart" '
+                       'hold?', True),
+    ("q", "route-48", 'Spreadsheet formula: =VLOOKUP(A2,Rates!A:B,2) What do our rules say about "formulas" in '
+                      'shared finance sheets?', True),
+    ("q", "pasted-56", "Prospect asks: 'Can we pay by invoice?' Which plans can be paid by card?", False),
+    ("q", "pasted-56", "Prospect asks: Can we pay by invoice? Which plans can be paid by card?", False),
+    ("f", "replacement-parts-2", "Replacement parts ship within 3 working days of the request and arrive within 7.5 "
+                                 "working days.", False),
+    ("f", "replacement-parts-2", "Replacement parts ship within 3 working days of the request and arrive within 7.",
+     True),
+    ("f", "marketing-reach-2", "No page fails to answer the questions prospects search for.", False),
+    ("f", "replacement-parts-1", "Replacement parts ship in no  more than three working days of the request and "
+                                 "arrive within 7.", True),
+    ("f", "web-video-2", "Videos on web pages never autoplay with sound, and every video on the web page has no "
+                         "captions or subtitles.", False),
 ]
 
 
@@ -234,6 +250,7 @@ def test_the_ko_corpus_swaps_only_the_twins_and_its_labels_map_back(tmp_path, v8
 # -- the meaning checks ---------------------------------------------------------------------
 
 def test_a_phrase_with_a_number_matches_the_whole_number():
+    from eval import meaning
     from eval.meaning import at
 
     assert at("31 days", "kept for 31 days") and not at("31 days", "kept for 131 days")
@@ -242,6 +259,11 @@ def test_a_phrase_with_a_number_matches_the_whole_number():
     # A phrase that does not end in a digit still matches inside a word, as a stem; a space matches a line break.
     assert at("reimburs", "Expenses are reimbursed") and at("1 point", "earn 1 point.")
     assert at("loyalty member", "What do loyalty\nmembers get?") == [(8, 22)] and not at("no ", "now")
+    # A phrase that ends in a number's point or comma ends the number there.
+    assert at("within 7.", "arrive within 7.") and not at("within 7.", "within 7.5 days")
+    assert not at("within 7,", "within 7,000 days") and at("within 7,", "within 7, and")
+    # A literal is as written, apart from the width of a space.
+    assert meaning.present("Google Drive", "in Google  Drive.") and not meaning.present("Google Drive", "GoogleDrive")
 
 
 def test_a_cue_before_or_after_a_positive_phrase_loses_it():
@@ -252,6 +274,9 @@ def test_a_cue_before_or_after_a_positive_phrase_loses_it():
     # A cue in another clause, a limit that reads like one, and a number's comma govern nothing.
     assert korean.lost("Deals are tracked in HubSpot, not in Pipedrive.", [["deal"]], ["HubSpot"]) == []
     assert korean.lost("Change it at once and never use it.", [["change"], ["at once"]], []) == []
+    # `or` keeps the cue (`no captions or subtitles`); a limit reads the same with a wider space.
+    assert korean.lost("Every video has no captions or subtitles.", [["every video"], ["caption", "subtitle"]], [])
+    assert korean.lost("Parts ship in no  more than three days.", [["ship"], ["three days"]], []) == []
     assert korean.lost("Shut it down without delay.", [["shut"], ["without delay"]], []) == []
     assert korean.lost("The site has 96,000 product pages.", [["product page"]], []) == []
     assert korean.lost("The site has not 96,000 product pages.", [["product page"]], [])
@@ -271,6 +296,11 @@ def test_the_asked_part_is_met_on_the_asked_line():
     assert korean.check(meaning, 'Draft: "Shared carts hold up to 20 items." How many can a private cart hold?') \
         == ["asked none of ['shared cart']"]
     assert korean.asked_part("Formula: =SUM(A:A) What do our rules say?", ["=SUM(A:A)"]) == " What do our rules say?"
+    # The first quotation is the pasted one; a term the question quotes later stays asked.
+    assert korean.asked_part('Draft: "Carts hold 20." How many can a "shared cart" hold?', []) == \
+        ' How many can a "shared cart" hold?'
+    assert korean.asked_part("Asks: 'Can we pay?' Which plans can't?", []) == " Which plans can't?"
+    assert korean.asked_part("Prospect asks: Can we pay by invoice? Which plans?", []) == " Which plans?"
 
 def test_a_negation_must_stay_in_its_own_sentence():
     require = [["does not run", "doesn't run"], ["windows"]]

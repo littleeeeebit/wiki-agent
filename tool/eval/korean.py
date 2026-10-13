@@ -47,14 +47,17 @@ OWN_LINE, STARTS = re.compile(r"#|\|"), re.compile(r"[-*+]\s|\d+[.)]\s|>")
 # a cue, the phrases that hold one but negate nothing, and what ends a cue's scope.
 # A cue governs up to five words after it, or three before it (`deals are not tracked`).
 # A comma, colon or point inside a number ends nothing;
-# `and` and `or` end it, so the next proposition is its own (`never use it and errors are shown`).
+# `and` ends it, so the next proposition is its own (`never use it and errors are shown`).
+# `or` does not: `no captions or subtitles` negates both.
 CUE = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot|unless)\b|n't\b", re.I)
-PSEUDO = re.compile(r"\b(?:no|not) (?:more|less|later|earlier) than\b|\bnot only\b|\bnot exceed|"
-                    r"\bwithout (?:delay|fail)\b|\bno matter\b|\bno doubt\b", re.I)
-CLAUSE = re.compile(r"[;!?\n]|[,.:](?!\d)|\b(?:and|or|but|although|though|however|whereas|while|which|except)\b",
-                    re.I)
-# What a question pastes ends at its last quotation mark.
-QUOTE = re.compile(r"[\"“”«»「」『』]")
+PSEUDO = re.compile(r"\b(?:no|not)\s+(?:more|less|later|earlier)\s+than\b|\bnot\s+only\b|\bnot\s+exceed|"
+                    r"\bwithout\s+(?:delay|fail)\b|\bno\s+matter\b|\bno\s+doubt\b", re.I)
+CLAUSE = re.compile(r"[;!?\n]|[,.:](?!\d)|\b(?:and|but|although|though|however|whereas|while|which|except)\b", re.I)
+# What a question pastes: its first quotation, in double, typographic or single quotation marks
+# (a single mark only where no word joins it, so `What's` opens nothing).
+QUOTED = re.compile(r"\"[^\"]*\"|“[^”]*”|‘[^’]*’(?!\w)|«[^»]*»|「[^」]*」|『[^』]*』|(?<!\w)'.+?'(?!\w)", re.S)
+# With nothing quoted or pasted on one line, a label's first sentence (`Prospect asks: Can we pay? ...`).
+LABELLED = re.compile(r"^[^:\n]{1,60}:\s.*?[.?!](?=\s)", re.S)
 BEFORE, AFTER = 5, 3
 
 
@@ -436,13 +439,25 @@ def missed(text: str, require: list[list[str]]) -> list[str]:
 
 
 def asked_part(text: str, literals: list[str]) -> str:
-    """What a question asks after what it pastes: the text after its last
-    quotation mark, else after its last pasted literal, else its last line.
-    Where the translator put the line breaks does not move it."""
+    """What a question asks after what it pastes. The pasted part is the
+    first quotation or pasted literal, whichever starts first, with whatever
+    starts inside it. Where the translator put the line breaks does not move
+    it, and a term the question itself quotes later (`a "shared cart"`,
+    `"formulas"`) stays in it. With neither, it is the last line, and on a
+    single line what follows a label's first sentence (`Prospect asks: ...?`)."""
 
-    ends = [m.end() for m in QUOTE.finditer(text)] or \
-        [i + len(x) for x in literals if (i := text.rfind(x)) >= 0]
-    return text[max(ends):] if ends else text.strip().rsplit("\n", 1)[-1]
+    from eval.meaning import at
+
+    first = QUOTED.search(text)
+    spans = sorted(([first.span()] if first else []) + [s[0] for x in literals if (s := at(x, text))])
+    if not spans:
+        s = text.strip()
+        return s.rsplit("\n", 1)[-1] if "\n" in s else s[m.end():] if (m := LABELLED.match(s)) else s
+    end = spans[0][1]
+    for i, j in spans[1:]:
+        if i < end:
+            end = max(end, j)
+    return text[end:]
 
 
 def check(meaning: dict, text: str) -> list[str]:

@@ -243,15 +243,69 @@ Changes:
   other swap that passes changes another unit's clause, or makes nonsense
   (`almost some`).
 
+## Cycle 3 (an exception the owner approved)
+
+Round 4 found five more P1s. PR 8's two cycles were spent, so the work
+stopped and the owner was asked. The owner chose one more label fix
+(2026-10-13). Every finding was again a hypothesis of the cycle before it
+that did not hold:
+
+- The last quotation mark was assumed to close the pasted part. A question
+  that quotes its own term (`a "shared cart"`) lost its target. ASCII single
+  quotes were not read as quotation marks at all.
+- `within 7.` was given to accept the original's bare amount. Its last
+  character is a point, so the number rule never ran, and `7.5` and `7,000`
+  passed.
+- `no page` was bound to the page but not to what the page does. `No page
+  fails to answer` passed.
+- Phrases matched any whitespace, but pseudo-cues needed one space.
+  `no  more than` became a cue.
+- `or` was made a terminator alongside `and`. Then `no captions or
+  subtitles` let `subtitles` escape the cue.
+
+Changes:
+
+1. The pasted part is the first quotation or pasted literal, whichever
+   starts first, with whatever starts inside it (`korean.asked_part`).
+   - Double, typographic and single quotation marks count. A single mark
+     counts only where no word joins it, so `What's` opens nothing.
+   - A term the question quotes later stays in the asked part.
+   - With nothing quoted or pasted, the asked part is the last line. On a
+     single line, it is what follows a label's first sentence (`Prospect
+     asks: Can we pay? ...`).
+2. A phrase that ends in a point or comma after a digit ends the number
+   there (`meaning.at`): `within 7.` is not in `within 7.5`.
+3. A literal is as written apart from the width of a space
+   (`meaning.found`). Pseudo-cues read any whitespace too.
+4. `or` no longer ends a cue's scope; `and` still does.
+5. `marketing-reach-2` binds the negation to the verb: `no page answers`.
+
+### Experiment and result (cycle 3)
+
+- Baseline: no failure. The 123 cases, round 4's 16 reproductions inverted
+  to the wanted outcome, and the cycle 2 sweeps all come out as expected.
+  Nine of round 4's reproductions are added to `tool/test_korean.py`.
+- New invariance sweeps over every question with an asked part:
+  - quotation marks made single;
+  - every space doubled;
+  - lines merged;
+  - every quotation mark removed and the lines merged.
+
+  Nothing fails, except one correct case: a code snippet whose own
+  quotation marks changed loses its literal. Doubling every space in every
+  English page fails no unit.
+- `tool/test_korean.py` and `tool/test_evidence.py`: 143 tests pass, 1 is
+  skipped.
+
 ## Unresolved
 
-- A cue farther than the window, or across coordination, is not seen.
+- A cue farther than the window, or across `and`, is not seen.
 - A sentence whose commas are all gone can count as a loss when a cue of
   the next proposition falls inside the window.
 - A self-contradicting change word beside a correct number order passes.
-- A question whose translation drops every quotation mark and every pasted
-  literal falls back to its last line.
 - A literal's own polarity is not checked; a phrase group beside it is.
 - These are measured on perturbations of the English originals, not on the
-  translator's real output. The paid run's per-unit outcomes name each
-  failure with its English, so a person can read them.
+  translator's real output. Each round has found new perturbations of the
+  same kind. A substring checker has no complete answer to them, and the
+  paid run's per-unit outcomes still need a person to read them. Each
+  outcome names its English, so a person can.

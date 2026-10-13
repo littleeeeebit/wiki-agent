@@ -65,9 +65,11 @@ def found(literal: str, text: str) -> str:
     A hyphen cannot be read: `v1.13.0-beta` is another version, while
     `HMAC-SHA256-based` keeps the algorithm, so `joined` is neither."""
 
-    out, start = "absent", 0
-    while (i := text.find(literal, start)) >= 0:
-        start, j = i + 1, i + len(literal)
+    # As written, apart from the width of a space: `Google  Drive` is `Google Drive`.
+    pattern, out, start = re.compile(r"\s+".join(map(re.escape, literal.split(" ")))), "absent", 0
+    while m := pattern.search(text, start):
+        i, j = m.span()
+        start = i + 1
         joints = ([text[i - 1]] if word(literal[0]) and i > 0 and joins(text, i - 1, -1, literal[0]) else []) + \
                  ([text[j]] if word(literal[-1]) and j < len(text) and joins(text, j, 1, literal[-1]) else [])
         if not joints:
@@ -88,8 +90,10 @@ def at(phrase: str, text: str) -> list[tuple[int, int]]:
     while m := pattern.search(text, start):
         i, j = m.span()
         start = i + 1
+        # A phrase that ends in a number's point or comma (`within 7.`) ends the number there, not in `7.5`.
+        tail = j - 1 if len(phrase) > 1 and phrase[-1] in ".,:" and phrase[-2].isdigit() else j
         if not (phrase[0].isdigit() and i > 0 and joins(text, i - 1, -1, phrase[0])) and \
-                not (phrase[-1].isdigit() and j < len(text) and joins(text, j, 1, phrase[-1])):
+                not (text[tail - 1].isdigit() and tail < len(text) and joins(text, tail, 1, text[tail - 1])):
             out.append((i, j))
     return out
 

@@ -508,17 +508,21 @@ Order step 3. `eval/jev/korean/pairs.json` holds the set:
   [the research for the set's labels](../../research/korean-set-labels.md)
   (`korean.missed`, `korean.check`):
   - A phrase matches inside words, as a stem, but a number in it matches
-    whole: `31 days` is not in `131 days`.
+    whole: `31 days` is not in `131 days`, and `within 7.` is not in
+    `within 7.5`. A space matches any whitespace, in phrases and literals.
   - A negation cue (`not`, `never`, `no`, `without`, `n't` and the like)
     in the same clause, up to five words before a phrase or three after it,
-    governs it. `and` and `or` end its clause, so it does not reach the next
-    proposition. A governed phrase fails a positive label, and it fails as
-    the positive wording in a group of negations (`prohibited`). Limits
-    such as `no more than` and `without delay` are not cues.
-  - A question's `asked` groups are met after what it pastes: after its last
-    quotation mark, else its last pasted literal, else on its last line.
-    Pasted words cannot stand in for the asked target, wherever the
-    translator breaks the lines.
+    governs it. `and` ends its clause, so it does not reach the next
+    proposition; `or` does not (`no captions or subtitles`). A governed
+    phrase fails a positive label, and it fails as the positive wording in
+    a group of negations (`prohibited`). Limits such as `no more than` and
+    `without delay` are not cues.
+  - A question's `asked` groups are met after what it pastes: its first
+    quotation or pasted literal, whichever starts first. With neither,
+    they are met on its last line, or after a label's first sentence on a
+    single line. Pasted words cannot stand in for the asked target,
+    wherever the translator breaks the lines, and a term the question
+    quotes itself stays asked.
 
   The labels follow these rules:
   - A negation is a phrase with what it negates (`never use`, `not
