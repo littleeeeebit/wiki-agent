@@ -71,6 +71,60 @@ Each state records its generator, prompt version, source pages and seed.
 The class balance per kind is stated; a kind whose natural rate is skewed
 keeps that rate in test and is balanced only in training.
 
+The passage kinds' generator is `laya/generate.py` (built 2026-10-13):
+
+- A teacher host turn (`prompts/generate.md`) writes eight questions over
+  six seeded documents of this repository (`.wiki/corpus.json`), across
+  five types: answered, partial, bridging, unanswered and false premise.
+  - The turn is journalled `pending` before it is sent.
+  - While one is left pending by an interruption, no new turn starts until
+    the owner closes it (`--abandon`). So a turn that may have been paid
+    for is never sent again unseen.
+- Each question runs through `knowledge.prepare` in this repository (hub,
+  documents and memory sources), in shadow mode.
+  - The stubbed decider answers every question 0.5, so a route still
+    retrieves and a source is still searched.
+  - The run is cancelled once its first grade-evidence request is
+    answered, before code's own repairs. Later rounds' states are not
+    generated yet.
+  - The translator's one request (`translate._ask`) answers nothing:
+    - English passes as production reads it, and a cached translation is
+      used.
+    - Other text is left unread.
+    - A question is not split into parts (`translate.parts`), where
+      production may split one.
+  - No host fallback runs.
+  - Retrieval asks only a search daemon already running. None is
+    started and no index is built in the process, either of which may
+    download embedding models. The generator refuses to start while the
+    daemon does not answer, and while any gate state's text is missing from
+    `laya/data/pool.jsonl`.
+  - Under all of these, no connection or name lookup leaves this machine
+    while a question runs (`loopback_only`). A path the stubs miss (arXiv, a
+    URL fetch, the Jev decider) fails there instead of sending.
+- A run's whole requests are claimed for its split (`generate.runs.jsonl`)
+  before any of its candidates is written. A run interrupted after its
+  claim finishes from the claimed requests, never from a new capture that
+  may differ. A resumed run claimed by another split is left to that split.
+  A finished run with no claim (written before claims existed) makes the
+  generator refuse to start, since its split's ownership cannot be told.
+- The daemon is asked again before each teacher turn. A question whose own
+  retrieval did not finish (`prepare` ends neither `ready` nor `partial`,
+  as when unavailable or out of budget, before any grade-evidence request) is left unrun with its reason, and the run stops
+  (`search_unavailable`) before paying for another turn. An empty retrieval
+  is recorded as a run with no candidates.
+- The captured request is checked whole, by whole state and every view. It
+  gives no candidate if it is a near-duplicate of a gate state, or of a
+  request whose candidates went to another split.
+- Each `useful`, `conflict` or `redirect` question then becomes one
+  candidate with its passage view, dropped if near a candidate already kept
+  in any split.
+- A manual run of one question, with no translator request, gave one
+  grade-evidence request with 13 passages, so 13 candidates per kind. A
+  50-candidate pilot is one teacher turn.
+
+Its tests are in `laya/test_laya.py`.
+
 ## Splits
 
 Per kind: 3,000 usable train, 300 validation (checkpoint choice, early

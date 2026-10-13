@@ -42,26 +42,46 @@ def signatures(row: dict) -> list[set]:
     return [shingles(row["state"])] + [shingles(json.loads(v)) for v in sorted(views)]
 
 
-def pairs(rows: list[dict]):
-    """`(i, j)` for every two rows with a signature each at Jaccard >= JACCARD. Candidates
-    come from an index of shingles, so only signatures that share one are compared."""
+class Near:
+    """The signatures of the rows added so far, indexed by shingle, so a new row is compared
+    only with signatures that share a shingle with it."""
 
-    sigs = [(i, s) for i, row in enumerate(rows) for s in signatures(row)]
-    index: dict[tuple, list[int]] = {}
-    for k, (_, s) in enumerate(sigs):
-        for shingle in s:
-            index.setdefault(shingle, []).append(k)
-    found = set()
-    for k, (i, s) in enumerate(sigs):
-        shared: dict[int, int] = {}
-        for shingle in s:
-            for m in index[shingle]:
-                if m > k:
+    def __init__(self, rows=()):
+        self.sigs: list[tuple[int, set]] = []
+        self.index: dict[tuple, list[int]] = {}
+        self.rows = 0
+        for row in rows:
+            self.add(row)
+
+    def found(self, row: dict) -> set[int]:
+        """The added rows (by order of adding) with a signature at Jaccard >= JACCARD
+        to one of `row`'s."""
+
+        out = set()
+        for s in signatures(row):
+            shared: dict[int, int] = {}
+            for shingle in s:
+                for m in self.index.get(shingle, ()):
                     shared[m] = shared.get(m, 0) + 1
-        for m, n in shared.items():
-            j = sigs[m][0]
-            if j != i and n >= JACCARD * (len(s) + len(sigs[m][1]) - n):
-                found.add((min(i, j), max(i, j)))
+            out |= {self.sigs[m][0] for m, n in shared.items()
+                    if n >= JACCARD * (len(s) + len(self.sigs[m][1]) - n)}
+        return out
+
+    def add(self, row: dict) -> None:
+        for s in signatures(row):
+            for shingle in s:
+                self.index.setdefault(shingle, []).append(len(self.sigs))
+            self.sigs.append((self.rows, s))
+        self.rows += 1
+
+
+def pairs(rows: list[dict]):
+    """`(i, j)`, `i < j`, for every two rows with a signature each at Jaccard >= JACCARD."""
+
+    near, found = Near(), set()
+    for j, row in enumerate(rows):
+        found |= {(i, j) for i in near.found(row)}
+        near.add(row)
     return found
 
 

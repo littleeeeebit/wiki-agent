@@ -5,6 +5,13 @@ See the [overview](0-overview.md). There is no preceding stage.
 Purpose. Answer the current decision requests from a local Laya server with
 no paid call, and measure whether the rest of the plan is worth paying for.
 
+Order (owner, 2026-10-13). The gate reservation and the measurements are
+done here. The contract below is built at stage 6, step 0, before shadow:
+the unchanged checkpoints agree with Jev on 40% of `useful` questions
+(Results), so nothing would use a provider before a stage 4 checkpoint
+passes its gate. Four requests in flight through `laya-serve` are measured
+then.
+
 ## Reserve the gate test first
 
 Before anything here reads a labelled case, stage 2's gate test is reserved
@@ -213,7 +220,7 @@ share ModernBERT-large's tokenizer, so lengths are the same for both;
    10 GB. Laya then retried on the CPU and filled the RAM, so `latency` now
    stops at the first error or CPU fallback, and `swap` and `zeroshot` raise
    on one. Four requests in flight through `laya-serve` are measured with
-   the server, in the provider PR.
+   the server, at stage 6's provider step.
 
 5. `option_layout="parallel"` needs transformers ≥ 5 (installed: 5.19.0)
    and the eager backend. No published checkpoint uses it, so a fine-tune

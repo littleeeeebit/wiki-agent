@@ -13,11 +13,14 @@ repository root.
 | `store.py` | Append-only JSONL journals that survive an interrupted write; whole-file replacement for pages |
 | `kinds.py` | The fourteen kinds, and which kind a production question name is |
 | `pool.py` | Production requests from the local Langfuse (and action requests from specs) to `data/pool.jsonl`, one row per distinct state |
+| `gate.py` | Reserves the gate test (`eval/laya/tests.json`) and finds near-duplicates of it, by whole state or passage view |
+| `stage1.py` | Stage 1's measurements: length, latency, option order, zero-shot agreement with Jev |
+| `generate.py` | Candidate states for a passage kind: teacher-written questions run through the production path, decider stubbed |
 | `label.py` | Two-labeller agreement labels; every dropped question goes to the error notebook |
 | `notes.py` | The error notebook: ledger, pages, statuses, the brief the generator reads |
 | `train.py` | Fine-tune one kind from the base, calibrate, score validation |
 | `loop.py` | The recursive improvement loop (RRSI) for one kind |
-| `prompts/` | The labeller and note-writer prompts |
+| `prompts/` | The teacher, labeller and note-writer prompts |
 | `notebooks/train.ipynb` | One kind, end to end, for a GPU session |
 | `test_laya.py` | The pipeline with stub labellers and models |
 

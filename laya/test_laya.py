@@ -4,10 +4,12 @@
 """
 
 import json
+import socket
 
 import pytest
 
 import gate
+import generate
 import kinds
 import label
 import loop
@@ -22,6 +24,12 @@ def folders(tmp_path, monkeypatch):
     monkeypatch.setattr(label, "DATA", tmp_path / "data")
     monkeypatch.setattr(loop, "DATA", tmp_path / "data")
     monkeypatch.setattr(notes, "NOTES", tmp_path / "notes")
+    monkeypatch.setattr(generate, "DATA", tmp_path / "data")
+    monkeypatch.setattr(generate, "searching", lambda: True)
+    monkeypatch.setattr(gate, "POOL", tmp_path / "pool.jsonl")
+    monkeypatch.setattr(gate, "TESTS", tmp_path / "tests.json")
+    write(tmp_path / "pool.jsonl", [])
+    (tmp_path / "tests.json").write_text('{"tests": []}', encoding="utf-8")
     return tmp_path
 
 
@@ -526,6 +534,285 @@ def test_rows_alike_only_in_a_passage_view_are_one_unit_and_kept_out_of_developm
     assert [len(u) for u in gate.units([a, b])] == [2]
     assert gate.development([a, b], {"h2"}) == []                      # a's view is b's, which is gated
     assert gate.development([a, b], set()) == [a, b]
+
+
+def passage(tag):
+    return {"id": "p0", "text": " ".join(f"{tag}{k}" for k in range(80))}
+
+
+def judged(query):
+    """What `generate.captured` returns for `query`: one grade-evidence request, two passages."""
+
+    state = {"query": query, "passages": [passage(f"{query}a"), {**passage(f"{query}b"), "id": "p1"}]}
+    return [{"state": state, "questions": {"useful_p0": NOUL, "useful_p1": NOUL, "conflict_p0": NOUL}}]
+
+
+class Teacher:
+    def __init__(self):
+        self.turns = []
+
+    def __call__(self, model, seed):
+        self.turns.append(seed)
+        return {"model": model, "cost_usd": 0.1, "seed": seed, "pages": ["docs/a.md"],
+                "queries": [{"text": f"s{seed}q{i}", "type": "answered"} for i in range(2)]}
+
+
+def test_generate_stops_at_target_and_resumes_without_paying_twice(folders):
+    teacher, ran = Teacher(), []
+
+    def capture(query):
+        ran.append(query)
+        return judged(query)
+
+    out = generate.generate("useful", "train", 3, "opus", 5, capture=capture, turn=teacher, log=lambda *_: None)
+    assert out["stopped"] == "target" and out["have"] == 3 and teacher.turns == [0] and ran == ["s0q0", "s0q1"]
+    rows = label.read(folders / "data" / "useful" / "train.candidates.jsonl")
+    assert [list(r["questions"]) for r in rows] == [["useful_p0"], ["useful_p1"], ["useful_p0"]]
+    assert rows[0]["state"]["passages"] == [passage("s0q0a")]          # the passage view
+    assert rows[0]["provenance"]["query"] == "s0q0" and rows[0]["provenance"]["seed"] == 0
+    out = generate.generate("useful", "train", 4, "opus", 5, capture=capture, turn=teacher, log=lambda *_: None)
+    assert teacher.turns == [0, 1] and ran == ["s0q0", "s0q1", "s1q0"]   # s0's queries are not run again
+    assert out["have"] == 4
+
+
+def test_generate_stops_at_its_turn_limit_and_records_a_failed_query(folders):
+    teacher = Teacher()
+
+    def capture(query):
+        if query.endswith("q1"):
+            raise RuntimeError("retrieval failed")
+        return judged(query)
+
+    out = generate.generate("useful", "train", 100, "opus", 2, capture=capture, turn=teacher, log=lambda *_: None)
+    assert out["stopped"] == "turn_limit" and teacher.turns == [0, 1] and out["have"] == 4
+    runs = label.read(folders / "data" / "useful" / "generate.runs.jsonl")
+    assert [r["run"] for r in runs if "error" in r] == ["t0-q1", "t1-q1"]
+
+
+def test_generate_drops_near_duplicates_of_the_gate_and_of_other_splits(folders):
+    gated = {"id": "obs", "state_hash": "g", "decision_kind": "retrieval", **judged("s0q0")[0],
+             "questions": {"useful_p0": {"kind": "useful", "question": NOUL}}}
+    write(folders / "pool.jsonl", [gated])
+    (folders / "tests.json").write_text(json.dumps({"tests": [[{"state_hash": "g"}]]}), encoding="utf-8")
+    teacher = Teacher()
+    out = generate.generate("useful", "validation", 10, "opus", 1, capture=judged, turn=teacher,
+                            log=lambda *_: None)
+    assert out["near_gate"] == 2 and out["have"] == 2          # s0q0's request is the gate's, both views
+    out = generate.generate("useful", "train", 10, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
+    assert out["have"] == 0                                    # no turn allowed, and nothing to rerun
+    write(folders / "data" / "useful" / "generate.runs.jsonl", [])   # run the paid queries again
+    out = generate.generate("useful", "train", 10, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
+    assert out["near_kept"] == 2 and out["have"] == 0          # validation already holds them
+    with pytest.raises(ValueError):
+        generate.generate("route", "train", 1, "opus", 1, capture=judged, turn=teacher)
+
+
+def test_generate_checks_a_request_whole_before_cutting_it_into_views(folders):
+    shared = " ".join(f"shared{i}" for i in range(1200))
+
+    def request(tag):
+        return {"query": "q", "passages": [{"id": "p0", "text": shared},
+                                           {"id": "p1", "text": " ".join(f"{tag}{i}" for i in range(80))}]}
+
+    both = {"useful_p0": NOUL, "useful_p1": NOUL}
+    write(folders / "pool.jsonl", [{"id": "obs", "state_hash": "g", "decision_kind": "retrieval",
+                                    "state": request("old"), "questions": {
+                                        n: {"kind": "useful", "question": NOUL} for n in both}}])
+    (folders / "tests.json").write_text(json.dumps({"tests": [[{"state_hash": "g"}]]}), encoding="utf-8")
+    # The new request's p1 view is unlike anything gated, but the whole request is the gate's.
+    out = generate.generate("useful", "train", 10, "opus", 1, turn=Teacher(), log=lambda *_: None,
+                            capture=lambda q: [{"state": request("new"), "questions": both}])
+    assert out["near_gate"] == 4 and out["have"] == 0
+
+
+def test_generate_keeps_one_request_on_one_split(folders):
+    shared = " ".join(f"shared{i}" for i in range(400))
+
+    def capture(query):
+        # The same question answered over a different second passage: one request, near-duplicate whole.
+        return [{"state": {"query": "q", "passages": [{"id": "p0", "text": shared},
+                                                       {"id": "p1", "text": f"{query} " + shared[:200]}]},
+                 "questions": {"useful_p0": NOUL, "useful_p1": NOUL}}]
+
+    out = generate.generate("useful", "validation", 1, "opus", 1, capture=capture, turn=Teacher(),
+                            log=lambda *_: None)
+    assert out["have"] == 1
+    out = generate.generate("useful", "train", 10, "opus", 0, capture=capture, turn=Teacher(),
+                            log=lambda *_: None)
+    assert out["other_split"] == 2 and out["have"] == 0        # s0q1 is near s0q0, which went to validation
+
+
+def test_a_teacher_turn_left_pending_stops_new_turns_until_it_is_abandoned(folders):
+    teacher = Teacher()
+    ledger = folders / "data" / "useful" / "generate.ledger.jsonl"
+    write(ledger, [{"seed": 0, "pending": True, "model": "opus", "prompt_version": "x"}])
+    out = generate.generate("useful", "train", 10, "opus", 3, capture=judged, turn=teacher, log=lambda *_: None)
+    assert out["stopped"] == "unsettled_turn" and out["unsettled"] == [0] and teacher.turns == []
+    generate.abandon("useful", 0)
+    out = generate.generate("useful", "train", 1, "opus", 3, capture=judged, turn=teacher, log=lambda *_: None)
+    assert teacher.turns == [1] and out["have"] == 1           # seed 0 is never sent again
+    with pytest.raises(SystemExit):
+        generate.abandon("useful", 1)                          # settled, not pending
+
+
+def test_generate_refuses_without_every_gate_state_or_a_running_search(folders):
+    teacher = Teacher()
+    (folders / "tests.json").write_text(json.dumps({"tests": [[{"state_hash": "missing"}]]}), encoding="utf-8")
+    with pytest.raises(SystemExit):
+        generate.generate("useful", "train", 1, "opus", 1, capture=judged, turn=teacher)
+    (folders / "tests.json").write_text('{"tests": []}', encoding="utf-8")
+    with pytest.raises(SystemExit):
+        generate.generate("useful", "train", 1, "opus", 1, capture=judged, turn=teacher, ready=lambda: False)
+    runs = folders / "data" / "useful" / "generate.runs.jsonl"
+    write(runs, [{"run": "t0-q0", "split": "train", "candidates": 0, "error": "RuntimeError: x"}])
+    generate.generate("useful", "train", 0, "opus", 0, capture=judged, turn=teacher)   # a failed run owns nothing
+    write(runs, [{"run": "t0-q0", "split": "train", "candidates": 1, "originals": [judged("a")[0]]}])
+    with pytest.raises(SystemExit, match="no claim"):   # from before claims: its split's ownership is lost
+        generate.generate("useful", "validation", 1, "opus", 1, capture=judged, turn=teacher)
+    assert teacher.turns == []
+
+
+def test_a_run_interrupted_after_its_candidates_keeps_its_request_on_its_split(folders, monkeypatch):
+    real, runs_written = generate.append, []
+
+    class Interrupted(BaseException):
+        pass
+
+    def append(path, row):
+        if path.name == "generate.runs.jsonl":
+            runs_written.append(row)
+            if len(runs_written) == 2:   # the claim is written, then a candidate, then this: the run's end
+                raise Interrupted()
+        real(path, row)
+
+    monkeypatch.setattr(generate, "append", append)
+    teacher = Teacher()
+    with pytest.raises(Interrupted):
+        generate.generate("useful", "train", 1, "opus", 1, capture=judged, turn=teacher, log=lambda *_: None)
+    monkeypatch.setattr(generate, "append", real)
+    out = generate.generate("useful", "validation", 5, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
+    validation = label.read(folders / "data" / "useful" / "validation.candidates.jsonl")
+    assert {r["provenance"]["run"] for r in validation} == {"t0-q1"}   # t0-q0 stays train's
+    assert out["have"] == 2 and teacher.turns == [0]
+
+
+def test_a_run_interrupted_after_its_claim_finishes_on_the_claim_not_a_new_capture(folders, monkeypatch):
+    real, captures = generate.append, []
+
+    class Interrupted(BaseException):
+        pass
+
+    def append(path, row):
+        if path.name == "train.candidates.jsonl":
+            raise Interrupted()
+        real(path, row)
+
+    def capture(query):   # the index changed between the interruption and the rerun
+        captures.append(query)
+        return judged("before" if len(captures) == 1 else "after")
+
+    monkeypatch.setattr(generate, "append", append)
+    teacher = Teacher()
+    with pytest.raises(Interrupted):
+        generate.generate("useful", "train", 1, "opus", 1, capture=capture, turn=teacher, log=lambda *_: None)
+    monkeypatch.setattr(generate, "append", real)
+    generate.generate("useful", "train", 1, "opus", 0, capture=capture, turn=teacher, log=lambda *_: None)
+    train = label.read(folders / "data" / "useful" / "train.candidates.jsonl")
+    assert len(captures) == 1 and train[0]["state"]["passages"] == [passage("beforea")]
+    out = generate.generate("useful", "validation", 5, "opus", 0, capture=capture, turn=teacher, log=lambda *_: None)
+    validation = label.read(folders / "data" / "useful" / "validation.candidates.jsonl")
+    assert {r["provenance"]["run"] for r in validation} == {"t0-q1"} and out["have"] == 2
+    assert teacher.turns == [0]
+
+
+def test_a_search_daemon_gone_mid_run_leaves_the_query_and_starts_no_turn(folders):
+    up = [True]
+    teacher = Teacher()
+
+    def turn(model, seed):
+        up[0] = False   # the daemon dies while the teacher writes
+        return teacher(model, seed)
+
+    def capture(query):
+        if not up[0]:
+            raise generate.Unavailable("retrieval_unavailable")   # what `captured` gives with no daemon
+        return judged(query)
+
+    out = generate.generate("useful", "train", 10, "opus", 3, capture=capture, turn=turn, ready=lambda: up[0],
+                            log=lambda *_: None)
+    assert out["stopped"] == "search_unavailable" and teacher.turns == [0] and out["have"] == 0
+    assert out["reason"] == "t0-q0: retrieval_unavailable"
+    assert label.read(folders / "data" / "useful" / "generate.runs.jsonl") == []
+    up[0] = True
+    out = generate.generate("useful", "train", 10, "opus", 0, capture=capture, turn=turn, ready=lambda: True,
+                            log=lambda *_: None)
+    assert out["have"] == 4 and teacher.turns == [0]            # the paid queries ran on the rerun
+
+
+def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
+    import sys
+    if str(generate.ROOT / "tool") not in sys.path:
+        sys.path.append(str(generate.ROOT / "tool"))   # after this folder, as `generate.captured` adds it
+    import decision
+    import translate
+    from main import knowledge
+
+    import search
+
+    seen, asked = {}, []
+    monkeypatch.setattr(knowledge, "retrieve_from_daemon", lambda *a, **k: asked.append(k) or None)
+
+    def prepare(query, project, cfg, cache, cancel):
+        seen["parts"] = translate.parts(query, 1e12)           # the translator's only request answers nothing
+        seen["fallback"] = knowledge.falls_back(cfg)
+        knowledge.retrieve_from_daemon({}, project, 1.0)       # a running daemon only
+        seen["cold"] = knowledge.cold({}, project, cancel)     # no index built here
+        with pytest.raises(RuntimeError):
+            search.spawn()
+        with pytest.raises(OSError, match="leaves this machine"):   # whatever path tries it
+            socket.create_connection(("example.com", 443), timeout=1)
+        with socket.socket() as s, pytest.raises(OSError, match="leaves this machine"):
+            s.connect(("203.0.113.1", 443))
+        for stage in ("route", "judge", "judge"):
+            if not cancel.is_set():
+                decision.evaluate(cfg, {"stage": stage}, {"useful_p0": NOUL}, [], None, stage)
+        seen["project"] = project
+        return {"status": "cancelled"}
+
+    monkeypatch.setattr(knowledge, "prepare", prepare)
+    real = translate._ask
+    got = generate.captured("Who owns deployment, and which port?")
+    assert got == [{"state": {"stage": "judge"}, "questions": {"useful_p0": NOUL}}]
+    assert seen == {"parts": None, "fallback": False, "cold": None, "project": generate.ROOT}
+    assert asked == [{"start": False}]
+    assert translate._ask is real and search.spawn is not None and knowledge.cold.__name__ == "cold"
+    assert socket.getaddrinfo.__module__ == "socket" and socket.socket.connect.__name__ == "connect"
+
+
+def test_a_capture_tells_a_failed_retrieval_from_an_empty_one(monkeypatch):
+    import sys
+    if str(generate.ROOT / "tool") not in sys.path:
+        sys.path.append(str(generate.ROOT / "tool"))
+    from main import knowledge
+
+    for status, empty in (("unavailable", False), ("exhausted", False), ("cancelled", False),
+                          ("partial", True), ("ready", True)):
+        monkeypatch.setattr(knowledge, "prepare", lambda *a, s=status, **k: {"status": s, "reason": "why"})
+        if empty:
+            assert generate.captured("q") == []
+        else:
+            with pytest.raises(generate.Unavailable, match="why"):
+                generate.captured("q")
+
+
+def test_the_teacher_samples_documents_the_capture_can_search():
+    import sys
+    if str(generate.ROOT / "tool") not in sys.path:
+        sys.path.append(str(generate.ROOT / "tool"))
+    from search import HUB, sources
+
+    searched = {p.resolve() for p in sources.listing(HUB, generate.ROOT)}
+    assert all((generate.ROOT / p["path"]).resolve() in searched for p in generate.sample(0))
 
 
 def test_a_passage_kind_sees_only_its_passage():

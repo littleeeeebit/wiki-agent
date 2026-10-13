@@ -50,6 +50,11 @@ paired answered subset, both 100-state rules, budget stop.
 
 ## Rollout
 
+0. Provider. Stage 1's contract (the provider map, kinds at the transport,
+   decider identity, policy per kind, overflow, the server's lifecycle and
+   `tool/test_decision_provider.py`) is built here, before shadow, once a
+   stage 4 checkpoint passes its gate. Nothing could use it earlier
+   (owner, 2026-10-13).
 1. Shadow. A per-kind provider value `typesafe+laya` keeps TypeSafe's answer
    for the decision and asks Laya beside it without waiting for it; Laya's
    answer goes into the trace entry's `groups` as `shadow` and changes no

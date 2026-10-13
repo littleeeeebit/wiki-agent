@@ -58,15 +58,16 @@ existing policy, else `unavailable`).
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | [Serving](1-serving.md) | Local server, per-kind provider, context and zero-shot baseline | In progress — gate test reserved, measurements in `laya/stage1.py`; the provider contract is not built |
-| 2 | [Data](2-data.md) | States per kind, splits, the gate test | In progress — gate test reserved (`laya/gate.py`) |
+| 1 | [Serving](1-serving.md) | Local server, per-kind provider, context and zero-shot baseline | Done — gate test reserved, measurements recorded (#138); the provider contract moved to stage 6, step 0 (owner) |
+| 2 | [Data](2-data.md) | States per kind, splits, the gate test | In progress — gate test reserved (`laya/gate.py`); passage-kind generator built (`laya/generate.py`), no paid run yet |
 | 3 | [Labels](3-labels.md) | Two-labeller agreement, drops refilled and noted, pilot then full run | In progress — `laya/label.py` and the error notebook built and tested with stubs; no paid run yet |
 | 4 | [Training](4-training.md) | Fourteen fine-tunes, calibration, fitted policy | Not started |
 | 5 | [Augmentation](5-augmentation.md) | Error-slice loop per kind, after RRSI | In progress — `laya/loop.py` built and tested with stubs; the generator (stage 2) is not |
 | 6 | [Rollout](6-rollout.md) | Non-inferiority gates, shadow then active per kind | Not started |
 
 Order: 1 → 2 → 3 → 4 → 5 → 6. Stage 1 first reserves the gate test, then
-runs no paid call and decides whether the rest is worth paying for. Every
+runs no paid call and decides whether the rest is worth paying for. Its
+provider contract is built at stage 6, once a checkpoint can use it. Every
 paid step needs the owner's approval with a stated budget before it sends
 anything: teacher generation (stage 2), labelling (stage 3), augmentation
 (stage 5) and the Jev comparison (stage 6); a repetition needs a second
