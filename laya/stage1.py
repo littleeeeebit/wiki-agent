@@ -28,6 +28,7 @@ OUT = ROOT / "raw" / "eval" / "laya"
 REPO = "convaiinnovations/laya"
 CHECKPOINTS = {"base": None, "typed": "typed-decisions"}
 LIMITS = (512, 1024, 2048, 4096)
+WHOLE_HEAD = 10**9   # a head budget no question reaches, so nothing of the question is cut
 
 
 def load(name: str, device: str = "cpu"):
@@ -46,7 +47,7 @@ def tokens(agent, state, question: dict) -> int:
     from laya.agent import Agent
     from laya.common import build_head, encode_text, serialize_state
 
-    head, _, _ = build_head(agent.tok, Agent._to_internal(question), head_max_len=10**9)
+    head, _, _ = build_head(agent.tok, Agent._to_internal(question), head_max_len=WHOLE_HEAD)
     text = serialize_state(state).replace(agent.tok.mask_token, " ")
     return len(head) + len(encode_text(agent.tok, text, add_special_tokens=False)["input_ids"]) + 1
 
@@ -134,10 +135,9 @@ LIMIT = 2304   # the longest passage view, 2,250 tokens, with room (`lengths`)
 def development() -> list[dict]:
     """Pool states outside the gate test (`laya/gate.py`): the only ones read here."""
 
-    from gate import reserved
+    import gate
 
-    gate = reserved()
-    return [r for r in read(POOL) if r["state_hash"] not in gate]
+    return gate.development(read(POOL), gate.reserved())
 
 
 def asked(rows: list[dict]):
@@ -166,7 +166,9 @@ def answers(agent, rows: list[dict], reverse: bool = False) -> tuple[dict, dict]
         if reverse:
             n = 2 if question["type"] == "noul" else len(question["criteria"])
             question = {**question, "option_order": list(range(n))[::-1]}
-        out = agent.predict(state, {name: question}, max_len=need)
+        # the question whole, as `tokens` counted it: the checkpoint's own `head_max_len`
+        # (192 or 256) would cut a long claim question's instructions
+        out = agent.predict(state, {name: question}, max_len=need, head_max_len=WHOLE_HEAD)
         if agent.cpu_fallback_count:
             raise RuntimeError(f"{name}: GPU out of memory at {need} tokens; Laya fell back to the CPU")
         got[(row["state_hash"], name)] = reply(out["answers"][name])

@@ -20,6 +20,15 @@ so reserving all of them would leave no real development state). A unit is a
 state, so the kinds asked of it stay on one side; the gate holds 104 units
 asking `useful`, `conflict`, `redirect` and `coverage`.
 
+That reservation compared whole states only. A passage view of a
+development state can be a near-duplicate of a gate state's view while the
+whole states are not, when the same query was asked again over different
+passages: 28 development states are, all with the gate state's query. The
+gate is not drawn again. `gate.development` leaves those states out, along
+with any state in a unit (by whole state or by view) that holds a gate
+state, so the development pool is 81 states. A training, validation or
+calibration state is dropped by the same rule (stage 2).
+
 ## Contracts
 
 Today `decision.decide` drops each question's kind before the transport
@@ -157,19 +166,20 @@ share ModernBERT-large's tokenizer, so lengths are the same for both;
    chosen. `coverage` and `action` stay on TypeSafe for now. The claim kinds
    are under 100 states anyway.
 
-2. Zero-shot agreement with Jev's recorded answers, on the 109 development
-   states and questions up to 2,304 tokens (noul by the side of 0.5).
-   Agreement, not accuracy: neither side is a label.
+2. Zero-shot agreement with Jev's recorded answers, on the 81 development
+   states and questions up to 2,304 tokens, each question whole (no
+   `head_max_len` cut), noul by the side of 0.5. Agreement, not accuracy:
+   neither side is a label.
 
    | Kind | n | `base` | `typed` |
    | --- | --- | --- | --- |
-   | `useful` | 453 | 37% | 40% |
-   | `conflict` | 453 | 89% | 99% |
-   | `redirect` | 453 | 47% | 43% |
-   | `route` | 30 | 70% | 73% |
-   | `source` | 90 | 73% | 80% |
-   | `analysis` | 30 | 67% | 57% |
-   | `ask` | 54 | 54% | 65% |
+   | `useful` | 294 | 39% | 40% |
+   | `conflict` | 294 | 90% | 99% |
+   | `redirect` | 294 | 52% | 48% |
+   | `route` | 26 | 65% | 69% |
+   | `source` | 78 | 71% | 78% |
+   | `analysis` | 26 | 69% | 62% |
+   | `ask` | 46 | 50% | 63% |
 
    Jev says `useful` for 31% of passages; the unchanged checkpoints say it
    for most, so they disagree on most `useful` questions. `answers` agreed
@@ -180,10 +190,10 @@ share ModernBERT-large's tokenizer, so lengths are the same for both;
 
    | Kind | `base` | `typed` |
    | --- | --- | --- |
-   | `useful` | 4% | 12% |
-   | `conflict` | 37% | 45% |
-   | `redirect` | 12% | 27% |
-   | `route`, `source`, `analysis`, `ask` | 0–17% | 6–20% |
+   | `useful` | 4% | 13% |
+   | `conflict` | 40% | 50% |
+   | `redirect` | 14% | 27% |
+   | `route`, `source`, `analysis`, `ask` | 0–20% | 6–23% |
 
    The unchanged models follow option position on a large share of
    `conflict` questions. Fine-tuning has to remove this; stage 4 measures

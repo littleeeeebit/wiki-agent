@@ -500,12 +500,32 @@ def test_pool_keeps_one_row_per_state_and_unwraps_requests():
 
 def test_gate_keeps_near_duplicates_and_a_states_kinds_on_one_side():
     text = " ".join(f"word{i}" for i in range(200))
-    rows = [{**candidate(i), "decision_kind": "retrieval", "state": {"text": text + f" tail{i}"}} for i in range(3)]
-    rows.append({**candidate(9), "decision_kind": "retrieval", "state": {"text": "something else entirely"}})
+    passages = [{"id": "p0", "text": "a passage"}]
+    rows = [{**candidate(i), "decision_kind": "retrieval", "state": {"query": text + f" tail{i}", "passages": passages}}
+            for i in range(3)]
+    rows.append({**candidate(9), "decision_kind": "retrieval",
+                 "state": {"query": "something else entirely", "passages": passages}})
     assert sorted(len(u) for u in gate.units(rows)) == [1, 3]
     reserved = gate.reserve(rows)
     assert len(reserved["tests"]) == 1          # two thirds of two units, rounded
     assert all(r["kinds"] == ["conflict", "useful"] and "state" not in r for r in reserved["tests"][0])
+
+
+def test_rows_alike_only_in_a_passage_view_are_one_unit_and_kept_out_of_development():
+    shared = " ".join(f"shared{i}" for i in range(200))
+
+    def row(i, other):
+        passages = [{"id": "p0", "text": shared}, {"id": "p1", "text": " ".join(f"{other}{k}" for k in range(600))}]
+        return {"id": f"obs-{i}", "state_hash": f"h{i}", "decision_kind": "retrieval",
+                "state": {"query": "q", "passages": passages},
+                "questions": {"useful_p0": {"kind": "useful", "question": NOUL}}}
+
+    a, b = row(1, "alpha"), row(2, "beta")
+    whole = gate.shingles(a["state"]), gate.shingles(b["state"])
+    assert len(whole[0] & whole[1]) < 0.8 * len(whole[0] | whole[1])   # the whole states differ
+    assert [len(u) for u in gate.units([a, b])] == [2]
+    assert gate.development([a, b], {"h2"}) == []                      # a's view is b's, which is gated
+    assert gate.development([a, b], set()) == [a, b]
 
 
 def test_a_passage_kind_sees_only_its_passage():
