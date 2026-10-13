@@ -116,11 +116,17 @@ def captured(query: str, project: Path = ROOT) -> list[dict]:
     try:
         with loopback_only():
             cfg = decision.Config("shadow", decision.MODEL, "file", key="laya-generator")
-            knowledge.prepare(query, project, cfg=cfg, cache=None, cancel=stop)
+            dossier = knowledge.prepare(query, project, cfg=cfg, cache=None, cancel=stop)
     finally:
         (decision.evaluate, translate._ask, knowledge.falls_back, knowledge.retrieve_from_daemon,
          knowledge.cold, search.spawn) = held
+    if not seen and dossier.get("status") == "unavailable":   # this query's retrieval failed, not an empty one
+        raise Unavailable(dossier.get("reason") or "unavailable")
     return seen[:1]
+
+
+class Unavailable(Exception):
+    """A query's retrieval failed; it is left unrun rather than recorded as empty."""
 
 
 LOCAL = ("127.0.0.1", "::1", "localhost")
@@ -219,8 +225,8 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
 
     Nothing starts without every gate state's text in the pool, or without the search
     daemon answering: either would make queries that cannot be checked or captured. A
-    query that captures nothing while the daemon has stopped answering is left unrun, and
-    no new turn starts (`search_unavailable`)."""
+    query whose own retrieval failed (`Unavailable`) is left unrun, with its reason, and no
+    new turn starts (`search_unavailable`); the daemon is asked again before each turn."""
 
     if kind not in PASSAGE:
         raise ValueError(f"{kind}: the generator writes passage kinds ({', '.join(PASSAGE)}) only")
@@ -251,7 +257,7 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
              "near_kept": 0}
 
     def run_queries(entry: dict) -> bool:
-        """False once the search daemon is found gone; that query is left for a rerun."""
+        """False once a query's retrieval fails (`Unavailable`); that query is left for a rerun."""
 
         nonlocal have
         for i, q in enumerate(entry["queries"]):
@@ -267,13 +273,14 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
             else:
                 try:
                     requests = capture(q["text"])
+                except Unavailable as error:
+                    stats["reason"] = f"{run}: {error}"
+                    return False
                 except Exception as error:  # noqa: BLE001 — one query's failed run is recorded, not retried forever
                     append(runs, {"run": run, "split": split, "candidates": 0,
                                   "error": f"{type(error).__name__}: {error}"[:200]})
                     done.add(run)
                     continue
-                if not requests and not alive():
-                    return False
                 asked = sum(kind_of(n) == kind for req in requests for n in req["questions"])
                 kept_requests = []
                 for req in requests:
@@ -304,7 +311,7 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
         return True
 
     def lost() -> dict:
-        log("the search daemon stopped answering; start it and rerun")
+        log(f"search is unavailable ({stats.get('reason', 'the daemon does not answer')}); start it and rerun")
         return {**stats, "have": have, "stopped": "search_unavailable"}
 
     paid = read(ledger)

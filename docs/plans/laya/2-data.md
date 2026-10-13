@@ -106,9 +106,11 @@ The passage kinds' generator is `laya/generate.py` (built 2026-10-13):
   before any of its candidates is written. A run interrupted after its
   claim finishes from the claimed requests, never from a new capture that
   may differ. A resumed run claimed by another split is left to that split.
-- The daemon is asked again before each teacher turn. A question that
-  captures nothing while the daemon has stopped answering is left unrun, and
-  the run stops (`search_unavailable`) before paying for another turn.
+- The daemon is asked again before each teacher turn. A question whose own
+  retrieval failed (`prepare` ends `unavailable` before any grade-evidence
+  request) is left unrun with its reason, and the run stops
+  (`search_unavailable`) before paying for another turn. An empty retrieval
+  is recorded as a run with no candidates.
 - The captured request is checked whole, by whole state and every view. It
   gives no candidate if it is a near-duplicate of a gate state, or of a
   request whose candidates went to another split.

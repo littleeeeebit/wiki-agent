@@ -728,11 +728,14 @@ def test_a_search_daemon_gone_mid_run_leaves_the_query_and_starts_no_turn(folder
         return teacher(model, seed)
 
     def capture(query):
-        return judged(query) if up[0] else []   # what `captured` gives with no daemon
+        if not up[0]:
+            raise generate.Unavailable("retrieval_unavailable")   # what `captured` gives with no daemon
+        return judged(query)
 
     out = generate.generate("useful", "train", 10, "opus", 3, capture=capture, turn=turn, ready=lambda: up[0],
                             log=lambda *_: None)
     assert out["stopped"] == "search_unavailable" and teacher.turns == [0] and out["have"] == 0
+    assert out["reason"] == "t0-q0: retrieval_unavailable"
     assert label.read(folders / "data" / "useful" / "generate.runs.jsonl") == []
     up[0] = True
     out = generate.generate("useful", "train", 10, "opus", 0, capture=capture, turn=turn, ready=lambda: True,
@@ -768,6 +771,7 @@ def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
             if not cancel.is_set():
                 decision.evaluate(cfg, {"stage": stage}, {"useful_p0": NOUL}, [], None, stage)
         seen["project"] = project
+        return {"status": "cancelled"}
 
     monkeypatch.setattr(knowledge, "prepare", prepare)
     real = translate._ask
@@ -777,6 +781,21 @@ def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
     assert asked == [{"start": False}]
     assert translate._ask is real and search.spawn is not None and knowledge.cold.__name__ == "cold"
     assert socket.getaddrinfo.__module__ == "socket" and socket.socket.connect.__name__ == "connect"
+
+
+def test_a_capture_tells_a_failed_retrieval_from_an_empty_one(monkeypatch):
+    import sys
+    if str(generate.ROOT / "tool") not in sys.path:
+        sys.path.append(str(generate.ROOT / "tool"))
+    from main import knowledge
+
+    for status, empty in (("unavailable", False), ("partial", True), ("ready", True)):
+        monkeypatch.setattr(knowledge, "prepare", lambda *a, s=status, **k: {"status": s, "reason": "why"})
+        if empty:
+            assert generate.captured("q") == []
+        else:
+            with pytest.raises(generate.Unavailable, match="why"):
+                generate.captured("q")
 
 
 def test_the_teacher_samples_documents_the_capture_can_search():
