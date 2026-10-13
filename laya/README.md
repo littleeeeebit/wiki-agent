@@ -40,7 +40,8 @@ history in view, and it is adopted only when its paired gain on validation clear
 noise floor (two bootstrap standard deviations, resampling whole states). Paid turns
 (generation, labelling, note writing) come from one approved total, `max_turns`; a round
 starts only when what it takes is left, and labelling that stops short stops the loop
-rather than condemning the slice. A slice whose round was not adopted is
+rather than condemning the slice; running the loop again continues it from
+`data/<kind>/rounds.jsonl`. A slice whose round was not adopted is
 `falsified` and never aimed at again; after such a stall the next round tries a feature
 not tried since. After the last round each adopted round is removed again if keeping it
 gains no more than the noise floor. The gate test never enters the loop. `loop.py`'s

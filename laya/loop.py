@@ -124,6 +124,30 @@ def note_errors(kind: str, round: int, rows: list[dict], wrong: set, predicted: 
                              predicted=predicted.get(key), state=row["state"])
 
 
+def restore(rows: list[dict]) -> tuple[list[str], set, int, tuple | None]:
+    """The loop's state from its own records, so running it again continues it: the kept
+    splits, the features stalled since the last adoption, the last round that aimed at a
+    slice, and that round and slice when its labelling stopped short."""
+
+    kept, stalled, last, unfinished = ["train"], set(), 0, None
+    for row in rows:
+        if "prune" in row:
+            if row["removed"] and row["prune"] in kept:
+                kept.remove(row["prune"])
+            continue
+        if "slice" not in row:
+            continue   # a baseline, a resume, or a round that never started
+        last, unfinished = row["round"], None
+        if row.get("adopted"):
+            kept.append(row["split"])
+            stalled.clear()
+        elif row.get("stopped") == "labelling_incomplete":
+            unfinished = (row["round"], tuple(row["slice"]))
+        else:
+            stalled.add(row["slice"][0])
+    return kept, stalled, last, unfinished
+
+
 def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns: int, rounds: int = ROUNDS,
         per_round: int = PER_ROUND, writer=None, log=print) -> dict:
     """Run the loop for `kind`.
@@ -143,6 +167,11 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
     Labelling that stops short (the turn limit, or under `MIN_JUDGED` questions judged,
     as when turns fail) stops the loop with the slice still `targeted`: running it again
     resumes, and a shortfall is never read as an ambiguous slice.
+
+    Running it again continues from `rounds.jsonl` (`restore`): the incumbent is retrained
+    on the kept splits, an unfinished round resumes with its own slice and split, and a new
+    round takes the next number, so a split name never holds two slices. `rounds` caps the
+    round number across runs. Every candidate must carry the `slice` it was aimed at.
     """
 
     folder = DATA / kind
@@ -169,18 +198,23 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
         wrong, predicted = score(kind, ckpt)
         return ckpt, set(wrong), predicted
 
-    kept = ["train"]
+    before = read(folder / "rounds.jsonl")
+    kept, stalled, last, unfinished = restore(before)
     best_ckpt, wrong, predicted = evaluate(kept)
-    note_errors(kind, 0, validation, wrong, predicted)
-    record(round=0, splits=kept, accuracy=1 - len(wrong) / len(universe), checkpoint=str(best_ckpt))
-    stalled: set = set()
-    for r in range(1, rounds + 1):
+    if before:
+        record(resumed=True, splits=kept, accuracy=1 - len(wrong) / len(universe), checkpoint=str(best_ckpt))
+    else:
+        note_errors(kind, 0, validation, wrong, predicted)
+        record(round=0, splits=kept, accuracy=1 - len(wrong) / len(universe), checkpoint=str(best_ckpt))
+    for r in range(unfinished[0] if unfinished else last + 1, rounds + 1):
         if max_turns - spent < round_turns:
             record(round=r, stopped="budget")
             break
         diagnose(max_turns - spent - round_turns)   # notes take only what the round leaves
         history = notes.brief(kind) | {"rounds": read(folder / "rounds.jsonl")}
-        target = pick(slices(validation, wrong), {tuple(s) for s in history["avoid"]}, stalled)
+        target = unfinished[1] if unfinished else \
+            pick(slices(validation, wrong), {tuple(s) for s in history["avoid"]}, stalled)
+        unfinished = None
         if target is None:
             record(round=r, stopped="no_slice")
             break
@@ -188,6 +222,9 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
         notes.set_status(kind, page, "targeted", r, target)
         split = f"aug-{r}"
         spent += generate(kind, target, per_round, history, r, max_turns - spent)
+        aimed = {json.dumps(c.get("slice")) for c in read(folder / f"{split}.candidates.jsonl")}
+        if aimed - {json.dumps(list(target))}:
+            raise ValueError(f"{split} holds candidates aimed at {sorted(aimed)}, not {list(target)}")
         stats = label(kind, split, per_round, r, target, max_turns - spent)
         spent += stats["turns"]
         asked = stats["agreed"] + stats["dropped"]
@@ -213,7 +250,7 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
         left = next((err for key, err, _ in slices(validation, wrong) if key == target), 0)
         notes.set_status(kind, page, "resolved" if left < MIN_ERRORS else "targeted", r)
         stalled.clear()
-        record(round=r, slice=target, labelled=stats, gain=gain, noise=noise, adopted=True,
+        record(round=r, slice=target, split=split, labelled=stats, gain=gain, noise=noise, adopted=True,
                accuracy=1 - len(wrong) / len(universe), checkpoint=str(ckpt))
     for split in [s for s in kept if s != "train"]:
         rest = [s for s in kept if s != split]

@@ -10,7 +10,8 @@ Files, per kind, under `laya/data/<kind>/`:
 
 - `<split>.candidates.jsonl` — rows of `pool.rows`' shape, the kind's questions only.
 - `<split>.ledger.jsonl` — every labeller turn, kept so a rerun never pays twice.
-- `<split>.judged.jsonl` — every judged state: how many questions it labelled and dropped.
+- `<split>.judged.jsonl` — every judged state's verdict: its labelled row and its dropped
+  questions' notes, written before either, so a rerun finishes what an interruption cut.
 - `<split>.jsonl` — the labelled rows, in Laya's `{state, questions, expected}` format.
 
     python laya/label.py useful train --target 3000 --labellers opus codex:gpt-6.1-sol --max-turns 400
@@ -145,8 +146,12 @@ def label(kind: str, split: str, target: int, labellers: list[str], max_turns: i
     """Label `split` of `kind` up to `target` questions; returns what happened: this run's
     `turns` and cost, and the whole split's `agreed` (labelled questions), `dropped`,
     `by_category` and `states`, so a resumed split reports its true agreement. Every
-    dropped question goes to the error notebook under `round` and `slice`, once: a judged
-    state (`<split>.judged.jsonl`) is never judged again.
+    dropped question goes to the error notebook under `round` and `slice`, once.
+
+    A state's verdict is one line of `<split>.judged.jsonl`, written first: its labelled row
+    and its notes are written after it, and a rerun writes whichever of them an
+    interruption left out. A judged state is never judged again; one interrupted before
+    its verdict is judged again from the ledger's turns, without paying twice.
     `turn(model, state, questions)` is the labeller call (a stub in tests)."""
 
     if len(labellers) != 2 or labellers[0] == labellers[1]:
@@ -155,9 +160,23 @@ def label(kind: str, split: str, target: int, labellers: list[str], max_turns: i
     ledger_path, out_path = folder / f"{split}.ledger.jsonl", folder / f"{split}.jsonl"
     judged_path = folder / f"{split}.judged.jsonl"
     ledger = {(r["state_hash"], r["labeller"]): r for r in read(ledger_path) if "error" not in r}
+    written = {r["provenance"]["state_hash"] for r in read(out_path)}
+    noted = {r["id"] for r in notes.ledger(kind)}
+
+    def settle(verdict):
+        """Write what `verdict` holds and an interruption may have left out."""
+        if verdict["row"] and verdict["state_hash"] not in written:
+            append(out_path, verdict["row"])
+            written.add(verdict["state_hash"])
+        for note in verdict["notes"]:
+            if notes.note_id(kind, note["round"], note["category"], note["state_hash"], note["question"]) not in noted:
+                noted.add(notes.record(kind, note.pop("category"), **note)["id"])
+
     judged = read(judged_path)
-    done = {r["state_hash"] for r in judged} | {r["provenance"]["state_hash"] for r in read(out_path)}
-    have = sum(len(r["expected"]) for r in read(out_path))
+    for verdict in judged:
+        settle(verdict)
+    done = {r["state_hash"] for r in judged}
+    have = sum(r["labelled"] for r in judged)
     stats = {"turns": 0, "cost_usd": 0.0, "cost_unknown": 0, "agreed": have,
              "dropped": sum(r["dropped"] for r in judged), "by_category": {}, "states": len(judged)}
     for r in judged:
@@ -189,25 +208,27 @@ def label(kind: str, split: str, target: int, labellers: list[str], max_turns: i
         if any("error" in s for s in said.values()):
             continue   # a failed turn is retried on a rerun, never read as disagreement
         a, b = (said[m]["answers"] for m in labellers)
-        labels, drops = {}, {}
+        labels, drops, dropped = {}, {}, []
         for n in questions:
             value, why = agreed(questions[n], a.get(n), b.get(n), (row.get("intended") or {}).get(n))
             if why is None:
                 labels[n] = value
                 continue
             drops[why] = drops.get(why, 0) + 1
-            notes.record(kind, why, round=round, slice=slice, state_hash=row["state_hash"], source=row["id"],
-                         question=n, intended=(row.get("intended") or {}).get(n), state=row["state"],
-                         answers=[{"labeller": said[m]["model"], **kept(said[m]["answers"].get(n))}
-                                  for m in labellers])
-        if labels:
-            append(out_path, {"state": row["state"], "questions": {n: questions[n] for n in labels},
-                              "expected": labels,
-                              "provenance": {"state_hash": row["state_hash"], "source": row["id"],
-                                             "labellers": [said[m]["model"] for m in labellers]}})
-            have += len(labels)
-        append(judged_path, {"state_hash": row["state_hash"], "labelled": len(labels),
-                             "dropped": sum(drops.values()), "by_category": drops})
+            dropped.append({"category": why, "round": round, "slice": slice if slice == "base" else list(slice),
+                            "state_hash": row["state_hash"], "source": row["id"], "question": n,
+                            "intended": (row.get("intended") or {}).get(n), "state": row["state"],
+                            "answers": [{"labeller": said[m]["model"], **kept(said[m]["answers"].get(n))}
+                                        for m in labellers]})
+        verdict = {"state_hash": row["state_hash"], "labelled": len(labels), "dropped": sum(drops.values()),
+                   "by_category": drops, "notes": dropped,
+                   "row": labels and {"state": row["state"], "questions": {n: questions[n] for n in labels},
+                                      "expected": labels,
+                                      "provenance": {"state_hash": row["state_hash"], "source": row["id"],
+                                                     "labellers": [said[m]["model"] for m in labellers]}}}
+        append(judged_path, verdict)
+        settle(verdict)
+        have += len(labels)
         done.add(row["state_hash"])
         stats["agreed"], stats["dropped"], stats["states"] = have, stats["dropped"] + sum(drops.values()), \
             stats["states"] + 1

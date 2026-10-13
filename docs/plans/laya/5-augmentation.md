@@ -60,7 +60,12 @@ round starts only when `round_turns`, measured in the pilot, is left, and
 notes take only what the round leaves. Labelling that stops short (the turn
 limit, or too few questions judged because turns failed) stops the loop
 with the slice still `targeted`; it is never read as an ambiguous slice,
-and a rerun resumes it.
+and a rerun resumes it. A rerun restores the loop from its own records:
+the kept splits, the stalled features, and an unfinished round with its own
+slice and split; a new round takes the next number, so one split never
+holds two slices, and every candidate carries the slice it was aimed at.
+Labelling writes each state's verdict before its labelled row and notes,
+so an interruption is finished on the rerun, never counted twice or lost.
 
 ## Acceptance
 

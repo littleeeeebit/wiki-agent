@@ -44,13 +44,17 @@ def slug(value) -> str:
     return re.sub(r"[^a-z0-9]+", "-", str(value).lower()).strip("-") or "base"
 
 
+def note_id(kind: str, round: int, category: str, state_hash: str, question: str) -> str:
+    return f"{kind}-{round}-{category}-{state_hash[:12]}-{question}"
+
+
 def record(kind: str, category: str, *, round: int, slice, state_hash: str, source: str, question: str,
            answers: list | None = None, intended=None, predicted=None, state=None) -> dict:
     """Append one error. `slice` is the `(feature, value)` the round aimed at, or `"base"`."""
 
     if category not in CATEGORIES:
         raise ValueError(f"unknown category {category!r}")
-    row = {"id": f"{kind}-{round}-{category}-{state_hash[:12]}-{question}", "kind": kind, "round": round,
+    row = {"id": note_id(kind, round, category, state_hash, question), "kind": kind, "round": round,
            "category": category, "slice": slice if slice == "base" else list(slice), "state_hash": state_hash,
            "source": source, "question": question, "answers": answers or [], "intended": intended,
            "predicted": predicted, "state": state, "at": time.time()}
@@ -109,10 +113,13 @@ def set_status(kind: str, name: str, status: str, round: int, slice="base") -> N
 
 def write_page(kind: str, name: str, rows: list[dict], diagnosis: dict, slice="base") -> Path:
     """The page for one cluster: front matter and cases by code, diagnosis by the writer.
-    A section the writer did not give keeps what the page said before."""
+    A section the writer did not give keeps what the page said before; `diagnosed` is the
+    count the last diagnosis saw, so a page that grew past it is diagnosed again."""
 
     path = NOTES / kind / f"{name}.md"
     old = front(path)
+    fresh = isinstance(diagnosis, dict) and bool(str(diagnosis.get("cause") or "").strip())
+    diagnosed = len(rows) if fresh else int(old.get("diagnosed", 0))
     m = re.search(r"## Cause\n\n(.*?)\n\n## Next\n\n(.*?)\n?\Z", path.read_text(encoding="utf-8"), re.S) \
         if path.exists() else None
     before = {"cause": m.group(1), "next": m.group(2)} if m else {}
@@ -127,7 +134,8 @@ def write_page(kind: str, name: str, rows: list[dict], diagnosis: dict, slice="b
         + (f"; predicted {r['predicted']}" if r.get("predicted") is not None else "")
         for r in rows[:3])
     body = (f"---\nkind: {kind}\ncategory: {first['category']}\nslice: {json.dumps(first['slice'])}\n"
-            f"count: {len(rows)}\nrounds: {joined(old.get('rounds', ''), [r['round'] for r in rows])}\n"
+            f"count: {len(rows)}\ndiagnosed: {diagnosed}\n"
+            f"rounds: {joined(old.get('rounds', ''), [r['round'] for r in rows])}\n"
             f"status: {old.get('status', 'open')}\n---\n\n"
             f"# {name}\n\n{CATEGORIES.get(first['category'], '')}.\n\n## Cases\n\n{cases or '- none yet'}\n\n"
             f"## Cause\n\n{diagnosis['cause'] or UNDIAGNOSED}\n\n"
@@ -139,10 +147,11 @@ def write_page(kind: str, name: str, rows: list[dict], diagnosis: dict, slice="b
 
 def write_pages(kind: str, writer=None, log=print, limit: int | None = None) -> list[str]:
     """Write or refresh every cluster page that reached `PAGE_AT` errors and grew since it
-    was last written, or that is not diagnosed yet when a writer is given (a writer's empty
-    answer leaves it so, for the next call). `writer(prompt_path, payload) -> {"cause",
-    "next"}` is one model turn (`label.writer`), called at most `limit` times; without one,
-    pages get cases and keep any diagnosis they had."""
+    was last written, or whose diagnosis is behind its errors when a writer is given (never
+    diagnosed, deferred for want of turns, or a writer's empty answer: each is tried again
+    on the next call). `writer(prompt_path, payload) -> {"cause", "next"}` is one model turn
+    (`label.writer`), called at most `limit` times; without one, pages get cases and keep
+    any diagnosis they had."""
 
     written, calls = [], 0
     for name, rows in clusters(kind).items():
@@ -150,9 +159,11 @@ def write_pages(kind: str, writer=None, log=print, limit: int | None = None) -> 
         if len(rows) < PAGE_AT:
             continue
         can = writer is not None and (limit is None or calls < limit)
-        undiagnosed = not path.exists() or UNDIAGNOSED in path.read_text(encoding="utf-8")
-        if front(path).get("count") == str(len(rows)) and not (can and undiagnosed):
+        page = front(path)
+        behind = int(page.get("diagnosed", 0)) != len(rows)
+        if page.get("count") == str(len(rows)) and not (can and behind):
             continue
+        can = can and behind
         diagnosis = {}
         if can:
             calls += 1
