@@ -38,7 +38,7 @@ use a -5 percentage-point lower confidence bound, as selected by the owner.
 | 6 | [Review profiles](6-review-profiles.md) | Rubrics, stable findings and independent roles | Done — live plan review left to PR 10 |
 | 7 | [Planner](7-planner.md) | Bounded artifacts, persisted workflow, PR and handoff | Done — live host capability and hand-off left to PR 10 |
 | 8 | [Recovery](8-recovery.md) | Recurrence barrier, research and two-cycle escalation | Done — live host research left to PR 10 |
-| 9 | [Korean comparison](9-korean.md) | Isolate input/evidence translation effects | In progress — paired experiment designed (v1) |
+| 9 | [Korean comparison](9-korean.md) | Isolate input/evidence translation effects | In progress — paired experiment designed and implemented (v1); the set is next |
 | 10 | [Live acceptance](10-acceptance.md) | Desktop/host scenarios and original-plan evidence | Not started |
 
 Merge order: 1–10. Dependencies: 4 after 3; 5 after 4; 6 after 2–3;

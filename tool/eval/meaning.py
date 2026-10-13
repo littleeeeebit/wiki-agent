@@ -30,14 +30,76 @@ RAW = ROOT / "raw" / "eval" / "jev"
 SECONDS = 120.0
 
 
+def word(ch: str) -> bool:
+    return ch.isalnum() or ch == "_"
+
+
+def joins(text: str, k: int, step: int, edge: str) -> bool:
+    """Whether `text[k]`, beside a literal's `edge` character (`step` points
+    away from it), carries the literal's token on. A word character, `/`,
+    `\\`, `-` and `@` always do: a longer name, path, version or address.
+    `.` does when a word character follows it (`x.py.bak`, `1.13.0`), not
+    when it ends a sentence. `,` and `:` do only between digits (`1,300`,
+    `09:30`); a clause's comma, a scheme (`mailto:`) or a label (`Port:`)
+    does not."""
+
+    c = text[k]
+    far = text[k + step] if 0 <= k + step < len(text) else ""
+    if word(c) or c in "/\\-@":
+        return True
+    if c == ".":
+        return bool(far) and word(far)
+    return c in ",:" and edge.isdigit() and far.isdigit()
+
+
+def found(literal: str, text: str) -> str:
+    """Whether `literal` is in `text` as a whole token (`present`), only
+    inside a longer token a hyphen joins (`joined`), or not at all (`absent`).
+
+    A whole token is never part of a longer number, name, path or version
+    (`joins`): `30` is not in `300`, `3.05`, `1,300` or `09:30`; `PR` is not
+    in `PRs`; `tool/x.py` is not in `tool/x.py.bak` or `other/tool/x.py`.
+    It is in `tool/x.py.`, `(30,`, `Port:7443` and `mailto:a@b.example`. An
+    edge that is not a word character (`%`, `)`, `/`) is checked by nothing.
+    A hyphen cannot be read: `v1.13.0-beta` is another version, while
+    `HMAC-SHA256-based` keeps the algorithm, so `joined` is neither."""
+
+    out, start = "absent", 0
+    while (i := text.find(literal, start)) >= 0:
+        start, j = i + 1, i + len(literal)
+        joints = ([text[i - 1]] if word(literal[0]) and i > 0 and joins(text, i - 1, -1, literal[0]) else []) + \
+                 ([text[j]] if word(literal[-1]) and j < len(text) and joins(text, j, 1, literal[-1]) else [])
+        if not joints:
+            return "present"
+        if all(c == "-" for c in joints):
+            out = "joined"
+    return out
+
+
+def present(literal: str, text: str) -> bool:
+    return found(literal, text) == "present"
+
+
+def literal_problem(literal: str, text: str) -> str | None:
+    """What is wrong with one literal in `text`: lost, or uncertain — found
+    only in a hyphenated word, which is not settled either way."""
+
+    got = found(literal, text)
+    return None if got == "present" else f"lost literal {literal!r}" if got == "absent" else \
+        f"uncertain literal {literal!r} (only in a hyphenated word)"
+
+
 def check(case: dict, outcome: dict) -> list[str]:
-    """What is wrong with one case's English. Empty means it passes."""
+    """What is wrong with one case's English. Empty means it passes.
+    `literals`, where a case has them (reliability PR 9's pairs), must appear
+    exactly as written, as whole tokens: a number, a name, a path."""
 
     if outcome["status"] != "translated":
         return [f"status {outcome['status']} ({outcome.get('reason')})"]
     text = outcome["text"].lower()
     wrong = [f"none of {group}" for group in case["require"] if not any(p.lower() in text for p in group)]
-    return wrong + [f"has {phrase!r}" for phrase in case["forbid"] if phrase.lower() in text]
+    wrong += [f"has {phrase!r}" for phrase in case["forbid"] if phrase.lower() in text]
+    return wrong + [p for x in case.get("literals", []) if (p := literal_problem(x, outcome["text"]))]
 
 
 def run(manifest: Path) -> dict:

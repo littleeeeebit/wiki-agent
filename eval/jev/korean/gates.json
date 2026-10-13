@@ -1,0 +1,17 @@
+{
+ "schema": "jev-gates/1",
+ "id": "korean-gates-v1",
+ "version": 1,
+ "frozen": "2026-10-13",
+ "change": "Reliability PR 9's gates (docs/plans/reliability/9-korean.md, v1, Gates), selected by the repository owner in the blueprint: no required negation or literal lost, integrity, and paired recall and coverage lower bounds of -0.05 against the same run's English control. A later change is a new version before its measurement.",
+ "description": "Read by `tool/eval/report.py` for a `compare.py --experiment pairs` run (`tool/eval/korean.py`). Every paired gate reads the frozen cohort: every pair in all four arms at repetition 0. A missing row, or a coverage grade still missing after one regrade, leaves a paired gate inconclusive; a failed retrieval scores recall 0 and a failed answer coverage 0. A question or fact unit not normalized leaves Literals inconclusive; a verified answer without a grade leaves Integrity inconclusive.",
+ "resamples": 2000,
+ "confidence": 0.95,
+ "seed": 20260927,
+ "gates": [
+  {"id": "literals", "label": "No required negation or literal lost (questions B, D; twin fact units)", "target": 0},
+  {"id": "integrity", "label": "No fabricated accepted citation, and no verified answer with an unsupported claim", "target": 0},
+  {"id": "paired_recall", "label": "Paired evidence recall, B-A, C-A and D-A: lower end at least", "target": -0.05},
+  {"id": "paired_coverage", "label": "Paired answer coverage, B-A, C-A and D-A: lower end at least", "target": -0.05}
+ ]
+}

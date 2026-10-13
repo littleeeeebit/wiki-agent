@@ -58,8 +58,8 @@
     },
     "tool/eval/compare.py": {
       "dup": 6,
-      "lines": 769,
-      "reason": "answers and grades carry what the host read beside the dossier (v5 calibration)"
+      "lines": 834,
+      "reason": "reliability PR 9: one measure() runs both arms and pairs, a failed grade is retried and kept apart from a failed answer, and a batch records only its own spending; the pairs logic and options live in tool/eval/korean.py"
     },
     "tool/eval/decisions.py": {
       "dup": 8,
