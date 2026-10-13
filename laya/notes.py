@@ -26,6 +26,7 @@ NOTES = Path(__file__).resolve().parent / "notes"
 PROMPT = Path(__file__).resolve().parent / "prompts" / "note.md"
 PAGE_AT = 5
 SAMPLES = 20
+UNDIAGNOSED = "Not diagnosed yet."
 
 CATEGORIES = {
     "disagree": "the two labellers gave different answers",
@@ -87,6 +88,10 @@ def front(path: Path) -> dict:
     return dict(line.split(": ", 1) for line in m.group(1).splitlines() if ": " in line) if m else {}
 
 
+def joined(old: str, rounds) -> str:
+    return ",".join(str(r) for r in sorted({int(r) for r in old.split(",") if r} | {int(r) for r in rounds}))
+
+
 def set_status(kind: str, name: str, status: str, round: int, slice="base") -> None:
     """Move a page's status; a page not written yet is written bare first, for `slice`."""
 
@@ -97,16 +102,22 @@ def set_status(kind: str, name: str, status: str, round: int, slice="base") -> N
         write_page(kind, name, clusters(kind).get(name, []), {}, slice)
     text = path.read_text(encoding="utf-8")
     text = re.sub(r"^status: .*$", f"status: {status}", text, count=1, flags=re.M)
-    text = re.sub(r"^rounds: (.*)$", lambda m: f"rounds: {','.join(sorted(set(filter(None, m.group(1).split(',') + [str(round)]))))}",
-                  text, count=1, flags=re.M)
+    text = re.sub(r"^rounds: (.*)$", lambda m: f"rounds: {joined(m.group(1), [round])}", text, count=1, flags=re.M)
     path.write_text(text, encoding="utf-8")
     write_index()
 
 
 def write_page(kind: str, name: str, rows: list[dict], diagnosis: dict, slice="base") -> Path:
-    """The page for one cluster: front matter and cases by code, diagnosis by the writer."""
+    """The page for one cluster: front matter and cases by code, diagnosis by the writer.
+    A section the writer did not give keeps what the page said before."""
 
-    old = front(NOTES / kind / f"{name}.md")
+    path = NOTES / kind / f"{name}.md"
+    old = front(path)
+    m = re.search(r"## Cause\n\n(.*?)\n\n## Next\n\n(.*?)\n?\Z", path.read_text(encoding="utf-8"), re.S) \
+        if path.exists() else None
+    before = {"cause": m.group(1), "next": m.group(2)} if m else {}
+    diagnosis = diagnosis if isinstance(diagnosis, dict) else {}
+    diagnosis = {k: str(diagnosis.get(k) or "").strip() or before.get(k, "") for k in ("cause", "next")}
     first = rows[0] if rows else {"category": name.split("--")[0],
                                   "slice": slice if slice == "base" else list(slice)}
     cases = "\n".join(
@@ -116,28 +127,35 @@ def write_page(kind: str, name: str, rows: list[dict], diagnosis: dict, slice="b
         + (f"; predicted {r['predicted']}" if r.get("predicted") is not None else "")
         for r in rows[:3])
     body = (f"---\nkind: {kind}\ncategory: {first['category']}\nslice: {json.dumps(first['slice'])}\n"
-            f"count: {len(rows)}\nrounds: {old.get('rounds', '')}\nstatus: {old.get('status', 'open')}\n---\n\n"
+            f"count: {len(rows)}\nrounds: {joined(old.get('rounds', ''), [r['round'] for r in rows])}\n"
+            f"status: {old.get('status', 'open')}\n---\n\n"
             f"# {name}\n\n{CATEGORIES.get(first['category'], '')}.\n\n## Cases\n\n{cases or '- none yet'}\n\n"
-            f"## Cause\n\n{diagnosis.get('cause', '').strip() or 'Not diagnosed yet.'}\n\n"
-            f"## Next\n\n{diagnosis.get('next', '').strip() or 'Not decided yet.'}\n")
-    path = NOTES / kind / f"{name}.md"
+            f"## Cause\n\n{diagnosis['cause'] or UNDIAGNOSED}\n\n"
+            f"## Next\n\n{diagnosis['next'] or 'Not decided yet.'}\n")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body, encoding="utf-8")
     return path
 
 
-def write_pages(kind: str, writer=None, log=print) -> list[str]:
+def write_pages(kind: str, writer=None, log=print, limit: int | None = None) -> list[str]:
     """Write or refresh every cluster page that reached `PAGE_AT` errors and grew since it
-    was last written. `writer(prompt_path, payload) -> {"cause", "next"}` is one model turn
-    (`label.host_turn`-like); without one, pages get cases and no diagnosis."""
+    was last written, or that is not diagnosed yet when a writer is given (a writer's empty
+    answer leaves it so, for the next call). `writer(prompt_path, payload) -> {"cause",
+    "next"}` is one model turn (`label.writer`), called at most `limit` times; without one,
+    pages get cases and keep any diagnosis they had."""
 
-    written = []
+    written, calls = [], 0
     for name, rows in clusters(kind).items():
         path = NOTES / kind / f"{name}.md"
-        if len(rows) < PAGE_AT or front(path).get("count") == str(len(rows)):
+        if len(rows) < PAGE_AT:
+            continue
+        can = writer is not None and (limit is None or calls < limit)
+        undiagnosed = not path.exists() or UNDIAGNOSED in path.read_text(encoding="utf-8")
+        if front(path).get("count") == str(len(rows)) and not (can and undiagnosed):
             continue
         diagnosis = {}
-        if writer is not None:
+        if can:
+            calls += 1
             diagnosis = writer(PROMPT, {"kind": kind, "category": rows[0]["category"],
                                         "meaning": CATEGORIES[rows[0]["category"]], "slice": rows[0]["slice"],
                                         "errors": rows[-SAMPLES:],
@@ -160,9 +178,12 @@ def write_index() -> None:
 
 
 def brief(kind: str) -> dict:
-    """What the generator reads before a round: what to aim at and what never to retry."""
+    """What the generator reads before a round, as RRSI's proposer reads the whole history:
+    every page whatever its status, every cluster's size (under `PAGE_AT` too), and the
+    slices never to aim at again. `loop.run` adds the rounds."""
 
-    pages = {p.stem: front(p) | {"text": p.read_text(encoding="utf-8")} for p in (NOTES / kind).glob("*.md")}
-    return {"open": [p["text"] for p in pages.values() if p.get("status") in ("open", "targeted")],
+    pages = {p.stem: front(p) | {"text": p.read_text(encoding="utf-8")} for p in sorted((NOTES / kind).glob("*.md"))}
+    return {"pages": [{"name": n, "status": p.get("status"), "text": p["text"]} for n, p in pages.items()],
+            "clusters": {n: len(rows) for n, rows in clusters(kind).items()},
             "avoid": [json.loads(p["slice"]) for p in pages.values()
                       if p.get("status") in ("falsified", "ambiguous") and p.get("slice", '"base"') != '"base"']}

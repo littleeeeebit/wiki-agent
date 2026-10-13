@@ -10,6 +10,7 @@ Files, per kind, under `laya/data/<kind>/`:
 
 - `<split>.candidates.jsonl` — rows of `pool.rows`' shape, the kind's questions only.
 - `<split>.ledger.jsonl` — every labeller turn, kept so a rerun never pays twice.
+- `<split>.judged.jsonl` — every judged state: how many questions it labelled and dropped.
 - `<split>.jsonl` — the labelled rows, in Laya's `{state, questions, expected}` format.
 
     python laya/label.py useful train --target 3000 --labellers opus codex:gpt-6.1-sol --max-turns 400
@@ -103,9 +104,17 @@ def expected(question: dict, answer):
     """The answer as Laya's `expected`: a bool for a noul, an option name for a choice;
     `None` for an answer the question does not offer."""
 
+    if not isinstance(answer, str):
+        return None
     if question["type"] == "noul":
-        return {"yes": True, "no": False}.get(str(answer).strip().lower())
+        return {"yes": True, "no": False}.get(answer.strip().lower())
     return answer if answer in (question.get("criteria") or {}) else None
+
+
+def kept(answer) -> dict:
+    """A labeller's answer as the notebook keeps it; a malformed one whole, under `raw`."""
+
+    return answer if isinstance(answer, dict) else {"raw": answer}
 
 
 def agreed(question: dict, a: dict | None, b: dict | None, intended=None) -> tuple[object, str | None]:
@@ -114,8 +123,8 @@ def agreed(question: dict, a: dict | None, b: dict | None, intended=None) -> tup
     state's `intended` answer must be the agreed one too."""
 
     def one(x):
-        if not isinstance(x, dict) or isinstance(x.get("confidence"), bool) \
-                or not isinstance(x.get("confidence"), (int, float)):
+        c = x.get("confidence") if isinstance(x, dict) else None
+        if isinstance(c, bool) or not isinstance(c, (int, float)) or not 0 <= c <= 1:   # NaN fails the range
             return None
         return expected(question, x.get("answer"))
 
@@ -133,18 +142,27 @@ def agreed(question: dict, a: dict | None, b: dict | None, intended=None) -> tup
 
 def label(kind: str, split: str, target: int, labellers: list[str], max_turns: int,
           turn=host_turn, log=print, round: int = 0, slice="base") -> dict:
-    """Label `split` of `kind` up to `target` questions; returns what happened. Every
-    dropped question goes to the error notebook under `round` and `slice`.
+    """Label `split` of `kind` up to `target` questions; returns what happened: this run's
+    `turns` and cost, and the whole split's `agreed` (labelled questions), `dropped`,
+    `by_category` and `states`, so a resumed split reports its true agreement. Every
+    dropped question goes to the error notebook under `round` and `slice`, once: a judged
+    state (`<split>.judged.jsonl`) is never judged again.
     `turn(model, state, questions)` is the labeller call (a stub in tests)."""
 
     if len(labellers) != 2 or labellers[0] == labellers[1]:
         raise ValueError("two different labellers")
     folder = DATA / kind
     ledger_path, out_path = folder / f"{split}.ledger.jsonl", folder / f"{split}.jsonl"
+    judged_path = folder / f"{split}.judged.jsonl"
     ledger = {(r["state_hash"], r["labeller"]): r for r in read(ledger_path) if "error" not in r}
-    done = {r["provenance"]["state_hash"] for r in read(out_path)}
+    judged = read(judged_path)
+    done = {r["state_hash"] for r in judged} | {r["provenance"]["state_hash"] for r in read(out_path)}
     have = sum(len(r["expected"]) for r in read(out_path))
-    stats = {"turns": 0, "cost_usd": 0.0, "cost_unknown": 0, "agreed": have, "dropped": 0, "states": 0}
+    stats = {"turns": 0, "cost_usd": 0.0, "cost_unknown": 0, "agreed": have,
+             "dropped": sum(r["dropped"] for r in judged), "by_category": {}, "states": len(judged)}
+    for r in judged:
+        for why, n in r["by_category"].items():
+            stats["by_category"][why] = stats["by_category"].get(why, 0) + n
     for row in read(folder / f"{split}.candidates.jsonl"):
         if have >= target:
             break
@@ -171,28 +189,30 @@ def label(kind: str, split: str, target: int, labellers: list[str], max_turns: i
         if any("error" in s for s in said.values()):
             continue   # a failed turn is retried on a rerun, never read as disagreement
         a, b = (said[m]["answers"] for m in labellers)
-        labels = {}
+        labels, drops = {}, {}
         for n in questions:
             value, why = agreed(questions[n], a.get(n), b.get(n), (row.get("intended") or {}).get(n))
             if why is None:
                 labels[n] = value
                 continue
-            stats["dropped"] += 1
-            stats.setdefault("by_category", {}).setdefault(why, 0)
-            stats["by_category"][why] += 1
+            drops[why] = drops.get(why, 0) + 1
             notes.record(kind, why, round=round, slice=slice, state_hash=row["state_hash"], source=row["id"],
                          question=n, intended=(row.get("intended") or {}).get(n), state=row["state"],
-                         answers=[{"labeller": said[m]["model"], **(said[m]["answers"].get(n) or {})}
+                         answers=[{"labeller": said[m]["model"], **kept(said[m]["answers"].get(n))}
                                   for m in labellers])
-        stats["states"] += 1
         if labels:
             append(out_path, {"state": row["state"], "questions": {n: questions[n] for n in labels},
                               "expected": labels,
                               "provenance": {"state_hash": row["state_hash"], "source": row["id"],
                                              "labellers": [said[m]["model"] for m in labellers]}})
             have += len(labels)
+        append(judged_path, {"state_hash": row["state_hash"], "labelled": len(labels),
+                             "dropped": sum(drops.values()), "by_category": drops})
         done.add(row["state_hash"])
-        stats["agreed"] = have
+        stats["agreed"], stats["dropped"], stats["states"] = have, stats["dropped"] + sum(drops.values()), \
+            stats["states"] + 1
+        for why, n in drops.items():
+            stats["by_category"][why] = stats["by_category"].get(why, 0) + n
     return {**stats, "stopped": "target" if have >= target else "candidates_exhausted"}
 
 

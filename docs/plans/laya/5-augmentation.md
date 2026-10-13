@@ -25,15 +25,17 @@ enters selection.
    tried since, when one qualifies.
 3. Generate. A teacher LLM writes new states for that slice (L5), through
    stage 2's builders, with each question's intended answer: 300 per round
-   by default. It reads the notebook's brief first (open pages, slices
-   never to retry) and records `off_slice` and `leak` drops.
+   by default. It reads the whole history first (every notebook page
+   whatever its status, every cluster's size, every round's record, the
+   slices never to retry) and records `off_slice` and `leak` drops.
 4. Label. Stage 3's agreement rule. If the labellers agree on under half
    the slice's questions, it is `ambiguous`: not adopted, a stall.
 5. Retrain from the base on the incumbent's data and this round,
    recalibrate on the same calibration split, and score validation.
 6. Adopt when the paired accuracy gain over the incumbent is above the
    noise floor (two bootstrap standard deviations of the paired
-   difference). Otherwise the slice is `falsified`: not adopted, a stall,
+   difference, resampling whole states, since one state's questions move
+   together). Otherwise the slice is `falsified`: not adopted, a stall,
    and the loop goes on to the next round.
 7. Prune. After the last round, retrain without each adopted round; drop it
    when keeping it gains no more than the noise floor.
@@ -52,7 +54,13 @@ pilot's cost per state and per label. Each round is checked against what is
 left before it sends anything; a round that does not fit is not started.
 Spend is recorded per round. A round not adopted or pruned leaves its data
 and checkpoint unused, not its spend. Notebook pages are diagnosed by one
-host turn each, within the same limit.
+host turn each, within the same limit. In `laya/loop.py` the limit is
+`max_turns` host turns shared by generation, labelling and note writing; a
+round starts only when `round_turns`, measured in the pilot, is left, and
+notes take only what the round leaves. Labelling that stops short (the turn
+limit, or too few questions judged because turns failed) stops the loop
+with the slice still `targeted`; it is never read as an ambiguous slice,
+and a rerun resumes it.
 
 ## Acceptance
 

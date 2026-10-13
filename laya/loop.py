@@ -11,8 +11,10 @@ round of data:
     round r   errors of the incumbent -> the error notebook (`student_wrong`)
               pick the slice with most errors that the notebook does not mark
               falsified or ambiguous, preferring a feature not tried since the last stall
-              generate states aimed at it, reading `notes.brief(kind)` first
+              generate states aimed at it, reading the whole history first: every
+              notebook page whatever its status, every cluster's size, every round
               label them by agreement (drops -> the notebook)
+              - labelling stopped short                -> stop; a rerun resumes it
               - labellers agree on under `MIN_AGREEMENT` -> slice `ambiguous`, next round
               retrain from the base on the incumbent's splits + this round, score validation
               - paired gain over the noise floor -> adopt: new incumbent, slice `resolved`
@@ -22,11 +24,11 @@ round of data:
               than the noise floor
 
 The noise floor is two bootstrap standard deviations of the paired accuracy difference on
-validation. Each round retrains from the base checkpoint, so a round not adopted leaves
+validation, resampling states, not questions. Paid turns come from one approved total. Each round retrains from the base checkpoint, so a round not adopted leaves
 nothing behind. Validation chooses everything here, so its accuracy is optimistic; the
 gate test is never read. Every round is a row of `laya/data/<kind>/rounds.jsonl`.
 
-`generate(kind, slice, n, brief, round)` writes `aug-<round>.candidates.jsonl` rows aimed at
+`generate(kind, slice, n, history, round, max_turns)` writes `aug-<round>.candidates.jsonl` rows aimed at
 a slice, with each question's `intended` answer, and records `off_slice` and `leak` drops
 itself; building them through the production request builders is plan stage 2. The loop
 takes it as an argument, as it takes `train`, `score` and `label`.
@@ -36,7 +38,7 @@ import json
 import random
 import re
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 
 import notes
 from label import DATA, append, read
@@ -44,6 +46,7 @@ from label import DATA, append, read
 ROUNDS = 3
 MIN_ERRORS = 10
 MIN_AGREEMENT = 0.5
+MIN_JUDGED = 30
 PER_ROUND = 300
 RESAMPLES = 1000
 NEGATION = re.compile(r"\b(?:not|no|never|without|none|cannot)\b|n't\b", re.I)
@@ -87,16 +90,23 @@ def pick(found, avoid: set, stalled: set) -> tuple | None:
 
 
 def floor(universe: list, old: set, new: set, seed: int = 0) -> tuple[float, float]:
-    """The paired accuracy gain of `new` over `old` (their wrong sets) on `universe`, and the
-    noise floor: two bootstrap standard deviations of that gain."""
+    """The paired accuracy gain of `new` over `old` (their wrong sets) on `universe`, the
+    `(state_hash, question)` items, and the noise floor: two bootstrap standard deviations
+    of that gain. States are resampled whole, since one state's questions move together."""
 
-    diff = [(x in old) - (x in new) for x in universe]   # +1 fixed, -1 broken, 0 same
-    n = len(diff)
+    per = defaultdict(lambda: [0, 0])   # state -> [fixed - broken, questions]
+    for x in universe:
+        per[x[0]][0] += (x in old) - (x in new)
+        per[x[0]][1] += 1
+    states = list(per.values())
     rng = random.Random(seed)
-    boots = [sum(diff[rng.randrange(n)] for _ in range(n)) / n for _ in range(RESAMPLES)]
+    boots = []
+    for _ in range(RESAMPLES):
+        drawn = [states[rng.randrange(len(states))] for _ in states]
+        boots.append(sum(d for d, _ in drawn) / sum(n for _, n in drawn))
     mean = sum(boots) / RESAMPLES
     sd = (sum((b - mean) ** 2 for b in boots) / (RESAMPLES - 1)) ** 0.5
-    return sum(diff) / n, 2 * sd
+    return sum(d for d, _ in states) / len(universe), 2 * sd
 
 
 def note_errors(kind: str, round: int, rows: list[dict], wrong: set, predicted: dict, target=None) -> None:
@@ -114,16 +124,25 @@ def note_errors(kind: str, round: int, rows: list[dict], wrong: set, predicted: 
                              predicted=predicted.get(key), state=row["state"])
 
 
-def run(kind: str, *, train, score, generate, label, rounds: int = ROUNDS, per_round: int = PER_ROUND,
-        writer=None, log=print) -> dict:
+def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns: int, rounds: int = ROUNDS,
+        per_round: int = PER_ROUND, writer=None, log=print) -> dict:
     """Run the loop for `kind`.
 
     - `train(kind, splits) -> checkpoint` trains from the base on those splits' labelled files.
     - `score(kind, checkpoint) -> (wrong, predicted)`: the `(state_hash, question)` it gets
       wrong on validation, and its answer for each.
-    - `generate(kind, slice, n, brief, round)` and `label(kind, split, target, round, slice)`
-      as the module docstring says; `label` returns `label.label`'s stats.
+    - `generate(kind, slice, n, history, round, max_turns) -> turns used` writes the round's
+      candidates as the module docstring says, resuming without paying twice.
+    - `label(kind, split, target, round, slice, max_turns)` returns `label.label`'s stats.
     - `writer` diagnoses notebook pages (`notes.write_pages`); without it pages hold cases.
+    - `max_turns` is the approved total of paid host turns for the whole run: generation,
+      labelling and note writing. `round_turns`, from the pilot, is what one round takes.
+      A round starts only when it fits what is left; every callee gets what is left as
+      its own limit, and what it used is subtracted.
+
+    Labelling that stops short (the turn limit, or under `MIN_JUDGED` questions judged,
+    as when turns fail) stops the loop with the slice still `targeted`: running it again
+    resumes, and a shortfall is never read as an ambiguous slice.
     """
 
     folder = DATA / kind
@@ -131,10 +150,19 @@ def run(kind: str, *, train, score, generate, label, rounds: int = ROUNDS, per_r
     universe = items(validation)
     if not universe:
         raise ValueError(f"{kind} has no labelled validation")
+    spent = 0
 
     def record(**row):
-        append(folder / "rounds.jsonl", {"kind": kind, "at": time.time(), **row})
+        append(folder / "rounds.jsonl", {"kind": kind, "at": time.time(), "spent": spent, **row})
         log(json.dumps(row, ensure_ascii=False, default=str))
+
+    def counted(prompt, payload):
+        nonlocal spent
+        spent += 1
+        return writer(prompt, payload)
+
+    def diagnose(limit):
+        notes.write_pages(kind, counted if writer else None, log, limit=max(0, limit))
 
     def evaluate(splits):
         ckpt = train(kind, splits)
@@ -147,19 +175,26 @@ def run(kind: str, *, train, score, generate, label, rounds: int = ROUNDS, per_r
     record(round=0, splits=kept, accuracy=1 - len(wrong) / len(universe), checkpoint=str(best_ckpt))
     stalled: set = set()
     for r in range(1, rounds + 1):
-        notes.write_pages(kind, writer, log)
-        avoid = {tuple(s) for s in notes.brief(kind)["avoid"]}
-        target = pick(slices(validation, wrong), avoid, stalled)
+        if max_turns - spent < round_turns:
+            record(round=r, stopped="budget")
+            break
+        diagnose(max_turns - spent - round_turns)   # notes take only what the round leaves
+        history = notes.brief(kind) | {"rounds": read(folder / "rounds.jsonl")}
+        target = pick(slices(validation, wrong), {tuple(s) for s in history["avoid"]}, stalled)
         if target is None:
             record(round=r, stopped="no_slice")
             break
         page = notes.cluster_name("student_wrong", target)
         notes.set_status(kind, page, "targeted", r, target)
         split = f"aug-{r}"
-        generate(kind, target, per_round, notes.brief(kind), r)
-        stats = label(kind, split, per_round, r, target)
+        spent += generate(kind, target, per_round, history, r, max_turns - spent)
+        stats = label(kind, split, per_round, r, target, max_turns - spent)
+        spent += stats["turns"]
         asked = stats["agreed"] + stats["dropped"]
-        if not asked or stats["agreed"] / asked < MIN_AGREEMENT:
+        if stats.get("stopped") == "turn_limit" or asked < MIN_JUDGED:
+            record(round=r, slice=target, labelled=stats, adopted=False, stopped="labelling_incomplete")
+            break
+        if stats["agreed"] / asked < MIN_AGREEMENT:
             notes.set_status(kind, page, "ambiguous", r)
             stalled.add(target[0])
             record(round=r, slice=target, labelled=stats, adopted=False, reason="ambiguous_slice")
@@ -188,5 +223,6 @@ def run(kind: str, *, train, score, generate, label, rounds: int = ROUNDS, per_r
         if removed:
             kept, best_ckpt, wrong, predicted = rest, ckpt, rest_wrong, rest_predicted
         record(prune=split, gain_of_keeping=keeping, noise=noise, removed=removed)
-    notes.write_pages(kind, writer, log)
-    return {"kind": kind, "accuracy": 1 - len(wrong) / len(universe), "checkpoint": best_ckpt, "splits": kept}
+    diagnose(max_turns - spent)
+    return {"kind": kind, "accuracy": 1 - len(wrong) / len(universe), "checkpoint": best_ckpt, "splits": kept,
+            "spent": spent}

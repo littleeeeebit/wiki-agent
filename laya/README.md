@@ -37,7 +37,10 @@ disagreement.
 
 After RRSI (google-research/rrsi): a round proposes a data candidate with the whole
 history in view, and it is adopted only when its paired gain on validation clears the
-noise floor (two bootstrap standard deviations). A slice whose round was not adopted is
+noise floor (two bootstrap standard deviations, resampling whole states). Paid turns
+(generation, labelling, note writing) come from one approved total, `max_turns`; a round
+starts only when what it takes is left, and labelling that stops short stops the loop
+rather than condemning the slice. A slice whose round was not adopted is
 `falsified` and never aimed at again; after such a stall the next round tries a feature
 not tried since. After the last round each adopted round is removed again if keeping it
 gains no more than the noise floor. The gate test never enters the loop. `loop.py`'s
@@ -91,8 +94,8 @@ the two labellers gave different answers.
 Code keeps the front matter and the cases; a model writes Cause and Next
 (`prompts/note.md`). A page's status moves `open` → `targeted` → `resolved`, `falsified`
 or `ambiguous` (labellers agree on under half of a slice). `notes/index.md` lists every
-page. Before each round the generator reads `notes.brief(kind)`: the open pages, and the
-slices never to aim at again.
+page. Before each round the generator reads the whole history: every page whatever its
+status, every cluster's size, every round's record, and the slices never to aim at again.
 
 ## Commands
 
