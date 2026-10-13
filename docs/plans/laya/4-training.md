@@ -2,8 +2,9 @@
 
 See the [overview](0-overview.md). After [stage 3](3-labels.md).
 
-Purpose. Train one Laya model per kind on the RTX 3080, calibrate it, and
-fit its thresholds.
+Purpose. Train one Laya model per kind on Colab's L4 (24 GB; owner,
+2026-10-14), calibrate it, and fit its thresholds. Serving stays on the
+RTX 3080.
 
 ## Training
 
@@ -13,12 +14,23 @@ fit its thresholds.
 - `laya.train.finetune` with `option_layout="parallel"`, so option order
   does not matter (L2), if stage 1 found its requirements met; otherwise
   the default layout with options shuffled per example. fp16, gradient
-  checkpointing, micro-batch and accumulation set to fit 10 GB.
+  checkpointing, micro-batch 4 with 16 accumulation steps (the notebook's
+  effective batch of 64) to fit the L4.
 - `max_len` per kind: the smallest of 1,024, 2,048 or 4,096 that holds 95%
-  of the kind's state-plus-head lengths from stage 1. Longer states follow
-  stage 1's length rule (TypeSafe, else `unavailable`); no state is cut.
+  of the kind's state-plus-head lengths from stage 1 (`useful`: 2,048, p95
+  1,396). Longer states follow stage 1's length rule (TypeSafe, else
+  `unavailable`); no state is cut, so a question over it is left out of
+  training and scoring alike.
+- Colab. `python laya/train.py pack <kind>` zips `laya/`'s code with the
+  kind's labelled splits; `laya/notebooks/train.ipynb` unpacks it from
+  Drive, installs `laya` 0.4.6, scores both published checkpoints
+  zero-shot at the reviewed commit, fine-tunes the better one, and saves
+  the checkpoint (with `laya-run.json`) back to Drive. No paid call runs
+  there; the improvement loop stays on the PC.
 - Early stopping on validation. Seed, data hashes and config recorded with
-  each checkpoint as `laya-<kind>-v<N>`.
+  each checkpoint as `laya-<kind>-v<N>`. Laya 0.4.6's `finetune` has no
+  early stopping: it scores validation (`eval_data`) before and after a
+  fixed number of epochs, so the epoch count is chosen on validation.
 - `useful` first, end to end through stage 6, before the other kinds; each
   of those starts once it has at least 100 production states.
 - Code: `laya/train.py` and `laya/notebooks/train.ipynb`.

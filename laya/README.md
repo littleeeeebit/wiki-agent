@@ -18,7 +18,7 @@ repository root.
 | `generate.py` | Candidate states for a passage kind: teacher-written questions run through the production path, decider stubbed |
 | `label.py` | Two-labeller agreement labels; every dropped question goes to the error notebook |
 | `notes.py` | The error notebook: ledger, pages, statuses, the brief the generator reads |
-| `train.py` | Fine-tune one kind from the base, calibrate, score validation |
+| `train.py` | Fine-tune one kind from the base, calibrate, score validation; `pack` zips code and labels for Colab |
 | `loop.py` | The recursive improvement loop (RRSI) for one kind |
 | `prompts/` | The teacher, labeller and note-writer prompts |
 | `notebooks/train.ipynb` | One kind, end to end, for a GPU session |

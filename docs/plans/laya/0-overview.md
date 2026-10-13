@@ -21,7 +21,7 @@ shadow and active. Research, sources and measurements are on
 | Passage view | `useful`, `conflict` and `redirect` ask about one passage against the query, so their model sees the state with only that passage: a median 900 tokens, max 2,250, instead of 4,300 and past ModernBERT's 8,192 at p95. `coverage` reads the passages together and stays whole | Owner, 2026-10-13, from stage 1's length measurement |
 | Improvement | After RRSI: a round is adopted only above the noise floor, falsified slices are never retried, adopted rounds are pruned; every dropped or wrong question goes to a local error notebook | Owner, 2026-10-13 |
 | Code | Data, labels, training, the loop and the notebook in the top-level `laya/` folder; serving stays in `tool/decision` | Owner, 2026-10-13 |
-| Runtime | Local server on the RTX 3080 (10 GB); TypeSafe stays as a per-kind fallback until rollout | This plan |
+| Runtime | Local server on the RTX 3080 (10 GB); training on Colab's L4 (owner, 2026-10-14); TypeSafe stays as a per-kind fallback until rollout | This plan |
 | Language | English states only, as Jev today; normalization is unchanged | Existing rule |
 
 The fourteen kinds (`tool/decision/policy.py`):

@@ -15,6 +15,7 @@ import label
 import loop
 import notes
 import pool
+import train
 
 NOUL = {"type": "noul", "instructions": "Is the passage useful?"}
 
@@ -28,6 +29,7 @@ def folders(tmp_path, monkeypatch):
     monkeypatch.setattr(generate, "searching", lambda: True)
     monkeypatch.setattr(gate, "POOL", tmp_path / "pool.jsonl")
     monkeypatch.setattr(gate, "TESTS", tmp_path / "tests.json")
+    monkeypatch.setattr(train, "DATA", tmp_path / "data")
     write(tmp_path / "pool.jsonl", [])
     (tmp_path / "tests.json").write_text('{"tests": []}', encoding="utf-8")
     return tmp_path
@@ -795,13 +797,19 @@ def test_a_capture_tells_a_failed_retrieval_from_an_empty_one(monkeypatch):
         sys.path.append(str(generate.ROOT / "tool"))
     from main import knowledge
 
-    for status, empty in (("unavailable", False), ("exhausted", False), ("cancelled", False),
-                          ("partial", True), ("ready", True)):
-        monkeypatch.setattr(knowledge, "prepare", lambda *a, s=status, **k: {"status": s, "reason": "why"})
-        if empty:
+    for status, reason, limits, got in (
+            ("unavailable", "retrieval_unavailable", [], generate.Unavailable),
+            ("unavailable", "normalization_failed", [{"baseline": "retrieval_unavailable"}], generate.Unavailable),
+            ("exhausted", "deadline", [], generate.Unavailable),
+            ("cancelled", "cancelled", [], generate.Unavailable),
+            ("unavailable", "normalization_failed", [], RuntimeError),   # this query's own, every time
+            ("partial", "no_repair", [], []), ("ready", "covered", [], [])):
+        monkeypatch.setattr(knowledge, "prepare", lambda *a, d={"status": status, "reason": reason,
+                                                                "limits": limits}, **k: d)
+        if got == []:
             assert generate.captured("q") == []
         else:
-            with pytest.raises(generate.Unavailable, match="why"):
+            with pytest.raises(got, match=reason):
                 generate.captured("q")
 
 
@@ -823,3 +831,26 @@ def test_a_passage_kind_sees_only_its_passage():
     assert kinds.view("coverage_r0", "coverage", state) is state
     with pytest.raises(ValueError):
         kinds.view("conflict_p7", "conflict", state)
+
+
+def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders, monkeypatch):
+    import zipfile
+
+    def row(i, text):
+        return {"state": {"query": "q", "passages": [{"id": "p0", "text": text}]},
+                "questions": {"useful_p0": NOUL}, "expected": {"useful_p0": i % 2 == 0},
+                "provenance": {"state_hash": f"h{i}"}}
+
+    write(folders / "data" / "useful" / "train.jsonl", [row(0, "short"), row(1, "long " * 50)])
+    write(folders / "data" / "useful" / "train.candidates.jsonl", [row(2, "unlabelled")])
+    monkeypatch.setattr(train, "tokens", lambda agent, state, q: len(state["passages"][0]["text"].split()))
+    path, left = train.merged("useful", ["train"], None, 10)
+    rows = label.read(path)
+    assert left == 1 and [r["state"]["passages"][0]["text"] for r in rows] == ["short"]
+    assert set(rows[0]) == {"state", "questions", "expected"}          # Laya's format, no provenance
+    with zipfile.ZipFile(train.pack("useful")) as z:
+        names = set(z.namelist())
+    assert {"laya/train.py", "laya/label.py", "laya/stage1.py", "laya/data/useful/train.jsonl"} <= names
+    assert not any("test_" in n or "candidates" in n or "pool" in n.split("/")[-1].split(".")[0] for n in names
+                   if n.startswith("laya/data/"))
+    assert "laya/test_laya.py" not in names

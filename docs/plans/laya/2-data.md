@@ -112,7 +112,10 @@ The passage kinds' generator is `laya/generate.py` (built 2026-10-13):
   retrieval did not finish (`prepare` ends neither `ready` nor `partial`,
   as when unavailable or out of budget, before any grade-evidence request) is left unrun with its reason, and the run stops
   (`search_unavailable`) before paying for another turn. An empty retrieval
-  is recorded as a run with no candidates.
+  is recorded as a run with no candidates. A question that fails on its own,
+  the same on every rerun (one the stubbed translator leaves unread ends
+  `normalization_failed`), is recorded as its run's error and skipped. The
+  teacher prompt asks for English in every character.
 - The captured request is checked whole, by whole state and every view. It
   gives no candidate if it is a near-duplicate of a gate state, or of a
   request whose candidates went to another split.
