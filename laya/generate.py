@@ -25,9 +25,11 @@ Nothing is sent without `--teacher`; `--dry` shows the first turn's pages.
 """
 
 import argparse
+import contextlib
 import hashlib
 import json
 import random
+import socket
 import sys
 import threading
 from pathlib import Path
@@ -111,12 +113,47 @@ def captured(query: str, project: Path = ROOT) -> list[dict]:
      knowledge.cold, search.spawn) = (evaluate, lambda *a, **k: None, lambda cfg: False, daemon_only,
                                       lambda *a, **k: None, no_spawn)
     try:
-        cfg = decision.Config("shadow", decision.MODEL, "file", key="laya-generator")
-        knowledge.prepare(query, project, cfg=cfg, cache=None, cancel=stop)
+        with loopback_only():
+            cfg = decision.Config("shadow", decision.MODEL, "file", key="laya-generator")
+            knowledge.prepare(query, project, cfg=cfg, cache=None, cancel=stop)
     finally:
         (decision.evaluate, translate._ask, knowledge.falls_back, knowledge.retrieve_from_daemon,
          knowledge.cold, search.spawn) = held
     return seen[:1]
+
+
+LOCAL = ("127.0.0.1", "::1", "localhost")
+
+
+@contextlib.contextmanager
+def loopback_only():
+    """No connection and no name lookup leaves this machine while the block runs, whatever
+    path in `knowledge.prepare` would make one (Jev, the translator, arXiv, a URL fetch):
+    the stubs above give each its answer, and this is the boundary under all of them."""
+
+    connect, connect_ex, lookup = socket.socket.connect, socket.socket.connect_ex, socket.getaddrinfo
+
+    def local(address) -> bool:
+        return isinstance(address, tuple) and str(address[0]) in LOCAL or isinstance(address, (str, bytes))
+
+    def guarded(real):
+        def call(self, address, *args):
+            if not local(address):
+                raise OSError(f"laya generator: no connection leaves this machine ({address[0]})")
+            return real(self, address, *args)
+        return call
+
+    def guarded_lookup(host, *args, **kwargs):
+        if host is not None and str(host) not in LOCAL:
+            raise OSError(f"laya generator: no name lookup leaves this machine ({host})")
+        return lookup(host, *args, **kwargs)
+
+    socket.socket.connect, socket.socket.connect_ex = guarded(connect), guarded(connect_ex)
+    socket.getaddrinfo = guarded_lookup
+    try:
+        yield
+    finally:
+        socket.socket.connect, socket.socket.connect_ex, socket.getaddrinfo = connect, connect_ex, lookup
 
 
 def searching(project: Path = ROOT) -> bool:

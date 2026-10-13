@@ -4,6 +4,7 @@
 """
 
 import json
+import socket
 
 import pytest
 
@@ -709,6 +710,10 @@ def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
         seen["cold"] = knowledge.cold({}, project, cancel)     # no index built here
         with pytest.raises(RuntimeError):
             search.spawn()
+        with pytest.raises(OSError, match="leaves this machine"):   # whatever path tries it
+            socket.create_connection(("example.com", 443), timeout=1)
+        with socket.socket() as s, pytest.raises(OSError, match="leaves this machine"):
+            s.connect(("203.0.113.1", 443))
         for stage in ("route", "judge", "judge"):
             if not cancel.is_set():
                 decision.evaluate(cfg, {"stage": stage}, {"useful_p0": NOUL}, [], None, stage)
@@ -721,6 +726,7 @@ def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
     assert seen == {"parts": None, "fallback": False, "cold": None, "project": generate.ROOT}
     assert asked == [{"start": False}]
     assert translate._ask is real and search.spawn is not None and knowledge.cold.__name__ == "cold"
+    assert socket.getaddrinfo.__module__ == "socket" and socket.socket.connect.__name__ == "connect"
 
 
 def test_the_teacher_samples_documents_the_capture_can_search():

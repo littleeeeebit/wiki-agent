@@ -99,6 +99,9 @@ The passage kinds' generator is `laya/generate.py` (built 2026-10-13):
     download embedding models. The generator refuses to start while the
     daemon does not answer, and while any gate state's text is missing from
     `laya/data/pool.jsonl`.
+  - Under all of these, no connection or name lookup leaves this machine
+    while a question runs (`loopback_only`). A path the stubs miss (arXiv, a
+    URL fetch, the Jev decider) fails there instead of sending.
 - A run's whole requests are claimed for its split (`generate.runs.jsonl`)
   before any of its candidates is written. A resumed run claimed by
   another split is left to that split.
