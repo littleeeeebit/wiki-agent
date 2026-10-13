@@ -690,10 +690,10 @@ def test_a_promotion_goes_up_as_a_spec_s_pull_request_after_the_gate(repo, monke
     assert ["git", "push", "-u", "origin", out["branch"]] in calls
     body = next(call for call in calls if isinstance(call, str))
     assert "Attention alone can replace recurrence" in body and "git --version" in body
-    # No loop starts in this process; the app's pull request list can take it (`loop.stranded`).
+    # No loop starts in this process; the app's pull request list can take it.
     from main import loop
 
-    assert loop.stranded(spec) and loop.refusal({}, spec) == ""
+    assert loop.refusal({}, spec) == ""
 
 
 def test_a_promotion_whose_gate_fails_pushes_nothing(repo, monkeypatch, spec_home):

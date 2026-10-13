@@ -1268,14 +1268,19 @@ def existing_pr(path: Path, branch: str, base: str) -> tuple[int, str] | None:
     """The open pull request of this repository from `branch` into `base`, or
     `None`. Every field is checked here, not left to `gh`'s filters: a fork's
     branch of the same name is someone else's. `RuntimeError` when GitHub
-    cannot be read — nobody can say then whether one exists."""
+    cannot be read — nobody can say then whether one exists — and when the
+    branch is already open into another base: a second PR from it is how
+    rfg_rag got #18 into dev and #19 into main, one spec between them."""
 
-    done = sh(["gh", "pr", "list", "--head", branch, "--base", base, "--state", "open",
+    done = sh(["gh", "pr", "list", "--head", branch, "--state", "open",
                "--json", "number,url,headRefName,baseRefName,isCrossRepository"], path, 60)
     if done.returncode:
         raise RuntimeError(f"열린 PR 을 확인하지 못했다 — {said(done)}")
-    rows = [r for r in json.loads(done.stdout)
-            if r.get("headRefName") == branch and r.get("baseRefName") == base and not r.get("isCrossRepository")]
+    rows = [r for r in json.loads(done.stdout) if r.get("headRefName") == branch and not r.get("isCrossRepository")]
+    other = next((r for r in rows if r.get("baseRefName") != base), None)
+    if other:
+        raise RuntimeError(f"`{branch}` 는 이미 PR #{other['number']} 로 `{other.get('baseRefName')}` 에 열려 있다 — "
+                           f"그 PR 을 닫거나 base 를 `{base}` 로 바꾼 뒤 다시 발행하세요")
     if len(rows) > 1:
         raise RuntimeError(f"`{branch}` → `{base}` 로 열린 PR 이 {len(rows)}개다")
     return (int(rows[0]["number"]), rows[0]["url"]) if rows else None

@@ -82,9 +82,8 @@ class GitHub(Remote):
             return subprocess.CompletedProcess(args, 1, "", "remote rejected\n")
         if args[:3] == ["gh", "pr", "list"] and "--head" in args:
             self.calls.append(args)
-            head, base = args[args.index("--head") + 1], args[args.index("--base") + 1]
-            return subprocess.CompletedProcess(args, 0, json.dumps([p for p in self.prs if (
-                p["headRefName"], p["baseRefName"]) == (head, base)]), "")
+            head = args[args.index("--head") + 1]
+            return subprocess.CompletedProcess(args, 0, json.dumps([p for p in self.prs if p["headRefName"] == head]), "")
         if args[:3] == ["gh", "pr", "create"]:
             self.prs.append({"number": 7, "url": "https://github.com/o/proj/pull/7", "isCrossRepository": False,
                              "headRefName": args[args.index("--head") + 1], "baseRefName": args[args.index("--base") + 1]})
@@ -741,4 +740,7 @@ def test_a_pr_that_is_already_open_is_used_not_made_again(checkout):
         assert specs.pull_request(checkout, "b", "main", "t", "body") == (9, "https://github.com/o/proj/pull/9")
         remote.prs[0]["isCrossRepository"] = True
         assert specs.pull_request(checkout, "b", "main", "t", "body")[0] == 7, "포크의 같은 이름 브랜치는 남의 것이다"
-    assert remote.creates() == 1
+        remote.prs[1]["baseRefName"] = "dev"
+        with pytest.raises(RuntimeError, match="PR #7 로 `dev`"):
+            specs.pull_request(checkout, "b", "main", "t", "body")
+    assert remote.creates() == 1, "never a second PR from a branch already open into another base"
