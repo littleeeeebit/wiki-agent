@@ -1,0 +1,496 @@
+"""The labelling pipeline, the error notebook and the loop, with stub labellers and models.
+
+    python -m pytest laya -q -p no:cacheprovider
+"""
+
+import json
+
+import pytest
+
+import label
+import loop
+import notes
+import pool
+
+NOUL = {"type": "noul", "instructions": "Is the passage useful?"}
+
+
+@pytest.fixture(autouse=True)
+def folders(tmp_path, monkeypatch):
+    monkeypatch.setattr(label, "DATA", tmp_path / "data")
+    monkeypatch.setattr(loop, "DATA", tmp_path / "data")
+    monkeypatch.setattr(notes, "NOTES", tmp_path / "notes")
+    return tmp_path
+
+
+def write(path, rows):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+
+def candidate(i):
+    return {"id": f"obs-{i}", "state_hash": f"h{i}", "state": {"text": f"state {i}"},
+            "questions": {"useful_p0": {"kind": "useful", "question": NOUL},
+                          "conflict_p0": {"kind": "conflict", "question": NOUL}}}
+
+
+def test_agreed_names_why_a_question_is_dropped():
+    yes, no = {"answer": "yes", "confidence": 0.9}, {"answer": "no", "confidence": 0.9}
+    assert label.agreed(NOUL, yes, yes) == (True, None)
+    assert label.agreed(NOUL, yes, no) == (None, "disagree")
+    assert label.agreed(NOUL, yes, {"answer": "yes", "confidence": 0.5}) == (None, "unsure")
+    assert label.agreed(NOUL, yes, {"answer": "maybe", "confidence": 0.9}) == (None, "invalid")
+    assert label.agreed(NOUL, yes, {"answer": "yes", "confidence": True}) == (None, "invalid")
+    assert label.agreed(NOUL, yes, None) == (None, "invalid")
+    assert label.agreed(NOUL, yes, "yes") == (None, "invalid")
+    assert label.agreed(NOUL, {"answer": "yes", "confidence": float("nan")}, {"answer": "yes", "confidence": 0.1}) \
+        == (None, "invalid")
+    assert label.agreed(NOUL, {"answer": "yes", "confidence": 2}, yes) == (None, "invalid")
+    assert label.agreed(NOUL, yes, yes, intended=False) == (None, "teacher_miss")
+    choice = {"type": "choice", "instructions": "?", "criteria": {"supports": "s", "contradicts": "c"}}
+    assert label.agreed(choice, {"answer": "supports", "confidence": 1}, {"answer": "supports", "confidence": 1}) \
+        == ("supports", None)
+    assert label.agreed(choice, {"answer": ["supports"], "confidence": 0.9}, yes) == (None, "invalid")
+
+
+def test_label_refills_drops_into_the_notebook_and_never_pays_twice():
+    write(label.DATA / "useful" / "train.candidates.jsonl", [candidate(i) for i in range(5)])
+    plan = {"h0": ("yes", "no"), "h1": ("yes", "yes"), "h2": ("no", "no"), "h3": ("no", "no"), "h4": ("yes", "yes")}
+    calls = []
+
+    def turn(model, state, questions):
+        calls.append((model, state["text"]))
+        assert set(questions) == {"useful_p0"}   # only the kind's questions
+        h = "h" + state["text"].split()[-1]
+        said = plan[h][0 if model == "a" else 1]
+        conf = 0.5 if h == "h2" else 0.9
+        return {"model": model, "cost_usd": 0.01, "answers": {"useful_p0": {"answer": said, "confidence": conf}}}
+
+    stats = label.label("useful", "train", 2, ["a", "b"], 100, turn=turn, log=lambda *_: None, round=1,
+                        slice=("length", "short"))
+    assert (stats["agreed"], stats["dropped"], stats["stopped"]) == (2, 2, "target")
+    assert stats["by_category"] == {"disagree": 1, "unsure": 1}
+    assert stats["turns"] == 8 and abs(stats["cost_usd"] - 0.08) < 1e-9
+    rows = label.read(label.DATA / "useful" / "train.jsonl")
+    assert [r["expected"] for r in rows] == [{"useful_p0": True}, {"useful_p0": False}]
+    assert rows[0]["provenance"] == {"state_hash": "h1", "source": "obs-1", "labellers": ["a", "b"]}
+    noted = notes.ledger("useful")
+    assert [(n["category"], n["state_hash"], n["slice"]) for n in noted] == \
+        [("disagree", "h0", ["length", "short"]), ("unsure", "h2", ["length", "short"])]
+    assert [a["answer"] for a in noted[0]["answers"]] == ["yes", "no"]
+
+    calls.clear()
+    stats = label.label("useful", "train", 3, ["a", "b"], 100, turn=turn, log=lambda *_: None)
+    assert calls == [("a", "state 4"), ("b", "state 4")]
+    # The split's whole record, not this run's: the agreement rate a resumed split reports.
+    assert (stats["agreed"], stats["dropped"], stats["states"], stats["stopped"]) == (3, 2, 5, "target")
+    assert stats["by_category"] == {"disagree": 1, "unsure": 1} and stats["turns"] == 2
+    assert len(notes.ledger("useful")) == 2   # a judged state is never noted again
+
+
+@pytest.mark.parametrize("cut", ["train.judged.jsonl", "train.jsonl"])
+def test_an_interrupted_verdict_is_finished_on_the_rerun(monkeypatch, cut):
+    row = candidate(0)
+    row["questions"] = {f"useful_p{i}": {"kind": "useful", "question": NOUL} for i in range(10)}
+    write(label.DATA / "useful" / "train.candidates.jsonl", [row])
+
+    def turn(model, state, questions):   # two agreed, eight disagreed
+        return {"model": model, "cost_usd": 0.0,
+                "answers": {n: {"answer": "yes" if int(n[8:]) < 2 or model == "a" else "no", "confidence": 0.9}
+                            for n in questions}}
+
+    original = label.append
+
+    def interrupted(path, value):
+        if path.name == cut:
+            raise RuntimeError("interrupted")
+        original(path, value)
+
+    monkeypatch.setattr(label, "append", interrupted)
+    with pytest.raises(RuntimeError):
+        label.label("useful", "train", 3, ["a", "b"], 2, turn=turn, log=lambda *_: None)
+    monkeypatch.setattr(label, "append", original)
+    stats = label.label("useful", "train", 3, ["a", "b"], 0, turn=turn, log=lambda *_: None)
+    assert (stats["agreed"], stats["dropped"], stats["states"], stats["turns"]) == (2, 8, 1, 0)
+    assert len(label.read(label.DATA / "useful" / "train.jsonl")) == 1
+    assert len(notes.ledger("useful")) == 8
+    label.label("useful", "train", 3, ["a", "b"], 0, turn=turn, log=lambda *_: None)
+    assert len(label.read(label.DATA / "useful" / "train.jsonl")) == 1 and len(notes.ledger("useful")) == 8
+
+
+def test_a_torn_last_line_was_never_written_and_corruption_is_raised(tmp_path):
+    import store
+
+    path = tmp_path / "j.jsonl"
+    store.append(path, {"a": 1})
+    with path.open("a", encoding="utf-8") as f:
+        f.write('{"b": "torn')
+    assert store.read(path) == [{"a": 1}]
+    store.append(path, {"c": 3})
+    assert store.read(path) == [{"a": 1}, {"c": 3}]
+    with path.open("a", encoding="utf-8") as f:
+        f.write('{"d": 4}')   # whole, only its newline lost
+    store.append(path, {"e": 5})
+    assert store.read(path) == [{"a": 1}, {"c": 3}, {"d": 4}, {"e": 5}]
+    path.write_text('{"a": 1}\n{"bad\n{"c": 3}\n', encoding="utf-8")
+    with pytest.raises(ValueError):
+        store.read(path)
+    path.write_bytes(b'{"good": 1}\n{"text": "' + "—".encode()[:1])   # torn inside a character
+    assert store.read(path) == [{"good": 1}]
+    store.append(path, {"next": "—"})
+    assert store.read(path) == [{"good": 1}, {"next": "—"}]
+    path.write_bytes(b'{"good": 1}\n{"text": "\xe2"}\n')   # a committed line that does not decode
+    with pytest.raises(ValueError):
+        store.read(path)
+
+
+def test_a_paid_diagnosis_is_journalled_before_its_page(monkeypatch):
+    import store
+
+    for i in range(notes.PAGE_AT):
+        notes.record("useful", "disagree", round=1, slice="base", state_hash=f"h{i}", source="s", question="q")
+    calls = []
+    original = store.write
+
+    def cut(path, text):
+        if path.name == "disagree--base.md":
+            raise RuntimeError("interrupted before the page")
+        original(path, text)
+
+    monkeypatch.setattr(store, "write", cut)
+    with pytest.raises(RuntimeError):
+        notes.write_pages("useful", lambda *_: calls.append(1) or {"cause": "Paid once.", "next": "Go on."},
+                          log=lambda *_: None, limit=1)
+    monkeypatch.setattr(store, "write", original)
+    notes.write_pages("useful", lambda *_: calls.append(1) or {"cause": "Paid twice."}, log=lambda *_: None)
+    page = (notes.NOTES / "useful" / "disagree--base.md").read_text(encoding="utf-8")
+    assert len(calls) == 1 and "Paid once." in page and "Go on." in page
+
+
+def test_a_page_whose_diagnosis_was_never_journalled_is_never_overwritten():
+    for i in range(notes.PAGE_AT):
+        notes.record("useful", "disagree", round=1, slice="base", state_hash=f"h{i}", source="s", question="q")
+    page = notes.NOTES / "useful" / "disagree--base.md"
+    page.write_text("---\ncount: 5\ndiagnosed: 5\nstatus: open\n---\n\n## Cause\n\nPaid earlier.\n\n"
+                    "## Next\n\nGo on.\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="disagree--base.md"):
+        notes.write_pages("useful", lambda *_: pytest.fail("never paid again"), log=lambda *_: None)
+    assert "Paid earlier." in page.read_text(encoding="utf-8")
+
+
+def test_notes_under_the_earlier_short_id_are_not_written_again():
+    h = "0123456789ab" + "0" * 52
+    write(notes.NOTES / "useful" / "ledger.jsonl",
+          [{"id": f"useful-0-disagree-{h[:12]}-useful_p0", "kind": "useful", "round": 0, "category": "disagree",
+            "slice": "base", "state_hash": h, "source": "s", "question": "useful_p0", "answers": []}])
+    write(label.DATA / "useful" / "train.judged.jsonl",
+          [{"state_hash": h, "labelled": 0, "dropped": 1, "by_category": {"disagree": 1}, "row": {},
+            "notes": [{"category": "disagree", "round": 0, "slice": "base", "state_hash": h, "source": "s",
+                       "question": "useful_p0", "intended": None, "state": {}, "answers": []}]}])
+    stats = label.label("useful", "train", 5, ["a", "b"], 0, turn=lambda *_: pytest.fail("no paid call"),
+                        log=lambda *_: None)
+    assert stats["dropped"] == 1 and len(notes.ledger("useful")) == 1
+
+
+def test_a_verdict_torn_mid_write_is_judged_again_from_the_ledger(monkeypatch):
+    write(label.DATA / "useful" / "train.candidates.jsonl", [candidate(0)])
+
+    def turn(model, state, questions):
+        return {"model": model, "cost_usd": 0.0,
+                "answers": {"useful_p0": {"answer": "yes" if model == "a" else "no", "confidence": 0.9}}}
+
+    original = label.append
+
+    def torn(path, value):
+        if path.name == "train.judged.jsonl":
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(value)[:30])
+            raise RuntimeError("interrupted mid-write")
+        original(path, value)
+
+    monkeypatch.setattr(label, "append", torn)
+    with pytest.raises(RuntimeError):
+        label.label("useful", "train", 1, ["a", "b"], 2, turn=turn, log=lambda *_: None)
+    monkeypatch.setattr(label, "append", original)
+    stats = label.label("useful", "train", 1, ["a", "b"], 0, turn=turn, log=lambda *_: None)
+    assert (stats["dropped"], stats["states"], stats["turns"]) == (1, 1, 0)
+    assert len(notes.ledger("useful")) == 1
+
+
+def test_records_from_before_verdicts_and_split_names_still_resume():
+    assert loop.restore([{"round": 0, "splits": ["train"]}, {"round": 1, "slice": ["options", 2], "adopted": True},
+                         {"prune": "aug-1", "removed": True}])[0] == ["train"]
+    assert loop.restore([{"round": 1, "slice": ["options", 2], "adopted": True}])[0] == ["train", "aug-1"]
+    write(label.DATA / "useful" / "train.judged.jsonl",
+          [{"state_hash": "h0", "labelled": 1, "dropped": 0, "by_category": {}}])
+    write(label.DATA / "useful" / "train.candidates.jsonl", [candidate(0)])
+    stats = label.label("useful", "train", 5, ["a", "b"], 0, turn=lambda *_: pytest.fail("no paid call"),
+                        log=lambda *_: None)
+    assert (stats["agreed"], stats["states"]) == (1, 1)
+
+
+def test_notes_of_states_sharing_a_hash_prefix_are_both_kept():
+    rows = [candidate(0), candidate(1)]
+    rows[0]["state_hash"], rows[1]["state_hash"] = "0123456789ab" + "0" * 52, "0123456789ab" + "1" * 52
+    write(label.DATA / "useful" / "train.candidates.jsonl", rows)
+
+    def turn(model, state, questions):
+        return {"model": model, "cost_usd": 0.0,
+                "answers": {"useful_p0": {"answer": "yes" if model == "a" else "no", "confidence": 0.9}}}
+
+    label.label("useful", "train", 5, ["a", "b"], 10, turn=turn, log=lambda *_: None)
+    assert len(notes.ledger("useful")) == 2
+
+
+def test_a_malformed_answer_is_noted_invalid_and_labelling_goes_on():
+    write(label.DATA / "useful" / "train.candidates.jsonl", [candidate(0), candidate(1)])
+
+    def turn(model, state, questions):
+        said = "yes" if state["text"] == "state 0" else {"answer": "yes", "confidence": 0.9}
+        return {"model": model, "cost_usd": 0.0, "answers": {"useful_p0": said}}
+
+    stats = label.label("useful", "train", 5, ["a", "b"], 100, turn=turn, log=lambda *_: None)
+    assert (stats["agreed"], stats["by_category"]) == (1, {"invalid": 1})
+    assert notes.ledger("useful")[0]["answers"] == [{"labeller": "a", "raw": "yes"}, {"labeller": "b", "raw": "yes"}]
+
+
+def test_a_failed_turn_is_skipped_then_retried_and_the_turn_limit_stops():
+    write(label.DATA / "useful" / "train.candidates.jsonl", [candidate(0)])
+    def failing(model, state, questions):
+        return {"model": model, "cost_usd": None, "answers": {}, "error": "boom"}
+
+    def ok(model, state, questions):
+        return {"model": model, "cost_usd": 0.0, "answers": {"useful_p0": {"answer": "yes", "confidence": 1}}}
+
+    stats = label.label("useful", "train", 1, ["a", "b"], 100, turn=failing, log=lambda *_: None)
+    assert (stats["agreed"], stats["dropped"], stats["stopped"]) == (0, 0, "candidates_exhausted")
+    assert notes.ledger("useful") == []   # a failure is not a disagreement
+    assert label.label("useful", "train", 1, ["a", "b"], 1, turn=ok, log=lambda *_: None)["stopped"] == "turn_limit"
+    assert label.label("useful", "train", 1, ["a", "b"], 100, turn=ok, log=lambda *_: None)["stopped"] == "target"
+    with pytest.raises(ValueError):
+        label.label("useful", "train", 1, ["a", "a"], 1, turn=ok)
+
+
+def test_notebook_pages_statuses_and_brief():
+    for i in range(notes.PAGE_AT):
+        notes.record("useful", "disagree", round=1, slice=("numbers", True), state_hash=f"h{i}", source="s",
+                     question="useful_p0", answers=[{"labeller": "a", "answer": "yes", "confidence": 0.9}])
+    notes.record("useful", "unsure", round=1, slice="base", state_hash="h9", source="s", question="q")
+    page = notes.NOTES / "useful" / "disagree--numbers-true.md"
+    assert notes.write_pages("useful", log=lambda *_: None) == ["disagree--numbers-true"]   # unsure: under PAGE_AT
+    assert notes.UNDIAGNOSED in page.read_text(encoding="utf-8") and notes.front(page)["rounds"] == "1"
+    assert notes.write_pages("useful", lambda *_: {}, log=lambda *_: None, limit=0) == []   # no turns left
+    assert notes.write_pages("useful", lambda *_: {}, log=lambda *_: None) == ["disagree--numbers-true"]
+    assert notes.UNDIAGNOSED in page.read_text(encoding="utf-8")   # a failed diagnosis is tried again later
+    seen = []
+    written = notes.write_pages("useful", lambda prompt, payload: seen.append(payload) or
+                                {"cause": "Negation flips it.", "next": "Generate negated states."},
+                                log=lambda *_: None)
+    assert written == ["disagree--numbers-true"]   # undiagnosed, though it did not grow
+    assert seen[0]["meaning"] == notes.CATEGORIES["disagree"] and len(seen[0]["errors"]) == notes.PAGE_AT
+    assert "Negation flips it." in page.read_text(encoding="utf-8")
+    assert notes.write_pages("useful", lambda *_: pytest.fail("unchanged pages are not rewritten"),
+                             log=lambda *_: None) == []
+    notes.record("useful", "disagree", round=3, slice=("numbers", True), state_hash="h7", source="s", question="q")
+    notes.write_pages("useful", lambda *_: pytest.fail("no turns left"), log=lambda *_: None, limit=0)
+    assert "Negation flips it." in page.read_text(encoding="utf-8")   # grown without a turn: kept
+    seen.clear()
+    notes.write_pages("useful", lambda prompt, payload: seen.append(payload) or {"cause": "Now numbers too."},
+                      log=lambda *_: None)
+    assert len(seen) == 1 and "Now numbers too." in page.read_text(encoding="utf-8")   # the deferred update
+    assert "Generate negated states." in page.read_text(encoding="utf-8")   # a section not given is kept
+    notes.set_status("useful", "disagree--numbers-true", "falsified", 2)
+    notes.set_status("useful", "student_wrong--length-long", "ambiguous", 3, ("length", "long"))
+    assert notes.front(page)["status"] == "falsified" and notes.front(page)["rounds"] == "1,2,3"
+    history = notes.brief("useful")
+    assert sorted(history["avoid"]) == [["length", "long"], ["numbers", True]]
+    assert {p["name"]: p["status"] for p in history["pages"]} == \
+        {"disagree--numbers-true": "falsified", "student_wrong--length-long": "ambiguous"}
+    assert history["clusters"] == {"disagree--numbers-true": 6, "unsure--base": 1}
+    assert "falsified" in (notes.NOTES / "index.md").read_text(encoding="utf-8")
+    with pytest.raises(ValueError):
+        notes.record("useful", "nope", round=0, slice="base", state_hash="h", source="s", question="q")
+
+
+def test_floor_separates_a_real_gain_from_noise():
+    universe = [(f"h{i}", "q") for i in range(40)]
+    gain, noise = loop.floor(universe, set(universe[:30]), set(universe[:12]))
+    assert gain == pytest.approx(0.45) and 0 < noise < gain
+    gain, noise = loop.floor(universe, set(universe[:12]), set(universe[1:13]))
+    assert gain == 0 and gain <= noise
+    # Ten states of twenty questions each, moving together: ten draws, not two hundred.
+    universe = [(f"h{i}", f"q{j}") for i in range(10) for j in range(20)]
+    old = {x for x in universe if int(x[0][1:]) < 7}
+    gain, noise = loop.floor(universe, old, set(universe) - old)
+    assert gain == pytest.approx(0.4) and noise > gain
+
+
+def validation():
+    rows = [{"state": {"text": f"state {i}"}, "questions": {"useful_p0": NOUL}, "expected": {"useful_p0": i < 20},
+             "provenance": {"state_hash": f"h{i}", "source": f"obs-{i}"}} for i in range(40)]
+    write(loop.DATA / "useful" / "validation.jsonl", rows)
+    return [(f"h{i}", "useful_p0") for i in range(40)]
+
+
+def train_stub(kind, splits):
+    return tuple(splits)
+
+
+def test_the_loop_adopts_falsifies_explores_and_prunes():
+    keys = validation()
+    asked, limits = [], []
+
+    def score(kind, ckpt):
+        wrong = set(keys[:12] if "aug-1" in ckpt else keys[:30])
+        return wrong, {k: False for k in wrong}
+
+    def generate(kind, slice, n, history, round, max_turns):
+        asked.append((round, slice))
+        limits.append(max_turns)
+        done = [r["round"] for r in history["rounds"] if "slice" in r and not r.get("started")]
+        assert done == list(range(1, round))   # every earlier round's outcome
+        started = label.read(loop.DATA / kind / "rounds.jsonl")[-1]
+        assert (started["round"], started["started"]) == (round, True)   # journalled before any paid turn
+        return 5
+
+    def label_(kind, split, target, round, slice, max_turns):
+        limits.append(max_turns)
+        agreed = 3 if round == 3 else 27
+        return {"agreed": agreed, "dropped": 30 - agreed, "turns": 10, "stopped": "target"}
+
+    out = loop.run("useful", train=train_stub, score=score, generate=generate, label=label_, max_turns=1000,
+                   round_turns=20, log=lambda *_: None)
+    assert out["splits"] == ["train", "aug-1"] and out["accuracy"] == pytest.approx(28 / 40)
+    assert out["spent"] == 45 and limits[:4] == [1000, 995, 985, 980]
+    # Round 2 aims at the highest error rate left; once it is falsified, round 3 tries
+    # another feature, and the slice round 1 aimed at is still open (`targeted`).
+    assert asked == [(1, ("options", 2)), (2, ("label", "True")), (3, ("options", 2))]
+    log = [r for r in label.read(loop.DATA / "useful" / "rounds.jsonl") if not r.get("started")]
+    assert [r.get("adopted") for r in log[1:4]] == [True, False, False]
+    assert log[2]["reason"] == "within_noise" and log[3]["reason"] == "ambiguous_slice"
+    assert log[4]["prune"] == "aug-1" and log[4]["removed"] is False
+    assert sorted(notes.brief("useful")["avoid"]) == [["label", "True"], ["options", 2]]
+    left = [n for n in notes.ledger("useful") if n["round"] == 1]
+    assert len(left) == 12 and all(n["slice"] == ["options", 2] for n in left)
+
+
+def test_labelling_that_stops_short_stops_the_loop_without_condemning_the_slice():
+    keys = validation()
+
+    def score(kind, ckpt):
+        return set(keys[:30]), {}
+
+    def generate(kind, slice, n, history, round, max_turns):
+        return 0
+
+    def short(kind, split, target, round, slice, max_turns):
+        return {"agreed": 0, "dropped": 0, "turns": max_turns, "stopped": "turn_limit"}
+
+    out = loop.run("useful", train=train_stub, score=score, generate=generate, label=short, max_turns=20,
+                   round_turns=20, writer=lambda *_: pytest.fail("notes take only what a round leaves"),
+                   log=lambda *_: None)
+    log = label.read(loop.DATA / "useful" / "rounds.jsonl")
+    assert log[-1]["stopped"] == "labelling_incomplete" and out["spent"] == 20
+    assert notes.brief("useful")["avoid"] == []
+    assert notes.front(notes.NOTES / "useful" / "student_wrong--options-2.md")["status"] == "targeted"
+
+
+def test_running_the_loop_again_continues_it():
+    keys = validation()
+    calls = []
+
+    def score(kind, ckpt):
+        return set(keys[:12] if "aug-2" in ckpt else keys[:30]), {}
+
+    def generate(kind, slice, n, history, round, max_turns):
+        calls.append((round, slice))
+        path = loop.DATA / kind / f"aug-{round}.candidates.jsonl"
+        if not path.exists():
+            write(path, [{"slice": list(slice)}])
+        return 0
+
+    results = iter([{"agreed": 0, "dropped": 0, "turns": 5, "stopped": "turn_limit"},   # run 1, round 1
+                    {"agreed": 27, "dropped": 3, "turns": 5, "stopped": "target"},      # run 2, round 1 resumed
+                    {"agreed": 27, "dropped": 3, "turns": 5, "stopped": "target"}])     # run 2, round 2
+
+    def label_(kind, split, target, round, slice, max_turns):
+        return next(results)
+
+    common = {"train": train_stub, "score": score, "generate": generate, "label": label_, "round_turns": 5,
+              "log": lambda *_: None}
+    loop.run("useful", max_turns=5, **common)
+    out = loop.run("useful", max_turns=10, **common)
+    # Round 1 resumes with its own slice; it is falsified, so round 2 is a new number and a new split.
+    assert calls == [(1, ("options", 2)), (1, ("options", 2)), (2, ("length", "short"))]
+    assert out["splits"] == ["train", "aug-2"]
+    assert loop.restore(label.read(loop.DATA / "useful" / "rounds.jsonl")) == \
+        (["train", "aug-2"], set(), 2, None, (2, ("length", "short")))
+
+    def wrong_slice(kind, slice, n, history, round, max_turns):
+        write(loop.DATA / kind / f"aug-{round}.candidates.jsonl", [{"slice": ["length", "long"]}])
+        return 0
+
+    with pytest.raises(ValueError):
+        loop.run("useful", max_turns=10, **common | {"generate": wrong_slice})
+
+
+@pytest.mark.parametrize("cut", ["outcome", "status"])
+def test_an_interruption_around_a_rounds_outcome_resumes_the_same_round(monkeypatch, cut):
+    keys = validation()
+    calls = []
+
+    def generate(kind, slice, n, history, round, max_turns):
+        calls.append((round, slice))
+        path = loop.DATA / kind / f"aug-{round}.candidates.jsonl"
+        if not path.exists():
+            write(path, [{"slice": list(slice)}])
+        return 0
+
+    common = {"train": train_stub, "score": lambda kind, ckpt: (set(keys[:30]), {}), "generate": generate,
+              "label": lambda *_: {"agreed": 27, "dropped": 3, "turns": 0, "stopped": "target"},
+              "rounds": 1, "max_turns": 10, "round_turns": 5, "log": lambda *_: None}
+    original_append, original_status = loop.append, notes.set_status
+
+    def append(path, row):
+        if row.get("reason") == "within_noise":
+            raise RuntimeError("interrupted before the outcome")
+        original_append(path, row)
+
+    def set_status(kind, name, status, round, slice="base"):
+        if status == "falsified":
+            raise RuntimeError("interrupted before the page")
+        original_status(kind, name, status, round, slice)
+
+    if cut == "outcome":
+        monkeypatch.setattr(loop, "append", append)
+    else:
+        monkeypatch.setattr(notes, "set_status", set_status)
+    with pytest.raises(RuntimeError):
+        loop.run("useful", **common)
+    monkeypatch.setattr(loop, "append", original_append)
+    monkeypatch.setattr(notes, "set_status", original_status)
+    loop.run("useful", **common | {"rounds": 2})
+    page = notes.NOTES / "useful" / "student_wrong--options-2.md"
+    assert notes.front(page)["status"] == "falsified"
+    if cut == "outcome":   # the outcome was never journalled: round 1 is done again, on its own slice
+        assert calls[:2] == [(1, ("options", 2)), (1, ("options", 2))]
+    else:                  # journalled: replayed onto the page, and round 2 moves on
+        assert calls[:2] == [(1, ("options", 2)), (2, ("length", "short"))]
+
+
+def test_a_round_that_does_not_fit_the_budget_never_starts():
+    keys = validation()
+    out = loop.run("useful", train=train_stub, score=lambda kind, ckpt: (set(keys[:30]), {}),
+                   generate=lambda *_: pytest.fail("no paid call"), label=lambda *_: pytest.fail("no paid call"),
+                   max_turns=19, round_turns=20, log=lambda *_: None)
+    assert out["spent"] == 0 and label.read(loop.DATA / "useful" / "rounds.jsonl")[-1]["stopped"] == "budget"
+
+
+def test_pool_keeps_one_row_per_state_and_unwraps_requests():
+    sent = {"state": {"q": "x"}, "questions": {"useful_p0": {"question": NOUL}, "mystery_1": NOUL}}
+    found = [{"id": "late", "startTime": "2026-02", "input": json.dumps(sent), "metadata": {}},
+             {"id": "early", "startTime": "2026-01", "input": sent, "metadata": {"decision_kind": "retrieval"}},
+             {"id": "other", "startTime": "2026-03", "input": {"state": {"q": "y"}, "questions": {"mystery_1": NOUL}}}]
+    out = pool.rows(found)
+    assert [r["id"] for r in out] == ["early"]
+    assert out[0]["questions"] == {"useful_p0": {"kind": "useful", "question": NOUL}}

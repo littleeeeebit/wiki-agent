@@ -10,22 +10,27 @@ under rules that keep the gate test independent.
 Reserved by stage 1 before any measurement, so no checkpoint choice,
 augmentation, calibration or threshold fit ever sees it.
 
-- Admitted. Only states production really sent: decision requests in
-  `raw/eval/jev` runs of the real app or CLI, `raw/actions` rows, and replay
-  tapes. A state from a synthetic or model-authored set is not admitted,
+- Admitted. Only states production really sent: decision requests the
+  local Langfuse traced (`route-question`, `grade-evidence`,
+  `judge-claims`; the run logs keep only input digests) and action requests
+  kept in `raw/specs`, collected by `laya/pool.py` into
+  `laya/data/pool.jsonl`. A state from a synthetic or model-authored set is not admitted,
   wherever its run log lives: `review-routing*.json` and its runs say
   "synthetic, model-authored" with `reviewed_by` null, and `actions.json` is
   a built fixture.
 - Unit. One logical state counts once: replays, retries, cache hits and
   trace copies of the same state hash, and near-duplicates (shingle Jaccard
   ≥ 0.8 on the state text), collapse to one test state.
-- Labels. Each test state is labelled by a person, who sees the state and
-  the question, not Jev's or any model's answer. The label records who and
-  when. An existing label is reused only if a person reviewed it and the
-  record says so.
+- Labels. No person labels the gate test (owner, 2026-10-13). Where its
+  answers come from is open and is decided before stage 6; whatever the
+  source, it never sees Jev's or a candidate model's answer, and the record
+  names it.
 - Size. Up to 300 per kind, chosen at random from what is admitted. A kind
-  with fewer than 100 is reported in stage 6 as inconclusive and stays on
-  TypeSafe.
+  with fewer than 100 stays on TypeSafe until enough accumulate. Distinct
+  states in the pool on 2026-10-13: `coverage` 187; `useful`, `conflict`
+  and `redirect` 185; `route`, `analysis` and `source` 88; `ask` 40,
+  `answers` 39, `repair` 31, `relation` and `progress` 24, `action` 15,
+  `faithful` 8.
 - Diagnostics. Synthetic and model-authored sets, and the development pool,
   are evaluated in stage 6 and reported beside the gate, never as it.
 
@@ -77,8 +82,10 @@ test is separate, above.
 ## Format
 
 Read Laya's fine-tuning format from its repository (L2) before writing the
-builder; store `eval/laya/<kind>/{train,validation,calibration}.jsonl` in
-that format plus a provenance field.
+builder; store `laya/data/<kind>/{train,validation,calibration}.jsonl` in
+that format plus a provenance field. Candidates go to
+`<split>.candidates.jsonl` in `laya/pool.py`'s row shape, with each
+generated question's intended answer.
 
 ## Acceptance
 
@@ -99,4 +106,4 @@ budget and resuming without paying twice.
 
 ## Rollback
 
-Data only; delete `eval/laya/<kind>`.
+Data only; delete `laya/data/<kind>`.

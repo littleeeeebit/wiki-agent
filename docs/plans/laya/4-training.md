@@ -19,7 +19,9 @@ fit its thresholds.
   stage 1's length rule (TypeSafe, else `unavailable`); no state is cut.
 - Early stopping on validation. Seed, data hashes and config recorded with
   each checkpoint as `laya-<kind>-v<N>`.
-- Route first, end to end through stage 6, before the other thirteen.
+- `useful` first, end to end through stage 6, before the other kinds; each
+  of those starts once it has at least 100 production states.
+- Code: `laya/train.py` and `laya/notebooks/train.ipynb`.
 
 ## Calibration and policy
 

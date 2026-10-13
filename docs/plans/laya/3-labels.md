@@ -3,30 +3,59 @@
 See the [overview](0-overview.md). After [stage 2](2-data.md).
 
 Purpose. Give every train, validation and calibration state a label two
-independent LLMs agree on, and send the rest to a person, until each kind
-has 3,000 usable train labels, 300 validation and 300 calibration. The gate
-test is labelled by a person only (stage 2).
+independent LLMs agree on, dropping the rest, until each kind has 3,000
+usable train labels, 300 validation and 300 calibration. No person labels
+anything (owner, 2026-10-13). Where the gate test's answers come from is
+still open (stage 2).
 
 ## Rule (all three splits)
 
 - Two labellers from different model families each answer the kind's
   question for the state, with the same instructions Jev receives, and give
-  a probability.
-- Agreement: same answer, both probabilities at least 0.7. An agreed state
-  is usable with that answer.
-- Disagreement, or agreement below 0.7: the human queue. A person's label
-  makes it usable; a state the person marks ambiguous is dropped.
+  a probability. They run as host turns (`agent.chat_session.oneshot`: no
+  tools, an empty folder) with `laya/prompts/label.md`.
+- Agreement: same valid answer, both probabilities at least 0.7, and, for a
+  generated state, the answer the generator intended. An agreed question is
+  usable with that answer.
+- Anything else is dropped: a disagreement, an agreement below 0.7, an
+  invalid answer, or an agreed answer other than the intended one. Each
+  drop is a line of the error notebook (below) with its category.
+- A failed turn settles nothing: it is retried on a rerun, never read as a
+  disagreement.
 - Validation and calibration take the same rule. The same two labellers are
   used for all three splits, so their cost is in the budget below.
-- Each label records labeller models, prompts, probabilities and, for a
-  person, who and when.
+- Each label records labeller models, the source observation and the state
+  hash.
+
+## Error notebook
+
+A local wiki under `laya/notes/` (ignored by Git: it quotes production
+states) keeps every question the pipeline drops or the trained model gets
+wrong, so a later round reads why, as RRSI keeps its history:
+
+| Category | Recorded when |
+| --- | --- |
+| `disagree` | the two labellers gave different answers |
+| `unsure` | the same answer, but a confidence under 0.7 |
+| `invalid` | an answer the question does not offer, missing, or malformed |
+| `teacher_miss` | the labellers agreed on an answer other than the generator's |
+| `off_slice` | a generated state lacks the feature its slice was aimed at |
+| `leak` | a generated state duplicates a gate or validation state |
+| `student_wrong` | the trained model answered a validation question wrongly |
+
+Each error is one ledger line (`<kind>/ledger.jsonl`). A cluster of one
+category and one slice gets a page (`<kind>/<category>--<slice>.md`) at
+five errors: front matter (kind, category, slice, count, rounds, status)
+and cases written by code, cause and next action written by a model
+(`laya/prompts/note.md`). Status moves `open` → `targeted` → `resolved`,
+`falsified` or `ambiguous`. `laya/README.md` has the page format.
 
 ## Completion and refill
 
 - A split is complete when it holds its target of usable labels (train
   3,000, validation 300, calibration 300).
-- A dropped state, or one beyond the kind's human cap, is replaced from
-  stage 2's 20% surplus, labelled under the same rule.
+- A dropped question's place is filled from stage 2's 20% surplus,
+  labelled under the same rule.
 - If the surplus runs out before a split is complete, the kind stops at
   stage 3 and is reported with its counts. It does not train on fewer.
   Generating more needs the owner's approval as a new budget.
@@ -45,34 +74,34 @@ may stop short (below). The real figure comes from the pilot.
 
 ## Pilot, then the full run
 
-1. Pilot: 200 states of the kind, with the owner's approval of its
-   budget. Measure agreement rate, human queue size, cost per label, and
-   agreement with human labels on development cases.
-2. The owner approves the full run with those numbers, a total spend limit
-   and a per-kind human cap. The tool stops at the limit; spend already made
-   is reported, not undone.
+1. Pilot: 200 states of `useful`, with the owner's approval of its
+   budget. Measure agreement rate, drops by category, and cost per label.
+2. The owner approves the full run with those numbers and a total turn
+   limit. The tool stops at the limit; spend already made is reported, not
+   undone.
 
 ## Tool
 
-`tool/eval/laya_label.py`: `label <kind>` runs both labellers within a
-budget (calls, tokens, seconds) and resumes without paying twice;
-`review <kind>` shows the queue one state at a time in the terminal.
+`laya/label.py <kind> <split> --target N --labellers A B --max-turns N`
+runs both labellers within the turn limit and resumes without paying twice;
+nothing is sent without `--labellers`, and `--dry` shows the first turn.
+`laya/notes.py` keeps the error notebook.
 
 ## Acceptance
 
 - Each kind's three splits are complete with usable labels and
   provenance, or the kind is stopped and reported.
-- Reported per kind and split: agreement rate, human count, drop count,
-  refills, spend.
+- Reported per kind and split: agreement rate, drops by category, refills,
+  turns and spend.
 
 ## Tests
 
-`tool/test_laya_label.py` with stubbed labellers: agreement threshold;
-validation and calibration labelled under the same rule; refill from
-surplus after drops; stop when the surplus runs out; resume without paying
-twice; budget stop; queue routing; gate test states never reaching any
-split.
+`laya/test_laya.py` with stubbed labellers: every drop category; refill
+after drops; resume without paying twice; a failed turn retried, not
+counted as a disagreement; the turn limit; notebook pages, statuses and the
+generator's brief.
 
 ## Rollback
 
-Labels are files beside the data; delete them. No product code changes.
+Labels and the notebook are local files under `laya/data/` and
+`laya/notes/`; delete them. No product code changes.
