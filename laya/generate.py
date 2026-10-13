@@ -13,8 +13,9 @@ Files under `laya/data/<kind>/`:
 - `generate.ledger.jsonl` — every teacher turn, `pending` before it is sent and whole once
   it returns: seed, pages, queries, model, cost. A rerun runs the queries already paid for
   before it asks for more, and starts no turn while one is unsettled.
-- `generate.runs.jsonl` — every query's run: its split, how many candidates it gave, and
-  the whole requests they came from, so a rerun never runs a query twice.
+- `generate.runs.jsonl` — every query's run: first its claim (the whole requests it
+  captured, for its split), then how many candidates it gave, so a rerun never runs a
+  query twice and never splits one request across splits.
 - `<split>.candidates.jsonl` — the candidates, `label.py`'s input.
 
     python laya/generate.py useful train --target 50 --teacher opus --max-turns 3
@@ -95,15 +96,37 @@ def captured(query: str, project: Path = ROOT) -> list[dict]:
                  "confidence": 0.5, "probabilities": {c: 1 / len(q["criteria"]) for c in q["criteria"]}}
                 for n, q in questions.items()}
 
-    translate = knowledge.translate
-    held = decision.evaluate, translate._ask, knowledge.falls_back
-    decision.evaluate, translate._ask, knowledge.falls_back = evaluate, lambda *a, **k: None, lambda cfg: False
+    def no_spawn():
+        raise RuntimeError("laya generator: the search daemon must already be running")
+
+    def daemon_only(req, project_, timeout, *args, **kwargs):
+        return real_retrieve(req, project_, timeout, *args, **{**kwargs, "start": False})
+
+    # Retrieval only from a daemon already running: none is started, and no index is built in
+    # this process, either of which may download embedding models (`search.daemon`).
+    translate, search, real_retrieve = knowledge.translate, sys.modules["search"], knowledge.retrieve_from_daemon
+    held = (decision.evaluate, translate._ask, knowledge.falls_back, knowledge.retrieve_from_daemon,
+            knowledge.cold, search.spawn)
+    (decision.evaluate, translate._ask, knowledge.falls_back, knowledge.retrieve_from_daemon,
+     knowledge.cold, search.spawn) = (evaluate, lambda *a, **k: None, lambda cfg: False, daemon_only,
+                                      lambda *a, **k: None, no_spawn)
     try:
         cfg = decision.Config("shadow", decision.MODEL, "file", key="laya-generator")
         knowledge.prepare(query, project, cfg=cfg, cache=None, cancel=stop)
     finally:
-        decision.evaluate, translate._ask, knowledge.falls_back = held
+        (decision.evaluate, translate._ask, knowledge.falls_back, knowledge.retrieve_from_daemon,
+         knowledge.cold, search.spawn) = held
     return seen[:1]
+
+
+def searching(project: Path = ROOT) -> bool:
+    """Whether the search daemon is running and answers, asked without starting one."""
+
+    if str(ROOT / "tool") not in sys.path:
+        sys.path.append(str(ROOT / "tool"))
+    import search
+
+    return search.ask("laya generator readiness", project, timeout=10.0, start=False) is not None
 
 
 def candidates(kind: str, requests: list[dict], provenance: dict) -> list[dict]:
@@ -138,7 +161,7 @@ def unsettled(ledger: list[dict]) -> list[int]:
 
 
 def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, seed: int = 0,
-             capture=captured, turn=teacher_turn, log=print) -> dict:
+             capture=captured, turn=teacher_turn, log=print, ready=None) -> dict:
     """Candidates for `split` of `kind` up to `target`; stops at `max_turns` teacher turns
     in this run. What was paid for before (the ledger) is run before any new turn.
 
@@ -149,20 +172,37 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
     A captured request is checked whole before it is cut into views: one near-duplicate of
     a gate state (by whole state or any view) gives no candidate, nor one near a request
     whose candidates went to another split. Each view is then checked against every
-    candidate kept, in any split."""
+    candidate kept, in any split.
+
+    A run's requests are claimed for its split (`claim`) before any candidate is written,
+    so an interruption between the two cannot let a resumed run send the same request's
+    other views to another split. A run claimed by another split is left for that split.
+
+    Nothing starts without every gate state's text in the pool, or without the search
+    daemon answering: either would make queries that cannot be checked or captured."""
 
     if kind not in PASSAGE:
         raise ValueError(f"{kind}: the generator writes passage kinds ({', '.join(PASSAGE)}) only")
     folder = DATA / kind
     ledger, runs = folder / "generate.ledger.jsonl", folder / "generate.runs.jsonl"
-    near_gate = gate.Near([r for r in read(gate.POOL) if r["state_hash"] in gate.reserved()])
-    origins, sides = gate.Near(), []
-    done = set()
+    reserved = gate.reserved()
+    gated = [r for r in read(gate.POOL) if r["state_hash"] in reserved]
+    missing = reserved - {r["state_hash"] for r in gated}
+    if missing:
+        raise SystemExit(f"{len(missing)} gate states are not in {gate.POOL.name}; "
+                         "run laya/pool.py before generating")
+    if not (ready or searching)():
+        raise SystemExit("the search daemon is not answering; start it before generating")
+    near_gate = gate.Near(gated)
+    origins, sides, claimed, done = gate.Near(), [], {}, set()
     for r in read(runs):
-        done.add(r["run"])
-        for o in r.get("originals", []):
-            origins.add(o)
-            sides.append(r["split"])
+        if "claim" in r:
+            claimed[r["run"]] = r["split"]
+            for o in r["claim"]:
+                origins.add(o)
+                sides.append(r["split"])
+        else:
+            done.add(r["run"])
     near = gate.Near(row for s in SPLITS for row in read(folder / f"{s}.candidates.jsonl"))
     have = len(read(folder / f"{split}.candidates.jsonl"))
     stats = {"turns": 0, "cost_usd": 0.0, "queries": 0, "kept": 0, "near_gate": 0, "other_split": 0,
@@ -172,7 +212,7 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
         nonlocal have
         for i, q in enumerate(entry["queries"]):
             run = f"t{entry['seed']}-q{i}"
-            if run in done or have >= target:
+            if run in done or have >= target or claimed.get(run, split) != split:
                 continue
             provenance = {"generator": "laya/generate.py", "prompt_version": entry["prompt_version"],
                           "teacher": entry["model"], "seed": entry["seed"], "pages": entry["pages"],
@@ -189,10 +229,17 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
             for req in requests:
                 if near_gate.found(whole(req)):
                     stats["near_gate"] += asked
-                elif any(sides[h] != split for h in origins.found(whole(req))):
+                elif any(sides[h] != split for h in origins.found(whole(req))):   # its own claim is this split
                     stats["other_split"] += asked
                 else:
                     kept_requests.append(req)
+            if run not in claimed:
+                originals = [whole(req) for req in kept_requests]
+                append(runs, {"run": run, "split": split, "claim": originals})
+                claimed[run] = split
+                for o in originals:
+                    origins.add(o)
+                    sides.append(split)
             kept = 0
             for row in candidates(kind, kept_requests, provenance):
                 if near.found(row):
@@ -201,11 +248,7 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
                     append(folder / f"{split}.candidates.jsonl", row)
                     near.add(row)
                     have, kept = have + 1, kept + 1
-            originals = [whole(req) for req in kept_requests]
-            append(runs, {"run": run, "split": split, "candidates": kept, "originals": originals})
-            for o in originals:
-                origins.add(o)
-                sides.append(split)
+            append(runs, {"run": run, "split": split, "candidates": kept})
             done.add(run)
             stats["queries"] += 1
             stats["kept"] += kept

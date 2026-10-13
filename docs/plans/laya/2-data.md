@@ -94,6 +94,14 @@ The passage kinds' generator is `laya/generate.py` (built 2026-10-13):
     - A question is not split into parts (`translate.parts`), where
       production may split one.
   - No host fallback runs.
+  - Retrieval asks only a search daemon already running. None is
+    started and no index is built in the process, either of which may
+    download embedding models. The generator refuses to start while the
+    daemon does not answer, and while any gate state's text is missing from
+    `laya/data/pool.jsonl`.
+- A run's whole requests are claimed for its split (`generate.runs.jsonl`)
+  before any of its candidates is written. A resumed run claimed by
+  another split is left to that split.
 - The captured request is checked whole, by whole state and every view. It
   gives no candidate if it is a near-duplicate of a gate state, or of a
   request whose candidates went to another split.

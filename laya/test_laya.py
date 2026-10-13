@@ -24,6 +24,7 @@ def folders(tmp_path, monkeypatch):
     monkeypatch.setattr(loop, "DATA", tmp_path / "data")
     monkeypatch.setattr(notes, "NOTES", tmp_path / "notes")
     monkeypatch.setattr(generate, "DATA", tmp_path / "data")
+    monkeypatch.setattr(generate, "searching", lambda: True)
     monkeypatch.setattr(gate, "POOL", tmp_path / "pool.jsonl")
     monkeypatch.setattr(gate, "TESTS", tmp_path / "tests.json")
     write(tmp_path / "pool.jsonl", [])
@@ -653,6 +654,41 @@ def test_a_teacher_turn_left_pending_stops_new_turns_until_it_is_abandoned(folde
         generate.abandon("useful", 1)                          # settled, not pending
 
 
+def test_generate_refuses_without_every_gate_state_or_a_running_search(folders):
+    teacher = Teacher()
+    (folders / "tests.json").write_text(json.dumps({"tests": [[{"state_hash": "missing"}]]}), encoding="utf-8")
+    with pytest.raises(SystemExit):
+        generate.generate("useful", "train", 1, "opus", 1, capture=judged, turn=teacher)
+    (folders / "tests.json").write_text('{"tests": []}', encoding="utf-8")
+    with pytest.raises(SystemExit):
+        generate.generate("useful", "train", 1, "opus", 1, capture=judged, turn=teacher, ready=lambda: False)
+    assert teacher.turns == []
+
+
+def test_a_run_interrupted_after_its_candidates_keeps_its_request_on_its_split(folders, monkeypatch):
+    real, runs_written = generate.append, []
+
+    class Interrupted(BaseException):
+        pass
+
+    def append(path, row):
+        if path.name == "generate.runs.jsonl":
+            runs_written.append(row)
+            if len(runs_written) == 2:   # the claim is written, then a candidate, then this: the run's end
+                raise Interrupted()
+        real(path, row)
+
+    monkeypatch.setattr(generate, "append", append)
+    teacher = Teacher()
+    with pytest.raises(Interrupted):
+        generate.generate("useful", "train", 1, "opus", 1, capture=judged, turn=teacher, log=lambda *_: None)
+    monkeypatch.setattr(generate, "append", real)
+    out = generate.generate("useful", "validation", 5, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
+    validation = label.read(folders / "data" / "useful" / "validation.candidates.jsonl")
+    assert {r["provenance"]["run"] for r in validation} == {"t0-q1"}   # t0-q0 stays train's
+    assert out["have"] == 2 and teacher.turns == [0]
+
+
 def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
     import sys
     if str(generate.ROOT / "tool") not in sys.path:
@@ -661,11 +697,18 @@ def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
     import translate
     from main import knowledge
 
-    seen = {}
+    import search
+
+    seen, asked = {}, []
+    monkeypatch.setattr(knowledge, "retrieve_from_daemon", lambda *a, **k: asked.append(k) or None)
 
     def prepare(query, project, cfg, cache, cancel):
         seen["parts"] = translate.parts(query, 1e12)           # the translator's only request answers nothing
         seen["fallback"] = knowledge.falls_back(cfg)
+        knowledge.retrieve_from_daemon({}, project, 1.0)       # a running daemon only
+        seen["cold"] = knowledge.cold({}, project, cancel)     # no index built here
+        with pytest.raises(RuntimeError):
+            search.spawn()
         for stage in ("route", "judge", "judge"):
             if not cancel.is_set():
                 decision.evaluate(cfg, {"stage": stage}, {"useful_p0": NOUL}, [], None, stage)
@@ -675,8 +718,9 @@ def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
     real = translate._ask
     got = generate.captured("Who owns deployment, and which port?")
     assert got == [{"state": {"stage": "judge"}, "questions": {"useful_p0": NOUL}}]
-    assert seen == {"parts": None, "fallback": False, "project": generate.ROOT}
-    assert translate._ask is real
+    assert seen == {"parts": None, "fallback": False, "cold": None, "project": generate.ROOT}
+    assert asked == [{"start": False}]
+    assert translate._ask is real and search.spawn is not None and knowledge.cold.__name__ == "cold"
 
 
 def test_the_teacher_samples_documents_the_capture_can_search():
