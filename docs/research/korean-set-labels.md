@@ -4,8 +4,9 @@ Reliability PR 9 counts a Korean translation as a loss when its normalized
 English fails the set's labels. The labels must reject a translation that
 changed a number, flipped a negation or lost a condition. They must accept the
 common faithful wordings. This page is PR 8's research step for the set review
-(#135). The same P1 class came back in rounds 1 and 2. This is research and fix
-cycle 1 of at most 2.
+(#135). The same P1 class came back in rounds 1 and 2: research and fix cycle
+1 of at most 2. It came back again in round 3: cycle 2, the last (see
+"Cycle 2").
 
 ## Problem and invariant
 
@@ -47,26 +48,28 @@ behavioural testing of NLP models.
 | S2 | [Wang et al. 2021, "As Easy as 1, 2, 3"](https://arxiv.org/abs/2107.08357) | Numerical errors are widespread across commercial and research translation systems. The mitigations treat numbers separately and add sanity checks. These are suite-level findings, not a checker design. |
 | S3 | [Hossain et al. 2020, "It's not a Non-Issue"](https://arxiv.org/abs/2010.05432) | Translation of negation remains an error source. Negation is detected through cues and their scope. |
 | S4 | [Tang et al. 2021, "Revisiting Negation in NMT"](https://arxiv.org/abs/2107.12203) | Negation errors are insertions or deletions of cues. Deletion is the harder case for systems and evaluation. Its contrastive evaluation follows LingEval97's polarity category. |
-| S5 | Chapman et al. 2001, NegEx ([J. Biomed. Inform. 34(5)](https://doi.org/10.1006/jbin.2001.1029)) | Rule-based negation. A trigger negates terms within a window of about five words. Pseudo-triggers (`no increase`, `not only`) negate nothing. Terminators (`but`, `however`) end the scope. Post-triggers negate the terms before them. The method is precise in clinical text and misses long-range scope. |
+| S5 | Chapman et al. 2001, NegEx ([J. Biomed. Inform. 34(5)](https://doi.org/10.1006/jbin.2001.1029), §2.1, §4, Appendix) | Rule-based negation of findings already indexed as clinical terms (UMLS). Pre-triggers and post-triggers each negate a term at most five intervening tokens away, a token being a word or a UMLS term. Pseudo-negation phrases negate nothing; the 2001 list holds its own phrases, not the ones this page uses. §4 reports false positives where a negation reaches an adjacent, separate proposition. |
+| S8 | Harkema et al. 2009, ConText ([J. Biomed. Inform. 42(5)](https://doi.org/10.1016/j.jbi.2009.05.002)) | NegEx's successor. A trigger's scope runs to the sentence's end or to a termination term (such as `but`), not over a fixed window. |
 | S6 | [Ribeiro et al. 2020, CheckList](https://arxiv.org/abs/2005.04118) | Behavioural testing with three test types. Minimum functionality tests check targeted cases. Invariance tests apply perturbations that must not change the result. Directional tests apply perturbations that must change it. Templates and perturbations find failures that held-out accuracy hides. |
-| S7 | Translation QA tools: Xbench's numeric mismatch check and Trados's number verifier (vendor documentation) | Commercial QA matches numbers as whole tokens and normalizes their formats. Boundary handling is the documented source of false matches. |
+| S7 | [Xbench QA features](https://docs.xbench.net/user-guide/work-qa-features/) | Translation QA ships a numeric mismatch check between source and target. The page establishes that the check exists, not how it draws token boundaries. |
 
 ## Core theory
 
 S1 and S4 define the losses that matter as a number change or a polarity change
-(interpretation: the set's losses match the WMT critical categories). S2 and S7
-show that numbers need a token-level check, not a substring check. S3 and S5
-show that polarity is a property of a cue and its scope, not of the words
-present. A check that only finds a phrase cannot tell `has alt text` from
+(interpretation: the set's losses match the WMT critical categories). S2 shows
+that numbers need their own check, and S7 that translation QA has one
+(interpretation: a substring check is not one). S3, S5 and S8 show that
+polarity is a property of a cue and its scope, not of the words present. A check that only finds a phrase cannot tell `has alt text` from
 `does not have alt text`. S6 supplies the test method: directional
 perturbations that must flip the outcome, and faithful rewordings that must not.
 
 ## Applicability
 
 The checker runs on short English rule and fact sentences, written by the
-translator from a known Korean source. The negation patterns are those of S5's
-setting: a cue a few words before or after its term, with clause punctuation
-as the boundary. Numbers in the set are integers, decimals, comma thousands,
+translator from a known Korean source. S5 and S8 were built and measured on
+clinical findings, not on policy sentences matched as substrings. Carrying
+their window and terminators here is this page's own inference, and the
+sweeps below are its only test (interpretation). Numbers in the set are integers, decimals, comma thousands,
 times and percentages, the formats `meaning.joins` already treats as one
 token for literals.
 
@@ -89,9 +92,10 @@ token for literals.
 - A model judge for meaning: rejected. PR 9's design keeps the translating
   model from grading its own output, and a second model would add cost and its
   own variance to every arm.
-- Dependency-parse negation scope: more accurate than a window (S3), but it
-  needs a parser dependency for 84 questions and 210 units. A window with
-  terminators covers the set's sentences (Result).
+- Dependency-parse negation scope: it would follow syntax rather than
+  distance, but no source here compares it with a window (S3 uses cue
+  detection and does not measure a parser), and it adds a parser dependency
+  for 84 questions and 210 units. Not tried.
 - Exact match against reference translations: rejected. It fails every
   faithful rewording (S1's note on partial deviations).
 
@@ -104,7 +108,8 @@ see the meaning.
    stems such as `reimburs` work. An edge that is a digit takes the literal
    rule, `meaning.joins`. `31 days` is not in `131 days`, and `March 1` is not
    in `March 12`. Stage 2's `meaning.check` uses the same matcher.
-2. Polarity, after S5 (`korean.missed`). A cue is `not`, `no`, `never`,
+2. Polarity (`korean.missed`): a window after S5 and terminators after S8,
+   combined here as this page's own rule. A cue is `not`, `no`, `never`,
    `none`, `nothing`, `neither`, `nor`, `without`, `cannot`, `unless` or
    `n't`. Pseudo-cues negate nothing: `no more than`, `not only`,
    `without delay` and the like. A cue governs a phrase when it stands in the
@@ -119,7 +124,8 @@ see the meaning.
    not checked.
 3. The asked part (`meaning.asked`). Groups that name what a question asks are
    met on its last line. A question that pastes something first asks it
-   there, so pasted words never stand in for a lost target.
+   there, so pasted words never stand in for a lost target. Cycle 2 moved
+   this off the line break.
 4. Labels where a rule cannot see the meaning:
    - a limit bound to its amount (`within 7`, `7 or less`);
    - a rate bound to its unit (`one point` with `per euro`);
@@ -129,7 +135,7 @@ see the meaning.
    - three more units split. Bare cues and positive alternatives were removed
      from negation groups.
 
-## Experiment
+## Experiment (cycle 1)
 
 - Every label on the English originals (`korean.baseline`, run by
   `korean.py --check`): none may fail.
@@ -143,7 +149,7 @@ see the meaning.
 
   Every perturbation that still passes is read by hand.
 
-## Result
+## Result (cycle 1)
 
 - Baseline: 84 pairs and 210 fact units, no failure.
 - The 123 cases all come out as expected. Regression cases are in
@@ -161,11 +167,91 @@ see the meaning.
     working days`, where the cue is seven words before `working day`. S5
     predicts both kinds: scope across coordination, and a long clause.
 
+## Cycle 2
+
+Round 3 found the class again, in rules cycle 1 had added. Each finding is a
+failed hypothesis of cycle 1:
+
+- The asked part on the last line assumed the translator keeps the line
+  break. Merged onto one line, the pasted `Shared carts` stood in for a
+  `private cart` again. Split over two lines, a faithful question failed.
+- The fixed window assumed one proposition per clause. In `change that
+  password at once and never use it`, the `never` of the next proposition
+  denied `at once`. This is S5's own §4 false positive, and S8's terminators
+  are its remedy.
+- Exempting what a negation group negates assumed the object survives
+  unchanged. `never autoplay without sound` kept every word. `have neither`
+  matched without its owner.
+- A bound amount assumed its unit or verb could not change: `within 7 years`,
+  `lose one point per euro`. That is S1's SEN category without a negation
+  word.
+- Order phrases and dates assumed adjacency: `to just 101%` and `March 1st`
+  failed.
+
+Changes:
+
+1. The asked part is the text after the question's last quotation mark, or
+   else after its last pasted literal, or else its last line
+   (`korean.asked_part`). Line breaks no longer move it.
+2. `and` and `or` end a cue's scope, as S8's termination terms do. A cue no
+   longer reaches the next proposition. Scope across coordination (`has not
+   a version and a link`) was already a known miss.
+3. A phrase's space matches any whitespace, a line break too (`meaning.at`
+   returns spans).
+4. Labels:
+   - every phrase of a negation group carries what it negates (`no assigned
+     owner`, not `have neither`; tailgating, marketing reach, office energy);
+   - a negated relation is bound (`with sound`);
+   - an amount carries its unit or its verb (`within 7 days`, `within 7.`;
+     `earn one point`);
+   - order phrases allow a modifier (`to just 101%`), dates the ordinal after
+     the month (`March 1st`), and every change unit uses them.
+
+### Experiment (cycle 2)
+
+- The baseline and the 123 cases again. Round 3's reproductions are added to
+  `tool/test_korean.py`.
+- The directional sweep of cycle 1 again.
+- A CheckList invariance sweep (S6): wordings that keep the meaning must still
+  hold.
+  - `, and` becomes ` and`;
+  - every comma is dropped;
+  - lines are merged, and the asked line is split;
+  - `to N` becomes `to just N`;
+  - a day-month date becomes `Month 1st`.
+- A directional sweep of antonym swaps, which must fail:
+  - earn/lose, with/without sound, rose/fell, within/after;
+  - only/also, more/less than, over/under, at least/at most, before/after;
+  - every/no, never/always, `is not`/`is`, `no `/`some `, delete/keep;
+  - and others.
+
+### Result (cycle 2)
+
+- Baseline: no failure. The 123 cases come out as expected. With round 3's
+  reproductions added, `tool/test_korean.py` and `tool/test_evidence.py`
+  pass 134 tests, with 1 skipped.
+- Invariance:
+  - Every `, and`, merged-line, split-line and ordinal variant holds.
+  - Three faithful sentences fail once every comma is dropped, as run-ons
+    (`at once do not charge it`).
+  - One literal fails because its pasted span lost a comma; that is correct.
+  - `4.5 to just 1` is not a wording of a ratio.
+- Directional: no swap passes inside the unit it changes. One kind is the
+  exception: a self-contradicting change (`fell from 41,000 to 83,000`). The
+  order of the numbers already fixes the direction, and the direction word is
+  not required (contractor, free-to-paid, NRR, packaging, podcast). Every
+  other swap that passes changes another unit's clause, or makes nonsense
+  (`almost some`).
+
 ## Unresolved
 
 - A cue farther than the window, or across coordination, is not seen.
-- A legitimate negation of another fact in the same clause, within the
-  window, counts a faithful sentence as a loss. Neither the baseline nor the
-  cases show one. The paid run's per-unit outcomes name any that occur, so a
-  person can read them.
+- A sentence whose commas are all gone can count as a loss when a cue of
+  the next proposition falls inside the window.
+- A self-contradicting change word beside a correct number order passes.
+- A question whose translation drops every quotation mark and every pasted
+  literal falls back to its last line.
 - A literal's own polarity is not checked; a phrase group beside it is.
+- These are measured on perturbations of the English originals, not on the
+  translator's real output. The paid run's per-unit outcomes name each
+  failure with its English, so a person can read them.

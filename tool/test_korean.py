@@ -187,6 +187,24 @@ SET_CASES = [
                       "finance sheets?", False),
     ("q", "pasted-64", 'Release notes draft: "Shared carts hold up to 20 items."\nHow many items can a private cart '
                        'hold?', False),
+    # Round 3: line breaks do not move the asked part; a cue does not cross `and`; relations and verbs are bound.
+    ("q", "pasted-64", 'Release notes draft: "Shared carts hold up to 20 items." How many items can a private cart '
+                       'hold?', False),
+    ("q", "route-48", "Spreadsheet formula: =VLOOKUP(A2,Rates!A:B,2) What do our rules say about reports in shared "
+                      "finance sheets?", False),
+    ("q", "pasted-64", 'Release notes draft: "Shared carts hold up to 20 items."\nHow many items\ncan a shared cart '
+                       'hold?', True),
+    ("f", "web-video-2", "Videos on web pages never autoplay with sound and every video has captions.", True),
+    ("f", "shared-passwords-2", "When a customer sends a password to staff, delete the message, tell the customer to "
+                                "change that password at once and never use it.", True),
+    ("f", "web-video-1", "Videos on web pages never autoplay without sound, and every video has captions.", False),
+    ("f", "incident-reviews-2", "Items have neither a description nor a due date but have an owner.", False),
+    ("f", "replacement-parts-2", "Replacement parts ship within 3 working days of the request and arrive within 7 "
+                                 "years.", False),
+    ("f", "loyalty-programme-1", "Loyalty members lose one point per euro spent and get free delivery on orders over "
+                                 "30 EUR.", False),
+    ("f", "2026-02-09-089-personio-1", "Employee records move to Personio from March 1st, 2026.", True),
+    ("f", "nrr-q3-1", "Net revenue retention fell from 112% to just 101%.", True),
 ]
 
 
@@ -221,8 +239,9 @@ def test_a_phrase_with_a_number_matches_the_whole_number():
     assert at("31 days", "kept for 31 days") and not at("31 days", "kept for 131 days")
     assert not at("March 1", "from March 12") and not at("1 March", "from 11 March") and at("March 1", "March 1, 2026")
     assert not at("4.5 to 1", "4.5 to 10") and not at("2", "our 12 tools") and at("2", "our 2 tools")
-    # A phrase that does not end in a digit still matches inside a word, as a stem.
+    # A phrase that does not end in a digit still matches inside a word, as a stem; a space matches a line break.
     assert at("reimburs", "Expenses are reimbursed") and at("1 point", "earn 1 point.")
+    assert at("loyalty member", "What do loyalty\nmembers get?") == [(8, 22)] and not at("no ", "now")
 
 
 def test_a_cue_before_or_after_a_positive_phrase_loses_it():
@@ -232,6 +251,7 @@ def test_a_cue_before_or_after_a_positive_phrase_loses_it():
     assert korean.lost("Sales deals are not tracked in HubSpot.", [["deal"]], ["HubSpot"])
     # A cue in another clause, a limit that reads like one, and a number's comma govern nothing.
     assert korean.lost("Deals are tracked in HubSpot, not in Pipedrive.", [["deal"]], ["HubSpot"]) == []
+    assert korean.lost("Change it at once and never use it.", [["change"], ["at once"]], []) == []
     assert korean.lost("Shut it down without delay.", [["shut"], ["without delay"]], []) == []
     assert korean.lost("The site has 96,000 product pages.", [["product page"]], []) == []
     assert korean.lost("The site has not 96,000 product pages.", [["product page"]], [])
@@ -247,6 +267,10 @@ def test_the_asked_part_is_met_on_the_asked_line():
     assert korean.check(meaning, 'Draft: "Shared carts hold up to 20 items."\nHow many items can a shared cart hold?') == []
     assert korean.check(meaning, 'Draft: "Shared carts hold up to 20 items."\nHow many items can a private cart hold?') \
         == ["asked none of ['shared cart']"]
+    # Merged onto one line, the asked part still starts after the quotation; with no quotation, after the literal.
+    assert korean.check(meaning, 'Draft: "Shared carts hold up to 20 items." How many can a private cart hold?') \
+        == ["asked none of ['shared cart']"]
+    assert korean.asked_part("Formula: =SUM(A:A) What do our rules say?", ["=SUM(A:A)"]) == " What do our rules say?"
 
 def test_a_negation_must_stay_in_its_own_sentence():
     require = [["does not run", "doesn't run"], ["windows"]]

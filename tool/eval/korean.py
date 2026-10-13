@@ -43,14 +43,18 @@ HANGUL = re.compile(r"[가-힣]")
 SENTENCE = re.compile(r"(?<=[.!?])\s+")
 # Lines that are a block of their own (a heading, a table row) or start one (a list item, a quote).
 OWN_LINE, STARTS = re.compile(r"#|\|"), re.compile(r"[-*+]\s|\d+[.)]\s|>")
-# Polarity, after NegEx (Chapman 2001; docs/research/korean-set-labels.md):
-# a cue, the phrases that hold one but negate nothing, and what ends a cue's clause.
-# A cue governs up to five words after it, or three before it (`deals are not tracked`);
-# a comma, colon or point inside a number ends nothing.
+# Polarity, after NegEx and ConText (docs/research/korean-set-labels.md):
+# a cue, the phrases that hold one but negate nothing, and what ends a cue's scope.
+# A cue governs up to five words after it, or three before it (`deals are not tracked`).
+# A comma, colon or point inside a number ends nothing;
+# `and` and `or` end it, so the next proposition is its own (`never use it and errors are shown`).
 CUE = re.compile(r"\b(?:not|no|never|none|nothing|neither|nor|without|cannot|unless)\b|n't\b", re.I)
 PSEUDO = re.compile(r"\b(?:no|not) (?:more|less|later|earlier) than\b|\bnot only\b|\bnot exceed|"
                     r"\bwithout (?:delay|fail)\b|\bno matter\b|\bno doubt\b", re.I)
-CLAUSE = re.compile(r"[;!?\n]|[,.:](?!\d)|\b(?:but|although|though|however|whereas|while|which|except)\b", re.I)
+CLAUSE = re.compile(r"[;!?\n]|[,.:](?!\d)|\b(?:and|or|but|although|though|however|whereas|while|which|except)\b",
+                    re.I)
+# What a question pastes ends at its last quotation mark.
+QUOTE = re.compile(r"[\"“”«»「」『』]")
 BEFORE, AFTER = 5, 3
 
 
@@ -428,19 +432,28 @@ def missed(text: str, require: list[list[str]]) -> list[str]:
     positive = not any(cued(p) for g in require for p in g)
     guard = lambda g, p: positive or (not cued(p) and any(cued(q) for q in g))  # noqa: E731
     return [f"none of {g}" for g in require
-            if not any(not (guard(g, p) and denied(text, i, i + len(p))) for p in g for i in at(p, text))]
+            if not any(not (guard(g, p) and denied(text, i, j)) for p in g for i, j in at(p, text))]
+
+
+def asked_part(text: str, literals: list[str]) -> str:
+    """What a question asks after what it pastes: the text after its last
+    quotation mark, else after its last pasted literal, else its last line.
+    Where the translator put the line breaks does not move it."""
+
+    ends = [m.end() for m in QUOTE.finditer(text)] or \
+        [i + len(x) for x in literals if (i := text.rfind(x)) >= 0]
+    return text[max(ends):] if ends else text.strip().rsplit("\n", 1)[-1]
 
 
 def check(meaning: dict, text: str) -> list[str]:
     """A question's meaning labels against its English: `missed`, any
     `forbid` phrase, and each literal as a whole token. `asked` groups are
-    the asked part and are met on the last line only, where a question that
-    pastes something first asks it: the pasted line's `Shared carts` is not
-    the asked line's `private cart`."""
+    the asked part and are met only after what the question pastes
+    (`asked_part`): the pasted `Shared carts` is not the asked `private cart`."""
 
     from eval.meaning import at, literal_problem
 
-    asked = text.strip().rsplit("\n", 1)[-1]
+    asked = asked_part(text, meaning["literals"])
     return missed(text, meaning["require"]) + [f"asked {m}" for m in missed(asked, meaning.get("asked", []))] + \
         [f"has {p!r}" for p in meaning["forbid"] if at(p, text)] + \
         [p for x in meaning.get("literals", []) if (p := literal_problem(x, text))]

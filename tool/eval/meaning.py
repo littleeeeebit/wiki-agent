@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -76,18 +77,20 @@ def found(literal: str, text: str) -> str:
     return out
 
 
-def at(phrase: str, text: str) -> list[int]:
-    """Where `phrase` stands in `text`, any case. A phrase matches inside
+def at(phrase: str, text: str) -> list[tuple[int, int]]:
+    """Where `phrase` stands in `text`, as spans, any case; a space in it
+    matches any run of whitespace, a line break too. A phrase matches inside
     words (`reimburs`), but an edge that is a digit is a number's edge and
     takes the whole-token rule: `31 days` is not in `131 days`, `March 1` not
     in `March 12`, `2` not in `12` (reliability PR 9's set review)."""
 
-    low, want, out, start = text.lower(), phrase.lower(), [], 0
-    while (i := low.find(want, start)) >= 0:
-        start, j = i + 1, i + len(want)
-        if not (want[0].isdigit() and i > 0 and joins(low, i - 1, -1, want[0])) and \
-                not (want[-1].isdigit() and j < len(low) and joins(low, j, 1, want[-1])):
-            out.append(i)
+    pattern, out, start = re.compile(r"\s+".join(map(re.escape, phrase.split(" "))), re.I), [], 0
+    while m := pattern.search(text, start):
+        i, j = m.span()
+        start = i + 1
+        if not (phrase[0].isdigit() and i > 0 and joins(text, i - 1, -1, phrase[0])) and \
+                not (phrase[-1].isdigit() and j < len(text) and joins(text, j, 1, phrase[-1])):
+            out.append((i, j))
     return out
 
 

@@ -511,20 +511,23 @@ Order step 3. `eval/jev/korean/pairs.json` holds the set:
     whole: `31 days` is not in `131 days`.
   - A negation cue (`not`, `never`, `no`, `without`, `n't` and the like)
     in the same clause, up to five words before a phrase or three after it,
-    governs it. A governed phrase fails a positive label, and it fails as
+    governs it. `and` and `or` end its clause, so it does not reach the next
+    proposition. A governed phrase fails a positive label, and it fails as
     the positive wording in a group of negations (`prohibited`). Limits
     such as `no more than` and `without delay` are not cues.
-  - A question's `asked` groups are met on its last line. A question that
-    pastes something first asks it there, so pasted words cannot stand in
-    for the asked target.
+  - A question's `asked` groups are met after what it pastes: after its last
+    quotation mark, else its last pasted literal, else on its last line.
+    Pasted words cannot stand in for the asked target, wherever the
+    translator breaks the lines.
 
   The labels follow these rules:
   - A negation is a phrase with what it negates (`never use`, `not
-    shared`), never a bare `not` or `no longer`.
+    shared`, `no assigned owner`), never a bare `not`, `no longer` or
+    `have neither`. A negated relation is bound too (`with sound`).
   - A number goes with its unit (`31 days`), and a date with its day and
-    month in either order. A limit goes with its amount (`within 7`), a rate
-    with its unit (`per euro`), and a change with its order (`112% to
-    101%`).
+    month in either order (`March 1st` too). A limit goes with its amount
+    and unit (`within 7 days`), a rate with its unit and verb (`earn one
+    point`, `per euro`), and a change with its order (`112% to just 101%`).
   - Each independent fact of a sentence is its own unit, so a translation
     that splits the sentence passes. A negation and its object stay in one
     unit.
