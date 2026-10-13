@@ -71,6 +71,29 @@ Each state records its generator, prompt version, source pages and seed.
 The class balance per kind is stated; a kind whose natural rate is skewed
 keeps that rate in test and is balanced only in training.
 
+The passage kinds' generator is `laya/generate.py` (built 2026-10-13):
+
+- A teacher host turn (`prompts/generate.md`) writes eight questions over
+  six seeded wiki pages, across five types: answered, partial, bridging,
+  unanswered and false premise.
+- Each question runs through `knowledge.prepare` in shadow mode.
+  - The stubbed decider answers every question 0.5. So a route still
+    retrieves, nothing is graded away, a repair defers, and the run ends
+    after its first grade-evidence request. Later rounds' states, after a
+    repair, are not generated yet.
+  - The translator is held to English text: a Korean passage is left
+    unread, so no translation is paid for.
+  - No host fallback runs.
+- Each `useful`, `conflict` or `redirect` question of the captured request
+  becomes one candidate with its passage view, dropped if it is a
+  near-duplicate of a gate state or of a candidate already kept in any
+  split.
+- A manual run of one question gave one grade-evidence request with 13
+  passages, so 13 candidates per kind. A 50-candidate pilot is one teacher
+  turn.
+
+Its tests are in `laya/test_laya.py`.
+
 ## Splits
 
 Per kind: 3,000 usable train, 300 validation (checkpoint choice, early
