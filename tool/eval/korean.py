@@ -8,7 +8,8 @@ product path — A en/EN, B ko/EN, C en/KO, D ko/KO — run in
 checks that need no host, and the report's pair gates and attribution.
 
 `--check` validates the pair file against its dataset: shapes, eligibility,
-heading maps and fact units, and the seven groups of twelve. The output
+heading maps and fact units, the seven groups of twelve, and every label on
+the English original it stands for. The output
 overlay check is `tool/eval/overlay.py`.
 """
 
@@ -445,6 +446,23 @@ def facts(pairs: dict, chunks: list[dict], label, english) -> list[dict]:
     return out
 
 
+def baseline(pairs: dict, data: dict) -> list[str]:
+    """Labels that fail on the English originals: each pair's meaning on its
+    intent's English question, and each fact unit on its English section. A
+    label that fails there would count a faithful translation as a loss."""
+
+    from eval import meaning as labels
+
+    intents, known = {i["id"]: i for i in data["intents"]}, dataset.pages(data)
+    out = [f"{p['intent']}: {m}" for p in pairs["pairs"] for m in labels.check(
+        p["meaning"], {"status": "translated", "text": intents[p["intent"]]["variants"]["en"]})]
+    for page, twin in sorted(pairs["twins"].items()):
+        body = {path.split(" > ")[-1]: b for path, b in dataset.sections(known[page])}
+        out += [f"{page} fact {f['id']}: {m}" for f in twin["facts"]
+                for m in lost(body.get(f["section"], ""), f["require"], f["literals"])]
+    return out
+
+
 def question(meaning: dict, row: dict) -> dict:
     """The meaning labels against a Korean question's normalized English as
     the row recorded it. Not normalized is its own outcome, never a pass;
@@ -700,10 +718,11 @@ def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="python tool/eval/korean.py", description="Reliability PR 9's pairs")
     parser.add_argument("--pairs", type=Path, default=PAIRS)
-    parser.add_argument("--check", action="store_true", help="validate the pair file and its seven groups of twelve")
+    parser.add_argument("--check", action="store_true",
+                        help="validate the pair file, its seven groups of twelve and its labels on the English originals")
     args = parser.parse_args(argv)
     pairs, data = load(args.pairs)
-    wrong = allocation(pairs, data)
+    wrong = baseline(pairs, data)
     print("\n".join(wrong) or f"{len(pairs['pairs'])} pairs, {len(pairs['twins'])} twins; calibration intents "
                               f"per group {calibration(pairs, data)}; reviewed by "
                               f"{pairs['labels']['reviewed_by'] or 'nobody yet'}")

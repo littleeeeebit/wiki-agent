@@ -486,10 +486,36 @@ Order step 2, with fake hosts only:
   twins, and paired recall reads `fail`. The stand-ins measure nothing; the
   case shows that the loss is reported, not hidden.
 
+### The set (v1)
+
+Order step 3. `eval/jev/korean/pairs.json` holds the set:
+- 84 pairs, twelve in each group, assigned in the order of `GROUPS`.
+  Calibration intents: conflict 6, names 2, negation 3; every other group
+  takes held-out intents only.
+- 89 twins with 142 fact units. Every page an intent's evidence names has
+  a twin, and every other page stays English.
+- Each `input.ko` keeps the question's negations, names, numbers and units.
+  Pasted machine or English text (logs, code, tickets, review comments,
+  dashboard lines) stays English. A quoted person (a customer, a colleague,
+  an old wiki line) is in Korean, as a Korean team would have written it.
+- Each pair's `meaning` labels the normalized English of the question.
+  Phrases list the wordings a faithful translation may choose, such as
+  `"6 years"` beside `"six years"`. A literal is a string that must come
+  through as written, a name, number or pasted span.
+- The planted instructions in three pages (children in the office, the
+  office gym, the showers) are test data. Their twins keep them,
+  translated.
+
+`korean.py --check` also runs every label on the English original it stands
+for (`baseline`). Each pair's meaning is checked on its intent's English
+question, and each fact unit on its section of the English page. A label
+that fails there would count a faithful translation as a loss, so the check
+refuses it. The set passes with none.
+
 ## Steps
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | Fixtures | Freeze reviewed paired questions and sources | In progress — design (v1) and implementation above; the set is next |
+| 1 | Fixtures | Freeze reviewed paired questions and sources | In progress — design (v1), implementation and the set above; the set's review is next |
 | 2 | Comparison | Run A–D comparisons and isolate causes | Not started |
 | 3 | Fix | Fix normalization only where evidence supports it | Not started |

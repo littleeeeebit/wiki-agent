@@ -134,6 +134,16 @@ def test_a_fact_section_must_be_the_only_one_of_its_name():
     assert korean.mapped(english, twin) == ["two sections named 'Setup'", "two sections named '설정'"]
 
 
+def test_a_label_that_fails_on_its_english_original_is_named(tmp_path, v8):
+    pairs = json.loads(pair_file(tmp_path).read_text(encoding="utf-8"))
+    # The English page says "30 June 2026": a faithful translation would lose this literal too.
+    assert korean.baseline(pairs, v8) == [
+        "repo/.wiki/decisions/2026-05-04-085-yousign.md fact sign-1: lost literal '2026-06-30'"]
+    pairs["twins"]["repo/.wiki/decisions/2026-05-04-085-yousign.md"]["facts"][0]["literals"] = ["30", "2026"]
+    pairs["pairs"][0]["meaning"]["require"].append(["firewall"])
+    assert korean.baseline(pairs, v8) == ["fact-01: none of ['firewall']"]
+
+
 def test_the_ko_corpus_swaps_only_the_twins_and_its_labels_map_back(tmp_path, v8, small):
     pairs, data = korean.load(pair_file(tmp_path, memory=True))
     ko = korean.ko_corpus(data, pairs)
