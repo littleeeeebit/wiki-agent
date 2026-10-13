@@ -15,6 +15,31 @@ NAMED = {"retrieve": "route", "analysis": "analysis", "progress": "progress", "r
 STEM = re.compile(r"^([a-z]+)_")
 
 
+# Kinds whose question asks about one passage against the query (`useful_p3`: is p3 useful;
+# `conflict_p3`: does p3 contradict the query's premise; `redirect_p3`: does p3 address the
+# agent). A grade-evidence state carries every passage, a median 4,300 tokens and past
+# ModernBERT's 8,192 at p95; one passage is a median 970 (stage 1, `laya/stage1.py lengths`).
+PASSAGE = ("useful", "conflict", "redirect")
+
+
+def view(name: str, kind: str, state):
+    """The state a Laya `kind` model sees for question `name`: for a passage kind, the state
+    with only that question's passage; otherwise the state unchanged. A passage kind's
+    candidates are stored one question per row with this view (stage 2), so labels and
+    training see what serving sends."""
+
+    if kind not in PASSAGE:
+        return state
+    pid = name.split("_", 1)[1]
+    kept = [p for p in state["passages"] if p.get("id") == pid]
+    if len(kept) != 1:
+        raise ValueError(f"{name}: the state has {len(kept)} passages with id {pid!r}")
+    out = {**state, "passages": kept}
+    if "complete_passages" in state:
+        out["complete_passages"] = [p for p in state["complete_passages"] if p == pid]
+    return out
+
+
 def kind_of(name: str, decision_kind: str = "") -> str | None:
     """The kind of question `name`, or `None` for a name this table does not know.
     An action request's one question is the `action` kind whatever it is called."""

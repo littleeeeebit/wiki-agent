@@ -16,7 +16,9 @@ shadow and active. Research, sources and measurements are on
 | Training data | 3,000 states per kind to start; then augmentation of the slices validation gets most wrong | Owner, 2026-10-13 |
 | Labels | Two LLM labellers independently; agreed labels train; a disagreement is dropped, recorded in the error notebook and refilled from the surplus; no person labels | Owner, 2026-10-13 |
 | Gate test | States production really sent, reserved before any measurement; synthetic sets are diagnostics only. Not labelled by a person; where its answers come from is still open | Owner, 2026-10-13 |
+| Gate split | Two thirds of the real states (near-duplicates as one unit) go to the gate test at random, one third is the development pool, so stage 1 can measure on real states | Owner, 2026-10-13 |
 | Pilot kind | `useful` (1,521 production questions, 185 states); a kind with under 100 production states stays on TypeSafe until enough accumulate | Owner, 2026-10-13 |
+| Passage view | `useful`, `conflict` and `redirect` ask about one passage against the query, so their model sees the state with only that passage: a median 900 tokens, max 2,250, instead of 4,300 and past ModernBERT's 8,192 at p95. `coverage` reads the passages together and stays whole | Owner, 2026-10-13, from stage 1's length measurement |
 | Improvement | After RRSI: a round is adopted only above the noise floor, falsified slices are never retried, adopted rounds are pruned; every dropped or wrong question goes to a local error notebook | Owner, 2026-10-13 |
 | Code | Data, labels, training, the loop and the notebook in the top-level `laya/` folder; serving stays in `tool/decision` | Owner, 2026-10-13 |
 | Runtime | Local server on the RTX 3080 (10 GB); TypeSafe stays as a per-kind fallback until rollout | This plan |
@@ -56,8 +58,8 @@ existing policy, else `unavailable`).
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
-| 1 | [Serving](1-serving.md) | Local server, per-kind provider, context and zero-shot baseline | Not started |
-| 2 | [Data](2-data.md) | States per kind, splits, the gate test | Not started |
+| 1 | [Serving](1-serving.md) | Local server, per-kind provider, context and zero-shot baseline | In progress — gate test reserved, measurements in `laya/stage1.py`; the provider contract is not built |
+| 2 | [Data](2-data.md) | States per kind, splits, the gate test | In progress — gate test reserved (`laya/gate.py`) |
 | 3 | [Labels](3-labels.md) | Two-labeller agreement, drops refilled and noted, pilot then full run | In progress — `laya/label.py` and the error notebook built and tested with stubs; no paid run yet |
 | 4 | [Training](4-training.md) | Fourteen fine-tunes, calibration, fitted policy | Not started |
 | 5 | [Augmentation](5-augmentation.md) | Error-slice loop per kind, after RRSI | In progress — `laya/loop.py` built and tested with stubs; the generator (stage 2) is not |

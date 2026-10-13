@@ -13,6 +13,22 @@ written to `eval/laya/tests.json`, and nothing in stages 1–5 reads their
 labels or answers. Every measurement below runs on the remaining cases, the
 development pool.
 
+Done 2026-10-13 by `laya/gate.py`: the 329 pooled states collapse to 288
+units (word 5-shingle Jaccard ≥ 0.8), and two thirds of the units, 192, are
+reserved with a fixed seed (owner: the pilot kind has only 185 real states,
+so reserving all of them would leave no real development state). A unit is a
+state, so the kinds asked of it stay on one side; the gate holds 104 units
+asking `useful`, `conflict`, `redirect` and `coverage`.
+
+That reservation compared whole states only. A passage view of a
+development state can be a near-duplicate of a gate state's view while the
+whole states are not, when the same query was asked again over different
+passages: 28 development states are, all with the gate state's query. The
+gate is not drawn again. `gate.development` leaves those states out, along
+with any state in a unit (by whole state or by view) that holds a gate
+state, so the development pool is 81 states. A training, validation or
+calibration state is dropped by the same rule (stage 2).
+
 ## Contracts
 
 Today `decision.decide` drops each question's kind before the transport
@@ -65,10 +81,19 @@ those shapes and fills them as follows.
   group and sends none of the rest. Replay tapes keep the logical request's
   answers and the entry, unchanged in shape.
 - Length. Each Laya kind has a token limit (its training `max_len`) for
-  the whole state plus that question's head, measured with Laya's
-  tokenizer. The state is never cut, reduced or split: `current_state`,
-  passage ids and headings define what a question means, so a reduced
-  state can make two different questions identical.
+  the state it sees plus that question's head, measured with Laya's
+  tokenizer. The state is never cut or truncated: `current_state`,
+  passage ids and headings define what a question means, so a cut state
+  can make two different questions identical. The one reduction is the
+  passage view (`laya/kinds.py`, `view`): a `useful`, `conflict` or
+  `redirect` question names one passage and asks about it against the
+  query, so its model sees the whole state with only that passage, the
+  same view in labels, training and serving. A whole grade-evidence state
+  is a median 4,300 tokens and past ModernBERT's 8,192 at p95 (measurement
+  1); its view is a median 900 and at most 2,250 (owner, 2026-10-13). The
+  `useful` question's "bridging fact that connects the query to other
+  evidence" is then judged without the other passages; stage 6's gate
+  measures what that costs.
 - Overflow is per request, decided before the request is built. The
   consumer checks every Laya question's length when it chooses the
   request's `model` and policy. If any is over its limit and TypeSafe is
@@ -88,6 +113,9 @@ those shapes and fills them as follows.
   after `decide` (claims re-judge relations with `Flow.pol`) uses the
   policy of the request that produced them, kept with the result, never
   the flow's current one.
+- Grouping with views. Questions of a passage kind have different views,
+  so each is one Laya request (`predict` encodes one state per call); they
+  run concurrently inside the group's deadline.
 - Server. `laya-serve` takes a `model` per request and registers extra
   names with `LAYA_EXTRA_MODELS` (L2); stage 1 uses it if its LRU and
   preload settings hold the measured memory. Only if they do not, a small
@@ -113,6 +141,83 @@ those shapes and fills them as follows.
    peak GPU memory.
 5. `option_layout="parallel"`'s requirements (transformers ≥ 5, eager
    backend) checked against the installed stack.
+
+## Results, 2026-10-13
+
+`laya/stage1.py`, laya 0.4.6 at the reviewed commit, torch 2.11 (CUDA
+12.8), transformers 5.19, RTX 3080 with about 5 GB held by desktop apps.
+Files in `raw/eval/laya/stage1-*-20261013T*.json`. The two checkpoints
+share ModernBERT-large's tokenizer, so lengths are the same for both;
+`base` was trained at `max_len` 512, `typed-decisions` at 1,024.
+
+1. Length, tokens per question (state plus head, nothing cut):
+
+   | Kinds | Questions | Median | p95 | Max | Over 4,096 |
+   | --- | --- | --- | --- | --- | --- |
+   | `useful`, `conflict`, `redirect` (whole state) | 1,521 each | 4,300 | 9,970 | 11,480 | 53% |
+   | `useful`, `conflict`, `redirect` (passage view) | 1,521 each | 900 | 1,390 | 2,250 | 0% |
+   | `coverage` | 391 | 4,071 | 7,625 | 11,472 | 48% |
+   | `action` | 339 | 7,901 | 8,581 | 9,794 | 100% |
+   | `answers`, `relation`, `repair`, `faithful` | 652 | 2,400–3,900 | 4,970–5,180 | 5,890 | 10–39% |
+   | `route`, `source`, `analysis`, `ask`, `progress` | 586 | 650–800 | 1,070–1,630 | 2,300 | 0% |
+
+   ModernBERT has 8,192 positions, so whole grade-evidence states past
+   that could not be encoded at all. This is why the passage view was
+   chosen. `coverage` and `action` stay on TypeSafe for now. The claim kinds
+   are under 100 states anyway.
+
+2. Zero-shot agreement with Jev's recorded answers, on the 81 development
+   states and questions up to 2,304 tokens, each question whole (no
+   `head_max_len` cut), noul by the side of 0.5. Agreement, not accuracy:
+   neither side is a label.
+
+   | Kind | n | `base` | `typed` |
+   | --- | --- | --- | --- |
+   | `useful` | 294 | 39% | 40% |
+   | `conflict` | 294 | 90% | 99% |
+   | `redirect` | 294 | 52% | 48% |
+   | `route` | 26 | 65% | 69% |
+   | `source` | 78 | 71% | 78% |
+   | `analysis` | 26 | 69% | 62% |
+   | `ask` | 46 | 50% | 63% |
+
+   Jev says `useful` for 31% of passages; the unchanged checkpoints say it
+   for most, so they disagree on most `useful` questions. `answers` agreed
+   on 0 of 7; the other choice kinds had 1–2 questions under the limit.
+
+3. Option order (Laya issue #156). The same questions with the options
+   listed in reverse; the share whose answer changed:
+
+   | Kind | `base` | `typed` |
+   | --- | --- | --- |
+   | `useful` | 4% | 13% |
+   | `conflict` | 40% | 50% |
+   | `redirect` | 14% | 27% |
+   | `route`, `source`, `analysis`, `ask` | 0–20% | 6–23% |
+
+   The unchanged models follow option position on a large share of
+   `conflict` questions. Fine-tuning has to remove this; stage 4 measures
+   the same share on its checkpoints.
+
+4. Latency and memory, `typed`, on a filler state (no pooled state),
+   warm, median of three:
+
+   | Tokens | 1 question | 8 questions | Peak GPU |
+   | --- | --- | --- | --- |
+   | 504 | 0.04 s | 0.13 s | 2.3–2.4 GB |
+   | 985 | 0.04 s | 0.25 s | 2.3–2.6 GB |
+   | 2,168 | 0.09 s | 0.59 s | 2.4–3.0 GB |
+
+   Loading a checkpoint from the local cache, which an LRU swap does, takes
+   4.7 s. A first attempt at 8,192 tokens and 8 questions did not fit in
+   10 GB. Laya then retried on the CPU and filled the RAM, so `latency` now
+   stops at the first error or CPU fallback, and `swap` and `zeroshot` raise
+   on one. Four requests in flight through `laya-serve` are measured with
+   the server, in the provider PR.
+
+5. `option_layout="parallel"` needs transformers ≥ 5 (installed: 5.19.0)
+   and the eager backend. No published checkpoint uses it, so a fine-tune
+   would opt in.
 
 ## Acceptance
 
