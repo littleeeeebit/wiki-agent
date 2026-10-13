@@ -10,6 +10,7 @@ repository root.
 
 | File | What it does |
 | --- | --- |
+| `store.py` | Append-only JSONL journals that survive an interrupted write; whole-file replacement for pages |
 | `kinds.py` | The fourteen kinds, and which kind a production question name is |
 | `pool.py` | Production requests from the local Langfuse (and action requests from specs) to `data/pool.jsonl`, one row per distinct state |
 | `label.py` | Two-labeller agreement labels; every dropped question goes to the error notebook |

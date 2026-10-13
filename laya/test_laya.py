@@ -118,6 +118,75 @@ def test_an_interrupted_verdict_is_finished_on_the_rerun(monkeypatch, cut):
     assert len(label.read(label.DATA / "useful" / "train.jsonl")) == 1 and len(notes.ledger("useful")) == 8
 
 
+def test_a_torn_last_line_was_never_written_and_corruption_is_raised(tmp_path):
+    import store
+
+    path = tmp_path / "j.jsonl"
+    store.append(path, {"a": 1})
+    with path.open("a", encoding="utf-8") as f:
+        f.write('{"b": "torn')
+    assert store.read(path) == [{"a": 1}]
+    store.append(path, {"c": 3})
+    assert store.read(path) == [{"a": 1}, {"c": 3}]
+    with path.open("a", encoding="utf-8") as f:
+        f.write('{"d": 4}')   # whole, only its newline lost
+    store.append(path, {"e": 5})
+    assert store.read(path) == [{"a": 1}, {"c": 3}, {"d": 4}, {"e": 5}]
+    path.write_text('{"a": 1}\n{"bad\n{"c": 3}\n', encoding="utf-8")
+    with pytest.raises(ValueError):
+        store.read(path)
+
+
+def test_a_verdict_torn_mid_write_is_judged_again_from_the_ledger(monkeypatch):
+    write(label.DATA / "useful" / "train.candidates.jsonl", [candidate(0)])
+
+    def turn(model, state, questions):
+        return {"model": model, "cost_usd": 0.0,
+                "answers": {"useful_p0": {"answer": "yes" if model == "a" else "no", "confidence": 0.9}}}
+
+    original = label.append
+
+    def torn(path, value):
+        if path.name == "train.judged.jsonl":
+            with path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(value)[:30])
+            raise RuntimeError("interrupted mid-write")
+        original(path, value)
+
+    monkeypatch.setattr(label, "append", torn)
+    with pytest.raises(RuntimeError):
+        label.label("useful", "train", 1, ["a", "b"], 2, turn=turn, log=lambda *_: None)
+    monkeypatch.setattr(label, "append", original)
+    stats = label.label("useful", "train", 1, ["a", "b"], 0, turn=turn, log=lambda *_: None)
+    assert (stats["dropped"], stats["states"], stats["turns"]) == (1, 1, 0)
+    assert len(notes.ledger("useful")) == 1
+
+
+def test_records_from_before_verdicts_and_split_names_still_resume():
+    assert loop.restore([{"round": 0, "splits": ["train"]}, {"round": 1, "slice": ["options", 2], "adopted": True},
+                         {"prune": "aug-1", "removed": True}])[0] == ["train"]
+    assert loop.restore([{"round": 1, "slice": ["options", 2], "adopted": True}])[0] == ["train", "aug-1"]
+    write(label.DATA / "useful" / "train.judged.jsonl",
+          [{"state_hash": "h0", "labelled": 1, "dropped": 0, "by_category": {}}])
+    write(label.DATA / "useful" / "train.candidates.jsonl", [candidate(0)])
+    stats = label.label("useful", "train", 5, ["a", "b"], 0, turn=lambda *_: pytest.fail("no paid call"),
+                        log=lambda *_: None)
+    assert (stats["agreed"], stats["states"]) == (1, 1)
+
+
+def test_notes_of_states_sharing_a_hash_prefix_are_both_kept():
+    rows = [candidate(0), candidate(1)]
+    rows[0]["state_hash"], rows[1]["state_hash"] = "0123456789ab" + "0" * 52, "0123456789ab" + "1" * 52
+    write(label.DATA / "useful" / "train.candidates.jsonl", rows)
+
+    def turn(model, state, questions):
+        return {"model": model, "cost_usd": 0.0,
+                "answers": {"useful_p0": {"answer": "yes" if model == "a" else "no", "confidence": 0.9}}}
+
+    label.label("useful", "train", 5, ["a", "b"], 10, turn=turn, log=lambda *_: None)
+    assert len(notes.ledger("useful")) == 2
+
+
 def test_a_malformed_answer_is_noted_invalid_and_labelling_goes_on():
     write(label.DATA / "useful" / "train.candidates.jsonl", [candidate(0), candidate(1)])
 
@@ -223,7 +292,10 @@ def test_the_loop_adopts_falsifies_explores_and_prunes():
     def generate(kind, slice, n, history, round, max_turns):
         asked.append((round, slice))
         limits.append(max_turns)
-        assert len(history["rounds"]) == round   # every earlier round's record
+        done = [r["round"] for r in history["rounds"] if "slice" in r and not r.get("started")]
+        assert done == list(range(1, round))   # every earlier round's outcome
+        started = label.read(loop.DATA / kind / "rounds.jsonl")[-1]
+        assert (started["round"], started["started"]) == (round, True)   # journalled before any paid turn
         return 5
 
     def label_(kind, split, target, round, slice, max_turns):
@@ -238,7 +310,7 @@ def test_the_loop_adopts_falsifies_explores_and_prunes():
     # Round 2 aims at the highest error rate left; once it is falsified, round 3 tries
     # another feature, and the slice round 1 aimed at is still open (`targeted`).
     assert asked == [(1, ("options", 2)), (2, ("label", "True")), (3, ("options", 2))]
-    log = label.read(loop.DATA / "useful" / "rounds.jsonl")
+    log = [r for r in label.read(loop.DATA / "useful" / "rounds.jsonl") if not r.get("started")]
     assert [r.get("adopted") for r in log[1:4]] == [True, False, False]
     assert log[2]["reason"] == "within_noise" and log[3]["reason"] == "ambiguous_slice"
     assert log[4]["prune"] == "aug-1" and log[4]["removed"] is False
@@ -296,7 +368,8 @@ def test_running_the_loop_again_continues_it():
     # Round 1 resumes with its own slice; it is falsified, so round 2 is a new number and a new split.
     assert calls == [(1, ("options", 2)), (1, ("options", 2)), (2, ("length", "short"))]
     assert out["splits"] == ["train", "aug-2"]
-    assert loop.restore(label.read(loop.DATA / "useful" / "rounds.jsonl")) == (["train", "aug-2"], set(), 2, None)
+    assert loop.restore(label.read(loop.DATA / "useful" / "rounds.jsonl")) == \
+        (["train", "aug-2"], set(), 2, None, (2, ("length", "short")))
 
     def wrong_slice(kind, slice, n, history, round, max_turns):
         write(loop.DATA / kind / f"aug-{round}.candidates.jsonl", [{"slice": ["length", "long"]}])
@@ -304,6 +377,50 @@ def test_running_the_loop_again_continues_it():
 
     with pytest.raises(ValueError):
         loop.run("useful", max_turns=10, **common | {"generate": wrong_slice})
+
+
+@pytest.mark.parametrize("cut", ["outcome", "status"])
+def test_an_interruption_around_a_rounds_outcome_resumes_the_same_round(monkeypatch, cut):
+    keys = validation()
+    calls = []
+
+    def generate(kind, slice, n, history, round, max_turns):
+        calls.append((round, slice))
+        path = loop.DATA / kind / f"aug-{round}.candidates.jsonl"
+        if not path.exists():
+            write(path, [{"slice": list(slice)}])
+        return 0
+
+    common = {"train": train_stub, "score": lambda kind, ckpt: (set(keys[:30]), {}), "generate": generate,
+              "label": lambda *_: {"agreed": 27, "dropped": 3, "turns": 0, "stopped": "target"},
+              "rounds": 1, "max_turns": 10, "round_turns": 5, "log": lambda *_: None}
+    original_append, original_status = loop.append, notes.set_status
+
+    def append(path, row):
+        if row.get("reason") == "within_noise":
+            raise RuntimeError("interrupted before the outcome")
+        original_append(path, row)
+
+    def set_status(kind, name, status, round, slice="base"):
+        if status == "falsified":
+            raise RuntimeError("interrupted before the page")
+        original_status(kind, name, status, round, slice)
+
+    if cut == "outcome":
+        monkeypatch.setattr(loop, "append", append)
+    else:
+        monkeypatch.setattr(notes, "set_status", set_status)
+    with pytest.raises(RuntimeError):
+        loop.run("useful", **common)
+    monkeypatch.setattr(loop, "append", original_append)
+    monkeypatch.setattr(notes, "set_status", original_status)
+    loop.run("useful", **common | {"rounds": 2})
+    page = notes.NOTES / "useful" / "student_wrong--options-2.md"
+    assert notes.front(page)["status"] == "falsified"
+    if cut == "outcome":   # the outcome was never journalled: round 1 is done again, on its own slice
+        assert calls[:2] == [(1, ("options", 2)), (1, ("options", 2))]
+    else:                  # journalled: replayed onto the page, and round 2 moves on
+        assert calls[:2] == [(1, ("options", 2)), (2, ("length", "short"))]
 
 
 def test_a_round_that_does_not_fit_the_budget_never_starts():

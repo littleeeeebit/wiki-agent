@@ -12,7 +12,10 @@ separate wiki under `laya/notes/` (local only, ignored by Git):
 
 A page's status moves `open` -> `targeted` (a round aimed at it) -> `resolved` (a kept round
 brought its errors under the loop's floor), `falsified` (a round aimed at it was not kept),
-or `ambiguous` (its labellers agree on under half of it). The generator reads `brief(kind)`
+or `ambiguous` (its labellers agree on under half of it). Pages are views: the ledger holds
+the errors, and `loop.run` journals every status change in `rounds.jsonl` before making it
+and replays them all when it starts, so an interruption between the two loses nothing.
+The generator reads `brief(kind)`
 before every round: open pages first, never a falsified or ambiguous slice again.
 """
 
@@ -21,6 +24,8 @@ import re
 import time
 from collections import defaultdict
 from pathlib import Path
+
+import store
 
 NOTES = Path(__file__).resolve().parent / "notes"
 PROMPT = Path(__file__).resolve().parent / "prompts" / "note.md"
@@ -45,7 +50,9 @@ def slug(value) -> str:
 
 
 def note_id(kind: str, round: int, category: str, state_hash: str, question: str) -> str:
-    return f"{kind}-{round}-{category}-{state_hash[:12]}-{question}"
+    """One error's identity: the full state hash, since it decides what is a duplicate."""
+
+    return f"{kind}-{round}-{category}-{state_hash}-{question}"
 
 
 def record(kind: str, category: str, *, round: int, slice, state_hash: str, source: str, question: str,
@@ -58,18 +65,12 @@ def record(kind: str, category: str, *, round: int, slice, state_hash: str, sour
            "category": category, "slice": slice if slice == "base" else list(slice), "state_hash": state_hash,
            "source": source, "question": question, "answers": answers or [], "intended": intended,
            "predicted": predicted, "state": state, "at": time.time()}
-    path = NOTES / kind / "ledger.jsonl"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    store.append(NOTES / kind / "ledger.jsonl", row)
     return row
 
 
 def ledger(kind: str) -> list[dict]:
-    path = NOTES / kind / "ledger.jsonl"
-    if not path.exists():
-        return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    return store.read(NOTES / kind / "ledger.jsonl")
 
 
 def cluster_name(category: str, slice) -> str:
@@ -107,7 +108,7 @@ def set_status(kind: str, name: str, status: str, round: int, slice="base") -> N
     text = path.read_text(encoding="utf-8")
     text = re.sub(r"^status: .*$", f"status: {status}", text, count=1, flags=re.M)
     text = re.sub(r"^rounds: (.*)$", lambda m: f"rounds: {joined(m.group(1), [round])}", text, count=1, flags=re.M)
-    path.write_text(text, encoding="utf-8")
+    store.write(path, text)
     write_index()
 
 
@@ -140,8 +141,7 @@ def write_page(kind: str, name: str, rows: list[dict], diagnosis: dict, slice="b
             f"# {name}\n\n{CATEGORIES.get(first['category'], '')}.\n\n## Cases\n\n{cases or '- none yet'}\n\n"
             f"## Cause\n\n{diagnosis['cause'] or UNDIAGNOSED}\n\n"
             f"## Next\n\n{diagnosis['next'] or 'Not decided yet.'}\n")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(body, encoding="utf-8")
+    store.write(path, body)
     return path
 
 
@@ -184,8 +184,7 @@ def write_index() -> None:
         f = front(path)
         lines.append(f"| {f.get('kind')} | [{path.stem}]({path.parent.name}/{path.name}) | {f.get('category')} | "
                      f"{f.get('count')} | {f.get('status')} | {f.get('rounds')} |")
-    NOTES.mkdir(parents=True, exist_ok=True)
-    (NOTES / "index.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    store.write(NOTES / "index.md", "\n".join(lines) + "\n")
 
 
 def brief(kind: str) -> dict:

@@ -41,7 +41,8 @@ import time
 from collections import Counter, defaultdict
 
 import notes
-from label import DATA, append, read
+from label import DATA
+from store import append, read
 
 ROUNDS = 3
 MIN_ERRORS = 10
@@ -111,12 +112,14 @@ def floor(universe: list, old: set, new: set, seed: int = 0) -> tuple[float, flo
 
 def note_errors(kind: str, round: int, rows: list[dict], wrong: set, predicted: dict, target=None) -> None:
     """Record the incumbent's validation errors: those inside the slice the round aimed at
-    under that slice, so its page shows what is left, the rest under `base`."""
+    under that slice, so its page shows what is left, the rest under `base`. An error already
+    noted for this round is not noted again, so a resumed run can call it safely."""
 
+    noted = {n["id"] for n in notes.ledger(kind)}
     for row in rows:
         for name, want in row["expected"].items():
             key = (row["provenance"]["state_hash"], name)
-            if key in wrong:
+            if key in wrong and notes.note_id(kind, round, "student_wrong", key[0], name) not in noted:
                 inside = target is not None and features(row, name).get(target[0]) == target[1]
                 notes.record(kind, "student_wrong", round=round, slice=target if inside else "base",
                              state_hash=key[0],
@@ -124,12 +127,13 @@ def note_errors(kind: str, round: int, rows: list[dict], wrong: set, predicted: 
                              predicted=predicted.get(key), state=row["state"])
 
 
-def restore(rows: list[dict]) -> tuple[list[str], set, int, tuple | None]:
-    """The loop's state from its own records, so running it again continues it: the kept
-    splits, the features stalled since the last adoption, the last round that aimed at a
-    slice, and that round and slice when its labelling stopped short."""
+def restore(rows: list[dict]) -> tuple[list[str], set, int, tuple | None, tuple]:
+    """The loop's state from its journal, `rounds.jsonl`, so running it again continues it:
+    the kept splits, the features stalled since the last adoption, the last round that
+    aimed at a slice, that round and slice when it never finished (started, or labelling
+    stopped short), and the round and slice that made the incumbent (`(0, None)`: the base)."""
 
-    kept, stalled, last, unfinished = ["train"], set(), 0, None
+    kept, stalled, last, unfinished, incumbent = ["train"], set(), 0, None, (0, None)
     for row in rows:
         if "prune" in row:
             if row["removed"] and row["prune"] in kept:
@@ -138,14 +142,15 @@ def restore(rows: list[dict]) -> tuple[list[str], set, int, tuple | None]:
         if "slice" not in row:
             continue   # a baseline, a resume, or a round that never started
         last, unfinished = row["round"], None
-        if row.get("adopted"):
-            kept.append(row["split"])
-            stalled.clear()
-        elif row.get("stopped") == "labelling_incomplete":
+        if row.get("started") or row.get("stopped") == "labelling_incomplete":
             unfinished = (row["round"], tuple(row["slice"]))
+        elif row.get("adopted"):
+            kept.append(row.get("split", f"aug-{row['round']}"))   # rows before `split` was kept
+            stalled.clear()
+            incumbent = (row["round"], tuple(row["slice"]))
         else:
             stalled.add(row["slice"][0])
-    return kept, stalled, last, unfinished
+    return kept, stalled, last, unfinished, incumbent
 
 
 def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns: int, rounds: int = ROUNDS,
@@ -198,14 +203,19 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
         wrong, predicted = score(kind, ckpt)
         return ckpt, set(wrong), predicted
 
+    def status(r, target, value):
+        """Journal first, then the page: a run replays every journalled status on start."""
+        notes.set_status(kind, notes.cluster_name("student_wrong", target), value, r, target)
+
     before = read(folder / "rounds.jsonl")
-    kept, stalled, last, unfinished = restore(before)
+    for row in before:
+        if "status" in row:
+            status(row["round"], tuple(row["slice"]), row["status"])
+    kept, stalled, last, unfinished, (made, aimed_at) = restore(before)
     best_ckpt, wrong, predicted = evaluate(kept)
-    if before:
-        record(resumed=True, splits=kept, accuracy=1 - len(wrong) / len(universe), checkpoint=str(best_ckpt))
-    else:
-        note_errors(kind, 0, validation, wrong, predicted)
-        record(round=0, splits=kept, accuracy=1 - len(wrong) / len(universe), checkpoint=str(best_ckpt))
+    note_errors(kind, made, validation, wrong, predicted, aimed_at)   # what an interruption left out
+    record(**({"resumed": True} if before else {"round": 0}), splits=kept,
+           accuracy=1 - len(wrong) / len(universe), checkpoint=str(best_ckpt))
     for r in range(unfinished[0] if unfinished else last + 1, rounds + 1):
         if max_turns - spent < round_turns:
             record(round=r, stopped="budget")
@@ -218,9 +228,9 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
         if target is None:
             record(round=r, stopped="no_slice")
             break
-        page = notes.cluster_name("student_wrong", target)
-        notes.set_status(kind, page, "targeted", r, target)
         split = f"aug-{r}"
+        record(round=r, slice=target, split=split, started=True, status="targeted")   # before any paid turn
+        status(r, target, "targeted")
         spent += generate(kind, target, per_round, history, r, max_turns - spent)
         aimed = {json.dumps(c.get("slice")) for c in read(folder / f"{split}.candidates.jsonl")}
         if aimed - {json.dumps(list(target))}:
@@ -229,29 +239,32 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
         spent += stats["turns"]
         asked = stats["agreed"] + stats["dropped"]
         if stats.get("stopped") == "turn_limit" or asked < MIN_JUDGED:
-            record(round=r, slice=target, labelled=stats, adopted=False, stopped="labelling_incomplete")
+            record(round=r, slice=target, split=split, labelled=stats, adopted=False,
+                   stopped="labelling_incomplete", status="targeted")
             break
         if stats["agreed"] / asked < MIN_AGREEMENT:
-            notes.set_status(kind, page, "ambiguous", r)
             stalled.add(target[0])
-            record(round=r, slice=target, labelled=stats, adopted=False, reason="ambiguous_slice")
+            record(round=r, slice=target, split=split, labelled=stats, adopted=False, reason="ambiguous_slice",
+                   status="ambiguous")
+            status(r, target, "ambiguous")
             continue
         ckpt, new_wrong, new_predicted = evaluate(kept + [split])
         gain, noise = floor(universe, wrong, new_wrong, seed=r)
         if gain <= noise:
-            notes.set_status(kind, page, "falsified", r)
             stalled.add(target[0])
-            record(round=r, slice=target, labelled=stats, gain=gain, noise=noise, adopted=False,
-                   reason="within_noise" if gain >= 0 else "regressed")
+            record(round=r, slice=target, split=split, labelled=stats, gain=gain, noise=noise, adopted=False,
+                   reason="within_noise" if gain >= 0 else "regressed", status="falsified")
+            status(r, target, "falsified")
             continue
         kept.append(split)
         best_ckpt, wrong, predicted = ckpt, new_wrong, new_predicted
-        note_errors(kind, r, validation, wrong, predicted, target)
         left = next((err for key, err, _ in slices(validation, wrong) if key == target), 0)
-        notes.set_status(kind, page, "resolved" if left < MIN_ERRORS else "targeted", r)
+        settled = "resolved" if left < MIN_ERRORS else "targeted"
         stalled.clear()
         record(round=r, slice=target, split=split, labelled=stats, gain=gain, noise=noise, adopted=True,
-               accuracy=1 - len(wrong) / len(universe), checkpoint=str(ckpt))
+               accuracy=1 - len(wrong) / len(universe), checkpoint=str(ckpt), status=settled)
+        note_errors(kind, r, validation, wrong, predicted, target)
+        status(r, target, settled)
     for split in [s for s in kept if s != "train"]:
         rest = [s for s in kept if s != split]
         ckpt, rest_wrong, rest_predicted = evaluate(rest)

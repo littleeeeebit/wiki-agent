@@ -27,23 +27,12 @@ import time
 from pathlib import Path
 
 import notes
+from store import append, read
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA = Path(__file__).resolve().parent / "data"
 PROMPT = Path(__file__).resolve().parent / "prompts" / "label.md"
 AGREE = 0.7
-
-
-def read(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
-
-
-def append(path: Path, row: dict) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def shown(question: dict) -> dict:
@@ -164,11 +153,12 @@ def label(kind: str, split: str, target: int, labellers: list[str], max_turns: i
     noted = {r["id"] for r in notes.ledger(kind)}
 
     def settle(verdict):
-        """Write what `verdict` holds and an interruption may have left out."""
-        if verdict["row"] and verdict["state_hash"] not in written:
+        """Write what `verdict` holds and an interruption may have left out. A verdict
+        from before verdicts held their row and notes has nothing to settle."""
+        if verdict.get("row") and verdict["state_hash"] not in written:
             append(out_path, verdict["row"])
             written.add(verdict["state_hash"])
-        for note in verdict["notes"]:
+        for note in verdict.get("notes", []):
             if notes.note_id(kind, note["round"], note["category"], note["state_hash"], note["question"]) not in noted:
                 noted.add(notes.record(kind, note.pop("category"), **note)["id"])
 

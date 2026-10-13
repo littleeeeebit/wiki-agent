@@ -65,7 +65,10 @@ the kept splits, the stalled features, and an unfinished round with its own
 slice and split; a new round takes the next number, so one split never
 holds two slices, and every candidate carries the slice it was aimed at.
 Labelling writes each state's verdict before its labelled row and notes,
-so an interruption is finished on the rerun, never counted twice or lost.
+and the loop journals each round's intent before any paid turn and each
+outcome before its page status; a torn last line is never committed. An
+interruption is finished on the rerun, never counted twice or lost
+([recovery research](../../research/laya-loop-recovery.md)).
 
 ## Acceptance
 
