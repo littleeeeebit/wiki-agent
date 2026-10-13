@@ -663,6 +663,12 @@ def test_generate_refuses_without_every_gate_state_or_a_running_search(folders):
     (folders / "tests.json").write_text('{"tests": []}', encoding="utf-8")
     with pytest.raises(SystemExit):
         generate.generate("useful", "train", 1, "opus", 1, capture=judged, turn=teacher, ready=lambda: False)
+    runs = folders / "data" / "useful" / "generate.runs.jsonl"
+    write(runs, [{"run": "t0-q0", "split": "train", "candidates": 0, "error": "RuntimeError: x"}])
+    generate.generate("useful", "train", 0, "opus", 0, capture=judged, turn=teacher)   # a failed run owns nothing
+    write(runs, [{"run": "t0-q0", "split": "train", "candidates": 1, "originals": [judged("a")[0]]}])
+    with pytest.raises(SystemExit, match="no claim"):   # from before claims: its split's ownership is lost
+        generate.generate("useful", "validation", 1, "opus", 1, capture=judged, turn=teacher)
     assert teacher.turns == []
 
 

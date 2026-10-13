@@ -251,6 +251,10 @@ def generate(kind: str, split: str, target: int, teacher: str, max_turns: int, s
                 sides.append(r["split"])
         else:
             done.add(r["run"])
+    unowned = {r["run"] for r in read(runs) if "candidates" in r and "error" not in r} - claimed.keys()
+    if unowned:   # written before claims: which split owns those requests cannot be told
+        raise SystemExit(f"{runs.name} has runs with no claim ({', '.join(sorted(unowned)[:3])}); "
+                         "they predate claims, so remove that kind's generated files before generating")
     near = gate.Near(row for s in SPLITS for row in read(folder / f"{s}.candidates.jsonl"))
     have = len(read(folder / f"{split}.candidates.jsonl"))
     stats = {"turns": 0, "cost_usd": 0.0, "queries": 0, "kept": 0, "near_gate": 0, "other_split": 0,

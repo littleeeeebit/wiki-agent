@@ -106,6 +106,8 @@ The passage kinds' generator is `laya/generate.py` (built 2026-10-13):
   before any of its candidates is written. A run interrupted after its
   claim finishes from the claimed requests, never from a new capture that
   may differ. A resumed run claimed by another split is left to that split.
+  A finished run with no claim (written before claims existed) makes the
+  generator refuse to start, since its split's ownership cannot be told.
 - The daemon is asked again before each teacher turn. A question whose own
   retrieval failed (`prepare` ends `unavailable` before any grade-evidence
   request) is left unrun with its reason, and the run stops
