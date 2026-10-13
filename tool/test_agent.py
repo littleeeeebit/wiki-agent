@@ -1010,6 +1010,26 @@ def test_a_close_waits_for_a_stop_still_using_the_job(tree):
     assert order == ["kill", "close"]
 
 
+def test_a_close_survives_a_process_slow_to_die_after_its_kill(tree):
+    # A Codex exec that outlived its kill by five seconds raised out of `close`,
+    # and the oneshot's folder it still held failed the cleanup after it.
+    class Slow:
+        stdin = None
+        kills = 0
+
+        def wait(self, timeout=None):
+            raise subprocess.TimeoutExpired("codex", timeout)
+
+        def kill(self):
+            self.kills += 1
+
+    session, ended = ChatSession(tree), []
+    session._proc, session._job = Slow(), "job"
+    with patch.object(chat_session, "terminated", side_effect=ended.append):
+        session.close()
+    assert ended == ["job"] and session._proc is None
+
+
 # Starts a child that marks a file 1.5 s later unless its tree is killed first.
 MARKS = '''import json, subprocess, sys
 subprocess.Popen([sys.executable, "-c", "import pathlib, sys, time; time.sleep(1.5); pathlib.Path(sys.argv[1]).touch()",

@@ -821,7 +821,10 @@ class ChatSession:
                 proc.wait(timeout=5)
         except Exception:
             proc.kill()
-            proc.wait(timeout=5)
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass   # still exiting after its kill: the job ends it and its children below
         finally:
             # Nobody watches its background work after this: no orphans.
             terminated(job)
@@ -1298,7 +1301,9 @@ def oneshot(prompt: str, payload: dict, model: str = "", effort: str = "", halt:
     thing said to it. `halt`, set from any thread, stops the turn (`stop`);
     the session is this call's and is closed on every way out."""
     system = (Path(__file__).resolve().parents[1] / "prompts" / prompt).read_text(encoding="utf-8")
-    with tempfile.TemporaryDirectory(prefix="wiki-oneshot-") as folder:
+    # A process killed a moment ago may still hold the folder (Windows): a leftover
+    # empty folder in the temp directory, never a failed turn.
+    with tempfile.TemporaryDirectory(prefix="wiki-oneshot-", ignore_cleanup_errors=True) as folder:
         chat = ChatSession(Path(folder), tools="", system=system, model=model,
                            effort=effort, isolated=True)
         ended = threading.Event()
