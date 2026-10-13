@@ -115,9 +115,10 @@ resident.
    ModernBERT's native context is 8,192 (L8). Train a kind at its measured
    state-plus-head length. A state is not reduced or split: its
    `current_state`, passage ids and headings fix what a question means, and
-   a reduced state can make two different questions identical. A question
-   over its kind's limit goes to TypeSafe, or, without TypeSafe, the request
-   is `unavailable` with `state_too_large`, an existing path
+   a reduced state can make two different questions identical. A request
+   with any question over its kind's limit goes whole to TypeSafe under the
+   existing TypeSafe policy, or, without TypeSafe, is `unavailable` with
+   `state_too_large`, an existing path
    ([stage 1](../plans/laya/1-serving.md)).
 
 ## Applicability and counterevidence

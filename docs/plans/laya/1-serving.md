@@ -68,15 +68,26 @@ those shapes and fills them as follows.
   the whole state plus that question's head, measured with Laya's
   tokenizer. The state is never cut, reduced or split: `current_state`,
   passage ids and headings define what a question means, so a reduced
-  state can make two different questions identical. A Laya question over
-  its limit is asked of TypeSafe instead, in the request's TypeSafe group,
-  and the trace entry marks it `overflow`. Where TypeSafe is not configured,
-  the whole request fails with the existing `state_too_large` category, so
-  `decide` returns `unavailable` and every owner takes its existing
-  unavailable path (baseline retrieval, unverified claims, the action
-  baseline). Every question is therefore either answered with a valid
-  answer or the request is unavailable; no new answer form is added. The
-  overflow and unavailable rates per kind are reported.
+  state can make two different questions identical.
+- Overflow is per request, decided before the request is built. The
+  consumer checks every Laya question's length when it chooses the
+  request's `model` and policy. If any is over its limit and TypeSafe is
+  configured, the whole request is built as an all-TypeSafe request: model
+  `jev-1.13.0`, the consumer's existing TypeSafe policy and prompt binding,
+  one TypeSafe call. The trace entry marks it `overflow`. So the model that
+  answers and the rule that judges always come from the same request, and
+  `decide`, the cache key, tapes and replays carry that pairing unchanged.
+  Where TypeSafe is not configured, the request is built for Laya and fails
+  with the existing `state_too_large` category, so `decide` returns
+  `unavailable` and every owner takes its existing unavailable path
+  (baseline retrieval, unverified claims, the action baseline). Every
+  question is therefore answered with a valid answer or the request is
+  unavailable; no new answer form is added. The overflow and unavailable
+  rates per kind are reported.
+- Judging with the request's policy. A consumer that judges answers again
+  after `decide` (claims re-judge relations with `Flow.pol`) uses the
+  policy of the request that produced them, kept with the result, never
+  the flow's current one.
 - Server. `laya-serve` takes a `model` per request and registers extra
   names with `LAYA_EXTRA_MODELS` (L2); stage 1 uses it if its LRU and
   preload settings hold the measured memory. Only if they do not, a small
@@ -112,10 +123,14 @@ those shapes and fills them as follows.
 - With `route` on `laya`, a route request is answered locally, recorded,
   cached and replayed like a Jev one; changing route's checkpoint changes
   the decider identity only of requests that ask `route`.
-- A mixed judge request and a mixed route request with one Laya question
-  over its limit: that question is answered by TypeSafe and marked
-  `overflow`; without TypeSafe the request is `unavailable` with
+- A judge request and a route request with one Laya question over its
+  limit: the whole request goes to TypeSafe with the existing policy and is
+  marked `overflow`; without TypeSafe it is `unavailable` with
   `state_too_large`.
+- With `relation` on Laya and no Laya relation rule yet, an overflowed
+  claim request whose TypeSafe answer is `supports` 0.7 (others 0.15 each)
+  stays `uncertain` under the existing relation policy (threshold 0.9), in
+  `decide`, in the claim re-judgment, on a cache hit and on replay.
 - A mixed request where the second group fails keeps the first group's usage
   in the trace and the result's `call`.
 - The measurements are written to `raw/eval/laya/stage1-<timestamp>.json`
@@ -136,8 +151,10 @@ checkpoint changed; a consumer's policy taking a Laya kind's rule; one
 cancelled groups' known usage kept and unknown usage not recorded as zero;
 a mixed request with the second group failing; cancel mid-request; a cache
 hit spending no call; replay of a mixed request with the same call and
-token deltas; overflow to TypeSafe and `state_too_large` without it; a
-non-local Laya URL refused.
+token deltas; whole-request overflow to TypeSafe with its existing policy
+and `state_too_large` without it; the overflowed relation case above
+through `decide`, claim re-judgment, cache hit and replay; a non-local
+Laya URL refused.
 
 ## Rollback
 

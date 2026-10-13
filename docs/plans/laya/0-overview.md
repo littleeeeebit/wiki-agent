@@ -46,7 +46,8 @@ answers are joined in question order. The kinds reach the transport, the
 request's `model` becomes the identity of the deciders it asked, the policy
 is composed per kind, and one trace entry keeps every group's model and
 usage. [Stage 1](1-serving.md) defines this contract and what happens to a
-state over a kind's length limit (TypeSafe, else `unavailable`).
+state over a kind's length limit (the whole request on TypeSafe with its
+existing policy, else `unavailable`).
 
 ## Steps
 
