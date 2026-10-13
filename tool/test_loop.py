@@ -1479,7 +1479,7 @@ def test_poller_reattaches_an_active_loop_without_a_driver_and_stops_on_shutdown
         thread = threading.Thread(target=loop.poll, args=(halt,), daemon=True)
         thread.start()
         try:
-            waited(lambda: specs.load("proj", spec["id"])["state"] == "머지 가능", 20)
+            waited(lambda: specs.load("proj", spec["id"])["state"] == "머지 가능")
             assert len(Reviewer.made) == 1 and len(Reviewer.made[0].heard) == 1
         finally:
             halt.set()
