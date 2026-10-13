@@ -34,12 +34,20 @@ those shapes and fills them as follows.
   `{kind: provider, checkpoint, version, temperature}` of those kinds only.
   The cache key already contains `model`, so changing one kind's checkpoint
   invalidates exactly the requests that ask that kind.
-- Policy per kind. A Laya kind's rules come from
-  `eval/laya/policy/<kind>.json`, bound to its checkpoint and version; a
-  TypeSafe kind's from `eval/jev/policy.json` as today. `decision.policy`
-  composes them; `policy_version` is a hash over each kind's (model, rule
-  source, rule). A kind without a fitted rule for its checkpoint is
-  provisional, as today.
+- Policy per kind. Each consumer keeps loading its own artifact with its
+  own prompt and kind-version binding, as today: retrieval
+  `eval/jev/policy.json`, claims `eval/jev/relation-policy.json`
+  (`decision.claims`), actions `eval/jev/action-policy.json`
+  (`main.decisions`). For a kind switched to Laya, that consumer's policy
+  takes the kind's rule from `eval/laya/policy/<kind>.json` instead, bound
+  to its checkpoint, version and temperature; without one the kind is
+  provisional, as today. With no kind on Laya, every consumer's policy,
+  `policy_version` and verdicts are exactly today's. With some on Laya,
+  `policy_version` is a hash over today's version and the Laya kinds' rule
+  sources. A consumer's policy covers all its kinds, so switching one kind
+  also changes the `policy_version`, and so the cache keys, of that
+  consumer's other requests; the cache is in memory and bounded, so this
+  costs repeat calls, not correctness.
 - One call per provider. Questions are grouped by provider, not by kind: all
   TypeSafe questions of a request stay one call, so with every kind on
   TypeSafe nothing changes. Laya questions are grouped by kind (one model
@@ -56,17 +64,19 @@ those shapes and fills them as follows.
   already sent keep their usage in the entry. A cancel aborts every in-flight
   group and sends none of the rest. Replay tapes keep the logical request's
   answers and the entry, unchanged in shape.
-- Length. Each kind has a token limit for state plus question head, measured
-  with Laya's tokenizer. Over the limit:
-
-  | Kinds | Over-long state |
-  | --- | --- |
-  | `useful`, `conflict`, `redirect` (one passage each) | Asked with the query and that passage only; the answer keeps its meaning |
-  | `coverage`, `relation`, `answers`, `faithful` (read passages or claims together) | No answer: the question is `uncertain`, which code already treats safely (coverage missing, claim unverified) |
-  | `route`, `source`, `ask`, `analysis`, `progress`, `repair`, `action` | No answer: `uncertain`, so route retrieves, a source is searched, repair takes code's order, an action runs the baseline |
-
-  No per-passage answers are combined into one; nothing is truncated
-  silently. The share of over-long states per kind is reported.
+- Length. Each Laya kind has a token limit (its training `max_len`) for
+  the whole state plus that question's head, measured with Laya's
+  tokenizer. The state is never cut, reduced or split: `current_state`,
+  passage ids and headings define what a question means, so a reduced
+  state can make two different questions identical. A Laya question over
+  its limit is asked of TypeSafe instead, in the request's TypeSafe group,
+  and the trace entry marks it `overflow`. Where TypeSafe is not configured,
+  the whole request fails with the existing `state_too_large` category, so
+  `decide` returns `unavailable` and every owner takes its existing
+  unavailable path (baseline retrieval, unverified claims, the action
+  baseline). Every question is therefore either answered with a valid
+  answer or the request is unavailable; no new answer form is added. The
+  overflow and unavailable rates per kind are reported.
 - Server. `laya-serve` takes a `model` per request and registers extra
   names with `LAYA_EXTRA_MODELS` (L2); stage 1 uses it if its LRU and
   preload settings hold the measured memory. Only if they do not, a small
@@ -96,27 +106,38 @@ those shapes and fills them as follows.
 ## Acceptance
 
 - With every kind on `typesafe`, the full gate passes unchanged, requests
-  send the same bodies, and recorded replays are identical.
+  send the same bodies, every consumer's policy version and verdicts are
+  today's (the claim policy's relation threshold among them), and recorded
+  replays are identical.
 - With `route` on `laya`, a route request is answered locally, recorded,
-  cached and replayed like a Jev one; changing route's checkpoint misses the
-  cache for route requests only.
+  cached and replayed like a Jev one; changing route's checkpoint changes
+  the decider identity only of requests that ask `route`.
+- A mixed judge request and a mixed route request with one Laya question
+  over its limit: that question is answered by TypeSafe and marked
+  `overflow`; without TypeSafe the request is `unavailable` with
+  `state_too_large`.
 - A mixed request where the second group fails keeps the first group's usage
   in the trace and the result's `call`.
 - The measurements are written to `raw/eval/laya/stage1-<timestamp>.json`
   and summarized in the plan.
 - The owner decides from them whether to pay for stage 2's generation. If
   the label swap dominates, swap latency or memory breaks the six-second call
-  limit, or a kind's over-long share makes it mostly `uncertain`, the plan
-  stops or drops that kind with that evidence.
+  limit, or a kind's share over 4,096 tokens would leave it mostly on
+  TypeSafe, the plan stops or drops that kind with that evidence.
 
 ## Tests
 
 `tool/test_decision_provider.py`, no network: kinds passed to the
-transport; all-TypeSafe bodies and traces byte-identical to today; grouping
-by provider; decider identity changing only for the kinds whose checkpoint
-changed; composed policy version; a mixed request with the second group
-failing; cancel mid-request; usage sum; replay of a mixed request; each
-over-long rule in the table; a non-local Laya URL refused.
+transport; all-TypeSafe bodies, traces, policy versions and verdicts
+identical to today for retrieval, claims and actions; grouping by
+provider; decider identity changing only for requests asking a kind whose
+checkpoint changed; a consumer's policy taking a Laya kind's rule; one
+`Budget.call()` per logical request whatever its groups, with failed and
+cancelled groups' known usage kept and unknown usage not recorded as zero;
+a mixed request with the second group failing; cancel mid-request; a cache
+hit spending no call; replay of a mixed request with the same call and
+token deltas; overflow to TypeSafe and `state_too_large` without it; a
+non-local Laya URL refused.
 
 ## Rollback
 

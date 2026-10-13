@@ -111,14 +111,13 @@ resident.
 4. Calibration on held-out data. One temperature per kind on a calibration
    split that neither trained nor selected the model (L3), then the existing
    threshold fit per model version (`eval/jev/policy.json`).
-5. Longer inputs by encoder length; splitting only where a question is
-   already about one passage. ModernBERT's native context is 8,192 (L8).
-   Train a kind at its measured state-plus-head length. `useful`, `conflict`
-   and `redirect` each ask about one passage, so an over-long state can be
-   cut to the query and that passage. A question that reads passages
-   together (`coverage`) or chooses among candidates has no faithful
-   per-passage combination; an over-long state there is the kind's
-   uncertain outcome, which code already handles safely
+5. Longer inputs by encoder length, never by cutting the state.
+   ModernBERT's native context is 8,192 (L8). Train a kind at its measured
+   state-plus-head length. A state is not reduced or split: its
+   `current_state`, passage ids and headings fix what a question means, and
+   a reduced state can make two different questions identical. A question
+   over its kind's limit goes to TypeSafe, or, without TypeSafe, the request
+   is `unavailable` with `state_too_large`, an existing path
    ([stage 1](../plans/laya/1-serving.md)).
 
 ## Applicability and counterevidence

@@ -16,7 +16,7 @@ fit its thresholds.
   checkpointing, micro-batch and accumulation set to fit 10 GB.
 - `max_len` per kind: the smallest of 1,024, 2,048 or 4,096 that holds 95%
   of the kind's state-plus-head lengths from stage 1. Longer states follow
-  stage 1's over-long table; no answers are combined.
+  stage 1's length rule (TypeSafe, else `unavailable`); no state is cut.
 - Early stopping on validation. Seed, data hashes and config recorded with
   each checkpoint as `laya-<kind>-v<N>`.
 - Route first, end to end through stage 6, before the other thirteen.

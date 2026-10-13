@@ -33,10 +33,15 @@ test is labelled by a person only (stage 2).
 
 ## Budget
 
-Per kind, labels for 3,600 states at most (the targets plus surplus) × two
-labellers, plus the human queue. With about 2k input tokens a label, that is
-about 14.4M input tokens a kind and about 200M for fourteen, before
-augmentation. The real figure comes from the pilot.
+Per kind, stage 2 generates 4,320 candidates: the 3,600 usable targets
+(train 3,000, validation 300, calibration 300) and a 20% surplus per split
+(600, 60, 60). Candidates are labelled in order and labelling of a split
+stops when its target is met, so the surplus is labelled only to replace
+drops. The upper bound is 4,320 × two labellers = 8,640 labels; with about
+2k input tokens a label, about 17.3M input tokens a kind and about 242M for
+fourteen, before augmentation. Pilot labels count toward the targets. The
+approved limit must cover the upper bound, or the owner accepts that a kind
+may stop short (below). The real figure comes from the pilot.
 
 ## Pilot, then the full run
 

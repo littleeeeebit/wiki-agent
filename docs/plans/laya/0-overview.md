@@ -45,8 +45,8 @@ questions stay one call, Laya questions go to each kind's model, and the
 answers are joined in question order. The kinds reach the transport, the
 request's `model` becomes the identity of the deciders it asked, the policy
 is composed per kind, and one trace entry keeps every group's model and
-usage. [Stage 1](1-serving.md) defines this contract and what an over-long
-state does per kind.
+usage. [Stage 1](1-serving.md) defines this contract and what happens to a
+state over a kind's length limit (TypeSafe, else `unavailable`).
 
 ## Steps
 
@@ -85,9 +85,9 @@ tokens per call and are replaced by each pilot's measurement.
 
 | Item | Per kind | Gate |
 | --- | --- | --- |
-| Teacher generation | 3,600 train/validation/calibration states with the 20% surplus | Stage 2 pilot of 50, then owner approval |
-| Labelling | 3,600 × 2 labellers, about 14.4M input tokens (about 200M for fourteen) | Stage 3 pilot of 200, then owner approval of a total limit |
-| Human review | The pilot's disagreement rate × 3,600, capped | Cap set from the pilot |
+| Teacher generation | 4,320 candidates: 3,600 usable targets (3,000 + 300 + 300) plus a 20% surplus per split (600 + 60 + 60) | Stage 2 pilot of 50, then owner approval |
+| Labelling | Up to 4,320 × 2 = 8,640 labels, about 17.3M input tokens (about 242M for fourteen); labelling stops when the targets are met, so surplus is paid only for refills | Stage 3 pilot of 200, then owner approval of a total limit |
+| Human review | The pilot's disagreement rate × the states labelled, capped | Cap set from the pilot |
 | Augmentation | Up to 3 rounds × 300 states, generated and labelled twice | One approved total limit before round 1 |
 | Training | About 1–3 GPU-hours locally, per run and per augmentation round | Local, no spend |
 | Jev comparison | Up to 300 gate states | Owner approval; a repetition needs a second |

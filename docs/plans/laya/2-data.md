@@ -36,9 +36,10 @@ dropped.
 
 ## Paid generation
 
-Generating states with a teacher LLM is a paid run. Before stage 2 sends
-anything, the owner approves a budget (calls, tokens, seconds, and an upper
-spend) set from a 50-state pilot of the kind that measures the cost per state.
+Generating states with a teacher LLM is a paid run. The owner first
+approves a small budget for a 50-state pilot of the kind, which measures the
+cost per state; then, before the full generation sends anything, a budget
+(calls, tokens, seconds, and an upper spend) set from that cost.
 The generator records each call's usage, resumes without paying twice, and
 stops at the budget. A local teacher model, if the owner prefers one, needs
 no spend approval but is recorded the same way.
@@ -68,7 +69,8 @@ keeps that rate in test and is balanced only in training.
 Per kind: 3,000 usable train, 300 validation (checkpoint choice, early
 stopping, augmentation), 300 calibration (temperatures and thresholds
 only). Usable means labelled under stage 3's rule. Stage 2 generates 20%
-more for each split; stage 3 refills from that surplus when states are
+more for each split, 4,320 candidates in all (3,600, 360, 360); stage 3
+refills from that surplus when states are
 dropped, and stops the kind if the surplus runs out (see stage 3). The gate
 test is separate, above.
 
