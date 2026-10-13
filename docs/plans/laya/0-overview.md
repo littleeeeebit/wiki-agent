@@ -14,8 +14,11 @@ shadow and active. Research, sources and measurements are on
 | Model | [Laya](https://huggingface.co/convaiinnovations/laya), Apache-2.0, fine-tuned locally | Owner, 2026-10-13 |
 | Split | Fourteen models, one per decision kind; code routes by the kind each question already carries | Owner, 2026-10-13 |
 | Training data | 3,000 states per kind to start; then augmentation of the slices validation gets most wrong | Owner, 2026-10-13 |
-| Labels | Two LLM labellers independently; agreed labels train, disagreements go to a person | Owner, 2026-10-13 |
-| Gate test | States production really sent, labelled by a person, reserved before any measurement; synthetic sets are diagnostics only | This plan |
+| Labels | Two LLM labellers independently; agreed labels train; a disagreement is dropped, recorded in the error notebook and refilled from the surplus; no person labels | Owner, 2026-10-13 |
+| Gate test | States production really sent, reserved before any measurement; synthetic sets are diagnostics only. Not labelled by a person; where its answers come from is still open | Owner, 2026-10-13 |
+| Pilot kind | `useful` (1,521 production questions, 185 states); a kind with under 100 production states stays on TypeSafe until enough accumulate | Owner, 2026-10-13 |
+| Improvement | After RRSI: a round is adopted only above the noise floor, falsified slices are never retried, adopted rounds are pruned; every dropped or wrong question goes to a local error notebook | Owner, 2026-10-13 |
+| Code | Data, labels, training, the loop and the notebook in the top-level `laya/` folder; serving stays in `tool/decision` | Owner, 2026-10-13 |
 | Runtime | Local server on the RTX 3080 (10 GB); TypeSafe stays as a per-kind fallback until rollout | This plan |
 | Language | English states only, as Jev today; normalization is unchanged | Existing rule |
 
@@ -55,9 +58,9 @@ existing policy, else `unavailable`).
 | --- | --- | --- | --- |
 | 1 | [Serving](1-serving.md) | Local server, per-kind provider, context and zero-shot baseline | Not started |
 | 2 | [Data](2-data.md) | States per kind, splits, the gate test | Not started |
-| 3 | [Labels](3-labels.md) | Two-labeller agreement, human queue, pilot then full run | Not started |
+| 3 | [Labels](3-labels.md) | Two-labeller agreement, drops refilled and noted, pilot then full run | In progress — `laya/label.py` and the error notebook built and tested with stubs; no paid run yet |
 | 4 | [Training](4-training.md) | Fourteen fine-tunes, calibration, fitted policy | Not started |
-| 5 | [Augmentation](5-augmentation.md) | Error-slice loop per kind | Not started |
+| 5 | [Augmentation](5-augmentation.md) | Error-slice loop per kind, after RRSI | In progress — `laya/loop.py` built and tested with stubs; the generator (stage 2) is not |
 | 6 | [Rollout](6-rollout.md) | Non-inferiority gates, shadow then active per kind | Not started |
 
 Order: 1 → 2 → 3 → 4 → 5 → 6. Stage 1 first reserves the gate test, then
@@ -65,8 +68,8 @@ runs no paid call and decides whether the rest is worth paying for. Every
 paid step needs the owner's approval with a stated budget before it sends
 anything: teacher generation (stage 2), labelling (stage 3), augmentation
 (stage 5) and the Jev comparison (stage 6); a repetition needs a second
-approval. Route goes through stages 2–6 first; the other thirteen start
-after route's stage 6 result.
+approval. `useful` goes through stages 2–6 first; the other kinds start
+after its stage 6 result, each once it has at least 100 production states.
 
 ## Relation to open work
 
@@ -79,8 +82,6 @@ after route's stage 6 result.
 
 ## Budget
 
-| Item | Estimate | Gate |
-| --- | --- | --- |
 Per kind; fourteen kinds multiply it. Token figures assume about 2k input
 tokens per call and are replaced by each pilot's measurement.
 
@@ -88,11 +89,11 @@ tokens per call and are replaced by each pilot's measurement.
 | --- | --- | --- |
 | Teacher generation | 4,320 candidates: 3,600 usable targets (3,000 + 300 + 300) plus a 20% surplus per split (600 + 60 + 60) | Stage 2 pilot of 50, then owner approval |
 | Labelling | Up to 4,320 × 2 = 8,640 labels, about 17.3M input tokens (about 242M for fourteen); labelling stops when the targets are met, so surplus is paid only for refills | Stage 3 pilot of 200, then owner approval of a total limit |
-| Human review | The pilot's disagreement rate × the states labelled, capped | Cap set from the pilot |
+| Error notebook | One host turn per page that reached five errors and grew | Within the round's approved limit |
 | Augmentation | Up to 3 rounds × 300 states, generated and labelled twice | One approved total limit before round 1 |
 | Training | About 1–3 GPU-hours locally, per run and per augmentation round | Local, no spend |
 | Jev comparison | Up to 300 gate states | Owner approval; a repetition needs a second |
 
 ## Sources
 
-See [the research page](../../research/laya-replacement.md), L1–L8.
+See [the research page](../../research/laya-replacement.md), L1–L9.

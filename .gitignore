@@ -28,3 +28,6 @@ android/.gradle/
 android/app/build/
 android/build/
 android/local.properties
+laya/data/
+laya/notes/
+laya/checkpoints/

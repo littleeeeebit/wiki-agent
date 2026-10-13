@@ -31,6 +31,7 @@ no model.
 | L6 | Clark et al. 2019, [Born-Again Multi-Task Networks](https://arxiv.org/abs/1907.04829) | Search summary | Multi-task BERT: average up, some tasks down |
 | L7 | Liu, Liang and Gitter 2019, [Loss-Balanced Task Weighting](https://ojs.aaai.org/index.php/AAAI/article/view/5125) | Search summary | Per-task negative transfer under multi-task training |
 | L8 | Warner et al. 2024, [ModernBERT](https://arxiv.org/abs/2412.13663) | Known paper, not reread | Encoder with native 8,192-token context |
+| L9 | Google Research, [RRSI](https://github.com/google-research/rrsi) | Repository, read 2026-10-13 | Recursive self-improvement regularized by a full attempt history, a leakage screen, a noise-adjusted adoption floor, exploration on stall, removal experiments, and held-out data kept out of selection |
 
 ## What Laya is (L1, L2)
 
@@ -102,16 +103,24 @@ resident.
    fourteen models (2026-10-13); routing is code's, since every request
    already names its kind.
 2. Labels by agreement. Two strong LLMs label independently; agreed labels
-   train, disagreements go to a person. LLM ensembles flag label errors, and
-   their confidence goes with the precision of a flag (L4). The ensemble is a
+   train, and a disagreement is dropped and refilled, with no person in the
+   loop (owner, 2026-10-13). LLM ensembles flag label errors, and their
+   confidence goes with the precision of a flag (L4). The ensemble is a
    filter, not ground truth.
 3. Error-driven augmentation. After training, cluster validation errors into
    slices and have a teacher write new states for the weakest slice, labelled
    by the same agreement rule (L5). Validation, never test, drives it.
-4. Calibration on held-out data. One temperature per kind on a calibration
+4. Regularized recursion (L9). Each round is adopted only when its paired
+   gain on validation clears a bootstrap noise floor; a slice whose round
+   was not adopted is never aimed at again, and the next round tries an
+   untried feature; adopted rounds are removed again when keeping them
+   gains nothing above the floor. Every dropped or wrongly answered question
+   is kept in a local error notebook (`laya/notes/`) that the next round's
+   generator reads, as RRSI shows its proposer the whole history.
+5. Calibration on held-out data. One temperature per kind on a calibration
    split that neither trained nor selected the model (L3), then the existing
    threshold fit per model version (`eval/jev/policy.json`).
-5. Longer inputs by encoder length, never by cutting the state.
+6. Longer inputs by encoder length, never by cutting the state.
    ModernBERT's native context is 8,192 (L8). Train a kind at its measured
    state-plus-head length. A state is not reduced or split: its
    `current_state`, passage ids and headings fix what a question means, and
@@ -129,10 +138,13 @@ resident.
 - Two LLM labellers share failure modes; agreement does not prove a label.
   L4's 6–21% (its Table 2) is the label error rate it found in sampled test
   sets, not the detector's precision or recall, and not a measure of agreed
-  labels' correctness. Gate test labels are therefore a person's.
+  labels' correctness. With no person labelling (owner, 2026-10-13), the
+  gate test's answers cannot come from the same agreement that trains the
+  models without sharing its errors; their source is open and is decided
+  before stage 6.
 - Synthetic states dominate training, because real traffic is small. A
   model can fit the generator's style. The gate test therefore takes only
-  states production really sent, labelled by a person; synthetic and
+  states production really sent; synthetic and
   model-authored sets (`review-routing*.json`, `actions.json`) are reported
   as diagnostics beside it, never as the gate
   ([stage 2](../plans/laya/2-data.md)).
@@ -148,8 +160,8 @@ resident.
   owner chose fourteen models.
 - Distilling Jev's answers: cheapest labels, but it copies Jev's errors,
   which is what the replacement is for.
-- Human labels only: about 42,000 labels is not feasible; humans adjudicate
-  disagreements and spot-check.
+- Human labels, alone or for disagreements: about 42,000 labels is not
+  feasible, and the owner chose no person in the loop (2026-10-13).
 - Laya's Router: it routes by script and language, not by purpose.
 
 ## Validation conditions
@@ -158,7 +170,7 @@ resident.
   current request shape; every kind's zero-shot accuracy on development
   cases and the label-swap effect are recorded; and swap latency fits the
   per-question budget.
-- Stage 3: a pilot measures agreement and the human queue before the full
-  labelling is approved.
+- Stage 3: a pilot measures agreement and drops by category before the
+  full labelling is approved.
 - Stage 6: per kind, Laya is non-inferior to `jev-1.13.0` on the gate test
   and the reliability v8 gates do not regress.

@@ -11,7 +11,8 @@ All on stage 2's gate test, read here for the first time.
 
 - Scoring. Both deciders answer every gate state with the same state and
   question. An answer is correct when its top option (a Noul's probability
-  at least 0.5) matches the person's label. Laya is asked alone, with no
+  at least 0.5) matches the gate state's answer (its source is open; stage
+  2). Laya is asked alone, with no
   overflow to TypeSafe. Invalid, unavailable or over its limit (no answer)
   counts as wrong for that decider. Policy verdicts (yes, no, uncertain)
   are reported beside it, not gated.
@@ -53,7 +54,7 @@ paired answered subset, both 100-state rules, budget stop.
    for the decision and asks Laya beside it without waiting for it; Laya's
    answer goes into the trace entry's `groups` as `shadow` and changes no
    cache key or verdict. Agreement is reported weekly per kind.
-2. Active, one kind at a time, starting with `route`, by the provider
+2. Active, one kind at a time, starting with `useful`, by the provider
    setting.
 3. When every kind is active and a week of traces shows no gate regression,
    TypeSafe becomes an optional fallback and `TYPESAFE_API_KEY` is no longer
