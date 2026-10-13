@@ -595,14 +595,98 @@ def test_generate_drops_near_duplicates_of_the_gate_and_of_other_splits(folders)
     teacher = Teacher()
     out = generate.generate("useful", "validation", 10, "opus", 1, capture=judged, turn=teacher,
                             log=lambda *_: None)
-    assert out["near_gate"] == 1 and out["have"] == 3          # s0q0's p0 view is the gate's
+    assert out["near_gate"] == 2 and out["have"] == 2          # s0q0's request is the gate's, both views
     out = generate.generate("useful", "train", 10, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
     assert out["have"] == 0                                    # no turn allowed, and nothing to rerun
     write(folders / "data" / "useful" / "generate.runs.jsonl", [])   # run the paid queries again
     out = generate.generate("useful", "train", 10, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
-    assert out["near_kept"] == 3 and out["have"] == 0          # validation already holds them
+    assert out["near_kept"] == 2 and out["have"] == 0          # validation already holds them
     with pytest.raises(ValueError):
         generate.generate("route", "train", 1, "opus", 1, capture=judged, turn=teacher)
+
+
+def test_generate_checks_a_request_whole_before_cutting_it_into_views(folders):
+    shared = " ".join(f"shared{i}" for i in range(1200))
+
+    def request(tag):
+        return {"query": "q", "passages": [{"id": "p0", "text": shared},
+                                           {"id": "p1", "text": " ".join(f"{tag}{i}" for i in range(80))}]}
+
+    both = {"useful_p0": NOUL, "useful_p1": NOUL}
+    write(folders / "pool.jsonl", [{"id": "obs", "state_hash": "g", "decision_kind": "retrieval",
+                                    "state": request("old"), "questions": {
+                                        n: {"kind": "useful", "question": NOUL} for n in both}}])
+    (folders / "tests.json").write_text(json.dumps({"tests": [[{"state_hash": "g"}]]}), encoding="utf-8")
+    # The new request's p1 view is unlike anything gated, but the whole request is the gate's.
+    out = generate.generate("useful", "train", 10, "opus", 1, turn=Teacher(), log=lambda *_: None,
+                            capture=lambda q: [{"state": request("new"), "questions": both}])
+    assert out["near_gate"] == 4 and out["have"] == 0
+
+
+def test_generate_keeps_one_request_on_one_split(folders):
+    shared = " ".join(f"shared{i}" for i in range(400))
+
+    def capture(query):
+        # The same question answered over a different second passage: one request, near-duplicate whole.
+        return [{"state": {"query": "q", "passages": [{"id": "p0", "text": shared},
+                                                       {"id": "p1", "text": f"{query} " + shared[:200]}]},
+                 "questions": {"useful_p0": NOUL, "useful_p1": NOUL}}]
+
+    out = generate.generate("useful", "validation", 1, "opus", 1, capture=capture, turn=Teacher(),
+                            log=lambda *_: None)
+    assert out["have"] == 1
+    out = generate.generate("useful", "train", 10, "opus", 0, capture=capture, turn=Teacher(),
+                            log=lambda *_: None)
+    assert out["other_split"] == 2 and out["have"] == 0        # s0q1 is near s0q0, which went to validation
+
+
+def test_a_teacher_turn_left_pending_stops_new_turns_until_it_is_abandoned(folders):
+    teacher = Teacher()
+    ledger = folders / "data" / "useful" / "generate.ledger.jsonl"
+    write(ledger, [{"seed": 0, "pending": True, "model": "opus", "prompt_version": "x"}])
+    out = generate.generate("useful", "train", 10, "opus", 3, capture=judged, turn=teacher, log=lambda *_: None)
+    assert out["stopped"] == "unsettled_turn" and out["unsettled"] == [0] and teacher.turns == []
+    generate.abandon("useful", 0)
+    out = generate.generate("useful", "train", 1, "opus", 3, capture=judged, turn=teacher, log=lambda *_: None)
+    assert teacher.turns == [1] and out["have"] == 1           # seed 0 is never sent again
+    with pytest.raises(SystemExit):
+        generate.abandon("useful", 1)                          # settled, not pending
+
+
+def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
+    import sys
+    if str(generate.ROOT / "tool") not in sys.path:
+        sys.path.append(str(generate.ROOT / "tool"))   # after this folder, as `generate.captured` adds it
+    import decision
+    import translate
+    from main import knowledge
+
+    seen = {}
+
+    def prepare(query, project, cfg, cache, cancel):
+        seen["parts"] = translate.parts(query, 1e12)           # the translator's only request answers nothing
+        seen["fallback"] = knowledge.falls_back(cfg)
+        for stage in ("route", "judge", "judge"):
+            if not cancel.is_set():
+                decision.evaluate(cfg, {"stage": stage}, {"useful_p0": NOUL}, [], None, stage)
+        seen["project"] = project
+
+    monkeypatch.setattr(knowledge, "prepare", prepare)
+    real = translate._ask
+    got = generate.captured("Who owns deployment, and which port?")
+    assert got == [{"state": {"stage": "judge"}, "questions": {"useful_p0": NOUL}}]
+    assert seen == {"parts": None, "fallback": False, "project": generate.ROOT}
+    assert translate._ask is real
+
+
+def test_the_teacher_samples_documents_the_capture_can_search():
+    import sys
+    if str(generate.ROOT / "tool") not in sys.path:
+        sys.path.append(str(generate.ROOT / "tool"))
+    from search import HUB, sources
+
+    searched = {p.resolve() for p in sources.listing(HUB, generate.ROOT)}
+    assert all((generate.ROOT / p["path"]).resolve() in searched for p in generate.sample(0))
 
 
 def test_a_passage_kind_sees_only_its_passage():
