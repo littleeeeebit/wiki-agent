@@ -170,6 +170,12 @@ def write_pages(kind: str, writer=None, log=print, limit: int | None = None) -> 
     any diagnosis they had."""
 
     written, calls, known = [], 0, diagnoses(kind)
+    unjournalled = [p.name for p in sorted((NOTES / kind).glob("*.md")) if p.stem not in known
+                    and (m := re.search(r"## Cause\n\n(.*?)\n\n## Next", p.read_text(encoding="utf-8"), re.S))
+                    and m.group(1).strip() != UNDIAGNOSED]
+    if unjournalled:   # written before diagnoses were journalled: never overwrite a paid diagnosis
+        raise ValueError(f"{kind}: pages hold diagnoses that diagnoses.jsonl does not: {unjournalled}; "
+                         "move them aside before writing pages")
     for name, rows in clusters(kind).items():
         path = NOTES / kind / f"{name}.md"
         if len(rows) < PAGE_AT:

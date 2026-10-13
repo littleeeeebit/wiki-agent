@@ -167,6 +167,17 @@ def test_a_paid_diagnosis_is_journalled_before_its_page(monkeypatch):
     assert len(calls) == 1 and "Paid once." in page and "Go on." in page
 
 
+def test_a_page_whose_diagnosis_was_never_journalled_is_never_overwritten():
+    for i in range(notes.PAGE_AT):
+        notes.record("useful", "disagree", round=1, slice="base", state_hash=f"h{i}", source="s", question="q")
+    page = notes.NOTES / "useful" / "disagree--base.md"
+    page.write_text("---\ncount: 5\ndiagnosed: 5\nstatus: open\n---\n\n## Cause\n\nPaid earlier.\n\n"
+                    "## Next\n\nGo on.\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="disagree--base.md"):
+        notes.write_pages("useful", lambda *_: pytest.fail("never paid again"), log=lambda *_: None)
+    assert "Paid earlier." in page.read_text(encoding="utf-8")
+
+
 def test_notes_under_the_earlier_short_id_are_not_written_again():
     h = "0123456789ab" + "0" * 52
     write(notes.NOTES / "useful" / "ledger.jsonl",

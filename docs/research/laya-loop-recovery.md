@@ -104,6 +104,13 @@ Notes stored under the earlier short id are matched by their fields and not
 written again. 21 tests pass. This is the second and last research-and-fix
 cycle that reliability PR 8 allows for this issue.
 
+Round 5 found one more case: a page whose diagnosis an earlier format of
+this branch wrote only to the page would be overwritten. No such page
+exists: `laya/notes/` was never created and no paid diagnosis ever ran. The
+owner chose a boundary over a migration (2026-10-13): `write_pages` refuses
+to write while any page holds a diagnosis `diagnoses.jsonl` lacks, and
+leaves the page untouched. 22 tests pass.
+
 ## Sources
 
 | # | Source | Used for |
