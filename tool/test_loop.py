@@ -1468,11 +1468,12 @@ def test_poller_reattaches_an_active_loop_without_a_driver_and_stops_on_shutdown
     halt, holding, release = threading.Event(), threading.Event(), threading.Event()
     if merging:
         # A clicked merge holds `_landing` through its `.omm` analysis; the poller waited
-        # on it at a newer merged spec's cleanup and reattached no loop. Released only after.
+        # on it at a newer merged spec's cleanup and reattached no loop. Released only after;
+        # the holder's own bound outlasts the completion wait so a blocked poller cannot pass.
         time.sleep(.01)
         merged = pr_spec(world, "merged-cleanup", 8)
         specs.update("proj", merged["id"], state="머지됨", cleanup_complete=False, merge={"base": "main", "commit": ""})
-        threading.Thread(target=lambda: (loop._landing.acquire(), holding.set(), release.wait(INTEGRATION_WAIT),
+        threading.Thread(target=lambda: (loop._landing.acquire(), holding.set(), release.wait(3 * INTEGRATION_WAIT),
                                          loop._landing.release()), daemon=True).start()
         assert holding.wait(5)
     with patch.object(loop, "POLL", .02):
