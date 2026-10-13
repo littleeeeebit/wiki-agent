@@ -15,7 +15,7 @@ shadow and active. Research, sources and measurements are on
 | Split | Fourteen models, one per decision kind; code routes by the kind each question already carries | Owner, 2026-10-13 |
 | Training data | 3,000 states per kind to start; then augmentation of the slices validation gets most wrong | Owner, 2026-10-13 |
 | Labels | Two LLM labellers independently; agreed labels train, disagreements go to a person | Owner, 2026-10-13 |
-| Test sets | Real logged states and existing evaluation sets only, frozen before training, never trained on | This plan |
+| Gate test | States production really sent, labelled by a person, reserved before any measurement; synthetic sets are diagnostics only | This plan |
 | Runtime | Local server on the RTX 3080 (10 GB); TypeSafe stays as a per-kind fallback until rollout | This plan |
 | Language | English states only, as Jev today; normalization is unchanged | Existing rule |
 
@@ -39,28 +39,33 @@ flowchart LR
     R --> D[decision.checked, policy, safe paths]
 ```
 
-A request that asks several kinds at once (a judge round asks grade,
-coverage and repair) is split by kind, sent to each kind's model, and joined
-in question order. The contract after `evaluate` is unchanged, so policy,
-cache, replay and traces need no new shape; the trace's `model` names the
-kind's checkpoint and version.
+A request that asks several kinds at once (a judge round asks useful,
+conflict, redirect, coverage and repair) is grouped by provider: TypeSafe
+questions stay one call, Laya questions go to each kind's model, and the
+answers are joined in question order. The kinds reach the transport, the
+request's `model` becomes the identity of the deciders it asked, the policy
+is composed per kind, and one trace entry keeps every group's model and
+usage. [Stage 1](1-serving.md) defines this contract and what an over-long
+state does per kind.
 
 ## Steps
 
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | [Serving](1-serving.md) | Local server, per-kind provider, context and zero-shot baseline | Not started |
-| 2 | [Data](2-data.md) | States per kind, splits, frozen tests | Not started |
+| 2 | [Data](2-data.md) | States per kind, splits, the gate test | Not started |
 | 3 | [Labels](3-labels.md) | Two-labeller agreement, human queue, pilot then full run | Not started |
 | 4 | [Training](4-training.md) | Fourteen fine-tunes, calibration, fitted policy | Not started |
 | 5 | [Augmentation](5-augmentation.md) | Error-slice loop per kind | Not started |
 | 6 | [Rollout](6-rollout.md) | Non-inferiority gates, shadow then active per kind | Not started |
 
-Order: 1 → 2 → 3 → 4 → 5 → 6. Stage 1 runs no paid call and decides
-whether the rest is worth paying for. Labelling (stage 3) and every paid
-evaluation need the owner's approval with a stated budget; a repetition
-needs a second approval. Route is the pilot kind through stages 2–6 before
-the other thirteen follow.
+Order: 1 → 2 → 3 → 4 → 5 → 6. Stage 1 first reserves the gate test, then
+runs no paid call and decides whether the rest is worth paying for. Every
+paid step needs the owner's approval with a stated budget before it sends
+anything: teacher generation (stage 2), labelling (stage 3), augmentation
+(stage 5) and the Jev comparison (stage 6); a repetition needs a second
+approval. Route goes through stages 2–6 first; the other thirteen start
+after route's stage 6 result.
 
 ## Relation to open work
 
@@ -75,10 +80,17 @@ the other thirteen follow.
 
 | Item | Estimate | Gate |
 | --- | --- | --- |
-| Labelling, full | 42,000 states × 2 labellers, about 2k input tokens each, about 170M input tokens | Pilot first (stage 3); owner approval with the measured cost |
-| Human review | The pilot's disagreement rate × 42,000, capped per kind | Cap set from the pilot |
-| Training | 14 runs × about 1–3 GPU-hours locally | Local, no spend |
-| Evaluation | Jev comparison on frozen tests: one paid run, one repetition | Owner approval each |
+Per kind; fourteen kinds multiply it. Token figures assume about 2k input
+tokens per call and are replaced by each pilot's measurement.
+
+| Item | Per kind | Gate |
+| --- | --- | --- |
+| Teacher generation | 3,600 train/validation/calibration states with the 20% surplus | Stage 2 pilot of 50, then owner approval |
+| Labelling | 3,600 × 2 labellers, about 14.4M input tokens (about 200M for fourteen) | Stage 3 pilot of 200, then owner approval of a total limit |
+| Human review | The pilot's disagreement rate × 3,600, capped | Cap set from the pilot |
+| Augmentation | Up to 3 rounds × 300 states, generated and labelled twice | One approved total limit before round 1 |
+| Training | About 1–3 GPU-hours locally, per run and per augmentation round | Local, no spend |
+| Jev comparison | Up to 300 gate states | Owner approval; a repetition needs a second |
 
 ## Sources
 

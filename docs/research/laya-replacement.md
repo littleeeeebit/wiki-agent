@@ -28,7 +28,7 @@ no model.
 | L3 | Guo et al. 2017, [On Calibration of Modern Neural Networks](https://arxiv.org/abs/1706.04599) | Known paper, not reread | Temperature scaling on held-out data |
 | L4 | Nahum et al. 2024, [Are LLMs Better than Reported?](https://arxiv.org/abs/2410.18889) | Search summary | LLM ensembles flag label errors for expert review |
 | L5 | Lee et al. 2024, [LLM2LLM](https://arxiv.org/abs/2403.15042) | Search summary | Teacher augmentation targeted at the student's errors |
-| L6 | Clark et al. 2019, [Born-Again Multi-Task Networks](https://arxiv.org/abs/1907.04829) | Search summary | Multi-task BERT often fails to match single-task models |
+| L6 | Clark et al. 2019, [Born-Again Multi-Task Networks](https://arxiv.org/abs/1907.04829) | Search summary | Multi-task BERT: average up, some tasks down |
 | L7 | Liu, Liang and Gitter 2019, [Loss-Balanced Task Weighting](https://ojs.aaai.org/index.php/AAAI/article/view/5125) | Search summary | Per-task negative transfer under multi-task training |
 | L8 | Warner et al. 2024, [ModernBERT](https://arxiv.org/abs/2412.13663) | Known paper, not reread | Encoder with native 8,192-token context |
 
@@ -39,6 +39,10 @@ no model.
   generates text.
 - `laya-serve` exposes "the same POST /v1/systemone request and response
   shape as TypeSafe Jev" (L1). A batch endpoint takes up to 64 states (L2).
+  The request's `model` field picks a checkpoint, and `LAYA_EXTRA_MODELS`
+  registers more names (L2, the self-hosting section).
+- The question and option head share the token limit with the state, so the
+  room left for the state depends on the questions (L2, "honest limits").
 - English root checkpoint: ModernBERT-large encoder (395M) with a decision
   head, 421M in all; default `max_len` 512. `laya-typed-decisions`: 1,024.
   The multilingual checkpoint reads up to 8,192 tokens, and accuracy "varies"
@@ -64,17 +68,20 @@ no model.
 
 ## Current Jev traffic (measured)
 
-Jev's recorded `input_tokens` under `raw/eval/jev` (Jev's tokenizer; Laya's
-will differ):
+Jev's recorded `input_tokens` per request under `raw/eval/jev` (Jev's
+tokenizer, state plus questions; Laya's will differ). Each row counts one
+request once: a decision record's `usage`, or a `row.trace` entry, never
+both, and never a file's top-level total.
 
-| Request | Count | Median | Max |
-| --- | --- | --- | --- |
-| route | 180 | 522 | 671 |
-| judge (grade, coverage, repair in one request) | 164 | 2,205 | 2,378 |
-| review routing | 520+ | 2,470 | 78,850 |
-| action (stage 8) | 50 | ~560 | 4,556 |
+| Request | Selector | Requests | Median | Max |
+| --- | --- | --- | --- | --- |
+| route | decision records with `kind` `route` | 90 | 522 | 671 |
+| judge (useful, conflict, redirect, coverage, repair in one request) | decision records with `kind` `judge` | 82 | 2,205 | 2,378 |
+| review routing | `row.trace` in `review-routing*.json` | 240 | 2,445 | 2,547 |
+| action (stage 8) | `runs[].usage` in `actions-20260927T101849Z.json` | 8 | 540 | 638 |
 
-Route fits Laya's 1,024 default. Judge and review routing do not. The
+Route and action fit Laya's 1,024 default. Judge and review routing do not;
+no recorded request is far beyond 2,600. The
 repository has a few hundred real requests in all (`raw/actions` holds 273
 rows), far below 3,000 per decision kind.
 
@@ -88,23 +95,31 @@ resident.
 
 ## Core theory adopted
 
-1. One model per kind. Multi-task fine-tuning of BERT-class encoders often
-   loses to single-task models on some tasks (L6, L7). The owner chose
+1. One model per kind. Multi-task fine-tuning of BERT-class encoders can
+   raise the average while some tasks lose to their single-task models
+   (L6's Table 1: 85.5 against 84.0 on average, lower on some tasks; L7).
+   This does not prove fourteen models are better here. The owner chose
    fourteen models (2026-10-13); routing is code's, since every request
    already names its kind.
 2. Labels by agreement. Two strong LLMs label independently; agreed labels
-   train, disagreements go to a person. LLM ensembles find label errors and
-   their confidence predicts precision (L4). The ensemble is a filter, not
-   ground truth.
+   train, disagreements go to a person. LLM ensembles flag label errors, and
+   their confidence goes with the precision of a flag (L4). The ensemble is a
+   filter, not ground truth.
 3. Error-driven augmentation. After training, cluster validation errors into
    slices and have a teacher write new states for the weakest slice, labelled
    by the same agreement rule (L5). Validation, never test, drives it.
 4. Calibration on held-out data. One temperature per kind on a calibration
    split that neither trained nor selected the model (L3), then the existing
    threshold fit per model version (`eval/jev/policy.json`).
-5. Longer inputs by encoder length, then by splitting. ModernBERT's native
-   context is 8,192 (L8). Train judge-type kinds at the measured length;
-   where a state still exceeds it, ask per passage through the batch path.
+5. Longer inputs by encoder length; splitting only where a question is
+   already about one passage. ModernBERT's native context is 8,192 (L8).
+   Train a kind at its measured state-plus-head length. `useful`, `conflict`
+   and `redirect` each ask about one passage, so an over-long state can be
+   cut to the query and that passage. A question that reads passages
+   together (`coverage`) or chooses among candidates has no faithful
+   per-passage combination; an over-long state there is the kind's
+   uncertain outcome, which code already handles safely
+   ([stage 1](../plans/laya/1-serving.md)).
 
 ## Applicability and counterevidence
 
@@ -112,11 +127,15 @@ resident.
   retrieval grading. Accuracy on this repository's kinds is unknown until
   stage 1's zero-shot baseline and stage 4's training.
 - Two LLM labellers share failure modes; agreement does not prove a label.
-  L4 measured error detection of 6–21%, not label correctness. The frozen
-  test sets stay human-labelled or come from existing reviewed sets.
+  L4's 6–21% (its Table 2) is the label error rate it found in sampled test
+  sets, not the detector's precision or recall, and not a measure of agreed
+  labels' correctness. Gate test labels are therefore a person's.
 - Synthetic states dominate training, because real traffic is small. A
-  model can fit the generator's style. The test sets therefore use real
-  logged states and existing evaluation sets only.
+  model can fit the generator's style. The gate test therefore takes only
+  states production really sent, labelled by a person; synthetic and
+  model-authored sets (`review-routing*.json`, `actions.json`) are reported
+  as diagnostics beside it, never as the gate
+  ([stage 2](../plans/laya/2-data.md)).
 - Fourteen models multiply training, calibration and storage by fourteen,
   and the GPU cannot hold all of them. Stage 1 measures swap latency before
   any training is paid for.
@@ -135,10 +154,11 @@ resident.
 
 ## Validation conditions
 
-- Stage 1: the local server answers the current request shape, every kind's
-  zero-shot accuracy and the label-swap effect are recorded, and swap latency
-  fits the per-question budget.
+- Stage 1: the gate test is reserved first; the local server answers the
+  current request shape; every kind's zero-shot accuracy on development
+  cases and the label-swap effect are recorded; and swap latency fits the
+  per-question budget.
 - Stage 3: a pilot measures agreement and the human queue before the full
   labelling is approved.
-- Stage 6: per kind, Laya is non-inferior to `jev-1.13.0` on the frozen test
+- Stage 6: per kind, Laya is non-inferior to `jev-1.13.0` on the gate test
   and the reliability v8 gates do not regress.
