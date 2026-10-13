@@ -300,6 +300,8 @@ Changes:
 ## Unresolved
 
 - A cue farther than the window, or across `and`, is not seen.
+- A cue reaches across `or`, so in `not X or Y` a separate positive `Y`
+  inside the window counts as denied.
 - A sentence whose commas are all gone can count as a loss when a cue of
   the next proposition falls inside the window.
 - A self-contradicting change word beside a correct number order passes.
