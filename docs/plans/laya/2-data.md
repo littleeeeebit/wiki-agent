@@ -25,7 +25,9 @@ augmentation, calibration or threshold fit ever sees it.
   answers come from is open and is decided before stage 6; whatever the
   source, it never sees Jev's or a candidate model's answer, and the record
   names it.
-- Size. Up to 300 per kind, chosen at random from what is admitted. A kind
+- Size. Two thirds of the admitted units, at most 300 per kind, chosen at
+  random; the rest is the development pool (owner, 2026-10-13; reserved by
+  `laya/gate.py`, see stage 1). A kind
   with fewer than 100 stays on TypeSafe until enough accumulate. Distinct
   states in the pool on 2026-10-13: `coverage` 187; `useful`, `conflict`
   and `redirect` 185; `route`, `analysis` and `source` 88; `ask` 40,
@@ -85,7 +87,9 @@ Read Laya's fine-tuning format from its repository (L2) before writing the
 builder; store `laya/data/<kind>/{train,validation,calibration}.jsonl` in
 that format plus a provenance field. Candidates go to
 `<split>.candidates.jsonl` in `laya/pool.py`'s row shape, with each
-generated question's intended answer.
+generated question's intended answer. A passage kind's candidate is one
+question per row, its state the passage view (`laya/kinds.py`, stage 1's
+Length), so labelling and training see what serving sends.
 
 ## Acceptance
 

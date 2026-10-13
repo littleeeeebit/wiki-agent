@@ -7,6 +7,8 @@ import json
 
 import pytest
 
+import gate
+import kinds
 import label
 import loop
 import notes
@@ -494,3 +496,23 @@ def test_pool_keeps_one_row_per_state_and_unwraps_requests():
     out = pool.rows(found)
     assert [r["id"] for r in out] == ["early"]
     assert out[0]["questions"] == {"useful_p0": {"kind": "useful", "question": NOUL}}
+
+
+def test_gate_keeps_near_duplicates_and_a_states_kinds_on_one_side():
+    text = " ".join(f"word{i}" for i in range(200))
+    rows = [{**candidate(i), "decision_kind": "retrieval", "state": {"text": text + f" tail{i}"}} for i in range(3)]
+    rows.append({**candidate(9), "decision_kind": "retrieval", "state": {"text": "something else entirely"}})
+    assert sorted(len(u) for u in gate.units(rows)) == [1, 3]
+    reserved = gate.reserve(rows)
+    assert len(reserved["tests"]) == 1          # two thirds of two units, rounded
+    assert all(r["kinds"] == ["conflict", "useful"] and "state" not in r for r in reserved["tests"][0])
+
+
+def test_a_passage_kind_sees_only_its_passage():
+    state = {"query": "q", "passages": [{"id": "p0", "text": "a"}, {"id": "p1", "text": "b"}],
+             "complete_passages": ["p0", "p1"]}
+    assert kinds.view("useful_p1", "useful", state) == {"query": "q", "passages": [{"id": "p1", "text": "b"}],
+                                                        "complete_passages": ["p1"]}
+    assert kinds.view("coverage_r0", "coverage", state) is state
+    with pytest.raises(ValueError):
+        kinds.view("conflict_p7", "conflict", state)
