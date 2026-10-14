@@ -878,8 +878,9 @@ def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders
     import sys
     import types
     from pathlib import Path
-    seen, agent = {}, types.SimpleNamespace(fit_temperatures=lambda recs: seen.update(recs=recs),
-                                            save_calibration=lambda path: None)
+    seen, agent = {}, types.SimpleNamespace(
+        fit_temperatures=lambda recs: seen.update(recs=recs), save_calibration=lambda path: None,
+        predict=lambda state, asked, **k: {"answers": {n: {"noul": 0.8, "confidence": 0.8} for n in asked}})
 
     def finetune(data, start, out, config):
         Path(out).mkdir(parents=True)
@@ -903,3 +904,10 @@ def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders
     train.train("useful", ["train"], micro_batch=4)
     assert seen["config"]["option_layout"] == "parallel" and seen["config"]["micro_batch"] == 4
     assert [list(q) for _, q, _ in seen["recs"]] == [["useful_p0"]]
+
+    # `score` hands back each answer's confidence beside the answers the loop reads.
+    write(folders / "data" / "useful" / "validation.jsonl", [row(0, "short"), row(1, "short")])
+    sure = {}
+    wrong, predicted = train.score("useful", "base", sure)
+    assert predicted == {("h0", "useful_p0"): True, ("h1", "useful_p0"): True} and wrong == {("h1", "useful_p0")}
+    assert sure == dict.fromkeys(predicted, 0.8)

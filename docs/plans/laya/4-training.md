@@ -38,7 +38,12 @@ RTX 3080.
 - Early stopping on validation. Seed, data hashes and config recorded with
   each checkpoint as `laya-<kind>-v<N>`. Laya 0.4.6's `finetune` has no
   early stopping: it scores validation (`eval_data`) before and after a
-  fixed number of epochs, so the epoch count is chosen on validation.
+  fixed number of epochs, so the notebook trains once per epoch count
+  (`EPOCHS`, 2 and 4) and keeps the most accurate on validation, the lower
+  ECE on a tie. The first `useful` run (500 train, 4 epochs, no
+  calibration split) went from 0.50 zero-shot (`base`) to 0.79 on 100
+  validation questions, at a mean confidence of 0.98 (ECE 0.21), hence
+  the calibration split and the shorter run.
 - `useful` first, end to end through stage 6, before the other kinds; each
   of those starts once it has at least 100 production states.
 - Code: `laya/train.py` and `laya/notebooks/train.ipynb`.
@@ -47,7 +52,9 @@ RTX 3080.
 
 - One temperature per kind fitted on the calibration split (never on
   training items, unlike the notebook default; L2, L3). Report ECE before
-  and after.
+  and after: `train_report.json` holds it before the temperatures, the
+  notebook's `results.json` after (`train.score` hands back each answer's
+  confidence).
 - Then the existing threshold fit (`tool/eval/policy.py`) on the same
   split, written to `eval/laya/policy/<kind>.json` bound to the checkpoint,
   its version and temperature (stage 1's composed policy). TypeSafe's

@@ -138,10 +138,11 @@ def train(kind: str, splits: list[str], base: str = "typed", **config) -> Path:
     return out
 
 
-def score(kind: str, checkpoint) -> tuple[set[tuple[str, str]], dict]:
+def score(kind: str, checkpoint, sure: dict | None = None) -> tuple[set[tuple[str, str]], dict]:
     """`(wrong, predicted)`: the validation `(state_hash, question)` the checkpoint gets
     wrong, and its answer to every validation question that fits `MAX_LEN`. `checkpoint`
-    is a fine-tune's folder, or a published name (`base`, `typed`) for zero-shot."""
+    is a fine-tune's folder, or a published name (`base`, `typed`) for zero-shot. `sure`,
+    when given, receives each answer's confidence (after the checkpoint's temperatures)."""
 
     import laya
 
@@ -159,6 +160,8 @@ def score(kind: str, checkpoint) -> tuple[set[tuple[str, str]], dict]:
         for name in asked:
             key = (row["provenance"]["state_hash"], name)
             predicted[key] = answer(asked[name], got[name])
+            if sure is not None:
+                sure[key] = got[name]["confidence"]
             if predicted[key] != row["expected"][name]:
                 wrong.add(key)
     return wrong, predicted
