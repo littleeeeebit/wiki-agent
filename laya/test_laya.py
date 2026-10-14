@@ -1005,6 +1005,16 @@ def test_the_spending_limit_stops_and_a_rerun_resumes_without_paying_twice(folde
     assert whole["stopped"] == "done" and whole["rounds"] == alone["rounds"] and len(made) == len(made2)
 
 
+def test_guided_rows_come_from_candidates_with_a_generator_provenance_or_from_labels(folders):
+    import guided
+    write(folders / "data" / "useful" / "c.jsonl", [{**candidate(0), "provenance": {"generator": "g"}}])
+    write(folders / "data" / "useful" / "l.jsonl", [labelled(1)])
+    (c,), (lab,) = guided.rows_of("useful", "c.jsonl"), guided.rows_of("useful", "l.jsonl")
+    assert c == {"state": {"text": "state 0"}, "questions": {"useful_p0": NOUL},
+                 "provenance": {"state_hash": "h0", "source": "obs-0"}}
+    assert lab == labelled(1)
+
+
 def test_a_turn_that_fails_is_tried_again_and_only_its_success_is_kept(folders):
     import guided
     call, made = guided_world()

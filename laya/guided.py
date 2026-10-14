@@ -190,7 +190,7 @@ def rows_of(kind: str, name: str) -> list[dict]:
 
     out = []
     for r in read(label.DATA / kind / name):
-        if "provenance" in r:
+        if "state_hash" not in r:   # a labelled row; a candidate holds its hash at the top
             out.append(r)
             continue
         qs = {n: q["question"] for n, q in r["questions"].items() if q["kind"] == kind}
@@ -335,12 +335,18 @@ def main() -> None:
     p.add_argument("--per-round", type=int, default=150)
     p.add_argument("--max-turns", type=int, default=2000)
     p.add_argument("--max-usd", type=float, required=True)
+    p.add_argument("--gold", help="a labelled file whose answers the kept labels are scored against, never shown")
     a = p.parse_args()
     name, _, count = a.probe.partition(":")
     probe = rows_of(a.kind, name)[:int(count) if count else None]
     if not probe or any("expected" not in r for r in probe):
         raise SystemExit("the probe must be labelled rows")
-    print(json.dumps(run(a.kind, a.split, rows_of(a.kind, a.rows), probe, labeller=a.labeller,
+    rows = rows_of(a.kind, a.rows)
+    if a.gold:
+        gold = {r["provenance"]["state_hash"]: r["expected"] for r in rows_of(a.kind, a.gold)}
+        rows = [{**r, "expected": gold[h]} if set(gold.get(h := r["provenance"]["state_hash"], ())) == set(r["questions"])
+                else r for r in rows]
+    print(json.dumps(run(a.kind, a.split, rows, probe, labeller=a.labeller,
                          verifier=a.verifier, rounds=a.rounds, per_round=a.per_round,
                          max_turns=a.max_turns, max_usd=a.max_usd), indent=1, ensure_ascii=False))
 
