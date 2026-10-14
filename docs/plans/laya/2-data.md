@@ -207,10 +207,26 @@ Built (2026-10-14). `laya/generate.py <split> --target N --teacher sonnet
   route candidates. A query whose search failed after the route is left
   unrun, as before.
 - Before a repository's first query in a run, the daemon is asked to
-  finish that repository's index, waiting up to 30 minutes. If it has not
-  finished by then, the run stops (`search_unavailable`) and no query is
-  recorded as empty. A cold index otherwise answers nothing: on 2026-10-14
-  a capture in this repository failed until its index was rebuilt.
+  finish that repository's index, waiting up to 30 minutes. A search
+  answers from an unfinished index too, so the daemon's `/search` reply now
+  says whether the asker's index is complete (`search.indexed`). If the
+  index has not finished, the run stops (`search_unavailable`) and no query
+  is recorded as empty. On 2026-10-14 a capture in this repository failed
+  until its index was rebuilt.
+  - The reply changes the search package's version. The running daemon is
+    replaced at the next ordinary use, and the repositories' indexes are
+    then warmed again before a run.
+- A kind's questions that share a state (a route's sources, a request's
+  coverage) are one candidate row with each of those questions. Counts and
+  `--target` are in questions.
+- A corpus entry whose path resolves outside its repository is never read.
+- The run log keeps the `--kinds` set it was started with, and a run with
+  another set is refused. A finished query is finished only for the kinds
+  it wrote.
+- The near-duplicate check leaves out a route state's table of source
+  descriptions (`gate.FIXED`). Left in, two different short questions
+  scored 0.87. The gate was reserved before this change and is not
+  reserved again.
 
 ## Splits
 

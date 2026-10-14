@@ -27,6 +27,7 @@ def folders(tmp_path, monkeypatch):
     monkeypatch.setattr(notes, "NOTES", tmp_path / "notes")
     monkeypatch.setattr(generate, "DATA", tmp_path / "data")
     monkeypatch.setattr(generate, "searching", lambda *a, **k: True)
+    monkeypatch.setattr(generate, "indexed", lambda *a, **k: True)
     monkeypatch.setattr(gate, "POOL", tmp_path / "pool.jsonl")
     monkeypatch.setattr(gate, "TESTS", tmp_path / "tests.json")
     monkeypatch.setattr(train, "DATA", tmp_path / "data")
@@ -629,6 +630,8 @@ def test_one_query_gives_every_retrieval_kind_at_most_two_candidates_in_one_spli
         assert rows[0]["provenance"]["repo"] == "here" and rows[0]["provenance"]["intent"] == "lookup"
     useful = label.read(folders / "data" / "useful" / "train.candidates.jsonl")
     assert len(useful[0]["state"]["passages"]) == 1                                  # the passage view
+    sources = label.read(folders / "data" / "source" / "train.candidates.jsonl")
+    assert [len(r["questions"]) for r in sources] == [2]   # two sources of one route: one row, both kept
     (route,) = [r for r in label.read(folders / "data" / "route" / "train.candidates.jsonl")
                 if r["provenance"]["run"] == "t0-q0"]
     assert route["state"]["query_parts"] == {"r0": "a", "r1": "b", "r2": "c"}       # the route state whole
@@ -636,9 +639,22 @@ def test_one_query_gives_every_retrieval_kind_at_most_two_candidates_in_one_spli
     assert [len(c["claim"]) for c in claims] == [2, 2] and {c["split"] for c in claims} == {"train"}
 
 
+def test_short_route_questions_are_not_near_duplicates_through_the_source_table():
+    sources = {s: " ".join(f"{s}{k}" for k in range(12)) for s in ("hub", "documents", "memory")}
+    a, b = ({"state": {"query": q, "current_state": "", "available_sources": sources},
+             "questions": {"retrieve": {"kind": "route", "question": NOUL}}} for q in ("Which port?", "Who deploys?"))
+    assert gate.Near([a]).found(b) == set() and gate.Near([a]).found(a) == {0}
+
+
+def test_generate_keeps_the_kinds_its_run_log_was_started_with(folders):
+    gen("useful", "train", 2, "opus", 1, capture=judged, turn=Teacher(), log=lambda *_: None)
+    with pytest.raises(SystemExit, match="same kinds"):
+        gen("conflict", "train", 2, "opus", 1, capture=judged, turn=Teacher(), log=lambda *_: None)
+
+
 def test_a_repository_the_daemon_cannot_index_leaves_its_queries_unrun(folders, monkeypatch):
     asked, ran = [], []
-    monkeypatch.setattr(generate, "searching", lambda project=None, wait=0.0: asked.append(wait) or not wait)
+    monkeypatch.setattr(generate, "indexed", lambda project, wait: asked.append(wait) and False)
     teacher = Teacher()
     out = gen("useful", "train", 10, "opus", 3, capture=lambda q: ran.append(q) or judged(q), turn=teacher,
               log=lambda *_: None)
@@ -909,6 +925,12 @@ def test_the_teacher_draws_a_repository_by_size_and_a_type_and_intent_for_each_q
         if n:
             (repo / ".wiki" / "corpus.json").write_text(json.dumps({"docs": [
                 {"path": f"d{i}.md", "title": f"d{i}", "heads": [], "lead": ""} for i in range(n)]}), encoding="utf-8")
+    (tmp_path / "outside.md").write_text("# not this repository's", encoding="utf-8")
+    listed = json.loads((tmp_path / "small" / ".wiki" / "corpus.json").read_text(encoding="utf-8"))
+    listed["docs"] += [{"path": p, "title": "x", "heads": [], "lead": ""}
+                       for p in ("../outside.md", str(tmp_path / "outside.md"), "missing.md")]
+    (tmp_path / "small" / ".wiki" / "corpus.json").write_text(json.dumps(listed), encoding="utf-8")
+    assert [d["path"] for d in generate.corpus(tmp_path / "small")] == ["d0.md"]   # never read outside it
     found = generate.repos(tmp_path)
     assert sorted(found) == ["large", "small"]                  # a worktree copy and a repo with no corpus are out
     drawn = generate.sample(0, found)

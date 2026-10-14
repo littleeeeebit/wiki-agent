@@ -243,6 +243,19 @@ def test_ask_gets_an_answer_from_a_running_daemon(running, reachable):
     assert not reachable
 
 
+def test_indexed_says_whether_the_index_is_finished_not_whether_it_answers(running, reachable, monkeypatch):
+    run = running()
+    assert search.ask("merged branch", None, timeout=5)                  # it answers from what it has, unfinished
+    assert search.indexed(None, timeout=5) is False                      # no embedder: never finished
+    with monkeypatch.context() as m:
+        m.setattr(searchd.Daemon, "complete", lambda self, hub, project: True)
+        assert search.indexed(None, timeout=5) is True                   # the reply carries it
+    monkeypatch.setattr(searchd.Index, "complete", lambda self: True)
+    assert run.daemon.complete(str(search.HUB), None) is True            # read off the asker's index
+    assert run.daemon.complete(str(search.HUB), str(search.HUB / "elsewhere")) is False   # one not built
+    assert not reachable
+
+
 def test_a_server_that_cannot_prove_the_token_is_not_sent_the_query(running, reachable):
     run = running(token="someone-else")
     asked = []

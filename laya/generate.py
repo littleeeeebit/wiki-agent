@@ -71,7 +71,12 @@ def repos(parent: Path = ROOT.parent) -> dict[str, Path]:
 
 
 def corpus(repo: Path) -> list[dict]:
-    return json.loads((repo / ".wiki" / "corpus.json").read_text(encoding="utf-8"))["docs"]
+    """The corpus documents whose path resolves inside `repo`: an entry that points out of
+    it (`../x.md`, an absolute path, a link) is never read, so never sent to the teacher."""
+
+    home = repo.resolve()
+    docs = json.loads((repo / ".wiki" / "corpus.json").read_text(encoding="utf-8"))["docs"]
+    return [d for d in docs if (repo / d["path"]).resolve().is_relative_to(home) and (repo / d["path"]).is_file()]
 
 
 def sample(seed: int, found: dict[str, Path] | None = None) -> dict:
@@ -212,37 +217,49 @@ def loopback_only():
         socket.socket.connect, socket.socket.connect_ex, socket.getaddrinfo = connect, connect_ex, lookup
 
 
-def searching(project: Path = ROOT, wait: float = 0.0) -> bool:
-    """Whether the search daemon is running and answers, asked without starting one; with
-    `wait`, it first finishes `project`'s index, up to that many seconds."""
+def searching(project: Path = ROOT) -> bool:
+    """Whether the search daemon is running and answers, asked without starting one."""
 
     if str(ROOT / "tool") not in sys.path:
         sys.path.append(str(ROOT / "tool"))
     import search
 
-    return search.ask("laya generator readiness", project, timeout=10.0 + wait, wait=wait, start=False) is not None
+    return search.ask("laya generator readiness", project, timeout=10.0, start=False) is not None
+
+
+def indexed(project: Path, wait: float) -> bool:
+    """Whether the daemon has finished `project`'s index, waiting up to `wait` seconds; an
+    unfinished index answers searches too, with what it has, so its answer is not enough."""
+
+    if str(ROOT / "tool") not in sys.path:
+        sys.path.append(str(ROOT / "tool"))
+    import search
+
+    return search.indexed(project, timeout=10.0 + wait, wait=wait, start=False)
 
 
 WARM = 1800.0   # seconds the daemon may take to index a repository it has not read yet
 
 
 def candidates(kind: str, requests: list[dict], provenance: dict) -> list[dict]:
-    """One row per `kind` question, its state the kind's view; at most `CAP`, a draw
-    seeded by the run and the kind, kept in their order."""
+    """`kind`'s questions, at most `CAP` (a draw seeded by the run and the kind, kept in
+    their order), as rows of the kind's view: questions that share a view (a route's
+    sources, a request's coverage) share one row, so no question is dropped as a
+    duplicate of its neighbour, and a passage kind's row holds its one question."""
 
-    out = []
-    for r, req in enumerate(requests):
-        for name, q in req["questions"].items():   # the transport's questions: named, kinds left out
-            if kind_of(name) != kind:
-                continue
-            state = view(name, kind, req["state"])
-            out.append({"id": f"{provenance['run']}-{r}-{name}", "state": state, "state_hash": digest(state),
-                        "questions": {name: {"kind": kind, "question": q}},
-                        "provenance": provenance})
-    if len(out) > CAP:
-        drawn = set(random.Random(f"{provenance['run']}-{kind}").sample(range(len(out)), CAP))
-        out = [row for i, row in enumerate(out) if i in drawn]
-    return out
+    asked = [(r, name, q) for r, req in enumerate(requests)
+             for name, q in req["questions"].items() if kind_of(name) == kind]   # named, kinds left out
+    if len(asked) > CAP:
+        drawn = set(random.Random(f"{provenance['run']}-{kind}").sample(range(len(asked)), CAP))
+        asked = [a for i, a in enumerate(asked) if i in drawn]
+    rows: dict[tuple, dict] = {}
+    for r, name, q in asked:
+        state = view(name, kind, requests[r]["state"])
+        h = digest(state)
+        row = rows.setdefault((r, h), {"id": f"{provenance['run']}-{r}-{name}", "state": state, "state_hash": h,
+                                       "questions": {}, "provenance": provenance})
+        row["questions"][name] = {"kind": kind, "question": q}
+    return list(rows.values())
 
 
 def whole(req: dict) -> dict:
@@ -317,8 +334,14 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
     if unowned:   # written before claims: which split owns those requests cannot be told
         raise SystemExit(f"{runs.name} has runs with no claim ({', '.join(sorted(unowned)[:3])}); "
                          "they predate claims, so remove that kind's generated files before generating")
+    # A finished run is finished for the kinds it wrote; another set would skip its other
+    # kinds for good, so the run log keeps the set it was started with.
+    other = {tuple(r["kinds"]) for r in read(runs) if "kinds" in r} - {tuple(kinds)}
+    if other:
+        raise SystemExit(f"{runs} was written for kinds {list(sorted(other)[0])}; generate the same kinds")
     near = {k: gate.Near(row for s in SPLITS for row in read(DATA / k / f"{s}.candidates.jsonl")) for k in kinds}
-    have = {k: len(read(DATA / k / f"{split}.candidates.jsonl")) for k in kinds}
+    # Counted in questions, as labels are: a row holds every question of its kind on its view.
+    have = {k: sum(len(r["questions"]) for r in read(DATA / k / f"{split}.candidates.jsonl")) for k in kinds}
     stats = {"turns": 0, "cost_usd": 0.0, "queries": 0, "kept": dict.fromkeys(kinds, 0), "near_gate": 0,
              "other_split": 0, "near_kept": 0}
 
@@ -343,7 +366,7 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
                 # A repository the daemon has not indexed answers nothing until it has: its first
                 # query waits for the index rather than failing as an empty search.
                 if entry["repo"] not in warmed:
-                    if not searching(found[entry["repo"]], WARM):
+                    if not indexed(found[entry["repo"]], WARM):
                         stats["reason"] = f"{run}: {entry['repo']} was not indexed within {WARM:.0f} s"
                         return False
                     warmed.add(entry["repo"])
@@ -353,7 +376,7 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
                     stats["reason"] = f"{run}: {error}"
                     return False
                 except Exception as error:  # noqa: BLE001 — one query's failed run is recorded, not retried forever
-                    append(runs, {"run": run, "split": split, "candidates": 0,
+                    append(runs, {"run": run, "split": split, "candidates": 0, "kinds": list(kinds),
                                   "error": f"{type(error).__name__}: {error}"[:200]})
                     done.add(run)
                     continue
@@ -380,10 +403,10 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
                     elif have[kind] < target:
                         append(DATA / kind / f"{split}.candidates.jsonl", row)
                         near[kind].add(row)
-                        have[kind] += 1
-                        stats["kept"][kind] += 1
-                        kept += 1
-            append(runs, {"run": run, "split": split, "candidates": kept})
+                        have[kind] += len(row["questions"])
+                        stats["kept"][kind] += len(row["questions"])
+                        kept += len(row["questions"])
+            append(runs, {"run": run, "split": split, "candidates": kept, "kinds": list(kinds)})
             done.add(run)
             stats["queries"] += 1
         return True

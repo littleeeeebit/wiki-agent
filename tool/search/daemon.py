@@ -1090,6 +1090,16 @@ class Daemon:
 
         return self.snapshot(hub, project, wait).search(query, k, sources)
 
+    def complete(self, hub: str, project: str | None) -> bool:
+        """Whether the asker's index has every chunk tried (`Index.complete`): a search
+        answers from an unfinished index too, so its answer alone does not say this."""
+
+        home = Path(hub).resolve()
+        root = Path(project).resolve() if project else None
+        with self.lock:
+            index = self.indexes.get((home, root))
+            return index is not None and index.complete()
+
     def retrieve(self, request: dict, hub: str, project: str | None, wait: float) -> dict:
         """A RetrievalRequest answered from one snapshot (`retrieval.run`)."""
 
@@ -1165,7 +1175,8 @@ def handler(daemon: Daemon, server_ref: list) -> type:
                                         int(ask.get("k") or 8), float(ask.get("wait") or 0), ask.get("sources"))
             except Exception as error:  # noqa: BLE001
                 return self.reply(400, {"error": type(error).__name__})
-            return self.reply(200, {"results": results})
+            return self.reply(200, {"results": results,
+                                    "complete": daemon.complete(str(ask["hub"]), ask.get("project"))})
 
     return Handler
 
