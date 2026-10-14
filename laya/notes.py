@@ -44,6 +44,8 @@ CATEGORIES = {
     "off_slice": "a generated state lacks the feature its slice was aimed at",
     "leak": "a generated state duplicates a gate or validation state",
     "student_wrong": "the trained model answered a validation question wrongly",
+    "verifier_reject": "the verifier's answer differed from the labeller's, or it was unsure",
+    "verifier_unreliable": "the verifier endorsed both an answer and its planted opposite in the question's batch, twice",
 }
 STATUSES = ("open", "targeted", "resolved", "falsified", "ambiguous")
 
