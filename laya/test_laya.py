@@ -937,7 +937,7 @@ def labelled(i):
             "provenance": {"state_hash": f"h{i}", "source": f"s{i}"}}
 
 
-def guided_world(stamp=False):
+def guided_world(stamp=False, rule_helps=True):
     """A labeller wrong on every fourth state until its guide holds `rule`, a verifier that
     answers the truth (or, with `stamp`, accepts whatever it is shown), and a lesson that
     proposes `rule`. Returns the call and the list of calls made."""
@@ -948,7 +948,8 @@ def guided_world(stamp=False):
         made.append((prompt.name, payload))
         if prompt.name == "label.md":
             i = payload["state"]["i"]
-            right = "rule" in payload.get("guide", []) or i % 4 != 0
+            ruled = "rule" in payload.get("guide", [])
+            right = (ruled or i % 4 != 0) if rule_helps else (i % 4 != 0 and not (ruled and i % 4 == 1))
             said = truth(i) if right else not truth(i)
             return {"model": model, "cost_usd": 0.01,
                     "json": {"answers": {"useful_p0": {"answer": "yes" if said else "no", "confidence": 0.9}}}}
@@ -966,43 +967,59 @@ def guided_world(stamp=False):
 
 def test_the_guided_labeller_learns_from_rejections_keeps_verified_labels_and_never_pays_twice(folders):
     import guided
-    rows, probe = [labelled(i) for i in range(80)], [labelled(i) for i in range(100, 120)]
+    rows = [labelled(i) for i in range(80)]
     call, made = guided_world()
     common = dict(labeller="haiku", verifier="sol", rounds=2, per_round=40, max_turns=10_000, log=lambda *_: None)
-    got = guided.run("useful", "pilot", rows, probe, max_usd=100, call=call, **common)
+    got = guided.run("useful", "pilot", rows, max_usd=100, call=call, **common)
     first, second = got["rounds"]
     # Round 0: every fourth state is labelled wrongly, rejected, and taught back as a rule.
     assert (first["guide"], first["kept"] + first["rejected"], first["unreliable"]) == (0, 40, 0)
-    assert first["rejected"] >= guided.LESSON_AT and first["kept_match_earlier"] == 1.0
-    assert first["lesson"]["adopted"] and first["lesson"]["probe_accuracy"] == [0.75, 1.0]
-    # Round 1 labels with the adopted guide, and nothing is rejected.
+    assert first["rejected"] >= guided.LESSON_AT and first["kept_match_earlier"] == 1.0 and "trial" not in first
+    # Round 1 labels its states with both guides; the candidate earns more verified labels and is adopted.
+    assert second["trial"]["adopted"] and second["trial"]["kept_rate"][1] == 1.0 > second["trial"]["kept_rate"][0]
     assert (second["guide"], second["kept"], second["rejected"]) == (1, 40, 0)
-    assert all(p.get("guide") == ["rule"] for name, p in made[-60:] if name == "label.md")
+    round1 = [p for name, p in made if name == "label.md"][40:]
+    assert len(round1) == 80 and sum(p.get("guide") == ["rule"] for p in round1) == 40
     kept = guided.read(folders / "data" / "useful" / "pilot.jsonl")
     assert len(kept) == first["kept"] + 40 and {r["provenance"]["guide"] for r in kept} == {0, 1}
     assert all(r["expected"]["useful_p0"] == truth(r["state"]["i"]) for r in kept)
     assert sum(n["category"] == "verifier_reject" for n in notes.ledger("useful")) == first["rejected"]
-    # Every verified batch carried its flipped copies, and an honest verifier passed them all.
+    assert [g["round"] for g in guided.read(folders / "data" / "useful" / "pilot.guide.jsonl")] == [1]
+    # Every verified batch carried its flipped copies, and the verifier never saw which guide wrote an answer.
     sent = [p for name, p in made if name == "verify.md"]
-    assert len(sent) == 4 and all(len(p["items"]) == guided.BATCH + guided.MIRRORS for p in sent)
+    assert all(guided.MIRRORS < len(p["items"]) <= guided.BATCH + guided.MIRRORS for p in sent)
+    assert all(set(it) == {"id", "state", "question", "proposed"} for p in sent for it in p["items"])
     # A rerun replays every turn from the file and pays for none.
     paid = len(made)
-    assert guided.run("useful", "pilot", rows, probe, max_usd=100, call=call, **common)["rounds"] == got["rounds"]
+    assert guided.run("useful", "pilot", rows, max_usd=100, call=call, **common)["rounds"] == got["rounds"]
     assert len(made) == paid and len(guided.read(folders / "data" / "useful" / "pilot.jsonl")) == len(kept)
+
+
+def test_a_candidate_guide_that_earns_fewer_verified_labels_is_not_adopted(folders):
+    import guided
+    call, _ = guided_world(rule_helps=False)
+    got = guided.run("useful", "pilot", [labelled(i) for i in range(80)], labeller="haiku", verifier="sol",
+                     rounds=2, per_round=40, max_turns=10_000, max_usd=100, call=call, log=lambda *_: None)
+    second = got["rounds"][1]
+    assert not second["trial"]["adopted"] and second["guide"] == 0 and got["guide"]["version"] == 0
+    kept = guided.read(folders / "data" / "useful" / "pilot.jsonl")
+    assert {r["provenance"]["guide"] for r in kept} == {0}
+    (trial,) = guided.read(folders / "data" / "useful" / "pilot.guide.jsonl")
+    assert trial["adopted"] is False and trial["rules"] == ["rule"]
 
 
 def test_the_spending_limit_stops_and_a_rerun_resumes_without_paying_twice(folders, monkeypatch):
     import guided
-    rows, probe = [labelled(i) for i in range(80)], [labelled(i) for i in range(100, 120)]
+    rows = [labelled(i) for i in range(80)]
     common = dict(labeller="haiku", verifier="sol", rounds=2, per_round=40, max_turns=10_000, log=lambda *_: None)
     call, made = guided_world()
-    cut = guided.run("useful", "pilot", rows, probe, max_usd=0.05, call=call, **common)
+    cut = guided.run("useful", "pilot", rows, max_usd=0.05, call=call, **common)
     # Turns already in flight may finish past the limit, at most one worker pool's worth.
     assert cut["stopped"] == "limit" and 5 <= len(made) < 5 + guided.LABELLERS and cut["usd_in_all"] >= 0.05
-    whole = guided.run("useful", "pilot", rows, probe, max_usd=100, call=call, **common)
+    whole = guided.run("useful", "pilot", rows, max_usd=100, call=call, **common)
     call2, made2 = guided_world()
     monkeypatch.setattr(label, "DATA", folders / "fresh")
-    alone = guided.run("useful", "pilot", rows, probe, max_usd=100, call=call2, **common)
+    alone = guided.run("useful", "pilot", rows, max_usd=100, call=call2, **common)
     assert whole["stopped"] == "done" and whole["rounds"] == alone["rounds"] and len(made) == len(made2)
 
 
@@ -1027,7 +1044,7 @@ def test_a_turn_that_fails_is_tried_again_and_only_its_success_is_kept(folders):
             made.append((prompt.name, payload))
             return {"model": model, "cost_usd": None, "error": "RuntimeError: None", "json": {}}
         return call(prompt, payload, model, effort)
-    got = guided.run("useful", "pilot", [labelled(i) for i in range(1, 4)], [labelled(100)], labeller="haiku",
+    got = guided.run("useful", "pilot", [labelled(i) for i in range(1, 4)], labeller="haiku",
                      verifier="sol", rounds=1, per_round=3, max_turns=100, max_usd=100, call=failing,
                      log=lambda *_: None)
     assert got["rounds"][0]["failed"] == 0 and sum(name == "verify.md" for name, _ in made) == 3
@@ -1038,7 +1055,7 @@ def test_a_verifier_that_accepts_planted_wrong_answers_keeps_nothing():
     import guided
     rows = [labelled(i) for i in range(20)]
     call, made = guided_world(stamp=True)
-    got = guided.run("useful", "pilot", rows, [labelled(100 + i) for i in range(5)], labeller="haiku", verifier="sol",
+    got = guided.run("useful", "pilot", rows, labeller="haiku", verifier="sol",
                      rounds=1, per_round=20, max_turns=10_000, max_usd=100, call=call, log=lambda *_: None)
     (only,) = got["rounds"]
     assert (only["kept"], only["unreliable"], only["rejected"]) == (0, 20, 0)

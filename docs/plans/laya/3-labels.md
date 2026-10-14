@@ -44,20 +44,27 @@ candidate is the labeller's guide (`laya/guided.py`):
   reshuffled, and dropped the second time (`verifier_unreliable`).
 - A label is kept when both answers match at confidence 0.7 or more.
   Rejections go to the error notebook (`verifier_reject`).
-- After each round the verifier rewrites the guide from the rejections and
-  the whole guide history (`laya/prompts/lesson.md`). The labeller answers
-  a held-out probe of labelled questions with the old and new guide; the
-  new one is adopted only when its paired gain clears the noise floor
-  (`loop.floor`). A guide not adopted stays in the history. The probe
-  never reaches the verifier.
+- After each round the verifier writes a candidate guide from the
+  rejections and the whole guide history (`laya/prompts/lesson.md`). The
+  next round labels its states with both the current and the candidate
+  guide; the verifier judges every answer without knowing which guide wrote
+  it (an answer both gave is judged once). The candidate is adopted only
+  when its paired gain in kept labels clears the noise floor
+  (`loop.floor`), and the round keeps the adopted guide's labels. A guide
+  not adopted stays in the history. No earlier labels are needed, so this
+  works for kinds that have none.
 - Every turn is journalled under its prompt, model and payload, so a rerun
   pays only for turns not yet made; `--max-usd` caps the journal's total.
 
-The two-labeller rule above stays for the existing splits. A pilot on 100
-or more of `useful`'s agreed labels, approved up to $10, measures cost per
-kept label, how often kept labels match the earlier ones, the verifier's
-mirror failures, and whether probe accuracy rises across rounds; its
-numbers decide the full run.
+The two-labeller rule above stays for the existing splits.
+
+Pilot (2026-10-14, `useful`'s 740 train candidates, approved up to $10):
+536 kept (72%), 99.6% matching the earlier two-frontier labels where they
+exist, $0.449 for 1,100 Haiku turns, about $0.0008 a kept label against
+$0.0105. No verifier batch endorsed a mirror. The first design judged
+guides on a 60-question probe of earlier agreed labels: Haiku already
+scored 0.883 there and no guide moved it beyond the noise, which is why a
+guide is now judged on the next round's states.
 
 ## Error notebook
 

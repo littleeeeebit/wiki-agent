@@ -42,8 +42,10 @@ Guided labelling (`guided.py`) is the cheaper path: a small labeller answers eac
 with the kind's guide, a stronger verifier from another family checks 20 labels a turn
 (two of them planted copies with the answer flipped, so a batch that endorses both an
 answer and its opposite is caught), and after each round the verifier rewrites the guide
-from its rejections. A new guide is adopted only when it makes the labeller more accurate
-on a held-out probe by more than the noise floor. Its docstring has the full round.
+from its rejections. The next round labels its states with both guides, the verifier
+judging every answer without knowing which guide wrote it, and the new guide is adopted
+only when it earns more verified labels by more than the noise floor; no earlier labels
+are needed. Its docstring has the full round.
 
 ## The loop
 
@@ -118,8 +120,8 @@ status, every cluster's size, every round's record, and the slices never to aim 
 python laya/pool.py                                               # local Langfuse only, free
 python laya/label.py useful train --target 3000 --dry             # what the first turn would send
 python laya/label.py useful train --target 3000 --labellers opus codex:gpt-6.1-sol --max-turns 400
-python laya/guided.py useful pilot --rows train.jsonl --probe validation.jsonl:60 \
-    --labeller haiku --verifier codex:gpt-6.1-sol --rounds 4 --per-round 150 --max-usd 10
+python laya/guided.py useful pilot --rows train.candidates.jsonl --gold train.jsonl \
+    --labeller haiku --verifier codex:gpt-6.1-sol --rounds 5 --per-round 148 --max-usd 10
 python -m pytest laya -q -p no:cacheprovider -o addopts=""
 ```
 

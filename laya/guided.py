@@ -2,38 +2,44 @@
 
 A small model labels each state; a stronger model from another family verifies the labels
 in batches and rewrites the small model's guide from what it rejected, after RRSI
-(`loop.py`): a new guide is adopted only when it beats the current one on a held-out probe
-by more than the noise floor (`loop.floor`), a guide that does not stays in the history as
-not adopted so it is not proposed again, and the probe never reaches the verifier.
+(`loop.py`): a new guide is adopted only when it earns more kept labels than the current one
+on the same fresh states by more than the noise floor (`loop.floor`), and a guide that does
+not stays in the history as not adopted so it is not proposed again. No earlier labels are
+needed, so it works for a kind that has none (a held-out probe of easy agreed labels could
+not show a guide helping: `.wiki/laya-insight-guide-probe.md`).
 
-    round r   the labeller answers `per_round` states with the current guide
-              the verifier checks them `BATCH` at a time; each batch also holds `MIRRORS`
-              copies of its items with the answer flipped. A batch that endorses both an
-              answer and its flipped copy is checked once more, reshuffled; doing it again
-              drops the batch (`verifier_unreliable`)
+    round r   the labeller answers `per_round` states with the current guide and, when the
+              last round proposed one, with the candidate guide too
+              the verifier checks the answers `BATCH` at a time, never told which guide wrote
+              one; an answer both guides gave is checked once. Each batch also holds
+              `MIRRORS` copies of its items with the answer flipped. A batch that endorses
+              both an answer and its flipped copy is checked once more, reshuffled; doing it
+              again drops the batch (`verifier_unreliable`)
               a label is kept when the labeller and the verifier give the same answer, both
-              at confidence `AGREE` or more, in a batch that rejected its mirrors; anything
-              else goes to the error notebook
-              from the round's rejections and the guide history the verifier writes the next
-              guide; the labeller answers the probe with both, and the new one is adopted
-              when its paired gain clears the noise floor
+              at confidence `AGREE` or more, in a batch that rejected its mirrors
+              a candidate is adopted when its paired gain in kept labels clears the noise
+              floor; the round keeps the adopted guide's labels, and its other answers go to
+              the error notebook
+              from those rejections and the guide history the verifier writes the next
+              round's candidate
 
 Every model turn is kept in `<split>.turns.jsonl` under its prompt, model and payload, so a
 rerun replays the same rounds and pays only for turns it has not made; a failed turn is
-tried up to `ATTEMPTS` times, is never kept, and is made again on a rerun. `max_usd` caps the whole file's spending, reruns
-included. Files, under `laya/data/<kind>/`:
+tried up to `ATTEMPTS` times, is never kept, and is made again on a rerun. `max_usd` caps
+the whole file's spending, reruns included. Files, under `laya/data/<kind>/`:
 
 - `<split>.turns.jsonl` — every paid turn.
-- `<split>.guide.jsonl` — every guide proposed: its round, rules, probe accuracy, gain and
-  floor, and whether it was adopted. The guide before the first adoption is empty.
+- `<split>.guide.jsonl` — every candidate tried: the round it was tried in, its rules, the
+  kept rates of both guides, gain and floor, and whether it was adopted. The guide before
+  the first adoption is empty.
 - `<split>.jsonl` — the kept labels in Laya's format, with labeller, verifier and guide.
 
 Rows come from a candidates file (`pool.rows`' shape) or a labelled file; a labelled row's
 `expected` is never shown to a model, only scored against, so a pilot on labelled data
 measures how often kept labels match the earlier ones.
 
-    python laya/guided.py useful pilot --rows train.jsonl --probe validation.jsonl:60 \\
-        --labeller haiku --verifier codex:gpt-6.1-sol --rounds 4 --per-round 150 --max-usd 10
+    python laya/guided.py useful pilot --rows train.candidates.jsonl --gold train.jsonl \\
+        --labeller haiku --verifier codex:gpt-6.1-sol --rounds 5 --per-round 148 --max-usd 10
 """
 
 import argparse
@@ -179,19 +185,53 @@ def kept(item: dict, verdict) -> bool:
             and v[0] == item["value"] and v[1] >= AGREE)
 
 
-def wrong(turns: Turns, probe: list[dict], guide: list[str], model: str) -> set | None:
-    """The probe's `(state_hash, question)` items the labeller gets wrong with `guide`."""
+def outcomes(turns: Turns, kind: str, batch: list[dict], tried: list[list[str]], labeller: str,
+             verifier: str, effort: str, seed) -> list[dict]:
+    """For each guide in `tried`, every `(state_hash, question)` of `batch` mapped to
+    `(outcome, item, verdict)`: outcome `kept`, `verifier_reject`, `verifier_unreliable`,
+    `invalid`, `unsure` or `failed`. An answer both guides gave is verified once."""
 
-    out = set()
     with ThreadPoolExecutor(LABELLERS) as pool:
-        said_all = list(pool.map(lambda row: answers(turns, row, guide, model), probe))
-    for row, said in zip(probe, said_all):
-        if said is None:
-            return None
-        for n, q in row["questions"].items():
-            v = valid(q, said.get(n))
-            if v is None or v[0] != row["expected"][n]:
-                out.add((row["provenance"]["state_hash"], n))
+        said = [list(pool.map(lambda row, g=g: answers(turns, row, g, labeller), batch)) for g in tried]
+    staged, entries, index = [], [], {}
+    for per in said:
+        res = {}
+        for row, got in zip(batch, per):
+            for n, q in row["questions"].items():
+                key = (row["provenance"]["state_hash"], n)
+                if got is None:
+                    res[key] = ("failed", None, None)
+                    continue
+                item = {"row": row, "n": n, "q": q, "said": label.kept(got.get(n))}
+                v = valid(q, got.get(n))
+                if v is None or v[1] < AGREE:
+                    res[key] = ("invalid" if v is None else "unsure", item, None)
+                    continue
+                entry = (*key, json.dumps(v[0]))
+                if entry not in index:
+                    index[entry] = len(entries)
+                    entries.append({**item, "value": v[0]})
+                res[key] = ("verify", {**item, "value": v[0]}, index[entry])
+        staged.append(res)
+    starts = range(0, len(entries), BATCH)
+    with ThreadPoolExecutor(VERIFIERS) as pool:
+        checked = list(pool.map(lambda s: verify(turns, kind, entries[s:s + BATCH], verifier, effort,
+                                                 random.Random(f"{seed}-{s}")), starts))
+    verdicts = []
+    for s, got in zip(starts, checked):
+        size = len(entries[s:s + BATCH])
+        verdicts += ["failed"] * size if got is None else ["unreliable"] * size if got == "unreliable" else got
+    out = []
+    for res in staged:
+        done = {}
+        for key, (outcome, item, at) in res.items():
+            if outcome != "verify":
+                done[key] = (outcome, item, None)
+            elif verdicts[at] in ("failed", "unreliable"):
+                done[key] = ("failed" if verdicts[at] == "failed" else "verifier_unreliable", item, None)
+            else:
+                done[key] = ("kept" if kept(item, verdicts[at]) else "verifier_reject", item, verdicts[at])
+        out.append(done)
     return out
 
 
@@ -210,7 +250,7 @@ def rows_of(kind: str, name: str) -> list[dict]:
     return out
 
 
-def run(kind: str, split: str, rows: list[dict], probe: list[dict], *, labeller: str, verifier: str,
+def run(kind: str, split: str, rows: list[dict], *, labeller: str, verifier: str,
         rounds: int, per_round: int, max_turns: int, max_usd: float, effort: str = "high",
         call=label.host_json, log=print, seed: int = 0) -> dict:
     """Run guided labelling for `rounds` rounds; returns per-round counts and what it cost."""
@@ -225,11 +265,10 @@ def run(kind: str, split: str, rows: list[dict], probe: list[dict], *, labeller:
     noted = notes.noted(kind)
     # Every random draw has its own seed, so a replayed round draws the same whatever an
     # earlier round skipped, and its turns are found in the file instead of paid again.
-    held = {r["provenance"]["state_hash"] for r in probe}
-    pending = [r for r in rows if r["provenance"]["state_hash"] not in held]
+    pending = list(rows)
     random.Random(f"{seed}-order").shuffle(pending)
-    universe = [(r["provenance"]["state_hash"], n) for r in probe for n in r["questions"]]
     guide, version, report = [], 0, []
+    candidate = None   # `(rules, why)` the last round proposed, tried in this one
 
     def note(category, item, r, verdict=None):
         h = item["row"]["provenance"]["state_hash"]
@@ -246,49 +285,40 @@ def run(kind: str, split: str, rows: list[dict], probe: list[dict], *, labeller:
             batch = pending[r * per_round:(r + 1) * per_round]
             if not batch:
                 break
-            stats = {"round": r, "guide": version, "states": len(batch), "questions": 0, "kept": 0,
+            tried = [guide] + ([candidate[0]] if candidate else [])
+            results = outcomes(turns, kind, batch, tried, labeller, verifier, effort, f"{seed}-{r}")
+            if candidate:
+                # Paired on the states both guides answered and the verifier settled.
+                settled = sorted(k for k in results[0] if all(res[k][0] not in ("failed", "verifier_unreliable")
+                                                              for res in results))
+                old, new = ({k for k in settled if res[k][0] != "kept"} for res in results)
+                gain, floor = loop.floor(settled, old, new, seed) if settled else (0.0, 0.0)
+                trial = next((g for g in guides if g["round"] == r), None)
+                if trial is None:
+                    trial = {"round": r, "version": r, "rules": candidate[0], "why": candidate[1],
+                             "adopted": gain > floor, "gain": round(gain, 4), "floor": round(floor, 4),
+                             "kept_rate": [round(1 - len(old) / max(len(settled), 1), 3),
+                                           round(1 - len(new) / max(len(settled), 1), 3)]}
+                    append(guides_path, trial)
+                    guides.append(trial)
+                if trial["adopted"]:
+                    guide, version = trial["rules"], trial["version"]
+            chosen = results[1] if candidate and trial["adopted"] else results[0]
+            stats = {"round": r, "guide": version, "states": len(batch), "questions": len(chosen), "kept": 0,
                      "invalid": 0, "unsure": 0, "rejected": 0, "unreliable": 0, "failed": 0}
-            items = []
-            with ThreadPoolExecutor(LABELLERS) as pool:
-                said_all = list(pool.map(lambda row: answers(turns, row, guide, labeller), batch))
-            for row, said in zip(batch, said_all):
-                if said is None:
-                    stats["failed"] += 1
-                    continue
-                for n, q in row["questions"].items():
-                    stats["questions"] += 1
-                    item = {"row": row, "n": n, "q": q, "said": label.kept(said.get(n))}
-                    v = valid(q, said.get(n))
-                    if v is None:
-                        stats["invalid"] += 1
-                        note("invalid", item, r)
-                    elif v[1] < AGREE:
-                        stats["unsure"] += 1
-                        note("unsure", item, r)
-                    else:
-                        items.append({**item, "value": v[0]})
+            if candidate:
+                stats["trial"] = {k: trial[k] for k in ("version", "adopted", "gain", "floor", "kept_rate")}
             rejections, keep = [], {}
-            starts = range(0, len(items), BATCH)
-            with ThreadPoolExecutor(VERIFIERS) as pool:
-                checked = list(pool.map(lambda s: verify(turns, kind, items[s:s + BATCH], verifier, effort,
-                                                         random.Random(f"{seed}-{r}-{s}")), starts))
-            for start, verdicts in zip(starts, checked):
-                chunk = items[start:start + BATCH]
-                if verdicts is None:
-                    stats["failed"] += len(chunk)
+            for (h, _), (outcome, item, verdict) in chosen.items():
+                if outcome == "kept":
+                    keep.setdefault(h, []).append(item)
                     continue
-                for k, item in enumerate(chunk):
-                    if verdicts == "unreliable":
-                        stats["unreliable"] += 1
-                        note("verifier_unreliable", item, r)
-                    elif kept(item, verdicts[k]):
-                        keep.setdefault(item["row"]["provenance"]["state_hash"], []).append(item)
-                    else:
-                        stats["rejected"] += 1
-                        note("verifier_reject", item, r, verdicts[k])
-                        if isinstance(verdicts[k], dict):
-                            rejections.append({"state": item["row"]["state"], "question": label.shown(item["q"]),
-                                               "labeller": item["said"], "verifier": verdicts[k]})
+                stats[{"verifier_reject": "rejected", "verifier_unreliable": "unreliable"}.get(outcome, outcome)] += 1
+                if outcome != "failed":   # a failed turn is made again on a rerun
+                    note(outcome, item, r, verdict)
+                if outcome == "verifier_reject" and isinstance(verdict, dict):
+                    rejections.append({"state": item["row"]["state"], "question": label.shown(item["q"]),
+                                       "labeller": item["said"], "verifier": verdict})
             gold = [it for its in keep.values() for it in its if "expected" in it["row"]]
             if gold:
                 stats["kept_match_earlier"] = round(sum(it["value"] == it["row"]["expected"][it["n"]]
@@ -303,30 +333,18 @@ def run(kind: str, split: str, rows: list[dict], probe: list[dict], *, labeller:
                                   "provenance": {"state_hash": h, "source": row["provenance"]["source"],
                                                  "labellers": [labeller, verifier], "guide": version}})
                 written.add(h)
-            # The lesson: the verifier rewrites the guide from this round's rejections.
-            done = next((g for g in guides if g["round"] == r), None)
-            if done is None and len(rejections) >= LESSON_AT:
+            # The lesson: the verifier writes the next round's candidate from these rejections.
+            candidate = None
+            if len(rejections) >= LESSON_AT and pending[(r + 1) * per_round:] and r + 1 < rounds:
                 got = turns(LESSON, {"kind": kind, "guide": guide,
                                      "rejections": random.Random(f"{seed}-{r}-lesson").sample(
                                          rejections, min(SAMPLES, len(rejections))),
                                      "history": [{k: g[k] for k in ("rules", "adopted", "gain", "floor")}
-                                                 for g in guides if g["round"] < r]}, verifier, effort)
+                                                 for g in guides if g["round"] <= r]}, verifier, effort)
                 rules = [x.strip()[:RULE_CHARS] for x in (got or {}).get("rules", [])
                          if isinstance(x, str) and x.strip()][:MAX_RULES]
-                if got is not None and rules != guide:
-                    old, new = wrong(turns, probe, guide, labeller), wrong(turns, probe, rules, labeller)
-                    if old is not None and new is not None:
-                        gain, floor = loop.floor(universe, old, new, seed)
-                        done = {"round": r, "version": r + 1, "rules": rules, "why": got.get("why"),
-                                "adopted": gain > floor, "gain": round(gain, 4), "floor": round(floor, 4),
-                                "probe_accuracy": [round(1 - len(old) / len(universe), 3),
-                                                   round(1 - len(new) / len(universe), 3)]}
-                        append(guides_path, done)
-                        guides.append(done)
-            if done is not None:
-                stats["lesson"] = {k: done[k] for k in ("version", "adopted", "gain", "floor", "probe_accuracy")}
-                if done["adopted"]:
-                    guide, version = done["rules"], done["version"]
+                if got is not None and rules and rules != guide:
+                    candidate = (rules, got.get("why"))
             report.append(stats)
             log(json.dumps(stats))
         stopped = "done"
@@ -342,7 +360,6 @@ def main() -> None:
     p.add_argument("kind")
     p.add_argument("split")
     p.add_argument("--rows", required=True, help="a file under laya/data/<kind>/")
-    p.add_argument("--probe", required=True, help="a labelled file under laya/data/<kind>/, as name[:count]")
     p.add_argument("--labeller", required=True)
     p.add_argument("--verifier", required=True)
     p.add_argument("--rounds", type=int, default=4)
@@ -351,16 +368,12 @@ def main() -> None:
     p.add_argument("--max-usd", type=float, required=True)
     p.add_argument("--gold", help="a labelled file whose answers the kept labels are scored against, never shown")
     a = p.parse_args()
-    name, _, count = a.probe.partition(":")
-    probe = rows_of(a.kind, name)[:int(count) if count else None]
-    if not probe or any("expected" not in r for r in probe):
-        raise SystemExit("the probe must be labelled rows")
     rows = rows_of(a.kind, a.rows)
     if a.gold:
         gold = {r["provenance"]["state_hash"]: r["expected"] for r in rows_of(a.kind, a.gold)}
         rows = [{**r, "expected": gold[h]} if set(gold.get(h := r["provenance"]["state_hash"], ())) == set(r["questions"])
                 else r for r in rows]
-    print(json.dumps(run(a.kind, a.split, rows, probe, labeller=a.labeller,
+    print(json.dumps(run(a.kind, a.split, rows, labeller=a.labeller,
                          verifier=a.verifier, rounds=a.rounds, per_round=a.per_round,
                          max_turns=a.max_turns, max_usd=a.max_usd), indent=1, ensure_ascii=False))
 
