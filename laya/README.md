@@ -15,7 +15,7 @@ repository root.
 | `pool.py` | Production requests from the local Langfuse (and action requests from specs) to `data/pool.jsonl`, one row per distinct state |
 | `gate.py` | Reserves the gate test (`eval/laya/tests.json`) and finds near-duplicates of it, by whole state or passage view |
 | `stage1.py` | Stage 1's measurements: length, latency, option order, zero-shot agreement with Jev |
-| `generate.py` | Candidate states for a passage kind: teacher-written questions run through the production path, decider stubbed |
+| `generate.py` | Candidate states for the ten retrieval kinds: teacher-written questions over the wiki corpora on this machine, run through the production path with the decider stubbed |
 | `label.py` | Two-labeller agreement labels; every dropped question goes to the error notebook |
 | `guided.py` | Guided labelling: a small labeller, a batch verifier, and a guide that improves by RRSI rounds |
 | `notes.py` | The error notebook: ledger, pages, statuses, the brief the generator reads |

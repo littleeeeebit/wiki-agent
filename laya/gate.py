@@ -28,7 +28,15 @@ FRACTION = 2 / 3
 JACCARD = 0.8
 
 
+# A route state's table of source descriptions is the same in every request; left in, it
+# makes two different short questions near-duplicates (`which port?` and `who deploys?`
+# score 0.87). The gate was reserved before this was left out, and is never reserved again.
+FIXED = ("available_sources",)
+
+
 def shingles(state) -> set[tuple[str, ...]]:
+    if isinstance(state, dict):
+        state = {k: v for k, v in state.items() if k not in FIXED}
     words = json.dumps(state, sort_keys=True, ensure_ascii=False).split()
     return {tuple(words[i:i + 5]) for i in range(max(1, len(words) - 4))}
 

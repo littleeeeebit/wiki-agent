@@ -128,6 +128,17 @@ def ask(query: str, project: str | Path | None, timeout: float, k: int = 8,
     return results if isinstance(results, list) else None
 
 
+def indexed(project: str | Path | None, timeout: float, wait: float = 0.0, start: bool = True) -> bool:
+    """Whether the daemon has finished `project`'s index, after holding the answer up to
+    `wait` seconds for it; `False` for no answer. A search answers from an unfinished
+    index too, so `ask` alone cannot tell."""
+
+    answer, _started = call("/search", {"query": "index readiness", "hub": str(HUB),
+                                        "project": str(project) if project else None,
+                                        "k": 1, "wait": wait, "sources": None}, timeout, wait, start)
+    return (answer or {}).get("complete") is True
+
+
 def retrieve(request: dict, project: str | Path | None, timeout: float, wait: float = 0.0,
              start: bool = True, cancel: threading.Event | None = None) -> dict | None:
     """The daemon's RetrievalResult for a RetrievalRequest (`retrieval`), or
