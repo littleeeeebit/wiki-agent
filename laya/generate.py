@@ -89,10 +89,11 @@ def corpus(repo: Path) -> list[dict]:
     return [d for d in docs if (repo / d["path"]).resolve().is_relative_to(home) and (repo / d["path"]).is_file()]
 
 
-def sample(seed: int, found: dict[str, Path] | None = None) -> dict:
+def sample(seed: int, found: dict[str, Path] | None = None, lean: bool = False) -> dict:
     """The teacher's turn for `seed`: one repository (weighted by the square root of its
     document count, so the largest does not dominate), `PAGES` of its documents, and a type
-    and intent for each of the `PER_TURN` questions, drawn so a turn spans them."""
+    and intent for each of the `PER_TURN` questions, drawn so a turn spans them; with
+    `lean` (a train turn), `EXTRA_FALSE_PREMISE` more false premises among the types."""
 
     found = repos() if found is None else found
     rng = random.Random(seed)
@@ -100,7 +101,7 @@ def sample(seed: int, found: dict[str, Path] | None = None) -> dict:
     docs = {n: corpus(found[n]) for n in names}
     name = rng.choices(names, weights=[math.sqrt(len(docs[n])) for n in names])[0]
     chosen = rng.sample(docs[name], min(PAGES, len(docs[name])))
-    types, intents = list(TYPES) * 2 + ["false_premise"] * EXTRA_FALSE_PREMISE, list(INTENTS) * 2
+    types, intents = list(TYPES) * 2 + ["false_premise"] * (EXTRA_FALSE_PREMISE if lean else 0), list(INTENTS) * 2
     rng.shuffle(types)
     rng.shuffle(intents)
     pages = [{**{k: d[k] for k in ("path", "title", "heads", "lead")},
@@ -110,9 +111,13 @@ def sample(seed: int, found: dict[str, Path] | None = None) -> dict:
             "slots": [{"type": t, "intent": i} for t, i in zip(types[:PER_TURN], intents[:PER_TURN])]}
 
 
-def teacher_turn(model: str, seed: int) -> dict:
-    drawn = sample(seed)
-    got = host_json(PROMPT, {"pages": drawn["pages"], "slots": drawn["slots"], "plants": PLANTS}, model)
+def teacher_turn(model: str, seed: int, lean: bool = False) -> dict:
+    """One teacher turn; a `lean` (train) turn draws more false premises and asks for plants,
+    and says so (`lean`), so another split never runs its queries."""
+
+    drawn = sample(seed, lean=lean)
+    got = host_json(PROMPT, {"pages": drawn["pages"], "slots": drawn["slots"], "plants": PLANTS if lean else 0},
+                    model)
     said = got.pop("json")
     titles = {p["path"]: p.get("title") for p in drawn["pages"]}
     queries, used = [], set()
@@ -123,12 +128,13 @@ def teacher_turn(model: str, seed: int) -> dict:
         if slot < PER_TURN and slot not in used:   # the slot it was asked for, never the teacher's own label
             used.add(slot)
             # The titles of the drawn pages it says it is about: a passage's heading starts with one.
-            about = [titles[p] for p in q.get("pages") or () if isinstance(p, str) and titles.get(p)]
+            pages = q["pages"] if isinstance(q.get("pages"), list) else []
+            about = [titles[p] for p in pages if isinstance(p, str) and titles.get(p)]
             queries.append({"text": q["text"], **drawn["slots"][slot], "about": about})
-    plants = said.get("plants") if isinstance(said.get("plants"), list) else []
+    plants = said.get("plants") if lean and isinstance(said.get("plants"), list) else []
     plants = [p.strip()[:PLANT_CHARS] for p in plants if isinstance(p, str) and p.strip()][:PLANTS]
     return {**got, "seed": seed, "repo": drawn["repo"], "pages": [p["path"] for p in drawn["pages"]],
-            "queries": queries, "plants": plants}
+            "queries": queries, "plants": plants, "lean": lean}
 
 
 def captured(query: str, project: Path = ROOT) -> list[dict]:
@@ -338,8 +344,10 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
 
     A captured request is checked whole before it is cut into views: one near-duplicate of
     a gate state (by whole state or any view) gives no candidate, nor one near a request
-    whose candidates went to another split. Each kind's row is then checked against every
-    candidate of that kind kept, in any split.
+    whose candidates went to another split. Each kind's row is then checked against the gate
+    again (a planted view is not the request checked) and against every candidate of that
+    kind kept, in any split. A train turn leans to rare answers (`lean`), so its queries are
+    never run for another split; train may run another split's.
 
     A run's requests are claimed for its split (`claim`) before any candidate is written,
     so an interruption between the two cannot let a resumed run send the same query's
@@ -404,6 +412,8 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
     def run_queries(entry: dict) -> bool:
         """False once a query's retrieval fails (`Unavailable`); that query is left for a rerun."""
 
+        if entry.get("lean") and split != "train":   # its slots lean to rare answers: train's only
+            return True
         for i, q in enumerate(entry["queries"]):
             run = f"t{entry['seed']}-q{i}"
             if run in done or full() or claimed.get(run, split) != split:
@@ -451,7 +461,9 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
             kept = 0
             for kind in kinds:
                 for row in candidates(kind, kept_requests, provenance, entry.get("plants", ()), lean=split == "train"):
-                    if near[kind].found(row):
+                    if near_gate.found(row):   # a planted view is not the request checked above
+                        stats["near_gate"] += len(row["questions"])
+                    elif near[kind].found(row):
                         stats["near_kept"] += 1
                     elif have[kind] < target:
                         append(DATA / kind / f"{split}.candidates.jsonl", row)
@@ -485,7 +497,8 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
             next_seed += 1
         append(ledger, {"seed": next_seed, "pending": True, "model": teacher, "prompt_version": prompt_version()})
         seeds.add(next_seed)
-        entry = {**turn(teacher, next_seed), "prompt_version": prompt_version()}
+        entry = {**turn(teacher, next_seed, split == "train"), "prompt_version": prompt_version(),
+                 "lean": split == "train"}
         append(ledger, entry)
         stats["turns"] += 1
         stats["cost_usd"] += entry.get("cost_usd") or 0.0
@@ -520,7 +533,7 @@ def main() -> None:
         abandon(a.abandon)
         return
     if a.dry or not a.teacher:
-        drawn = sample(a.seed)
+        drawn = sample(a.seed, lean=a.split == "train")
         print(json.dumps({"prompt_version": prompt_version(), "repo": drawn["repo"],
                           "pages": [x["path"] for x in drawn["pages"]], "slots": drawn["slots"]}, indent=1))
         return
