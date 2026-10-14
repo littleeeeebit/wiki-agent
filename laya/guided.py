@@ -281,7 +281,8 @@ def run(kind: str, split: str, rows: list[dict], *, labeller: str, verifier: str
     setup = hashlib.sha256(json.dumps(
         [[hashlib.sha256(p.read_bytes()).hexdigest() for p in (label.PROMPT, VERIFY, LESSON)],
          labeller, verifier, effort, seed, per_round,
-         [[r["provenance"]["state_hash"], r["state"], r["questions"]] for r in rows]], sort_keys=True,
+         # The questions as pairs: their order makes the verifier's batches, and sorted keys would lose it.
+         [[r["provenance"]["state_hash"], r["state"], list(r["questions"].items())] for r in rows]], sort_keys=True,
         ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
     if ({g.get("setup") for g in guides} | {r["provenance"].get("setup") for r in out}) - {setup}:
         raise SystemExit(f"{split} under {folder} was written with another setup (prompts, models, effort, seed, "
