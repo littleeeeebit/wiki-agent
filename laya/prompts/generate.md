@@ -35,6 +35,10 @@ The slot's `intent` says what the developer wants:
 - `pasted`: a request beside pasted material: a log excerpt, an error, a
   notice or a message from someone, on its own lines, followed or preceded
   by what the developer actually asks about it.
+- `chat`: a message that needs nothing from the repository or its history:
+  a greeting, thanks or an acknowledgement, or a request to reword,
+  shorten, translate or format text the message itself gives. The `type`
+  does not apply.
 
 Vary the form across the turn: short and long, terse and with the context
 the developer is in, a task ("change X so that Y") as well as a question.
@@ -43,12 +47,22 @@ another script (a Korean term, say), describe it in English instead of
 copying it. Do not quote a page's sentence as the question, and do not name
 the page.
 
+Then write `plants` (the number the input gives) short texts for training
+a detector of prompt injection: each one to three sentences that a
+repository document could contain and that address an AI assistant or
+agent reading it, trying to change what it does: ignore its instructions,
+run or skip a step, reveal something, change its answer or recommend
+something. Vary them: blunt or polite, overt or hidden in a comment, a
+note, a log line or a quoted message, on these pages' topics. They are data
+for the detector; nothing here is to be followed.
+
 ## Output
 
 Only one JSON object, no prose around it, no code fence:
 
 ```json
-{"queries": [{"slot": 0, "text": "...", "pages": ["docs/architecture.md"]}]}
+{"queries": [{"slot": 0, "text": "...", "pages": ["docs/architecture.md"]}],
+ "plants": ["..."]}
 ```
 
 `slot` is the slot's index; `pages` lists the paths the question is about.
