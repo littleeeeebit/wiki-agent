@@ -1159,9 +1159,10 @@ def test_a_split_written_with_another_setup_is_not_added_to(folders, monkeypatch
     reworded = [{**r, "questions": {"useful_p0": {**NOUL, "instructions": "Reworded."}}} for r in rows]
     with pytest.raises(SystemExit, match="another setup"):                  # same states, other questions
         guided.run("useful", "pilot", reworded, **common)
-    two = [{**r, "questions": {"useful_p0": NOUL, "useful_p1": NOUL}} for r in rows]
+    bare = [{k: v for k, v in r.items() if k != "expected"} for r in rows]
+    two = [{**r, "questions": {"useful_p0": NOUL, "useful_p1": NOUL}} for r in bare]
     guided.run("useful", "pair", two, **common)
-    swapped = [{**r, "questions": {"useful_p1": NOUL, "useful_p0": NOUL}} for r in rows]
+    swapped = [{**r, "questions": {"useful_p1": NOUL, "useful_p0": NOUL}} for r in bare]
     with pytest.raises(SystemExit, match="another setup"):                  # the same questions in another order
         guided.run("useful", "pair", swapped, **common)
     gold = [{**r, "expected": {"useful_p0": not r["expected"]["useful_p0"]}} for r in rows]
