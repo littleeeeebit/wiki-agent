@@ -9,7 +9,11 @@ the decider stubbed and the translator sending nothing (`captured`): its route r
 its first grade-evidence request are captured as production would send them, and nothing goes
 to Jev, the translator or a host fallback. Each kind's candidate is one question per row,
 its state the kind's view (`kinds.view`), at most `CAP` per kind from one question;
-near-duplicates of the gate test and across splits are dropped (`generate`).
+near-duplicates of the gate test and across splits are dropped (`generate`). Kinds whose yes
+or no the pages rarely give get it by design: `chat` questions need no retrieval (`route`),
+false premises are drawn more often, and in `train` only, a `conflict` draw takes a passage of
+the question's own pages and some `redirect` passages get one of the teacher's instructions to
+an assistant planted in them (`candidates`).
 
 Files under `laya/data/`:
 
@@ -55,7 +59,13 @@ PER_TURN = 8
 EXCERPT = 3000
 CAP = 2   # candidates of one kind from one question, so a kind's set spans many questions
 TYPES = ("answered", "partial", "bridging", "unanswered", "false_premise")
-INTENTS = ("lookup", "analysis", "progress", "general", "compound", "pasted")
+# `chat` needs nothing from the repository, so `route` gets its no (the 2026-10-14 pilot had none).
+INTENTS = ("lookup", "analysis", "progress", "general", "compound", "pasted", "chat")
+# Drawn twice more than the other types: only a false premise gives `conflict` its yes.
+EXTRA_FALSE_PREMISE = 2
+PLANTS = 4      # instructions to an assistant the teacher writes each turn, planted for `redirect`
+PLANT = 0.3     # share of `redirect` candidates given one, so the kind has its yes
+PLANT_CHARS = 500
 
 
 def prompt_version() -> str:
@@ -90,7 +100,7 @@ def sample(seed: int, found: dict[str, Path] | None = None) -> dict:
     docs = {n: corpus(found[n]) for n in names}
     name = rng.choices(names, weights=[math.sqrt(len(docs[n])) for n in names])[0]
     chosen = rng.sample(docs[name], min(PAGES, len(docs[name])))
-    types, intents = list(TYPES) * 2, list(INTENTS) * 2
+    types, intents = list(TYPES) * 2 + ["false_premise"] * EXTRA_FALSE_PREMISE, list(INTENTS) * 2
     rng.shuffle(types)
     rng.shuffle(intents)
     pages = [{**{k: d[k] for k in ("path", "title", "heads", "lead")},
@@ -102,18 +112,23 @@ def sample(seed: int, found: dict[str, Path] | None = None) -> dict:
 
 def teacher_turn(model: str, seed: int) -> dict:
     drawn = sample(seed)
-    got = host_json(PROMPT, {"pages": drawn["pages"], "slots": drawn["slots"]}, model)
-    said = got.pop("json").get("queries")
+    got = host_json(PROMPT, {"pages": drawn["pages"], "slots": drawn["slots"], "plants": PLANTS}, model)
+    said = got.pop("json")
+    titles = {p["path"]: p.get("title") for p in drawn["pages"]}
     queries, used = [], set()
-    for i, q in enumerate(said if isinstance(said, list) else []):
+    for i, q in enumerate(said.get("queries") if isinstance(said.get("queries"), list) else []):
         if not (isinstance(q, dict) and isinstance(q.get("text"), str) and q["text"].strip()):
             continue
         slot = q["slot"] if isinstance(q.get("slot"), int) and 0 <= q["slot"] < PER_TURN else i
         if slot < PER_TURN and slot not in used:   # the slot it was asked for, never the teacher's own label
             used.add(slot)
-            queries.append({"text": q["text"], **drawn["slots"][slot]})
+            # The titles of the drawn pages it says it is about: a passage's heading starts with one.
+            about = [titles[p] for p in q.get("pages") or () if isinstance(p, str) and titles.get(p)]
+            queries.append({"text": q["text"], **drawn["slots"][slot], "about": about})
+    plants = said.get("plants") if isinstance(said.get("plants"), list) else []
+    plants = [p.strip()[:PLANT_CHARS] for p in plants if isinstance(p, str) and p.strip()][:PLANTS]
     return {**got, "seed": seed, "repo": drawn["repo"], "pages": [p["path"] for p in drawn["pages"]],
-            "queries": queries}
+            "queries": queries, "plants": plants}
 
 
 def captured(query: str, project: Path = ROOT) -> list[dict]:
@@ -241,23 +256,56 @@ def indexed(project: Path, wait: float) -> bool:
 WARM = 1800.0   # seconds the daemon may take to index a repository it has not read yet
 
 
-def candidates(kind: str, requests: list[dict], provenance: dict) -> list[dict]:
+def title_of(request: dict, name: str) -> str:
+    """The document title that question `name`'s passage comes from (its heading's first part)."""
+
+    pid = name.split("_", 1)[1]
+    heading = next((p.get("heading") or "" for p in request["state"].get("passages", []) if p.get("id") == pid), "")
+    return heading.split(" > ")[0]
+
+
+def planted(state: dict, plant: str, rng: random.Random) -> dict:
+    """A passage view with `plant` put between two of its passage's lines."""
+
+    (p,) = state["passages"]
+    lines = p["text"].split("\n")
+    at = rng.randint(0, len(lines))
+    return {**state, "passages": [{**p, "text": "\n".join(lines[:at] + [plant] + lines[at:])}]}
+
+
+def candidates(kind: str, requests: list[dict], provenance: dict, plants=(), lean: bool = False) -> list[dict]:
     """`kind`'s questions, at most `CAP` (a draw seeded by the run and the kind, kept in
     their order), as rows of the kind's view: questions that share a view (a route's
     sources, a request's coverage) share one row, so no question is dropped as a
-    duplicate of its neighbour, and a passage kind's row holds its one question."""
+    duplicate of its neighbour, and a passage kind's row holds its one question.
+
+    With `lean` (train only: validation and calibration keep the natural rate, plan stage
+    2), the two kinds whose yes is rare get it on purpose: a `conflict` draw holds a
+    passage from a page the question was written about, when one was found (where a false
+    premise is contradicted), and a `redirect` view is given one of the turn's `plants`, an
+    instruction to an assistant, with chance `PLANT`."""
 
     asked = [(r, name, q) for r, req in enumerate(requests)
              for name, q in req["questions"].items() if kind_of(name) == kind]   # named, kinds left out
     if len(asked) > CAP:
-        drawn = set(random.Random(f"{provenance['run']}-{kind}").sample(range(len(asked)), CAP))
+        rng = random.Random(f"{provenance['run']}-{kind}")
+        drawn = set(rng.sample(range(len(asked)), CAP))
+        about = set(provenance.get("about") or ())
+        on = [i for i, (r, name, _) in enumerate(asked)
+              if lean and kind == "conflict" and title_of(requests[r], name) in about]
+        if on and not drawn & set(on):
+            drawn = {rng.choice(on), *sorted(drawn)[:CAP - 1]}
         asked = [a for i, a in enumerate(asked) if i in drawn]
     rows: dict[tuple, dict] = {}
     for r, name, q in asked:
-        state = view(name, kind, requests[r]["state"])
+        state, origin = view(name, kind, requests[r]["state"]), provenance
+        pick = random.Random(f"{provenance['run']}-{r}-{name}-plant")
+        if lean and kind == "redirect" and plants and pick.random() < PLANT:
+            plant = pick.choice(list(plants))
+            state, origin = planted(state, plant, pick), {**provenance, "planted": plant}
         h = digest(state)
         row = rows.setdefault((r, h), {"id": f"{provenance['run']}-{r}-{name}", "state": state, "state_hash": h,
-                                       "questions": {}, "provenance": provenance})
+                                       "questions": {}, "provenance": origin})
         row["questions"][name] = {"kind": kind, "question": q}
     return list(rows.values())
 
@@ -363,7 +411,7 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
             provenance = {"generator": "laya/generate.py", "prompt_version": entry["prompt_version"],
                           "teacher": entry["model"], "seed": entry["seed"], "repo": entry["repo"],
                           "pages": entry["pages"], "query": q["text"], "type": q.get("type"),
-                          "intent": q.get("intent"), "run": run}
+                          "intent": q.get("intent"), "about": q.get("about", []), "run": run}
             if run in claimed:   # interrupted after its claim: finish on what it claimed
                 kept_requests = [{"state": o["state"], "questions": {n: v["question"] for n, v in o["questions"].items()}}
                                  for o in claims[run]]
@@ -402,7 +450,7 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
                     sides.append(split)
             kept = 0
             for kind in kinds:
-                for row in candidates(kind, kept_requests, provenance):
+                for row in candidates(kind, kept_requests, provenance, entry.get("plants", ()), lean=split == "train"):
                     if near[kind].found(row):
                         stats["near_kept"] += 1
                     elif have[kind] < target:

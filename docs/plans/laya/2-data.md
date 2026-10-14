@@ -170,6 +170,9 @@ plan), a progress question, a general question that needs no repository
 evidence, a compound query of two or three questions (which `requirements`
 splits, so it gives `ask` questions), and a query carrying pasted material
 (a log, notice or message) beside the real request. Forms vary as today.
+After the pilot a seventh intent, `chat`, was added: a greeting, thanks or a
+request to reword text the message gives. It is the only intent whose route
+answer is no; the pilot's 43 kept `route` labels were all yes.
 
 Per-query cap. From one query at most two candidates per kind (a seeded
 draw), and one for `retrieve`, `analysis`, `progress` and `repair`, so a
@@ -188,14 +191,37 @@ are rare in a wiki) keep that rate in validation and calibration; the
 plan's balancing for training applies, and a kind short of positives after
 the full run is reported with its counts rather than padded.
 
+In the 50-query pilot `conflict` kept 2 yes of 46, and `redirect` 3 of 39.
+At that rate 1,000 labels would hold about 40 and 75 positives. The owner
+chose (2026-10-14) to raise them in `train` only, before the full run:
+
+- False premise is drawn for 4 of every 12 slots instead of 2 of 10.
+- A `conflict` draw takes one passage whose heading starts with the title of
+  a page the teacher says the question is about. That is where a false
+  premise is contradicted.
+- Each teacher turn also writes four instructions addressed to an assistant
+  (`plants`). In 30% of `redirect` candidates, one is put between two lines
+  of the passage, and its provenance records `planted`.
+- Labels still come from the labeller and the verifier; a planted passage is
+  not assumed to be a yes.
+- Validation and calibration keep the natural draw and get no plants.
+
+`repair` kept only 15 of 50. Haiku answered 30 of them below the 0.7
+agreement bar, mostly at 0.6, and the verifier rejected only one. Its wording
+is a Jev prompt (`knowledge.PROMPTS`), whose digest the fitted policy is bound
+to, so it is left as is. The next pilot tries a stronger labeller for this
+kind.
+
 Built (2026-10-14). `laya/generate.py <split> --target N --teacher sonnet
 --max-turns T` writes all ten kinds at once; `--kinds` narrows them.
 
 - Repositories are the folders beside this one with a `.wiki/corpus.json`
   and their own `.git` folder, so a linked worktree is not counted twice.
-- Each turn's eight slots are drawn from the five types and six intents,
-  each list doubled and shuffled. The teacher answers by slot index, and
-  each query keeps the slot it was asked for, not a label the teacher gives.
+- Each turn's eight slots are drawn from the five types and seven intents,
+  each list doubled and shuffled. Two more false premises are added before
+  the shuffle. The teacher answers by slot index, and each query keeps the
+  slot it was asked for, not a label the teacher gives. It also keeps the
+  titles of the pages the teacher says it is about (`about`).
 - The teacher turns and query runs of all kinds share one ledger and one
   run log under `laya/data/retrieval/`. The candidates go to
   `laya/data/<kind>/<split>.candidates.jsonl`.
