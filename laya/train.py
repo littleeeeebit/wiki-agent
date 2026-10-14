@@ -21,6 +21,7 @@ name, so `import laya` always finds the installed Laya package, never this folde
 
 import hashlib
 import json
+import random
 import subprocess
 import sys
 import zipfile
@@ -78,6 +79,19 @@ def pack(kind: str) -> Path:
                 packed["splits"][split] = hashlib.sha256(path.read_bytes()).hexdigest()
         z.writestr("laya/packed.json", json.dumps(packed, indent=1))
     return out
+
+
+def subset(kind: str, n: int, seed: int = 0) -> tuple[str, int]:
+    """A split of `n` train rows drawn with `seed`, for a learning curve: its name and how
+    many rows it holds. Rows are read as records, so a torn tail or a blank line is not one."""
+
+    rows = read(DATA / kind / "train.jsonl")
+    random.Random(seed).shuffle(rows)
+    name = f"train{n}"
+    with (DATA / kind / f"{name}.jsonl").open("w", encoding="utf-8") as f:
+        for row in rows[:n]:
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    return name, len(rows[:n])
 
 
 def merged(kind: str, splits: list[str], agent, max_len: int) -> tuple[Path, int]:
