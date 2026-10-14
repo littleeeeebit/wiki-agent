@@ -646,10 +646,27 @@ def test_short_route_questions_are_not_near_duplicates_through_the_source_table(
     assert gate.Near([a]).found(b) == set() and gate.Near([a]).found(a) == {0}
 
 
-def test_generate_keeps_the_kinds_its_run_log_was_started_with(folders):
-    gen("useful", "train", 2, "opus", 1, capture=judged, turn=Teacher(), log=lambda *_: None)
-    with pytest.raises(SystemExit, match="same kinds"):
-        gen("conflict", "train", 2, "opus", 1, capture=judged, turn=Teacher(), log=lambda *_: None)
+def test_generate_keeps_the_kinds_its_run_log_was_started_with(folders, monkeypatch):
+    real = generate.append
+
+    class Interrupted(BaseException):
+        pass
+
+    def append(path, row):   # stopped after the first claim, before any run finished
+        real(path, row)
+        if "claim" in row:
+            raise Interrupted()
+
+    monkeypatch.setattr(generate, "append", append)
+    with pytest.raises(Interrupted):
+        generate.generate("train", 2, "opus", 1, kinds=("useful", "conflict"), found={"here": generate.ROOT},
+                          capture=lambda q, p: judged(q), turn=Teacher(), log=lambda *_: None)
+    monkeypatch.setattr(generate, "append", real)
+    with pytest.raises(SystemExit, match="same kinds"):           # the claim already holds the set
+        gen("useful", "train", 2, "opus", 0, capture=judged, turn=Teacher(), log=lambda *_: None)
+    out = generate.generate("train", 2, "opus", 0, kinds=("conflict", "useful"), found={"here": generate.ROOT},
+                            capture=lambda q, p: judged(q), turn=Teacher(), log=lambda *_: None)
+    assert out["have"] == {"useful": 2, "conflict": 2}               # the same set in another order resumes
 
 
 def test_a_repository_the_daemon_cannot_index_leaves_its_queries_unrun(folders, monkeypatch):

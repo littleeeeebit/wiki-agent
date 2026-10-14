@@ -307,6 +307,7 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
     unknown = [k for k in kinds if k not in RETRIEVAL]
     if unknown:
         raise ValueError(f"{', '.join(unknown)}: the generator writes retrieval kinds ({', '.join(RETRIEVAL)}) only")
+    kinds = tuple(k for k in RETRIEVAL if k in kinds)   # one order for one set, as the run log records it
     shared = DATA / "retrieval"
     ledger, runs = shared / "generate.ledger.jsonl", shared / "generate.runs.jsonl"
     reserved = gate.reserved()
@@ -390,7 +391,7 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
                     else:
                         kept_requests.append(req)
                 originals = [whole(req) for req in kept_requests]
-                append(runs, {"run": run, "split": split, "claim": originals})
+                append(runs, {"run": run, "split": split, "claim": originals, "kinds": list(kinds)})
                 claimed[run] = split
                 for o in originals:
                     origins.add(o)
