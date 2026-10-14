@@ -27,6 +27,38 @@ still open (stage 2).
 - Each label records labeller models, the source observation and the state
   hash.
 
+## Guided labelling — a labeller that improves with use (owner, 2026-10-14)
+
+Two frontier labellers per state cost about $0.01 a label for `useful`
+(Sonnet $0.0075 a turn; the Codex side is a subscription), and the owner
+asked for cheaper labels. The labelling stage becomes an RRSI loop whose
+candidate is the labeller's guide (`laya/guided.py`):
+
+- A small labeller (Claude Haiku 5.5) answers each state, one turn a
+  state, with `laya/prompts/label.md` and the kind's current guide.
+- A stronger verifier from another family (Codex `gpt-6.1-sol`, high)
+  checks the labels 20 at a time with `laya/prompts/verify.md`: it quotes
+  the evidence, writes its own answer, and only then compares. Each batch
+  also holds two items copied with the answer flipped; a batch that
+  endorses both an answer and its opposite is checked once more,
+  reshuffled, and dropped the second time (`verifier_unreliable`).
+- A label is kept when both answers match at confidence 0.7 or more.
+  Rejections go to the error notebook (`verifier_reject`).
+- After each round the verifier rewrites the guide from the rejections and
+  the whole guide history (`laya/prompts/lesson.md`). The labeller answers
+  a held-out probe of labelled questions with the old and new guide; the
+  new one is adopted only when its paired gain clears the noise floor
+  (`loop.floor`). A guide not adopted stays in the history. The probe
+  never reaches the verifier.
+- Every turn is journalled under its prompt, model and payload, so a rerun
+  pays only for turns not yet made; `--max-usd` caps the journal's total.
+
+The two-labeller rule above stays for the existing splits. A pilot on 100
+or more of `useful`'s agreed labels, approved up to $10, measures cost per
+kept label, how often kept labels match the earlier ones, the verifier's
+mirror failures, and whether probe accuracy rises across rounds; its
+numbers decide the full run.
+
 ## Error notebook
 
 A local wiki under `laya/notes/` (ignored by Git: it quotes production
@@ -42,6 +74,8 @@ wrong, so a later round reads why, as RRSI keeps its history:
 | `off_slice` | a generated state lacks the feature its slice was aimed at |
 | `leak` | a generated state duplicates a gate or validation state |
 | `student_wrong` | the trained model answered a validation question wrongly |
+| `verifier_reject` | guided labelling: the verifier's answer differed from the labeller's, or it was unsure |
+| `verifier_unreliable` | guided labelling: the batch endorsed an answer and its planted opposite, twice |
 
 Each error is one ledger line (`<kind>/ledger.jsonl`). A cluster of one
 category and one slice gets a page (`<kind>/<category>--<slice>.md`) at

@@ -17,10 +17,11 @@ repository root.
 | `stage1.py` | Stage 1's measurements: length, latency, option order, zero-shot agreement with Jev |
 | `generate.py` | Candidate states for a passage kind: teacher-written questions run through the production path, decider stubbed |
 | `label.py` | Two-labeller agreement labels; every dropped question goes to the error notebook |
+| `guided.py` | Guided labelling: a small labeller, a batch verifier, and a guide that improves by RRSI rounds |
 | `notes.py` | The error notebook: ledger, pages, statuses, the brief the generator reads |
 | `train.py` | Fine-tune one kind from the base, calibrate, score validation; `pack` zips code and labels for Colab |
 | `loop.py` | The recursive improvement loop (RRSI) for one kind |
-| `prompts/` | The teacher, labeller and note-writer prompts |
+| `prompts/` | The teacher, labeller, verifier, lesson and note-writer prompts |
 | `notebooks/train.ipynb` | One kind, end to end, for a GPU session |
 | `test_laya.py` | The pipeline with stub labellers and models |
 
@@ -36,6 +37,13 @@ state, that answer is the one the generator intended. Every other question is dr
 the next candidate takes its place: no person labels anything. The ledger keeps every turn,
 so a rerun pays only for turns it has not made; a failed turn is retried, never read as a
 disagreement.
+
+Guided labelling (`guided.py`) is the cheaper path: a small labeller answers each state
+with the kind's guide, a stronger verifier from another family checks 20 labels a turn
+(two of them planted copies with the answer flipped, so a batch that endorses both an
+answer and its opposite is caught), and after each round the verifier rewrites the guide
+from its rejections. A new guide is adopted only when it makes the labeller more accurate
+on a held-out probe by more than the noise floor. Its docstring has the full round.
 
 ## The loop
 
@@ -65,6 +73,8 @@ Every question the pipeline throws away or gets wrong is one line of
 | `off_slice` | a generated state lacks the feature its slice was aimed at |
 | `leak` | a generated state duplicates a gate or validation state |
 | `student_wrong` | the trained model answered a validation question wrongly |
+| `verifier_reject` | guided labelling: the verifier's answer differed from the labeller's, or it was unsure |
+| `verifier_unreliable` | guided labelling: the batch endorsed an answer and its planted opposite, twice |
 
 A line holds `id, kind, round, category, slice, state_hash, source, question, answers
 (each labeller's answer and confidence), intended, predicted, state, at`.
@@ -108,6 +118,8 @@ status, every cluster's size, every round's record, and the slices never to aim 
 python laya/pool.py                                               # local Langfuse only, free
 python laya/label.py useful train --target 3000 --dry             # what the first turn would send
 python laya/label.py useful train --target 3000 --labellers opus codex:gpt-6.1-sol --max-turns 400
+python laya/guided.py useful pilot --rows train.jsonl --probe validation.jsonl:60 \
+    --labeller haiku --verifier codex:gpt-6.1-sol --rounds 4 --per-round 150 --max-usd 10
 python -m pytest laya -q -p no:cacheprovider -o addopts=""
 ```
 

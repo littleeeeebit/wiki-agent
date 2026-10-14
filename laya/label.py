@@ -48,7 +48,7 @@ def parsed(text: str) -> dict:
     return got if isinstance(got, dict) else {}
 
 
-def host_json(prompt: Path, payload: dict, model: str) -> dict:
+def host_json(prompt: Path, payload: dict, model: str, effort: str = "") -> dict:
     """One host turn (`agent.chat_session.oneshot`: no tools, an empty folder) answering
     one JSON object: `{"json", "model", "cost_usd"}`, or with `error` and an empty `json`.
     Never raises."""
@@ -59,7 +59,7 @@ def host_json(prompt: Path, payload: dict, model: str) -> dict:
 
     out = {"model": model, "cost_usd": None, "json": {}}
     # `oneshot` reads its prompt under tool/prompts; an absolute path replaces that folder (pathlib).
-    turn = oneshot(str(prompt), payload, model)
+    turn = oneshot(str(prompt), payload, model, effort)
     try:
         for ev in turn:
             if ev.kind == "done":
