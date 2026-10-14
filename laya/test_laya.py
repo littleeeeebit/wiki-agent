@@ -1156,6 +1156,11 @@ def test_a_split_written_with_another_setup_is_not_added_to(folders, monkeypatch
     guided.run("useful", "pilot", rows, **{**common, "rounds": 3})          # more rounds of the same setup
     with pytest.raises(SystemExit, match="another setup"):
         guided.run("useful", "pilot", rows[:60], **common)
+    reworded = [{**r, "questions": {"useful_p0": {**NOUL, "instructions": "Reworded."}}} for r in rows]
+    with pytest.raises(SystemExit, match="another setup"):                  # same states, other questions
+        guided.run("useful", "pilot", reworded, **common)
+    gold = [{**r, "expected": {"useful_p0": not r["expected"]["useful_p0"]}} for r in rows]
+    guided.run("useful", "pilot", gold, **common)                           # an answer to score against is not setup
     with pytest.raises(SystemExit, match="another setup"):
         guided.run("useful", "pilot", rows, **{**common, "verifier": "opus"})
     edited = folders / "verify.md"

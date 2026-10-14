@@ -64,7 +64,8 @@ candidate is the labeller's guide (`laya/guided.py`):
   not a list of strings counts as a failed turn, and a failed lesson stops
   the run after its round.
 - A split's guide and label files carry their setup (the three prompts'
-  text, the models, effort, seed, round size and rows); a run with another
+  text, the models, effort, seed, round size, and the rows' states and
+  questions in order, never their earlier answers); a run with another
   setup refuses to add to them, so a file never mixes labels an edited
   prompt would not give. More rounds of the same setup continue it.
 
