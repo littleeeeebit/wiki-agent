@@ -19,8 +19,8 @@ not adopted so it is not proposed again, and the probe never reaches the verifie
               when its paired gain clears the noise floor
 
 Every model turn is kept in `<split>.turns.jsonl` under its prompt, model and payload, so a
-rerun replays the same rounds and pays only for turns it has not made; a failed turn is not
-kept and is made again on a rerun. `max_usd` caps the whole file's spending, reruns
+rerun replays the same rounds and pays only for turns it has not made; a failed turn is
+tried up to `ATTEMPTS` times, is never kept, and is made again on a rerun. `max_usd` caps the whole file's spending, reruns
 included. Files, under `laya/data/<kind>/`:
 
 - `<split>.turns.jsonl` — every paid turn.
@@ -48,6 +48,7 @@ import notes
 from store import append, read
 
 AGREE = label.AGREE
+ATTEMPTS = 3
 BATCH = 20
 MIRRORS = 2
 MAX_RULES = 12
@@ -77,16 +78,19 @@ class Turns:
                                         ensure_ascii=False).encode("utf-8")).hexdigest()
         if key in self.kept:
             return self.kept[key]["json"]
-        if self.turns >= self.max_turns or self.usd >= self.max_usd:
-            raise Spent(f"limit reached: {self.turns} turns this run, ${self.usd:.2f} in all")
-        got = self.call(prompt, payload, model, effort)
-        self.turns += 1
-        if got.get("cost_usd") is None:
-            self.unknown += 1
-        else:
-            self.usd += got["cost_usd"]
-        if "error" in got:
+        for _ in range(ATTEMPTS):   # a host turn fails now and then with no reason given
+            if self.turns >= self.max_turns or self.usd >= self.max_usd:
+                raise Spent(f"limit reached: {self.turns} turns this run, ${self.usd:.2f} in all")
+            got = self.call(prompt, payload, model, effort)
+            self.turns += 1
+            if got.get("cost_usd") is None:
+                self.unknown += 1
+            else:
+                self.usd += got["cost_usd"]
+            if "error" not in got:
+                break
             self.log(f"{prompt.name} on {model} failed: {got['error']}")
+        else:
             return None
         row = {"key": key, "prompt": prompt.name, "model": got["model"], "cost_usd": got["cost_usd"],
                "json": got["json"]}

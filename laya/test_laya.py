@@ -1005,6 +1005,24 @@ def test_the_spending_limit_stops_and_a_rerun_resumes_without_paying_twice(folde
     assert whole["stopped"] == "done" and whole["rounds"] == alone["rounds"] and len(made) == len(made2)
 
 
+def test_a_turn_that_fails_is_tried_again_and_only_its_success_is_kept(folders):
+    import guided
+    call, made = guided_world()
+    flaky = {"left": 2}
+
+    def failing(prompt, payload, model, effort):
+        if prompt.name == "verify.md" and flaky["left"]:
+            flaky["left"] -= 1
+            made.append((prompt.name, payload))
+            return {"model": model, "cost_usd": None, "error": "RuntimeError: None", "json": {}}
+        return call(prompt, payload, model, effort)
+    got = guided.run("useful", "pilot", [labelled(i) for i in range(1, 4)], [labelled(100)], labeller="haiku",
+                     verifier="sol", rounds=1, per_round=3, max_turns=100, max_usd=100, call=failing,
+                     log=lambda *_: None)
+    assert got["rounds"][0]["failed"] == 0 and sum(name == "verify.md" for name, _ in made) == 3
+    assert [r["prompt"] for r in guided.read(folders / "data" / "useful" / "pilot.turns.jsonl")].count("verify.md") == 1
+
+
 def test_a_verifier_that_accepts_planted_wrong_answers_keeps_nothing():
     import guided
     rows = [labelled(i) for i in range(20)]
