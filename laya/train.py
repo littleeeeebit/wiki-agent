@@ -19,7 +19,9 @@ This folder is not a package (no `__init__.py`): its modules import each other b
 name, so `import laya` always finds the installed Laya package, never this folder.
 """
 
+import hashlib
 import json
+import subprocess
 import sys
 import zipfile
 from pathlib import Path
@@ -55,16 +57,26 @@ def fits(agent, row: dict, name: str, max_len: int) -> bool:
 
 
 def pack(kind: str) -> Path:
-    """This folder's code and `kind`'s labelled splits, as `laya/...` in one zip."""
+    """This folder's code and `kind`'s labelled splits, as `laya/...` in one zip, with
+    `laya/packed.json` naming the commit and the splits' hashes the notebook's result
+    carries back."""
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=HERE, capture_output=True, text=True).stdout.strip()
 
     out = DATA / kind / f"colab-{kind}.zip"
+    packed = {"kind": kind, "commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain", "--", ".")),
+              "splits": {}}
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(HERE.glob("*.py")):
             if not f.name.startswith("test_"):
                 z.write(f, f"laya/{f.name}")
         for split in SPLITS:
-            if (DATA / kind / f"{split}.jsonl").exists():
-                z.write(DATA / kind / f"{split}.jsonl", f"laya/data/{kind}/{split}.jsonl")
+            path = DATA / kind / f"{split}.jsonl"
+            if path.exists():
+                z.write(path, f"laya/data/{kind}/{split}.jsonl")
+                packed["splits"][split] = hashlib.sha256(path.read_bytes()).hexdigest()
+        z.writestr("laya/packed.json", json.dumps(packed, indent=1))
     return out
 
 

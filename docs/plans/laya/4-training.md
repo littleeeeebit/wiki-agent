@@ -22,11 +22,19 @@ RTX 3080.
   `unavailable`); no state is cut, so a question over it is left out of
   training and scoring alike.
 - Colab. `python laya/train.py pack <kind>` zips `laya/`'s code with the
-  kind's labelled splits; `laya/notebooks/train.ipynb` unpacks it from
-  Drive, installs `laya` 0.4.6, scores both published checkpoints
-  zero-shot at the reviewed commit, fine-tunes the better one, and saves
-  the checkpoint (with `laya-run.json`) back to Drive. No paid call runs
-  there; the improvement loop stays on the PC.
+  kind's labelled splits, and `laya/packed.json` with the commit and the
+  splits' hashes; `laya/notebooks/train.ipynb` (Korean, for the owner)
+  unpacks it from Drive, installs `laya` 0.4.6, scores both published
+  checkpoints zero-shot at the reviewed commit, fine-tunes the better one,
+  and saves the checkpoint (with `laya-run.json`) back to Drive. After
+  every step it rewrites a small result zip on Drive, so a failed run
+  still leaves one: `log.txt` (every step's output and traceback),
+  `results.json` (environment, `packed.json`, data counts, accuracies,
+  seconds per step), `predictions.jsonl` (each validation question's
+  expected answer and every model's, no state text), `laya-run.json` and
+  `train_report.json`. The owner brings that zip back to the PC for the
+  comparison. No paid call runs there; the improvement loop stays on the
+  PC.
 - Early stopping on validation. Seed, data hashes and config recorded with
   each checkpoint as `laya-<kind>-v<N>`. Laya 0.4.6's `finetune` has no
   early stopping: it scores validation (`eval_data`) before and after a

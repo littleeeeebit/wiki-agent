@@ -866,6 +866,8 @@ def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders
     assert set(rows[0]) == {"state", "questions", "expected"}          # Laya's format, no provenance
     with zipfile.ZipFile(train.pack("useful")) as z:
         names = set(z.namelist())
+        packed = json.loads(z.read("laya/packed.json"))
+    assert set(packed["splits"]) == {"train"} and len(packed["commit"]) == 40   # a result traces back to these
     assert {"laya/train.py", "laya/label.py", "laya/stage1.py", "laya/data/useful/train.jsonl"} <= names
     assert not any("test_" in n or "candidates" in n or "pool" in n.split("/")[-1].split(".")[0] for n in names
                    if n.startswith("laya/data/"))
