@@ -1122,7 +1122,7 @@ def test_a_round_with_a_failed_turn_settles_nothing_until_a_rerun(folders):
     assert len(row["expected"]) == 21
 
 
-def test_a_malformed_lesson_is_a_failed_turn_not_a_guide(folders):
+def test_a_malformed_lesson_is_a_failed_turn_not_a_guide(folders, monkeypatch):
     import guided
     call, made = guided_world()
 
@@ -1132,12 +1132,38 @@ def test_a_malformed_lesson_is_a_failed_turn_not_a_guide(folders):
             return {"model": model, "cost_usd": None, "json": {"rules": None, "why": "no rule"}}
         return call(prompt, payload, model, effort)
 
+    rows = [labelled(i) for i in range(80)]
     common = dict(labeller="haiku", verifier="sol", rounds=2, per_round=40, max_turns=10_000, max_usd=100,
-                  call=malformed, log=lambda *_: None)
+                  log=lambda *_: None)
     for _ in range(2):   # and the rerun asks again rather than replaying it
-        got = guided.run("useful", "pilot", [labelled(i) for i in range(80)], **common)
-        assert got["stopped"] == "done" and "trial" not in got["rounds"][1]
+        got = guided.run("useful", "pilot", rows, call=malformed, **common)
+        assert got["stopped"] == "failed_turns" and len(got["rounds"]) == 1   # round 1 waits for its lesson
     assert sum(name == "lesson.md" for name, _ in made) == 2 * guided.ATTEMPTS
+    resumed = guided.run("useful", "pilot", rows, call=call, **common)
+    monkeypatch.setattr(label, "DATA", folders / "fresh")
+    clean = guided.run("useful", "pilot", rows, call=guided_world()[0], **common)
+    assert resumed["rounds"] == clean["rounds"] and resumed["rounds"][1]["trial"]["adopted"]
+    assert guided.read(folders / "data" / "useful" / "pilot.jsonl") == guided.read(folders / "fresh" / "useful" / "pilot.jsonl")
+
+
+def test_a_split_written_with_another_setup_is_not_added_to(folders, monkeypatch):
+    import guided
+    call, _ = guided_world()
+    rows = [labelled(i) for i in range(80)]
+    common = dict(labeller="haiku", verifier="sol", rounds=2, per_round=40, max_turns=10_000, max_usd=100,
+                  call=call, log=lambda *_: None)
+    guided.run("useful", "pilot", rows, **common)
+    guided.run("useful", "pilot", rows, **{**common, "rounds": 3})          # more rounds of the same setup
+    with pytest.raises(SystemExit, match="another setup"):
+        guided.run("useful", "pilot", rows[:60], **common)
+    with pytest.raises(SystemExit, match="another setup"):
+        guided.run("useful", "pilot", rows, **{**common, "verifier": "opus"})
+    edited = folders / "verify.md"
+    edited.write_text(guided.VERIFY.read_text(encoding="utf-8") + "\nOne more rule.\n", encoding="utf-8")
+    monkeypatch.setattr(guided, "VERIFY", edited)
+    with pytest.raises(SystemExit, match="another setup"):
+        guided.run("useful", "pilot", rows, **common)
+    assert guided.run("useful", "other", rows, **common)["stopped"] == "done"
 
 
 def test_a_verifier_that_accepts_planted_wrong_answers_keeps_nothing():

@@ -26,7 +26,10 @@ not show a guide helping: `.wiki/laya-insight-guide-probe.md`).
 Every model turn is kept in `<split>.turns.jsonl` under its prompt's name and text, model and
 payload, so a rerun replays the same rounds and pays only for turns it has not made; a failed
 turn is tried up to `ATTEMPTS` times and made again on a rerun, never replayed. A round with a
-failed turn left settles nothing (no trial, label or lesson) and stops the run for a rerun.
+failed turn left settles nothing (no trial, label or lesson) and stops the run for a rerun;
+a lesson that fails stops it after its round. A split's guide and label files are bound to
+one setup (the three prompts' text, the models, effort, seed, round size and rows): a run
+with another refuses to add to them.
 `max_usd` caps the whole file's spending, failed calls and reruns included. Files, under
 `laya/data/<kind>/`:
 
@@ -272,8 +275,17 @@ def run(kind: str, split: str, rows: list[dict], *, labeller: str, verifier: str
     folder = label.DATA / kind
     turns = Turns(folder / f"{split}.turns.jsonl", call, max_turns, max_usd, log)
     guides_path, out_path = folder / f"{split}.guide.jsonl", folder / f"{split}.jsonl"
-    guides = read(guides_path)
-    written = {r["provenance"]["state_hash"] for r in read(out_path)}
+    guides, out = read(guides_path), read(out_path)
+    # What decides every answer and draw: a split's files hold one setup, so a replay never
+    # meets labels or trials an edited prompt, another model or other rows would not give.
+    setup = hashlib.sha256(json.dumps(
+        [[hashlib.sha256(p.read_bytes()).hexdigest() for p in (label.PROMPT, VERIFY, LESSON)],
+         labeller, verifier, effort, seed, per_round, [r["provenance"]["state_hash"] for r in rows]]
+    ).encode("utf-8")).hexdigest()[:16]
+    if ({g.get("setup") for g in guides} | {r["provenance"].get("setup") for r in out}) - {setup}:
+        raise SystemExit(f"{split} under {folder} was written with another setup (prompts, models, effort, seed, "
+                         "per-round or rows); use another split name")
+    written = {r["provenance"]["state_hash"] for r in out}
     noted = notes.noted(kind)
     # Every random draw has its own seed, so a replayed round draws the same whatever an
     # earlier round skipped, and its turns are found in the file instead of paid again.
@@ -313,7 +325,7 @@ def run(kind: str, split: str, rows: list[dict], *, labeller: str, verifier: str
                 old, new = ({k for k in settled if res[k][0] != "kept"} for res in results)
                 gain, floor = loop.floor(settled, old, new, seed) if settled else (0.0, 0.0)
                 # Decided from this run's results; the file records it once, again only if it changed.
-                trial = {"round": r, "version": r, "rules": candidate[0], "why": candidate[1],
+                trial = {"round": r, "version": r, "setup": setup, "rules": candidate[0], "why": candidate[1],
                          "adopted": gain > floor, "gain": round(gain, 4), "floor": round(floor, 4),
                          "kept_rate": [round(1 - len(old) / max(len(settled), 1), 3),
                                        round(1 - len(new) / max(len(settled), 1), 3)]}
@@ -349,7 +361,8 @@ def run(kind: str, split: str, rows: list[dict], *, labeller: str, verifier: str
                 append(out_path, {"state": row["state"], "questions": {it["n"]: it["q"] for it in its},
                                   "expected": {it["n"]: it["value"] for it in its},
                                   "provenance": {"state_hash": h, "source": row["provenance"]["source"],
-                                                 "labellers": [labeller, verifier], "guide": version}})
+                                                 "labellers": [labeller, verifier], "guide": version,
+                                                 "setup": setup}})
                 written.add(h)
             # The lesson: the verifier writes the next round's candidate from these rejections.
             candidate = None
@@ -362,7 +375,12 @@ def run(kind: str, split: str, rows: list[dict], *, labeller: str, verifier: str
                                                  if g["round"] <= r]}, verifier, effort,
                             ok=lambda j: isinstance(j.get("rules"), list)
                             and all(isinstance(x, str) for x in j["rules"]))
-                rules = [x.strip()[:RULE_CHARS] for x in (got or {}).get("rules", []) if x.strip()][:MAX_RULES]
+                if got is None:   # the next round cannot be what a rerun makes it: stop before it
+                    report.append(stats)
+                    log(f"round {r}: the lesson failed; rerun to go on")
+                    stopped = "failed_turns"
+                    break
+                rules = [x.strip()[:RULE_CHARS] for x in got["rules"] if x.strip()][:MAX_RULES]
                 if rules and rules != guide:
                     candidate = (rules, got.get("why"))
             report.append(stats)

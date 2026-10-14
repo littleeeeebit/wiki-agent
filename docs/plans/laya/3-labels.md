@@ -61,7 +61,12 @@ candidate is the labeller's guide (`laya/guided.py`):
 - A round with a failed turn left settles nothing: no trial decision, no
   label and no lesson. The run stops there (`failed_turns`), and a rerun
   replays what succeeded and finishes the round. A lesson whose `rules` is
-  not a list of strings counts as a failed turn.
+  not a list of strings counts as a failed turn, and a failed lesson stops
+  the run after its round.
+- A split's guide and label files carry their setup (the three prompts'
+  text, the models, effort, seed, round size and rows); a run with another
+  setup refuses to add to them, so a file never mixes labels an edited
+  prompt would not give. More rounds of the same setup continue it.
 
 The two-labeller rule above stays for the existing splits.
 
