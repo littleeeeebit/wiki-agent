@@ -68,6 +68,17 @@ def items(rows: list[dict]) -> list[tuple[str, str]]:
     return [(r["provenance"]["state_hash"], n) for r in rows for n in r["expected"]]
 
 
+def scoped(rows: list[dict], keys: set) -> list[dict]:
+    """The rows with only the questions in `keys`, the `(state_hash, question)` scored."""
+
+    out = []
+    for row in rows:
+        kept = {n: v for n, v in row["expected"].items() if (row["provenance"]["state_hash"], n) in keys}
+        if kept:
+            out.append(row | {"expected": kept})
+    return out
+
+
 def slices(rows: list[dict], wrong: set[tuple[str, str]]) -> list[tuple[tuple[str, object], int, int]]:
     """`(feature, value)`, errors, size: every slice of validation, most errors first.
     `wrong` holds `(state_hash, question)` of each wrong answer."""
@@ -159,7 +170,9 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
 
     - `train(kind, splits) -> checkpoint` trains from the base on those splits' labelled files.
     - `score(kind, checkpoint) -> (wrong, predicted)`: the `(state_hash, question)` it gets
-      wrong on validation, and its answer for each.
+      wrong on validation, and its answer to each question it scores. Those questions are
+      the validation every accuracy, slice and gain is counted on (one over the length
+      limit is left out); every checkpoint must be scored on the same ones.
     - `generate(kind, slice, n, history, round, max_turns) -> turns used` writes the round's
       candidates as the module docstring says, resuming without paying twice.
     - `label(kind, split, target, round, slice, max_turns)` returns `label.label`'s stats.
@@ -180,11 +193,10 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
     """
 
     folder = DATA / kind
-    validation = read(folder / "validation.jsonl")
-    universe = items(validation)
-    if not universe:
+    labelled = read(folder / "validation.jsonl")
+    if not items(labelled):
         raise ValueError(f"{kind} has no labelled validation")
-    spent = 0
+    universe, spent = None, 0
 
     def record(**row):
         append(folder / "rounds.jsonl", {"kind": kind, "at": time.time(), "spent": spent, **row})
@@ -201,6 +213,8 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
     def evaluate(splits):
         ckpt = train(kind, splits)
         wrong, predicted = score(kind, ckpt)
+        if universe is not None and set(predicted) != set(universe):
+            raise ValueError(f"{ckpt} was scored on other validation questions than the incumbent")
         return ckpt, set(wrong), predicted
 
     def status(r, target, value):
@@ -213,9 +227,14 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
             status(row["round"], tuple(row["slice"]), row["status"])
     kept, stalled, last, unfinished, (made, aimed_at) = restore(before)
     best_ckpt, wrong, predicted = evaluate(kept)
+    universe = list(predicted)
+    if not universe:
+        raise ValueError(f"{kind}: no validation question was scored (all over the length limit?)")
+    validation = scoped(labelled, set(universe))
     note_errors(kind, made, validation, wrong, predicted, aimed_at)   # what an interruption left out
     record(**({"resumed": True} if before else {"round": 0}), splits=kept,
-           accuracy=1 - len(wrong) / len(universe), checkpoint=str(best_ckpt))
+           accuracy=1 - len(wrong) / len(universe), left_for_length=len(items(labelled)) - len(universe),
+           checkpoint=str(best_ckpt))
     for r in range(unfinished[0] if unfinished else last + 1, rounds + 1):
         if max_turns - spent < round_turns:
             record(round=r, stopped="budget")

@@ -98,6 +98,8 @@ def train(kind: str, splits: list[str], base: str = "typed", **config) -> Path:
     from laya.train import TrainConfig, finetune
 
     max_len = MAX_LEN[kind]
+    # Option order cannot matter (plan stage 4, L2); stage 1 found its requirements met.
+    config = {"option_layout": "parallel", **config}
     start = base_dir(base)
     reader = laya.load(start, device="cpu")   # its tokenizer only, to count lengths
     data, left = merged(kind, splits, reader, max_len)
@@ -113,13 +115,13 @@ def train(kind: str, splits: list[str], base: str = "typed", **config) -> Path:
     if not (DATA / kind / "calibration.jsonl").exists():
         return out
     agent = laya.load(str(out))
-    pairs = [(r["state"], r["questions"],
+    pairs = [(r["state"], r["questions"],   # questions and targets: the same ones that fit
               {n: [0.0, 1.0] if v is True else [1.0, 0.0] if v is False
                else [1.0 if o == v else 0.0 for o in r["questions"][n]["criteria"]]
-               for n, v in r["expected"].items() if fits(agent, r, n, max_len)})
-             for r in read(DATA / kind / "calibration.jsonl")]
+               for n, v in r["expected"].items()})
+             for r in read(merged(kind, ["calibration"], agent, max_len)[0])]
     from laya.calibrate import records_from_labeled
-    agent.fit_temperatures(records_from_labeled(agent, [p for p in pairs if p[2]]))
+    agent.fit_temperatures(records_from_labeled(agent, pairs))
     agent.save_calibration(str(out / "calibration.json"))
     return out
 
