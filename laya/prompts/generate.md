@@ -19,7 +19,9 @@ finds and grades. Vary them across these types, roughly evenly:
 Also vary the form: a short question; a longer request with the context the
 developer is in; a task ("change X so that Y") whose answer needs the pages;
 now and then a question with a pasted log line, error or snippet. English
-only. Do not quote a page's sentence as the question, and do not name the
+only, every character of it: where a page names something in another
+script (a Korean test name, say), describe it in English instead of copying
+it. Do not quote a page's sentence as the question, and do not name the
 page.
 
 ## Output

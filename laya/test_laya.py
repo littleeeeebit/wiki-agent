@@ -15,6 +15,7 @@ import label
 import loop
 import notes
 import pool
+import train
 
 NOUL = {"type": "noul", "instructions": "Is the passage useful?"}
 
@@ -28,6 +29,7 @@ def folders(tmp_path, monkeypatch):
     monkeypatch.setattr(generate, "searching", lambda: True)
     monkeypatch.setattr(gate, "POOL", tmp_path / "pool.jsonl")
     monkeypatch.setattr(gate, "TESTS", tmp_path / "tests.json")
+    monkeypatch.setattr(train, "DATA", tmp_path / "data")
     write(tmp_path / "pool.jsonl", [])
     (tmp_path / "tests.json").write_text('{"tests": []}', encoding="utf-8")
     return tmp_path
@@ -352,7 +354,7 @@ def test_the_loop_adopts_falsifies_explores_and_prunes():
 
     def score(kind, ckpt):
         wrong = set(keys[:12] if "aug-1" in ckpt else keys[:30])
-        return wrong, {k: False for k in wrong}
+        return wrong, {k: k not in wrong for k in keys}
 
     def generate(kind, slice, n, history, round, max_turns):
         asked.append((round, slice))
@@ -388,7 +390,7 @@ def test_labelling_that_stops_short_stops_the_loop_without_condemning_the_slice(
     keys = validation()
 
     def score(kind, ckpt):
-        return set(keys[:30]), {}
+        return set(keys[:30]), dict.fromkeys(keys)
 
     def generate(kind, slice, n, history, round, max_turns):
         return 0
@@ -410,7 +412,7 @@ def test_running_the_loop_again_continues_it():
     calls = []
 
     def score(kind, ckpt):
-        return set(keys[:12] if "aug-2" in ckpt else keys[:30]), {}
+        return set(keys[:12] if "aug-2" in ckpt else keys[:30]), dict.fromkeys(keys)
 
     def generate(kind, slice, n, history, round, max_turns):
         calls.append((round, slice))
@@ -456,7 +458,8 @@ def test_an_interruption_around_a_rounds_outcome_resumes_the_same_round(monkeypa
             write(path, [{"slice": list(slice)}])
         return 0
 
-    common = {"train": train_stub, "score": lambda kind, ckpt: (set(keys[:30]), {}), "generate": generate,
+    common = {"train": train_stub, "score": lambda kind, ckpt: (set(keys[:30]), dict.fromkeys(keys)),
+              "generate": generate,
               "label": lambda *_: {"agreed": 27, "dropped": 3, "turns": 0, "stopped": "target"},
               "rounds": 1, "max_turns": 10, "round_turns": 5, "log": lambda *_: None}
     original_append, original_status = loop.append, notes.set_status
@@ -490,10 +493,25 @@ def test_an_interruption_around_a_rounds_outcome_resumes_the_same_round(monkeypa
 
 def test_a_round_that_does_not_fit_the_budget_never_starts():
     keys = validation()
-    out = loop.run("useful", train=train_stub, score=lambda kind, ckpt: (set(keys[:30]), {}),
+    out = loop.run("useful", train=train_stub, score=lambda kind, ckpt: (set(keys[:30]), dict.fromkeys(keys)),
                    generate=lambda *_: pytest.fail("no paid call"), label=lambda *_: pytest.fail("no paid call"),
                    max_turns=19, round_turns=20, log=lambda *_: None)
     assert out["spent"] == 0 and label.read(loop.DATA / "useful" / "rounds.jsonl")[-1]["stopped"] == "budget"
+
+
+def test_the_loop_counts_only_the_questions_scored():
+    keys = validation()
+    common = {"train": train_stub, "generate": lambda *_: pytest.fail("no paid call"),
+              "label": lambda *_: pytest.fail("no paid call"), "max_turns": 0, "round_turns": 20,
+              "log": lambda *_: None}
+    # Ten questions over the length limit are left out: accuracy is over the thirty scored.
+    out = loop.run("useful", score=lambda kind, ckpt: (set(keys[:15]), dict.fromkeys(keys[:30])), **common)
+    assert out["accuracy"] == pytest.approx(15 / 30)
+    assert label.read(loop.DATA / "useful" / "rounds.jsonl")[0]["left_for_length"] == 10
+    with pytest.raises(ValueError):   # nothing scored is no accuracy at all
+        loop.run("useful", score=lambda kind, ckpt: (set(), {}), **common)
+    with pytest.raises(ValueError):   # wrong where it was not scored
+        loop.run("useful", score=lambda kind, ckpt: ({keys[35]}, dict.fromkeys(keys[:30])), **common)
 
 
 def test_pool_keeps_one_row_per_state_and_unwraps_requests():
@@ -795,13 +813,19 @@ def test_a_capture_tells_a_failed_retrieval_from_an_empty_one(monkeypatch):
         sys.path.append(str(generate.ROOT / "tool"))
     from main import knowledge
 
-    for status, empty in (("unavailable", False), ("exhausted", False), ("cancelled", False),
-                          ("partial", True), ("ready", True)):
-        monkeypatch.setattr(knowledge, "prepare", lambda *a, s=status, **k: {"status": s, "reason": "why"})
-        if empty:
+    for status, reason, limits, got in (
+            ("unavailable", "retrieval_unavailable", [], generate.Unavailable),
+            ("unavailable", "normalization_failed", [{"baseline": "retrieval_unavailable"}], generate.Unavailable),
+            ("exhausted", "deadline", [], generate.Unavailable),
+            ("cancelled", "cancelled", [], generate.Unavailable),
+            ("unavailable", "normalization_failed", [], RuntimeError),   # this query's own, every time
+            ("partial", "no_repair", [], []), ("ready", "covered", [], [])):
+        monkeypatch.setattr(knowledge, "prepare", lambda *a, d={"status": status, "reason": reason,
+                                                                "limits": limits}, **k: d)
+        if got == []:
             assert generate.captured("q") == []
         else:
-            with pytest.raises(generate.Unavailable, match="why"):
+            with pytest.raises(got, match=reason):
                 generate.captured("q")
 
 
@@ -823,3 +847,67 @@ def test_a_passage_kind_sees_only_its_passage():
     assert kinds.view("coverage_r0", "coverage", state) is state
     with pytest.raises(ValueError):
         kinds.view("conflict_p7", "conflict", state)
+
+
+def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders, monkeypatch):
+    import zipfile
+
+    def row(i, text):
+        return {"state": {"query": "q", "passages": [{"id": "p0", "text": text}]},
+                "questions": {"useful_p0": NOUL}, "expected": {"useful_p0": i % 2 == 0},
+                "provenance": {"state_hash": f"h{i}"}}
+
+    write(folders / "data" / "useful" / "train.jsonl", [row(0, "short"), row(1, "long " * 50)])
+    write(folders / "data" / "useful" / "train.candidates.jsonl", [row(2, "unlabelled")])
+    monkeypatch.setattr(train, "tokens", lambda agent, state, q: len(state["passages"][0]["text"].split()))
+    path, left = train.merged("useful", ["train"], None, 10)
+    rows = label.read(path)
+    assert left == 1 and [r["state"]["passages"][0]["text"] for r in rows] == ["short"]
+    assert set(rows[0]) == {"state", "questions", "expected"}          # Laya's format, no provenance
+    with zipfile.ZipFile(train.pack("useful")) as z:
+        names = set(z.namelist())
+        packed = json.loads(z.read("laya/packed.json"))
+    assert set(packed["splits"]) == {"train"} and len(packed["commit"]) == 40   # a result traces back to these
+    assert {"laya/train.py", "laya/label.py", "laya/stage1.py", "laya/data/useful/train.jsonl"} <= names
+    assert not any("test_" in n or "candidates" in n or "pool" in n.split("/")[-1].split(".")[0] for n in names
+                   if n.startswith("laya/data/"))
+    assert "laya/test_laya.py" not in names
+
+    # `train` with the package stubbed: the parallel layout, and calibration that asks only
+    # the questions it has targets for (a row whose second question is too long).
+    import sys
+    import types
+    from pathlib import Path
+    seen, agent = {}, types.SimpleNamespace(
+        fit_temperatures=lambda recs: seen.update(recs=recs), save_calibration=lambda path: None,
+        predict=lambda state, asked, **k: {"answers": {n: {"noul": 0.8, "confidence": 0.8} for n in asked}})
+
+    def finetune(data, start, out, config):
+        Path(out).mkdir(parents=True)
+        seen["config"] = config
+        return {}
+
+    def records_from_labeled(agent, pairs):
+        assert all(set(questions) == set(targets) for _, questions, targets in pairs)
+        return pairs
+
+    mixed = row(4, "short") | {"questions": {"useful_p0": NOUL, "useful_p1": NOUL | {"long": True}},
+                               "expected": {"useful_p0": True, "useful_p1": False}}
+    write(folders / "data" / "useful" / "calibration.jsonl", [mixed])
+    monkeypatch.setattr(train, "tokens", lambda agent, state, q: 3000 if q.get("long") else 1)
+    monkeypatch.setattr(train, "base_dir", lambda name: "base")
+    monkeypatch.setattr(train, "CHECKPOINTS", folders / "checkpoints")
+    for name, attrs in {"laya": {"load": lambda *a, **k: agent},
+                        "laya.train": {"TrainConfig": lambda **k: k, "finetune": finetune},
+                        "laya.calibrate": {"records_from_labeled": records_from_labeled}}.items():
+        monkeypatch.setitem(sys.modules, name, types.SimpleNamespace(**attrs))
+    train.train("useful", ["train"], micro_batch=4)
+    assert seen["config"]["option_layout"] == "parallel" and seen["config"]["micro_batch"] == 4
+    assert [list(q) for _, q, _ in seen["recs"]] == [["useful_p0"]]
+
+    # `score` hands back each answer's confidence beside the answers the loop reads.
+    write(folders / "data" / "useful" / "validation.jsonl", [row(0, "short"), row(1, "short")])
+    sure = {}
+    wrong, predicted = train.score("useful", "base", sure)
+    assert predicted == {("h0", "useful_p0"): True, ("h1", "useful_p0"): True} and wrong == {("h1", "useful_p0")}
+    assert sure == dict.fromkeys(predicted, 0.8)

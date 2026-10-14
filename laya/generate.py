@@ -120,14 +120,20 @@ def captured(query: str, project: Path = ROOT) -> list[dict]:
     finally:
         (decision.evaluate, translate._ask, knowledge.falls_back, knowledge.retrieve_from_daemon,
          knowledge.cold, search.spawn) = held
-    if not seen and dossier.get("status") not in ("ready", "partial"):   # did not finish, not an empty one
-        raise Unavailable(f"{dossier.get('status')}: {dossier.get('reason')}")
-    return seen[:1]
+    status, reason = dossier.get("status"), dossier.get("reason")
+    if seen or status in ("ready", "partial"):
+        return seen[:1]
+    if (status in ("exhausted", "cancelled") or reason == "retrieval_unavailable"
+            or {"baseline": "retrieval_unavailable"} in dossier.get("limits", [])):
+        raise Unavailable(f"{status}: {reason}")
+    # The query's own failure, the same on every rerun (a question the stubbed translator
+    # leaves unread ends `normalization_failed`): recorded as its run's error.
+    raise RuntimeError(f"{status}: {reason}")
 
 
 class Unavailable(Exception):
-    """A query's retrieval did not finish (unavailable, out of budget, cancelled) before any
-    grade-evidence request; it is left unrun rather than recorded as empty."""
+    """A query's retrieval did not finish (search unavailable, out of budget, cancelled)
+    before any grade-evidence request; it is left unrun rather than recorded as empty."""
 
 
 LOCAL = ("127.0.0.1", "::1", "localhost")
