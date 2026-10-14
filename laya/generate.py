@@ -337,7 +337,11 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
                          "they predate claims, so remove that kind's generated files before generating")
     # A finished run is finished for the kinds it wrote; another set would skip its other
     # kinds for good, so the run log keeps the set it was started with.
-    other = {tuple(r["kinds"]) for r in read(runs) if "kinds" in r} - {tuple(kinds)}
+    # A row that does not say its kinds cannot be told apart, so it is refused, not passed over.
+    logged = read(runs)
+    if any("kinds" not in r for r in logged):
+        raise SystemExit(f"{runs} has runs with no kinds recorded; remove the generated files before generating")
+    other = {tuple(k for k in RETRIEVAL if k in r["kinds"]) for r in logged} - {kinds}
     if other:
         raise SystemExit(f"{runs} was written for kinds {list(sorted(other)[0])}; generate the same kinds")
     near = {k: gate.Near(row for s in SPLITS for row in read(DATA / k / f"{s}.candidates.jsonl")) for k in kinds}

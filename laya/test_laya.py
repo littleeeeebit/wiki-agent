@@ -667,6 +667,15 @@ def test_generate_keeps_the_kinds_its_run_log_was_started_with(folders, monkeypa
     out = generate.generate("train", 2, "opus", 0, kinds=("conflict", "useful"), found={"here": generate.ROOT},
                             capture=lambda q, p: judged(q), turn=Teacher(), log=lambda *_: None)
     assert out["have"] == {"useful": 2, "conflict": 2}               # the same set in another order resumes
+    runs = folders / "data" / "retrieval" / "generate.runs.jsonl"
+    logged = label.read(runs)
+    write(runs, [{**r, "kinds": r["kinds"][::-1]} for r in logged])  # recorded in another order: the same set
+    generate.generate("train", 2, "opus", 0, kinds=("useful", "conflict"), found={"here": generate.ROOT},
+                      capture=lambda q, p: judged(q), turn=Teacher(), log=lambda *_: None)
+    write(runs, [{k: v for k, v in r.items() if k != "kinds"} for r in logged])   # a row that does not say
+    with pytest.raises(SystemExit, match="no kinds recorded"):
+        generate.generate("train", 2, "opus", 0, kinds=("useful", "conflict"), found={"here": generate.ROOT},
+                          capture=lambda q, p: judged(q), turn=Teacher(), log=lambda *_: None)
 
 
 def test_a_repository_the_daemon_cannot_index_leaves_its_queries_unrun(folders, monkeypatch):
@@ -769,7 +778,7 @@ def test_generate_refuses_without_every_gate_state_or_a_running_search(folders):
     with pytest.raises(SystemExit):
         gen("useful", "train", 1, "opus", 1, capture=judged, turn=teacher, ready=lambda: False)
     runs = folders / "data" / "retrieval" / "generate.runs.jsonl"
-    write(runs, [{"run": "t0-q0", "split": "train", "candidates": 0, "error": "RuntimeError: x"}])
+    write(runs, [{"run": "t0-q0", "split": "train", "candidates": 0, "error": "RuntimeError: x", "kinds": ["useful"]}])
     gen("useful", "train", 0, "opus", 0, capture=judged, turn=teacher)   # a failed run owns nothing
     write(runs, [{"run": "t0-q0", "split": "train", "candidates": 1, "originals": [judged("a")[0]]}])
     with pytest.raises(SystemExit, match="no claim"):   # from before claims: its split's ownership is lost
