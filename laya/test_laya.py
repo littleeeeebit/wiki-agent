@@ -997,7 +997,8 @@ def test_the_spending_limit_stops_and_a_rerun_resumes_without_paying_twice(folde
     common = dict(labeller="haiku", verifier="sol", rounds=2, per_round=40, max_turns=10_000, log=lambda *_: None)
     call, made = guided_world()
     cut = guided.run("useful", "pilot", rows, probe, max_usd=0.05, call=call, **common)
-    assert cut["stopped"] == "limit" and len(made) == 5 and cut["usd_in_all"] == 0.05
+    # Turns already in flight may finish past the limit, at most one worker pool's worth.
+    assert cut["stopped"] == "limit" and 5 <= len(made) < 5 + guided.LABELLERS and cut["usd_in_all"] >= 0.05
     whole = guided.run("useful", "pilot", rows, probe, max_usd=100, call=call, **common)
     call2, made2 = guided_world()
     monkeypatch.setattr(label, "DATA", folders / "fresh")

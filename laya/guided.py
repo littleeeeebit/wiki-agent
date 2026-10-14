@@ -40,6 +40,8 @@ import argparse
 import hashlib
 import json
 import random
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import label
@@ -55,6 +57,7 @@ MAX_RULES = 12
 RULE_CHARS = 300
 LESSON_AT = notes.PAGE_AT
 SAMPLES = 20
+LABELLERS, VERIFIERS = 8, 4   # turns at once: a labeller turn takes ~10 s, a verifier batch ~60 s
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 VERIFY, LESSON = PROMPTS / "verify.md", PROMPTS / "lesson.md"
 
@@ -72,21 +75,26 @@ class Turns:
         self.kept = {r["key"]: r for r in read(path)}
         self.turns, self.unknown = 0, 0
         self.usd = sum(r["cost_usd"] or 0 for r in self.kept.values())
+        self.lock = threading.Lock()   # turns run on worker threads
 
     def __call__(self, prompt: Path, payload: dict, model: str, effort: str = "") -> dict | None:
         key = hashlib.sha256(json.dumps([prompt.name, model, effort, payload], sort_keys=True,
                                         ensure_ascii=False).encode("utf-8")).hexdigest()
-        if key in self.kept:
-            return self.kept[key]["json"]
+        with self.lock:
+            if key in self.kept:
+                return self.kept[key]["json"]
         for _ in range(ATTEMPTS):   # a host turn fails now and then with no reason given
-            if self.turns >= self.max_turns or self.usd >= self.max_usd:
-                raise Spent(f"limit reached: {self.turns} turns this run, ${self.usd:.2f} in all")
+            with self.lock:
+                # ponytail: turns already in flight may pass the limit by one worker pool's worth
+                if self.turns >= self.max_turns or self.usd >= self.max_usd:
+                    raise Spent(f"limit reached: {self.turns} turns this run, ${self.usd:.2f} in all")
+                self.turns += 1
             got = self.call(prompt, payload, model, effort)
-            self.turns += 1
-            if got.get("cost_usd") is None:
-                self.unknown += 1
-            else:
-                self.usd += got["cost_usd"]
+            with self.lock:
+                if got.get("cost_usd") is None:
+                    self.unknown += 1
+                else:
+                    self.usd += got["cost_usd"]
             if "error" not in got:
                 break
             self.log(f"{prompt.name} on {model} failed: {got['error']}")
@@ -94,8 +102,9 @@ class Turns:
             return None
         row = {"key": key, "prompt": prompt.name, "model": got["model"], "cost_usd": got["cost_usd"],
                "json": got["json"]}
-        append(self.path, row)
-        self.kept[key] = row
+        with self.lock:
+            append(self.path, row)
+            self.kept[key] = row
         return got["json"]
 
 
@@ -174,8 +183,9 @@ def wrong(turns: Turns, probe: list[dict], guide: list[str], model: str) -> set 
     """The probe's `(state_hash, question)` items the labeller gets wrong with `guide`."""
 
     out = set()
-    for row in probe:
-        said = answers(turns, row, guide, model)
+    with ThreadPoolExecutor(LABELLERS) as pool:
+        said_all = list(pool.map(lambda row: answers(turns, row, guide, model), probe))
+    for row, said in zip(probe, said_all):
         if said is None:
             return None
         for n, q in row["questions"].items():
@@ -239,8 +249,9 @@ def run(kind: str, split: str, rows: list[dict], probe: list[dict], *, labeller:
             stats = {"round": r, "guide": version, "states": len(batch), "questions": 0, "kept": 0,
                      "invalid": 0, "unsure": 0, "rejected": 0, "unreliable": 0, "failed": 0}
             items = []
-            for row in batch:
-                said = answers(turns, row, guide, labeller)
+            with ThreadPoolExecutor(LABELLERS) as pool:
+                said_all = list(pool.map(lambda row: answers(turns, row, guide, labeller), batch))
+            for row, said in zip(batch, said_all):
                 if said is None:
                     stats["failed"] += 1
                     continue
@@ -257,9 +268,12 @@ def run(kind: str, split: str, rows: list[dict], probe: list[dict], *, labeller:
                     else:
                         items.append({**item, "value": v[0]})
             rejections, keep = [], {}
-            for start in range(0, len(items), BATCH):
+            starts = range(0, len(items), BATCH)
+            with ThreadPoolExecutor(VERIFIERS) as pool:
+                checked = list(pool.map(lambda s: verify(turns, kind, items[s:s + BATCH], verifier, effort,
+                                                         random.Random(f"{seed}-{r}-{s}")), starts))
+            for start, verdicts in zip(starts, checked):
                 chunk = items[start:start + BATCH]
-                verdicts = verify(turns, kind, chunk, verifier, effort, random.Random(f"{seed}-{r}-{start}"))
                 if verdicts is None:
                     stats["failed"] += len(chunk)
                     continue
