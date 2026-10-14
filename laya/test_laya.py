@@ -26,7 +26,7 @@ def folders(tmp_path, monkeypatch):
     monkeypatch.setattr(loop, "DATA", tmp_path / "data")
     monkeypatch.setattr(notes, "NOTES", tmp_path / "notes")
     monkeypatch.setattr(generate, "DATA", tmp_path / "data")
-    monkeypatch.setattr(generate, "searching", lambda: True)
+    monkeypatch.setattr(generate, "searching", lambda *a, **k: True)
     monkeypatch.setattr(gate, "POOL", tmp_path / "pool.jsonl")
     monkeypatch.setattr(gate, "TESTS", tmp_path / "tests.json")
     monkeypatch.setattr(train, "DATA", tmp_path / "data")
@@ -571,8 +571,18 @@ class Teacher:
 
     def __call__(self, model, seed):
         self.turns.append(seed)
-        return {"model": model, "cost_usd": 0.1, "seed": seed, "pages": ["docs/a.md"],
-                "queries": [{"text": f"s{seed}q{i}", "type": "answered"} for i in range(2)]}
+        return {"model": model, "cost_usd": 0.1, "seed": seed, "repo": "here", "pages": ["docs/a.md"],
+                "queries": [{"text": f"s{seed}q{i}", "type": "answered", "intent": "lookup"} for i in range(2)]}
+
+
+def gen(kind, split, target, teacher, max_turns, capture=None, **kw):
+    """`generate.generate` for one kind, with a capture that reads only the query, and that
+    kind's count as `have`."""
+
+    if capture is not None:
+        kw["capture"] = lambda query, project: capture(query)
+    out = generate.generate(split, target, teacher, max_turns, kinds=(kind,), found={"here": generate.ROOT}, **kw)
+    return {**out, "have": out["have"][kind]}
 
 
 def test_generate_stops_at_target_and_resumes_without_paying_twice(folders):
@@ -582,15 +592,59 @@ def test_generate_stops_at_target_and_resumes_without_paying_twice(folders):
         ran.append(query)
         return judged(query)
 
-    out = generate.generate("useful", "train", 3, "opus", 5, capture=capture, turn=teacher, log=lambda *_: None)
+    out = gen("useful", "train", 3, "opus", 5, capture=capture, turn=teacher, log=lambda *_: None)
     assert out["stopped"] == "target" and out["have"] == 3 and teacher.turns == [0] and ran == ["s0q0", "s0q1"]
     rows = label.read(folders / "data" / "useful" / "train.candidates.jsonl")
     assert [list(r["questions"]) for r in rows] == [["useful_p0"], ["useful_p1"], ["useful_p0"]]
     assert rows[0]["state"]["passages"] == [passage("s0q0a")]          # the passage view
     assert rows[0]["provenance"]["query"] == "s0q0" and rows[0]["provenance"]["seed"] == 0
-    out = generate.generate("useful", "train", 4, "opus", 5, capture=capture, turn=teacher, log=lambda *_: None)
+    out = gen("useful", "train", 4, "opus", 5, capture=capture, turn=teacher, log=lambda *_: None)
     assert teacher.turns == [0, 1] and ran == ["s0q0", "s0q1", "s1q0"]   # s0's queries are not run again
     assert out["have"] == 4
+
+
+def test_one_query_gives_every_retrieval_kind_at_most_two_candidates_in_one_split(folders):
+    def routed(query, project):
+        words = " ".join(f"{query}w{k}" for k in range(80))
+        route = {"state": {"query": words, "query_parts": {"r0": "a", "r1": "b", "r2": "c"}},
+                 "questions": {n: NOUL for n in ("retrieve", "analysis", "progress", "source_hub", "source_documents",
+                                                  "source_memory", "ask_r0", "ask_r1", "ask_r2")}}
+        judge = {"state": {"query": words, "passages": [{**passage(f"{query}{p}"), "id": p} for p in ("p0", "p1", "p2")],
+                           "complete_passages": ["p0"]},
+                 "questions": {**{f"{k}_{p}": NOUL for k in ("useful", "conflict", "redirect") for p in ("p0", "p1", "p2")},
+                               "coverage_r0": NOUL, "repair": NOUL}}
+        return [route, judge]
+
+    teacher = Teacher()
+    out = generate.generate("train", 2, "sonnet", 5, capture=routed, turn=teacher, log=lambda *_: None,
+                            found={"here": generate.ROOT})
+    assert out["stopped"] == "target" and teacher.turns == [0] and out["queries"] == 2
+    assert out["have"] == dict.fromkeys(generate.RETRIEVAL, 2)
+    for kind in generate.RETRIEVAL:
+        rows = label.read(folders / "data" / kind / "train.candidates.jsonl")
+        assert all(kinds.kind_of(n) == kind for r in rows for n in r["questions"])   # each kind's own file
+        assert {r["provenance"]["run"] for r in rows} <= {"t0-q0", "t0-q1"}
+        per_query = [r["provenance"]["run"] for r in rows]
+        assert max(per_query.count(q) for q in per_query) <= generate.CAP
+        assert rows[0]["provenance"]["repo"] == "here" and rows[0]["provenance"]["intent"] == "lookup"
+    useful = label.read(folders / "data" / "useful" / "train.candidates.jsonl")
+    assert len(useful[0]["state"]["passages"]) == 1                                  # the passage view
+    (route,) = [r for r in label.read(folders / "data" / "route" / "train.candidates.jsonl")
+                if r["provenance"]["run"] == "t0-q0"]
+    assert route["state"]["query_parts"] == {"r0": "a", "r1": "b", "r2": "c"}       # the route state whole
+    claims = [r for r in label.read(folders / "data" / "retrieval" / "generate.runs.jsonl") if "claim" in r]
+    assert [len(c["claim"]) for c in claims] == [2, 2] and {c["split"] for c in claims} == {"train"}
+
+
+def test_a_repository_the_daemon_cannot_index_leaves_its_queries_unrun(folders, monkeypatch):
+    asked, ran = [], []
+    monkeypatch.setattr(generate, "searching", lambda project=None, wait=0.0: asked.append(wait) or not wait)
+    teacher = Teacher()
+    out = gen("useful", "train", 10, "opus", 3, capture=lambda q: ran.append(q) or judged(q), turn=teacher,
+              log=lambda *_: None)
+    assert out["stopped"] == "search_unavailable" and "here was not indexed" in out["reason"]
+    assert ran == [] and teacher.turns == [0] and generate.WARM in asked
+    assert label.read(folders / "data" / "retrieval" / "generate.runs.jsonl") == []
 
 
 def test_generate_stops_at_its_turn_limit_and_records_a_failed_query(folders):
@@ -601,9 +655,9 @@ def test_generate_stops_at_its_turn_limit_and_records_a_failed_query(folders):
             raise RuntimeError("retrieval failed")
         return judged(query)
 
-    out = generate.generate("useful", "train", 100, "opus", 2, capture=capture, turn=teacher, log=lambda *_: None)
+    out = gen("useful", "train", 100, "opus", 2, capture=capture, turn=teacher, log=lambda *_: None)
     assert out["stopped"] == "turn_limit" and teacher.turns == [0, 1] and out["have"] == 4
-    runs = label.read(folders / "data" / "useful" / "generate.runs.jsonl")
+    runs = label.read(folders / "data" / "retrieval" / "generate.runs.jsonl")
     assert [r["run"] for r in runs if "error" in r] == ["t0-q1", "t1-q1"]
 
 
@@ -613,16 +667,16 @@ def test_generate_drops_near_duplicates_of_the_gate_and_of_other_splits(folders)
     write(folders / "pool.jsonl", [gated])
     (folders / "tests.json").write_text(json.dumps({"tests": [[{"state_hash": "g"}]]}), encoding="utf-8")
     teacher = Teacher()
-    out = generate.generate("useful", "validation", 10, "opus", 1, capture=judged, turn=teacher,
+    out = gen("useful", "validation", 10, "opus", 1, capture=judged, turn=teacher,
                             log=lambda *_: None)
     assert out["near_gate"] == 2 and out["have"] == 2          # s0q0's request is the gate's, both views
-    out = generate.generate("useful", "train", 10, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
+    out = gen("useful", "train", 10, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
     assert out["have"] == 0                                    # no turn allowed, and nothing to rerun
-    write(folders / "data" / "useful" / "generate.runs.jsonl", [])   # run the paid queries again
-    out = generate.generate("useful", "train", 10, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
+    write(folders / "data" / "retrieval" / "generate.runs.jsonl", [])   # run the paid queries again
+    out = gen("useful", "train", 10, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
     assert out["near_kept"] == 2 and out["have"] == 0          # validation already holds them
     with pytest.raises(ValueError):
-        generate.generate("route", "train", 1, "opus", 1, capture=judged, turn=teacher)
+        gen("relation", "train", 1, "opus", 1, capture=judged, turn=teacher)
 
 
 def test_generate_checks_a_request_whole_before_cutting_it_into_views(folders):
@@ -638,7 +692,7 @@ def test_generate_checks_a_request_whole_before_cutting_it_into_views(folders):
                                         n: {"kind": "useful", "question": NOUL} for n in both}}])
     (folders / "tests.json").write_text(json.dumps({"tests": [[{"state_hash": "g"}]]}), encoding="utf-8")
     # The new request's p1 view is unlike anything gated, but the whole request is the gate's.
-    out = generate.generate("useful", "train", 10, "opus", 1, turn=Teacher(), log=lambda *_: None,
+    out = gen("useful", "train", 10, "opus", 1, turn=Teacher(), log=lambda *_: None,
                             capture=lambda q: [{"state": request("new"), "questions": both}])
     assert out["near_gate"] == 4 and out["have"] == 0
 
@@ -652,41 +706,41 @@ def test_generate_keeps_one_request_on_one_split(folders):
                                                        {"id": "p1", "text": f"{query} " + shared[:200]}]},
                  "questions": {"useful_p0": NOUL, "useful_p1": NOUL}}]
 
-    out = generate.generate("useful", "validation", 1, "opus", 1, capture=capture, turn=Teacher(),
+    out = gen("useful", "validation", 1, "opus", 1, capture=capture, turn=Teacher(),
                             log=lambda *_: None)
     assert out["have"] == 1
-    out = generate.generate("useful", "train", 10, "opus", 0, capture=capture, turn=Teacher(),
+    out = gen("useful", "train", 10, "opus", 0, capture=capture, turn=Teacher(),
                             log=lambda *_: None)
     assert out["other_split"] == 2 and out["have"] == 0        # s0q1 is near s0q0, which went to validation
 
 
 def test_a_teacher_turn_left_pending_stops_new_turns_until_it_is_abandoned(folders):
     teacher = Teacher()
-    ledger = folders / "data" / "useful" / "generate.ledger.jsonl"
+    ledger = folders / "data" / "retrieval" / "generate.ledger.jsonl"
     write(ledger, [{"seed": 0, "pending": True, "model": "opus", "prompt_version": "x"}])
-    out = generate.generate("useful", "train", 10, "opus", 3, capture=judged, turn=teacher, log=lambda *_: None)
+    out = gen("useful", "train", 10, "opus", 3, capture=judged, turn=teacher, log=lambda *_: None)
     assert out["stopped"] == "unsettled_turn" and out["unsettled"] == [0] and teacher.turns == []
-    generate.abandon("useful", 0)
-    out = generate.generate("useful", "train", 1, "opus", 3, capture=judged, turn=teacher, log=lambda *_: None)
+    generate.abandon(0)
+    out = gen("useful", "train", 1, "opus", 3, capture=judged, turn=teacher, log=lambda *_: None)
     assert teacher.turns == [1] and out["have"] == 1           # seed 0 is never sent again
     with pytest.raises(SystemExit):
-        generate.abandon("useful", 1)                          # settled, not pending
+        generate.abandon(1)                          # settled, not pending
 
 
 def test_generate_refuses_without_every_gate_state_or_a_running_search(folders):
     teacher = Teacher()
     (folders / "tests.json").write_text(json.dumps({"tests": [[{"state_hash": "missing"}]]}), encoding="utf-8")
     with pytest.raises(SystemExit):
-        generate.generate("useful", "train", 1, "opus", 1, capture=judged, turn=teacher)
+        gen("useful", "train", 1, "opus", 1, capture=judged, turn=teacher)
     (folders / "tests.json").write_text('{"tests": []}', encoding="utf-8")
     with pytest.raises(SystemExit):
-        generate.generate("useful", "train", 1, "opus", 1, capture=judged, turn=teacher, ready=lambda: False)
-    runs = folders / "data" / "useful" / "generate.runs.jsonl"
+        gen("useful", "train", 1, "opus", 1, capture=judged, turn=teacher, ready=lambda: False)
+    runs = folders / "data" / "retrieval" / "generate.runs.jsonl"
     write(runs, [{"run": "t0-q0", "split": "train", "candidates": 0, "error": "RuntimeError: x"}])
-    generate.generate("useful", "train", 0, "opus", 0, capture=judged, turn=teacher)   # a failed run owns nothing
+    gen("useful", "train", 0, "opus", 0, capture=judged, turn=teacher)   # a failed run owns nothing
     write(runs, [{"run": "t0-q0", "split": "train", "candidates": 1, "originals": [judged("a")[0]]}])
     with pytest.raises(SystemExit, match="no claim"):   # from before claims: its split's ownership is lost
-        generate.generate("useful", "validation", 1, "opus", 1, capture=judged, turn=teacher)
+        gen("useful", "validation", 1, "opus", 1, capture=judged, turn=teacher)
     assert teacher.turns == []
 
 
@@ -706,9 +760,9 @@ def test_a_run_interrupted_after_its_candidates_keeps_its_request_on_its_split(f
     monkeypatch.setattr(generate, "append", append)
     teacher = Teacher()
     with pytest.raises(Interrupted):
-        generate.generate("useful", "train", 1, "opus", 1, capture=judged, turn=teacher, log=lambda *_: None)
+        gen("useful", "train", 1, "opus", 1, capture=judged, turn=teacher, log=lambda *_: None)
     monkeypatch.setattr(generate, "append", real)
-    out = generate.generate("useful", "validation", 5, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
+    out = gen("useful", "validation", 5, "opus", 0, capture=judged, turn=teacher, log=lambda *_: None)
     validation = label.read(folders / "data" / "useful" / "validation.candidates.jsonl")
     assert {r["provenance"]["run"] for r in validation} == {"t0-q1"}   # t0-q0 stays train's
     assert out["have"] == 2 and teacher.turns == [0]
@@ -732,12 +786,12 @@ def test_a_run_interrupted_after_its_claim_finishes_on_the_claim_not_a_new_captu
     monkeypatch.setattr(generate, "append", append)
     teacher = Teacher()
     with pytest.raises(Interrupted):
-        generate.generate("useful", "train", 1, "opus", 1, capture=capture, turn=teacher, log=lambda *_: None)
+        gen("useful", "train", 1, "opus", 1, capture=capture, turn=teacher, log=lambda *_: None)
     monkeypatch.setattr(generate, "append", real)
-    generate.generate("useful", "train", 1, "opus", 0, capture=capture, turn=teacher, log=lambda *_: None)
+    gen("useful", "train", 1, "opus", 0, capture=capture, turn=teacher, log=lambda *_: None)
     train = label.read(folders / "data" / "useful" / "train.candidates.jsonl")
     assert len(captures) == 1 and train[0]["state"]["passages"] == [passage("beforea")]
-    out = generate.generate("useful", "validation", 5, "opus", 0, capture=capture, turn=teacher, log=lambda *_: None)
+    out = gen("useful", "validation", 5, "opus", 0, capture=capture, turn=teacher, log=lambda *_: None)
     validation = label.read(folders / "data" / "useful" / "validation.candidates.jsonl")
     assert {r["provenance"]["run"] for r in validation} == {"t0-q1"} and out["have"] == 2
     assert teacher.turns == [0]
@@ -756,18 +810,18 @@ def test_a_search_daemon_gone_mid_run_leaves_the_query_and_starts_no_turn(folder
             raise generate.Unavailable("retrieval_unavailable")   # what `captured` gives with no daemon
         return judged(query)
 
-    out = generate.generate("useful", "train", 10, "opus", 3, capture=capture, turn=turn, ready=lambda: up[0],
+    out = gen("useful", "train", 10, "opus", 3, capture=capture, turn=turn, ready=lambda: up[0],
                             log=lambda *_: None)
     assert out["stopped"] == "search_unavailable" and teacher.turns == [0] and out["have"] == 0
     assert out["reason"] == "t0-q0: retrieval_unavailable"
-    assert label.read(folders / "data" / "useful" / "generate.runs.jsonl") == []
+    assert label.read(folders / "data" / "retrieval" / "generate.runs.jsonl") == []
     up[0] = True
-    out = generate.generate("useful", "train", 10, "opus", 0, capture=capture, turn=turn, ready=lambda: True,
+    out = gen("useful", "train", 10, "opus", 0, capture=capture, turn=turn, ready=lambda: True,
                             log=lambda *_: None)
     assert out["have"] == 4 and teacher.turns == [0]            # the paid queries ran on the rerun
 
 
-def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
+def test_captured_sends_nothing_and_keeps_the_route_and_the_first_judge(monkeypatch):
     import sys
     if str(generate.ROOT / "tool") not in sys.path:
         sys.path.append(str(generate.ROOT / "tool"))   # after this folder, as `generate.captured` adds it
@@ -800,7 +854,7 @@ def test_captured_sends_nothing_and_stops_at_the_first_judge(monkeypatch):
     monkeypatch.setattr(knowledge, "prepare", prepare)
     real = translate._ask
     got = generate.captured("Who owns deployment, and which port?")
-    assert got == [{"state": {"stage": "judge"}, "questions": {"useful_p0": NOUL}}]
+    assert got == [{"state": {"stage": s}, "questions": {"useful_p0": NOUL}} for s in ("route", "judge")]
     assert seen == {"parts": None, "fallback": False, "cold": None, "project": generate.ROOT}
     assert asked == [{"start": False}]
     assert translate._ask is real and search.spawn is not None and knowledge.cold.__name__ == "cold"
@@ -835,8 +889,46 @@ def test_the_teacher_samples_documents_the_capture_can_search():
         sys.path.append(str(generate.ROOT / "tool"))
     from search import HUB, sources
 
-    searched = {p.resolve() for p in sources.listing(HUB, generate.ROOT)}
-    assert all((generate.ROOT / p["path"]).resolve() in searched for p in generate.sample(0))
+    found = generate.repos()
+    if not found:
+        pytest.skip("no repository with a wiki corpus beside this one")
+    for seed in range(len(found) * 3):
+        drawn = generate.sample(seed, found)
+        repo = found[drawn["repo"]]
+        searched = {p.resolve() for p in sources.listing(HUB, repo)}
+        assert all((repo / p["path"]).resolve() in searched for p in drawn["pages"])
+
+
+def test_the_teacher_draws_a_repository_by_size_and_a_type_and_intent_for_each_question(tmp_path):
+    for name, n, git in (("small", 1, "dir"), ("large", 100, "dir"), ("copy", 100, "file"), ("bare", 0, "dir")):
+        repo = tmp_path / name
+        (repo / ".wiki").mkdir(parents=True)
+        (repo / ".git").mkdir() if git == "dir" else (repo / ".git").write_text("gitdir: x", encoding="utf-8")
+        for i in range(n):
+            (repo / f"d{i}.md").write_text(f"# d{i}", encoding="utf-8")
+        if n:
+            (repo / ".wiki" / "corpus.json").write_text(json.dumps({"docs": [
+                {"path": f"d{i}.md", "title": f"d{i}", "heads": [], "lead": ""} for i in range(n)]}), encoding="utf-8")
+    found = generate.repos(tmp_path)
+    assert sorted(found) == ["large", "small"]                  # a worktree copy and a repo with no corpus are out
+    drawn = generate.sample(0, found)
+    assert drawn == generate.sample(0, found) and len(drawn["slots"]) == generate.PER_TURN
+    assert {s["type"] for s in drawn["slots"]} <= set(generate.TYPES)
+    assert len({s["intent"] for s in drawn["slots"]}) >= 4      # a turn spans the intents
+    large = sum(generate.sample(s, found)["repo"] == "large" for s in range(300)) / 300
+    assert 0.8 < large < 0.97                                   # sqrt(100) : sqrt(1), not 100 : 1
+
+
+def test_the_teacher_turn_keeps_each_question_on_the_slot_it_was_asked_for(monkeypatch):
+    slots = [{"type": generate.TYPES[i % 5], "intent": generate.INTENTS[i % 6]} for i in range(generate.PER_TURN)]
+    monkeypatch.setattr(generate, "sample", lambda seed: {"repo": "r", "pages": [{"path": "a.md"}], "slots": slots})
+    said = [{"slot": 3, "text": "third", "intent": "made up"}, {"text": "second"}, {"slot": 3, "text": "again"},
+            {"slot": 99, "text": "nowhere"}, {"text": " "}, "junk"]
+    monkeypatch.setattr(generate, "host_json", lambda *a: {"model": "m", "cost_usd": 0.04, "json": {"queries": said}})
+    got = generate.teacher_turn("sonnet", 7)
+    assert got["repo"] == "r" and got["pages"] == ["a.md"]
+    # An index past the slots falls back to its position (3, taken), so only two are kept.
+    assert got["queries"] == [{"text": "third", **slots[3]}, {"text": "second", **slots[1]}]
 
 
 def test_a_passage_kind_sees_only_its_passage():

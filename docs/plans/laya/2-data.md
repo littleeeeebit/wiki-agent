@@ -71,7 +71,9 @@ Each state records its generator, prompt version, source pages and seed.
 The class balance per kind is stated; a kind whose natural rate is skewed
 keeps that rate in test and is balanced only in training.
 
-The passage kinds' generator is `laya/generate.py` (built 2026-10-13):
+The passage kinds' generator is `laya/generate.py` (built 2026-10-13; its
+sources, query types and kinds are widened by the next section, and the
+safeguards below are unchanged):
 
 - A teacher host turn (`prompts/generate.md`) writes eight questions over
   six seeded documents of this repository (`.wiki/corpus.json`), across
@@ -127,6 +129,88 @@ The passage kinds' generator is `laya/generate.py` (built 2026-10-13):
   50-candidate pilot is one teacher turn.
 
 Its tests are in `laya/test_laya.py`.
+
+## Diverse data for the ten retrieval kinds (owner, 2026-10-14)
+
+Run 5 (`.wiki/laya-exp-useful-training.md`) showed `useful`'s 500 train
+labels came from 58 queries, up to 13 passages each, all over this
+repository's 90 wiki pages, and seeds alone moved accuracy as much as any
+setting. The owner set three rules for every kind: at least 1,000 train
+labels; each kind's dataset holds that kind only; within a kind the
+distribution is diverse, from the other repositories on this PC and from
+varied query types. The teacher stays Sonnet 5.5; this stage covers the ten
+retrieval kinds at once.
+
+What one run gives. A query's production run makes two requests the
+generator now keeps: the route request (`retrieve`, `analysis`, `progress`,
+`source_<s>` for each available source, and `ask_<r>` for each query part
+when the query has more than one) and the first grade-evidence request
+(`useful`, `conflict` and `redirect` for each passage, `coverage_<r>` for
+each requirement once a passage is complete, and `repair` when a next
+retrieval step exists). Each kind's candidates are cut from these, one
+question per row, as passage kinds are today.
+
+Sources. The wiki corpora of the repositories on this PC: wiki-agent (90
+documents), ai-coding-wiki (274), ai-companion-voice-agent (140),
+project-codeit-mid (40), ai-generation (39), ai-coding-agent-wiki-public
+(22), rfg_rag (7), ai-coding-agent-wiki (6). A teacher turn picks one
+repository, weighted by the square root of its document count so the
+largest does not dominate, and six of its documents; its queries run
+through `knowledge.prepare` in that repository, so the hub and memory stay
+those production reads, and the search daemon builds that repository's
+index with the embedder it already holds. A repository is a unit of
+diversity, so splits are drawn by query, never by passage: every
+candidate of one query goes to the same split.
+
+Query types. Two axes per teacher turn, each assigned to the turn so a
+turn cannot drift to one type: the content types already used (answered,
+partial, bridging, unanswered, false premise) and an intent axis the route
+kinds need — a repository lookup, an analysis (a comparison, judgment or
+plan), a progress question, a general question that needs no repository
+evidence, a compound query of two or three questions (which `requirements`
+splits, so it gives `ask` questions), and a query carrying pasted material
+(a log, notice or message) beside the real request. Forms vary as today.
+
+Per-query cap. From one query at most two candidates per kind (a seeded
+draw), and one for `retrieve`, `analysis`, `progress` and `repair`, so a
+kind's 1,000 train labels come from at least 500 queries.
+
+Volume and budget. A kind needs 1,600 labels (1,000 train, 300 validation,
+300 calibration); at the guided labeller's 72% keep rate, about 2,200
+candidates. The one-per-query kinds set the count: about 2,200 queries,
+about 275 teacher turns of eight, about $12 at $0.043 a turn. Labels cost
+about $0.0008 kept, about $13 for ten kinds. A 50-query pilot measures
+each kind's yield per query and the class balance before the full run;
+both need the owner's approval with a budget.
+
+Class balance. Kinds whose natural rate is skewed (`redirect` positives
+are rare in a wiki) keep that rate in validation and calibration; the
+plan's balancing for training applies, and a kind short of positives after
+the full run is reported with its counts rather than padded.
+
+Built (2026-10-14). `laya/generate.py <split> --target N --teacher sonnet
+--max-turns T` writes all ten kinds at once; `--kinds` narrows them.
+
+- Repositories are the folders beside this one with a `.wiki/corpus.json`
+  and their own `.git` folder, so a linked worktree is not counted twice.
+- Each turn's eight slots are drawn from the five types and six intents,
+  each list doubled and shuffled. The teacher answers by slot index, and
+  each query keeps the slot it was asked for, not a label the teacher gives.
+- The teacher turns and query runs of all kinds share one ledger and one
+  run log under `laya/data/retrieval/`. The candidates go to
+  `laya/data/<kind>/<split>.candidates.jsonl`.
+- A run claims the whole route and grade-evidence requests for its split
+  before writing, so every candidate of one query is in one split.
+- The run stops when every kind has `--target` candidates, or at the turn
+  limit.
+- A query whose retrieval finished with nothing to judge still gives its
+  route candidates. A query whose search failed after the route is left
+  unrun, as before.
+- Before a repository's first query in a run, the daemon is asked to
+  finish that repository's index, waiting up to 30 minutes. If it has not
+  finished by then, the run stops (`search_unavailable`) and no query is
+  recorded as empty. A cold index otherwise answers nothing: on 2026-10-14
+  a capture in this repository failed until its index was rebuilt.
 
 ## Splits
 

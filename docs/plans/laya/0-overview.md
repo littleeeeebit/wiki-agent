@@ -59,7 +59,7 @@ existing policy, else `unavailable`).
 | # | Step | Deliverable | Status |
 | --- | --- | --- | --- |
 | 1 | [Serving](1-serving.md) | Local server, per-kind provider, context and zero-shot baseline | Done — gate test reserved, measurements recorded (#138); the provider contract moved to stage 6, step 0 (owner) |
-| 2 | [Data](2-data.md) | States per kind, splits, the gate test | In progress — gate test reserved (`laya/gate.py`); passage-kind generator built (`laya/generate.py`), no paid run yet |
+| 2 | [Data](2-data.md) | States per kind, splits, the gate test | In progress — gate test reserved (`laya/gate.py`); generator for the ten retrieval kinds over the corpora on this machine (`laya/generate.py`); `useful` labelled from its first version, the diverse run awaits a pilot |
 | 3 | [Labels](3-labels.md) | Two-labeller agreement, drops refilled and noted, pilot then full run | In progress — `laya/label.py` and the error notebook built and tested with stubs; no paid run yet |
 | 4 | [Training](4-training.md) | Fourteen fine-tunes, calibration, fitted policy | Not started |
 | 5 | [Augmentation](5-augmentation.md) | Error-slice loop per kind, after RRSI | In progress — `laya/loop.py` built and tested with stubs; the generator (stage 2) is not |
