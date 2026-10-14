@@ -53,8 +53,15 @@ candidate is the labeller's guide (`laya/guided.py`):
   (`loop.floor`), and the round keeps the adopted guide's labels. A guide
   not adopted stays in the history. No earlier labels are needed, so this
   works for kinds that have none.
-- Every turn is journalled under its prompt, model and payload, so a rerun
-  pays only for turns not yet made; `--max-usd` caps the journal's total.
+- Every call is journalled under its prompt's name and text, model and
+  payload, so a rerun pays only for turns not yet made; a failed call is
+  journalled with its cost and error and asked again, never replayed.
+  `--max-usd` caps the journal's total, failed calls included. Two workers
+  asking the same turn at once make one call.
+- A round with a failed turn left settles nothing: no trial decision, no
+  label and no lesson. The run stops there (`failed_turns`), and a rerun
+  replays what succeeded and finishes the round. A lesson whose `rules` is
+  not a list of strings counts as a failed turn.
 
 The two-labeller rule above stays for the existing splits.
 

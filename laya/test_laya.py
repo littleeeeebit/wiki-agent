@@ -952,7 +952,8 @@ def guided_world(stamp=False, rule_helps=True):
             right = (ruled or i % 4 != 0) if rule_helps else (i % 4 != 0 and not (ruled and i % 4 == 1))
             said = truth(i) if right else not truth(i)
             return {"model": model, "cost_usd": 0.01,
-                    "json": {"answers": {"useful_p0": {"answer": "yes" if said else "no", "confidence": 0.9}}}}
+                    "json": {"answers": {n: {"answer": "yes" if said else "no", "confidence": 0.9}
+                                         for n in payload["questions"]}}}
         if prompt.name == "verify.md":
             out = {}
             for it in payload["items"]:
@@ -1047,8 +1048,96 @@ def test_a_turn_that_fails_is_tried_again_and_only_its_success_is_kept(folders):
     got = guided.run("useful", "pilot", [labelled(i) for i in range(1, 4)], labeller="haiku",
                      verifier="sol", rounds=1, per_round=3, max_turns=100, max_usd=100, call=failing,
                      log=lambda *_: None)
-    assert got["rounds"][0]["failed"] == 0 and sum(name == "verify.md" for name, _ in made) == 3
-    assert [r["prompt"] for r in guided.read(folders / "data" / "useful" / "pilot.turns.jsonl")].count("verify.md") == 1
+    assert got["stopped"] == "done" and sum(name == "verify.md" for name, _ in made) == 3
+    journal = [r for r in guided.read(folders / "data" / "useful" / "pilot.turns.jsonl") if r["prompt"] == "verify.md"]
+    assert ["error" in r for r in journal] == [True, True, False]   # every call journalled, one replayed
+
+
+def test_turns_count_failed_calls_and_make_one_call_per_key_and_prompt_text(folders):
+    import threading
+    import time
+
+    import guided
+    made = []
+
+    def failing(prompt, payload, model, effort):
+        made.append(payload)
+        return {"model": model, "cost_usd": 0.3, "error": "RuntimeError: None", "json": {}}
+
+    path = folders / "t.jsonl"
+    with pytest.raises(guided.Spent):
+        guided.Turns(path, failing, 100, 0.5, log=lambda *_: None)(guided.VERIFY, {}, "sol")
+    reopened = guided.Turns(path, failing, 100, 0.5, log=lambda *_: None)
+    assert len(made) == 2 and reopened.usd == pytest.approx(0.6)          # a rerun counts the failed spend
+    with pytest.raises(guided.Spent):
+        reopened(guided.VERIFY, {}, "sol")
+    assert len(made) == 2
+
+    def slow(prompt, payload, model, effort):
+        made.append(prompt.read_text(encoding="utf-8"))
+        time.sleep(0.2)
+        return {"model": model, "cost_usd": 0.1, "json": {"text": made[-1]}}
+
+    made.clear()
+    turns, prompt = guided.Turns(folders / "u.jsonl", slow, 100, 10), folders / "p.md"
+    prompt.write_text("old", encoding="utf-8")
+    workers = [threading.Thread(target=turns, args=(prompt, {"same": 1}, "sol")) for _ in range(2)]
+    [w.start() for w in workers]
+    [w.join() for w in workers]
+    assert made == ["old"]                                              # the second asker read the first's turn
+    prompt.write_text("new", encoding="utf-8")
+    assert turns(prompt, {"same": 1}, "sol") == {"text": "new"}         # an edited prompt is asked again
+
+
+def test_a_round_with_a_failed_turn_settles_nothing_until_a_rerun(folders):
+    import guided
+    call, made = guided_world()
+    asked, down = [], {"on": True}
+
+    def flaky(prompt, payload, model, effort):
+        asked.append(prompt.name)
+        if prompt.name == "verify.md" and down["on"] and "lesson.md" in asked:   # round 1's checks fail
+            return {"model": model, "cost_usd": None, "error": "RuntimeError: None", "json": {}}
+        return call(prompt, payload, model, effort)
+
+    rows = [labelled(i) for i in range(80)]
+    common = dict(labeller="haiku", verifier="sol", rounds=2, per_round=40, max_turns=10_000, max_usd=100,
+                  log=lambda *_: None)
+    cut = guided.run("useful", "pilot", rows, call=flaky, **common)
+    assert cut["stopped"] == "failed_turns" and len(cut["rounds"]) == 1
+    assert guided.read(folders / "data" / "useful" / "pilot.guide.jsonl") == []   # no trial decided on failures
+    down["on"] = False
+    whole = guided.run("useful", "pilot", rows, call=flaky, **common)
+    assert whole["stopped"] == "done" and whole["rounds"][1]["trial"]["adopted"] and whole["rounds"][1]["kept"] == 40
+
+    # One state's questions split over two verifier batches: the state is written whole, once.
+    wide = {"state": {"i": 1}, "questions": {f"useful_p{k}": NOUL for k in range(21)},
+            "provenance": {"state_hash": "w", "source": "s"}}
+    down["on"], asked[:] = True, ["lesson.md"]
+    cut = guided.run("useful", "wide", [wide], call=flaky, **{**common, "rounds": 1, "per_round": 1})
+    assert cut["stopped"] == "failed_turns" and guided.read(folders / "data" / "useful" / "wide.jsonl") == []
+    down["on"] = False
+    guided.run("useful", "wide", [wide], call=flaky, **{**common, "rounds": 1, "per_round": 1})
+    (row,) = guided.read(folders / "data" / "useful" / "wide.jsonl")
+    assert len(row["expected"]) == 21
+
+
+def test_a_malformed_lesson_is_a_failed_turn_not_a_guide(folders):
+    import guided
+    call, made = guided_world()
+
+    def malformed(prompt, payload, model, effort):
+        if prompt.name == "lesson.md":
+            made.append((prompt.name, payload))
+            return {"model": model, "cost_usd": None, "json": {"rules": None, "why": "no rule"}}
+        return call(prompt, payload, model, effort)
+
+    common = dict(labeller="haiku", verifier="sol", rounds=2, per_round=40, max_turns=10_000, max_usd=100,
+                  call=malformed, log=lambda *_: None)
+    for _ in range(2):   # and the rerun asks again rather than replaying it
+        got = guided.run("useful", "pilot", [labelled(i) for i in range(80)], **common)
+        assert got["stopped"] == "done" and "trial" not in got["rounds"][1]
+    assert sum(name == "lesson.md" for name, _ in made) == 2 * guided.ATTEMPTS
 
 
 def test_a_verifier_that_accepts_planted_wrong_answers_keeps_nothing():

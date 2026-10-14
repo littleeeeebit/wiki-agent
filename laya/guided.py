@@ -23,12 +23,14 @@ not show a guide helping: `.wiki/laya-insight-guide-probe.md`).
               from those rejections and the guide history the verifier writes the next
               round's candidate
 
-Every model turn is kept in `<split>.turns.jsonl` under its prompt, model and payload, so a
-rerun replays the same rounds and pays only for turns it has not made; a failed turn is
-tried up to `ATTEMPTS` times, is never kept, and is made again on a rerun. `max_usd` caps
-the whole file's spending, reruns included. Files, under `laya/data/<kind>/`:
+Every model turn is kept in `<split>.turns.jsonl` under its prompt's name and text, model and
+payload, so a rerun replays the same rounds and pays only for turns it has not made; a failed
+turn is tried up to `ATTEMPTS` times and made again on a rerun, never replayed. A round with a
+failed turn left settles nothing (no trial, label or lesson) and stops the run for a rerun.
+`max_usd` caps the whole file's spending, failed calls and reruns included. Files, under
+`laya/data/<kind>/`:
 
-- `<split>.turns.jsonl` — every paid turn.
+- `<split>.turns.jsonl` — every call, failed ones with their error.
 - `<split>.guide.jsonl` — every candidate tried: the round it was tried in, its rules, the
   kept rates of both guides, gain and floor, and whether it was adopted. The guide before
   the first adoption is empty.
@@ -74,44 +76,54 @@ class Spent(Exception):
 
 class Turns:
     """Model turns, each paid once: replayed from `path`, or made through `call` within
-    the limits. A call returns the turn's JSON, or `None` for a failed turn."""
+    the limits. A call returns the turn's JSON, or `None` for a failed turn.
+
+    Every call is journalled, a failed one too (with its `error` and no JSON), so the
+    spending a rerun counts is every call ever made; only a successful turn is replayed."""
 
     def __init__(self, path: Path, call, max_turns: int, max_usd: float, log=print):
         self.path, self.call, self.max_turns, self.max_usd, self.log = path, call, max_turns, max_usd, log
-        self.kept = {r["key"]: r for r in read(path)}
+        made = read(path)
+        self.kept = {r["key"]: r for r in made if "error" not in r}
         self.turns, self.unknown = 0, 0
-        self.usd = sum(r["cost_usd"] or 0 for r in self.kept.values())
+        self.usd = sum(r["cost_usd"] or 0 for r in made)
         self.lock = threading.Lock()   # turns run on worker threads
+        self.flying: dict[str, threading.Lock] = {}
 
-    def __call__(self, prompt: Path, payload: dict, model: str, effort: str = "") -> dict | None:
-        key = hashlib.sha256(json.dumps([prompt.name, model, effort, payload], sort_keys=True,
+    def __call__(self, prompt: Path, payload: dict, model: str, effort: str = "", ok=None) -> dict | None:
+        """`ok`, when given, tells a usable reply from a malformed one, which counts as failed."""
+
+        # The prompt's text is part of the key, so an edited prompt is asked again.
+        text = hashlib.sha256(prompt.read_bytes()).hexdigest()
+        key = hashlib.sha256(json.dumps([prompt.name, text, model, effort, payload], sort_keys=True,
                                         ensure_ascii=False).encode("utf-8")).hexdigest()
         with self.lock:
-            if key in self.kept:
-                return self.kept[key]["json"]
-        for _ in range(ATTEMPTS):   # a host turn fails now and then with no reason given
+            same = self.flying.setdefault(key, threading.Lock())
+        with same:   # one call per key at a time: a second asker waits and reads the first's turn
             with self.lock:
-                # ponytail: turns already in flight may pass the limit by one worker pool's worth
-                if self.turns >= self.max_turns or self.usd >= self.max_usd:
-                    raise Spent(f"limit reached: {self.turns} turns this run, ${self.usd:.2f} in all")
-                self.turns += 1
-            got = self.call(prompt, payload, model, effort)
-            with self.lock:
-                if got.get("cost_usd") is None:
-                    self.unknown += 1
-                else:
-                    self.usd += got["cost_usd"]
-            if "error" not in got:
-                break
-            self.log(f"{prompt.name} on {model} failed: {got['error']}")
-        else:
+                if key in self.kept:
+                    return self.kept[key]["json"]
+            for _ in range(ATTEMPTS):   # a host turn fails now and then with no reason given
+                with self.lock:
+                    # ponytail: turns already in flight may pass the limit by one worker pool's worth
+                    if self.turns >= self.max_turns or self.usd >= self.max_usd:
+                        raise Spent(f"limit reached: {self.turns} turns this run, ${self.usd:.2f} in all")
+                    self.turns += 1
+                got = self.call(prompt, payload, model, effort)
+                error = got.get("error") or (None if ok is None or ok(got["json"]) else "malformed reply")
+                row = {"key": key, "prompt": prompt.name, "model": got.get("model"), "cost_usd": got.get("cost_usd"),
+                       **({"error": str(error)[:200]} if error else {"json": got["json"]})}
+                with self.lock:
+                    if got.get("cost_usd") is None:
+                        self.unknown += 1
+                    else:
+                        self.usd += got["cost_usd"]
+                    append(self.path, row)
+                    if not error:
+                        self.kept[key] = row
+                        return got["json"]
+                self.log(f"{prompt.name} on {model} failed: {error}")
             return None
-        row = {"key": key, "prompt": prompt.name, "model": got["model"], "cost_usd": got["cost_usd"],
-               "json": got["json"]}
-        with self.lock:
-            append(self.path, row)
-            self.kept[key] = row
-        return got["json"]
 
 
 def valid(question: dict, said) -> tuple[object, float] | None:
@@ -280,6 +292,7 @@ def run(kind: str, split: str, rows: list[dict], *, labeller: str, verifier: str
                                source=item["row"]["provenance"]["source"], question=item["n"],
                                answers=said, state=item["row"]["state"])["id"])
 
+    stopped = "done"
     try:
         for r in range(rounds):
             batch = pending[r * per_round:(r + 1) * per_round]
@@ -287,25 +300,31 @@ def run(kind: str, split: str, rows: list[dict], *, labeller: str, verifier: str
                 break
             tried = [guide] + ([candidate[0]] if candidate else [])
             results = outcomes(turns, kind, batch, tried, labeller, verifier, effort, f"{seed}-{r}")
+            failed = sum(o == "failed" for res in results for o, _, _ in res.values())
+            if failed:
+                # Nothing of a round is settled while a turn of it failed: its trial, labels and
+                # lesson wait for a rerun, which replays what succeeded and makes the rest again.
+                log(f"round {r}: {failed} answers lost to failed turns; rerun to finish it")
+                stopped = "failed_turns"
+                break
             if candidate:
                 # Paired on the states both guides answered and the verifier settled.
-                settled = sorted(k for k in results[0] if all(res[k][0] not in ("failed", "verifier_unreliable")
-                                                              for res in results))
+                settled = sorted(k for k in results[0] if all(res[k][0] != "verifier_unreliable" for res in results))
                 old, new = ({k for k in settled if res[k][0] != "kept"} for res in results)
                 gain, floor = loop.floor(settled, old, new, seed) if settled else (0.0, 0.0)
-                trial = next((g for g in guides if g["round"] == r), None)
-                if trial is None:
-                    trial = {"round": r, "version": r, "rules": candidate[0], "why": candidate[1],
-                             "adopted": gain > floor, "gain": round(gain, 4), "floor": round(floor, 4),
-                             "kept_rate": [round(1 - len(old) / max(len(settled), 1), 3),
-                                           round(1 - len(new) / max(len(settled), 1), 3)]}
+                # Decided from this run's results; the file records it once, again only if it changed.
+                trial = {"round": r, "version": r, "rules": candidate[0], "why": candidate[1],
+                         "adopted": gain > floor, "gain": round(gain, 4), "floor": round(floor, 4),
+                         "kept_rate": [round(1 - len(old) / max(len(settled), 1), 3),
+                                       round(1 - len(new) / max(len(settled), 1), 3)]}
+                if trial != {g["round"]: g for g in guides}.get(r):
                     append(guides_path, trial)
                     guides.append(trial)
                 if trial["adopted"]:
                     guide, version = trial["rules"], trial["version"]
             chosen = results[1] if candidate and trial["adopted"] else results[0]
             stats = {"round": r, "guide": version, "states": len(batch), "questions": len(chosen), "kept": 0,
-                     "invalid": 0, "unsure": 0, "rejected": 0, "unreliable": 0, "failed": 0}
+                     "invalid": 0, "unsure": 0, "rejected": 0, "unreliable": 0}
             if candidate:
                 stats["trial"] = {k: trial[k] for k in ("version", "adopted", "gain", "floor", "kept_rate")}
             rejections, keep = [], {}
@@ -314,8 +333,7 @@ def run(kind: str, split: str, rows: list[dict], *, labeller: str, verifier: str
                     keep.setdefault(h, []).append(item)
                     continue
                 stats[{"verifier_reject": "rejected", "verifier_unreliable": "unreliable"}.get(outcome, outcome)] += 1
-                if outcome != "failed":   # a failed turn is made again on a rerun
-                    note(outcome, item, r, verdict)
+                note(outcome, item, r, verdict)
                 if outcome == "verifier_reject" and isinstance(verdict, dict):
                     rejections.append({"state": item["row"]["state"], "question": label.shown(item["q"]),
                                        "labeller": item["said"], "verifier": verdict})
@@ -340,14 +358,15 @@ def run(kind: str, split: str, rows: list[dict], *, labeller: str, verifier: str
                                      "rejections": random.Random(f"{seed}-{r}-lesson").sample(
                                          rejections, min(SAMPLES, len(rejections))),
                                      "history": [{k: g[k] for k in ("rules", "adopted", "gain", "floor")}
-                                                 for g in guides if g["round"] <= r]}, verifier, effort)
-                rules = [x.strip()[:RULE_CHARS] for x in (got or {}).get("rules", [])
-                         if isinstance(x, str) and x.strip()][:MAX_RULES]
-                if got is not None and rules and rules != guide:
+                                                 for g in {g["round"]: g for g in guides}.values()
+                                                 if g["round"] <= r]}, verifier, effort,
+                            ok=lambda j: isinstance(j.get("rules"), list)
+                            and all(isinstance(x, str) for x in j["rules"]))
+                rules = [x.strip()[:RULE_CHARS] for x in (got or {}).get("rules", []) if x.strip()][:MAX_RULES]
+                if rules and rules != guide:
                     candidate = (rules, got.get("why"))
             report.append(stats)
             log(json.dumps(stats))
-        stopped = "done"
     except Spent as limit:
         log(str(limit))
         stopped = "limit"
