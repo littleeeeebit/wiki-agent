@@ -213,6 +213,8 @@ def run(kind: str, *, train, score, generate, label, max_turns: int, round_turns
     def evaluate(splits):
         ckpt = train(kind, splits)
         wrong, predicted = score(kind, ckpt)
+        if set(wrong) - set(predicted):
+            raise ValueError(f"{ckpt} got questions wrong that it was not scored on")
         if universe is not None and set(predicted) != set(universe):
             raise ValueError(f"{ckpt} was scored on other validation questions than the incumbent")
         return ckpt, set(wrong), predicted

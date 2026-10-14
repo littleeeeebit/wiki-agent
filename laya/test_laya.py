@@ -510,6 +510,8 @@ def test_the_loop_counts_only_the_questions_scored():
     assert label.read(loop.DATA / "useful" / "rounds.jsonl")[0]["left_for_length"] == 10
     with pytest.raises(ValueError):   # nothing scored is no accuracy at all
         loop.run("useful", score=lambda kind, ckpt: (set(), {}), **common)
+    with pytest.raises(ValueError):   # wrong where it was not scored
+        loop.run("useful", score=lambda kind, ckpt: ({keys[35]}, dict.fromkeys(keys[:30])), **common)
 
 
 def test_pool_keeps_one_row_per_state_and_unwraps_requests():
