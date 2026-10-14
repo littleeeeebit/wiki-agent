@@ -849,6 +849,21 @@ def test_a_passage_kind_sees_only_its_passage():
         kinds.view("conflict_p7", "conflict", state)
 
 
+def test_a_train_subset_holds_whole_records_and_says_how_many(folders):
+    rows = [{"state": {"text": f"s{i} line"}, "questions": {"useful_p0": NOUL},
+             "expected": {"useful_p0": True}, "provenance": {"state_hash": f"h{i}"}} for i in range(10)]
+    path = folders / "data" / "useful" / "train.jsonl"
+    write(path, rows)
+    with path.open("a", encoding="utf-8") as f:
+        f.write('\n{"state":')                               # a blank line, then a torn tail
+    name, count = train.subset("useful", 4)
+    got = label.read(folders / "data" / "useful" / f"{name}.jsonl")
+    assert name == "train4" and count == 4 and len(got) == 4
+    assert all(r in rows for r in got)                       # U+2028 inside a string did not split a record
+    assert train.subset("useful", 4) == ("train4", 4) and label.read(folders / "data" / "useful" / "train4.jsonl") == got
+    assert train.subset("useful", 50)[1] == 10               # asking for more than there is says so
+
+
 def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders, monkeypatch):
     import zipfile
 

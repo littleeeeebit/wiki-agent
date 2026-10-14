@@ -38,8 +38,9 @@ RTX 3080.
 - Early stopping on validation. Seed, data hashes and config recorded with
   each checkpoint as `laya-<kind>-v<N>`. Laya 0.4.6's `finetune` has no
   early stopping: it scores validation (`eval_data`) before and after a
-  fixed number of epochs, so the notebook trains once per epoch count
-  (`EPOCHS`, 2, 3 and 4) and keeps the lowest validation log loss after
+  fixed number of epochs, so the notebook trains once per entry of `RUNS`
+  (epoch count and other `TrainConfig` values, or a seeded subset of
+  train) and keeps the lowest validation log loss after
   the temperatures, since the policy answers only when confident and needs
   confidence that separates right from wrong, not accuracy alone. The
   first `useful` run (500 train, 4 epochs, no calibration split) went from
@@ -49,7 +50,10 @@ RTX 3080.
   reached 0.78 against 0.74 for 2, but its temperature hit Laya's 5.0
   ceiling and it was 0.83 accurate even at confidence 0.9 or above (AUROC
   0.65, log loss 0.58); 2 epochs fitted 1.84 and was 0.94 accurate on the
-  113 questions at 0.8 or above (AUROC 0.78, log loss 0.49).
+  113 questions at 0.8 or above (AUROC 0.78, log loss 0.49). With 2, 3
+  and 4 epochs chosen by log loss, 2 won again (0.489; 3 epochs 0.492,
+  temperature 3.88). The experiments are recorded in the local wiki's
+  `laya` pages.
 - `useful` first, end to end through stage 6, before the other kinds; each
   of those starts once it has at least 100 production states.
 - Code: `laya/train.py` and `laya/notebooks/train.ipynb`.
