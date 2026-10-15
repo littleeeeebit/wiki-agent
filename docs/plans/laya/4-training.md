@@ -16,6 +16,9 @@ RTX 3080.
   the default layout with options shuffled per example. fp16, gradient
   checkpointing, micro-batch 4 with 16 accumulation steps (an effective
   batch of 64) to fit the L4; `coverage` takes 1 with 64 (`MICRO_BATCH`).
+  `finetune` scores `eval_data` 16 questions a batch in FP32 whatever the
+  micro-batch, so a one-question kind's validation is scored only by
+  `score` (`Agent.predict`), not inside `finetune`.
 - `max_len` per kind: the smallest of 1,024, 2,048 or 4,096 that holds 95%
   of the kind's state-plus-head lengths from stage 1 (`useful`: 2,048, p95
   1,396). On the labelled splits (2026-10-15) the other retrieval kinds are

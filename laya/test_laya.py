@@ -1132,10 +1132,19 @@ def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders
                         "laya.train": {"TrainConfig": lambda **k: k, "finetune": finetune},
                         "laya.calibrate": {"records_from_labeled": records_from_labeled}}.items():
         monkeypatch.setitem(sys.modules, name, types.SimpleNamespace(**attrs))
+    write(folders / "data" / "useful" / "validation.jsonl", [row(0, "short")])
     train.train("useful", ["train"])
     assert seen["config"]["option_layout"] == "parallel" and seen["config"]["micro_batch"] == 4
     assert seen["config"]["grad_accum"] == 16 and seen["config"]["max_len"] == 2048
+    assert seen["config"]["eval_data"]   # scored before and after inside `finetune`
     assert set(train.MAX_LEN) == set(generate.RETRIEVAL) - {"repair"}   # every labelled retrieval kind can train
+    # `coverage` (8,192 tokens) trains one question a micro-batch, and its validation is not
+    # handed to `finetune`, which would score it 16 a batch in FP32.
+    write(folders / "data" / "coverage" / "train.jsonl", [row(5, "short")])
+    write(folders / "data" / "coverage" / "validation.jsonl", [row(6, "short")])
+    train.train("coverage", ["train"])
+    assert (seen["config"]["micro_batch"], seen["config"]["grad_accum"], seen["config"]["max_len"]) == (1, 64, 8192)
+    assert seen["config"]["eval_data"] is None
     assert [list(q) for _, q, _ in seen["recs"]] == [["useful_p0"]]
 
     # `score` hands back each answer's confidence beside the answers the loop reads.

@@ -138,7 +138,9 @@ def train(kind: str, splits: list[str], base: str = "typed", **config) -> Path:
     reader = laya.load(start, device="cpu")   # its tokenizer only, to count lengths
     data, left = merged(kind, splits, reader, max_len)
     held = None   # validation, scored before and after by `finetune` (never trained on)
-    if "validation" not in splits and (DATA / kind / "validation.jsonl").exists():
+    # `finetune` scores it 16 questions a batch in FP32 whatever `micro_batch` is, which a
+    # kind cut to one question a micro-batch cannot afford; `score` covers it there.
+    if kind not in MICRO_BATCH and "validation" not in splits and (DATA / kind / "validation.jsonl").exists():
         held = str(merged(kind, ["validation"], reader, max_len)[0])
     out = CHECKPOINTS / f"{kind}-{'+'.join(splits)}"
     summary = finetune(str(data), start, str(out), TrainConfig(
