@@ -1529,9 +1529,13 @@ def test_unsupported_quotes_only_train_splits(tmp_path, monkeypatch):
     store.append(folder / "train.jsonl", {"expected": {"coverage_r0": True}, "provenance": {"state_hash": "a"}})
     store.append(folder / "calibration.candidates.jsonl", {"state": {"other": 1}, "state_hash": "c", "questions": {}})
     said = {"json": {"verdicts": {"i0": {"answer": "yes", "evidence": "\"The cache holds keys for an hour.\""}}}}
-    for split, h in (("full1", "a"), ("full1-cal", "c")):
+    # mixed kept only its train label, though its verifier judged the calibration state too.
+    for split, inputs, h in (("full1", "a", "a"), ("full1-cal", "c", "c"), ("mixed", "ac", "a"), ("odd", "z", "a")):
         store.append(folder / f"{split}.turns.jsonl", said)
         store.append(folder / f"{split}.jsonl", {"expected": {"coverage_r0": True}, "provenance": {"state_hash": h}})
+        for i in inputs:
+            store.append(folder / f"{split}.candidates.jsonl", {"state_hash": i})
+    store.append(folder / "bare.turns.jsonl", said)
     monkeypatch.setattr(augment, "DATA", tmp_path)
     monkeypatch.setattr(gate, "reserved", lambda: set())
     monkeypatch.setattr(gate, "POOL", tmp_path / "pool.jsonl")
@@ -1540,11 +1544,12 @@ def test_unsupported_quotes_only_train_splits(tmp_path, monkeypatch):
         monkeypatch.setattr(sys, "argv", ["augment.py", "unsupported", "5", "--split", split, "--types", "partial"]
                             + (["--quotes-from", *names] if names else []))
         augment.main()
-    with pytest.raises(SystemExit, match="train splits only"):
-        run("aug2", "full1", "full1-cal")
+    for names, refusal in ((["full1", "full1-cal"], "train splits only"), (["mixed"], "train splits only"),
+                           (["bare"], "input rows are kept"), (["odd"], "not that split's input"),
+                           ([], "go with unsupported")):
+        with pytest.raises(SystemExit, match=refusal):
+            run("aug2", *names)
     assert not (folder / "aug2.candidates.jsonl").exists()
-    with pytest.raises(SystemExit, match="go with unsupported"):
-        run("aug2")
     run("aug2", "full1")
     (got,) = store.read(folder / "aug2.candidates.jsonl")
     assert got["provenance"]["dropped"] == ["p0"]

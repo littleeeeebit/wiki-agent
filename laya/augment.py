@@ -10,7 +10,8 @@ as it does any other.
   (`provenance.about`). Other pages often cover the requirement too: its first 243 labels
   were 23% no.
 - `unsupported` drops every listed passage holding a quote a verifier gave as the evidence
-  for a yes (`quotes`, from the guided labelling turns of the train splits named), and takes
+  for a yes (`quotes`, from the guided labelling turns of the train splits named, each with
+  its input rows kept as `<split>.candidates.jsonl`), and takes
   only the question types named, the ones validation got most wrong.
 
     python laya/augment.py uncovered 400 --split aug1
@@ -139,15 +140,20 @@ def main() -> None:
         drawn = uncovered(rows, labelled, a.n, a.seed, held)
     else:
         # Calibration sets temperatures and thresholds only, and validation picks checkpoints:
-        # a quote from their turns would choose and shape train input. A split is taken only when
-        # none of its labelled states is held. ponytail: a split that kept no label cannot be told
-        # apart; name train splits.
+        # a quote from their turns would choose and shape train input. A split's turns judged
+        # every state of its input rows, kept labels or not, so the input file must hold none of
+        # them. ponytail: `<split>.candidates.jsonl` is taken as the `--rows` file it was labelled
+        # from, checked only to contain its labels; guided could record the rows' hash instead.
         kept = {r["state_hash"] for r in held}
         for s in a.quotes_from:
-            if not (folder / f"{s}.turns.jsonl").exists():
-                sys.exit(f"{s}.turns.jsonl is not in {folder}")
-            if any(r["provenance"]["state_hash"] in kept for r in read(folder / f"{s}.jsonl")):
-                sys.exit(f"{s} labelled gate, validation or calibration states; quote train splits only")
+            for name in ("turns", "candidates"):
+                if not (folder / f"{s}.{name}.jsonl").exists():
+                    sys.exit(f"{s}.{name}.jsonl is not in {folder}: quote splits whose input rows are kept")
+            inputs = {r["state_hash"] for r in read(folder / f"{s}.candidates.jsonl")}
+            if inputs & kept:
+                sys.exit(f"{s} was asked about gate, validation or calibration states; quote train splits only")
+            if {r["provenance"]["state_hash"] for r in read(folder / f"{s}.jsonl")} - inputs:
+                sys.exit(f"{s} labelled states its candidates file does not hold; it is not that split's input")
         quoted = quotes([t for s in a.quotes_from for t in read(folder / f"{s}.turns.jsonl")])
         drawn = unsupported(rows, labelled, quoted, set(a.types), a.n, a.seed, held)
     for row in drawn:
