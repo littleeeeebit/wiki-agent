@@ -10,11 +10,12 @@ as it does any other.
   (`provenance.about`). Other pages often cover the requirement too: its first 243 labels
   were 23% no.
 - `unsupported` drops every listed passage holding a quote a verifier gave as the evidence
-  for a yes (`quotes`, from the guided labelling turns), and takes only the question types
-  named, the ones validation got most wrong.
+  for a yes (`quotes`, from the guided labelling turns of the train splits named), and takes
+  only the question types named, the ones validation got most wrong.
 
     python laya/augment.py uncovered 400 --split aug1
-    python laya/augment.py unsupported 400 --split aug2 --types bridging partial unanswered
+    python laya/augment.py unsupported 400 --split aug2 --types bridging partial unanswered \
+        --quotes-from full1 full2 full3 aug1
 """
 
 import argparse
@@ -119,9 +120,11 @@ def main() -> None:
     p.add_argument("--split", required=True, help="the new candidates file, laya/data/coverage/<split>.candidates.jsonl")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--types", nargs="+", help="unsupported: the question types to take")
+    p.add_argument("--quotes-from", nargs="+", metavar="SPLIT",
+                   help="unsupported: the train splits whose verifier turns give the quotes")
     a = p.parse_args()
-    if (a.how == "unsupported") != bool(a.types):
-        sys.exit("--types goes with unsupported, and only with it")
+    if not (a.how == "unsupported") == bool(a.types) == bool(a.quotes_from):
+        sys.exit("--types and --quotes-from go with unsupported, and only with it")
     folder = DATA / "coverage"
     out = folder / f"{a.split}.candidates.jsonl"
     if out.exists():
@@ -135,7 +138,17 @@ def main() -> None:
     if a.how == "uncovered":
         drawn = uncovered(rows, labelled, a.n, a.seed, held)
     else:
-        quoted = quotes([t for f in sorted(folder.glob("*.turns.jsonl")) for t in read(f)])
+        # Calibration sets temperatures and thresholds only, and validation picks checkpoints:
+        # a quote from their turns would choose and shape train input. A split is taken only when
+        # none of its labelled states is held. ponytail: a split that kept no label cannot be told
+        # apart; name train splits.
+        kept = {r["state_hash"] for r in held}
+        for s in a.quotes_from:
+            if not (folder / f"{s}.turns.jsonl").exists():
+                sys.exit(f"{s}.turns.jsonl is not in {folder}")
+            if any(r["provenance"]["state_hash"] in kept for r in read(folder / f"{s}.jsonl")):
+                sys.exit(f"{s} labelled gate, validation or calibration states; quote train splits only")
+        quoted = quotes([t for s in a.quotes_from for t in read(folder / f"{s}.turns.jsonl")])
         drawn = unsupported(rows, labelled, quoted, set(a.types), a.n, a.seed, held)
     for row in drawn:
         append(out, row)

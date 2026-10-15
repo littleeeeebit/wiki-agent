@@ -5,6 +5,7 @@
 
 import json
 import socket
+import sys
 
 import pytest
 
@@ -16,6 +17,7 @@ import label
 import loop
 import notes
 import pool
+import store
 import train
 
 NOUL = {"type": "noul", "instructions": "Is the passage useful?"}
@@ -1515,3 +1517,34 @@ def test_unsupported_drops_the_passages_a_verifier_quoted_for_a_yes():
     assert {k: got["provenance"][k] for k in ("derived", "from", "dropped")} == {
         "derived": "unsupported", "from": "a", "dropped": ["p0"]}
     assert got["id"] == "a-unsupported" and list(got["questions"]) == ["coverage_r0"]
+
+
+def test_unsupported_quotes_only_train_splits(tmp_path, monkeypatch):
+    folder = tmp_path / "coverage"
+    passage = {"id": "p0", "heading": "Page", "text": "The cache holds keys for an hour."}
+    state = {"query": "q", "requirements": [{"id": "r0"}], "passages": [passage, {**passage, "id": "p1", "text": "x"}],
+             "complete_passages": ["p0", "p1"]}
+    store.append(folder / "train.candidates.jsonl", {"id": "a", "state": state, "state_hash": "a",
+                 "provenance": {"run": "a", "type": "partial"}, "questions": {"coverage_r0": {"kind": "coverage"}}})
+    store.append(folder / "train.jsonl", {"expected": {"coverage_r0": True}, "provenance": {"state_hash": "a"}})
+    store.append(folder / "calibration.candidates.jsonl", {"state": {"other": 1}, "state_hash": "c", "questions": {}})
+    said = {"json": {"verdicts": {"i0": {"answer": "yes", "evidence": "\"The cache holds keys for an hour.\""}}}}
+    for split, h in (("full1", "a"), ("full1-cal", "c")):
+        store.append(folder / f"{split}.turns.jsonl", said)
+        store.append(folder / f"{split}.jsonl", {"expected": {"coverage_r0": True}, "provenance": {"state_hash": h}})
+    monkeypatch.setattr(augment, "DATA", tmp_path)
+    monkeypatch.setattr(gate, "reserved", lambda: set())
+    monkeypatch.setattr(gate, "POOL", tmp_path / "pool.jsonl")
+
+    def run(split, *names):
+        monkeypatch.setattr(sys, "argv", ["augment.py", "unsupported", "5", "--split", split, "--types", "partial"]
+                            + (["--quotes-from", *names] if names else []))
+        augment.main()
+    with pytest.raises(SystemExit, match="train splits only"):
+        run("aug2", "full1", "full1-cal")
+    assert not (folder / "aug2.candidates.jsonl").exists()
+    with pytest.raises(SystemExit, match="go with unsupported"):
+        run("aug2")
+    run("aug2", "full1")
+    (got,) = store.read(folder / "aug2.candidates.jsonl")
+    assert got["provenance"]["dropped"] == ["p0"]
