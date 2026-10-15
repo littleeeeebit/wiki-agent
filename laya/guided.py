@@ -25,7 +25,8 @@ not show a guide helping: `.wiki/laya-insight-guide-probe.md`).
 
 Every model turn is kept in `<split>.turns.jsonl` under its prompt's name and text, model and
 payload, so a rerun replays the same rounds and pays only for turns it has not made; a failed
-turn is tried up to `ATTEMPTS` times and made again on a rerun, never replayed. A round with a
+turn is tried up to `ATTEMPTS` times and made again on a rerun, never replayed; a usage-policy
+refusal (`REFUSAL`) is not a failure but an empty reply, asked once and replayed. A round with a
 failed turn left settles nothing (no trial, label or lesson) and stops the run for a rerun;
 a lesson that fails stops it after its round. A split's guide and label files are bound to
 one setup (the three prompts' text, the models, effort, seed, round size, and the rows'
@@ -69,6 +70,7 @@ RULE_CHARS = 300
 LESSON_AT = notes.PAGE_AT
 SAMPLES = 20
 LABELLERS, VERIFIERS = 8, 4   # turns at once: a labeller turn takes ~10 s, a verifier batch ~60 s
+REFUSAL = "can't help with this"   # the host's usage-policy refusal, the same for a payload on every try
 PROMPTS = Path(__file__).resolve().parent / "prompts"
 VERIFY, LESSON = PROMPTS / "verify.md", PROMPTS / "lesson.md"
 
@@ -113,9 +115,15 @@ class Turns:
                         raise Spent(f"limit reached: {self.turns} turns this run, ${self.usd:.2f} in all")
                     self.turns += 1
                 got = self.call(prompt, payload, model, effort)
+                refused = REFUSAL in str(got.get("error") or "")
+                if refused:
+                    # The model declines this payload on every try: an empty reply, kept and
+                    # replayed, so a labeller's questions end `invalid` and the round goes on.
+                    got = {**got, "error": None, "json": {}}
                 error = got.get("error") or (None if ok is None or ok(got["json"]) else "malformed reply")
                 row = {"key": key, "prompt": prompt.name, "model": got.get("model"), "cost_usd": got.get("cost_usd"),
-                       **({"error": str(error)[:200]} if error else {"json": got["json"]})}
+                       **({"error": str(error)[:200]} if error else {"json": got["json"]}),
+                       **({"refused": True} if refused else {})}
                 with self.lock:
                     if got.get("cost_usd") is None:
                         self.unknown += 1
