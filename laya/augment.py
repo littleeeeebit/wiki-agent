@@ -25,8 +25,9 @@ def uncovered(rows: list[dict], labelled: list[dict], n: int, seed: int = 0, hel
     """At most `n` candidates, one per labelled state that has a covered (true) requirement,
     a passage from an `about` page and one from another page: the state without the `about`
     passages, asking only the questions that were true. Drawn with `seed`. A cut state that is
-    a near-duplicate of a `held` row (the gate, validation, calibration) is left out: dropping
-    passages can bring a train state close to one its source was far from."""
+    a near-duplicate of a `held` row (the gate, validation, calibration) or of one already
+    drawn is left out: dropping passages can bring a train state close to one its source was
+    far from."""
 
     near = gate.Near(held)
     covered = {}
@@ -53,7 +54,14 @@ def uncovered(rows: list[dict], labelled: list[dict], n: int, seed: int = 0, hel
                     "provenance": {**row["provenance"], "derived": "uncovered", "from": row["state_hash"],
                                    "dropped": sorted(drop)}})
     random.Random(seed).shuffle(out)
-    return [r for r in out if not near.found(r)][:n]
+    picked = []
+    for r in out:
+        if len(picked) == n:
+            break
+        if not near.found(r):   # two sources that differ only in the dropped pages cut to one state
+            picked.append(r)
+            near.add(r)
+    return picked
 
 
 def main() -> None:
