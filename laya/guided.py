@@ -203,9 +203,11 @@ def verify(turns: Turns, kind: str, chunk: list[dict], model: str, effort: str, 
 
 
 def kept(item: dict, verdict) -> bool:
+    # The verifier's own answer and confidence decide, not its verdict word: it says `unclear`
+    # when it can quote no evidence, which is every "no" that means something is absent, and
+    # reading that as a rejection dropped 983 agreed coverage "no"s (2026-10-15).
     v = valid(item["q"], verdict)
-    return (isinstance(verdict, dict) and verdict.get("verdict") == "accept" and v is not None
-            and v[0] == item["value"] and v[1] >= AGREE)
+    return v is not None and v[0] == item["value"] and v[1] >= AGREE
 
 
 def outcomes(turns: Turns, kind: str, batch: list[dict], tried: list[list[str]], labeller: str,

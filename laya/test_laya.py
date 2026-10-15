@@ -1261,6 +1261,16 @@ def test_guided_rows_come_from_candidates_with_a_generator_provenance_or_from_la
     assert lab == labelled(1)
 
 
+def test_an_agreed_absence_is_kept_though_the_verifier_has_no_evidence_to_quote():
+    import guided
+    item = {"q": NOUL, "value": False}
+    said = {"evidence": "none", "answer": "no", "verdict": "unclear"}
+    assert guided.kept(item, {**said, "confidence": 1.0})
+    assert not guided.kept(item, {**said, "confidence": 0.5})                     # unsure
+    assert not guided.kept(item, {**said, "answer": "yes", "confidence": 1.0})   # disagrees
+    assert not guided.kept(item, "unreliable")
+
+
 def test_a_turn_that_fails_is_tried_again_and_only_its_success_is_kept(folders):
     import guided
     call, made = guided_world()
