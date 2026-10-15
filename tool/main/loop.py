@@ -45,6 +45,9 @@ CLOUD_PROFILE = ChatSession.VERIFICATION_PROFILE
 CLOUD_TOOLS = ChatSession.VERIFICATION_TOOLS
 
 LOOPING = re.compile(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+")
+# A model input stops at 1 MiB, so one data file in a PR used to fail the whole round.
+# ponytail: per-file cap only; many mid-sized files can still sum past 1 MiB — cap the total if that happens.
+DIFF_FILE_LIMIT = 100_000
 
 
 class Why(str, enum.Enum):
@@ -377,6 +380,13 @@ def shortstat(path: Path, base: str, head: str, base_oid: str = "") -> str:
     return (done.stdout.strip() or "(no change)") if not done.returncode else f"(failed: {specs.said(done)})"
 
 
+def trimmed(diff: str, limit: int = DIFF_FILE_LIMIT) -> str:
+    """`diff` with every file over `limit` characters cut back to its header."""
+    return "".join(f if len(f) <= limit else
+                   f.split("\n@@", 1)[0] + f"\n(hunks left out: {len(f):,} characters — read the file itself)\n"
+                   for f in re.split(r"(?m)^(?=diff --git )", diff))
+
+
 profiled = review_contract.profiled
 
 
@@ -477,7 +487,7 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
     # Both reviewers have read/search tools, not a shell or GitHub connector.
     diff = specs.sh(["gh", "pr", "diff", str(pr)], path, 120)
     out += ["", f"## `gh pr diff {pr}`", "", "```diff",
-            diff.stdout.rstrip() if not diff.returncode else f"(failed: {specs.said(diff)})", "```"]
+            trimmed(diff.stdout).rstrip() if not diff.returncode else f"(failed: {specs.said(diff)})", "```"]
     out += ["", "## Report", "",
             "First line as above. Then one block per finding, opening `[P0|P1|P2] path:line — what / when / "
             "why`, with trigger, defect, impact and reproducible evidence under it, graded by the criteria "

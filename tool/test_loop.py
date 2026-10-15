@@ -1329,6 +1329,14 @@ def test_findings_that_do_not_shrink_bring_the_grouping_section(world):
     assert "## `gh pr diff 7`" in claude and "+the diff of #7" in claude
 
 
+def test_a_file_diff_over_the_limit_keeps_only_its_header():
+    small = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x\n+y\n"
+    big = "diff --git a/d.jsonl b/d.jsonl\nindex 0000000..1234567\n--- /dev/null\n+++ b/d.jsonl\n@@ -0,0 +1 @@\n" \
+        + "+" + "x" * 200 + "\n"
+    out = loop.trimmed(small + big, limit=150)
+    assert out.startswith(small) and "+++ b/d.jsonl\n(hunks left out:" in out and "x" * 200 not in out
+
+
 def test_four_loops_with_three_seats_leave_the_fourth_waiting(world):
     let_go = threading.Event()
 
