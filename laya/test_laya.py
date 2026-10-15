@@ -1262,6 +1262,16 @@ def test_guided_rows_come_from_candidates_with_a_generator_provenance_or_from_la
     assert lab == labelled(1)
 
 
+def test_an_agreed_absence_is_kept_though_the_verifier_has_no_evidence_to_quote():
+    import guided
+    item = {"q": NOUL, "value": False}
+    said = {"evidence": "none", "answer": "no", "verdict": "unclear"}
+    assert guided.kept(item, {**said, "confidence": 1.0})
+    assert not guided.kept(item, {**said, "confidence": 0.5})                     # unsure
+    assert not guided.kept(item, {**said, "answer": "yes", "confidence": 1.0})   # disagrees
+    assert not guided.kept(item, "unreliable")
+
+
 def test_a_turn_that_fails_is_tried_again_and_only_its_success_is_kept(folders):
     import guided
     call, made = guided_world()
@@ -1420,6 +1430,10 @@ def test_a_split_written_with_another_setup_is_not_added_to(folders, monkeypatch
     guided.run("useful", "pilot", gold, **common)                           # an answer to score against is not setup
     with pytest.raises(SystemExit, match="another setup"):
         guided.run("useful", "pilot", rows, **{**common, "verifier": "opus"})
+    with monkeypatch.context() as m:   # the same turns kept under another rule are other labels and lessons
+        m.setattr(guided, "KEEP_RULE", guided.KEEP_RULE + 1)
+        with pytest.raises(SystemExit, match="another setup"):
+            guided.run("useful", "pilot", rows, **common)
     edited = folders / "verify.md"
     edited.write_text(guided.VERIFY.read_text(encoding="utf-8") + "\nOne more rule.\n", encoding="utf-8")
     monkeypatch.setattr(guided, "VERIFY", edited)
