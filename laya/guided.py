@@ -29,8 +29,9 @@ turn is tried up to `ATTEMPTS` times and made again on a rerun, never replayed; 
 refusal (`REFUSAL`) is not a failure but an empty reply, asked once and replayed. A round with a
 failed turn left settles nothing (no trial, label or lesson) and stops the run for a rerun;
 a lesson that fails stops it after its round. A split's guide and label files are bound to
-one setup (the three prompts' text, the models, effort, seed, round size, and the rows'
-states and questions in order, not their `expected`): a run with another refuses to add to them.
+one setup (the three prompts' text, the models, effort, seed, round size, `KEEP_RULE`, and the
+rows' states and questions in order, not their `expected`): a run with another refuses to add to
+them, since the same turns under another keep rule are other labels and lessons.
 `max_usd` caps the whole file's spending, failed calls and reruns included. Files, under
 `laya/data/<kind>/`:
 
@@ -62,6 +63,7 @@ import notes
 from store import append, read
 
 AGREE = label.AGREE
+KEEP_RULE = 2   # `kept`'s version, part of a split's setup: bump it whenever `kept` decides otherwise
 ATTEMPTS = 3
 BATCH = 20
 MIRRORS = 2
@@ -290,13 +292,13 @@ def run(kind: str, split: str, rows: list[dict], *, labeller: str, verifier: str
     # meets labels or trials an edited prompt, another model or other rows would not give.
     setup = hashlib.sha256(json.dumps(
         [[hashlib.sha256(p.read_bytes()).hexdigest() for p in (label.PROMPT, VERIFY, LESSON)],
-         labeller, verifier, effort, seed, per_round,
+         labeller, verifier, effort, seed, per_round, KEEP_RULE,
          # The questions as pairs: their order makes the verifier's batches, and sorted keys would lose it.
          [[r["provenance"]["state_hash"], r["state"], list(r["questions"].items())] for r in rows]], sort_keys=True,
         ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
     if ({g.get("setup") for g in guides} | {r["provenance"].get("setup") for r in out}) - {setup}:
         raise SystemExit(f"{split} under {folder} was written with another setup (prompts, models, effort, seed, "
-                         "per-round or rows); use another split name")
+                         "per-round, keep rule or rows); use another split name")
     written = {r["provenance"]["state_hash"] for r in out}
     noted = notes.noted(kind)
     # Every random draw has its own seed, so a replayed round draws the same whatever an

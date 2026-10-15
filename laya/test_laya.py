@@ -1429,6 +1429,10 @@ def test_a_split_written_with_another_setup_is_not_added_to(folders, monkeypatch
     guided.run("useful", "pilot", gold, **common)                           # an answer to score against is not setup
     with pytest.raises(SystemExit, match="another setup"):
         guided.run("useful", "pilot", rows, **{**common, "verifier": "opus"})
+    with monkeypatch.context() as m:   # the same turns kept under another rule are other labels and lessons
+        m.setattr(guided, "KEEP_RULE", guided.KEEP_RULE + 1)
+        with pytest.raises(SystemExit, match="another setup"):
+            guided.run("useful", "pilot", rows, **common)
     edited = folders / "verify.md"
     edited.write_text(guided.VERIFY.read_text(encoding="utf-8") + "\nOne more rule.\n", encoding="utf-8")
     monkeypatch.setattr(guided, "VERIFY", edited)
