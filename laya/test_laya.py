@@ -8,6 +8,7 @@ import socket
 
 import pytest
 
+import augment
 import gate
 import generate
 import kinds
@@ -1437,3 +1438,39 @@ def test_a_verifier_that_accepts_planted_wrong_answers_keeps_nothing():
     assert (only["kept"], only["unreliable"], only["rejected"]) == (0, 20, 0)
     assert sum(name == "verify.md" for name, _ in made) == 2   # checked once more, reshuffled, then dropped
     assert sum(n["category"] == "verifier_unreliable" for n in notes.ledger("useful")) == 20
+
+
+def test_uncovered_drops_the_about_pages_and_asks_only_what_was_covered():
+    def passage(pid, page):
+        return {"id": pid, "heading": f"{page} > Part", "text": f"{page} text"}
+
+    def row(h, about, pages, complete):
+        state = {"query": "q", "requirements": [{"id": "r0"}, {"id": "r1"}],
+                 "passages": [passage(f"p{i}", page) for i, page in enumerate(pages)], "complete_passages": complete}
+        return {"id": h, "state": state, "state_hash": h, "provenance": {"run": h, "about": about},
+                "questions": {"coverage_r0": {"kind": "coverage"}, "coverage_r1": {"kind": "coverage"}}}
+
+    rows = [row("a", ["Hash"], ["Hash", "Trees", "Hash"], ["p0", "p1", "p2"]),
+            row("b", ["Hash"], ["Hash"], ["p0"]),                    # nothing left once Hash goes
+            row("c", ["Hash"], ["Trees", "Graphs"], ["p0", "p1"]),   # nothing from the about page
+            row("d", [], ["Hash", "Trees"], ["p0", "p1"]),           # no about page recorded
+            row("e", ["Hash"], ["Hash", "Trees"], ["p0", "p1"])]     # no covered requirement
+    labelled = [{"expected": {"coverage_r0": True, "coverage_r1": False}, "provenance": {"state_hash": h}}
+                for h in "abcd"] + [{"expected": {"coverage_r0": False}, "provenance": {"state_hash": "e"}}]
+    (got,) = augment.uncovered(rows, labelled, 10)
+    assert [p["id"] for p in got["state"]["passages"]] == ["p1"] and got["state"]["complete_passages"] == ["p1"]
+    assert list(got["questions"]) == ["coverage_r0"]                     # only the requirement that was covered
+    assert got["state_hash"] == pool.digest(got["state"]) != "a"
+    assert {k: got["provenance"][k] for k in ("derived", "from", "dropped")} == {
+        "derived": "uncovered", "from": "a", "dropped": ["p0", "p2"]}
+    assert rows[0]["state"]["complete_passages"] == ["p0", "p1", "p2"]   # the source row is untouched
+    assert len(augment.uncovered(rows * 3, labelled, 2)) == 1            # one state however many sources cut to it
+    many = [row(f"m{i}", ["Hash"], ["Hash", f"Page{i} Topic{i}", f"Area{i} Field{i}"], ["p0", "p1", "p2"])
+            for i in range(3)]
+    covered = [{"expected": {"coverage_r0": True}, "provenance": {"state_hash": f"m{i}"}} for i in range(3)]
+    assert len(augment.uncovered(many, covered, 3)) == 3 and len(augment.uncovered(many, covered, 2)) == 2   # at most n
+    # A held state matching "a"'s cut, not "a" itself: the cut is left out.
+    held = {"state": dict(got["state"]), "questions": {}}
+    assert not gate.Near([held]).found(rows[0])
+    assert augment.uncovered(rows, labelled, 10, held=[held]) == []
+    assert len(augment.uncovered(rows, labelled, 10, held=[{"state": {"other": "far"}, "questions": {}}])) == 1
