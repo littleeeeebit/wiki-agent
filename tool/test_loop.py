@@ -21,7 +21,7 @@ from unittest.mock import patch
 import pytest
 
 import debt
-from agent import chat_session
+from agent import chat_session, read_tools
 from agent.chat_session import Event
 from main import channels as chat_channels
 from main import app as main_app
@@ -1327,6 +1327,54 @@ def test_findings_that_do_not_shrink_bring_the_grouping_section(world):
     assert "## `gh pr diff 7`" in loop.instruction(spec, path, 1, head, "main", True)
     claude = loop.instruction(spec, path, 1, head, "main", False)
     assert "## `gh pr diff 7`" in claude and "+the diff of #7" in claude
+
+
+def block(name: str, body: str) -> str:
+    return f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1 +1 @@\n{body}\n"
+
+
+def test_a_diff_over_its_room_shortens_its_largest_files_and_names_their_lines(monkeypatch):
+    small, big = block("a.py", "-x\n+y"), block("d.jsonl", "+" + "x" * 200)
+    monkeypatch.setattr(loop, "DIFF_FILE_LIMIT", 150)
+    monkeypatch.setattr(loop, "DIFF_KEPT", 60)
+    out = loop.trimmed(small + big, [(1, 6), (7, 11)], "read them with `pr_diff`", 10_000)
+    assert out.startswith(small) and "+++ b/d.jsonl\n@@ -1 +1 @@\n" in out and "x" * 200 not in out
+    assert "lines 7–11 of the whole diff; read them with `pr_diff`" in out
+    # Each file under the per-file limit, together over the room: the largest go first.
+    monkeypatch.setattr(loop, "DIFF_FILE_LIMIT", 100_000)
+    parts = [block(f"f{i}.txt", "+" + "y" * (1000 * (i + 1))) for i in range(4)]
+    spans = [(i * 10 + 1, i * 10 + 5) for i in range(4)]
+    out = loop.trimmed("".join(parts), spans, "how", 4_000)
+    assert len(out) <= 4_000 and out.startswith(parts[0] + parts[1]) and "lines 31–35" in out
+    # Over the room even then: headers alone.
+    assert len(loop.trimmed("".join(parts), spans, "how", 1_000)) <= 1_000
+
+
+def test_the_instruction_stays_inside_the_model_input_and_saves_the_whole_diff(world, monkeypatch):
+    spec = pr_spec(world, "fix-g", 7)
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    diff = "".join(block(f"file-{i}.txt", "+" + "x" * 90_000) for i in range(12))
+    real = specs.sh
+    monkeypatch.setattr(specs, "sh", lambda cmd, *a, **k: subprocess.CompletedProcess(cmd, 0, diff, "")
+                        if cmd[:3] == ["gh", "pr", "diff"] else real(cmd, *a, **k))
+    for codex in (True, False):
+        message = loop.instruction(spec, path, 1, head, "main", codex)
+        assert len(message) <= loop.DIFF_ROOM and "of the whole diff" in message
+    saved = read_tools.call(path, "pr_diff", {"offset": 1, "limit": 3})
+    lines = [line for f in read_tools.files(diff) for line in read_tools.wrapped(f)]
+    assert saved.startswith("1: diff --git a/file-0.txt b/file-0.txt") and f"전체 {len(lines)}줄" in saved
+    assert "".join(lines[4:]).replace("~", "").startswith("+" + "x" * 90_000)   # the long line, whole across pieces
+    # Cloud verification's Codex has no pr_diff: it is told the file.
+    monkeypatch.setattr(loop.verification, "cloud", lambda spec: True)
+    cloud = loop.instruction(spec, path, 1, head, "main", True)
+    assert "`pr_diff`" not in cloud and str(read_tools.diff_file(path).resolve()) in cloud
+    monkeypatch.undo()
+    # A round whose diff cannot be had leaves no earlier round's diff to read.
+    monkeypatch.setattr(specs, "sh", lambda cmd, *a, **k: subprocess.CompletedProcess(cmd, 1, "", "gh is down")
+                        if cmd[:3] == ["gh", "pr", "diff"] else real(cmd, *a, **k))
+    assert "(failed:" in loop.instruction(spec, path, 2, head, "main", True)
+    with pytest.raises(ValueError):
+        read_tools.call(path, "pr_diff", {})
 
 
 def test_four_loops_with_three_seats_leave_the_fourth_waiting(world):

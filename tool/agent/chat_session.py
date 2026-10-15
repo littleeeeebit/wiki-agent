@@ -515,7 +515,8 @@ class ChatSession:
                                 for name in config.get("mcp_servers", {})}
             if self.source_only:
                 params["developerInstructions"] = self.system + (
-                    "\nUse repo_read, repo_glob and repo_grep for source inspection. Shell, connectors and "
+                    "\nUse repo_read, repo_glob and repo_grep for source inspection, and pr_diff for the whole "
+                    "PR diff when the instruction shortened a file's. Shell, connectors and "
                     "permission requests are unavailable. The server supplies the diff and executes checks; "
                     "never request escalated permissions or claim unexecuted tests passed.")
             else:

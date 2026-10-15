@@ -502,7 +502,7 @@ say({"id": m["id"], "result": {"config": {"mcp_servers": {"private": {"enabled":
 m = read(); p = m["params"]
 assert p["approvalPolicy"] == "never" and p["sandbox"] == "read-only"
 assert p["config"]['mcp_servers.private.enabled'] is False
-assert {t["name"] for t in p["dynamicTools"]} == {"repo_read", "repo_glob", "repo_grep"}
+assert {t["name"] for t in p["dynamicTools"]} == {"repo_read", "repo_glob", "repo_grep", "pr_diff"}
 assert all(t["type"] == "function" for t in p["dynamicTools"])
 say({"id": m["id"], "result": {"thread": {"id": "source-1"}}})
 m = read(); assert m["params"]["approvalPolicy"] == "never"
@@ -558,6 +558,20 @@ def test_source_tools_read_tracked_text_but_not_private_ignored_or_outside_files
         # A tracked symlink/junction cannot escape the worktree.
         with pytest.raises(ValueError):
             read_tools.call(tree, "repo_read", {"path": "source.py"})
+
+
+def test_the_saved_pr_diff_reads_back_whole_lines_deleted_files_and_carriage_returns(tree):
+    with pytest.raises(ValueError):                       # no round has saved one yet
+        read_tools.call(tree, "pr_diff", {})
+    gone = "diff --git a/old.py b/old.py\ndeleted file mode 100644\n--- a/old.py\n+++ /dev/null\n" \
+           "@@ -1,2 +0,0 @@\n-removed\r\n-" + "z" * 4_500 + "\n"
+    kept = "diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-x\n+y\n"
+    spans = read_tools.save_diff(tree, gone + kept)
+    assert spans == [(1, 9), (10, 15)]                    # 4,501 characters wrap to three lines
+    out = read_tools.call(tree, "pr_diff", {"offset": 6, "limit": 5})
+    assert "6: -removed\r" in out and f"7: -{'z' * 1999}" in out and f"9: ~{'z' * 502}" in out
+    assert "10: diff --git a/a.py b/a.py" in out and "(전체 15줄; 다음 offset=11)" in out
+    assert "wiki-review" not in read_tools.call(tree, "repo_glob", {"pattern": "*"})   # never in the source tree
 
 
 CODEX_VERIFICATION = '''import json, sys
