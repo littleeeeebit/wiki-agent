@@ -1304,6 +1304,29 @@ def test_turns_count_failed_calls_and_make_one_call_per_key_and_prompt_text(fold
     assert turns(prompt, {"same": 1}, "sol") == {"text": "new"}         # an edited prompt is asked again
 
 
+def test_a_refused_turn_is_an_empty_reply_asked_once_and_replayed(folders):
+    import guided
+    made = []
+
+    def refusing(prompt, payload, model, effort):
+        made.append(payload)
+        return {"model": model, "cost_usd": 0.01, "error": "RuntimeError: API Error: Haiku 5.5 can't help with this.",
+                "json": {}}
+
+    path = folders / "r.jsonl"
+    assert guided.Turns(path, refusing, 100, 1)(guided.label.PROMPT, {"s": 1}, "haiku") == {}
+    assert guided.Turns(path, refusing, 100, 1)(guided.label.PROMPT, {"s": 1}, "haiku") == {}
+    assert len(made) == 1                                                # not retried, then replayed
+    with pytest.raises(guided.Spent):                                    # a lesson needs rules: still a failure
+        guided.Turns(path, refusing, 100, 0.03, log=lambda *_: None)(guided.LESSON, {"s": 2}, "sol",
+                                                                     ok=lambda j: isinstance(j.get("rules"), list))
+    row = {"state": "s", "questions": {"n": {"type": "noul", "kind": "useful", "instructions": "q?"}},
+           "provenance": {"state_hash": "h", "source": "c"}}
+    turns = guided.Turns(folders / "o.jsonl", refusing, 100, 1)
+    res = guided.outcomes(turns, "useful", [row], [[]], "haiku", "sol", "high", "0")
+    assert res[0][("h", "n")][0] == "invalid"                            # the round settles without it
+
+
 def test_a_round_with_a_failed_turn_settles_nothing_until_a_rerun(folders):
     import guided
     call, made = guided_world()
