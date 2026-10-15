@@ -1,11 +1,17 @@
 """Codex's shell-free counterpart of Claude's Read, Glob and Grep."""
 
 import fnmatch
+import re
 import subprocess
 from pathlib import Path
 
 
-PROFILE = "repo-read-v1"
+# A saved Codex thread keeps the tools it started with: a new tool is a new profile.
+PROFILE = "repo-read-v2"
+# The whole PR diff of the current round, under the worktree's git dir: never tracked, never in
+# the source tree. Lines are wrapped at WRAP so every one is readable whole.
+DIFF = "wiki-review/pr.diff"
+WRAP = 2_000
 SPECS = []
 for name, description, properties, required in (
     ("repo_read", "Read a tracked UTF-8 source file, with numbered lines. No shell or private files.",
@@ -15,6 +21,9 @@ for name, description, properties, required in (
      {"pattern": {"type": "string"}}, ["pattern"]),
     ("repo_grep", "Search tracked UTF-8 source for literal text, returning path:line matches.",
      {"text": {"type": "string"}, "pattern": {"type": "string"}}, ["text"]),
+    ("pr_diff", "Read the whole PR diff of this round, with numbered lines; the instruction names the lines "
+     "of every file it shortened. A line starting with ~ continues the line before it.",
+     {"offset": {"type": "integer", "minimum": 1}, "limit": {"type": "integer", "minimum": 1, "maximum": 500}}, []),
 ):
     SPECS.append({"type": "function", "name": name, "description": description,
                   "inputSchema": {"type": "object", "properties": properties,
@@ -27,6 +36,49 @@ def private(path: Path) -> bool:
             or (name.startswith(".env") and not name.endswith((".example", ".sample", ".template")))
             or name.endswith((".pem", ".key", ".p12", ".pfx"))
             or name in {"auth.json", "credentials.json", "sandbox_users.json", "id_rsa", "id_ed25519"})
+
+
+def files(diff: str) -> list[str]:
+    """`diff` per file. A diff line inside a hunk starts with `+`, `-`, ` ` or `\\`, never `diff --git`."""
+    return [f for f in re.split(r"(?m)^(?=diff --git )", diff) if f]
+
+
+def wrapped(text: str) -> list[str]:
+    """`text`'s lines, a line over WRAP characters split into pieces of at most WRAP; a piece that
+    continues a line starts with `~`, which no unified-diff line does."""
+    out = []
+    for line in text.removesuffix("\n").split("\n"):
+        out.append(line[:WRAP])
+        out += ["~" + line[i:i + WRAP - 1] for i in range(WRAP, len(line), WRAP - 1)]
+    return out
+
+
+def diff_file(repo: Path) -> Path:
+    where = subprocess.run(["git", "-C", str(repo), "rev-parse", "--git-path", DIFF],
+                           capture_output=True, text=True, timeout=10, check=True).stdout.strip()
+    return Path(where) if Path(where).is_absolute() else repo / where
+
+
+def save_diff(repo: Path, diff: str) -> list[tuple[int, int]]:
+    """Write `diff` where `pr_diff` reads it; each file's first and last line there."""
+    lines, spans = [], []
+    for f in files(diff):
+        w = wrapped(f)
+        spans.append((len(lines) + 1, len(lines) + len(w)))
+        lines += w
+    target = diff_file(repo)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("w", encoding="utf-8", newline="\n") as stream:
+        stream.write("\n".join(lines) + "\n")
+    return spans
+
+
+def numbered(content: list[str], args: dict) -> str:
+    start, limit = args.get("offset", 1), args.get("limit", 200)
+    out = [f"{i}: {line}" for i, line in enumerate(content, 1) if start <= i < start + limit]
+    out.append(f"(전체 {len(content)}줄; 다음 offset={start + limit})")
+    result = "\n".join(out)
+    return result if len(result) <= 60_000 else result[:60_000] + "\n(출력 제한: limit을 줄여 다시 읽어라)"
 
 
 def call(repo: Path, tool: str, args: dict) -> str:
@@ -44,6 +96,13 @@ def call(repo: Path, tool: str, args: dict) -> str:
         elif type(value) is not int or not 1 <= value <= (500 if key == "limit" else 10_000_000):
             raise ValueError("줄 범위가 잘못됐다")
     root = repo.resolve()
+    if tool == "pr_diff":
+        try:
+            # Bytes, so a carriage return inside a line does not move the line numbers given.
+            content = diff_file(root).read_bytes().decode("utf-8").removesuffix("\n").split("\n")
+        except (OSError, subprocess.SubprocessError) as error:
+            raise ValueError("이번 회차의 PR diff 가 없다") from error
+        return numbered(content, args)
     inventory = subprocess.run(["git", "-C", str(root), "ls-files", "-z"],
                                capture_output=True, timeout=10, check=True).stdout.decode("utf-8").split("\0")
     paths = {name: root / name for name in inventory if name and not private(Path(name))}
@@ -65,12 +124,7 @@ def call(repo: Path, tool: str, args: dict) -> str:
         path = next((p for p in paths.values() if p.absolute() == target), None)
         if path is None:
             raise ValueError("추적된 소스 파일만 읽을 수 있다")
-        content = lines(path)
-        start, limit = args.get("offset", 1), args.get("limit", 200)
-        out = [f"{i}: {line}" for i, line in enumerate(content, 1) if start <= i < start + limit]
-        out.append(f"(전체 {len(content)}줄; 다음 offset={start + limit})")
-        result = "\n".join(out)
-        return result if len(result) <= 60_000 else result[:60_000] + "\n(출력 제한: limit을 줄여 다시 읽어라)"
+        return numbered(lines(path), args)
     out = []
     for name, path in sorted(paths.items()):
         if not fnmatch.fnmatchcase(name, args.get("pattern", "*")):

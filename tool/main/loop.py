@@ -20,7 +20,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 import translate
-from agent import ChatSession
+from agent import ChatSession, read_tools
 from common import errorlog, worktree_home
 from common import settings as settings_file
 from common.budget import Budget, Cancelled, Exhausted
@@ -45,9 +45,12 @@ CLOUD_PROFILE = ChatSession.VERIFICATION_PROFILE
 CLOUD_TOOLS = ChatSession.VERIFICATION_TOOLS
 
 LOOPING = re.compile(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+")
-# A model input stops at 1 MiB, so one data file in a PR used to fail the whole round.
-# ponytail: per-file cap only; many mid-sized files can still sum past 1 MiB — cap the total if that happens.
+# A model input stops at 1,048,576 characters, so one data file in a PR used to fail the whole
+# round. The diff gets what the rest of the instruction leaves of DIFF_ROOM; a shortened file's
+# whole diff stays readable (`read_tools.DIFF`).
+DIFF_ROOM = 900_000
 DIFF_FILE_LIMIT = 100_000
+DIFF_KEPT = 10_000
 
 
 class Why(str, enum.Enum):
@@ -380,11 +383,33 @@ def shortstat(path: Path, base: str, head: str, base_oid: str = "") -> str:
     return (done.stdout.strip() or "(no change)") if not done.returncode else f"(failed: {specs.said(done)})"
 
 
-def trimmed(diff: str, limit: int = DIFF_FILE_LIMIT) -> str:
-    """`diff` with every file over `limit` characters cut back to its header."""
-    return "".join(f if len(f) <= limit else
-                   f.split("\n@@", 1)[0] + f"\n(hunks left out: {len(f):,} characters — read the file itself)\n"
-                   for f in re.split(r"(?m)^(?=diff --git )", diff))
+def trimmed(diff: str, spans: list[tuple[int, int]], how: str, budget: int) -> str:
+    """`diff` within `budget` characters. A file over `DIFF_FILE_LIMIT`, then the largest others
+    until the rest fits, keep their header and the start of their hunks and name their lines
+    (`spans`) in the whole diff saved for the reviewer, read as `how` says."""
+
+    parts = read_tools.files(diff)
+
+    def short(i: int, keep: int) -> str:
+        head, at, hunks = parts[i].partition("\n@@")
+        shown = "\n".join(line[:read_tools.WRAP] for line in (at + hunks)[:keep].split("\n")[:-1])
+        return (f"{head[:read_tools.WRAP]}{shown}\n(shortened: {len(parts[i]):,} characters in all — lines "
+                f"{spans[i][0]}–{spans[i][1]} of the whole diff; {how})\n")
+
+    for keep in (DIFF_KEPT, 0):
+        # ponytail: a PR of thousands of files can stay over the budget with headers alone
+        shorts = [short(i, keep) for i in range(len(parts))]
+        cut = {i for i, f in enumerate(parts) if len(f) > DIFF_FILE_LIMIT}
+        total = sum(len(shorts[i]) if i in cut else len(f) for i, f in enumerate(parts))
+        for i in sorted(range(len(parts)), key=lambda i: -len(parts[i])):
+            if total <= budget:
+                break
+            if i not in cut and len(shorts[i]) < len(parts[i]):
+                cut.add(i)
+                total += len(shorts[i]) - len(parts[i])
+        if total <= budget:
+            break
+    return "".join(shorts[i] if i in cut else f for i, f in enumerate(parts))
 
 
 profiled = review_contract.profiled
@@ -486,15 +511,23 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
                 "first."]
     # Both reviewers have read/search tools, not a shell or GitHub connector.
     diff = specs.sh(["gh", "pr", "diff", str(pr)], path, 120)
-    out += ["", f"## `gh pr diff {pr}`", "", "```diff",
-            trimmed(diff.stdout).rstrip() if not diff.returncode else f"(failed: {specs.said(diff)})", "```"]
-    out += ["", "## Report", "",
-            "First line as above. Then one block per finding, opening `[P0|P1|P2] path:line — what / when / "
-            "why`, with trigger, defect, impact and reproducible evidence under it, graded by the criteria "
-            "under `Review profile`. Then the `finding-meta` block, one entry per finding; `existing_id` only "
-            "from `Known findings`. With nothing wrong, the one line `새 발견 없음` and no block. The last line is "
-            "exactly `머지 허용`, or `머지 불가 — <reason>`."]
-    return "\n".join(out) + "\n"
+    report = ["```", "", "## Report", "",
+              "First line as above. Then one block per finding, opening `[P0|P1|P2] path:line — what / when / "
+              "why`, with trigger, defect, impact and reproducible evidence under it, graded by the criteria "
+              "under `Review profile`. Then the `finding-meta` block, one entry per finding; `existing_id` only "
+              "from `Known findings`. With nothing wrong, the one line `새 발견 없음` and no block. The last line is "
+              "exactly `머지 허용`, or `머지 불가 — <reason>`."]
+    out += ["", f"## `gh pr diff {pr}`", "", "```diff"]
+    if diff.returncode:
+        out.append(f"(failed: {specs.said(diff)})")
+    else:
+        spans = read_tools.save_diff(path, diff.stdout)
+        how = ("read them with `pr_diff`" if codex else
+               f"read them with Read on `{read_tools.diff_file(path).resolve()}`; a line starting with ~ "
+               "continues the line before it")
+        room = DIFF_ROOM - len("\n".join(out + report)) - 2
+        out.append(trimmed(diff.stdout, spans, how, room).rstrip())
+    return "\n".join(out + report) + "\n"
 
 
 def fixing(n: int, findings: list[dict], said: str) -> str:
