@@ -14,20 +14,29 @@ RTX 3080.
 - `laya.train.finetune` with `option_layout="parallel"`, so option order
   does not matter (L2), if stage 1 found its requirements met; otherwise
   the default layout with options shuffled per example. fp16, gradient
-  checkpointing, micro-batch 4 with 16 accumulation steps (the notebook's
-  effective batch of 64) to fit the L4.
+  checkpointing, micro-batch 4 with 16 accumulation steps (an effective
+  batch of 64) to fit the L4; `coverage` takes 1 with 64 (`MICRO_BATCH`).
+  `finetune` scores `eval_data` 16 questions a batch in FP32 whatever the
+  micro-batch, so a one-question kind's validation is scored only by
+  `score` (`Agent.predict`), not inside `finetune`.
 - `max_len` per kind: the smallest of 1,024, 2,048 or 4,096 that holds 95%
   of the kind's state-plus-head lengths from stage 1 (`useful`: 2,048, p95
-  1,396). Longer states follow stage 1's length rule (TypeSafe, else
+  1,396). On the labelled splits (2026-10-15) the other retrieval kinds are
+  277–684 at p95, so 1,024. `coverage` reads every passage: 4,844 at p95,
+  40% over 4,096, so it takes ModernBERT's whole 8,192 (owner, 2026-10-15).
+  Longer states follow stage 1's length rule (TypeSafe, else
   `unavailable`); no state is cut, so a question over it is left out of
   training and scoring alike.
-- Colab. `python laya/train.py pack <kind>` zips `laya/`'s code with the
-  kind's labelled splits, and `laya/packed.json` with the commit and the
-  splits' hashes; `laya/notebooks/train.ipynb` (Korean, for the owner)
-  unpacks it from Drive, installs `laya` 0.4.6, scores both published
-  checkpoints zero-shot at the reviewed commit, fine-tunes the better one,
-  and saves the checkpoint (with `laya-run.json`) back to Drive. After
-  every step it rewrites a small result zip on Drive, so a failed run
+- Colab. `python laya/train.py pack <kind>...` zips `laya/`'s code with the
+  kinds' labelled splits as `laya/data/colab.zip`, and `laya/packed.json`
+  with the kinds in training order, the commit and the splits' hashes;
+  `laya/notebooks/train.ipynb` (Korean, for the owner) unpacks it from
+  Drive, installs `laya` 0.4.6 and takes each kind in turn: it scores both
+  published checkpoints zero-shot at the reviewed commit, fine-tunes the
+  better one, and saves the chosen checkpoint (with `laya-run.json`) back
+  to Drive. A kind that fails leaves its error in its result zip and the
+  next kind starts. After every step it rewrites the kind's small result
+  zip on Drive, so a failed run
   still leaves one: `log.txt` (every step's output and traceback),
   `results.json` (environment, `packed.json`, data counts, accuracies,
   seconds per step), `predictions.jsonl` (each validation question's
@@ -52,8 +61,10 @@ RTX 3080.
   0.65, log loss 0.58); 2 epochs fitted 1.84 and was 0.94 accurate on the
   113 questions at 0.8 or above (AUROC 0.78, log loss 0.49). With 2, 3
   and 4 epochs chosen by log loss, 2 won again (0.489; 3 epochs 0.492,
-  temperature 3.88). The experiments are recorded in the local wiki's
-  `laya` pages.
+  temperature 3.88). The sweep after it chose 3 epochs with label smoothing
+  0.1 (log loss 0.471), with 2 epochs at 0.1 next (0.484), so the
+  nine-kind run trains those two per kind. The experiments are recorded in
+  the local wiki's `laya` pages.
 - `useful` first, end to end through stage 6, before the other kinds; each
   of those starts once it has at least 100 production states.
 - Code: `laya/train.py` and `laya/notebooks/train.ipynb`.
