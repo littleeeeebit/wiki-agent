@@ -1488,3 +1488,30 @@ def test_uncovered_drops_the_about_pages_and_asks_only_what_was_covered():
     assert not gate.Near([held]).found(rows[0])
     assert augment.uncovered(rows, labelled, 10, held=[held]) == []
     assert len(augment.uncovered(rows, labelled, 10, held=[{"state": {"other": "far"}, "questions": {}}])) == 1
+
+
+def test_unsupported_drops_the_passages_a_verifier_quoted_for_a_yes():
+    turns = [{"json": {"verdicts": {
+        "i0": {"answer": "yes", "evidence": "\"The cache   holds keys for an hour\" ... \"short\""},
+        "i1": {"answer": "no", "evidence": "\"Trees grow from the root upwards\""},     # not a yes
+        "i2": {"answer": "yes", "evidence": "none"}}}},
+        {"json": {"rules": ["a lesson turn"]}}]
+    assert augment.quotes(turns) == {"The cache holds keys for an hour"}         # "short" is under QUOTE
+
+    def row(h, kind, texts):
+        state = {"query": "q", "requirements": [{"id": "r0"}],
+                 "passages": [{"id": f"p{i}", "heading": "Page", "text": t} for i, t in enumerate(texts)],
+                 "complete_passages": [f"p{i}" for i in range(len(texts))]}
+        return {"id": h, "state": state, "state_hash": h, "provenance": {"run": h, "type": kind},
+                "questions": {"coverage_r0": {"kind": "coverage"}}}
+
+    rows = [row("a", "partial", ["Note. The cache holds keys\nfor an hour.","Trees grow from the root upwards."]),
+            row("b", "answered", ["The cache holds keys for an hour.", "Other text entirely."]),    # a type not asked
+            row("c", "partial", ["The cache holds keys for an hour."]),                          # nothing left
+            row("d", "partial", ["Nothing quoted here at all.", "Nor here."])]                   # nothing quoted
+    labelled = [{"expected": {"coverage_r0": True}, "provenance": {"state_hash": h}} for h in "abcd"]
+    (got,) = augment.unsupported(rows, labelled, augment.quotes(turns), {"partial"}, 10)
+    assert [p["id"] for p in got["state"]["passages"]] == ["p1"] and got["state"]["complete_passages"] == ["p1"]
+    assert {k: got["provenance"][k] for k in ("derived", "from", "dropped")} == {
+        "derived": "unsupported", "from": "a", "dropped": ["p0"]}
+    assert got["id"] == "a-unsupported" and list(got["questions"]) == ["coverage_r0"]
