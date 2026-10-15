@@ -1465,3 +1465,8 @@ def test_uncovered_drops_the_about_pages_and_asks_only_what_was_covered():
         "derived": "uncovered", "from": "a", "dropped": ["p0", "p2"]}
     assert rows[0]["state"]["complete_passages"] == ["p0", "p1", "p2"]   # the source row is untouched
     assert len(augment.uncovered(rows * 3, labelled, 2)) == 2            # at most n
+    # A held state matching "a"'s cut, not "a" itself: the cut is left out.
+    held = {"state": dict(got["state"]), "questions": {}}
+    assert not gate.Near([held]).found(rows[0])
+    assert augment.uncovered(rows, labelled, 10, held=[held]) == []
+    assert len(augment.uncovered(rows, labelled, 10, held=[{"state": {"other": "far"}, "questions": {}}])) == 1

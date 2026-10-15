@@ -14,17 +14,21 @@ import argparse
 import random
 import sys
 
+import gate
 from pool import digest
 from store import append, read
 
 from label import DATA
 
 
-def uncovered(rows: list[dict], labelled: list[dict], n: int, seed: int = 0) -> list[dict]:
+def uncovered(rows: list[dict], labelled: list[dict], n: int, seed: int = 0, held=()) -> list[dict]:
     """At most `n` candidates, one per labelled state that has a covered (true) requirement,
     a passage from an `about` page and one from another page: the state without the `about`
-    passages, asking only the questions that were true. Drawn with `seed`."""
+    passages, asking only the questions that were true. Drawn with `seed`. A cut state that is
+    a near-duplicate of a `held` row (the gate, validation, calibration) is left out: dropping
+    passages can bring a train state close to one its source was far from."""
 
+    near = gate.Near(held)
     covered = {}
     for r in labelled:
         yes = [q for q, v in r["expected"].items() if v is True]
@@ -49,7 +53,7 @@ def uncovered(rows: list[dict], labelled: list[dict], n: int, seed: int = 0) -> 
                     "provenance": {**row["provenance"], "derived": "uncovered", "from": row["state_hash"],
                                    "dropped": sorted(drop)}})
     random.Random(seed).shuffle(out)
-    return out[:n]
+    return [r for r in out if not near.found(r)][:n]
 
 
 def main() -> None:
@@ -62,8 +66,13 @@ def main() -> None:
     out = DATA / "coverage" / f"{a.split}.candidates.jsonl"
     if out.exists():
         sys.exit(f"{out} exists; name a new split")
+    reserved = gate.reserved()
+    gated = [r for r in read(gate.POOL) if r["state_hash"] in reserved]
+    if reserved - {r["state_hash"] for r in gated}:
+        sys.exit(f"gate states are missing from {gate.POOL.name}; run laya/pool.py first")
+    held = gated + [r for s in ("validation", "calibration") for r in read(DATA / "coverage" / f"{s}.candidates.jsonl")]
     rows = uncovered(read(DATA / "coverage" / "train.candidates.jsonl"), read(DATA / "coverage" / "train.jsonl"),
-                     a.n, a.seed)
+                     a.n, a.seed, held)
     for row in rows:
         append(out, row)
     print(f"{len(rows)} rows, {sum(len(r['questions']) for r in rows)} questions -> {out}")
