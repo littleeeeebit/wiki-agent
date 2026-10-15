@@ -10,10 +10,11 @@ labelling runs without it.
 No question is cut: one whose state and head exceed `MAX_LEN` is left out of training and
 of scoring alike (stage 1's length rule).
 
-Training runs on Colab (an L4, owner 2026-10-14). `pack` puts this folder's code and one
-kind's labelled splits in a zip to upload there; `laya/notebooks/train.ipynb` takes it:
+Training runs on Colab (an L4, owner 2026-10-14). `pack` puts this folder's code and the
+given kinds' labelled splits in one zip to upload there; `laya/notebooks/train.ipynb` trains
+each kind in it in turn:
 
-    python laya/train.py pack useful
+    python laya/train.py pack analysis ask conflict progress redirect route source useful coverage
 
 This folder is not a package (no `__init__.py`): its modules import each other by bare
 name, so `import laya` always finds the installed Laya package, never this folder.
@@ -35,8 +36,13 @@ HERE = Path(__file__).resolve().parent
 CHECKPOINTS = HERE / "checkpoints"
 SPLITS = ("train", "validation", "calibration")
 # The smallest of 1,024, 2,048 and 4,096 holding 95% of the kind's questions (plan stage 4):
-# `useful` views are 1,396 tokens at p95, 0.3% over 2,048 (stage 1 lengths, 2026-10-13).
-MAX_LEN = {"useful": 2048}
+# `useful` views are 1,396 tokens at p95, 0.3% over 2,048 (stage 1 lengths, 2026-10-13). On
+# the labelled splits (2026-10-15) the other retrieval kinds are 277-684 at p95, at most 1,039.
+# `coverage` reads every passage: 4,844 at p95, 40% over 4,096, so it takes ModernBERT's
+# whole 8,192 (owner, 2026-10-15), one question a micro-batch to fit the L4.
+MAX_LEN = {"useful": 2048, "coverage": 8192,
+           **dict.fromkeys(("route", "source", "conflict", "redirect", "ask", "analysis", "progress"), 1024)}
+MICRO_BATCH = {"coverage": 1}   # others 4; accumulation keeps the effective batch at 64
 
 
 def base_dir(name: str = "typed") -> str:
@@ -57,26 +63,27 @@ def fits(agent, row: dict, name: str, max_len: int) -> bool:
     return tokens(agent, row["state"], row["questions"][name]) <= max_len
 
 
-def pack(kind: str) -> Path:
-    """This folder's code and `kind`'s labelled splits, as `laya/...` in one zip, with
-    `laya/packed.json` naming the commit and the splits' hashes the notebook's result
-    carries back."""
+def pack(*kinds: str) -> Path:
+    """This folder's code and `kinds`' labelled splits, as `laya/...` in one zip, with
+    `laya/packed.json` naming the kinds in training order, the commit and the splits'
+    hashes the notebook's result carries back."""
 
     def git(*args):
         return subprocess.run(["git", *args], cwd=HERE, capture_output=True, text=True).stdout.strip()
 
-    out = DATA / kind / f"colab-{kind}.zip"
-    packed = {"kind": kind, "commit": git("rev-parse", "HEAD"), "dirty": bool(git("status", "--porcelain", "--", ".")),
-              "splits": {}}
+    out = DATA / "colab.zip"
+    packed = {"kinds": list(kinds), "commit": git("rev-parse", "HEAD"),
+              "dirty": bool(git("status", "--porcelain", "--", ".")), "splits": {}}
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(HERE.glob("*.py")):
             if not f.name.startswith("test_"):
                 z.write(f, f"laya/{f.name}")
-        for split in SPLITS:
-            path = DATA / kind / f"{split}.jsonl"
-            if path.exists():
-                z.write(path, f"laya/data/{kind}/{split}.jsonl")
-                packed["splits"][split] = hashlib.sha256(path.read_bytes()).hexdigest()
+        for kind in kinds:
+            for split in SPLITS:
+                path = DATA / kind / f"{split}.jsonl"
+                if path.exists():
+                    z.write(path, f"laya/data/{kind}/{split}.jsonl")
+                    packed["splits"].setdefault(kind, {})[split] = hashlib.sha256(path.read_bytes()).hexdigest()
         z.writestr("laya/packed.json", json.dumps(packed, indent=1))
     return out
 
@@ -125,7 +132,8 @@ def train(kind: str, splits: list[str], base: str = "typed", **config) -> Path:
 
     max_len = MAX_LEN[kind]
     # Option order cannot matter (plan stage 4, L2); stage 1 found its requirements met.
-    config = {"option_layout": "parallel", **config}
+    micro = MICRO_BATCH.get(kind, 4)
+    config = {"option_layout": "parallel", "micro_batch": micro, "grad_accum": 64 // micro, **config}
     start = base_dir(base)
     reader = laya.load(start, device="cpu")   # its tokenizer only, to count lengths
     data, left = merged(kind, splits, reader, max_len)
@@ -182,6 +190,6 @@ def score(kind: str, checkpoint, sure: dict | None = None) -> tuple[set[tuple[st
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] != ["pack"] or len(sys.argv) != 3:
-        raise SystemExit("python laya/train.py pack <kind>")
-    print(pack(sys.argv[2]))
+    if sys.argv[1:2] != ["pack"] or len(sys.argv) < 3 or not set(sys.argv[2:]) <= set(MAX_LEN):
+        raise SystemExit(f"python laya/train.py pack <kind>... (kinds: {', '.join(MAX_LEN)})")
+    print(pack(*sys.argv[2:]))

@@ -1094,10 +1094,11 @@ def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders
     rows = label.read(path)
     assert left == 1 and [r["state"]["passages"][0]["text"] for r in rows] == ["short"]
     assert set(rows[0]) == {"state", "questions", "expected"}          # Laya's format, no provenance
-    with zipfile.ZipFile(train.pack("useful")) as z:
+    with zipfile.ZipFile(train.pack("useful", "route")) as z:
         names = set(z.namelist())
         packed = json.loads(z.read("laya/packed.json"))
-    assert set(packed["splits"]) == {"train"} and len(packed["commit"]) == 40   # a result traces back to these
+    assert packed["kinds"] == ["useful", "route"] and len(packed["commit"]) == 40   # a result traces back to these
+    assert packed["splits"] == {"useful": {"train": packed["splits"]["useful"]["train"]}}   # route has no labels
     assert {"laya/train.py", "laya/label.py", "laya/stage1.py", "laya/data/useful/train.jsonl"} <= names
     assert not any("test_" in n or "candidates" in n or "pool" in n.split("/")[-1].split(".")[0] for n in names
                    if n.startswith("laya/data/"))
@@ -1131,8 +1132,10 @@ def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders
                         "laya.train": {"TrainConfig": lambda **k: k, "finetune": finetune},
                         "laya.calibrate": {"records_from_labeled": records_from_labeled}}.items():
         monkeypatch.setitem(sys.modules, name, types.SimpleNamespace(**attrs))
-    train.train("useful", ["train"], micro_batch=4)
+    train.train("useful", ["train"])
     assert seen["config"]["option_layout"] == "parallel" and seen["config"]["micro_batch"] == 4
+    assert seen["config"]["grad_accum"] == 16 and seen["config"]["max_len"] == 2048
+    assert set(train.MAX_LEN) == set(generate.RETRIEVAL) - {"repair"}   # every labelled retrieval kind can train
     assert [list(q) for _, q, _ in seen["recs"]] == [["useful_p0"]]
 
     # `score` hands back each answer's confidence beside the answers the loop reads.
