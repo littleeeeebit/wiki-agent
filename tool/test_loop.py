@@ -1364,6 +1364,17 @@ def test_the_instruction_stays_inside_the_model_input_and_saves_the_whole_diff(w
     lines = [line for f in read_tools.files(diff) for line in read_tools.wrapped(f)]
     assert saved.startswith("1: diff --git a/file-0.txt b/file-0.txt") and f"전체 {len(lines)}줄" in saved
     assert "".join(lines[4:]).replace("~", "").startswith("+" + "x" * 90_000)   # the long line, whole across pieces
+    # Cloud verification's Codex has no pr_diff: it is told the file.
+    monkeypatch.setattr(loop.verification, "cloud", lambda spec: True)
+    cloud = loop.instruction(spec, path, 1, head, "main", True)
+    assert "`pr_diff`" not in cloud and str(read_tools.diff_file(path).resolve()) in cloud
+    monkeypatch.undo()
+    # A round whose diff cannot be had leaves no earlier round's diff to read.
+    monkeypatch.setattr(specs, "sh", lambda cmd, *a, **k: subprocess.CompletedProcess(cmd, 1, "", "gh is down")
+                        if cmd[:3] == ["gh", "pr", "diff"] else real(cmd, *a, **k))
+    assert "(failed:" in loop.instruction(spec, path, 2, head, "main", True)
+    with pytest.raises(ValueError):
+        read_tools.call(path, "pr_diff", {})
 
 
 def test_four_loops_with_three_seats_leave_the_fourth_waiting(world):

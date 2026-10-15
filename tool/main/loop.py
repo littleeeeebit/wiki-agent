@@ -519,11 +519,14 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
               "exactly `머지 허용`, or `머지 불가 — <reason>`."]
     out += ["", f"## `gh pr diff {pr}`", "", "```diff"]
     if diff.returncode:
+        # An earlier round's diff must not pass for this head's.
+        read_tools.diff_file(path).unlink(missing_ok=True)
         out.append(f"(failed: {specs.said(diff)})")
     else:
         spans = read_tools.save_diff(path, diff.stdout)
-        how = ("read them with `pr_diff`" if codex else
-               f"read them with Read on `{read_tools.diff_file(path).resolve()}`; a line starting with ~ "
+        # Only the read-only Codex cell has `pr_diff`; Claude and Cloud verification read the file.
+        how = ("read them with `pr_diff`" if codex and not verification.cloud(spec) else
+               f"read them from `{read_tools.diff_file(path).resolve()}`; a line starting with ~ "
                "continues the line before it")
         room = DIFF_ROOM - len("\n".join(out + report)) - 2
         out.append(trimmed(diff.stdout, spans, how, room).rstrip())
