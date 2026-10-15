@@ -19,6 +19,7 @@ repository root.
 | `label.py` | Two-labeller agreement labels; every dropped question goes to the error notebook |
 | `guided.py` | Guided labelling: a small labeller, a batch verifier, and a guide that improves by RRSI rounds |
 | `notes.py` | The error notebook: ledger, pages, statuses, the brief the generator reads |
+| `augment.py` | Train candidates aimed at a slice a model got wrong: `uncovered` drops a covered `coverage` state's own pages |
 | `train.py` | Fine-tune one kind from the base, calibrate, score validation; `pack` zips code and the given kinds' labels for Colab, which trains them in turn |
 | `loop.py` | The recursive improvement loop (RRSI) for one kind |
 | `prompts/` | The teacher, labeller, verifier, lesson and note-writer prompts |
