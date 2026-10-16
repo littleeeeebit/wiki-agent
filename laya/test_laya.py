@@ -17,6 +17,7 @@ import label
 import loop
 import notes
 import pool
+import stage1
 import store
 import train
 
@@ -1062,9 +1063,59 @@ def test_a_passage_kind_sees_only_its_passage():
              "complete_passages": ["p0", "p1"]}
     assert kinds.view("useful_p1", "useful", state) == {"query": "q", "passages": [{"id": "p1", "text": "b"}],
                                                         "complete_passages": ["p1"]}
-    assert kinds.view("coverage_r0", "coverage", state) is state
+    assert kinds.view("coverage_r0", "coverage", state) == state
+    assert kinds.view("ask", "ask", state) is state
     with pytest.raises(ValueError):
         kinds.view("conflict_p7", "conflict", state)
+
+
+def test_coverage_sees_and_trains_on_only_the_listed_passages(folders, monkeypatch):
+    def row(i, listed):
+        return {"state": {"query": "q", "requirements": [{"id": "r0", "text": "r"}, {"id": "r1", "text": "s"}],
+                          "passages": [{"id": "p0", "text": "kept"}, {"id": "p1", "text": "unlisted " * 9}],
+                          "complete_passages": listed},
+                "questions": {"coverage_r0": NOUL, "coverage_r1": NOUL},
+                "expected": {"coverage_r0": False, "coverage_r1": True}, "provenance": {"state_hash": f"h{i}"}}
+
+    assert kinds.view("coverage_r1", "coverage", row(0, ["p0"])["state"])["passages"] == [{"id": "p0", "text": "kept"}]
+    assert kinds.view("coverage_r0", "coverage", row(0, None)["state"])["passages"] == []
+    # Length is the view's: the unlisted passage would push both questions past 5 words.
+    monkeypatch.setattr(train, "tokens", lambda agent, state, q: sum(len(p["text"].split()) for p in state["passages"]))
+    write(folders / "data" / "coverage" / "train.jsonl", [row(0, ["p0"]), row(1, ["p0", "p1"])])
+    path, left = train.merged("coverage", ["train"], None, 5)
+    rows = label.read(path)
+    assert left == 2 and len(rows) == 1 and [p["id"] for p in rows[0]["state"]["passages"]] == ["p0"]
+    assert set(rows[0]["expected"]) == {"coverage_r0", "coverage_r1"}
+
+    import sys
+    import types
+    shown = []
+    agent = types.SimpleNamespace(predict=lambda state, asked, **k: shown.append(state) or {
+        "answers": {n: {"noul": 0.8, "confidence": 0.8} for n in asked}})
+    monkeypatch.setattr(train, "base_dir", lambda name: "base")
+    monkeypatch.setitem(sys.modules, "laya", types.SimpleNamespace(load=lambda *a, **k: agent))
+    write(folders / "data" / "coverage" / "validation.jsonl", [row(2, ["p0"])])
+    assert train.score("coverage", "base")[0] == {("h2", "coverage_r0")}
+    assert [[p["id"] for p in s["passages"]] for s in shown] == [["p0"]]
+
+    # Two states that differ only in an unlisted passage are one input to the model: near-duplicates.
+    a, b = row(3, ["p0"]), row(4, ["p0"])
+    a["state"]["passages"][0]["text"] = b["state"]["passages"][0]["text"] = " ".join(f"w{i}" for i in range(40))
+    b["state"]["passages"][1]["text"] = " ".join(f"x{i}" for i in range(400))
+    # Stage 1's length summary measures that view too, beside the whole state.
+    from unittest.mock import patch
+    pooled = {"state": row(5, ["p0"])["state"], "questions": {"coverage_r0": {"kind": "coverage", "question": NOUL}}}
+    with patch.object(stage1, "CHECKPOINTS", {"base": ""}), patch.object(stage1, "read", lambda path: [pooled]), \
+         patch.object(stage1, "load", lambda name: types.SimpleNamespace(cfg={})), \
+         patch.object(stage1, "tokens", lambda agent, state, q: sum(len(p["text"].split()) for p in state["passages"])):
+        measured = stage1.lengths()["checkpoints"]["base"]
+    assert (measured["kinds"]["coverage"]["median"], measured["views"]["coverage"]["median"]) == (10, 1)
+
+    for r in (a, b):
+        r["questions"] = {"coverage_r0": {"kind": "coverage"}}   # a candidate's question names its kind
+    assert gate.pairs([a, b]) == {(0, 1)}
+    a["questions"] = b["questions"] = {"ask": {"kind": "ask"}}
+    assert gate.pairs([a, b]) == set()                           # the whole states are far apart
 
 
 def test_a_train_subset_holds_whole_records_and_says_how_many(folders):

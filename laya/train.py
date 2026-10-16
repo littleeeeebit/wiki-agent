@@ -28,6 +28,7 @@ import sys
 import zipfile
 from pathlib import Path
 
+from kinds import LISTED, view
 from label import DATA, read
 from stage1 import CHECKPOINTS as PUBLISHED
 from stage1 import REPO, WHOLE_HEAD, tokens
@@ -59,8 +60,15 @@ def base_dir(name: str = "typed") -> str:
     return str(Path(root) / sub) if sub else root
 
 
-def fits(agent, row: dict, name: str, max_len: int) -> bool:
-    return tokens(agent, row["state"], row["questions"][name]) <= max_len
+def shown(kind: str, row: dict, name: str):
+    """What the `kind` model is shown of `row` for question `name` (`kinds.view`). A passage
+    kind's rows are stored with their view; a listed kind's view is taken here."""
+
+    return view(name, kind, row["state"]) if kind in LISTED else row["state"]
+
+
+def fits(agent, kind: str, row: dict, name: str, max_len: int) -> bool:
+    return tokens(agent, shown(kind, row, name), row["questions"][name]) <= max_len
 
 
 def pack(*kinds: str) -> Path:
@@ -109,10 +117,12 @@ def merged(kind: str, splits: list[str], agent, max_len: int) -> tuple[Path, int
     with path.open("w", encoding="utf-8") as f:
         for split in splits:
             for row in read(DATA / kind / f"{split}.jsonl"):
-                kept = [n for n in row["expected"] if fits(agent, row, n, max_len)]
+                kept = [n for n in row["expected"] if fits(agent, kind, row, n, max_len)]
                 left += len(row["expected"]) - len(kept)
                 if kept:
-                    f.write(json.dumps({"state": row["state"], "questions": {n: row["questions"][n] for n in kept},
+                    # A listed kind's view is the same for each question of a row.
+                    f.write(json.dumps({"state": shown(kind, row, kept[0]),
+                                        "questions": {n: row["questions"][n] for n in kept},
                                         "expected": {n: row["expected"][n] for n in kept}}, ensure_ascii=False) + "\n")
     return path, left
 
@@ -177,10 +187,11 @@ def score(kind: str, checkpoint, sure: dict | None = None) -> tuple[set[tuple[st
         agent.load_calibration(str(calibration))
     wrong, predicted = set(), {}
     for row in read(DATA / kind / "validation.jsonl"):
-        asked = {n: row["questions"][n] for n in row["expected"] if fits(agent, row, n, max_len)}
+        asked = {n: row["questions"][n] for n in row["expected"] if fits(agent, kind, row, n, max_len)}
         if not asked:
             continue
-        got = agent.predict(row["state"], asked, max_len=max_len, head_max_len=WHOLE_HEAD)["answers"]
+        got = agent.predict(shown(kind, row, next(iter(asked))), asked, max_len=max_len,
+                            head_max_len=WHOLE_HEAD)["answers"]
         for name in asked:
             key = (row["provenance"]["state_hash"], name)
             predicted[key] = answer(asked[name], got[name])

@@ -18,7 +18,7 @@ import sys
 import time
 from pathlib import Path
 
-from kinds import PASSAGE, view
+from kinds import VIEWED, view
 from store import read
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -69,7 +69,7 @@ def lengths() -> dict:
         for row in rows:
             for qname, q in row["questions"].items():
                 full.setdefault(q["kind"], []).append(tokens(agent, row["state"], q["question"]))
-                if q["kind"] in PASSAGE:
+                if q["kind"] in VIEWED:
                     shown = view(qname, q["kind"], row["state"])
                     seen.setdefault(q["kind"], []).append(tokens(agent, shown, q["question"]))
         out[name] = {"max_len": agent.cfg.get("max_len"), "head_max_len": agent.cfg.get("head_max_len"),
