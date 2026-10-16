@@ -1155,6 +1155,36 @@ def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, 
     assert sorted(n for r in support.derive([source], 10) for n in r["questions"]) == ["support_r0_p0", "support_r0_p1"]
     assert [list(r["questions"]) for r in support.derive([source], 10, held=[gated])] == [["support_r0_p1"]]
 
+    # Aimed at part: a passage that stated all, less the quoted sentence, and the covered
+    # requirement's second and third passages, never one asked before.
+    said = "The cache entry expires after exactly one hour of idle time."
+    stated = {"id": "p0", "heading": "Cache", "text": f"Entries live in memory. {said} " + " ".join(f"w{i}" for i in range(30))}
+    asked_row = {"id": "a", "state_hash": "a", "state": {**state, "passages": [stated], "complete_passages": ["p0"]},
+                 "questions": {"support_r0_p0": {"kind": "support", "drawn": "overlap"}}, "provenance": {"coverage": "c0"}}
+    turns = [{"json": {"verdicts": {"i0": {"answer": "all", "evidence": f'"{said}"'},
+                                    "i1": {"answer": "part", "evidence": "Entries live in memory."}}}}]
+    (cut,) = support.trimmed([asked_row], support.quotes(turns, "all"))
+    assert said not in cut["state"]["passages"][0]["text"] and "Entries live in memory." in cut["state"]["passages"][0]["text"]
+    assert cut["questions"]["support_r0_p0"]["drawn"] == "trimmed" and cut["provenance"]["trimmed"] == "a"
+    assert cut["state_hash"] == pool.digest(cut["state"])
+    short = {**asked_row, "state": {**asked_row["state"], "passages": [{**stated, "text": f"Short. {said}"}]}}
+    assert support.trimmed([short], support.quotes(turns, "all")) == []   # nothing left to judge
+    # A quote inside another goes with it, whatever order the set yields them in.
+    for quoted in ([said[:30], said], [said, said[:30]]):
+        (nested,) = support.trimmed([asked_row], dict.fromkeys(quoted))
+        assert "idle time" not in nested["state"]["passages"][0]["text"] and nested["state_hash"] == cut["state_hash"]
+    wide = {**row, "state": {**state, "passages": [*state["passages"], {"id": "p3", "text": "cache expires hour"}],
+                             "complete_passages": ["p0", "p1", "p3"]}}
+    assert [(rid, pid, how) for _, rid, pid, how in sorted(support.runners([wide], 0), key=str)] == \
+        [("r0", "p1", "overlap3"), ("r0", "p3", "overlap2")]   # r1 is not covered
+    p3 = support.derive([], 10, drawn=support.runners([wide], 0))
+    assert sorted(n for r in p3 for n in r["questions"]) == ["support_r0_p1", "support_r0_p3"]
+    assert sorted(n for r in support.derive([], 10, drawn=support.runners([wide], 0), asked_before=p3[:1])
+                  for n in r["questions"]) == sorted(set(["support_r0_p1", "support_r0_p3"]) - set(p3[0]["questions"]))
+    got = support.augment([asked_row], turns, [wide], 2)
+    drawn = [q["drawn"] for r in got for q in r["questions"].values()]
+    assert drawn[0] == "trimmed" and drawn[1] in ("overlap2", "overlap3") and len(drawn) == 2
+
     def probs(c):
         return {"choice": c, "probabilities": {"all": 0.8 if c == "all" else 0.1}}
 
