@@ -17,6 +17,7 @@ import label
 import loop
 import notes
 import pool
+import stage1
 import store
 import train
 
@@ -1101,6 +1102,15 @@ def test_coverage_sees_and_trains_on_only_the_listed_passages(folders, monkeypat
     a, b = row(3, ["p0"]), row(4, ["p0"])
     a["state"]["passages"][0]["text"] = b["state"]["passages"][0]["text"] = " ".join(f"w{i}" for i in range(40))
     b["state"]["passages"][1]["text"] = " ".join(f"x{i}" for i in range(400))
+    # Stage 1's length summary measures that view too, beside the whole state.
+    from unittest.mock import patch
+    pooled = {"state": row(5, ["p0"])["state"], "questions": {"coverage_r0": {"kind": "coverage", "question": NOUL}}}
+    with patch.object(stage1, "CHECKPOINTS", {"base": ""}), patch.object(stage1, "read", lambda path: [pooled]), \
+         patch.object(stage1, "load", lambda name: types.SimpleNamespace(cfg={})), \
+         patch.object(stage1, "tokens", lambda agent, state, q: sum(len(p["text"].split()) for p in state["passages"])):
+        measured = stage1.lengths()["checkpoints"]["base"]
+    assert (measured["kinds"]["coverage"]["median"], measured["views"]["coverage"]["median"]) == (10, 1)
+
     for r in (a, b):
         r["questions"] = {"coverage_r0": {"kind": "coverage"}}   # a candidate's question names its kind
     assert gate.pairs([a, b]) == {(0, 1)}
