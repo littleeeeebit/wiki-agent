@@ -1169,6 +1169,10 @@ def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, 
     assert cut["state_hash"] == pool.digest(cut["state"])
     short = {**asked_row, "state": {**asked_row["state"], "passages": [{**stated, "text": f"Short. {said}"}]}}
     assert support.trimmed([short], support.quotes(turns, "all")) == []   # nothing left to judge
+    # A quote inside another goes with it, whatever order the set yields them in.
+    for quoted in ([said[:30], said], [said, said[:30]]):
+        (nested,) = support.trimmed([asked_row], dict.fromkeys(quoted))
+        assert "idle time" not in nested["state"]["passages"][0]["text"] and nested["state_hash"] == cut["state_hash"]
     wide = {**row, "state": {**state, "passages": [*state["passages"], {"id": "p3", "text": "cache expires hour"}],
                              "complete_passages": ["p0", "p1", "p3"]}}
     assert [(rid, pid, how) for _, rid, pid, how in sorted(support.runners([wide], 0), key=str)] == \

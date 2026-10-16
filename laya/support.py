@@ -115,7 +115,8 @@ def trimmed(rows: list[dict], quoted: set[str], held=()) -> list[dict]:
     for row in rows:
         (p,) = row["state"]["passages"]
         text = fold(p["text"])
-        cut = [q for q in quoted if q in text]
+        # Longest first, so a quote inside another cannot leave the rest of the longer one.
+        cut = sorted((q for q in quoted if q in text), key=lambda q: (-len(q), q))
         for q in cut:
             text = text.replace(q, " ")
         text = fold(text)
