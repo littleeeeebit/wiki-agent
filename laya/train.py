@@ -197,7 +197,8 @@ def score(kind: str, checkpoint, sure: dict | None = None,
     """`(wrong, predicted)`: the validation `(state_hash, question)` the checkpoint gets
     wrong, and its answer to every validation question that fits `MAX_LEN`. `checkpoint`
     is a fine-tune's folder, or a published name (`base`, `typed`) for zero-shot. `sure`,
-    when given, receives each answer's confidence (after the checkpoint's temperatures);
+    when given, receives each answer's probability (`answer_confidence`, max(p) after the
+    checkpoint's temperatures, what ECE reads; a choice's `confidence` is entropy);
     `truth`, the probability it gave the expected answer (`chance`), what log loss reads."""
 
     max_len = MAX_LEN[kind]
@@ -213,7 +214,7 @@ def score(kind: str, checkpoint, sure: dict | None = None,
             key = (row["provenance"]["state_hash"], name)
             predicted[key] = answer(asked[name], got[name])
             if sure is not None:
-                sure[key] = got[name]["confidence"]
+                sure[key] = got[name]["answer_confidence"]
             if truth is not None:
                 truth[key] = chance(got[name], row["expected"][name])
             if predicted[key] != row["expected"][name]:

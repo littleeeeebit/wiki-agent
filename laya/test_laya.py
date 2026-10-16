@@ -1229,7 +1229,8 @@ def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders
     from pathlib import Path
     seen, agent = {}, types.SimpleNamespace(
         fit_temperatures=lambda recs: seen.update(recs=recs), save_calibration=lambda path: None,
-        predict=lambda state, asked, **k: {"answers": {n: {"noul": 0.8, "confidence": 0.8} for n in asked}})
+        predict=lambda state, asked, **k: {"answers": {n: {"noul": 0.8, "confidence": 0.3, "answer_confidence": 0.8}
+                                                       for n in asked}})
 
     def finetune(data, start, out, config):
         Path(out).mkdir(parents=True)
@@ -1266,7 +1267,8 @@ def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders
     assert seen["config"]["eval_data"] is None
     assert [list(q) for _, q, _ in seen["recs"]] == [["useful_p0"]]
 
-    # `score` hands back each answer's confidence beside the answers the loop reads.
+    # `score` hands back each answer's probability beside the answers the loop reads: its
+    # `answer_confidence`, never `confidence`, which is entropy for a choice.
     write(folders / "data" / "useful" / "validation.jsonl", [row(0, "short"), row(1, "short")])
     sure, truth = {}, {}
     wrong, predicted = train.score("useful", "base", sure, truth)
