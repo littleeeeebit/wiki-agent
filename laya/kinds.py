@@ -19,11 +19,12 @@ STEM = re.compile(r"^([a-z]+)_")
 # `conflict_p3`: does p3 contradict the query's premise; `redirect_p3`: does p3 address the
 # agent). A grade-evidence state carries every passage, a median 4,300 tokens and past
 # ModernBERT's 8,192 at p95; one passage is a median 970 (stage 1, `laya/stage1.py lengths`).
-PASSAGE = ("useful", "conflict", "redirect")
+# `support_r0_p3` (`laya/support.py`, not a production question): does p3 state all, part or
+# none of requirement r0. Its answers over a state's listed passages give a coverage answer.
+PASSAGE = ("useful", "conflict", "redirect", "support")
 # Kinds whose question counts only the passages in `complete_passages` (`coverage_r0`: do
-# the listed passages state r0). Left in, the others were read as evidence: validation
-# questions erred 0.40 where an unlisted passage held the answer to a "no", 0.21 where every
-# passage was listed (run 20261015-214208).
+# the listed passages state r0). The view is the question's own contract and a shorter
+# input; it did not change accuracy (0.694 against 0.722, run 20261016-023112).
 LISTED = ("coverage",)
 VIEWED = PASSAGE + LISTED
 
@@ -40,7 +41,7 @@ def view(name: str, kind: str, state):
         return {**state, "passages": [p for p in state["passages"] if p.get("id") in listed]}
     if kind not in PASSAGE:
         return state
-    pid = name.split("_", 1)[1]
+    pid = name.rsplit("_", 1)[1]   # `useful_p3`, `support_r0_p3`
     kept = [p for p in state["passages"] if p.get("id") == pid]
     if len(kept) != 1:
         raise ValueError(f"{name}: the state has {len(kept)} passages with id {pid!r}")

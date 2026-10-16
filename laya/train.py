@@ -41,7 +41,7 @@ SPLITS = ("train", "validation", "calibration")
 # the labelled splits (2026-10-15) the other retrieval kinds are 277-684 at p95, at most 1,039.
 # `coverage` reads every passage: 4,844 at p95, 40% over 4,096, so it takes ModernBERT's
 # whole 8,192 (owner, 2026-10-15), one question a micro-batch to fit the L4.
-MAX_LEN = {"useful": 2048, "coverage": 8192,
+MAX_LEN = {"useful": 2048, "coverage": 8192, "support": 1024,   # `support` views: 2,624 characters at most
            **dict.fromkeys(("route", "source", "conflict", "redirect", "ask", "analysis", "progress"), 1024)}
 MICRO_BATCH = {"coverage": 1}   # others 4; accumulation keeps the effective batch at 64
 
@@ -86,12 +86,13 @@ def pack(*kinds: str) -> Path:
         for f in sorted(HERE.glob("*.py")):
             if not f.name.startswith("test_"):
                 z.write(f, f"laya/{f.name}")
-        for kind in kinds:
-            for split in SPLITS:
-                path = DATA / kind / f"{split}.jsonl"
-                if path.exists():
-                    z.write(path, f"laya/data/{kind}/{split}.jsonl")
-                    packed["splits"].setdefault(kind, {})[split] = hashlib.sha256(path.read_bytes()).hexdigest()
+        # `support` is scored as the coverage answers it makes (`support.evaluate`).
+        extra = [("coverage", "validation")] if "support" in kinds and "coverage" not in kinds else []
+        for kind, split in [(k, s) for k in kinds for s in SPLITS] + extra:
+            path = DATA / kind / f"{split}.jsonl"
+            if path.exists():
+                z.write(path, f"laya/data/{kind}/{split}.jsonl")
+                packed["splits"].setdefault(kind, {})[split] = hashlib.sha256(path.read_bytes()).hexdigest()
         z.writestr("laya/packed.json", json.dumps(packed, indent=1))
     return out
 
@@ -172,19 +173,36 @@ def train(kind: str, splits: list[str], base: str = "typed", **config) -> Path:
     return out
 
 
-def score(kind: str, checkpoint, sure: dict | None = None) -> tuple[set[tuple[str, str]], dict]:
-    """`(wrong, predicted)`: the validation `(state_hash, question)` the checkpoint gets
-    wrong, and its answer to every validation question that fits `MAX_LEN`. `checkpoint`
-    is a fine-tune's folder, or a published name (`base`, `typed`) for zero-shot. `sure`,
-    when given, receives each answer's confidence (after the checkpoint's temperatures)."""
+def loaded(checkpoint):
+    """A Laya agent for a fine-tune's folder, with its temperatures, or for a published name."""
 
     import laya
 
-    max_len = MAX_LEN[kind]
     agent = laya.load(base_dir(checkpoint) if checkpoint in PUBLISHED else str(checkpoint))
     calibration = Path(checkpoint) / "calibration.json"
     if checkpoint not in PUBLISHED and calibration.exists():
         agent.load_calibration(str(calibration))
+    return agent
+
+
+def chance(got: dict, want) -> float:
+    """The probability an answer gave the expected one: P(yes) or P(no) for a noul, the
+    option's probability for a choice, where 1 - confidence is two other options' share."""
+
+    return got["probabilities"].get(want, 0.0) if "probabilities" in got else got["noul"] if want else 1 - got["noul"]
+
+
+def score(kind: str, checkpoint, sure: dict | None = None,
+          truth: dict | None = None) -> tuple[set[tuple[str, str]], dict]:
+    """`(wrong, predicted)`: the validation `(state_hash, question)` the checkpoint gets
+    wrong, and its answer to every validation question that fits `MAX_LEN`. `checkpoint`
+    is a fine-tune's folder, or a published name (`base`, `typed`) for zero-shot. `sure`,
+    when given, receives each answer's probability (`answer_confidence`, max(p) after the
+    checkpoint's temperatures, what ECE reads; a choice's `confidence` is entropy);
+    `truth`, the probability it gave the expected answer (`chance`), what log loss reads."""
+
+    max_len = MAX_LEN[kind]
+    agent = loaded(checkpoint)
     wrong, predicted = set(), {}
     for row in read(DATA / kind / "validation.jsonl"):
         asked = {n: row["questions"][n] for n in row["expected"] if fits(agent, kind, row, n, max_len)}
@@ -196,7 +214,9 @@ def score(kind: str, checkpoint, sure: dict | None = None) -> tuple[set[tuple[st
             key = (row["provenance"]["state_hash"], name)
             predicted[key] = answer(asked[name], got[name])
             if sure is not None:
-                sure[key] = got[name]["confidence"]
+                sure[key] = got[name]["answer_confidence"]
+            if truth is not None:
+                truth[key] = chance(got[name], row["expected"][name])
             if predicted[key] != row["expected"][name]:
                 wrong.add(key)
     return wrong, predicted
