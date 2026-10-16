@@ -172,13 +172,28 @@ def test_a_read_session_refuses_without_asking(tmp_path):
 def test_codex_write_runs_app_server_and_answers_by_id(tree):
     session = ChatSession(tree, model="codex:test-model", write=True)
     command, events = run(session, CODEX, tree, lambda e: session.answer(e.meta["id"], True))
-    assert command[:4] == ["codex", "app-server", "--enable", "default_mode_request_user_input"]
+    assert command[:4] == ["codex", "app-server", "--disable", "default_mode_request_user_input"]
+    assert "--enable" not in command
     approvals = [e for e in events if e.kind == "approval"]
     # the command ran in a cwd outside the worktree: declined unasked
     assert [(e.meta["id"] in ("100", "101"), e.meta["tool"], e.meta.get("by")) for e in approvals] == [
         (False, "fileChange", None), (True, "command", "outside")]
     assert events[-1].kind == "done" and events[-1].text == "accept,decline,True"
     assert events[-1].meta["session_id"] == "th-1"
+
+
+def test_codex_asks_with_a_choices_block_and_claude_never_sees_it(tree):
+    codex, claude = ChatSession(tree, model="codex:m", write=True), ChatSession(tree, write=True)
+    assert "```choices" in codex.asking and "AskUserQuestion" not in codex.asking
+    assert "AskUserQuestion" in claude.asking and "```choices" not in claude.asking
+    # A Codex read focus whose answers nobody parses for blocks is not told to emit them.
+    assert ChatSession(tree, model="codex:m").asking == ""
+    assert "```choices" in ChatSession(tree, model="codex:m", choices=True).asking
+    # Claude's read focuses keep their preamble's own block format.
+    assert ChatSession(tree, choices=True).asking == ""
+    # Decided per host at start-up, so a session moved to Codex asks Codex's way.
+    claude.reconfigure("codex:m", None)
+    assert "```choices" in claude.asking
 
 
 def test_writes_open_in_repository_roots_and_refuse_non_repositories(tree, tmp_path):

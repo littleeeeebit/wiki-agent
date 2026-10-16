@@ -73,8 +73,8 @@ function Candidates({ list, korean, busy, onSay }: { list: { title: string; why?
   )
 }
 
-function Choices({ value, korean, busy, onSay }:
-  { value: ChoiceQuestion | { questions: ChoiceQuestion[] } } & BlockProps) {
+export function Choices({ value, korean, busy, onSay }:
+  { value: ChoiceQuestion | { questions: ChoiceQuestion[] } } & Pick<BlockProps, 'korean' | 'busy' | 'onSay'>) {
   const questions = 'questions' in value ? value.questions : [value]
   return <div className={box}>
     <Questions questions={questions.map((q) => ({ question: q.question, header: q.header,

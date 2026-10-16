@@ -33,6 +33,7 @@ tool. The user set recurrence severity at P0.
 | --- | --- | --- |
 | Claude Code, interactive | built-in `AskUserQuestion` | The spec's `questions`, `options`, `multiSelect`. Codex experiment settings are irrelevant |
 | Codex | `request_user_input` | Whether it is offered and permitted for this mode and use. `header`, `id`, `question`, and each option's `label` and `description` |
+| Codex inside wiki-agent | a `choices` block at the end of the answer | The app turns `request_user_input` off and its developer instructions give the format. A prose question is still the wrong way |
 | Codex, asynchronous | `request_user_input_async` | Forbidden outright, and so is `functions.request_user_input_async` |
 
 - Do not apply a Codex tool or setting to Claude. The two schemas are not

@@ -63,6 +63,19 @@ QUESTIONS = {"AskUserQuestion", "requestUserInput"}
 WRITES_PATH = {"Edit": "file_path", "Write": "file_path", "MultiEdit": "file_path",
                "NotebookEdit": "notebook_path"}
 DECLINED = "The person declined this."
+# How each host asks, chosen when its process starts: one session object can
+# move between hosts (`reconfigure`). Codex's `request_user_input` is a
+# default-mode experiment that asked one thin question in ten turns, so Codex
+# asks with the `choices` block the screen draws instead; Claude never sees it.
+CLAUDE_ASKS = (
+    "\nWhen asking the person, use AskUserQuestion. "
+    "Group independent decisions in one call with chapter headers, within the host's limits. "
+    "Offer three or four meaningful alternatives when available, recommendation first, with "
+    "detailed consequences, costs and concrete examples. Include Markdown or fenced text sketches "
+    "in descriptions when comparing layouts. Write question prose in English for the Korean overlay; "
+    "preserve code and paths. Ask dependent follow-ups after the batch is answered. "
+    "Never invent alternatives just to fill the list.")
+CODEX_ASKS = "\n\n" + (Path(__file__).resolve().parents[1] / "prompts" / "codex-choices.md").read_text(encoding="utf-8").strip()
 
 BOOT_TIMEOUT = 120.0   # the first turn is slow: hooks, and loading
 TURN_TIMEOUT = 600.0
@@ -148,7 +161,7 @@ class ChatSession:
                  isolated: bool = False, write: bool = False,
                  parent_id: str | None = None, bypass: bool = False,
                  verification: Path | None = None, env: dict | None = None,
-                 fast: bool = False, results: list[str] | None = None) -> None:
+                 fast: bool = False, results: list[str] | None = None, choices: bool = False) -> None:
         self.repo = Path(repo)
         # Every tool result as the host received it, whole: a caller grading what the host read passes a list.
         self.results = results
@@ -191,15 +204,9 @@ class ChatSession:
         self.system = system.strip()
         if not isolated:
             self.system += "\n" + INSTRUCTIONS
-        if write:
-            self.system += (
-                "\nWhen asking the person, use AskUserQuestion (Claude) or request_user_input (Codex). "
-                "Group independent decisions in one call with chapter headers, within the host's limits. "
-                "Offer three or four meaningful alternatives when available, recommendation first, with "
-                "detailed consequences, costs and concrete examples. Include Markdown or fenced text sketches "
-                "in descriptions when comparing layouts. Write question prose in English for the Korean overlay; "
-                "preserve code and paths. Ask dependent follow-ups after the batch is answered. "
-                "Never invent alternatives just to fill the list.")
+        # A focus whose answers the server reads for `choices` blocks; a write
+        # session asks too. How is the host's, decided at start-up (`asking`).
+        self.choices = choices
         # The model and the effort are fixed when the process starts. Changing
         # either means `reconfigure` starting it again, and it reconnects with
         # `--resume` so the conversation is not lost.
@@ -298,6 +305,15 @@ class ChatSession:
         return self.is_codex and not self.isolated
 
     @property
+    def asking(self) -> str:
+        """How this session asks the person, for the host it runs on now.
+        Claude's read focuses have no `AskUserQuestion` and use their
+        preamble's `choices` block as they are."""
+        if self.is_codex:
+            return CODEX_ASKS if (self.write or self.choices) and self.app else ""
+        return CLAUDE_ASKS if self.write else ""
+
+    @property
     def source_only(self) -> bool:
         """Sources through the server's read tools only: no shell, connectors or
         edits. Research (`searching`) keeps Codex's own web search on as well."""
@@ -344,8 +360,8 @@ class ChatSession:
             # instructions. Native hooks and the app's prompts own this workflow.
             cmd += ["--disable-slash-commands"]
             cmd += ["--settings", json.dumps({"fastMode": self.fast})]
-        if self.system:
-            cmd += ["--system-prompt" if self.isolated else "--append-system-prompt", self.system]
+        if self.system or self.asking:
+            cmd += ["--system-prompt" if self.isolated else "--append-system-prompt", self.system + self.asking]
         if self.model:
             cmd += ["--model", self.model]
         if self.effort:
@@ -353,14 +369,14 @@ class ChatSession:
         if self._resume:
             cmd += ["--resume", self._resume]
         if self.app:
-            # `request_user_input` is Plan mode's only, unless this is on (CLI 0.156.0).
-            cmd = ["codex", "app-server"] + (["--enable", "default_mode_request_user_input"] if self.write
-                                             else ["--disable", "multi_agent"])
+            # `request_user_input` is Plan mode's only unless this experiment is on
+            # (CLI 0.156.0). Off everywhere: Codex asks with a `choices` block.
+            cmd = ["codex", "app-server", "--disable", "default_mode_request_user_input"] + (
+                [] if self.write else ["--disable", "multi_agent"])
             if self.bypass:
                 cmd += ["-c", 'approval_policy="never"', "-c", 'sandbox_mode="danger-full-access"']
             if self.source_only or self.verification is not None:
-                for feature in ("apps", "plugins", "computer_use", "request_permissions_tool",
-                                "default_mode_request_user_input", "memories"):
+                for feature in ("apps", "plugins", "computer_use", "request_permissions_tool", "memories"):
                     cmd += ["--disable", feature]
                 if self.source_only:
                     cmd += ["--disable", "shell_tool", "--disable", "unified_exec", "--disable", "browser_use",
@@ -502,8 +518,8 @@ class ChatSession:
                   else "danger-full-access" if self.bypass else "read-only",
                   "approvalPolicy": "on-request" if self.write and not self.bypass else "never",
                   "model": self.model_name, "serviceTier": "priority" if self.fast else "default"}
-        if self.system:
-            params["developerInstructions"] = self.system
+        if self.system or self.asking:
+            params["developerInstructions"] = self.system + self.asking
         if self.source_only or self.verification is not None:
             # Do not inherit connector tools from global or project settings.
             # Read the effective names only; never expose config/credentials to the model.

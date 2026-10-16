@@ -185,7 +185,10 @@ wiki's tool-name blocks and `Bash(...)` argument patterns along with the
 existing diff and progress-language checks. `request_user_input_async` and
 `functions.request_user_input_async` are forbidden outright by the existing
 `enforce.deny` declaration, regardless of whether options are present, and the
-permitted `request_user_input` is used instead. When Codex supplies no tool
+permitted `request_user_input` is used instead. Sessions the wiki-agent app
+starts are the exception: there the default-mode experiment is off, and Codex
+asks with a `choices` block the screen draws as buttons
+(`tool/prompts/codex-choices.md`). When Codex supplies no tool
 description, the progress-language check has no value to judge. The shell
 check is limited to known direct command shapes. It is not a security boundary
 covering nested shells, dynamic commands and every PowerShell write, and it

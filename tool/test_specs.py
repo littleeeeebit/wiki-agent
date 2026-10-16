@@ -319,6 +319,17 @@ def test_the_next_focus_sends_blocks_apart_and_records_them(repo):
     assert specs.load("proj", "fix-login")["source"]["session"] == "cli-9"
 
 
+def test_codexs_first_spec_without_a_question_comes_back_once():
+    spec, asked = {"name": "spec", "value": spec_block()}, {"name": "choices", "value": {"question": "?", "options": []}}
+    with patch.object(chat, "recall", return_value=[]):
+        assert chat.asked_first("next", [spec], "codex:m") == [{"name": "spec", "error": chat.ASK_FIRST}]
+        assert chat.asked_first("next", [spec], "claude-opus") == [spec]
+        assert chat.asked_first("next", [asked, spec], "codex:m") == [asked, spec]
+    for prior in ({"name": "choices", "value": {}}, {"name": "spec", "error": chat.ASK_FIRST}):
+        with patch.object(chat, "recall", return_value=[{"role": "assistant", "blocks": [prior]}]):
+            assert chat.asked_first("next", [spec], "codex:m") == [spec]
+
+
 def test_asking_for_candidates_sends_the_materials_and_shows_one_line(repo):
     heard = []
 

@@ -201,12 +201,31 @@ def session(cid: str) -> ChatSession:
             cfg = config(cid)
             repo = current_repo()
             system = "\n\n".join((channels.ANSWER_PROMPT, channels.get(cid).preamble, search_note(repo)))
-            chat = ChatSession(repo, system=system, model=cfg["model"], effort=cfg["effort"])
+            chat = ChatSession(repo, system=system, model=cfg["model"], effort=cfg["effort"],
+                               choices=cid in ("next", "refactor"))
             # Restarting the server is not clearing the conversation either.
             # Only the same CLI, after an explicit reset, is resumed.
             chat.session_id = resumable(recall(cid, include_context=True), chat.is_codex)
             _sessions[key] = chat
         return chat
+
+
+ASK_FIRST = ("먼저 물어라 — 이 대화에서 아직 선택지를 묻지 않았다. Ask the open decisions (scope, "
+             "done conditions, what stays out, approach) as a `choices` block first; emit the spec after the answers.")
+
+
+def asked_first(cid: str, found: list[dict], model: str) -> list[dict]:
+    """Codex's first spec in a conversation that asked nothing comes back once
+    as `ASK_FIRST`: Codex wrote specs on choices it made alone, Claude asked.
+    The second spec goes through, so a person who wants none is held one turn."""
+
+    if not model.startswith("codex:") or not any(b["name"] == "spec" for b in found) \
+            or any(b["name"] == "choices" and "error" not in b for b in found):
+        return found
+    prior = [b for r in recall(cid) if r.get("role") == "assistant" for b in r.get("blocks") or []]
+    if any((b.get("name") == "choices" and "error" not in b) or b.get("error") == ASK_FIRST for b in prior):
+        return found
+    return [b for b in found if b["name"] != "spec"] + [{"name": "spec", "error": ASK_FIRST}]
 
 
 def resumable(rows: list[dict], codex: bool) -> str | None:
@@ -833,7 +852,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                 finished = True
                 metadata = {k: v for k, v in spent.items() if k != "error"}
                 if cid in ("next", "refactor"):
-                    found = specs.blocks(out["rest"])[1]
+                    found = asked_first(cid, specs.blocks(out["rest"])[1], cfg["model"] or "")
                     cited = {c["evidence_id"]: c for c in verification["citations"]}
                     accepted = {e: cited[c] for e, c in out["evidence_ids"].items() if c in cited}
                     source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
@@ -875,6 +894,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                     # The blocks leave the answer, so the overlay never
                     # translates JSON; they go to the screen apart.
                     reply[0], found = specs.blocks(reply[0])
+                    found = asked_first(cid, found, cfg["model"] or "")
                     source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
                     if cid == "refactor":
                         source["refactor_mode"] = cfg.get("refactor_mode", "cleanup")

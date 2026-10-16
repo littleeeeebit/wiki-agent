@@ -1,6 +1,24 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import * as api from '@/lib/api'
-import type { AnsweredBy, Rule, Tokens, WorkEv, WorkStep } from '@/lib/api'
+import type { AnsweredBy, ChoiceQuestion, Rule, Tokens, WorkEv, WorkStep } from '@/lib/api'
+
+const CHOICES = /^```choices[ \t]*\r?\n([\s\S]*?)^```[ \t]*$\n?/m
+
+/** A write session's answer and the `choices` block it ends with — how Codex
+ *  asks there. Unreadable JSON stays in the text, where the person sees it. */
+export function choicesOf(text: string): [string, ChoiceQuestion | { questions: ChoiceQuestion[] } | null] {
+  const m = CHOICES.exec(text)
+  if (!m) return [text, null]
+  try {
+    const value = JSON.parse(m[1])
+    const questions = Array.isArray(value?.questions) ? value.questions : [value]
+    if (!questions.length || !questions.every((q: ChoiceQuestion) => typeof q?.question === 'string'
+      && Array.isArray(q.options) && q.options.every((o) => typeof o?.label === 'string'))) return [text, null]
+    return [text.replace(m[0], '').trimEnd(), value]
+  } catch {
+    return [text, null]
+  }
+}
 
 /** What happened inside one agent turn, in order. Commands and approvals
  *  retain their originals; completed progress gets the Korean overlay. */
