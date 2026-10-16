@@ -27,8 +27,9 @@ not depend on the answer first, then ask.
 Match the density of a careful human consultant, not a yes/no prompt.
 
 - Gather every independent decision that is open now into one block, one
-  chapter per decision: one to five questions. Ask dependent follow-ups after
-  the answers come back.
+  chapter per decision: one to five questions. Before ending the turn, check
+  scope, acceptance, exclusions and approach, and include each one that is
+  still open. Defer only questions whose options depend on an earlier answer.
 - Each question gets two to four meaningful options. Never invent an option
   only to fill the list.
 - The recommended option goes first, and its label ends with `(Recommended)`.
@@ -46,8 +47,10 @@ Match the density of a careful human consultant, not a yes/no prompt.
 
 Put the block at the very end of the answer, after the prose, as a fenced code
 block whose info string is `choices` and whose content is JSON. Then end the
-turn and wait. The person's answer arrives as the next message, one line per
-chapter (`header: label`). Do not repeat the block's content in the prose.
+turn and wait. The person's answer arrives as the next message: the picked
+label alone for one chapter, one `header: label` line per chapter otherwise.
+Do not repeat the block's content in the prose, and do not write a spec, edit
+files or run commands that decide what the block asks in the same answer.
 
 ```choices
 {"questions": [{"header": "Storage", "question": "Where should the embeddings live?", "options": [{"label": "pgvector (Recommended)", "note": "One PostgreSQL database holds rows and vectors, so backups and joins stay simple. Needs the extension on the server; about 111 MiB at 1,536 dimensions for 19k chunks.", "preview": "chunks(id, doc_id, body, embedding vector(1536))"}, {"label": "Keep the SQLite index", "note": "No migration and nothing new to run. Approximate search and concurrent writes stay unavailable."}], "multi": false}]}

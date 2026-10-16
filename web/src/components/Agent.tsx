@@ -61,7 +61,8 @@ export function Agent({
     const question = [...(end.current?.parentElement?.querySelectorAll('[data-question-pending="true"]') ?? [])].at(-1)
     if (question) question.scrollIntoView({ block: 'start' })
     else end.current?.scrollIntoView({ block: 'end' })
-  }, [grown])
+    // `busy`: a finished turn mounts its `choices` cards without growing.
+  }, [grown, busy])
 
   return (
     <section aria-label="에이전트 세션" className="flex h-full min-h-0 flex-col">

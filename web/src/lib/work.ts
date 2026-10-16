@@ -4,17 +4,30 @@ import type { AnsweredBy, ChoiceQuestion, Rule, Tokens, WorkEv, WorkStep } from 
 
 const CHOICES = /^```choices[ \t]*\r?\n([\s\S]*?)^```[ \t]*$\n?/m
 
+const filled = (v: unknown) => typeof v === 'string' && v.trim() !== ''
+const optional = (v: unknown, type: string) => v === undefined || typeof v === type
+
+/** One question as `specs._shape` accepts it: what the screen draws reads only these fields. */
+function asked(q: unknown): boolean {
+  if (!q || typeof q !== 'object' || 'questions' in q) return false
+  const { question, options, header, multi } = q as Record<string, unknown>
+  return filled(question) && optional(header, 'string') && optional(multi, 'boolean')
+    && Array.isArray(options) && options.length > 0 && options.every((o) => o && typeof o === 'object'
+      && filled(o.label) && optional(o.note, 'string') && optional(o.preview, 'string'))
+}
+
 /** A write session's answer and the `choices` block it ends with — how Codex
- *  asks there. Unreadable JSON stays in the text, where the person sees it. */
+ *  asks there. A block the server's check would refuse stays in the text,
+ *  where the person sees it, rather than reaching the question cards. */
 export function choicesOf(text: string): [string, ChoiceQuestion | { questions: ChoiceQuestion[] } | null] {
   const m = CHOICES.exec(text)
   if (!m) return [text, null]
   try {
     const value = JSON.parse(m[1])
-    const questions = Array.isArray(value?.questions) ? value.questions : [value]
-    if (!questions.length || !questions.every((q: ChoiceQuestion) => typeof q?.question === 'string'
-      && Array.isArray(q.options) && q.options.every((o) => typeof o?.label === 'string'))) return [text, null]
-    return [text.replace(m[0], '').trimEnd(), value]
+    const ok = value && typeof value === 'object' && !Array.isArray(value) && ('questions' in value
+      ? Array.isArray(value.questions) && value.questions.length > 0 && value.questions.every(asked)
+      : asked(value))
+    return ok ? [text.replace(m[0], '').trimEnd(), value] : [text, null]
   } catch {
     return [text, null]
   }
