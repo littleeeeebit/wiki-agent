@@ -4,7 +4,7 @@
 
 Reads `laya/data/pool.jsonl` (real production states only; `pool.py` admits nothing else),
 collapses near-duplicates (word 5-shingle Jaccard >= 0.8 on the state text, or on any
-passage view of it) into one unit,
+passage or listed view of it) into one unit,
 and reserves two thirds of the units at random for the gate test (owner, 2026-10-13: the
 pilot kind has 185 real states, and the rest are the development pool). A unit is a state,
 not a question: the kinds asked of one state go to the same side. `eval/laya/tests.json`
@@ -17,7 +17,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from kinds import PASSAGE, view
+from kinds import VIEWED, view
 from store import read
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,11 +42,11 @@ def shingles(state) -> set[tuple[str, ...]]:
 
 
 def signatures(row: dict) -> list[set]:
-    """What a model can be shown of `row`: the whole state, and each passage view
+    """What a model can be shown of `row`: the whole state, and each passage or listed view
     (`kinds.view`). Two rows are near-duplicates when any of these match."""
 
     views = {json.dumps(view(n, q["kind"], row["state"]), sort_keys=True)
-             for n, q in row["questions"].items() if q["kind"] in PASSAGE}
+             for n, q in row["questions"].items() if q["kind"] in VIEWED}
     return [shingles(row["state"])] + [shingles(json.loads(v)) for v in sorted(views)]
 
 

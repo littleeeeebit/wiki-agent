@@ -39,7 +39,7 @@ augmentation, calibration or threshold fit ever sees it.
 `eval/laya/tests.json` records each test state's hash, source file and
 locator, never its text. A training, validation, calibration or
 augmentation state matching a test state by hash or near-duplicate, of
-the whole state or of a passage view (`laya/gate.py`), is dropped.
+the whole state or of a passage or listed view (`laya/gate.py`), is dropped.
 
 ## Paid generation
 

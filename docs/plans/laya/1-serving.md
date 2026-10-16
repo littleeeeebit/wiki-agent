@@ -91,7 +91,11 @@ those shapes and fills them as follows.
   the state it sees plus that question's head, measured with Laya's
   tokenizer. The state is never cut or truncated: `current_state`,
   passage ids and headings define what a question means, so a cut state
-  can make two different questions identical. The one reduction is the
+  can make two different questions identical. There are two reductions.
+  The listed view drops a `coverage` state's passages outside
+  `complete_passages`. Its question says those do not count, and with them
+  in, the model answered from them (2026-10-16). `laya/train.py` applies it
+  in training and scoring. The other reduction is the
   passage view (`laya/kinds.py`, `view`): a `useful`, `conflict` or
   `redirect` question names one passage and asks about it against the
   query, so its model sees the whole state with only that passage, the

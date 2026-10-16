@@ -20,14 +20,24 @@ STEM = re.compile(r"^([a-z]+)_")
 # agent). A grade-evidence state carries every passage, a median 4,300 tokens and past
 # ModernBERT's 8,192 at p95; one passage is a median 970 (stage 1, `laya/stage1.py lengths`).
 PASSAGE = ("useful", "conflict", "redirect")
+# Kinds whose question counts only the passages in `complete_passages` (`coverage_r0`: do
+# the listed passages state r0). Left in, the others were read as evidence: validation
+# questions erred 0.40 where an unlisted passage held the answer to a "no", 0.21 where every
+# passage was listed (run 20261015-214208).
+LISTED = ("coverage",)
+VIEWED = PASSAGE + LISTED
 
 
 def view(name: str, kind: str, state):
     """The state a Laya `kind` model sees for question `name`: for a passage kind, the state
-    with only that question's passage; otherwise the state unchanged. A passage kind's
-    candidates are stored one question per row with this view (stage 2), so labels and
-    training see what serving sends."""
+    with only that question's passage; for a listed kind, only the listed passages;
+    otherwise the state unchanged. A passage kind's candidates are stored one question per
+    row with this view (stage 2), so labels and training see what serving sends; a listed
+    kind's view is the same for every question of a state, and `train` applies it."""
 
+    if kind in LISTED and "complete_passages" in state:
+        listed = set(state["complete_passages"] or ())
+        return {**state, "passages": [p for p in state["passages"] if p.get("id") in listed]}
     if kind not in PASSAGE:
         return state
     pid = name.split("_", 1)[1]
