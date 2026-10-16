@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Eraser } from 'lucide-react'
 import { Answer } from '@/components/Answer'
+import { Choices } from '@/components/Blocks'
 import { Questions } from '@/components/Questions'
 import type { Asked } from '@/components/Questions'
 import { TokenUsage } from '@/components/ProviderUsage'
@@ -10,6 +11,7 @@ import { Toolbar } from '@/components/Toolbar'
 import type { Choice } from '@/components/Toolbar'
 import type { Keep, Kept, Options, Rule, Worktree } from '@/lib/api'
 import { useOverlay, useParagraphOverlay } from '@/lib/overlay'
+import { choicesOf } from '@/lib/work'
 import type { Step, Turn } from '@/lib/work'
 import { cn } from '@/lib/utils'
 
@@ -59,7 +61,8 @@ export function Agent({
     const question = [...(end.current?.parentElement?.querySelectorAll('[data-question-pending="true"]') ?? [])].at(-1)
     if (question) question.scrollIntoView({ block: 'start' })
     else end.current?.scrollIntoView({ block: 'end' })
-  }, [grown])
+    // `busy`: a finished turn mounts its `choices` cards without growing.
+  }, [grown, busy])
 
   return (
     <section aria-label="에이전트 세션" className="flex h-full min-h-0 flex-col">
@@ -133,7 +136,8 @@ export function Agent({
                 </div>
               </div>
             ) : (
-              <Reply key={t.key} turn={t} on={on} progressOn={progressOn} onAnswer={onAnswer} onPeek={onPeek} />
+              <Reply key={t.key} turn={t} on={on} progressOn={progressOn} onAnswer={onAnswer} onPeek={onPeek}
+                onSend={t === last ? onSend : undefined} />
             ),
           )}
           {queued && (
@@ -190,16 +194,20 @@ export function Agent({
   )
 }
 
-export function Reply({ turn, on, progressOn = on, onAnswer, onPeek }: {
+export function Reply({ turn, on, progressOn = on, onAnswer, onPeek, onSend }: {
   turn: Turn
   on: boolean
   progressOn?: boolean
   onAnswer: Props['onAnswer']
   onPeek: Props['onPeek']
+  /** Only the latest turn's: a `choices` block answered sends the next instruction. */
+  onSend?: (text: string) => void
 }) {
+  // Codex asks with a `choices` block at the end of a finished answer.
+  const [body, asked] = turn.pending ? [turn.text, null] : choicesOf(turn.text)
   // Only once the answer is finished: a half-streamed paragraph translated
   // reads exactly like a whole one.
-  const text = useParagraphOverlay(turn.text, on && (!turn.pending || turn.answered != null))
+  const text = useParagraphOverlay(body, on && (!turn.pending || turn.answered != null))
   // The steps after the answer — the gate — stand after it, in the order they ran.
   const cut = turn.answered ?? turn.steps.length
   const lastStep = turn.steps.at(-1)
@@ -232,7 +240,10 @@ export function Reply({ turn, on, progressOn = on, onAnswer, onPeek }: {
   return (
     <div className="space-y-2">
       {list(0, cut)}
-      {turn.text && <Answer text={text} korean={on} remote="" onPeek={onPeek} />}
+      {body && <Answer text={text} korean={on} remote="" onPeek={onPeek} />}
+      {asked && <div data-question-pending={onSend ? 'true' : undefined}>
+        <Choices value={asked} korean={on} busy={!onSend} onSay={(said) => onSend?.(said)} />
+      </div>}
       {list(cut, turn.steps.length)}
       {turn.latest !== 'step' && marker}
       {turn.error && <p role="alert" className="text-[12.5px] text-destructive">{turn.error}</p>}

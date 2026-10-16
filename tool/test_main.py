@@ -312,7 +312,8 @@ for event in [
                 assert events[-1].meta["tokens"] == {"in": 220, "out": 12, "cache_read": 160, "reasoning": 2}
                 assert session.alive
             assert len(commands) == 1   # one process, two turns, with native skill overrides
-            assert commands[0][:4] == ["codex", "app-server", "--disable", "multi_agent"]
+            assert commands[0][:6] == ["codex", "app-server", "--disable", "default_mode_request_user_input",
+                                       "--disable", "multi_agent"]
         finally:
             session.close()
 

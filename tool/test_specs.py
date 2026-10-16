@@ -319,6 +319,26 @@ def test_the_next_focus_sends_blocks_apart_and_records_them(repo):
     assert specs.load("proj", "fix-login")["source"]["session"] == "cli-9"
 
 
+def test_codexs_spec_waits_for_an_answer_and_a_first_one_comes_back_once(repo):
+    spec = {"name": "spec", "value": spec_block()}
+    asked = {"name": "choices", "value": {"question": "Scope?", "options": [{"label": "A"}, {"label": "B"}]}}
+    empty = {"name": "choices", "value": {"question": "Scope?", "options": []}}
+    with patch.object(chat, "recall", return_value=[]):
+        assert chat.asked_first("next", [spec], "codex:m") == [{"name": "spec", "error": chat.ASK_FIRST}]
+        assert chat.asked_first("next", [spec], "claude-opus") == [spec]
+        # Asking and deciding in one answer: the spec waits, and no card is made from it.
+        held = chat.asked_first("refactor", [asked, spec], "codex:m")
+        assert held == [asked, {"name": "spec", "error": chat.WAIT_ANSWER}]
+        assert [b["name"] for b in specs.answered(repo, held, {"focus": "next"}) if "id" in b] == []
+        # A question with no options is no question: still the first unasked spec.
+        assert chat.asked_first("next", [empty, spec], "codex:m") == [empty, {"name": "spec", "error": chat.ASK_FIRST}]
+    for prior in (asked, {"name": "spec", "error": chat.ASK_FIRST}):
+        with patch.object(chat, "recall", return_value=[{"role": "assistant", "blocks": [prior]}]):
+            assert chat.asked_first("next", [spec], "codex:m") == [spec]
+    with patch.object(chat, "recall", return_value=[{"role": "assistant", "blocks": [empty]}]):
+        assert chat.asked_first("next", [spec], "codex:m") == [{"name": "spec", "error": chat.ASK_FIRST}]
+
+
 def test_asking_for_candidates_sends_the_materials_and_shows_one_line(repo):
     heard = []
 
