@@ -1185,6 +1185,30 @@ def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, 
     drawn = [q["drawn"] for r in got for q in r["questions"].values()]
     assert drawn[0] == "trimmed" and drawn[1] in ("overlap2", "overlap3") and len(drawn) == 2
 
+    # all told another way: its quoted evidence alone, another listed passage before or
+    # after it, the evidence with one after; only the all question, never over CHARS.
+    (cand,) = [r for r in support.derive([wide], 10) if "support_r0_p0" in r["questions"]]
+    labelled = {"state": cand["state"], "provenance": {"state_hash": cand["state_hash"]},
+                "questions": {n: q["question"] for n, q in cand["questions"].items()},
+                "expected": {n: "all" if n == "support_r0_p0" else "none" for n in cand["questions"]}}
+    quote = "A cache entry expires after one hour"
+    # With two other listed passages the evidence has none left to follow it: a repeat, left out.
+    assert len(support.restated([labelled], [cand], [wide], {quote})) == 3
+    wider = {**wide, "state": {**wide["state"], "passages": [*wide["state"]["passages"], {"id": "p4", "text": "Logs rotate."}],
+                               "complete_passages": [*wide["state"]["complete_passages"], "p4"]}}
+    told = support.restated([labelled], [cand], [wider], {quote, "after one hour"})
+    ways = {next(iter(r["questions"].values()))["drawn"]: r for r in told}
+    assert set(ways) == {"evidence", "before", "after", "evidence_after"}
+    assert all(list(r["questions"]) == ["support_r0_p0"] and r["provenance"]["restated"] == cand["state_hash"]
+               and r["questions"]["support_r0_p0"]["question"] == support.question("r0", "p0") for r in told)
+    assert ways["evidence"]["state"]["passages"][0]["text"] == quote   # a quote inside another is not repeated
+    assert ways["before"]["state"]["passages"][0]["text"].endswith(support.fold(stated_text := cand["state"]["passages"][0]["text"]))
+    assert ways["after"]["state"]["passages"][0]["text"].startswith(support.fold(stated_text))
+    assert all(r["state_hash"] == pool.digest(r["state"]) for r in told)
+    monkeypatch.setattr(support, "CHARS", 40)   # the passage alone is 37: nothing fits beside it
+    assert {next(iter(r["questions"].values()))["drawn"]
+            for r in support.restated([labelled], [cand], [wider], {quote})} == {"evidence"}
+
     def probs(c):
         return {"choice": c, "probabilities": {"all": 0.8 if c == "all" else 0.1}}
 
