@@ -185,11 +185,20 @@ def loaded(checkpoint):
     return agent
 
 
-def score(kind: str, checkpoint, sure: dict | None = None) -> tuple[set[tuple[str, str]], dict]:
+def chance(got: dict, want) -> float:
+    """The probability an answer gave the expected one: P(yes) or P(no) for a noul, the
+    option's probability for a choice, where 1 - confidence is two other options' share."""
+
+    return got["probabilities"].get(want, 0.0) if "probabilities" in got else got["noul"] if want else 1 - got["noul"]
+
+
+def score(kind: str, checkpoint, sure: dict | None = None,
+          truth: dict | None = None) -> tuple[set[tuple[str, str]], dict]:
     """`(wrong, predicted)`: the validation `(state_hash, question)` the checkpoint gets
     wrong, and its answer to every validation question that fits `MAX_LEN`. `checkpoint`
     is a fine-tune's folder, or a published name (`base`, `typed`) for zero-shot. `sure`,
-    when given, receives each answer's confidence (after the checkpoint's temperatures)."""
+    when given, receives each answer's confidence (after the checkpoint's temperatures);
+    `truth`, the probability it gave the expected answer (`chance`), what log loss reads."""
 
     max_len = MAX_LEN[kind]
     agent = loaded(checkpoint)
@@ -205,6 +214,8 @@ def score(kind: str, checkpoint, sure: dict | None = None) -> tuple[set[tuple[st
             predicted[key] = answer(asked[name], got[name])
             if sure is not None:
                 sure[key] = got[name]["confidence"]
+            if truth is not None:
+                truth[key] = chance(got[name], row["expected"][name])
             if predicted[key] != row["expected"][name]:
                 wrong.add(key)
     return wrong, predicted

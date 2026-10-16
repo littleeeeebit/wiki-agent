@@ -1142,6 +1142,18 @@ def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, 
         assert r["state_hash"] == pool.digest(r["state"]) and r["provenance"] == {"coverage": "c0"}
     assert sum(len(r["questions"]) for r in support.derive([row], 1)) == 1
     assert support.derive([row], 10, held=[row]) == []   # every view is a held one
+    # A gate row of another kind with no listed passage still holds its passage views.
+    shared = " ".join(f"shared{i}" for i in range(200))
+    gated = {"state_hash": "g", "questions": {"useful_p0": {"kind": "useful", "question": NOUL}},
+             "state": {"query": "q", "requirements": [{"id": "r0", "text": "shared0 shared1"}], "complete_passages": [],
+                       "passages": [{"id": "p0", "text": shared},
+                                    {"id": "p1", "text": " ".join(f"gate{i}" for i in range(200))}]}}
+    source = {"state": {**gated["state"], "complete_passages": ["p0", "p1"],
+                        "passages": [{"id": "p0", "text": shared},
+                                     {"id": "p1", "text": " ".join(f"train{i}" for i in range(200))}]},
+              "expected": {"coverage_r0": True}, "provenance": {"state_hash": "c1"}}
+    assert sorted(n for r in support.derive([source], 10) for n in r["questions"]) == ["support_r0_p0", "support_r0_p1"]
+    assert [list(r["questions"]) for r in support.derive([source], 10, held=[gated])] == [["support_r0_p1"]]
 
     def probs(c):
         return {"choice": c, "probabilities": {"all": 0.8 if c == "all" else 0.1}}
@@ -1256,10 +1268,42 @@ def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders
 
     # `score` hands back each answer's confidence beside the answers the loop reads.
     write(folders / "data" / "useful" / "validation.jsonl", [row(0, "short"), row(1, "short")])
-    sure = {}
-    wrong, predicted = train.score("useful", "base", sure)
+    sure, truth = {}, {}
+    wrong, predicted = train.score("useful", "base", sure, truth)
     assert predicted == {("h0", "useful_p0"): True, ("h1", "useful_p0"): True} and wrong == {("h1", "useful_p0")}
     assert sure == dict.fromkeys(predicted, 0.8)
+    assert truth == {("h0", "useful_p0"): 0.8, ("h1", "useful_p0"): pytest.approx(0.2)}   # P(the expected answer)
+    # A choice's wrong answer leaves its confidence's complement to two other options.
+    assert train.chance({"probabilities": {"none": 0.6, "part": 0.39, "all": 0.01}, "confidence": 0.6}, "all") == 0.01
+
+
+def test_the_notebook_chooses_a_choice_run_by_the_probability_of_the_right_option():
+    import ast
+    import io
+    import math
+    import types
+    from pathlib import Path
+    book = json.loads((Path(train.HERE) / "notebooks" / "train.ipynb").read_text(encoding="utf-8"))
+    cell = next("".join(c["source"]) for c in book["cells"] if "def record(" in "".join(c["source"]))
+    tree = ast.parse(cell)
+    key = ("s", "support_r0_p0")
+    probs = {"A": {"none": 0.6, "part": 0.39, "all": 0.01}, "B": {"none": 0.8, "part": 0.01, "all": 0.19}}
+
+    def score(kind, checkpoint, sure, truth):
+        got = {"probabilities": probs[checkpoint], "confidence": max(probs[checkpoint].values())}
+        sure[key], truth[key] = got["confidence"], train.chance(got, "all")
+        return {key}, {key: "none"}
+
+    space = {"math": math, "json": json, "KIND": "support", "train": types.SimpleNamespace(score=score),
+             "ANSWERS": {}, "SURE": {}, "SUMMARY": {}, "RESULT": Path("unused"),
+             "VALIDATION": [{"provenance": {"state_hash": "s"}, "expected": {key[1]: "all"}}],
+             "open": lambda *a, **k: io.StringIO(), "print": lambda *a, **k: None}
+    exec(compile(ast.Module(body=[n for n in tree.body if isinstance(n, ast.FunctionDef)], type_ignores=[]),
+                 "notebook", "exec"), space)
+    for name in probs:
+        space["record"](name, name)
+    losses = {n: space["SUMMARY"]["accuracy"][n]["log_loss"] for n in probs}
+    assert min(losses, key=losses.get) == "B" and losses["A"] == pytest.approx(-math.log(0.01), abs=1e-3)
 
 
 def truth(i):

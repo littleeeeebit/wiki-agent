@@ -14,8 +14,8 @@ answers over the state's listed passages:
 `derive` makes candidates from `coverage`'s labelled splits: for each question, the listed
 passage sharing most words with the requirement and one other listed passage at random. It
 reads no label and no verifier turn. A row is skipped when its view is near a held one
-(`gate.Near`): any gate state for every split, and for train also every validation and
-calibration coverage state, each listed passage's view.
+(`gate.Near`, `held_rows`): any gate state for every split, and for train also every
+validation and calibration coverage state.
 
     python laya/support.py derive train 1600
     python laya/support.py derive validation 300
@@ -29,7 +29,7 @@ import sys
 
 import gate
 import train
-from kinds import view
+from kinds import kind_of, view
 from label import DATA
 from pool import digest
 from store import append, read
@@ -80,11 +80,17 @@ def pairs(rows: list[dict], seed: int) -> list[tuple[dict, str, str, str]]:
 
 
 def held_rows(rows: list[dict]) -> list[dict]:
-    """`rows` (coverage states) as `gate.Near` reads them: the whole state and each listed
-    passage's view."""
+    """Held rows (gate candidates, labelled coverage rows) as `gate.Near` reads them: the
+    whole state, the views of their own questions, and every passage's one-passage view,
+    listed or not. A gate row of another kind keeps its own passage views this way."""
 
-    return [{"state": r["state"], "questions": {name("r", p["id"]): {"kind": KIND} for p in listed(r["state"])}}
-            for r in rows]
+    out = []
+    for r in rows:
+        kinds = {n: q.get("kind") or kind_of(n) for n, q in (r.get("questions") or {}).items()}
+        questions = {n: {"kind": k} for n, k in kinds.items() if k}
+        questions.update({name("r", p["id"]): {"kind": KIND} for p in r["state"].get("passages") or ()})
+        out.append({"state": r["state"], "questions": questions})
+    return out
 
 
 def derive(rows: list[dict], n: int, seed: int = 0, held=()) -> list[dict]:
