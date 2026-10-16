@@ -19,6 +19,7 @@ import notes
 import pool
 import stage1
 import store
+import support
 import train
 
 NOUL = {"type": "noul", "instructions": "Is the passage useful?"}
@@ -35,6 +36,7 @@ def folders(tmp_path, monkeypatch):
     monkeypatch.setattr(gate, "POOL", tmp_path / "pool.jsonl")
     monkeypatch.setattr(gate, "TESTS", tmp_path / "tests.json")
     monkeypatch.setattr(train, "DATA", tmp_path / "data")
+    monkeypatch.setattr(support, "DATA", tmp_path / "data")
     write(tmp_path / "pool.jsonl", [])
     (tmp_path / "tests.json").write_text('{"tests": []}', encoding="utf-8")
     return tmp_path
@@ -1118,6 +1120,56 @@ def test_coverage_sees_and_trains_on_only_the_listed_passages(folders, monkeypat
     assert gate.pairs([a, b]) == set()                           # the whole states are far apart
 
 
+def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, monkeypatch):
+    import types
+    import zipfile
+    state = {"query": "q", "requirements": [{"id": "r0", "text": "When does a cache entry expire?"},
+                                            {"id": "r1", "text": "Which port does the server use?"}],
+             "passages": [{"id": "p0", "heading": "Cache", "text": "A cache entry expires after one hour."},
+                          {"id": "p1", "heading": "Trees", "text": "Trees are independent."},
+                          {"id": "p2", "heading": "Cache", "text": "Unlisted: cache entry expires."}],
+             "complete_passages": ["p0", "p1"]}
+    row = {"state": state, "questions": {}, "expected": {"coverage_r0": True, "coverage_r1": False},
+           "provenance": {"state_hash": "c0"}}
+    drawn = support.derive([row], 10)
+    asked = {n: q for r in drawn for n, q in r["questions"].items()}
+    assert sorted(asked) == ["support_r0_p0", "support_r0_p1", "support_r1_p0", "support_r1_p1"]
+    assert asked["support_r0_p0"]["drawn"] == "overlap" and asked["support_r0_p1"]["drawn"] == "random"
+    assert len(drawn) == 2   # a passage asked about two requirements is one view, one row
+    for r in drawn:
+        (pid,) = {n.rsplit("_", 1)[1] for n in r["questions"]}
+        assert [p["id"] for p in r["state"]["passages"]] == [pid] and r["state"]["requirements"] == state["requirements"]
+        assert r["state_hash"] == pool.digest(r["state"]) and r["provenance"] == {"coverage": "c0"}
+    assert sum(len(r["questions"]) for r in support.derive([row], 1)) == 1
+    assert support.derive([row], 10, held=[row]) == []   # every view is a held one
+
+    def probs(c):
+        return {"choice": c, "probabilities": {"all": 0.8 if c == "all" else 0.1}}
+
+    assert support.decide([probs("none"), probs("all")])[0] is True
+    assert support.decide([probs("none"), probs("none")])[0] is False
+    assert support.decide([probs("part"), probs("none")])[0] is None
+    assert support.decide([probs("none"), probs("all")])[1] == pytest.approx(1 - 0.9 * 0.2)
+
+    # Scored as coverage: r0 is stated whole by p0, r1 by nothing; p2 is never asked.
+    write(folders / "data" / "coverage" / "validation.jsonl", [row])
+    seen = []
+    agent = types.SimpleNamespace(predict=lambda st, asked, **k: seen.append(st["passages"][0]["id"]) or {
+        "answers": {n: probs("all" if n == "support_r0_p0" else "none") for n in asked}})
+    monkeypatch.setattr(train, "tokens", lambda agent, st, q: 10)
+    summary, records = support.evaluate("ckpt", agent)
+    assert sorted(seen) == ["p0", "p1"]
+    assert [(r["question"], r["verdict"]) for r in records] == [("coverage_r0", True), ("coverage_r1", False)]
+    assert summary["accuracy_decided"] == 1.0 and summary["decided"] == 2 and summary["auroc"] == 1.0
+    monkeypatch.setattr(train, "tokens", lambda agent, st, q: 5000)   # too long: undecided, not guessed
+    assert support.evaluate("ckpt", agent)[0]["verdicts"] == {"True": 0, "False": 0, "None": 2}
+
+    # Packed with coverage's validation questions, which it is scored on.
+    write(folders / "data" / "support" / "train.jsonl", [{"state": {}, "questions": {}, "expected": {}}])
+    with zipfile.ZipFile(train.pack("support")) as z:
+        assert {"laya/support.py", "laya/data/support/train.jsonl", "laya/data/coverage/validation.jsonl"} <= set(z.namelist())
+
+
 def test_a_train_subset_holds_whole_records_and_says_how_many(folders):
     rows = [{"state": {"text": f"s{i} line"}, "questions": {"useful_p0": NOUL},
              "expected": {"useful_p0": True}, "provenance": {"state_hash": f"h{i}"}} for i in range(10)]
@@ -1191,7 +1243,8 @@ def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders
     assert seen["config"]["option_layout"] == "parallel" and seen["config"]["micro_batch"] == 4
     assert seen["config"]["grad_accum"] == 16 and seen["config"]["max_len"] == 2048
     assert seen["config"]["eval_data"]   # scored before and after inside `finetune`
-    assert set(train.MAX_LEN) == set(generate.RETRIEVAL) - {"repair"}   # every labelled retrieval kind can train
+    # Every labelled retrieval kind can train, and `support`, which coverage is made from.
+    assert set(train.MAX_LEN) == set(generate.RETRIEVAL) - {"repair"} | {"support"}
     # `coverage` (8,192 tokens) trains one question a micro-batch, and its validation is not
     # handed to `finetune`, which would score it 16 a batch in FP32.
     write(folders / "data" / "coverage" / "train.jsonl", [row(5, "short")])

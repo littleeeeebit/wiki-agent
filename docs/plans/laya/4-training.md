@@ -69,6 +69,34 @@ RTX 3080.
   of those starts once it has at least 100 production states.
 - Code: `laya/train.py` and `laya/notebooks/train.ipynb`.
 
+### Coverage by passage (owner, 2026-10-16)
+
+`coverage` stayed near 0.70 accuracy and 0.77 class AUROC over three
+retrains: more "no" data, more epochs, and the listed view. Two thirds of
+its validation errors had a correct label. Its question asks whether several
+passages together state a requirement. The owner chose to ask one passage at
+a time instead, the shape `useful` learned.
+
+- Kind `support` (`laya/support.py`, not a production question): does
+  passage p state all, part or none of requirement r. Its view is the state
+  with that one passage. It trains at 1,024 tokens, since a view is at most
+  2,624 characters.
+- The production `coverage` question is unchanged. Its answer is made from
+  the answers over the state's listed passages:
+  - yes when some passage states all of the requirement;
+  - no when every passage states none of it;
+  - undecided otherwise, which leaves it to the LLM.
+- Candidates are derived from `coverage`'s labelled splits. Each question
+  gives its listed passage sharing most words with the requirement, and one
+  other listed passage at random; no label or verifier turn is read. A train
+  row near a held view (gate, validation, calibration) is skipped. Planned:
+  1,600 train, 300 validation and 300 calibration questions, labelled by
+  guided labelling. The cap is $40.
+- The notebook chooses the `support` run by its own validation log loss, then
+  scores the chosen run on `coverage`'s 219 validation questions
+  (`support.evaluate`): the decided rate, accuracy on the decided ones, and
+  AUROC of the chance that some passage states all of it.
+
 ## Calibration and policy
 
 - One temperature per kind fitted on the calibration split (never on
