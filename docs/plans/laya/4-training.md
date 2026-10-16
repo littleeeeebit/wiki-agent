@@ -96,6 +96,17 @@ a time instead, the shape `useful` learned.
   scores the chosen run on `coverage`'s 219 validation questions
   (`support.evaluate`): the decided rate, accuracy on the decided ones, and
   AUROC of the chance that some passage states all of it.
+- First run (20261016-094429): `support` 0.75, but coverage made from it 0.662
+  (AUROC 0.73), below the coverage model. It learned none and all, never part
+  (1 of 42), so coverage decided 216 of 219 and one false all among a dozen
+  passages made a false yes.
+- Augmentation aimed at part (owner, 2026-10-16; cap raised to $42):
+  `support.augment` makes about 800 train candidates. A trimmed candidate is a
+  passage that stated all of a requirement, less the sentences a verifier
+  quoted for that all. The quotes come only from train's own labelling turns.
+  A runner candidate is a covered requirement's second or third passage by
+  shared words. Both are labelled like any other candidate, and train then
+  holds full1 plus that split.
 
 ## Calibration and policy
 

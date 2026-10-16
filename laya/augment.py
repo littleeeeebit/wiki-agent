@@ -37,15 +37,15 @@ def fold(text: str) -> str:
     return " ".join(text.split())
 
 
-def quotes(turns: list[dict]) -> set[str]:
-    """Every passage text a verifier quoted as the evidence for a yes, cut at ellipses, at
+def quotes(turns: list[dict], answer: str = "yes") -> set[str]:
+    """Every passage text a verifier quoted as the evidence for `answer`, cut at ellipses, at
     least `QUOTE` characters, whitespace folded."""
 
     out = set()
     for t in turns:
         verdicts = (t.get("json") or {}).get("verdicts")
         for v in verdicts.values() if isinstance(verdicts, dict) else ():
-            if isinstance(v, dict) and str(v.get("answer")).lower() == "yes":
+            if isinstance(v, dict) and str(v.get("answer")).lower() == answer:
                 for part in re.split(r"\.\.\.|…", str(v.get("evidence") or "")):
                     part = fold(part).strip(" \"'“”")
                     if len(part) >= QUOTE:
