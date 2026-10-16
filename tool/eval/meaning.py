@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -64,15 +65,36 @@ def found(literal: str, text: str) -> str:
     A hyphen cannot be read: `v1.13.0-beta` is another version, while
     `HMAC-SHA256-based` keeps the algorithm, so `joined` is neither."""
 
-    out, start = "absent", 0
-    while (i := text.find(literal, start)) >= 0:
-        start, j = i + 1, i + len(literal)
+    # As written, apart from the width of a space: `Google  Drive` is `Google Drive`.
+    pattern, out, start = re.compile(r"\s+".join(map(re.escape, literal.split(" ")))), "absent", 0
+    while m := pattern.search(text, start):
+        i, j = m.span()
+        start = i + 1
         joints = ([text[i - 1]] if word(literal[0]) and i > 0 and joins(text, i - 1, -1, literal[0]) else []) + \
                  ([text[j]] if word(literal[-1]) and j < len(text) and joins(text, j, 1, literal[-1]) else [])
         if not joints:
             return "present"
         if all(c == "-" for c in joints):
             out = "joined"
+    return out
+
+
+def at(phrase: str, text: str) -> list[tuple[int, int]]:
+    """Where `phrase` stands in `text`, as spans, any case; a space in it
+    matches any run of whitespace, a line break too. A phrase matches inside
+    words (`reimburs`), but an edge that is a digit is a number's edge and
+    takes the whole-token rule: `31 days` is not in `131 days`, `March 1` not
+    in `March 12`, `2` not in `12` (reliability PR 9's set review)."""
+
+    pattern, out, start = re.compile(r"\s+".join(map(re.escape, phrase.split(" "))), re.I), [], 0
+    while m := pattern.search(text, start):
+        i, j = m.span()
+        start = i + 1
+        # A phrase that ends in a number's point or comma (`within 7.`) ends the number there, not in `7.5`.
+        tail = j - 1 if len(phrase) > 1 and phrase[-1] in ".,:" and phrase[-2].isdigit() else j
+        if not (phrase[0].isdigit() and i > 0 and joins(text, i - 1, -1, phrase[0])) and \
+                not (text[tail - 1].isdigit() and tail < len(text) and joins(text, tail, 1, text[tail - 1])):
+            out.append((i, j))
     return out
 
 
@@ -96,9 +118,9 @@ def check(case: dict, outcome: dict) -> list[str]:
 
     if outcome["status"] != "translated":
         return [f"status {outcome['status']} ({outcome.get('reason')})"]
-    text = outcome["text"].lower()
-    wrong = [f"none of {group}" for group in case["require"] if not any(p.lower() in text for p in group)]
-    wrong += [f"has {phrase!r}" for phrase in case["forbid"] if phrase.lower() in text]
+    text = outcome["text"]
+    wrong = [f"none of {group}" for group in case["require"] if not any(at(p, text) for p in group)]
+    wrong += [f"has {phrase!r}" for phrase in case["forbid"] if at(phrase, text)]
     return wrong + [p for x in case.get("literals", []) if (p := literal_problem(x, outcome["text"]))]
 
 
