@@ -27,6 +27,12 @@ second and third passages (`runners`).
     python laya/support.py derive validation 300
     python laya/support.py derive calibration 300
     python laya/support.py augment aug1 800
+
+With aug1 and aug2 (the whole pool of second to fifth passages) part rose to 20 of 42, but
+all fell to 2 of 17 and coverage never said yes (owner, 2026-10-17). `restate` asks each
+labelled all again of the same passage told another way (`restated`):
+
+    python laya/support.py restate aug3 0 --from full1 aug1 aug2
 """
 
 import argparse
@@ -44,6 +50,7 @@ from store import append, read
 
 KIND = "support"
 LEFT = 20   # words a trimmed passage keeps, or there is nothing left to judge
+CHARS = 2600   # a restated passage's longest text: the longest view that fit `MAX_LEN` (2,624)
 OPTIONS = {"all": "The passage by itself states everything the requirement asks for.",
            "part": "The passage states some of what the requirement asks for, not all of it.",
            "none": "The passage states nothing the requirement asks for."}
@@ -187,6 +194,54 @@ def augment(rows: list[dict], turns: list[dict], coverage: list[dict], n: int, s
     return out + derive([], n - asked, seed, held, runners(coverage, seed), asked_before=rows)
 
 
+def restated(labelled: list[dict], rows: list[dict], coverage: list[dict], quoted: set[str], seed: int = 0,
+             held=()) -> list[dict]:
+    """Train candidates for all, the answer the aug2 model lost (2 of 17, owner 2026-10-17):
+    each `all` label of `labelled`, asked again of the same passage told another way. The
+    labelled row's candidate is in `rows`, and that candidate's coverage state is in
+    `coverage`. The ways are:
+
+    - `evidence`: only the `quoted` texts (a verifier's quotes for an all) it holds;
+    - `before`, `after`: another listed passage of its coverage state put before or after it;
+    - `evidence_after`: the quoted texts with another listed passage after them.
+
+    The labeller still answers each one. A text past `CHARS`, a repeat, or a row near a
+    `held` one is left out."""
+
+    cands = {r["state_hash"]: r for r in rows}
+    states = {r["provenance"]["state_hash"]: r["state"] for r in coverage}
+    near, seen, out = gate.Near(held_rows(list(held))), set(), []
+    rng = random.Random(f"{seed}-restated")
+    for row in labelled:
+        cand = cands[row["provenance"]["state_hash"]]
+        (p,) = cand["state"]["passages"]
+        text = fold(p["text"])
+        found = [q for q in quoted if q in text]
+        found = [q for q in found if not any(q != o and q in o for o in found)]   # a quote inside another
+        said = " ".join(q for _, q in sorted((text.index(q), q) for q in found))
+        others = [fold(o["text"]) for o in listed(states[cand["provenance"]["coverage"]]) if o["id"] != p["id"]]
+        rng.shuffle(others)
+        pad = iter(others)
+        ways = {"evidence": said, "before": f"{next(pad, '')} {text}", "after": f"{text} {next(pad, '')}",
+                "evidence_after": f"{said} {next(pad, '')}" if said else ""}
+        for how, new in ways.items():
+            new = fold(new)
+            if not new or new == text or len(new) > CHARS:
+                continue
+            for q, v in row["expected"].items():
+                if v != "all":
+                    continue
+                state = {**cand["state"], "passages": [{**p, "text": new}]}
+                r = {"id": f"{cand['id']}-{how}-{q}", "state": state, "state_hash": digest(state),
+                     "questions": {q: {"kind": KIND, "question": question(*q.split("_")[1:]), "drawn": how}},
+                     "provenance": {**cand["provenance"], "restated": cand["state_hash"]}}
+                if (r["state_hash"], q) not in seen and not near.found(r):
+                    seen.add((r["state_hash"], q))
+                    out.append(r)
+    rng.shuffle(out)
+    return out
+
+
 def decide(answers: list[dict]) -> tuple[bool | None, float]:
     """A coverage answer from `support` answers over a state's listed passages (Laya's
     `{"choice", "probabilities"}`): the verdict, `None` when undecided, and a score for
@@ -257,13 +312,16 @@ def summary(records: list[dict]) -> dict:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("how", choices=["derive", "augment"])
-    p.add_argument("split", help="derive: train, validation or calibration; augment: a new train split")
-    p.add_argument("n", type=int)
+    p.add_argument("how", choices=["derive", "augment", "restate"])
+    p.add_argument("split", help="derive: train, validation or calibration; augment, restate: a new train split")
+    p.add_argument("n", type=int, help="derive, augment: questions at most; restate: unused, 0")
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--from", dest="sources", nargs="+", default=["full1"],
+                   help="restate: the train splits whose labels and turns it reads (rows from train.candidates "
+                        "for full1, <split>.candidates otherwise)")
     a = p.parse_args()
     if (a.how == "derive") != (a.split in train.SPLITS):
-        sys.exit("derive makes train, validation or calibration; augment makes another train split")
+        sys.exit("derive makes train, validation or calibration; augment and restate make another train split")
     out = DATA / KIND / f"{a.split}.candidates.jsonl"
     if out.exists():
         sys.exit(f"{out} exists; move it aside first")
@@ -275,6 +333,19 @@ def main() -> None:
         held += [r for s in ("validation", "calibration") for r in read(DATA / "coverage" / f"{s}.jsonl")]
     if a.how == "derive":
         drawn = derive(read(DATA / "coverage" / f"{a.split}.jsonl"), a.n, a.seed, held)
+    elif a.how == "restate":
+        coverage = read(DATA / "coverage" / "train.jsonl")
+        trained = {r["provenance"]["state_hash"] for r in coverage}
+        labelled, rows, turns = [], [], []
+        for s in a.sources:
+            got = read(DATA / KIND / ("train.candidates.jsonl" if s == "full1" else f"{s}.candidates.jsonl"))
+            mine = read(DATA / KIND / f"{s}.jsonl")
+            if {r["provenance"]["state_hash"] for r in mine} - {r["state_hash"] for r in got}:
+                sys.exit(f"{s} labelled states its candidates do not hold: not that split's input")
+            if {r["provenance"]["coverage"] for r in got} - trained:
+                sys.exit(f"{s} asked about states outside coverage's train: restate reads train splits only")
+            labelled, rows, turns = labelled + mine, rows + got, turns + read(DATA / KIND / f"{s}.turns.jsonl")
+        drawn = restated(labelled, rows, coverage, quotes(turns, "all"), a.seed, held)
     else:
         rows = read(DATA / KIND / "train.candidates.jsonl")
         if {r["provenance"]["state_hash"] for r in read(DATA / KIND / "full1.jsonl")} - {r["state_hash"] for r in rows}:

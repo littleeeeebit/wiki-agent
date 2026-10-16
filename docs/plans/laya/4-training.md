@@ -107,6 +107,19 @@ a time instead, the shape `useful` learned.
   A runner candidate is a covered requirement's second or third passage by
   shared words. Both are labelled like any other candidate, and train then
   holds full1 plus that split.
+- aug1 (800) and aug2 (3,410, the whole remaining pool: the owner asked for
+  one large batch, not small ones) raised part to 20 of 42. all fell to 2 of
+  17, and coverage made from that model never says yes. Train held 953 part
+  against 472 all.
+- Augmentation aimed at all (owner, 2026-10-17; cap $48): `support restate`
+  asks every labelled all of the train splits again, of the same passage told
+  another way:
+  - its verifier-quoted evidence alone;
+  - another listed passage of its coverage state before it;
+  - another listed passage after it;
+  - the evidence with another passage after it.
+
+  That gives about 1,600 candidates, each still labelled.
 
 ## Calibration and policy
 
