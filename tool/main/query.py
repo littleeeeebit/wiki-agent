@@ -939,16 +939,15 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                          **({"blocks": shown} if shown else {}),
                          **({"verification": verification} if verification else {}), **metadata)
         finally:
-            try:
-                outcome = ("cancelled" if code == "cancelled" else "failed" if failed else
-                           verification["status"] if verification else "answered")
-                run.finish(outcome, code or None, out if verification else None, answered="".join(reply))
-                if code != "cancelled":
-                    from . import work
+            # The durable answer is complete; a finished tail must observe an available focus.
+            release()
+            outcome = ("cancelled" if code == "cancelled" else "failed" if failed else
+                       verification["status"] if verification else "answered")
+            run.finish(outcome, code or None, out if verification else None, answered="".join(reply))
+            if code != "cancelled":
+                from . import work
 
-                    work.notice("대화 응답 실패" if failed else "대화 응답 완료", f"{run.repo} · {cid}")
-            finally:
-                release()
+                work.notice("대화 응답 실패" if failed else "대화 응답 완료", f"{run.repo} · {cid}")
 
 
 class Stopped(Exception):

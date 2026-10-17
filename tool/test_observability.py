@@ -269,6 +269,12 @@ def test_another_projects_run_is_not_found_by_its_id(tmp_path, active):
 def test_a_stop_ends_the_run_cancelled_and_publishes_nothing(tmp_path, active):
     d, _reply = mixed(tmp_path)
     heard = threading.Event()
+    finishing = []
+    finish = knowledge.Run.finish
+
+    def recorded(run, *args, **kwargs):
+        finishing.append("wiki" in chat._busy)
+        return finish(run, *args, **kwargs)
 
     class Waiting:
         def say(self, text, halt=None):
@@ -278,7 +284,7 @@ def test_a_stop_ends_the_run_cancelled_and_publishes_nothing(tmp_path, active):
 
     screen = web()
     with patch.object(chat, "prepare", retrieved(d)), patch.object(chat, "session", return_value=Waiting()), \
-         patch.object(chat, "streaming", lambda events: events):
+         patch.object(chat, "streaming", lambda events: events), patch.object(knowledge.Run, "finish", recorded):
         stream = chat.say("wiki", chat.Say(text="데몬 포트는?"))
         first = json.loads(next(stream)[6:])
         assert heard.wait(120)
@@ -290,6 +296,7 @@ def test_a_stop_ends_the_run_cancelled_and_publishes_nothing(tmp_path, active):
     assert run.summary["outcome"] == "cancelled" and run.summary["verification"] is None
     row = chat.recall("wiki")[-1]
     assert row["cancelled"] and row["error"] == "멈췄다" and not row.get("verification")
+    assert finishing == [False], "the durable answer releases its focus before notifying completed tails"
     assert "wiki" not in chat._busy
 
 
