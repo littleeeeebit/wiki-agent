@@ -718,7 +718,7 @@ def extra_check(repo: Path, path: Path, run, spec: dict) -> tuple[bool, str]:
 
     from . import specs  # `specs` imports this module
 
-    if verify.policy(repo):
+    if verify.policy(path, project=repo):
         return True, ""  # The declared round and final owners already cover this repository.
     checked = (spec.get("validation") or {}).get("round") or {}
     already = checked.get("commands", []) if checked.get("head") == (spec.get("gate") or {}).get("head") else []

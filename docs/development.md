@@ -70,7 +70,9 @@ history. CI retries use the existing GitHub run; neither path retries silently.
 | CI already requested but failed/unavailable | Retain the CI owner; stop failed or pending, never duplicate locally |
 
 The tracked `verification.toml` declares the round command, complete local
-command and optional hosted workflow. Existing projects without it retain their
+command and optional hosted workflow. It is read from the candidate worktree;
+only the ignored local override comes from the original project checkout.
+Existing projects without it retain their
 adapter's final command, now under the same local owner. Unknown path mappings
 run only a cheap patch check during repair and defer broad coverage to the final
 owner. Frozen preservation checks remain mandatory.
@@ -95,7 +97,10 @@ CI runs on an explicit final request, not every repair commit. PR updates cancel
 the older candidate without starting another full run. On first installation,
 the workflow is not yet on the default branch: after review, the `ci-final` PR
 label can bootstrap one hosted run. Its commit and base must match the reviewed
-candidate. Ordinary PR events do not run the suites. CI includes Windows Python
+candidate. A label run names the base tip; both its identity step and the local
+result reader normalize that tip to the reviewed merge base. Only a new commit
+or an explicit final request can cancel an older final run; unrelated labels
+cannot cancel verification. Ordinary PR events do not run the suites. CI includes Windows Python
 and native fixtures, isolated Laya tests, lint, debt and frontend build/browser
 checks. JUnit reports are retained for three days; durations remain in logs.
 

@@ -258,10 +258,10 @@ def fork(repo: Path, sid: str) -> tuple[Path, str, str]:
 
 # -- Checking what a person settles -----------------------------------------
 
-def gate_of(repo: Path) -> str:
+def gate_of(repo: Path, path: Path | None = None) -> str:
     """The adapter's `gate_cmd`, or empty: a repository not connected yet."""
 
-    if cfg := verify.policy(repo):
+    if cfg := verify.policy(path or repo, project=repo):
         return cfg["round"]
     try:
         return slots_for(repo.name, repo).get("gate_cmd", "").strip()
@@ -1067,12 +1067,14 @@ def required(repo: Path, spec: dict) -> str:
 
     local = local_required(repo, spec)
     return verify.command(repo, own_base(spec) or "main", local,
-                          local_only=bool(review_contract.preservation_command(spec))) if verify.policy(repo) else local
+                          local_only=bool(review_contract.preservation_command(spec))) \
+        if verify.policy(Path(spec.get("worktree") or repo), project=repo) else local
 
 
 def local_required(repo: Path, spec: dict) -> str:
-    cfg = verify.policy(repo)
-    gate = cfg["local"] if cfg else gate_of(repo) or spec["done"][0]
+    path = Path(spec.get("worktree") or repo)
+    cfg = verify.policy(path, project=repo)
+    gate = cfg["local"] if cfg else gate_of(repo, path) or spec["done"][0]
     return " && ".join(filter(None, [gate, "" if cfg else debt.command(spec.get("base") or ""),
                                     review_contract.preservation_command(spec)]))
 
@@ -1094,7 +1096,7 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
 
 def for_round(repo: Path, path: Path, spec: dict, base: str) -> dict:
     """One selection for dispatch and reuse, including mandatory preservation."""
-    chosen = selected(repo, path, base, gate_of(repo) or spec["done"][0])
+    chosen = selected(repo, path, base, gate_of(repo, path) or spec["done"][0])
     preserve = review_contract.preservation_command(spec)
     if preserve and chosen["selection"] in {"mapped", "deferred"}:
         chosen = {**chosen, "commands": list(dict.fromkeys([*chosen["commands"], preserve]))}
@@ -1111,9 +1113,7 @@ def own_base(spec: dict) -> str:
 
 
 def local_base(spec: dict, path: Path) -> str:
-    """The base a pull request not opened yet goes to, read without GitHub:
-    the spec's own, else `origin/HEAD`. Empty defers broad checks to final. Nothing
-    leaves this machine before the checks pass."""
+    """The spec's base or remote default, read without GitHub; empty defers broad checks."""
 
     if own_base(spec):
         return own_base(spec)
@@ -1155,7 +1155,7 @@ def selected(repo: Path, path: Path, base: str, gate_cmd: str) -> dict:
     it never starts a full local suite. `fnmatch` stars cross `/`."""
 
     oid = merge_base(path, base)
-    if cfg := verify.policy(repo):
+    if cfg := verify.policy(path, project=repo):
         return {"base_oid": oid, "commands": [cfg["round"]], "selection": "mapped"}
     # Unmapped/shared changes wait for the one final owner, never a surprise local suite.
     full = {"base_oid": oid, "commands": ["git diff --check" + (f" {oid} HEAD" if oid else "")], "selection": "deferred"}

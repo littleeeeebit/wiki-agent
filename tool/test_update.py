@@ -104,6 +104,32 @@ def test_a_screen_older_than_its_sources_is_rebuilt_before_the_window_reads_it(t
     assert ran == [(["run", "build"], root / "web")] * 2
 
 
+def test_a_build_created_after_clean_import_serves_assets_without_restarting(tmp_path, monkeypatch):
+    import importlib.util
+
+    from main import channels
+
+    monkeypatch.setattr(channels, "WIKI", tmp_path)
+    module_spec = importlib.util.spec_from_file_location("main.clean_build_fixture", main_app.__file__)
+    clean = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(clean)
+    client = TestClient(clean.app, base_url="http://127.0.0.1:8787")
+    assert client.get("/").status_code == 200
+    assert client.get("/assets/app.js").status_code == 404
+    dist = tmp_path / "web" / "dist"
+    (dist / "assets").mkdir(parents=True)
+    for name, content in (("index.html", "<script src='/assets/app.js'></script>"), ("assets/app.js", "ready"),
+                          ("manifest.webmanifest", "{}"), ("sw.js", "worker")):
+        (dist / name).write_text(content, encoding="utf-8")
+    monkeypatch.setattr(update, "screen_ready", lambda: True)
+    assert "app.js" in client.get("/").text
+    assert client.get("/assets/app.js").text == "ready"
+    assert client.get("/manifest.webmanifest").json() == {}
+    assert client.get("/sw.js").text == "worker"
+    (tmp_path / "private.txt").write_text("private", encoding="utf-8")
+    assert client.get("/assets/%2e%2e/%2e%2e/%2e%2e/private.txt").status_code == 404
+
+
 def test_a_broken_publish_or_staging_never_breaks_the_screen_or_leaves_it_loading(tmp_path, monkeypatch):
     staged, dist = tmp_path / "staged", tmp_path / "dist"
     for folder, text in ((staged, "new"), (dist, "old")):

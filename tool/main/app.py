@@ -448,32 +448,40 @@ def index():
     return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-store"})
 
 
-if DIST.is_dir():
-    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
+@app.get("/assets/{path:path}")
+async def assets(request: Request, path: str):
+    if not (DIST / "assets").is_dir():
+        raise HTTPException(404, "화면을 먼저 빌드하세요")
+    return await StaticFiles(directory=DIST / "assets").get_response(path, request.scope)
 
-    @app.get("/manifest.webmanifest")
-    def manifest() -> FileResponse:
-        return FileResponse(DIST / "manifest.webmanifest", media_type="application/manifest+json")
 
-    @app.get("/mobile-icon.svg")
-    def mobile_icon() -> FileResponse:
-        return FileResponse(DIST / "mobile-icon.svg", media_type="image/svg+xml")
+@app.get("/manifest.webmanifest")
+def manifest() -> FileResponse:
+    return FileResponse(DIST / "manifest.webmanifest", media_type="application/manifest+json")
 
-    @app.get("/pwa-192.png")
-    @app.get("/pwa-512.png")
-    @app.get("/pwa-maskable-512.png")
-    @app.get("/apple-touch-icon.png")
-    def mobile_png(request: Request) -> FileResponse:
-        return FileResponse(DIST / request.url.path.removeprefix("/"), media_type="image/png")
 
-    @app.get("/offline.html")
-    def offline() -> FileResponse:
-        return FileResponse(DIST / "offline.html", headers={"Cache-Control": "no-cache"})
+@app.get("/mobile-icon.svg")
+def mobile_icon() -> FileResponse:
+    return FileResponse(DIST / "mobile-icon.svg", media_type="image/svg+xml")
 
-    @app.get("/sw.js")
-    def service_worker() -> FileResponse:
-        return FileResponse(DIST / "sw.js", media_type="application/javascript",
-                            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+@app.get("/pwa-192.png")
+@app.get("/pwa-512.png")
+@app.get("/pwa-maskable-512.png")
+@app.get("/apple-touch-icon.png")
+def mobile_png(request: Request) -> FileResponse:
+    return FileResponse(DIST / request.url.path.removeprefix("/"), media_type="image/png")
+
+
+@app.get("/offline.html")
+def offline() -> FileResponse:
+    return FileResponse(DIST / "offline.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    return FileResponse(DIST / "sw.js", media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 
 
 def taken(host: str, port: int) -> bool:

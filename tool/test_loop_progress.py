@@ -18,7 +18,8 @@ from test_loop import (  # noqa: F401 -- shared fixtures and isolated Git/GitHub
 from workspace import remove
 
 
-def test_final_preparation_trouble_stops_without_another_test_run_or_worker(world, monkeypatch):
+@pytest.mark.parametrize("error", [specs.verify.Pending, RuntimeError])
+def test_final_preparation_trouble_stops_without_another_test_run_or_worker(world, monkeypatch, error):
     mapped(world, "*")
     pr_spec(world, "final-preparation", 7, gate=None)
     real = specs.judge
@@ -30,7 +31,7 @@ def test_final_preparation_trouble_stops_without_another_test_run_or_worker(worl
         return real(path, commands, halt, *args, **kwargs)
 
     def unavailable(*_args, **_kwargs):
-        raise specs.verify.Pending("CI connection unavailable; existing owner retained")
+        raise error("CI connection unavailable; existing owner retained")
 
     monkeypatch.setattr(specs, "judge", judge)
     monkeypatch.setattr(specs.verify, "final", unavailable)

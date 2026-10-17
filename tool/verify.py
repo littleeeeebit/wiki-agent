@@ -25,7 +25,7 @@ class Failure(RuntimeError):
     """A completed check failed; preserve it and return it to the implementation owner."""
 
 
-def policy(repo):
+def policy(repo, *, project=None):
     path = Path(repo) / POLICY
     if not path.is_file():
         return None
@@ -38,7 +38,7 @@ def policy(repo):
             or not isinstance(value["workflow"], str) \
             or value["workflow"] and not re.fullmatch(r"[\w-]+\.ya?ml", value["workflow"]):
         raise ValueError("verification.toml의 verification 설정이 올바르지 않습니다")
-    override = Path(repo) / ".wiki" / POLICY
+    override = Path(project or repo) / ".wiki" / POLICY
     if override.is_file():
         local = tomllib.loads(override.read_text(encoding="utf-8")).get("verification")
         if not isinstance(local, dict) or set(local) != {"mode"} or not isinstance(local["mode"], str) \
@@ -170,7 +170,15 @@ def latest(repo, workflow, head, base_oid):
     fields = {"databaseId", "headSha", "displayTitle", "status", "conclusion", "url", "attempt"}
     if not isinstance(rows, list) or any(not isinstance(r, dict) or not fields <= r.keys() for r in rows):
         raise Pending("CI 실행 목록 응답의 형식이 올바르지 않습니다")
-    matches = [r for r in rows if r["headSha"] == head and r["displayTitle"] == f"Final {head} {base_oid}"]
+    matches = []
+    for row in rows:
+        title = re.fullmatch(rf"Final {re.escape(head)} ([0-9a-f]{{40}})", row["displayTitle"])
+        if row["headSha"] != head or not title:
+            continue
+        declared = title[1]
+        # A first-install label names the base tip; normalize it to the same merge base as dispatch.
+        if declared == base_oid or run(["git", "merge-base", head, declared], repo) == base_oid:
+            matches.append(row)
     return max(matches, key=lambda r: r["databaseId"], default=None)
 
 
@@ -255,6 +263,8 @@ def local_result(repo, command, record, receipt, dispatch, deadline, halt, judge
         env = {**os.environ, "WIKI_FINAL_RUN": "1", "PYTEST_XDIST_AUTO_NUM_WORKERS": "2", "PYTHONUTF8": "1"}
         print(f"로컬 최종 검사 · 한 번만 실행 · {command}", flush=True)
         verdict = judge(repo, command, env, halt, max(0, deadline - time.monotonic()))
+        if verdict.get("ok") and verdict.get("head") != record["head"]:
+            verdict = {**verdict, "ok": False, "code": None, "reason": "검토한 커밋과 실제 검사한 커밋이 다릅니다"}
         record.update(status="passed" if verdict["ok"] else "incomplete" if verdict.get("code", 1) is None else "failed",
                       reason=verdict.get("reason", ""),
                       tail=verdict.get("tail", ""), finished_at=time.time(),
@@ -279,7 +289,7 @@ def local_judge(repo, command, env, halt, timeout):
 def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=19 * 60, halt=None,
           judge=local_judge, retry_reason="", noted=None, local_only=False):
     project = Path(project or repo)
-    cfg = policy(project)
+    cfg = policy(repo, project=project)
     local_command = local_command or (cfg or {}).get("local", "")
     if not local_command and cfg is None:
         import debt
@@ -325,8 +335,15 @@ def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=
             head, base_oid, record["backend"]
         ) or record["backend"] == "local" and proof.get("environment_digest") != signature:
             raise Pending("저장된 통과 증거가 현재 커밋·검사 조건과 다릅니다")
-        if identity(repo, base) != (head, base_oid):
-            raise RuntimeError("검증 대기 중 커밋·base가 바뀌었습니다")
+        try:
+            if identity(repo, base) != (head, base_oid):
+                raise Pending("검증 대기 중 커밋·base가 바뀌었습니다")
+        except (RuntimeError, OSError, subprocess.SubprocessError):
+            if dispatch and record["backend"] == "local":
+                record.update(status="incomplete", reason="검증 뒤 커밋·base를 확인하지 못했습니다")
+                record.pop("proof", None)
+                saved(receipt, record)
+            raise
         return proof
 
 
@@ -338,7 +355,7 @@ def verdict(project, repo, base, command, halt, noted=None, local_only=False):
                   "tail": "VERIFY_PROOF " + json.dumps(proof)}
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
         result = {"ok": False, "head": "", "code": 1, "reason": str(exc), "tail": str(exc),
-                  "pending": isinstance(exc, Pending)}
+                  "pending": not isinstance(exc, Failure)}
     return {**result, "elapsed_seconds": round(time.monotonic() - started, 3)}
 
 

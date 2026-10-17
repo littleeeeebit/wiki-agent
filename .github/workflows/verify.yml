@@ -22,7 +22,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: verification-${{ github.head_ref || github.ref_name }}
+  group: >-
+    verification-${{ (github.event_name == 'workflow_dispatch' || github.event.action == 'synchronize' || (github.event.action == 'labeled' && github.event.label.name == 'ci-final')) && (github.head_ref || github.ref_name) || format('event-{0}', github.run_id) }}
   cancel-in-progress: true
 
 env:
@@ -54,10 +55,11 @@ jobs:
           head, base = os.environ['EXPECTED_HEAD'], os.environ['EXPECTED_BASE']
           assert all(re.fullmatch(r'[0-9a-f]{40}', value) for value in (head, base))
           assert subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip() == head
-          assert subprocess.check_output(['git', 'merge-base', head, base], text=True).strip() == base
+          merge_base = subprocess.check_output(['git', 'merge-base', head, base], text=True).strip()
           if os.environ['EVENT_NAME'] == 'workflow_dispatch':
+              assert merge_base == base, 'The requested merge base is not an ancestor'
               assert os.environ['DISPATCH_HEAD'] == head, 'The branch moved before dispatch'
-          print(f'Tested identity: {head}; merge base: {base}')
+          print(f'Tested identity: {head}; merge base: {merge_base}')
           PY
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:

@@ -210,7 +210,7 @@ def test_private_local_verification_runs_once_and_reuses_across_sessions(hosted_
         calls.append(command)
         assert env["WIKI_FINAL_RUN"] == "1" and env["PYTEST_XDIST_AUTO_NUM_WORKERS"] == "2"
         assert 0 < timeout <= 19 * 60
-        return {"ok": True, "tail": "passed", "elapsed_seconds": 1}
+        return {"ok": True, "head": HEAD, "tail": "passed", "elapsed_seconds": 1}
 
     proof = ci.final(hosted_repo, "main", judge=judge)
     assert proof["backend"] == "local"
@@ -252,7 +252,7 @@ def test_local_override_and_policy_changes_invalidate_old_success(hosted_repo, m
     monkeypatch.setattr(ci, "backend", lambda *_: "local")
     monkeypatch.setattr(ci, "run", lambda args, repo: str(repo))
     def judge(*_):
-        return {"ok": True}
+        return {"ok": True, "head": HEAD}
     first = ci.final(hosted_repo, "main", judge=judge)
     override = hosted_repo / ".wiki" / ci.POLICY
     override.parent.mkdir()
@@ -287,7 +287,7 @@ def test_explicit_local_retry_keeps_the_original_failure(hosted_repo, monkeypatc
     with pytest.raises(ci.Failure):
         ci.final(hosted_repo, "main", judge=lambda *_: {"ok": False, "reason": "missing browser"})
     proof = ci.final(hosted_repo, "main", retry_reason="Installed the required browser",
-                     judge=lambda *_: {"ok": True})
+                     judge=lambda *_: {"ok": True, "head": HEAD})
     receipt = json.loads(next(hosted_repo.glob("wiki-verification-*.json")).read_text(encoding="utf-8"))
     assert proof["backend"] == "local" and receipt["history"][0]["reason"] == "missing browser"
     assert receipt["retry_reason"] == "Installed the required browser"
@@ -330,7 +330,7 @@ def test_frozen_local_contract_never_dispatches_ci(hosted_repo, monkeypatch):
 
     def judge(repo, command, *_):
         calls.append(command)
-        return {"ok": True}
+        return {"ok": True, "head": HEAD}
 
     proof = ci.final(hosted_repo, "main", local_command="full-check && frozen-check", local_only=True, judge=judge)
     assert proof["backend"] == "local" and calls == ["full-check && frozen-check"]
@@ -347,7 +347,7 @@ def test_existing_private_project_without_a_policy_uses_its_adapter(tmp_path, mo
 
     def judge(repo, command, *_):
         commands.append(command)
-        return {"ok": True}
+        return {"ok": True, "head": HEAD}
 
     proof = ci.final(tmp_path, "main", judge=judge)
     assert proof["backend"] == "local" and commands[0].startswith("legacy-complete-check && ")
@@ -377,7 +377,7 @@ def test_a_local_policy_does_not_require_any_ci_fields(tmp_path, monkeypatch):
 def test_corrupt_cached_proof_cannot_pass_or_trigger_another_run(hosted_repo, monkeypatch):
     monkeypatch.setattr(ci, "backend", lambda *_: "local")
     monkeypatch.setattr(ci, "run", lambda args, repo: str(repo))
-    ci.final(hosted_repo, "main", judge=lambda *_: {"ok": True})
+    ci.final(hosted_repo, "main", judge=lambda *_: {"ok": True, "head": HEAD})
     file = next(hosted_repo.glob("wiki-verification-*.json"))
     record = json.loads(file.read_text(encoding="utf-8"))
     record["proof"]["head"] = "c" * 40
@@ -412,3 +412,112 @@ def test_no_ci_optional_selection_cannot_repeat_an_already_passed_round_check(tm
             "validation": {"round": {"head": HEAD, "commands": ["focused-check"]}}}
     run = SimpleNamespace(turn=1, halt=None, chat=SimpleNamespace(model=None))
     assert decisions.extra_check(tmp_path, tmp_path, run, spec) == (True, "")
+
+
+def test_worktree_policy_and_project_local_override_have_separate_owners(tmp_path, monkeypatch):
+    project, worktree = tmp_path / "project", tmp_path / "worktree"
+    for root, mode, command in ((project, "auto", "old"), (worktree, "local", "reviewed")):
+        root.mkdir()
+        (root / ci.POLICY).write_text(
+            f'[verification]\nmode = "{mode}"\nround = "{command}-round"\nlocal = "{command}-full"\n', encoding="utf-8")
+    override = project / ".wiki" / ci.POLICY
+    override.parent.mkdir()
+    override.write_text('[verification]\nmode = "auto"\n', encoding="utf-8")
+    (worktree / ".wiki").mkdir()
+    (worktree / ".wiki" / ci.POLICY).write_text('[verification]\nmode = "local"\n', encoding="utf-8")
+    cfg = ci.policy(worktree, project=project)
+    assert cfg["mode"] == "auto" and cfg["local"] == "reviewed-full"
+    monkeypatch.setattr(specs, "merge_base", lambda *_: BASE)
+    spec = {"worktree": str(worktree), "done": ["legacy-full"]}
+    assert specs.local_required(project, spec) == "reviewed-full"
+    assert "reviewed-full" in specs.required(project, spec)
+    assert specs.for_round(project, worktree, spec, "main")["commands"] == ["reviewed-round"]
+    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE))
+    monkeypatch.setattr(ci, "run", lambda *_: str(worktree))
+    commands = []
+
+    def judge(repo, command, *_):
+        commands.append(command)
+        return {"ok": True, "head": HEAD}
+
+    assert ci.final(worktree, "main", project=project, judge=judge)["backend"] == "local"
+    assert commands == ["reviewed-full"]
+    (worktree / ci.POLICY).unlink()
+    assert ci.policy(worktree, project=project) is None, "A removed policy must not come back from the project"
+
+
+@pytest.mark.parametrize("move_after_judge", [False, True])
+def test_a_head_race_never_leaves_a_reusable_local_pass(hosted_repo, monkeypatch, move_after_judge):
+    monkeypatch.setattr(ci, "backend", lambda *_: "local")
+    monkeypatch.setattr(ci, "run", lambda args, repo: str(repo))
+    if move_after_judge:
+        identities = iter([(HEAD, BASE), ("c" * 40, BASE)])
+        monkeypatch.setattr(ci, "identity", lambda *_: next(identities))
+    with pytest.raises(ci.Pending):
+        ci.final(hosted_repo, "main", judge=lambda *_: {"ok": True, "head": HEAD if move_after_judge else "c" * 40})
+    receipt = json.loads(next(hosted_repo.glob("wiki-verification-*.json")).read_text(encoding="utf-8"))
+    assert receipt["status"] == "incomplete" and "proof" not in receipt
+    monkeypatch.setattr(ci, "identity", lambda *_: (HEAD, BASE))
+    with pytest.raises(ci.Pending, match="자동 재실행하지"):
+        ci.final(hosted_repo, "main", judge=lambda *_: pytest.fail("The untested head cannot reuse or rerun"))
+
+
+@pytest.fixture
+def diverged_repo(tmp_path):
+    def git(*args):
+        return ci.run(["git", *args], tmp_path)
+
+    git("init", "-q", "-b", "main")
+    git("config", "user.name", "fixture")
+    git("config", "user.email", "fixture@example.com")
+    git("commit", "-qm", "base", "--allow-empty")
+    base = git("rev-parse", "HEAD")
+    git("checkout", "-qb", "task")
+    git("commit", "-qm", "candidate", "--allow-empty")
+    head = git("rev-parse", "HEAD")
+    git("checkout", "-q", "main")
+    git("commit", "-qm", "advanced base", "--allow-empty")
+    tip = git("rev-parse", "HEAD")
+    git("checkout", "-q", "task")
+    return tmp_path, head, base, tip
+
+
+def test_real_base_fetch_failure_is_preparation_without_starting_a_check(diverged_repo, monkeypatch):
+    repo, _, _, _ = diverged_repo
+    ci.run(["git", "remote", "add", "origin", str(repo / "missing-origin.git")], repo)
+    monkeypatch.setattr(ci, "local_result", lambda *_: pytest.fail("No test starts when preparation fails"))
+    result = ci.verdict(repo, repo, "main", "complete-check", None)
+    assert not result["ok"] and result["pending"] and "missing-origin" in result["reason"]
+
+
+def test_label_bootstrap_normalizes_an_advanced_base_tip_to_the_reviewed_merge_base(diverged_repo, monkeypatch):
+    import yaml
+
+    repo, head, base, tip = diverged_repo
+    root = Path(ci.__file__).resolve().parent.parent
+    workflow = yaml.load((root / ".github/workflows/verify.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    script = workflow["jobs"]["identity"]["steps"][1]["run"].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
+    env = {**os.environ, "EXPECTED_HEAD": head, "EXPECTED_BASE": tip, "EVENT_NAME": "pull_request", "DISPATCH_HEAD": head}
+    result = subprocess.run([sys.executable, "-c", script], cwd=repo, env=env, capture_output=True, text=True, check=True)
+    assert f"merge base: {base}" in result.stdout and base != tip
+    real = ci.run
+    row = completed(headSha=head, displayTitle=f"Final {head} {tip}")
+    monkeypatch.setattr(ci, "run", lambda args, path: json.dumps([row]) if args[0] == "gh" else real(args, path))
+    assert ci.latest(repo, "verify.yml", head, base) == row
+
+
+@pytest.mark.parametrize("event,action,label,shares_final", [
+    ("workflow_dispatch", "", "", True), ("pull_request", "synchronize", "", True),
+    ("pull_request", "labeled", "ci-final", True), ("pull_request", "labeled", "bug", False),
+    ("pull_request", "opened", "", False), ("pull_request", "reopened", "", False)])
+def test_only_requests_and_new_commits_can_cancel_a_final_run(event, action, label, shares_final):
+    import yaml
+
+    root = Path(ci.__file__).resolve().parent.parent
+    workflow = yaml.load((root / ".github/workflows/verify.yml").read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+    expression = workflow["concurrency"]["group"].split("${{", 1)[1].rsplit("}}", 1)[0]
+    context = SimpleNamespace(event_name=event, head_ref="task" if event == "pull_request" else "", ref_name="task",
+        run_id=42, event=SimpleNamespace(action=action, label=SimpleNamespace(name=label)))
+    group = eval(expression.strip().replace("&&", " and ").replace("||", " or "),
+                 {"__builtins__": {}, "github": context, "format": lambda text, value: text.format(value)})
+    assert (group == "task") == shares_final
