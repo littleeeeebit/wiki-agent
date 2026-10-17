@@ -518,8 +518,10 @@ def test_a_translator_fault_ends_explicit_with_no_english_in_evidence_and_questi
     isolated.setattr(translate.urllib.request, "urlopen", urlopen)
     if kind == "limit":
         isolated.setenv("TRANSLATE_MONTHLY_USD", "0")
+    # Only the slow transport tests the deadline; response faults must reach their assertions under CI load.
+    seconds = 0.4 if kind == "slow" else 5.0
     # Evidence normalization, as `judge` asks for a passage.
-    out = knowledge.english([SOURCE], 0.4)[0]
+    out = knowledge.english([SOURCE], seconds)[0]
     assert out["status"] not in evidence.USABLE and out["text"] is None, out
     if FAULTS[kind]:
         assert out["reason"] == FAULTS[kind]
@@ -529,7 +531,7 @@ def test_a_translator_fault_ends_explicit_with_no_english_in_evidence_and_questi
 
     seen = []
     jev(isolated, [], seen, answer=lambda *a: pytest.fail("Jev was asked"))
-    isolated.setattr(knowledge, "NORMALIZE_SECONDS", 0.4)
+    isolated.setattr(knowledge, "NORMALIZE_SECONDS", seconds)
     d = knowledge.prepare(SOURCE.replace("쓴다.", "쓰나?"), None, cfg=ACTIVE, cache=None)
     assert d["status"] == "unavailable" and d["reason"] == "normalization_failed" and d["question_en"] is None
     assert d["normalization"]["query"] not in evidence.USABLE and seen == []

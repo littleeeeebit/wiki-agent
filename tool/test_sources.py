@@ -826,6 +826,16 @@ def test_a_stalled_tls_handshake_cannot_outlast_the_deadline(monkeypatch):
     held = []
     threading.Thread(target=lambda: held.append(silent.accept()), daemon=True).start()
     real = socket.create_connection
+    context = providers.ssl.create_default_context()
+    wrap = context.wrap_socket
+    timeouts = []
+
+    def handshake(sock, **kwargs):
+        timeouts.append(sock.gettimeout())
+        return wrap(sock, **kwargs)
+
+    monkeypatch.setattr(context, "wrap_socket", handshake)
+    monkeypatch.setattr(providers.ssl, "create_default_context", lambda: context)
 
     def slow(*args, **kwargs):
         time.sleep(0.15)
@@ -835,11 +845,16 @@ def test_a_stalled_tls_handshake_cannot_outlast_the_deadline(monkeypatch):
                         lambda *a, **k: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port))])
     monkeypatch.setattr(socket, "create_connection", slow)
     monkeypatch.setattr(providers, "public", lambda address: address == "127.0.0.1")
-    started = time.monotonic()
-    with pytest.raises(providers.FetchError) as caught:
-        providers.fetch(f"https://tls.test:{port}/", seconds=0.2)
-    assert caught.value.reason == "timeout" and time.monotonic() - started < 0.3
-    silent.close()
+    try:
+        with pytest.raises(providers.FetchError) as caught:
+            providers.fetch(f"https://tls.test:{port}/", seconds=0.2)
+        assert caught.value.reason == "timeout"
+        # The 0.15s connection leaves less than half the 0.2s budget for the real TLS handshake.
+        assert timeouts and 0 < timeouts[0] < 0.1
+    finally:
+        silent.close()
+        for connection, _address in held:
+            connection.close()
 
 
 def test_an_unknown_charset_falls_back_to_utf8(repo, monkeypatch):
