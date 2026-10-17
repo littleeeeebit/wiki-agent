@@ -17,10 +17,14 @@ its preparation finished starts on whatever the packages were.
 
 from __future__ import annotations
 
+import os
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
 import time
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
@@ -169,11 +173,25 @@ def screen_stale(root=None) -> bool:
                for p in listed if not p.startswith("web/src-tauri/"))
 
 
+def publish_screen(staged: Path, dist: Path) -> None:
+    """Copy a finished build over `dist`, `index.html` last and atomically: until
+    then every window — and a failed build — keeps the last good screen. Old
+    hashed assets stay for windows still open on them (`emptyOutDir: false`)."""
+
+    shutil.copytree(staged, dist, dirs_exist_ok=True, ignore=lambda folder, names:
+                    ["index.html"] if Path(folder) == staged else [])
+    swap = dist / "index.html.new"
+    shutil.copyfile(staged / "index.html", swap)
+    os.replace(swap, dist / "index.html")
+
+
 def rebuild_screen(root=None) -> None:
-    """At start-up, build a stale screen in the background. The server answers
-    at once — the window's shell gives it 40 seconds — and `/` waits on
-    `screen_ready`, so the window opens on the new build. A failed build is
-    recorded and the old one is served."""
+    """Build a stale screen in the background, from the start-up of a server
+    that owns this checkout (`app.lifespan`, inside `server_owner`). The server
+    answers at once — the window's shell gives it 40 seconds — and `/` waits
+    on `screen_ready`. The build goes to a temporary folder and is published
+    only once it succeeded, so a failure leaves the last good screen, still
+    stale, and the next start tries again; the failure is recorded."""
 
     root = root or WIKI
     if not screen_stale(root):
@@ -181,21 +199,27 @@ def rebuild_screen(root=None) -> None:
     _screen.clear()
 
     def build() -> None:
+        staged = Path(tempfile.mkdtemp(prefix="wiki-screen-"))
         try:
-            done = subprocess.run([*cli_command("npm"), "run", "build"], cwd=root / "web", capture_output=True,
+            done = subprocess.run([*cli_command("npm"), "run", "build", "--", "--outDir", str(staged),
+                                   "--emptyOutDir"], cwd=root / "web", capture_output=True,
                                   text=True, encoding="utf-8", errors="replace", timeout=900)
-            if done.returncode:
+            if done.returncode or not (staged / "index.html").is_file():
                 raise RuntimeError((done.stderr or done.stdout).strip()[-500:] or f"종료 코드 {done.returncode}")
+            publish_screen(staged, root / "web" / "dist")
         except Exception as exc:
             errorlog.record("screen-build", exc)
         finally:
+            shutil.rmtree(staged, ignore_errors=True)
             _screen.set()
 
     threading.Thread(target=build, name="screen-build", daemon=True).start()
 
 
-def screen_ready(timeout: float = 300) -> None:
-    _screen.wait(timeout)
+def screen_ready(timeout: float = 60) -> bool:
+    """Whether the screen is current within `timeout`. `/` answers a loading
+    page that retries when it is not, never the old screen."""
+    return _screen.wait(timeout)
 
 
 def steps(paths: list[str]) -> list[tuple[str, object, list[str]]]:

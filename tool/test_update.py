@@ -2,11 +2,13 @@
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from main import app as main_app
 from main import update
 
 
@@ -61,26 +63,61 @@ def test_a_screen_older_than_its_sources_is_rebuilt_before_the_window_reads_it(t
     os.utime(root / "web/src/lib.ts", (2000, 2000))           # a checkout moved the screen's source
     assert update.screen_stale(root)
 
-    release, ran = threading.Event(), []
+    release, ran, fail = threading.Event(), [], []
+    (index.parent / "assets").mkdir()
+    (index.parent / "assets" / "old.js").write_text("old", encoding="utf-8")
 
     def build(command, **kwargs):
-        ran.append((command[-2:], kwargs["cwd"]))
+        out = Path(command[command.index("--outDir") + 1])
+        ran.append((command[1:3], kwargs["cwd"]))
         assert release.wait(10)
-        index.write_text("new", encoding="utf-8")
+        (out / "assets").mkdir()
+        (out / "assets" / "new.js").write_text("new", encoding="utf-8")
+        if fail:   # broke half-way: something written, no index
+            return subprocess.CompletedProcess(command, 1, "", "tsc failed")
+        (out / "index.html").write_text("new", encoding="utf-8")
         return subprocess.CompletedProcess(command, 0, "", "")
 
     monkeypatch.setattr(update.subprocess, "run", build)
     monkeypatch.setattr(update, "cli_command", lambda name: [name])
+    monkeypatch.setattr(update.errorlog, "record", lambda *a, **k: None)
+    monkeypatch.setattr(main_app, "DIST", index.parent)
     monkeypatch.setattr(update, "screen_stale", lambda root=None: True)
+    screen = TestClient(main_app.app, base_url="http://127.0.0.1:8787")
+
+    fail.append(1)
     update.rebuild_screen(root)
-    waiter = threading.Thread(target=update.screen_ready, args=(10,))
-    waiter.start()
-    waiter.join(0.3)
-    assert waiter.is_alive()   # `/` holds until the build is done
+    ready = update.screen_ready
+    monkeypatch.setattr(update, "screen_ready", lambda timeout=60: ready(0.2))   # `/` gives up waiting
+    loading = screen.get("/")   # never the old screen while the new one builds
+    assert loading.status_code == 503 and "다시 빌드" in loading.text and loading.headers["retry-after"]
+    monkeypatch.setattr(update, "screen_ready", ready)
     release.set()
-    waiter.join(10)
-    assert not waiter.is_alive() and index.read_text(encoding="utf-8") == "new"
-    assert ran == [(["run", "build"], root / "web")]
+    assert update.screen_ready(10)
+    # A failed build publishes nothing: the last good screen, still stale, for the next start.
+    assert index.read_text(encoding="utf-8") == "old" and not (index.parent / "assets" / "new.js").exists()
+
+    fail.clear()
+    update.rebuild_screen(root)
+    assert update.screen_ready(10) and screen.get("/").text == "new"
+    assert (index.parent / "assets" / "old.js").exists()   # windows still open on the old build
+    assert ran == [(["run", "build"], root / "web")] * 2
+
+
+def test_only_the_checkouts_owner_rebuilds_its_screen(monkeypatch):
+    from main import runtime, specs
+
+    built = []
+    monkeypatch.setattr(update, "rebuild_screen", lambda root=None: built.append(1))
+    monkeypatch.setattr(main_app.app.state, "rebuild_screen", True, raising=False)
+    with runtime.server_owner(specs.SPECS.parent):   # the running server
+        with pytest.raises(RuntimeError, match="이미 실행 중"):
+            with TestClient(main_app.app):
+                pass
+    assert built == []
+    with TestClient(main_app.app):
+        pass
+    assert built == [1]
 
 
 def test_offers_pulls_and_waits_for_restart(checkouts):
