@@ -439,7 +439,7 @@ def configure(settings: dict, project: Path | None, adapter: str | None, python:
     `project=None` is the user-level install: no project in any command, every
     hook going through `hook.py`.
     """
-    where = project.as_posix() if project else ""
+    where = project.resolve().as_posix() if project else ""
     # The dispatcher supplies the host for global hooks; a per-project
     # command supplies it directly for the host-specific output ceiling.
     host = agent if project else ""

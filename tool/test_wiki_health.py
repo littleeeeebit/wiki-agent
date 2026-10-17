@@ -27,7 +27,7 @@ def run(script, *args, payload=None, env=None):
 
 def test_wiring():
     assert "tree" not in apply.unfilled("example"), "git 리비전 문법은 슬롯이 아니다"
-    assert "gate_cmd" in apply.unfilled("__health_missing_adapter__"), "선언된 실제 슬롯 누락은 잡아야 한다"
+    assert "review_dir" in apply.unfilled("__health_missing_adapter__"), "선언된 실제 슬롯 누락은 잡아야 한다"
     with tempfile.TemporaryDirectory() as tmp:
         project = Path(tmp)
         agents = ("claude", "codex")

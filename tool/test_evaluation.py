@@ -1,7 +1,5 @@
-"""Stage 10 of `docs/plans/jev/`: the frozen evaluation set, the resumable
-comparison, the report's gates and the per-project canary. No network: the
-arms here are the two that send nothing (A and C over BM25), and Jev is a
-stand-in wherever a choice is asked."""
+"""Frozen evaluations, resumable comparisons, report gates and project canaries.
+Stage 10 of `docs/plans/jev/`; offline arms A/C and a stand-in Jev use no network."""
 
 import json
 import re
@@ -176,6 +174,12 @@ def test_answer_support_allows_coverage_short_of_a_s_by_its_margin_at_the_interv
     assert got["answer_support"] == verdict
 
 
+def action_result(options, pick, trace, stage):
+    trace.append({"stage": stage, "model": "jev-test", "usage": {"input_tokens": 10, "output_tokens": 1}})
+    return {"action": {"choice": pick, "confidence": 0.9,
+                       "probabilities": {o: 0.9 if o == pick else 0.1 / (len(options) - 1) for o in options}}}
+
+
 def test_held_out_action_fixtures_pass_the_execution_boundary_once(tmp_path, monkeypatch):
     env = tmp_path / "jev.env"
     env.write_text("TYPESAFE_API_KEY=test-key\nWIKI_JEV_MODE=active\n", encoding="utf-8")
@@ -186,9 +190,7 @@ def test_held_out_action_fixtures_pass_the_execution_boundary_once(tmp_path, mon
             budget.call()
             options = list(questions["action"]["criteria"])
             pick = next((o for o in options if o not in ("dispatch", "fix", "none", decision.DEFER)), options[0])
-            trace.append({"stage": stage, "model": "jev-test", "usage": {"input_tokens": 10, "output_tokens": 1}})
-            return {"action": {"choice": pick, "confidence": 0.9,
-                               "probabilities": {o: 0.9 if o == pick else 0.1 / (len(options) - 1) for o in options}}}
+            return action_result(options, pick, trace, stage)
         return evaluate
 
     folder = tmp_path / "actions"
@@ -577,7 +579,8 @@ def test_the_host_s_own_time_is_not_a_deadline_breach():
 def test_a_run_its_deadline_stopped_is_not_a_breach_within_one_poll():
     limits = {"seconds": 15.0, "calls": 6, "candidates": 40, "tokens": 100}
     used = {"calls": 1, "candidates": 0, "tokens": 0}
-    budget = lambda elapsed, aside=0: {"limits": limits, "used": used, "elapsed_ms": elapsed, "aside_ms": aside}
+    def budget(elapsed, aside=0):
+        return {"limits": limits, "used": used, "elapsed_ms": elapsed, "aside_ms": aside}
     # v7's none-44 in B: stopped 4 ms late.
     assert compare.breaches(budget(15_004)) == [] and compare.overshoot_ms(budget(15_004)) == 4
     assert compare.breaches(budget(15_050)) == [], "the grace's edge is inside it"
@@ -599,39 +602,3 @@ def test_the_largest_overshoot_reads_every_repetition(ran):
     assert table[first["arm"]]["max_overshoot_ms"] == 16_000 - first["budget"]["limits"]["seconds"] * 1000
     assert table[first["arm"]]["rows"] == len([r for r in rows if r["arm"] == first["arm"]]), \
         "the quality figures still read the first repetition"
-
-
-def test_the_reliability_actions_read_their_own_fixtures(tmp_path, monkeypatch):
-    env = tmp_path / "jev.env"
-    env.write_text("TYPESAFE_API_KEY=test-key\nWIKI_JEV_MODE=active\n", encoding="utf-8")
-    monkeypatch.setenv("JEV_ENV", str(env))
-    fixtures = json.loads((RELIABLE / "actions.json").read_text(encoding="utf-8"))
-    labels = {f["id"]: f["label"] for f in fixtures["fixtures"]}
-
-    def transport(cfg):
-        def evaluate(state, questions, trace, budget, stage):
-            budget.call()
-            options = list(questions["action"]["criteria"])
-            pick = options[0]
-            trace.append({"stage": stage, "model": "jev-test", "usage": {"input_tokens": 10, "output_tokens": 1}})
-            return {"action": {"choice": pick, "confidence": 0.9,
-                               "probabilities": {o: 0.9 if o == pick else 0.1 / (len(options) - 1) for o in options}}}
-        return evaluate
-
-    folder = tmp_path / "actions"
-    with patch.object(decisions, "transport", transport):
-        assert compare.main([str(folder), "--experiment", "actions", "--dataset", str(RELIABLE / "intents.json"),
-                             "--actions", str(RELIABLE / "actions.json")]) == 0
-    rows = compare.rows(folder, "actions")
-    assert len(rows) == 18 and {r["key"] for r in rows} <= set(labels)
-    got = report.build([folder])
-    measured = {g["id"]: g for g in got["gates"]}
-    assert all(measured[g]["detail"].get("n") == 6 for g in ("action_work_start", "action_specs_check",
-                                                             "action_loop_fix"))
-    assert measured["decision_quality"]["value"] == got["actions"]["selected_right_rate"]
-    # Fixtures that moved since the run are not the ones measured.
-    run = json.loads((folder / "run.json").read_text(encoding="utf-8"))
-    run["options"]["fixtures"]["sha256"] = "0" * 64
-    (folder / "run.json").write_text(json.dumps(run), encoding="utf-8")
-    with pytest.raises(SystemExit, match="not the ones its manifest names"):
-        report.build([folder])

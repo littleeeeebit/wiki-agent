@@ -13,6 +13,15 @@ JEV = Path(__file__).resolve().parents[1] / "eval" / "jev"
 V5 = JEV / "reliability-v5"
 
 
+def earlier_fixtures(root, versions):
+    seen = []
+    for version in versions:
+        path = root / f"reliability{version}" / "actions.json"
+        if path.exists():
+            seen += json.loads(path.read_text(encoding="utf-8"))["fixtures"]
+    return seen
+
+
 def strata(data):
     """The v5 routing cohorts: analysis, fact, with a material segment, and request-only multipart."""
 

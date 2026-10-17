@@ -438,48 +438,56 @@ def wiki_graph(repo: str = "") -> dict:
     }
 
 
-if DIST.is_dir():
-    app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
-
-    @app.get("/")
-    def index():
-        # A stale build being rebuilt at start-up (`update.rebuild_screen`): the
-        # old screen would draw the new server's answers wrongly, so a page that
-        # retries stands in until the new one is published.
-        if not update.screen_ready():
-            return HTMLResponse(SCREEN_BUILDING, 503, headers={"Cache-Control": "no-store", "Retry-After": "3"})
-        # The assets under it are content-hashed and may be cached forever.
-        # This file is the only thing that says which hash is current, so a
-        # cached copy of it pins the window to a build that no longer exists.
-        return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-store"})
-
-    @app.get("/manifest.webmanifest")
-    def manifest() -> FileResponse:
-        return FileResponse(DIST / "manifest.webmanifest", media_type="application/manifest+json")
-
-    @app.get("/mobile-icon.svg")
-    def mobile_icon() -> FileResponse:
-        return FileResponse(DIST / "mobile-icon.svg", media_type="image/svg+xml")
-
-    @app.get("/pwa-192.png")
-    @app.get("/pwa-512.png")
-    @app.get("/pwa-maskable-512.png")
-    @app.get("/apple-touch-icon.png")
-    def mobile_png(request: Request) -> FileResponse:
-        return FileResponse(DIST / request.url.path.removeprefix("/"), media_type="image/png")
-
-    @app.get("/offline.html")
-    def offline() -> FileResponse:
-        return FileResponse(DIST / "offline.html", headers={"Cache-Control": "no-cache"})
-
-    @app.get("/sw.js")
-    def service_worker() -> FileResponse:
-        return FileResponse(DIST / "sw.js", media_type="application/javascript",
-                            headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
-else:
-    @app.get("/")
-    def index() -> dict:
+@app.get("/")
+def index():
+    # Resolve at request time so a clean checkout and a built checkout share one route.
+    if not DIST.is_dir():
         return {"화면이 아직 없다": "npm --prefix web run build 를 먼저 돌려라"}
+    if not update.screen_ready():
+        return HTMLResponse(SCREEN_BUILDING, 503, headers={"Cache-Control": "no-store", "Retry-After": "3"})
+    return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/assets/{path:path}")
+async def assets(request: Request, path: str):
+    if not (DIST / "assets").is_dir():
+        raise HTTPException(404, "화면을 먼저 빌드하세요")
+    return await StaticFiles(directory=DIST / "assets").get_response(path, request.scope)
+
+
+def screen_file(name: str, **kwargs) -> FileResponse:
+    if not (DIST / name).is_file():
+        raise HTTPException(404, "화면 파일이 없습니다")
+    return FileResponse(DIST / name, **kwargs)
+
+
+@app.get("/manifest.webmanifest")
+def manifest() -> FileResponse:
+    return screen_file("manifest.webmanifest", media_type="application/manifest+json")
+
+
+@app.get("/mobile-icon.svg")
+def mobile_icon() -> FileResponse:
+    return screen_file("mobile-icon.svg", media_type="image/svg+xml")
+
+
+@app.get("/pwa-192.png")
+@app.get("/pwa-512.png")
+@app.get("/pwa-maskable-512.png")
+@app.get("/apple-touch-icon.png")
+def mobile_png(request: Request) -> FileResponse:
+    return screen_file(request.url.path.removeprefix("/"), media_type="image/png")
+
+
+@app.get("/offline.html")
+def offline() -> FileResponse:
+    return screen_file("offline.html", headers={"Cache-Control": "no-cache"})
+
+
+@app.get("/sw.js")
+def service_worker() -> FileResponse:
+    return screen_file("sw.js", media_type="application/javascript",
+                       headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 
 
 def taken(host: str, port: int) -> bool:

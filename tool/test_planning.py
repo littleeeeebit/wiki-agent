@@ -1,10 +1,7 @@
-"""The Plan action (`docs/plans/reliability/7-planner.md`): one request makes
-one plan spec and worktree, planner A researches and drafts through a fake
-host, the server writes only the new plan folder, the pull request goes up
-once, and A hands off to the reviser and the review cell the request named.
+"""Plan creation, bounded file publication, and handoff to the named reviser/reviewer.
 
-The host is a stand-in behind `planning.ChatSession`; GitHub and the push are
-stand-ins behind `specs.sh`. Git itself runs.
+See `docs/plans/reliability/7-planner.md`. The host (`planning.ChatSession`),
+GitHub and push (`specs.sh`) are stand-ins; Git itself runs.
 """
 
 import json

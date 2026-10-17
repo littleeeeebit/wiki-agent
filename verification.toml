@@ -1,0 +1,6 @@
+# Private repositories and repositories without an active workflow use one bounded local run.
+[verification]
+mode = "auto"
+workflow = "verify.yml"
+round = "python -m ruff check tool laya"
+local = "python -m ruff check tool laya && python tool/lint.py --check && python tool/debt.py check && python -m pytest tool -n 2 && python -m pytest laya -n 0 && npm --prefix web run lint && npm --prefix web run build && python web/tests/task_browser.py"

@@ -1,14 +1,8 @@
-"""decisions — Jev at the choices this server owns (stage 8 of `docs/plans/jev/`).
+"""Jev choices owned by the server (stage 8 of `docs/plans/jev/`).
 
-Three owner functions ask Jev which code-owned operation runs next:
-    work.start    send the first turn, gather evidence or ask for missing input
-    specs.check   `specs._check` once the required gate passed: run one more
-                  registered check, or open the pull request on the gate
-    loop.fix      `loop.step` at a refused round: send the findings, or
-                  gather the context they touch first
-
-and `specs.answered` asks which proposed next task the materials support
-best — a recommendation; the person still chooses the goal.
+`work.start` dispatches, gathers evidence or asks; `specs.check` selects an extra scoped check.
+`loop.fix` repairs or gathers context; `specs.answered` recommends the person's next task.
+None replaces final verification or the person's choice of goal.
 
 Code builds the candidates; Jev picks one id or defers. The pick becomes an
 ActionProposal, and `admit` checks it again right before the owner runs it:
@@ -19,9 +13,8 @@ the owner's baseline is proposed in its place, without Jev, and checked the
 same way. Uncertain, deferred, unavailable, invalid or exhausted runs the
 baseline, what the owner did before this stage; a cancel runs nothing.
 
-Mode off asks nothing. Shadow records Jev's pick beside the baseline and
-waits for none of it. Active runs the pick. A Claude or Codex session's own
-tool choices are the host's: nothing here reaches them (`HOST`).
+Off asks nothing; shadow records without waiting; active runs the pick.
+Host tool choices remain with Claude/Codex (`HOST`).
 """
 
 from __future__ import annotations
@@ -41,6 +34,7 @@ from pathlib import Path
 from typing import Callable
 
 import decision
+import verify
 from common.budget import ACTION, Budget
 from session_state import run as git
 from wiki import adapter_path
@@ -659,7 +653,7 @@ def registered(repo: Path) -> dict[str, dict]:
 
     `paths` are the globs a round's selection maps changed files to
     (`specs.selected`). Absent is `[]`, mapping nothing; anything but a list
-    of strings is `None`, a malformed map that selects the full gate."""
+    of strings is `None`, a malformed map that defers broad work to final."""
 
     try:
         path = adapter_path(repo.name, repo)
@@ -717,8 +711,12 @@ def extra_check(repo: Path, path: Path, run, spec: dict) -> tuple[bool, str]:
 
     from . import specs  # `specs` imports this module
 
+    if verify.policy(path, project=repo):
+        return True, ""  # The declared round and final owners already cover this repository.
+    checked = (spec.get("validation") or {}).get("round") or {}
+    already = checked.get("commands", []) if checked.get("head") == (spec.get("gate") or {}).get("head") else []
     gate = spec["done"][0]
-    pick = choose("specs.check", lambda: check_offer(repo, gate),
+    pick = choose("specs.check", lambda: [c for c in check_offer(repo, gate) if c["id"] == "none" or c["args"]["cmd"] not in already],
                   lambda: {"task": "The required gate passed; the server may run one registered check more "
                                    "before it opens the pull request.",
                            "goal": spec["goal"], "acceptance_criteria": spec["done"][1:],

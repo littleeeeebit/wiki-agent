@@ -18,6 +18,12 @@ elsewhere counts.
 
 ## What you may do
 
+- Read `Already run` and reuse evidence for the same commit and conditions.
+  The application owns final verification through CI or bounded local work.
+  Do not dispatch it or run local whole-suite pytest, including Cloud verification mode. Identify a
+  concrete evidence gap before requesting an additional focused check. The
+  application owns final execution after review; a missing final run during
+  review is expected and cannot be replaced by reviewer execution.
 - Allowed: reading files and the server-provided diff and receipts. In Cloud
   verification mode, also run checks and create verification files using the
   prepared test environment and artifact directory. Scope and permissions are

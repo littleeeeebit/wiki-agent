@@ -28,6 +28,9 @@ from workspace import adopt, base_branch, folder_for, merged, remove, worktrees
 
 from . import channels, connect, decisions, query, review_contract, runtime, specs, sweep, verification, work
 from .query import ROOT, _lock, current_repo, hold, project, streaming
+from .review_result import (  # noqa: F401 -- preserve the loop protocol API
+    FIRST, FINDING, FENCE, META, bare, parse, described, block, disposed,
+)
 
 REVIEW = ROOT / "raw" / "review"
 PROMPT = (ROOT / "tool/prompts/review-round.md").read_text(encoding="utf-8")
@@ -101,111 +104,6 @@ def store(**changes) -> None:
 
 
 # -- A round's result --------------------------------------------------------
-
-FIRST = re.compile(r"Round (\d+)\s*[·|—-]\s*PR #(\d+)\s*[·|—-]\s*([0-9a-f]{7,40})\b")
-FINDING = re.compile(r"^\[(P0|P1|P2)\] (\S+):(\d+)")
-FENCE = r"^```{}[ \t]*\r?\n(.*?)^```"
-META = "finding-meta"
-
-
-def bare(line: str) -> str:
-    """A line without the markdown a model wraps a protocol line in."""
-
-    return line.strip().strip("*`#> ").strip()
-
-
-def parse(text: str, n: int, pr: int, head: str, known: set[str] = frozenset()) -> dict:
-    """Parse round/head, findings and verdict; validate metadata against known ids.
-    Missing or limited metadata leaves that finding without identity."""
-
-    metas = re.findall(FENCE.format(META), text, re.M | re.S)
-    text = re.sub(FENCE.format(META) + r"[ \t]*\r?\n?", "", text, flags=re.M | re.S)
-    if re.search(rf"^\s*```{META}", text, re.M):
-        # Opened and never closed: an attempt at identity, not an answer without one.
-        raise ValueError("`finding-meta` 블록이 닫히지 않았다")
-    lines = [line.rstrip() for line in text.strip().splitlines()]
-    if not lines:
-        raise ValueError("빈 답이다")
-    first = FIRST.match(bare(lines[0]))
-    if not first:
-        raise ValueError("첫 줄이 `Round <n> · PR #<번호> · <머리 커밋>` 이 아니다")
-    if int(first[1]) != n:
-        raise ValueError(f"라운드 번호가 {first[1]} 다 — {n} 이어야 한다")
-    if int(first[2]) != pr:
-        raise ValueError(f"PR 번호가 #{first[2]} 다 — #{pr} 이어야 한다")
-    if not head.startswith(first[3]):
-        raise ValueError(f"머리 커밋이 {first[3]} 다 — {head[:7]} 이어야 한다")
-    last = bare(lines[-1])
-    if last == "머지 허용":
-        verdict = "allow"
-    elif last.startswith("머지 불가"):
-        verdict = "deny"
-    else:
-        raise ValueError("마지막 줄이 `머지 허용` 이나 `머지 불가` 가 아니다")
-    findings: list[dict] = []
-    for line in lines[1:-1]:
-        found = FINDING.match(line.strip())
-        if found:
-            findings.append({"grade": found[1], "file": found[2], "line": int(found[3]),
-                             "head": line.strip(), "body": []})
-        elif findings:
-            findings[-1]["body"].append(line)
-    for f in findings:
-        f["body"] = "\n".join(f["body"]).strip()
-    if metas:
-        try:
-            meta = json.loads(metas[-1])
-        except ValueError as exc:
-            raise ValueError(f"`finding-meta` 가 JSON 이 아니다 — {exc}") from exc
-        for f, m in zip(findings, described(meta, len(findings), known)):
-            if not m.get("limited"):
-                f["meta"] = m
-    counts = {g: sum(f["grade"] == g for f in findings) for g in ("P0", "P1", "P2")}
-    identity = "limited" if any("meta" not in f for f in findings) else "full"
-    return {"verdict": verdict, "findings": findings, "counts": counts, "said": last, "identity": identity}
-
-
-def described(meta, count: int, known: set[str]) -> list[dict]:
-    """Validate one full or limited metadata entry per finding ordinal; ids are server-owned."""
-
-    if not isinstance(meta, list) or not all(isinstance(m, dict) for m in meta):
-        raise ValueError("`finding-meta` 는 객체의 목록이어야 한다")
-    ordinals = [m.get("ordinal") for m in meta]
-    if not all(type(o) is int for o in ordinals) or sorted(ordinals) != list(range(1, count + 1)):
-        raise ValueError(f"`finding-meta` 의 ordinal 이 발견 1–{count} 과 하나씩 맞지 않는다")
-    for m in meta:
-        if "limited" in m:
-            if m["limited"] is not True or set(m) != {"ordinal", "limited"}:
-                raise ValueError("limited 항목은 ordinal 과 limited: true 만 받는다")
-            continue
-        if not all(isinstance(m.get(k), str) and m[k].strip() for k in ("component", "invariant")):
-            raise ValueError("`finding-meta` 항목마다 `component` 와 `invariant` 가 있어야 한다")
-        if m.get("existing_id") is not None and (not isinstance(m["existing_id"], str)
-                                                 or m["existing_id"] not in known):
-            raise ValueError(f"`finding-meta` 의 `existing_id` {m['existing_id']!r} 는 이 명세가 준 id 가 아니다")
-    return sorted(meta, key=lambda m: m["ordinal"])
-
-
-def block(name: str, text: str):
-    """The JSON of the last fenced block named `name`, or `None`."""
-
-    found = re.findall(FENCE.format(re.escape(name)), text, re.M | re.S)
-    try:
-        return json.loads(found[-1]) if found else None
-    except ValueError:
-        return None
-
-
-def disposed(text: str) -> list[dict] | None:
-    """The work cell's `disposition` block, entries that have their shape."""
-
-    items = block("disposition", text)
-    if not isinstance(items, list):
-        return None
-    return [i for i in items if isinstance(i, dict) and isinstance(i.get("finding"), str)
-            and i.get("action") in ("fixed", "not-reproduced", "disagree")
-            and isinstance(i.get("id"), (str, type(None)))]
-
 
 def _key(text: str) -> tuple[str, str, str]:
     """A finding as `(path, line, what)`: the fixing side copies its first
@@ -572,17 +470,11 @@ def folder(repo: str, pr: int) -> Path:
 
 
 def cell(spec: dict, path: Path) -> ChatSession:
-    """The pull request's review cell, made once and kept while the pull
-    request lives. Its CLI session id is kept beside the rounds, so a server
-    started again goes on in the same conversation.
+    """Reuse the PR's independent review session across rounds and restarts.
 
-    Read once per round: a model or effort changed in the settings applies
-    from the next round, never inside one, and each round keeps the one its
-    verdict ran on (`reviewer`). A change of CLI is a new cell — the old
-    session id is the other CLI's. Never an implementation session: ordinary
-    review has read tools; Cloud verification has execution and artifact tools.
-    A spec that names its own `reviewer` — a plan's — is reviewed by that
-    model instead of the settings'."""
+    Model/effort changes apply next round; changing CLI creates a new cell.
+    A spec's reviewer overrides settings. Ordinary review uses read tools;
+    Cloud verification additionally gets execution and artifact tools."""
 
     key = (spec["repo"], spec["pr"]["number"])
     verify_dir = folder(*key) / "verification" / spec["pr"]["head"] if verification.cloud(spec) else None
@@ -1016,7 +908,8 @@ def reusable(spec: dict, head: str, chosen: dict) -> bool:
 
     last = (spec.get("validation") or {}).get("round")
     if last:
-        return bool(last.get("ok")) and (last.get("head"), last.get("base_oid"), last.get("commands")) == \
+        return bool(last.get("ok")) and last.get("environment_digest") == chosen.get("environment_digest") \
+            and (last.get("head"), last.get("base_oid"), last.get("commands")) == \
             (head, chosen["base_oid"], chosen["commands"])
     gated = spec.get("gate") or {}
     if review_contract.preservation_command(spec):
@@ -1030,16 +923,10 @@ def repair(cmd: str, verdict: dict) -> str:
 
 
 def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str) -> bool:
-    """The head that goes to review passed its round checks here, and is up.
+    """Fast-forward external changes, reuse or run round checks, then push.
 
-    A push made elsewhere to the branch is taken in by fast-forward first, so
-    the files the review cell reads are the head it reviews. Nothing more to
-    do when the worktree is clean at the pull request's head and the same
-    checks already passed there (`reusable`). Otherwise the checks this change
-    maps to run (`specs.selected`) — not the whole gate, which runs once on
-    the allowed head (`finalized`). A failure goes to the work cell once with
-    the output's tail, and two in a row stop. Commits the pull request lacks
-    are pushed once the checks pass."""
+    A failed round check sends its tail to the work cell once; two failures stop.
+    The full gate belongs to `finalized`, after independent source approval."""
 
     branch = specs.branch_of(spec)
     for attempt in (1, 2):
@@ -1078,15 +965,13 @@ def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str
 
 
 def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str) -> dict | None:
-    """The full gate, once, on the head the review allowed — before the spec
-    may become mergeable. `None` when the loop was stopped.
-
-    While it runs, `validation.phase` is `final_running` and the final record
-    already stands, failed and unfinished: a stop, a crash or a restart
-    leaves exactly that, never an `ok`. The record is bound to the head, the
-    merge base and `specs.digest`; `merge` checks all three."""
+    """Persist one owned final result; interruption never leaves a passing record."""
 
     cmd = specs.required(repo, spec)
+    previous = (spec.get("validation") or {}).get("final") or {}
+    research = ((spec.get("local_verification") or {}).get("research") or [{}])[-1]
+    retry = research.get("note", "") if not previous.get("ok") and previous.get("head") == head \
+        and research.get("head") == head and research.get("ts", 0) > (previous.get("finished_at") or float("inf")) else ""
     release = wait_hold(loop, path)
     if release is None:
         return None
@@ -1096,14 +981,21 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
                   "reason": "끝나지 않았다", "finished_at": None}
         specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
         settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
-        verdict = specs.judge(path, [cmd], loop.halt)
+        verdict = specs.verify.verdict(repo, path, base, specs.local_required(repo, spec), loop.halt,
+            retry_reason=retry,
+            local_only=bool(review_contract.preservation_command(spec)),
+            noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
         if verification.cloud(spec):
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
     finally:
         release()
-    ok = verdict["ok"] and verdict["head"] == head
-    reason = verdict["reason"] if not verdict["ok"] else "" if ok else "작업트리가 허용된 커밋에 있지 않다"
-    record = {**record, "ok": ok, "code": verdict.get("code"), "reason": reason, "finished_at": time.time()}
+    ok = verdict["ok"] and verdict["head"] == head and verdict["verification"]["base_oid"] == record["base_oid"]
+    reason = verdict["reason"] if not verdict["ok"] else "" if ok else "검증 커밋·base가 리뷰와 다릅니다"
+    record = {**record, "ok": ok, "code": verdict.get("code"), "reason": reason, "finished_at": time.time(),
+              "tail": verdict["tail"], "elapsed_seconds": verdict.get("elapsed_seconds")}
+    record["pending"] = verdict.get("pending", False)
+    if ok:
+        record["verification"] = verdict["verification"]
     specs.validate(loop.repo, loop.sid, phase=None, final=record)
     return None if loop.halt.is_set() else {**record, "tail": verdict["tail"]}
 
@@ -1155,6 +1047,8 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
         comment = ("리뷰에서 남긴 P2 — 따로 할 만한 것\n\n" + "\n".join(f"- {p}" for p in shown)) if kept_p2 else ""
         change(loop, "머지 가능", p2=kept_p2, p2_comment=comment)
         return False
+    if final.get("pending"):
+        return stop(loop, loop.repo, loop.sid, Why.PREPARATION, final["reason"])
     if verification.cloud(spec):
         verification.return_to_cloud(repo, spec, head, final["reason"] + "\n" + final["tail"], ["offline/final"])
         return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, "최종 게이트 실패 — 클라우드 수정 대기")
@@ -1256,6 +1150,12 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
         if spec["local_verification"]["state"] not in ("runtime_passed", "verified"):
             why = Why.EXTERNAL if spec["local_verification"]["state"] == "waiting_cloud" else Why.PREPARATION
             return stop(loop, loop.repo, loop.sid, why, spec["local_verification"]["reason"])
+        if (record.get("failure_attempts") or record.get("failures")) and (
+                unresolved := verification.uninvestigated(repo, path, spec, head)):
+            reason = "같은 커밋·환경의 실패 기록이 있다 — 재실행 전에 원인 확인 필요"
+            verification.return_to_cloud(repo, spec, head, reason + "\n" + "\n".join(r["reason"] for r in unresolved),
+                                         sorted({issue for r in unresolved for issue in r["failures"]}), "unstable")
+            raise ValueError(reason)
         chosen = specs.for_round(repo, path, spec, base)
         if not reusable(spec, head, chosen):
             settings = verification.redaction(verification.local(repo), path)
@@ -2180,6 +2080,12 @@ def _merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) ->
             raise HTTPException(409, "사용자가 요청한 커밋의 머지가 아니다")
     release = hold(work._busy, _lock, str(path), "작업이 끝난 뒤 머지를 요청하세요", kind="turn")
     try:
+        if (spec.get("validation") or {}).get("final", {}).get("verification"):
+            try:
+                specs.verify.confirm(repo, path, base, specs.local_required(repo, spec), spec["validation"]["final"]["verification"],
+                                     local_only=bool(review_contract.preservation_command(spec)))
+            except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
+                raise HTTPException(409, f"최종 검증 결과 확인 실패 — {exc}") from exc
         local = specs.sh(["git", "rev-parse", "HEAD"], path)
         dirty = specs.sh(["git", "status", "--porcelain"], path)
         if local.returncode or local.stdout.strip() != allowed["head"] or dirty.returncode or dirty.stdout.strip():

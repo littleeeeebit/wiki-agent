@@ -121,7 +121,7 @@ def test_tighten_only_lowers_and_drops_what_the_caps_cover(tmp_path):
 
 
 def test_final_gate_runs_the_ratchet_and_keeps_shell_out_of_the_base(tmp_path, monkeypatch):
-    monkeypatch.setattr(specs, "gate_of", lambda repo: "git --version")
+    monkeypatch.setattr(specs, "gate_of", lambda repo, path=None: "git --version")
     cmd = specs.required(tmp_path, {"base": "main", "done": ["x"]})
     assert cmd.startswith("git --version && ") and cmd.endswith(" check --base main")
     assert debt.command("main & del x") == debt.command("")

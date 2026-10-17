@@ -37,7 +37,7 @@ The person's later instructions update the assignment as work progresses.
   supersedes; duplicates asserting the same observation as another test; skips
   and xfails whose reason no longer holds. Keep every test that guards current
   behaviour or a regression that can still happen; never delete a test to make
-  it pass or to weaken a check. Rerun the gate, commit, then add a
+  it pass or to weaken a check. Run only affected checks, commit, then add a
   `test-cleanup` fenced JSON block before the `done-report`:
 
   ```test-cleanup
@@ -56,8 +56,18 @@ The person's later instructions update the assignment as work progresses.
 
 - If any item did not pass, do not say you are done and do not emit the
   block. Say what is blocking and ask.
-- The server runs the first `done` item, the repository's gate, again in this
-  checkout before it believes the report.
+- Read `verification.toml` when present. One final owner chooses hosted CI for
+  a public repository with an active workflow, otherwise bounded local work.
+  Private repositories do not dispatch CI. Never run whole-directory pytest
+  directly or dispatch final verification during repairs.
+  Run only the affected test files needed to establish the change. The server
+  owns the declared round command, so do not duplicate that command yourself.
+  Report exact commands, results and limits. A final result still pending is not
+  passed; report the focused evidence and name final verification as pending.
+- The server runs or reuses the declared round checks before publication. After
+  independent review allows the candidate, it requests or reuses final verification
+  for that commit and merge base. Once an owner starts, failure, cancellation or
+  unavailable transport never authorizes switching owners or automatic retry.
 - After publishing the PR, stop and wait for the person's explicit Review Loop
   request. Completion reporting and PR publication never authorize review.
   Review Loop starts server-owned automation for this PR. After each repair,

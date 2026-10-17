@@ -180,19 +180,20 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
         <div className="mt-3 space-y-0.5 text-muted-foreground">
           {checked && (
             <div>
-              라운드 확인 · {checked.selection === 'mapped' ? '변경이 닿는 것만' : '전체'} ·{' '}
+              라운드 확인 · {checked.selection === 'mapped' ? '변경이 닿는 것만' : checked.selection === 'deferred' ? '패치 확인 · 넓은 검사는 최종 담당 대기' : '전체'} ·{' '}
               <span className={checked.ok ? 'text-primary' : 'text-destructive'}>{checked.ok ? '통과' : '실패'}</span>
               <span className="ml-1 font-mono text-[10.5px] text-faint">{checked.head.slice(0, 7)}</span>
             </div>
           )}
           <div>
-            최종 게이트 ·{' '}
+            최종 검증 · {final?.verification?.backend === 'ci' ? 'GitHub CI · ' : final?.verification?.backend === 'local' ? '로컬 · ' : ''}
             {running ? '도는 중 — 끝나기 전에는 머지하지 않는다'
               : !final ? '아직 — 리뷰가 허용한 커밋에서 돈다'
-                : !final.ok ? <span className="text-destructive">실패 — {final.reason}</span>
+                : !final.ok ? <span className={final.pending ? 'text-muted-foreground' : 'text-destructive'}>{final.pending ? '준비 대기' : '실패'} — {final.reason}</span>
                   : spec.unproven ? `지난 통과는 이제 안 선다 — ${spec.unproven}`
                     : <span className="text-primary">통과</span>}
             {final && !running && <span className="ml-1 font-mono text-[10.5px] text-faint">{final.head.slice(0, 7)}</span>}
+            {final?.verification?.url && <a className="ml-2 underline" href={final.verification.url} target="_blank" rel="noreferrer">CI 결과</a>}
           </div>
         </div>
       )}
@@ -211,7 +212,7 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
                   ? api.startLoops([spec.pr!.number], 'claude-cloud', spec.repo).then(({ results }) => {
                     if (results[0]?.error) throw new Error(results[0].error)
                   }) : api.mergeSpec(spec.id, spec.approved!, spec.repo).catch(() => undefined))}>
-                {working === 'final' ? '…' : cloud ? '로컬 검증 다시 시작' : '최종 게이트 돌리기'}
+                {working === 'final' ? '…' : cloud ? '로컬 검증 확인' : '최종 검증 확인'}
               </Btn>
             )}
             <span className="font-mono text-[10.5px] text-faint">squash · {spec.approved.slice(0, 7)} 에 묶인다</span>

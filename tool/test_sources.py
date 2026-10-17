@@ -679,17 +679,18 @@ def test_a_promotion_goes_up_as_a_spec_s_pull_request_after_the_gate(repo, monke
         return subprocess.run(args, cwd=cwd, capture_output=True, text=True, encoding="utf-8", timeout=timeout)
 
     monkeypatch.setattr(specs, "sh", remote)
-    monkeypatch.setattr(specs, "gate_of", lambda repo: "git --version")
+    monkeypatch.setattr(specs, "gate_of", lambda repo, path=None: "git --version")
     monkeypatch.setattr(specs.translate, "translate", lambda texts, direction, deadline: list(texts))
     out = knowledge.promote(path, paper["source_id"])
     spec = specs.load(path.name, out["spec"])
-    # The spec owns the worktree, and its pull request is the promotion's, after the gate passed there again.
+    # The spec owns the checkout and publishes only its scoped-check evidence.
     assert specs.owner(Path(out["worktree"]))["id"] == out["spec"] == out["branch"]
     assert spec["gate"]["ok"] and spec["gate"]["head"] == out["commit"]
     assert spec["state"] == "PR #9" and spec["pr"]["branch"] == out["branch"]
     assert ["git", "push", "-u", "origin", out["branch"]] in calls
     body = next(call for call in calls if isinstance(call, str))
-    assert "Attention alone can replace recurrence" in body and "git --version" in body
+    assert "Attention alone can replace recurrence" in body and spec["gate"]["cmd"] in body
+    assert spec["gate"]["selection"] == "deferred" and "전체 게이트" in body and not spec["validation"].get("final")
     # No loop starts in this process; the app's pull request list can take it.
     from main import loop
 
@@ -703,7 +704,9 @@ def test_a_promotion_whose_gate_fails_pushes_nothing(repo, monkeypatch, spec_hom
     monkeypatch.setattr(specs, "sh", lambda args, cwd, timeout=60: pytest.fail(f"ran {args}")
                         if args[0] == "gh" or args[:2] == ["git", "push"] else
                         subprocess.run(args, cwd=cwd, capture_output=True, text=True, timeout=timeout))
-    monkeypatch.setattr(specs, "gate_of", lambda repo: "git definitely-not-a-command")
+    monkeypatch.setattr(specs, "gate_of", lambda repo, path=None: "git --version")
+    monkeypatch.setattr(specs, "selected", lambda *_: {
+        "base_oid": "", "commands": ["git definitely-not-a-command"], "selection": "mapped"})
     out = knowledge.promote(path, paper["source_id"])
     spec = specs.load(path.name, out["spec"])
     assert spec["state"] == "작업 중" and spec["pr"] is None and spec["fault"].startswith("판정 실패")

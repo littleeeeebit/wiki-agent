@@ -388,8 +388,11 @@ the original conversation; switching between Claude and Codex starts a new
 context. "Related rules" on screen is a display-time comparison, not evidence
 that the host delivered a hook, and hooks are never re-run to produce it.
 
-Checks: `python -m pytest -q tool/test_main.py tool/test_specs.py tool/test_loop.py tool/test_connect.py`,
-`npm --prefix web run build`, `npm --prefix web run lint`. They confirm the
+During development, select affected cases from `tool/test_main.py`,
+`tool/test_specs.py`, `tool/test_loop.py` and `tool/test_connect.py`.
+Final verification has [one owner](docs/development.md#one-final-verification-owner):
+hosted CI for a configured public repository, bounded local work otherwise.
+The checks confirm the
 CLI events, the session separation, the original surviving a failure, and the
 model and effort validation. `tool/test_specs.py` confirms the next-task
 focus: a spec with an empty goal is refused, the gate stays the first done item

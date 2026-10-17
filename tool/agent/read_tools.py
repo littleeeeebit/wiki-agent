@@ -55,7 +55,7 @@ def wrapped(text: str) -> list[str]:
 
 def diff_file(repo: Path) -> Path:
     where = subprocess.run(["git", "-C", str(repo), "rev-parse", "--git-path", DIFF],
-                           capture_output=True, text=True, timeout=10, check=True).stdout.strip()
+                           capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10, check=True).stdout.strip()
     return Path(where) if Path(where).is_absolute() else repo / where
 
 
