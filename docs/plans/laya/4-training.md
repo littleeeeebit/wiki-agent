@@ -120,6 +120,19 @@ a time instead, the shape `useful` learned.
   - the evidence with another passage after it.
 
   That gives about 1,600 candidates, each still labelled.
+- With aug3, coverage made from support passed the coverage model: 0.744 on
+  the score's best threshold against 0.694, and AUROC 0.80 against 0.77. It
+  decides 55% at 0.81. all still read as part 11 of 17 times.
+- Next (owner, 2026-10-17; cap $55): augment all against part heavily, and
+  widen validation. The steps are:
+  - `support trim`: aug3's padded alls lose their quoted evidence, giving
+    long minimal pairs (about 1,070).
+  - `support restate --answer part`: part labels are padded too, so a long
+    passage does not mean all (about 3,280).
+  - `support widen validation`: label every listed passage `evaluate` asks
+    of coverage's validation questions (about 1,980 more). The support
+    validation then measures the population coverage is scored on, not 17
+    alls.
 
 ## Calibration and policy
 

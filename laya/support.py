@@ -33,6 +33,15 @@ all fell to 2 of 17 and coverage never said yes (owner, 2026-10-17). `restate` a
 labelled all again of the same passage told another way (`restated`):
 
     python laya/support.py restate aug3 0 --from full1 aug1 aug2
+
+With aug3, coverage from support passed the coverage model (0.744 against 0.694, AUROC 0.80),
+but all still read part 11 of 17 times, out of only 17 validation alls (owner, 2026-10-17).
+So the restated alls lose their quotes (`trim`), part is restated too so padding cannot mean
+all, and validation is widened to every listed passage `evaluate` asks:
+
+    python laya/support.py trim aug4a 0 --from aug3
+    python laya/support.py restate aug4b 0 --from full1 aug1 aug2 --answer part
+    python laya/support.py widen validation 0
 """
 
 import argparse
@@ -194,14 +203,23 @@ def augment(rows: list[dict], turns: list[dict], coverage: list[dict], n: int, s
     return out + derive([], n - asked, seed, held, runners(coverage, seed), asked_before=rows)
 
 
-def restated(labelled: list[dict], rows: list[dict], coverage: list[dict], quoted: set[str], seed: int = 0,
-             held=()) -> list[dict]:
-    """Train candidates for all, the answer the aug2 model lost (2 of 17, owner 2026-10-17):
-    each `all` label of `labelled`, asked again of the same passage told another way. The
-    labelled row's candidate is in `rows`, and that candidate's coverage state is in
-    `coverage`. The ways are:
+def everything(rows: list[dict]) -> list[tuple[dict, str, str, str]]:
+    """`pairs`' shape for every listed passage of every question of `rows`: what `evaluate`
+    asks of a coverage validation question (owner, 2026-10-17: validation widened to it)."""
 
-    - `evidence`: only the `quoted` texts (a verifier's quotes for an all) it holds;
+    return [(row, q.split("_", 1)[1], p["id"], "listed") for row in rows for q in sorted(row["expected"])
+            for p in listed(row["state"])]
+
+
+def restated(labelled: list[dict], rows: list[dict], coverage: list[dict], quoted: set[str], seed: int = 0,
+             held=(), answer: str = "all") -> list[dict]:
+    """Train candidates for all, the answer the aug2 model lost (2 of 17, owner 2026-10-17):
+    each `answer` label of `labelled`, asked again of the same passage told another way. The
+    labelled row's candidate is in `rows`, and that candidate's coverage state is in
+    `coverage`. Restating part as well (owner, 2026-10-17) keeps a padded passage from
+    meaning all: aug3 padded only alls. The ways are:
+
+    - `evidence`: only the `quoted` texts (a verifier's quotes for that answer) it holds;
     - `before`, `after`: another listed passage of its coverage state put before or after it;
     - `evidence_after`: the quoted texts with another listed passage after them.
 
@@ -229,7 +247,7 @@ def restated(labelled: list[dict], rows: list[dict], coverage: list[dict], quote
             if not new or new == text or len(new) > CHARS:
                 continue
             for q, v in row["expected"].items():
-                if v != "all":
+                if v != answer:
                     continue
                 state = {**cand["state"], "passages": [{**p, "text": new}]}
                 r = {"id": f"{cand['id']}-{how}-{q}", "state": state, "state_hash": digest(state),
@@ -312,17 +330,21 @@ def summary(records: list[dict]) -> dict:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("how", choices=["derive", "augment", "restate"])
-    p.add_argument("split", help="derive: train, validation or calibration; augment, restate: a new train split")
-    p.add_argument("n", type=int, help="derive, augment: questions at most; restate: unused, 0")
+    p.add_argument("how", choices=["derive", "augment", "restate", "trim", "widen"])
+    p.add_argument("split", help="derive: train, validation or calibration; widen: validation or calibration; "
+                                 "augment, restate, trim: a new train split")
+    p.add_argument("n", type=int, help="derive, augment: questions at most; restate, trim, widen: unused, 0")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--from", dest="sources", nargs="+", default=["full1"],
-                   help="restate: the train splits whose labels and turns it reads (rows from train.candidates "
-                        "for full1, <split>.candidates otherwise)")
+                   help="restate, trim: the train splits whose labels and turns it reads (rows from "
+                        "train.candidates for full1, <split>.candidates otherwise)")
+    p.add_argument("--answer", choices=list(OPTIONS), default="all", help="restate: the labels to restate")
     a = p.parse_args()
-    if (a.how == "derive") != (a.split in train.SPLITS):
-        sys.exit("derive makes train, validation or calibration; augment and restate make another train split")
-    out = DATA / KIND / f"{a.split}.candidates.jsonl"
+    if (a.how in ("derive", "widen")) != (a.split in train.SPLITS) or a.how == "widen" and a.split == "train":
+        sys.exit("derive makes train, validation or calibration, widen validation or calibration; "
+                 "augment, restate and trim make another train split")
+    # widen adds every listed passage evaluate asks, beside the split's derived candidates.
+    out = DATA / KIND / (f"{a.split}-wide.candidates.jsonl" if a.how == "widen" else f"{a.split}.candidates.jsonl")
     if out.exists():
         sys.exit(f"{out} exists; move it aside first")
     reserved = gate.reserved()
@@ -333,7 +355,10 @@ def main() -> None:
         held += [r for s in ("validation", "calibration") for r in read(DATA / "coverage" / f"{s}.jsonl")]
     if a.how == "derive":
         drawn = derive(read(DATA / "coverage" / f"{a.split}.jsonl"), a.n, a.seed, held)
-    elif a.how == "restate":
+    elif a.how == "widen":
+        drawn = derive([], 10 ** 9, a.seed, held, everything(read(DATA / "coverage" / f"{a.split}.jsonl")),
+                       asked_before=read(DATA / KIND / f"{a.split}.candidates.jsonl"))
+    elif a.how in ("restate", "trim"):
         coverage = read(DATA / "coverage" / "train.jsonl")
         trained = {r["provenance"]["state_hash"] for r in coverage}
         labelled, rows, turns = [], [], []
@@ -345,7 +370,10 @@ def main() -> None:
             if {r["provenance"]["coverage"] for r in got} - trained:
                 sys.exit(f"{s} asked about states outside coverage's train: restate reads train splits only")
             labelled, rows, turns = labelled + mine, rows + got, turns + read(DATA / KIND / f"{s}.turns.jsonl")
-        drawn = restated(labelled, rows, coverage, quotes(turns, "all"), a.seed, held)
+        if a.how == "trim":   # the quoted alls cut out: a long all told as part or none
+            drawn = trimmed(rows, quotes(turns, "all"), held)
+        else:
+            drawn = restated(labelled, rows, coverage, quotes(turns, a.answer), a.seed, held, a.answer)
     else:
         rows = read(DATA / KIND / "train.candidates.jsonl")
         if {r["provenance"]["state_hash"] for r in read(DATA / KIND / "full1.jsonl")} - {r["state_hash"] for r in rows}:
