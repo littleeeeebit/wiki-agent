@@ -24,6 +24,8 @@ def runs_pytest(stage: str) -> bool:
             option = words.pop(0)
             if option == "--":
                 break
+            if wrapper == "command" and set(option[1:]) & {"v", "V"}:
+                return False
             if option in {"-u", "--unset", "-C", "--chdir", "-a", "-o", "--output", "-f", "--format",
                           "-k", "--kill-after", "-s", "--signal"}:
                 del words[:1]
