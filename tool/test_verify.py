@@ -303,13 +303,13 @@ import subprocess, sys
 sys.path.insert(0, "tool")
 import verify
 with verify.locked(verify.local_lock_path()):
-    done = subprocess.run([sys.executable, "-m", "pytest", "-q", "-n", "0",
+    done = subprocess.run([sys.executable, "-m", "pytest", "-q", "-n", "0", "--basetemp", sys.argv[1],
         "tool/test_loop.py::test_a_targeted_pass_cannot_merge_and_the_loop_runs_only_the_final_gate"], timeout=75)
 raise SystemExit(done.returncode)
 '''
     env = {**os.environ, "TEMP": str(scratch), "TMP": str(scratch), "TMPDIR": str(scratch),
            "WIKI_FINAL_RUN": "1", "PYTHONUTF8": "1"}
-    result = subprocess.run([sys.executable, "-c", script], cwd=Path(ci.__file__).resolve().parent.parent,
+    result = subprocess.run([sys.executable, "-c", script, str(scratch / "tests")], cwd=Path(ci.__file__).resolve().parent.parent,
                             env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
     assert result.returncode == 0, result.stdout + result.stderr
 
