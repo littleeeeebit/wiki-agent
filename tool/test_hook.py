@@ -143,6 +143,35 @@ def test_user_level_claude_carries_no_machine_wide_deny():
     assert deny.verdict({"tool_name": "Bash", "tool_input": {"command": "git status"}}) is None
 
 
+@pytest.mark.parametrize("command", [
+    "cd /c/x && python -m pytest tool -q 2>&1 | tail -4",
+    'python -m pytest tool -q --deselect "a::b" 2>&1 | grep -E "^FAILED|passed|failed" | tail -15',
+    r".venv\Scripts\python -m pytest -q tests | head -20",
+    "timeout 250 pytest tool/test_korean.py -q | grep -E passed",
+])
+def test_a_test_run_piped_where_its_progress_cannot_be_read_is_refused(command):
+    """A full gate piped into `tail` printed nothing for 19 minutes; hung and
+    slow looked the same, so it was stopped and run again blind. The run is
+    refused before it starts, with how to run it so its progress shows."""
+
+    import deny
+    blocked = deny.verdict({"tool_name": "Bash", "tool_input": {"command": command}})
+    assert blocked and blocked["hookSpecificOutput"]["permissionDecision"] == "deny"
+    assert "run_in_background" in blocked["hookSpecificOutput"]["permissionDecisionReason"]
+
+
+@pytest.mark.parametrize("command", [
+    "python -m pytest tool -v -p no:cacheprovider 2>&1",
+    "python -m pytest tool -q 2>&1 | tee gate.log | tail -5",
+    "python -m pip install pytest 2>&1 | tail -3",
+    'git commit -m "gate: never run pytest | tail"',
+    "python -m pytest tool -q && git log --oneline | head -3",
+])
+def test_a_test_run_whose_output_stays_readable_passes(command):
+    import deny
+    assert deny.verdict({"tool_name": "Bash", "tool_input": {"command": command}}) is None
+
+
 def test_a_path_named_as_data_is_not_an_old_install():
     with tempfile.TemporaryDirectory() as raw:
         top = Path(raw)
