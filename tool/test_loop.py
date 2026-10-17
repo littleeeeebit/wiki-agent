@@ -981,6 +981,7 @@ def test_a_refusal_goes_to_the_work_cell_through_the_gate_and_up(world):
     """The gate fails once after the fix and is sent back with its tail; the
     second run passes, the fix is pushed, and the next round names it all."""
 
+    mapped(world, "*", command="python gate.py round")
     pr_spec(world, "fix-b", 7)
     finding = "[P1] a.txt:1 — 값이 틀렸다"
     Reviewer.replies = [deny(finding, "[P2] b.txt:2 — 이름"), allow, keep()]
@@ -1143,6 +1144,7 @@ def test_evidence_backed_correction_without_a_code_change_can_be_reviewed(world,
 
 
 def test_the_gate_failing_twice_in_a_row_stops(world):
+    mapped(world, "*", command="python gate.py round")
     pr_spec(world, "fix-c", 7)
     Reviewer.replies = [deny("[P1] a.txt:1 — 틀렸다")]
     Worker.replies = [fixed(("[P1] a.txt:1 — 틀렸다", "fixed"), broken=True), "못 고쳤다"]
@@ -1325,6 +1327,14 @@ def test_four_loops_with_three_seats_leave_the_fourth_waiting(world):
     assert sum(specs.load("proj", f"seat-{i}")["state"] == "리뷰 대기" for i in range(4)) == 1
     let_go.set()
     waited(lambda: not loop._loops)
+    for i in range(4):
+        name = f"seat-{i}"
+        spec = specs.load("proj", name)
+        if spec["state"] == "멈춤":
+            assert spec["stopped"]["reason"] == loop.Why.PREPARATION.value
+            assert spec["validation"]["final"]["pending"] and not Worker.made
+            spec = looped(name)
+        assert spec["validation"]["final"]["ok"] and len(spec["rounds"]) == 1
     assert {specs.load("proj", f"seat-{i}")["state"] for i in range(4)} == {"머지 가능"}
 
 
@@ -1827,10 +1837,10 @@ def test_conflict_created_during_final_gate_requires_new_head_and_review(world):
     spec = pr_spec(world, "gate-base-race", 7, file="collision.txt")
     original = specs.judge
     advanced = []
-    def gate(path, cmds, halt, noted=lambda text: None):
-        if not advanced:
+    def gate(path, cmds, halt, noted=lambda text: None, **kwargs):
+        if cmds == [FINAL] and not advanced:
             advanced.append(conflicting_base(world))
-        return original(path, cmds, halt, noted)
+        return original(path, cmds, halt, noted, **kwargs)
     Worker.replies = [integrate_conflict]
     with patch.object(specs, "judge", gate):
         fresh = looped(spec["id"])
@@ -2054,11 +2064,11 @@ def test_a_restart_during_the_final_gate_stays_blocked_and_resume_reruns_only_it
     assert spec["state"] == "머지 가능" and spec["validation"]["final"]["finished_at"]
 
 
-def mapped(w, *globs: str) -> None:
-    """Register `git --version` as the check for `globs` in the adapter."""
+def mapped(w, *globs: str, command="git --version") -> None:
+    """Register a scoped check for `globs` in the adapter."""
 
     adapter = w.repo / ".wiki/adapter.toml"
-    adapter.write_text(adapter.read_text(encoding="utf-8") + '\n[checks.text]\ncmd = "git --version"\npaths = '
+    adapter.write_text(adapter.read_text(encoding="utf-8") + '\n[checks.text]\ncmd = ' + json.dumps(command) + '\npaths = '
                        + json.dumps(list(globs)) + "\n", encoding="utf-8")
 
 

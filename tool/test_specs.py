@@ -428,9 +428,10 @@ sys.stdin.read()
     assert [(r["role"], r["text"]) for r in rows] == [("user", "Start."), ("assistant", "saw it")]
 
 
-def test_a_passing_report_is_not_believed_over_a_failing_gate_or_an_uncommitted_change(repo):
+def test_a_passing_report_is_not_believed_over_a_failing_gate_or_an_uncommitted_change(repo, monkeypatch):
     web = client()
     remote = Remote()
+    monkeypatch.setattr(specs, "selected", lambda *_: {"selection": "mapped", "commands": [FAIL], "reason": "fixture"})
 
     def dirty(path, halt):
         (path / "left.txt").write_text("x", encoding="utf-8")

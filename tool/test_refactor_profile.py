@@ -64,6 +64,8 @@ def _git(root: Path, *args: str) -> None:
 def _repo(root: Path) -> Path:
     root.mkdir()
     _git(root, "init", "-q", "-b", "main")
+    _git(root, "config", "user.name", "fixture")
+    _git(root, "config", "user.email", "fixture@example.test")
     (root / "src").mkdir()
     (root / "src/calc.py").write_text(CALC, encoding="utf-8")
     (root / "src/check_calc.py").write_text(CHECK, encoding="utf-8")
@@ -95,7 +97,7 @@ def test_frozen_tests_reject_and_the_debt_drop_selects(tmp_path):
 
     result = refactor_profile.drive(repo, "project", "dedupe", config, store=tmp_path / "runs")
 
-    assert result["state"] == "adopted" and result["review_required"]
+    assert result["state"] == "adopted" and result["review_required"], result
     state = improvement.Experiment(repo, "project", "dedupe", store=tmp_path / "runs").read()
     verdicts = {(c["round"], c["candidate"]): c for c in state["history"]}
     assert not verdicts[0, 0]["evaluation"]["guards"]["preserved"], "a behaviour change fails the frozen test"
@@ -134,7 +136,7 @@ def test_cancelled_refactoring_resumes_without_replacing_its_evidence(tmp_path, 
     stopped = experiment.read()
     assert stopped["stopped"] == "cancelled"
     result = refactor_profile.drive(repo, "project", "resume", config, store=store, halt=threading.Event())
-    assert result["state"] == "adopted"
+    assert result["state"] == "adopted", result
     resumed = experiment.read()
     assert resumed["recovery"] == 1 and resumed["spent"]["calls"] >= stopped["spent"]["calls"]
     retained = json.loads((experiment.root / "cancellations/1.json").read_text(encoding="utf-8"))

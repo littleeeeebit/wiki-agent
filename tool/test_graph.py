@@ -88,7 +88,7 @@ def test_it_finds_the_attached_repositories_itself():
     # has to produce a graph.
     import graph
 
-    workspace = Path(tempfile.mkdtemp())
+    workspace = Path(tempfile.mkdtemp()).resolve()
     wiki = workspace / "위키"
     for name, wired in (("붙은 저장소", True), ("안 붙은 것", False), ("위키", True)):
         repo = workspace / name

@@ -16,6 +16,11 @@ from main import decisions, specs
 HEAD, BASE = "a" * 40, "b" * 40
 
 
+@pytest.fixture(autouse=True)
+def isolated_local_owner(tmp_path, monkeypatch):
+    monkeypatch.setattr(ci, "local_lock_path", lambda: tmp_path / "wiki-agent-final.lock")
+
+
 @pytest.fixture
 def hosted_repo(tmp_path, monkeypatch):
     (tmp_path / ci.POLICY).write_text(
@@ -264,11 +269,49 @@ def test_local_override_and_policy_changes_invalidate_old_success(hosted_repo, m
     assert first["environment_digest"] != second["environment_digest"]
 
 
+def test_investigated_local_failure_can_resume_with_a_new_environment(hosted_repo, monkeypatch):
+    monkeypatch.setattr(ci, "backend", lambda *_: "local")
+    monkeypatch.setattr(ci, "run", lambda args, repo: str(repo))
+    with pytest.raises(ci.Failure):
+        ci.final(hosted_repo, "main", judge=lambda *_: {"ok": False, "reason": "Old command failed"})
+    policy = hosted_repo / ci.POLICY
+    policy.write_text(policy.read_text(encoding="utf-8").replace("complete-check", "repaired-check"), encoding="utf-8")
+    calls = []
+
+    def judge(repo, command, *_):
+        calls.append(command)
+        return {"ok": True, "head": HEAD}
+
+    proof = ci.final(hosted_repo, "main", retry_reason="Corrected the command after investigation", judge=judge)
+    assert ci.final(hosted_repo, "main", judge=judge) == proof and calls == ["repaired-check"]
+    records = [json.loads(p.read_text(encoding="utf-8")) for p in hosted_repo.glob("wiki-verification-*.json")]
+    assert sorted(r["status"] for r in records) == ["failed", "passed"]
+
+
 def test_two_local_final_runs_cannot_overlap(tmp_path):
     with ci.locked(tmp_path / "shared.lock"):
         with pytest.raises(RuntimeError, match="중복 실행하지"):
             with ci.locked(tmp_path / "shared.lock"):
                 pytest.fail("A second final run acquired the same host lock")
+
+
+def test_local_final_can_run_integration_fixtures_while_holding_its_host_lock(tmp_path):
+    scratch = tmp_path / "outer-owner"
+    scratch.mkdir()
+    script = '''
+import subprocess, sys
+sys.path.insert(0, "tool")
+import verify
+with verify.locked(verify.local_lock_path()):
+    done = subprocess.run([sys.executable, "-m", "pytest", "-q", "-n", "0",
+        "tool/test_loop.py::test_a_targeted_pass_cannot_merge_and_the_loop_runs_only_the_final_gate"], timeout=75)
+raise SystemExit(done.returncode)
+'''
+    env = {**os.environ, "TEMP": str(scratch), "TMP": str(scratch), "TMPDIR": str(scratch),
+           "WIKI_FINAL_RUN": "1", "PYTHONUTF8": "1"}
+    result = subprocess.run([sys.executable, "-c", script], cwd=Path(ci.__file__).resolve().parent.parent,
+                            env=env, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90)
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_direct_whole_suite_stops_before_collecting_or_running_tests():

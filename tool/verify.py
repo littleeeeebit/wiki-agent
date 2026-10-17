@@ -250,6 +250,11 @@ def _ci_result(repo, cfg, head, base_oid, record, receipt, dispatch, deadline, h
     raise Pending("CI 대기가 중단됐습니다. 기존 실행은 유지하며 로컬 전체 검사는 시작하지 않습니다")
 
 
+def local_lock_path():
+    scratch = Path(os.environ.get("TEMP") or tempfile.gettempdir()) if os.name == "nt" else Path(tempfile.gettempdir())
+    return scratch / "wiki-agent-final.lock"
+
+
 def local_result(repo, command, record, receipt, dispatch, deadline, halt, judge):
     if record.get("status") == "passed":
         return record["proof"]
@@ -260,8 +265,7 @@ def local_result(repo, command, record, receipt, dispatch, deadline, halt, judge
         raise Pending("현재 커밋·조건의 로컬 최종 검사 결과가 없습니다")
     if not command:
         raise ValueError("로컬 최종 검사 명령을 먼저 등록하세요")
-    scratch = Path(os.environ.get("TEMP") or tempfile.gettempdir()) if os.name == "nt" else Path(tempfile.gettempdir())
-    with locked(scratch / "wiki-agent-final.lock"):
+    with locked(local_lock_path()):
         record.update(status="running", started_at=time.time(), command=command)
         saved(receipt, record)
         env = {**os.environ, "WIKI_FINAL_RUN": "1", "PYTEST_XDIST_AUTO_NUM_WORKERS": "2", "PYTHONUTF8": "1"}
@@ -318,7 +322,7 @@ def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=
             head, base_oid, signature
         ) or record.get("backend") not in ("ci", "local"):
             raise Pending("저장된 최종 검증 기록의 형식·대상이 맞지 않습니다. 재실행하지 않았습니다")
-        if retry_reason:
+        if retry_reason and receipt.is_file():
             if not dispatch or record["backend"] != "local" or record.get("status") not in {"failed", "running", "incomplete"}:
                 raise ValueError("재시도 사유는 실패·중단된 로컬 검사에만 지정하세요. CI는 기존 실행 화면에서 처리하세요")
             # Keep the original attempt; a recorded reason is required for an intentional retry.
@@ -351,10 +355,11 @@ def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=
         return proof
 
 
-def verdict(project, repo, base, command, halt, noted=None, local_only=False):
+def verdict(project, repo, base, command, halt, noted=None, local_only=False, retry_reason=""):
     started = time.monotonic()
     try:
-        proof = final(repo, base, project=project, local_command=command, halt=halt, noted=noted, local_only=local_only)
+        proof = final(repo, base, project=project, local_command=command, halt=halt, noted=noted,
+                      local_only=local_only, retry_reason=retry_reason)
         result = {"ok": True, "head": proof["head"], "code": 0, "reason": "", "verification": proof,
                   "tail": "VERIFY_PROOF " + json.dumps(proof)}
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:

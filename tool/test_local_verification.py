@@ -672,7 +672,9 @@ def test_offline_and_review_same_head_recovery_requires_investigation(cloud_worl
         monkeypatch.setattr(specs, "judge", fail_once)
     first = looped("cloud")
     assert first["local_verification"]["state"] == "waiting_cloud"
+    before_retry = len(calls)
     retried = looped("cloud")
+    assert len(calls) == before_retry, "An unchanged failed head cannot silently repeat checks"
     record = retried["local_verification"]
     assert record["state"] == "unstable" and record["needs_research"]
     assert retried["state"] == "멈춤" and world.github.statuses[-1][1] == "pending"
@@ -681,6 +683,10 @@ def test_offline_and_review_same_head_recovery_requires_investigation(cloud_worl
     assert client().post("/api/specs/cloud/resume", json={"note": "Investigated nondeterminism; isolated and measured fixture"}).status_code == 200
     waited(lambda: ("proj", "cloud") not in loop._loops)
     assert specs.load("proj", "cloud")["state"] == "머지 가능"
+    if failure == "final":
+        receipt = json.loads(next((world.repo / ".git").glob("wiki-verification-*.json")).read_text(encoding="utf-8"))
+        assert len(calls) == before_retry + 1 and receipt["history"][0]["status"] == "failed"
+        assert receipt["retry_reason"] == "Investigated nondeterminism; isolated and measured fixture"
 
 
 def test_setup_rejects_stale_manifest_and_requests_from_another_project(cloud_world):
@@ -808,7 +814,7 @@ def test_failed_cloud_comment_is_pending_and_retried_before_verification(cloud_w
     assert not calls and not world.hub.comments
     outage = False
     resumed = looped("cloud")
-    assert world.hub.comments[0][1] == saved_body and calls
+    assert world.hub.comments[0][1] == saved_body and not calls, "Failure delivery cannot retry the same final gate"
     assert resumed["local_verification"]["state"] == "unstable"
     assert not resumed["local_verification"].get("delivery")
 

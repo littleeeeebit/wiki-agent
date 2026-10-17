@@ -60,6 +60,9 @@ interruption is retained and never automatically retried on the same identity.
 After diagnosing and resolving a local environment failure, an intentional retry
 uses `final --retry-reason "<cause and remedy>"`. The previous attempt remains in
 history. CI retries use the existing GitHub run; neither path retries silently.
+In the managed Cloud loop, resume requires a recorded investigation note after
+a same-head failure. A new note authorizes one retry of a failed local final;
+it never authorizes a CI retry or discards the original failure.
 
 | Repository/setup | Final owner |
 | --- | --- |

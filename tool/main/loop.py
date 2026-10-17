@@ -470,17 +470,11 @@ def folder(repo: str, pr: int) -> Path:
 
 
 def cell(spec: dict, path: Path) -> ChatSession:
-    """The pull request's review cell, made once and kept while the pull
-    request lives. Its CLI session id is kept beside the rounds, so a server
-    started again goes on in the same conversation.
+    """Reuse the PR's independent review session across rounds and restarts.
 
-    Read once per round: a model or effort changed in the settings applies
-    from the next round, never inside one, and each round keeps the one its
-    verdict ran on (`reviewer`). A change of CLI is a new cell — the old
-    session id is the other CLI's. Never an implementation session: ordinary
-    review has read tools; Cloud verification has execution and artifact tools.
-    A spec that names its own `reviewer` — a plan's — is reviewed by that
-    model instead of the settings'."""
+    Model/effort changes apply next round; changing CLI creates a new cell.
+    A spec's reviewer overrides settings. Ordinary review uses read tools;
+    Cloud verification additionally gets execution and artifact tools."""
 
     key = (spec["repo"], spec["pr"]["number"])
     verify_dir = folder(*key) / "verification" / spec["pr"]["head"] if verification.cloud(spec) else None
@@ -929,16 +923,10 @@ def repair(cmd: str, verdict: dict) -> str:
 
 
 def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str) -> bool:
-    """The head that goes to review passed its round checks here, and is up.
+    """Fast-forward external changes, reuse or run round checks, then push.
 
-    A push made elsewhere to the branch is taken in by fast-forward first, so
-    the files the review cell reads are the head it reviews. Nothing more to
-    do when the worktree is clean at the pull request's head and the same
-    checks already passed there (`reusable`). Otherwise the checks this change
-    maps to run (`specs.selected`) — not the whole gate, which runs once on
-    the allowed head (`finalized`). A failure goes to the work cell once with
-    the output's tail, and two in a row stop. Commits the pull request lacks
-    are pushed once the checks pass."""
+    A failed round check sends its tail to the work cell once; two failures stop.
+    The full gate belongs to `finalized`, after independent source approval."""
 
     branch = specs.branch_of(spec)
     for attempt in (1, 2):
@@ -980,6 +968,10 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     """Persist one owned final result; interruption never leaves a passing record."""
 
     cmd = specs.required(repo, spec)
+    previous = (spec.get("validation") or {}).get("final") or {}
+    research = ((spec.get("local_verification") or {}).get("research") or [{}])[-1]
+    retry = research.get("note", "") if not previous.get("ok") and previous.get("head") == head \
+        and research.get("head") == head and research.get("ts", 0) > (previous.get("finished_at") or float("inf")) else ""
     release = wait_hold(loop, path)
     if release is None:
         return None
@@ -990,6 +982,7 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
         specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
         settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
         verdict = specs.verify.verdict(repo, path, base, specs.local_required(repo, spec), loop.halt,
+            retry_reason=retry,
             local_only=bool(review_contract.preservation_command(spec)),
             noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
         if verification.cloud(spec):
@@ -1157,6 +1150,12 @@ def cloud_shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, bas
         if spec["local_verification"]["state"] not in ("runtime_passed", "verified"):
             why = Why.EXTERNAL if spec["local_verification"]["state"] == "waiting_cloud" else Why.PREPARATION
             return stop(loop, loop.repo, loop.sid, why, spec["local_verification"]["reason"])
+        if (record.get("failure_attempts") or record.get("failures")) and (
+                unresolved := verification.uninvestigated(repo, path, spec, head)):
+            reason = "같은 커밋·환경의 실패 기록이 있다 — 재실행 전에 원인 확인 필요"
+            verification.return_to_cloud(repo, spec, head, reason + "\n" + "\n".join(r["reason"] for r in unresolved),
+                                         sorted({issue for r in unresolved for issue in r["failures"]}), "unstable")
+            raise ValueError(reason)
         chosen = specs.for_round(repo, path, spec, base)
         if not reusable(spec, head, chosen):
             settings = verification.redaction(verification.local(repo), path)
