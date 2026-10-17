@@ -104,4 +104,3 @@ def test_a_disposition_id_counts_only_when_this_round_gave_it_to_that_finding():
     assert [f["disposition"] for f in completed] == ["disagree", None]
     ambiguous = loop.vouched(said("[P1] a.py:1 — reworded", None), shared)
     assert all(f["disposition"] is None for f in loop.settled(shared, ambiguous))
-

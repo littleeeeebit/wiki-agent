@@ -38,4 +38,3 @@ export type MapData = {
   }
   metrics: { pages: number; orphans: number; lint: number }
 }
-
