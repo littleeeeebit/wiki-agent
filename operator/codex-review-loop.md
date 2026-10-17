@@ -3,7 +3,7 @@ scope: operator
 severity: landmine
 repeat: rule
 triggers: ["리뷰\\s*루프", "review\\s*loop", "codex.{0,12}(리뷰|보내|돌려)", "라운드\\s*\\d+\\s*(를|을)?\\s*(보내|전송)"]
-slots: [review_dir, gate_cmd, live_cmd]
+slots: [review_dir, live_cmd]
 sources: []
 sources_withheld: true
 links: [pick-up-async-results, ask-with-arrow-key-options, agent-delegation, gate-the-exit-not-the-callers, measure-after-the-last-change, verify-narrow-then-wide, cloud-local-review]
@@ -11,20 +11,21 @@ links: [pick-up-async-results, ask-with-arrow-key-options, agent-delegation, gat
 
 # The Codex review loop — the application owns dispatch
 
-Rule. Start review only after the person's explicit request. Stop after PR
-publication and wait at that boundary; a completion report or planner handoff
-never authorizes review. Use `review-loop` for an authorized request. In app-managed wiki-agent sessions, the review loop control asks the server
-to attach an existing task PR, write instructions, dispatch its independent
-reviewer and persist the result. The implementation agent never edits raw
-metadata or contacts an external terminal. Review authorization does not
-permit another implementation agent — [[agent-delegation]]. In a host that
-explicitly supplies a manual review cell, write
+Rule. Start review only on the person's explicit request; publication and a
+completion report never authorize it. Use `review-loop`. The managed app owns
+PR association, metadata, independent dispatch and results; never edit raw
+state or contact an external terminal. Review does not permit another
+implementer — [[agent-delegation]]. Repairs use scoped checks and actual
+`{live_cmd}` evidence; commit and push fixes. After `머지 허용`, one final
+owner runs or reuses the declared final verification on that head before merge:
+hosted CI where configured and available, bounded local work for private/no-CI
+repositories. Neither agent nor reviewer adds a full run, switches owners
+after failure or retries without diagnosis — [[verify-narrow-then-wide]].
+
+In a host with an explicitly supplied manual review cell, write
 `{review_dir}/<topic>-round-<n>.md`, arm the result watch, then send one native
-instruction to read it. Read `<topic>-round-<n>-result.md`, not terminal output
-— [[pick-up-async-results]]. Repair rounds run scoped checks and carry actual
-live evidence (`{live_cmd}`). Commit and push the fixes. After `머지 허용`,
-run `{gate_cmd}` once on that head before a requested merge —
-[[verify-narrow-then-wide]]. The procedure is in `skills/review-loop/SKILL.md`.
+instruction. Read `<topic>-round-<n>-result.md`, not terminal output —
+[[pick-up-async-results]]. The procedure is in `skills/review-loop/SKILL.md`.
 
 In the managed app, start the loop once per PR. The server waits for completed
 repairs and publication, advances subsequent rounds automatically, and resumes

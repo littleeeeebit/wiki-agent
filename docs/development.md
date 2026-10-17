@@ -6,7 +6,7 @@ How the parts fit and which document answers what is in
 ```powershell
 python -m pip install -r requirements-dev.txt
 python -m ruff check tool
-python -m pytest -q tool
+python -m pytest -q tool/test_verify.py
 python tool/lint.py --check
 python tool/debt.py check
 npm --prefix web ci
@@ -23,10 +23,13 @@ Building the map against real projects can pull in those projects' paths and
 state, so the result is not added to the public copy. Regenerate the map file
 with the `python tool/graph.py` command above.
 
-Full `python -m pytest -q tool` runs use up to eight isolated pytest-xdist workers.
-Run the final gate while no other checkout's full suite shares the host.
+During development, select the changed test files or specific cases. Do not
+repeat the server's declared round command. Direct whole-directory pytest is
+refused before execution; the final-verification owner alone may start it.
 Focused files, `-k`, `-m` and `--lf` stay serial by default; `-n 0` explicitly
-selects serial diagnosis and a numeric `-n` explicitly selects a worker count.
+selects serial diagnosis. Hosted whole-suite runs use at most four workers;
+the owned local fallback uses two. Do not increase concurrency to compensate
+for slow storage or another verification already running.
 Install `requirements-dev.txt` before running; the configuration requires xdist.
 The scheduler balances cases with differing duration without dropping tests.
 Small worker queues let a failed run stop after its first failure. Use
@@ -38,6 +41,67 @@ selects the fixture root. Use `--durations=25` to profile setup, call and teardo
 separately; avoid simultaneous full suites competing for the same machine.
 See [verification runtime diagnosis](research/verification-runtime.md) for the
 measured regression and the review runner's shared deadline.
+
+## One final-verification owner
+
+Implementation and repair use affected checks. After independent review allows
+the final candidate, the application calls `tool/verify.py` once. The same
+helper is available outside the application:
+
+```powershell
+python tool/verify.py final --base main
+python tool/verify.py status --base main
+```
+
+`status` only reads proof; it cannot dispatch CI or start local tests. A successful
+result is reused across sessions, sibling worktrees and merge clicks when the
+commit, merge base, command and recorded environment still match. A failure or
+interruption is retained and never automatically retried on the same identity.
+After diagnosing and resolving a local environment failure, an intentional retry
+uses `final --retry-reason "<cause and remedy>"`. The previous attempt remains in
+history. CI retries use the existing GitHub run; neither path retries silently.
+
+| Repository/setup | Final owner |
+| --- | --- |
+| Public, active configured GitHub workflow | GitHub-hosted CI |
+| Private, missing/disabled CI, or no GitHub setup | One bounded local run |
+| Explicit local mode | Local, without querying GitHub Actions |
+| Task with a frozen local preservation contract | Local, including its mandatory preservation checks |
+| CI already requested but failed/unavailable | Retain the CI owner; stop failed or pending, never duplicate locally |
+
+The tracked `verification.toml` declares the round command, complete local
+command and optional hosted workflow. Existing projects without it retain their
+adapter's final command, now under the same local owner. Unknown path mappings
+run only a cheap patch check during repair and defer broad coverage to the final
+owner. Frozen preservation checks remain mandatory.
+
+To keep a clone local, including when a public repository becomes private,
+create the ignored `.wiki/verification.toml`:
+
+```toml
+[verification]
+mode = "local"
+```
+
+Auto mode decides before execution and records its choice. It does not dispatch
+CI for private repositories. The hosted workflow also refuses private-repository
+jobs. A confirmed missing/disabled workflow selects local; an uncertain workflow
+lookup on a known public repository stops pending. No account token, paid runner or self-hosted runner is required for local
+mode. Local execution holds a machine-wide final-run lock and uses the existing
+process-tree cancellation and shared time budget. Busy, interrupted and
+unavailable verification stays pending instead of starting implementation fixes.
+
+CI runs on an explicit final request, not every repair commit. PR updates cancel
+the older candidate without starting another full run. On first installation,
+the workflow is not yet on the default branch: after review, the `ci-final` PR
+label can bootstrap one hosted run. Its commit and base must match the reviewed
+candidate. Ordinary PR events do not run the suites. CI includes Windows Python
+and native fixtures, isolated Laya tests, lint, debt and frontend build/browser
+checks. JUnit reports are retained for three days; durations remain in logs.
+
+The app verifies the current run/attempt again before merge. Hosted native fixtures
+do not establish that installed hooks or the person's actual app window work;
+those need a scoped real-host check. Passing targeted checks does not grant merge.
 
 The automatic checks use a temporary project. Real users' conversation records
 are not test input. They confirm settings merging, reinstalling, paths with

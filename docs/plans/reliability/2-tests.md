@@ -3,6 +3,19 @@
 Reduce runtime, maintenance duplication, and repeated full-suite runs while
 retaining meaningful behavior coverage.
 
+## Ownership update — 2026-10-17
+
+The current contract supersedes the original full-gate fallback during repairs.
+Unmapped/shared inputs defer broad execution to one final owner. Hosted CI is
+used only for public repositories with an active configured workflow; private
+repositories and repositories without CI use a serialized, bounded local run.
+CI trouble after dispatch never starts a duplicate local suite. Results bind
+commit, merge base, command and environment and survive session restarts.
+Preparation/interruption stops pending; confirmed failures return to repair.
+See [development](../../development.md#one-final-verification-owner) for the
+active commands and rollout procedure. Historical measurements below remain
+evidence for their original implementation, not instructions to run it again.
+
 ## Work
 
 Measure collection, fixtures and calls separately; record Python, pytest, plugins,

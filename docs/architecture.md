@@ -262,8 +262,14 @@ projects: a connected repository sees the hub's shared rules only.
 
 ## Final gate
 
-A repair round runs the checks its changed paths map to; the whole gate runs
-once, on the commit review allowed, and merge is bound to that head. The flow
+A repair round runs mapped checks and never expands silently into the whole
+suite. One final owner runs the complete gate on the commit review allowed;
+merge is bound to that head. `tool/verify.py` chooses hosted CI for a public
+repository with an active configured workflow, otherwise one bounded local
+run. Private repositories do not dispatch CI. Once work starts, an unavailable
+CI cannot trigger duplicate local tests. Results and incomplete attempts live
+under the repository's common Git directory; a host lock serializes local
+final runs across projects. The flow
 and its commands are in [development](development.md) and the
 [reliability plan](plans/reliability/2-tests.md).
 

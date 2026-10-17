@@ -438,20 +438,18 @@ def wiki_graph(repo: str = "") -> dict:
     }
 
 
+@app.get("/")
+def index():
+    # Resolve at request time so a clean checkout and a built checkout share one route.
+    if not DIST.is_dir():
+        return {"화면이 아직 없다": "npm --prefix web run build 를 먼저 돌려라"}
+    if not update.screen_ready():
+        return HTMLResponse(SCREEN_BUILDING, 503, headers={"Cache-Control": "no-store", "Retry-After": "3"})
+    return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-store"})
+
+
 if DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
-
-    @app.get("/")
-    def index():
-        # A stale build being rebuilt at start-up (`update.rebuild_screen`): the
-        # old screen would draw the new server's answers wrongly, so a page that
-        # retries stands in until the new one is published.
-        if not update.screen_ready():
-            return HTMLResponse(SCREEN_BUILDING, 503, headers={"Cache-Control": "no-store", "Retry-After": "3"})
-        # The assets under it are content-hashed and may be cached forever.
-        # This file is the only thing that says which hash is current, so a
-        # cached copy of it pins the window to a build that no longer exists.
-        return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-store"})
 
     @app.get("/manifest.webmanifest")
     def manifest() -> FileResponse:
@@ -476,10 +474,6 @@ if DIST.is_dir():
     def service_worker() -> FileResponse:
         return FileResponse(DIST / "sw.js", media_type="application/javascript",
                             headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
-else:
-    @app.get("/")
-    def index() -> dict:
-        return {"화면이 아직 없다": "npm --prefix web run build 를 먼저 돌려라"}
 
 
 def taken(host: str, port: int) -> bool:

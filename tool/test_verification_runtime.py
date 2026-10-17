@@ -22,10 +22,11 @@ from test_loop import (  # noqa: F401
 
 
 def test_only_whole_suite_requests_default_to_parallel_workers(monkeypatch):
+    monkeypatch.delenv("WIKI_FINAL_RUN", raising=False)
     monkeypatch.setattr(os, "cpu_count", lambda: 16)
     option = SimpleNamespace(keyword="", markexpr="")
     config = SimpleNamespace(args=[str(Path(__file__).parent)], option=option, getoption=lambda *_: False)
-    assert pytest_xdist_auto_num_workers(config) == 8
+    assert pytest_xdist_auto_num_workers(config) == 4
     option.keyword = "one_case"
     assert pytest_xdist_auto_num_workers(config) == 0
     option.keyword, option.markexpr = "", "integration"
@@ -35,6 +36,8 @@ def test_only_whole_suite_requests_default_to_parallel_workers(monkeypatch):
     config.args, config.getoption = [str(Path(__file__))], lambda *_: False
     assert pytest_xdist_auto_num_workers(config) == 0
     config.args = [str(Path(__file__).parent)]
+    monkeypatch.setenv("WIKI_FINAL_RUN", "1")
+    assert pytest_xdist_auto_num_workers(config) == 2
     monkeypatch.setattr(os, "cpu_count", lambda: 1)
     assert pytest_xdist_auto_num_workers(config) == 1
 

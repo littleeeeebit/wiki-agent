@@ -689,7 +689,7 @@ def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True)
 
 
-def test_round_checks_follow_the_changed_paths_and_widen_when_unsure(repo):
+def test_round_checks_follow_changed_paths_and_defer_uncertain_scope_to_the_final_owner(repo):
     (repo / ".wiki/adapter.toml").write_text(
         f'[slots]\ngate_cmd = "{PASS}"\n[checks.a]\ncmd = "check a"\npaths = ["src/a/**"]\n'
         '[checks.b]\ncmd = "check b"\npaths = ["src/b/**", "src/shared.py"]\n'
@@ -714,18 +714,22 @@ def test_round_checks_follow_the_changed_paths_and_widen_when_unsure(repo):
         return got["selection"], got["commands"]
 
     edit = lambda name: lambda: (repo / name).write_text("y\n", encoding="utf-8")  # noqa: E731
+    deferred = ("deferred", ["git diff --check " + subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "origin/main"], capture_output=True, text=True).stdout.strip() + " HEAD"])
     assert after(edit("src/a/x.py")) == ("mapped", ["check a"])
     assert after(edit("src/shared.py")) == ("mapped", ["check b", "check c"]), "every consumer of a shared file"
     assert after(lambda: _git(repo, "mv", "src/a/x.py", "src/b/y.py")) == ("mapped", ["check a", "check b"]), \
         "both names of a rename"
     assert after(lambda: (repo / "src/b/z.py").unlink()) == ("mapped", ["check b"]), "a deletion"
-    assert after(edit("src/a/x.py"), edit("notes.txt")) == ("full", [PASS]), "an unmapped path"
-    assert after(edit("requirements.txt")) == ("full", [PASS]), "shared configuration"
-    assert after() == ("full", [PASS]), "nothing changed is not nothing to check"
-    assert specs.selected(repo, repo, "no-such-base", PASS)["selection"] == "full", "no merge base"
+    assert after(edit("src/a/x.py"), edit("notes.txt")) == deferred, "an unmapped path never starts the full gate"
+    assert after(edit("requirements.txt")) == deferred, "shared configuration waits for final verification"
+    assert after() == deferred, "no changed path does not authorize a full run"
+    assert specs.selected(repo, repo, "no-such-base", PASS)["selection"] == "deferred", "no merge base"
     adapter = repo / ".wiki/adapter.toml"
     adapter.write_text(adapter.read_text(encoding="utf-8").replace('["src/a/**"]', '"src/a"'), encoding="utf-8")
-    assert after(edit("src/a/x.py")) == ("full", [PASS]), "a malformed map"
+    assert after(edit("src/a/x.py")) == deferred, "a malformed map never starts the full gate"
+    adapter.write_text(f'[slots]\ngate_cmd = "{PASS}"\n[checks.whole]\ncmd = "{PASS}"\npaths = ["*"]\n', encoding="utf-8")
+    assert after(edit("src/a/x.py")) == deferred, "mapping the final command does not authorize it during repair"
 
 
 def test_only_a_passing_final_gate_on_the_same_identity_stands():

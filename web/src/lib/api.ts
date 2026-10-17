@@ -486,11 +486,14 @@ export type ReviewProfile = 'plan' | 'code' | 'mixed'
 export type Validation = {
   version: number
   round: {
-    head: string; base_oid: string; commands: string[]; selection: 'mapped' | 'full'; ok: boolean; finished_at: number
+    head: string; base_oid: string; commands: string[]; selection: 'mapped' | 'full' | 'deferred'; ok: boolean; finished_at: number
   } | null
   final: {
     head: string; base_oid: string; command: string; environment_digest: string; ok: boolean; code: number | null
     reason: string; finished_at: number | null
+    pending?: boolean
+    elapsed_seconds?: number
+    verification?: { backend: 'ci' | 'local'; url?: string; run_id?: number; attempt?: number }
   } | null
   phase: 'final_running' | null
 }

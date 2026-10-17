@@ -13,8 +13,31 @@ from agent import Event
 from main import loop, specs, work
 from test_loop import (  # noqa: F401 -- shared fixtures and isolated Git/GitHub world
     Reviewer, Worker, allow, client, deny, git, no_machine_settings, pr_spec, template, waited, world,
+    looped, mapped,
 )
 from workspace import remove
+
+
+def test_final_preparation_trouble_stops_without_another_test_run_or_worker(world, monkeypatch):
+    mapped(world, "*")
+    pr_spec(world, "final-preparation", 7, gate=None)
+    real = specs.judge
+    calls = []
+
+    def judge(path, commands, halt, *args, **kwargs):
+        calls.append(commands)
+        assert commands == ["git --version"], "Preparation trouble must not start the whole gate"
+        return real(path, commands, halt, *args, **kwargs)
+
+    def unavailable(*_args, **_kwargs):
+        raise specs.verify.Pending("CI connection unavailable; existing owner retained")
+
+    monkeypatch.setattr(specs, "judge", judge)
+    monkeypatch.setattr(specs.verify, "final", unavailable)
+    result = looped("final-preparation")
+    assert result["state"] == "멈춤" and result["stopped"]["reason"] == loop.Why.PREPARATION.value
+    assert result["validation"]["final"]["pending"] and not result["validation"]["final"]["ok"]
+    assert calls == [["git --version"]] and not Worker.made
 
 
 class Hangs:

@@ -15,13 +15,11 @@ stays Korean.
 
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 import re
 import signal
 import subprocess
-import sys
 import tempfile
 import threading
 import time
@@ -31,6 +29,7 @@ from pathlib import Path
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+import verify
 import debt
 import translate
 from common import errorlog, process, python_environment, worktree_home
@@ -262,6 +261,8 @@ def fork(repo: Path, sid: str) -> tuple[Path, str, str]:
 def gate_of(repo: Path) -> str:
     """The adapter's `gate_cmd`, or empty: a repository not connected yet."""
 
+    if cfg := verify.policy(repo):
+        return cfg["round"]
     try:
         return slots_for(repo.name, repo).get("gate_cmd", "").strip()
     except (OSError, ValueError):
@@ -1051,11 +1052,10 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
 
 
 # -- Which checks a head needs ----------------------------------------------
-# A round runs the registered checks its changed paths map to; the final gate
-# is the adapter's whole `gate_cmd`, once, on the head the review allowed.
+# Round checks are scoped; one final owner runs the whole gate on the allowed head.
 # `docs/plans/reliability/2-tests.md` is the contract.
 
-# A change to any of these can reach every consumer: the full gate.
+# These can reach every consumer; broad execution belongs to the final owner.
 SHARED = ("conftest.py", "requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini",
           "package.json", "package-lock.json", ".wiki/adapter.toml")
 LOCKS = ("requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini", "package-lock.json",
@@ -1063,11 +1063,17 @@ LOCKS = ("requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.
 
 
 def required(repo: Path, spec: dict) -> str:
-    """The full gate: the adapter's `gate_cmd` as it is now, else the one the
-    spec was settled with, then the debt ratchet (`tool/debt.py`), which
-    passes in a repository that has not adopted it."""
+    """The one final owner's command, including debt and mandatory preservation."""
 
-    return " && ".join(filter(None, [gate_of(repo) or spec["done"][0], debt.command(spec.get("base") or ""),
+    local = local_required(repo, spec)
+    return verify.command(repo, own_base(spec) or "main", local,
+                          local_only=bool(review_contract.preservation_command(spec))) if verify.policy(repo) else local
+
+
+def local_required(repo: Path, spec: dict) -> str:
+    cfg = verify.policy(repo)
+    gate = cfg["local"] if cfg else gate_of(repo) or spec["done"][0]
+    return " && ".join(filter(None, [gate, "" if cfg else debt.command(spec.get("base") or ""),
                                     review_contract.preservation_command(spec)]))
 
 
@@ -1077,17 +1083,22 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
     the spec's `gate` for the screens, and `validation.round`."""
 
     chosen = chosen or for_round(repo, path, spec, base)
+    last = (spec.get("validation") or {}).get("round") or {}
+    current = sh(["git", "rev-parse", "HEAD"], path)
+    clean = sh(["git", "status", "--porcelain"], path)
+    if reused := verify.cached_round(spec, chosen, current, clean):
+        return reused, last
     verdict = {**judge(path, chosen["commands"], halt, noted), "selection": chosen["selection"]}
     return verdict, {"head": verdict["head"], **chosen, "ok": verdict["ok"], "finished_at": verdict["ts"]}
 
 
 def for_round(repo: Path, path: Path, spec: dict, base: str) -> dict:
     """One selection for dispatch and reuse, including mandatory preservation."""
-    chosen = selected(repo, path, base, required(repo, spec))
+    chosen = selected(repo, path, base, gate_of(repo) or spec["done"][0])
     preserve = review_contract.preservation_command(spec)
-    if preserve and chosen["selection"] == "mapped":
+    if preserve and chosen["selection"] in {"mapped", "deferred"}:
         chosen = {**chosen, "commands": list(dict.fromkeys([*chosen["commands"], preserve]))}
-    return chosen
+    return {**chosen, "environment_digest": digest(repo, path, " && ".join(chosen["commands"]))}
 
 
 def own_base(spec: dict) -> str:
@@ -1101,7 +1112,7 @@ def own_base(spec: dict) -> str:
 
 def local_base(spec: dict, path: Path) -> str:
     """The base a pull request not opened yet goes to, read without GitHub:
-    the spec's own, else `origin/HEAD`. Empty selects the full gate. Nothing
+    the spec's own, else `origin/HEAD`. Empty defers broad checks to final. Nothing
     leaves this machine before the checks pass."""
 
     if own_base(spec):
@@ -1140,11 +1151,14 @@ def current_merge_base(path: Path, base: str, rev: str = "HEAD", *, budget=None)
 def selected(repo: Path, path: Path, base: str, gate_cmd: str) -> dict:
     """`{base_oid, commands, selection}` for the worktree's HEAD.
     Union checks matching every changed path, including both rename names and
-    deletions. Missing base, malformed maps, unmapped or shared paths select
-    the full gate. `fnmatch` stars cross `/`, conservatively widening matches."""
+    deletions. Unknown scope defers broad checks to the final owner;
+    it never starts a full local suite. `fnmatch` stars cross `/`."""
 
     oid = merge_base(path, base)
-    full = {"base_oid": oid, "commands": [gate_cmd], "selection": "full"}
+    if cfg := verify.policy(repo):
+        return {"base_oid": oid, "commands": [cfg["round"]], "selection": "mapped"}
+    # Unmapped/shared changes wait for the one final owner, never a surprise local suite.
+    full = {"base_oid": oid, "commands": ["git diff --check" + (f" {oid} HEAD" if oid else "")], "selection": "deferred"}
     listed = sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", oid, "HEAD"], path) \
         if oid else None
     checks = registered(repo).values()
@@ -1154,7 +1168,7 @@ def selected(repo: Path, path: Path, base: str, gate_cmd: str) -> dict:
     for changed in filter(None, listed.stdout.splitlines()):
         if any(fnmatchcase(changed, s) or fnmatchcase(changed.rsplit("/", 1)[-1], s) for s in SHARED):
             return full
-        hits = [c["cmd"] for c in checks if any(fnmatchcase(changed, g) for g in c["paths"])]
+        hits = [c["cmd"] for c in checks if c["cmd"] != gate_cmd and any(fnmatchcase(changed, g) for g in c["paths"])]
         if not hits:
             return full
         chosen += hits
@@ -1162,21 +1176,8 @@ def selected(repo: Path, path: Path, base: str, gate_cmd: str) -> dict:
 
 
 def digest(repo: Path, path: Path, cmd: str) -> str:
-    """What the final gate's result is bound to beside the commit: the command,
-    the server's Python, the adapter and the lock and config files present in
-    the worktree. Not every property of the machine — only the changes this
-    program can see invalidate a result. No credentials go in."""
-
-    def sha(file: Path) -> str:
-        try:
-            return hashlib.sha256(file.read_bytes()).hexdigest()
-        except OSError:
-            return ""
-
-    found = {f.relative_to(path).as_posix(): sha(f) for pattern in LOCKS for f in sorted(path.glob(pattern))}
-    adapter = adapter_path(repo.name, repo)
-    shown = {"cmd": cmd, "python": (sys.version, sys.executable), "adapter": sha(adapter) if adapter else "", "files": found}
-    return hashlib.sha256(json.dumps(shown, sort_keys=True).encode()).hexdigest()
+    """Bind results to the command, Python, adapter, policy and visible lock files."""
+    return verify.environment_digest(repo, path, cmd, LOCKS, adapter_path(repo.name, repo))
 
 
 def validate(repo: str, sid: str, **parts) -> dict | None:
@@ -1239,9 +1240,9 @@ def body_of(spec: dict) -> str:
     lines += ["## 확인", ""]
     lines += [f"- [x] {i['item']}" + (f" — {i['evidence']}" if i.get("evidence") else "") for i in spec["report"]]
     last = (spec["gate"].get("tail") or "").splitlines()[-1:] or [""]
-    what = "이 변경이 닿는 확인을" if spec["gate"].get("selection") == "mapped" else "게이트를"
-    lines += [f"- [x] 서버가 작업트리에서 {what} 다시 돌림 — `{spec['gate']['cmd']}` · {last[0]}".rstrip(" ·")]
-    if spec["gate"].get("selection") == "mapped":
+    what = "변경이 닿는 확인" if spec["gate"].get("selection") == "mapped" else "패치 확인" if spec["gate"].get("selection") == "deferred" else "게이트"
+    lines += [f"- [x] 서버의 {what} 기록 — `{spec['gate']['cmd']}` · {last[0]}".rstrip(" ·")]
+    if spec["gate"].get("selection") in {"mapped", "deferred"}:
         lines += ["- [ ] 전체 게이트 — 리뷰가 허용한 커밋에서 머지 전에 돈다"]
     lines += [f"- [x] Jev 가 고른 추가 확인 — `{c['cmd']}` · 통과" for c in spec.get("checks") or []
               if c["ok"] and c.get("head") == spec["gate"].get("head")]

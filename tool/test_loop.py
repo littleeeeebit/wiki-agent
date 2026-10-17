@@ -2052,9 +2052,9 @@ def judged(calls: list):
 
     real = specs.judge
 
-    def run(path, cmds, halt, noted=lambda text: None):
+    def run(path, cmds, halt, noted=lambda text: None, **kwargs):
         calls.append(list(cmds))
-        return real(path, cmds, halt, noted)
+        return real(path, cmds, halt, noted, **kwargs)
     return patch.object(specs, "judge", run)
 
 
@@ -2077,10 +2077,9 @@ def final_of(w, spec: dict, **extra) -> dict:
             "finished_at": 1.0, **extra}
 
 
-def round_of(spec: dict) -> dict:
+def round_of(w, spec: dict) -> dict:
     path, head = Path(spec["worktree"]), spec["pr"]["head"]
-    return {"head": head, "base_oid": specs.merge_base(path, "main", head), "commands": [FINAL],
-            "selection": "full", "ok": True, "finished_at": 1.0}
+    return {"head": head, **specs.for_round(w.repo, path, spec, "main"), "ok": True, "finished_at": 1.0}
 
 
 def test_a_targeted_pass_cannot_merge_and_the_loop_runs_only_the_final_gate(world):
@@ -2089,7 +2088,7 @@ def test_a_targeted_pass_cannot_merge_and_the_loop_runs_only_the_final_gate(worl
 
     web = client()
     spec = allowed_spec(world, "fix-u", 7)
-    specs.validate("proj", "fix-u", round=round_of(spec))
+    specs.validate("proj", "fix-u", round=round_of(world, spec))
     with judged(calls := []):
         answer = web.post("/api/specs/fix-u/merge", json={"head": spec["pr"]["head"]})
         assert answer.status_code == 409 and "최종 게이트" in answer.json()["detail"]
@@ -2132,7 +2131,7 @@ def test_a_worktree_gone_from_disk_is_unproven_and_the_rest_still_list(world):
 def test_a_restart_during_the_final_gate_stays_blocked_and_resume_reruns_only_it(world):
     spec = allowed_spec(world, "fix-y", 7)
     specs.update("proj", "fix-y", state="리뷰 R1")
-    specs.validate("proj", "fix-y", round=round_of(spec), phase="final_running",
+    specs.validate("proj", "fix-y", round=round_of(world, spec), phase="final_running",
                    final=final_of(world, spec, ok=False, code=None, reason="끝나지 않았다", finished_at=None))
     loop.recover()
     spec = specs.load("proj", "fix-y")

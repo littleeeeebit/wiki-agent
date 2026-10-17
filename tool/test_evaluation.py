@@ -577,7 +577,8 @@ def test_the_host_s_own_time_is_not_a_deadline_breach():
 def test_a_run_its_deadline_stopped_is_not_a_breach_within_one_poll():
     limits = {"seconds": 15.0, "calls": 6, "candidates": 40, "tokens": 100}
     used = {"calls": 1, "candidates": 0, "tokens": 0}
-    budget = lambda elapsed, aside=0: {"limits": limits, "used": used, "elapsed_ms": elapsed, "aside_ms": aside}
+    def budget(elapsed, aside=0):
+        return {"limits": limits, "used": used, "elapsed_ms": elapsed, "aside_ms": aside}
     # v7's none-44 in B: stopped 4 ms late.
     assert compare.breaches(budget(15_004)) == [] and compare.overshoot_ms(budget(15_004)) == 4
     assert compare.breaches(budget(15_050)) == [], "the grace's edge is inside it"

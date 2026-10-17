@@ -1016,7 +1016,8 @@ def reusable(spec: dict, head: str, chosen: dict) -> bool:
 
     last = (spec.get("validation") or {}).get("round")
     if last:
-        return bool(last.get("ok")) and (last.get("head"), last.get("base_oid"), last.get("commands")) == \
+        return bool(last.get("ok")) and last.get("environment_digest") == chosen.get("environment_digest") \
+            and (last.get("head"), last.get("base_oid"), last.get("commands")) == \
             (head, chosen["base_oid"], chosen["commands"])
     gated = spec.get("gate") or {}
     if review_contract.preservation_command(spec):
@@ -1078,13 +1079,7 @@ def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str
 
 
 def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str) -> dict | None:
-    """The full gate, once, on the head the review allowed — before the spec
-    may become mergeable. `None` when the loop was stopped.
-
-    While it runs, `validation.phase` is `final_running` and the final record
-    already stands, failed and unfinished: a stop, a crash or a restart
-    leaves exactly that, never an `ok`. The record is bound to the head, the
-    merge base and `specs.digest`; `merge` checks all three."""
+    """Persist one owned final result; interruption never leaves a passing record."""
 
     cmd = specs.required(repo, spec)
     release = wait_hold(loop, path)
@@ -1096,14 +1091,20 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
                   "reason": "끝나지 않았다", "finished_at": None}
         specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
         settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
-        verdict = specs.judge(path, [cmd], loop.halt)
+        verdict = specs.verify.verdict(repo, path, base, specs.local_required(repo, spec), loop.halt,
+            local_only=bool(review_contract.preservation_command(spec)),
+            noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
         if verification.cloud(spec):
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
     finally:
         release()
-    ok = verdict["ok"] and verdict["head"] == head
-    reason = verdict["reason"] if not verdict["ok"] else "" if ok else "작업트리가 허용된 커밋에 있지 않다"
-    record = {**record, "ok": ok, "code": verdict.get("code"), "reason": reason, "finished_at": time.time()}
+    ok = verdict["ok"] and verdict["head"] == head and verdict["verification"]["base_oid"] == record["base_oid"]
+    reason = verdict["reason"] if not verdict["ok"] else "" if ok else "검증 커밋·base가 리뷰와 다릅니다"
+    record = {**record, "ok": ok, "code": verdict.get("code"), "reason": reason, "finished_at": time.time(),
+              "tail": verdict["tail"], "elapsed_seconds": verdict.get("elapsed_seconds")}
+    record["pending"] = verdict.get("pending", False)
+    if ok:
+        record["verification"] = verdict["verification"]
     specs.validate(loop.repo, loop.sid, phase=None, final=record)
     return None if loop.halt.is_set() else {**record, "tail": verdict["tail"]}
 
@@ -1155,6 +1156,8 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
         comment = ("리뷰에서 남긴 P2 — 따로 할 만한 것\n\n" + "\n".join(f"- {p}" for p in shown)) if kept_p2 else ""
         change(loop, "머지 가능", p2=kept_p2, p2_comment=comment)
         return False
+    if final.get("pending"):
+        return stop(loop, loop.repo, loop.sid, Why.PREPARATION, final["reason"])
     if verification.cloud(spec):
         verification.return_to_cloud(repo, spec, head, final["reason"] + "\n" + final["tail"], ["offline/final"])
         return stop(loop, loop.repo, loop.sid, Why.EXTERNAL, "최종 게이트 실패 — 클라우드 수정 대기")
@@ -2180,6 +2183,12 @@ def _merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) ->
             raise HTTPException(409, "사용자가 요청한 커밋의 머지가 아니다")
     release = hold(work._busy, _lock, str(path), "작업이 끝난 뒤 머지를 요청하세요", kind="turn")
     try:
+        if (spec.get("validation") or {}).get("final", {}).get("verification"):
+            try:
+                specs.verify.confirm(repo, path, base, specs.local_required(repo, spec), spec["validation"]["final"]["verification"],
+                                     local_only=bool(review_contract.preservation_command(spec)))
+            except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
+                raise HTTPException(409, f"최종 검증 결과 확인 실패 — {exc}") from exc
         local = specs.sh(["git", "rev-parse", "HEAD"], path)
         dirty = specs.sh(["git", "status", "--porcelain"], path)
         if local.returncode or local.stdout.strip() != allowed["head"] or dirty.returncode or dirty.stdout.strip():

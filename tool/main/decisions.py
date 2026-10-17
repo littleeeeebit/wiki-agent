@@ -41,6 +41,7 @@ from pathlib import Path
 from typing import Callable
 
 import decision
+import verify
 from common.budget import ACTION, Budget
 from session_state import run as git
 from wiki import adapter_path
@@ -659,7 +660,7 @@ def registered(repo: Path) -> dict[str, dict]:
 
     `paths` are the globs a round's selection maps changed files to
     (`specs.selected`). Absent is `[]`, mapping nothing; anything but a list
-    of strings is `None`, a malformed map that selects the full gate."""
+    of strings is `None`, a malformed map that defers broad work to final."""
 
     try:
         path = adapter_path(repo.name, repo)
@@ -717,8 +718,12 @@ def extra_check(repo: Path, path: Path, run, spec: dict) -> tuple[bool, str]:
 
     from . import specs  # `specs` imports this module
 
+    if verify.policy(repo):
+        return True, ""  # The declared round and final owners already cover this repository.
+    checked = (spec.get("validation") or {}).get("round") or {}
+    already = checked.get("commands", []) if checked.get("head") == (spec.get("gate") or {}).get("head") else []
     gate = spec["done"][0]
-    pick = choose("specs.check", lambda: check_offer(repo, gate),
+    pick = choose("specs.check", lambda: [c for c in check_offer(repo, gate) if c["id"] == "none" or c["args"]["cmd"] not in already],
                   lambda: {"task": "The required gate passed; the server may run one registered check more "
                                    "before it opens the pull request.",
                            "goal": spec["goal"], "acceptance_criteria": spec["done"][1:],
