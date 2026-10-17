@@ -792,3 +792,16 @@ def test_the_pr_goes_up_in_korean_and_the_spec_stays_english(repo):
     assert "- [x] KO(항목 1) — ran 1 · ok" in remote.body, "명령과 그 출력은 옮기지 않는다"
     assert specs.load("proj", sid)["goal"] == "Return to the page after login"
     assert KICKED == [], "An ordinary done report opens the PR, then waits for explicit review"
+
+
+def test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there(tmp_path):
+    """rfg_rag PR #64 was published by hand into `dev` and attached to its spec.
+    A spec-update republished it against the default `main`, and `existing_pr`
+    refused a second PR from the same branch, so the task could not return to
+    review. The attached PR's base must win over the default, without asking GitHub."""
+
+    spec = {"pr": {"number": 64, "base": "dev", "branch": "review-kiwi-bm25-tokenizer"}}
+    with patch.object(specs, "sh", side_effect=AssertionError("asked for the default branch")):
+        assert specs.base_of(spec, tmp_path).stdout == "dev"
+        assert specs.local_base(spec, tmp_path) == "dev"
+    assert specs.own_base({**spec, "base": "release"}) == "release", "`[다시 PR]`'s base still wins"

@@ -1090,13 +1090,22 @@ def for_round(repo: Path, path: Path, spec: dict, base: str) -> dict:
     return chosen
 
 
+def own_base(spec: dict) -> str:
+    """The base this spec already names: its own, else that of the pull request
+    attached to it. A PR published by hand into a non-default base keeps that
+    base when the spec is published again; the default would be a second PR
+    from the same branch, which `existing_pr` refuses."""
+
+    return spec.get("base") or (spec.get("pr") or {}).get("base") or ""
+
+
 def local_base(spec: dict, path: Path) -> str:
     """The base a pull request not opened yet goes to, read without GitHub:
     the spec's own, else `origin/HEAD`. Empty selects the full gate. Nothing
     leaves this machine before the checks pass."""
 
-    if spec.get("base"):
-        return spec["base"]
+    if own_base(spec):
+        return own_base(spec)
     done = sh(["git", "rev-parse", "--abbrev-ref", "origin/HEAD"], path)
     return "" if done.returncode else done.stdout.strip().removeprefix("origin/")
 
@@ -1258,9 +1267,10 @@ def korean(spec: dict) -> dict:
 
 def base_of(spec: dict, path: Path) -> subprocess.CompletedProcess:
     """The branch the pull request goes to. A spec sent back by `[다시 PR]`
-    goes to the base it was reviewed for; any other, the repository's default."""
+    goes to the base it was reviewed for, one with a PR to that PR's base;
+    any other, the repository's default."""
 
-    return subprocess.CompletedProcess([], 0, spec["base"], "") if spec.get("base") else \
+    return subprocess.CompletedProcess([], 0, own_base(spec), "") if own_base(spec) else \
         sh(["gh", "repo", "view", "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name"], path, 30)
 
 
