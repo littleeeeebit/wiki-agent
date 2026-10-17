@@ -1075,7 +1075,7 @@ def local_required(repo: Path, spec: dict) -> str:
     path = Path(spec.get("worktree") or repo)
     cfg = verify.policy(path, project=repo)
     gate = cfg["local"] if cfg else gate_of(repo, path) or spec["done"][0]
-    return " && ".join(filter(None, [gate, "" if cfg else debt.command(spec.get("base") or ""),
+    return " && ".join(filter(None, [gate, "" if cfg else debt.command(own_base(spec)),
                                     review_contract.preservation_command(spec)]))
 
 

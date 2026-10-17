@@ -34,7 +34,7 @@ from test_specs import Worker
 from workspace import adopt, create
 
 GATE = "python gate.py"
-FINAL = f"{GATE} && {debt.command()}"   # the final gate ends with the debt ratchet
+FINAL = f"{GATE} && {debt.command('main')}"   # these fixtures attach their PRs to main
 INTEGRATION_WAIT = 120  # Completion ceiling, not a product performance or timeout contract.
 
 

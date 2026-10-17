@@ -810,3 +810,11 @@ def test_a_spec_attached_to_a_pr_into_a_non_default_base_is_republished_there(tm
         assert specs.base_of(spec, tmp_path).stdout == "dev"
         assert specs.local_base(spec, tmp_path) == "dev"
     assert specs.own_base({**spec, "base": "release"}) == "release", "`[다시 PR]`'s base still wins"
+
+
+@pytest.mark.parametrize("explicit, expected", [("", "dev"), ("release", "release")])
+def test_legacy_final_debt_check_uses_the_attached_pr_base(tmp_path, monkeypatch, explicit, expected):
+    monkeypatch.setattr(specs.verify, "policy", lambda *_a, **_k: None)
+    monkeypatch.setattr(specs, "gate_of", lambda *_: PASS)
+    spec = {"base": explicit, "pr": {"base": "dev"}, "done": [PASS]}
+    assert specs.required(tmp_path, spec) == f"{PASS} && {specs.debt.command(expected)}"
