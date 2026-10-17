@@ -104,6 +104,38 @@ def test_a_screen_older_than_its_sources_is_rebuilt_before_the_window_reads_it(t
     assert ran == [(["run", "build"], root / "web")] * 2
 
 
+def test_a_broken_publish_or_staging_never_breaks_the_screen_or_leaves_it_loading(tmp_path, monkeypatch):
+    staged, dist = tmp_path / "staged", tmp_path / "dist"
+    for folder, text in ((staged, "new"), (dist, "old")):
+        (folder / "assets").mkdir(parents=True)
+        (folder / "index.html").write_text(text, encoding="utf-8")
+    (staged / "assets" / "same-hash.js").write_text("whole", encoding="utf-8")
+    (dist / "assets" / "same-hash.js").write_text("whole", encoding="utf-8")   # the old index uses it
+    copy = update.shutil.copy2
+
+    def torn(source, target, **kwargs):   # the disk fills half-way through a file
+        Path(target).write_text("wh", encoding="utf-8")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(update.shutil, "copy2", torn)
+    with pytest.raises(OSError):
+        update.publish_screen(staged, dist)
+    assert (dist / "assets" / "same-hash.js").read_text(encoding="utf-8") == "whole"
+    assert (dist / "index.html").read_text(encoding="utf-8") == "old"
+    monkeypatch.setattr(update.shutil, "copy2", copy)
+
+    recorded = []
+
+    def full(**kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(update.tempfile, "mkdtemp", full)
+    monkeypatch.setattr(update.errorlog, "record", lambda where, exc: recorded.append(where))
+    monkeypatch.setattr(update, "screen_stale", lambda root=None: True)
+    update.rebuild_screen(tmp_path)
+    assert update.screen_ready(10) and recorded == ["screen-build"]
+
+
 def test_only_the_checkouts_owner_rebuilds_its_screen(monkeypatch):
     from main import runtime, specs
 

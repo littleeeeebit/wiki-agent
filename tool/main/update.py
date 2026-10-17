@@ -176,13 +176,18 @@ def screen_stale(root=None) -> bool:
 def publish_screen(staged: Path, dist: Path) -> None:
     """Copy a finished build over `dist`, `index.html` last and atomically: until
     then every window — and a failed build — keeps the last good screen. Old
-    hashed assets stay for windows still open on them (`emptyOutDir: false`)."""
+    hashed assets stay for windows still open on them (`emptyOutDir: false`).
+    Each file lands whole or not at all: an unchanged asset keeps its hashed
+    name, so a copy truncated in place would break the screen still served."""
 
-    shutil.copytree(staged, dist, dirs_exist_ok=True, ignore=lambda folder, names:
-                    ["index.html"] if Path(folder) == staged else [])
-    swap = dist / "index.html.new"
-    shutil.copyfile(staged / "index.html", swap)
-    os.replace(swap, dist / "index.html")
+    def replace(source, target):
+        swap = f"{target}.new"
+        shutil.copy2(source, swap)
+        os.replace(swap, target)
+
+    shutil.copytree(staged, dist, dirs_exist_ok=True, copy_function=replace,
+                    ignore=lambda folder, names: ["index.html"] if Path(folder) == staged else [])
+    replace(staged / "index.html", dist / "index.html")
 
 
 def rebuild_screen(root=None) -> None:
@@ -199,8 +204,9 @@ def rebuild_screen(root=None) -> None:
     _screen.clear()
 
     def build() -> None:
-        staged = Path(tempfile.mkdtemp(prefix="wiki-screen-"))
+        staged = None
         try:
+            staged = Path(tempfile.mkdtemp(prefix="wiki-screen-"))
             done = subprocess.run([*cli_command("npm"), "run", "build", "--", "--outDir", str(staged),
                                    "--emptyOutDir"], cwd=root / "web", capture_output=True,
                                   text=True, encoding="utf-8", errors="replace", timeout=900)
@@ -210,7 +216,8 @@ def rebuild_screen(root=None) -> None:
         except Exception as exc:
             errorlog.record("screen-build", exc)
         finally:
-            shutil.rmtree(staged, ignore_errors=True)
+            if staged:
+                shutil.rmtree(staged, ignore_errors=True)
             _screen.set()
 
     threading.Thread(target=build, name="screen-build", daemon=True).start()
