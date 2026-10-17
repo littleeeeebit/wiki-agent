@@ -1,23 +1,51 @@
 """Keep pytest progress visible instead of buffering it through output filters."""
 
 import re
+import shlex
 
 _QUOTED = re.compile(r'"[^"]*"|\'[^\']*\'')
-_TEST_RUN = re.compile(r"-m\s+pytest\b|(?:^|\s)(?:\S*[/\\])?pytest(?:\.exe)?(?=\s|$)")
-_INSTALL = re.compile(r"\binstall\b")  # `pip install pytest | tail` installs, it runs nothing
+
+
+def runs_pytest(stage: str) -> bool:
+    try:
+        words = [word.strip("\"'") for word in shlex.split(stage, posix=False)]
+    except ValueError:
+        return False
+    while words and (words[0] in {"env", "command", "exec", "time"}
+                     or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0])):
+        words.pop(0)
+    if words and words[0].replace("\\", "/").rsplit("/", 1)[-1] in {"timeout", "timeout.exe"}:
+        duration = next((i for i, word in enumerate(words[1:], 1)
+                         if re.fullmatch(r"\d+(?:\.\d+)?[smhd]?", word)), len(words))
+        words = words[duration + 1:]
+    if not words:
+        return False
+    executable = words[0].replace("\\", "/").rsplit("/", 1)[-1]
+    if re.fullmatch(r"pytest(?:\.exe)?", executable):
+        return True
+    if re.fullmatch(r"(?:python[\d.]*|py)(?:\.exe)?", executable):
+        args = iter(words[1:])
+        for arg in args:
+            if arg == "-m":
+                return next(args, "") == "pytest"
+            if arg in {"-W", "-X"}:
+                next(args, None)
+            elif not arg.startswith("-") or arg == "-c":
+                return False
+    return False
 
 
 def held_back(command: str) -> str:
     """The pipe stage a pytest run's output is fed into, unless it is `tee`.
     `| tail` or `| grep` hold the run's progress until it ends, so a gate hung
     on one test reads exactly like a slow one and nobody can tell which. Quoted
-    text is blanked first, so a `|` in a pattern or a commit message is not a pipe."""
+    operators are blanked so patterns and messages cannot introduce pipelines."""
 
-    bare = _QUOTED.sub('""', command)
+    bare = _QUOTED.sub(lambda match: re.sub(r"[|;&\n]", " ", match[0]), command)
     for chain in re.split(r"&&|\|\||;|\n", bare):
         stages = [s.strip() for s in chain.split("|")]
         for before, after in zip(stages, stages[1:]):
-            if _TEST_RUN.search(before) and not _INSTALL.search(before) and after.split()[:1] != ["tee"]:
+            if runs_pytest(before) and after.split()[:1] != ["tee"]:
                 return after
     return ""
 
