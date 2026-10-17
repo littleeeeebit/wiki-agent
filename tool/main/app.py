@@ -455,14 +455,20 @@ async def assets(request: Request, path: str):
     return await StaticFiles(directory=DIST / "assets").get_response(path, request.scope)
 
 
+def screen_file(name: str, **kwargs) -> FileResponse:
+    if not (DIST / name).is_file():
+        raise HTTPException(404, "화면 파일이 없습니다")
+    return FileResponse(DIST / name, **kwargs)
+
+
 @app.get("/manifest.webmanifest")
 def manifest() -> FileResponse:
-    return FileResponse(DIST / "manifest.webmanifest", media_type="application/manifest+json")
+    return screen_file("manifest.webmanifest", media_type="application/manifest+json")
 
 
 @app.get("/mobile-icon.svg")
 def mobile_icon() -> FileResponse:
-    return FileResponse(DIST / "mobile-icon.svg", media_type="image/svg+xml")
+    return screen_file("mobile-icon.svg", media_type="image/svg+xml")
 
 
 @app.get("/pwa-192.png")
@@ -470,18 +476,18 @@ def mobile_icon() -> FileResponse:
 @app.get("/pwa-maskable-512.png")
 @app.get("/apple-touch-icon.png")
 def mobile_png(request: Request) -> FileResponse:
-    return FileResponse(DIST / request.url.path.removeprefix("/"), media_type="image/png")
+    return screen_file(request.url.path.removeprefix("/"), media_type="image/png")
 
 
 @app.get("/offline.html")
 def offline() -> FileResponse:
-    return FileResponse(DIST / "offline.html", headers={"Cache-Control": "no-cache"})
+    return screen_file("offline.html", headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/sw.js")
 def service_worker() -> FileResponse:
-    return FileResponse(DIST / "sw.js", media_type="application/javascript",
-                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+    return screen_file("sw.js", media_type="application/javascript",
+                       headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
 
 
 def taken(host: str, port: int) -> bool:

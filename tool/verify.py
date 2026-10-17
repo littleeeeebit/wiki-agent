@@ -177,7 +177,11 @@ def latest(repo, workflow, head, base_oid):
             continue
         declared = title[1]
         # A first-install label names the base tip; normalize it to the same merge base as dispatch.
-        if declared == base_oid or run(["git", "merge-base", head, declared], repo) == base_oid:
+        try:
+            actual = base_oid if declared == base_oid else run(["git", "merge-base", head, declared], repo)
+        except RuntimeError:
+            continue  # An invalid request's title is not evidence against other valid runs.
+        if actual == base_oid:
             matches.append(row)
     return max(matches, key=lambda r: r["databaseId"], default=None)
 

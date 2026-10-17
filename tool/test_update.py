@@ -116,6 +116,8 @@ def test_a_build_created_after_clean_import_serves_assets_without_restarting(tmp
     client = TestClient(clean.app, base_url="http://127.0.0.1:8787")
     assert client.get("/").status_code == 200
     assert client.get("/assets/app.js").status_code == 404
+    for name in ("sw.js", "manifest.webmanifest", "mobile-icon.svg", "pwa-192.png", "offline.html"):
+        assert client.get("/" + name).status_code == 404
     dist = tmp_path / "web" / "dist"
     (dist / "assets").mkdir(parents=True)
     for name, content in (("index.html", "<script src='/assets/app.js'></script>"), ("assets/app.js", "ready"),

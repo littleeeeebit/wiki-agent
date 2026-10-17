@@ -506,6 +506,17 @@ def test_label_bootstrap_normalizes_an_advanced_base_tip_to_the_reviewed_merge_b
     assert ci.latest(repo, "verify.yml", head, base) == row
 
 
+@pytest.mark.parametrize("bad_first", [True, False])
+def test_a_malformed_prior_ci_run_cannot_hide_valid_evidence(diverged_repo, monkeypatch, bad_first):
+    repo, head, base, _ = diverged_repo
+    valid = completed(headSha=head, displayTitle=f"Final {head} {base}")
+    invalid = completed(databaseId=11, headSha=head, displayTitle=f"Final {head} {'0' * 40}", conclusion="failure")
+    rows = [invalid, valid] if bad_first else [valid, invalid]
+    real = ci.run
+    monkeypatch.setattr(ci, "run", lambda args, path: json.dumps(rows) if args[0] == "gh" else real(args, path))
+    assert ci.latest(repo, "verify.yml", head, base) == valid
+
+
 @pytest.mark.parametrize("event,action,label,shares_final", [
     ("workflow_dispatch", "", "", True), ("pull_request", "synchronize", "", True),
     ("pull_request", "labeled", "ci-final", True), ("pull_request", "labeled", "bug", False),
