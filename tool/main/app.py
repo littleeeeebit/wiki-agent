@@ -439,6 +439,7 @@ if DIST.is_dir():
         # The assets under it are content-hashed and may be cached forever.
         # This file is the only thing that says which hash is current, so a
         # cached copy of it pins the window to a build that no longer exists.
+        update.screen_ready()   # a stale build being rebuilt at start-up (`update.rebuild_screen`)
         return FileResponse(DIST / "index.html", headers={"Cache-Control": "no-store"})
 
     @app.get("/manifest.webmanifest")
@@ -583,6 +584,7 @@ def main() -> int:
         )
         return 1
 
+    update.rebuild_screen()
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning",
                                         proxy_headers=False, ws="wsproto", ws_max_size=100_000))
     ended_first(server)

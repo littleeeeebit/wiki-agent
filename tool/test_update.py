@@ -37,6 +37,52 @@ def checkouts(tmp_path, monkeypatch):
     return local, other
 
 
+def test_a_screen_older_than_its_sources_is_rebuilt_before_the_window_reads_it(tmp_path, monkeypatch):
+    import os
+    import threading
+
+    root = tmp_path / "wiki"
+    (root / "web" / "src").mkdir(parents=True)
+    (root / "web" / "src-tauri").mkdir()
+    for name in ("web/src/lib.ts", "web/src-tauri/main.rs"):
+        (root / name).write_text("x", encoding="utf-8")
+    git(tmp_path, "init", "-q", str(root))
+    git(root, "add", ".")
+    index = root / "web" / "dist" / "index.html"
+    assert not update.screen_stale(root)   # no build at all is not a stale one
+    index.parent.mkdir(parents=True)
+    index.write_text("old", encoding="utf-8")
+    os.utime(index, (1000, 1000))
+    for name in ("web/src/lib.ts", "web/src-tauri/main.rs"):
+        os.utime(root / name, (900, 900))
+    assert not update.screen_stale(root)
+    os.utime(root / "web/src-tauri/main.rs", (2000, 2000))   # the shell is not the screen
+    assert not update.screen_stale(root)
+    os.utime(root / "web/src/lib.ts", (2000, 2000))           # a checkout moved the screen's source
+    assert update.screen_stale(root)
+
+    release, ran = threading.Event(), []
+
+    def build(command, **kwargs):
+        ran.append((command[-2:], kwargs["cwd"]))
+        assert release.wait(10)
+        index.write_text("new", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(update.subprocess, "run", build)
+    monkeypatch.setattr(update, "cli_command", lambda name: [name])
+    monkeypatch.setattr(update, "screen_stale", lambda root=None: True)
+    update.rebuild_screen(root)
+    waiter = threading.Thread(target=update.screen_ready, args=(10,))
+    waiter.start()
+    waiter.join(0.3)
+    assert waiter.is_alive()   # `/` holds until the build is done
+    release.set()
+    waiter.join(10)
+    assert not waiter.is_alive() and index.read_text(encoding="utf-8") == "new"
+    assert ran == [(["run", "build"], root / "web")]
+
+
 def test_offers_pulls_and_waits_for_restart(checkouts):
     local, other = checkouts
     assert update.status(force=True)["state"] == "current"

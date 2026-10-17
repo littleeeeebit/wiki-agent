@@ -26,6 +26,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from agent import cli_command
+from common import errorlog
 
 from . import mobile
 from .channels import WIKI
@@ -142,6 +143,59 @@ def apply() -> dict:
         return status(force=True)
     finally:
         _applying.release()
+
+
+# Set while the screen is current; cleared while `rebuild_screen` builds it.
+_screen = threading.Event()
+_screen.set()
+
+
+def screen_stale(root=None) -> bool:
+    """Was a file the screen is built from changed after `web/dist` was built?
+
+    A pull or checkout made outside `apply` — a session's merge cleanup —
+    moves `web/` and leaves the build behind: the window then draws the new
+    server's answers with the old screen (Codex's `choices` arrived as raw
+    JSON). The same files as `steps` count; a checkout stamps what it changed."""
+
+    root = root or WIKI
+    index = root / "web" / "dist" / "index.html"
+    if not index.is_file():
+        return False   # no build at all: `app.cmd` and `/` say how to make one
+    built = index.stat().st_mtime
+    listed = subprocess.run(["git", "-C", str(root), "ls-files", "web"], capture_output=True, text=True,
+                            encoding="utf-8", errors="replace", timeout=30).stdout.splitlines()
+    return any((root / p).is_file() and (root / p).stat().st_mtime > built
+               for p in listed if not p.startswith("web/src-tauri/"))
+
+
+def rebuild_screen(root=None) -> None:
+    """At start-up, build a stale screen in the background. The server answers
+    at once — the window's shell gives it 40 seconds — and `/` waits on
+    `screen_ready`, so the window opens on the new build. A failed build is
+    recorded and the old one is served."""
+
+    root = root or WIKI
+    if not screen_stale(root):
+        return
+    _screen.clear()
+
+    def build() -> None:
+        try:
+            done = subprocess.run([*cli_command("npm"), "run", "build"], cwd=root / "web", capture_output=True,
+                                  text=True, encoding="utf-8", errors="replace", timeout=900)
+            if done.returncode:
+                raise RuntimeError((done.stderr or done.stdout).strip()[-500:] or f"종료 코드 {done.returncode}")
+        except Exception as exc:
+            errorlog.record("screen-build", exc)
+        finally:
+            _screen.set()
+
+    threading.Thread(target=build, name="screen-build", daemon=True).start()
+
+
+def screen_ready(timeout: float = 300) -> None:
+    _screen.wait(timeout)
 
 
 def steps(paths: list[str]) -> list[tuple[str, object, list[str]]]:
