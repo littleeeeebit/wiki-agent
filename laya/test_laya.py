@@ -1205,6 +1205,18 @@ def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, 
     assert ways["before"]["state"]["passages"][0]["text"].endswith(support.fold(stated_text := cand["state"]["passages"][0]["text"]))
     assert ways["after"]["state"]["passages"][0]["text"].startswith(support.fold(stated_text))
     assert all(r["state_hash"] == pool.digest(r["state"]) for r in told)
+    # part restated too, from part quotes, so padding does not mean all.
+    as_part = {**labelled, "expected": {n: "part" if v == "all" else v for n, v in labelled["expected"].items()}}
+    assert support.restated([labelled], [cand], [wider], {quote}, answer="part") == []
+    parts = support.restated([as_part], [cand], [wider], {quote}, answer="part")
+    assert {next(iter(r["questions"].values()))["drawn"] for r in parts} == set(ways)
+    # Two rows of one view (two passages trimmed to the same text) go to guided as one.
+    one = support.grouped([{"state_hash": "s", "questions": {"a": 1}}, {"state_hash": "s", "questions": {"a": 2, "b": 3}},
+                           {"state_hash": "t", "questions": {"c": 4}}])
+    assert [(r["state_hash"], r["questions"]) for r in one] == [("s", {"a": 1, "b": 3}), ("t", {"c": 4})]
+    # widen: every listed passage of every question, what evaluate asks; listed only.
+    assert sorted((rid, pid) for _, rid, pid, how in support.everything([wider]) if how == "listed") == \
+        [(r, p) for r in ("r0", "r1") for p in ("p0", "p1", "p3", "p4")]
     monkeypatch.setattr(support, "CHARS", 40)   # the passage alone is 37: nothing fits beside it
     assert {next(iter(r["questions"].values()))["drawn"]
             for r in support.restated([labelled], [cand], [wider], {quote})} == {"evidence"}
