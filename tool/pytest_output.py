@@ -11,13 +11,24 @@ def runs_pytest(stage: str) -> bool:
         words = [word.strip("\"'") for word in shlex.split(stage, posix=False)]
     except ValueError:
         return False
-    while words and (words[0] in {"env", "command", "exec", "time"}
-                     or re.fullmatch(r"[A-Za-z_]\w*=.*", words[0])):
+    # shortcut: inspect direct argv, not nested shell scripts or env -S strings; extend for observed commands.
+    while words:
+        if re.fullmatch(r"[A-Za-z_]\w*=.*", words[0]):
+            words.pop(0)
+            continue
+        wrapper = words[0].replace("\\", "/").rsplit("/", 1)[-1].removesuffix(".exe")
+        if wrapper not in {"env", "command", "exec", "time", "timeout"}:
+            break
         words.pop(0)
-    if words and words[0].replace("\\", "/").rsplit("/", 1)[-1] in {"timeout", "timeout.exe"}:
-        duration = next((i for i, word in enumerate(words[1:], 1)
-                         if re.fullmatch(r"\d+(?:\.\d+)?[smhd]?", word)), len(words))
-        words = words[duration + 1:]
+        while words and words[0].startswith("-"):
+            option = words.pop(0)
+            if option == "--":
+                break
+            if option in {"-u", "--unset", "-C", "--chdir", "-a", "-o", "--output", "-f", "--format",
+                          "-k", "--kill-after", "-s", "--signal"}:
+                del words[:1]
+        if wrapper == "timeout":
+            del words[:1]
     if not words:
         return False
     executable = words[0].replace("\\", "/").rsplit("/", 1)[-1]

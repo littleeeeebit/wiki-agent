@@ -150,6 +150,10 @@ def test_user_level_claude_carries_no_machine_wide_deny():
     "timeout 250 pytest tool/test_korean.py -q | grep -E passed",
     '"C:/Program Files/Python/python.exe" -X utf8 -m pytest tool | tail -1',
     "env PYTHONUTF8=1 pytest tool/install | tail -1",
+    "time -p pytest tool | tail -1",
+    "env -i pytest tool | tail -1",
+    "timeout -k 5s 250s pytest tool | tail -1",
+    "timeout --signal TERM 250s env -u PYTHONPATH pytest tool | tail -1",
 ])
 def test_a_test_run_piped_where_its_progress_cannot_be_read_is_refused(command):
     """A full gate piped into `tail` printed nothing for 19 minutes; hung and
@@ -173,6 +177,8 @@ def test_a_test_run_piped_where_its_progress_cannot_be_read_is_refused(command):
     "echo python -m pytest | tail -1",
     "python report.py pytest | tail -1",
     'python -c "print(1)" -m pytest | tail -1',
+    "time -p echo pytest | tail -1",
+    "env -i printf pytest | head -1",
 ])
 def test_a_test_run_whose_output_stays_readable_passes(command):
     import deny
