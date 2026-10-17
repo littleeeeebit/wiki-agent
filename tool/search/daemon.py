@@ -55,6 +55,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from common.language import language  # noqa: E402
 from search import PORT, cache_dir, evidence, knowledge_graph, proof, retrieval, state_path, version  # noqa: E402
 from search.retrieval import family  # noqa: E402
+from search.tokenize import WORD, terms  # noqa: E402, F401 -- preserve daemon exports
 from search.sources import SOURCE_NAMES, Records, audiences, listing, records_folder  # noqa: E402
 
 # The version this process runs, read once. Read per request it would follow
@@ -73,26 +74,6 @@ MODEL_ID = f"{MODEL}/{FILES['model.onnx']}"
 HEADING = re.compile(r"^ {0,3}(#{1,3})[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$")
 # A code fence's marker and what follows it, as CommonMark reads one.
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
-WORD = re.compile(r"[a-z0-9_]+|[가-힣]+")
-
-
-def terms(text: str) -> list[str]:
-    """English words in lower case, Hangul as overlapping bigrams.
-
-    Both, because the hub's pages are English while a repository's are often
-    Korean, and so is the question. Bigrams catch a Korean stem through its
-    endings without a morphological analyser.
-    """
-
-    out = []
-    for word in WORD.findall(text.lower()):
-        if "가" <= word[0] <= "힣":
-            out += [word[i:i + 2] for i in range(len(word) - 1)] or [word]
-        else:
-            out.append(word)
-    return out
-
-
 def body_of(text: str) -> str:
     """The page without its front matter — the slice `wiki.front_matter` takes,
     without parsing the YAML this index never reads."""

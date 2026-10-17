@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 
 from eval import dataset
-from test_reliability_v5 import strata
+from test_reliability_v5 import earlier_fixtures, strata
 
 JEV = Path(__file__).resolve().parents[1] / "eval" / "jev"
 V7 = JEV / "reliability-v7"
@@ -54,11 +54,7 @@ def test_the_seventh_action_set_holds_out_54_fresh_fixtures_per_changed_point():
                             else "file" if f["spec"]["grounds"]["files"] else "none"
                             for f in held if f["label"] == label) for label in ("clarify", "dispatch", "evidence")}
     assert shapes["clarify"] == shapes["dispatch"] == shapes["evidence"]
-    seen = []
-    for v in EARLIER:
-        path = JEV / f"reliability{v}" / "actions.json"
-        if path.exists():
-            seen += json.loads(path.read_text(encoding="utf-8"))["fixtures"]
+    seen = earlier_fixtures(JEV, EARLIER)
     assert not {f["id"] for f in held} & {f["id"] for f in seen}
     assert not {f["spec"]["goal"] for f in held if "spec" in f} & {f["spec"]["goal"] for f in seen if "spec" in f}
     assert not {x for f in held for x in f.get("findings", [])} & {x for f in seen for x in f.get("findings", [])}

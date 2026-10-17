@@ -1,14 +1,8 @@
-"""decisions — Jev at the choices this server owns (stage 8 of `docs/plans/jev/`).
+"""Jev choices owned by the server (stage 8 of `docs/plans/jev/`).
 
-Three owner functions ask Jev which code-owned operation runs next:
-    work.start    send the first turn, gather evidence or ask for missing input
-    specs.check   `specs._check` once the required gate passed: run one more
-                  registered check, or open the pull request on the gate
-    loop.fix      `loop.step` at a refused round: send the findings, or
-                  gather the context they touch first
-
-and `specs.answered` asks which proposed next task the materials support
-best — a recommendation; the person still chooses the goal.
+`work.start` dispatches, gathers evidence or asks; `specs.check` selects an extra scoped check.
+`loop.fix` repairs or gathers context; `specs.answered` recommends the person's next task.
+None replaces final verification or the person's choice of goal.
 
 Code builds the candidates; Jev picks one id or defers. The pick becomes an
 ActionProposal, and `admit` checks it again right before the owner runs it:
@@ -19,9 +13,8 @@ the owner's baseline is proposed in its place, without Jev, and checked the
 same way. Uncertain, deferred, unavailable, invalid or exhausted runs the
 baseline, what the owner did before this stage; a cancel runs nothing.
 
-Mode off asks nothing. Shadow records Jev's pick beside the baseline and
-waits for none of it. Active runs the pick. A Claude or Codex session's own
-tool choices are the host's: nothing here reaches them (`HOST`).
+Off asks nothing; shadow records without waiting; active runs the pick.
+Host tool choices remain with Claude/Codex (`HOST`).
 """
 
 from __future__ import annotations

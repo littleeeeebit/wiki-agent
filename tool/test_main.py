@@ -1,5 +1,4 @@
-"""The program's main: the wiki query's two stages, the work pane's worktrees
-and approvals, the translation switch, and the door only its own screen opens."""
+"""Main flows: query stages, worktrees, approvals, translation and screen access."""
 
 import atexit
 import json

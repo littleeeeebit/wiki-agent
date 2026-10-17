@@ -1,5 +1,4 @@
-"""planning — the Plan action: research, a new plan folder, its pull request,
-and the hand-off to document review (`docs/plans/reliability/7-planner.md`).
+"""Research, publish a plan PR, then hand it to review (`docs/plans/reliability/7-planner.md`).
 
 Main-layer composition. `specs` stays the owner of every spec write: a plan
 spec is read and saved only through `specs.load`/`specs.save` under

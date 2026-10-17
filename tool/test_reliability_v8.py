@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from test_reliability_v5 import earlier_fixtures
 
 JEV = Path(__file__).resolve().parents[1] / "eval" / "jev"
 V8, V7 = JEV / "reliability-v8", JEV / "reliability-v7"
@@ -41,11 +42,7 @@ def test_the_eighth_action_set_holds_out_54_fresh_work_start_fixtures():
     # The shape v7 missed, tested on more cases, and no label given away by how files are named.
     shapes = {label: sorted(shape(f) for f in held if f["label"] == label) for label in ("clarify", "dispatch", "evidence")}
     assert shapes["clarify"] == shapes["dispatch"] == shapes["evidence"] and shapes["dispatch"].count("none") >= 9
-    seen = []
-    for v in EARLIER:
-        path = JEV / f"reliability{v}" / "actions.json"
-        if path.exists():
-            seen += json.loads(path.read_text(encoding="utf-8"))["fixtures"]
+    seen = earlier_fixtures(JEV, EARLIER)
     assert not {f["id"] for f in held} & {f["id"] for f in seen}
     assert not {f["spec"]["goal"] for f in held} & {f["spec"]["goal"] for f in seen if "spec" in f}
     # Nor an earlier goal reworded: same target, same situation (review r8, round 1).
