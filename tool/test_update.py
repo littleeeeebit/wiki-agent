@@ -2,11 +2,13 @@
 
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+from main import app as main_app
 from main import update
 
 
@@ -35,6 +37,126 @@ def checkouts(tmp_path, monkeypatch):
     monkeypatch.setattr(update, "_prepared", "")
     monkeypatch.setattr(update, "_failed", "")
     return local, other
+
+
+def test_a_screen_older_than_its_sources_is_rebuilt_before_the_window_reads_it(tmp_path, monkeypatch):
+    import os
+    import threading
+
+    root = tmp_path / "wiki"
+    (root / "web" / "src").mkdir(parents=True)
+    (root / "web" / "src-tauri").mkdir()
+    for name in ("web/src/lib.ts", "web/src-tauri/main.rs"):
+        (root / name).write_text("x", encoding="utf-8")
+    git(tmp_path, "init", "-q", str(root))
+    git(root, "add", ".")
+    index = root / "web" / "dist" / "index.html"
+    assert not update.screen_stale(root)   # no build at all is not a stale one
+    index.parent.mkdir(parents=True)
+    index.write_text("old", encoding="utf-8")
+    os.utime(index, (1000, 1000))
+    for name in ("web/src/lib.ts", "web/src-tauri/main.rs"):
+        os.utime(root / name, (900, 900))
+    assert not update.screen_stale(root)
+    os.utime(root / "web/src-tauri/main.rs", (2000, 2000))   # the shell is not the screen
+    assert not update.screen_stale(root)
+    os.utime(root / "web/src/lib.ts", (2000, 2000))           # a checkout moved the screen's source
+    assert update.screen_stale(root)
+
+    release, ran, fail = threading.Event(), [], []
+    (index.parent / "assets").mkdir()
+    (index.parent / "assets" / "old.js").write_text("old", encoding="utf-8")
+
+    def build(command, **kwargs):
+        out = Path(command[command.index("--outDir") + 1])
+        ran.append((command[1:3], kwargs["cwd"]))
+        assert release.wait(10)
+        (out / "assets").mkdir()
+        (out / "assets" / "new.js").write_text("new", encoding="utf-8")
+        if fail:   # broke half-way: something written, no index
+            return subprocess.CompletedProcess(command, 1, "", "tsc failed")
+        (out / "index.html").write_text("new", encoding="utf-8")
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(update.subprocess, "run", build)
+    monkeypatch.setattr(update, "cli_command", lambda name: [name])
+    monkeypatch.setattr(update.errorlog, "record", lambda *a, **k: None)
+    monkeypatch.setattr(main_app, "DIST", index.parent)
+    monkeypatch.setattr(update, "screen_stale", lambda root=None: True)
+    screen = TestClient(main_app.app, base_url="http://127.0.0.1:8787")
+
+    fail.append(1)
+    update.rebuild_screen(root)
+    ready = update.screen_ready
+    monkeypatch.setattr(update, "screen_ready", lambda timeout=60: ready(0.2))   # `/` gives up waiting
+    loading = screen.get("/")   # never the old screen while the new one builds
+    assert loading.status_code == 503 and "다시 빌드" in loading.text and loading.headers["retry-after"]
+    monkeypatch.setattr(update, "screen_ready", ready)
+    release.set()
+    assert update.screen_ready(10)
+    # A failed build publishes nothing: the last good screen, still stale, for the next start.
+    assert index.read_text(encoding="utf-8") == "old" and not (index.parent / "assets" / "new.js").exists()
+
+    fail.clear()
+    update.rebuild_screen(root)
+    assert update.screen_ready(10) and screen.get("/").text == "new"
+    assert (index.parent / "assets" / "old.js").exists()   # windows still open on the old build
+    assert ran == [(["run", "build"], root / "web")] * 2
+
+
+def test_a_broken_publish_or_staging_never_breaks_the_screen_or_leaves_it_loading(tmp_path, monkeypatch):
+    staged, dist = tmp_path / "staged", tmp_path / "dist"
+    for folder, text in ((staged, "new"), (dist, "old")):
+        (folder / "assets").mkdir(parents=True)
+        (folder / "index.html").write_text(text, encoding="utf-8")
+    (staged / "assets" / "sw.js").write_text("whole, rebuilt", encoding="utf-8")   # same name, new content
+    (dist / "assets" / "sw.js").write_text("whole", encoding="utf-8")   # the old index uses it
+    copy = update.shutil.copy2
+
+    def torn(source, target, **kwargs):   # the disk fills half-way through a file
+        Path(target).write_text("wh", encoding="utf-8")
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(update.shutil, "copy2", torn)
+    with pytest.raises(OSError):
+        update.publish_screen(staged, dist)
+    assert (dist / "assets" / "sw.js").read_text(encoding="utf-8") == "whole"
+    assert (dist / "index.html").read_text(encoding="utf-8") == "old"
+    monkeypatch.setattr(update.shutil, "copy2", copy)
+
+    # Identical output still marks the build done, or every start rebuilds it.
+    (staged / "index.html").write_text("old", encoding="utf-8")
+    import os
+    os.utime(dist / "index.html", (1000, 1000))
+    update.publish_screen(staged, dist)
+    assert (dist / "index.html").stat().st_mtime > 1000
+
+    recorded = []
+
+    def full(**kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(update.tempfile, "mkdtemp", full)
+    monkeypatch.setattr(update.errorlog, "record", lambda where, exc: recorded.append(where))
+    monkeypatch.setattr(update, "screen_stale", lambda root=None: True)
+    update.rebuild_screen(tmp_path)
+    assert update.screen_ready(10) and recorded == ["screen-build"]
+
+
+def test_only_the_checkouts_owner_rebuilds_its_screen(monkeypatch):
+    from main import runtime, specs
+
+    built = []
+    monkeypatch.setattr(update, "rebuild_screen", lambda root=None: built.append(1))
+    monkeypatch.setattr(main_app.app.state, "rebuild_screen", True, raising=False)
+    with runtime.server_owner(specs.SPECS.parent):   # the running server
+        with pytest.raises(RuntimeError, match="이미 실행 중"):
+            with TestClient(main_app.app):
+                pass
+    assert built == []
+    with TestClient(main_app.app):
+        pass
+    assert built == [1]
 
 
 def test_offers_pulls_and_waits_for_restart(checkouts):

@@ -25,7 +25,7 @@ from typing import Literal
 from urllib.parse import unquote
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import AnyHttpUrl, BaseModel, Field
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -50,11 +50,14 @@ mimetypes.add_type("application/json", ".json")
 
 ROOT = channels.WIKI
 DIST = ROOT / "web" / "dist"
+SCREEN_BUILDING = ("<!doctype html><meta charset=utf-8><meta http-equiv=refresh content=3>"
+                   "<title>wiki-agent</title><body style='font:14px system-ui;padding:24px;background:#14161a;"
+                   "color:#eceae5'>화면을 새 코드에 맞춰 다시 빌드하는 중이다. 끝나면 저절로 열린다.")
 SWITCH = query.LOGS / "main.json"
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):
+async def lifespan(application: FastAPI):
     """When the server goes down the children go with it, or `claude.exe` piles up.
 
     Runs on Ctrl+C, on an ordinary shutdown, and when the Tauri shell that
@@ -63,6 +66,10 @@ async def lifespan(_: FastAPI):
 
     with server_owner(specs.SPECS.parent):
         runtime.stopping.clear()
+        # Only the checkout's owner rebuilds its screen: a second launch, refused
+        # above, must not write into the running server's `web/dist`.
+        if getattr(application.state, "rebuild_screen", False):
+            update.rebuild_screen()
         # Recovery must run only after exclusive ownership is acquired: a
         # second server must never mark the first server's live loops stopped.
         resume = loop.recover()
@@ -435,7 +442,12 @@ if DIST.is_dir():
     app.mount("/assets", StaticFiles(directory=DIST / "assets"), name="assets")
 
     @app.get("/")
-    def index() -> FileResponse:
+    def index():
+        # A stale build being rebuilt at start-up (`update.rebuild_screen`): the
+        # old screen would draw the new server's answers wrongly, so a page that
+        # retries stands in until the new one is published.
+        if not update.screen_ready():
+            return HTMLResponse(SCREEN_BUILDING, 503, headers={"Cache-Control": "no-store", "Retry-After": "3"})
         # The assets under it are content-hashed and may be cached forever.
         # This file is the only thing that says which hash is current, so a
         # cached copy of it pins the window to a build that no longer exists.
@@ -583,6 +595,7 @@ def main() -> int:
         )
         return 1
 
+    app.state.rebuild_screen = True   # done by `lifespan` once this server owns the checkout
     server = uvicorn.Server(uvicorn.Config(app, host=args.host, port=args.port, log_level="warning",
                                         proxy_headers=False, ws="wsproto", ws_max_size=100_000))
     ended_first(server)
