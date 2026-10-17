@@ -19,8 +19,8 @@ export function phase(state: string | undefined): Phase {
 }
 
 /** The rail's order: what a person has to do, what runs, what waits to be
- *  started, and what is finished. */
-export type Group = 'act' | 'run' | 'idle' | 'done'
+ *  started. Finished work has no place on it. */
+export type Group = 'act' | 'run' | 'idle'
 
 export type Task = {
   /** The worktree's path, or `spec:<id>` for a spec not started yet. */
@@ -50,7 +50,9 @@ function word(state: string): string {
 }
 
 /** The project's tasks: one per spec and one per worktree without a spec.
- *  A finished spec whose worktree was removed is gone from the rail. */
+ *  A merged spec is never shown, nor one left `작업 중` with no PR whose
+ *  branch is no longer checked out anywhere: nothing can run it, and those
+ *  are work that landed through another branch. The spec files stay. */
 export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string) => number,
   busy: (path: string) => boolean): Task[] {
   const byPath = new Map(rows.map((r) => [r.path, r]))
@@ -64,8 +66,7 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
     const row = found && (s.workspace_mode !== 'branch' || found.branch === (s.branch ?? s.id)) ? found : null
     if (row) owned.add(row.path)
     const p = phase(s.state)
-    if (p === 'done' && (s.cleanup_complete || (s.cleanup_complete === undefined && !row))) continue
-    const cleanupPending = p === 'done' && s.cleanup_complete === false
+    if (p === 'done' || (p === 'work' && !row && !s.pr)) continue
     const asks = row ? approvals(row.path) : 0
     const waiting = asks > 0 || Boolean(row && s.waiting)
     const running = row ? busy(row.path) : false
@@ -73,7 +74,7 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
     // A plan still being drafted says its phase; its questions and its stop wait on the person.
     const plan = s.state === '작업 중' ? s.planning : null
     const planAct = plan?.phase === 'clarify' || plan?.phase === 'stopped'
-    const parts = [merging ? s.merge_progress!.stage : cleanupPending ? '정리 대기' : plan ? `계획 · ${PLAN_PHASE[plan.phase]}` : word(s.state)]
+    const parts = [merging ? s.merge_progress!.stage : plan ? `계획 · ${PLAN_PHASE[plan.phase]}` : word(s.state)]
     if (plan?.stopped) parts.push(PLAN_STOP[plan.stopped.reason] ?? plan.stopped.reason)
     if (waiting) parts.push(asks ? `승인 ${asks}` : '승인 대기')
     if (p === 'ready' && !merging) parts.push('머지를 누른다')
@@ -83,8 +84,8 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
       key: row?.path ?? `spec:${s.id}`, path: row?.path ?? null, spec: s, name: s.id,
       pr: s.pr?.number ?? null, round: (s.rounds ?? []).filter((r) => !r.stale).length,
       phase: p,
-      group: waiting || planAct || cleanupPending || p === 'ready' && !merging || p === 'stop' ? 'act'
-        : p === 'done' ? 'done' : p === 'draft' && !running ? 'idle' : 'run',
+      group: waiting || planAct || p === 'ready' && !merging || p === 'stop' ? 'act'
+        : p === 'draft' && !running ? 'idle' : 'run',
       line: parts.join(' · '), waiting, busy: running || merging, live: row?.live ?? false, row,
     })
   }

@@ -698,15 +698,10 @@ def main():
             page.reload()
             page.get_by_text("아직 작업이 없다.", exact=False).wait_for()
             assert not page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").count()
-            # A merged task remains actionable while cleanup waits, then disappears
-            # even though its shared checkout still exists on the server.
+            # A merged task is never shown, even while its cleanup still waits
+            # and its shared checkout still exists on the server.
             deleted = False
             spec.update(state="머지됨", cleanup_complete=False)
-            page.reload()
-            row = page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task")
-            row.wait_for()
-            assert "정리 대기" in row.inner_text()
-            spec["cleanup_complete"] = True
             page.reload()
             page.get_by_text("아직 작업이 없다.", exact=False).wait_for()
             assert not page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").count()

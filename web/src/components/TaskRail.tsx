@@ -38,7 +38,7 @@ const DOT: Record<Phase, string> = {
   draft: 'bg-st-draft', work: 'bg-st-work', review: 'bg-st-review', ready: 'bg-st-ready',
   queued: 'bg-st-queued', stop: 'bg-st-stop', done: 'bg-border', none: 'bg-border',
 }
-const GROUPS: { id: Exclude<Group, 'done'>; label: string }[] = [
+const GROUPS: { id: Group; label: string }[] = [
   { id: 'act', label: '할 것' }, { id: 'run', label: '도는 것' }, { id: 'idle', label: '시작 대기' },
 ]
 
@@ -48,7 +48,7 @@ const NARROW = 'rail-folded min-[1280px]:hidden'
 
 /** The project, the window's settings and review loop, and the project's
  *  tasks in the order a person reads them: what they have to do, what runs,
- *  what waits to be started, what is finished. */
+ *  what waits to be started. Finished work is not shown at all. */
 export function TaskRail(props: Props) {
   const { repo, options, view, tasks, selected, prs } = props
   const [fault, setFault] = useState('')
@@ -67,7 +67,6 @@ export function TaskRail(props: Props) {
       return numbers ? { repo, numbers } : null
     })
   const pickable = prs.filter((p) => p.pickable)
-  const done = tasks.filter((t) => t.group === 'done')
   // Right-click on a task with a worktree: a menu at the pointer, then a confirm.
   const [menu, setMenu] = useState<(Target & { x: number; y: number }) | null>(null)
   const [doomed, setDoomed] = useState<Target | null>(null)
@@ -199,16 +198,6 @@ export function TaskRail(props: Props) {
             </div>
           )
         })}
-        {done.length > 0 && (
-          <details className="mb-2">
-            <summary className="cursor-pointer list-none rounded-md px-2 py-1 font-heading text-[11px] font-semibold text-faint hover:bg-sidebar-accent max-[1280px]:text-center">
-              <span className={WIDE}>끝난 것 {done.length}</span>
-              <span className={NARROW}>{done.length}</span>
-            </summary>
-            {done.map((t) => <Row key={t.key} task={t} selected={t.key === selected} onSelect={props.onSelect}
-              onMenu={onMenu(t)} />)}
-          </details>
-        )}
         {props.others.length > 0 && (
           <div className="mb-2">
             <Label>다른 프로젝트</Label>
