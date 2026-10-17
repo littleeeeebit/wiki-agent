@@ -17,6 +17,7 @@ its preparation finished starts on whatever the packages were.
 
 from __future__ import annotations
 
+import filecmp
 import os
 import shutil
 import subprocess
@@ -181,6 +182,8 @@ def publish_screen(staged: Path, dist: Path) -> None:
     name, so a copy truncated in place would break the screen still served."""
 
     def replace(source, target):
+        if os.path.isfile(target) and filecmp.cmp(source, target, shallow=False):
+            return   # an unchanged hashed asset, maybe open in a window: Windows refuses to replace it
         swap = f"{target}.new"
         shutil.copy2(source, swap)
         os.replace(swap, target)

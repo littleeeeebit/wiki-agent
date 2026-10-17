@@ -109,8 +109,8 @@ def test_a_broken_publish_or_staging_never_breaks_the_screen_or_leaves_it_loadin
     for folder, text in ((staged, "new"), (dist, "old")):
         (folder / "assets").mkdir(parents=True)
         (folder / "index.html").write_text(text, encoding="utf-8")
-    (staged / "assets" / "same-hash.js").write_text("whole", encoding="utf-8")
-    (dist / "assets" / "same-hash.js").write_text("whole", encoding="utf-8")   # the old index uses it
+    (staged / "assets" / "sw.js").write_text("whole, rebuilt", encoding="utf-8")   # same name, new content
+    (dist / "assets" / "sw.js").write_text("whole", encoding="utf-8")   # the old index uses it
     copy = update.shutil.copy2
 
     def torn(source, target, **kwargs):   # the disk fills half-way through a file
@@ -120,7 +120,7 @@ def test_a_broken_publish_or_staging_never_breaks_the_screen_or_leaves_it_loadin
     monkeypatch.setattr(update.shutil, "copy2", torn)
     with pytest.raises(OSError):
         update.publish_screen(staged, dist)
-    assert (dist / "assets" / "same-hash.js").read_text(encoding="utf-8") == "whole"
+    assert (dist / "assets" / "sw.js").read_text(encoding="utf-8") == "whole"
     assert (dist / "index.html").read_text(encoding="utf-8") == "old"
     monkeypatch.setattr(update.shutil, "copy2", copy)
 
