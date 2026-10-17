@@ -260,6 +260,19 @@ def restated(labelled: list[dict], rows: list[dict], coverage: list[dict], quote
     return out
 
 
+def grouped(rows: list[dict]) -> list[dict]:
+    """`rows` as one row per state, its questions merged (the first of a repeated one kept):
+    guided skips a state it already saved, so a second row of that state would be labelled and
+    lost. Two trimmed passages can cut to one view."""
+
+    out = {}
+    for r in rows:
+        row = out.setdefault(r["state_hash"], {**r, "questions": {}})
+        for q, v in r["questions"].items():
+            row["questions"].setdefault(q, v)
+    return list(out.values())
+
+
 def decide(answers: list[dict]) -> tuple[bool | None, float]:
     """A coverage answer from `support` answers over a state's listed passages (Laya's
     `{"choice", "probabilities"}`): the verdict, `None` when undecided, and a score for
@@ -380,6 +393,7 @@ def main() -> None:
             sys.exit("full1 labelled states train.candidates.jsonl does not hold: its quotes are not from those rows")
         drawn = augment(rows, read(DATA / KIND / "full1.turns.jsonl"), read(DATA / "coverage" / "train.jsonl"),
                         a.n, a.seed, held)
+    drawn = grouped(drawn)
     for row in drawn:
         append(out, row)
     print(f"{len(drawn)} rows, {sum(len(r['questions']) for r in drawn)} questions -> {out}")
