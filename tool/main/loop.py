@@ -2391,6 +2391,16 @@ def halt_loop(repo: str, sid: str) -> None:
     stop(None, repo, sid, Why.PERSON)
 
 
+def stalled(spec: dict) -> bool:
+    """A spec whose PR is already open but whose last completion failed while
+    republishing it — a gate that crashed, a base GitHub refused — and no turn
+    holds its worktree. Nothing moves it out of `작업 중` by itself, so without
+    this the PR could never be picked for review again."""
+
+    return (spec["state"] == "작업 중" and bool(spec.get("pr")) and bool(spec.get("fault"))
+            and str(spec.get("worktree") or "") not in work._busy)
+
+
 def refusal(row: dict, spec: dict | None) -> str:
     """Why a pull request cannot go into a loop from the list, or ``""``."""
 
@@ -2406,6 +2416,8 @@ def refusal(row: dict, spec: dict | None) -> str:
         # the plan row is owed: a round now would review the head without it.
         return ("계획 행 커밋이 아직이다 — 에이전트 탭에서 행을 고쳐 커밋하게 하면 리뷰로 간다"
                 if spec.get("plan_commit") == "asked" else "")
+    if stalled(spec):
+        return ""
     if spec["state"] != "멈춤":
         return f"이미 {spec['state']}"
     if reason == Why.WRONG_BASE.value:
@@ -2537,6 +2549,9 @@ def take(repo: Path, n: int, environment: str = "local") -> str:
             specs.update(repo.name, spec["id"], review_again=True,
                          extra=spec.get("extra", 0) + (MORE if len(counted(spec)) >= cap(spec) else 0))
             kick(repo.name, spec["id"])
+            return spec["id"]
+        if stalled(spec):
+            kick(repo.name, spec["id"])   # `리뷰 대기`, and the fault is cleared there
             return spec["id"]
         return proceed(repo, spec, "")["id"]
     view = gh_or_502(repo, ["pr", "view", str(n), "--json",
