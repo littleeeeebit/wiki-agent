@@ -124,6 +124,13 @@ def test_a_broken_publish_or_staging_never_breaks_the_screen_or_leaves_it_loadin
     assert (dist / "index.html").read_text(encoding="utf-8") == "old"
     monkeypatch.setattr(update.shutil, "copy2", copy)
 
+    # Identical output still marks the build done, or every start rebuilds it.
+    (staged / "index.html").write_text("old", encoding="utf-8")
+    import os
+    os.utime(dist / "index.html", (1000, 1000))
+    update.publish_screen(staged, dist)
+    assert (dist / "index.html").stat().st_mtime > 1000
+
     recorded = []
 
     def full(**kwargs):

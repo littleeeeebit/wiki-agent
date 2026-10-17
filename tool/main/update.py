@@ -191,6 +191,7 @@ def publish_screen(staged: Path, dist: Path) -> None:
     shutil.copytree(staged, dist, dirs_exist_ok=True, copy_function=replace,
                     ignore=lambda folder, names: ["index.html"] if Path(folder) == staged else [])
     replace(staged / "index.html", dist / "index.html")
+    os.utime(dist / "index.html")   # the build's stamp for `screen_stale`, even when its bytes did not change
 
 
 def rebuild_screen(root=None) -> None:
