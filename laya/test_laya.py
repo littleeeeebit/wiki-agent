@@ -1241,6 +1241,8 @@ def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, 
     assert summary["accuracy_decided"] == 1.0 and summary["decided"] == 2 and summary["auroc"] == 1.0
     monkeypatch.setattr(train, "tokens", lambda agent, st, q: 5000)   # too long: undecided, not guessed
     assert support.evaluate("ckpt", agent)[0]["verdicts"] == {"True": 0, "False": 0, "None": 2}
+    write(folders / "data" / "coverage" / "train.jsonl", [row, row])   # train's picks are what joint asks
+    assert len(support.evaluate("ckpt", agent, split="train")[1]) == 4
 
     # Packed with coverage's validation questions, which it is scored on.
     write(folders / "data" / "support" / "train.jsonl", [{"state": {}, "questions": {}, "expected": {}}])
@@ -1255,44 +1257,47 @@ def test_joint_asks_the_part_passages_together_where_support_left_coverage_undec
     state = {"query": "q", "requirements": [{"id": "r0", "text": "first"}, {"id": "r1", "text": "second"}],
              "passages": passages, "complete_passages": ["p0", "p1", "p2", "p3"]}   # p4 is not listed
     row = {"state": state, "expected": {"coverage_r0": True, "coverage_r1": False}, "provenance": {"state_hash": "c0"}}
-    # Support labels come from unchanged one-passage views only; a trimmed one is not read.
-    cands = [{"state_hash": f"v{p}", "provenance": {"coverage": "c0"}} for p in range(4)]
-    cands.append({"state_hash": "t0", "provenance": {"coverage": "c0", "trimmed": "v0"}})
-    said = {"p0": "part", "p1": "part", "p2": "none", "p3": "none"}
-    write(folders / "data" / "support" / "train.candidates.jsonl", cands)
-    write(folders / "data" / "support" / "full1.jsonl",
-          [{"provenance": {"state_hash": f"v{i}"}, "expected": {f"support_r0_{p}": v}} for i, (p, v) in enumerate(said.items())]
-          + [{"provenance": {"state_hash": "t0"}, "expected": {"support_r0_p0": "none"}}])
-    got = joint.labels(["full1"])
-    assert got == {("c0", "r0"): said}
+    # A support run's picks (its coverage records): the passages it read as part and as none;
+    # a question too long keeps neither. `joint.py picks` reads them off a result zip.
+    records = [{"state_hash": "c0", "question": "coverage_r0", "verdict": None, "score": 0.2,
+                "picks": ["part", "part", "none", "none"]},
+               {"state_hash": "c0", "question": "coverage_r1", "verdict": None, "score": None, "picks": []}]
+    write(folders / "data" / "coverage" / "validation.jsonl", [row])
+    result = folders / "result.zip"
+    with zipfile.ZipFile(result, "w") as z:   # a support training result names validation's plainly
+        z.writestr("coverage-predictions.jsonl", "".join(json.dumps(r) + "\n" for r in records))
+    monkeypatch.setattr(joint.sys, "argv", ["joint.py", "picks", "validation", str(result)])
+    joint.main()
+    chosen = label.read(folders / "data" / "joint" / "picks-validation.jsonl")
+    assert chosen == joint.picks(records, [row])
+    assert [(p["parts"], p["nones"]) for p in chosen] == [(["p0", "p1"], ["p2", "p3"]), (None, None)]
 
-    (one,) = joint.derive([row], got)   # r1 has no labels, so nothing to ask of it
+    # Every split asks the views evaluate asks: an undecided question's part picks, together.
+    (one,) = joint.picked(chosen, [row])   # r1 was too long, so nothing to ask of it
     assert [p["id"] for p in one["state"]["passages"]] == ["p0", "p1"] == one["state"]["complete_passages"]
-    assert one["questions"] == {"joint_r0": {"kind": "joint", "question": joint.question("r0"), "drawn": "parts"}}
+    assert one["questions"] == {"joint_r0": {"kind": "joint", "question": joint.question("r0"), "drawn": "picks"}}
     assert one["state_hash"] == pool.digest(one["state"]) and one["provenance"] == {"coverage": "c0"}
     assert kinds.view("joint_r0", "joint", one["state"]) == one["state"]   # stored with its own view
-    # Train is augmented: each part left out, and one none passage added.
+    # Train is augmented: each pick left out, and one passage the run read as none added.
     wide = {tuple(p["id"] for p in r["state"]["passages"]): next(iter(r["questions"].values()))["drawn"]
-            for r in joint.derive([row], got, wide=True)}
-    assert wide.pop(("p0", "p1")) == "parts" and wide.pop(("p0",)) == wide.pop(("p1",)) == "fewer"
+            for r in joint.picked(chosen, [row], wide=True)}
+    assert wide.pop(("p0", "p1")) == "picks" and wide.pop(("p0",)) == wide.pop(("p1",)) == "fewer"
     assert len(wide) == 1 and set(wide) <= {("p0", "p1", "p2"), ("p0", "p1", "p3")} and set(wide.values()) == {"padded"}
-    assert joint.derive([row], got, held=[{"state": one["state"]}]) == []   # near a held state
+    assert joint.picked(chosen, [row], held=[{"state": one["state"]}]) == []   # near a held state
+    rng = joint.random.Random(0)
+    assert joint.views({"verdict": True, "parts": ["p0"], "nones": [], "listed": ["p0"]}, rng, True) == []   # decided
+    assert joint.views({"verdict": None, "parts": ["p2"], "nones": ["p0"], "listed": ["p0", "p1", "p2"]}, rng, True) == \
+        [(["p2"], "picks"), (["p0", "p2"], "padded")]   # in the state's order
 
-    # A support run's picks: the passages it read as part; a question too long keeps none.
-    records = [{"state_hash": "c0", "question": "coverage_r0", "verdict": None, "score": 0.2,
-                "picks": ["part", "none", "part", "none"]},
-               {"state_hash": "c0", "question": "coverage_r1", "verdict": None, "score": None, "picks": []}]
-    picked = joint.picks(records, [row])
-    assert [p["parts"] for p in picked] == [["p0", "p2"], None]
-    write(folders / "data" / "joint" / "picks.jsonl", picked + [
-        {"state_hash": "c0", "question": "coverage_r1", "verdict": False, "score": 0.1, "parts": []}])
-    write(folders / "data" / "coverage" / "validation.jsonl", [row])
+    write(folders / "data" / "joint" / "picks-validation.jsonl", chosen[:1] + [
+        {"state_hash": "c0", "question": "coverage_r1", "verdict": None, "score": None, "parts": None, "nones": None},
+        {"state_hash": "c0", "question": "coverage_r1", "verdict": False, "score": 0.1, "parts": [], "nones": ["p0"]}])
     seen = []
     agent = types.SimpleNamespace(predict=lambda st, asked, **k: seen.append([p["id"] for p in st["passages"]]) or {
         "answers": {n: {"noul": 0.75} for n in asked}})
     monkeypatch.setattr(train, "tokens", lambda agent, st, q: 10)
     summary, recs = joint.evaluate("ckpt", agent)
-    assert seen == [["p0", "p2"]]   # only the undecided question that fits, over its parts
+    assert seen == [["p0", "p1"]]   # only the undecided question that fits, over its parts
     assert [(r["question"], r["verdict"], r["joint"]) for r in recs] == \
         [("coverage_r0", True, 0.75), ("coverage_r1", None, None), ("coverage_r1", False, None)]
     assert recs[0]["score"] == pytest.approx(1 - 0.8 * 0.25)
@@ -1303,8 +1308,16 @@ def test_joint_asks_the_part_passages_together_where_support_left_coverage_undec
     # Packed with coverage's validation questions and the picks it is scored over.
     write(folders / "data" / "joint" / "train.jsonl", [{"state": {}, "questions": {}, "expected": {}}])
     with zipfile.ZipFile(train.pack("joint")) as z:
-        assert {"laya/joint.py", "laya/data/joint/train.jsonl", "laya/data/joint/picks.jsonl",
+        assert {"laya/joint.py", "laya/data/joint/train.jsonl", "laya/data/joint/picks-validation.jsonl",
                 "laya/data/coverage/validation.jsonl"} <= set(z.namelist())
+        assert "picks" not in json.loads(z.read("laya/packed.json"))
+    # A picks pack has the notebook read coverage's train and calibration with a support checkpoint.
+    write(folders / "data" / "coverage" / "train.jsonl", [row])
+    write(folders / "data" / "coverage" / "calibration.jsonl", [row])
+    with zipfile.ZipFile(train.pack(picks="support.zip")) as z:
+        assert json.loads(z.read("laya/packed.json"))["picks"] == {"checkpoint": "support.zip",
+                                                                   "splits": ["train", "calibration"]}
+        assert {"laya/data/coverage/train.jsonl", "laya/data/coverage/calibration.jsonl"} <= set(z.namelist())
 
 
 def test_a_train_subset_holds_whole_records_and_says_how_many(folders):

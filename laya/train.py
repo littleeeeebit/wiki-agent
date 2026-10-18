@@ -73,10 +73,12 @@ def fits(agent, kind: str, row: dict, name: str, max_len: int) -> bool:
     return tokens(agent, shown(kind, row, name), row["questions"][name]) <= max_len
 
 
-def pack(*kinds: str) -> Path:
+def pack(*kinds: str, picks: str | None = None) -> Path:
     """This folder's code and `kinds`' labelled splits, as `laya/...` in one zip, with
     `laya/packed.json` naming the kinds in training order, the commit and the splits'
-    hashes the notebook's result carries back."""
+    hashes the notebook's result carries back. `picks`, a support checkpoint's zip on
+    Drive, has the notebook read coverage's train and calibration questions with it first
+    (`support.evaluate`): the picks `joint` is asked over."""
 
     def git(*args):
         return subprocess.run(["git", *args], cwd=HERE, capture_output=True, text=True).stdout.strip()
@@ -84,6 +86,8 @@ def pack(*kinds: str) -> Path:
     out = DATA / "colab.zip"
     packed = {"kinds": list(kinds), "commit": git("rev-parse", "HEAD"),
               "dirty": bool(git("status", "--porcelain", "--", ".")), "splits": {}}
+    if picks:
+        packed["picks"] = {"checkpoint": picks, "splits": ["train", "calibration"]}
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(HERE.glob("*.py")):
             if not f.name.startswith("test_"):
@@ -91,7 +95,8 @@ def pack(*kinds: str) -> Path:
         # `support` and `joint` are scored as the coverage answers they make (`support.evaluate`,
         # `joint.evaluate`); `joint` over a support run's picks.
         extra = [("coverage", "validation")] if {"support", "joint"} & set(kinds) and "coverage" not in kinds else []
-        extra += [("joint", "picks")] if "joint" in kinds else []
+        extra += [("joint", "picks-validation")] if "joint" in kinds else []
+        extra += [("coverage", s) for s in packed.get("picks", {}).get("splits", [])]
         for kind, split in [(k, s) for k in kinds for s in SPLITS] + extra:
             path = DATA / kind / f"{split}.jsonl"
             if path.exists():
@@ -227,6 +232,10 @@ def score(kind: str, checkpoint, sure: dict | None = None,
 
 
 if __name__ == "__main__":
-    if sys.argv[1:2] != ["pack"] or len(sys.argv) < 3 or not set(sys.argv[2:]) <= set(MAX_LEN):
-        raise SystemExit(f"python laya/train.py pack <kind>... (kinds: {', '.join(MAX_LEN)})")
-    print(pack(*sys.argv[2:]))
+    args, picks = sys.argv[2:], None
+    if args[:1] == ["--picks"]:
+        picks, args = (args[1:2] or [None])[0], args[2:]
+    if sys.argv[1:2] != ["pack"] or not (args or picks) or not set(args) <= set(MAX_LEN):
+        raise SystemExit(f"python laya/train.py pack [--picks <support checkpoint zip>] <kind>... "
+                         f"(kinds: {', '.join(MAX_LEN)})")
+    print(pack(*args, picks=picks))

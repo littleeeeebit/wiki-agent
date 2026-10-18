@@ -305,14 +305,15 @@ def auroc(pos: list[float], neg: list[float]) -> float | None:
     return sum((p > q) + 0.5 * (p == q) for p in pos for q in neg) / (len(pos) * len(neg))
 
 
-def evaluate(checkpoint, agent=None) -> tuple[dict, list[dict]]:
+def evaluate(checkpoint, agent=None, split: str = "validation") -> tuple[dict, list[dict]]:
     """A `support` checkpoint scored as the coverage answers it makes on `coverage`'s
-    validation questions: a summary and one record per question. A question with a
-    passage view past `MAX_LEN` is left undecided."""
+    `split` questions: a summary and one record per question. A question with a passage
+    view past `MAX_LEN` is left undecided. Its picks on train and calibration are what
+    `joint` is asked over (`joint.picks`)."""
 
     agent = agent or train.loaded(checkpoint)
     max_len, records = train.MAX_LEN[KIND], []
-    for row in read(DATA / "coverage" / "validation.jsonl"):
+    for row in read(DATA / "coverage" / f"{split}.jsonl"):
         rids = [q.split("_", 1)[1] for q in row["expected"]]
         got, long = {rid: [] for rid in rids}, set()
         for p in listed(row["state"]):
