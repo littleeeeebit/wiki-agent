@@ -150,17 +150,24 @@ a time instead, the shape `useful` learned.
 - The coverage answer becomes:
   - support's yes or no, when it gives one;
   - otherwise joint's answer over the passages support read as part.
-- Candidates come from the support labels of each split's unchanged
-  one-passage views; trimmed and restated views are not read. Each coverage
-  question with a passage labelled part gives those passages (`parts`). Train
-  also gives them less one part (`fewer`), and with one passage labelled none
-  added (`padded`): support's own picks miss and add passages. That makes
-  2,791 train questions, 111 validation and 27 calibration, labelled by guided
-  labelling. Each passage already passed support's check against held views.
-- `joint picks <support result zip>` keeps a support run's coverage records
-  with the passages it read as part. The notebook scores the chosen `joint`
-  run on them (`joint.evaluate`), so the support checkpoint is not needed on
-  Colab.
+- Candidates are the views `joint.evaluate` asks, on every split: a support
+  run's part picks for each coverage question it left undecided. Train also
+  gives them less one pick (`fewer`), and with one passage the run read as
+  none added (`padded`). Views built from the support labels instead missed
+  the listed passages labeller and verifier did not agree on, often the ones
+  that complete a requirement: joint labels there said no to 16 of 18 covered
+  requirements, while on run 211003's picks they agreed with coverage 68 of
+  72 times (owner, 2026-10-18).
+- The picks come from `support.evaluate` on coverage's split.
+  Validation's are the support training run's own coverage records;
+  train's and calibration's come from the notebook's picks step
+  (`train.py pack --picks <support checkpoint zip on Drive>`), which reads
+  those splits with that checkpoint before any training.
+- `joint picks <split> <result zip>` keeps a split's records with the
+  passages read as part and as none (`picks-<split>.jsonl`); `joint derive
+  <split>` makes candidates from them. The notebook scores the chosen `joint`
+  run on validation's (`joint.evaluate`), so the support checkpoint is not
+  needed on Colab then.
 
 ## Calibration and policy
 
