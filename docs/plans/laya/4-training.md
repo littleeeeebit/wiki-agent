@@ -175,6 +175,15 @@ a time instead, the shape `useful` learned.
   coverage train requirement two random sets of its listed passages. Each
   set's size is drawn from the run's part-pick sizes. That gives 4,364
   questions.
+- Stopped after 12 of 29 rounds: random sets rarely hold the passages that
+  matter. 1,333 of 1,434 labels were no, 545 of them on covered requirements.
+  Those are easy problems. The owner's rule (2026-10-18): the data must span
+  difficulty, weighted hard, so the model works when the decision is hard.
+- Hard problems come from more support runs instead (`train.py pack --picks
+  a.zip,b.zip`, `joint.py picks|derive train --tag <checkpoint>`). Each run
+  leaves other questions undecided and reads other passages as part. Their
+  views are relevant passages that may or may not complete the requirement,
+  like serving's. Random sets stay only as a capped easy share.
 
 ## Calibration and policy
 

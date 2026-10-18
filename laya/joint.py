@@ -27,6 +27,13 @@ result, train's and calibration's from the notebook's picks step (`train.py pack
     python laya/joint.py picks train Downloads/res/result-picks-<stamp>.zip
     python laya/joint.py derive train
     python laya/joint.py subsets train   # random listed-passage sets, sized like the picks
+
+More support runs leave other questions undecided, and those are hard problems
+(owner: the data must span difficulty, weighted hard). Each run's picks are tagged:
+
+    python laya/train.py pack --picks <checkpoint>.zip,<checkpoint>.zip
+    python laya/joint.py picks train <picks result zip> --tag <checkpoint>
+    python laya/joint.py derive train --tag <checkpoint>
 """
 
 import argparse
@@ -164,35 +171,37 @@ def main() -> None:
     p.add_argument("how", choices=["derive", "picks", "subsets"])
     p.add_argument("split", choices=train.SPLITS)
     p.add_argument("source", nargs="?", help="picks: a support training result (validation) or a picks result zip")
+    p.add_argument("--tag", default="", help="one of several support runs' picks: its checkpoint name, no .zip")
     a = p.parse_args()
-    source = DATA / KIND / f"picks-{a.split}.jsonl"
+    tag = f"-{a.tag}" if a.tag else ""
+    source = DATA / KIND / f"picks-{a.split}{tag}.jsonl"
+    # a view the split's first picks already ask is labelled there (views only: a picks
+    # record's hash is its coverage state's)
+    before = DATA / KIND / f"{a.split}.candidates.jsonl"
+    asked = {r["state_hash"] for r in read(before)} if before.exists() and (tag or a.how == "subsets") else set()
     if a.how == "picks":
         if not a.source:
             sys.exit("picks takes the result zip holding the split's coverage predictions")
         out = source
         with zipfile.ZipFile(a.source) as z:
             # a picks result names each split's; a support training result scores validation only
-            member = f"coverage-predictions-{a.split}.jsonl"
-            if member not in z.namelist() and a.split == "validation":
+            member = f"coverage-predictions-{a.split}{tag}.jsonl"
+            if member not in z.namelist() and a.split == "validation" and not tag:
                 member = "coverage-predictions.jsonl"
             records = [json.loads(line) for line in z.read(member).decode("utf-8").splitlines() if line.strip()]
         rows = picks(records, read(DATA / "coverage" / f"{a.split}.jsonl"))
+    elif not source.exists():
+        sys.exit(f"{source.name} is missing: run joint.py picks {a.split} <zip> first")
     elif a.how == "subsets":
         out = DATA / KIND / f"{a.split}-subsets.candidates.jsonl"
-        if not source.exists():
-            sys.exit(f"{source.name} is missing: run joint.py picks {a.split} <zip> first")
         sizes = [len(p["parts"]) for p in read(source) if p["verdict"] is None and p["parts"]]
-        # a view the split's picks already ask is labelled there
-        before = DATA / KIND / f"{a.split}.candidates.jsonl"
-        asked = {r["state_hash"] for r in read(before)} if before.exists() else set()
         rows = [r for r in subsets(read(DATA / "coverage" / f"{a.split}.jsonl"), sizes, support.held_for(a.split))
                 if r["state_hash"] not in asked]
     else:
-        out = DATA / KIND / f"{a.split}.candidates.jsonl"
-        if not source.exists():
-            sys.exit(f"{source.name} is missing: run joint.py picks {a.split} <zip> first")
-        rows = picked(read(source), read(DATA / "coverage" / f"{a.split}.jsonl"), support.held_for(a.split),
-                      wide=a.split == "train")
+        out = DATA / KIND / f"{a.split}{tag}.candidates.jsonl"
+        rows = [r for r in picked(read(source), read(DATA / "coverage" / f"{a.split}.jsonl"),
+                                  support.held_for(a.split), wide=a.split == "train")
+                if r["state_hash"] not in asked]
     if out.exists():
         sys.exit(f"{out} exists; move it aside first")
     for row in rows:

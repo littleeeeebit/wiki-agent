@@ -73,12 +73,13 @@ def fits(agent, kind: str, row: dict, name: str, max_len: int) -> bool:
     return tokens(agent, shown(kind, row, name), row["questions"][name]) <= max_len
 
 
-def pack(*kinds: str, picks: str | None = None) -> Path:
+def pack(*kinds: str, picks: tuple[str, ...] = ()) -> Path:
     """This folder's code and `kinds`' labelled splits, as `laya/...` in one zip, with
     `laya/packed.json` naming the kinds in training order, the commit and the splits'
-    hashes the notebook's result carries back. `picks`, a support checkpoint's zip on
-    Drive, has the notebook read coverage's train and calibration questions with it first
-    (`support.evaluate`): the picks `joint` is asked over."""
+    hashes the notebook's result carries back. `picks`, support checkpoints' zips on
+    Drive, has the notebook read coverage's train and calibration questions with each
+    first (`support.evaluate`): the picks `joint` is asked over. Several runs leave
+    different questions undecided, so they give joint more distinct problems."""
 
     def git(*args):
         return subprocess.run(["git", *args], cwd=HERE, capture_output=True, text=True).stdout.strip()
@@ -87,7 +88,10 @@ def pack(*kinds: str, picks: str | None = None) -> Path:
     packed = {"kinds": list(kinds), "commit": git("rev-parse", "HEAD"),
               "dirty": bool(git("status", "--porcelain", "--", ".")), "splits": {}}
     if picks:
-        packed["picks"] = {"checkpoint": picks, "splits": ["train", "calibration"]}
+        # the notebook names each run's outputs by its checkpoint's stem
+        if len({Path(p).stem for p in picks}) < len(picks):
+            raise ValueError(f"picks checkpoints share a name: {', '.join(picks)}")
+        packed["picks"] = {"checkpoints": list(picks), "splits": ["train", "calibration"]}
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(HERE.glob("*.py")):
             if not f.name.startswith("test_"):
@@ -97,7 +101,7 @@ def pack(*kinds: str, picks: str | None = None) -> Path:
         extra = [("coverage", "validation")] if {"support", "joint"} & set(kinds) and "coverage" not in kinds else []
         extra += [("joint", "picks-validation")] if "joint" in kinds else []
         extra += [("coverage", s) for s in packed.get("picks", {}).get("splits", [])]
-        for kind, split in [(k, s) for k in kinds for s in SPLITS] + extra:
+        for kind, split in dict.fromkeys([(k, s) for k in kinds for s in SPLITS] + extra):
             path = DATA / kind / f"{split}.jsonl"
             if path.exists():
                 z.write(path, f"laya/data/{kind}/{split}.jsonl")
@@ -232,10 +236,11 @@ def score(kind: str, checkpoint, sure: dict | None = None,
 
 
 if __name__ == "__main__":
-    args, picks = sys.argv[2:], None
+    args, picks = sys.argv[2:], ()
     if args[:1] == ["--picks"]:
-        picks, args = (args[1:2] or [None])[0], args[2:]
-    if sys.argv[1:2] != ["pack"] or not (args or picks) or not set(args) <= set(MAX_LEN):
-        raise SystemExit(f"python laya/train.py pack [--picks <support checkpoint zip>] <kind>... "
+        picks, args = tuple((args[1:2] or [""])[0].split(",")), args[2:]
+    bad = any(p.startswith("-") or not p.endswith(".zip") for p in picks)
+    if sys.argv[1:2] != ["pack"] or bad or not (args or picks) or not set(args) <= set(MAX_LEN):
+        raise SystemExit(f"python laya/train.py pack [--picks <support checkpoint zip>[,<zip>...]] <kind>... "
                          f"(kinds: {', '.join(MAX_LEN)})")
     print(pack(*args, picks=picks))
