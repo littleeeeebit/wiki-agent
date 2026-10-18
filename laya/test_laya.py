@@ -1323,10 +1323,25 @@ def test_joint_asks_the_part_passages_together_where_support_left_coverage_undec
     # A picks pack has the notebook read coverage's train and calibration with a support checkpoint.
     write(folders / "data" / "coverage" / "train.jsonl", [row])
     write(folders / "data" / "coverage" / "calibration.jsonl", [row])
-    with zipfile.ZipFile(train.pack(picks="support.zip")) as z:
-        assert json.loads(z.read("laya/packed.json"))["picks"] == {"checkpoint": "support.zip",
+    with zipfile.ZipFile(train.pack("coverage", picks=("s1.zip", "s2.zip"))) as z:
+        assert json.loads(z.read("laya/packed.json"))["picks"] == {"checkpoints": ["s1.zip", "s2.zip"],
                                                                    "splits": ["train", "calibration"]}
-        assert {"laya/data/coverage/train.jsonl", "laya/data/coverage/calibration.jsonl"} <= set(z.namelist())
+        names = z.namelist()   # coverage's own splits are not packed twice
+        assert names.count("laya/data/coverage/train.jsonl") == names.count("laya/data/coverage/calibration.jsonl") == 1
+
+    # Another support run's picks are tagged with its checkpoint; its views the first run's
+    # candidates already ask are left out.
+    write(folders / "data" / "joint" / "train.candidates.jsonl", [one])
+    with zipfile.ZipFile(result, "w") as z:
+        z.writestr("coverage-predictions-train-s2.jsonl", json.dumps({**records[0], "picks": ["part"] * 3 + ["none"]}))
+    monkeypatch.setattr(joint.sys, "argv", ["joint.py", "picks", "train", str(result), "--tag", "s2"])
+    joint.main()
+    monkeypatch.setattr(joint.sys, "argv", ["joint.py", "derive", "train", "--tag", "s2"])
+    monkeypatch.setattr(support, "held_for", lambda split: [])
+    joint.main()
+    views = {tuple(p["id"] for p in r["state"]["passages"])
+             for r in label.read(folders / "data" / "joint" / "train-s2.candidates.jsonl")}
+    assert ("p0", "p1", "p2") in views and ("p0", "p1") not in views   # p0 p1 is the first run's view
 
 
 def test_a_train_subset_holds_whole_records_and_says_how_many(folders):
