@@ -101,8 +101,11 @@ send executable HTML. Do not invent alternatives merely to meet a count.
   contract test can be offline; deployed authentication or state acceptance
   requires actual isolated API observations; UI acceptance requires actual
   browser actions; native-host acceptance requires desktop evidence. Plans
-  specify future verification without claiming it already ran. Refactoring
-  preservation uses its frozen workflow checks. Missing collectors or setup
+  specify future verification without claiming it already ran. `refactor` and
+  `differential` belong to steps of a refactoring run, which adds them itself;
+  comparing old and new behaviour in an ordinary task is `data` or
+  `performance`. `performance` asks the reviewer for before/after measurements
+  in the PR; nothing measures it for you. Missing collectors or setup
   block verification; never silently omit an obligation to avoid that wait.
 
 The same `slug` emitted again in this conversation replaces the earlier

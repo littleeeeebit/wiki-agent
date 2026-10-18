@@ -224,6 +224,11 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
         # local `.env`. Local and external work is gated by review and the final gate.
         explicit = {**explicit, "flows": [],
                     "evidence": [e for e in explicit["evidence"] if e not in ("api", "browser", "desktop")]}
+    if not spec.get("refactor"):
+        # Preservation needs a refactoring run's frozen checks. An ordinary task that
+        # asked for it could never be reviewed (rfg_rag #64, #66).
+        explicit = {**explicit, "criteria": [c for c in explicit["criteria"] if c != "refactor"],
+                    "evidence": [e for e in explicit["evidence"] if e != "differential"]}
     criteria = {"plan", "code"} if profile == "mixed" else {profile}
     criteria.update(explicit["criteria"])
     evidence = {"offline", *explicit["evidence"]}
@@ -323,8 +328,8 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
     for kind in sorted(evidence & {"api", "browser", "desktop"}):
         if not any(f["kind"] == kind or kind == "api" and f["kind"] == "browser" for f in flows):
             problems.append(f"{kind}: 필요한 동작을 검증하는 등록 흐름이 없다")
-    if "performance" in criteria:
-        problems.append("performance: 대표 측정 범위가 없다 — 정확성 검사 통과로 대체하지 않는다")
+    # Performance has no measuring flow; the reviewer judges the PR's own before/after
+    # measurements by its criterion, and `coverage` tells it nothing was measured here.
     out = {"version": VERSION, "head": head, "base_oid": base_oid, "base": (spec.get("pr") or {}).get("base"),
            "spec_signature": signature(spec),
            "profile": profile, "criteria": sorted(criteria), "evidence": sorted(evidence), "flows": flows,

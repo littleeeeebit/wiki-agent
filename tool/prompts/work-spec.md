@@ -28,7 +28,8 @@ The person's later instructions update the assignment as work progresses.
   them or authorize execution. An API-related pure contract test can be
   offline; acceptance involving deployed state/authentication needs actual
   isolated API evidence. Native-host acceptance needs desktop evidence.
-  Refactoring preservation uses the frozen refactoring workflow checks.
+  `refactor` and `differential` apply only to a refactoring run's steps and are
+  ignored elsewhere. `performance` means the PR carries before/after measurements.
 - Every implementation ends with a test cleanup pass, after the code is final
   and before the completion report. Audit the tests this task added or changed
   and the tests that exercise code it changed or removed. Delete or fold:
