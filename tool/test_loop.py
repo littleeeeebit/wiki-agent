@@ -714,7 +714,8 @@ def test_review_attach_refuses_a_busy_or_wrong_checkout_without_changing_metadat
 def test_a_published_spec_stuck_in_work_by_a_failed_republish_goes_back_into_review(world):
     """rfg_rag PR #64: a spec-update republished the task, the gate crashed on a
     temp-folder permission and the spec stayed `작업 중` with a fault. The PR list
-    said `이미 작업 중` even after a restart, so the PR could never be reviewed."""
+    said `이미 작업 중` even after a restart, so the PR could never be reviewed.
+    rfg_rag PR #66 stayed there with no fault: a spec-update came without a done report."""
 
     sid = "stuck-republish"
     spec = pr_spec(world, sid, 11)
@@ -724,8 +725,7 @@ def test_a_published_spec_stuck_in_work_by_a_failed_republish_goes_back_into_rev
     with patch.dict(work._busy, {spec["worktree"]: object()}):
         assert loop.refusal({}, specs.load("proj", sid)) == "이미 작업 중", "a running turn keeps it"
     specs.save({**specs.load("proj", sid), "fault": None})
-    assert loop.refusal({}, specs.load("proj", sid)) == "이미 작업 중", "work without a failure is still work"
-    specs.save({**specs.load("proj", sid), "fault": "판정 실패 — 게이트가 1 로 끝났다"})
+    assert loop.refusal({}, specs.load("proj", sid)) == "", "a spec-update without a done report"
     with patch.object(loop, "kick") as dispatch:
         result = client().post("/api/loops", json={"prs": [11]}).json()["results"]
     assert result == [{"number": 11, "id": sid}]

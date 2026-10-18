@@ -2298,12 +2298,13 @@ def halt_loop(repo: str, sid: str) -> None:
 
 
 def stalled(spec: dict) -> bool:
-    """A spec whose PR is already open but whose last completion failed while
-    republishing it — a gate that crashed, a base GitHub refused — and no turn
-    holds its worktree. Nothing moves it out of `작업 중` by itself, so without
-    this the PR could never be picked for review again."""
+    """A spec in `작업 중` whose PR is already open and whose worktree no turn
+    holds: its republish failed (a gate that crashed, a base GitHub refused), or
+    a `spec-update` came without a done report (rfg_rag #66). Nothing moves it
+    out of `작업 중` by itself, so without this the PR could never be picked for
+    review again."""
 
-    return (spec["state"] == "작업 중" and bool(spec.get("pr")) and bool(spec.get("fault"))
+    return (spec["state"] == "작업 중" and bool(spec.get("pr"))
             and str(spec.get("worktree") or "") not in work._busy)
 
 
