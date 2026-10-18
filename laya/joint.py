@@ -26,6 +26,7 @@ result, train's and calibration's from the notebook's picks step (`train.py pack
     python laya/joint.py picks validation Downloads/res/result-support-20261017-211003.zip
     python laya/joint.py picks train Downloads/res/result-picks-<stamp>.zip
     python laya/joint.py derive train
+    python laya/joint.py subsets train   # random listed-passage sets, sized like the picks
 """
 
 import argparse
@@ -92,6 +93,21 @@ def picked(chosen: list[dict], rows: list[dict], held=(), seed: int = 0, wide: b
     return list(out.values())
 
 
+def subsets(rows: list[dict], sizes: list[int], held=(), seed: int = 0, per: int = 2) -> list[dict]:
+    """Candidate rows, `per` a requirement, of random sets of coverage `rows`' listed passages,
+    each as many as a size drawn from `sizes` (a support run's part picks). Picks give few
+    distinct problems: 725 states for train, the rest variants of them (owner, 2026-10-18)."""
+
+    near, out, rng = gate.Near(support.held_rows(list(held))), {}, random.Random(f"{seed}-subsets")
+    for row in rows:
+        listed = [p["id"] for p in support.listed(row["state"])]
+        for q in sorted(row["expected"]):
+            for _ in range(per):
+                chosen = set(rng.sample(listed, min(rng.choice(sizes), len(listed))))
+                ask(out, near, row, q.split("_", 1)[1], [p for p in listed if p in chosen], "subset")
+    return list(out.values())
+
+
 def ask(out: dict, near, row: dict, rid: str, pids, how: str) -> None:
     """Add to `out` (candidates by state hash) the question `joint_<rid>` of `row`'s
     passages `pids`, unless its view is near a held row."""
@@ -145,7 +161,7 @@ def evaluate(checkpoint, agent=None) -> tuple[dict, list[dict]]:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("how", choices=["derive", "picks"])
+    p.add_argument("how", choices=["derive", "picks", "subsets"])
     p.add_argument("split", choices=train.SPLITS)
     p.add_argument("source", nargs="?", help="picks: a support training result (validation) or a picks result zip")
     a = p.parse_args()
@@ -161,6 +177,16 @@ def main() -> None:
                 member = "coverage-predictions.jsonl"
             records = [json.loads(line) for line in z.read(member).decode("utf-8").splitlines() if line.strip()]
         rows = picks(records, read(DATA / "coverage" / f"{a.split}.jsonl"))
+    elif a.how == "subsets":
+        out = DATA / KIND / f"{a.split}-subsets.candidates.jsonl"
+        if not source.exists():
+            sys.exit(f"{source.name} is missing: run joint.py picks {a.split} <zip> first")
+        sizes = [len(p["parts"]) for p in read(source) if p["verdict"] is None and p["parts"]]
+        # a view the split's picks already ask is labelled there
+        before = DATA / KIND / f"{a.split}.candidates.jsonl"
+        asked = {r["state_hash"] for r in read(before)} if before.exists() else set()
+        rows = [r for r in subsets(read(DATA / "coverage" / f"{a.split}.jsonl"), sizes, support.held_for(a.split))
+                if r["state_hash"] not in asked]
     else:
         out = DATA / KIND / f"{a.split}.candidates.jsonl"
         if not source.exists():

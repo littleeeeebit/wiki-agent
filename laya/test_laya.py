@@ -1285,6 +1285,15 @@ def test_joint_asks_the_part_passages_together_where_support_left_coverage_undec
     assert len(wide) == 1 and set(wide) <= {("p0", "p1", "p2"), ("p0", "p1", "p3")} and set(wide.values()) == {"padded"}
     assert joint.picked(chosen, [row], held=[{"state": one["state"]}]) == []   # near a held state
     rng = joint.random.Random(0)
+    # Random listed-passage sets, sized like the picks, give distinct problems; never unlisted p4.
+    drawn = joint.subsets([row], [2], per=3)
+    assert {len(r["state"]["passages"]) for r in drawn} == {2} and len(drawn) <= 6
+    assert all("p4" not in r["state"]["complete_passages"] and r["state_hash"] == pool.digest(r["state"]) for r in drawn)
+    assert {q["drawn"] for r in drawn for q in r["questions"].values()} == {"subset"}
+    assert {n for r in drawn for n in r["questions"]} == {"joint_r0", "joint_r1"}
+    assert joint.subsets([row], [9])[0]["state"]["complete_passages"] == ["p0", "p1", "p2", "p3"]   # all it has
+    kept = joint.subsets([row], [2], held=[{"state": drawn[0]["state"]}], per=3)
+    assert drawn[0]["state_hash"] not in {r["state_hash"] for r in kept}   # near a held state
     assert joint.views({"verdict": True, "parts": ["p0"], "nones": [], "listed": ["p0"]}, rng, True) == []   # decided
     assert joint.views({"verdict": None, "parts": ["p2"], "nones": ["p0"], "listed": ["p0", "p1", "p2"]}, rng, True) == \
         [(["p2"], "picks"), (["p0", "p2"], "padded")]   # in the state's order

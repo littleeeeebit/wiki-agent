@@ -168,6 +168,13 @@ a time instead, the shape `useful` learned.
   <split>` makes candidates from them. The notebook scores the chosen `joint`
   run on validation's (`joint.evaluate`), so the support checkpoint is not
   needed on Colab then.
+- The first joint run learned weakly: AUROC 0.67 on the 105 questions support
+  left undecided, against labels that agree with coverage 94% of the time.
+  Train had 725 distinct problems; its fewer and padded views are variants of
+  them. Augmentation (owner, 2026-10-18): `joint subsets train` gives each
+  coverage train requirement two random sets of its listed passages. Each
+  set's size is drawn from the run's part-pick sizes. That gives 4,364
+  questions.
 
 ## Calibration and policy
 
