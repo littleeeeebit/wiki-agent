@@ -10,6 +10,7 @@ import pytest
 
 import gate
 import generate
+import joint
 import kinds
 import label
 import loop
@@ -34,6 +35,7 @@ def folders(tmp_path, monkeypatch):
     monkeypatch.setattr(gate, "TESTS", tmp_path / "tests.json")
     monkeypatch.setattr(train, "DATA", tmp_path / "data")
     monkeypatch.setattr(support, "DATA", tmp_path / "data")
+    monkeypatch.setattr(joint, "DATA", tmp_path / "data")
     write(tmp_path / "pool.jsonl", [])
     (tmp_path / "tests.json").write_text('{"tests": []}', encoding="utf-8")
     return tmp_path
@@ -1246,6 +1248,65 @@ def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, 
         assert {"laya/support.py", "laya/data/support/train.jsonl", "laya/data/coverage/validation.jsonl"} <= set(z.namelist())
 
 
+def test_joint_asks_the_part_passages_together_where_support_left_coverage_undecided(folders, monkeypatch):
+    import types
+    import zipfile
+    passages = [{"id": f"p{i}", "text": f"passage {i}"} for i in range(5)]
+    state = {"query": "q", "requirements": [{"id": "r0", "text": "first"}, {"id": "r1", "text": "second"}],
+             "passages": passages, "complete_passages": ["p0", "p1", "p2", "p3"]}   # p4 is not listed
+    row = {"state": state, "expected": {"coverage_r0": True, "coverage_r1": False}, "provenance": {"state_hash": "c0"}}
+    # Support labels come from unchanged one-passage views only; a trimmed one is not read.
+    cands = [{"state_hash": f"v{p}", "provenance": {"coverage": "c0"}} for p in range(4)]
+    cands.append({"state_hash": "t0", "provenance": {"coverage": "c0", "trimmed": "v0"}})
+    said = {"p0": "part", "p1": "part", "p2": "none", "p3": "none"}
+    write(folders / "data" / "support" / "train.candidates.jsonl", cands)
+    write(folders / "data" / "support" / "full1.jsonl",
+          [{"provenance": {"state_hash": f"v{i}"}, "expected": {f"support_r0_{p}": v}} for i, (p, v) in enumerate(said.items())]
+          + [{"provenance": {"state_hash": "t0"}, "expected": {"support_r0_p0": "none"}}])
+    got = joint.labels(["full1"])
+    assert got == {("c0", "r0"): said}
+
+    (one,) = joint.derive([row], got)   # r1 has no labels, so nothing to ask of it
+    assert [p["id"] for p in one["state"]["passages"]] == ["p0", "p1"] == one["state"]["complete_passages"]
+    assert one["questions"] == {"joint_r0": {"kind": "joint", "question": joint.question("r0"), "drawn": "parts"}}
+    assert one["state_hash"] == pool.digest(one["state"]) and one["provenance"] == {"coverage": "c0"}
+    assert kinds.view("joint_r0", "joint", one["state"]) == one["state"]   # stored with its own view
+    # Train is augmented: each part left out, and one none passage added.
+    wide = {tuple(p["id"] for p in r["state"]["passages"]): next(iter(r["questions"].values()))["drawn"]
+            for r in joint.derive([row], got, wide=True)}
+    assert wide.pop(("p0", "p1")) == "parts" and wide.pop(("p0",)) == wide.pop(("p1",)) == "fewer"
+    assert len(wide) == 1 and set(wide) <= {("p0", "p1", "p2"), ("p0", "p1", "p3")} and set(wide.values()) == {"padded"}
+    assert joint.derive([row], got, held=[{"state": one["state"]}]) == []   # near a held state
+
+    # A support run's picks: the passages it read as part; a question too long keeps none.
+    records = [{"state_hash": "c0", "question": "coverage_r0", "verdict": None, "score": 0.2,
+                "picks": ["part", "none", "part", "none"]},
+               {"state_hash": "c0", "question": "coverage_r1", "verdict": None, "score": None, "picks": []}]
+    picked = joint.picks(records, [row])
+    assert [p["parts"] for p in picked] == [["p0", "p2"], None]
+    write(folders / "data" / "joint" / "picks.jsonl", picked + [
+        {"state_hash": "c0", "question": "coverage_r1", "verdict": False, "score": 0.1, "parts": []}])
+    write(folders / "data" / "coverage" / "validation.jsonl", [row])
+    seen = []
+    agent = types.SimpleNamespace(predict=lambda st, asked, **k: seen.append([p["id"] for p in st["passages"]]) or {
+        "answers": {n: {"noul": 0.75} for n in asked}})
+    monkeypatch.setattr(train, "tokens", lambda agent, st, q: 10)
+    summary, recs = joint.evaluate("ckpt", agent)
+    assert seen == [["p0", "p2"]]   # only the undecided question that fits, over its parts
+    assert [(r["question"], r["verdict"], r["joint"]) for r in recs] == \
+        [("coverage_r0", True, 0.75), ("coverage_r1", None, None), ("coverage_r1", False, None)]
+    assert recs[0]["score"] == pytest.approx(1 - 0.8 * 0.25)
+    assert summary["joint_asked"] == 1 and summary["joint_accuracy"] == 1.0 and summary["decided"] == 2
+    monkeypatch.setattr(train, "tokens", lambda agent, st, q: 5000)   # too long: stays undecided
+    assert joint.evaluate("ckpt", agent)[0]["joint_asked"] == 0
+
+    # Packed with coverage's validation questions and the picks it is scored over.
+    write(folders / "data" / "joint" / "train.jsonl", [{"state": {}, "questions": {}, "expected": {}}])
+    with zipfile.ZipFile(train.pack("joint")) as z:
+        assert {"laya/joint.py", "laya/data/joint/train.jsonl", "laya/data/joint/picks.jsonl",
+                "laya/data/coverage/validation.jsonl"} <= set(z.namelist())
+
+
 def test_a_train_subset_holds_whole_records_and_says_how_many(folders):
     rows = [{"state": {"text": f"s{i} line"}, "questions": {"useful_p0": NOUL},
              "expected": {"useful_p0": True}, "provenance": {"state_hash": f"h{i}"}} for i in range(10)]
@@ -1320,8 +1381,8 @@ def test_training_leaves_out_what_is_too_long_and_packs_code_with_labels(folders
     assert seen["config"]["option_layout"] == "parallel" and seen["config"]["micro_batch"] == 4
     assert seen["config"]["grad_accum"] == 16 and seen["config"]["max_len"] == 2048
     assert seen["config"]["eval_data"]   # scored before and after inside `finetune`
-    # Every labelled retrieval kind can train, and `support`, which coverage is made from.
-    assert set(train.MAX_LEN) == set(generate.RETRIEVAL) - {"repair"} | {"support"}
+    # Every labelled retrieval kind can train, and `support` and `joint`, which coverage is made from.
+    assert set(train.MAX_LEN) == set(generate.RETRIEVAL) - {"repair"} | {"support", "joint"}
     # `coverage` (8,192 tokens) trains one question a micro-batch, and its validation is not
     # handed to `finetune`, which would score it 16 a batch in FP32.
     write(folders / "data" / "coverage" / "train.jsonl", [row(5, "short")])
