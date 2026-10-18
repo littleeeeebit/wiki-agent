@@ -88,6 +88,9 @@ def pack(*kinds: str, picks: tuple[str, ...] = ()) -> Path:
     packed = {"kinds": list(kinds), "commit": git("rev-parse", "HEAD"),
               "dirty": bool(git("status", "--porcelain", "--", ".")), "splits": {}}
     if picks:
+        # the notebook names each run's outputs by its checkpoint's stem
+        if len({Path(p).stem for p in picks}) < len(picks):
+            raise ValueError(f"picks checkpoints share a name: {', '.join(picks)}")
         packed["picks"] = {"checkpoints": list(picks), "splits": ["train", "calibration"]}
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(HERE.glob("*.py")):
@@ -235,8 +238,9 @@ def score(kind: str, checkpoint, sure: dict | None = None,
 if __name__ == "__main__":
     args, picks = sys.argv[2:], ()
     if args[:1] == ["--picks"]:
-        picks, args = tuple(p for p in (args[1:2] or [""])[0].split(",") if p), args[2:]
-    if sys.argv[1:2] != ["pack"] or not (args or picks) or not set(args) <= set(MAX_LEN):
+        picks, args = tuple((args[1:2] or [""])[0].split(",")), args[2:]
+    bad = any(p.startswith("-") or not p.endswith(".zip") for p in picks)
+    if sys.argv[1:2] != ["pack"] or bad or not (args or picks) or not set(args) <= set(MAX_LEN):
         raise SystemExit(f"python laya/train.py pack [--picks <support checkpoint zip>[,<zip>...]] <kind>... "
                          f"(kinds: {', '.join(MAX_LEN)})")
     print(pack(*args, picks=picks))

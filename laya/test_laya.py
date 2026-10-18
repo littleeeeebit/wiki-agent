@@ -1328,14 +1328,18 @@ def test_joint_asks_the_part_passages_together_where_support_left_coverage_undec
                                                                    "splits": ["train", "calibration"]}
         names = z.namelist()   # coverage's own splits are not packed twice
         assert names.count("laya/data/coverage/train.jsonl") == names.count("laya/data/coverage/calibration.jsonl") == 1
+    with pytest.raises(ValueError):   # the notebook names a run's outputs by its checkpoint's stem
+        train.pack("joint", picks=("old/same.zip", "new/same.zip"))
 
     # Another support run's picks are tagged with its checkpoint; its views the first run's
-    # candidates already ask are left out.
-    write(folders / "data" / "joint" / "train.candidates.jsonl", [one])
+    # candidates already ask are left out. A picks record is kept even when a candidate's
+    # hash equals its coverage state's: only views are compared.
+    write(folders / "data" / "joint" / "train.candidates.jsonl", [one, {"state_hash": "c0"}])
     with zipfile.ZipFile(result, "w") as z:
         z.writestr("coverage-predictions-train-s2.jsonl", json.dumps({**records[0], "picks": ["part"] * 3 + ["none"]}))
     monkeypatch.setattr(joint.sys, "argv", ["joint.py", "picks", "train", str(result), "--tag", "s2"])
     joint.main()
+    assert [p["parts"] for p in label.read(folders / "data" / "joint" / "picks-train-s2.jsonl")] == [["p0", "p1", "p2"]]
     monkeypatch.setattr(joint.sys, "argv", ["joint.py", "derive", "train", "--tag", "s2"])
     monkeypatch.setattr(support, "held_for", lambda split: [])
     joint.main()

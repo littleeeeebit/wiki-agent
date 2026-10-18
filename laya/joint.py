@@ -175,7 +175,8 @@ def main() -> None:
     a = p.parse_args()
     tag = f"-{a.tag}" if a.tag else ""
     source = DATA / KIND / f"picks-{a.split}{tag}.jsonl"
-    # a view the split's first picks already ask is labelled there
+    # a view the split's first picks already ask is labelled there (views only: a picks
+    # record's hash is its coverage state's)
     before = DATA / KIND / f"{a.split}.candidates.jsonl"
     asked = {r["state_hash"] for r in read(before)} if before.exists() and (tag or a.how == "subsets") else set()
     if a.how == "picks":
@@ -194,12 +195,13 @@ def main() -> None:
     elif a.how == "subsets":
         out = DATA / KIND / f"{a.split}-subsets.candidates.jsonl"
         sizes = [len(p["parts"]) for p in read(source) if p["verdict"] is None and p["parts"]]
-        rows = subsets(read(DATA / "coverage" / f"{a.split}.jsonl"), sizes, support.held_for(a.split))
+        rows = [r for r in subsets(read(DATA / "coverage" / f"{a.split}.jsonl"), sizes, support.held_for(a.split))
+                if r["state_hash"] not in asked]
     else:
         out = DATA / KIND / f"{a.split}{tag}.candidates.jsonl"
-        rows = picked(read(source), read(DATA / "coverage" / f"{a.split}.jsonl"), support.held_for(a.split),
-                      wide=a.split == "train")
-    rows = [r for r in rows if r.get("state_hash") not in asked]
+        rows = [r for r in picked(read(source), read(DATA / "coverage" / f"{a.split}.jsonl"),
+                                  support.held_for(a.split), wide=a.split == "train")
+                if r["state_hash"] not in asked]
     if out.exists():
         sys.exit(f"{out} exists; move it aside first")
     for row in rows:
