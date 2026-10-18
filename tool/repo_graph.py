@@ -13,6 +13,7 @@ sys.path.insert(0, str(HERE))
 import corpus  # noqa: E402
 from search import knowledge_graph, projection  # noqa: E402
 from wiki import INJECTABLE, front_matter, project_pages  # noqa: E402
+from workspace import sessions  # noqa: E402
 
 NS = "repo"
 
@@ -78,10 +79,13 @@ def build(repo: Path) -> dict | None:
     read = {edge["b"] for edge in edges if edge["kind"] == "reads"}
     orphans = sorted(known - inbound - ENTRY)
     records = decisions_of(repo)
+    # The main clone, not this checkout: the pre-merge refresh runs in a
+    # pull request's worktree, named after its branch, and graph.json is committed.
+    _top, clone, _branch = sessions.checkout(repo)
 
     return {
         "ns": NS,
-        "repo": repo.name,
+        "repo": Path(clone).name if clone else repo.name,
         "nodes_from": ".wiki/corpus.json",
         "edges": edges,
         "orphans": orphans,

@@ -123,6 +123,20 @@ def test_with_no_listing_nothing_is_built():
     assert repo_graph.build(root) is None
 
 
+def test_a_linked_worktree_names_the_repository_not_its_own_directory():
+    """The pre-merge refresh runs in the pull request's worktree, whose
+    directory is named after its branch. Written as `repo`, that renamed
+    rfg_rag to `feature-golden-data-self-improvement` in a committed graph.json."""
+
+    root = repo({"docs/a.md": ""})
+    tree = root.parent / f"{root.name}-worktrees" / "feature-x"
+    for args in (["init", "-q"], ["add", "-A"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "x"],
+                 ["worktree", "add", "-q", "-b", "feature-x", str(tree)]):
+        subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
+
+    assert repo_graph.build(tree)["repo"] == repo_graph.build(root)["repo"] == root.name
+
+
 def test_a_line_reference_counts():
     data = repo_graph.build(repo({
         "docs/a.md": "`docs/b.md:24` 와 `docs/c.md:3-9`", "docs/b.md": "", "docs/c.md": "",
