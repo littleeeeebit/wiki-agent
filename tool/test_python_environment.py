@@ -57,6 +57,15 @@ def test_review_session_and_gate_use_the_running_environment_without_activation(
         session.close()
 
 
+@pytest.mark.skipif(os.name != "nt", reason="the shared temp folder is a Windows account problem")
+def test_a_gate_keeps_its_own_temp_folder_apart_from_other_accounts(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEMP", str(tmp_path))
+    command = 'python -c "import tempfile; print(tempfile.gettempdir())"'
+    code, output, cut = specs.gate(command, tmp_path, threading.Event())
+    assert (code, cut) == (0, ""), output
+    assert output.strip() == str(tmp_path / "wiki-agent-gate")
+
+
 def test_gate_receipt_changes_when_the_interpreter_changes(tmp_path, monkeypatch):
     monkeypatch.setattr(specs, "adapter_path", lambda *_: None)
     before = specs.digest(tmp_path, tmp_path, "python -m pytest")
