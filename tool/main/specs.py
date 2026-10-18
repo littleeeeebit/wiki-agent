@@ -1017,7 +1017,15 @@ def gate(cmd: str, cwd: Path, halt: threading.Event, env: dict | None = None,
     """Run the adapter's shell command as `(code, output, cut reason)`.
     Check cancellation and the deadline during execution and after completion."""
 
-    return runtime.gate(cmd, cwd, halt, python_environment(env), GATE_SECONDS if timeout is None else timeout, owned_jobs, kill)
+    env = python_environment(env)
+    if os.name == "nt":
+        # The Codex sandbox runs pytest as another Windows account with the same user
+        # name, so it shares `%TEMP%\pytest-of-<user>` and leaves links this account
+        # cannot read; pytest's cleanup then fails a gate whose tests all passed (rfg_rag #64).
+        scratch = Path(env.get("TEMP") or tempfile.gettempdir()) / "wiki-agent-gate"
+        scratch.mkdir(exist_ok=True)
+        env["TMPDIR"] = env["TEMP"] = env["TMP"] = str(scratch)
+    return runtime.gate(cmd, cwd, halt, env, GATE_SECONDS if timeout is None else timeout, owned_jobs, kill)
 
 
 def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text: None, env: dict | None = None,
