@@ -46,12 +46,17 @@ def test_closed_declarations_and_executable_markdown_keep_code_floor(world):
     assert result["criteria"] == ["plan"] and result["evidence"] == ["offline"]
 
 
-@pytest.mark.parametrize("review", [{"evidence": ["differential"]}, {"criteria": ["performance"]}])
-def test_missing_preservation_or_measurement_proof_blocks_before_reviewer(world, review):
-    pr_spec(world, "missing", 1, review=review)
-    spec = looped("missing")
-    assert spec["state"] == "멈춤" and spec["stopped"]["reason"] == loop.Why.PREPARATION.value
-    assert spec["review_contract"]["problems"] and not Reviewer.made and not Worker.made
+@pytest.mark.parametrize("review", [{"evidence": ["differential"]}, {"criteria": ["refactor", "performance"]}])
+def test_an_ordinary_task_asking_for_preservation_or_performance_is_still_reviewed(world, review):
+    """rfg_rag #64 and #66 stopped for good before review: an ordinary task's spec asked
+    for refactoring preservation, which only a refactoring run can supply, and for
+    performance, which no flow measures."""
+    pr_spec(world, "ordinary", 1, review=review)
+    spec = looped("ordinary")
+    assert spec["state"] == "머지 가능", spec.get("stopped")
+    record = spec["rounds"][0]["review_contract"]
+    assert "refactor" not in record["criteria"] and "differential" not in record["evidence"]
+    assert ("performance" in record["criteria"]) == ("performance" in review.get("criteria", []))
 
 
 def test_contract_is_in_instruction_and_changed_obligations_invalidate_approval(world):
@@ -328,7 +333,7 @@ def test_cancel_and_stale_preparation_are_persisted_without_review_dispatch(worl
 
 
 def test_blocked_readiness_keeps_shadow_and_aborted_attempts(world):
-    spec = pr_spec(world, "blocked-shadow", 1, "code.py", review={"criteria": ["performance"]})
+    spec = pr_spec(world, "blocked-shadow", 1, "code.py", refactor={"run": "gone"})
     specs.update(spec["repo"], spec["id"], review_shadow_attempts=[{
         "attempt_id": "interrupted", "round": 1, "input_identity": "old", "status": "preparing"}])
     with patch.object(decision, "config", return_value=decision.Config("off", "test", "default")):
@@ -577,7 +582,7 @@ def test_v2_multiple_grounds_stable_order_and_replay_do_not_mutate_baseline(clou
     assert_grounded(composed)
 
 
-def test_mandatory_performance_and_browser_dependencies_remain_preparation_problems(world):
+def test_mandatory_performance_and_browser_dependencies_remain_unresolved(world):
     spec = pr_spec(world, "mandatory-coverage", 1, "code.py", implementation_environment="claude-cloud",
                    review={"criteria": ["performance"], "evidence": ["browser"]})
     result = selected(world, spec)
