@@ -42,8 +42,10 @@ SPLITS = ("train", "validation", "calibration")
 # `coverage` reads every passage: 4,844 at p95, 40% over 4,096, so it takes ModernBERT's
 # whole 8,192 (owner, 2026-10-15), one question a micro-batch to fit the L4.
 MAX_LEN = {"useful": 2048, "coverage": 8192, "support": 1024,   # `support` views: 2,624 characters at most
+           # `joint` views (2026-10-18): train 844 tokens median, 5.4% over 2,048, longest 3,439.
+           "joint": 4096,
            **dict.fromkeys(("route", "source", "conflict", "redirect", "ask", "analysis", "progress"), 1024)}
-MICRO_BATCH = {"coverage": 1}   # others 4; accumulation keeps the effective batch at 64
+MICRO_BATCH = {"coverage": 1, "joint": 2}   # others 4; accumulation keeps the effective batch at 64
 
 
 def base_dir(name: str = "typed") -> str:
@@ -86,8 +88,10 @@ def pack(*kinds: str) -> Path:
         for f in sorted(HERE.glob("*.py")):
             if not f.name.startswith("test_"):
                 z.write(f, f"laya/{f.name}")
-        # `support` is scored as the coverage answers it makes (`support.evaluate`).
-        extra = [("coverage", "validation")] if "support" in kinds and "coverage" not in kinds else []
+        # `support` and `joint` are scored as the coverage answers they make (`support.evaluate`,
+        # `joint.evaluate`); `joint` over a support run's picks.
+        extra = [("coverage", "validation")] if {"support", "joint"} & set(kinds) and "coverage" not in kinds else []
+        extra += [("joint", "picks")] if "joint" in kinds else []
         for kind, split in [(k, s) for k in kinds for s in SPLITS] + extra:
             path = DATA / kind / f"{split}.jsonl"
             if path.exists():

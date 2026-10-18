@@ -25,7 +25,9 @@ PASSAGE = ("useful", "conflict", "redirect", "support")
 # Kinds whose question counts only the passages in `complete_passages` (`coverage_r0`: do
 # the listed passages state r0). The view is the question's own contract and a shorter
 # input; it did not change accuracy (0.694 against 0.722, run 20261016-023112).
-LISTED = ("coverage",)
+# `joint_r0` (`laya/joint.py`, not a production question): do the passages support read as
+# part state r0 together. Its rows are stored with only those passages, all listed.
+LISTED = ("coverage", "joint")
 VIEWED = PASSAGE + LISTED
 
 

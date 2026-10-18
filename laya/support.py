@@ -161,6 +161,19 @@ def held_rows(rows: list[dict]) -> list[dict]:
     return out
 
 
+def held_for(split: str) -> list[dict]:
+    """The rows a `split` candidate must not be near: every gate state, and for train also
+    every validation and calibration coverage state."""
+
+    reserved = gate.reserved()
+    held = [r for r in read(gate.POOL) if r["state_hash"] in reserved]
+    if reserved - {r["state_hash"] for r in held}:
+        sys.exit(f"gate states are missing from {gate.POOL.name}; run laya/pool.py first")
+    if split != "validation" and split != "calibration":
+        held += [r for s in ("validation", "calibration") for r in read(DATA / "coverage" / f"{s}.jsonl")]
+    return held
+
+
 def derive(rows: list[dict], n: int, seed: int = 0, held=(), drawn=None, asked_before=()) -> list[dict]:
     """Candidate rows holding at most `n` `support` questions, one row per view (two
     requirements asked of one passage share it), from `drawn` (`pairs` of `rows` by
@@ -360,12 +373,7 @@ def main() -> None:
     out = DATA / KIND / (f"{a.split}-wide.candidates.jsonl" if a.how == "widen" else f"{a.split}.candidates.jsonl")
     if out.exists():
         sys.exit(f"{out} exists; move it aside first")
-    reserved = gate.reserved()
-    held = [r for r in read(gate.POOL) if r["state_hash"] in reserved]
-    if reserved - {r["state_hash"] for r in held}:
-        sys.exit(f"gate states are missing from {gate.POOL.name}; run laya/pool.py first")
-    if a.split != "validation" and a.split != "calibration":
-        held += [r for s in ("validation", "calibration") for r in read(DATA / "coverage" / f"{s}.jsonl")]
+    held = held_for(a.split)
     if a.how == "derive":
         drawn = derive(read(DATA / "coverage" / f"{a.split}.jsonl"), a.n, a.seed, held)
     elif a.how == "widen":

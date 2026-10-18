@@ -15,7 +15,8 @@ RTX 3080.
   does not matter (L2), if stage 1 found its requirements met; otherwise
   the default layout with options shuffled per example. fp16, gradient
   checkpointing, micro-batch 4 with 16 accumulation steps (an effective
-  batch of 64) to fit the L4; `coverage` takes 1 with 64 (`MICRO_BATCH`).
+  batch of 64) to fit the L4; `coverage` takes 1 with 64 and `joint` 2 with
+  32 (`MICRO_BATCH`).
   `finetune` scores `eval_data` 16 questions a batch in FP32 whatever the
   micro-batch, so a one-question kind's validation is scored only by
   `score` (`Agent.predict`), not inside `finetune`.
@@ -133,6 +134,33 @@ a time instead, the shape `useful` learned.
     of coverage's validation questions (about 1,980 more). The support
     validation then measures the population coverage is scored on, not 17
     alls.
+- With aug5 (every unasked listed passage of coverage train, owner,
+  2026-10-17), coverage made from support decides 52% at 0.842. Applied to the
+  support labels themselves, `decide` settles only 78 of 219: 55 of the 103
+  covered requirements have no passage labelled all. Their passages each
+  state part, and only together the whole.
+
+### Parts together (owner, 2026-10-18)
+
+- Kind `joint` (`laya/joint.py`, not a production question): do these passages,
+  taken together, state everything requirement r asks for (yes or no). Its
+  view is the state with only those passages, all listed (a `LISTED` kind
+  stored with its view). It trains at 4,096 tokens: train views are 844
+  tokens at the median, 5.4% over 2,048, and 3,439 at most.
+- The coverage answer becomes:
+  - support's yes or no, when it gives one;
+  - otherwise joint's answer over the passages support read as part.
+- Candidates come from the support labels of each split's unchanged
+  one-passage views; trimmed and restated views are not read. Each coverage
+  question with a passage labelled part gives those passages (`parts`). Train
+  also gives them less one part (`fewer`), and with one passage labelled none
+  added (`padded`): support's own picks miss and add passages. That makes
+  2,791 train questions, 111 validation and 27 calibration, labelled by guided
+  labelling. Each passage already passed support's check against held views.
+- `joint picks <support result zip>` keeps a support run's coverage records
+  with the passages it read as part. The notebook scores the chosen `joint`
+  run on them (`joint.evaluate`), so the support checkpoint is not needed on
+  Colab.
 
 ## Calibration and policy
 
