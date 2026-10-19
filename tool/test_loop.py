@@ -169,6 +169,7 @@ class Reviewer:
 
     def __init__(self, path, tools="", system="", model="", effort="", **rest):
         self.path, self.tools, self.model, self.effort, self.rest = Path(path), tools, model, effort, rest
+        self.system = system
         self.verification = rest.get("verification")
         self._env = rest.get("env", {})
         self.is_codex, self.session_id, self.alive, self.heard = model.startswith("codex:"), None, True, []
@@ -1080,22 +1081,52 @@ def test_a_provider_safety_refusal_stops_and_resumes_in_a_new_conversation(world
     assert specs.load("proj", spec["id"])["state"] == "머지 가능"
 
 
+def test_a_refused_review_resumes_in_a_new_review_conversation_from_its_handoff(world, monkeypatch):
+    spec = pr_spec(world, "review-refused", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    refusal = "This request was blocked by our safety systems. Reason: Potentially unintended activity."
+    say, calls = Reviewer.say, []
+
+    def refused(cell, text, halt=None):
+        calls.append(text)
+        if len(calls) == 2:   # round 2's first turn
+            yield Event("error", refusal, {})
+            return
+        yield from say(cell, text, halt)
+
+    monkeypatch.setattr(Reviewer, "say", refused)
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [fixed((finding, "fixed"))]
+    stopped = looped(spec["id"])
+    assert stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value and len(calls) == 2
+    kept = loop.folder("proj", 7)
+    assert not (kept / "session.json").exists()
+    handoff = (kept / "handoff.md").read_text(encoding="utf-8")
+    assert refusal in handoff and f'"id": "{spec["id"]}"' in handoff and finding in handoff
+
+    client().post(f"/api/specs/{spec['id']}/resume", json={}).raise_for_status()
+    waited(lambda: not loop._loops)
+    fresh = Reviewer.made[-1]
+    assert fresh is not Reviewer.made[0] and handoff in fresh.system
+    assert specs.load("proj", spec["id"])["state"] == "머지 가능"
+
+
 def test_a_compaction_restates_the_unfinished_spec_into_the_running_turn(world, monkeypatch):
     spec = pr_spec(world, "repair-compacted", 7)
     finding = "[P1] a.txt:1 — wrong path"
-    say = Worker.say
+    for cls in (Worker, Reviewer):
+        def compacting(cell, text, halt=None, say=cls.say):
+            yield Event("compaction", "Context compaction completed", {"phase": "completed"}, cell.id)
+            yield from say(cell, text, halt)
 
-    def compacting(worker, text, halt=None):
-        yield Event("compaction", "Context compaction completed", {"phase": "completed"}, worker.id)
-        yield from say(worker, text, halt)
-
-    monkeypatch.setattr(Worker, "say", compacting)
-    monkeypatch.setattr(Worker, "steer", lambda worker, text: worker.heard.append(text) or True, raising=False)
+        monkeypatch.setattr(cls, "say", compacting)
+        monkeypatch.setattr(cls, "steer", lambda cell, text: cell.heard.append(text) or True, raising=False)
     Reviewer.replies = [deny(finding), allow]
     Worker.replies = [fixed((finding, "fixed"))]
     assert looped(spec["id"])["state"] == "머지 가능"
-    restated = [t for w in Worker.made for t in w.heard if t.startswith("The context was just compacted.")]
-    assert restated and all(f'"id": "{spec["id"]}"' in t for t in restated)
+    for made in (Worker.made, Reviewer.made):
+        restated = [t for c in made for t in c.heard if t.startswith("The context was just compacted.")]
+        assert restated and all(f'"id": "{spec["id"]}"' in t for t in restated)
 
 
 @pytest.mark.parametrize("stored", ["pending", "partial", "stale"])

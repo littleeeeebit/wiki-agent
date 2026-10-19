@@ -989,11 +989,15 @@ def system(path: Path) -> str:
     after a restart still has it."""
 
     spec = owner(path)
-    if spec is None:
-        return ""
+    return "" if spec is None else SPEC_PROMPT.rstrip() + "\n\n" + brief(spec)
+
+
+def brief(spec: dict) -> str:
+    """The spec's fields as the agents read them: the implementer and the reviewer."""
+
     shown = {**{k: spec[k] for k in ("id", "rev", "goal", "out", "done", "grounds", "decisions")},
              **profile_of(spec), **({"review": spec["review"]} if spec.get("review") else {})}
-    return SPEC_PROMPT.rstrip() + "\n\n```json\n" + json.dumps(shown, ensure_ascii=False, indent=2) + "\n```\n"
+    return "```json\n" + json.dumps(shown, ensure_ascii=False, indent=2) + "\n```\n"
 
 
 def note(run, text: str) -> None:

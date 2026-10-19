@@ -108,8 +108,8 @@
     },
     "tool/main/loop.py": {
       "dup": 0,
-      "lines": 2644,
-      "reason": "A provider safety refusal of a review or repair turn stops the loop for the person instead of being resent into the same thread, where #67 R2 was refused again at its compaction (seven lines; the pattern lives in `work`). Before that:The poller takes `_landing` without waiting and retries the next minute: a clicked merge holds it through its minutes-long `.omm` analysis, and waiting on it stalled every repository's loop reattach and cleanup."
+      "lines": 2679,
+      "reason": "A provider safety refusal of a review or repair turn stops the loop for the person instead of being resent into the same thread, where #67 R2 was refused again at its compaction; a refused review conversation is left for a new one that starts from a handoff (`refused_cell`), and each review compaction restates the spec (forty-two lines). Before that:The poller takes `_landing` without waiting and retries the next minute: a clicked merge holds it through its minutes-long `.omm` analysis, and waiting on it stalled every repository's loop reattach and cleanup."
     },
     "tool/main/planning.py": {
       "dup": 18,
@@ -128,8 +128,8 @@
     },
     "tool/main/specs.py": {
       "dup": 0,
-      "lines": 1489,
-      "reason": "Stage 4 uses existing Windows job ownership for gate cancellation and attempt-owned setup lifetime, with bounded cleanup timeout."
+      "lines": 1501,
+      "reason": "`brief` splits the spec block out of `system` so the reviewer's handoff and post-compaction restatement read the same spec as the implementer (four lines; main already stood at 1497 with no reason recorded). Before that: Stage 4 uses existing Windows job ownership for gate cancellation and attempt-owned setup lifetime, with bounded cleanup timeout."
     },
     "tool/main/verification.py": {
       "dup": 12,
@@ -218,8 +218,8 @@
     },
     "tool/test_loop.py": {
       "dup": 19,
-      "lines": 2375,
-      "reason": "Pins that a provider safety refusal of a repair turn is sent once, stops for the person and resumes in a new conversation with its handoff, and that a compaction restates the unfinished spec (#67 R2)."
+      "lines": 2406,
+      "reason": "Pins that a provider safety refusal of a repair or review turn is sent once, stops for the person and resumes in a new conversation with its handoff, and that a compaction of either restates the unfinished spec (#67 R2)."
     },
     "tool/test_main.py": {
       "dup": 61,
