@@ -226,7 +226,8 @@ def test_verification_artifacts_and_child_scratch_use_native_temp(cloud_world, m
     monkeypatch.setattr(verification.tempfile, "tempdir", str(inherited))
     record = verification.execute(world.repo, spec, path, head, base, threading.Event())["local_verification"]
     assert record["state"] == "runtime_passed" and Path(record["artifact_dir"]).is_relative_to(native)
-    assert Path((Path(record["artifact_dir"]) / "scratch-root").read_text(encoding="utf-8")) == native
+    # the gate's own folder under the native TEMP (#172), never the inherited TMPDIR
+    assert Path((Path(record["artifact_dir"]) / "scratch-root").read_text(encoding="utf-8")) == native / "wiki-agent-gate"
 
 
 @pytest.mark.skipif(os.name != "nt", reason="Windows temporary directory policy")
