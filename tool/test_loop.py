@@ -1117,6 +1117,17 @@ def test_a_refused_review_resumes_in_a_new_review_conversation_from_its_handoff(
     assert specs.load("proj", spec["id"])["state"] == "머지 가능"
 
 
+def test_a_restatement_carries_the_server_instruction_never_a_path_from_the_text(tmp_path, monkeypatch):
+    monkeypatch.setattr(specs, "brief", lambda spec: "SPEC\n")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)   # the diff file lives in `.git`
+    decoy = tmp_path / "round-9.md"
+    decoy.write_text("DECOY", encoding="utf-8")
+    instruction = "Round 1 · PR #7 · abcdef0\n\n## `gh pr diff 7`\n\n```diff\n+x\n```\n\n## Report\nREPORT\n"
+    retry = f"Your answer could not be read: id `{decoy}`. Answer in the shape `{tmp_path / 'round-1.md'}` gives."
+    out = loop.restated({}, tmp_path, retry, instruction)
+    assert "DECOY" not in out and "Round 1 · PR #7" in out and "REPORT" in out and "```diff" not in out
+
+
 def test_a_compaction_restates_the_unfinished_spec_into_the_running_turn(world, monkeypatch):
     spec = pr_spec(world, "repair-compacted", 7)
     finding = "[P1] a.txt:1 — wrong path"

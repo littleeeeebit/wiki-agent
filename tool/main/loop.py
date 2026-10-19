@@ -530,20 +530,16 @@ def reviewer(chat: ChatSession) -> dict:
             "tools": chat.tools, "mode": "cloud-verification" if getattr(chat, "verification", None) else "read-only"}
 
 
-def restated(spec: dict, path: Path, text: str) -> str:
-    """A review turn's own instruction after a compaction, the spec first. The
-    reviewer cannot read the recorded round file (`read_tools` reads tracked
-    source only), so it comes back whole except the diff, which the tools
-    the instruction names read again. A format retry only names the round
-    file, so the server reads it for the reviewer."""
+def restated(spec: dict, path: Path, text: str, instruction: str = "") -> str:
+    """A review turn's own text after a compaction, the spec first, and the
+    round's `instruction` as the server wrote it when the text does not carry
+    it — a format retry only names the round file. The reviewer cannot read
+    that file (`read_tools` reads tracked source only), and a path is never
+    taken from the text, which holds model-written words. The diff is left
+    out; the tools the instruction names read it again."""
 
-    named = re.search(r"`([^`]*round-\d+\.md)`", text)
-    try:
-        recorded = Path(named[1]).read_text(encoding="utf-8") if named else ""
-    except OSError:
-        recorded = ""
-    if recorded and recorded not in text:
-        text += "\n\n" + recorded
+    if instruction not in text:
+        text += "\n\n" + instruction
     before, cut, after = text.partition("\n## `gh pr diff ")
     report = after[after.find("\n## Report"):] if "\n## Report" in after else ""
     return ("The context was just compacted. The spec under review and this turn's instruction are restated "
@@ -831,7 +827,7 @@ def wait_hold(loop: Loop, path: Path):
     return None
 
 
-def ask(loop: Loop, chat: ChatSession, text: str) -> str:
+def ask(loop: Loop, chat: ChatSession, text: str, instruction: str = "") -> str:
     """One turn of the review cell: its final answer, or `RuntimeError`."""
 
     final, failed = "", ""
@@ -855,7 +851,7 @@ def ask(loop: Loop, chat: ChatSession, text: str) -> str:
             if verification.cloud(spec):
                 payload = verification.sanitize(payload, redaction)
             run.put(payload)
-            if ev.kind == "compaction" and ev.meta.get("phase") == "completed" and chat.steer(restated(spec, path, text)):
+            if ev.kind == "compaction" and ev.meta.get("phase") == "completed" and chat.steer(restated(spec, path, text, instruction)):
                 run.put({"kind": "tool", "text": "압축 뒤 명세를 다시 넣었다", "meta": {}, "session_id": chat.id,
                          "parent_id": None})
             if ev.kind == "done":
@@ -1404,7 +1400,7 @@ def step(loop: Loop) -> bool:
     parsed, why, ask_for = None, "", f"Review the instruction below (recorded at `{order}`):\n\n{review_instruction}"
     for _ in range(2):
         try:
-            answer = ask(loop, chat, ask_for)
+            answer = ask(loop, chat, ask_for, review_instruction)
         except RuntimeError as exc:
             if loop.halt.is_set():
                 return False
