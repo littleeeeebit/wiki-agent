@@ -179,7 +179,7 @@ Published benchmark numbers are not forecasts for this repository.
 | 8 | [Agent decisions](8-agent-decisions.md) | Server-owned choices, preconditions, execution, and outcomes | Done |
 | 9 | [Product and observability](9-product-observability.md) | Settings, map paths, evidence, trace, reconnection, and cost | Done |
 | 10 | [Evaluation and rollout](10-evaluation-rollout.md) | Ablations, live evaluation, window checks, and reversible activation | In progress — held-out, English only: all seven gates of `gates.json` version 3 pass and the repetition subset ran; the app runs active for every project; window checks remain |
-| 11 | [Question shape](11-question-shape.md) | Ask Jev the way its documentation says it works, old against new on the same labelled cases | In progress — measured: B (direct wording) adopted, 83.5 → 44.5 policy cost; A, C, D rejected. B into production and refit remain |
+| 11 | [Question shape](11-question-shape.md) | Ask Jev the way its documentation says it works, old against new on the same labelled cases | In progress — B (direct wording) adopted, A, C, D rejected; production asks B's questions, refit 88.5 → 47.0, all seven held-out gates pass; merge is the switch |
 
 Implement in order. Evaluation fixtures start in stage 1 and accumulate results
 throughout; measurement does not wait until stage 10. Each stage is a reviewable

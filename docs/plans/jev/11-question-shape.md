@@ -145,11 +145,38 @@ no stay no. B's coverage gate run stopped at the cap and is incomplete, so
 it is not compared. A shows Jev judges a passage better beside the others
 than alone.
 
+## Adoption (step 3, 2026-10-19)
+
+- Production asks B's questions (`PROMPTS`; conflict as two questions,
+  combined by `knowledge.conflicted` where the judge reads it). The
+  calibration scores are B's answers, not a new collection: each of
+  production's 172 requests is byte-identical to one B sent (the wire
+  digests in `raw/eval/jev/arms.journal.jsonl`). Refit on all of B's
+  answers: policy cost 88.5 → 47.0 (source 37.5 → 20, conflict 34.5 → 14,
+  coverage 2 → 1, repair 5 → 3, redirect 2.5 → 2), no kind rose.
+- The smoke-03 replay tape was recorded again: its bridge question's
+  coverage is 0.8 with the requirement quoted, ready in the first round,
+  where by id it was 0.61–0.64 and ended partial.
+- Held-out gates (`gates.json` v3), the fifth run's options (English, A and
+  D, answer level): all seven pass (`raw/eval/jev/report-heldout-b.json`).
+  D's coverage 0.892 → 0.967, D − A −0.033 [−0.075, 0.0]; fixed grading's
+  false rejection 0 of 57 with no uncertain (was 3), false acceptance
+  0.0152 (was 0.0102); decision quality 1.0. D's unsupported claims are
+  8 of 171 (0.047, was 0). All 8 are in three rows that abstained in the
+  fifth run and since #112 (2026-10-11) publish a fallback answer marked
+  unverified. B does not cause them. Spent 672,419 Jev tokens and USD 7.21.
+- `origin/main` (#183, `loop.py` and `verify.py` only) was merged into the
+  branch during the run, so the arms ran at `85ffb7d` and fixed and actions
+  at `599d8e8`. `report.py` refuses runs of different commits. The owner
+  accepted the report built with only that check relaxed; every other
+  manifest field is the same.
+- Rollback: revert the PR. Prompts, scores and policy go back together.
+
 ## Steps
 
 | # | Step | Status |
 | --- | --- | --- |
 | 1 | Wording for arms A–D, reviewed | Done — reviewed, PR #182 |
 | 2 | Collect each arm on the calibration split and the coverage gate states; compare | Done — B adopted; A, C, D rejected (Results) |
-| 3 | Refit the policy on the adopted arms; held-out gates | In progress — B's wording into production |
-| 4 | Production switch through the existing modes, reversible per kind | Planned |
+| 3 | Refit the policy on the adopted arms; held-out gates | Done — refit 88.5 → 47.0; all seven held-out gates pass (Adoption) |
+| 4 | Production switch through the existing modes, reversible per kind | In progress — the switch is this PR's merge (the prompts are code, not a mode); rollback is its revert |
