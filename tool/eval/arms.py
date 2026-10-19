@@ -30,12 +30,14 @@ coverage gate states (Laya stage 6) against Jev's answers recorded there
 so `direct`'s gate numbers carry part of `view`'s change too and are a
 diagnostic, the calibration split the measure.
 
-`--collect` appends each answer to `raw/eval/jev/arms-<arm>.journal.jsonl`
-as it arrives, so a stop or a failure keeps what was paid for and a rerun
-asks only the rest. `--tokens` caps the arm's total, journal included: a
-request is sent only when its `bound` fits in what is left. The record goes
-to `raw/eval/jev/arms-<arm>-<timestamp>.json`; an incomplete one is never
-compared.
+`--collect` appends each outcome to `raw/eval/jev/arms-<arm>.journal.jsonl`
+as it arrives, failures with what they cost, so a stop or a failure keeps
+what was paid for and a rerun asks only the rest. `--tokens` caps the
+arm's total, journal included: a request is sent only when its reservation
+(`bound`) fits in what is left. Jev takes no output limit, so the
+reservation's output part is an estimate; a response past it stops the run.
+The record goes to `raw/eval/jev/arms-<arm>-<timestamp>.json`; an
+incomplete one is never compared.
 """
 
 from __future__ import annotations
@@ -274,57 +276,94 @@ def compared(old: dict, new: dict) -> dict:
 
 
 def bound(size: int, questions: int, overhead: int, per_question: float) -> int:
-    """At most what one request costs: every token carries at least one byte of what is sent,
-    beside Jev's own instructions (`overhead`), and the output is taken as up to twice the
-    largest per question seen."""
+    """What one request is reserved before it is sent: a token per byte of its body, Jev's
+    own instructions (`overhead`), and twice the largest output per question seen. An
+    estimate: Jev takes no output limit, so a response past it stops the run (`asked`)."""
 
     return size + overhead + int(2 * per_question * questions) + 1
 
 
-def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, journal: Path) -> dict:
-    """Every item's requests, each answer appended to `journal` as it arrives; a request is sent
-    only when its `bound` fits in what is left of `limit`, journal included. Requests already
-    in the journal are read back, not asked again."""
+def journalled(journal: Path) -> list[dict]:
+    """The journal's entries. A last line cut off mid-write is dropped, and one written whole
+    but for its newline gets it, so the next append starts a line of its own."""
 
-    done = {}
-    if journal.exists():
-        for line in journal.read_text(encoding="utf-8").splitlines():
-            entry = json.loads(line)
-            done[entry["digest"]] = entry
-    spent = sum(e["input_tokens"] + e["output_tokens"] for e in done.values())
+    if not journal.exists():
+        return []
+    text = journal.read_text(encoding="utf-8")
+    lines = text.split("\n")
+    if lines[-1]:
+        try:
+            json.loads(lines[-1])
+            journal.write_text(text + "\n", encoding="utf-8")
+        except json.JSONDecodeError:
+            lines[-1] = ""
+            journal.write_text("\n".join(lines), encoding="utf-8")
+    return [json.loads(line) for line in lines if line]
+
+
+def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, journal: Path) -> dict:
+    """Every item's requests, each outcome appended to `journal` as it arrives: an answer, or a
+    failure with what it cost (its reported usage, else its reservation once sent). A request
+    is sent only when its `bound` fits in what is left of `limit`, journal included; a response
+    past its reservation stops the run. Answers already in the journal are read back for the
+    same body, model included, and failed requests are asked again."""
+
+    paid = journalled(journal)
+    done = {e["digest"]: e for e in paid if "answers" in e}
+    spent = sum(e["input_tokens"] + e["output_tokens"] for e in paid)
     overhead = max([SEED_OVERHEAD] + [e["input_tokens"] - e["bytes"] for e in done.values()])
     per_question = max([SEED_OUTPUT] + [e["output_tokens"] / e["questions"] for e in done.values()])
     budget = Budget(seconds=None, calls=None, candidates=0)
     answers: dict[str, dict] = {}
-    complete = True
+    stopped = False
+
+    def keep(entry):
+        with journal.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+
     for key, reqs in items:
         for kind, state, questions, *tag in reqs:
-            sent = {"state": state, "questions": {n: q["question"] for n, q in questions.items()}}
-            body = json.dumps(sent, ensure_ascii=False, sort_keys=True).encode()
+            asking = {n: q["question"] for n, q in questions.items()}
+            body = decision.wire(cfg.model, state, asking)
             digest = hashlib.sha256(body).hexdigest()[:24]
             if digest not in done:
                 most = bound(len(body), len(questions), overhead, per_question)
-                if not complete or spent + most > limit:
-                    complete = False
+                if stopped or spent + most > limit:
+                    stopped = True
                     continue
                 trace: list[dict] = []
-                got = decision.evaluate(cfg, state, sent["questions"], trace, budget, f"arms:{kind}")
-                usage = trace[-1].get("usage") or {}
-                # A response that reports no count is charged its bound: nothing spent goes uncounted.
-                entry = {"digest": digest, "key": key, "kind": kind, "answers": got, "bytes": len(body),
-                         "questions": len(questions), "model": trace[-1].get("model"),
-                         "input_tokens": usage.get("input_tokens", most), "output_tokens": usage.get("output_tokens", 0)}
-                with journal.open("a", encoding="utf-8") as f:
-                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                base = {"digest": digest, "key": key, "kind": kind, "bytes": len(body), "questions": len(questions)}
+                try:
+                    got = decision.evaluate(cfg, state, asking, trace, budget, f"arms:{kind}")
+                except Exception as error:
+                    last = trace[-1] if trace else {}
+                    usage = last.get("usage")
+                    counted = isinstance(usage, dict) and all(type(usage.get(k)) is int
+                                                              for k in ("input_tokens", "output_tokens"))
+                    cost = ((usage["input_tokens"], usage["output_tokens"]) if counted else
+                            (most, 0) if last.get("sent") else (0, 0))
+                    keep({**base, "failed": getattr(error, "category", type(error).__name__),
+                          "input_tokens": cost[0], "output_tokens": cost[1]})
+                    raise
+                usage = trace[-1]["usage"]
+                entry = {**base, "answers": got, "model": trace[-1].get("model"),
+                         "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"]}
+                keep(entry)
                 done[digest] = entry
                 spent += entry["input_tokens"] + entry["output_tokens"]
                 overhead = max(overhead, entry["input_tokens"] - entry["bytes"])
                 per_question = max(per_question, entry["output_tokens"] / entry["questions"])
+                if entry["input_tokens"] + entry["output_tokens"] > most:
+                    stopped = True   # past its reservation: nothing more is sent on this estimate
             prefix = tag[0] if tag else ""
             answers.setdefault(key, {}).update({prefix + n: v for n, v in done[digest]["answers"].items()})
-    used = list(done.values())
-    return {"answers": answers, "complete": complete, "model": used[-1]["model"] if used else cfg.model,
-            "costs": {"requests": len(used), "input_tokens": sum(e["input_tokens"] for e in used),
+    used = journalled(journal)
+    asked_for = {e["digest"] for e in done.values()}
+    return {"answers": answers, "complete": not stopped and spent <= limit,
+            "model": next((e["model"] for e in reversed(used) if e.get("model")), cfg.model),
+            "costs": {"requests": len(used), "answered": len(asked_for),
+                      "failed": sum("failed" in e for e in used),
+                      "input_tokens": sum(e["input_tokens"] for e in used),
                       "output_tokens": sum(e["output_tokens"] for e in used), "limit": limit}}
 
 

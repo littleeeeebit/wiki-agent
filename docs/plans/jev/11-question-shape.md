@@ -102,13 +102,19 @@ Jev's price is unknown, so the allowance is in Jev tokens.
   A about 360,000 and B about 445,000 at most. Order: the calibration
   arms, then A on the gate, then B on the gate only with what remains of
   the allowance.
-- `--tokens` caps an arm's total, its journal included. A request is sent
-  only when its bound fits in what is left: its bytes (a token carries at
-  least one byte), Jev's own instructions (at most 736 tokens a request on
-  the recorded side, taken as 4,000 until measured) and twice the largest
-  output per question seen (200 until measured). The input part holds by
-  construction; the output part is an assumption the journal checks after
-  each answer. A response that reports no count is charged its bound.
+- `--tokens` caps an arm's total, its journal included, failed requests
+  too. A request is sent only when its reservation fits in what is left:
+  a token per byte of the body as sent, Jev's own instructions (at most 736
+  tokens a request on the recorded side, if they are the same in every
+  request; taken as 4,000 until measured) and twice the largest output per
+  question seen (200 until measured). This is an estimate, not a guarantee:
+  Jev takes no output limit and its tokenizer is not ours to check. A
+  response past its reservation stops the run, and its record is never
+  compared. A failed request is charged its reported usage, or its
+  reservation once sent.
+- So the allowance holds with room: the runs' `--tokens` add up to at most
+  900,000, leaving 100,000 of the approved 1,000,000 for one response past
+  its reservation.
 
 ## Steps
 

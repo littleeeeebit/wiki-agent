@@ -90,35 +90,83 @@ def test_jev_arm_answers_combine_in_code_as_the_workflow_reads_them():
     assert risen["risen"] == ["redirect"] and not risen["adopted"]
 
 
-def test_a_jev_arm_never_passes_its_tokens_and_keeps_what_it_paid_for(tmp_path, monkeypatch):
-    from types import SimpleNamespace
-
+def test_a_jev_arm_reserves_before_it_sends_and_keeps_what_it_paid_for(tmp_path, monkeypatch):
+    import decision
     from eval import arms
 
-    sent = []
+    sent, replies = [], {}
 
-    def evaluate(cfg, state, questions, trace, budget, stage):
-        sent.append(state["n"])
-        trace.append({"model": "m", "usage": None if state["n"] == 2 else {"input_tokens": 300, "output_tokens": 50}})
-        return {name: 0.5 for name in questions}
+    def send(key, body, timeout, cancel, dispatched=None):
+        request = json.loads(body)
+        sent.append(request["state"]["n"])
+        if dispatched:
+            dispatched()
+        return replies.get(request["state"]["n"], {
+            "model": request["model"], "usage": {"input_tokens": 300, "output_tokens": 50},
+            "answers": {n: {"type": "noul", "noul": 0.5} for n in request["questions"]}})
 
-    monkeypatch.setattr(arms.decision, "evaluate", evaluate)
+    # The real transport's checks, only the network stubbed.
+    monkeypatch.setattr(decision, "send", send)
+    cfg = decision.Config(mode="active", model="m", key_source="file", key="k")
     q = {"x": {"question": {"type": "noul", "instructions": "?"}}}
-    items = [(f"k{n}", [("judge", {"n": n}, q)]) for n in range(3)]
-    size = len(json.dumps({"state": {"n": 0}, "questions": {"x": q["x"]["question"]}}, sort_keys=True).encode())
-    most = arms.bound(size, 1, arms.SEED_OVERHEAD, arms.SEED_OUTPUT)
-    journal, cfg = tmp_path / "j.jsonl", SimpleNamespace(model="m")
-    # Room for one request's bound, not two: the second is never sent.
-    got = arms.asked(cfg, items, most + 100, journal)
+
+    def items(*ns):
+        return [(f"k{n}", [("judge", {"n": n}, q)]) for n in ns]
+
+    most = arms.bound(len(decision.wire("m", {"n": 0}, {"x": q["x"]["question"]})), 1, arms.SEED_OVERHEAD,
+                      arms.SEED_OUTPUT)
+    journal = tmp_path / "j.jsonl"
+    # Room for one reservation, not two: the second is never sent.
+    got = arms.asked(cfg, items(0, 1, 2), most + 100, journal)
     assert sent == [0] and not got["complete"] and list(got["answers"]) == ["k0"]
-    assert got["costs"]["input_tokens"] + got["costs"]["output_tokens"] <= most + 100
-    assert len(journal.read_text(encoding="utf-8").splitlines()) == 1
-    # A rerun reads back what was paid for and asks only the rest; no count is charged its bound.
-    got = arms.asked(cfg, items, 10**6, journal)
+    # A rerun reads back what was paid for and asks only the rest.
+    got = arms.asked(cfg, items(0, 1, 2), 10**6, journal)
     assert sent == [0, 1, 2] and got["complete"] and sorted(got["answers"]) == ["k0", "k1", "k2"]
-    entries = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
-    assert [e["input_tokens"] for e in entries][:2] == [300, 300] and entries[2]["input_tokens"] >= size
-    assert arms.asked(cfg, items, 0, journal)["complete"] and sent == [0, 1, 2]
+    assert arms.asked(cfg, items(0, 1, 2), 10**6, journal)["complete"] and sent == [0, 1, 2]
+    # The same body is the same request; options in another order, or another model, are
+    # another (PR #182 review): the digest reads the body as sent, unsorted.
+    first, flipped = (decision.choice("Which?", dict.fromkeys(o)) for o in (("s", "b"), ("b", "s")))
+    assert decision.wire("m", {}, {"r": first}) != decision.wire("m", {}, {"r": flipped})
+    arms.asked(cfg, [("again", [("judge", {"n": 0}, q)])], 10**6, journal)
+    assert sent == [0, 1, 2]
+    arms.asked(decision.Config(mode="active", model="other", key_source="file", key="k"), items(0), 10**6, journal)
+    assert sent == [0, 1, 2, 0]
+
+    # A failure keeps what it cost: its reported usage, else its reservation once sent.
+    replies[5] = {"model": "m", "usage": {"input_tokens": 300, "output_tokens": 50}, "answers": {}}
+    replies[6] = {"model": "m", "usage": None, "answers": {"x": {"type": "noul", "noul": 0.5}}}
+    failed = tmp_path / "failed.jsonl"
+    for n in (5, 6):
+        with pytest.raises(decision.JevError):
+            arms.asked(cfg, items(n), 10**6, failed)
+    entries = [json.loads(line) for line in failed.read_text(encoding="utf-8").splitlines()]
+    assert [(e["failed"], e["input_tokens"] + e["output_tokens"]) for e in entries] == \
+        [("invalid_response", 350), ("invalid_response", most)]
+    del replies[5]
+    got = arms.asked(cfg, items(5), 10**6, failed)
+    assert sent[-1] == 5 and got["costs"]["failed"] == 2 and \
+        got["costs"]["input_tokens"] + got["costs"]["output_tokens"] == 350 + most + 350, "asked again, all counted"
+
+    # A response past its reservation stops the run and the record is incomplete.
+    replies[7] = {"model": "m", "usage": {"input_tokens": 1, "output_tokens": 10**6},
+                  "answers": {"x": {"type": "noul", "noul": 0.5}}}
+    got = arms.asked(cfg, items(7, 8), 10**7, tmp_path / "over.jsonl")
+    assert sent[-1] == 7 and not got["complete"] and list(got["answers"]) == ["k7"]
+
+
+def test_a_jev_arm_journal_survives_a_torn_last_line(tmp_path):
+    from eval import arms
+
+    journal = tmp_path / "j.jsonl"
+    whole = json.dumps({"digest": "d", "answers": {}, "input_tokens": 1, "output_tokens": 1})
+    journal.write_text(whole + "\n" + '{"digest": "torn', encoding="utf-8")
+    assert [e["digest"] for e in arms.journalled(journal)] == ["d"]
+    assert journal.read_text(encoding="utf-8") == whole + "\n"
+    journal.write_text(whole, encoding="utf-8")   # written whole but for its newline
+    assert len(arms.journalled(journal)) == 1 and journal.read_text(encoding="utf-8").endswith("\n")
+    journal.write_text("{broken\n" + whole + "\n", encoding="utf-8")
+    with pytest.raises(json.JSONDecodeError):
+        arms.journalled(journal)   # a finished line that does not read is an error, not a tail
 
 
 def test_a_jev_arm_compares_offline_on_the_real_split(tmp_path, capsys):
