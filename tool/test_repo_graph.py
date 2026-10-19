@@ -133,3 +133,29 @@ def test_a_line_reference_counts():
 def test_the_root_readme_is_the_way_in_not_an_orphan():
     data = repo_graph.build(repo({"README.md": "", "docs/README.md": ""}))
     assert data["orphans"] == ["docs/README.md"], "루트 README 만 입구다"
+
+
+def test_a_pr_worktree_writes_what_the_original_checkout_writes(tmp_path):
+    """Merge preparation builds in a PR worktree named after its branch, and
+    rfg_rag ignores `.wiki/decisions/`. The committed file flipped between
+    `rfg_rag` with the original's records and the branch name with none
+    (rfg_rag #70, F4)."""
+
+    def git(cwd, *args):
+        subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True)
+
+    root = repo({"docs/a.md": ""})
+    original = tmp_path / "rfg_rag"
+    root.rename(original)
+    (original / ".wiki" / ".gitignore").write_text("/decisions/\n", encoding="utf-8")
+    git(original, "init", "-q")
+    git(original, "add", "-A")
+    git(original, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init")
+    (original / ".wiki" / "decisions").mkdir()
+    (original / ".wiki" / "decisions" / "local.md").write_text("# local\n", encoding="utf-8")
+    branch = tmp_path / "retrieval-port-requirement-links"
+    git(original, "worktree", "add", "-q", "-b", "feature", str(branch))
+
+    built = [repo_graph.build(path) for path in (original, branch)]
+    assert built[0] == built[1]
+    assert built[0]["repo"] == "rfg_rag" and built[0]["counts"]["decisions"] == 0
