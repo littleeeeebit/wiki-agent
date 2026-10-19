@@ -169,6 +169,7 @@ class Reviewer:
 
     def __init__(self, path, tools="", system="", model="", effort="", **rest):
         self.path, self.tools, self.model, self.effort, self.rest = Path(path), tools, model, effort, rest
+        self.system = system
         self.verification = rest.get("verification")
         self._env = rest.get("env", {})
         self.is_codex, self.session_id, self.alive, self.heard = model.startswith("codex:"), None, True, []
@@ -1048,6 +1049,108 @@ def test_the_next_review_waits_for_a_complete_correction_and_published_head(worl
     assert complete["rounds"][1]["head"] == world.hub.head(7)
 
 
+def test_a_provider_safety_refusal_stops_and_resumes_in_a_new_conversation(world, monkeypatch):
+    spec = pr_spec(world, "repair-refused", 7)
+    finding = "[P0] a.txt:1 — history still holds records"
+    refusal = "This request was blocked by our safety systems. Reason: Potentially unintended activity."
+    say, refusals = Worker.say, [refusal]
+
+    def refused(worker, text, halt=None):
+        if refusals:
+            worker.heard.append(text)
+            yield Event("error", refusals.pop(), {}, worker.id)
+            return
+        yield from say(worker, text, halt)
+
+    monkeypatch.setattr(Worker, "say", refused)
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [fixed((finding, "fixed"))]
+    stopped = looped(spec["id"])
+    assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
+    assert "안전 정책" in stopped["stopped"]["detail"] and refusal in stopped["stopped"]["detail"]
+    assert sum(len(w.heard) for w in Worker.made) == 1
+    first = Worker.made[-1]
+
+    client().post(f"/api/specs/{spec['id']}/resume", json={}).raise_for_status()
+    waited(lambda: not loop._loops)
+    fresh = Worker.made[-1]
+    assert fresh is not first and fresh.session_id is None
+    assert fresh.system.startswith(specs.system(Path(spec["worktree"])))
+    assert "## Why this conversation is new" in fresh.system and refusal in fresh.system
+    assert "- Asked: Review round 1 refused the merge" in fresh.system
+    assert specs.load("proj", spec["id"])["state"] == "머지 가능"
+    # Past the screen's 200 rows the conversation keeps its handoff and its session.
+    path = Path(spec["worktree"])
+    for _ in range(101):
+        work.remember(path, "user", "continue")
+        work.remember(path, "assistant", "done", session_id="cli-1", provider="claude")
+    assert work.session(path, "", "") is fresh
+
+
+def test_a_refused_review_resumes_in_a_new_review_conversation_from_its_handoff(world, monkeypatch):
+    spec = pr_spec(world, "review-refused", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    refusal = "This request was blocked by our safety systems. Reason: Potentially unintended activity."
+    say, calls = Reviewer.say, []
+
+    def refused(cell, text, halt=None):
+        calls.append(text)
+        if len(calls) == 2:   # round 2's first turn
+            yield Event("error", refusal, {})
+            return
+        yield from say(cell, text, halt)
+
+    monkeypatch.setattr(Reviewer, "say", refused)
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [fixed((finding, "fixed"))]
+    stopped = looped(spec["id"])
+    assert stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value and len(calls) == 2
+    kept = loop.folder("proj", 7)
+    assert not (kept / "session.json").exists()
+    handoff = (kept / "handoff.md").read_text(encoding="utf-8")
+    assert refusal in handoff and f'"id": "{spec["id"]}"' in handoff and finding in handoff
+
+    client().post(f"/api/specs/{spec['id']}/resume", json={}).raise_for_status()
+    waited(lambda: not loop._loops)
+    fresh = Reviewer.made[-1]
+    assert fresh is not Reviewer.made[0] and handoff in fresh.system
+    assert specs.load("proj", spec["id"])["state"] == "머지 가능"
+
+
+def test_a_restatement_carries_the_server_instruction_never_a_path_from_the_text(tmp_path, monkeypatch):
+    monkeypatch.setattr(specs, "brief", lambda spec: "SPEC\n")
+    subprocess.run(["git", "init", "-q", str(tmp_path)], check=True)   # the diff file lives in `.git`
+    decoy = tmp_path / "round-9.md"
+    decoy.write_text("DECOY", encoding="utf-8")
+    instruction = "Round 1 · PR #7 · abcdef0\n\n## `gh pr diff 7`\n\n```diff\n+x\n```\n\n## Report\nREPORT\n"
+    retry = f"Your answer could not be read: id `{decoy}`. Answer in the shape `{tmp_path / 'round-1.md'}` gives."
+    out = loop.restated({}, tmp_path, retry, instruction)
+    assert "DECOY" not in out and "Round 1 · PR #7" in out and "REPORT" in out and "```diff" not in out
+
+
+def test_a_compaction_restates_the_unfinished_spec_into_the_running_turn(world, monkeypatch):
+    spec = pr_spec(world, "repair-compacted", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    for cls in (Worker, Reviewer):
+        def compacting(cell, text, halt=None, say=cls.say):
+            yield Event("compaction", "Context compaction completed", {"phase": "completed"}, cell.id)
+            yield from say(cell, text, halt)
+
+        monkeypatch.setattr(cls, "say", compacting)
+        monkeypatch.setattr(cls, "steer", lambda cell, text: cell.heard.append(text) or True, raising=False)
+    Reviewer.replies = ["Not a review.", deny(finding), allow]   # round 1's second attempt is a format retry
+    Worker.replies = [fixed((finding, "fixed"))]
+    assert looped(spec["id"])["state"] == "머지 가능"
+    for made in (Worker.made, Reviewer.made):
+        restated = [t for c in made for t in c.heard if t.startswith("The context was just compacted.")]
+        assert restated and all(f'"id": "{spec["id"]}"' in t for t in restated)
+    # The reviewer cannot read the recorded round file: its instruction comes back, the diff does not,
+    # on a format retry too.
+    reviews = [t for c in Reviewer.made for t in c.heard if t.startswith("The context was just compacted.")]
+    assert len(reviews) == 3 and any("could not be read" in t for t in reviews)
+    assert all(re.search(r"Round \d · PR #7", t) and "## Report" in t and "```diff" not in t for t in reviews)
+
+
 @pytest.mark.parametrize("stored", ["pending", "partial", "stale"])
 def test_resume_finishes_the_pending_correction_before_requesting_another_review(world, stored):
     spec = pr_spec(world, "repair-resume", 7)
@@ -1258,6 +1361,20 @@ def test_findings_that_do_not_shrink_bring_the_grouping_section(world):
     assert "## `gh pr diff 7`" in loop.instruction(spec, path, 1, head, "main", True)
     claude = loop.instruction(spec, path, 1, head, "main", False)
     assert "## `gh pr diff 7`" in claude and "+the diff of #7" in claude
+
+
+def test_the_reviewer_judges_against_the_spec_and_leaves_what_the_branch_cannot_repair_to_the_person(world):
+    # #67: a reviewer that never saw `out` asked for pushed history, then GitHub's copies, to go.
+    spec = {**pr_spec(world, "fix-s", 7), "out": ["Rewriting or erasing Git history"]}
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    text = loop.instruction(spec, path, 1, head, "main", True)
+    assert text.index("Rewriting or erasing Git history") < text.index("## `gh pr diff 7`")
+    assert "report it once as P2 for the person" in text
+    assert text.count("## The spec under review") == loop.restated(spec, path, text).count("## The spec under review")
+    assert "is `disagree`" in loop.fixing(2, [{"head": "[P0] a.md:1 — x", "body": ""}], "no")
+    # A mixed profile lists the goal and done under `## Requirements`; the spec block does not repeat them.
+    mixed = loop.instruction({**spec, "done": ["long acceptance " * 100]}, path, 1, head, "main", True, "mixed")
+    assert mixed.count("long acceptance " * 100) == 1 and "Rewriting or erasing Git history" in mixed
 
 
 def block(name: str, body: str) -> str:

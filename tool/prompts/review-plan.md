@@ -6,7 +6,7 @@ alternatives weighed, the gates, who owns what, and the rollback.
 
 | Grade | Criterion |
 | --- | --- |
-| P0 | A contradictory safety or authority contract; a destructive design without the boundary it needs |
+| P0 | A contradictory permission or authority contract; a destructive design without the boundary it needs |
 | P1 | A required behaviour missing; an impossible dependency; an adopted claim its sources do not support; an acceptance nobody could implement or observe |
 | P2 | An optional alternative, wording, a nonessential optimisation |
 
