@@ -43,9 +43,11 @@ owner's approval of its budget.
 
 Labels: guided labelling on the gate states (Haiku labeller, Codex Sol
 verifier, agreed labels only), which sees neither decider's answer (owner,
-2026-10-19). For `coverage` that is 209 of 268 questions over 114 of 129
-states; 10 of the 209 are yes, so accuracy is near what always answering no
-would get, and the per-class rates are reported beside it.
+2026-10-19). For `coverage`, 209 of 268 questions over 114 of 129 state hashes
+were labelled. One reserved unit is one test state, so the first labelled
+hash of each unit is evaluated: 180 questions over 94 units, under the
+100-unit rule. Of the 180, 10 are yes, so accuracy is near what always
+answering no would get, and the per-class rates are reported beside it.
 
 Beside the verdict, diagnostics: Jev under its fitted production policy
 (`eval/jev/policy.json`, uncertain between the thresholds), and both
