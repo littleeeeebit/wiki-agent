@@ -305,6 +305,12 @@ def category(status: int) -> str:
     return "http_error"
 
 
+def wire(model: str, state: dict, questions: dict) -> bytes:
+    """The request body exactly as it is sent."""
+
+    return json.dumps({"model": model, "state": state, "questions": questions}, ensure_ascii=False).encode("utf-8")
+
+
 def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
              budget: Budget | None = None, stage: str = "") -> dict[str, float | dict]:
     """One request, bounded by `budget` in time, count and tokens; no retries.
@@ -343,8 +349,7 @@ def evaluate(cfg: Config, state: dict, questions: dict, trace: list[dict],
             raise JevError("unsupported_question")
         if not cfg.key:
             raise JevError("missing_api_key")
-        body = json.dumps({"model": cfg.model, "state": state, "questions": questions},
-                          ensure_ascii=False).encode("utf-8")
+        body = wire(cfg.model, state, questions)
         if len(body) > MAX_BODY:
             raise JevError("state_too_large")
         budget = budget or Budget(**PROBE)
