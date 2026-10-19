@@ -1,7 +1,7 @@
 {
  "schema": "jev-policy/1",
  "model": "jev-1.13.0",
- "prompt_version": "afa145931e76393e",
+ "prompt_version": "ccbb381abb5c1940",
  "normalization_version": "original_english",
  "dataset": {
   "path": "eval/jev/calibration.json",
@@ -15,28 +15,28 @@
    "yes": 0.8
   },
   "source": {
-   "no": 0.4,
+   "no": 0.35,
    "yes": 0.85
   },
   "useful": {
    "no": 0.2,
-   "yes": 0.8
+   "yes": 0.6
   },
   "coverage": {
    "no": 0.2,
-   "yes": 0.65
+   "yes": 0.6
   },
   "conflict": {
-   "no": 0.05,
+   "no": 0.1,
    "yes": 0.8
   },
   "redirect": {
-   "no": 0.3,
+   "no": 0.4,
    "yes": 0.8
   },
   "repair": {
-   "confidence": 0.5,
-   "margin": 0.2
+   "confidence": 0.4,
+   "margin": 0.3
   }
  },
  "errors": {
@@ -55,13 +55,13 @@
    "n": 192,
    "positives": 48,
    "fitted": true,
-   "cost": 37.5,
-   "provisional_cost": 52.0,
+   "cost": 20.0,
+   "provisional_cost": 40.0,
    "counts": {
-    "negative_uncertain": 75,
-    "positive_uncertain": 38,
-    "negative_no": 69,
-    "positive_yes": 10
+    "negative_no": 104,
+    "positive_uncertain": 42,
+    "negative_uncertain": 40,
+    "positive_yes": 6
    }
   },
   "useful": {
@@ -69,37 +69,37 @@
    "positives": 76,
    "fitted": true,
    "cost": 7.0,
-   "provisional_cost": 7.0,
+   "provisional_cost": 8.0,
    "counts": {
-    "positive_yes": 70,
-    "negative_no": 76,
+    "positive_yes": 72,
+    "negative_no": 75,
     "negative_uncertain": 6,
-    "positive_uncertain": 6,
-    "negative_yes": 1
+    "positive_uncertain": 4,
+    "negative_yes": 2
    }
   },
   "coverage": {
    "n": 83,
    "positives": 48,
    "fitted": true,
-   "cost": 2,
+   "cost": 1,
    "provisional_cost": 5,
    "counts": {
-    "positive_yes": 46,
-    "negative_uncertain": 3,
-    "negative_no": 32,
-    "positive_uncertain": 2
+    "positive_yes": 47,
+    "negative_uncertain": 4,
+    "negative_no": 31,
+    "positive_uncertain": 1
    }
   },
   "conflict": {
    "n": 159,
    "positives": 8,
    "fitted": true,
-   "cost": 34.5,
-   "provisional_cost": 40.5,
+   "cost": 14.0,
+   "provisional_cost": 27.5,
    "counts": {
-    "negative_no": 102,
-    "negative_uncertain": 49,
+    "negative_no": 143,
+    "negative_uncertain": 8,
     "positive_uncertain": 6,
     "positive_no": 2
    }
@@ -108,32 +108,31 @@
    "n": 159,
    "positives": 9,
    "fitted": true,
-   "cost": 2.5,
-   "provisional_cost": 5.0,
+   "cost": 2.0,
+   "provisional_cost": 4.0,
    "counts": {
-    "negative_no": 145,
+    "negative_no": 146,
     "positive_yes": 9,
-    "negative_uncertain": 5
+    "negative_uncertain": 4
    }
   },
   "repair": {
    "n": 29,
    "fitted": true,
-   "cost": 5,
+   "cost": 3,
    "provisional_cost": 6,
    "counts": {
-    "accepted_right": 16,
-    "deferred_right": 8,
-    "deferred_wrong": 5
+    "accepted_right": 18,
+    "deferred_wrong": 3,
+    "deferred_right": 8
    }
   }
  },
  "costs": {
-  "requests": 172,
-  "input_tokens": 126572,
-  "output_tokens": 19978,
-  "elapsed_ms": 39973
+  "requests": 143,
+  "input_tokens": 113987,
+  "output_tokens": 20707
  },
- "fitted_at": "2026-09-27T15:11:36+00:00",
+ "fitted_at": "2026-10-19T11:37:59+00:00",
  "note": "Error rates on the calibration split only; not a calibration claim. The relation Choice (stage 7) and kinds without enough labels stay provisional. Stage 10 holds the held-out evaluation."
 }

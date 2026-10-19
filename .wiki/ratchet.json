@@ -58,8 +58,8 @@
     },
     "tool/eval/compare.py": {
       "dup": 6,
-      "lines": 834,
-      "reason": "reliability PR 9: one measure() runs both arms and pairs, a failed grade is retried and kept apart from a failed answer, and a batch records only its own spending; the pairs logic and options live in tool/eval/korean.py"
+      "lines": 835,
+      "reason": "Jev stage 11 step 3: the fixed experiment reads conflict as production does, its two questions combined by knowledge.conflicted. Before that, reliability PR 9: one measure() runs both arms and pairs, a failed grade is retried and kept apart from a failed answer, and a batch records only its own spending; the pairs logic and options live in tool/eval/korean.py"
     },
     "tool/eval/decisions.py": {
       "dup": 8,
@@ -103,8 +103,8 @@
     },
     "tool/main/knowledge.py": {
       "dup": 0,
-      "lines": 3886,
-      "reason": "v7 F2 and M1 (5-english-baseline.md): parsed reads one host answer that follows its reasoning, never a second or an inner one, and ASK names a quoted question someone else asked as material. Before that, v6 route change (5-english-baseline.md): the ANALYSIS question says what to do in a routine case is the policy that covers it, a fact, and why; beside L1's analysis judge policy, B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
+      "lines": 3896,
+      "reason": "Jev stage 11 step 3 (11-question-shape.md): arm B's wording adopted; coverage quotes its requirement, so judge_questions takes the texts, and conflict is two literal questions combined in code (conflicted) where the judge reads it. Before that, v7 F2 and M1 (5-english-baseline.md): parsed reads one host answer that follows its reasoning, never a second or an inner one, and ASK names a quoted question someone else asked as material. Before that, v6 route change (5-english-baseline.md): the ANALYSIS question says what to do in a routine case is the policy that covers it, a fact, and why; beside L1's analysis judge policy, B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
     },
     "tool/main/loop.py": {
       "dup": 0,

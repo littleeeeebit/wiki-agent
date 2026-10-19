@@ -51,7 +51,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import decision  # noqa: E402
 from common.budget import Budget  # noqa: E402
 from main.knowledge import (DESCRIBED, PROMPT_VERSION, PROMPTS, REPAIR_ORDER, REPAIRS,  # noqa: E402
-                            judge_questions, route_questions)
+                            conflicted, judge_questions, route_questions)
 from search import HUB  # noqa: E402
 
 SCHEMA = "jev-policy/1"
@@ -109,7 +109,7 @@ def requests(case: dict) -> list[tuple[str, dict, dict]]:
                                **({"coverage": p["coverage"]} if p.get("coverage") else {})}
                               for pid, p in zip(ids, passages)],
                  "complete_passages": [pid for pid, p in zip(ids, passages) if not p.get("coverage")]}
-        questions = judge_questions({pid: pid for pid in ids}, [r["id"] for r in reqs])
+        questions = judge_questions({pid: pid for pid in ids}, {r["id"]: r["text"] for r in reqs})
         if case.get("repair"):
             questions["repair"] = {"decision": "repair", "candidate": None,
                                    "question": decision.choice(PROMPTS["repair"], repair_options(case["repair"]))}
@@ -154,8 +154,9 @@ def labelled(dataset: dict, answers: dict) -> dict[str, list[tuple[float, bool]]
         for source, label in (case.get("sources") or {}).items():
             out["source"].append((got[f"source_{source}"], label))
         for i, p in enumerate(case.get("passages") or []):
-            for kind in ("useful", "conflict", "redirect"):
+            for kind in ("useful", "redirect"):
                 out[kind].append((got[f"{kind}_p{i}"], p[kind]))
+            out["conflict"].append((conflicted(got, f"p{i}"), p["conflict"]))
         for i, r in enumerate(case.get("requirements") or [] if case.get("passages") else []):
             out["coverage"].append((got[f"coverage_r{i}"], r["covered"]))
     return out

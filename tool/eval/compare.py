@@ -633,7 +633,7 @@ def run_fixed(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict)
                                        "text": (e.get("text_en") or e["original_text"])[:knowledge.MAX_PASSAGE]}
                                       for e in items],
                          "complete_passages": list(ids.values())}
-                questions = knowledge.judge_questions({p: cid for cid, p in ids.items()}, ["r0"])
+                questions = knowledge.judge_questions({p: cid for cid, p in ids.items()}, {"r0": unit["text"]})
                 budget = Budget(seconds=60.0, calls=1, candidates=0)
                 req = decision.request("judge", state, questions, allowed=list(ids) + ["r0"], model=cfg.model,
                                        prompt_version=knowledge.PROMPT_VERSION, policy_version=pol.version,
@@ -648,7 +648,8 @@ def run_fixed(folder: Path, opts: dict, data: dict, ceiling: Ceiling, run: dict)
                                         "score": (res["answers"] or {}).get(f"useful_{ids[e['chunk_id']]}"),
                                         "verdict": (res["verdicts"] or {}).get(f"useful_{ids[e['chunk_id']]}"),
                                         "redirect": (res["verdicts"] or {}).get(f"redirect_{ids[e['chunk_id']]}"),
-                                        "conflict": (res["verdicts"] or {}).get(f"conflict_{ids[e['chunk_id']]}")}
+                                        "conflict": decision.verdict(pol, "conflict", knowledge.conflicted(
+                                            res["answers"], ids[e["chunk_id"]])) if res["answers"] else None}
                                        for e in items],
                         "coverage": (res["verdicts"] or {}).get("coverage_r0"),
                         "cost": {"jev_requests": 1 if res["status"] in ("decided", "uncertain") else 0,

@@ -125,11 +125,31 @@ Jev's price is unknown, so the allowance is in Jev tokens.
   strict cap would need a spending limit on Jev's side. The owner accepted
   collection on these terms, 900,000 and a halt (2026-10-19).
 
+## Results (2026-10-19)
+
+Calibration split, 89 cases, policy cost old → new. 861,078 Jev tokens
+spent of the 900,000 cap (817,107 input, 43,971 output), no halt. Records:
+`raw/eval/jev/arms-<arm>-20261019T*.json`; the later view and direct
+records hold the coverage gate runs.
+
+| Arm | Cost | Verdict |
+| --- | --- | --- |
+| A view | 83.5 → 88.0 | rejected: useful 7 → 11, conflict 34.5 → 37.5, coverage 2 → 0; coverage gate 173/180 → 163/180 |
+| B direct | 83.5 → 44.5 | adopted: source 37.5 → 20, conflict 34.5 → 14, coverage 2 → 1; no kind rose |
+| C order | 5 → 6 | rejected: accepted right 16 → 11 |
+| D plain | 0 → 0 | no difference: neither wording erred on the v7 intents |
+
+B's gain is the uncertain band collapsing: conflict negatives uncertain
+49 → 8, source negatives uncertain 75 → 40. Conflict's two positives said
+no stay no. B's coverage gate run stopped at the cap and is incomplete, so
+it is not compared. A shows Jev judges a passage better beside the others
+than alone.
+
 ## Steps
 
 | # | Step | Status |
 | --- | --- | --- |
-| 1 | Wording for arms A–D, reviewed | In progress — wording and `tool/eval/arms.py` written, offline test passes; review remains |
-| 2 | Collect each arm on the calibration split and the coverage gate states; compare | Planned |
-| 3 | Refit the policy on the adopted arms; held-out gates | Planned |
+| 1 | Wording for arms A–D, reviewed | Done — reviewed, PR #182 |
+| 2 | Collect each arm on the calibration split and the coverage gate states; compare | Done — B adopted; A, C, D rejected (Results) |
+| 3 | Refit the policy on the adopted arms; held-out gates | In progress — B's wording into production |
 | 4 | Production switch through the existing modes, reversible per kind | Planned |

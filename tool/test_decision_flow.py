@@ -79,10 +79,10 @@ def answering(route=0.9, sources=None, useful=0.9, conflict=0.0, redirect=0.0, c
                 pick = value(repair, name)
                 pick = pick if pick in q["criteria"] or not offered_only else decision.DEFER
                 out[name] = {"choice": pick, "confidence": confidence, "probabilities": {pick: 1.0}}
-            else:
+            else:   # conflictother 0, so the combined conflict is the value given
                 kind = name.split("_")[0]
-                out[name] = value({"useful": useful, "conflict": conflict, "redirect": redirect,
-                                   "coverage": coverage, "ask": ask}[kind], name)
+                out[name] = value({"useful": useful, "conflictquery": conflict, "conflictother": 0.0,
+                                   "redirect": redirect, "coverage": coverage, "ask": ask}[kind], name)
         return out
 
     return answer
