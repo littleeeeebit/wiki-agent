@@ -1453,14 +1453,14 @@ EVAL = Path(__file__).resolve().parents[1] / "eval" / "jev"
 
 def test_a_live_run_s_committed_tape_replays_exactly():
     """Recorded from the live sample (`tool/eval/decisions.py --tape`): a
-    bridge question that searched, judged, repaired and ended partial."""
+    bridge question that searched, judged and ended ready."""
 
     tape = json.loads((EVAL / "replay.smoke-03.tape.json").read_text(encoding="utf-8"))
     again = knowledge.replay(tape)
     assert again["matches"] and not again["prompt_changed"], "the prompts changed: record the tape again"
-    # The bridge question: both passages found, their coverage 0.61-0.64 in three recordings — ready under the
-    # stage 6 policy's 0.6, a repair round and then partial under stage 10's fitted 0.65.
-    assert [t["to"] for t in again["transitions"]][-2:] == ["assess", "partial"]
+    # The bridge question: both passages found. Asked by id, coverage was 0.61-0.64 and ended partial under the
+    # fitted 0.65; quoting the requirement (stage 11, B) it is 0.8, ready in the first round.
+    assert [t["to"] for t in again["transitions"]][-2:] == ["assess", "ready"]
 
 
 def test_the_committed_policy_is_fitted_for_the_model_and_prompts_in_use():
