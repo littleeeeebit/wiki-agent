@@ -306,7 +306,7 @@ def test_the_next_focus_sends_blocks_apart_and_records_them(repo):
         def say(self, text, halt=None):
             yield Event("done", answer, {"session_id": "cli-9", "error": False})
 
-    def plain(source, model, effort):
+    def plain(source, model, effort, halt=None):
         assert "```" not in source
         yield Event("done", "쉬운 설명")
 
@@ -314,6 +314,7 @@ def test_the_next_focus_sends_blocks_apart_and_records_them(repo):
         events = parse(client().post("/api/say/next", json={"text": "다음은?"}).text)
     done = next(e for e in events if e["kind"] == "done")
     assert done["text"] == "후보는 하나다."
+    assert "simple_done" in [e["kind"] for e in events]   # the stand-in ran: an error here hides its assert
     assert next(e for e in events if e["kind"] == "blocks")["blocks"] == [{"name": "spec", "id": "fix-login"}]
     assert chat.recall("next")[-1]["blocks"] == [{"name": "spec", "id": "fix-login"}]
     assert specs.load("proj", "fix-login")["source"]["session"] == "cli-9"
