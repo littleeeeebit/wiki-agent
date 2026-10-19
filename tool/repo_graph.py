@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -28,9 +29,39 @@ resolve = knowledge_graph.resolve
 ENTRY = {"README.md"}
 
 
+def git(repo: Path, *args: str) -> str | None:
+    """git's answer in `repo`, or None where git does not answer."""
+
+    try:
+        done = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    return None if done.returncode else done.stdout
+
+
+def name_of(repo: Path) -> str:
+    """The repository's name, not the checkout's. Merge preparation builds in
+    a PR worktree whose folder is named after its branch, and the committed
+    file then flipped between the two names on every refresh."""
+
+    common = git(repo, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not common:
+        return repo.name
+    common_dir = Path(common.strip()).resolve()
+    return (common_dir.parent if common_dir.name == ".git" else common_dir).name
+
+
 def decisions_of(repo: Path) -> list[dict]:
+    # Only published records. A repository that ignores `.wiki/decisions/`
+    # keeps them in the original checkout alone, so counting what happens to
+    # be on disk made the committed file differ between checkouts.
+    listed = git(repo, "ls-files", "--cached", "--others", "--exclude-standard", "-z", "--", ".wiki/decisions")
+    published = None if listed is None else set(listed.split("\0"))
     found = []
     for path in sorted((repo / ".wiki" / "decisions").glob("*.md")):
+        if published is not None and path.relative_to(repo).as_posix() not in published:
+            continue
         meta, _body = front_matter(path.read_text(encoding="utf-8"))
         found.append({
             "id": f".wiki/decisions/{path.stem}",
@@ -81,7 +112,7 @@ def build(repo: Path) -> dict | None:
 
     return {
         "ns": NS,
-        "repo": repo.name,
+        "repo": name_of(repo),
         "nodes_from": ".wiki/corpus.json",
         "edges": edges,
         "orphans": orphans,
