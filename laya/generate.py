@@ -72,7 +72,9 @@ PLANT_CHARS = 500
 # The conversation before a question, near the development pool's shares (plan stage 5,
 # 2026-10-20: half had one, a fifth past `STATE_CHARS`); a `long` one is summarized.
 CONTEXTS = {"none": 0.5, "short": 0.3, "long": 0.2}
-LONG_QUERY = 0.25   # share of questions written long: production's p90 is about 1,200 characters
+# Share of questions written long. Production's query p90 is about 1,200 characters; at 0.25
+# with 600 to 1,800 the `shape1` pilot reached 615 (owner, 2026-10-20: write them longer).
+LONG_QUERY = 0.3
 JUDGES = 3          # grade-evidence rounds kept from one question, so later rounds' passages are seen
 
 
