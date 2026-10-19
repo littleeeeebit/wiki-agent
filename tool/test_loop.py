@@ -1786,12 +1786,7 @@ def test_adopt_takes_the_branch_as_it_is_and_refuses_what_it_would_have_to_move(
     with pytest.raises(RuntimeError, match="PR 머리와 다르다"):
         adopt(repo, "a3", oid["a3"])
     assert git(repo, "rev-parse", "a3") == before and not (repo.parent / "proj-worktrees/a3").exists()
-    # Checked out in another worktree: git's own reason.
-    git(repo, "branch", "a4", oid["a4"])
-    git(repo, "worktree", "add", "-q", str(world.tmp / "a4-elsewhere"), "a4")
-    with pytest.raises(RuntimeError, match="a4"):
-        adopt(repo, "a4", oid["a4"])
-    # A new branch that does not land on the pull request's head: taken away.
+    # Checked out in another worktree: `test_loop_progress`. A new branch that does not land on the pull request's head: taken away.
     with pytest.raises(RuntimeError, match="PR 머리에 서지 않았다"):
         adopt(repo, "a5", git(repo, "rev-parse", "main~1"))
     assert not (repo.parent / "proj-worktrees/a5").exists()
