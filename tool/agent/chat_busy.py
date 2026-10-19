@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import itertools
 import re
-import threading
 import time
 
 from .chat_events import Event
@@ -22,18 +21,25 @@ BUSY = re.compile(r"at capacity|overloaded|rate.?limit|too many requests|tempora
 WAITS = (30, 60, 120, 240, 480, 600)   # seconds; the last repeats
 
 
-def patiently(once, halt: threading.Event | None, mark):
+def refused(event: Event) -> bool:
+    """Codex says it with an `error`; Claude with a `done` whose result is an error."""
+    failed = event.kind == "error" or (event.kind == "done" and event.meta.get("error"))
+    return bool(failed) and bool(BUSY.search(event.text))
+
+
+def patiently(once, over, mark):
     """The events of `once()` — one turn — sent again while the provider
     refuses it as full before any work, the longest wait repeating, until it
-    is taken or `halt` is set. Work already done, or any other error, passes
-    through as it came. `mark` stamps each event with the session."""
+    is taken or `over()` — a stop, the session's end, the server's — says to
+    give up. Work already done, or any other error, passes through as it
+    came. `mark` stamps each event with the session."""
 
     for attempt in itertools.count():
         turn, worked, busy = once(), False, None
         try:
             for event in turn:
                 mark(event)
-                if event.kind == "error" and not worked and BUSY.search(event.text):
+                if not worked and refused(event):
                     busy = event
                     break
                 worked = worked or event.kind in ("delta", "tool", "approval")
@@ -43,9 +49,13 @@ def patiently(once, halt: threading.Event | None, mark):
         if busy is None:
             return
         delay = WAITS[min(attempt, len(WAITS) - 1)]
-        yield mark(Event("context", f"모델 용량 초과 — {delay}초 뒤 같은 요청을 다시 보낸다: {busy.text}"))
-        if halt is not None and halt.wait(delay):
+        # A `tool` step, not `context`: `context` on record means the CLI's
+        # conversation could not be resumed, and this one still can.
+        yield mark(Event("tool", f"모델 용량 초과 — {delay}초 뒤 같은 요청을 다시 보낸다: {busy.text}"[:300]))
+        ends = time.monotonic() + delay
+        # ponytail: polls a quarter second; one Event per stop if that ever costs.
+        while not over() and time.monotonic() < ends:
+            time.sleep(0.25)
+        if over():
             yield mark(Event("error", "멈췄다."))
             return
-        if halt is None:
-            time.sleep(delay)

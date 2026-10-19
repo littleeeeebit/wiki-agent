@@ -809,8 +809,9 @@ class ChatSession:
                 self._kill()
 
     def end(self) -> None:
-        """Whatever turn is running ends, from another thread (`end_all`)."""
+        """Whatever turn, or wait for a full provider, is running ends, from another thread (`end_all`)."""
 
+        self._ended = True
         with self._halting:
             self._kill()
 
@@ -853,16 +854,16 @@ class ChatSession:
 
         `halt` is this turn's stop. `stop()` can only kill a process that
         exists; one asked for while the process is still starting is caught
-        here, once it has started and before anything is sent to it.
-
-        A turn the provider refuses as full is sent again (`chat_busy`).
+        here, once it has started and before anything is sent to it. A turn the
+        provider refuses as full waits and goes again until `halt` or `end` (`chat_busy`).
         """
 
         def mark(event: Event) -> Event:
             event.session_id, event.parent_id = self.id, self.parent_id
             return event
-
-        yield from chat_busy.patiently(lambda: self._say(text, halt), halt, mark)
+        self._ended = False
+        over = lambda: self._ended or _ending or bool(halt and halt.is_set())  # noqa: E731 -- `end`, `end_all` or `halt`
+        yield from chat_busy.patiently(lambda: self._say(text, halt), over, mark)
 
     def _say(self, text: str, halt: threading.Event | None = None):
         if not self._turn.acquire(blocking=False):

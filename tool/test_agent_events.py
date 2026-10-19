@@ -318,7 +318,71 @@ def test_a_turn_refused_at_capacity_is_sent_again_until_it_is_taken(monkeypatch)
     chat, sent = _busy_session([full, full, full, [("done", "reviewed")]], monkeypatch)
     events = list(chat.say("review", threading.Event()))
     assert sent == ["review"] * 4
-    assert [e.kind for e in events] == ["context", "context", "context", "done"]
+    # A `tool` step: `context` on record would cut the conversation's resume.
+    assert [e.kind for e in events] == ["tool", "tool", "tool", "done"]
+    from main import query
+    assert query.line("c", events[0]) is None   # nothing remembered as a conversation break
+    rows = [{"role": "assistant", "session_id": "saved-thread", "provider": "claude"},
+            {"role": "assistant", "text": "", "error": "멈췄다."}]
+    assert query.resumable(rows, codex=False) == "saved-thread"
+
+
+def _two_turns(first, second):
+    """`say` against a stand-in CLI whose first process is `first`, then `second`."""
+
+    real_popen, processes = subprocess.Popen, []
+
+    def spawn(command, **kwargs):
+        processes.append(real_popen([sys.executable, "-X", "utf8", "-c", second if processes else first], **kwargs))
+        return processes[-1]
+
+    return spawn, processes
+
+
+@pytest.mark.parametrize("codex", [False, True])
+def test_a_raw_capacity_refusal_from_either_cli_is_sent_again(tree, codex, monkeypatch):
+    """Claude says it on a `result` with `is_error`, Codex on the refused `turn/start`."""
+
+    full = "Selected model is at capacity. Please try a different model."
+    if codex:
+        refused = CODEX_START.rsplit("m = read()", 1)[0] + (
+            'm = read(); say({"id": m["id"], "error": {"message": "FULL"}})\nsys.stdin.read()\n').replace("FULL", full)
+        taken = CODEX_BYPASS
+    else:
+        refused = ('import json, sys\nsys.stdin.readline()\nprint(json.dumps({"type": "result", "is_error": True, '
+                   '"result": "FULL", "session_id": "cli-1"}), flush=True)\nsys.stdin.read()\n').replace("FULL", full)
+        taken = CLAUDE_ANSWERS
+    monkeypatch.setattr(chat_busy, "WAITS", (0,))
+    session = ChatSession(tree, model="codex:m" if codex else "", write=True, bypass=True)
+    spawn, processes = _two_turns(refused, taken)
+    try:
+        with patch.object(chat_session.subprocess, "Popen", spawn), \
+             patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+            events = list(session.say("review", threading.Event()))
+    finally:
+        session.close()
+    assert len(processes) == 2
+    assert [e.kind for e in events][0] == "tool" and full in events[0].text
+    assert events[-1].kind == "done" and events[-1].text == "ran" and not events[-1].meta.get("error")
+
+
+@pytest.mark.parametrize("ending", ["end", "end_all"])
+def test_a_capacity_wait_ends_at_once_when_the_session_or_server_ends(monkeypatch, ending):
+    """No halt — a one-off turn's case — and a wait far longer than the test."""
+
+    chat, _ = _busy_session([[("error", "Selected model is at capacity.")]], monkeypatch)
+    monkeypatch.setattr(chat_busy, "WAITS", (600,))
+    chat._halting, chat._proc, out = threading.Lock(), None, []
+    waiting = threading.Thread(target=lambda: [out.append(e) for e in chat.say("x")])
+    waiting.start()
+    while not out and waiting.is_alive():
+        threading.Event().wait(0.05)
+    try:
+        chat.end() if ending == "end" else chat_session.end_all()
+        waiting.join(timeout=5)
+    finally:
+        chat_session.reopen()
+    assert not waiting.is_alive() and out[-1].text == "멈췄다."
 
 
 def test_a_capacity_wait_ends_on_halt_and_other_errors_pass_through(monkeypatch):
