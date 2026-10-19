@@ -928,18 +928,29 @@ class Flow:
                       chunk["coverage"] if chunk["coverage"] != "full_text" else None)
             passages.append({"id": ids[chunk["chunk_id"]], "heading": self.headings.get(chunk["chunk_id"]),
                              "text": text, **({"coverage": marker} if marker else {})})
+        while True:
+            state = {**self.context, "requirements": [{"id": r["id"], "text": r["text"]} for r in self.requirements],
+                     "passages": passages,
+                     "complete_passages": [ids[c["chunk_id"]] for c in earlier + graded
+                                           if c["chunk_id"] in ids and complete(c)]}
+            questions = judge_questions({ids[c["chunk_id"]]: c["chunk_id"] for c in graded if c["chunk_id"] in ids},
+                                        {r["id"]: r["text"] for r in self.requirements if state["complete_passages"]})
+            # This request and the next round's must both fit beside the reserve.
+            if options and self.room_for_round(2):
+                questions["repair"] = {"decision": "repair", "candidate": None, "question": decision.choice(
+                    PROMPTS["repair"], {**options, decision.DEFER: "No step clearly helps; stop here."})}
+            # The questions quote the requirements (stage 11), so the body as sent, not the passages alone,
+            # must fit the transport: the last passage placed waits, as one past the allowance does.
+            asked = {n: q["question"] for n, q in questions.items()}
+            if not passages or len(decision.wire(self.model, state, asked)) <= decision.MAX_BODY:
+                break
+            pid = passages.pop()["id"]
+            last = next(c for c in earlier + graded if ids.get(c["chunk_id"]) == pid)
+            del ids[last["chunk_id"]]
+            last["limit"] = "state_allowance"
+            unsent.append(last["chunk_id"])
         if unsent:
             self.dossier["limits"].append({"state_allowance": unsent})
-        state = {**self.context, "requirements": [{"id": r["id"], "text": r["text"]} for r in self.requirements],
-                 "passages": passages,
-                 "complete_passages": [ids[c["chunk_id"]] for c in earlier + graded
-                                       if c["chunk_id"] in ids and complete(c)]}
-        questions = judge_questions({ids[c["chunk_id"]]: c["chunk_id"] for c in graded if c["chunk_id"] in ids},
-                                    {r["id"]: r["text"] for r in self.requirements if state["complete_passages"]})
-        # This request and the next round's must both fit beside the reserve.
-        if options and self.room_for_round(2):
-            questions["repair"] = {"decision": "repair", "candidate": None, "question": decision.choice(
-                PROMPTS["repair"], {**options, decision.DEFER: "No step clearly helps; stop here."})}
         if not questions:
             # Nothing Jev could read in full or in part: nothing is graded or covered.
             return {"status": "decided", "answers": {}, "verdicts": {}, "reason_code": "nothing_to_judge"}

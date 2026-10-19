@@ -1376,10 +1376,21 @@ def test_a_memory_saying_how_the_assistant_should_answer_is_not_flagged_as_an_in
     assert [flagged[c["chunk_id"]] for c in out["untrusted"]] == ["inject"]
 
 
-def test_what_exceeds_the_state_allowance_is_not_sent_and_says_so(monkeypatch):
-    monkeypatch.setattr(knowledge, "STATE_ALLOWANCE", 40)
-    world = World(answering(), [found([chunk("a", "The port is 8791 as decided."), chunk("b", "More text here.")])])
+@pytest.mark.parametrize("bound", ["passages", "body"])
+def test_what_exceeds_the_state_allowance_is_not_sent_and_says_so(monkeypatch, bound):
+    # The passages alone, or the body as sent: the questions quote the requirements (stage 11, PR #184 review).
+    def world_():
+        return World(answering(), [found([chunk("a", "The port is 8791 as decided."), chunk("b", "More text here.")])])
+    if bound == "passages":
+        monkeypatch.setattr(knowledge, "STATE_ALLOWANCE", 40)
+    else:
+        whole = world_()
+        run(whole, available=["documents"])
+        _, state, questions = whole.asked[1]
+        monkeypatch.setattr(decision, "MAX_BODY", len(decision.wire(MODEL, state, questions)) - 1)
+    world = world_()
     out = run(world, available=["documents"])
+    assert len(decision.wire(MODEL, *world.asked[1][1:])) <= decision.MAX_BODY
     b = next(e for e in out["evidence"] if e["heading_path"] == ["b"])
     assert len(world.asked[1][1]["passages"]) == 1 and b["relevance"] is None
     assert {"state_allowance": [b["chunk_id"]]} in out["limits"]

@@ -54,6 +54,11 @@ def test_jev_arm_answers_combine_in_code_as_the_workflow_reads_them():
 
     assert arms.combined({"conflictquery_p0": 0.8, "conflictother_p0": 0.5, "useful_p0": 0.3}, {}) == \
         {"useful_p0": 0.3, "conflict_p0": 0.4}
+    # Against B's recorded parts, view's new conflict parts are what the merged answers read (PR #184 review).
+    from main.knowledge import conflicted
+    got = arms.merged("view", {"useful_p0": .9, "conflictquery_p0": .05, "conflictother_p0": 0.0},
+                      {"useful_p0": .9, "conflictquery_p0": .99, "conflictother_p0": 0.0})
+    assert conflicted(got, "p0") == .99
     # C: the recorded answer is the old order's; a choice that moves with the order defers.
     a = {"choice": "sources", "confidence": 0.8, "probabilities": {"sources": 0.8, "bridge": 0.1, "defer": 0.1}}
     b = {"choice": "bridge", "confidence": 0.6, "probabilities": {"sources": 0.3, "bridge": 0.6, "defer": 0.1}}

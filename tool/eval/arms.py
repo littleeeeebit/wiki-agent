@@ -382,7 +382,8 @@ def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, journ
 
 
 BUILD = {"view": view, "direct": direct, "order": order}
-AFTER = {"view": lambda new, old: new, "direct": combined, "order": agreed}
+# view's passage questions are production's, so since B's adoption its conflict comes in two parts too.
+AFTER = {"view": combined, "direct": combined, "order": agreed}
 # The kinds an arm changes: only their new answers replace the recorded ones, so
 # a resampled answer to an unchanged question is not credited to the arm.
 KINDS = {"view": ("useful", "conflict", "redirect", "coverage"), "direct": ("coverage", "conflict", "source"),

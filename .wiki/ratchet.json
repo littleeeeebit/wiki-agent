@@ -103,8 +103,8 @@
     },
     "tool/main/knowledge.py": {
       "dup": 0,
-      "lines": 3896,
-      "reason": "Jev stage 11 step 3 (11-question-shape.md): arm B's wording adopted; coverage quotes its requirement, so judge_questions takes the texts, and conflict is two literal questions combined in code (conflicted) where the judge reads it. Before that, v7 F2 and M1 (5-english-baseline.md): parsed reads one host answer that follows its reasoning, never a second or an inner one, and ASK names a quoted question someone else asked as material. Before that, v6 route change (5-english-baseline.md): the ANALYSIS question says what to do in a routine case is the policy that covers it, a fact, and why; beside L1's analysis judge policy, B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
+      "lines": 3907,
+      "reason": "Jev stage 11 step 3 (11-question-shape.md): arm B's wording adopted; coverage quotes its requirement, so judge_questions takes the texts, and conflict is two literal questions combined in code (conflicted) where the judge reads it. The judge places passages until the body as sent, questions included, fits MAX_BODY (PR #184 review). Before that, v7 F2 and M1 (5-english-baseline.md): parsed reads one host answer that follows its reasoning, never a second or an inner one, and ASK names a quoted question someone else asked as material. Before that, v6 route change (5-english-baseline.md): the ANALYSIS question says what to do in a routine case is the policy that covers it, a fact, and why; beside L1's analysis judge policy, B's progress route question, ordinary-answer check policy, plain rendering and synthesis fallback."
     },
     "tool/main/loop.py": {
       "dup": 0,
@@ -193,8 +193,8 @@
     },
     "tool/test_decision_flow.py": {
       "dup": 7,
-      "lines": 1530,
-      "reason": "v7 F2: a host answer after its reasoning, or in a fence, still settles; two answers, a cut-off object or array, or prose holding a bracket settles nothing, in parsed and in host_decides. Before that, answer path L1: an analysis's uncertain coverage is not sent to the host, a non-analysis's still is, and a tape from before L1 replays its host settlement; beside the progress settlement it mirrors."
+      "lines": 1541,
+      "reason": "Jev stage 11 step 3 (PR #184 review): what exceeds the state allowance is tested by the passages and by the body as sent, whose questions quote the requirements. Before that, v7 F2: a host answer after its reasoning, or in a fence, still settles; two answers, a cut-off object or array, or prose holding a bracket settles nothing, in parsed and in host_decides. Before that, answer path L1: an analysis's uncertain coverage is not sent to the host, a non-analysis's still is, and a tape from before L1 replays its host settlement; beside the progress settlement it mirrors."
     },
     "tool/test_edit_as_diff.py": {
       "dup": 11,
