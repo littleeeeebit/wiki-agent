@@ -475,7 +475,7 @@ def return_to_cloud(repo: Path, spec: dict, head: str, reason: str, failures: li
     text = ["Cloud implementation: local verification requires changes", "", f"Commit: `{head}`",
             f"State: `{state}`", "", redact(reason, local(repo)), "", "Affected invariants:",
             *(f"- `{issue}`" for issue in failures), "", "Reproduce with the repository's `verification.json` "
-            "and the PR handoff. Keep secrets and private data local. Update the handoff to the repaired commit."]
+            "and the PR handoff. Keep secrets local. Update the handoff to the repaired commit."]
     for row, evidence in zip(record.get("flows", []), attempts[-1]["evidence"]):
         if not row.get("ok"):
             text += ["", f"Flow `{row['id']}`", "```json", json.dumps(evidence, ensure_ascii=False), "```"]

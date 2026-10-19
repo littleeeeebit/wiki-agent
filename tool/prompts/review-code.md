@@ -6,7 +6,7 @@ under `Already run`.
 
 | Grade | Criterion |
 | --- | --- |
-| P0 | Data corruption or loss, security, crash, contract violation |
+| P0 | Data corruption or loss, a crash, a broken interface contract |
 | P1 | A reproducible correctness defect, a regression, an unsafe state transition, invalid evidence or permissions this PR introduced |
 | P2 | A suggestion, style, a follow-up candidate |
 
