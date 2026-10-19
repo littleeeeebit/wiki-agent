@@ -37,7 +37,7 @@ from common.process import SUSPENDED, contained, killed, resumed, terminated
 
 from .chat_events import Event, _claude_hook, _hook, _tool_brief, _user
 from .chat_local import claude_usage, cli_command, codex_usage, quota_windows
-from . import read_tools
+from . import chat_busy, read_tools
 
 # Something opened in a browser that edits files is not a chat, it is a remote
 # shell. So `Edit` and `Write` are not on the list.
@@ -854,15 +854,15 @@ class ChatSession:
         `halt` is this turn's stop. `stop()` can only kill a process that
         exists; one asked for while the process is still starting is caught
         here, once it has started and before anything is sent to it.
+
+        A turn the provider refuses as full is sent again (`chat_busy`).
         """
 
-        turn = self._say(text, halt)
-        try:
-            for event in turn:
-                event.session_id, event.parent_id = self.id, self.parent_id
-                yield event
-        finally:
-            turn.close()
+        def mark(event: Event) -> Event:
+            event.session_id, event.parent_id = self.id, self.parent_id
+            return event
+
+        yield from chat_busy.patiently(lambda: self._say(text, halt), halt, mark)
 
     def _say(self, text: str, halt: threading.Event | None = None):
         if not self._turn.acquire(blocking=False):

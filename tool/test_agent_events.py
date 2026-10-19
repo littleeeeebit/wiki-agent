@@ -5,11 +5,12 @@
 import json
 import subprocess
 import sys
+import threading
 from unittest.mock import patch
 
 import pytest
 
-from agent import ChatSession, chat_session
+from agent import ChatSession, chat_busy, chat_session
 from test_agent import CODEX_BYPASS, CODEX_START, CLAUDE_ANSWERS, run, tree  # noqa: F401 -- shared fixture
 
 
@@ -291,3 +292,43 @@ def test_completed_progress_is_separate_from_the_final_answer(tree, provider):
     _, events = run(ChatSession(tree, model="codex:m" if provider.startswith("codex") else "", write=True, bypass=True), fixture, tree)
     assert [e.text for e in events if e.kind == "progress"] == [text]
     assert events[-1].kind == "done" and events[-1].text == "ran"
+
+
+def _busy_session(answers, monkeypatch):
+    """A session whose turns answer `answers` in order, one list of events per turn."""
+
+    from agent.chat_events import Event
+
+    chat = ChatSession.__new__(ChatSession)
+    chat.id, chat.parent_id, sent = "s", None, []
+
+    def turn(text, halt=None):
+        sent.append(text)
+        yield from (Event(kind, said) for kind, said in answers[len(sent) - 1])
+
+    monkeypatch.setattr(chat, "_say", turn)
+    monkeypatch.setattr(chat_busy, "WAITS", (0,))
+    return chat, sent
+
+
+def test_a_turn_refused_at_capacity_is_sent_again_until_it_is_taken(monkeypatch):
+    """rfg_rag #70's review loop stopped on this error after one immediate retry."""
+
+    full = [("error", "Selected model is at capacity. Please try a different model.")]
+    chat, sent = _busy_session([full, full, full, [("done", "reviewed")]], monkeypatch)
+    events = list(chat.say("review", threading.Event()))
+    assert sent == ["review"] * 4
+    assert [e.kind for e in events] == ["context", "context", "context", "done"]
+
+
+def test_a_capacity_wait_ends_on_halt_and_other_errors_pass_through(monkeypatch):
+    halt = threading.Event()
+    halt.set()
+    full = [("error", "Selected model is at capacity.")]
+    chat, sent = _busy_session([full], monkeypatch)
+    assert [(e.kind, e.text) for e in chat.say("x", halt)][-1] == ("error", "멈췄다.") and len(sent) == 1
+    # Work already done, or another error, is never sent twice.
+    chat, sent = _busy_session([[("tool", "edit"), *full], [("error", "프로세스가 닫혔다.")]], monkeypatch)
+    assert [e.kind for e in chat.say("x", threading.Event())] == ["tool", "error"] and len(sent) == 1
+    chat, sent = _busy_session([[("error", "프로세스가 닫혔다.")]], monkeypatch)
+    assert [e.text for e in chat.say("x", threading.Event())] == ["프로세스가 닫혔다."] and len(sent) == 1
