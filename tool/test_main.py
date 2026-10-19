@@ -122,7 +122,7 @@ def test_stream_persists_both_and_keeps_original_on_rewrite_failure(tmp_path):
             # Codex may send a finished response with no character deltas.
             yield Event("done", "정확한 원문 13건", {"session_id": "answer-session", "error": False})
 
-    def rewrite(source, model, effort):
+    def rewrite(source, model, effort, halt=None):
         assert source == "정확한 원문 13건"
         yield Event("delta", "쉬운 ")
         yield Event("done", "쉬운 설명 13건")

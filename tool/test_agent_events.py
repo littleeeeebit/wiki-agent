@@ -5,11 +5,12 @@
 import json
 import subprocess
 import sys
+import threading
 from unittest.mock import patch
 
 import pytest
 
-from agent import ChatSession, chat_session
+from agent import ChatSession, chat_busy, chat_session
 from test_agent import CODEX_BYPASS, CODEX_START, CLAUDE_ANSWERS, run, tree  # noqa: F401 -- shared fixture
 
 
@@ -291,3 +292,140 @@ def test_completed_progress_is_separate_from_the_final_answer(tree, provider):
     _, events = run(ChatSession(tree, model="codex:m" if provider.startswith("codex") else "", write=True, bypass=True), fixture, tree)
     assert [e.text for e in events if e.kind == "progress"] == [text]
     assert events[-1].kind == "done" and events[-1].text == "ran"
+
+
+def _busy_session(answers, monkeypatch):
+    """A session whose turns answer `answers` in order, one list of events per turn."""
+
+    from agent.chat_events import Event
+
+    chat = ChatSession.__new__(ChatSession)
+    chat.id, chat.parent_id, sent = "s", None, []
+
+    def turn(text, halt=None):
+        sent.append(text)
+        yield from (Event(kind, said) for kind, said in answers[len(sent) - 1])
+
+    monkeypatch.setattr(chat, "_say", turn)
+    monkeypatch.setattr(chat_busy, "WAITS", (0,))
+    return chat, sent
+
+
+def test_a_turn_refused_at_capacity_is_sent_again_until_it_is_taken(monkeypatch):
+    """rfg_rag #70's review loop stopped on this error after one immediate retry."""
+
+    full = [("error", "Selected model is at capacity. Please try a different model.")]
+    chat, sent = _busy_session([full, full, full, [("done", "reviewed")]], monkeypatch)
+    events = list(chat.say("review", threading.Event()))
+    assert sent == ["review"] * 4
+    # A `tool` step: `context` on record would cut the conversation's resume.
+    assert [e.kind for e in events] == ["tool", "tool", "tool", "done"]
+    from main import query
+    assert query.line("c", events[0]) is None   # nothing remembered as a conversation break
+    rows = [{"role": "assistant", "session_id": "saved-thread", "provider": "claude"},
+            {"role": "assistant", "text": "", "error": "멈췄다."}]
+    assert query.resumable(rows, codex=False) == "saved-thread"
+
+
+def _two_turns(first, second):
+    """`say` against a stand-in CLI whose first process is `first`, then `second`."""
+
+    real_popen, processes = subprocess.Popen, []
+
+    def spawn(command, **kwargs):
+        processes.append(real_popen([sys.executable, "-X", "utf8", "-c", second if processes else first], **kwargs))
+        return processes[-1]
+
+    return spawn, processes
+
+
+@pytest.mark.parametrize("codex", [False, True])
+def test_a_raw_capacity_refusal_from_either_cli_is_sent_again(tree, codex, monkeypatch):
+    """Claude says it on a `result` with `is_error`, Codex on the refused `turn/start`."""
+
+    full = "Selected model is at capacity. Please try a different model."
+    if codex:
+        refused = CODEX_START.rsplit("m = read()", 1)[0] + (
+            'm = read(); say({"id": m["id"], "error": {"message": "FULL"}})\nsys.stdin.read()\n').replace("FULL", full)
+        taken = CODEX_BYPASS
+    else:
+        refused = ('import json, sys\nsys.stdin.readline()\nprint(json.dumps({"type": "result", "is_error": True, '
+                   '"result": "FULL", "session_id": "cli-1"}), flush=True)\nsys.stdin.read()\n').replace("FULL", full)
+        taken = CLAUDE_ANSWERS
+    monkeypatch.setattr(chat_busy, "WAITS", (0,))
+    session = ChatSession(tree, model="codex:m" if codex else "", write=True, bypass=True)
+    spawn, processes = _two_turns(refused, taken)
+    try:
+        with patch.object(chat_session.subprocess, "Popen", spawn), \
+             patch.object(chat_session, "cli_command", side_effect=lambda name: [name]):
+            events = list(session.say("review", threading.Event()))
+    finally:
+        session.close()
+    assert len(processes) == 2
+    assert [e.kind for e in events][0] == "tool" and full in events[0].text
+    assert events[-1].kind == "done" and events[-1].text == "ran" and not events[-1].meta.get("error")
+
+
+@pytest.mark.parametrize("ending", ["end", "end_all"])
+def test_a_capacity_wait_ends_at_once_when_the_session_or_server_ends(monkeypatch, ending):
+    """No halt — a one-off turn's case — and a wait far longer than the test."""
+
+    chat, _ = _busy_session([[("error", "Selected model is at capacity.")]], monkeypatch)
+    monkeypatch.setattr(chat_busy, "WAITS", (600,))
+    chat._halting, chat._proc, out = threading.Lock(), None, []
+    waiting = threading.Thread(target=lambda: [out.append(e) for e in chat.say("x")])
+    waiting.start()
+    while not out and waiting.is_alive():
+        threading.Event().wait(0.05)
+    try:
+        chat.end() if ending == "end" else chat_session.end_all()
+        waiting.join(timeout=5)
+    finally:
+        chat_session.reopen()
+    assert not waiting.is_alive() and out[-1].text == "멈췄다."
+
+
+def test_an_ended_wait_stays_ended_when_the_session_takes_another_turn(monkeypatch):
+    full = [("error", "Selected model is at capacity.")]
+    chat, sent = _busy_session([full, [("done", "new")], [("done", "old again")]], monkeypatch)
+    chat._halting, chat._proc = threading.Lock(), None
+    old = chat.say("old")
+    assert next(old).kind == "tool"   # waiting
+    chat.end()
+    assert [e.text for e in chat.say("new")] == ["new"]
+    assert [e.text for e in old] == ["멈췄다."] and sent == ["old", "new"]
+
+
+def test_cancelling_the_run_ends_its_plain_explanation_waiting_on_capacity(monkeypatch):
+    """The explanation's session is its own, not the focus's: the run's cancel reaches it as `halt`."""
+
+    from agent.chat_events import Event
+    sent: list = []
+
+    def full(self, text, halt=None):
+        sent.append(text)
+        yield Event("error", "Selected model is at capacity.")
+
+    monkeypatch.setattr(ChatSession, "_say", full)
+    monkeypatch.setattr(chat_busy, "WAITS", (600,))
+    cancel, out = threading.Event(), []
+    waiting = threading.Thread(target=lambda: [out.append(e) for e in chat_session.explain("answer", halt=cancel)])
+    waiting.start()
+    while not out and waiting.is_alive():
+        threading.Event().wait(0.05)
+    cancel.set()
+    waiting.join(timeout=5)
+    assert not waiting.is_alive() and out[-1].text == "멈췄다." and len(sent) == 1
+
+
+def test_a_capacity_wait_ends_on_halt_and_other_errors_pass_through(monkeypatch):
+    halt = threading.Event()
+    halt.set()
+    full = [("error", "Selected model is at capacity.")]
+    chat, sent = _busy_session([full], monkeypatch)
+    assert [(e.kind, e.text) for e in chat.say("x", halt)][-1] == ("error", "멈췄다.") and len(sent) == 1
+    # Work already done, or another error, is never sent twice.
+    chat, sent = _busy_session([[("tool", "edit"), *full], [("error", "프로세스가 닫혔다.")]], monkeypatch)
+    assert [e.kind for e in chat.say("x", threading.Event())] == ["tool", "error"] and len(sent) == 1
+    chat, sent = _busy_session([[("error", "프로세스가 닫혔다.")]], monkeypatch)
+    assert [e.text for e in chat.say("x", threading.Event())] == ["프로세스가 닫혔다."] and len(sent) == 1

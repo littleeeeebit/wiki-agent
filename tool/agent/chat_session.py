@@ -37,7 +37,7 @@ from common.process import SUSPENDED, contained, killed, resumed, terminated
 
 from .chat_events import Event, _claude_hook, _hook, _tool_brief, _user
 from .chat_local import claude_usage, cli_command, codex_usage, quota_windows
-from . import read_tools
+from . import chat_busy, read_tools
 
 # Something opened in a browser that edits files is not a chat, it is a remote
 # shell. So `Edit` and `Write` are not on the list.
@@ -236,8 +236,9 @@ class ChatSession:
         # The Codex thread a resume could not reach; told once, on the next turn.
         self._lost: str | None = None
         # The running turn's stop, for `_spawn`: a stop that came before the
-        # process existed kills it the moment it does.
+        # process existed kills it the moment it does. `_ended`: the latest `say`'s, for `end`.
         self._halt: threading.Event | None = None
+        self._ended = threading.Event()
         # Guards `_halt` against `stop`: a stop checks whose turn runs and
         # kills in one step, so it never lands on the turn after its own.
         self._halting = threading.Lock()
@@ -809,8 +810,9 @@ class ChatSession:
                 self._kill()
 
     def end(self) -> None:
-        """Whatever turn is running ends, from another thread (`end_all`)."""
+        """Whatever turn, or wait for a full provider, is running ends, from another thread (`end_all`)."""
 
+        self._ended.set()
         with self._halting:
             self._kill()
 
@@ -853,16 +855,16 @@ class ChatSession:
 
         `halt` is this turn's stop. `stop()` can only kill a process that
         exists; one asked for while the process is still starting is caught
-        here, once it has started and before anything is sent to it.
+        here, once it has started and before anything is sent to it. A turn the
+        provider refuses as full waits and goes again until `halt` or `end` (`chat_busy`).
         """
 
-        turn = self._say(text, halt)
-        try:
-            for event in turn:
-                event.session_id, event.parent_id = self.id, self.parent_id
-                yield event
-        finally:
-            turn.close()
+        def mark(event: Event) -> Event:
+            event.session_id, event.parent_id = self.id, self.parent_id
+            return event
+        ended = self._ended = threading.Event()   # this say's own: the next one cannot clear it
+        over = lambda: ended.is_set() or _ending or bool(halt and halt.is_set())  # noqa: E731 -- `end`, `end_all` or `halt`
+        yield from chat_busy.patiently(lambda: self._say(text, halt), over, mark)
 
     def _say(self, text: str, halt: threading.Event | None = None):
         if not self._turn.acquire(blocking=False):
@@ -1303,13 +1305,12 @@ class ChatSession:
                 return
 
 
-def explain(answer: str, model: str = "", effort: str = ""):
+def explain(answer: str, model: str = "", effort: str = "", halt: threading.Event | None = None):
     """Hand only the answer to a fresh session.
 
     Not the search prompt, not the channel, not the conversation so far — the
-    plain explanation is written from the answer alone.
-    """
-    yield from oneshot("chat-explain.md", {"source_answer": answer}, model, effort)
+    plain explanation is written from the answer alone. `halt` is the run's cancel."""
+    yield from oneshot("chat-explain.md", {"source_answer": answer}, model, effort, halt)
 
 
 def oneshot(prompt: str, payload: dict, model: str = "", effort: str = "", halt: threading.Event | None = None):
