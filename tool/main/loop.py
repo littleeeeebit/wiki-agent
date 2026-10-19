@@ -366,7 +366,12 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
                 *[f"- `{name}`" for name in maintenance.get("files", [])]]
     # #67: without the spec a reviewer escalated a fixed file to pushed history, then to
     # copies on GitHub; the fixing agent chased that past `out` and was refused.
-    out += ["", SPEC_HEAD.strip(), "", specs.brief(spec).rstrip(), "",
+    shown = spec
+    if profile != "code":   # `profiled` lists the goal, and the done items unless an outline replaces them
+        shown = {**spec, "goal": "R0 under `## Requirements`"}
+        if not (spec.get("planning") or {}).get("outline"):
+            shown["done"] = "R1 onward under `## Requirements`"
+    out += ["", SPEC_HEAD.strip(), "", specs.brief(shown).rstrip(), "",
             "A finding is a defect in what this pull request changes, judged against this spec. What the "
             "spec lists under `out`, or what only an irreversible or outside action could repair (rewriting "
             "pushed history, removing copies from the remote or elsewhere, asking an outside service), does "

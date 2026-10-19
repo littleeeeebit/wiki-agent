@@ -1372,6 +1372,9 @@ def test_the_reviewer_judges_against_the_spec_and_leaves_what_the_branch_cannot_
     assert "report it once as P2 for the person" in text
     assert text.count("## The spec under review") == loop.restated(spec, path, text).count("## The spec under review")
     assert "is `disagree`" in loop.fixing(2, [{"head": "[P0] a.md:1 — x", "body": ""}], "no")
+    # A mixed profile lists the goal and done under `## Requirements`; the spec block does not repeat them.
+    mixed = loop.instruction({**spec, "done": ["long acceptance " * 100]}, path, 1, head, "main", True, "mixed")
+    assert mixed.count("long acceptance " * 100) == 1 and "Rewriting or erasing Git history" in mixed
 
 
 def block(name: str, body: str) -> str:
