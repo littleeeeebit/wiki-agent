@@ -632,6 +632,8 @@ def main():
                 has_text="fixture-task").click()
             desktop.get_by_text("문맥 압축 중 · 대화 기록을 요약하고 있다", exact=True).wait_for()
             desktop.get_by_text("40 percent", exact=False).wait_for()
+            # A running turn keeps its repository; the server does not wait for it, nor does the picker.
+            assert desktop.get_by_role("combobox", name="프로젝트", exact=True).is_enabled()
             compact_done.set()
             desktop.get_by_text("문맥 압축 완료", exact=False).wait_for()
             desktop.get_by_text("completed · 10/10", exact=False).wait_for()

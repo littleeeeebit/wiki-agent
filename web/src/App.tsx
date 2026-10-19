@@ -583,9 +583,11 @@ export default function App() {
       <TaskRail
         repo={repo}
         options={options}
-        // The server refuses the switch too; this keeps the picker from offering it.
-        projectBusy={queryBusy || rows.some((r) => r.busy)
-          || Object.values(work.turns).some((turns) => turns.at(-1)?.pending)}
+        // Only what the server refuses the switch for. A running turn or loop
+        // keeps its own repository and stays on the rail (`others`), so it no
+        // longer pins the picker; a short worktree request is refused by the
+        // server with its reason.
+        projectBusy={queryBusy}
         view={view}
         tasks={list}
         others={others}
