@@ -40,7 +40,7 @@ Each change is its own arm, so its effect is attributed to it alone.
 | --- | --- | --- |
 | A. View | A passage question goes in its own request, whose state holds only that passage, the query and the requirements. coverage gets only its listed passages. | useful, conflict, redirect, coverage |
 | B. Direct | The requirement's or passage's own words in the question instead of its id. conflict is split into literal questions combined in code. source names the concrete condition. | coverage, conflict, source |
-| C. Order | repair is asked in two option orders, and an answer that changes with the order defers. | repair |
+| C. Order | repair is asked again with its options in the other order, in the same judge request; an answer that changes with the order defers. | repair |
 | D. Plain | ask and analysis are rewritten without stacked negations, keeping their meaning. | ask, analysis |
 
 Each arm's wording is reviewed before any paid call. Answers stay read by
@@ -60,16 +60,26 @@ reused.
     v7 intents' calibration split (`eval/jev/reliability-v8/intents.json`,
     72 intents).
 - The old side is already recorded (`eval/jev/calibration.scores.json`;
-  the gate's from Langfuse), so only the new arm is paid. Only the arm's own
-  kinds replace recorded answers, so a resampled answer to an unchanged
-  question is not credited to it. Ask and analysis were never asked alone,
-  so D asks both wordings, in the same reduced route request.
-- Each kind is fitted on both sides with `tool/eval/policy.py`'s costs; ask
-  and analysis get costs from how `Flow.route` acts on them: a question read
-  as material is never answered, and analysis skips the claim check only on
-  a sure yes.
+  the gate's from Langfuse), so only the new arm is paid. The new arm is
+  asked in exactly the recorded requests but for its own change: the route
+  gained analysis and progress questions after the scores were collected,
+  so B's route leaves them out; C asks the whole recorded judge request
+  again with only the repair's options flipped, and combines that with the
+  recorded answer (the mean over every option either order named). Only the
+  arm's own kinds replace recorded answers, so a resampled answer to an
+  unchanged question is not credited to it (PR #182 review). Ask and
+  analysis were never asked alone, so D asks both wordings, in the same
+  reduced route request.
+- Each kind is fitted on both sides with `tool/eval/policy.py`'s costs.
+  Analysis skips the claim check only on a sure yes. Ask is costed an
+  intent at a time as `Flow.route` reads its parts: beside a sure ask an
+  uncertain part is dropped as material, and a dropped question costs 10, a
+  kept piece of material 1.
 - Tool: `tool/eval/arms.py <arm>`, `--collect` to ask, `--answers` to
-  compare a saved record again; records under `raw/eval/jev/`.
+  compare a saved record again; records under `raw/eval/jev/`. Each answer
+  goes to the arm's journal as it arrives: a stop or failure keeps what was
+  paid for, a rerun asks only the rest, and an incomplete record is never
+  compared.
 - An arm is adopted when its policy cost on the calibration split falls and
   no kind's cost rises beyond one case. Then the policy is refitted on the
   adopted questions.
@@ -87,11 +97,18 @@ Jev's price is unknown, so the allowance is in Jev tokens.
   held-out gate run (about 750,000 tokens, USD 13 of host spend in stage 10).
 - Each paid run needs the owner's approval.
 - Estimate, from request sizes at the recorded 0.23 tokens per character:
-  A 242 requests, about 67,000 input tokens; B 172, about 136,000; C 58,
-  about 14,000; D both wordings 144, about 32,000; the gate's coverage,
+  A 242 requests, about 67,000 input tokens; B 172, about 114,000; C 29,
+  about 19,000; D both wordings 144, about 32,000; the gate's coverage,
   A about 360,000 and B about 445,000 at most. Order: the calibration
   arms, then A on the gate, then B on the gate only with what remains of
-  the allowance. `--tokens` stops a run before it passes its share.
+  the allowance.
+- `--tokens` caps an arm's total, its journal included. A request is sent
+  only when its bound fits in what is left: its bytes (a token carries at
+  least one byte), Jev's own instructions (at most 736 tokens a request on
+  the recorded side, taken as 4,000 until measured) and twice the largest
+  output per question seen (200 until measured). The input part holds by
+  construction; the output part is an assumption the journal checks after
+  each answer. A response that reports no count is charged its bound.
 
 ## Steps
 

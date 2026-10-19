@@ -8,30 +8,41 @@ cases.
   the query and the requirements; coverage over only its listed passages.
 - `direct` (B): coverage quotes the requirement; conflict is two literal
   questions combined in code; source names the concrete condition.
-- `order` (C): repair asked in two option orders; an answer that changes
-  with the order defers.
+- `order` (C): repair's options flipped; an answer that changes with the
+  order defers.
 - `plain` (D): ask and analysis without stacked negations.
 
 The old side of `view`, `direct` and `order` is the recorded calibration
-scores (`eval/jev/calibration.scores.json`); only the new arm is asked.
+scores (`eval/jev/calibration.scores.json`); only the new arm is asked, in
+exactly the requests the recorded side was asked with (`baseline`) but for
+the arm's own change, and only the arm's own kinds replace recorded answers
+(`merged`). `order` asks the same judge request again with the repair's
+options flipped, and combines it with the recorded answer in the old order.
 `plain`'s kinds are labelled only in the v7 intents
 (`eval/jev/reliability-v8/intents.json`, their calibration split), never
 asked alone before, so both sides are asked there, in the same reduced
-route request. Each kind is fitted with `eval.policy.fit` on both sides; the
-arm is adopted when its total cost falls and no kind's rises by more than one
+route request. Each kind is fitted on both sides (`eval.policy.fit`; ask
+over each intent's parts together, as `Flow.route` reads them); the arm is
+adopted when its total cost falls and no kind's rises by more than one
 case's worst cost. With `--gate`, coverage is also asked on the labelled
 coverage gate states (Laya stage 6) against Jev's answers recorded there
-(`--gate-old`, a `laya/jev_gate.py` result); there coverage is asked alone, so
-`direct`'s gate numbers carry part of `view`'s change too and are a
-diagnostic, the calibration split the measure. `--collect` stops before a
-request would pass `--tokens` Jev tokens. Records go to
-`raw/eval/jev/arms-<arm>-<timestamp>.json`.
+(`--gate-old`, a `laya/jev_gate.py` result); there coverage is asked alone,
+so `direct`'s gate numbers carry part of `view`'s change too and are a
+diagnostic, the calibration split the measure.
+
+`--collect` appends each answer to `raw/eval/jev/arms-<arm>.journal.jsonl`
+as it arrives, so a stop or a failure keeps what was paid for and a rerun
+asks only the rest. `--tokens` caps the arm's total, journal included: a
+request is sent only when its `bound` fits in what is left. The record goes
+to `raw/eval/jev/arms-<arm>-<timestamp>.json`; an incomplete one is never
+compared.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import sys
 import time
@@ -71,26 +82,42 @@ PLAIN = {
                  "convention covers: the sources state that answer."),
 }
 OLD_PLAIN = {"ask": ASK, "analysis": ANALYSIS}
-# What a wrong verdict costs where the workflow acts on it (`Flow.route`): a question
-# read as material is never answered; analysis skips the claim check only on a sure yes.
-COSTS = {"ask": {True: {"no": 10, "uncertain": 0.5, "yes": 0}, False: {"no": 0, "uncertain": 0.5, "yes": 1}},
-         "analysis": {True: {"no": 1, "uncertain": 1, "yes": 0}, False: {"no": 0, "uncertain": 0, "yes": 10}}}
+# Analysis skips the claim check only on a sure yes (`Flow.route`).
+ANALYSIS_COSTS = {True: {"no": 1, "uncertain": 1, "yes": 0}, False: {"no": 0, "uncertain": 0, "yes": 10}}
+# Ask's cost is a whole intent's (`ask_cost`): a question dropped as material is never answered.
+DROPPED, KEPT_MATERIAL = 10, 1
+# The worst one case can cost, per kind: how far a kind may rise and the arm still be adopted.
+WORST = {**{k: max(v for by in c.values() for v in by.values()) for k, c in policy.COSTS.items()},
+         "repair": max(policy.CHOICE_COSTS.values()), "ask": DROPPED, "analysis": 10}
+# A request's bound before anything was answered: tokens beyond its bytes (Jev's own
+# instructions, the same in every request) and output per question. The recorded side
+# spent 126,572 input tokens over 172 requests, so those instructions cost at most 736
+# a request; output averaged 116 a request. Raised to the largest seen as answers arrive.
+SEED_OVERHEAD, SEED_OUTPUT = 4_000, 200
+FLIPPED = "flipped:"
 
 
 def noul(kind: str, candidate, text: str) -> dict:
     return {"decision": kind, "candidate": candidate, "question": decision.noul(text)}
 
 
-def judged(case: dict) -> tuple[dict, dict] | None:
-    """The case's judge request as the workflow sends it, if it has passages."""
+def baseline(case: dict, names) -> list[tuple[str, dict, dict]]:
+    """The case's requests holding only the questions the recorded side was asked (`names`):
+    the route gained analysis and progress after the calibration scores were collected."""
 
-    return next(((s, q) for kind, s, q in policy.requests(case) if kind == "judge"), None)
+    out = [(kind, state, {n: q for n, q in questions.items() if n in names})
+           for kind, state, questions in policy.requests(case)]
+    return [r for r in out if r[2]]
 
 
-def view(case: dict) -> list[tuple[str, dict, dict]]:
+def judged(case: dict, names) -> tuple[dict, dict] | None:
+    return next(((s, q) for kind, s, q in baseline(case, names) if kind == "judge"), None)
+
+
+def view(case: dict, names) -> list[tuple]:
     """A: the judge request's passage and coverage questions, each reading only what it needs."""
 
-    if not (got := judged(case)):
+    if not (got := judged(case, names)):
         return []
     state, old = got
     context = {"query": state["query"], "requirements": state["requirements"]}
@@ -104,11 +131,11 @@ def view(case: dict) -> list[tuple[str, dict, dict]]:
     return out
 
 
-def direct(case: dict) -> list[tuple[str, dict, dict]]:
-    """B: the same requests, with coverage, conflict and source asked literally."""
+def direct(case: dict, names) -> list[tuple]:
+    """B: the recorded requests, with coverage, conflict and source asked literally."""
 
     out = []
-    for kind, state, old in policy.requests(case):
+    for kind, state, old in baseline(case, names):
         questions = {}
         for name, q in old.items():
             if q["decision"] == "source":
@@ -127,43 +154,44 @@ def direct(case: dict) -> list[tuple[str, dict, dict]]:
     return out
 
 
-def combined(answers: dict) -> dict:
+def combined(new: dict, old: dict) -> dict:
     """B's conflict: the passage contradicts the query, and not only another passage."""
 
-    out = {n: v for n, v in answers.items() if not n.startswith(("conflictquery_", "conflictother_"))}
-    for name in answers:
+    out = {n: v for n, v in new.items() if not n.startswith(("conflictquery_", "conflictother_"))}
+    for name in new:
         if name.startswith("conflictquery_"):
             pid = name.split("_", 1)[1]
-            out[f"conflict_{pid}"] = answers[name] * (1 - answers.get(f"conflictother_{pid}", 0.0))
+            out[f"conflict_{pid}"] = new[name] * (1 - new.get(f"conflictother_{pid}", 0.0))
     return out
 
 
-def order(case: dict) -> list[tuple[str, dict, dict]]:
-    """C: only the repair, asked once in each option order; defer stays last."""
+def order(case: dict, names) -> list[tuple]:
+    """C: the recorded judge request again, its repair's options in the other order (defer
+    stays last), answered under `FLIPPED` names; the old order's answer is the recorded one."""
 
-    if not (got := judged(case)) or "repair" not in got[1]:
+    if not (got := judged(case, names)) or "repair" not in got[1]:
         return []
     state, old = got
     criteria = old["repair"]["question"]["criteria"]
     named = [n for n in criteria if n != decision.DEFER]
     flipped = {n: criteria[n] for n in [*reversed(named), decision.DEFER]}
-    return [("judge", state, {"repair": old["repair"]}),
-            ("judge", state, {"repairflipped": {**old["repair"], "question": decision.choice(PROMPTS["repair"],
-                                                                                              flipped)}})]
+    repair = {**old["repair"], "question": decision.choice(PROMPTS["repair"], flipped)}
+    return [("judge", state, {**old, "repair": repair}, FLIPPED)]
 
 
-def agreed(answers: dict) -> dict:
-    """C's repair: the mean of both orders, deferred when their choices differ."""
+def agreed(new: dict, old: dict) -> dict:
+    """C's repair: the mean of both orders over every option either named, deferred when
+    their choices differ."""
 
-    a, b = answers.pop("repair", None), answers.pop("repairflipped", None)
+    a, b = old.get("repair"), new.get(FLIPPED + "repair")
     if a is None or b is None:
-        return answers
+        return {}
     probabilities = {n: round((a["probabilities"].get(n, 0) + b["probabilities"].get(n, 0)) / 2, 4)
-                     for n in a["probabilities"]}
+                     for n in {**a["probabilities"], **b["probabilities"]}}
     same = a["choice"] == b["choice"]
-    return {**answers, "repair": {"choice": a["choice"] if same else decision.DEFER,
-                                  "confidence": min(a["confidence"], b["confidence"]) if same else 0.0,
-                                  "probabilities": probabilities}}
+    return {"repair": {"choice": a["choice"] if same else decision.DEFER,
+                       "confidence": min(a["confidence"], b["confidence"]) if same else 0.0,
+                       "probabilities": probabilities}}
 
 
 def plain(intent: dict, wording: dict) -> list[tuple[str, dict, dict]]:
@@ -176,63 +204,132 @@ def plain(intent: dict, wording: dict) -> list[tuple[str, dict, dict]]:
                               **{f"ask_{rid}": noul("ask", rid, wording["ask"].format(id=rid)) for rid in parts}})]
 
 
-def plain_labelled(intents: list[dict], answers: dict) -> dict[str, list[tuple[float, bool]]]:
-    out: dict[str, list] = {"ask": [], "analysis": []}
+def plain_labelled(intents: list[dict], answers: dict) -> tuple[list[tuple[float, bool]], list[list]]:
+    """Analysis's `(score, label)` per intent, and ask's per intent in several parts: its
+    parts' `(score, label)` together, as the route reads them."""
+
+    analysis, ask = [], []
     for intent in intents:
         got = answers[intent["id"]]
-        out["analysis"].append((got["analysis"], intent["analysis"]))
+        analysis.append((got["analysis"], intent["analysis"]))
         segments = intent["route_segments"]
-        for i, s in enumerate(segments if len(segments) > 1 else []):
-            out["ask"].append((got[f"ask_r{i}"], s["ask"]))
-    return out
+        if len(segments) > 1:
+            ask.append([(got[f"ask_r{i}"], s["ask"]) for i, s in enumerate(segments)])
+    return analysis, ask
 
 
-def fitted(pairs: dict[str, list], costs: dict) -> dict:
+def ask_cost(parts: list[tuple[float, bool]], no: float, yes: float) -> tuple[int, int]:
+    """`(questions dropped, material kept)` when `Flow.route` reads these parts' verdicts:
+    beside a sure ask an uncertain part is material, with none sure it stays, and should
+    every part go, none does."""
+
+    said = [policy.verdict(s, no, yes) for s, _ in parts]
+    sure = "yes" in said
+    asked = [v == "yes" or (not sure and v != "no") for v in said]
+    kept = asked if any(asked) and not all(asked) else [True] * len(parts)
+    return (sum(label and not k for (_, label), k in zip(parts, kept)),
+            sum(k and not label for (_, label), k in zip(parts, kept)))
+
+
+def fit_ask(groups: list[list]) -> dict:
+    """Ask's lowest-cost rule over whole intents, the provisional one breaking ties."""
+
+    pairs = [p for g in groups for p in g]
+    positives = sum(label for _, label in pairs)
+    report = {"n": len(pairs), "intents": len(groups), "positives": positives}
+    if positives < policy.LEAST or len(pairs) - positives < policy.LEAST:
+        return {**report, "fitted": False, "why": f"fewer than {policy.LEAST} labels of each value"}
+
+    def tally(no, yes):
+        dropped = kept = 0
+        for g in groups:
+            d, k = ask_cost(g, no, yes)
+            dropped, kept = dropped + d, kept + k
+        return dropped * DROPPED + kept * KEPT_MATERIAL, {"dropped": dropped, "kept_material": kept}
+
+    no, yes = min(((n, y) for n in policy.GRID_NO for y in policy.GRID_YES),
+                  key=lambda r: (tally(*r)[0], abs(r[0] - 0.2) + abs(r[1] - 0.8)))
+    cost, counts = tally(no, yes)
+    return {**report, "fitted": True, "rule": {"no": no, "yes": yes}, "cost": cost, "counts": counts}
+
+
+def fitted(pairs: dict[str, list], costs: dict | None = None) -> dict:
     """Each kind's lowest-cost rule and what it leaves, `costs` added to the fit's own."""
 
-    with patch.dict(policy.COSTS, costs):
+    with patch.dict(policy.COSTS, costs or {}):
         return {kind: policy.fit(kind, got)[1] for kind, got in pairs.items() if got}
 
 
-def compared(old: dict, new: dict, costs: dict) -> dict:
+def compared(old: dict, new: dict) -> dict:
     """Old against new per kind, and whether the arm is adopted."""
 
-    worst = {k: max(v for by in costs[k].values() for v in by.values()) for k in old}
     kinds = {k: {"old": old[k].get("cost"), "new": new.get(k, {}).get("cost"),
                  "old_counts": old[k].get("counts"), "new_counts": new.get(k, {}).get("counts")} for k in old}
     total_old = sum(v["old"] or 0 for v in kinds.values())
     total_new = sum(v["new"] or 0 for v in kinds.values())
     rose = [k for k, v in kinds.items() if v["old"] is not None and v["new"] is not None
-            and v["new"] - v["old"] > worst[k]]
+            and v["new"] - v["old"] > WORST[k]]
     return {"kinds": kinds, "cost_old": total_old, "cost_new": total_new, "risen": rose,
             "adopted": total_new < total_old and not rose}
 
 
-def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, stage: str) -> dict:
-    """Every item's requests asked live, stopping before `limit` Jev tokens."""
+def bound(size: int, questions: int, overhead: int, per_question: float) -> int:
+    """At most what one request costs: every token carries at least one byte of what is sent,
+    beside Jev's own instructions (`overhead`), and the output is taken as up to twice the
+    largest per question seen."""
 
-    budget = Budget(seconds=3600.0, calls=sum(len(r) for _, r in items) + 1, candidates=0)
-    trace: list[dict] = []
+    return size + overhead + int(2 * per_question * questions) + 1
+
+
+def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, journal: Path) -> dict:
+    """Every item's requests, each answer appended to `journal` as it arrives; a request is sent
+    only when its `bound` fits in what is left of `limit`, journal included. Requests already
+    in the journal are read back, not asked again."""
+
+    done = {}
+    if journal.exists():
+        for line in journal.read_text(encoding="utf-8").splitlines():
+            entry = json.loads(line)
+            done[entry["digest"]] = entry
+    spent = sum(e["input_tokens"] + e["output_tokens"] for e in done.values())
+    overhead = max([SEED_OVERHEAD] + [e["input_tokens"] - e["bytes"] for e in done.values()])
+    per_question = max([SEED_OUTPUT] + [e["output_tokens"] / e["questions"] for e in done.values()])
+    budget = Budget(seconds=None, calls=None, candidates=0)
     answers: dict[str, dict] = {}
-    started, spent = time.monotonic(), 0
+    complete = True
     for key, reqs in items:
-        for kind, state, questions in reqs:
-            if spent >= limit:
-                raise SystemExit(f"stopped at {spent} Jev tokens, before {key}; raise --tokens to go on")
-            got = decision.evaluate(cfg, state, {n: q["question"] for n, q in questions.items()}, trace, budget,
-                                    f"{stage}:{kind}")
-            answers.setdefault(key, {}).update(got)
-            usage = trace[-1].get("usage") or {}
-            spent += usage.get("input_tokens", 0) + usage.get("output_tokens", 0)
-    usage = [t.get("usage") or {} for t in trace]
-    return {"answers": answers, "model": trace[-1]["model"] if trace else cfg.model,
-            "costs": {"requests": len(trace), "input_tokens": sum(u.get("input_tokens", 0) for u in usage),
-                      "output_tokens": sum(u.get("output_tokens", 0) for u in usage),
-                      "elapsed_ms": round((time.monotonic() - started) * 1000)}}
+        for kind, state, questions, *tag in reqs:
+            sent = {"state": state, "questions": {n: q["question"] for n, q in questions.items()}}
+            body = json.dumps(sent, ensure_ascii=False, sort_keys=True).encode()
+            digest = hashlib.sha256(body).hexdigest()[:24]
+            if digest not in done:
+                most = bound(len(body), len(questions), overhead, per_question)
+                if not complete or spent + most > limit:
+                    complete = False
+                    continue
+                trace: list[dict] = []
+                got = decision.evaluate(cfg, state, sent["questions"], trace, budget, f"arms:{kind}")
+                usage = trace[-1].get("usage") or {}
+                # A response that reports no count is charged its bound: nothing spent goes uncounted.
+                entry = {"digest": digest, "key": key, "kind": kind, "answers": got, "bytes": len(body),
+                         "questions": len(questions), "model": trace[-1].get("model"),
+                         "input_tokens": usage.get("input_tokens", most), "output_tokens": usage.get("output_tokens", 0)}
+                with journal.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                done[digest] = entry
+                spent += entry["input_tokens"] + entry["output_tokens"]
+                overhead = max(overhead, entry["input_tokens"] - entry["bytes"])
+                per_question = max(per_question, entry["output_tokens"] / entry["questions"])
+            prefix = tag[0] if tag else ""
+            answers.setdefault(key, {}).update({prefix + n: v for n, v in done[digest]["answers"].items()})
+    used = list(done.values())
+    return {"answers": answers, "complete": complete, "model": used[-1]["model"] if used else cfg.model,
+            "costs": {"requests": len(used), "input_tokens": sum(e["input_tokens"] for e in used),
+                      "output_tokens": sum(e["output_tokens"] for e in used), "limit": limit}}
 
 
 BUILD = {"view": view, "direct": direct, "order": order}
-AFTER = {"view": lambda a: a, "direct": combined, "order": agreed}
+AFTER = {"view": lambda new, old: new, "direct": combined, "order": agreed}
 # The kinds an arm changes: only their new answers replace the recorded ones, so
 # a resampled answer to an unchanged question is not credited to the arm.
 KINDS = {"view": ("useful", "conflict", "redirect", "coverage"), "direct": ("coverage", "conflict", "source"),
@@ -242,11 +339,11 @@ KINDS = {"view": ("useful", "conflict", "redirect", "coverage"), "direct": ("cov
 def merged(arm: str, old: dict, new: dict) -> dict:
     """The recorded answers with the arm's own kinds replaced by its new ones."""
 
-    mine = {n: v for n, v in AFTER[arm](dict(new)).items() if n.split("_", 1)[0] in KINDS[arm]}
+    mine = {n: v for n, v in AFTER[arm](dict(new), old).items() if n.split("_", 1)[0] in KINDS[arm]}
     return {**old, **mine}
 
 
-def gate_requests(arm: str, row: dict) -> list[tuple[str, dict, dict]]:
+def gate_requests(arm: str, row: dict) -> list[tuple]:
     """Coverage on one gate state, as `view` or `direct` asks it."""
 
     state, names = row["state"], list(row["expected"])
@@ -256,7 +353,7 @@ def gate_requests(arm: str, row: dict) -> list[tuple[str, dict, dict]]:
         return [("judge", {"query": state["query"], "requirements": state["requirements"],
                            "passages": [p for p in state["passages"] if p["id"] in listed],
                            "complete_passages": state.get("complete_passages") or []},
-                 {n: q for n, q in judge_questions({}, rids).items()})]
+                 judge_questions({}, rids))]
     text = {r["id"]: r["text"] for r in state["requirements"]}
     return [("judge", state, {f"coverage_{r}": noul("coverage", r, COVERAGE.format(id=r, text=text[r]))
                               for r in rids})]
@@ -285,7 +382,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--answers", type=Path, help="a saved arms record to compare again, nothing sent")
     p.add_argument("--gate", type=Path, help="labelled coverage gate rows (laya/data/coverage/gate.jsonl)")
     p.add_argument("--gate-old", type=Path, help="a laya/jev_gate.py result holding Jev's recorded answers")
-    p.add_argument("--tokens", type=int, default=250_000, help="stop before passing this many Jev tokens")
+    p.add_argument("--tokens", type=int, default=250_000, help="the arm's Jev tokens at most, journal included")
     a = p.parse_args(argv)
     if a.collect == bool(a.answers):
         p.error("give --collect or --answers")
@@ -293,6 +390,7 @@ def main(argv: list[str] | None = None) -> int:
         p.error("--gate is for view and direct, with --gate-old")
     source = INTENTS if a.arm == "plain" else policy.DATASET
     dataset = json.loads(policy.DATASET.read_text(encoding="utf-8"))
+    old = json.loads(policy.SCORE_FILE.read_text(encoding="utf-8"))["answers"]
     intents = [i for i in json.loads(INTENTS.read_text(encoding="utf-8"))["intents"] if i["split"] == "calibration"]
     recorded = {(r["state_hash"], r["question"]): r["jev"]
                 for r in json.loads(a.gate_old.read_text(encoding="utf-8"))["records"]
@@ -307,39 +405,48 @@ def main(argv: list[str] | None = None) -> int:
         if cfg.mode == "off" or not cfg.key:
             p.error(f"Jev is not configured: {cfg.status()}")
         if a.arm == "plain":
-            record = {side: asked(cfg, [(i["id"], plain(i, wording)) for i in intents], a.tokens // 2,
-                                  f"arms:plain:{side}") for side, wording in (("old", OLD_PLAIN), ("new", PLAIN))}
+            items = [(f"{side}:{i['id']}", plain(i, wording))
+                     for side, wording in (("old", OLD_PLAIN), ("new", PLAIN)) for i in intents]
         else:
             # One allowance over both sets: case ids and state hashes never collide.
-            got = asked(cfg, [(c["id"], BUILD[a.arm](c)) for c in dataset["cases"]] +
-                        [(r["provenance"]["state_hash"], gate_requests(a.arm, r)) for r in rows], a.tokens,
-                        f"arms:{a.arm}")
-            hashes = {r["provenance"]["state_hash"] for r in rows}
-            record = {"new": {**got, "answers": {k: v for k, v in got["answers"].items() if k not in hashes}},
-                      **({"gate": {"answers": {k: v for k, v in got["answers"].items() if k in hashes}}}
-                         if rows else {})}
-        record = {"schema": "jev-arm/1", "arm": a.arm, "dataset_sha256": policy.sha(source.read_bytes()),
-                  "collected_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), **record}
+            items = ([(c["id"], BUILD[a.arm](c, old[c["id"]])) for c in dataset["cases"]] +
+                     [(r["provenance"]["state_hash"], gate_requests(a.arm, r)) for r in rows])
         RAW.mkdir(parents=True, exist_ok=True)
+        got = asked(cfg, items, a.tokens, RAW / f"arms-{a.arm}.journal.jsonl")
+        answers = got.pop("answers")
+        if a.arm == "plain":
+            sides = {s: {"answers": {k.split(":", 1)[1]: v for k, v in answers.items() if k.startswith(s + ":")}}
+                     for s in ("old", "new")}
+        else:
+            hashes = {r["provenance"]["state_hash"] for r in rows}
+            sides = {"new": {"answers": {k: v for k, v in answers.items() if k not in hashes}},
+                     **({"gate": {"answers": {k: v for k, v in answers.items() if k in hashes}}} if rows else {})}
+        record = {"schema": "jev-arm/1", "arm": a.arm, "dataset_sha256": policy.sha(source.read_bytes()),
+                  "collected_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"), **got, **sides}
         out = RAW / f"arms-{a.arm}-{time.strftime('%Y%m%dT%H%M%S')}.json"
         out.write_text(json.dumps(record, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
         print("->", out)
+        if not record["complete"]:
+            print(f"stopped under --tokens {a.tokens}: {record['costs']}. The journal keeps what was paid for; "
+                  "a rerun with a larger --tokens asks only the rest. Nothing is compared.")
+            return 1
     else:
         record = json.loads(a.answers.read_text(encoding="utf-8"))
         if record.get("arm") != a.arm or record.get("dataset_sha256") != policy.sha(source.read_bytes()):
             p.error("the record is for another arm or another version of its cases; collect again")
+        if not record.get("complete"):
+            p.error("the record is incomplete; collect again to finish it")
     if a.arm == "plain":
-        result = compared(*(fitted(plain_labelled(intents, record[s]["answers"]), COSTS) for s in ("old", "new")),
-                          COSTS)
+        result = compared(*({**fitted({"analysis": analysis}, {"analysis": ANALYSIS_COSTS}), "ask": fit_ask(ask)}
+                            for analysis, ask in (plain_labelled(intents, record[s]["answers"])
+                                                  for s in ("old", "new"))))
     else:
-        old = json.loads(policy.SCORE_FILE.read_text(encoding="utf-8"))["answers"]
         new = {c["id"]: merged(a.arm, old[c["id"]], record["new"]["answers"].get(c["id"], {}))
                for c in dataset["cases"]}
         if a.arm == "order":
-            sides = [{"repair": policy.fit_choice(policy.chosen(dataset, s))[1]} for s in (old, new)]
-            result = compared(*sides, {"repair": {None: policy.CHOICE_COSTS}})
+            result = compared(*({"repair": policy.fit_choice(policy.chosen(dataset, s))[1]} for s in (old, new)))
         else:
-            result = compared(*(fitted(policy.labelled(dataset, s), {}) for s in (old, new)), policy.COSTS)
+            result = compared(*(fitted(policy.labelled(dataset, s)) for s in (old, new)))
         if rows and "gate" in record:
             result["gate"] = gate_compared(rows, recorded, record["gate"]["answers"])
     print(json.dumps({"arm": a.arm, **result}, ensure_ascii=False, indent=1))
