@@ -64,7 +64,7 @@ and writes `raw/eval/laya/gate-<kind>-<timestamp>.json`. The file holds
 per-question answers, the paired interval, ECE, the diagnostics and the
 verdict (`pass`, `fail`, `inconclusive`). `coverage` is Laya's support
 checkpoint, then joint over support's part picks where support left a
-question undecided. Tests in `laya/test_laya.py`: no answer counts as wrong,
+question undecided. Tests in `laya/test_jev_gate.py`: no answer counts as wrong,
 the paired bootstrap on known cases, ECE bins, both 100-state rules, the
 policy reading and the weak-spot tags.
 
