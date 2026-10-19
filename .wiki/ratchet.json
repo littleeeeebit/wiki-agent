@@ -108,8 +108,8 @@
     },
     "tool/main/loop.py": {
       "dup": 0,
-      "lines": 2637,
-      "reason": "The poller takes `_landing` without waiting and retries the next minute: a clicked merge holds it through its minutes-long `.omm` analysis, and waiting on it stalled every repository's loop reattach and cleanup."
+      "lines": 2649,
+      "reason": "A provider safety refusal of a review or repair turn stops the loop for the person instead of being resent into the same thread, where #67 R2 was refused again at its compaction (twelve lines). Before that: The poller takes `_landing` without waiting and retries the next minute: a clicked merge holds it through its minutes-long `.omm` analysis, and waiting on it stalled every repository's loop reattach and cleanup."
     },
     "tool/main/planning.py": {
       "dup": 18,
@@ -218,8 +218,8 @@
     },
     "tool/test_loop.py": {
       "dup": 19,
-      "lines": 2328,
-      "reason": "baseline at adoption"
+      "lines": 2347,
+      "reason": "Pins that a provider safety refusal of a repair turn is sent once and stops for the person (#67 R2)."
     },
     "tool/test_main.py": {
       "dup": 61,

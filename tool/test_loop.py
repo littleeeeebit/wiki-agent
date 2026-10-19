@@ -1048,6 +1048,28 @@ def test_the_next_review_waits_for_a_complete_correction_and_published_head(worl
     assert complete["rounds"][1]["head"] == world.hub.head(7)
 
 
+def test_a_provider_safety_refusal_of_the_repair_stops_without_resending(world, monkeypatch):
+    spec = pr_spec(world, "repair-refused", 7)
+    finding = "[P0] a.txt:1 — history still holds records"
+    refusal = "This request was blocked by our safety systems. Reason: Potentially unintended activity."
+    say = Worker.say
+
+    def refused(worker, text, halt=None):
+        if not worker.heard:
+            worker.heard.append(text)
+            yield Event("error", refusal, {}, worker.id)
+            return
+        yield from say(worker, text, halt)
+
+    monkeypatch.setattr(Worker, "say", refused)
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [fixed((finding, "fixed"))]
+    stopped = looped(spec["id"])
+    assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
+    assert "안전 정책" in stopped["stopped"]["detail"] and refusal in stopped["stopped"]["detail"]
+    assert sum(len(w.heard) for w in Worker.made) == 1
+
+
 @pytest.mark.parametrize("stored", ["pending", "partial", "stale"])
 def test_resume_finishes_the_pending_correction_before_requesting_another_review(world, stored):
     spec = pr_spec(world, "repair-resume", 7)
