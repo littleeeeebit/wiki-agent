@@ -120,6 +120,32 @@ def test_continue_runs_a_final_gate_that_ran_out_of_time_once_more(world, after)
     assert receipt["history"][0]["status"] == "incomplete" and receipt["status"] == "passed"
 
 
+@pytest.mark.parametrize("dirty", [False, True])
+def test_a_review_takes_a_branch_another_worktree_holds_when_it_can_let_go(world, dirty):
+    """rfg_rag #75: an Orca workspace that published the pull request still had its branch
+    checked out, and `git worktree add` refused it. Clean at the head, it lets go on that
+    commit; with work of its own, it keeps the branch and the reason says where."""
+
+    git(world.repo, "push", "-q", "origin", "main:refs/heads/feat/usage")
+    world.hub.open(31, "feat/usage")
+    head = world.hub.push_elsewhere(31, "usage.txt")
+    git(world.repo, "fetch", "-q", "origin", "feat/usage:feat/usage")
+    elsewhere = world.tmp / "orca-barracuda"
+    git(world.repo, "worktree", "add", "-q", str(elsewhere), "feat/usage")
+    if dirty:
+        (elsewhere / "draft.txt").write_text("unsaved", encoding="utf-8")
+    result = client().post("/api/loops", json={"prs": [31]}).json()["results"][0]
+    if dirty:
+        assert str(elsewhere.resolve()) in result["error"] and "커밋하지 않은 변경" in result["error"]
+        assert git(elsewhere, "branch", "--show-current") == "feat/usage"
+        return
+    waited(lambda: not loop._loops)
+    spec = specs.load("proj", result["id"])
+    assert git(Path(spec["worktree"]), "branch", "--show-current") == "feat/usage"
+    assert git(Path(spec["worktree"]), "rev-parse", "HEAD") == head == git(elsewhere, "rev-parse", "HEAD")
+    assert not git(elsewhere, "branch", "--show-current") and (elsewhere / "usage.txt").is_file()
+
+
 @pytest.mark.parametrize("error", [specs.verify.Pending, RuntimeError])
 def test_final_preparation_trouble_stops_without_another_test_run_or_worker(world, monkeypatch, error):
     mapped(world, "*")
