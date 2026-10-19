@@ -374,6 +374,19 @@ def test_cloud_runs_real_api_and_independent_review_without_a_local_writer(cloud
     assert specs.view(world.repo, spec)["unproven"] == ""
 
 
+def test_a_refused_cloud_review_hands_off_without_its_secrets(cloud_world):
+    cloud_spec(cloud_world)
+
+    def refused(chat, text, halt=None):
+        yield Event("error", "This request was blocked by our safety systems. Saw private-api-key")
+
+    with patch.object(Reviewer, "say", refused):
+        spec = looped("cloud")
+    assert spec["stopped"]["reason"] == loop.Why.EXTERNAL.value
+    handoff = (loop.folder("proj", spec["pr"]["number"]) / "handoff.md").read_text(encoding="utf-8")
+    assert "blocked by our safety systems" in handoff and "private-api-key" not in handoff
+
+
 @pytest.mark.parametrize("change_source", [False, True])
 def test_cloud_reviewer_artifacts_survive_next_round_but_source_edits_block_completion(cloud_world, change_source):
     world = cloud_world

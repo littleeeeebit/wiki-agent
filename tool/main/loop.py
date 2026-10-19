@@ -530,6 +530,20 @@ def reviewer(chat: ChatSession) -> dict:
             "tools": chat.tools, "mode": "cloud-verification" if getattr(chat, "verification", None) else "read-only"}
 
 
+def restated(spec: dict, path: Path, text: str) -> str:
+    """A review turn's own instruction after a compaction, the spec first. The
+    reviewer cannot read the recorded round file (`read_tools` reads tracked
+    source only), so it comes back whole except the diff, which the tools
+    the instruction names read again."""
+
+    before, cut, after = text.partition("\n## `gh pr diff ")
+    report = after[after.find("\n## Report"):] if "\n## Report" in after else ""
+    return ("The context was just compacted. The spec under review and this turn's instruction are restated "
+            "below; they outrank the compacted summary."
+            + (f" The diff is left out: read it again with `pr_diff`, or from `{read_tools.diff_file(path).resolve()}`."
+               if cut else "") + "\n\n## The spec under review\n" + specs.brief(spec) + "\n" + before + report)
+
+
 def refused_cell(spec: dict, why: str) -> None:
     """A review conversation the provider refused cannot be continued: the cell
     and its saved session go, and the next one starts from a handoff — the spec,
@@ -833,9 +847,7 @@ def ask(loop: Loop, chat: ChatSession, text: str) -> str:
             if verification.cloud(spec):
                 payload = verification.sanitize(payload, redaction)
             run.put(payload)
-            if ev.kind == "compaction" and ev.meta.get("phase") == "completed" and chat.steer(
-                    "The context was just compacted. The spec under review is restated below; re-read the round's "
-                    "instruction file named in the request before going on.\n\n" + specs.brief(spec)):
+            if ev.kind == "compaction" and ev.meta.get("phase") == "completed" and chat.steer(restated(spec, path, text)):
                 run.put({"kind": "tool", "text": "압축 뒤 명세를 다시 넣었다", "meta": {}, "session_id": chat.id,
                          "parent_id": None})
             if ev.kind == "done":
@@ -865,7 +877,7 @@ def ask(loop: Loop, chat: ChatSession, text: str) -> str:
             release()
             run.finish()
     if work.REFUSED.search(failed):
-        refused_cell(specs.load(loop.repo, loop.sid) or spec, failed)
+        refused_cell(specs.load(loop.repo, loop.sid) or spec, verification.redact(failed, redaction) if redaction else failed)
     if failed or not final.strip():
         raise RuntimeError(failed or "빈 답이다")
     return final

@@ -277,9 +277,9 @@ def remember(path: Path, role: str, text: str, **extra) -> None:
     memory.append(record(path), {"ts": time.time(), "role": role, "text": text, "path": str(path), **extra})
 
 
-def recall(path: Path) -> list[dict]:
-    """This worktree's turns since the last clear. Rows of a removed worktree
-    that had the same name are left out by path."""
+def recall(path: Path, limit: int = MAX_REPLAY) -> list[dict]:
+    """This worktree's last `limit` turns since the last clear (`0`: all of
+    them). Rows of a removed worktree that had the same name are left out by path."""
 
     file = record(path)
     if not file.exists():
@@ -292,7 +292,7 @@ def recall(path: Path) -> list[dict]:
             continue
         if row.get("path") == str(path):
             rows.append(row)
-    return memory.since_clear(rows)[-MAX_REPLAY:]
+    return memory.since_clear(rows)[-limit:]
 
 
 def handoff(rows: list[dict], why: str) -> str:
@@ -501,7 +501,8 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
 
     key = str(path)
     bypass = settings()["bypass"]
-    prompt = specs.system(path) + started_from(recall(path))
+    # Every row, not the screen's last 200: a long conversation keeps its handoff.
+    prompt = specs.system(path) + started_from(recall(path, 0))
     with _lock:
         chat = _sessions.get(key)
         if chat is not None and chat.is_codex != model.startswith("codex:"):

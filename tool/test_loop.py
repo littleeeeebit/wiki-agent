@@ -1079,6 +1079,12 @@ def test_a_provider_safety_refusal_stops_and_resumes_in_a_new_conversation(world
     assert "## Why this conversation is new" in fresh.system and refusal in fresh.system
     assert "- Asked: Review round 1 refused the merge" in fresh.system
     assert specs.load("proj", spec["id"])["state"] == "머지 가능"
+    # Past the screen's 200 rows the conversation keeps its handoff and its session.
+    path = Path(spec["worktree"])
+    for _ in range(101):
+        work.remember(path, "user", "continue")
+        work.remember(path, "assistant", "done", session_id="cli-1", provider="claude")
+    assert work.session(path, "", "") is fresh
 
 
 def test_a_refused_review_resumes_in_a_new_review_conversation_from_its_handoff(world, monkeypatch):
@@ -1127,6 +1133,9 @@ def test_a_compaction_restates_the_unfinished_spec_into_the_running_turn(world, 
     for made in (Worker.made, Reviewer.made):
         restated = [t for c in made for t in c.heard if t.startswith("The context was just compacted.")]
         assert restated and all(f'"id": "{spec["id"]}"' in t for t in restated)
+    # The reviewer cannot read the recorded round file: its instruction comes back, the diff does not.
+    review = next(t for c in Reviewer.made for t in c.heard if t.startswith("The context was just compacted."))
+    assert "Round 1 · PR #7" in review and "## Report" in review and "```diff" not in review
 
 
 @pytest.mark.parametrize("stored", ["pending", "partial", "stale"])
