@@ -55,6 +55,34 @@ deciders' accuracy per Jev weak spot from Jev's documentation (numbers,
 dates, literal wording, injected instructions, the longest quarter of
 states). Laya's data must cover those weak spots (owner, 2026-10-19).
 
+## Results
+
+`coverage`, 2026-10-19: inconclusive, 94 units, under the 100-unit rule
+(`raw/eval/laya/gate-coverage-20261019T182337.json`, support at 2,048
+tokens at inference, then joint).
+
+- 180 questions. Laya answered 98%, accuracy 0.800 against Jev's 0.961;
+  paired difference −0.16 [−0.25, −0.07]. That would fail the −5 point
+  margin if the gate were large enough.
+- Laya found 1 of 10 covered requirements; ECE 0.53 against Jev's 0.15.
+
+The gate was read four times that day, all with the same checkpoints.
+Each read is a diagnostic:
+
+- `…174403`: hashes counted as states (114, 209 questions), support at its
+  trained 1,024 tokens. 522 of 1,415 views did not fit, so Laya answered
+  53%.
+- `…174725`: the same hash count, at 2,048 tokens, a length chosen from
+  the gate's view lengths. The tool then said fail: 0.790 against 0.967.
+- `…182109` and `…182337`: the same two runs recounted by unit, the
+  current rule.
+
+Why, and the next round: [stage 5](5-augmentation.md), production-shaped
+states. Jev's side here is its answers under the old wording. Since #184
+(2026-10-19) production asks stage 11's arm B wording
+([Jev stage 11](../jev/11-question-shape.md)), so the next comparison
+needs Jev's answers to that wording.
+
 ## Tool
 
 `laya/jev_gate.py <kind>`, run with `laya/.venv`. It sits beside the other
