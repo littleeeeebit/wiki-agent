@@ -1045,8 +1045,7 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     cut = previous.get("head") == head and bool(previous.get("pending") or not done) \
         and max(fresh.get("continued", 0), fresh.get("recovered", 0)) > (done or 0)
     # A confirmed failure of this head goes again after a continue, a person's or a repair's that changed no code
-    # (rfg_rag #73: the worktree had no `.venv`). Never a recovery's: its receipt may say `failed` while the
-    # spec, saved after it, does not. `verify` applies these to a local receipt only; CI reads its run.
+    # (rfg_rag #73: no `.venv`), never a recovery's: the receipt is saved before the spec. Local receipts only.
     fixed = previous.get("head") == head and bool(done) and not previous.get("ok") and not retry \
         and fresh.get("continued", 0) > done and not verification.cloud(spec)
     again = ("incomplete", "running", "failed") if fixed else ("incomplete", "running") if cut else ()
