@@ -140,18 +140,37 @@ def test_a_jev_arm_reserves_before_it_sends_and_keeps_what_it_paid_for(tmp_path,
         with pytest.raises(decision.JevError):
             arms.asked(cfg, items(n), 10**6, failed)
     entries = [json.loads(line) for line in failed.read_text(encoding="utf-8").splitlines()]
-    assert [(e["failed"], e["input_tokens"] + e["output_tokens"]) for e in entries] == \
-        [("invalid_response", 350), ("invalid_response", most)]
+    assert [(e["failed"], e["input_tokens"] + e["output_tokens"], "halt" in e) for e in entries] == \
+        [("invalid_response", 350, False), ("invalid_response", most, True)]
+    # Sent with no usable count: the stage halts, every later run sends nothing until accepted.
     del replies[5]
-    got = arms.asked(cfg, items(5), 10**6, failed)
+    count = len(sent)
+    assert not arms.asked(cfg, items(5), 10**6, failed)["complete"] and len(sent) == count
+    got = arms.asked(cfg, items(5), 10**6, failed, accepted=1)
     assert sent[-1] == 5 and got["costs"]["failed"] == 2 and \
         got["costs"]["input_tokens"] + got["costs"]["output_tokens"] == 350 + most + 350, "asked again, all counted"
+    # A negative count is no count (PR #182 review): charged its reservation, never credited.
+    replies[9] = {"model": "m", "usage": {"input_tokens": -10000, "output_tokens": 0},
+                  "answers": {"x": {"type": "noul", "noul": 0.5}}}
+    negative = tmp_path / "negative.jsonl"
+    with pytest.raises(decision.JevError):
+        arms.asked(cfg, items(9), 10**6, negative)
+    [entry] = [json.loads(line) for line in negative.read_text(encoding="utf-8").splitlines()]
+    assert entry["input_tokens"] == most and "halt" in entry
 
-    # A response past its reservation stops the run and the record is incomplete.
+    # A response past its reservation halts the stage: this run, and the next, until accepted.
     replies[7] = {"model": "m", "usage": {"input_tokens": 1, "output_tokens": 10**6},
                   "answers": {"x": {"type": "noul", "noul": 0.5}}}
-    got = arms.asked(cfg, items(7, 8), 10**7, tmp_path / "over.jsonl")
+    over = tmp_path / "over.jsonl"
+    got = arms.asked(cfg, items(7, 8), 10**7, over)
     assert sent[-1] == 7 and not got["complete"] and list(got["answers"]) == ["k7"]
+    assert not arms.asked(cfg, items(8), 10**7, over)["complete"] and sent[-1] == 7
+    assert arms.asked(cfg, items(8), 10**7, over, accepted=1)["complete"] and sent[-1] == 8
+    # One journal is one allowance: another arm's items see what the first spent.
+    shared = tmp_path / "shared.jsonl"
+    arms.asked(cfg, items(10), 10**6, shared)
+    spent = 350
+    assert not arms.asked(cfg, items(11), spent + most - 1, shared)["complete"] and sent[-1] == 10
 
 
 def test_a_jev_arm_journal_survives_a_torn_last_line(tmp_path):

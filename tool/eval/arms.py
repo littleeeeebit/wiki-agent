@@ -30,12 +30,14 @@ coverage gate states (Laya stage 6) against Jev's answers recorded there
 so `direct`'s gate numbers carry part of `view`'s change too and are a
 diagnostic, the calibration split the measure.
 
-`--collect` appends each outcome to `raw/eval/jev/arms-<arm>.journal.jsonl`
-as it arrives, failures with what they cost, so a stop or a failure keeps
-what was paid for and a rerun asks only the rest. `--tokens` caps the
-arm's total, journal included: a request is sent only when its reservation
-(`bound`) fits in what is left. Jev takes no output limit, so the
-reservation's output part is an estimate; a response past it stops the run.
+`--collect` appends each outcome to `raw/eval/jev/arms.journal.jsonl`, one
+journal for every arm, as it arrives, failures with what they cost, so a
+stop or a failure keeps what was paid for and a rerun asks only the rest.
+`--tokens` caps the stage's total, every arm's included: a request is sent
+only when its reservation (`bound`) fits in what is left. Jev takes no
+output limit, so the reservation's output part is an estimate. A response
+past it, or one sent with no usable count, halts every arm until the owner
+accepts that halt (`--accept-halts`).
 The record goes to `raw/eval/jev/arms-<arm>-<timestamp>.json`; an
 incomplete one is never compared.
 """
@@ -61,6 +63,8 @@ from main.knowledge import ANALYSIS, ASK, DESCRIBED, PROMPTS, judge_questions  #
 
 ARMS = ("view", "direct", "order", "plain")
 INTENTS = policy.HUB / "eval" / "jev" / "reliability-v8" / "intents.json"
+# One journal for every arm: the approved allowance is the stage's, not an arm's.
+JOURNAL = RAW / "arms.journal.jsonl"
 
 # B. The requirement's own words, not its id (the page: name the relevant parts of state).
 COVERAGE = ('Requirement {id} asks: "{text}". Do the passages listed in complete_passages, taken together, state '
@@ -301,12 +305,16 @@ def journalled(journal: Path) -> list[dict]:
     return [json.loads(line) for line in lines if line]
 
 
-def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, journal: Path) -> dict:
+def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, journal: Path,
+          accepted: int = 0) -> dict:
     """Every item's requests, each outcome appended to `journal` as it arrives: an answer, or a
-    failure with what it cost (its reported usage, else its reservation once sent). A request
-    is sent only when its `bound` fits in what is left of `limit`, journal included; a response
-    past its reservation stops the run. Answers already in the journal are read back for the
-    same body, model included, and failed requests are asked again."""
+    failure with what it cost (its reported usage, else its reservation once sent). The journal
+    is the whole stage's, every arm's, and `limit` its total: a request is sent only when its
+    `bound` fits in what is left. A response past its reservation, or one sent with no usable
+    count, halts the stage: from then no run sends anything until the owner has seen the
+    spending and accepts that halt (`accepted`, the number of halts accepted). Answers already
+    in the journal are read back for the same body, model included; failed requests are asked
+    again."""
 
     paid = journalled(journal)
     done = {e["digest"]: e for e in paid if "answers" in e}
@@ -315,7 +323,8 @@ def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, journ
     per_question = max([SEED_OUTPUT] + [e["output_tokens"] / e["questions"] for e in done.values()])
     budget = Budget(seconds=None, calls=None, candidates=0)
     answers: dict[str, dict] = {}
-    stopped = False
+    halts = sum("halt" in e for e in paid)
+    stopped = halts > accepted
 
     def keep(entry):
         with journal.open("a", encoding="utf-8") as f:
@@ -338,23 +347,27 @@ def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, journ
                 except Exception as error:
                     last = trace[-1] if trace else {}
                     usage = last.get("usage")
-                    counted = isinstance(usage, dict) and all(type(usage.get(k)) is int
+                    # A count the transport would refuse (`decision.evaluate`) is no count.
+                    counted = isinstance(usage, dict) and all(type(usage.get(k)) is int and usage[k] >= 0
                                                               for k in ("input_tokens", "output_tokens"))
                     cost = ((usage["input_tokens"], usage["output_tokens"]) if counted else
                             (most, 0) if last.get("sent") else (0, 0))
+                    unknown = last.get("sent") and not counted
                     keep({**base, "failed": getattr(error, "category", type(error).__name__),
-                          "input_tokens": cost[0], "output_tokens": cost[1]})
+                          "input_tokens": cost[0], "output_tokens": cost[1],
+                          **({"halt": "sent with no usable count"} if unknown else {})})
                     raise
                 usage = trace[-1]["usage"]
+                over = usage["input_tokens"] + usage["output_tokens"] > most
                 entry = {**base, "answers": got, "model": trace[-1].get("model"),
-                         "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"]}
+                         "input_tokens": usage["input_tokens"], "output_tokens": usage["output_tokens"],
+                         **({"halt": f"past its reservation of {most}"} if over else {})}
                 keep(entry)
                 done[digest] = entry
                 spent += entry["input_tokens"] + entry["output_tokens"]
                 overhead = max(overhead, entry["input_tokens"] - entry["bytes"])
                 per_question = max(per_question, entry["output_tokens"] / entry["questions"])
-                if entry["input_tokens"] + entry["output_tokens"] > most:
-                    stopped = True   # past its reservation: nothing more is sent on this estimate
+                stopped = stopped or over   # nothing more is sent on this estimate, by any run
             prefix = tag[0] if tag else ""
             answers.setdefault(key, {}).update({prefix + n: v for n, v in done[digest]["answers"].items()})
     used = journalled(journal)
@@ -362,7 +375,7 @@ def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, journ
     return {"answers": answers, "complete": not stopped and spent <= limit,
             "model": next((e["model"] for e in reversed(used) if e.get("model")), cfg.model),
             "costs": {"requests": len(used), "answered": len(asked_for),
-                      "failed": sum("failed" in e for e in used),
+                      "failed": sum("failed" in e for e in used), "halts": sum("halt" in e for e in used),
                       "input_tokens": sum(e["input_tokens"] for e in used),
                       "output_tokens": sum(e["output_tokens"] for e in used), "limit": limit}}
 
@@ -421,7 +434,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--answers", type=Path, help="a saved arms record to compare again, nothing sent")
     p.add_argument("--gate", type=Path, help="labelled coverage gate rows (laya/data/coverage/gate.jsonl)")
     p.add_argument("--gate-old", type=Path, help="a laya/jev_gate.py result holding Jev's recorded answers")
-    p.add_argument("--tokens", type=int, default=250_000, help="the arm's Jev tokens at most, journal included")
+    p.add_argument("--tokens", type=int, default=900_000,
+                   help="the stage's Jev tokens at most, every arm's journalled spending included")
+    p.add_argument("--accept-halts", type=int, default=0,
+                   help="halts the owner has seen and accepted; past them no run sends anything")
     a = p.parse_args(argv)
     if a.collect == bool(a.answers):
         p.error("give --collect or --answers")
@@ -451,7 +467,7 @@ def main(argv: list[str] | None = None) -> int:
             items = ([(c["id"], BUILD[a.arm](c, old[c["id"]])) for c in dataset["cases"]] +
                      [(r["provenance"]["state_hash"], gate_requests(a.arm, r)) for r in rows])
         RAW.mkdir(parents=True, exist_ok=True)
-        got = asked(cfg, items, a.tokens, RAW / f"arms-{a.arm}.journal.jsonl")
+        got = asked(cfg, items, a.tokens, JOURNAL, a.accept_halts)
         answers = got.pop("answers")
         if a.arm == "plain":
             sides = {s: {"answers": {k.split(":", 1)[1]: v for k, v in answers.items() if k.startswith(s + ":")}}
@@ -466,8 +482,10 @@ def main(argv: list[str] | None = None) -> int:
         out.write_text(json.dumps(record, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
         print("->", out)
         if not record["complete"]:
-            print(f"stopped under --tokens {a.tokens}: {record['costs']}. The journal keeps what was paid for; "
-                  "a rerun with a larger --tokens asks only the rest. Nothing is compared.")
+            print(f"stopped under --tokens {a.tokens}: {record['costs']}. The journal keeps what was paid for and a "
+                  "rerun asks only the rest. A halt (a response past its reservation, or one with no usable count) "
+                  "stops every arm until the owner, having seen the spending, accepts it with --accept-halts. "
+                  "Nothing is compared.")
             return 1
     else:
         record = json.loads(a.answers.read_text(encoding="utf-8"))

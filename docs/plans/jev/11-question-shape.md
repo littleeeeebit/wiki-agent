@@ -102,19 +102,23 @@ Jev's price is unknown, so the allowance is in Jev tokens.
   A about 360,000 and B about 445,000 at most. Order: the calibration
   arms, then A on the gate, then B on the gate only with what remains of
   the allowance.
-- `--tokens` caps an arm's total, its journal included, failed requests
-  too. A request is sent only when its reservation fits in what is left:
+- One journal holds every arm's spending, failed requests too, and
+  `--tokens` caps the stage's total, 900,000 by default. A request is sent
+  only when its reservation fits in what is left:
   a token per byte of the body as sent, Jev's own instructions (at most 736
   tokens a request on the recorded side, if they are the same in every
   request; taken as 4,000 until measured) and twice the largest output per
   question seen (200 until measured). This is an estimate, not a guarantee:
   Jev takes no output limit and its tokenizer is not ours to check. A
-  response past its reservation stops the run, and its record is never
-  compared. A failed request is charged its reported usage, or its
-  reservation once sent.
-- So the allowance holds with room: the runs' `--tokens` add up to at most
-  900,000, leaving 100,000 of the approved 1,000,000 for one response past
-  its reservation.
+  failed request is charged its reported usage (a non-negative count, as
+  the transport requires), or its reservation once sent.
+- A response past its reservation, or one sent with no usable count,
+  halts the whole stage: no arm sends anything until the owner has seen
+  the journal's spending and accepts that halt (`--accept-halts`), setting
+  what remains of the allowance. So collection passes 900,000 by at most
+  one response's excess, and the 100,000 left of the approved 1,000,000
+  covers it only if that one excess is under 100,000. The client cannot
+  promise that: a strict cap would need a spending limit on Jev's side.
 
 ## Steps
 
