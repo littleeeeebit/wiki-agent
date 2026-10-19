@@ -89,16 +89,18 @@ pool is every pool state outside the reserved units
 (`gate.development(pool, gate.reserved())`, whole transitive near-units
 left out), with a coverage question. It holds 20 states, 43 questions and
 14 units, recorded 2026-10-01 to 2026-10-12. That is too few to fix
-numbers, only directions:
+numbers, only directions. Lengths are characters of
+`json.dumps(state, ensure_ascii=False)`; a median is `statistics.median`,
+and p90 is the sorted value at index `int(n * 0.9)`.
 
 | Shape | Train (1,699) | Validation (165) | Development pool (20) |
 | --- | --- | --- | --- |
-| `current_state` present | 0% | 0% | 50%; of those, median 2,711 characters, max 2,954 |
+| `current_state` present | 0% | 0% | 50%; of those, median 2,391 characters, max 2,954 |
 | `omitted_context` present | 0% | 0% | 20% |
 | More than one requirement | 62% | 60% | 60% |
 | Query length p90 / max | 266 / 452 | 257 / 328 | 1,173 / 1,812 |
 | Passages max | 13 | 13 | 30 |
-| State characters p50 / p90 | 13,851 / 16,796 | 14,676 / 17,732 | 14,379 / 31,286 |
+| State characters p50 / p90 | 13,851 / 16,796 | 14,676 / 17,732 | 14,317 / 31,286 |
 | Yes rate | 0.53 (balanced) | 0.47 | unlabelled; the gate's is 0.06 |
 
 The generator (`laya/generate.py` `captured`) runs `knowledge.prepare` with
@@ -127,8 +129,11 @@ Changes, one batch sized to the pool (not top-ups):
    `support.held_for(split)` and `support.held_rows` for support, and
    `joint.picked`'s `held` for joint. Every reserved gate state is held,
    whether its label was kept or not. Train is also held from validation
-   and calibration. Holds are per view: 142 of the development pool's 905
-   one-passage views are near a held row and are left out. The development
+   and calibration. Holds are per view: of the development pool's 293
+   one-passage support views (every passage of each state, through
+   `kinds.view`), 64 are near a row in `support.held_for("validation")`. Those
+   views are left out as label candidates only. A coverage state is still
+   evaluated whole, with every passage it had. The development
    pool joins the held rows for train; one current train state is near
    one of its states.
 3. Validation. The new generated validation keeps its own rate. It decides
