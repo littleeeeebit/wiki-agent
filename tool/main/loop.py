@@ -2321,9 +2321,9 @@ def adopted(repo: Path, branch: str, oid: str, detached: bool = False) -> Path:
     try:
         specs.checkout_idle(repo)
         tree_release = hold(work._busy, _lock, str(worktree_home(repo) / folder_for(branch)), "그 작업트리를 다른 요청이 쓰고 있다")
-        # A worktree holding the branch is let go (`adopt`): never one a spec owns or a turn runs in.
+        # Another worktree holding the branch is let go (`adopt`): never one a spec owns or a turn runs in.
         held = None if detached else holder(repo, branch)
-        if held is not None and held != (worktree_home(repo) / folder_for(branch)).resolve():
+        if held is not None and held not in {Path(repo).resolve(), (worktree_home(repo) / folder_for(branch)).resolve()}:
             if any(s.get("worktree") and Path(s["worktree"]).resolve() == held for s in specs.listing(repo.name)):
                 raise HTTPException(409, f"`{branch}` 는 다른 명세의 작업트리 {held} 에 열려 있다")
             held_release = hold(work._busy, _lock, str(held), f"`{branch}` 를 잡은 작업트리 {held} 에서 작업이 실행 중이다")

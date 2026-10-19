@@ -120,6 +120,20 @@ def test_continue_runs_a_final_gate_that_ran_out_of_time_once_more(world, after)
     assert receipt["history"][0]["status"] == "incomplete" and receipt["status"] == "passed"
 
 
+def test_a_review_still_reuses_the_checkout_that_holds_its_branch(world):
+    """#188 round 2: the selected checkout on the PR branch is reused as before, not
+    refused by the hold the review itself took on it."""
+
+    git(world.repo, "push", "-q", "origin", "main:refs/heads/feat/here")
+    world.hub.open(32, "feat/here")
+    head = world.hub.push_elsewhere(32, "here.txt")
+    git(world.repo, "fetch", "-q", "origin", "feat/here:feat/here")
+    git(world.repo, "checkout", "-q", "feat/here")
+    result = client().post("/api/loops", json={"prs": [32]}).json()["results"][0]
+    waited(lambda: not loop._loops)
+    assert specs.load("proj", result["id"])["worktree"] == str(world.repo) and git(world.repo, "rev-parse", "HEAD") == head
+
+
 @pytest.mark.parametrize("how", ["clean", "draft", "hidden draft", "turn", "spec"])
 def test_a_review_takes_a_branch_another_worktree_holds_when_it_can_let_go(world, monkeypatch, how):
     """rfg_rag #75: an Orca workspace that published the pull request still had its branch
