@@ -184,6 +184,15 @@ a time instead, the shape `useful` learned.
   leaves other questions undecided and reads other passages as part. Their
   views are relevant passages that may or may not complete the requirement,
   like serving's. Random sets stay only as a capped easy share.
+- With that hard-weighted train (4,417 questions) coverage rose to 0.753, but
+  joint's AUROC on the 105 undecided questions moved only from 0.673 to 0.680.
+  On 72 validation questions its 95% interval is 0.52–0.82, so the two runs
+  cannot be told apart; the labels are consistent (0.4% nested
+  contradictions), and train's yes rate climbs with the passage count (0.17
+  for one, 0.62 for four or more), a shortcut the model follows. Next (owner,
+  2026-10-19): validation and calibration take the other support runs' picks
+  too (`pack --picks` reads coverage validation as well), and train's yes rate
+  is evened across passage counts.
 
 ## Calibration and policy
 

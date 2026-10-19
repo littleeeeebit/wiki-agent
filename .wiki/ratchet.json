@@ -129,7 +129,7 @@
     "tool/main/specs.py": {
       "dup": 0,
       "lines": 1501,
-      "reason": "`brief` splits the spec block out of `system` so the reviewer's handoff and post-compaction restatement read the same spec as the implementer (four lines; main already stood at 1497 with no reason recorded). Before that: Stage 4 uses existing Windows job ownership for gate cancellation and attempt-owned setup lifetime, with bounded cleanup timeout."
+      "reason": "`brief` splits the spec block out of `system` so the reviewer's handoff and post-compaction restatement read the same spec as the implementer (four lines, #175). Before that: #172 points every Windows gate's TMPDIR, TEMP and TMP at its own folder, since the Codex sandbox's same-named account leaves pytest links this account cannot read; merged without raising this ceiling, so main failed debt.py check."
     },
     "tool/main/verification.py": {
       "dup": 12,

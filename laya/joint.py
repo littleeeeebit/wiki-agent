@@ -34,6 +34,11 @@ More support runs leave other questions undecided, and those are hard problems
     python laya/train.py pack --picks <checkpoint>.zip,<checkpoint>.zip
     python laya/joint.py picks train <picks result zip> --tag <checkpoint>
     python laya/joint.py derive train --tag <checkpoint>
+
+One run's 72 validation questions could not tell two joint runs apart (AUROC 95% interval
+0.52-0.82), so validation and calibration take the other runs' picks too (owner,
+2026-10-19): `picks|derive validation --tag <checkpoint>`, without `fewer` or `padded`.
+`evaluate` still scores coverage over `picks-validation.jsonl`, the serving run's.
 """
 
 import argparse
@@ -166,6 +171,19 @@ def evaluate(checkpoint, agent=None) -> tuple[dict, list[dict]]:
             "joint_accuracy": round(sum(r["verdict"] == r["expected"] for r in asked) / max(1, len(asked)), 4)}, records
 
 
+def others(split: str) -> list[dict]:
+    """The joint rows of every other split, labelled or still candidates. A coverage state
+    held whole is not enough: a few of its passages can make a view near another split's
+    view (PR #174 review: a validation view at Jaccard 0.83 to a train one)."""
+
+    rows = {}
+    for s in train.SPLITS:
+        for f in sorted((DATA / KIND).glob(f"{s}*.jsonl")) if s != split else ():
+            if ".turns." not in f.name:
+                rows.update((digest(r["state"]), r) for r in read(f) if r.get("state"))
+    return list(rows.values())
+
+
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("how", choices=["derive", "picks", "subsets"])
@@ -195,12 +213,13 @@ def main() -> None:
     elif a.how == "subsets":
         out = DATA / KIND / f"{a.split}-subsets.candidates.jsonl"
         sizes = [len(p["parts"]) for p in read(source) if p["verdict"] is None and p["parts"]]
-        rows = [r for r in subsets(read(DATA / "coverage" / f"{a.split}.jsonl"), sizes, support.held_for(a.split))
+        rows = [r for r in subsets(read(DATA / "coverage" / f"{a.split}.jsonl"), sizes,
+                                   support.held_for(a.split) + others(a.split))
                 if r["state_hash"] not in asked]
     else:
         out = DATA / KIND / f"{a.split}{tag}.candidates.jsonl"
         rows = [r for r in picked(read(source), read(DATA / "coverage" / f"{a.split}.jsonl"),
-                                  support.held_for(a.split), wide=a.split == "train")
+                                  support.held_for(a.split) + others(a.split), wide=a.split == "train")
                 if r["state_hash"] not in asked]
     if out.exists():
         sys.exit(f"{out} exists; move it aside first")
