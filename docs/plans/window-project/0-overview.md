@@ -56,6 +56,10 @@ The project is a property of the window, not the server.
 | Screen (`web/src/lib/api.ts`, `App.tsx`) | Follows `X-Project-Moved` and the server's choice | Keeps its own project per window (session storage), opens on the default, and treats 409 as an error, not a move |
 | Tauri (`web/src-tauri/src/main.rs`) | One window labelled `main` | A command that opens another window with its own label |
 | Feed events | One stream for all | Unchanged; each window refetches with its own `X-Project`, and events already carry their path or repository |
+| Rail rows of other projects (`/api/loops` turns, `web/src/lib/tasks.ts` `elsewhere`) | A running turn's project is guessed from its path's parent folder, so a shared checkout such as `C:/repos/a` is named `repos` and also lands in the current project's group; a plain turn's row is fixed at `waiting: false` | The project comes from the session or the task's recorded owner; a row shows the pending approvals the screen already knows for its path |
+
+The rail rows were found by the #178 review (round 1, both P2). They predate
+#178, but a picker that switches during work shows them more often.
 
 About 54 call sites read `project()` or `current_repo()`. Nearly all are route
 handlers, where the request's header answers them. The ones above are the
@@ -78,5 +82,5 @@ exceptions found so far; the first step is to confirm that list.
 | 0 | Picker follows the server | #178: the picker no longer locks while a turn or loop runs | In review |
 | 1 | Audit | Every `project()` and `current_repo()` call classified as request or background, with background ones passing their repository | Not started |
 | 2 | Server per request | `project()` from `X-Project`, holds keyed by repository, switch closes nothing, idle limit | Not started |
-| 3 | Screen per window | Window-owned project, no following on 409, a second window from the desktop app | Not started |
+| 3 | Screen per window | Window-owned project, no following on 409, a second window from the desktop app, rail rows named by their owner and showing waiting approvals | Not started |
 | 4 | Verification | Two windows on two repositories: a task in each, a review loop in one, a switch in the other, nothing refused or crossed | Not started |
