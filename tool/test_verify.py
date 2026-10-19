@@ -336,6 +336,33 @@ def test_explicit_local_retry_keeps_the_original_failure(hosted_repo, monkeypatc
     assert receipt["retry_reason"] == "Installed the required browser"
 
 
+@pytest.mark.parametrize("cut", ["incomplete", "running", "failed"])
+def test_only_a_persons_continue_runs_an_unfinished_local_final_again(hosted_repo, monkeypatch, cut):
+    """Over its time, or left `running` by a dead server, a run proved nothing:
+    `again` runs it once more. A confirmed failure still needs its research."""
+
+    monkeypatch.setattr(ci, "backend", lambda *_: "local")
+    monkeypatch.setattr(ci, "run", lambda args, repo: str(repo))
+
+    def first(*_):
+        if cut == "running":
+            raise OSError("the server died mid-run")
+        return {"ok": False, "code": None if cut == "incomplete" else 1, "reason": "cut"}
+
+    with pytest.raises(ci.Failure if cut == "failed" else (ci.Pending, OSError)):
+        ci.final(hosted_repo, "main", judge=first)
+    never = lambda *_: pytest.fail("ran again without a person")  # noqa: E731
+    with pytest.raises(ci.Failure if cut == "failed" else ci.Pending, match="자동 재실행하지"):
+        ci.final(hosted_repo, "main", judge=never)
+    if cut == "failed":
+        with pytest.raises(ci.Failure, match="자동 재실행하지"):
+            ci.final(hosted_repo, "main", again=True, judge=never)
+        return
+    proof = ci.final(hosted_repo, "main", again=True, judge=lambda *_: {"ok": True, "head": HEAD})
+    receipt = json.loads(next(hosted_repo.glob("wiki-verification-*.json")).read_text(encoding="utf-8"))
+    assert proof["backend"] == "local" and receipt["history"][0]["status"] == cut and receipt["retry_reason"]
+
+
 def test_transport_failure_while_polling_stays_pending(hosted_repo, monkeypatch):
     monkeypatch.setattr(ci, "run", lambda args, repo: str(repo))
     rows = iter([completed(status="in_progress", conclusion=""), RuntimeError("network unavailable")])

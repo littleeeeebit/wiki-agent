@@ -1050,7 +1050,7 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
         specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
         settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
         verdict = specs.verify.verdict(repo, path, base, specs.local_required(repo, spec), loop.halt,
-            retry_reason=retry,
+            retry_reason=retry, again=bool(previous.get("pending")) and previous.get("head") == head,
             local_only=bool(review_contract.preservation_command(spec)),
             noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
         if verification.cloud(spec):

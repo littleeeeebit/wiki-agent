@@ -2,6 +2,7 @@
 
 # ruff: noqa: F811 -- pytest injects the imported fixture by name
 
+import json
 import re
 import threading
 from pathlib import Path
@@ -13,9 +14,37 @@ from agent import Event
 from main import loop, specs, work
 from test_loop import (  # noqa: F401 -- shared fixtures and isolated Git/GitHub world
     Reviewer, Worker, allow, client, deny, git, no_machine_settings, pr_spec, template, waited, world,
-    looped, mapped,
+    looped, mapped, allowed_spec, round_of, FINAL,
 )
 from workspace import remove
+
+
+def test_continue_runs_a_final_gate_that_ran_out_of_time_once_more(world):
+    """rfg_rag #72 r4: a final gate cut at its time limit stopped the loop, and
+    every continue (`/resume`) read the cut-short receipt back instead of running it again."""
+
+    web = client()
+    spec = allowed_spec(world, "fix-t", 7)
+    specs.validate("proj", "fix-t", round=round_of(world, spec))
+    real, calls = specs.judge, []
+
+    def cut_once(path, cmds, halt, noted=lambda text: None, **kwargs):
+        calls.append(list(cmds))
+        if len(calls) == 1:
+            return {"ok": False, "code": None, "reason": "검증 실행 시간 제한을 넘었다", "tail": "[  9%]", "cmd": cmds[0]}
+        return real(path, cmds, halt, noted, **kwargs)
+
+    with patch.object(specs, "judge", cut_once):
+        assert web.post("/api/specs/fix-t/merge", json={"head": spec["pr"]["head"]}).status_code == 409
+        waited(lambda: ("proj", "fix-t") not in loop._loops)
+        stopped = specs.load("proj", "fix-t")
+        assert stopped["state"] == "멈춤" and "시간 제한" in stopped["stopped"]["detail"] and calls == [[FINAL]]
+        web.post("/api/specs/fix-t/resume", json={}).raise_for_status()
+        waited(lambda: ("proj", "fix-t") not in loop._loops)
+    spec = specs.load("proj", "fix-t")
+    assert spec["state"] == "머지 가능" and spec["validation"]["final"]["ok"] and calls == [[FINAL], [FINAL]]
+    receipt = json.loads(next((world.repo / ".git").glob("wiki-verification-*.json")).read_text(encoding="utf-8"))
+    assert receipt["history"][0]["status"] == "incomplete" and receipt["status"] == "passed"
 
 
 @pytest.mark.parametrize("error", [specs.verify.Pending, RuntimeError])
