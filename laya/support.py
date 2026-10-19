@@ -308,8 +308,8 @@ def auroc(pos: list[float], neg: list[float]) -> float | None:
 def evaluate(checkpoint, agent=None, split: str = "validation") -> tuple[dict, list[dict]]:
     """A `support` checkpoint scored as the coverage answers it makes on `coverage`'s
     `split` questions: a summary and one record per question. A question with a passage
-    view past `MAX_LEN` is left undecided. Its picks on train and calibration are what
-    `joint` is asked over (`joint.picks`)."""
+    view past `MAX_LEN` is left undecided. Its picks on every split are what `joint` is
+    asked over (`joint.picks`)."""
 
     agent = agent or train.loaded(checkpoint)
     max_len, records = train.MAX_LEN[KIND], []

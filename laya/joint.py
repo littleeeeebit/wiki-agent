@@ -34,6 +34,11 @@ More support runs leave other questions undecided, and those are hard problems
     python laya/train.py pack --picks <checkpoint>.zip,<checkpoint>.zip
     python laya/joint.py picks train <picks result zip> --tag <checkpoint>
     python laya/joint.py derive train --tag <checkpoint>
+
+One run's 72 validation questions could not tell two joint runs apart (AUROC 95% interval
+0.52-0.82), so validation and calibration take the other runs' picks too (owner,
+2026-10-19): `picks|derive validation --tag <checkpoint>`, without `fewer` or `padded`.
+`evaluate` still scores coverage over `picks-validation.jsonl`, the serving run's.
 """
 
 import argparse

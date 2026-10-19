@@ -1320,14 +1320,15 @@ def test_joint_asks_the_part_passages_together_where_support_left_coverage_undec
         assert {"laya/joint.py", "laya/data/joint/train.jsonl", "laya/data/joint/picks-validation.jsonl",
                 "laya/data/coverage/validation.jsonl"} <= set(z.namelist())
         assert "picks" not in json.loads(z.read("laya/packed.json"))
-    # A picks pack has the notebook read coverage's train and calibration with a support checkpoint.
+    # A picks pack has the notebook read coverage's train, calibration and validation with a
+    # support checkpoint.
     write(folders / "data" / "coverage" / "train.jsonl", [row])
     write(folders / "data" / "coverage" / "calibration.jsonl", [row])
     with zipfile.ZipFile(train.pack("coverage", picks=("s1.zip", "s2.zip"))) as z:
         assert json.loads(z.read("laya/packed.json"))["picks"] == {"checkpoints": ["s1.zip", "s2.zip"],
-                                                                   "splits": ["train", "calibration"]}
+                                                                   "splits": ["train", "calibration", "validation"]}
         names = z.namelist()   # coverage's own splits are not packed twice
-        assert names.count("laya/data/coverage/train.jsonl") == names.count("laya/data/coverage/calibration.jsonl") == 1
+        assert all(names.count(f"laya/data/coverage/{s}.jsonl") == 1 for s in ("train", "calibration", "validation"))
     with pytest.raises(ValueError):   # the notebook names a run's outputs by its checkpoint's stem
         train.pack("joint", picks=("old/same.zip", "new/same.zip"))
 
