@@ -72,63 +72,116 @@ interruption is finished on the rerun, never counted twice or lost
 
 ## Coverage: production-shaped states (plan, 2026-10-20)
 
-Why. Coverage (support, then joint) failed its stage 6 gate (2026-10-19):
-accuracy 0.790 against Jev's 0.967 at 2,048 tokens, with 1 of 10 covered
-requirements found. Its validation (0.78 support, about 0.72 coverage) did
-not predict that, because every train and validation state is generated
-and production's are shaped differently. Measured on the production pool's
-coverage states **outside the gate** (73 states; the gate chooses nothing
-here):
+Why. The gate reads of 2026-10-19 put coverage (support, then joint) well
+below Jev: 0.800 against 0.961 (stage 6, Results). Under the current unit
+rule the verdict is inconclusive, not fail: 94 units, under 100. Validation
+(0.78 support, about 0.72 coverage) did not predict the gap. The gate read
+started this round, and its view lengths chose 2,048 tokens, so the gate
+has shaped this plan. The rule "the gate test never chooses a slice" holds
+only for what follows: the shapes below are measured on the development
+pool, never on gate states.
 
-| Shape | Train (1,699) | Validation (165) | Pool outside the gate (73) |
+Every train and validation state is generated, and generated states are
+shaped differently from production's. That is a hypothesis for the gap,
+not its proven cause: the label rates, support's pick distribution,
+calibration and the wording Jev was asked also differ. The development
+pool is every pool state outside the reserved units
+(`gate.development(pool, gate.reserved())`, whole transitive near-units
+left out), with a coverage question. It holds 20 states, 43 questions and
+14 units, recorded 2026-10-01 to 2026-10-12. That is too few to fix
+numbers, only directions:
+
+| Shape | Train (1,699) | Validation (165) | Development pool (20) |
 | --- | --- | --- | --- |
-| `current_state` present | 0% | 0% | 60%, median 1,832 characters, max 3,950 |
-| `omitted_context` present | 0% | 0% | 40% |
-| Query length p90 / max | 266 / 452 | 257 / 328 | 1,083 / 1,995 |
-| Passages max | 13 | 13 | 37 |
-| State characters p50 / p90 | 13,851 / 16,796 | 14,676 / 17,732 | 15,177 / 21,333 |
-| Yes rate | 0.53 (balanced) | 0.47 | (unlabelled; the gate's is 0.05) |
+| `current_state` present | 0% | 0% | 50%; of those, median 2,711 characters, max 2,954 |
+| `omitted_context` present | 0% | 0% | 20% |
+| More than one requirement | 62% | 60% | 60% |
+| Query length p90 / max | 266 / 452 | 257 / 328 | 1,173 / 1,812 |
+| Passages max | 13 | 13 | 30 |
+| State characters p50 / p90 | 13,851 / 16,796 | 14,676 / 17,732 | 14,379 / 31,286 |
+| Yes rate | 0.53 (balanced) | 0.47 | unlabelled; the gate's is 0.06 |
 
 The generator (`laya/generate.py` `captured`) runs `knowledge.prepare` with
-an empty conversation, leaves the query unsplit, and stops at the first
-grade-evidence request. So no generated state has conversation context, an
-omitted part, a split query or a later round's passages.
+an empty conversation, answers the translator's request with nothing (so
+the model split, `Flow.split` through `translate.parts`, never runs), and
+stops at the first grade-evidence request. The punctuation split
+(`knowledge.requirements`) still runs, and `laya/prompts/generate.md`
+already asks for multi-part questions and pasted material. What generated
+states lack is conversation context (`current_state`, `omitted_context`),
+the model split, later repair rounds' passages, and queries as long as
+production's.
 
 Changes, one batch sized to the pool (not top-ups):
 
-1. Validation and calibration from production. Label the pool's coverage
-   states outside the gate, after `gate.Near` drops any near a gate state,
-   with guided labelling (stage 3). They replace generated validation as the
-   measure for support and joint; their natural yes rate is kept. Too few
-   for calibration alone (73 states), so calibration stays the generated
-   split until the pool grows.
-2. Generator. `laya/generate.py` writes the conversation production sees:
+1. Generator. `laya/generate.py` writes the conversation production sees:
    a prior exchange passed as `state` to `prepare` (so `current_state` and,
-   past `STATE_CHARS`, `omitted_context` are production's own), queries
-   that paste material or quote someone else's question, multi-part
-   queries that `Flow.split` splits, and repair rounds whose passages
-   accumulate. Slices weighted hard, by the owner's rule: numbers, dates,
-   literal wording, the longest states, and Jev's documented weak spots
-   (`.wiki/laya-insight-jev-usage.md`).
-3. Balance. Train is balanced by class; validation and calibration keep the
-   production rate.
-4. Length. support trains and serves at 2,048 tokens, where every gate view
-   fits (522 of 1,415 views exceeded 1,024).
-5. Retrain support, then joint over support's picks; measure on the
-   production validation.
+   past `STATE_CHARS`, `omitted_context` are production's own), the model
+   split on, longer queries that paste material, and repair rounds whose
+   passages accumulate. Before the batch, the same shape table on the new
+   generator's first 50 states shows it reaches the development pool's
+   directions. Multi-part queries are already common, so the batch does
+   not add more of them. Slices weighted hard, by the owner's rule:
+   numbers, dates, literal wording, the longest states, and Jev's
+   documented weak spots (`.wiki/laya-insight-jev-usage.md`).
+2. Holds. Derived support and joint views are held as today:
+   `support.held_for(split)` and `support.held_rows` for support, and
+   `joint.picked`'s `held` for joint. Every reserved gate state is held,
+   whether its label was kept or not. Train is also held from validation
+   and calibration. Holds are per view: 142 of the development pool's 905
+   one-passage views are near a held row and are left out. The development
+   pool joins the held rows for train; one current train state is near
+   one of its states.
+3. Validation. The new generated validation keeps its own rate. It decides
+   adoption as before. The development pool is labelled (guided labelling,
+   stage 3) at its natural rate and reported beside it. It decides nothing
+   until it has at least 50 units, 10 yes questions and 20 questions that
+   reach joint. Below that it is `inconclusive`. Support alone and support
+   then joint are compared on the same states, with intervals from a
+   bootstrap over units, not questions. A rare-positive diagnostic set,
+   if added, stays apart from both natural-rate sets.
+4. Calibration. Stays the generated calibration split. Its temperature
+   (`laya/train.py`, `laya/calibrate.py`, one scalar per type) does not
+   correct the prior shift from a 0.5 to a 0.06 yes rate. Calibration on
+   production is unverified until a production calibration sample exists,
+   a separate set from validation.
+5. Balance. Train is balanced by class.
+6. Length. support trains and serves at 2,048 tokens, where every gate view
+   fits (522 of 1,415 views exceeded 1,024). That figure came from the gate,
+   as Why says.
+7. Retrain support, then joint over support's picks; measure as in 3.
 
-Budget, estimated from earlier runs (generation $4.72 for 708 queries;
-labels about $0.0005 each; Codex Sol on the subscription): 1,500 queries
-about $10.50, about 4,000 support views $2, about 1,500 joint labels $0.75,
-production validation about $0.50. Cap $20, approved before anything is
-sent; nothing above is approved yet.
+Budget, per kept label from the last full runs, with the verifier (Codex
+Sol) on the subscription. Generation was $4.72 for 708 queries. A support
+label cost about $0.0014 per kept label ($2.59 for 1,850 kept, 4,382
+calls). A joint label cost about $0.0016 per kept label ($3.51 for 2,159
+kept, 6,628 calls).
+
+| Item | Kept | Estimate |
+| --- | --- | --- |
+| Generation | 1,500 queries | about $10.00 |
+| Support labels | 4,000 kept | about $5.60 |
+| Joint labels | 1,500 kept | about $2.44 |
+| Development pool labels | 43 questions, their views | under $0.50 |
+| Model split and longer states | not measured | unknown |
+
+That is about $18.50 before the new calls, under a $20 cap. A pilot of 100
+queries, generated and labelled (about $1.40), comes first. It measures the
+cost per kept label, the yield and the model split's calls. The batch is
+then sized to what fits the cap, and it stops at the cap with whatever it
+has kept. Nothing is approved yet. The pilot and the batch each need the
+owner's approval.
 
 Open, for the owner before the next gate:
 
-- The gate has been read once for coverage. Slices here come from the pool
-  outside it, but the next gate read is a second look at the same states.
-  Accept that (reported as such), or reserve a fresh gate from production
-  states recorded after 2026-10-19.
+- Exposure. The coverage gate was read four times on 2026-10-19, all
+  diagnostics with the same checkpoints (stage 6, Results). Support ran
+  at 1,024 tokens, then at 2,048, a length chosen from the gate's view
+  lengths, and each run was recounted by unit. Its 94 units cannot meet the 100-unit rule whatever else is decided.
+  Either add reserved units from production states recorded after the
+  pool (2026-10-13), or reserve a fresh coverage gate of at least 100
+  units from them. Either way, reserve them before any of those states
+  enters the pool or development, and report the old units' exposure
+  beside the verdict.
 - Jev's side of the gate is its recorded answers under the old wording.
   Since #184 production asks arm B's wording, so the next comparison needs
   Jev's B answers on the gate states (paid; stage 11's incomplete gate run
