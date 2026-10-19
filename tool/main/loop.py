@@ -534,8 +534,16 @@ def restated(spec: dict, path: Path, text: str) -> str:
     """A review turn's own instruction after a compaction, the spec first. The
     reviewer cannot read the recorded round file (`read_tools` reads tracked
     source only), so it comes back whole except the diff, which the tools
-    the instruction names read again."""
+    the instruction names read again. A format retry only names the round
+    file, so the server reads it for the reviewer."""
 
+    named = re.search(r"`([^`]*round-\d+\.md)`", text)
+    try:
+        recorded = Path(named[1]).read_text(encoding="utf-8") if named else ""
+    except OSError:
+        recorded = ""
+    if recorded and recorded not in text:
+        text += "\n\n" + recorded
     before, cut, after = text.partition("\n## `gh pr diff ")
     report = after[after.find("\n## Report"):] if "\n## Report" in after else ""
     return ("The context was just compacted. The spec under review and this turn's instruction are restated "

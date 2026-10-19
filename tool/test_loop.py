@@ -1127,15 +1127,17 @@ def test_a_compaction_restates_the_unfinished_spec_into_the_running_turn(world, 
 
         monkeypatch.setattr(cls, "say", compacting)
         monkeypatch.setattr(cls, "steer", lambda cell, text: cell.heard.append(text) or True, raising=False)
-    Reviewer.replies = [deny(finding), allow]
+    Reviewer.replies = ["Not a review.", deny(finding), allow]   # round 1's second attempt is a format retry
     Worker.replies = [fixed((finding, "fixed"))]
     assert looped(spec["id"])["state"] == "머지 가능"
     for made in (Worker.made, Reviewer.made):
         restated = [t for c in made for t in c.heard if t.startswith("The context was just compacted.")]
         assert restated and all(f'"id": "{spec["id"]}"' in t for t in restated)
-    # The reviewer cannot read the recorded round file: its instruction comes back, the diff does not.
-    review = next(t for c in Reviewer.made for t in c.heard if t.startswith("The context was just compacted."))
-    assert "Round 1 · PR #7" in review and "## Report" in review and "```diff" not in review
+    # The reviewer cannot read the recorded round file: its instruction comes back, the diff does not,
+    # on a format retry too.
+    reviews = [t for c in Reviewer.made for t in c.heard if t.startswith("The context was just compacted.")]
+    assert len(reviews) == 3 and any("could not be read" in t for t in reviews)
+    assert all(re.search(r"Round \d · PR #7", t) and "## Report" in t and "```diff" not in t for t in reviews)
 
 
 @pytest.mark.parametrize("stored", ["pending", "partial", "stale"])
