@@ -1348,6 +1348,28 @@ def test_joint_asks_the_part_passages_together_where_support_left_coverage_undec
              for r in label.read(folders / "data" / "joint" / "train-s2.candidates.jsonl")}
     assert ("p0", "p1", "p2") in views and ("p0", "p1") not in views   # p0 p1 is the first run's view
 
+    # A view near another split's joint row, labelled or a candidate, is left out: the coverage
+    # states differ, but the passages picked can make the views near (PR #174 review).
+    def rows_of(split):
+        monkeypatch.setattr(joint.sys, "argv", ["joint.py", "derive", split, "--tag", "s2"])
+        joint.main()
+        found = folders / "data" / "joint" / f"{split}-s2.candidates.jsonl"
+        got = {tuple(p["id"] for p in r["state"]["passages"]) for r in label.read(found)} if found.exists() else set()
+        found.unlink(missing_ok=True)
+        return got
+
+    write(folders / "data" / "joint" / "picks-validation-s2.jsonl", label.read(folders / "data" / "joint" / "picks-train-s2.jsonl"))
+    (folders / "data" / "joint" / "train-s2.candidates.jsonl").unlink()   # holds the same view
+    (folders / "data" / "joint" / "train.candidates.jsonl").unlink()
+    assert rows_of("validation") == {("p0", "p1", "p2")}          # only gate states held
+    write(folders / "data" / "joint" / "train.jsonl", [{"state": joint.together(state, ["p0", "p1", "p2"]),
+                                                        "questions": {"joint_r0": NOUL}, "expected": {"joint_r0": True}}])
+    assert rows_of("validation") == set()                         # train's labelled view
+    (folders / "data" / "joint" / "train.jsonl").unlink()
+    write(folders / "data" / "joint" / "train-more.candidates.jsonl", [{"state": joint.together(state, ["p0", "p1", "p2"])}])
+    assert rows_of("validation") == set()                         # a train candidate's view
+    assert ("p0", "p1", "p2") in rows_of("train")                 # a split's own rows are not held
+
 
 def test_a_train_subset_holds_whole_records_and_says_how_many(folders):
     rows = [{"state": {"text": f"s{i} line"}, "questions": {"useful_p0": NOUL},
