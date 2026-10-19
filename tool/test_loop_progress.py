@@ -120,11 +120,12 @@ def test_continue_runs_a_final_gate_that_ran_out_of_time_once_more(world, after)
     assert receipt["history"][0]["status"] == "incomplete" and receipt["status"] == "passed"
 
 
-@pytest.mark.parametrize("dirty", [False, True])
-def test_a_review_takes_a_branch_another_worktree_holds_when_it_can_let_go(world, dirty):
+@pytest.mark.parametrize("how", ["clean", "draft", "hidden draft", "turn", "spec"])
+def test_a_review_takes_a_branch_another_worktree_holds_when_it_can_let_go(world, monkeypatch, how):
     """rfg_rag #75: an Orca workspace that published the pull request still had its branch
     checked out, and `git worktree add` refused it. Clean at the head, it lets go on that
-    commit; with work of its own, it keeps the branch and the reason says where."""
+    commit. With work of its own — a draft `status` settings hide too, a running turn, a
+    spec that owns it (#188 round 1) — it keeps the branch and the reason says where."""
 
     git(world.repo, "push", "-q", "origin", "main:refs/heads/feat/usage")
     world.hub.open(31, "feat/usage")
@@ -132,11 +133,22 @@ def test_a_review_takes_a_branch_another_worktree_holds_when_it_can_let_go(world
     git(world.repo, "fetch", "-q", "origin", "feat/usage:feat/usage")
     elsewhere = world.tmp / "orca-barracuda"
     git(world.repo, "worktree", "add", "-q", str(elsewhere), "feat/usage")
-    if dirty:
+    if "draft" in how:
         (elsewhere / "draft.txt").write_text("unsaved", encoding="utf-8")
-    result = client().post("/api/loops", json={"prs": [31]}).json()["results"][0]
-    if dirty:
-        assert str(elsewhere.resolve()) in result["error"] and "커밋하지 않은 변경" in result["error"]
+    if how == "hidden draft":
+        git(elsewhere, "config", "status.showUntrackedFiles", "no")
+    if how == "turn":
+        work._busy[str(elsewhere.resolve())] = object()
+    if how == "spec":
+        listing = specs.listing
+        monkeypatch.setattr(specs, "listing", lambda name: [*listing(name), {"id": "other", "worktree": str(elsewhere),
+                                                                         "pr": {"number": 9, "branch": "other"}}])
+    try:
+        result = client().post("/api/loops", json={"prs": [31]}).json()["results"][0]
+    finally:
+        work._busy.pop(str(elsewhere.resolve()), None)
+    if how != "clean":
+        assert str(elsewhere.resolve()) in result["error"]
         assert git(elsewhere, "branch", "--show-current") == "feat/usage"
         return
     waited(lambda: not loop._loops)

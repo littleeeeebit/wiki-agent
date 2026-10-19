@@ -76,7 +76,7 @@ def folder_for(branch: str) -> str:
     return name if TASK.fullmatch(name) else ""
 
 
-def _holder(repo: Path, branch: str) -> Path | None:
+def holder(repo: Path, branch: str) -> Path | None:
     """The worktree that has `branch` checked out, wherever it lives."""
 
     path = None
@@ -121,11 +121,12 @@ def adopt(repo: Path, branch: str, oid: str, detached: bool = False) -> Path:
             raise RuntimeError("체크아웃의 커밋이 PR 머리와 다르다")
         return repo
     repo = _main(repo)
-    held = _holder(repo, branch) if local and not detached else None
+    held = holder(repo, branch) if local and not detached else None
     if held is not None and held != path.resolve():
         # Another checkout holds it — an Orca workspace that published the PR (rfg_rag #75) — so
         # `worktree add` refuses. Clean and at the head, it lets go on that commit; its files stay.
-        clean = _git(held, "status", "--porcelain")
+        # Untracked and submodule changes count whatever the person's `status` settings hide.
+        clean = _git(held, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
         if clean.returncode or clean.stdout.strip() or _git(held, "rev-parse", "HEAD").stdout.strip() != oid:
             raise RuntimeError(f"`{branch}` 가 다른 작업트리 {held} 에 열려 있고, 커밋하지 않은 변경이 있거나 PR 머리와 다르다")
         freed = _git(held, "switch", "--detach")
