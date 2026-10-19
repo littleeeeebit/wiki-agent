@@ -1037,9 +1037,12 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
 
     cmd = specs.required(repo, spec)
     previous = (spec.get("validation") or {}).get("final") or {}
-    research = ((spec.get("local_verification") or {}).get("research") or [{}])[-1]
+    research, done = ((spec.get("local_verification") or {}).get("research") or [{}])[-1], previous.get("finished_at")
     retry = research.get("note", "") if not previous.get("ok") and previous.get("head") == head \
-        and research.get("head") == head and research.get("ts", 0) > (previous.get("finished_at") or float("inf")) else ""
+        and research.get("head") == head and research.get("ts", 0) > (done or float("inf")) else ""
+    # Cut short, or never finished (a dead server): once more after a continue or a restart's recovery, which stamp it.
+    again = previous.get("head") == head and bool(previous.get("pending") or not done) \
+        and (specs.load(loop.repo, loop.sid) or spec).get("continued", 0) > (done or 0)
     release = wait_hold(loop, path)
     if release is None:
         return None
@@ -1050,7 +1053,7 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
         specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
         settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
         verdict = specs.verify.verdict(repo, path, base, specs.local_required(repo, spec), loop.halt,
-            retry_reason=retry, again=bool(previous.get("pending")) and previous.get("head") == head,
+            retry_reason=retry, again=again,
             local_only=bool(review_contract.preservation_command(spec)),
             noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
         if verification.cloud(spec):
@@ -1659,6 +1662,7 @@ def recover() -> list[tuple[str, str]]:
                         # A research turn cut mid-flight: its spend is unknown, and the cycle still counts.
                         specs.update(repo.name, spec["id"], recovery=marked)
                     stop(None, repo.name, spec["id"], Why.RESTART)
+                    specs.update(repo.name, spec["id"], continued=time.time())   # the run it was in goes on, a final gate too
                     resume.append((repo.name, spec["id"]))
                 elif spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == Why.RESTART.value:
                     resume.append((repo.name, spec["id"]))
@@ -2288,6 +2292,7 @@ def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> di
         if view["state"] == "MERGED":
             landed(repo, fresh)
             return specs.view(repo, specs.load(repo.name, sid))
+    specs.update(repo.name, sid, continued=time.time())   # `finalized` runs a cut-short final gate once more after it
     kick(repo.name, sid)
     return specs.view(repo, specs.load(repo.name, sid))
 

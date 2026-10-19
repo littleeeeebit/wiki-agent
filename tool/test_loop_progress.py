@@ -19,9 +19,11 @@ from test_loop import (  # noqa: F401 -- shared fixtures and isolated Git/GitHub
 from workspace import remove
 
 
-def test_continue_runs_a_final_gate_that_ran_out_of_time_once_more(world):
+@pytest.mark.parametrize("after", ["resume", "recover"])
+def test_continue_runs_a_final_gate_that_ran_out_of_time_once_more(world, after):
     """rfg_rag #72 r4: a final gate cut at its time limit stopped the loop, and
-    every continue (`/resume`) read the cut-short receipt back instead of running it again."""
+    every continue (`/resume`) read the cut-short receipt back instead of running it again.
+    A restart's recovery goes on too; any other automatic start does not run it."""
 
     web = client()
     spec = allowed_spec(world, "fix-t", 7)
@@ -39,7 +41,15 @@ def test_continue_runs_a_final_gate_that_ran_out_of_time_once_more(world):
         waited(lambda: ("proj", "fix-t") not in loop._loops)
         stopped = specs.load("proj", "fix-t")
         assert stopped["state"] == "멈춤" and "시간 제한" in stopped["stopped"]["detail"] and calls == [[FINAL]]
-        web.post("/api/specs/fix-t/resume", json={}).raise_for_status()
+        loop.kick("proj", "fix-t", automatic=True)   # no continue stamped: the receipt stands
+        waited(lambda: ("proj", "fix-t") not in loop._loops)
+        assert specs.load("proj", "fix-t")["state"] == "멈춤" and calls == [[FINAL]]
+        if after == "resume":
+            web.post("/api/specs/fix-t/resume", json={}).raise_for_status()
+        else:
+            specs.update("proj", "fix-t", state="리뷰 R1", stopped=None)   # the loop a restart cut
+            assert loop.recover() == [("proj", "fix-t")]
+            loop.kick("proj", "fix-t", automatic=True)
         waited(lambda: ("proj", "fix-t") not in loop._loops)
     spec = specs.load("proj", "fix-t")
     assert spec["state"] == "머지 가능" and spec["validation"]["final"]["ok"] and calls == [[FINAL], [FINAL]]
