@@ -70,6 +70,70 @@ outcome before its page status; a torn last line is never committed. An
 interruption is finished on the rerun, never counted twice or lost
 ([recovery research](../../research/laya-loop-recovery.md)).
 
+## Coverage: production-shaped states (plan, 2026-10-20)
+
+Why. Coverage (support, then joint) failed its stage 6 gate (2026-10-19):
+accuracy 0.790 against Jev's 0.967 at 2,048 tokens, with 1 of 10 covered
+requirements found. Its validation (0.78 support, about 0.72 coverage) did
+not predict that, because every train and validation state is generated
+and production's are shaped differently. Measured on the production pool's
+coverage states **outside the gate** (73 states; the gate chooses nothing
+here):
+
+| Shape | Train (1,699) | Validation (165) | Pool outside the gate (73) |
+| --- | --- | --- | --- |
+| `current_state` present | 0% | 0% | 60%, median 1,832 characters, max 3,950 |
+| `omitted_context` present | 0% | 0% | 40% |
+| Query length p90 / max | 266 / 452 | 257 / 328 | 1,083 / 1,995 |
+| Passages max | 13 | 13 | 37 |
+| State characters p50 / p90 | 13,851 / 16,796 | 14,676 / 17,732 | 15,177 / 21,333 |
+| Yes rate | 0.53 (balanced) | 0.47 | (unlabelled; the gate's is 0.05) |
+
+The generator (`laya/generate.py` `captured`) runs `knowledge.prepare` with
+an empty conversation, leaves the query unsplit, and stops at the first
+grade-evidence request. So no generated state has conversation context, an
+omitted part, a split query or a later round's passages.
+
+Changes, one batch sized to the pool (not top-ups):
+
+1. Validation and calibration from production. Label the pool's coverage
+   states outside the gate, after `gate.Near` drops any near a gate state,
+   with guided labelling (stage 3). They replace generated validation as the
+   measure for support and joint; their natural yes rate is kept. Too few
+   for calibration alone (73 states), so calibration stays the generated
+   split until the pool grows.
+2. Generator. `laya/generate.py` writes the conversation production sees:
+   a prior exchange passed as `state` to `prepare` (so `current_state` and,
+   past `STATE_CHARS`, `omitted_context` are production's own), queries
+   that paste material or quote someone else's question, multi-part
+   queries that `Flow.split` splits, and repair rounds whose passages
+   accumulate. Slices weighted hard, by the owner's rule: numbers, dates,
+   literal wording, the longest states, and Jev's documented weak spots
+   (`.wiki/laya-insight-jev-usage.md`).
+3. Balance. Train is balanced by class; validation and calibration keep the
+   production rate.
+4. Length. support trains and serves at 2,048 tokens, where every gate view
+   fits (522 of 1,415 views exceeded 1,024).
+5. Retrain support, then joint over support's picks; measure on the
+   production validation.
+
+Budget, estimated from earlier runs (generation $4.72 for 708 queries;
+labels about $0.0005 each; Codex Sol on the subscription): 1,500 queries
+about $10.50, about 4,000 support views $2, about 1,500 joint labels $0.75,
+production validation about $0.50. Cap $20, approved before anything is
+sent; nothing above is approved yet.
+
+Open, for the owner before the next gate:
+
+- The gate has been read once for coverage. Slices here come from the pool
+  outside it, but the next gate read is a second look at the same states.
+  Accept that (reported as such), or reserve a fresh gate from production
+  states recorded after 2026-10-19.
+- Jev's side of the gate is its recorded answers under the old wording.
+  Since #184 production asks arm B's wording, so the next comparison needs
+  Jev's B answers on the gate states (paid; stage 11's incomplete gate run
+  holds part of them).
+
 ## Acceptance
 
 Per kind and round, in `laya/data/<kind>/rounds.jsonl`: the slice chosen,

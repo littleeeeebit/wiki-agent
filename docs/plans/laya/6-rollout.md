@@ -55,6 +55,23 @@ deciders' accuracy per Jev weak spot from Jev's documentation (numbers,
 dates, literal wording, injected instructions, the longest quarter of
 states). Laya's data must cover those weak spots (owner, 2026-10-19).
 
+## Results
+
+`coverage`, 2026-10-19 (`raw/eval/laya/gate-coverage-20261019T174725.json`,
+support at 2,048 tokens at inference, then joint): fail.
+
+- Laya answered 98%, accuracy 0.790 against Jev's 0.967; paired difference
+  −0.18 [−0.26, −0.09].
+- Laya found 1 of 10 covered requirements; ECE 0.55 against Jev's 0.16.
+- At support's trained 1,024 tokens, 522 of 1,415 views did not fit, so it
+  answered 53%.
+
+Why, and the next round: [stage 5](5-augmentation.md), production-shaped
+states. Jev's side here is its answers under the old wording. Since #184
+(2026-10-19) production asks stage 11's arm B wording
+([Jev stage 11](../jev/11-question-shape.md)), so the next comparison
+needs Jev's answers to that wording.
+
 ## Tool
 
 `laya/jev_gate.py <kind>`, run with `laya/.venv`. It sits beside the other
