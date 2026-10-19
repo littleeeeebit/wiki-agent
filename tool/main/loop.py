@@ -54,6 +54,7 @@ LOOPING = re.compile(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+")
 DIFF_ROOM = 900_000
 DIFF_FILE_LIMIT = 100_000
 DIFF_KEPT = 10_000
+SPEC_HEAD = "\n\n## The spec under review\n"
 
 
 class Why(str, enum.Enum):
@@ -363,6 +364,13 @@ def instruction(spec: dict, path: Path, n: int, head: str, base: str, codex: boo
                 "The server committed lint repairs, document indexes and architecture updates in these files. "
                 "Review their correctness and scope as part of this head:",
                 *[f"- `{name}`" for name in maintenance.get("files", [])]]
+    # #67: without the spec a reviewer escalated a fixed file to pushed history, then to
+    # copies on GitHub; the fixing agent chased that past `out` and was refused.
+    out += ["", SPEC_HEAD.strip(), "", specs.brief(spec).rstrip(), "",
+            "A finding is a defect in what this pull request changes, judged against this spec. What the "
+            "spec lists under `out`, or what only an irreversible or outside action could repair (rewriting "
+            "pushed history, removing copies from the remote or elsewhere, asking an outside service), does "
+            "not block the merge: report it once as P2 for the person, and never ask the fixing side to do it."]
     out += profiled(spec, profile, head, base, base_oid)
     if contract is not None:
         out += review_contract.render(contract, spec, path)
@@ -440,7 +448,10 @@ def fixing(n: int, findings: list[dict], said: str) -> str:
         f"Review round {n} refused the merge (`{said}`) and found the following. For each finding: "
         "reproduce it first. Fix it where it "
         "points, and count separately the other places the same rule applies to. If you do not agree, "
-        "say why with evidence rather than changing the code. Commit and push the task branch. "
+        "say why with evidence rather than changing the code. A finding that asks for what the spec lists "
+        "under `out`, or for an irreversible or outside action (rewriting or force-pushing pushed history, "
+        "removing data from the remote, contacting an outside service), is `disagree`: quote the `out` item "
+        "or name the action, do not do it, and leave it to the person. Commit and push the task branch. "
         "The server also synchronizes the branch before the next review.\n\n"
         "End the answer with a fenced block whose info string is `disposition`, holding a JSON list with "
         "one entry per finding, in order: `{\"finding\": \"<its first line, copied>\", \"id\": \"<its id, "
@@ -545,7 +556,8 @@ def restated(spec: dict, path: Path, text: str, instruction: str = "") -> str:
     return ("The context was just compacted. The spec under review and this turn's instruction are restated "
             "below; they outrank the compacted summary."
             + (f" The diff is left out: read it again with `pr_diff`, or from `{read_tools.diff_file(path).resolve()}`."
-               if cut else "") + "\n\n## The spec under review\n" + specs.brief(spec) + "\n" + before + report)
+               if cut else "") + ("" if SPEC_HEAD in before else SPEC_HEAD + "\n" + specs.brief(spec))
+            + "\n" + before + report)
 
 
 def refused_cell(spec: dict, why: str) -> None:

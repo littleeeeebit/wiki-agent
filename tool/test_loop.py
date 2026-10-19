@@ -1363,6 +1363,17 @@ def test_findings_that_do_not_shrink_bring_the_grouping_section(world):
     assert "## `gh pr diff 7`" in claude and "+the diff of #7" in claude
 
 
+def test_the_reviewer_judges_against_the_spec_and_leaves_what_the_branch_cannot_repair_to_the_person(world):
+    # #67: a reviewer that never saw `out` asked for pushed history, then GitHub's copies, to go.
+    spec = {**pr_spec(world, "fix-s", 7), "out": ["Rewriting or erasing Git history"]}
+    path, head = Path(spec["worktree"]), spec["pr"]["head"]
+    text = loop.instruction(spec, path, 1, head, "main", True)
+    assert text.index("Rewriting or erasing Git history") < text.index("## `gh pr diff 7`")
+    assert "report it once as P2 for the person" in text
+    assert text.count("## The spec under review") == loop.restated(spec, path, text).count("## The spec under review")
+    assert "is `disagree`" in loop.fixing(2, [{"head": "[P0] a.md:1 — x", "body": ""}], "no")
+
+
 def block(name: str, body: str) -> str:
     return f"diff --git a/{name} b/{name}\n--- a/{name}\n+++ b/{name}\n@@ -1 +1 @@\n{body}\n"
 

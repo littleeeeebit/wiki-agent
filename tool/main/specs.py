@@ -995,7 +995,7 @@ def system(path: Path) -> str:
 def brief(spec: dict) -> str:
     """The spec's fields as the agents read them: the implementer and the reviewer."""
 
-    shown = {**{k: spec[k] for k in ("id", "rev", "goal", "out", "done", "grounds", "decisions")},
+    shown = {**{k: spec.get(k) for k in ("id", "rev", "goal", "out", "done", "grounds", "decisions")},
              **profile_of(spec), **({"review": spec["review"]} if spec.get("review") else {})}
     return "```json\n" + json.dumps(shown, ensure_ascii=False, indent=2) + "\n```\n"
 
