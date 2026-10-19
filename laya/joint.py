@@ -148,15 +148,15 @@ def picks(records: list[dict], rows: list[dict]) -> list[dict]:
     return out
 
 
-def evaluate(checkpoint, agent=None) -> tuple[dict, list[dict]]:
-    """Coverage's validation questions answered by support's picks (`picks-validation.jsonl`)
-    and, where support left one undecided, a `joint` checkpoint over its part passages: a
-    summary and one record per question."""
+def evaluate(checkpoint, agent=None, split: str = "validation", chosen=None) -> tuple[dict, list[dict]]:
+    """Coverage's `split` questions answered by support's picks (`chosen`, else
+    `picks-<split>.jsonl`) and, where support left one undecided, a `joint` checkpoint over
+    its part passages: a summary and one record per question."""
 
     agent = agent or train.loaded(checkpoint)
-    rows = {r["provenance"]["state_hash"]: r for r in read(DATA / "coverage" / "validation.jsonl")}
+    rows = {r["provenance"]["state_hash"]: r for r in read(DATA / "coverage" / f"{split}.jsonl")}
     records = []
-    for p in read(DATA / KIND / "picks-validation.jsonl"):
+    for p in chosen if chosen is not None else read(DATA / KIND / f"picks-{split}.jsonl"):
         row, rid = rows[p["state_hash"]], p["question"].split("_", 1)[1]
         rec = {**p, "expected": row["expected"][p["question"]], "joint": None}
         if p["verdict"] is None and p["parts"]:

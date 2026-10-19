@@ -21,10 +21,10 @@ augmentation, calibration or threshold fit ever sees it.
 - Unit. One logical state counts once: replays, retries, cache hits and
   trace copies of the same state hash, and near-duplicates (shingle Jaccard
   ≥ 0.8 on the state text), collapse to one test state.
-- Labels. No person labels the gate test (owner, 2026-10-13). Where its
-  answers come from is open and is decided before stage 6; whatever the
-  source, it never sees Jev's or a candidate model's answer, and the record
-  names it.
+- Labels. No person labels the gate test (owner, 2026-10-13). Its answers
+  are guided labelling's agreed labels (owner, 2026-10-19,
+  [stage 6](6-rollout.md)); they never see Jev's or a candidate model's
+  answer, and the record names them.
 - Size. Two thirds of the admitted units, at most 300 per kind, chosen at
   random; the rest is the development pool (owner, 2026-10-13; reserved by
   `laya/gate.py`, see stage 1). A kind
