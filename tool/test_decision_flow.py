@@ -79,10 +79,10 @@ def answering(route=0.9, sources=None, useful=0.9, conflict=0.0, redirect=0.0, c
                 pick = value(repair, name)
                 pick = pick if pick in q["criteria"] or not offered_only else decision.DEFER
                 out[name] = {"choice": pick, "confidence": confidence, "probabilities": {pick: 1.0}}
-            else:
+            else:   # conflictother 0, so the combined conflict is the value given
                 kind = name.split("_")[0]
-                out[name] = value({"useful": useful, "conflict": conflict, "redirect": redirect,
-                                   "coverage": coverage, "ask": ask}[kind], name)
+                out[name] = value({"useful": useful, "conflictquery": conflict, "conflictother": 0.0,
+                                   "redirect": redirect, "coverage": coverage, "ask": ask}[kind], name)
         return out
 
     return answer
@@ -1376,10 +1376,21 @@ def test_a_memory_saying_how_the_assistant_should_answer_is_not_flagged_as_an_in
     assert [flagged[c["chunk_id"]] for c in out["untrusted"]] == ["inject"]
 
 
-def test_what_exceeds_the_state_allowance_is_not_sent_and_says_so(monkeypatch):
-    monkeypatch.setattr(knowledge, "STATE_ALLOWANCE", 40)
-    world = World(answering(), [found([chunk("a", "The port is 8791 as decided."), chunk("b", "More text here.")])])
+@pytest.mark.parametrize("bound", ["passages", "body"])
+def test_what_exceeds_the_state_allowance_is_not_sent_and_says_so(monkeypatch, bound):
+    # The passages alone, or the body as sent: the questions quote the requirements (stage 11, PR #184 review).
+    def world_():
+        return World(answering(), [found([chunk("a", "The port is 8791 as decided."), chunk("b", "More text here.")])])
+    if bound == "passages":
+        monkeypatch.setattr(knowledge, "STATE_ALLOWANCE", 40)
+    else:
+        whole = world_()
+        run(whole, available=["documents"])
+        _, state, questions = whole.asked[1]
+        monkeypatch.setattr(decision, "MAX_BODY", len(decision.wire(MODEL, state, questions)) - 1)
+    world = world_()
     out = run(world, available=["documents"])
+    assert len(decision.wire(MODEL, *world.asked[1][1:])) <= decision.MAX_BODY
     b = next(e for e in out["evidence"] if e["heading_path"] == ["b"])
     assert len(world.asked[1][1]["passages"]) == 1 and b["relevance"] is None
     assert {"state_allowance": [b["chunk_id"]]} in out["limits"]
@@ -1453,14 +1464,14 @@ EVAL = Path(__file__).resolve().parents[1] / "eval" / "jev"
 
 def test_a_live_run_s_committed_tape_replays_exactly():
     """Recorded from the live sample (`tool/eval/decisions.py --tape`): a
-    bridge question that searched, judged, repaired and ended partial."""
+    bridge question that searched, judged and ended ready."""
 
     tape = json.loads((EVAL / "replay.smoke-03.tape.json").read_text(encoding="utf-8"))
     again = knowledge.replay(tape)
     assert again["matches"] and not again["prompt_changed"], "the prompts changed: record the tape again"
-    # The bridge question: both passages found, their coverage 0.61-0.64 in three recordings — ready under the
-    # stage 6 policy's 0.6, a repair round and then partial under stage 10's fitted 0.65.
-    assert [t["to"] for t in again["transitions"]][-2:] == ["assess", "partial"]
+    # The bridge question: both passages found. Asked by id, coverage was 0.61-0.64 and ended partial under the
+    # fitted 0.65; quoting the requirement (stage 11, B) it is 0.8, ready in the first round.
+    assert [t["to"] for t in again["transitions"]][-2:] == ["assess", "ready"]
 
 
 def test_the_committed_policy_is_fitted_for_the_model_and_prompts_in_use():

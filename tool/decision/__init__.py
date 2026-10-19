@@ -40,7 +40,7 @@ from common.budget import PROBE, QUESTION, Budget
 __all__ = ("Config", "JevError", "MODES", "choice", "config", "env_file", "evaluate", "noul", "probe", "score",
            "DEFER", "STATUSES", "UNSURE", "Cache", "request", "decide", "checked", "final", "settled_by", "Policy",
            "policy", "verdict", "claims", "CODE_SETTLES",
-           "FAMILIES", "LIMITS", "save", "settings_file")
+           "FAMILIES", "LIMITS", "save", "settings_file", "MAX_BODY", "wire")
 
 HOST = "api.typesafe.ai"
 PATH = "/v1/systemone"

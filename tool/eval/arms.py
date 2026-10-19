@@ -40,6 +40,10 @@ past it, or one sent with no usable count, halts every arm until the owner
 accepts that halt (`--accept-halts`).
 The record goes to `raw/eval/jev/arms-<arm>-<timestamp>.json`; an
 incomplete one is never compared.
+
+B was adopted (step 3): production asks its questions, and the recorded
+scores are B's. An arm built or compared now is measured against B; the
+records of 2026-10-19 were compared against the scores at fc5c8f1.
 """
 
 from __future__ import annotations
@@ -66,14 +70,11 @@ INTENTS = policy.HUB / "eval" / "jev" / "reliability-v8" / "intents.json"
 # One journal for every arm: the approved allowance is the stage's, not an arm's.
 JOURNAL = RAW / "arms.journal.jsonl"
 
-# B. The requirement's own words, not its id (the page: name the relevant parts of state).
-COVERAGE = ('Requirement {id} asks: "{text}". Do the passages listed in complete_passages, taken together, state '
-            "what it asks for, without assuming missing facts? Only passages listed in complete_passages count.")
-# B. The old question's negated exception becomes its own literal question; code combines them.
-CONFLICT_QUERY = "Does passage {id} state that something the query says or takes as true is false?"
-CONFLICT_OTHER = ("Does passage {id} disagree only with another passage, on a point the query does not take as "
-                  "true or false?")
-SOURCE = "Does the query ask about something that source '{source}' contains? It contains: {description}"
+# B, adopted into production's PROMPTS (stage 11 step 3). The requirement's own words, not its id
+# (the page: name the relevant parts of state); the old conflict question's negated exception
+# became its own literal question, which code combines.
+COVERAGE, CONFLICT_QUERY, CONFLICT_OTHER, SOURCE = (PROMPTS[k] for k in ("coverage", "conflictquery",
+                                                                          "conflictother", "source"))
 # D. One positive condition first, then what does not count, each stated once.
 PLAIN = {
     "ask": ("Is query part {id} a question or request that the user puts to the assistant? Answer no when the part "
@@ -127,7 +128,7 @@ def view(case: dict, names) -> list[tuple]:
         return []
     state, old = got
     context = {"query": state["query"], "requirements": state["requirements"]}
-    out = [("judge", {**context, "passages": [p]}, judge_questions({p["id"]: p["id"]}, []))
+    out = [("judge", {**context, "passages": [p]}, judge_questions({p["id"]: p["id"]}, {}))
            for p in state["passages"]]
     listed = set(state["complete_passages"])
     coverage = {n: q for n, q in old.items() if q["decision"] == "coverage"}
@@ -381,7 +382,8 @@ def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, journ
 
 
 BUILD = {"view": view, "direct": direct, "order": order}
-AFTER = {"view": lambda new, old: new, "direct": combined, "order": agreed}
+# view's passage questions are production's, so since B's adoption its conflict comes in two parts too.
+AFTER = {"view": combined, "direct": combined, "order": agreed}
 # The kinds an arm changes: only their new answers replace the recorded ones, so
 # a resampled answer to an unchanged question is not credited to the arm.
 KINDS = {"view": ("useful", "conflict", "redirect", "coverage"), "direct": ("coverage", "conflict", "source"),
@@ -400,13 +402,13 @@ def gate_requests(arm: str, row: dict) -> list[tuple]:
 
     state, names = row["state"], list(row["expected"])
     rids = [n.split("_", 1)[1] for n in names]
+    text = {r["id"]: r["text"] for r in state["requirements"]}
     if arm == "view":
         listed = set(state.get("complete_passages") or [])
         return [("judge", {"query": state["query"], "requirements": state["requirements"],
                            "passages": [p for p in state["passages"] if p["id"] in listed],
                            "complete_passages": state.get("complete_passages") or []},
-                 judge_questions({}, rids))]
-    text = {r["id"]: r["text"] for r in state["requirements"]}
+                 judge_questions({}, {r: text[r] for r in rids}))]
     return [("judge", state, {f"coverage_{r}": noul("coverage", r, COVERAGE.format(id=r, text=text[r]))
                               for r in rids})]
 

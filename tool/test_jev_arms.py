@@ -10,8 +10,10 @@ CASE = {"id": "c", "query": "Why was X dropped in 2024?", "current_state": "long
         "passages": [{"heading": "h0", "text": "a"}, {"heading": "h1", "text": "b", "coverage": "partial"}],
         "repair": {"options": ["sources", "bridge"], "rest": ["hub"], "choice": "sources"}}
 # What the recorded calibration side was asked: its route had no analysis or progress question.
+# Since B's adoption (stage 11 step 3) its conflict is two questions.
 NAMES = {"retrieve", "source_hub", "source_documents", "source_memory", "source_papers", "coverage_r0", "repair",
-         *(f"{k}_p{i}" for k in ("useful", "conflict", "redirect") for i in (0, 1))}
+         *(f"{k}_p{i}" for k in ("useful", "conflictquery", "conflictother", "redirect") for i in (0, 1))}
+PASSAGE = ("useful", "conflictquery", "conflictother", "redirect")
 
 
 def test_each_jev_question_arm_changes_only_its_own_variable():
@@ -19,8 +21,8 @@ def test_each_jev_question_arm_changes_only_its_own_variable():
 
     # A: one request per passage and one for coverage over its listed passages; no current_state.
     view = arms.view(CASE, NAMES)
-    assert [sorted(q) for _, _, q in view] == [["conflict_p0", "redirect_p0", "useful_p0"],
-                                               ["conflict_p1", "redirect_p1", "useful_p1"], ["coverage_r0"]]
+    assert [sorted(q) for _, _, q in view] == [sorted(f"{k}_p0" for k in PASSAGE), sorted(f"{k}_p1" for k in PASSAGE),
+                                               ["coverage_r0"]]
     assert [[p["id"] for p in s["passages"]] for _, s, _ in view] == [["p0"], ["p1"], ["p0"]]
     assert not any("current_state" in s for _, s, _ in view) and arms.view({**CASE, "passages": []}, NAMES) == []
     # B: the recorded requests, question for question, but for the literal wording.
@@ -32,7 +34,7 @@ def test_each_jev_question_arm_changes_only_its_own_variable():
     # C: the recorded judge request again, every question kept, only the repair's options flipped.
     [(_, _, flipped, prefix)] = arms.order(CASE, NAMES)
     assert prefix == arms.FLIPPED and sorted(flipped) == sorted(n for n in NAMES if n.split("_")[0] in
-                                                                ("useful", "conflict", "redirect", "coverage", "repair"))
+                                                                (*PASSAGE, "coverage", "repair"))
     assert list(flipped["repair"]["question"]["criteria"]) == ["bridge", "sources", "defer"]
     # D: analysis always, ask only for a query in several parts.
     intent = {"id": "i", "variants": {"en": "Q"}, "analysis": False,
@@ -52,6 +54,11 @@ def test_jev_arm_answers_combine_in_code_as_the_workflow_reads_them():
 
     assert arms.combined({"conflictquery_p0": 0.8, "conflictother_p0": 0.5, "useful_p0": 0.3}, {}) == \
         {"useful_p0": 0.3, "conflict_p0": 0.4}
+    # Against B's recorded parts, view's new conflict parts are what the merged answers read (PR #184 review).
+    from main.knowledge import conflicted
+    got = arms.merged("view", {"useful_p0": .9, "conflictquery_p0": .05, "conflictother_p0": 0.0},
+                      {"useful_p0": .9, "conflictquery_p0": .99, "conflictother_p0": 0.0})
+    assert conflicted(got, "p0") == .99
     # C: the recorded answer is the old order's; a choice that moves with the order defers.
     a = {"choice": "sources", "confidence": 0.8, "probabilities": {"sources": 0.8, "bridge": 0.1, "defer": 0.1}}
     b = {"choice": "bridge", "confidence": 0.6, "probabilities": {"sources": 0.3, "bridge": 0.6, "defer": 0.1}}

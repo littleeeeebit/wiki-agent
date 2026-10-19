@@ -87,19 +87,6 @@
      "request": null
     },
     {
-     "text": "# Login decision\n\nThe user decided to keep password login and add passkeys later.",
-     "status": "original_english",
-     "reason": null,
-     "language": "en",
-     "model": null,
-     "prompt_version": "1",
-     "glossary_version": "d2d068ff5886",
-     "version": "e1",
-     "spans": null,
-     "cached": false,
-     "request": null
-    },
-    {
      "text": "# Atlas team",
      "status": "original_english",
      "reason": null,
@@ -178,78 +165,7 @@
      "request": null
     },
     {
-     "text": "Login decision",
-     "status": "original_english",
-     "reason": null,
-     "language": "en",
-     "model": null,
-     "prompt_version": "1",
-     "glossary_version": "d2d068ff5886",
-     "version": "e1",
-     "spans": null,
-     "cached": false,
-     "request": null
-    },
-    {
      "text": "Atlas team",
-     "status": "original_english",
-     "reason": null,
-     "language": "en",
-     "model": null,
-     "prompt_version": "1",
-     "glossary_version": "d2d068ff5886",
-     "version": "e1",
-     "spans": null,
-     "cached": false,
-     "request": null
-    }
-   ],
-   "calls": 0,
-   "tokens": 0
-  },
-  {
-   "value": [
-    {
-     "text": "# One retry budget\n\nRule. A loop shares one deadline, one call count and one token ceiling across all of its steps. A step's own limit never multiplies the total.",
-     "status": "original_english",
-     "reason": null,
-     "language": "en",
-     "model": null,
-     "prompt_version": "1",
-     "glossary_version": "d2d068ff5886",
-     "version": "e1",
-     "spans": null,
-     "cached": false,
-     "request": null
-    },
-    {
-     "text": "# Review before merge\n\nRule. Every pull request receives one independent review round before it is merged. The author's own checks are not a review.",
-     "status": "original_english",
-     "reason": null,
-     "language": "en",
-     "model": null,
-     "prompt_version": "1",
-     "glossary_version": "d2d068ff5886",
-     "version": "e1",
-     "spans": null,
-     "cached": false,
-     "request": null
-    },
-    {
-     "text": "One retry budget",
-     "status": "original_english",
-     "reason": null,
-     "language": "en",
-     "model": null,
-     "prompt_version": "1",
-     "glossary_version": "d2d068ff5886",
-     "version": "e1",
-     "spans": null,
-     "cached": false,
-     "request": null
-    },
-    {
-     "text": "Review before merge",
      "status": "original_english",
      "reason": null,
      "language": "en",
@@ -272,86 +188,68 @@
    "value": {
     "answers": {
      "retrieve": 0.96,
-     "analysis": 0.06,
+     "analysis": 0.05,
      "progress": 0.07,
-     "source_hub": 0.35,
-     "source_documents": 0.64,
-     "source_memory": 0.58
+     "source_hub": 0.25,
+     "source_documents": 0.51,
+     "source_memory": 0.32
     },
     "model": "jev-1.13.0",
     "usage": {
-     "input_tokens": 669,
+     "input_tokens": 723,
      "output_tokens": 104
     },
     "sent": true
    },
    "calls": 1,
-   "tokens": 773
+   "tokens": 827
   },
   {
    "value": {
     "answers": {
      "useful_p0": 0.93,
-     "conflict_p0": 0.06,
+     "conflictquery_p0": 0.06,
+     "conflictother_p0": 0.13,
      "redirect_p0": 0.02,
      "useful_p1": 0.92,
-     "conflict_p1": 0.08,
+     "conflictquery_p1": 0.08,
+     "conflictother_p1": 0.12,
      "redirect_p1": 0.02,
      "useful_p2": 0.03,
-     "conflict_p2": 0.04,
+     "conflictquery_p2": 0.03,
+     "conflictother_p2": 0.16,
      "redirect_p2": 0.02,
      "useful_p3": 0.02,
-     "conflict_p3": 0.04,
+     "conflictquery_p3": 0.04,
+     "conflictother_p3": 0.75,
      "redirect_p3": 0.02,
-     "useful_p4": 0.02,
-     "conflict_p4": 0.04,
+     "useful_p4": 0.03,
+     "conflictquery_p4": 0.05,
+     "conflictother_p4": 0.85,
      "redirect_p4": 0.04,
-     "useful_p5": 0.02,
-     "conflict_p5": 0.03,
-     "redirect_p5": 0.02,
-     "useful_p6": 0.14,
-     "conflict_p6": 0.05,
-     "redirect_p6": 0.02,
-     "coverage_r0": 0.58,
+     "useful_p5": 0.16,
+     "conflictquery_p5": 0.04,
+     "conflictother_p5": 0.18,
+     "redirect_p5": 0.03,
+     "coverage_r0": 0.8,
      "repair": {
       "choice": "defer",
-      "confidence": 0.18,
+      "confidence": 0.16,
       "probabilities": {
-       "sources": 0.41,
-       "defer": 0.59
+       "sources": 0.42,
+       "defer": 0.58
       }
      }
     },
     "model": "jev-1.13.0",
     "usage": {
-     "input_tokens": 2012,
-     "output_tokens": 443
+     "input_tokens": 1954,
+     "output_tokens": 513
     },
     "sent": true
    },
    "calls": 1,
-   "tokens": 2455
-  },
-  {
-   "value": {
-    "answers": {
-     "useful_p2": 0.02,
-     "conflict_p2": 0.04,
-     "redirect_p2": 0.1,
-     "useful_p3": 0.02,
-     "conflict_p3": 0.03,
-     "redirect_p3": 0.06,
-     "coverage_r0": 0.64
-    },
-    "model": "jev-1.13.0",
-    "usage": {
-     "input_tokens": 949,
-     "output_tokens": 134
-    },
-    "sent": true
-   },
-   "calls": 1,
-   "tokens": 1083
+   "tokens": 2467
   }
  ],
  "fallback": [],
@@ -382,9 +280,9 @@
       ],
       "text": "# Owners\n\nThe ingest pipeline is owned by the Atlas team.",
       "completeness": "whole",
-      "chunk_id": "bfc69e72dd4bd7394c5b0e3b0ff3b8f9c755536e68bf98dcc47c5d4ca8513cb9",
-      "source_id": "77e3522c302ce22ca0e6bbe0cb61c58f94bc20b121f0cd093af1d0d1557af50b",
-      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
+      "chunk_id": "a5db811bac2763510c98d2fc01229b5c99bc70f3aa68c252d4783eca6a118f6d",
+      "source_id": "0fbc943ffddd731e476810b89b34278e8d6f75c3e19d2dddab00830002fc0a05",
+      "repo_id": "fcc689cf6eb64ed44fa972911d15ba9a76b970fb0bc961348c7d7868d3863529",
       "revision": "cba91557fde56a0c52500a15e750b2c6a8f2c297a70a2b61db3bdab770be19f1",
       "kind": "document",
       "visibility": "repository",
@@ -411,9 +309,9 @@
       ],
       "text": "## Rota\n\nThe Atlas team is on call every Tuesday and handles incidents for everything it owns.",
       "completeness": "whole",
-      "chunk_id": "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
-      "source_id": "030cef620ce4599876618439f982e9579d2d8e2c39592f5b6e09f394ffa70044",
-      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
+      "chunk_id": "0d8b33134a6b732a92ebb82498ae23a57d8f2cf590120c1d30657f72f2ce6f53",
+      "source_id": "632a7eaac3e3c1b6a44157c0032b80a0ab762203db48db4aacbd4133468c691b",
+      "repo_id": "fcc689cf6eb64ed44fa972911d15ba9a76b970fb0bc961348c7d7868d3863529",
       "revision": "365edf17431839844b3a76ec8cd737f372fb0cc662016f28db91edadbc06ce28",
       "kind": "document",
       "visibility": "repository",
@@ -439,9 +337,9 @@
       ],
       "text": "# Ports\n\nThe search daemon listens on port 8791. The chat server listens on port 8787.",
       "completeness": "whole",
-      "chunk_id": "4ba68687493896dcc10ee3cbebae6f4d3823dd4f8cac9c482cdd3f3d5067fa7f",
-      "source_id": "c4a724f338756085801dfd082f55a95e7f3d68ef425a4248593003ba752c0b71",
-      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
+      "chunk_id": "50be571d03af7069c5a43061309494ebf4f9e08a03cdd5dd71867d927a000dbe",
+      "source_id": "c773e4fdbd778ce572af79d7b73f7b1bfe4f547d0b5fec40af1d47b8a507649d",
+      "repo_id": "fcc689cf6eb64ed44fa972911d15ba9a76b970fb0bc961348c7d7868d3863529",
       "revision": "49236a8535538a3651097462d9eba2005f33c2d1d1198c96df94cda32b65c592",
       "kind": "document",
       "visibility": "repository",
@@ -467,9 +365,9 @@
       ],
       "text": "# Decision: translation cache in the checkout\n\nThe translation cache is stored as a SQLite file inside the repository checkout.",
       "completeness": "whole",
-      "chunk_id": "8834ff0d0c49ac24b161883bd6c4ead41228f71ef8c5bb6ef680dc7152394643",
-      "source_id": "3b3893281d8adbcb930e3e3873d6e03be1bb8864049ca1806aad79da6ed99c78",
-      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
+      "chunk_id": "0c2c7c26f76f9d179753978e042262e6840d0fc234d9e55b5abac7794e27899c",
+      "source_id": "7db56c980a0834d466bf2ee06742f70bf485965628bd0ca76c16021f3e2aa40a",
+      "repo_id": "fcc689cf6eb64ed44fa972911d15ba9a76b970fb0bc961348c7d7868d3863529",
       "revision": "5a5b0ea1f986ede755c74bfe84e93d3fae0c026e3e1ec2a0c39f1e232d86e5c8",
       "kind": "document",
       "visibility": "repository",
@@ -495,43 +393,15 @@
       ],
       "text": "# Decision: translation cache moved\n\nThis supersedes the 2025 cache decision. The translation cache is now stored under the user cache folder, never inside the checkout.",
       "completeness": "whole",
-      "chunk_id": "f4ed1e4352afbd41cfe347b36e8089a1f685069e8e407a18cdacc591ef96802e",
-      "source_id": "f5e774b48ffaadf2f0e03c6c5d7425225cda267b8759f9b7ad6e90f70214b546",
-      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
+      "chunk_id": "d2c19e65b54c9470539d56f70a1772d17facdab9099ced4a31a4dc1eb2d1fb4d",
+      "source_id": "c6a55b306a5b566e4bc2a4d7bcebc20ebb9c2b1cd55e945430a9f89d5cbca43b",
+      "repo_id": "fcc689cf6eb64ed44fa972911d15ba9a76b970fb0bc961348c7d7868d3863529",
       "revision": "2e46051fbf1307f63a107e5c071455a059aeb64a55c0dad087d6878671c38160",
       "kind": "document",
       "visibility": "repository",
       "language": "en",
       "locator": {
        "path": "docs/decisions/cache-2026.md",
-       "start_line": 1,
-       "end_line": 3
-      },
-      "coverage": "full_text",
-      "record": null,
-      "audiences": null,
-      "lane": "rrf",
-      "duplicates": []
-     },
-     {
-      "path": "<corpus>\\repo\\.wiki\\memory\\2026-09-20-login.md",
-      "line": 1,
-      "end_line": 3,
-      "heading": "Login decision",
-      "heading_path": [
-       "Login decision"
-      ],
-      "text": "# Login decision\n\nThe user decided to keep password login and add passkeys later.",
-      "completeness": "whole",
-      "chunk_id": "31d69508d085655ef24547f900908d8199afe021570947dbfd51b99250947e16",
-      "source_id": "a85489f04e26e522774ed2f37f69cb4849c2be595045b982c6b5992379328827",
-      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
-      "revision": "2bdfcad178468234ed64936fde19d984c398756db2d5d0492ae7586980071dd3",
-      "kind": "memory",
-      "visibility": "private",
-      "language": "en",
-      "locator": {
-       "path": ".wiki/memory/2026-09-20-login.md",
        "start_line": 1,
        "end_line": 3
       },
@@ -551,9 +421,9 @@
       ],
       "text": "# Atlas team",
       "completeness": "whole",
-      "chunk_id": "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926",
-      "source_id": "030cef620ce4599876618439f982e9579d2d8e2c39592f5b6e09f394ffa70044",
-      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
+      "chunk_id": "814bd52c2107c42d5e2a0c26735b5691a16959009e7d5233eef3a0347190ea0f",
+      "source_id": "632a7eaac3e3c1b6a44157c0032b80a0ab762203db48db4aacbd4133468c691b",
+      "repo_id": "fcc689cf6eb64ed44fa972911d15ba9a76b970fb0bc961348c7d7868d3863529",
       "revision": "365edf17431839844b3a76ec8cd737f372fb0cc662016f28db91edadbc06ce28",
       "kind": "document",
       "visibility": "repository",
@@ -571,7 +441,7 @@
      }
     ],
     "scores": {
-     "bfc69e72dd4bd7394c5b0e3b0ff3b8f9c755536e68bf98dcc47c5d4ca8513cb9": {
+     "a5db811bac2763510c98d2fc01229b5c99bc70f3aa68c252d4783eca6a118f6d": {
       "rrf": {
        "rank": 1,
        "score": 0.01639
@@ -583,7 +453,7 @@
       "cos": null,
       "graph": null
      },
-     "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de": {
+     "0d8b33134a6b732a92ebb82498ae23a57d8f2cf590120c1d30657f72f2ce6f53": {
       "rrf": {
        "rank": 2,
        "score": 0.01613
@@ -595,7 +465,7 @@
       "cos": null,
       "graph": null
      },
-     "4ba68687493896dcc10ee3cbebae6f4d3823dd4f8cac9c482cdd3f3d5067fa7f": {
+     "50be571d03af7069c5a43061309494ebf4f9e08a03cdd5dd71867d927a000dbe": {
       "rrf": {
        "rank": 3,
        "score": 0.01587
@@ -607,7 +477,7 @@
       "cos": null,
       "graph": null
      },
-     "8834ff0d0c49ac24b161883bd6c4ead41228f71ef8c5bb6ef680dc7152394643": {
+     "0c2c7c26f76f9d179753978e042262e6840d0fc234d9e55b5abac7794e27899c": {
       "rrf": {
        "rank": 4,
        "score": 0.01562
@@ -619,7 +489,7 @@
       "cos": null,
       "graph": null
      },
-     "f4ed1e4352afbd41cfe347b36e8089a1f685069e8e407a18cdacc591ef96802e": {
+     "d2c19e65b54c9470539d56f70a1772d17facdab9099ced4a31a4dc1eb2d1fb4d": {
       "rrf": {
        "rank": 5,
        "score": 0.01538
@@ -631,19 +501,7 @@
       "cos": null,
       "graph": null
      },
-     "31d69508d085655ef24547f900908d8199afe021570947dbfd51b99250947e16": {
-      "rrf": {
-       "rank": 6,
-       "score": 0.01515
-      },
-      "bm25": {
-       "rank": 6,
-       "score": 0.29482
-      },
-      "cos": null,
-      "graph": null
-     },
-     "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926": {
+     "814bd52c2107c42d5e2a0c26735b5691a16959009e7d5233eef3a0347190ea0f": {
       "rrf": null,
       "bm25": null,
       "cos": null,
@@ -659,19 +517,19 @@
     "paths": [
      {
       "lane": "graph",
-      "seed": "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
-      "to": "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926",
+      "seed": "0d8b33134a6b732a92ebb82498ae23a57d8f2cf590120c1d30657f72f2ce6f53",
+      "to": "814bd52c2107c42d5e2a0c26735b5691a16959009e7d5233eef3a0347190ea0f",
       "hops": 1,
       "status": "discovered",
       "steps": [
        {
-        "node": "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
+        "node": "0d8b33134a6b732a92ebb82498ae23a57d8f2cf590120c1d30657f72f2ce6f53",
         "node_kind": "chunk"
        },
        {
-        "node": "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926",
+        "node": "814bd52c2107c42d5e2a0c26735b5691a16959009e7d5233eef3a0347190ea0f",
         "node_kind": "chunk",
-        "edge_id": "3fb79b21dde8fcdf263ae35913a710974a8f72f489e10f51df9f8970538323c4",
+        "edge_id": "894ec048c7b8627de3f9a6c5eafb24f0112ead892a26528c3a2ffd0a5ea00b3a",
         "kind": "next_chunk",
         "reverse": true,
         "origin": "deterministic",
@@ -683,209 +541,23 @@
     "coverage": {
      "documents": {
       "candidates": 5,
-      "floor": 2,
+      "floor": 4,
       "selected": 5
-     },
-     "memory": {
-      "candidates": 1,
-      "floor": 1,
-      "selected": 1
      }
     },
     "missing_sources": [],
     "truncated": [],
     "seen_chunk_ids": [
-     "bfc69e72dd4bd7394c5b0e3b0ff3b8f9c755536e68bf98dcc47c5d4ca8513cb9",
-     "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
-     "4ba68687493896dcc10ee3cbebae6f4d3823dd4f8cac9c482cdd3f3d5067fa7f",
-     "8834ff0d0c49ac24b161883bd6c4ead41228f71ef8c5bb6ef680dc7152394643",
-     "f4ed1e4352afbd41cfe347b36e8089a1f685069e8e407a18cdacc591ef96802e",
-     "31d69508d085655ef24547f900908d8199afe021570947dbfd51b99250947e16",
-     "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926"
+     "a5db811bac2763510c98d2fc01229b5c99bc70f3aa68c252d4783eca6a118f6d",
+     "0d8b33134a6b732a92ebb82498ae23a57d8f2cf590120c1d30657f72f2ce6f53",
+     "50be571d03af7069c5a43061309494ebf4f9e08a03cdd5dd71867d927a000dbe",
+     "0c2c7c26f76f9d179753978e042262e6840d0fc234d9e55b5abac7794e27899c",
+     "d2c19e65b54c9470539d56f70a1772d17facdab9099ced4a31a4dc1eb2d1fb4d",
+     "814bd52c2107c42d5e2a0c26735b5691a16959009e7d5233eef3a0347190ea0f"
     ],
-    "spent": 7,
+    "spent": 6,
     "audiences": null,
-    "elapsed_ms": 0.5
-   },
-   "calls": 0,
-   "tokens": 0
-  },
-  {
-   "value": {
-    "note": {
-     "need": "sources",
-     "round": 2,
-     "sources": [
-      "hub"
-     ]
-    },
-    "requests": [
-     {
-      "schema_version": "retrieval-request/1",
-      "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
-      "query_original": "Who is on call for the ingest pipeline?",
-      "query_en": "Who is on call for the ingest pipeline?",
-      "source_allowlist": [
-       "hub"
-      ],
-      "filters": {},
-      "generation": 1,
-      "limit": 8,
-      "deadline": 1791670999.71213,
-      "graph_budget": {
-       "seeds": 8,
-       "hops": 2,
-       "fanout": 5
-      },
-      "max_candidates": 23,
-      "seen_chunk_ids": [
-       "bfc69e72dd4bd7394c5b0e3b0ff3b8f9c755536e68bf98dcc47c5d4ca8513cb9",
-       "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
-       "4ba68687493896dcc10ee3cbebae6f4d3823dd4f8cac9c482cdd3f3d5067fa7f",
-       "8834ff0d0c49ac24b161883bd6c4ead41228f71ef8c5bb6ef680dc7152394643",
-       "f4ed1e4352afbd41cfe347b36e8089a1f685069e8e407a18cdacc591ef96802e",
-       "31d69508d085655ef24547f900908d8199afe021570947dbfd51b99250947e16",
-       "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926"
-      ],
-      "spent": 7,
-      "round": 2,
-      "graph_seeds": [],
-      "context_of": []
-     }
-    ],
-    "results": [
-     {
-      "schema_version": "retrieval-result/1",
-      "generation": 1,
-      "round": 2,
-      "queries": [
-       "Who is on call for the ingest pipeline?"
-      ],
-      "vectors": false,
-      "graph_budget": {
-       "seeds": 8,
-       "hops": 2,
-       "fanout": 5
-      },
-      "max_candidates": 23,
-      "chunks": [
-       {
-        "path": "<corpus>\\hub\\craft\\one-retry-budget.md",
-        "line": 1,
-        "end_line": 3,
-        "heading": "One retry budget",
-        "heading_path": [
-         "One retry budget"
-        ],
-        "text": "# One retry budget\n\nRule. A loop shares one deadline, one call count and one token ceiling across all of its steps. A step's own limit never multiplies the total.",
-        "completeness": "whole",
-        "chunk_id": "027a04f4e2111a320da2f1a0bdfd293cf674650487e711ea9dd30eb78c49bda9",
-        "source_id": "99ad37ef8447882d167ab29644d31e75c29311f0dba6c0c10c4d07a5b8a5b1cf",
-        "repo_id": "97f06033596c8d22197567862fe4091e1c6c9f038d3625a540ad92802c922303",
-        "revision": "4fa5c2c87772b5cc1d058c0fa054d0dc614cab191c205eb2f70316bef39d7162",
-        "kind": "rule",
-        "visibility": "shared",
-        "language": "en",
-        "locator": {
-         "path": "craft/one-retry-budget.md",
-         "start_line": 1,
-         "end_line": 3
-        },
-        "coverage": "full_text",
-        "record": null,
-        "audiences": [
-         "product",
-         "hooks",
-         "jev"
-        ],
-        "lane": "rrf",
-        "duplicates": []
-       },
-       {
-        "path": "<corpus>\\hub\\operator\\review-before-merge.md",
-        "line": 1,
-        "end_line": 3,
-        "heading": "Review before merge",
-        "heading_path": [
-         "Review before merge"
-        ],
-        "text": "# Review before merge\n\nRule. Every pull request receives one independent review round before it is merged. The author's own checks are not a review.",
-        "completeness": "whole",
-        "chunk_id": "95b7a1daf769a51f24b2bec3bbe6af6797eb0a42e28a910a4e49be5f792c5d3b",
-        "source_id": "9fc73d4fcf495ea9ed0304a6c35afdba9a43571041116648e62c60859094d1f5",
-        "repo_id": "97f06033596c8d22197567862fe4091e1c6c9f038d3625a540ad92802c922303",
-        "revision": "e28d8de9f01e8c1a34efcb5641d72c671135018c898cd9b746225c5f6e98099d",
-        "kind": "rule",
-        "visibility": "shared",
-        "language": "en",
-        "locator": {
-         "path": "operator/review-before-merge.md",
-         "start_line": 1,
-         "end_line": 3
-        },
-        "coverage": "full_text",
-        "record": null,
-        "audiences": [
-         "product",
-         "hooks",
-         "jev"
-        ],
-        "lane": "rrf",
-        "duplicates": []
-       }
-      ],
-      "scores": {
-       "027a04f4e2111a320da2f1a0bdfd293cf674650487e711ea9dd30eb78c49bda9": {
-        "rrf": {
-         "rank": 1,
-         "score": 0.01639
-        },
-        "bm25": {
-         "rank": 1,
-         "score": 1.3762
-        },
-        "cos": null,
-        "graph": null
-       },
-       "95b7a1daf769a51f24b2bec3bbe6af6797eb0a42e28a910a4e49be5f792c5d3b": {
-        "rrf": {
-         "rank": 2,
-         "score": 0.01613
-        },
-        "bm25": {
-         "rank": 2,
-         "score": 0.82281
-        },
-        "cos": null,
-        "graph": null
-       }
-      },
-      "paths": [],
-      "coverage": {
-       "hub": {
-        "candidates": 2,
-        "floor": 2,
-        "selected": 2
-       }
-      },
-      "missing_sources": [],
-      "truncated": [],
-      "seen_chunk_ids": [
-       "bfc69e72dd4bd7394c5b0e3b0ff3b8f9c755536e68bf98dcc47c5d4ca8513cb9",
-       "6b89645639c3f8854e73f637ba0ffa2f11806c2404ea2541127f8b2fbb0013de",
-       "4ba68687493896dcc10ee3cbebae6f4d3823dd4f8cac9c482cdd3f3d5067fa7f",
-       "8834ff0d0c49ac24b161883bd6c4ead41228f71ef8c5bb6ef680dc7152394643",
-       "f4ed1e4352afbd41cfe347b36e8089a1f685069e8e407a18cdacc591ef96802e",
-       "31d69508d085655ef24547f900908d8199afe021570947dbfd51b99250947e16",
-       "c93a9eb4c2b678fad8af11fb60809adaff29d3c240c495af67d88f44c8637926",
-       "027a04f4e2111a320da2f1a0bdfd293cf674650487e711ea9dd30eb78c49bda9",
-       "95b7a1daf769a51f24b2bec3bbe6af6797eb0a42e28a910a4e49be5f792c5d3b"
-      ],
-      "spent": 9,
-      "audiences": null,
-      "elapsed_ms": 0.44
-     }
-    ]
+    "elapsed_ms": 0.42
    },
    "calls": 0,
    "tokens": 0
@@ -916,31 +588,6 @@
    "value": false,
    "calls": 0,
    "tokens": 0
-  },
-  {
-   "value": true,
-   "calls": 0,
-   "tokens": 0
-  },
-  {
-   "value": false,
-   "calls": 0,
-   "tokens": 0
-  },
-  {
-   "value": false,
-   "calls": 0,
-   "tokens": 0
-  },
-  {
-   "value": false,
-   "calls": 0,
-   "tokens": 0
-  },
-  {
-   "value": true,
-   "calls": 0,
-   "tokens": 0
   }
  ],
  "inputs": {
@@ -953,7 +600,7 @@
    "documents",
    "memory"
   ],
-  "repo_id": "138a5b0b16b51ecc95ab975eb37716aefeb06b4fb625b78120c40ef8bdd72748",
+  "repo_id": "fcc689cf6eb64ed44fa972911d15ba9a76b970fb0bc961348c7d7868d3863529",
   "graph": true,
   "model": "jev-1.13.0",
   "live": true,
@@ -961,7 +608,8 @@
   "required": false,
   "audiences": null,
   "cause": null,
-  "fallback": false
+  "fallback": false,
+  "analysis_judge_fallback": false
  },
  "limits": {
   "seconds": 15.0,
@@ -970,31 +618,31 @@
   "tokens": null
  },
  "policy": {
-  "version": "fitted-9f69ae0ac177",
+  "version": "fitted-243c41a159e4",
   "rules": {
    "route": {
     "no": 0.25,
     "yes": 0.8
    },
    "source": {
-    "no": 0.4,
+    "no": 0.35,
     "yes": 0.85
    },
    "useful": {
     "no": 0.2,
-    "yes": 0.8
+    "yes": 0.6
    },
    "conflict": {
-    "no": 0.05,
+    "no": 0.1,
     "yes": 0.8
    },
    "redirect": {
-    "no": 0.3,
+    "no": 0.4,
     "yes": 0.8
    },
    "coverage": {
     "no": 0.2,
-    "yes": 0.65
+    "yes": 0.6
    },
    "ask": {
     "no": 0.2,
@@ -1009,8 +657,8 @@
     "yes": 0.8
    },
    "repair": {
-    "confidence": 0.5,
-    "margin": 0.2
+    "confidence": 0.4,
+    "margin": 0.3
    },
    "relation": {
     "confidence": 0.6,
@@ -1042,8 +690,8 @@
   "problem": "",
   "dataset": "b6f269f0d9542d3e9f8c8fd5cc982dd51697f2fb3bf9393160b250b07007d91a"
  },
- "prompt_version": "afa145931e76393e",
- "behavior": "836c5936b1b26baf",
+ "prompt_version": "ccbb381abb5c1940",
+ "behavior": "7b86dc6528ddb020",
  "transitions": [
   {
    "from": "normalize",
@@ -1060,14 +708,13 @@
    "to": "retrieve",
    "reason": "retrieval_needed",
    "sources": [
-    "documents",
-    "memory"
+    "documents"
    ],
    "score": 0.96,
    "budget": {
     "calls": 1,
     "candidates": 0,
-    "tokens": 773
+    "tokens": 827
    }
   },
   {
@@ -1075,13 +722,13 @@
    "to": "expand",
    "reason": "candidates",
    "round": 1,
-   "chunks": 7,
+   "chunks": 6,
    "graph": 1,
    "paths": 1,
    "budget": {
     "calls": 1,
     "candidates": 0,
-    "tokens": 773
+    "tokens": 827
    }
   },
   {
@@ -1091,116 +738,49 @@
    "budget": {
     "calls": 1,
     "candidates": 0,
-    "tokens": 773
+    "tokens": 827
    }
   },
   {
    "from": "grade",
    "to": "assess",
    "reason": "graded",
-   "kept": 2,
-   "covered": [],
+   "kept": 6,
+   "covered": [
+    "r0"
+   ],
    "budget": {
     "calls": 2,
-    "candidates": 7,
-    "tokens": 3228
+    "candidates": 6,
+    "tokens": 3294
    }
   },
   {
    "from": "assess",
-   "to": "repair_retrieval",
-   "reason": "missing_requirements",
-   "missing": [
-    "r0"
-   ],
-   "options": [
-    "sources"
-   ],
-   "chosen": null,
-   "by": "code",
+   "to": "ready",
+   "reason": "requirements_covered",
    "budget": {
     "calls": 2,
-    "candidates": 7,
-    "tokens": 3228
-   }
-  },
-  {
-   "from": "repair_retrieval",
-   "to": "retrieve",
-   "reason": "sources",
-   "round": 2,
-   "requests": 1,
-   "budget": {
-    "calls": 2,
-    "candidates": 7,
-    "tokens": 3228
-   }
-  },
-  {
-   "from": "retrieve",
-   "to": "expand",
-   "reason": "candidates",
-   "round": 2,
-   "chunks": 2,
-   "graph": 0,
-   "paths": 0,
-   "budget": {
-    "calls": 2,
-    "candidates": 7,
-    "tokens": 3228
-   }
-  },
-  {
-   "from": "expand",
-   "to": "grade",
-   "reason": "expanded",
-   "budget": {
-    "calls": 2,
-    "candidates": 7,
-    "tokens": 3228
-   }
-  },
-  {
-   "from": "grade",
-   "to": "assess",
-   "reason": "graded",
-   "kept": 0,
-   "covered": [],
-   "budget": {
-    "calls": 3,
-    "candidates": 9,
-    "tokens": 4311
-   }
-  },
-  {
-   "from": "assess",
-   "to": "partial",
-   "reason": "no_repair",
-   "missing": [
-    "r0"
-   ],
-   "budget": {
-    "calls": 3,
-    "candidates": 9,
-    "tokens": 4311
+    "candidates": 6,
+    "tokens": 3294
    }
   }
  ],
  "calls": {
-  "calls": 3,
-  "provider_calls": 3,
+  "calls": 2,
+  "provider_calls": 2,
   "cache_hits": 0,
   "cost_usd_known": 0,
-  "cost_unknown": 3,
+  "cost_unknown": 2,
   "tokens": {
-   "input": 3630,
-   "output": 681
+   "input": 2677,
+   "output": 617
   },
   "by_purpose": {
    "route": 1,
    "source_select": 1,
-   "grade": 2,
-   "sufficiency": 2
+   "grade": 1,
+   "sufficiency": 1
   }
  }
 }
