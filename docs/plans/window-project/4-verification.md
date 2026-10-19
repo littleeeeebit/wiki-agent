@@ -24,6 +24,10 @@ rfg_rag):
 - The turn in A and the loop in B finish; neither session was closed by the
   other window's switch.
 - The restart question, asked from either window, names the work of both.
+  Asked from B while A has only a wiki answer being generated, it still
+  warns, and cancelling leaves A's answer running.
+- With a terminal open in each window, closing A ends A's shell; B's shell,
+  B's loop and A's server-side work go on.
 
 ## Evidence
 
