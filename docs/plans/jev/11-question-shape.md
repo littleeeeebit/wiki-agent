@@ -179,4 +179,4 @@ than alone.
 | 1 | Wording for arms A–D, reviewed | Done — reviewed, PR #182 |
 | 2 | Collect each arm on the calibration split and the coverage gate states; compare | Done — B adopted; A, C, D rejected (Results) |
 | 3 | Refit the policy on the adopted arms; held-out gates | Done — refit 88.5 → 47.0; all seven held-out gates pass (Adoption) |
-| 4 | Production switch through the existing modes, reversible per kind | In progress — the switch is this PR's merge (the prompts are code, not a mode); rollback is its revert |
+| 4 | Production switch through the existing modes, reversible per kind | Done — switched by merging PR #184 (7096e2d, 2026-10-19); the prompts are code, not a mode, so rollback is reverting it |
