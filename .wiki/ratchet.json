@@ -128,8 +128,8 @@
     },
     "tool/main/specs.py": {
       "dup": 0,
-      "lines": 1489,
-      "reason": "Stage 4 uses existing Windows job ownership for gate cancellation and attempt-owned setup lifetime, with bounded cleanup timeout."
+      "lines": 1497,
+      "reason": "#172 points every Windows gate's TMPDIR, TEMP and TMP at its own folder, since the Codex sandbox's same-named account leaves pytest links this account cannot read; merged without raising this ceiling, so main failed debt.py check."
     },
     "tool/main/verification.py": {
       "dup": 12,
