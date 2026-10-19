@@ -33,7 +33,8 @@ def git(repo: Path, *args: str) -> str | None:
     """git's answer in `repo`, or None where git does not answer."""
 
     try:
-        done = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True, encoding="utf-8")
+        done = subprocess.run(["git", *args], cwd=repo, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
     except OSError:
         return None
     return None if done.returncode else done.stdout
