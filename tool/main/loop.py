@@ -1041,8 +1041,14 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     retry = research.get("note", "") if not previous.get("ok") and previous.get("head") == head \
         and research.get("head") == head and research.get("ts", 0) > (done or float("inf")) else ""
     # Cut short, or never finished (a dead server): once more after a continue or a restart's recovery, which stamp it.
-    again = previous.get("head") == head and bool(previous.get("pending") or not done) \
-        and (specs.load(loop.repo, loop.sid) or spec).get("continued", 0) > (done or 0)
+    fresh = specs.load(loop.repo, loop.sid) or spec
+    cut = previous.get("head") == head and bool(previous.get("pending") or not done) \
+        and max(fresh.get("continued", 0), fresh.get("recovered", 0)) > (done or 0)
+    # A confirmed failure of this head goes again after a continue, a person's or a repair's that changed no code
+    # (rfg_rag #73: no `.venv`), never a recovery's: the receipt is saved before the spec. Local receipts only.
+    fixed = previous.get("head") == head and bool(done) and not previous.get("ok") and not retry \
+        and fresh.get("continued", 0) > done and not verification.cloud(spec)
+    again = ("incomplete", "running", "failed") if fixed else ("incomplete", "running") if cut else ()
     release = wait_hold(loop, path)
     if release is None:
         return None
@@ -1129,6 +1135,9 @@ def allowed(loop: Loop, spec: dict, repo: Path, path: Path, chat: ChatSession, n
     if spec is None or told(loop, spec, path, repair(final["command"], final)) is None:
         return False
     if specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == head:
+        if (specs.load(loop.repo, loop.sid) or spec).get("repaired") != head:   # it may have fixed what is outside the code
+            specs.update(loop.repo, loop.sid, repaired=head, continued=time.time())
+            return True
         return stop(loop, loop.repo, loop.sid, Why.GATE, f"최종 게이트 실패, 고친 커밋이 없다 — {final['reason']}")
     return True
 
@@ -1662,7 +1671,7 @@ def recover() -> list[tuple[str, str]]:
                         # A research turn cut mid-flight: its spend is unknown, and the cycle still counts.
                         specs.update(repo.name, spec["id"], recovery=marked)
                     stop(None, repo.name, spec["id"], Why.RESTART)
-                    specs.update(repo.name, spec["id"], continued=time.time())   # the run it was in goes on, a final gate too
+                    specs.update(repo.name, spec["id"], recovered=time.time())   # the run it was in goes on, a cut final gate too
                     resume.append((repo.name, spec["id"]))
                 elif spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == Why.RESTART.value:
                     resume.append((repo.name, spec["id"]))
