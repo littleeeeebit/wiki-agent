@@ -77,9 +77,10 @@ def pack(*kinds: str, picks: tuple[str, ...] = ()) -> Path:
     """This folder's code and `kinds`' labelled splits, as `laya/...` in one zip, with
     `laya/packed.json` naming the kinds in training order, the commit and the splits'
     hashes the notebook's result carries back. `picks`, support checkpoints' zips on
-    Drive, has the notebook read coverage's train and calibration questions with each
-    first (`support.evaluate`): the picks `joint` is asked over. Several runs leave
-    different questions undecided, so they give joint more distinct problems."""
+    Drive, has the notebook read coverage's train, calibration and validation questions
+    with each first (`support.evaluate`): the picks `joint` is asked over. Several runs
+    leave different questions undecided, so they give joint more distinct problems, and
+    its validation more than one run's 72 questions."""
 
     def git(*args):
         return subprocess.run(["git", *args], cwd=HERE, capture_output=True, text=True).stdout.strip()
@@ -91,7 +92,7 @@ def pack(*kinds: str, picks: tuple[str, ...] = ()) -> Path:
         # the notebook names each run's outputs by its checkpoint's stem
         if len({Path(p).stem for p in picks}) < len(picks):
             raise ValueError(f"picks checkpoints share a name: {', '.join(picks)}")
-        packed["picks"] = {"checkpoints": list(picks), "splits": ["train", "calibration"]}
+        packed["picks"] = {"checkpoints": list(picks), "splits": ["train", "calibration", "validation"]}
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
         for f in sorted(HERE.glob("*.py")):
             if not f.name.startswith("test_"):
