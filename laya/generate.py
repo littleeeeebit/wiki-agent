@@ -5,9 +5,12 @@ A teacher host turn writes questions over a seeded sample of one repository's do
 corpus (`repos`), weighted by the square root of its size, and each question is given its
 type and intent before it is written (`sample`), so the set is diverse by construction
 (owner, 2026-10-14). Each question runs through `knowledge.prepare` in its repository with
-the decider stubbed and the translator sending nothing (`captured`): its route request and
-its first grade-evidence request are captured as production would send them, and nothing goes
-to Jev, the translator or a host fallback. Each kind's candidate is one question per row,
+the decider stubbed and the translator sending nothing (`captured`), after the conversation
+the teacher wrote before it (`conversation`): its route request and its first `JUDGES`
+grade-evidence requests are captured as production would send them, and nothing goes
+to Jev, the translator or a host fallback. A slot's `context` and `length` follow the
+development pool's shape (plan stage 5, 2026-10-20); `--batch` keeps a round in files of
+its own and holds it from every production state. Each kind's candidate is one question per row,
 its state the kind's view (`kinds.view`), at most `CAP` per kind from one question;
 near-duplicates of the gate test and across splits are dropped (`generate`). Kinds whose yes
 or no the pages rarely give get it by design: `chat` questions need no retrieval (`route`),
@@ -66,6 +69,11 @@ EXTRA_FALSE_PREMISE = 2
 PLANTS = 4      # instructions to an assistant the teacher writes each turn, planted for `redirect`
 PLANT = 0.3     # share of `redirect` candidates given one, so the kind has its yes
 PLANT_CHARS = 500
+# The conversation before a question, near the development pool's shares (plan stage 5,
+# 2026-10-20: half had one, a fifth past `STATE_CHARS`); a `long` one is summarized.
+CONTEXTS = {"none": 0.5, "short": 0.3, "long": 0.2}
+LONG_QUERY = 0.25   # share of questions written long: production's p90 is about 1,200 characters
+JUDGES = 3          # grade-evidence rounds kept from one question, so later rounds' passages are seen
 
 
 def prompt_version() -> str:
@@ -107,8 +115,19 @@ def sample(seed: int, found: dict[str, Path] | None = None, lean: bool = False) 
     pages = [{**{k: d[k] for k in ("path", "title", "heads", "lead")},
               "excerpt": (found[name] / d["path"]).read_text(encoding="utf-8", errors="replace")[:EXCERPT]}
              for d in chosen]
+    contexts = rng.choices(list(CONTEXTS), weights=list(CONTEXTS.values()), k=PER_TURN)
     return {"repo": name, "pages": pages,
-            "slots": [{"type": t, "intent": i} for t, i in zip(types[:PER_TURN], intents[:PER_TURN])]}
+            "slots": [{"type": t, "intent": i, "context": c, "length": "long" if rng.random() < LONG_QUERY else "short"}
+                      for t, i, c in zip(types[:PER_TURN], intents[:PER_TURN], contexts)]}
+
+
+def conversation(prior: list[dict], pages: list[dict], long: bool) -> str:
+    """The state production passes `prepare`: the turns before the question, one
+    `role: text` line each (`main.query`). A `long` one starts with earlier turns of an
+    assistant quoting the pages, so it passes `STATE_CHARS` and its summary omits them."""
+
+    lines = [f"assistant: {p['excerpt']}" for p in pages] if long else []
+    return "\n".join(lines + [f"{t['role']}: {t['text']}" for t in prior])
 
 
 def teacher_turn(model: str, seed: int, lean: bool = False) -> dict:
@@ -130,22 +149,32 @@ def teacher_turn(model: str, seed: int, lean: bool = False) -> dict:
             # The titles of the drawn pages it says it is about: a passage's heading starts with one.
             pages = q["pages"] if isinstance(q.get("pages"), list) else []
             about = [titles[p] for p in pages if isinstance(p, str) and titles.get(p)]
-            queries.append({"text": q["text"], **drawn["slots"][slot], "about": about})
+            slotted = drawn["slots"][slot]
+            prior = [t for t in q.get("prior") or [] if isinstance(t, dict) and t.get("role") in ("user", "assistant")
+                     and isinstance(t.get("text"), str) and t["text"].strip()] if isinstance(q.get("prior"), list) else []
+            asks = [a.strip() for a in q.get("asks") or [] if isinstance(a, str) and a.strip()] \
+                if isinstance(q.get("asks"), list) else []
+            state = conversation(prior, drawn["pages"], slotted.get("context") == "long") \
+                if slotted.get("context") in ("short", "long") else ""
+            queries.append({"text": q["text"], **slotted, "about": about,
+                            **({"state": state} if state else {}),
+                            **({"asks": asks} if len(asks) > 1 else {})})
     plants = said.get("plants") if lean and isinstance(said.get("plants"), list) else []
     plants = [p.strip()[:PLANT_CHARS] for p in plants if isinstance(p, str) and p.strip()][:PLANTS]
     return {**got, "seed": seed, "repo": drawn["repo"], "pages": [p["path"] for p in drawn["pages"]],
             "queries": queries, "plants": plants, "lean": lean}
 
 
-def captured(query: str, project: Path = ROOT) -> list[dict]:
-    """The route request and the first grade-evidence request (each `{state, questions}`)
-    that `query` makes on the production path in `project`, with no model and no
-    translator request.
+def captured(query: str, project: Path = ROOT, state: str = "", asks=None, judges: int = JUDGES) -> list[dict]:
+    """The route request and the first `judges` grade-evidence requests (each `{state,
+    questions}`) that `query` makes on the production path in `project`, after the
+    conversation `state`, with no model and no translator request.
 
     The translator's one request (`translate._ask`) answers nothing, so English passes as
-    production reads it, a cached translation is used, and anything else is left unread; a
-    question is not split (`translate.parts`). The run is cancelled once the first
-    grade-evidence request is answered, before code's own repairs run."""
+    production reads it, a cached translation is used, and anything else is left unread.
+    The model split (`translate.parts`) answers with the teacher's `asks`, or nothing. Every
+    decision is uncertain, so code repairs between rounds as it does when Jev is unsure;
+    the run is cancelled once the last round wanted is answered."""
 
     if str(ROOT / "tool") not in sys.path:
         sys.path.append(str(ROOT / "tool"))
@@ -153,14 +182,17 @@ def captured(query: str, project: Path = ROOT) -> list[dict]:
     from main import knowledge
 
     seen: list[dict] = []
+    rounds = []
     stop = threading.Event()
 
-    def evaluate(cfg, state, questions, trace, budget=None, stage=""):
+    def evaluate(cfg, sent, questions, trace, budget=None, stage=""):
         # Every question uncertain: a route still retrieves, a source is still searched.
         if stage in ("route", "judge") and not stop.is_set():
-            seen.append({"state": state, "questions": questions})
+            seen.append({"state": sent, "questions": questions})
             if stage == "judge":
-                stop.set()
+                rounds.append(stage)
+                if len(rounds) >= judges:
+                    stop.set()
         return {n: 0.5 if q["type"] == "noul" else
                 {"choice": decision.DEFER if decision.DEFER in q["criteria"] else next(iter(q["criteria"])),
                  "confidence": 0.5, "probabilities": {c: 1 / len(q["criteria"]) for c in q["criteria"]}}
@@ -175,21 +207,22 @@ def captured(query: str, project: Path = ROOT) -> list[dict]:
     # Retrieval only from a daemon already running: none is started, and no index is built in
     # this process, either of which may download embedding models (`search.daemon`).
     translate, search, real_retrieve = knowledge.translate, sys.modules["search"], knowledge.retrieve_from_daemon
-    held = (decision.evaluate, translate._ask, knowledge.falls_back, knowledge.retrieve_from_daemon,
+    held = (decision.evaluate, translate._ask, translate.parts, knowledge.falls_back, knowledge.retrieve_from_daemon,
             knowledge.cold, search.spawn)
-    (decision.evaluate, translate._ask, knowledge.falls_back, knowledge.retrieve_from_daemon,
-     knowledge.cold, search.spawn) = (evaluate, lambda *a, **k: None, lambda cfg: False, daemon_only,
-                                      lambda *a, **k: None, no_spawn)
+    (decision.evaluate, translate._ask, translate.parts, knowledge.falls_back, knowledge.retrieve_from_daemon,
+     knowledge.cold, search.spawn) = (evaluate, lambda *a, **k: None, lambda *a: list(asks) if asks else None,
+                                      lambda cfg: False, daemon_only, lambda *a, **k: None, no_spawn)
     try:
         with loopback_only():
             cfg = decision.Config("shadow", decision.MODEL, "file", key="laya-generator")
-            dossier = knowledge.prepare(query, project, cfg=cfg, cache=None, cancel=stop)
+            dossier = knowledge.prepare(query, project, state, cfg=cfg, cache=None, cancel=stop)
     finally:
-        (decision.evaluate, translate._ask, knowledge.falls_back, knowledge.retrieve_from_daemon,
+        (decision.evaluate, translate._ask, translate.parts, knowledge.falls_back, knowledge.retrieve_from_daemon,
          knowledge.cold, search.spawn) = held
     status, reason = dossier.get("status"), dossier.get("reason")
-    # A route alone is the whole capture only when retrieval finished with nothing to judge.
-    if stop.is_set() or status in ("ready", "partial"):
+    # A route alone is the whole capture only when retrieval finished with nothing to judge;
+    # a run that ran out after a round keeps the rounds it had, as production records them.
+    if stop.is_set() or rounds or status in ("ready", "partial"):
         return seen
     if (status in ("exhausted", "cancelled") or reason == "retrieval_unavailable"
             or {"baseline": "retrieval_unavailable"} in dossier.get("limits", [])):
@@ -333,7 +366,7 @@ def unsettled(ledger: list[dict]) -> list[int]:
 
 
 def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 0, kinds=RETRIEVAL,
-             capture=captured, turn=teacher_turn, log=print, ready=None, found=None) -> dict:
+             capture=captured, turn=teacher_turn, log=print, ready=None, found=None, batch: str = "") -> dict:
     """Candidates for `split` of each of `kinds` up to `target`; stops once every kind has
     them, or at `max_turns` teacher turns in this run. What was paid for before (the
     ledger) is run before any new turn.
@@ -364,7 +397,7 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
     if unknown:
         raise ValueError(f"{', '.join(unknown)}: the generator writes retrieval kinds ({', '.join(RETRIEVAL)}) only")
     kinds = tuple(k for k in RETRIEVAL if k in kinds)   # one order for one set, as the run log records it
-    shared = DATA / "retrieval"
+    shared, out = DATA / f"retrieval-{batch}" if batch else DATA / "retrieval", f"{batch}-{split}" if batch else split
     ledger, runs = shared / "generate.ledger.jsonl", shared / "generate.runs.jsonl"
     reserved = gate.reserved()
     gated = [r for r in read(gate.POOL) if r["state_hash"] in reserved]
@@ -377,7 +410,8 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
         raise SystemExit("the search daemon is not answering; start it before generating")
     found = repos() if found is None else found
     warmed: set[str] = set()   # repositories whose index the daemon has finished in this run
-    near_gate = gate.Near(gated)
+    # A batch is held from every production state, the development pool's too (plan stage 5).
+    near_gate = gate.Near(read(gate.POOL) if batch else gated)
     origins, sides, claimed, claims, done = gate.Near(), [], {}, {}, set()
     for r in read(runs):
         if "claim" in r:
@@ -400,9 +434,10 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
     other = {tuple(k for k in RETRIEVAL if k in r["kinds"]) for r in logged} - {kinds}
     if other:
         raise SystemExit(f"{runs} was written for kinds {list(sorted(other)[0])}; generate the same kinds")
-    near = {k: gate.Near(row for s in SPLITS for row in read(DATA / k / f"{s}.candidates.jsonl")) for k in kinds}
+    near = {k: gate.Near(row for s in SPLITS for name in {s, f"{batch}-{s}" if batch else s}
+                         for row in read(DATA / k / f"{name}.candidates.jsonl")) for k in kinds}
     # Counted in questions, as labels are: a row holds every question of its kind on its view.
-    have = {k: sum(len(r["questions"]) for r in read(DATA / k / f"{split}.candidates.jsonl")) for k in kinds}
+    have = {k: sum(len(r["questions"]) for r in read(DATA / k / f"{out}.candidates.jsonl")) for k in kinds}
     stats = {"turns": 0, "cost_usd": 0.0, "queries": 0, "kept": dict.fromkeys(kinds, 0), "near_gate": 0,
              "other_split": 0, "near_kept": 0}
 
@@ -434,7 +469,8 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
                         return False
                     warmed.add(entry["repo"])
                 try:
-                    requests = capture(q["text"], found[entry["repo"]])
+                    requests = capture(q["text"], found[entry["repo"]],
+                                       **{k: q[k] for k in ("state", "asks") if k in q})
                 except Unavailable as error:
                     stats["reason"] = f"{run}: {error}"
                     return False
@@ -466,7 +502,7 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
                     elif near[kind].found(row):
                         stats["near_kept"] += 1
                     elif have[kind] < target:
-                        append(DATA / kind / f"{split}.candidates.jsonl", row)
+                        append(DATA / kind / f"{out}.candidates.jsonl", row)
                         near[kind].add(row)
                         have[kind] += len(row["questions"])
                         stats["kept"][kind] += len(row["questions"])
@@ -509,10 +545,10 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
     return {**stats, "have": have, "stopped": "target" if full() else "turn_limit"}
 
 
-def abandon(seed: int) -> None:
+def abandon(seed: int, batch: str = "") -> None:
     """Close an unsettled teacher turn: counted as made, its cost unknown, never retried."""
 
-    ledger = DATA / "retrieval" / "generate.ledger.jsonl"
+    ledger = (DATA / f"retrieval-{batch}" if batch else DATA / "retrieval") / "generate.ledger.jsonl"
     if seed not in unsettled(read(ledger)):
         raise SystemExit(f"seed {seed} is not an unsettled turn")
     append(ledger, {"seed": seed, "abandoned": True, "cost_usd": None})
@@ -528,16 +564,18 @@ def main() -> None:
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--abandon", type=int, metavar="SEED")
     p.add_argument("--dry", action="store_true")
+    p.add_argument("--batch", default="", help="a round of its own: its ledger, runs and <batch>-<split> files")
     a = p.parse_args()
     if a.abandon is not None:
-        abandon(a.abandon)
+        abandon(a.abandon, a.batch)
         return
     if a.dry or not a.teacher:
         drawn = sample(a.seed, lean=a.split == "train")
         print(json.dumps({"prompt_version": prompt_version(), "repo": drawn["repo"],
                           "pages": [x["path"] for x in drawn["pages"]], "slots": drawn["slots"]}, indent=1))
         return
-    print(json.dumps(generate(a.split, a.target, a.teacher, a.max_turns, a.seed, a.kinds), indent=1))
+    print(json.dumps(generate(a.split, a.target, a.teacher, a.max_turns, a.seed, a.kinds, batch=a.batch),
+                     indent=1))
 
 
 if __name__ == "__main__":

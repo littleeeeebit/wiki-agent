@@ -119,9 +119,22 @@ Changes, one batch sized to the pool (not top-ups):
    a prior exchange passed as `state` to `prepare` (so `current_state` and,
    past `STATE_CHARS`, `omitted_context` are production's own), the model
    split on, longer queries that paste material, and repair rounds whose
-   passages accumulate. Before the batch, the same shape table on the new
-   generator's first 50 states shows it reaches the development pool's
-   directions. Multi-part queries are already common, so the batch does
+   passages accumulate. Built so (2026-10-20):
+   - Each slot draws a `context` (none 0.5, short 0.3, long 0.2) and a
+     `length` (long 0.25).
+   - The teacher writes the turns before a question (`prior`). A long one
+     starts with an assistant quoting the drawn pages, so it passes
+     `STATE_CHARS` and is summarized.
+   - The teacher writes the separate asks of a question that asks several.
+     They answer the model split, so no translator request is sent.
+   - The capture keeps up to three grade-evidence rounds.
+   - `--batch` writes a round's ledger, runs and candidates to files of
+     their own, held from every pool state.
+
+   A free local capture showed all three: a split to three requirements, a
+   summarized conversation, and rounds of 13, 15 and 17 passages.
+   Before the batch, the same shape table on the new generator's first 50
+   states shows it reaches the development pool's directions. Multi-part queries are already common, so the batch does
    not add more of them. Slices weighted hard, by the owner's rule:
    numbers, dates, literal wording, the longest states, and Jev's
    documented weak spots (`.wiki/laya-insight-jev-usage.md`).
@@ -167,30 +180,31 @@ kept, 6,628 calls).
 | Support labels | 4,000 kept | about $5.60 |
 | Joint labels | 1,500 kept | about $2.44 |
 | Development pool labels | 43 questions, their views | under $0.50 |
-| Model split and longer states | not measured | unknown |
+| Teacher's conversations, asks and long queries | in generation's output | not measured |
 
-That is about $18.50 before the new calls, under a $20 cap. A pilot of 100
-queries, generated and labelled (about $1.40), comes first. It measures the
-cost per kept label, the yield and the model split's calls. The batch is
-then sized to what fits the cap, and it stops at the cap with whatever it
-has kept. Nothing is approved yet. The pilot and the batch each need the
-owner's approval.
+That is about $18.50 before the longer teacher output, under a $20 cap.
+The model split sends no request (item 1). A pilot of 100 queries,
+generated and labelled (about $1.40), comes first. It measures the cost
+per query and per kept label, and the yield. The batch is then sized to
+what fits the cap, and it stops at the cap with whatever it has kept.
 
-Open, for the owner before the next gate:
+Owner, 2026-10-20 (after #187):
 
-- Exposure. The coverage gate was read four times on 2026-10-19, all
+- Budget. The pilot is approved. The batch needs its own approval after
+  the pilot's numbers.
+- Gate. The coverage gate was read four times on 2026-10-19, all
   diagnostics with the same checkpoints (stage 6, Results). Support ran
   at 1,024 tokens, then at 2,048, a length chosen from the gate's view
-  lengths, and each run was recounted by unit. Its 94 units cannot meet the 100-unit rule whatever else is decided.
-  Either add reserved units from production states recorded after the
-  pool (2026-10-13), or reserve a fresh coverage gate of at least 100
-  units from them. Either way, reserve them before any of those states
-  enters the pool or development, and report the old units' exposure
-  beside the verdict.
-- Jev's side of the gate is its recorded answers under the old wording.
-  Since #184 production asks arm B's wording, so the next comparison needs
-  Jev's B answers on the gate states (paid; stage 11's incomplete gate run
-  holds part of them).
+  lengths, and each run was recounted by unit. Its 94 units cannot meet
+  the 100-unit rule. The next gate is a fresh coverage reservation of at
+  least 100 units from production states recorded after the pool
+  (2026-10-13). It fills by ordinary use: on 2026-10-20 there were 10 such
+  states, 6 units. Until it is reserved, `laya/pool.py` is not run again,
+  so none of those states enters the pool or development first.
+- Jev. Jev's side of the gate is its recorded answers under the old
+  wording. Since #184 production asks arm B's wording, so Jev's B answers
+  are collected on the fresh gate's states once they are reserved, with
+  their own budget.
 
 ## Acceptance
 

@@ -1,6 +1,11 @@
 {
   "exclude": [],
   "files": {
+    "laya/test_laya.py": {
+      "dup": 0,
+      "lines": 1550,
+      "reason": "Laya stage 5 production-shaped coverage round: the generator's capture takes the conversation, answers the model split with the teacher's asks and keeps later judge rounds, including a run that ran out after one; the teacher keeps a question's prior turns and asks; a slot draws the development pool's context and length shares; a batch writes files of its own and is held from every production state."
+    },
     "tool/agent/chat_session.py": {
       "dup": 0,
       "lines": 1352,
