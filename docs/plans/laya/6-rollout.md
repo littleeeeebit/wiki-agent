@@ -35,18 +35,36 @@ All on stage 2's gate test, read here for the first time.
 Diagnostics reported beside the gate, never as it: synthetic and
 model-authored sets, and the validation split.
 
-The Jev side is one paid run of at most 300 states × fourteen kinds, with
-the owner's approval of its budget; a repetition needs a second approval.
+The Jev side is the answer production recorded in the local Langfuse for
+the same gate state and question, not a paid run (owner, 2026-10-19). A paid
+run is needed only for a Jev arm asked differently, such as the way Jev's own
+documentation advises (`.wiki/laya-insight-jev-usage.md`), and needs the
+owner's approval of its budget.
+
+Labels: guided labelling on the gate states (Haiku labeller, Codex Sol
+verifier, agreed labels only), which sees neither decider's answer (owner,
+2026-10-19). For `coverage` that is 209 of 268 questions over 114 of 129
+states; 10 of the 209 are yes, so accuracy is near what always answering no
+would get, and the per-class rates are reported beside it.
+
+Beside the verdict, diagnostics: Jev under its fitted production policy
+(`eval/jev/policy.json`, uncertain between the thresholds), and both
+deciders' accuracy per Jev weak spot from Jev's documentation (numbers,
+dates, literal wording, injected instructions, the longest quarter of
+states). Laya's data must cover those weak spots (owner, 2026-10-19).
 
 ## Tool
 
-`tool/eval/laya_gate.py <kind>`: reads `eval/laya/tests.json`, runs both
-deciders within the approved budget, resumes without paying twice, and
-writes `raw/eval/laya/gate-<kind>-<timestamp>.json` with per-state answers,
-the paired interval, ECE and the verdict (`pass`, `fail`,
-`inconclusive`). `tool/test_laya_gate.py`: scoring of invalid and
-over-limit answers, the paired bootstrap on a known case, ECE bins on the
-paired answered subset, both 100-state rules, budget stop.
+`laya/jev_gate.py <kind>`, run with `laya/.venv`. It sits beside the other
+Laya code, which its tests stub. It reads the labelled gate rows
+(`laya/data/<kind>/gate.jsonl`), asks Laya and reads Jev's recorded answers,
+and writes `raw/eval/laya/gate-<kind>-<timestamp>.json`. The file holds
+per-question answers, the paired interval, ECE, the diagnostics and the
+verdict (`pass`, `fail`, `inconclusive`). `coverage` is Laya's support
+checkpoint, then joint over support's part picks where support left a
+question undecided. Tests in `laya/test_laya.py`: no answer counts as wrong,
+the paired bootstrap on known cases, ECE bins, both 100-state rules, the
+policy reading and the weak-spot tags.
 
 ## Rollout
 
