@@ -1045,10 +1045,9 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     again = previous.get("head") == head and bool(previous.get("pending") or not done) \
         and max(fresh.get("continued", 0), fresh.get("recovered", 0)) > (done or 0)
     # A confirmed failure of this head goes again after a continue, a person's or a repair's that changed no code
-    # (rfg_rag #73: the worktree had no `.venv`); the cloud flow keeps its research note.
-    if not retry and not again and previous.get("head") == head and done and not previous.get("ok") \
-            and fresh.get("continued", 0) > done and not verification.cloud(spec):
-        retry = "같은 커밋을 다시 검사한다 — 코드 밖(환경 등)을 고친 뒤 계속했다"
+    # (rfg_rag #73: the worktree had no `.venv`). `verify` applies it to a local receipt only; CI reads its run.
+    again = again or (previous.get("head") == head and bool(done) and not previous.get("ok") and not retry
+                      and fresh.get("continued", 0) > done and not verification.cloud(spec))
     release = wait_hold(loop, path)
     if release is None:
         return None

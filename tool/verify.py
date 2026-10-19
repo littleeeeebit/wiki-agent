@@ -323,10 +323,11 @@ def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=
         ) or record.get("backend") not in ("ci", "local"):
             raise Pending("저장된 최종 검증 기록의 형식·대상이 맞지 않습니다. 재실행하지 않았습니다")
         # A run cut short — over its time, stopped, or left `running` by a dead
-        # server (this lock is held for a live one) — proved nothing either way.
-        # A person's continue (`again`) runs it once more, never a loop of its own.
-        unfinished = again and dispatch and record["backend"] == "local" and record.get("status") in {"incomplete", "running"}
-        retry_reason = retry_reason or ("끝나지 못한 로컬 최종 검사를 사람이 계속했다" if unfinished else "")
+        # server (this lock is held for a live one) — proved nothing either way;
+        # a failure may have been fixed outside the code. `again`, which the loop
+        # passes only after a continue, runs a local one once more; CI reads its run.
+        unfinished = again and dispatch and record["backend"] == "local" and record.get("status") in {"incomplete", "running", "failed"}
+        retry_reason = retry_reason or ("끝나지 못했거나 코드 밖을 고친 로컬 최종 검사를 계속했다" if unfinished else "")
         if retry_reason and receipt.is_file():
             if not dispatch or record["backend"] != "local" or record.get("status") not in {"failed", "running", "incomplete"}:
                 raise ValueError("재시도 사유는 실패·중단된 로컬 검사에만 지정하세요. CI는 기존 실행 화면에서 처리하세요")
