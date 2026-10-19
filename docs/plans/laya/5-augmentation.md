@@ -121,7 +121,8 @@ Changes, one batch sized to the pool (not top-ups):
    split on, longer queries that paste material, and repair rounds whose
    passages accumulate. Built so (2026-10-20):
    - Each slot draws a `context` (none 0.5, short 0.3, long 0.2) and a
-     `length` (long 0.25).
+     `length` (long 0.3, written 1,000 to 2,500 characters; the pilot's
+     0.25 at 600 to 1,800 reached a query p90 of 615).
    - The teacher writes the turns before a question (`prior`). A long one
      starts with an assistant quoting the drawn pages, so it passes
      `STATE_CHARS` and is summarized.
@@ -190,8 +191,12 @@ what fits the cap, and it stops at the cap with whatever it has kept.
 
 Owner, 2026-10-20 (after #187):
 
-- Budget. The pilot is approved. The batch needs its own approval after
-  the pilot's numbers.
+- Budget. The pilot (batch `shape1`) spent $1.09 on 99 questions:
+  generation $0.0084 a question, a kept coverage label $0.0020, a kept
+  support label $0.00067. Its shape matched the development pool except
+  query length (p90 615 against 1,173). The owner then approved the
+  batch: 1,400 questions, cap $20, after long queries are written longer.
+  It stops and reports if its first 50 states' shape does not improve.
 - Gate. The coverage gate was read four times on 2026-10-19, all
   diagnostics with the same checkpoints (stage 6, Results). Support ran
   at 1,024 tokens, then at 2,048, a length chosen from the gate's view

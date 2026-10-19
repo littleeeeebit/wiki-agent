@@ -51,8 +51,11 @@ The slot's `context` says what came before the message:
   you mentioned") without repeating what it said.
 
 The slot's `length` says how long the message is: `short` is up to a few
-sentences; `long` is 600 to 1,800 characters, with pasted material,
-several paragraphs of the developer's situation, or a detailed task.
+sentences; `long` is 1,000 to 2,500 characters and never under 1,000,
+as developers' long messages are: pasted material of many lines (a log,
+an error with its trace, a config, a message from someone), several
+paragraphs of the developer's situation, or a detailed task with its
+constraints.
 
 Lean on what is hard to get right: numbers, versions, dates, exact names
 and wording, conditions and exceptions, and details where two pages
