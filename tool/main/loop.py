@@ -2529,15 +2529,20 @@ def minimal(repo: Path, view: dict, path: Path, gate: str) -> dict:
             "history": [{"ts": now, "state": "리뷰 대기"}]}
 
 
-def take(repo: Path, n: int, environment: str = "local") -> str:
+def take(repo: Path, n: int, environment: str = "local", cell: dict | None = None) -> str:
     """One pull request into a loop: a stopped spec goes on; one without a
-    spec gets its worktree from the pull request's branch, and a spec."""
+    spec gets its worktree from the pull request's branch, and a spec.
+    `cell`, the work model the screen has chosen, fills a spec that names none:
+    a PR adopted from GitHub ran its repairs on Claude's default (rfg_rag #74-#76)."""
 
+    cell = cell if cell and cell.get("model") else None
     spec = by_pr(repo.name).get(n)
     if spec is not None:
         why = refusal({}, spec)
         if why:
             raise HTTPException(409, why)
+        if cell and not (spec.get("cell") or {}).get("model"):
+            spec = specs.update(repo.name, spec["id"], cell=cell)
         view = gh_or_502(repo, ["pr", "view", str(n), "--json", "body"])
         if verification.cloud(spec) or "```cloud-handoff" in (view.get("body") or ""):
             environment = "claude-cloud"
@@ -2570,6 +2575,8 @@ def take(repo: Path, n: int, environment: str = "local") -> str:
     existing = unlinked(repo, view["headRefName"])
     if existing is not None:
         spec = attach(repo, existing, view, environment)
+        if cell and not (spec.get("cell") or {}).get("model"):
+            specs.update(repo.name, spec["id"], cell=cell)
         kick(repo.name, spec["id"])
         return spec["id"]
     why = clash(repo.name, view["headRefName"])
@@ -2577,7 +2584,8 @@ def take(repo: Path, n: int, environment: str = "local") -> str:
         raise HTTPException(409, why)
     path = adopted(repo, view["headRefName"], view["headRefOid"], detached=environment != "local")
     with specs._files:
-        made = {**minimal(repo, view, path, gate), "id": sid, "implementation_environment": environment}
+        made = {**minimal(repo, view, path, gate), "id": sid, "implementation_environment": environment,
+                **({"cell": cell} if cell else {})}
         if path.resolve() == repo.resolve():
             made.update(workspace_mode="branch", branch=view["headRefName"], return_branch=view["baseRefName"])
         specs.save(made)
@@ -2588,6 +2596,7 @@ def take(repo: Path, n: int, environment: str = "local") -> str:
 class Pick(BaseModel):
     prs: list[int]
     implementation_environment: Literal["local", "claude-cloud", "external"] = "local"
+    cell: specs.Start | None = None   # the work model the screen has chosen
 
 
 @router.post("/api/loops")
@@ -2599,7 +2608,8 @@ def start(body: Pick) -> dict:
     out = []
     for n in body.prs:
         try:
-            out.append({"number": n, "id": take(repo, n, body.implementation_environment)})
+            out.append({"number": n, "id": take(repo, n, body.implementation_environment,
+                                                body.cell.model_dump() if body.cell else None)})
         except HTTPException as exc:
             errorlog.record("review-start", exc.detail, repo=repo.name, pr=n, status=exc.status_code)
             out.append({"number": n, "error": exc.detail})

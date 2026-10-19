@@ -610,7 +610,8 @@ export default function App() {
         onLoop={async (numbers, environment, owner) => {
           // Asked here, on a click: a browser grants it only to a gesture.
           void requestNotifications().catch((err) => setFault(`알림 연결 실패 · ${err}`))
-          const { results } = await api.startLoops(numbers, environment, owner)
+          // The work model chosen here runs the loop's repairs of a spec that names none.
+          const { results } = await api.startLoops(numbers, environment, owner, choice)
           readPrs()
           readSpecs()
           refresh()

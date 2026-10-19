@@ -120,6 +120,27 @@ def test_continue_runs_a_final_gate_that_ran_out_of_time_once_more(world, after)
     assert receipt["history"][0]["status"] == "incomplete" and receipt["status"] == "passed"
 
 
+def test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose(world):
+    """rfg_rag #74-#76: a spec made from a GitHub PR named no work model, so its repair
+    turns ran on Claude's default while the screen said `gpt-6.1-sol`. The loop button
+    sends the choice; it fills a spec that names none and never replaces one that does."""
+
+    git(world.repo, "push", "-q", "origin", "main:refs/heads/feat/model")
+    world.hub.open(33, "feat/model")
+    world.hub.push_elsewhere(33, "model.txt")
+    Reviewer.replies = [deny("[P1] model.txt:1 — wrong")]
+    chosen = {"model": "claude-chosen", "effort": "high", "fast": False}
+    result = client().post("/api/loops", json={"prs": [33], "cell": chosen}).json()["results"][0]
+    waited(lambda: not loop._loops)
+    spec = specs.load("proj", result["id"])
+    assert spec["cell"] == chosen and Worker.made and Worker.made[0].model == "claude-chosen"
+    specs.update("proj", spec["id"], state="멈춤")
+    again = client().post("/api/loops", json={"prs": [33], "cell": {"model": "claude-other", "effort": ""}})
+    assert again.json()["results"][0].get("id") == spec["id"], again.text
+    waited(lambda: not loop._loops)
+    assert specs.load("proj", spec["id"])["cell"] == chosen
+
+
 def test_a_review_still_reuses_the_checkout_that_holds_its_branch(world):
     """#188 round 2: the selected checkout on the PR branch is reused as before, not
     refused by the hold the review itself took on it."""

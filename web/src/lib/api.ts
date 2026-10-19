@@ -630,8 +630,9 @@ export type LoopSettings = { rounds: number; concurrent: number; review_model: s
 
 export const getPrs = () =>
   get('/api/prs').then((r) => json<{ project: string; rows: Pr[]; error?: string }>(r, 'PR 목록'))
-export const startLoops = (prs: number[], implementation_environment: 'local' | 'claude-cloud' | 'external' = 'local', owner?: string) =>
-  post('/api/loops', { prs, implementation_environment }, 'POST', owner).then((r) =>
+export const startLoops = (prs: number[], implementation_environment: 'local' | 'claude-cloud' | 'external' = 'local', owner?: string,
+  cell?: { model: string; effort: string; fast?: boolean }) =>
+  post('/api/loops', { prs, implementation_environment, cell }, 'POST', owner).then((r) =>
     json<{ results: { number: number; id?: string; error?: string }[] }>(r, '리뷰 루프'))
 export const getLoops = () =>
   get('/api/loops').then((r) => json<{ loops: LoopRow[]; turns: { path: string; repo: string }[] }>(r, '루프'))
