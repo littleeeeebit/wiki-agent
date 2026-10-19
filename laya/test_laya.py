@@ -1082,6 +1082,24 @@ def test_a_batch_writes_files_of_its_own_and_holds_every_production_state(folder
     assert held["near_gate"] > 0 and held["have"] == 0
 
 
+def test_a_request_stays_on_its_split_across_batches(folders):
+    same = lambda q: judged("same")   # noqa: E731 — every query captures one request
+    assert gen("useful", "validation", 2, "opus", 1, capture=same, turn=Teacher(), log=lambda *_: None,
+               batch="pilot")["have"] == 2
+    out = gen("useful", "train", 2, "opus", 1, capture=same, turn=Teacher(), log=lambda *_: None, batch="full")
+    assert out["have"] == 0 and out["other_split"] > 0             # another batch's validation
+    other = lambda q: judged("other")   # noqa: E731
+    gen("useful", "validation", 2, "opus", 1, capture=other, turn=Teacher(), log=lambda *_: None)
+    out = generate.generate("train", 1, "opus", 1, kinds=("conflict",), found={"here": generate.ROOT},
+                            capture=lambda q, p: other(q), turn=Teacher(), log=lambda *_: None, batch="shape")
+    assert out["have"]["conflict"] == 0 and out["other_split"] > 0   # the default run's, through another kind
+    write(folders / "data" / "retrieval-cut" / "generate.runs.jsonl",   # a claim cut off before its candidates
+          [{"run": "t0-q0", "split": "validation", "kinds": ["useful"], "claim": [generate.whole(judged("cut")[0])]}])
+    out = gen("useful", "train", 2, "opus", 1, capture=lambda q: judged("cut"), turn=Teacher(), log=lambda *_: None,
+              batch="next")
+    assert out["have"] == 0 and out["other_split"] > 0
+
+
 def test_rare_yes_kinds_get_a_page_passage_and_planted_instructions():
     def judge(n):
         passages = [{"id": f"p{i}", "heading": f"{'Doc A' if i == n - 1 else 'Other'} > s{i}", "text": f"l{i}\nm{i}"}

@@ -412,13 +412,20 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
     warmed: set[str] = set()   # repositories whose index the daemon has finished in this run
     # A batch is held from every production state, the development pool's too (plan stage 5).
     near_gate = gate.Near(read(gate.POOL) if batch else gated)
+    # Splits stay apart across batches: every run log's claims and every batch's candidates
+    # hold a request to its split. Resuming (`claimed`, `done`) reads this batch's log only,
+    # where a run's name is its own.
+    batches = sorted(({p.name.split("-", 1)[1] for p in DATA.glob("retrieval-*") if p.is_dir()} | {batch}) - {""})
+    stems = [""] + [f"{b}-" for b in batches]
     origins, sides, claimed, claims, done = gate.Near(), [], {}, {}, set()
+    for folder in [DATA / "retrieval"] + [DATA / f"retrieval-{b}" for b in batches]:
+        for r in read(folder / "generate.runs.jsonl"):
+            for o in r.get("claim", ()):
+                origins.add(o)
+                sides.append(r["split"])
     for r in read(runs):
         if "claim" in r:
             claimed[r["run"]], claims[r["run"]] = r["split"], r["claim"]
-            for o in r["claim"]:
-                origins.add(o)
-                sides.append(r["split"])
         else:
             done.add(r["run"])
     unowned = {r["run"] for r in read(runs) if "candidates" in r and "error" not in r} - claimed.keys()
@@ -434,8 +441,8 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
     other = {tuple(k for k in RETRIEVAL if k in r["kinds"]) for r in logged} - {kinds}
     if other:
         raise SystemExit(f"{runs} was written for kinds {list(sorted(other)[0])}; generate the same kinds")
-    near = {k: gate.Near(row for s in SPLITS for name in {s, f"{batch}-{s}" if batch else s}
-                         for row in read(DATA / k / f"{name}.candidates.jsonl")) for k in kinds}
+    near = {k: gate.Near(row for s in SPLITS for stem in stems
+                         for row in read(DATA / k / f"{stem}{s}.candidates.jsonl")) for k in kinds}
     # Counted in questions, as labels are: a row holds every question of its kind on its view.
     have = {k: sum(len(r["questions"]) for r in read(DATA / k / f"{out}.candidates.jsonl")) for k in kinds}
     stats = {"turns": 0, "cost_usd": 0.0, "queries": 0, "kept": dict.fromkeys(kinds, 0), "near_gate": 0,
