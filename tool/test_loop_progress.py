@@ -28,7 +28,7 @@ def test_a_final_failure_fixed_outside_the_code_runs_again_without_a_commit(worl
     web = client()
     spec = allowed_spec(world, "fix-e", 7)
     specs.validate("proj", "fix-e", round=round_of(world, spec))
-    real, calls = specs.judge, []
+    real, calls, verdict, reasons = specs.judge, [], specs.verify.verdict, []
 
     def unstartable(path, cmds, halt, noted=lambda text: None, **kwargs):
         calls.append(list(cmds))
@@ -37,7 +37,12 @@ def test_a_final_failure_fixed_outside_the_code_runs_again_without_a_commit(worl
                     "cmd": cmds[0], "head": spec["pr"]["head"]}
         return real(path, cmds, halt, noted, **kwargs)
 
-    with patch.object(specs, "judge", unstartable):
+    def judged(*args, **kwargs):
+        reasons.append(kwargs["retry_reason"])
+        return verdict(*args, **kwargs)
+
+    # #185 round 1: a local-only retry reason would refuse a CI rerun; the continue rides `again` instead.
+    with patch.object(specs, "judge", unstartable), patch.object(specs.verify, "verdict", judged):
         assert web.post("/api/specs/fix-e/merge", json={"head": spec["pr"]["head"]}).status_code == 409
         waited(lambda: ("proj", "fix-e") not in loop._loops)
         if fails == 2:   # the repair's own rerun failed too: a person's continue runs it once more
@@ -48,6 +53,33 @@ def test_a_final_failure_fixed_outside_the_code_runs_again_without_a_commit(worl
     spec = specs.load("proj", "fix-e")
     assert spec["state"] == "머지 가능" and spec["validation"]["final"]["ok"] and calls == [[FINAL]] * (fails + 1)
     assert len([w for w in Worker.made if w.heard]) >= 1, "the failure went to the work cell first"
+    assert reasons == [""] * (fails + 1)
+
+
+def test_a_recovery_never_runs_a_failed_receipt_its_spec_had_not_recorded(world):
+    """#185 round 2: the receipt said `failed`, then the server died before the spec
+    recorded it. A restart's recovery reads that failure back; only a continue runs it."""
+
+    web = client()
+    spec = allowed_spec(world, "fix-r", 7)
+    specs.validate("proj", "fix-r", round=round_of(world, spec))
+    calls = []
+
+    def fails(path, cmds, halt, noted=lambda text: None, **kwargs):
+        calls.append(list(cmds))
+        return {"ok": False, "code": 1, "reason": "게이트가 1 로 끝났다", "tail": "E", "cmd": cmds[0], "head": spec["pr"]["head"]}
+
+    with patch.object(specs, "judge", fails):
+        assert web.post("/api/specs/fix-r/merge", json={"head": spec["pr"]["head"]}).status_code == 409
+        waited(lambda: ("proj", "fix-r") not in loop._loops)
+        assert calls == [[FINAL]] * 2, "its own run and the repair's rerun"
+        final = specs.load("proj", "fix-r")["validation"]["final"]
+        specs.validate("proj", "fix-r", phase="final_running", final={**final, "finished_at": None})   # the save a crash cut
+        specs.update("proj", "fix-r", state="리뷰 R1", stopped=None)
+        assert loop.recover() == [("proj", "fix-r")]
+        loop.kick("proj", "fix-r", automatic=True)
+        waited(lambda: ("proj", "fix-r") not in loop._loops)
+    assert specs.load("proj", "fix-r")["state"] == "멈춤" and calls == [[FINAL]] * 2
 
 
 @pytest.mark.parametrize("after", ["resume", "recover"])

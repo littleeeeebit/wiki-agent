@@ -1042,12 +1042,14 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
         and research.get("head") == head and research.get("ts", 0) > (done or float("inf")) else ""
     # Cut short, or never finished (a dead server): once more after a continue or a restart's recovery, which stamp it.
     fresh = specs.load(loop.repo, loop.sid) or spec
-    again = previous.get("head") == head and bool(previous.get("pending") or not done) \
+    cut = previous.get("head") == head and bool(previous.get("pending") or not done) \
         and max(fresh.get("continued", 0), fresh.get("recovered", 0)) > (done or 0)
     # A confirmed failure of this head goes again after a continue, a person's or a repair's that changed no code
-    # (rfg_rag #73: the worktree had no `.venv`). `verify` applies it to a local receipt only; CI reads its run.
-    again = again or (previous.get("head") == head and bool(done) and not previous.get("ok") and not retry
-                      and fresh.get("continued", 0) > done and not verification.cloud(spec))
+    # (rfg_rag #73: the worktree had no `.venv`). Never a recovery's: its receipt may say `failed` while the
+    # spec, saved after it, does not. `verify` applies these to a local receipt only; CI reads its run.
+    fixed = previous.get("head") == head and bool(done) and not previous.get("ok") and not retry \
+        and fresh.get("continued", 0) > done and not verification.cloud(spec)
+    again = ("incomplete", "running", "failed") if fixed else ("incomplete", "running") if cut else ()
     release = wait_hold(loop, path)
     if release is None:
         return None

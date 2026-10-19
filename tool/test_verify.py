@@ -339,8 +339,8 @@ def test_explicit_local_retry_keeps_the_original_failure(hosted_repo, monkeypatc
 @pytest.mark.parametrize("cut", ["incomplete", "running", "failed"])
 def test_only_a_persons_continue_runs_an_unfinished_local_final_again(hosted_repo, monkeypatch, cut):
     """Over its time, or left `running` by a dead server, a run proved nothing;
-    a failure may have been fixed outside the code (rfg_rag #73). `again`, which
-    the loop passes only after a continue, runs it once more."""
+    a failure may have been fixed outside the code (rfg_rag #73). `again`, the
+    statuses the loop's continue may run once more, runs only those (#185 round 2)."""
 
     monkeypatch.setattr(ci, "backend", lambda *_: "local")
     monkeypatch.setattr(ci, "run", lambda args, repo: str(repo))
@@ -354,8 +354,8 @@ def test_only_a_persons_continue_runs_an_unfinished_local_final_again(hosted_rep
         ci.final(hosted_repo, "main", judge=first)
     never = lambda *_: pytest.fail("ran again without a person")  # noqa: E731
     with pytest.raises(ci.Failure if cut == "failed" else ci.Pending, match="자동 재실행하지"):
-        ci.final(hosted_repo, "main", judge=never)
-    proof = ci.final(hosted_repo, "main", again=True, judge=lambda *_: {"ok": True, "head": HEAD})
+        ci.final(hosted_repo, "main", judge=never, again=tuple({"incomplete", "running", "failed"} - {cut}))
+    proof = ci.final(hosted_repo, "main", again=(cut,), judge=lambda *_: {"ok": True, "head": HEAD})
     receipt = json.loads(next(hosted_repo.glob("wiki-verification-*.json")).read_text(encoding="utf-8"))
     assert proof["backend"] == "local" and receipt["history"][0]["status"] == cut and receipt["retry_reason"]
 
@@ -369,7 +369,7 @@ def test_a_continue_after_a_failed_ci_reads_its_rerun_instead_of_refusing(hosted
     with pytest.raises(ci.Failure, match="자동 재실행하지"):
         ci.final(hosted_repo, "main")
     run["conclusion"] = "success"   # rerun on GitHub
-    proof =ci.final(hosted_repo, "main", again=True, judge=lambda *_: pytest.fail("CI never runs locally"))
+    proof = ci.final(hosted_repo, "main", again=("failed",), judge=lambda *_: pytest.fail("CI never runs locally"))
     assert proof["backend"] == "ci" and proof["head"] == HEAD
 
 
