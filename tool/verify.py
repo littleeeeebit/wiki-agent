@@ -295,7 +295,7 @@ def local_judge(repo, command, env, halt, timeout):
 
 
 def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=19 * 60, halt=None,
-          judge=local_judge, retry_reason="", noted=None, local_only=False):
+          judge=local_judge, retry_reason="", noted=None, local_only=False, again=False):
     project = Path(project or repo)
     cfg = policy(repo, project=project)
     local_command = local_command or (cfg or {}).get("local", "")
@@ -322,6 +322,11 @@ def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=
             head, base_oid, signature
         ) or record.get("backend") not in ("ci", "local"):
             raise Pending("저장된 최종 검증 기록의 형식·대상이 맞지 않습니다. 재실행하지 않았습니다")
+        # A run cut short — over its time, stopped, or left `running` by a dead
+        # server (this lock is held for a live one) — proved nothing either way.
+        # A person's continue (`again`) runs it once more, never a loop of its own.
+        unfinished = again and dispatch and record["backend"] == "local" and record.get("status") in {"incomplete", "running"}
+        retry_reason = retry_reason or ("끝나지 못한 로컬 최종 검사를 사람이 계속했다" if unfinished else "")
         if retry_reason and receipt.is_file():
             if not dispatch or record["backend"] != "local" or record.get("status") not in {"failed", "running", "incomplete"}:
                 raise ValueError("재시도 사유는 실패·중단된 로컬 검사에만 지정하세요. CI는 기존 실행 화면에서 처리하세요")
@@ -355,11 +360,11 @@ def final(repo, base, *, project=None, local_command="", dispatch=True, seconds=
         return proof
 
 
-def verdict(project, repo, base, command, halt, noted=None, local_only=False, retry_reason=""):
+def verdict(project, repo, base, command, halt, noted=None, local_only=False, retry_reason="", again=False):
     started = time.monotonic()
     try:
         proof = final(repo, base, project=project, local_command=command, halt=halt, noted=noted,
-                      local_only=local_only, retry_reason=retry_reason)
+                      local_only=local_only, retry_reason=retry_reason, again=again)
         result = {"ok": True, "head": proof["head"], "code": 0, "reason": "", "verification": proof,
                   "tail": "VERIFY_PROOF " + json.dumps(proof)}
     except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
