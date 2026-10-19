@@ -108,8 +108,8 @@
     },
     "tool/main/loop.py": {
       "dup": 0,
-      "lines": 2649,
-      "reason": "A provider safety refusal of a review or repair turn stops the loop for the person instead of being resent into the same thread, where #67 R2 was refused again at its compaction (twelve lines). Before that: The poller takes `_landing` without waiting and retries the next minute: a clicked merge holds it through its minutes-long `.omm` analysis, and waiting on it stalled every repository's loop reattach and cleanup."
+      "lines": 2644,
+      "reason": "A provider safety refusal of a review or repair turn stops the loop for the person instead of being resent into the same thread, where #67 R2 was refused again at its compaction (seven lines; the pattern lives in `work`). Before that:The poller takes `_landing` without waiting and retries the next minute: a clicked merge holds it through its minutes-long `.omm` analysis, and waiting on it stalled every repository's loop reattach and cleanup."
     },
     "tool/main/planning.py": {
       "dup": 18,
@@ -138,8 +138,8 @@
     },
     "tool/main/work.py": {
       "dup": 0,
-      "lines": 1061,
-      "reason": "`close_all(wait=False)` returns the turn threads instead of joining them, so shutdown marks every workflow stopped, then ends the providers no registry holds, then joins."
+      "lines": 1120,
+      "reason": "A refused conversation is left for a new one that starts from the spec, an abridged summary, why it is new and what to do (`handoff`); after each compaction the unfinished spec is steered back into the running turn (`restate`), since long tasks compact often and the spec blurs (#67 R2, fifty-nine lines). Before that: `close_all(wait=False)` returns the turn threads instead of joining them, so shutdown marks every workflow stopped, then ends the providers no registry holds, then joins."
     },
     "tool/markdown_emphasis.py": {
       "dup": 17,
@@ -218,8 +218,8 @@
     },
     "tool/test_loop.py": {
       "dup": 19,
-      "lines": 2347,
-      "reason": "Pins that a provider safety refusal of a repair turn is sent once and stops for the person (#67 R2)."
+      "lines": 2375,
+      "reason": "Pins that a provider safety refusal of a repair turn is sent once, stops for the person and resumes in a new conversation with its handoff, and that a compaction restates the unfinished spec (#67 R2)."
     },
     "tool/test_main.py": {
       "dup": 61,

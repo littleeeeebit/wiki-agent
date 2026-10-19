@@ -39,6 +39,11 @@ from .query import ROOT, _lock, current_repo, hold, keep, project, resumable, ss
 
 LOGS = ROOT / "raw" / "work"
 MAX_REPLAY = 200
+# A provider's safety refusal is decided on the request, not a flaky turn: sent
+# again into the same thread it is refused again, the second time at the
+# compaction of that thread (#67 R2). It is never resent, and the thread that
+# holds it is left: the next turn opens a new one that starts from `handoff`.
+REFUSED = re.compile(r"blocked by our safety systems", re.I)
 # An answer that closes the work: a task's completion report, a fix round's
 # dispositions. A background task still running after one is left over, and
 # the turn does not wait on it (`ChatSession.settled`).
@@ -290,6 +295,39 @@ def recall(path: Path) -> list[dict]:
     return memory.since_clear(rows)[-MAX_REPLAY:]
 
 
+def handoff(rows: list[dict], why: str) -> str:
+    """What the conversation after a refusal starts from, beside the spec that
+    is already its system prompt (`specs.system`): why it is new, the turns
+    before it, abridged, and what to do."""
+
+    lines = []
+    for row in rows:
+        text = str(row.get("text") or "").strip()
+        if row.get("role") == "user" and text:
+            lines.append("- Asked: " + text.splitlines()[0][:300])
+        elif row.get("role") == "assistant":
+            lines.append("- Answered: " + (text[-600:].replace("\n", " ") if text
+                                           else f"(no answer: {str(row.get('error') or '')[:200]})"))
+    return ("## Why this conversation is new\n"
+            f"The model provider's safety system refused a request in the previous conversation: {why}\n"
+            "A refused conversation cannot be continued, so this one starts fresh. The worktree and the "
+            "branch are as that conversation left them.\n\n"
+            "## The conversation so far, oldest first and abridged\n" + "\n".join(lines[-24:]) + "\n\n"
+            "## What to do\n"
+            "- The spec above is the task. The summary is abridged: read the worktree "
+            "(`git status`, `git log`) before relying on it.\n"
+            "- Do what the next message asks.\n"
+            "- Do not take an irreversible or outward action the person has not explicitly approved, such as "
+            "rewriting or force-pushing published history or deleting remote data. Say it is needed and stop.\n")
+
+
+def started_from(rows: list[dict]) -> str:
+    """The handoff the current conversation began with, if a refusal began it."""
+
+    last = next((r for r in reversed(rows) if r.get("role") == "context"), None)
+    return "\n\n" + last["handoff"] if last and last.get("handoff") else ""
+
+
 # -- Worktrees --------------------------------------------------------------
 
 class Where(BaseModel):
@@ -463,7 +501,7 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
 
     key = str(path)
     bypass = settings()["bypass"]
-    prompt = specs.system(path)
+    prompt = specs.system(path) + started_from(recall(path))
     with _lock:
         chat = _sessions.get(key)
         if chat is not None and chat.is_codex != model.startswith("codex:"):
@@ -731,6 +769,8 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> 
                 text = sent
                 remember(path, "user", text)
         for ev in chat.say(text, run.halt) if events is None else events:
+            if ev.kind == "compaction" and ev.meta.get("phase") == "completed":
+                restate(path, run)
             if ev.kind == "context":   # the CLI's conversation could not be resumed
                 remember(path, "context", ev.text)
                 ev.kind = "tool"
@@ -767,6 +807,9 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> 
             remember(path, "assistant", final, error=failed, steps=made,
                      turn=run.turn, cell=chat.id, started_at=run.started_at, cancelled=run.halt.is_set(),
                      provider="codex" if chat.is_codex else "claude", diff_base=run.diff_base, **answered, **meta)
+            if REFUSED.search(failed):
+                remember(path, "context", "안전 거절 — 다음 턴은 새 대화로 시작한다",
+                         handoff=handoff(recall(path), failed))
         except Exception as exc:
             # Transcript publication is not the execution boundary. A lost
             # record must not skip an already accepted review/plan handoff.
@@ -785,6 +828,22 @@ def run_turn(path: Path, run: Run, text: str, release, decide: bool = False) -> 
             then()
     finally:
         dispatch(path, run)
+
+
+def restate(path: Path, run: Run) -> None:
+    """After a compaction, the unfinished spec goes back into the running turn:
+    a long task compacts many times, and each summary blurs the spec more."""
+
+    from . import specs  # `specs` imports this module
+
+    spec = specs.owner(path)
+    if not spec or spec.get("state") in ("머지됨", "정리됨"):
+        return
+    text = ("The context was just compacted. The task's spec is restated below; it is unfinished and it "
+            "outranks the compacted summary.\n\n" + specs.system(path))
+    if run.chat.steer(text):
+        run.put({"kind": "tool", "text": "압축 뒤 명세를 다시 넣었다", "meta": {},
+                 "session_id": run.chat.id, "parent_id": run.chat.parent_id})
 
 
 def dispatch(path: Path, ended: Run) -> None:

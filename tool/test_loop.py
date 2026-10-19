@@ -1048,16 +1048,16 @@ def test_the_next_review_waits_for_a_complete_correction_and_published_head(worl
     assert complete["rounds"][1]["head"] == world.hub.head(7)
 
 
-def test_a_provider_safety_refusal_of_the_repair_stops_without_resending(world, monkeypatch):
+def test_a_provider_safety_refusal_stops_and_resumes_in_a_new_conversation(world, monkeypatch):
     spec = pr_spec(world, "repair-refused", 7)
     finding = "[P0] a.txt:1 — history still holds records"
     refusal = "This request was blocked by our safety systems. Reason: Potentially unintended activity."
-    say = Worker.say
+    say, refusals = Worker.say, [refusal]
 
     def refused(worker, text, halt=None):
-        if not worker.heard:
+        if refusals:
             worker.heard.append(text)
-            yield Event("error", refusal, {}, worker.id)
+            yield Event("error", refusals.pop(), {}, worker.id)
             return
         yield from say(worker, text, halt)
 
@@ -1068,6 +1068,34 @@ def test_a_provider_safety_refusal_of_the_repair_stops_without_resending(world, 
     assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == loop.Why.EXTERNAL.value
     assert "안전 정책" in stopped["stopped"]["detail"] and refusal in stopped["stopped"]["detail"]
     assert sum(len(w.heard) for w in Worker.made) == 1
+    first = Worker.made[-1]
+
+    client().post(f"/api/specs/{spec['id']}/resume", json={}).raise_for_status()
+    waited(lambda: not loop._loops)
+    fresh = Worker.made[-1]
+    assert fresh is not first and fresh.session_id is None
+    assert fresh.system.startswith(specs.system(Path(spec["worktree"])))
+    assert "## Why this conversation is new" in fresh.system and refusal in fresh.system
+    assert "- Asked: Review round 1 refused the merge" in fresh.system
+    assert specs.load("proj", spec["id"])["state"] == "머지 가능"
+
+
+def test_a_compaction_restates_the_unfinished_spec_into_the_running_turn(world, monkeypatch):
+    spec = pr_spec(world, "repair-compacted", 7)
+    finding = "[P1] a.txt:1 — wrong path"
+    say = Worker.say
+
+    def compacting(worker, text, halt=None):
+        yield Event("compaction", "Context compaction completed", {"phase": "completed"}, worker.id)
+        yield from say(worker, text, halt)
+
+    monkeypatch.setattr(Worker, "say", compacting)
+    monkeypatch.setattr(Worker, "steer", lambda worker, text: worker.heard.append(text) or True, raising=False)
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [fixed((finding, "fixed"))]
+    assert looped(spec["id"])["state"] == "머지 가능"
+    restated = [t for w in Worker.made for t in w.heard if t.startswith("The context was just compacted.")]
+    assert restated and all(f'"id": "{spec["id"]}"' in t for t in restated)
 
 
 @pytest.mark.parametrize("stored", ["pending", "partial", "stale"])

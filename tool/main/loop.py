@@ -55,11 +55,6 @@ DIFF_ROOM = 900_000
 DIFF_FILE_LIMIT = 100_000
 DIFF_KEPT = 10_000
 
-# A provider's safety refusal is decided on the request, not a flaky turn: sent
-# again into the same thread it is refused again, the second time at the
-# compaction of that thread (#67 R2). It stops for the person; it is never resent.
-REFUSED = re.compile(r"blocked by our safety systems", re.I)
-
 
 class Why(str, enum.Enum):
     """Only the stage 4 stop reasons are admitted; unknown reasons raise ValueError."""
@@ -1359,7 +1354,7 @@ def step(loop: Loop) -> bool:
             if loop.halt.is_set():
                 return False
             detail = verification.redact(str(exc), settings) if verification.cloud(spec) else str(exc)
-            if REFUSED.search(detail):
+            if work.REFUSED.search(detail):
                 return stop(loop, loop.repo, loop.sid, Why.EXTERNAL,
                             f"R{n} 리뷰 요청을 모델 제공자가 안전 정책으로 거절했다 — 같은 요청을 다시 보내지 않았다: {detail}")
             why = f"리뷰 셀이 답하지 못했다 — {detail}"
@@ -1531,7 +1526,7 @@ def corrected(loop: Loop, spec: dict, repo: Path, path: Path) -> bool:
         except RuntimeError as exc:
             if loop.halt.is_set():
                 return False
-            if REFUSED.search(str(exc)):
+            if work.REFUSED.search(str(exc)):
                 return stop(loop, loop.repo, loop.sid, Why.EXTERNAL,
                             f"R{n} 수정 턴을 모델 제공자가 안전 정책으로 거절했다 — 같은 요청을 다시 보내지 않았다. "
                             f"발견이 요구하는 작업(예: 푸시된 이력 재작성)을 사람이 처리하거나 판단한 뒤 잇는다: {exc}")
