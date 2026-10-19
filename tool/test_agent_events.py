@@ -385,6 +385,39 @@ def test_a_capacity_wait_ends_at_once_when_the_session_or_server_ends(monkeypatc
     assert not waiting.is_alive() and out[-1].text == "멈췄다."
 
 
+def test_an_ended_wait_stays_ended_when_the_session_takes_another_turn(monkeypatch):
+    full = [("error", "Selected model is at capacity.")]
+    chat, sent = _busy_session([full, [("done", "new")], [("done", "old again")]], monkeypatch)
+    chat._halting, chat._proc = threading.Lock(), None
+    old = chat.say("old")
+    assert next(old).kind == "tool"   # waiting
+    chat.end()
+    assert [e.text for e in chat.say("new")] == ["new"]
+    assert [e.text for e in old] == ["멈췄다."] and sent == ["old", "new"]
+
+
+def test_cancelling_the_run_ends_its_plain_explanation_waiting_on_capacity(monkeypatch):
+    """The explanation's session is its own, not the focus's: the run's cancel reaches it as `halt`."""
+
+    from agent.chat_events import Event
+    sent: list = []
+
+    def full(self, text, halt=None):
+        sent.append(text)
+        yield Event("error", "Selected model is at capacity.")
+
+    monkeypatch.setattr(ChatSession, "_say", full)
+    monkeypatch.setattr(chat_busy, "WAITS", (600,))
+    cancel, out = threading.Event(), []
+    waiting = threading.Thread(target=lambda: [out.append(e) for e in chat_session.explain("answer", halt=cancel)])
+    waiting.start()
+    while not out and waiting.is_alive():
+        threading.Event().wait(0.05)
+    cancel.set()
+    waiting.join(timeout=5)
+    assert not waiting.is_alive() and out[-1].text == "멈췄다." and len(sent) == 1
+
+
 def test_a_capacity_wait_ends_on_halt_and_other_errors_pass_through(monkeypatch):
     halt = threading.Event()
     halt.set()

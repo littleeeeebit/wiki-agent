@@ -1132,7 +1132,7 @@ def test_provenance_stays_out_of_the_answer_history_and_explanation(tmp_path, ac
     session, sent = session_saying(reply)
     explained = []
 
-    def explain(source, model, effort):
+    def explain(source, model, effort, halt=None):
         explained.append(source)
         yield Event("delta", "검색 데몬은 ")
         yield Event("done", "검색 데몬은 8791 포트를 쓴다.")
@@ -1172,7 +1172,7 @@ def test_a_conversation_answer_never_promotes_old_answers_to_verified(tmp_path, 
     reply = "The confirmed earlier answer used port 8791."
     session, _sent = session_saying(reply)
 
-    def explain(source, model, effort):
+    def explain(source, model, effort, halt=None):
         yield Event("done", "검색 데몬은 8791 포트를 쓴다.")
 
     with patch.object(chat, "prepare", return_value=d), patch.object(chat, "session", return_value=session), \
@@ -1189,7 +1189,7 @@ def test_an_explanation_that_adds_a_number_is_a_presentation_error(tmp_path, act
     d, reply = mixed(tmp_path)
     session, _sent = session_saying(reply)
 
-    def explain(source, model, effort):
+    def explain(source, model, effort, halt=None):
         yield Event("delta", "검색 데몬은 8792 ")
         yield Event("done", "검색 데몬은 8792 포트를 쓴다.")
 

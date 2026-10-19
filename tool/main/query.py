@@ -891,7 +891,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             started = time.monotonic()
             try:
                 simple_finished = False
-                for ev in explain("".join(reply), cfg["model"], cfg["effort"]):
+                for ev in explain("".join(reply), cfg["model"], cfg["effort"], run.cancel):
                     if run.cancel.is_set():
                         raise ValueError("멈췄다")
                     if ev.kind == "delta":

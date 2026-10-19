@@ -236,8 +236,9 @@ class ChatSession:
         # The Codex thread a resume could not reach; told once, on the next turn.
         self._lost: str | None = None
         # The running turn's stop, for `_spawn`: a stop that came before the
-        # process existed kills it the moment it does.
+        # process existed kills it the moment it does. `_ended`: the latest `say`'s, for `end`.
         self._halt: threading.Event | None = None
+        self._ended = threading.Event()
         # Guards `_halt` against `stop`: a stop checks whose turn runs and
         # kills in one step, so it never lands on the turn after its own.
         self._halting = threading.Lock()
@@ -811,7 +812,7 @@ class ChatSession:
     def end(self) -> None:
         """Whatever turn, or wait for a full provider, is running ends, from another thread (`end_all`)."""
 
-        self._ended = True
+        self._ended.set()
         with self._halting:
             self._kill()
 
@@ -861,8 +862,8 @@ class ChatSession:
         def mark(event: Event) -> Event:
             event.session_id, event.parent_id = self.id, self.parent_id
             return event
-        self._ended = False
-        over = lambda: self._ended or _ending or bool(halt and halt.is_set())  # noqa: E731 -- `end`, `end_all` or `halt`
+        ended = self._ended = threading.Event()   # this say's own: the next one cannot clear it
+        over = lambda: ended.is_set() or _ending or bool(halt and halt.is_set())  # noqa: E731 -- `end`, `end_all` or `halt`
         yield from chat_busy.patiently(lambda: self._say(text, halt), over, mark)
 
     def _say(self, text: str, halt: threading.Event | None = None):
@@ -1304,13 +1305,12 @@ class ChatSession:
                 return
 
 
-def explain(answer: str, model: str = "", effort: str = ""):
+def explain(answer: str, model: str = "", effort: str = "", halt: threading.Event | None = None):
     """Hand only the answer to a fresh session.
 
     Not the search prompt, not the channel, not the conversation so far — the
-    plain explanation is written from the answer alone.
-    """
-    yield from oneshot("chat-explain.md", {"source_answer": answer}, model, effort)
+    plain explanation is written from the answer alone. `halt` is the run's cancel."""
+    yield from oneshot("chat-explain.md", {"source_answer": answer}, model, effort, halt)
 
 
 def oneshot(prompt: str, payload: dict, model: str = "", effort: str = "", halt: threading.Event | None = None):
