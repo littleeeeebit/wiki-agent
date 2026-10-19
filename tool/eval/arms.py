@@ -352,10 +352,10 @@ def asked(cfg: decision.Config, items: list[tuple[str, list]], limit: int, journ
                                                               for k in ("input_tokens", "output_tokens"))
                     cost = ((usage["input_tokens"], usage["output_tokens"]) if counted else
                             (most, 0) if last.get("sent") else (0, 0))
-                    unknown = last.get("sent") and not counted
+                    halt = ("sent with no usable count" if last.get("sent") and not counted else
+                            f"past its reservation of {most}" if sum(cost) > most else None)
                     keep({**base, "failed": getattr(error, "category", type(error).__name__),
-                          "input_tokens": cost[0], "output_tokens": cost[1],
-                          **({"halt": "sent with no usable count"} if unknown else {})})
+                          "input_tokens": cost[0], "output_tokens": cost[1], **({"halt": halt} if halt else {})})
                     raise
                 usage = trace[-1]["usage"]
                 over = usage["input_tokens"] + usage["output_tokens"] > most

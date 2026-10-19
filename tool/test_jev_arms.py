@@ -158,6 +158,13 @@ def test_a_jev_arm_reserves_before_it_sends_and_keeps_what_it_paid_for(tmp_path,
     [entry] = [json.loads(line) for line in negative.read_text(encoding="utf-8").splitlines()]
     assert entry["input_tokens"] == most and "halt" in entry
 
+    # A failed answer past its reservation halts the stage too (PR #182 review).
+    replies[12] = {"model": "m", "usage": {"input_tokens": 1, "output_tokens": 59999}, "answers": {}}
+    failed_over = tmp_path / "failed-over.jsonl"
+    with pytest.raises(decision.JevError):
+        arms.asked(cfg, items(12), 900_000, failed_over)
+    assert not arms.asked(cfg, items(13), 900_000, failed_over)["complete"] and sent[-1] == 12
+
     # A response past its reservation halts the stage: this run, and the next, until accepted.
     replies[7] = {"model": "m", "usage": {"input_tokens": 1, "output_tokens": 10**6},
                   "answers": {"x": {"type": "noul", "noul": 0.5}}}

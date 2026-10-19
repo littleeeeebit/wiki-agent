@@ -112,13 +112,18 @@ Jev's price is unknown, so the allowance is in Jev tokens.
   Jev takes no output limit and its tokenizer is not ours to check. A
   failed request is charged its reported usage (a non-negative count, as
   the transport requires), or its reservation once sent.
-- A response past its reservation, or one sent with no usable count,
-  halts the whole stage: no arm sends anything until the owner has seen
-  the journal's spending and accepts that halt (`--accept-halts`), setting
-  what remains of the allowance. So collection passes 900,000 by at most
-  one response's excess, and the 100,000 left of the approved 1,000,000
-  covers it only if that one excess is under 100,000. The client cannot
-  promise that: a strict cap would need a spending limit on Jev's side.
+- A response past its reservation, answered or failed, or one sent with
+  no usable count, halts the whole stage: no arm sends anything until the
+  owner has seen the journal's spending and accepts that halt
+  (`--accept-halts`), setting the stage's total again. `--tokens` is that
+  cumulative total, never what remains.
+- Runs go one at a time. With known counts, collection then passes
+  900,000 by at most one response's excess, and the 100,000 left of the
+  approved 1,000,000 covers it only if that one excess is under 100,000.
+  A request sent with no usable count has a cost not yet known, so its
+  reservation does not bound it. The client cannot promise either: a
+  strict cap would need a spending limit on Jev's side. The owner accepted
+  collection on these terms, 900,000 and a halt (2026-10-19).
 
 ## Steps
 
