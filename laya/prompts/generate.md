@@ -51,8 +51,9 @@ The slot's `context` says what came before the message:
   you mentioned") without repeating what it said.
 
 The slot's `length` says how long the message is: `short` is up to a few
-sentences; `long` is 1,000 to 2,500 characters and never under 1,000,
-as developers' long messages are: pasted material of many lines (a log,
+sentences; `long` is 170 to 400 words (1,000 to 2,500 characters) and
+never under 170 words, as developers' long messages are: pasted material
+of many lines (a log,
 an error with its trace, a config, a message from someone), several
 paragraphs of the developer's situation, or a detailed task with its
 constraints.
@@ -68,9 +69,11 @@ Where a message asks for more than one thing, write `asks`: each separate
 thing as one self-contained question, in the message's own words, keeping
 every version, year, edition and exclusion it applies to. A message that
 asks one thing has no `asks`.
-English only, every character of it: where a page names something in
-another script (a Korean term, say), describe it in English instead of
-copying it. Do not quote a page's sentence as the question, and do not name
+English only, every character of it, pasted material and `prior` too:
+where a page names something in another script (a Korean term, say),
+describe it in English instead of copying it, and write a pasted log or
+message as an English-speaking team's. Write every question in full;
+never a stand-in such as `placeholder`. Do not quote a page's sentence as the question, and do not name
 the page.
 
 Then write `plants` (the number the input gives) short texts for training

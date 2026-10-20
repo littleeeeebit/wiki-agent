@@ -197,6 +197,16 @@ Owner, 2026-10-20 (after #187):
   query length (p90 615 against 1,173). The owner then approved the
   batch: 1,400 questions, cap $20, after long queries are written longer.
   It stops and reports if its first 50 states' shape does not improve.
+  Its first 7 turns (`shape2`, $0.40) did not: query p90 274. One turn
+  wrote `placeholder` for six questions, long slots fell short of 1,000
+  characters, and the longest questions pasted Korean from the pages and
+  failed normalization. Now a known stand-in or a repeated question is
+  dropped (a short question is kept), pasted material is English too, a
+  long conversation's quoted page lines in Korean are left out, long is
+  counted in words, and a turn asks six questions, not eight. A turn whose
+  JSON fails to parse (`Extra data`) is still lost; `shape3`'s first 50
+  states show how often. The batch restarts as `shape3`; `shape2`
+  is not labelled, and its spend counts against the cap.
 - Gate. The coverage gate was read four times on 2026-10-19, all
   diagnostics with the same checkpoints (stage 6, Results). Support ran
   at 1,024 tokens, then at 2,048, a length chosen from the gate's view
