@@ -1353,6 +1353,37 @@ def test_a_queued_instruction_that_asks_again_keeps_the_loop_waiting(world):
     assert len(Worker.made[0].heard) == 3, "no correction is sent past the new question"
 
 
+def test_an_older_answer_does_not_resume_past_a_newer_question(world):
+    """The answer's resume runs after it let the worktree go: a newer turn can
+    start, ask again and end before it (#193 round 2)."""
+
+    spec = pr_spec(world, "newer-asks", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, "First answer accepted.", ASK]
+    looped(spec["id"])
+    entered, go, real = threading.Event(), threading.Event(), loop.answered
+
+    def answered(*args):
+        entered.set()
+        assert go.wait(15)
+        return real(*args)
+
+    with patch.object(loop, "answered", side_effect=answered):
+        try:
+            work.say(work.Order(path=spec["worktree"], text="First answer"))
+            assert entered.wait(15)
+            work.say(work.Order(path=spec["worktree"], text="Another instruction"))
+            newer = work._runs[spec["worktree"]]
+            waited(lambda: newer.done)
+        finally:
+            go.set()
+        waited(lambda: not work._turns)
+    waited(lambda: ("proj", spec["id"]) not in loop._loops)
+    again = specs.load("proj", spec["id"])
+    assert again["state"] == "멈춤" and again["stopped"]["reason"] == "작업 에이전트의 질문"
+    assert len(Worker.made[0].heard) == 3
+
+
 def test_the_gate_failing_twice_in_a_row_stops(world):
     mapped(world, "*", command="python gate.py round")
     pr_spec(world, "fix-c", 7)

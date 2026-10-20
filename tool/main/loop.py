@@ -995,7 +995,7 @@ def answered(repo: Path, sid: str, run: work.Run, path: str) -> None:
     spec = specs.load(repo.name, sid)
     if not spec or spec["state"] != "멈춤" or (spec.get("stopped") or {}).get("reason") != Why.ASKED.value:
         return
-    if run.halt.is_set() or path in work._queued:
+    if run.halt.is_set() or work._runs.get(path) is not run or path in work._queued:   # a newer turn decides
         return
     try:
         proceed(repo, spec, "")
