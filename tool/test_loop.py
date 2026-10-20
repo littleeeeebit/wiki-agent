@@ -1246,6 +1246,39 @@ def test_evidence_backed_correction_without_a_code_change_can_be_reviewed(world,
     assert len(Worker.made[0].heard) == 1
 
 
+ASK = ("Which split?\n\n```choices\n" + json.dumps({"question": "Which split?", "options": [
+    {"label": "Explicit roles (Recommended)"}, {"label": "Reject ambiguous rows"}]}) + "\n```")
+
+
+def test_a_repair_turn_that_asks_waits_for_the_person_then_goes_on(world):
+    """Codex asks by ending its turn on `choices`: nothing is sent again until
+    the person answers, and the loop goes on by itself once that turn ends."""
+
+    spec = pr_spec(world, "repair-asks", 7)
+    finding = "[P1] a.txt:1 — ambiguous rows"
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [ASK, "Explicit roles, then.", fixed((finding, "fixed"))]
+    stopped = looped(spec["id"])
+    assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == "작업 에이전트의 질문"
+    assert len(Worker.made[0].heard) == 1, "the question is not answered by sending the correction again"
+    client().post("/api/work/say", json={"path": spec["worktree"], "text": "Explicit roles"}).raise_for_status()
+    waited(lambda: specs.load("proj", spec["id"])["state"] == "머지 가능")
+    heard = Worker.made[0].heard
+    assert heard[1] == "Explicit roles" and finding in heard[2], "after the answer, the same round's correction"
+
+
+def test_an_answer_that_asks_again_keeps_the_loop_waiting(world):
+    spec = pr_spec(world, "repair-asks-again", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, ASK]
+    looped(spec["id"])
+    client().post("/api/work/say", json={"path": spec["worktree"], "text": "Neither"}).raise_for_status()
+    waited(lambda: not work._turns)   # the answer's thread, past anything it would start
+    again = specs.load("proj", spec["id"])
+    assert again["state"] == "멈춤" and again["stopped"]["reason"] == "작업 에이전트의 질문"
+    assert len(Worker.made[0].heard) == 2 and ("proj", spec["id"]) not in loop._loops
+
+
 def test_the_gate_failing_twice_in_a_row_stops(world):
     mapped(world, "*", command="python gate.py round")
     pr_spec(world, "fix-c", 7)

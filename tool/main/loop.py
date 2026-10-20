@@ -73,6 +73,7 @@ class Why(str, enum.Enum):
     PREPARATION = "로컬 검증 준비"
     EXTERNAL = "외부 수정 대기"
     RECOVERY = "반복 발견 재조사"   # `recovery`: research owed before another fix
+    ASKED = "작업 에이전트의 질문"   # a turn ended on a `choices` block; `answered` goes on after the person's turn
 
 
 router = APIRouter()
@@ -966,7 +967,24 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         raise RuntimeError(failure["text"] or "완료된 답이 없다")
     if not end or end["kind"] != "done" or not end["text"].strip():
         raise RuntimeError("완료된 답이 없다")
+    if specs.asks(end["text"]):
+        # Codex asks by ending its turn; asking again before the person answers repeats the question.
+        stop(loop, loop.repo, loop.sid, Why.ASKED, "작업 에이전트가 판단을 물었다 — 에이전트 칸에서 고르면 그 답의 턴이 끝난 뒤 루프가 이어 간다")
+        return None
     return end["text"]
+
+
+def answered(repo: Path, sid: str) -> None:
+    """The person's turn after `Why.ASKED` ended without asking again: `[계속]`
+    on their behalf. Run after the turn let the worktree go."""
+
+    spec = specs.load(repo.name, sid)
+    if not spec or spec["state"] != "멈춤" or (spec.get("stopped") or {}).get("reason") != Why.ASKED.value:
+        return
+    try:
+        proceed(repo, spec, "")
+    except HTTPException as exc:
+        errorlog.record("loop-answered", exc, repo=repo.name, spec=sid)
 
 
 def reusable(spec: dict, head: str, chosen: dict) -> bool:

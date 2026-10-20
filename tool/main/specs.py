@@ -509,6 +509,19 @@ def _shape(name: str, value) -> None:
             raise ValueError("`choices.multi` 는 참·거짓이어야 한다")
 
 
+def asks(text: str) -> bool:
+    """The answer puts a well-formed `choices` question to the person."""
+
+    for block in blocks(text)[1]:
+        if block["name"] == "choices" and "error" not in block:
+            try:
+                _shape("choices", block["value"])
+                return True
+            except ValueError:
+                pass
+    return False
+
+
 def card(repo: Path, block, gate: str, source: dict, accepted: dict | None = None) -> str:
     """One `spec` block as a card on disk; its id.
 
@@ -1466,6 +1479,11 @@ def _check(path: Path, run, final: str):
         note(run, f"push · 계획 행 `{plan['path']}` {plan['row']}")
         update(spec["repo"], spec["id"], plan_commit="pushed", fault=None)
         return lambda: reviewed(spec)
+    if spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == "작업 에이전트의 질문" \
+            and not asks(final):
+        from . import loop  # `loop` imports this module
+
+        return lambda: loop.answered(repo, spec["id"])   # the person answered what a loop's turn asked
     if spec["state"] != "작업 중":
         return None
     report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)

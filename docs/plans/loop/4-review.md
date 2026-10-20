@@ -82,6 +82,7 @@ The reasons for stopping are all in the table below. The overview and other step
 | `로컬 검증 준비` | Prepare the cloud handoff, local environment or required evidence, then resume local verification |
 | `외부 수정 대기` | Fix in the external implementation environment, push the new head, then start the next local review round |
 | `반복 발견 재조사` | A recurring serious finding needs research before another fix ([reliability PR 8](../reliability/8-recovery.md)). [Continue] with research limits when they are missing or spent, after accepting an unknown spend as a lower bound, or, after two research cycles, with what the person decided for that finding |
+| `작업 에이전트의 질문` | A loop's work-cell turn ended on a `choices` question (Codex asks by ending its turn). Nothing is sent again until the person answers in the agent pane; when that answer's turn ends without another question, the loop continues by itself as [Continue] would. [Continue] also works |
 
 `rounds` of the specification is `[{n, head, base, findings: {P0, P1, P2}, verdict, gate, disposition}]`. `base` is the base branch name (`baseRefName`) of the PR that the round saw.
 
