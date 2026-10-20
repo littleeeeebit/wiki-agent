@@ -210,8 +210,9 @@ Owner, 2026-10-20 (after #187):
   `current_state` 0.56, `omitted_context` 0.18; no stand-in, no
   normalization failure) and ran to 169 turns, stopped by the owner after
   Claude Code twice ended the background run for low memory: 941
-  questions, $10.70. 9 turns were lost to `Extra data`. 53 runs failed
-  normalization, most a long context whose summary carries a
+  questions, $10.70. 9 turns were lost to `Extra data`. 50 runs failed
+  normalization: 25 Korean questions, where the teacher broke the English
+  rule, and 25 English ones with a long context, whose summary carries a
   repository's Korean plans and decisions, which the capture does not
   translate. Kept labels: coverage 912 (yes 0.41), support 1,395 (none
   1,051, part 271, all 73), joint 1,491 from random passage subsets (yes
