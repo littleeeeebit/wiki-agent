@@ -2633,8 +2633,14 @@ def loops() -> dict:
     with _lock:
         running = [path for path, run in work._runs.items() if not run.done]
     # The owning spec names the task as its own project does; the screen keys the work model by it.
-    turns = [{"path": path, "repo": Path(path).parent.name.removesuffix("-worktrees"),
-              "spec": {"repo": owned["repo"], "id": owned["id"]} if (owned := specs.owner(Path(path))) else None}
+    def owning(path: str) -> dict | None:
+        try:
+            owned = specs.owner(Path(path))
+        except (OSError, subprocess.SubprocessError):   # optional: one failed lookup never empties the list
+            return None
+        return {"repo": owned["repo"], "id": owned["id"]} if owned else None
+
+    turns = [{"path": path, "repo": Path(path).parent.name.removesuffix("-worktrees"), "spec": owning(path)}
              for path in running]
     return {"loops": found, "turns": turns}
 
