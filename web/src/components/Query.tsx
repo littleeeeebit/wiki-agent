@@ -298,12 +298,8 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
   const busy = busyOn.includes(slot(active)) || configuring
   const latestSpec = new Map(messages.flatMap((m) => (m.blocks ?? [])
     .flatMap((b) => b.name === 'spec' && 'id' in b ? [[b.id, m] as const] : [])))
-  const start = async (id: string) => {
-    if (specs.find((s) => s.id === id)?.refactor?.mode) {
-      await api.startSpec(id, here ?? { model: '', effort: '' })
-      onSpecs()
-    } else await onStart(id)
-  }
+  // Every card, refactoring included, starts on the work model, not this conversation's.
+  const start = onStart
 
   const apply = useCallback(
     async (cfg: { model: string; effort: string; refactor_mode?: RefactorMode }) => {

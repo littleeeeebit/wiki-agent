@@ -431,7 +431,7 @@ export default function App() {
   const owning = task?.spec ?? others.find((o) => o.path === selected)?.spec
   const blank = `new:${repo}`   // the empty agent pane's pick, which a spec card's start falls back to
   const choiceKey = owning ? choiceOf(owning) : selected || blank
-  const choice = choices[choiceKey] ?? NO_CHOICE
+  const choice = choices[choiceKey] ?? task?.spec?.cell ?? NO_CHOICE
   const setChoice = (c: Choice) => setChoices((all) => ({ ...all, [choiceKey]: c }))
 
   const order = useCallback(async (text: string) => {
@@ -440,16 +440,8 @@ export default function App() {
     api.getSwitch().then(setSw).catch(() => {})
   }, [path, choice, work, refresh])
 
-  // `[시작]`: create or reopen a task branch in the same repository directory.
-  // Reload its own conversation even though the path did not change.
-  const start = useCallback(async (id: string) => {
-    const target = specs.find((spec) => spec.id === id)
-    // Cards start from the conversation, often with no task selected; the started task keeps the pick.
-    const key = choiceOf({ repo: target?.repo ?? repo, id })
-    const picked = choices[key] ?? choices[blank] ?? NO_CHOICE
-    const { path } = target && target.state !== '정리됨'
-      ? await api.checkoutSpec(id) : await api.startSpec(id, picked)
-    setChoices((all) => ({ ...all, [key]: all[key] ?? picked }))
+  // A started or reopened task branch: reload its own conversation even though the path did not change.
+  const opened = useCallback((path: string) => {
     work.forget(path)
     work.load(path)
     readSpecs()
@@ -457,7 +449,22 @@ export default function App() {
     setSelected(path)
     setTab('agent')
     setMobilePane('task')
-  }, [blank, choices, repo, readSpecs, refresh, specs, work])
+  }, [readSpecs, refresh, work])
+
+  // `[시작]`: create or reopen a task branch in the same repository directory.
+  const start = useCallback(async (id: string) => {
+    const target = specs.find((spec) => spec.id === id)
+    // Reopening runs no turn, so it takes no model: the task keeps its own.
+    if (target && target.state !== '정리됨') return opened((await api.checkoutSpec(id)).path)
+    // Cards start from the conversation, often with no task selected; the started task keeps the pick.
+    const key = choiceOf({ repo: target?.repo ?? repo, id })
+    const picked = choices[key] ?? choices[blank] ?? NO_CHOICE
+    const { path, refactor } = await api.startSpec(id, picked)
+    setChoices((all) => ({ ...all, [key]: all[key] ?? picked }))
+    // A refactoring card's controller runs in its conversation, not in a worktree.
+    if (refactor) readSpecs()
+    else opened(path)
+  }, [blank, choices, opened, repo, readSpecs, specs])
 
   // `[계획]`: the server made the plan's branch and runs its planner there;
   // selecting it attaches to the planner's turn like any other.

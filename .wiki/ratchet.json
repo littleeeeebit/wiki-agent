@@ -278,8 +278,8 @@
     },
     "web/src/App.tsx": {
       "dup": 0,
-      "lines": 817,
-      "reason": "A spec card's start falls back to the model picked in the empty agent pane: per-task keys alone sent an empty model and the first turn ran on the Claude default (five lines). Before that: the work model is kept per task under `spec:<repo>/<id>` instead of once per window, which carried one repository's model into rfg_rag's task; the task derivation moved above its first use (#194, ten lines). Before that: the refactoring tab's import and pane; splitting App.tsx is left to a refactor run, not this feature"
+      "lines": 824,
+      "reason": "A spec card's start, refactoring cards included, falls back to the model picked in the empty agent pane, while reopening keeps the task's own model: per-task keys alone sent an empty model and the first turn ran on the Claude default (twelve lines, the reopen path split out of start). Before that: the work model is kept per task under `spec:<repo>/<id>` instead of once per window, which carried one repository's model into rfg_rag's task; the task derivation moved above its first use (#194, ten lines). Before that: the refactoring tab's import and pane; splitting App.tsx is left to a refactor run, not this feature"
     },
     "web/src/components/Blocks.tsx": {
       "dup": 6,
@@ -308,8 +308,8 @@
     },
     "web/tests/task_browser.py": {
       "dup": 12,
-      "lines": 741,
-      "reason": "Checks that a spec card started with no task selected sends the empty agent pane's model (P0: it sent an empty model). Before that: baseline at adoption"
+      "lines": 757,
+      "reason": "Checks that ordinary and refactoring spec cards started with no task selected send the empty agent pane's model (P0: they sent an empty or the conversation's model), and that reopening a task keeps its own. Before that: baseline at adoption"
     },
     "web/tests/terminal_privacy.py": {
       "dup": 6,
