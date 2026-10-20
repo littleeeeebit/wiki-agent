@@ -758,7 +758,7 @@ export default function App() {
               />
             )}
             {tab === 'review' && (
-              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} on={on} progressOn={full} options={options}
+              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} on={on} progressOn={full} options={options} choice={choice}
                 settings={loopSettings} onSettings={async (s) => setLoopSettings(await api.setLoopSettings(s))}
                 onPeek={showPeek} onChanged={() => {
                 readSpecs()

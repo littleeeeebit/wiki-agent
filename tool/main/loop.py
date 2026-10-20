@@ -2240,6 +2240,7 @@ def settle(sid: str, body: Settle) -> dict:
 class Resume(BaseModel):
     note: str = ""
     limits: dict | None = None   # a recovery stop's research limits: seconds, calls, tokens
+    cell: specs.Start | None = None   # the work model the screen has chosen (`named`)
 
 
 def proceed(repo: Path, spec: dict, note: str, limits: dict | None = None) -> dict:
@@ -2344,6 +2345,7 @@ def resume(sid: str, body: Resume) -> dict:
     repo, spec = mine(sid)
     if spec["state"] != "멈춤":
         raise HTTPException(409, "멈춘 명세만 잇는다")
+    spec = named(repo, spec, body.cell.model_dump() if body.cell else None)
     return proceed(repo, spec, body.note.strip(), body.limits)
 
 
@@ -2529,11 +2531,18 @@ def minimal(repo: Path, view: dict, path: Path, gate: str) -> dict:
             "history": [{"ts": now, "state": "리뷰 대기"}]}
 
 
+def named(repo: Path, spec: dict, cell: dict | None) -> dict:
+    """`cell`, the work model the screen has chosen, fills a spec that names none, never one that does:
+    a PR adopted from GitHub ran its repairs on Claude's default (rfg_rag #74-#76)."""
+
+    if cell and cell.get("model") and not (spec.get("cell") or {}).get("model"):
+        return specs.update(repo.name, spec["id"], cell=cell)
+    return spec
+
+
 def take(repo: Path, n: int, environment: str = "local", cell: dict | None = None) -> str:
     """One pull request into a loop: a stopped spec goes on; one without a
-    spec gets its worktree from the pull request's branch, and a spec.
-    `cell`, the work model the screen has chosen, fills a spec that names none:
-    a PR adopted from GitHub ran its repairs on Claude's default (rfg_rag #74-#76)."""
+    spec gets its worktree from the pull request's branch, and a spec."""
 
     cell = cell if cell and cell.get("model") else None
     spec = by_pr(repo.name).get(n)
@@ -2541,8 +2550,7 @@ def take(repo: Path, n: int, environment: str = "local", cell: dict | None = Non
         why = refusal({}, spec)
         if why:
             raise HTTPException(409, why)
-        if cell and not (spec.get("cell") or {}).get("model"):
-            spec = specs.update(repo.name, spec["id"], cell=cell)
+        spec = named(repo, spec, cell)
         view = gh_or_502(repo, ["pr", "view", str(n), "--json", "body"])
         if verification.cloud(spec) or "```cloud-handoff" in (view.get("body") or ""):
             environment = "claude-cloud"
@@ -2574,9 +2582,7 @@ def take(repo: Path, n: int, environment: str = "local", cell: dict | None = Non
     sid = folder_for(view["headRefName"])
     existing = unlinked(repo, view["headRefName"])
     if existing is not None:
-        spec = attach(repo, existing, view, environment)
-        if cell and not (spec.get("cell") or {}).get("model"):
-            specs.update(repo.name, spec["id"], cell=cell)
+        spec = named(repo, attach(repo, existing, view, environment), cell)
         kick(repo.name, spec["id"])
         return spec["id"]
     why = clash(repo.name, view["headRefName"])

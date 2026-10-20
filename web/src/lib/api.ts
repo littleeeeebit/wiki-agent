@@ -640,8 +640,10 @@ export const mergeSpec = (id: string, head: string, owner?: string) =>
   post(`/api/specs/${id}/merge`, { head }, 'POST', owner).then((r) => json<Spec>(r, '머지'))
 export const settleSpec = (id: string, choice: 'accept' | 'reopen', owner?: string) =>
   post(`/api/specs/${id}/settle`, { choice }, 'POST', owner).then((r) => json<Spec>(r, '끝내기'))
-export const resumeSpec = (id: string, note = '', owner?: string, limits?: ResearchLimits) =>
-  post(`/api/specs/${id}/resume`, limits ? { note, limits } : { note }, 'POST', owner).then((r) => json<Spec>(r, '계속'))
+export const resumeSpec = (id: string, note = '', owner?: string, limits?: ResearchLimits,
+  cell?: { model: string; effort: string; fast?: boolean }) =>
+  post(`/api/specs/${id}/resume`, { note, ...(limits ? { limits } : {}), ...(cell ? { cell } : {}) }, 'POST', owner)
+    .then((r) => json<Spec>(r, '계속'))
 export const haltSpec = (id: string, owner?: string) => post(`/api/specs/${id}/halt`, undefined, 'POST', owner).then((r) => json<Spec>(r, '멈춤'))
 export const reviewSpec = (id: string, owner: string) => post(`/api/specs/${id}/review`, undefined, 'POST', owner).then((r) => json<Spec>(r, '다음 리뷰 라운드'))
 export const cloudInstructions = (id: string, owner: string) => get(`/api/specs/${id}/cloud-instructions`, owner).then((r) => json<{ text: string }>(r, '클라우드 인계'))

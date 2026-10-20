@@ -139,6 +139,11 @@ def test_a_pr_adopted_from_github_repairs_on_the_work_model_the_screen_chose(wor
     assert again.json()["results"][0].get("id") == spec["id"], again.text
     waited(lambda: not loop._loops)
     assert specs.load("proj", spec["id"])["cell"] == chosen
+    # #191 round 1: a continue (`/resume`) on a spec that names none sends the choice too.
+    blank = {"model": "", "effort": "", "fast": False}
+    specs.update("proj", spec["id"], cell=blank, state="멈춤", stopped={"reason": loop.Why.PERSON.value, "detail": ""})
+    with patch.object(loop, "proceed", lambda repo, spec, note, limits=None: spec):
+        assert client().post(f"/api/specs/{spec['id']}/resume", json={"cell": chosen}).json()["cell"] == chosen
 
 
 def test_a_review_still_reuses_the_checkout_that_holds_its_branch(world):

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Btn } from '@/components/Modal'
 import { Reply } from '@/components/Agent'
-import { Toolbar } from '@/components/Toolbar'
+import { Toolbar, type Choice } from '@/components/Toolbar'
 import { useReview } from '@/lib/work'
 import { useParagraphOverlay } from '@/lib/overlay'
 import * as api from '@/lib/api'
@@ -13,7 +13,9 @@ import { cn } from '@/lib/utils'
  *  stopped, and the buttons that act on it. Which spec and PR it is, the
  *  pane's header says. */
 type Props = { spec: Spec | null; onChanged: () => void; on: boolean; progressOn?: boolean; options: Options | null;
-  settings: LoopSettings | null; onSettings: (s: LoopSettings) => Promise<void>; onPeek: (path: string, line: number) => void }
+  settings: LoopSettings | null; onSettings: (s: LoopSettings) => Promise<void>; onPeek: (path: string, line: number) => void
+  /** The work model the agent pane has chosen: [계속] fills a spec that names none. */
+  choice?: Choice }
 
 export function Review(props: Props) {
   const { spec, options, settings, onSettings } = props
@@ -47,7 +49,7 @@ export function Review(props: Props) {
   </section>
 }
 
-function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
+function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek, choice }: Props) {
   const [working, setWorking] = useState('')
   const [fault, setFault] = useState('')
   const [note, setNote] = useState('')
@@ -154,7 +156,7 @@ function ReviewBody({ spec, onChanged, on, progressOn = on, onPeek }: Props) {
               <Btn tone="primary" disabled={!!working || ((reason === '반론' || analysis || needsRuling) && !note.trim())
                   || (needsLimits && !limitsOk(limits))}
                 onClick={() => act('resume', () => api.resumeSpec(spec.id, note.trim(), spec.repo,
-                  needsLimits ? parsedLimits(limits) : undefined))}>
+                  needsLimits ? parsedLimits(limits) : undefined, choice))}>
                 {working === 'resume' ? '…' : reason === '라운드 상한' ? '계속 (+4 라운드)' : cloud ? '로컬 검증 재개' : reason === '외부 수정 대기' ? '수정된 PR 로 다음 라운드' : '계속'}
               </Btn>
             </div>
