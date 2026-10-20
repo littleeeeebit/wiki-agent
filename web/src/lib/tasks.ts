@@ -1,5 +1,5 @@
 import { PLAN_PHASE, PLAN_STOP } from '@/lib/api'
-import type { LoopRow, Spec, Worktree } from '@/lib/api'
+import type { LoopRow, Spec, TurnRow, Worktree } from '@/lib/api'
 
 /** The review loop's own states: while in one of these, the server runs it. */
 export const LOOPING = /^(리뷰 대기|리뷰 R\d+|고치는 중 R\d+)$/
@@ -110,16 +110,17 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
 }
 
 /** A task of another project that the rail still shows: its loop or its turn. */
-export function elsewhere(loops: LoopRow[], turns: { path: string; repo: string }[], repo: string) {
+export function elsewhere(loops: LoopRow[], turns: TurnRow[], repo: string) {
   return [
     ...loops.filter((l) => l.repo !== repo && l.worktree).map((l) => ({
-      path: l.worktree!, repo: l.repo, name: l.id, pr: l.pr, round: l.round, phase: phase(l.state),
+      path: l.worktree!, repo: l.repo, spec: { repo: l.repo, id: l.id } as TurnRow['spec'],
+      name: l.id, pr: l.pr, round: l.round, phase: phase(l.state),
       waiting: l.waiting,
       line: [word(l.state), l.waiting && '승인 대기', l.stopped?.reason, l.state === '머지 대기' && (l.queued || '대기열')]
         .filter(Boolean).join(' · '),
     })),
     ...turns.filter((t) => t.repo !== repo && !loops.some((l) => l.worktree === t.path)).map((t) => ({
-      path: t.path, repo: t.repo, name: t.path.split(/[\\/]/).pop() ?? '', pr: null, round: 0,
+      path: t.path, repo: t.repo, spec: t.spec, name: t.path.split(/[\\/]/).pop() ?? '', pr: null, round: 0,
       phase: 'work' as Phase, waiting: false, line: '도는 중',
     })),
   ]

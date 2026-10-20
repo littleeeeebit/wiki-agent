@@ -5,6 +5,7 @@ import subprocess
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -201,6 +202,19 @@ def test_a_running_gate_is_on_its_task_only_while_it_runs(repo):
         shown = specs.view(repo, specs.load(repo.name, sid))["gating"]
         assert shown["kind"] == "round" and shown["since"] <= time.time()
     assert specs.view(repo, specs.load(repo.name, sid))["gating"] is None
+
+
+def test_a_running_turn_names_the_task_that_owns_its_worktree(repo):
+    # Under another project the screen keyed a task's work model by its path,
+    # so a model picked there never reached the task in its own project.
+    web = client()
+    with patch.object(work, "ChatSession", Worker):
+        sid = made(repo, spec_block())[0]["id"]
+        started(web, sid)
+    with patch.dict(work._runs, {str(repo): SimpleNamespace(done=False)}):
+        turns = web.get("/api/loops").json()["turns"]
+    assert [t["spec"] for t in turns] == [{"repo": repo.name, "id": sid}]
+    work.close_all()
 
 
 def until(ready, seconds: float = 60):

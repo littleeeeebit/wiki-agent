@@ -92,7 +92,7 @@ export default function App() {
   // that project: right after a switch the old one still stands here.
   const [prs, setPrs] = useState<{ project: string; rows: Pr[] }>({ project: '', rows: [] })
   const [loopRows, setLoopRows] = useState<LoopRow[]>([])
-  const [turnsElsewhere, setTurnsElsewhere] = useState<{ path: string; repo: string }[]>([])
+  const [turnsElsewhere, setTurnsElsewhere] = useState<api.TurnRow[]>([])
   const [loopSettings, setLoopSettings] = useState<LoopSettings | null>(null)
   const [tab, setTab] = useState<Tab>('agent')
   const [mobilePane, setMobilePane] = useState<'tasks' | 'chat' | 'task'>('tasks')
@@ -424,12 +424,14 @@ export default function App() {
   const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.at(-1)?.pending)
   const list = taskList(specs, rows, asks, busy)
   const task = list.find((t) => t.key === selected)
+  const others = elsewhere(loopRows, turnsElsewhere, repo)
   // A task's work model is keyed by its spec's repository and id, the same
-  // from draft to worktree. Several tasks share a checkout path, and spec ids
-  // repeat across repositories, so neither alone names one task.
-  const choiceKey = task?.spec ? choiceOf(task.spec) : selected
+  // from draft to worktree and under another project. Several tasks share a
+  // checkout path, and spec ids repeat across repositories, so neither alone names one task.
+  const owning = task?.spec ?? others.find((o) => o.path === selected)?.spec
+  const choiceKey = owning ? choiceOf(owning) : selected
   const choice = choices[choiceKey] ?? NO_CHOICE
-  const setChoice = useCallback((c: Choice) => setChoices((all) => ({ ...all, [choiceKey]: c })), [choiceKey])
+  const setChoice = (c: Choice) => setChoices((all) => ({ ...all, [choiceKey]: c }))
 
   const order = useCallback(async (text: string) => {
     await work.send(path, text, choice)
@@ -522,7 +524,6 @@ export default function App() {
     setTab(next)
   }, [tab, refresh])
 
-  const others = elsewhere(loopRows, turnsElsewhere, repo)
   const otherPaths = new Set(others.map((o) => o.path))
   useEffect(() => {
     away.current = new Set(otherPaths)

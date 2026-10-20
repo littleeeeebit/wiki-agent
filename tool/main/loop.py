@@ -2631,8 +2631,11 @@ def loops() -> dict:
              for s in specs.listing(repo.name)
              if LOOPING.fullmatch(s["state"]) or s["state"] in ("머지 가능", "머지 대기", "멈춤")]
     with _lock:
-        turns = [{"path": path, "repo": Path(path).parent.name.removesuffix("-worktrees")}
-                 for path, run in work._runs.items() if not run.done]
+        running = [path for path, run in work._runs.items() if not run.done]
+    # The owning spec names the task as its own project does; the screen keys the work model by it.
+    turns = [{"path": path, "repo": Path(path).parent.name.removesuffix("-worktrees"),
+              "spec": {"repo": owned["repo"], "id": owned["id"]} if (owned := specs.owner(Path(path))) else None}
+             for path in running]
     return {"loops": found, "turns": turns}
 
 
