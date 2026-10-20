@@ -269,6 +269,28 @@ def main():
                 page.get_by_role("option", name="codex:fixture-fast", exact=True).click()
                 assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() == "codex:fixture-fast"
                 assert agent.get_by_role("textbox").is_disabled()
+            # The model picked with no task selected is what a spec card's start sends.
+            started = []
+            draft = {**spec, "id": "draft-task", "state": "정리됨", "worktree": None, "report": []}
+            page.route("**/api/specs", lambda route: route.fulfill(json={"project": "fixture", "specs": [draft]}))
+            page.route("**/api/log/next*", lambda route: route.fulfill(json=[
+                {"role": "assistant", "text": "Synthetic specification", "blocks": [{"name": "spec", "id": "draft-task"}]}]))
+            page.route("**/api/specs/draft-task/start", lambda route: (
+                started.append(route.request.post_data_json), route.fulfill(json={"path": "fixture-task", "turn": "t"})))
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.goto(base)
+            agent = page.get_by_label("에이전트 세션", exact=True)
+            agent.get_by_role("combobox").first.click()
+            page.get_by_role("option", name="codex:fixture-fast", exact=True).click()
+            page.get_by_role("navigation", name="초점", exact=True).get_by_role("button", name="다음 작업", exact=True).click()
+            page.get_by_role("button", name="시작 ▸", exact=True).click()
+            for _ in range(50):
+                if started:
+                    break
+                page.wait_for_timeout(100)
+            assert started and started[0]["model"] == "codex:fixture-fast", started
+            page.unroute("**/api/specs/draft-task/start")
+            page.unroute("**/api/log/next*")
             page.unroute("**/api/worktrees")
             page.unroute("**/api/specs")
             page.set_viewport_size({"width": 1440, "height": 900})

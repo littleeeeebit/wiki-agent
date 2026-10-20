@@ -429,7 +429,8 @@ export default function App() {
   // from draft to worktree and under another project. Several tasks share a
   // checkout path, and spec ids repeat across repositories, so neither alone names one task.
   const owning = task?.spec ?? others.find((o) => o.path === selected)?.spec
-  const choiceKey = owning ? choiceOf(owning) : selected
+  const blank = `new:${repo}`   // the empty agent pane's pick, which a spec card's start falls back to
+  const choiceKey = owning ? choiceOf(owning) : selected || blank
   const choice = choices[choiceKey] ?? NO_CHOICE
   const setChoice = (c: Choice) => setChoices((all) => ({ ...all, [choiceKey]: c }))
 
@@ -443,8 +444,12 @@ export default function App() {
   // Reload its own conversation even though the path did not change.
   const start = useCallback(async (id: string) => {
     const target = specs.find((spec) => spec.id === id)
+    // Cards start from the conversation, often with no task selected; the started task keeps the pick.
+    const key = choiceOf({ repo: target?.repo ?? repo, id })
+    const picked = choices[key] ?? choices[blank] ?? NO_CHOICE
     const { path } = target && target.state !== '정리됨'
-      ? await api.checkoutSpec(id) : await api.startSpec(id, choices[choiceOf({ repo: target?.repo ?? repo, id })] ?? NO_CHOICE)
+      ? await api.checkoutSpec(id) : await api.startSpec(id, picked)
+    setChoices((all) => ({ ...all, [key]: all[key] ?? picked }))
     work.forget(path)
     work.load(path)
     readSpecs()
@@ -452,7 +457,7 @@ export default function App() {
     setSelected(path)
     setTab('agent')
     setMobilePane('task')
-  }, [choices, repo, readSpecs, refresh, specs, work])
+  }, [blank, choices, repo, readSpecs, refresh, specs, work])
 
   // `[계획]`: the server made the plan's branch and runs its planner there;
   // selecting it attaches to the planner's turn like any other.
