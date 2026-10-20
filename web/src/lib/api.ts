@@ -512,6 +512,8 @@ export type Spec = {
   /** The head the last counted round allowed: what `[머지]` is bound to. */
   approved?: string | null
   validation?: Validation
+  /** The gate running for this task now (`since` in epoch seconds); the server holds it only while it runs. */
+  gating?: { kind: 'round' | 'final'; since: number } | null
   /** In `머지 가능`, why the final gate does not stand for `approved` now —
    *  the server's `specs.proven`, never judged here. Empty only when `[머지]`
    *  may go; `null` in every other state. */
@@ -635,7 +637,9 @@ export const startLoops = (prs: number[], implementation_environment: 'local' | 
   post('/api/loops', { prs, implementation_environment, cell }, 'POST', owner).then((r) =>
     json<{ results: { number: number; id?: string; error?: string }[] }>(r, '리뷰 루프'))
 export const getLoops = () =>
-  get('/api/loops').then((r) => json<{ loops: LoopRow[]; turns: { path: string; repo: string }[] }>(r, '루프'))
+  get('/api/loops').then((r) => json<{ loops: LoopRow[]; turns: TurnRow[] }>(r, '루프'))
+/** A running turn in any project; `spec` is the task that owns its worktree, if one does. */
+export type TurnRow = { path: string; repo: string; spec: { repo: string; id: string } | null }
 export const mergeSpec = (id: string, head: string, owner?: string) =>
   post(`/api/specs/${id}/merge`, { head }, 'POST', owner).then((r) => json<Spec>(r, '머지'))
 export const settleSpec = (id: string, choice: 'accept' | 'reopen', owner?: string) =>

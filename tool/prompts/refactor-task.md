@@ -26,8 +26,9 @@ The spec uses Next Task's JSON fields and additionally includes:
 {"refactor": {"mode": "cleanup", "files": ["src/orders/service.py"]}}
 ```
 
-Files are initial discovery targets, not a fixed file-count allowance. The
-server checks repository-relative paths. Include the whole agreed request in
+Files are initial discovery targets, not a fixed file-count allowance; a
+package directory is accepted. The server checks that each repository-relative
+path exists. Include the whole agreed request in
 goal, done and out. Do not invent time, call or token ceilings. Starting the
 card calls the existing mode pipeline: characterization tests, candidate
 selection, staged PRs and the current review/approval rules. Merge remains

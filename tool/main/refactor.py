@@ -469,13 +469,18 @@ def purpose(run: dict) -> str:
 
 # -- The phases ----------------------------------------------------------------
 
+def targeted(path: str, files: list[str]) -> bool:
+    """`path` is one of the run's targets or lies under a target directory."""
+    return any(path == f or path.startswith(f.rstrip("/") + "/") for f in files)
+
+
 def scan(w: Worker, run: dict) -> dict:
     if run["mode"] == "full":
         return w.note(phase="audit", hotspots=hotspots(w.repo, 20))
     if run["mode"] != "cleanup":   # the person chose the module; its measurements are shown, not filtered
-        return w.note(phase="audit", hotspots=[r for r in debt.scan(w.repo) if r["path"] in run["files"]])
+        return w.note(phase="audit", hotspots=[r for r in debt.scan(w.repo) if targeted(r["path"], run["files"])])
     rows = hotspots(w.repo) if not run["files"] else \
-        [r for r in hotspots(w.repo) if r["path"] in run["files"]]
+        [r for r in hotspots(w.repo) if targeted(r["path"], run["files"])]
     if run.get("goal"):
         return w.note(phase="audit", hotspots=rows)
     if not rows:
