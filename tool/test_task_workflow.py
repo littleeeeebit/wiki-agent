@@ -231,6 +231,13 @@ def test_spec_update_without_done_report_asks_for_one_then_stops_with_a_fault(re
         assert web.post("/api/work/say", json={"path": str(repo), "text": "Revise"}).status_code == 200
         saved = until(lambda: (s := specs.load(repo.name, sid)).get("fault") and s)
         assert saved["rev"] == 3 and saved["state"] == "작업 중" and "다시 빠졌다" in saved["fault"]
+        # Answering the request with another revision only is the second miss too, not a fresh request.
+        Worker.replies = ["```spec-update\n" + json.dumps({**change, "rev": rev}) + "\n```" for rev in (3, 4, 5)]
+        specs.update(repo.name, sid, fault=None)
+        settled(str(repo))
+        assert web.post("/api/work/say", json={"path": str(repo), "text": "Revise"}).status_code == 200
+        saved = until(lambda: (s := specs.load(repo.name, sid)).get("fault") and s)
+        assert saved["rev"] == 5 and not saved["report_asked"] and len(Worker.replies) == 1
     work.close_all()
 
 

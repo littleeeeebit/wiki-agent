@@ -41,6 +41,7 @@ const TONE: Record<string, string> = {
 }
 
 const NO_CHOICE: Choice = { model: '', effort: '' }
+const choiceOf = (s: { repo: string; id: string }) => `spec:${s.repo}/${s.id}`
 
 function stored<T extends string>(key: string, fallback: T): T {
   try {
@@ -81,12 +82,10 @@ export default function App() {
   const [mapRun, setMapRun] = useState<{ repo: string; run: RunSummary } | null>(null)
   const [setting, setSetting] = useState(false)
   const [queryBusy, setQueryBusy] = useState(false)
-  // Each task keeps its own work model, by its key: a model picked in one task,
-  // or in another repository, never becomes another task's selection.
+  // Each task keeps its own work model (`choiceKey`): a model picked in one
+  // task, or in another repository, never becomes another task's selection.
   const [choices, setChoices] = useState<Record<string, Choice>>({})
-  const choice = choices[selected] ?? NO_CHOICE
-  const setChoice = useCallback((c: Choice) => setChoices((all) => ({ ...all, [selected]: c })), [selected])
-  const [peek,setPeek] = useState<{ data: PeekData | null; error?: string } | null>(null)
+  const [peek, setPeek] = useState<{ data: PeekData | null; error?: string } | null>(null)
   // Dark unless the person chose light. Remembered per machine, not per server.
   const [theme, setTheme] = useState<Theme>(() => stored('theme', 'dark'))
   // The list carries the project it was read for, and is shown only under
@@ -417,6 +416,21 @@ export default function App() {
     }
   }, [])
 
+  // Open approvals by worktree, as this window's streams know them.
+  const asks = (p: string) => (work.turns[p] ?? []).filter((t) => t.pending)
+    .flatMap((t) => t.steps).filter((s) => s.kind === 'approval' && s.answer === undefined).length
+  // The server's `busy` is as old as the last listing; a turn this window is
+  // streaming is known here first.
+  const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.at(-1)?.pending)
+  const list = taskList(specs, rows, asks, busy)
+  const task = list.find((t) => t.key === selected)
+  // A task's work model is keyed by its spec's repository and id, the same
+  // from draft to worktree. Several tasks share a checkout path, and spec ids
+  // repeat across repositories, so neither alone names one task.
+  const choiceKey = task?.spec ? choiceOf(task.spec) : selected
+  const choice = choices[choiceKey] ?? NO_CHOICE
+  const setChoice = useCallback((c: Choice) => setChoices((all) => ({ ...all, [choiceKey]: c })), [choiceKey])
+
   const order = useCallback(async (text: string) => {
     await work.send(path, text, choice)
     refresh()
@@ -428,9 +442,7 @@ export default function App() {
   const start = useCallback(async (id: string) => {
     const target = specs.find((spec) => spec.id === id)
     const { path } = target && target.state !== '정리됨'
-      ? await api.checkoutSpec(id) : await api.startSpec(id, choice)
-    // The choice made on the spec card goes with the task to its worktree.
-    setChoices((all) => all[`spec:${id}`] ? { ...all, [path]: all[`spec:${id}`] } : all)
+      ? await api.checkoutSpec(id) : await api.startSpec(id, choices[choiceOf({ repo: target?.repo ?? repo, id })] ?? NO_CHOICE)
     work.forget(path)
     work.load(path)
     readSpecs()
@@ -438,7 +450,7 @@ export default function App() {
     setSelected(path)
     setTab('agent')
     setMobilePane('task')
-  }, [choice, readSpecs, refresh, specs, work])
+  }, [choices, repo, readSpecs, refresh, specs, work])
 
   // `[계획]`: the server made the plan's branch and runs its planner there;
   // selecting it attaches to the planner's turn like any other.
@@ -515,14 +527,6 @@ export default function App() {
   useEffect(() => {
     away.current = new Set(otherPaths)
   })
-  // Open approvals by worktree, as this window's streams know them.
-  const asks = (p: string) => (work.turns[p] ?? []).filter((t) => t.pending)
-    .flatMap((t) => t.steps).filter((s) => s.kind === 'approval' && s.answer === undefined).length
-  // The server's `busy` is as old as the last listing; a turn this window is
-  // streaming is known here first.
-  const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.at(-1)?.pending)
-  const list = taskList(specs, rows, asks, busy)
-  const task = list.find((t) => t.key === selected)
   const other = others.find((o) => o.path === selected)
   // A worktree of another project has no row in this project's list; the
   // pane still shows it, and a new instruction there is refused by the server.

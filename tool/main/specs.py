@@ -1478,6 +1478,10 @@ def _check(path: Path, run, final: str):
         note(run, f"명세 판 {spec['rev']} 반영 · 이전 리뷰 승인은 다시 확인한다")
         if spec["state"] == "작업 중" and not any(b["name"] == "done-report" for b in blocks(final)[1]):
             # Nothing else moves a revised task out of `작업 중`: ask once for the report the gate needs.
+            # A second revision in answer to that request is the second miss, not a new first one.
+            if spec.get("report_asked"):
+                update(spec["repo"], spec["id"], report_asked=False)
+                return failed(run, spec, f"명세 판 {spec['rev']} 의 완료 보고가 다시 빠졌다 — 에이전트에게 완료 보고를 요청해라")
             spec = update(spec["repo"], spec["id"], report_asked=True)
             note(run, f"명세 판 {spec['rev']} 의 완료 보고를 요청한다")
             return lambda: again(path, run.chat, REPORT_AGAIN.format(rev=spec["rev"]), spec)
