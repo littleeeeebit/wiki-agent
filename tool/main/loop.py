@@ -2243,6 +2243,17 @@ def _merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) ->
         dirty = specs.sh(["git", "status", "--porcelain"], path)
         if local.returncode or local.stdout.strip() != allowed["head"] or dirty.returncode or dirty.stdout.strip():
             raise HTTPException(409, "머지 직전 작업 폴더가 바뀌었다")
+        # A work agent may open its PR as a draft, which GitHub refuses to
+        # merge. The person's merge click is the request to take it out of draft.
+        try:
+            draft = gh_json(repo, ["pr", "view", str(n), "--json", "isDraft"]).get("isDraft")
+        except (RuntimeError, ValueError) as exc:
+            raise HTTPException(502, str(exc)) from exc
+        if draft:
+            specs.merge_progress(repo.name, sid, "드래프트 PR 을 리뷰 준비 상태로 바꾸는 중")
+            ready = specs.sh(["gh", "pr", "ready", str(n)], repo, 60)
+            if ready.returncode:
+                raise HTTPException(409, f"드래프트 PR 을 준비 상태로 바꾸지 못했다 — {specs.said(ready)}")
         specs.merge_progress(repo.name, sid, "GitHub에 squash 머지 요청 중")
         done = specs.sh(["gh", "pr", "merge", str(n), "--squash", "--match-head-commit", allowed["head"]], repo, 120)
         if not done.returncode:

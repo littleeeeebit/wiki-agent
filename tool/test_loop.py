@@ -76,7 +76,7 @@ class Hub:
 
     def open(self, n: int, branch: str, **extra) -> None:
         self.prs[n] = {"branch": branch, "base": "main", "state": "OPEN", "title": f"PR {n}", "body": "",
-                       "cross": False, "auto": None, "queue": False, "merged": None, **extra}
+                       "cross": False, "auto": None, "queue": False, "merged": None, "draft": False, **extra}
 
     def head(self, n: int) -> str:
         # A push leaves a loose ref: read it rather than start a git per `gh`
@@ -118,7 +118,7 @@ class Hub:
         return {"number": n, "title": pr["title"], "body": pr["body"], "headRefName": pr["branch"],
                 "headRefOid": self.head(n), "baseRefName": pr["base"], "state": pr["state"],
                 "mergeCommit": {"oid": pr["merged"]} if pr["merged"] else None, "autoMergeRequest": pr["auto"],
-                "isCrossRepository": pr["cross"], "headRepositoryOwner": {"login": "o"},
+                "isCrossRepository": pr["cross"], "isDraft": pr["draft"], "headRepositoryOwner": {"login": "o"},
                 "url": f"https://github.com/o/proj/pull/{n}", "mergedAt": None}
 
     def __call__(self, args, cwd, timeout=60):
@@ -140,12 +140,17 @@ class Hub:
             n = int(args[3])
             if args[args.index("--match-head-commit") + 1] != self.head(n):
                 return no("GraphQL: Head branch was modified. Review and try the merge again.")
+            if self.prs[n]["draft"]:
+                return no("GraphQL: Pull Request is still a draft (mergePullRequest)")
             if self.merge_as == "merged":
                 self.prs[n].update(state="MERGED", merged=self.squash(n))
             elif self.merge_as == "queued":
                 self.prs[n]["queue"] = True
             elif self.merge_as == "auto":
                 self.prs[n]["auto"] = {"enabledAt": "now"}
+            return ok()
+        if what == ["pr", "ready"]:
+            self.prs[int(args[3])]["draft"] = False
             return ok()
         if what == ["pr", "comment"]:
             self.comments.append((int(args[3]), Path(args[args.index("--body-file") + 1]).read_text(encoding="utf-8")))
@@ -2080,6 +2085,19 @@ def test_merge_is_bound_to_the_allowed_head_and_cleans_up_after(world):
     assert loop._cells == {} and not (world.tmp / "review/proj/7").exists()
     told = [r["text"] for r in chat.recall("next") if r["role"] == "result"]
     assert told[-1] == "PR #7 머지됨 — 라운드 1, 남은 P2 1"
+
+
+def test_a_draft_pr_is_made_ready_by_the_merge_click(world):
+    # ai-coding-wiki #153: the work agent opened its PR with `--draft`, and the merge failed on GitHub.
+    pr_spec(world, "draft-k", 8)
+    world.hub.prs[8]["draft"] = True
+    Reviewer.replies = [lambda first, _: f"{first}\n머지 허용"]
+    approved = looped("draft-k")["rounds"][0]["head"]
+    done = client().post("/api/specs/draft-k/merge", json={"head": approved})
+    assert done.status_code == 200, done.text
+    asked = [c[1:3] for c in world.hub.calls if c[1:3] in (["pr", "ready"], ["pr", "merge"])]
+    assert asked == [["pr", "ready"], ["pr", "merge"]], asked
+    assert specs.load("proj", "draft-k")["state"] == "머지됨"
 
 
 def test_legacy_cleanup_preserves_a_local_commit_added_after_review(world):
