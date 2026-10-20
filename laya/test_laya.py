@@ -1057,7 +1057,7 @@ def test_the_teacher_turn_keeps_each_question_on_the_slot_it_was_asked_for(monke
 
 def test_the_teacher_turn_keeps_the_conversation_before_a_question_and_its_asks(monkeypatch):
     pages = [{"path": "a.md", "title": "A", "excerpt": "x" * 3000 + "\n한국어 줄"},
-             {"path": "b.md", "title": "B", "excerpt": "y" * 3000}]
+             {"path": "b.md", "title": "B", "excerpt": "　" + "y" * 3000}]   # CJK punctuation in English
     slots = [{"type": "answered", "intent": "lookup", "context": c, "length": "short"}
              for c in ("none", "short", "long", "short")]
     monkeypatch.setattr(generate, "sample", lambda seed, lean: {"repo": "r", "pages": pages, "slots": slots})
@@ -1070,7 +1070,7 @@ def test_the_teacher_turn_keeps_the_conversation_before_a_question_and_its_asks(
     assert "state" not in q0 and q0["asks"] == ["one?", "two?"]          # no conversation was asked for
     assert q1["state"] == "user: Which port?\nassistant: 8765." and "asks" not in q1   # one ask is no split
     assert q2["state"].endswith(q1["state"]) and len(q2["state"]) > 4000    # past `STATE_CHARS`: summarized
-    assert not generate.FOREIGN.search(q2["state"])                          # a quoted Korean line is left out
+    assert "한국어" not in q2["state"] and "y" * 100 in q2["state"]          # a quoted Korean line is left out
     assert "state" not in q3 and "asks" not in q3
 
 

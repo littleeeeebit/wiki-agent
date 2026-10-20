@@ -41,7 +41,6 @@ import hashlib
 import json
 import math
 import random
-import re
 import socket
 import sys
 import threading
@@ -54,6 +53,9 @@ from pool import digest
 from store import append, read
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT / "tool") not in sys.path:
+    sys.path.append(str(ROOT / "tool"))
+from common.language import language  # noqa: E402  production's own reading of a text's language
 DATA = Path(__file__).resolve().parent / "data"
 PROMPT = Path(__file__).resolve().parent / "prompts" / "generate.md"
 SPLITS = ("train", "validation", "calibration")
@@ -64,9 +66,6 @@ PAGES = 6
 PER_TURN = 6
 # What a teacher writes in place of a question (lower case, outer punctuation stripped).
 STAND_INS = {"placeholder", "todo", "tbd", "n/a", "question", "..."}
-# Hangul and CJK: the capture's translator answers nothing, so a state holding them fails
-# normalization (`captured`).
-FOREIGN = re.compile("[ᄀ-ᇿ　-鿿가-힯]")
 EXCERPT = 3000
 CAP = 2   # candidates of one kind from one question, so a kind's set spans many questions
 TYPES = ("answered", "partial", "bridging", "unanswered", "false_premise")
@@ -135,9 +134,11 @@ def conversation(prior: list[dict], pages: list[dict], long: bool) -> str:
     """The state production passes `prepare`: the turns before the question, one
     `role: text` line each (`main.query`). A `long` one starts with earlier turns of an
     assistant quoting the pages, so it passes `STATE_CHARS` and its summary omits them;
-    their lines in another script are left out, as the teacher's own text is English."""
+    their lines production would not read as English are left out, as the teacher's own
+    text is English: the capture's translator answers nothing, so such a state fails
+    normalization (`captured`)."""
 
-    quoted = ["\n".join(line for line in p["excerpt"].split("\n") if not FOREIGN.search(line)) for p in pages]
+    quoted = ["\n".join(line for line in p["excerpt"].split("\n") if language(line) == "en") for p in pages]
     lines = [f"assistant: {q}" for q in quoted if q.strip()] if long else []
     return "\n".join(lines + [f"{t['role']}: {t['text']}" for t in prior])
 
@@ -194,8 +195,6 @@ def captured(query: str, project: Path = ROOT, state: str = "", asks=None, judge
     decision is uncertain, so code repairs between rounds as it does when Jev is unsure;
     the run is cancelled once the last round wanted is answered."""
 
-    if str(ROOT / "tool") not in sys.path:
-        sys.path.append(str(ROOT / "tool"))
     import decision
     from main import knowledge
 
