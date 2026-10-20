@@ -73,6 +73,7 @@ class Why(str, enum.Enum):
     PREPARATION = "로컬 검증 준비"
     EXTERNAL = "외부 수정 대기"
     RECOVERY = "반복 발견 재조사"   # `recovery`: research owed before another fix
+    ASKED = "작업 에이전트의 질문"   # a turn ended on a `choices` block; `answered` goes on after the person's turn
 
 
 router = APIRouter()
@@ -967,6 +968,69 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
     if not end or end["kind"] != "done" or not end["text"].strip():
         raise RuntimeError("완료된 답이 없다")
     return end["text"]
+
+
+def asked(repo: str, sid: str) -> bool:
+    """A work-cell turn ended on a `choices` question while this spec's loop
+    runs — its own repair turn or a person's between its turns. Codex asks by
+    ending its turn, so the loop halts on `Why.ASKED` instead of sending on.
+    Called from that turn's thread before it lets the worktree go: no answer
+    can start, or end, before the stop is written."""
+
+    with _lock:
+        loop = _loops.get((repo, sid))
+    if loop is None or loop.halt.is_set():
+        return False
+    stop(loop, repo, sid, Why.ASKED, "작업 에이전트가 판단을 물었다 — 에이전트 칸에서 고르면 그 답의 턴이 끝난 뒤 루프가 이어 간다")
+    loop.halt.set()   # not the turn's own halt: the question is not a cancelled turn
+    return True
+
+
+def answered(repo: Path, sid: str, run: work.Run, path: str) -> None:
+    """The person's turn after `Why.ASKED` ended without asking again: `[계속]`
+    on their behalf. Run after the turn let the worktree go; not for a turn
+    stopped while it was being recorded, nor while another instruction waits
+    in the queue — that turn's own end decides."""
+
+    def current() -> dict | None:
+        spec = specs.load(repo.name, sid)
+        if not spec or spec["state"] != "멈춤" or (spec.get("stopped") or {}).get("reason") != Why.ASKED.value:
+            return None
+        if run.halt.is_set() or work._runs.get(path) is not run or path in work._queued:   # a newer turn decides
+            return None
+        return spec
+
+    if current() is None:
+        return
+    # The halted loop is waited for first, then the worktree is held while this
+    # is checked and the loop restarted: no turn can start, and ask, between
+    # the check and the restart (#193 rounds 2 and 3).
+    with _lock:
+        old = _loops.get((repo.name, sid))
+    if old is not None and old.thread is not None:
+        old.thread.join(30)   # outside the hold: a halted loop may still be leaving `wait_hold`
+        if old.thread.is_alive():   # `kick` would wait again, holding the worktree; `/resume` picks it up
+            errorlog.record("loop-answered", "앞 루프가 아직 멈추는 중이다", repo=repo.name, spec=sid)
+            return
+    while True:
+        # Only the newest answer takes the hold: a stale one leaves above, and a
+        # hold another answer's check has for a moment is waited out (#193 round 4).
+        if current() is None:
+            return
+        try:
+            release = hold(work._busy, _lock, path, "", kind="turn")
+            break
+        except HTTPException:
+            time.sleep(0.2)
+    try:
+        spec = current()
+        if spec is None:
+            return
+        proceed(repo, spec, "")
+    except HTTPException as exc:
+        errorlog.record("loop-answered", exc, repo=repo.name, spec=sid)
+    finally:
+        release()
 
 
 def reusable(spec: dict, head: str, chosen: dict) -> bool:

@@ -14,6 +14,7 @@ import sys
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -1244,6 +1245,270 @@ def test_evidence_backed_correction_without_a_code_change_can_be_reviewed(world,
     assert complete["rounds"][0]["disposition"][0]["action"] == action
     assert complete["rounds"][1]["head"] == spec["pr"]["head"] == world.hub.head(7)
     assert len(Worker.made[0].heard) == 1
+
+
+ASK = ("Which split?\n\n```choices\n" + json.dumps({"question": "Which split?", "options": [
+    {"label": "Explicit roles (Recommended)"}, {"label": "Reject ambiguous rows"}]}) + "\n```")
+
+
+def test_a_repair_turn_that_asks_waits_for_the_person_then_goes_on(world):
+    """Codex asks by ending its turn on `choices`: nothing is sent again until
+    the person answers, and the loop goes on by itself once that turn ends."""
+
+    spec = pr_spec(world, "repair-asks", 7)
+    finding = "[P1] a.txt:1 — ambiguous rows"
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [ASK, "Explicit roles, then.", fixed((finding, "fixed"))]
+    stopped = looped(spec["id"])
+    assert stopped["state"] == "멈춤" and stopped["stopped"]["reason"] == "작업 에이전트의 질문"
+    assert len(Worker.made[0].heard) == 1, "the question is not answered by sending the correction again"
+    client().post("/api/work/say", json={"path": spec["worktree"], "text": "Explicit roles"}).raise_for_status()
+    waited(lambda: specs.load("proj", spec["id"])["state"] == "머지 가능")
+    heard = Worker.made[0].heard
+    assert heard[1] == "Explicit roles" and finding in heard[2], "after the answer, the same round's correction"
+
+
+def test_an_answer_that_asks_again_keeps_the_loop_waiting(world):
+    spec = pr_spec(world, "repair-asks-again", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, ASK]
+    looped(spec["id"])
+    client().post("/api/work/say", json={"path": spec["worktree"], "text": "Neither"}).raise_for_status()
+    waited(lambda: not work._turns)   # the answer's thread, past anything it would start
+    again = specs.load("proj", spec["id"])
+    assert again["state"] == "멈춤" and again["stopped"]["reason"] == "작업 에이전트의 질문"
+    assert len(Worker.made[0].heard) == 2 and ("proj", spec["id"]) not in loop._loops
+
+
+def test_the_question_is_a_stop_before_the_worktree_is_let_go(world):
+    """An answer could otherwise start, and end, while the loop has not yet
+    written the stop (#193 round 1): the turn's record is kept while it still
+    holds the worktree, and the stop is there by then."""
+
+    spec = pr_spec(world, "repair-asks-early", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK]
+    seen, real = [], work.remember
+
+    def remember(path, role, text, **kwargs):
+        if role == "assistant":
+            seen.append((specs.load("proj", spec["id"])["state"], str(path) in work._busy))
+        return real(path, role, text, **kwargs)
+
+    with patch.object(work, "remember", side_effect=remember):
+        looped(spec["id"])
+    assert seen == [("멈춤", True)]
+
+
+def test_an_answer_stopped_while_it_is_recorded_does_not_go_on(world):
+    spec = pr_spec(world, "answer-stopped", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, "Explicit roles, then."]
+    looped(spec["id"])
+    entered, go, real = threading.Event(), threading.Event(), work.remember
+
+    def remember(path, role, text, **kwargs):
+        if role == "assistant":
+            entered.set()
+            assert go.wait(15)
+        return real(path, role, text, **kwargs)
+
+    with patch.object(work, "remember", side_effect=remember), patch.object(loop, "proceed") as proceed:
+        try:
+            work.say(work.Order(path=spec["worktree"], text="Explicit roles"))
+            assert entered.wait(15)
+            run = work._runs[spec["worktree"]]
+            client().post("/api/work/stop", json={"path": spec["worktree"], "turn": run.turn}).raise_for_status()
+        finally:
+            go.set()
+        waited(lambda: not work._turns)
+    assert not proceed.called
+
+
+def test_a_queued_instruction_that_asks_again_keeps_the_loop_waiting(world):
+    spec = pr_spec(world, "queued-asks", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, "First answer accepted.", ASK]
+    looped(spec["id"])
+    entered, go, real = threading.Event(), threading.Event(), work.remember
+
+    def remember(path, role, text, **kwargs):
+        if role == "assistant" and text == "First answer accepted.":
+            entered.set()
+            assert go.wait(15)
+        return real(path, role, text, **kwargs)
+
+    with patch.object(work, "remember", side_effect=remember):
+        try:
+            work.say(work.Order(path=spec["worktree"], text="First answer"))
+            assert entered.wait(15)
+            run = work._runs[spec["worktree"]]
+            client().post("/api/work/queue", json={"path": spec["worktree"], "turn": run.turn,
+                                                   "text": "Another instruction"}).raise_for_status()
+        finally:
+            go.set()
+        waited(lambda: len(Worker.made[0].heard) == 3 and not work._turns)
+    waited(lambda: ("proj", spec["id"]) not in loop._loops)
+    again = specs.load("proj", spec["id"])
+    assert again["state"] == "멈춤" and again["stopped"]["reason"] == "작업 에이전트의 질문"
+    assert len(Worker.made[0].heard) == 3, "no correction is sent past the new question"
+
+
+def test_an_older_answer_does_not_resume_past_a_newer_question(world):
+    """The answer's resume runs after it let the worktree go: a newer turn can
+    start, ask again and end before it (#193 round 2)."""
+
+    spec = pr_spec(world, "newer-asks", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, "First answer accepted.", ASK]
+    looped(spec["id"])
+    entered, go, real = threading.Event(), threading.Event(), loop.answered
+
+    def answered(*args):
+        entered.set()
+        assert go.wait(15)
+        return real(*args)
+
+    with patch.object(loop, "answered", side_effect=answered):
+        try:
+            work.say(work.Order(path=spec["worktree"], text="First answer"))
+            assert entered.wait(15)
+            work.say(work.Order(path=spec["worktree"], text="Another instruction"))
+            newer = work._runs[spec["worktree"]]
+            waited(lambda: newer.done)
+        finally:
+            go.set()
+        waited(lambda: not work._turns)
+    waited(lambda: ("proj", spec["id"]) not in loop._loops)
+    again = specs.load("proj", spec["id"])
+    assert again["state"] == "멈춤" and again["stopped"]["reason"] == "작업 에이전트의 질문"
+    assert len(Worker.made[0].heard) == 3
+
+
+@contextmanager
+def leaving(spec: dict):
+    """The spec's loop stopped on a question, its halted thread kept from
+    leaving until `leave` is set; `joined` lists the threads that wait for it."""
+
+    exiting, leave, joined, real_step, old = threading.Event(), threading.Event(), [], loop.step, None
+
+    def step(lp):
+        result = real_step(lp)
+        if lp is old and lp.halt.is_set():
+            exiting.set()
+            assert leave.wait(INTEGRATION_WAIT)
+        return result
+
+    with patch.object(loop, "step", side_effect=step):
+        try:
+            loop.kick("proj", spec["id"])
+            old = loop._loops[("proj", spec["id"])]
+            assert exiting.wait(INTEGRATION_WAIT)
+            real_join = old.thread.join
+
+            def join(timeout=None):
+                joined.append(threading.current_thread())
+                return real_join(timeout)
+
+            with patch.object(old.thread, "join", side_effect=join):
+                yield leave, joined, old
+        finally:
+            leave.set()
+
+
+def test_a_question_while_the_halted_loop_is_leaving_is_not_run_past(world):
+    """The resume waits for the halted loop to leave; a turn that starts and
+    asks during that wait is seen once it holds the worktree (#193 round 3)."""
+
+    spec = pr_spec(world, "asks-during-join", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, "First answer accepted.", ASK]
+    with leaving(spec) as (leave, joined, old):
+        work.say(work.Order(path=spec["worktree"], text="First answer"))
+        waited(lambda: joined)
+        work.say(work.Order(path=spec["worktree"], text="Another instruction"))
+        newer = work._runs[spec["worktree"]]
+        waited(lambda: newer.done)
+        leave.set()
+        waited(lambda: not old.thread.is_alive() and not work._turns)
+    again = specs.load("proj", spec["id"])
+    assert again["state"] == "멈춤" and again["stopped"]["reason"] == "작업 에이전트의 질문"
+    assert len(Worker.made[0].heard) == 3, "no correction is sent past the newer question"
+
+
+def test_the_newest_answer_resumes_when_a_stale_one_takes_the_hold_first(world):
+    """Two answers wait for the halted loop; the stale one's check holds the
+    worktree a moment, and the newest waits it out instead of giving up (#193 round 4)."""
+
+    spec = pr_spec(world, "answers-race", 7)
+    finding = "[P1] a.txt:1 — ambiguous rows"
+    Reviewer.replies = [deny(finding), allow]
+    Worker.replies = [ASK, "First answer accepted.", "Latest answer accepted.", fixed((finding, "fixed"))]
+    stale_turn, stale_go, real_hold, real_answered = threading.Event(), threading.Event(), loop.hold, loop.answered
+
+    def hold(*args, **kwargs):
+        # The newest tries only once the stale one holds the worktree, or has left.
+        me = threading.current_thread()
+        if len(joined) == 2 and me is joined[1]:
+            assert stale_turn.wait(INTEGRATION_WAIT)
+        release = real_hold(*args, **kwargs)
+        if joined and me is joined[0]:
+            stale_turn.set()
+            assert stale_go.wait(INTEGRATION_WAIT)
+        return release
+
+    def answered(*args):
+        try:
+            return real_answered(*args)
+        finally:
+            if joined and threading.current_thread() is joined[0]:
+                stale_turn.set()
+
+    with leaving(spec) as (leave, joined, _), patch.object(loop, "hold", side_effect=hold), \
+            patch.object(loop, "answered", side_effect=answered):
+        try:
+            work.say(work.Order(path=spec["worktree"], text="First answer"))
+            waited(lambda: len(joined) == 1)
+            work.say(work.Order(path=spec["worktree"], text="Latest answer"))
+            waited(lambda: len(joined) == 2)
+            leave.set()
+            assert stale_turn.wait(INTEGRATION_WAIT)
+            time.sleep(0.5)   # the newest's first try, against a stale hold if there is one
+            stale_go.set()
+            waited(lambda: specs.load("proj", spec["id"])["state"] == "머지 가능")
+        finally:
+            stale_go.set()
+    assert len(Worker.made[0].heard) == 4
+
+
+def test_an_answer_that_revises_the_spec_and_asks_again_waits_for_the_person(world):
+    """A revision sends the spec back to `작업 중`, where a missing done report
+    is asked for once by itself (#194); a turn that asks is not (#193 round 6)."""
+
+    spec = pr_spec(world, "answer-revises", 7)
+    change = {**{k: spec[k] for k in ("goal", "out", "done")}, "rev": spec["rev"],
+              "reason": "Clarify the requested split", "goal": spec["goal"] + " with explicit roles"}
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, "```spec-update\n" + json.dumps(change) + "\n```\n\n" + ASK, "No answer was given."]
+    looped(spec["id"])
+    client().post("/api/work/say", json={"path": spec["worktree"], "text": "Explicit roles"}).raise_for_status()
+    waited(lambda: not work._turns)
+    fresh = specs.load("proj", spec["id"])
+    assert len(Worker.made[0].heard) == 2, "nothing is sent past the new question"
+    assert fresh["state"] == "작업 중" and fresh["rev"] == spec["rev"] + 1 and not fresh.get("fault")
+
+
+def test_a_loop_that_will_not_leave_is_waited_for_once(world):
+    spec = pr_spec(world, "stuck-loop", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK]
+    looped(spec["id"])
+    path, joins = spec["worktree"], []
+    stuck = SimpleNamespace(thread=SimpleNamespace(join=joins.append, is_alive=lambda: True))
+    with patch.dict(loop._loops, {("proj", spec["id"]): stuck}):
+        loop.answered(world.repo, spec["id"], work._runs[path], path)
+    assert joins == [30] and path not in work._busy, "never a second wait holding the worktree"
+    assert specs.load("proj", spec["id"])["stopped"]["reason"] == "작업 에이전트의 질문"
 
 
 def test_the_gate_failing_twice_in_a_row_stops(world):

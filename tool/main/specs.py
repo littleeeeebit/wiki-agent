@@ -537,6 +537,19 @@ def _shape(name: str, value) -> None:
             raise ValueError("`choices.multi` 는 참·거짓이어야 한다")
 
 
+def asks(text: str) -> bool:
+    """The answer puts a well-formed `choices` question to the person."""
+
+    for block in blocks(text)[1]:
+        if block["name"] == "choices" and "error" not in block:
+            try:
+                _shape("choices", block["value"])
+                return True
+            except ValueError:
+                pass
+    return False
+
+
 def card(repo: Path, block, gate: str, source: dict, accepted: dict | None = None) -> str:
     """One `spec` block as a card on disk; its id.
 
@@ -1479,7 +1492,8 @@ def _check(path: Path, run, final: str):
         except ValueError as exc:
             return failed(run, spec, f"명세 변경을 반영하지 못했다 — {exc}")
         note(run, f"명세 판 {spec['rev']} 반영 · 이전 리뷰 승인은 다시 확인한다")
-        if spec["state"] == "작업 중" and not any(b["name"] == "done-report" for b in blocks(final)[1]):
+        # A turn that asks the person waits for the answer: nothing is sent past the question (#193 round 6).
+        if spec["state"] == "작업 중" and not asks(final) and not any(b["name"] == "done-report" for b in blocks(final)[1]):
             # Nothing else moves a revised task out of `작업 중`: ask once for the report the gate needs.
             # A second revision in answer to that request is the second miss, not a new first one.
             if spec.get("report_asked"):
@@ -1505,10 +1519,17 @@ def _check(path: Path, run, final: str):
         update(spec["repo"], spec["id"], plan_commit="pushed", fault=None)
         return lambda: reviewed(spec)
     if spec["state"] != "작업 중":
+        from . import loop  # `loop` imports this module
+
+        if asks(final):
+            loop.asked(spec["repo"], spec["id"])
+            return None
+        if spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == loop.Why.ASKED.value:
+            return lambda: loop.answered(repo, spec["id"], run, str(path))   # the person answered it
         return None
     report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
     if report is None:
-        if spec.get("report_asked"):
+        if spec.get("report_asked") and not asks(final):
             update(spec["repo"], spec["id"], report_asked=False)
             return failed(run, spec, f"명세 판 {spec['rev']} 의 완료 보고가 다시 빠졌다 — 에이전트에게 완료 보고를 요청해라")
         return None
