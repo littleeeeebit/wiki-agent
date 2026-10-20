@@ -1243,7 +1243,7 @@ def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, 
                                     "i1": {"answer": "part", "evidence": "Entries live in memory."}}}}]
     (cut,) = support.trimmed([asked_row], support.quotes(turns, "all"))
     assert said not in cut["state"]["passages"][0]["text"] and "Entries live in memory." in cut["state"]["passages"][0]["text"]
-    assert cut["questions"]["support_r0_p0"]["drawn"] == "trimmed" and cut["provenance"]["trimmed"] == "a"
+    assert cut["questions"]["support_r0_p0"] == {"kind": "support", "drawn": "trimmed", "question": (asked := support.question(cut["state"], "r0", "p0"))} and f'"{support.asks(cut["state"], "r0")}"' in asked["instructions"] and cut["provenance"]["trimmed"] == "a"
     assert cut["state_hash"] == pool.digest(cut["state"])
     short = {**asked_row, "state": {**asked_row["state"], "passages": [{**stated, "text": f"Short. {said}"}]}}
     assert support.trimmed([short], support.quotes(turns, "all")) == []   # nothing left to judge
@@ -1278,7 +1278,7 @@ def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, 
     ways = {next(iter(r["questions"].values()))["drawn"]: r for r in told}
     assert set(ways) == {"evidence", "before", "after", "evidence_after"}
     assert all(list(r["questions"]) == ["support_r0_p0"] and r["provenance"]["restated"] == cand["state_hash"]
-               and r["questions"]["support_r0_p0"]["question"] == support.question("r0", "p0") for r in told)
+               and r["questions"]["support_r0_p0"]["question"] == support.question(r["state"], "r0", "p0") for r in told)
     assert ways["evidence"]["state"]["passages"][0]["text"] == quote   # a quote inside another is not repeated
     assert ways["before"]["state"]["passages"][0]["text"].endswith(support.fold(stated_text := cand["state"]["passages"][0]["text"]))
     assert ways["after"]["state"]["passages"][0]["text"].startswith(support.fold(stated_text))
@@ -1353,7 +1353,7 @@ def test_joint_asks_the_part_passages_together_where_support_left_coverage_undec
     # Every split asks the views evaluate asks: an undecided question's part picks, together.
     (one,) = joint.picked(chosen, [row])   # r1 was too long, so nothing to ask of it
     assert [p["id"] for p in one["state"]["passages"]] == ["p0", "p1"] == one["state"]["complete_passages"]
-    assert one["questions"] == {"joint_r0": {"kind": "joint", "question": joint.question("r0"), "drawn": "picks"}}
+    assert one["questions"] == {"joint_r0": {"kind": "joint", "question": joint.question(row["state"], "r0"), "drawn": "picks"}}
     assert one["state_hash"] == pool.digest(one["state"]) and one["provenance"] == {"coverage": "c0"}
     assert kinds.view("joint_r0", "joint", one["state"]) == one["state"]   # stored with its own view
     # Train is augmented: each pick left out, and one passage the run read as none added.
