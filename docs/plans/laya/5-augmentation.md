@@ -242,8 +242,13 @@ Owner, 2026-10-20 (after #187):
   unchanged, so the stored questions of every split are reworded, not
   relabelled. One Colab run retrains both on the same data as the
   `shape3` runs, so the paired comparison against them isolates the
-  wording, by the adoption rule above. Rejected, the wording is reverted
-  with the data.
+  wording, by the adoption rule above. A quoted requirement lengthens the
+  question, so a view can pass `MAX_LEN` and be left out of training,
+  calibration and scoring (coverage then leaves it undecided). The paired
+  gain and its noise floor are computed only on questions both runs
+  scored. The questions newly left out, by split, and coverage's decided
+  rate are reported beside it. Rejected, the wording is reverted with the
+  data.
 
 ## Acceptance
 

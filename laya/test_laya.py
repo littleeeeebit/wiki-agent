@@ -1243,7 +1243,8 @@ def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, 
                                     "i1": {"answer": "part", "evidence": "Entries live in memory."}}}}]
     (cut,) = support.trimmed([asked_row], support.quotes(turns, "all"))
     assert said not in cut["state"]["passages"][0]["text"] and "Entries live in memory." in cut["state"]["passages"][0]["text"]
-    assert cut["questions"]["support_r0_p0"]["drawn"] == "trimmed" and cut["provenance"]["trimmed"] == "a"
+    assert cut["questions"]["support_r0_p0"] == {"kind": "support", "drawn": "trimmed", "question": (asked := support.question(
+        cut["state"], "r0", "p0"))} and f'"{support.asks(cut["state"], "r0")}"' in asked["instructions"] and cut["provenance"]["trimmed"] == "a"
     assert cut["state_hash"] == pool.digest(cut["state"])
     short = {**asked_row, "state": {**asked_row["state"], "passages": [{**stated, "text": f"Short. {said}"}]}}
     assert support.trimmed([short], support.quotes(turns, "all")) == []   # nothing left to judge
@@ -1279,7 +1280,6 @@ def test_support_asks_one_listed_passage_and_makes_the_coverage_answer(folders, 
     assert set(ways) == {"evidence", "before", "after", "evidence_after"}
     assert all(list(r["questions"]) == ["support_r0_p0"] and r["provenance"]["restated"] == cand["state_hash"]
                and r["questions"]["support_r0_p0"]["question"] == support.question(r["state"], "r0", "p0") for r in told)
-    assert '"' + support.asks(cand["state"], "r0") + '"' in support.question(cand["state"], "r0", "p0")["instructions"]
     assert ways["evidence"]["state"]["passages"][0]["text"] == quote   # a quote inside another is not repeated
     assert ways["before"]["state"]["passages"][0]["text"].endswith(support.fold(stated_text := cand["state"]["passages"][0]["text"]))
     assert ways["after"]["state"]["passages"][0]["text"].startswith(support.fold(stated_text))

@@ -146,7 +146,8 @@ def trimmed(rows: list[dict], quoted: set[str], held=()) -> list[dict]:
             continue
         state = {**row["state"], "passages": [{**p, "text": text}]}
         cand = {"id": f"{row['id']}-trimmed", "state": state, "state_hash": digest(state),
-                "questions": {n: {**q, "drawn": "trimmed"} for n, q in row["questions"].items()},
+                "questions": {n: {**q, "question": question(state, *n.split("_")[1:]), "drawn": "trimmed"}
+                              for n, q in row["questions"].items()},
                 "provenance": {**row["provenance"], "trimmed": row["state_hash"]}}
         if not near.found(cand):
             out.append(cand)
