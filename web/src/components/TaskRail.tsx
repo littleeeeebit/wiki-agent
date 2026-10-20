@@ -294,7 +294,20 @@ function Label({ children }: { children: string }) {
   return <div className={cn('px-2 pt-1 pb-1 font-heading text-[11px] font-semibold text-faint', WIDE)}>{children}</div>
 }
 
-type RowTask = Pick<Task, 'key' | 'name' | 'pr' | 'round' | 'phase' | 'waiting' | 'busy' | 'line'>
+type RowTask = Pick<Task, 'key' | 'name' | 'pr' | 'round' | 'phase' | 'waiting' | 'busy' | 'line'> & Partial<Pick<Task, 'gate'>>
+
+/** "게이트 중 · 3분 12초" while the task's gate runs, ticking each second. */
+function useGateLabel(gate: Task['gate'] | undefined): string {
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!gate) return
+    const timer = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [gate])
+  if (!gate) return ''
+  const s = Math.max(0, Math.floor(now / 1000 - gate.since))
+  return `${gate.kind === 'final' ? '최종 게이트' : '게이트'} 중 · ${s >= 60 ? `${Math.floor(s / 60)}분 ${s % 60}초` : `${s}초`}`
+}
 
 /** One task: its name, PR and round; then one word of state and what a
  *  person has to do. Folded, only the dot stays, and the words move to the
@@ -302,7 +315,9 @@ type RowTask = Pick<Task, 'key' | 'name' | 'pr' | 'round' | 'phase' | 'waiting' 
 function Row({ task: t, selected, onSelect, onMenu, title }: {
   task: RowTask; selected: boolean; onSelect: (key: string) => void; onMenu?: (e: MouseEvent) => void; title?: string
 }) {
-  const tip = `${t.name}${t.pr ? ` #${t.pr}` : ''}${t.round ? ` R${t.round}` : ''} — ${t.line}`
+  const gate = useGateLabel(t.gate)
+  const line = [gate, t.line].filter(Boolean).join(' · ')
+  const tip = `${t.name}${t.pr ? ` #${t.pr}` : ''}${t.round ? ` R${t.round}` : ''} — ${line}`
   return (
     <button type="button" onClick={() => onSelect(t.key)} onContextMenu={onMenu} aria-current={selected}
       title={title ?? tip}
@@ -318,8 +333,9 @@ function Row({ task: t, selected, onSelect, onMenu, title }: {
           </span>
         )}
       </span>
-      <span className={cn('task-state mt-0.5 block truncate pl-4 font-mono text-[10.5px]', t.waiting ? 'text-wait' : 'text-muted-foreground', WIDE)}>
-        {t.line}
+      <span role={gate ? 'status' : undefined}
+        className={cn('task-state mt-0.5 block truncate pl-4 font-mono text-[10.5px]', t.waiting ? 'text-wait' : gate ? 'text-primary' : 'text-muted-foreground', WIDE)}>
+        {line}
       </span>
       <span className={cn('sr-only', NARROW)}>{tip}</span>
     </button>

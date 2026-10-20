@@ -23,6 +23,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from fnmatch import fnmatchcase
 from pathlib import Path
 
@@ -65,8 +66,13 @@ STATE = re.compile(r"정리됨|작업 중|PR #\d+|리뷰 대기|리뷰 R\d+|고�
 # its name. A block cut off before its closing fence is not one.
 BLOCK = re.compile(r"^```(candidates|choices|spec|spec-update|done-report|test-cleanup)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 
+REPORT_AGAIN = ("The specification is now revision {rev}, and your last answer had no `done-report`, so nothing "
+                "can be checked or reviewed. Check every completion condition of revision {rev} against the current "
+                "code, finish and push what is missing, then end with the `test-cleanup` block if tests changed "
+                "and the `done-report` block for revision {rev}.")
+
 # `path:line` or `path:line-line` as an answer cites it.
-LINE = re.compile(r":\d+(?:[-–]\d+)?$")
+LINE =re.compile(r":\d+(?:[-–]\d+)?$")
 
 router = APIRouter()
 
@@ -139,6 +145,24 @@ def summary(spec: dict) -> dict:
 
 def publish(spec: dict) -> None:
     work.feed.put({"kind": "spec", **summary(spec)})
+
+
+# The gate running for a spec now, `{kind, since}`. Kept in memory, not in the
+# spec file: a server that died mid-gate must never leave one shown running.
+_gating: dict[tuple[str, str], dict] = {}
+
+
+@contextmanager
+def gating(repo: str, sid: str, kind: str):
+    _gating[(repo, sid)] = {"kind": kind, "since": time.time()}
+    try:
+        if spec := load(repo, sid):
+            publish(spec)
+        yield
+    finally:
+        _gating.pop((repo, sid), None)
+        if spec := load(repo, sid):
+            publish(spec)
 
 
 def branch_of(spec: dict) -> str:
@@ -454,6 +478,7 @@ def view(repo: Path, spec: dict) -> dict:
         except (OSError, subprocess.SubprocessError) as exc:
             unproven = f"작업트리를 읽지 못했다 — {exc}"
     return {**spec, **profile_of(spec), **review_contract.view(repo, spec, allowed),
+            "gating": _gating.get((spec["repo"], spec["id"])),
             "missing": missing(repo, spec), "approved": allowed["head"] if allowed else None,
             "unproven": unproven, "waiting": bool(spec.get("worktree")) and work.waiting(spec["worktree"])}
 
@@ -1102,7 +1127,8 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
     clean = sh(["git", "status", "--porcelain"], path)
     if reused := verify.cached_round(spec, chosen, current, clean):
         return reused, last
-    verdict = {**judge(path, chosen["commands"], halt, noted), "selection": chosen["selection"]}
+    with gating(spec["repo"], spec["id"], "round"):
+        verdict = {**judge(path, chosen["commands"], halt, noted), "selection": chosen["selection"]}
     return verdict, {"head": verdict["head"], **chosen, "ok": verdict["ok"], "finished_at": verdict["ts"]}
 
 
@@ -1450,6 +1476,11 @@ def _check(path: Path, run, final: str):
         except ValueError as exc:
             return failed(run, spec, f"명세 변경을 반영하지 못했다 — {exc}")
         note(run, f"명세 판 {spec['rev']} 반영 · 이전 리뷰 승인은 다시 확인한다")
+        if spec["state"] == "작업 중" and not any(b["name"] == "done-report" for b in blocks(final)[1]):
+            # Nothing else moves a revised task out of `작업 중`: ask once for the report the gate needs.
+            spec = update(spec["repo"], spec["id"], report_asked=True)
+            note(run, f"명세 판 {spec['rev']} 의 완료 보고를 요청한다")
+            return lambda: again(path, run.chat, REPORT_AGAIN.format(rev=spec["rev"]), spec)
     if spec["state"].startswith("PR #") and spec.get("plan_commit") == "asked":
         # Any turn that ends here is not the row's commit: a person's turn may
         # have got there first, or the agent answered without the edit. Only
@@ -1470,11 +1501,14 @@ def _check(path: Path, run, final: str):
         return None
     report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
     if report is None:
+        if spec.get("report_asked"):
+            update(spec["repo"], spec["id"], report_asked=False)
+            return failed(run, spec, f"명세 판 {spec['rev']} 의 완료 보고가 다시 빠졌다 — 에이전트에게 완료 보고를 요청해라")
         return None
     if "error" in report or not valid(report.get("value")):
         return failed(run, spec, f"완료 보고를 읽지 못했다 — {report.get('error') or '항목마다 item 과 pass 가 있어야 한다'}")
     items = report["value"]
-    spec = update(spec["repo"], spec["id"], report=items)
+    spec = update(spec["repo"], spec["id"], report=items, report_asked=False)
     if len(items) < len(spec["done"]) or not all(i["pass"] for i in items):
         return failed(run, spec, "완료 보고에 통과하지 못했거나 빠진 항목이 있다. 판정하지 않는다")
     cleanup = next((b.get("value") for b in blocks(final)[1] if b["name"] == "test-cleanup"), None)

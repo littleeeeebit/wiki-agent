@@ -512,6 +512,8 @@ export type Spec = {
   /** The head the last counted round allowed: what `[머지]` is bound to. */
   approved?: string | null
   validation?: Validation
+  /** The gate running for this task now (`since` in epoch seconds); the server holds it only while it runs. */
+  gating?: { kind: 'round' | 'final'; since: number } | null
   /** In `머지 가능`, why the final gate does not stand for `approved` now —
    *  the server's `specs.proven`, never judged here. Empty only when `[머지]`
    *  may go; `null` in every other state. */

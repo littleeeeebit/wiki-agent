@@ -145,3 +145,21 @@ def test_resumed_runner_usage_is_recorded_once(selected, tmp_path):
             saved = refactor.load("proj", rid)
             assert saved["spent"]["calls"] == calls and saved["spent"]["tokens"] == tokens
             assert saved["spent"]["unknown"]
+
+
+def test_a_package_directory_is_a_discovery_target(selected):
+    # A full-mode spec naming the package directory, as a module described by
+    # purpose usually is, was refused as "not a file in this repository".
+    (selected / "pkg").mkdir()
+    (selected / "pkg/orders.py").write_text("x = 1\n", encoding="utf-8")
+    source = {"focus": "refactor", "turn": 1, "session": "discussion", "refactor_mode": "full"}
+
+    def card(files):
+        block = spec_block(slug="whole-repo", goal="Pay down debt", done=["Behavior is preserved"],
+                           refactor={"mode": "full", "files": files})
+        return specs.answered(selected, [{"name": "spec", "value": block}], source)[0]
+
+    assert specs.load("proj", card(["pkg", "big.py"])["id"])["refactor"]["files"] == ["pkg", "big.py"]
+    assert "디렉터리가 아니다" in card(["missing"])["error"]
+    paths = ["pkg/orders.py", "pkgx.py", "big.py"]
+    assert [p for p in paths if refactor.targeted(p, ["pkg/"])] == ["pkg/orders.py"]

@@ -40,6 +40,8 @@ const TONE: Record<string, string> = {
   queued: 'text-st-queued', stop: 'text-st-stop', done: 'text-faint', none: 'text-faint',
 }
 
+const NO_CHOICE: Choice = { model: '', effort: '' }
+
 function stored<T extends string>(key: string, fallback: T): T {
   try {
     return (localStorage.getItem(key) as T | null) ?? fallback
@@ -79,8 +81,12 @@ export default function App() {
   const [mapRun, setMapRun] = useState<{ repo: string; run: RunSummary } | null>(null)
   const [setting, setSetting] = useState(false)
   const [queryBusy, setQueryBusy] = useState(false)
-  const [choice, setChoice] = useState<Choice>({ model: '', effort: '' })
-  const [peek, setPeek] = useState<{ data: PeekData | null; error?: string } | null>(null)
+  // Each task keeps its own work model, by its key: a model picked in one task,
+  // or in another repository, never becomes another task's selection.
+  const [choices, setChoices] = useState<Record<string, Choice>>({})
+  const choice = choices[selected] ?? NO_CHOICE
+  const setChoice = useCallback((c: Choice) => setChoices((all) => ({ ...all, [selected]: c })), [selected])
+  const [peek,setPeek] = useState<{ data: PeekData | null; error?: string } | null>(null)
   // Dark unless the person chose light. Remembered per machine, not per server.
   const [theme, setTheme] = useState<Theme>(() => stored('theme', 'dark'))
   // The list carries the project it was read for, and is shown only under
@@ -423,6 +429,8 @@ export default function App() {
     const target = specs.find((spec) => spec.id === id)
     const { path } = target && target.state !== '정리됨'
       ? await api.checkoutSpec(id) : await api.startSpec(id, choice)
+    // The choice made on the spec card goes with the task to its worktree.
+    setChoices((all) => all[`spec:${id}`] ? { ...all, [path]: all[`spec:${id}`] } : all)
     work.forget(path)
     work.load(path)
     readSpecs()

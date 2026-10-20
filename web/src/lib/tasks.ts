@@ -34,6 +34,8 @@ export type Task = {
   group: Group
   /** The second line: one word of state, then what a person has to do. */
   line: string
+  /** A gate running for this task: shown on its own row, never as a row of its own. */
+  gate: Spec['gating']
   waiting: boolean
   busy: boolean
   live: boolean
@@ -74,7 +76,9 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
     // A plan still being drafted says its phase; its questions and its stop wait on the person.
     const plan = s.state === '작업 중' ? s.planning : null
     const planAct = plan?.phase === 'clarify' || plan?.phase === 'stopped'
-    const parts = [merging ? s.merge_progress!.stage : plan ? `계획 · ${PLAN_PHASE[plan.phase]}` : word(s.state)]
+    const gate = merging ? null : s.gating ?? null
+    // A running gate takes the state word's place; the row shows it with its elapsed time.
+    const parts = gate ? [] : [merging ? s.merge_progress!.stage : plan ? `계획 · ${PLAN_PHASE[plan.phase]}` : word(s.state)]
     if (plan?.stopped) parts.push(PLAN_STOP[plan.stopped.reason] ?? plan.stopped.reason)
     if (waiting) parts.push(asks ? `승인 ${asks}` : '승인 대기')
     if (p === 'ready' && !merging) parts.push('머지를 누른다')
@@ -86,7 +90,7 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
       phase: p,
       group: waiting || planAct || p === 'ready' && !merging || p === 'stop' ? 'act'
         : p === 'draft' && !running ? 'idle' : 'run',
-      line: parts.join(' · '), waiting, busy: running || merging, live: row?.live ?? false, row,
+      line: parts.join(' · '), gate, waiting, busy: running || merging || !!gate, live: row?.live ?? false, row,
     })
   }
   for (const r of rows) {
@@ -99,7 +103,7 @@ export function tasks(specs: Spec[], rows: Worktree[], approvals: (path: string)
     else if (r.dirty) parts.push('변경 있음')
     else if (r.merged) parts.push('HEAD 에 다 있음')
     out.push({ key: r.path, path: r.path, spec: null, name: r.name, pr: null, round: 0, phase: 'none',
-      group: asks ? 'act' : running ? 'run' : 'idle', line: parts.join(' · '), waiting: asks > 0,
+      group: asks ? 'act' : running ? 'run' : 'idle', line: parts.join(' · '), gate: null, waiting: asks > 0,
       busy: running, live: r.live, row: r })
   }
   return out
