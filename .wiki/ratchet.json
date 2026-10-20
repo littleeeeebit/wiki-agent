@@ -133,8 +133,8 @@
     },
     "tool/main/specs.py": {
       "dup": 0,
-      "lines": 1539,
-      "reason": "A turn that revises the spec without a done-report gets one automatic request for it and a second miss is a fault, since rfg_rag #76 sat in `작업 중` with nothing running; and `gating` holds each running gate in memory for the task row, so a dead server never leaves one shown (#194, thirty-eight lines). Before that: `brief` splits the spec block out of `system` so the reviewer's handoff and post-compaction restatement read the same spec as the implementer (four lines, #175). Before that: #172 points every Windows gate's TMPDIR, TEMP and TMP at its own folder, since the Codex sandbox's same-named account leaves pytest links this account cannot read; merged without raising this ceiling, so main failed debt.py check."
+      "lines": 1542,
+      "reason": "A turn that revises the spec without a done-report gets one automatic request for it and a second miss is a fault, since rfg_rag #76 sat in `작업 중` with nothing running; and `gating` holds each running gate in memory for the task row, so a dead server never leaves one shown, and skips a bare check spec with no task, which `rounded` still accepts (#194, forty-one lines). Before that: `brief` splits the spec block out of `system` so the reviewer's handoff and post-compaction restatement read the same spec as the implementer (four lines, #175). Before that: #172 points every Windows gate's TMPDIR, TEMP and TMP at its own folder, since the Codex sandbox's same-named account leaves pytest links this account cannot read; merged without raising this ceiling, so main failed debt.py check."
     },
     "tool/main/verification.py": {
       "dup": 12,

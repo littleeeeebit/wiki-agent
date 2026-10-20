@@ -153,7 +153,10 @@ _gating: dict[tuple[str, str], dict] = {}
 
 
 @contextmanager
-def gating(repo: str, sid: str, kind: str):
+def gating(repo: str | None, sid: str | None, kind: str):
+    if not (repo and sid):   # a bare check spec has no task row to show it on
+        yield
+        return
     _gating[(repo, sid)] = {"kind": kind, "since": time.time()}
     try:
         if spec := load(repo, sid):
@@ -1127,7 +1130,7 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
     clean = sh(["git", "status", "--porcelain"], path)
     if reused := verify.cached_round(spec, chosen, current, clean):
         return reused, last
-    with gating(spec["repo"], spec["id"], "round"):
+    with gating(spec.get("repo"), spec.get("id"), "round"):
         verdict = {**judge(path, chosen["commands"], halt, noted), "selection": chosen["selection"]}
     return verdict, {"head": verdict["head"], **chosen, "ok": verdict["ok"], "finished_at": verdict["ts"]}
 
