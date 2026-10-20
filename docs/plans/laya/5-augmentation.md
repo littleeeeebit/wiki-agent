@@ -205,7 +205,19 @@ Owner, 2026-10-20 (after #187):
   long conversation's quoted page lines in Korean are left out, long is
   counted in words, and a turn asks six questions, not eight. A turn whose
   JSON fails to parse (`Extra data`) is still lost; `shape3`'s first 50
-  states show how often. The batch restarts as `shape3`; `shape2`
+  states show how often.
+  `shape3` passed the check (query p90 1,193 over its first 50 states,
+  `current_state` 0.56, `omitted_context` 0.18; no stand-in, no
+  normalization failure) and ran to 169 turns, stopped by the owner after
+  Claude Code twice ended the background run for low memory: 941
+  questions, $10.70. 9 turns were lost to `Extra data`. 50 runs failed
+  normalization: 25 Korean questions, where the teacher broke the English
+  rule, and 25 English ones with a long context, whose summary carries a
+  repository's Korean plans and decisions, which the capture does not
+  translate. Kept labels: coverage 912 (yes 0.41), support 1,395 (none
+  1,051, part 271, all 73), joint 1,491 from random passage subsets (yes
+  0.05). The batch spent $15.06 of the $20 cap. Support's train now holds
+  the pilot's and `shape3`'s labels: 18,688 rows. The batch restarts as `shape3`; `shape2`
   is not labelled, and its spend counts against the cap.
 - Gate. The coverage gate was read four times on 2026-10-19, all
   diagnostics with the same checkpoints (stage 6, Results). Support ran

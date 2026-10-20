@@ -41,7 +41,9 @@ SPLITS = ("train", "validation", "calibration")
 # the labelled splits (2026-10-15) the other retrieval kinds are 277-684 at p95, at most 1,039.
 # `coverage` reads every passage: 4,844 at p95, 40% over 4,096, so it takes ModernBERT's
 # whole 8,192 (owner, 2026-10-15), one question a micro-batch to fit the L4.
-MAX_LEN = {"useful": 2048, "coverage": 8192, "support": 1024,   # `support` views: 2,624 characters at most
+# `support` reads production's views, 522 of the gate's 1,415 over 1,024 tokens, so it takes
+# 2,048, where every gate view fits (stage 5, Length; 2026-10-20).
+MAX_LEN = {"useful": 2048, "coverage": 8192, "support": 2048,
            # `joint` views (2026-10-18): train 844 tokens median, 5.4% over 2,048, longest 3,439.
            "joint": 4096,
            **dict.fromkeys(("route", "source", "conflict", "redirect", "ask", "analysis", "progress"), 1024)}
