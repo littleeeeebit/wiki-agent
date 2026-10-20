@@ -269,6 +269,44 @@ def main():
                 page.get_by_role("option", name="codex:fixture-fast", exact=True).click()
                 assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() == "codex:fixture-fast"
                 assert agent.get_by_role("textbox").is_disabled()
+            # The model picked with no task selected is what a spec card's start sends,
+            # a refactoring card's too; reopening a task keeps the task's own model.
+            started = []
+            draft = {**spec, "id": "draft-task", "state": "정리됨", "worktree": None, "report": []}
+            cards = [draft, {**draft, "id": "draft-refactor", "refactor": {"mode": "cleanup", "files": []}},
+                     {**spec, "id": "existing-task", "state": "PR #9", "pr": {"number": 9}, "worktree": None,
+                      "cell": {"model": "opus", "effort": "", "fast": False}}]
+            page.route("**/api/specs", lambda route: route.fulfill(json={"project": "fixture", "specs": cards}))
+            page.route("**/api/log/next*", lambda route: route.fulfill(json=[
+                {"role": "assistant", "text": "Synthetic specification",
+                 "blocks": [{"name": "spec", "id": card["id"]} for card in cards]}]))
+            page.route("**/api/specs/*/start", lambda route: (
+                started.append((route.request.url.split("/")[-2], route.request.post_data_json)),
+                route.fulfill(json={"refactor": "run"} if "refactor" in route.request.url
+                              else {"path": "fixture-task", "turn": "t"})))
+            page.route("**/api/specs/*/checkout", lambda route: (
+                started.append((route.request.url.split("/")[-2], None)), route.fulfill(json={"path": "fixture-task"})))
+            page.set_viewport_size({"width": 1440, "height": 900})
+            page.goto(base)
+            agent = page.get_by_label("에이전트 세션", exact=True)
+            agent.get_by_role("combobox").first.click()
+            page.get_by_role("option", name="codex:fixture-fast", exact=True).click()
+            page.get_by_role("navigation", name="초점", exact=True).get_by_role("button", name="다음 작업", exact=True).click()
+            for n, button in enumerate((page.get_by_role("button", name="시작 ▸", exact=True).first,
+                                        page.get_by_role("button", name="시작 ▸", exact=True).last,
+                                        page.get_by_role("button", name="브랜치 열기", exact=True)), 1):
+                button.click()
+                for _ in range(50):
+                    if len(started) == n:
+                        break
+                    page.wait_for_timeout(100)
+            assert [(sid, body and body["model"]) for sid, body in started] == [
+                ("draft-task", "codex:fixture-fast"), ("draft-refactor", "codex:fixture-fast"), ("existing-task", None)], started
+            page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="existing-task").click()
+            assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() == "opus"
+            page.unroute("**/api/specs/*/start")
+            page.unroute("**/api/specs/*/checkout")
+            page.unroute("**/api/log/next*")
             page.unroute("**/api/worktrees")
             page.unroute("**/api/specs")
             page.set_viewport_size({"width": 1440, "height": 900})

@@ -479,6 +479,8 @@ export type Recovery = {
 
 export type Spec = {
   cleanup_complete?: boolean
+  /** The work model its turns last ran on. */
+  cell?: { model: string; effort: string; fast?: boolean }
   id: string
   repo: string
   rev: number
