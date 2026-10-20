@@ -58,7 +58,10 @@ PROMPT = Path(__file__).resolve().parent / "prompts" / "generate.md"
 SPLITS = ("train", "validation", "calibration")
 RETRIEVAL = (*NOUL, "repair")
 PAGES = 6
-PER_TURN = 8
+# Six leave the teacher room for long questions and conversations: at eight, a `shape2` turn
+# wrote `placeholder` for six of them (2026-10-20).
+PER_TURN = 6
+FEWEST = 20   # characters: a shorter text is a stand-in, not a question
 EXCERPT = 3000
 CAP = 2   # candidates of one kind from one question, so a kind's set spans many questions
 TYPES = ("answered", "partial", "bridging", "unanswered", "false_premise")
@@ -141,10 +144,13 @@ def teacher_turn(model: str, seed: int, lean: bool = False) -> dict:
                     model)
     said = got.pop("json")
     titles = {p["path"]: p.get("title") for p in drawn["pages"]}
-    queries, used = [], set()
+    queries, used, texts = [], set(), set()
     for i, q in enumerate(said.get("queries") if isinstance(said.get("queries"), list) else []):
-        if not (isinstance(q, dict) and isinstance(q.get("text"), str) and q["text"].strip()):
+        # A stand-in (`placeholder`) or a text written twice is no question, and is never run.
+        if not (isinstance(q, dict) and isinstance(q.get("text"), str) and len(q["text"].strip()) >= FEWEST
+                and q["text"].strip() not in texts):
             continue
+        texts.add(q["text"].strip())
         slot = q["slot"] if isinstance(q.get("slot"), int) and 0 <= q["slot"] < PER_TURN else i
         if slot < PER_TURN and slot not in used:   # the slot it was asked for, never the teacher's own label
             used.add(slot)
