@@ -995,12 +995,28 @@ def answered(repo: Path, sid: str, run: work.Run, path: str) -> None:
     spec = specs.load(repo.name, sid)
     if not spec or spec["state"] != "멈춤" or (spec.get("stopped") or {}).get("reason") != Why.ASKED.value:
         return
-    if run.halt.is_set() or work._runs.get(path) is not run or path in work._queued:   # a newer turn decides
-        return
+    # The halted loop is waited for first, then the worktree is held while this
+    # is checked and the loop restarted: no turn can start, and ask, between
+    # the check and the restart (#193 rounds 2 and 3).
+    with _lock:
+        old = _loops.get((repo.name, sid))
+    if old is not None and old.thread is not None:
+        old.thread.join(30)   # outside the hold: a halted loop may still be leaving `wait_hold`
     try:
+        release = hold(work._busy, _lock, path, "", kind="turn")
+    except HTTPException:
+        return   # a newer turn runs there; its own end decides
+    try:
+        spec = specs.load(repo.name, sid)
+        if not spec or spec["state"] != "멈춤" or (spec.get("stopped") or {}).get("reason") != Why.ASKED.value:
+            return
+        if run.halt.is_set() or work._runs.get(path) is not run or path in work._queued:   # a newer turn decides
+            return
         proceed(repo, spec, "")
     except HTTPException as exc:
         errorlog.record("loop-answered", exc, repo=repo.name, spec=sid)
+    finally:
+        release()
 
 
 def reusable(spec: dict, head: str, chosen: dict) -> bool:

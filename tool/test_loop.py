@@ -1384,6 +1384,49 @@ def test_an_older_answer_does_not_resume_past_a_newer_question(world):
     assert len(Worker.made[0].heard) == 3
 
 
+def test_a_question_while_the_halted_loop_is_leaving_is_not_run_past(world):
+    """The resume waits for the halted loop to leave; a turn that starts and
+    asks during that wait is seen once it holds the worktree (#193 round 3)."""
+
+    spec = pr_spec(world, "asks-during-join", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, "First answer accepted.", ASK]
+    exiting, leave, joining, real_step, old = (threading.Event(), threading.Event(), threading.Event(),
+                                              loop.step, None)
+
+    def step(lp):
+        result = real_step(lp)
+        if lp is old and lp.halt.is_set():
+            exiting.set()
+            assert leave.wait(15)
+        return result
+
+    with patch.object(loop, "step", side_effect=step):
+        try:
+            loop.kick("proj", spec["id"])
+            old = loop._loops[("proj", spec["id"])]
+            assert exiting.wait(15)
+            real_join = old.thread.join
+
+            def join(timeout=None):
+                joining.set()
+                return real_join(timeout)
+
+            with patch.object(old.thread, "join", side_effect=join):
+                work.say(work.Order(path=spec["worktree"], text="First answer"))
+                assert joining.wait(15)
+                work.say(work.Order(path=spec["worktree"], text="Another instruction"))
+                newer = work._runs[spec["worktree"]]
+                waited(lambda: newer.done)
+                leave.set()
+                waited(lambda: not old.thread.is_alive() and not work._turns)
+        finally:
+            leave.set()
+    again = specs.load("proj", spec["id"])
+    assert again["state"] == "멈춤" and again["stopped"]["reason"] == "작업 에이전트의 질문"
+    assert len(Worker.made[0].heard) == 3, "no correction is sent past the newer question"
+
+
 def test_the_gate_failing_twice_in_a_row_stops(world):
     mapped(world, "*", command="python gate.py round")
     pr_spec(world, "fix-c", 7)
