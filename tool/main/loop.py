@@ -992,8 +992,15 @@ def answered(repo: Path, sid: str, run: work.Run, path: str) -> None:
     stopped while it was being recorded, nor while another instruction waits
     in the queue — that turn's own end decides."""
 
-    spec = specs.load(repo.name, sid)
-    if not spec or spec["state"] != "멈춤" or (spec.get("stopped") or {}).get("reason") != Why.ASKED.value:
+    def current() -> dict | None:
+        spec = specs.load(repo.name, sid)
+        if not spec or spec["state"] != "멈춤" or (spec.get("stopped") or {}).get("reason") != Why.ASKED.value:
+            return None
+        if run.halt.is_set() or work._runs.get(path) is not run or path in work._queued:   # a newer turn decides
+            return None
+        return spec
+
+    if current() is None:
         return
     # The halted loop is waited for first, then the worktree is held while this
     # is checked and the loop restarted: no turn can start, and ask, between
@@ -1002,15 +1009,22 @@ def answered(repo: Path, sid: str, run: work.Run, path: str) -> None:
         old = _loops.get((repo.name, sid))
     if old is not None and old.thread is not None:
         old.thread.join(30)   # outside the hold: a halted loop may still be leaving `wait_hold`
-    try:
-        release = hold(work._busy, _lock, path, "", kind="turn")
-    except HTTPException:
-        return   # a newer turn runs there; its own end decides
-    try:
-        spec = specs.load(repo.name, sid)
-        if not spec or spec["state"] != "멈춤" or (spec.get("stopped") or {}).get("reason") != Why.ASKED.value:
+        if old.thread.is_alive():   # `kick` would wait again, holding the worktree; `/resume` picks it up
+            errorlog.record("loop-answered", "앞 루프가 아직 멈추는 중이다", repo=repo.name, spec=sid)
             return
-        if run.halt.is_set() or work._runs.get(path) is not run or path in work._queued:   # a newer turn decides
+    while True:
+        # Only the newest answer takes the hold: a stale one leaves above, and a
+        # hold another answer's check has for a moment is waited out (#193 round 4).
+        if current() is None:
+            return
+        try:
+            release = hold(work._busy, _lock, path, "", kind="turn")
+            break
+        except HTTPException:
+            time.sleep(0.2)
+    try:
+        spec = current()
+        if spec is None:
             return
         proceed(repo, spec, "")
     except HTTPException as exc:
