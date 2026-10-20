@@ -1481,6 +1481,23 @@ def test_the_newest_answer_resumes_when_a_stale_one_takes_the_hold_first(world):
     assert len(Worker.made[0].heard) == 4
 
 
+def test_an_answer_that_revises_the_spec_and_asks_again_waits_for_the_person(world):
+    """A revision sends the spec back to `작업 중`, where a missing done report
+    is asked for once by itself (#194); a turn that asks is not (#193 round 6)."""
+
+    spec = pr_spec(world, "answer-revises", 7)
+    change = {**{k: spec[k] for k in ("goal", "out", "done")}, "rev": spec["rev"],
+              "reason": "Clarify the requested split", "goal": spec["goal"] + " with explicit roles"}
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, "```spec-update\n" + json.dumps(change) + "\n```\n\n" + ASK, "No answer was given."]
+    looped(spec["id"])
+    client().post("/api/work/say", json={"path": spec["worktree"], "text": "Explicit roles"}).raise_for_status()
+    waited(lambda: not work._turns)
+    fresh = specs.load("proj", spec["id"])
+    assert len(Worker.made[0].heard) == 2, "nothing is sent past the new question"
+    assert fresh["state"] == "작업 중" and fresh["rev"] == spec["rev"] + 1 and not fresh.get("fault")
+
+
 def test_a_loop_that_will_not_leave_is_waited_for_once(world):
     spec = pr_spec(world, "stuck-loop", 7)
     Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
