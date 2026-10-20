@@ -41,6 +41,7 @@ import hashlib
 import json
 import math
 import random
+import re
 import socket
 import sys
 import threading
@@ -59,9 +60,13 @@ SPLITS = ("train", "validation", "calibration")
 RETRIEVAL = (*NOUL, "repair")
 PAGES = 6
 # Six leave the teacher room for long questions and conversations: at eight, a `shape2` turn
-# wrote `placeholder` for six of them (2026-10-20).
+# wrote `placeholder` for six of them (2026-10-20, `STAND_INS`).
 PER_TURN = 6
-FEWEST = 20   # characters: a shorter text is a stand-in, not a question
+# What a teacher writes in place of a question (lower case, outer punctuation stripped).
+STAND_INS = {"placeholder", "todo", "tbd", "n/a", "question", "..."}
+# Hangul and CJK: the capture's translator answers nothing, so a state holding them fails
+# normalization (`captured`).
+FOREIGN = re.compile("[ᄀ-ᇿ　-鿿가-힯]")
 EXCERPT = 3000
 CAP = 2   # candidates of one kind from one question, so a kind's set spans many questions
 TYPES = ("answered", "partial", "bridging", "unanswered", "false_premise")
@@ -129,9 +134,11 @@ def sample(seed: int, found: dict[str, Path] | None = None, lean: bool = False) 
 def conversation(prior: list[dict], pages: list[dict], long: bool) -> str:
     """The state production passes `prepare`: the turns before the question, one
     `role: text` line each (`main.query`). A `long` one starts with earlier turns of an
-    assistant quoting the pages, so it passes `STATE_CHARS` and its summary omits them."""
+    assistant quoting the pages, so it passes `STATE_CHARS` and its summary omits them;
+    their lines in another script are left out, as the teacher's own text is English."""
 
-    lines = [f"assistant: {p['excerpt']}" for p in pages] if long else []
+    quoted = ["\n".join(line for line in p["excerpt"].split("\n") if not FOREIGN.search(line)) for p in pages]
+    lines = [f"assistant: {q}" for q in quoted if q.strip()] if long else []
     return "\n".join(lines + [f"{t['role']}: {t['text']}" for t in prior])
 
 
@@ -151,9 +158,9 @@ def teacher_turn(model: str, seed: int, lean: bool = False) -> dict:
         slot = q["slot"] if isinstance(q.get("slot"), int) and 0 <= q["slot"] < PER_TURN else i
         if slot < PER_TURN and slot not in used:   # the slot it was asked for, never the teacher's own label
             # A stand-in (`placeholder`) or a text written twice is no question, and is never run;
-            # a chat ("thanks!") may be short.
+            # a short one ("Which port?", "thanks!") is.
             text = q["text"].strip()
-            if text in texts or len(text) < FEWEST and drawn["slots"][slot].get("intent") != "chat":
+            if text in texts or text.lower().strip(" .!?:;'\"`") in STAND_INS | {""}:
                 continue
             texts.add(text)
             used.add(slot)
