@@ -80,8 +80,10 @@ a time instead, the shape `useful` learned.
 
 - Kind `support` (`laya/support.py`, not a production question): does
   passage p state all, part or none of requirement r. Its view is the state
-  with that one passage. It trains at 1,024 tokens, since a view is at most
-  2,624 characters.
+  with that one passage. It trained at 1,024 tokens while a generated view
+  was at most 2,624 characters; production's are longer (522 of the gate's
+  1,415 views exceed 1,024), so it now trains and serves at 2,048
+  ([stage 5](5-augmentation.md), Length).
 - The production `coverage` question is unchanged. Its answer is made from
   the answers over the state's listed passages:
   - yes when some passage states all of the requirement;
