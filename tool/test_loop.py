@@ -1279,6 +1279,80 @@ def test_an_answer_that_asks_again_keeps_the_loop_waiting(world):
     assert len(Worker.made[0].heard) == 2 and ("proj", spec["id"]) not in loop._loops
 
 
+def test_the_question_is_a_stop_before_the_worktree_is_let_go(world):
+    """An answer could otherwise start, and end, while the loop has not yet
+    written the stop (#193 round 1): the turn's record is kept while it still
+    holds the worktree, and the stop is there by then."""
+
+    spec = pr_spec(world, "repair-asks-early", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK]
+    seen, real = [], work.remember
+
+    def remember(path, role, text, **kwargs):
+        if role == "assistant":
+            seen.append((specs.load("proj", spec["id"])["state"], str(path) in work._busy))
+        return real(path, role, text, **kwargs)
+
+    with patch.object(work, "remember", side_effect=remember):
+        looped(spec["id"])
+    assert seen == [("멈춤", True)]
+
+
+def test_an_answer_stopped_while_it_is_recorded_does_not_go_on(world):
+    spec = pr_spec(world, "answer-stopped", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, "Explicit roles, then."]
+    looped(spec["id"])
+    entered, go, real = threading.Event(), threading.Event(), work.remember
+
+    def remember(path, role, text, **kwargs):
+        if role == "assistant":
+            entered.set()
+            assert go.wait(15)
+        return real(path, role, text, **kwargs)
+
+    with patch.object(work, "remember", side_effect=remember), patch.object(loop, "proceed") as proceed:
+        try:
+            work.say(work.Order(path=spec["worktree"], text="Explicit roles"))
+            assert entered.wait(15)
+            run = work._runs[spec["worktree"]]
+            client().post("/api/work/stop", json={"path": spec["worktree"], "turn": run.turn}).raise_for_status()
+        finally:
+            go.set()
+        waited(lambda: not work._turns)
+    assert not proceed.called
+
+
+def test_a_queued_instruction_that_asks_again_keeps_the_loop_waiting(world):
+    spec = pr_spec(world, "queued-asks", 7)
+    Reviewer.replies = [deny("[P1] a.txt:1 — ambiguous rows")]
+    Worker.replies = [ASK, "First answer accepted.", ASK]
+    looped(spec["id"])
+    entered, go, real = threading.Event(), threading.Event(), work.remember
+
+    def remember(path, role, text, **kwargs):
+        if role == "assistant" and text == "First answer accepted.":
+            entered.set()
+            assert go.wait(15)
+        return real(path, role, text, **kwargs)
+
+    with patch.object(work, "remember", side_effect=remember):
+        try:
+            work.say(work.Order(path=spec["worktree"], text="First answer"))
+            assert entered.wait(15)
+            run = work._runs[spec["worktree"]]
+            client().post("/api/work/queue", json={"path": spec["worktree"], "turn": run.turn,
+                                                   "text": "Another instruction"}).raise_for_status()
+        finally:
+            go.set()
+        waited(lambda: len(Worker.made[0].heard) == 3 and not work._turns)
+    waited(lambda: ("proj", spec["id"]) not in loop._loops)
+    again = specs.load("proj", spec["id"])
+    assert again["state"] == "멈춤" and again["stopped"]["reason"] == "작업 에이전트의 질문"
+    assert len(Worker.made[0].heard) == 3, "no correction is sent past the new question"
+
+
 def test_the_gate_failing_twice_in_a_row_stops(world):
     mapped(world, "*", command="python gate.py round")
     pr_spec(world, "fix-c", 7)

@@ -967,19 +967,35 @@ def turn(loop: Loop, spec: dict, path: Path, text: str) -> str | None:
         raise RuntimeError(failure["text"] or "완료된 답이 없다")
     if not end or end["kind"] != "done" or not end["text"].strip():
         raise RuntimeError("완료된 답이 없다")
-    if specs.asks(end["text"]):
-        # Codex asks by ending its turn; asking again before the person answers repeats the question.
-        stop(loop, loop.repo, loop.sid, Why.ASKED, "작업 에이전트가 판단을 물었다 — 에이전트 칸에서 고르면 그 답의 턴이 끝난 뒤 루프가 이어 간다")
-        return None
     return end["text"]
 
 
-def answered(repo: Path, sid: str) -> None:
+def asked(repo: str, sid: str) -> bool:
+    """A work-cell turn ended on a `choices` question while this spec's loop
+    runs — its own repair turn or a person's between its turns. Codex asks by
+    ending its turn, so the loop halts on `Why.ASKED` instead of sending on.
+    Called from that turn's thread before it lets the worktree go: no answer
+    can start, or end, before the stop is written."""
+
+    with _lock:
+        loop = _loops.get((repo, sid))
+    if loop is None or loop.halt.is_set():
+        return False
+    stop(loop, repo, sid, Why.ASKED, "작업 에이전트가 판단을 물었다 — 에이전트 칸에서 고르면 그 답의 턴이 끝난 뒤 루프가 이어 간다")
+    loop.halt.set()   # not the turn's own halt: the question is not a cancelled turn
+    return True
+
+
+def answered(repo: Path, sid: str, run: work.Run, path: str) -> None:
     """The person's turn after `Why.ASKED` ended without asking again: `[계속]`
-    on their behalf. Run after the turn let the worktree go."""
+    on their behalf. Run after the turn let the worktree go; not for a turn
+    stopped while it was being recorded, nor while another instruction waits
+    in the queue — that turn's own end decides."""
 
     spec = specs.load(repo.name, sid)
     if not spec or spec["state"] != "멈춤" or (spec.get("stopped") or {}).get("reason") != Why.ASKED.value:
+        return
+    if run.halt.is_set() or path in work._queued:
         return
     try:
         proceed(repo, spec, "")

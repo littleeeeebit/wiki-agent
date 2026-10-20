@@ -1479,12 +1479,14 @@ def _check(path: Path, run, final: str):
         note(run, f"push · 계획 행 `{plan['path']}` {plan['row']}")
         update(spec["repo"], spec["id"], plan_commit="pushed", fault=None)
         return lambda: reviewed(spec)
-    if spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == "작업 에이전트의 질문" \
-            and not asks(final):
+    if spec["state"] != "작업 중":
         from . import loop  # `loop` imports this module
 
-        return lambda: loop.answered(repo, spec["id"])   # the person answered what a loop's turn asked
-    if spec["state"] != "작업 중":
+        if asks(final):
+            loop.asked(spec["repo"], spec["id"])
+            return None
+        if spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == loop.Why.ASKED.value:
+            return lambda: loop.answered(repo, spec["id"], run, str(path))   # the person answered it
         return None
     report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
     if report is None:
