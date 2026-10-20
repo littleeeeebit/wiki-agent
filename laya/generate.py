@@ -146,13 +146,16 @@ def teacher_turn(model: str, seed: int, lean: bool = False) -> dict:
     titles = {p["path"]: p.get("title") for p in drawn["pages"]}
     queries, used, texts = [], set(), set()
     for i, q in enumerate(said.get("queries") if isinstance(said.get("queries"), list) else []):
-        # A stand-in (`placeholder`) or a text written twice is no question, and is never run.
-        if not (isinstance(q, dict) and isinstance(q.get("text"), str) and len(q["text"].strip()) >= FEWEST
-                and q["text"].strip() not in texts):
+        if not (isinstance(q, dict) and isinstance(q.get("text"), str) and q["text"].strip()):
             continue
-        texts.add(q["text"].strip())
         slot = q["slot"] if isinstance(q.get("slot"), int) and 0 <= q["slot"] < PER_TURN else i
         if slot < PER_TURN and slot not in used:   # the slot it was asked for, never the teacher's own label
+            # A stand-in (`placeholder`) or a text written twice is no question, and is never run;
+            # a chat ("thanks!") may be short.
+            text = q["text"].strip()
+            if text in texts or len(text) < FEWEST and drawn["slots"][slot].get("intent") != "chat":
+                continue
+            texts.add(text)
             used.add(slot)
             # The titles of the drawn pages it says it is about: a passage's heading starts with one.
             pages = q["pages"] if isinstance(q.get("pages"), list) else []
