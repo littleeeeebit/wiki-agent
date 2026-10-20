@@ -630,8 +630,9 @@ export type LoopSettings = { rounds: number; concurrent: number; review_model: s
 
 export const getPrs = () =>
   get('/api/prs').then((r) => json<{ project: string; rows: Pr[]; error?: string }>(r, 'PR 목록'))
-export const startLoops = (prs: number[], implementation_environment: 'local' | 'claude-cloud' | 'external' = 'local', owner?: string) =>
-  post('/api/loops', { prs, implementation_environment }, 'POST', owner).then((r) =>
+export const startLoops = (prs: number[], implementation_environment: 'local' | 'claude-cloud' | 'external' = 'local', owner?: string,
+  cell?: { model: string; effort: string; fast?: boolean }) =>
+  post('/api/loops', { prs, implementation_environment, cell }, 'POST', owner).then((r) =>
     json<{ results: { number: number; id?: string; error?: string }[] }>(r, '리뷰 루프'))
 export const getLoops = () =>
   get('/api/loops').then((r) => json<{ loops: LoopRow[]; turns: { path: string; repo: string }[] }>(r, '루프'))
@@ -639,8 +640,10 @@ export const mergeSpec = (id: string, head: string, owner?: string) =>
   post(`/api/specs/${id}/merge`, { head }, 'POST', owner).then((r) => json<Spec>(r, '머지'))
 export const settleSpec = (id: string, choice: 'accept' | 'reopen', owner?: string) =>
   post(`/api/specs/${id}/settle`, { choice }, 'POST', owner).then((r) => json<Spec>(r, '끝내기'))
-export const resumeSpec = (id: string, note = '', owner?: string, limits?: ResearchLimits) =>
-  post(`/api/specs/${id}/resume`, limits ? { note, limits } : { note }, 'POST', owner).then((r) => json<Spec>(r, '계속'))
+export const resumeSpec = (id: string, note = '', owner?: string, limits?: ResearchLimits,
+  cell?: { model: string; effort: string; fast?: boolean }) =>
+  post(`/api/specs/${id}/resume`, { note, ...(limits ? { limits } : {}), ...(cell ? { cell } : {}) }, 'POST', owner)
+    .then((r) => json<Spec>(r, '계속'))
 export const haltSpec = (id: string, owner?: string) => post(`/api/specs/${id}/halt`, undefined, 'POST', owner).then((r) => json<Spec>(r, '멈춤'))
 export const reviewSpec = (id: string, owner: string) => post(`/api/specs/${id}/review`, undefined, 'POST', owner).then((r) => json<Spec>(r, '다음 리뷰 라운드'))
 export const cloudInstructions = (id: string, owner: string) => get(`/api/specs/${id}/cloud-instructions`, owner).then((r) => json<{ text: string }>(r, '클라우드 인계'))

@@ -610,7 +610,8 @@ export default function App() {
         onLoop={async (numbers, environment, owner) => {
           // Asked here, on a click: a browser grants it only to a gesture.
           void requestNotifications().catch((err) => setFault(`알림 연결 실패 · ${err}`))
-          const { results } = await api.startLoops(numbers, environment, owner)
+          // The work model chosen here runs the loop's repairs of a spec that names none.
+          const { results } = await api.startLoops(numbers, environment, owner, choice)
           readPrs()
           readSpecs()
           refresh()
@@ -757,7 +758,7 @@ export default function App() {
               />
             )}
             {tab === 'review' && (
-              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} on={on} progressOn={full} options={options}
+              <Review key={spec ? `${spec.repo}/${spec.id}` : ''} spec={spec} on={on} progressOn={full} options={options} choice={choice}
                 settings={loopSettings} onSettings={async (s) => setLoopSettings(await api.setLoopSettings(s))}
                 onPeek={showPeek} onChanged={() => {
                 readSpecs()
