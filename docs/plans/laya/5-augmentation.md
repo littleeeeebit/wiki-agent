@@ -232,6 +232,18 @@ Owner, 2026-10-20 (after #187):
   wording. Since #184 production asks arm B's wording, so Jev's B answers
   are collected on the fresh gate's states once they are reserved, with
   their own budget.
+- Results. Retrained on `shape3`, support (2,048 tokens) and joint each
+  gained less than the noise floor on the generated validation (support
+  accuracy 0.859 → 0.857; coverage from support and joint 0.744 → 0.767,
+  floor 0.042), so the incumbents stay.
+- Direct wording (owner, 2026-10-20). Support and joint questions quote the
+  requirement, as Jev's adopted arm B does (`support.question`,
+  `joint.question`), where they named it only by id. The labels are
+  unchanged, so the stored questions of every split are reworded, not
+  relabelled. One Colab run retrains both on the same data as the
+  `shape3` runs, so the paired comparison against them isolates the
+  wording, by the adoption rule above. Rejected, the wording is reverted
+  with the data.
 
 ## Acceptance
 
