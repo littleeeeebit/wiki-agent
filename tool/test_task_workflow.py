@@ -3,7 +3,9 @@
 import json
 import subprocess
 import threading
+import time
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -190,6 +192,71 @@ def test_agent_spec_update_and_completion_open_or_reuse_pr(repo):
             edit = next(call for call in remote.calls if call[:3] == ["gh", "pr", "edit"])
             assert edit[edit.index("--title") + 1] == "Handle an edge case"
             assert "Handle an edge case" in remote.body and "Edge case passes" in remote.body
+    work.close_all()
+
+
+def test_a_running_gate_is_on_its_task_only_while_it_runs(repo):
+    # The rail showed nothing while a gate ran for minutes, so a task looked stopped.
+    sid = made(repo, spec_block())[0]["id"]
+    with specs.gating(repo.name, sid, "round"):
+        shown = specs.view(repo, specs.load(repo.name, sid))["gating"]
+        assert shown["kind"] == "round" and shown["since"] <= time.time()
+    assert specs.view(repo, specs.load(repo.name, sid))["gating"] is None
+
+
+def test_a_running_turn_names_the_task_that_owns_its_worktree(repo):
+    # Under another project the screen keyed a task's work model by its path,
+    # so a model picked there never reached the task in its own project.
+    web = client()
+    with patch.object(work, "ChatSession", Worker):
+        sid = made(repo, spec_block())[0]["id"]
+        started(web, sid)
+    with patch.dict(work._runs, {str(repo): SimpleNamespace(done=False)}):
+        turns = web.get("/api/loops").json()["turns"]
+    assert [t["spec"] for t in turns] == [{"repo": repo.name, "id": sid}]
+    # A lookup whose Git call fails keeps the row without its spec; it never fails the whole list.
+    with patch.dict(work._runs, {str(repo): SimpleNamespace(done=False)}), \
+         patch.object(specs, "owner", side_effect=subprocess.TimeoutExpired(["git"], 60)):
+        response = web.get("/api/loops")
+    assert response.status_code == 200 and [t["spec"] for t in response.json()["turns"]] == [None]
+    work.close_all()
+
+
+def until(ready, seconds: float = 60):
+    end = time.monotonic() + seconds
+    while not (value := ready()):
+        assert time.monotonic() < end, "timed out"
+        time.sleep(0.05)
+    return value
+
+
+def test_spec_update_without_done_report_asks_for_one_then_stops_with_a_fault(repo):
+    # rfg_rag #76: a turn ended with only a `spec-update`; the task sat in `작업 중`
+    # with nothing running. The server now asks once, and a second miss is a fault.
+    web, remote = client(), Remote()
+    change = {"rev": 1, "reason": "Explicit roles", "goal": "Handle an edge case", "out": [], "done": ["Edge case passes"]}
+    report = [{"item": PASS, "pass": True}, {"item": "Edge case passes", "pass": True}]
+    Worker.replies = ["```spec-update\n" + json.dumps(change) + "\n```", SWEPT + "```done-report\n" + json.dumps(report) + "\n```"]
+    with patch.object(work, "ChatSession", Worker), patch.object(specs, "sh", remote), \
+         patch.object(specs, "korean", side_effect=lambda spec: spec):
+        sid = made(repo, spec_block())[0]["id"]
+        started(web, sid)
+        saved = until(lambda: (s := specs.load(repo.name, sid)).get("pr") and s)
+        assert saved["rev"] == 2 and saved["pr"]["number"] == 7 and not saved["report_asked"]
+        assert "revision 2" in work._sessions[str(repo)].heard[-1]
+        Worker.replies = ["```spec-update\n" + json.dumps({**change, "rev": 2}) + "\n```", "Still working"]
+        specs.update(repo.name, sid, state="작업 중")
+        settled(str(repo))
+        assert web.post("/api/work/say", json={"path": str(repo), "text": "Revise"}).status_code == 200
+        saved = until(lambda: (s := specs.load(repo.name, sid)).get("fault") and s)
+        assert saved["rev"] == 3 and saved["state"] == "작업 중" and "다시 빠졌다" in saved["fault"]
+        # Answering the request with another revision only is the second miss too, not a fresh request.
+        Worker.replies = ["```spec-update\n" + json.dumps({**change, "rev": rev}) + "\n```" for rev in (3, 4, 5)]
+        specs.update(repo.name, sid, fault=None)
+        settled(str(repo))
+        assert web.post("/api/work/say", json={"path": str(repo), "text": "Revise"}).status_code == 200
+        saved = until(lambda: (s := specs.load(repo.name, sid)).get("fault") and s)
+        assert saved["rev"] == 5 and not saved["report_asked"] and len(Worker.replies) == 1
     work.close_all()
 
 

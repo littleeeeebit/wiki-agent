@@ -91,9 +91,12 @@ def checked(repo: Path, body: Start) -> None:
             improvement.relative(rel)
         except improvement.Refused as exc:
             raise HTTPException(400, str(exc)) from exc
-        target = (repo / rel).resolve()
-        if repo.resolve() not in target.parents or not target.is_file():
-            raise HTTPException(400, f"`{rel}` 이 저장소 안의 파일이 아니다")
+        # A discovery target may be a package directory: a module described by purpose usually is one.
+        # A link may resolve into `.git` although the path names none: judge where it lands.
+        root, target = repo.resolve(), (repo / rel).resolve()
+        if root not in target.parents or target.relative_to(root).parts[0].casefold() == ".git" \
+                or not (target.is_file() or target.is_dir()):
+            raise HTTPException(400, f"`{rel}` 이 저장소 안의 파일이나 디렉터리가 아니다")
 
 
 @router.post("/api/refactors")

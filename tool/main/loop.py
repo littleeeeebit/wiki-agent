@@ -1058,10 +1058,11 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
                   "reason": "끝나지 않았다", "finished_at": None}
         specs.validate(loop.repo, loop.sid, phase="final_running", final=record)
         settings = verification.redaction(verification.local(repo), path) if verification.cloud(spec) else {}
-        verdict = specs.verify.verdict(repo, path, base, specs.local_required(repo, spec), loop.halt,
-            retry_reason=retry, again=again,
-            local_only=bool(review_contract.preservation_command(spec)),
-            noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
+        with specs.gating(loop.repo, loop.sid, "final"):
+            verdict = specs.verify.verdict(repo, path, base, specs.local_required(repo, spec), loop.halt,
+                retry_reason=retry, again=again,
+                local_only=bool(review_contract.preservation_command(spec)),
+                noted=lambda backend: specs.validate(loop.repo, loop.sid, final={**record, "verification": {"backend": backend}}))
         if verification.cloud(spec):
             verdict = {**verdict, **{k: verification.redact(verdict[k], settings) for k in ("reason", "tail")}}
     finally:
@@ -2630,8 +2631,17 @@ def loops() -> dict:
              for s in specs.listing(repo.name)
              if LOOPING.fullmatch(s["state"]) or s["state"] in ("머지 가능", "머지 대기", "멈춤")]
     with _lock:
-        turns = [{"path": path, "repo": Path(path).parent.name.removesuffix("-worktrees")}
-                 for path, run in work._runs.items() if not run.done]
+        running = [path for path, run in work._runs.items() if not run.done]
+    # The owning spec names the task as its own project does; the screen keys the work model by it.
+    def owning(path: str) -> dict | None:
+        try:
+            owned = specs.owner(Path(path))
+        except (OSError, subprocess.SubprocessError):   # optional: one failed lookup never empties the list
+            return None
+        return {"repo": owned["repo"], "id": owned["id"]} if owned else None
+
+    turns = [{"path": path, "repo": Path(path).parent.name.removesuffix("-worktrees"), "spec": owning(path)}
+             for path in running]
     return {"loops": found, "turns": turns}
 
 

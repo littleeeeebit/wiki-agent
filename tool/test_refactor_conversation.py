@@ -2,6 +2,7 @@
 # ruff: noqa: F811 — imported pytest fixtures are reused by name
 
 import json
+import os
 import threading
 from unittest.mock import patch
 
@@ -13,6 +14,9 @@ from main import channels, planning, query, refactor, specs
 from test_main import client, no_machine_settings  # noqa: F401
 from test_refactor import Host, _git, selected  # noqa: F401
 from test_specs import repo, spec_block  # noqa: F401
+
+if os.name == "nt":
+    import _winapi
 
 
 def draft(repo, mode="cleanup", **extra):
@@ -145,3 +149,27 @@ def test_resumed_runner_usage_is_recorded_once(selected, tmp_path):
             saved = refactor.load("proj", rid)
             assert saved["spent"]["calls"] == calls and saved["spent"]["tokens"] == tokens
             assert saved["spent"]["unknown"]
+
+
+def test_a_package_directory_is_a_discovery_target(selected):
+    # A full-mode spec naming the package directory, as a module described by
+    # purpose usually is, was refused as "not a file in this repository".
+    (selected / "pkg").mkdir()
+    (selected / "pkg/orders.py").write_text("x = 1\n", encoding="utf-8")
+    source = {"focus": "refactor", "turn": 1, "session": "discussion", "refactor_mode": "full"}
+
+    def card(files):
+        block = spec_block(slug="whole-repo", goal="Pay down debt", done=["Behavior is preserved"],
+                           refactor={"mode": "full", "files": files})
+        return specs.answered(selected, [{"name": "spec", "value": block}], source)[0]
+
+    assert specs.load("proj", card(["pkg", "big.py"])["id"])["refactor"]["files"] == ["pkg", "big.py"]
+    assert "디렉터리가 아니다" in card(["missing"])["error"]
+    # A link named like a package but landing in Git metadata is refused where it lands.
+    if os.name == "nt":
+        _winapi.CreateJunction(str(selected / ".git"), str(selected / "meta"))
+    else:
+        (selected / "meta").symlink_to(selected / ".git", target_is_directory=True)
+    assert "디렉터리가 아니다" in card(["meta"])["error"]
+    paths = ["pkg/orders.py", "pkgx.py", "big.py"]
+    assert [p for p in paths if refactor.targeted(p, ["pkg/"])] == ["pkg/orders.py"]
