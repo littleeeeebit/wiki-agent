@@ -269,13 +269,17 @@ def main():
                 page.get_by_role("option", name="codex:fixture-fast", exact=True).click()
                 assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() == "codex:fixture-fast"
                 assert agent.get_by_role("textbox").is_disabled()
-            # The model picked with no task selected is what a spec card's start sends,
-            # a refactoring card's too; reopening a task keeps the task's own model.
+            # Whatever empty agent pane the model is picked in — a spec card not started, or a
+            # selection whose task is gone (the hidden primary checkout a started card lands on) —
+            # it is what any card's start sends; reopening a task keeps the task's own model.
             started = []
             draft = {**spec, "id": "draft-task", "state": "정리됨", "worktree": None, "report": []}
             cards = [draft, {**draft, "id": "draft-refactor", "refactor": {"mode": "cleanup", "files": []}},
                      {**spec, "id": "existing-task", "state": "PR #9", "pr": {"number": 9}, "worktree": None,
-                      "cell": {"model": "opus", "effort": "", "fast": False}}]
+                      "branch": "existing-task", "cell": {"model": "sonnet", "effort": "", "fast": False}}]
+            rows = [{"path": "fixture-task", "name": "fixture-task", "branch": "fixture", "dirty": False,
+                     "primary": True, "merged": False, "live": False, "busy": False}]
+            page.route("**/api/worktrees", lambda route: route.fulfill(json={"project": "fixture", "repo": "fixture", "rows": rows}))
             page.route("**/api/specs", lambda route: route.fulfill(json={"project": "fixture", "specs": cards}))
             page.route("**/api/log/next*", lambda route: route.fulfill(json=[
                 {"role": "assistant", "text": "Synthetic specification",
@@ -284,28 +288,64 @@ def main():
                 started.append((route.request.url.split("/")[-2], route.request.post_data_json)),
                 route.fulfill(json={"refactor": "run"} if "refactor" in route.request.url
                               else {"path": "fixture-task", "turn": "t"})))
-            page.route("**/api/specs/*/checkout", lambda route: (
-                started.append((route.request.url.split("/")[-2], None)), route.fulfill(json={"path": "fixture-task"})))
+            def checkout(route):
+                # Reopening checks the PR's branch out: from here the task has a worktree row.
+                started.append((route.request.url.split("/")[-2], None))
+                cards[2]["worktree"] = "existing-wt"
+                rows.append({**rows[0], "path": "existing-wt", "name": "existing-wt", "branch": "existing-task", "primary": False})
+                route.fulfill(json={"path": "existing-wt"})
+            page.route("**/api/specs/*/checkout", checkout)
+            # The checkout's history ran on Codex; that is no pick for the next start.
+            page.route("**/api/work/log*", lambda route: route.fulfill(json={
+                "rows": [{"role": "assistant", "text": "Old turn", "model": "codex:fixture-fast", "steps": []}],
+                "session_id": "fixture", "busy": False, "running": None, "rules": [], "queued": None}))
             page.set_viewport_size({"width": 1440, "height": 900})
             page.goto(base)
             agent = page.get_by_label("에이전트 세션", exact=True)
-            agent.get_by_role("combobox").first.click()
-            page.get_by_role("option", name="codex:fixture-fast", exact=True).click()
-            page.get_by_role("navigation", name="초점", exact=True).get_by_role("button", name="다음 작업", exact=True).click()
-            for n, button in enumerate((page.get_by_role("button", name="시작 ▸", exact=True).first,
-                                        page.get_by_role("button", name="시작 ▸", exact=True).last,
-                                        page.get_by_role("button", name="브랜치 열기", exact=True)), 1):
+            first, last = (page.get_by_role("button", name="시작 ▸", exact=True).first,
+                           page.get_by_role("button", name="시작 ▸", exact=True).last)
+
+            def pick(model):
+                agent.get_by_text("명세의 [시작]이", exact=False).wait_for()
+                agent.get_by_role("combobox").first.click()
+                page.get_by_role("option", name=model, exact=True).click()
+
+            def press(button):
                 button.click()
+                count = len(started)
                 for _ in range(50):
-                    if len(started) == n:
+                    if len(started) > count:
                         break
                     page.wait_for_timeout(100)
-            assert [(sid, body and body["model"]) for sid, body in started] == [
-                ("draft-task", "codex:fixture-fast"), ("draft-refactor", "codex:fixture-fast"), ("existing-task", None)], started
+
+            # Nothing picked yet: the empty pane shows what [시작] would send, not a past turn's
+            # model on the stale primary checkout, nor a selected PR's own model.
+            page.get_by_role("navigation", name="초점", exact=True).get_by_role("button", name="다음 작업", exact=True).click()
+            press(first)
+            agent.get_by_text("Old turn", exact=True).wait_for()
+            assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() == "Claude 기본"
             page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="existing-task").click()
-            assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() == "opus"
+            agent.get_by_text("명세의 [시작]이", exact=False).wait_for()
+            assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() != "sonnet"
+            page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="draft-task").click()
+            pick("codex:fixture-fast")
+            page.get_by_role("navigation", name="초점", exact=True).get_by_role("button", name="다음 작업", exact=True).click()
+            press(last)
+            press(first)
+            pick("opus")
+            press(last)
+            # A started PR not checked out shows the same empty pane.
+            page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="existing-task").click()
+            pick("codex:fixture-standard")
+            press(last)
+            press(page.get_by_role("button", name="브랜치 열기", exact=True))
+            assert [(sid, body and body["model"]) for sid, body in started] == [
+                ("draft-task", ""), ("draft-refactor", "codex:fixture-fast"), ("draft-task", "codex:fixture-fast"),
+                ("draft-refactor", "opus"), ("draft-refactor", "codex:fixture-standard"), ("existing-task", None)], started
+            expect(agent.get_by_label("선택한 작업 모델", exact=True)).to_have_text("sonnet")
             page.unroute("**/api/specs/*/start")
             page.unroute("**/api/specs/*/checkout")
+            page.unroute("**/api/work/log*")
             page.unroute("**/api/log/next*")
             page.unroute("**/api/worktrees")
             page.unroute("**/api/specs")

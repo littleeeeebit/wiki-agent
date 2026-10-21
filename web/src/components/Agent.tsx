@@ -73,7 +73,7 @@ export function Agent({
           <span className="agent-model-label shrink-0 font-heading text-[11px] font-semibold text-faint">작업 모델</span>
           <span className="min-w-0 truncate text-[12.5px] leading-4" aria-label="선택한 작업 모델">
             {choice.model ? options?.models.find((model) => model.id === choice.model)?.label || choice.model
-              : last?.model || 'Claude 기본'}
+              : (row && last?.model) || 'Claude 기본'}
           </span>
           <TokenUsage model={choice.model} path={row?.path} />
           {row && busy && last?.turn && (
