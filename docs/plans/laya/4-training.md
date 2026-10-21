@@ -220,7 +220,8 @@ a time instead, the shape `useful` learned.
   are no longer local.
 - Result (run 20261021-045345, packed at 1d499a6). Every kind chose the
   same epoch as before, and validation accuracy moved by at most 0.017.
-  The fitted rules (P(yes) below `no`, above `yes`, otherwise uncertain)
+  The fitted rules (P(yes) at or below `no` answers no, at or above `yes`
+  answers yes, otherwise uncertain)
   and their cost on the calibration split:
 
   | Kind | Rule no / yes | Cost / questions | Deferred |
