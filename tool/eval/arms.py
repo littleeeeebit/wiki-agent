@@ -89,8 +89,7 @@ PLAIN = {
                  "convention covers: the sources state that answer."),
 }
 OLD_PLAIN = {"ask": ASK, "analysis": ANALYSIS}
-# Analysis skips the claim check only on a sure yes (`Flow.route`).
-ANALYSIS_COSTS = {True: {"no": 1, "uncertain": 1, "yes": 0}, False: {"no": 0, "uncertain": 0, "yes": 10}}
+ANALYSIS_COSTS = policy.ANALYSIS_COSTS
 # Ask's cost is a whole intent's (`ask_cost`): a question dropped as material is never answered.
 DROPPED, KEPT_MATERIAL = 10, 1
 # The worst one case can cost, per kind: how far a kind may rise and the arm still be adopted.

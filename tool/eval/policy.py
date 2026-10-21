@@ -34,6 +34,13 @@ The faithful Choice — does a claim citing nothing, a recommendation or a
 direct run's text, state only what its grounds do — has its own cases
 (`eval/jev/faithful.json`), one request each; accepting `faithful` for a
 claim that adds a fact publishes an unchecked fact, and costs the same.
+
+`--laya <result zip>...` fits Laya's kinds instead (`docs/plans/laya/4-training.md`,
+Calibration and policy): each zip is one kind's notebook run, whose chosen
+checkpoint's probabilities on that kind's calibration split
+(`calibration-predictions.jsonl`) get the same fit and costs, written to
+`eval/laya/policy/<kind>.json` bound to the checkpoint, its run, its data and
+its temperature. A kind with no cost table here keeps no rule and says so.
 """
 
 from __future__ import annotations
@@ -44,6 +51,7 @@ import hashlib
 import json
 import sys
 import time
+import zipfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -88,6 +96,11 @@ COSTS = {
     "conflict": {True: {"no": 5, "uncertain": 0, "yes": 0}, False: {"no": 0, "uncertain": 0.5, "yes": 1}},
     "redirect": {True: {"no": 5, "uncertain": 0, "yes": 0}, False: {"no": 0, "uncertain": 0.5, "yes": 1}},
 }
+# Analysis skips the claim check only on a sure yes (`Flow.route`). Fitted for Laya; Jev's arm D compared on it.
+ANALYSIS_COSTS = {True: {"no": 1, "uncertain": 1, "yes": 0}, False: {"no": 0, "uncertain": 0, "yes": 10}}
+LAYA_COSTS = {**COSTS, "analysis": ANALYSIS_COSTS}
+LAYA_SCHEMA = "laya-policy/1"
+LAYA_ARTIFACTS = HUB / "eval" / "laya" / "policy"
 
 
 def sha(data: bytes) -> str:
@@ -166,10 +179,12 @@ def verdict(score: float, no: float, yes: float) -> str:
     return "no" if score <= no else "yes" if score >= yes else "uncertain"
 
 
-def fit(kind: str, pairs: list[tuple[float, bool]]) -> tuple[dict | None, dict]:
-    """The lowest-cost rule for `kind`, the provisional one breaking ties by
-    nearness; `None` with too few labels. And the errors it leaves."""
+def fit(kind: str, pairs: list[tuple[float, bool]], costs: dict | None = None) -> tuple[dict | None, dict]:
+    """The lowest-cost rule for `kind` (under `costs`, else its own), the
+    provisional one breaking ties by nearness; `None` with too few labels.
+    And the errors it leaves."""
 
+    costs = costs or COSTS[kind]
     positives = sum(label for _s, label in pairs)
     report = {"n": len(pairs), "positives": positives}
     if positives < LEAST or len(pairs) - positives < LEAST:
@@ -177,7 +192,7 @@ def fit(kind: str, pairs: list[tuple[float, bool]]) -> tuple[dict | None, dict]:
     best = None
     for no in GRID_NO:
         for yes in GRID_YES:
-            cost = sum(COSTS[kind][label][verdict(s, no, yes)] for s, label in pairs)
+            cost = sum(costs[label][verdict(s, no, yes)] for s, label in pairs)
             key = (cost, abs(no - 0.2) + abs(yes - 0.8))
             if best is None or key < best[0]:
                 best = (key, {"no": no, "yes": yes})
@@ -186,7 +201,7 @@ def fit(kind: str, pairs: list[tuple[float, bool]]) -> tuple[dict | None, dict]:
     for s, label in pairs:
         name = f"{'positive' if label else 'negative'}_{verdict(s, rule['no'], rule['yes'])}"
         counts[name] = counts.get(name, 0) + 1
-    provisional = sum(COSTS[kind][label][verdict(s, 0.2, 0.8)] for s, label in pairs)
+    provisional = sum(costs[label][verdict(s, 0.2, 0.8)] for s, label in pairs)
     return rule, {**report, "fitted": True, "cost": best[0][0], "provisional_cost": provisional, "counts": counts}
 
 
@@ -420,6 +435,40 @@ def artifact(dataset_path: Path, dataset: dict, scores: dict) -> dict:
                     "evaluation."}
 
 
+def laya_artifact(result: Path) -> dict:
+    """The policy of the checkpoint a Laya result zip chose: its kind's rule
+    fitted on the calibration split's P(yes), bound to the checkpoint, its run,
+    its data hashes and its temperature."""
+
+    with zipfile.ZipFile(result) as z:
+        run = json.loads(z.read("results.json"))
+        kind, chosen = run["kind"], run.get("chosen")
+        names = set(z.namelist())
+        if not run.get("checkpoint_zip") or "calibration-predictions.jsonl" not in names:
+            raise ValueError(f"{result.name}: no saved checkpoint or calibration predictions to fit")
+        temperature = json.loads(z.read(f"{chosen.removeprefix('fine-tuned-')}-calibration.json"))
+        rows = [json.loads(line) for line in z.read("calibration-predictions.jsonl").decode("utf-8").splitlines()
+                if line.strip()]
+    if not all(isinstance(r["expected"], bool) for r in rows):
+        raise ValueError(f"{result.name}: {kind} is not a Noul kind")
+    pairs = [(r["chance"] if r["expected"] else 1 - r["chance"], r["expected"]) for r in rows]
+    if kind in LAYA_COSTS:
+        rule, errors = fit(kind, pairs, LAYA_COSTS[kind])
+    else:
+        rule, errors = None, {"n": len(pairs), "positives": sum(label for _s, label in pairs), "fitted": False,
+                              "why": "no cost table for this kind"}
+    packed = run["env"]["packed"]
+    return {"schema": LAYA_SCHEMA, "kind": kind, "model": Path(run["checkpoint_zip"]).name,
+            "run": run["started"], "chosen": chosen, "laya": run["env"].get("laya"), "commit": packed["commit"],
+            "splits": packed["splits"][kind], "temperature": temperature,
+            "dataset": {"split": "calibration", "sha256": packed["splits"][kind].get("calibration"),
+                        "questions": len(pairs)},
+            "rule": rule, "errors": errors, "costs": LAYA_COSTS.get(kind),
+            "fitted_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
+            "note": "Error rates on the calibration split the temperature was fitted on; not a calibration claim. "
+                    "The gate (Laya stage 6) holds the held-out evaluation."}
+
+
 def main(argv: list[str] | None = None) -> int:
     sys.stdout.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(prog="python tool/eval/policy.py", description="Fit the Jev decision policy")
@@ -428,7 +477,17 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, default=None)
     parser.add_argument("--collect", action="store_true", help="ask Jev live and save the scores first")
     parser.add_argument("--relation", action="store_true", help="fit stage 7's relation Choice instead")
+    parser.add_argument("--laya", type=Path, nargs="+", help="fit Laya kinds from their notebook result zips")
     args = parser.parse_args(argv)
+    if args.laya:
+        out_dir = args.out or LAYA_ARTIFACTS
+        out_dir.mkdir(parents=True, exist_ok=True)
+        for result in args.laya:
+            out = laya_artifact(result)
+            (out_dir / f"{out['kind']}.json").write_text(json.dumps(out, ensure_ascii=False, indent=1) + "\n",
+                                                       encoding="utf-8")
+            print(json.dumps({k: out[k] for k in ("kind", "model", "rule", "errors")}, ensure_ascii=False))
+        return 0
     defaults = (RELATION_DATASET, RELATION_SCORES, RELATION_ARTIFACT) if args.relation else (DATASET, SCORE_FILE,
                                                                                             ARTIFACT)
     dataset_path, score_path, out_path = (given or default for given, default in
