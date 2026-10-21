@@ -428,9 +428,13 @@ export default function App() {
   // A task's work model is keyed by its spec's repository and id, the same
   // from draft to worktree and under another project. Several tasks share a
   // checkout path, and spec ids repeat across repositories, so neither alone names one task.
-  const owning = task?.spec ?? others.find((o) => o.path === selected)?.spec
-  const blank = `new:${repo}`   // the empty agent pane's pick, which a spec card's start falls back to
-  const choiceKey = owning ? choiceOf(owning) : selected || blank
+  const other = others.find((o) => o.path === selected)
+  const owning = task?.spec ?? other?.spec
+  // A pane with no worktree yet — nothing selected, a selection whose task is gone, a spec not
+  // started — is the one empty agent pane: its pick is what [시작] sends, whichever card is pressed.
+  const blank = `new:${repo}`
+  const empty = !other && (!task || (task.spec?.state === '정리됨' && !task.row))
+  const choiceKey = empty ? blank : owning ? choiceOf(owning) : selected
   const choice = choices[choiceKey] ?? task?.spec?.cell ?? NO_CHOICE
   const setChoice = (c: Choice) => setChoices((all) => ({ ...all, [choiceKey]: c }))
 
@@ -456,11 +460,10 @@ export default function App() {
     const target = specs.find((spec) => spec.id === id)
     // Reopening runs no turn, so it takes no model: the task keeps its own.
     if (target && target.state !== '정리됨') return opened((await api.checkoutSpec(id)).path)
-    // Cards start from the conversation, often with no task selected; the started task keeps the pick.
-    const key = choiceOf({ repo: target?.repo ?? repo, id })
-    const picked = choices[key] ?? choices[blank] ?? NO_CHOICE
+    // A spec carries no model of its own; the started task keeps the empty pane's pick.
+    const picked = choices[blank] ?? NO_CHOICE
     const { path, refactor } = await api.startSpec(id, picked)
-    setChoices((all) => ({ ...all, [key]: all[key] ?? picked }))
+    setChoices((all) => ({ ...all, [choiceOf({ repo: target?.repo ?? repo, id })]: picked }))
     // A refactoring card's controller runs in its conversation, not in a worktree.
     if (refactor) readSpecs()
     else opened(path)
@@ -540,7 +543,6 @@ export default function App() {
   useEffect(() => {
     away.current = new Set(otherPaths)
   })
-  const other = others.find((o) => o.path === selected)
   // A worktree of another project has no row in this project's list; the
   // pane still shows it, and a new instruction there is refused by the server.
   const row = task?.row ?? (other
