@@ -1,0 +1,224 @@
+{
+ "schema": "laya-policy/1",
+ "kind": "progress",
+ "model": "progress-train-e3-ls0.1-20261021-045345-ktfkxq5y.zip",
+ "run": "20261021-051121",
+ "chosen": "fine-tuned-e3-ls0.1",
+ "laya": "0.4.6",
+ "commit": "1d499a6e50187872353705f9f5f586a2bcf31c4f",
+ "splits": {
+  "train": "5984ae77142b698b5d611e9b3fa74c898b98055f94c84c646b47ca0073426309",
+  "validation": "7a86bbf06a0ded9f19768fc8a9109ccc4217d09adff779996f155ff0d062d65d",
+  "calibration": "170b88d056847960a95f253a2d88c66b13c3a23049d66338117e8861baf90b69"
+ },
+ "temperature": {
+  "version": 2,
+  "temperature": [
+   1.0,
+   1.0,
+   0.6242270469665527
+  ],
+  "temperature_by_options": {},
+  "model_id_or_path": "/content/laya/checkpoints/20261021-045345-ktfkxq5y/progress-train",
+  "subfolder": null,
+  "config": {
+   "encoder": "answerdotai/ModernBERT-large",
+   "head_layers": 2,
+   "max_len": 1024,
+   "head_max_len": 1000000000,
+   "max_prefixes": 6,
+   "act_costs": {
+    "escalate": 0.5
+   },
+   "cost_wrong_act": 3.0,
+   "amp_dtype": "bf16",
+   "model_name": "rl-agent",
+   "training": {
+    "updates": 7313,
+    "epochs_completed": 1,
+    "hours": 1.96,
+    "world_size": 1,
+    "fine_tuned_from_checkpoint": true,
+    "laya_train": {
+     "epochs": 3,
+     "micro_batch": 4,
+     "grad_accum": 16,
+     "encoder_lr": 2.5e-05,
+     "head_lr": 0.0001,
+     "min_lr": 1e-06,
+     "weight_decay": 0.01,
+     "grad_clip": 1.0,
+     "loss": "rlcd",
+     "rl_samples": 4,
+     "sigma_start": 0.4,
+     "sigma_end": 0.1,
+     "w_sph": 0.75,
+     "w_rps": 1.0,
+     "shuffle_options": [],
+     "option_layout": "parallel",
+     "freeze_encoder": false,
+     "calib_max": 400,
+     "calib_frac": 0.0,
+     "calib_seed": 20260922,
+     "seed": 0,
+     "max_len": 1024,
+     "head_max_len": 1000000000,
+     "amp": null,
+     "gradient_checkpointing": null,
+     "log_every": 100,
+     "label_smoothing": 0.1,
+     "text_column": "text",
+     "label_column": "label",
+     "question_id": "label",
+     "instructions": null,
+     "eval_data": "/content/laya/data/progress/merged-validation.jsonl",
+     "target_error": 0.1,
+     "min_abstain_n": 10
+    },
+    "laya_train_calibration": {
+     "choice": {
+      "items": 0,
+      "temperature": 1.0,
+      "issues": []
+     },
+     "score": {
+      "items": 0,
+      "temperature": 1.0,
+      "issues": []
+     },
+     "noul": {
+      "items": 0,
+      "temperature": 1.0,
+      "issues": []
+     }
+    },
+    "train_report": {
+     "eval_source": "/content/laya/data/progress/merged-validation.jsonl",
+     "eval_mode": "held_out",
+     "is_held_out": true,
+     "eval_items": 317,
+     "note": "Metrics reflect independent held-out evaluation.",
+     "before": {
+      "items": 317,
+      "loss": 0.6349,
+      "accuracy": 0.6593,
+      "mean_confidence": 0.7173,
+      "ece": 0.1044,
+      "brier": 0.4445,
+      "brier_top1": 0.2223,
+      "by_type": {
+       "noul": {
+        "items": 317,
+        "loss": 0.6349,
+        "accuracy": 0.6593,
+        "mean_confidence": 0.7173,
+        "ece": 0.1044,
+        "brier": 0.4445,
+        "brier_top1": 0.2223
+       }
+      }
+     },
+     "after": {
+      "items": 317,
+      "loss": 0.0763,
+      "accuracy": 0.9905,
+      "mean_confidence": 0.9535,
+      "ece": 0.037,
+      "brier": 0.0216,
+      "brier_top1": 0.0108,
+      "by_type": {
+       "noul": {
+        "items": 317,
+        "loss": 0.0763,
+        "accuracy": 0.9905,
+        "mean_confidence": 0.9535,
+        "ece": 0.037,
+        "brier": 0.0216,
+        "brier_top1": 0.0108
+       }
+      }
+     },
+     "comparison": {
+      "delta_accuracy": 0.3312,
+      "delta_loss": -0.5586,
+      "delta_ece": -0.0674,
+      "delta_brier": -0.4229,
+      "delta_brier_top1": -0.2115,
+      "delta_mean_confidence": 0.2362
+     },
+     "calibration": {
+      "choice": {
+       "items": 0,
+       "temperature": 1.0,
+       "issues": []
+      },
+      "score": {
+       "items": 0,
+       "temperature": 1.0,
+       "issues": []
+      },
+      "noul": {
+       "items": 0,
+       "temperature": 1.0,
+       "issues": []
+      }
+     },
+     "abstention_thresholds": {},
+     "training": {
+      "epochs": 3,
+      "micro_batch": 4,
+      "grad_accum": 16,
+      "encoder_lr": 2.5e-05,
+      "head_lr": 0.0001,
+      "min_lr": 1e-06,
+      "weight_decay": 0.01,
+      "grad_clip": 1.0,
+      "loss": "rlcd",
+      "rl_samples": 4,
+      "sigma_start": 0.4,
+      "sigma_end": 0.1,
+      "w_sph": 0.75,
+      "w_rps": 1.0,
+      "shuffle_options": [],
+      "option_layout": "parallel",
+      "freeze_encoder": false,
+      "calib_max": 400,
+      "calib_frac": 0.0,
+      "calib_seed": 20260922,
+      "seed": 0,
+      "max_len": 1024,
+      "head_max_len": 1000000000,
+      "amp": null,
+      "gradient_checkpointing": null,
+      "log_every": 100,
+      "label_smoothing": 0.1,
+      "text_column": "text",
+      "label_column": "label",
+      "question_id": "label",
+      "instructions": null,
+      "eval_data": "/content/laya/data/progress/merged-validation.jsonl",
+      "target_error": 0.1,
+      "min_abstain_n": 10
+     }
+    }
+   },
+   "option_layout": "parallel",
+   "fine_tuned": true
+  }
+ },
+ "dataset": {
+  "split": "calibration",
+  "sha256": "170b88d056847960a95f253a2d88c66b13c3a23049d66338117e8861baf90b69",
+  "questions": 330
+ },
+ "rule": null,
+ "errors": {
+  "n": 330,
+  "positives": 44,
+  "fitted": false,
+  "why": "no cost table for this kind"
+ },
+ "costs": null,
+ "fitted_at": "2026-10-21T06:11:02+00:00",
+ "note": "Error rates on the calibration split the temperature was fitted on; not a calibration claim. The gate (Laya stage 6) holds the held-out evaluation."
+}

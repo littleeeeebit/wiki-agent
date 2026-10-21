@@ -1,0 +1,246 @@
+{
+ "schema": "laya-policy/1",
+ "kind": "analysis",
+ "model": "analysis-train-e3-ls0.1-20261021-045345-ktfkxq5y.zip",
+ "run": "20261021-045433",
+ "chosen": "fine-tuned-e3-ls0.1",
+ "laya": "0.4.6",
+ "commit": "1d499a6e50187872353705f9f5f586a2bcf31c4f",
+ "splits": {
+  "train": "accdeb0a2399a1b3552e608617fa2414c270d0cd05fb205a568891d678879fb9",
+  "validation": "3d9a1184941dbc1d311701f0f21b78cf7d020a3add161c9dc1c7270b877a0a69",
+  "calibration": "2c3b710b32112ae4b2cc15b733695e4c45e37cafd6e45473a555f267e0231c35"
+ },
+ "temperature": {
+  "version": 2,
+  "temperature": [
+   1.0,
+   1.0,
+   1.4395147562026978
+  ],
+  "temperature_by_options": {},
+  "model_id_or_path": "/content/laya/checkpoints/20261021-045345-ktfkxq5y/analysis-train",
+  "subfolder": null,
+  "config": {
+   "encoder": "answerdotai/ModernBERT-large",
+   "head_layers": 2,
+   "max_len": 1024,
+   "head_max_len": 1000000000,
+   "max_prefixes": 6,
+   "act_costs": {
+    "escalate": 0.5
+   },
+   "cost_wrong_act": 3.0,
+   "amp_dtype": "bf16",
+   "model_name": "rl-agent",
+   "training": {
+    "updates": 7313,
+    "epochs_completed": 1,
+    "hours": 1.96,
+    "world_size": 1,
+    "fine_tuned_from_checkpoint": true,
+    "laya_train": {
+     "epochs": 3,
+     "micro_batch": 4,
+     "grad_accum": 16,
+     "encoder_lr": 2.5e-05,
+     "head_lr": 0.0001,
+     "min_lr": 1e-06,
+     "weight_decay": 0.01,
+     "grad_clip": 1.0,
+     "loss": "rlcd",
+     "rl_samples": 4,
+     "sigma_start": 0.4,
+     "sigma_end": 0.1,
+     "w_sph": 0.75,
+     "w_rps": 1.0,
+     "shuffle_options": [],
+     "option_layout": "parallel",
+     "freeze_encoder": false,
+     "calib_max": 400,
+     "calib_frac": 0.0,
+     "calib_seed": 20260922,
+     "seed": 0,
+     "max_len": 1024,
+     "head_max_len": 1000000000,
+     "amp": null,
+     "gradient_checkpointing": null,
+     "log_every": 100,
+     "label_smoothing": 0.1,
+     "text_column": "text",
+     "label_column": "label",
+     "question_id": "label",
+     "instructions": null,
+     "eval_data": "/content/laya/data/analysis/merged-validation.jsonl",
+     "target_error": 0.1,
+     "min_abstain_n": 10
+    },
+    "laya_train_calibration": {
+     "choice": {
+      "items": 0,
+      "temperature": 1.0,
+      "issues": []
+     },
+     "score": {
+      "items": 0,
+      "temperature": 1.0,
+      "issues": []
+     },
+     "noul": {
+      "items": 0,
+      "temperature": 1.0,
+      "issues": []
+     }
+    },
+    "train_report": {
+     "eval_source": "/content/laya/data/analysis/merged-validation.jsonl",
+     "eval_mode": "held_out",
+     "is_held_out": true,
+     "eval_items": 254,
+     "note": "Metrics reflect independent held-out evaluation.",
+     "before": {
+      "items": 254,
+      "loss": 0.6811,
+      "accuracy": 0.5945,
+      "mean_confidence": 0.7036,
+      "ece": 0.1474,
+      "brier": 0.488,
+      "brier_top1": 0.244,
+      "by_type": {
+       "noul": {
+        "items": 254,
+        "loss": 0.6811,
+        "accuracy": 0.5945,
+        "mean_confidence": 0.7036,
+        "ece": 0.1474,
+        "brier": 0.488,
+        "brier_top1": 0.244
+       }
+      }
+     },
+     "after": {
+      "items": 254,
+      "loss": 0.4001,
+      "accuracy": 0.8622,
+      "mean_confidence": 0.933,
+      "ece": 0.0746,
+      "brier": 0.2344,
+      "brier_top1": 0.1172,
+      "by_type": {
+       "noul": {
+        "items": 254,
+        "loss": 0.4001,
+        "accuracy": 0.8622,
+        "mean_confidence": 0.933,
+        "ece": 0.0746,
+        "brier": 0.2344,
+        "brier_top1": 0.1172
+       }
+      }
+     },
+     "comparison": {
+      "delta_accuracy": 0.2677,
+      "delta_loss": -0.281,
+      "delta_ece": -0.0728,
+      "delta_brier": -0.2536,
+      "delta_brier_top1": -0.1268,
+      "delta_mean_confidence": 0.2294
+     },
+     "calibration": {
+      "choice": {
+       "items": 0,
+       "temperature": 1.0,
+       "issues": []
+      },
+      "score": {
+       "items": 0,
+       "temperature": 1.0,
+       "issues": []
+      },
+      "noul": {
+       "items": 0,
+       "temperature": 1.0,
+       "issues": []
+      }
+     },
+     "abstention_thresholds": {},
+     "training": {
+      "epochs": 3,
+      "micro_batch": 4,
+      "grad_accum": 16,
+      "encoder_lr": 2.5e-05,
+      "head_lr": 0.0001,
+      "min_lr": 1e-06,
+      "weight_decay": 0.01,
+      "grad_clip": 1.0,
+      "loss": "rlcd",
+      "rl_samples": 4,
+      "sigma_start": 0.4,
+      "sigma_end": 0.1,
+      "w_sph": 0.75,
+      "w_rps": 1.0,
+      "shuffle_options": [],
+      "option_layout": "parallel",
+      "freeze_encoder": false,
+      "calib_max": 400,
+      "calib_frac": 0.0,
+      "calib_seed": 20260922,
+      "seed": 0,
+      "max_len": 1024,
+      "head_max_len": 1000000000,
+      "amp": null,
+      "gradient_checkpointing": null,
+      "log_every": 100,
+      "label_smoothing": 0.1,
+      "text_column": "text",
+      "label_column": "label",
+      "question_id": "label",
+      "instructions": null,
+      "eval_data": "/content/laya/data/analysis/merged-validation.jsonl",
+      "target_error": 0.1,
+      "min_abstain_n": 10
+     }
+    }
+   },
+   "option_layout": "parallel",
+   "fine_tuned": true
+  }
+ },
+ "dataset": {
+  "split": "calibration",
+  "sha256": "2c3b710b32112ae4b2cc15b733695e4c45e37cafd6e45473a555f267e0231c35",
+  "questions": 250
+ },
+ "rule": {
+  "no": 0.2,
+  "yes": 0.7
+ },
+ "errors": {
+  "n": 250,
+  "positives": 68,
+  "fitted": true,
+  "cost": 36,
+  "provisional_cost": 46,
+  "counts": {
+   "negative_no": 180,
+   "positive_no": 28,
+   "positive_yes": 32,
+   "positive_uncertain": 8,
+   "negative_uncertain": 2
+  }
+ },
+ "costs": {
+  "true": {
+   "no": 1,
+   "uncertain": 1,
+   "yes": 0
+  },
+  "false": {
+   "no": 0,
+   "uncertain": 0,
+   "yes": 10
+  }
+ },
+ "fitted_at": "2026-10-21T06:11:02+00:00",
+ "note": "Error rates on the calibration split the temperature was fitted on; not a calibration claim. The gate (Laya stage 6) holds the held-out evaluation."
+}

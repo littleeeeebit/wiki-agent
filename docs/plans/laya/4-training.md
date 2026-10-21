@@ -218,6 +218,25 @@ a time instead, the shape `useful` learned.
   `source`, `useful`): the run that chose their checkpoints
   (20261015-053449) kept no calibration probabilities, and its result zips
   are no longer local.
+- Result (run 20261021-045345, packed at 1d499a6). Every kind chose the
+  same epoch as before, and validation accuracy moved by at most 0.017.
+  The fitted rules (P(yes) at or below `no` answers no, at or above `yes`
+  answers yes, otherwise uncertain)
+  and their cost on the calibration split:
+
+  | Kind | Rule no / yes | Cost / questions | Deferred |
+  | --- | --- | --- | --- |
+  | route | 0.35 / 0.80 | 5 / 322 | 1 |
+  | source | 0.05 / 0.95 | 23 / 205 | 39 |
+  | useful | 0.10 / 0.70 | 103.5 / 300 | 175 |
+  | redirect | 0.20 / 0.95 | 44 / 304 | 7 |
+  | analysis | 0.20 / 0.70 | 36 / 250 | 10 |
+
+  `useful` never answers no: 138 of its 154 negatives are deferred, because
+  a dropped supporting passage costs 10 and 37 positives sit between 0.10 and 0.70.
+  `redirect` answers no to 8 of its 18 positives. These are error rates on
+  the split the temperature was fitted on; the gate (stage 6) is the
+  held-out comparison with Jev.
 
 ## Acceptance
 
