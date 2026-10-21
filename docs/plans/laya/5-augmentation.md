@@ -249,6 +249,12 @@ Owner, 2026-10-20 (after #187):
   scored. The questions newly left out, by split, and coverage's decided
   rate are reported beside it. Rejected, the wording is reverted with the
   data.
+  Result (run 20261020-215126, PR #197 reverted): support gained +0.012
+  accuracy against a 0.014 floor, in both epochs, and log loss fell
+  0.469 → 0.431; joint was flat on its own validation, but coverage made
+  with it fell 0.767 → 0.712, past the 0.049 floor. Neither is adopted
+  (owner, 2026-10-21): both kinds ask by id again, and the stored
+  questions are restored.
 
 ## Acceptance
 
