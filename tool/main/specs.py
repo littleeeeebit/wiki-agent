@@ -121,16 +121,22 @@ def save(spec: dict) -> None:
         file.parent.mkdir(parents=True, exist_ok=True)
         temporary = file.with_suffix(".tmp")
         temporary.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
-        # Windows readers can temporarily prevent the atomic swap.
-        for attempt in range(40):
-            try:
-                temporary.replace(file)
-                break
-            except PermissionError:
-                if attempt == 39:
-                    raise
-                time.sleep(0.025)
+        swap(temporary, file)
         publish(spec)
+
+
+def swap(temporary: Path, file: Path) -> None:
+    """`temporary` replaces `file` whole. A Windows reader holding `file`
+    open refuses the swap for a moment, so it is tried again."""
+
+    for attempt in range(40):
+        try:
+            temporary.replace(file)
+            return
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.025)
 
 
 def summary(spec: dict) -> dict:

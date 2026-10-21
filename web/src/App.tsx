@@ -424,6 +424,11 @@ export default function App() {
   const busy = (p: string) => Boolean(rows.find((r) => r.path === p)?.busy || work.turns[p]?.at(-1)?.pending)
   const list = taskList(specs, rows, asks, busy)
   const task = list.find((t) => t.key === selected)
+  // A task picked by its spec before the worktree list arrived is keyed by
+  // the worktree once it does; the selection follows instead of going blank.
+  const moved = !task && selected.startsWith('spec:')
+    ? list.find((t) => t.spec && `spec:${t.spec.id}` === selected)?.key : undefined
+  if (moved) setSelected(moved)
   const others = elsewhere(loopRows, turnsElsewhere, repo)
   // A task's work model is keyed by its spec's repository and id, the same
   // from draft to worktree and under another project. Several tasks share a

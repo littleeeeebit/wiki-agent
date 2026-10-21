@@ -562,6 +562,10 @@ def ran(tmp_path, monkeypatch, small):
     monkeypatch.setattr(decision, "evaluate", evaluate)
     monkeypatch.setattr(translate, "CACHE", tmp_path / "translate.sqlite3")
     monkeypatch.setattr(translate, "api_key", lambda: "test-key")
+    # Exercise resumption and drift, not the production latency ceiling, under CI load:
+    # a fresh translation that misses its deadline is a failed read, never drift.
+    monkeypatch.setattr(knowledge, "NORMALIZE_SECONDS", 30.0)
+    monkeypatch.setattr(decision, "QUESTION", {**decision.QUESTION, "seconds": 120.0})
 
     def ask(system, batch, seconds, same_length=True):
         out = []

@@ -520,6 +520,22 @@ def test_a_turn_cut_by_the_time_limit_leaves_nothing_it_committed(surveyed):
     assert "late.md" in git(path, "stash", "show", "--include-untracked", "--name-only", "stash@{0}"), "stash 에 남는다"
 
 
+def test_a_record_read_while_it_is_kept_does_not_fail_the_write():
+    # On Windows a reader holding the record open refuses the swap for a moment;
+    # the survey above once ended in `실패` with no reason because of it.
+    replace, refused = Path.replace, []
+
+    def busy(self, target):
+        if not refused:
+            refused.append(target)
+            raise PermissionError(5, "Access is denied")
+        return replace(self, target)
+
+    with patch.object(Path, "replace", busy):
+        connect.keep("proj", survey={"state": "끝"})
+    assert refused and connect.record("proj")["survey"] == {"state": "끝"}
+
+
 def test_a_turn_that_touches_an_existing_file_or_code_is_put_back(tmp_path):
     repo = _repo(tmp_path)
     (repo / ".wiki").mkdir()
