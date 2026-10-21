@@ -40,7 +40,7 @@ def main():
     merge_failed = False
     worktrees_open = threading.Event()
     worktrees_open.set()
-    worktree_gone = False
+    rows_override = specs_override = None
     fast_requests = []
     screen_errors = []
     fast_models = [("opus", True), ("opus[1m]", True), ("claude-opus-4-8", True),
@@ -117,11 +117,13 @@ def main():
         if path == "worktrees":
             while not worktrees_open.is_set():
                 await asyncio.sleep(.05)
-            return {"project": "fixture", "repo": "fixture", "rows": [] if deleted or worktree_gone else [
+            return {"project": "fixture", "repo": "fixture", "rows": rows_override if rows_override is not None
+                    else [] if deleted else [
                 {"path": "fixture-task", "name": "fixture-task", "branch": "fixture", "dirty": False,
                  "primary": True, "merged": False, "live": False, "busy": compacting}]}
         if path == "specs":
-            return {"project": "fixture", "specs": [] if deleted else [spec]}
+            return {"project": "fixture", "specs": specs_override if specs_override is not None
+                    else [] if deleted else [spec]}
         if path == "specs/fixture-task/review/log":
             return {"rows": [], "running": None}
         if path == "specs/fixture-task/merge":
@@ -782,13 +784,30 @@ def main():
             progress.get_by_role("status").filter(has_text="머지 중단 — 합성 구조 갱신 실패").wait_for()
             expect(page.get_by_role("button", name="머지 ▸", exact=True)).to_be_enabled()
             assert progress.get_attribute("aria-busy") == "false"
-            # The worktree is removed outside the app while its spec stays: the task stays selected.
-            worktree_gone = True
-            with page.expect_response(lambda r: r.url.endswith("/api/worktrees")):
-                page.evaluate("window.dispatchEvent(new Event('focus'))")
-            page.wait_for_timeout(500)
+            # The worktree is removed outside the app while its spec stays: once the changes pane
+            # (shown only with a worktree) goes, the task is still selected.
+            changes, focus = page.locator(".task-changes"), "window.dispatchEvent(new Event('focus'))"
+            expect(changes).to_have_count(1)
+            rows_override = []
+            page.evaluate(focus)
+            expect(changes).to_have_count(0)
             expect(page.get_by_role("button", name="머지 ▸", exact=True)).to_be_enabled()
-            worktree_gone = False
+            rows_override = None
+            page.evaluate(focus)
+            expect(changes).to_have_count(1)
+            # Another window deletes this task while a second spec names the same checkout. The
+            # specs answer first, then the listing drops the checkout: the other task is not taken.
+            specs_override = [{**spec, "id": "fixture-other", "branch": "other", "pr": {**spec["pr"], "number": 8}}]
+            worktrees_open.clear()
+            page.evaluate(focus)
+            page.get_by_text("작업 목록에서 선택하세요", exact=True).wait_for(state="attached")
+            rows_override = [{"path": "marker-wt", "name": "marker-wt", "branch": "marker", "dirty": False,
+                              "primary": False, "merged": False, "live": True, "busy": True}]
+            worktrees_open.set()
+            page.get_by_text("marker-wt", exact=True).first.wait_for(state="attached")
+            expect(page.locator(".task-pane h2")).to_have_text("작업")
+            rows_override = specs_override = None
+            page.evaluate(focus)
             assert not errors, errors
             page.set_viewport_size({"width": 1440, "height": 900})
             row = page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task")

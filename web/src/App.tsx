@@ -163,9 +163,8 @@ export default function App() {
   // Worktrees of other projects the rail lists — a loop, a running turn. One
   // of them stays selected when this project's list does not have it.
   const away = useRef(new Set<string>())
-  // The specs as last read, for a listing that drops the selected worktree.
-  const known = useRef<Spec[]>([])
-  useEffect(() => { known.current = specs }, [specs])
+  // The spec of the task on screen, for a listing that drops its worktree.
+  const picked = useRef<string | null>(null)
 
   const refresh = useCallback(() => {
     const mine = ++listing.current
@@ -179,10 +178,9 @@ export default function App() {
         setRows(rows)
         setSelected((key) => {
           if (key.startsWith('spec:') || rows.some((r) => r.path === key) || away.current.has(key)) return key
-          // A worktree removed under its task leaves the task keyed by its spec; a shared
-          // checkout several specs name is not guessed.
-          const owners = known.current.filter((s) => s.worktree === key)
-          return owners.length === 1 ? `spec:${owners[0].id}` : ''
+          // A worktree removed under its task leaves that task keyed by its spec. Another
+          // spec naming the same checkout is never taken for it.
+          return picked.current ? `spec:${picked.current}` : ''
         })
       })
       .catch((err) => mine === listing.current && setFault(String(err)))
@@ -437,6 +435,8 @@ export default function App() {
   const moved = !task && selected.startsWith('spec:')
     ? list.find((t) => t.spec && `spec:${t.spec.id}` === selected)?.key : undefined
   if (moved) setSelected(moved)
+  const pickedId = task?.spec?.id ?? null
+  useEffect(() => { picked.current = pickedId }, [pickedId])
   const others = elsewhere(loopRows, turnsElsewhere, repo)
   // A task's work model is keyed by its spec's repository and id, the same
   // from draft to worktree and under another project. Several tasks share a
