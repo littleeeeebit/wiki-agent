@@ -259,6 +259,18 @@ a time instead, the shape `useful` learned.
   0.850. Its 87 errors, joined to the candidates' provenance, run 0.13–0.27
   across query types and intents, so no one slice stands out to augment.
   The experiment record is `.wiki/laya-exp-retrieval-training.md`.
+- Two follow-ups left `useful`'s policy where #207 put it (owner,
+  2026-10-22). Sonnet relabelled 30 of the validation errors and agreed
+  with the label on 26, so the errors are the model's. Doubling train to
+  3,171 with candidates rebuilt from the train split's claims (run
+  20261021-114803) raised validation to 0.849 and cut ECE to 0.016, but
+  the fitted cost rose to 176.5 against 139. Label smoothing 0 on the
+  same data (run 20261021-214310) was worse on both: 0.805, cost 264. In
+  all three runs, 14 of the 204 calibration positives score P(yes) at or
+  below 0.2. These are weak positives: the passage sits beside the answer
+  or shows that it is absent. At 10 per dropped positive they rule out
+  any "no" rule, so the lever is the definition and cost of a weak
+  positive, not more training.
 
 ## Acceptance
 
