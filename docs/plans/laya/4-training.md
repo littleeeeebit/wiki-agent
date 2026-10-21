@@ -247,6 +247,18 @@ a time instead, the shape `useful` learned.
   619 and 624 candidates from 310 and 312 queries. They are labelled like
   the other kinds' `full1-val` (Haiku, Sol verifier, one round), then
   replace `useful`'s validation and calibration.
+- Result (run 20261021-075007, packed at fea47a3, same train). Labelling
+  kept 476 validation questions from 288 queries and 487 calibration
+  questions from 294. The refitted rule is 0.10 / 0.65 at cost 139 / 487:
+  it answers no to 103 of 283 negatives with one positive among them, and
+  defers 210 questions (43%, against 58% on the pilot split). The
+  artifact's embedded training report scores the 476 validation questions
+  0.500 before and 0.819 after. The notebook's own scoring of the chosen
+  checkpoint (the result zip's `results.json` and `predictions.jsonl`)
+  gives 0.817 against base 0.504, not comparable with the pilot split's
+  0.850. Its 87 errors, joined to the candidates' provenance, run 0.13–0.27
+  across query types and intents, so no one slice stands out to augment.
+  The experiment record is `.wiki/laya-exp-retrieval-training.md`.
 
 ## Acceptance
 

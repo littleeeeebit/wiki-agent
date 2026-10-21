@@ -1,25 +1,25 @@
 {
  "schema": "laya-policy/1",
  "kind": "useful",
- "model": "useful-train-e3-ls0.1-20261021-045345-ktfkxq5y.zip",
- "run": "20261021-054948",
+ "model": "useful-train-e3-ls0.1-20261021-075007-lfyaedty.zip",
+ "run": "20261021-075055",
  "chosen": "fine-tuned-e3-ls0.1",
  "laya": "0.4.6",
- "commit": "1d499a6e50187872353705f9f5f586a2bcf31c4f",
+ "commit": "fea47a3de8fc5f1f03b290bd61c3d03a19dafacd",
  "splits": {
   "train": "d8efb1078dff148c976331f692ef350322d5e826fcc5a03081da8c6bca9a9b7a",
-  "validation": "faf2583160c766e61784c3c96f444dc2279b977f9a8c4ea59c0af6cce5b62805",
-  "calibration": "3bb21c432b96769518c1a43c99265e35782a92e9e44cf360f029e10b290b35c1"
+  "validation": "da686685503af9a0d15c494ecc4329660891248cb2d1d6258030a4edaeeb66d5",
+  "calibration": "a1204765c338b28e61b55f12c65a5aef7da829c841424ea63d797460cca6ec0c"
  },
  "temperature": {
   "version": 2,
   "temperature": [
    1.0,
    1.0,
-   1.7180105447769165
+   1.363019347190857
   ],
   "temperature_by_options": {},
-  "model_id_or_path": "/content/laya/checkpoints/20261021-045345-ktfkxq5y/useful-train",
+  "model_id_or_path": "/content/laya/checkpoints/20261021-075007-lfyaedty/useful-train",
   "subfolder": null,
   "config": {
    "encoder": "answerdotai/ModernBERT-large",
@@ -96,55 +96,55 @@
      "eval_source": "/content/laya/data/useful/merged-validation.jsonl",
      "eval_mode": "held_out",
      "is_held_out": true,
-     "eval_items": 300,
+     "eval_items": 476,
      "note": "Metrics reflect independent held-out evaluation.",
      "before": {
-      "items": 300,
-      "loss": 0.8175,
-      "accuracy": 0.5267,
-      "mean_confidence": 0.6983,
-      "ece": 0.1994,
-      "brier": 0.5988,
-      "brier_top1": 0.2994,
+      "items": 476,
+      "loss": 0.8004,
+      "accuracy": 0.5,
+      "mean_confidence": 0.6996,
+      "ece": 0.1996,
+      "brier": 0.586,
+      "brier_top1": 0.293,
       "by_type": {
        "noul": {
-        "items": 300,
-        "loss": 0.8175,
-        "accuracy": 0.5267,
-        "mean_confidence": 0.6983,
-        "ece": 0.1994,
-        "brier": 0.5988,
-        "brier_top1": 0.2994
+        "items": 476,
+        "loss": 0.8004,
+        "accuracy": 0.5,
+        "mean_confidence": 0.6996,
+        "ece": 0.1996,
+        "brier": 0.586,
+        "brier_top1": 0.293
        }
       }
      },
      "after": {
-      "items": 300,
-      "loss": 0.4477,
-      "accuracy": 0.85,
-      "mean_confidence": 0.9193,
-      "ece": 0.1021,
-      "brier": 0.2673,
-      "brier_top1": 0.1336,
+      "items": 476,
+      "loss": 0.4634,
+      "accuracy": 0.8193,
+      "mean_confidence": 0.9079,
+      "ece": 0.0926,
+      "brier": 0.287,
+      "brier_top1": 0.1435,
       "by_type": {
        "noul": {
-        "items": 300,
-        "loss": 0.4477,
-        "accuracy": 0.85,
-        "mean_confidence": 0.9193,
-        "ece": 0.1021,
-        "brier": 0.2673,
-        "brier_top1": 0.1336
+        "items": 476,
+        "loss": 0.4634,
+        "accuracy": 0.8193,
+        "mean_confidence": 0.9079,
+        "ece": 0.0926,
+        "brier": 0.287,
+        "brier_top1": 0.1435
        }
       }
      },
      "comparison": {
-      "delta_accuracy": 0.3233,
-      "delta_loss": -0.3698,
-      "delta_ece": -0.0973,
-      "delta_brier": -0.3315,
-      "delta_brier_top1": -0.1658,
-      "delta_mean_confidence": 0.221
+      "delta_accuracy": 0.3193,
+      "delta_loss": -0.337,
+      "delta_ece": -0.107,
+      "delta_brier": -0.299,
+      "delta_brier_top1": -0.1495,
+      "delta_mean_confidence": 0.2083
      },
      "calibration": {
       "choice": {
@@ -208,24 +208,26 @@
  },
  "dataset": {
   "split": "calibration",
-  "sha256": "3bb21c432b96769518c1a43c99265e35782a92e9e44cf360f029e10b290b35c1",
-  "questions": 300
+  "sha256": "a1204765c338b28e61b55f12c65a5aef7da829c841424ea63d797460cca6ec0c",
+  "questions": 487
  },
  "rule": {
   "no": 0.1,
-  "yes": 0.7
+  "yes": 0.65
  },
  "errors": {
-  "n": 300,
-  "positives": 146,
+  "n": 487,
+  "positives": 204,
   "fitted": true,
-  "cost": 103.5,
-  "provisional_cost": 291.5,
+  "cost": 139.0,
+  "provisional_cost": 399.0,
   "counts": {
-   "positive_yes": 109,
-   "negative_uncertain": 138,
-   "negative_yes": 16,
-   "positive_uncertain": 37
+   "negative_no": 103,
+   "positive_yes": 149,
+   "negative_uncertain": 156,
+   "positive_uncertain": 54,
+   "negative_yes": 24,
+   "positive_no": 1
   }
  },
  "costs": {
@@ -240,6 +242,6 @@
    "yes": 1
   }
  },
- "fitted_at": "2026-10-21T06:11:02+00:00",
+ "fitted_at": "2026-10-21T08:45:03+00:00",
  "note": "Error rates on the calibration split the temperature was fitted on; not a calibration claim. The gate (Laya stage 6) holds the held-out evaluation."
 }
