@@ -430,10 +430,10 @@ export default function App() {
   // checkout path, and spec ids repeat across repositories, so neither alone names one task.
   const other = others.find((o) => o.path === selected)
   const owning = task?.spec ?? other?.spec
-  // A pane with no worktree yet — nothing selected, a selection whose task is gone, a spec not
-  // started — is the one empty agent pane: its pick is what [시작] sends, whichever card is pressed.
+  // A pane with no worktree — nothing selected, a selection whose task is gone, a spec not started
+  // or a PR not checked out — is the one empty agent pane: its pick is what [시작] sends, whichever card is pressed.
   const blank = `new:${repo}`
-  const empty = !other && (!task || (task.spec?.state === '정리됨' && !task.row))
+  const empty = !other && !task?.row
   const choiceKey = empty ? blank : owning ? choiceOf(owning) : selected
   const choice = choices[choiceKey] ?? task?.spec?.cell ?? NO_CHOICE
   const setChoice = (c: Choice) => setChoices((all) => ({ ...all, [choiceKey]: c }))
