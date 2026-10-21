@@ -86,7 +86,7 @@ def keep(name: str, **fields) -> dict:
         file.parent.mkdir(parents=True, exist_ok=True)
         temporary = file.with_suffix(".tmp")
         temporary.write_text(json.dumps(now, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        temporary.replace(file)
+        specs.swap(temporary, file)
     work.feed.put({"kind": "connect", "repo": name})
     return now
 

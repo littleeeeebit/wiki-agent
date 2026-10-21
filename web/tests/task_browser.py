@@ -38,6 +38,7 @@ def main():
     merge_events = []
     merge_release = threading.Event()
     merge_failed = False
+    worktree_delay = 0
     fast_requests = []
     screen_errors = []
     fast_models = [("opus", True), ("opus[1m]", True), ("claude-opus-4-8", True),
@@ -112,6 +113,7 @@ def main():
                     await asyncio.sleep(0.1)
             return StreamingResponse(interactive(), media_type="text/event-stream")
         if path == "worktrees":
+            await asyncio.sleep(worktree_delay)
             return {"project": "fixture", "repo": "fixture", "rows": [] if deleted else [
                 {"path": "fixture-task", "name": "fixture-task", "branch": "fixture", "dirty": False,
                  "primary": True, "merged": False, "live": False, "busy": compacting}]}
@@ -763,8 +765,13 @@ def main():
             spec.update(state="머지 가능", merge_progress=None)
             merge_release.clear()
             merge_failed = True
+            # The specs answer first, so the row is picked by its spec key; the selection must
+            # follow it to the worktree key that the late worktree list gives it.
+            worktree_delay = 1.5
             page.reload()
-            page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").click()
+            with page.expect_response(lambda r: r.url.endswith("/api/worktrees")):
+                page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task").click()
+            worktree_delay = 0
             page.get_by_role("tab", name="리뷰", exact=True).click()
             page.get_by_role("button", name="머지 ▸", exact=True).click()
             progress.get_by_role("status").filter(has_text=".omm 구조 문서 새로 고치는 중").wait_for()
