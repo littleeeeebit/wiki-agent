@@ -29,6 +29,8 @@ import re
 import threading
 from pathlib import Path
 
+from common import swap
+
 # The hub checkout this code runs from; its `.env` is the default file.
 HUB = Path(__file__).resolve().parents[2]
 
@@ -76,7 +78,7 @@ def saved(path: Path, changes: dict) -> None:
         temporary = Path(path).with_suffix(".tmp")
         temporary.write_text(json.dumps({**(old if isinstance(old, dict) else {}), **changes}, ensure_ascii=False)
                              + "\n", encoding="utf-8")
-        temporary.replace(path)
+        swap(temporary, path)
 
 
 def unquote(value: str) -> str:

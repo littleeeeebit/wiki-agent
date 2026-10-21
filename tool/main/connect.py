@@ -39,6 +39,7 @@ from pydantic import BaseModel
 import apply
 import setup_agents
 from agent import cli_command
+from common import swap
 from common.host import environment, skill_config
 from workspace import base_branch
 
@@ -86,7 +87,7 @@ def keep(name: str, **fields) -> dict:
         file.parent.mkdir(parents=True, exist_ok=True)
         temporary = file.with_suffix(".tmp")
         temporary.write_text(json.dumps(now, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        specs.swap(temporary, file)
+        swap(temporary, file)
     work.feed.put({"kind": "connect", "repo": name})
     return now
 

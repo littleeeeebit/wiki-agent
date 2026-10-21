@@ -2,12 +2,27 @@
 
 import asyncio
 import json
+from pathlib import Path
 from unittest.mock import patch
 from types import SimpleNamespace
 
 import pytest
 
 from main import loop, query, work
+
+
+def refused_once(refused: list):
+    """`Path.replace` refusing its first call, as a Windows reader holding the target does."""
+
+    replace = Path.replace
+
+    def busy(self, target):
+        if not refused:
+            refused.append(target)
+            raise PermissionError(5, "Access is denied")
+        return replace(self, target)
+
+    return patch.object(Path, "replace", busy)
 
 
 def test_conversation_append_and_clear_announce_after_persistence(tmp_path):
@@ -25,6 +40,21 @@ def test_conversation_append_and_clear_announce_after_persistence(tmp_path):
         assert query.recall("wiki") == []
         assert feed.events[-1] == {"kind": "conversation", "cid": "wiki", "seq": 1}
         assert "private question" not in json.dumps(feed.events)
+
+
+def test_a_conversation_read_while_it_is_cleared_does_not_fail_the_clear(tmp_path):
+    # On Windows a reader holding the log open (a `GET /api/log`) refuses the swap for a moment.
+    refused = []
+    repo = tmp_path / "fixture"
+    repo.mkdir()
+    with patch.object(work, "feed", work.Feed()), patch.object(query, "LOGS", tmp_path / "logs"), \
+         patch.object(query, "current_repo", return_value=repo), \
+         patch.object(query, "config", return_value={}), \
+         patch.object(query, "_sessions", {}), patch.object(query, "_busy", {}):
+        query.remember("wiki", "user", "private question")
+        with refused_once(refused):
+            query.reset("wiki", query.Clear(keep="delete"))
+        assert refused and query.recall("wiki") == []
 
 
 @pytest.mark.parametrize("after, cursor, expected", [(None, 1, []), (-1, -1, [0, 1]),

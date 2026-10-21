@@ -28,6 +28,7 @@ from main import channels as chat_channels
 from main import connect, loop, specs, survey, work
 from main import query as chat
 from test_main import _repo, client, no_machine_settings  # noqa: F401 — the fixture is autouse
+from test_sync import refused_once
 from workspace import base_branch
 
 HERE = Path(__file__).resolve().parent
@@ -523,15 +524,8 @@ def test_a_turn_cut_by_the_time_limit_leaves_nothing_it_committed(surveyed):
 def test_a_record_read_while_it_is_kept_does_not_fail_the_write():
     # On Windows a reader holding the record open refuses the swap for a moment;
     # the survey above once ended in `실패` with no reason because of it.
-    replace, refused = Path.replace, []
-
-    def busy(self, target):
-        if not refused:
-            refused.append(target)
-            raise PermissionError(5, "Access is denied")
-        return replace(self, target)
-
-    with patch.object(Path, "replace", busy):
+    refused = []
+    with refused_once(refused):
         connect.keep("proj", survey={"state": "끝"})
     assert refused and connect.record("proj")["survey"] == {"state": "끝"}
 
