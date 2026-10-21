@@ -207,6 +207,17 @@ a time instead, the shape `useful` learned.
   split, written to `eval/laya/policy/<kind>.json` bound to the checkpoint,
   its version and temperature (stage 1's composed policy). TypeSafe's
   `eval/jev/policy.json` is not touched.
+- How (owner, 2026-10-21). The notebook writes the chosen checkpoint's
+  probability of each calibration question's expected answer
+  (`calibration-predictions.jsonl`), and
+  `python tool/eval/policy.py --laya <result zip>...` fits each kind with
+  Jev's costs (`COSTS`; `analysis` with the costs Jev's arm D was compared
+  on). `ask` and `progress` have no cost table, in Jev's fit or here, so
+  they keep no rule until one is set. The first run retrains the seven
+  kinds that learned (`ask`, `analysis`, `progress`, `redirect`, `route`,
+  `source`, `useful`): the run that chose their checkpoints
+  (20261015-053449) kept no calibration probabilities, and its result zips
+  are no longer local.
 
 ## Acceptance
 
