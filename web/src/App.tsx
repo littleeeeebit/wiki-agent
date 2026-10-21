@@ -435,7 +435,7 @@ export default function App() {
   const blank = `new:${repo}`
   const empty = !other && !task?.row
   const choiceKey = empty ? blank : owning ? choiceOf(owning) : selected
-  const choice = choices[choiceKey] ?? task?.spec?.cell ?? NO_CHOICE
+  const choice = choices[choiceKey] ?? (empty ? undefined : task?.spec?.cell) ?? NO_CHOICE
   const setChoice = (c: Choice) => setChoices((all) => ({ ...all, [choiceKey]: c }))
 
   const order = useCallback(async (text: string) => {

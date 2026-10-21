@@ -314,6 +314,10 @@ def main():
                         break
                     page.wait_for_timeout(100)
 
+            # Nothing picked yet: the empty pane shows what [시작] would send, not a selected PR's own model.
+            page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="existing-task").click()
+            agent.get_by_text("명세의 [시작]이", exact=False).wait_for()
+            assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() != "sonnet"
             page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="draft-task").click()
             pick("codex:fixture-fast")
             page.get_by_role("navigation", name="초점", exact=True).get_by_role("button", name="다음 작업", exact=True).click()

@@ -308,8 +308,8 @@
     },
     "web/tests/task_browser.py": {
       "dup": 12,
-      "lines": 783,
-      "reason": "Checks the pick made with a draft card selected, under a stale selection (the hidden primary checkout a started card lands on) and with a started PR not checked out is what each start sends, and that the reopened task keeps its own model (#199 round 1). Before that: Checks that ordinary and refactoring spec cards started with no task selected send the empty agent pane's model (P0: they sent an empty or the conversation's model), and that reopening a task keeps its own. Before that: baseline at adoption"
+      "lines": 787,
+      "reason": "Checks the pick made with a draft card selected, under a stale selection (the hidden primary checkout a started card lands on) and with a started PR not checked out is what each start sends, that an empty pane never shows a PR's own model before anything is picked (#199 round 2), and that the reopened task keeps its own model (#199 round 1). Before that: Checks that ordinary and refactoring spec cards started with no task selected send the empty agent pane's model (P0: they sent an empty or the conversation's model), and that reopening a task keeps its own. Before that: baseline at adoption"
     },
     "web/tests/terminal_privacy.py": {
       "dup": 6,
