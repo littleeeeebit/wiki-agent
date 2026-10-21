@@ -31,6 +31,7 @@ Files under `laya/data/`:
 
     python laya/generate.py train --target 50 --teacher sonnet --max-turns 7
     python laya/generate.py train --abandon 4     # close an unsettled turn
+    python laya/generate.py validation --rebuild useful full1-val   # no teacher, no search (`rebuild`)
 
 Nothing is sent without `--teacher`; `--dry` shows the first turn's repository, pages and slots.
 """
@@ -374,6 +375,54 @@ def whole(req: dict) -> dict:
                                                  for n, q in req["questions"].items() if kind_of(n)}}
 
 
+def origin(entry: dict, i: int) -> dict:
+    """The provenance of the `i`th query of a teacher turn's ledger `entry`."""
+
+    q = entry["queries"][i]
+    return {"generator": "laya/generate.py", "prompt_version": entry["prompt_version"],
+            "teacher": entry["model"], "seed": entry["seed"], "repo": entry["repo"],
+            "pages": entry["pages"], "query": q["text"], "type": q.get("type"),
+            "intent": q.get("intent"), "about": q.get("about", []), "run": f"t{entry['seed']}-q{i}"}
+
+
+def rebuild(kind: str, split: str, out: str) -> dict:
+    """`kind`'s candidates cut again from the requests `split`'s runs claimed, with no teacher
+    turn and no search: for a kind those runs gave nothing because its `split` file was
+    already full (`useful`, whose validation and calibration were the 2026-10-13 pilot's,
+    33 and 32 queries; owner, 2026-10-21). Written to `<kind>/<out>.candidates.jsonl`, a new
+    file; a row near a gate state or any candidate of the kind already kept is dropped."""
+
+    target = DATA / kind / f"{out}.candidates.jsonl"
+    if target.exists():
+        raise SystemExit(f"{target} exists; rebuild writes a new file")
+    shared = DATA / "retrieval"
+    entries = {e["seed"]: e for e in read(shared / "generate.ledger.jsonl") if "queries" in e}
+    reserved = gate.reserved()
+    gated = [r for r in read(gate.POOL) if r["state_hash"] in reserved]
+    if reserved - {r["state_hash"] for r in gated}:
+        raise SystemExit(f"gate states are missing from {gate.POOL.name}; run laya/pool.py before rebuilding")
+    near_gate = gate.Near(gated)
+    near = gate.Near(row for path in sorted((DATA / kind).glob("*.candidates.jsonl")) for row in read(path))
+    stats = {"queries": 0, "kept": 0, "near_gate": 0, "near_kept": 0}
+    for r in read(shared / "generate.runs.jsonl"):
+        if r.get("split") != split or "claim" not in r:
+            continue
+        seed, i = (int(x) for x in r["run"][1:].split("-q"))
+        requests = [{"state": o["state"], "questions": {n: v["question"] for n, v in o["questions"].items()}}
+                    for o in r["claim"]]
+        stats["queries"] += 1
+        for row in candidates(kind, requests, origin(entries[seed], i)):
+            if near_gate.found(row):
+                stats["near_gate"] += len(row["questions"])
+            elif near.found(row):
+                stats["near_kept"] += len(row["questions"])
+            else:
+                append(target, row)
+                near.add(row)
+                stats["kept"] += len(row["questions"])
+    return stats
+
+
 def unsettled(ledger: list[dict]) -> list[int]:
     """Seeds of teacher turns started (`pending`) that never came back or were abandoned:
     a turn that may have been paid for with nothing to show for it."""
@@ -477,10 +526,7 @@ def generate(split: str, target: int, teacher: str, max_turns: int, seed: int = 
             run = f"t{entry['seed']}-q{i}"
             if run in done or full() or claimed.get(run, split) != split:
                 continue
-            provenance = {"generator": "laya/generate.py", "prompt_version": entry["prompt_version"],
-                          "teacher": entry["model"], "seed": entry["seed"], "repo": entry["repo"],
-                          "pages": entry["pages"], "query": q["text"], "type": q.get("type"),
-                          "intent": q.get("intent"), "about": q.get("about", []), "run": run}
+            provenance = origin(entry, i)
             if run in claimed:   # interrupted after its claim: finish on what it claimed
                 kept_requests = [{"state": o["state"], "questions": {n: v["question"] for n, v in o["questions"].items()}}
                                  for o in claims[run]]
@@ -589,7 +635,13 @@ def main() -> None:
     p.add_argument("--abandon", type=int, metavar="SEED")
     p.add_argument("--dry", action="store_true")
     p.add_argument("--batch", default="", help="a round of its own: its ledger, runs and <batch>-<split> files")
+    p.add_argument("--rebuild", nargs=2, metavar=("KIND", "OUT"),
+                   help="cut KIND's candidates again from the split's claimed runs into <KIND>/<OUT>.candidates.jsonl")
     a = p.parse_args()
+    if a.rebuild:
+        kind, out = a.rebuild
+        print(json.dumps(rebuild(kind, a.split, out), indent=1))
+        return
     if a.abandon is not None:
         abandon(a.abandon, a.batch)
         return

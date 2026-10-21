@@ -237,6 +237,16 @@ a time instead, the shape `useful` learned.
   `redirect` answers no to 8 of its 18 positives. These are error rates on
   the split the temperature was fitted on; the gate (stage 6) is the
   held-out comparison with Jev.
+- `useful`'s weak rule is mostly its measurement (owner, 2026-10-21: remake
+  validation first). Its validation and calibration are the 2026-10-13
+  pilot's, 33 and 32 queries at up to 12 passages each, labelled by Sonnet;
+  two thirds of train has 1–2 passages a query, labelled by Haiku. The
+  full run's validation and calibration runs gave `useful` nothing because
+  its files were full, so `python laya/generate.py <split> --rebuild useful
+  full1-val` cuts them from those runs' claims with no teacher or search:
+  619 and 624 candidates from 310 and 312 queries. They are labelled like
+  the other kinds' `full1-val` (Haiku, Sol verifier, one round), then
+  replace `useful`'s validation and calibration.
 
 ## Acceptance
 
