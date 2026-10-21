@@ -389,7 +389,7 @@ def rebuild(kind: str, split: str, out: str) -> dict:
     """`kind`'s candidates cut again from the requests `split`'s runs claimed, with no teacher
     turn and no search: for a kind those runs gave nothing because its `split` file was
     already full (`useful`, whose validation and calibration were the 2026-10-13 pilot's,
-    33 queries each; owner, 2026-10-21). Written to `<kind>/<out>.candidates.jsonl`, a new
+    33 and 32 queries; owner, 2026-10-21). Written to `<kind>/<out>.candidates.jsonl`, a new
     file; a row near a gate state or any candidate of the kind already kept is dropped."""
 
     target = DATA / kind / f"{out}.candidates.jsonl"
