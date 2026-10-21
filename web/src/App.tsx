@@ -163,6 +163,9 @@ export default function App() {
   // Worktrees of other projects the rail lists — a loop, a running turn. One
   // of them stays selected when this project's list does not have it.
   const away = useRef(new Set<string>())
+  // The specs as last read, for a listing that drops the selected worktree.
+  const known = useRef<Spec[]>([])
+  useEffect(() => { known.current = specs }, [specs])
 
   const refresh = useCallback(() => {
     const mine = ++listing.current
@@ -174,8 +177,13 @@ export default function App() {
           return
         }
         setRows(rows)
-        setSelected((key) => (key.startsWith('spec:') || rows.some((r) => r.path === key) || away.current.has(key)
-          ? key : ''))
+        setSelected((key) => {
+          if (key.startsWith('spec:') || rows.some((r) => r.path === key) || away.current.has(key)) return key
+          // A worktree removed under its task leaves the task keyed by its spec; a shared
+          // checkout several specs name is not guessed.
+          const owners = known.current.filter((s) => s.worktree === key)
+          return owners.length === 1 ? `spec:${owners[0].id}` : ''
+        })
       })
       .catch((err) => mine === listing.current && setFault(String(err)))
   }, [follow])

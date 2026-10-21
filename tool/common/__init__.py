@@ -8,6 +8,21 @@ drift apart: a worktree created by another tool is not ours.
 import os
 from pathlib import Path
 import sys
+import time
+
+
+def swap(temporary: Path, file: Path) -> None:
+    """`temporary` replaces `file` whole. A Windows reader holding `file`
+    open refuses the swap for a moment, so it is tried again."""
+
+    for attempt in range(40):
+        try:
+            Path(temporary).replace(file)
+            return
+        except PermissionError:
+            if attempt == 39:
+                raise
+            time.sleep(0.025)
 
 
 def python_environment(env: dict | None = None) -> dict:

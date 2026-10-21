@@ -33,7 +33,7 @@ from pydantic import BaseModel
 import verify
 import debt
 import translate
-from common import errorlog, process, python_environment, worktree_home
+from common import errorlog, process, python_environment, swap, worktree_home
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
@@ -123,20 +123,6 @@ def save(spec: dict) -> None:
         temporary.write_text(json.dumps(spec, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
         swap(temporary, file)
         publish(spec)
-
-
-def swap(temporary: Path, file: Path) -> None:
-    """`temporary` replaces `file` whole. A Windows reader holding `file`
-    open refuses the swap for a moment, so it is tried again."""
-
-    for attempt in range(40):
-        try:
-            temporary.replace(file)
-            return
-        except PermissionError:
-            if attempt == 39:
-                raise
-            time.sleep(0.025)
 
 
 def summary(spec: dict) -> dict:

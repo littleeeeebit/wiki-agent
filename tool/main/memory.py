@@ -20,6 +20,7 @@ from pathlib import Path
 import yaml
 
 from agent import oneshot
+from common import swap
 
 # The context row a clear leaves. What a screen shows starts after the last one.
 CLEARED = "사용자가 문맥 지우기"
@@ -76,7 +77,7 @@ def clear(file: Path, owns: Callable[[dict], bool], marker: dict, delete: bool) 
         file.parent.mkdir(parents=True, exist_ok=True)
         temporary = file.with_suffix(".tmp")
         temporary.write_text("".join(f"{line}\n" for line in kept), encoding="utf-8", newline="\n")
-        temporary.replace(file)
+        swap(temporary, file)
     return [row for _, row in mine]
 
 

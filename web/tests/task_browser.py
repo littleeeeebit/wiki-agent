@@ -40,6 +40,7 @@ def main():
     merge_failed = False
     worktrees_open = threading.Event()
     worktrees_open.set()
+    worktree_gone = False
     fast_requests = []
     screen_errors = []
     fast_models = [("opus", True), ("opus[1m]", True), ("claude-opus-4-8", True),
@@ -116,7 +117,7 @@ def main():
         if path == "worktrees":
             while not worktrees_open.is_set():
                 await asyncio.sleep(.05)
-            return {"project": "fixture", "repo": "fixture", "rows": [] if deleted else [
+            return {"project": "fixture", "repo": "fixture", "rows": [] if deleted or worktree_gone else [
                 {"path": "fixture-task", "name": "fixture-task", "branch": "fixture", "dirty": False,
                  "primary": True, "merged": False, "live": False, "busy": compacting}]}
         if path == "specs":
@@ -781,6 +782,13 @@ def main():
             progress.get_by_role("status").filter(has_text="머지 중단 — 합성 구조 갱신 실패").wait_for()
             expect(page.get_by_role("button", name="머지 ▸", exact=True)).to_be_enabled()
             assert progress.get_attribute("aria-busy") == "false"
+            # The worktree is removed outside the app while its spec stays: the task stays selected.
+            worktree_gone = True
+            with page.expect_response(lambda r: r.url.endswith("/api/worktrees")):
+                page.evaluate("window.dispatchEvent(new Event('focus'))")
+            page.wait_for_timeout(500)
+            expect(page.get_by_role("button", name="머지 ▸", exact=True)).to_be_enabled()
+            worktree_gone = False
             assert not errors, errors
             page.set_viewport_size({"width": 1440, "height": 900})
             row = page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="fixture-task")
