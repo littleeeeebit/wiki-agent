@@ -137,7 +137,7 @@ export function Agent({
               </div>
             ) : (
               <Reply key={t.key} turn={t} on={on} progressOn={progressOn} onAnswer={onAnswer} onPeek={onPeek}
-                onSend={t === last ? onSend : undefined} />
+                onSend={t === last && row ? onSend : undefined} />
             ),
           )}
           {queued && (

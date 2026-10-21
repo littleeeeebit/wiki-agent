@@ -295,9 +295,11 @@ def main():
                 rows.append({**rows[0], "path": "existing-wt", "name": "existing-wt", "branch": "existing-task", "primary": False})
                 route.fulfill(json={"path": "existing-wt"})
             page.route("**/api/specs/*/checkout", checkout)
-            # The checkout's history ran on Codex; that is no pick for the next start.
+            # The checkout's history ran on Codex; that is no pick for the next start. Its last
+            # question cannot be answered from a pane with no worktree.
+            asked = '```choices\n{"question": "Continue old task?", "options": [{"label": "Continue"}]}\n```'
             page.route("**/api/work/log*", lambda route: route.fulfill(json={
-                "rows": [{"role": "assistant", "text": "Old turn", "model": "codex:fixture-fast", "steps": []}],
+                "rows": [{"role": "assistant", "text": f"Old turn\n\n{asked}", "model": "codex:fixture-fast", "steps": []}],
                 "session_id": "fixture", "busy": False, "running": None, "rules": [], "queued": None}))
             page.set_viewport_size({"width": 1440, "height": 900})
             page.goto(base)
@@ -323,7 +325,9 @@ def main():
             page.get_by_role("navigation", name="초점", exact=True).get_by_role("button", name="다음 작업", exact=True).click()
             press(first)
             agent.get_by_text("Old turn", exact=True).wait_for()
+            agent.get_by_text("Continue old task?", exact=False).first.wait_for()
             assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() == "Claude 기본"
+            assert agent.locator('[data-question-pending="true"]').count() == 0
             page.get_by_role("navigation", name="작업", exact=True).get_by_role("button").filter(has_text="existing-task").click()
             agent.get_by_text("명세의 [시작]이", exact=False).wait_for()
             assert agent.get_by_label("선택한 작업 모델", exact=True).inner_text() != "sonnet"
