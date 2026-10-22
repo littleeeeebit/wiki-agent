@@ -77,6 +77,45 @@ Each read is a diagnostic:
 - `…182109` and `…182337`: the same two runs recounted by unit, the
   current rule.
 
+`useful` and `redirect`, 2026-10-22: both fail, each read once. These were
+the first gate reads for these kinds, on their 104 units reserved
+2026-10-13. Most of those units (92 of `useful`'s 102 evaluated, 94 of
+`redirect`'s 104) are units coverage's gate read before; coverage's labels
+are for another kind, and none of these units went into training.
+Labels came from guided labelling on one view per question (1,045 per
+kind, $0.33 and $0.30). Laya was asked at 2,048 tokens. Jev's side is
+production's recorded answers; stage 11's arm B reworded neither kind.
+
+| Kind | Units, questions | Laya | Jev | Paired difference | ECE Laya / Jev | Yes right, Laya / Jev |
+| --- | --- | --- | --- | --- | --- | --- |
+| `useful` (run 20261021-075007) | 102, 731 | 0.783 | 0.945 | −0.163 [−0.228, −0.102] | 0.052 / 0.155 | 70 / 169 of 175 |
+| `redirect` (run 20261022-014821) | 104, 781 | 0.773 | 0.941 | −0.168 [−0.242, −0.100] | 0.166 / 0.089 | 66 / 87 of 100 |
+
+Records: `raw/eval/laya/gate-useful-20261022T185138.json` and
+`gate-redirect-20261022T185258.json`.
+
+Diagnostics, not the gate:
+- The gate's views are longer than train's (median 880 tokens against 520).
+  Laya is worse on longer views. Below 3,000 characters it is 0.849 and
+  0.836 against Jev's 0.938 and 0.944, and even there it says yes to 38 of
+  80 `useful` positives, where Jev says yes to 77.
+- No threshold recovers the gap. Among the six tested thresholds (0.5,
+  0.4, 0.3, 0.2, 0.15 and 0.1), `useful`'s best is 0.791 at 0.4 and
+  `redirect`'s is 0.776 at 0.5. Even the best cutoff over every recorded
+  score, which a gate must not choose, is 0.795 and 0.892.
+- `redirect` also says yes to 141 of 681 negatives and leaves 2 unanswered.
+- Like coverage (0.800 against 0.961), both kinds sit about 16 points under
+  Jev on production states. The same checkpoints scored 0.817 (`useful`)
+  and 0.990 (`redirect`) on their generated validation splits. The
+  generated states stand in for production poorly.
+- A next verdict for either kind needs units these reads have not seen.
+
+Owner, 2026-10-22: Laya's paid work stops and the plan is reconsidered.
+Jev stays in production. The plan assumed that generated states could
+stand in for production. Three gated kinds about 16 points under Jev
+contradict that assumption. Nothing paid restarts without a new plan
+and its approval.
+
 Why, and the next round: [stage 5](5-augmentation.md), production-shaped
 states. Jev's side here is its answers under the old wording. Since #184
 (2026-10-19) production asks stage 11's arm B wording
