@@ -405,13 +405,20 @@ def head_of(path: Path) -> str:
     return specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
 
 
-def clean(path: Path, root: str) -> bool:
-    """Nothing uncommitted but untracked files outside the plan folder — the
-    decision records a session's start hook writes — which no plan commit takes."""
+def uncommitted(path: Path, root: str) -> set[str] | None:
+    """The uncommitted paths a publication must account for, or `None` when Git
+    cannot say. Untracked files outside the plan folder — the decision records
+    a session's start hook writes — are left out: no plan commit takes them."""
 
     done = specs.sh(["git", "-c", "core.quotepath=off", "status", "--porcelain", "--untracked-files=all"], path)
-    return not done.returncode and not [line for line in done.stdout.splitlines()
-                                        if not line.startswith("?? ") or line[3:].strip('"').startswith(f"{root}/")]
+    if done.returncode:
+        return None
+    return {line[3:].strip('"') for line in done.stdout.splitlines()
+            if line.strip() and not (line.startswith("?? ") and not line[3:].strip('"').startswith(f"{root}/"))}
+
+
+def clean(path: Path, root: str) -> bool:
+    return uncommitted(path, root) == set()
 
 
 def leftover(path: Path, root: str, manifest: list[dict]) -> list[Path] | None:
@@ -440,9 +447,8 @@ def leftover(path: Path, root: str, manifest: list[dict]) -> list[Path] | None:
         if not swap or swap[1] not in hashes:
             return None
         temporary.append(f)
-    done = specs.sh(["git", "-c", "core.quotepath=off", "status", "--porcelain", "-uall"], path)
-    changed = {line[3:].strip('"') for line in done.stdout.splitlines() if line.strip()}
-    if done.returncode or not changed <= {f"{root}/{f.name}" for f in folder.iterdir()}:
+    changed = uncommitted(path, root)
+    if changed is None or not changed <= {f"{root}/{f.name}" for f in folder.iterdir()}:
         return None
     return temporary
 

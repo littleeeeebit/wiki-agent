@@ -544,6 +544,9 @@ def test_a_write_cut_halfway_is_finished_on_resume_only_if_every_file_is_ours(ch
         (folder / "1-entry.md").write_text("# Mine\n\nA person's notes.\n", encoding="utf-8")
     elif left == "a person's other file":
         (folder / "notes.md").write_text("mine\n", encoding="utf-8")
+    # A session's start hook harvested a record meanwhile: outside the folder, it decides nothing.
+    (path / ".wiki" / "decisions").mkdir(parents=True, exist_ok=True)
+    (path / ".wiki" / "decisions" / "2026-10-22-246-fix-x.md").write_text("# fix x\n", encoding="utf-8")
     with patch.object(specs, "sh", remote):
         assert web.post(f"/api/plans/{sid}/resume").status_code == 200
         spec = settled(sid, "handoff", "stopped")
