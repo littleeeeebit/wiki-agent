@@ -1397,7 +1397,7 @@ def step(loop: Loop) -> bool:
         if loop.halt.is_set():
             return False
         if observation["status"] == "stale":
-            return True
+            return review_contract.read_again(loop, observation)
         contract = review_contract.store(repo, path, spec, review_contract.compose(contract, observation))
         if contract is None:
             return True
