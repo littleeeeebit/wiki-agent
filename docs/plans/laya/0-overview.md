@@ -98,10 +98,13 @@ Jev for every kind read so far:
 | `redirect` | 0.773 / 0.941 (fail) | 0.990 |
 
 Rounds of augmentation on generated states improved generated validation
-and policy cost. The gates show that those states stand in for production
-poorly. Two things the gates rule out as the main cause:
-- length alone: short views still miss half of `useful`'s positives;
-- the decision threshold: no cutoff closes the gap.
+and policy cost. The gates suggest those states stand in for production
+poorly. Neither length nor the decision threshold fully explains the gap:
+- Short views still miss 42 of `useful`'s 80 positives there; Jev misses 3.
+- No cutoff closes the gap. In hindsight, `redirect`'s best cutoff over its
+  recorded scores (0.892) would remove about 70% of its deficit. A gate
+  must never choose that cutoff, but threshold choice is a real part of
+  `redirect`'s gap.
 
 The plan's assumption that generated states can train a replacement does
 not hold as executed. Recorded spend on generated data includes the
@@ -121,9 +124,11 @@ Options:
    question). Jev's recorded answers can be a second labeller at no cost.
    This removes the generated-to-production gap, but needs volume. `useful`
    asks about 9 questions per state, so 1,000 train questions is about 110
-   states. With a gate of at least 100 units beside them, that is about two
-   months of today's use. `coverage`, at about 3 questions per state, needs
-   longer.
+   states. With a gate of at least 100 units beside them, that is at least
+   two months of today's use. That figure is optimistic: it assumes every
+   state is its own unit and every question keeps its label, while only 27
+   of the 55 new states carry `useful` and labelling drops about a quarter.
+   `coverage`, at about 3 questions per state, needs longer.
 2. Read the existing `shape3` checkpoints on a fresh coverage gate. `shape3`
    is production-shaped generation, never read on a gate. This waits for
    100 new coverage units (17 now). It costs only the gate labels (under
