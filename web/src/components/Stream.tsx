@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Answer } from '@/components/Answer'
 import type { AnswerProps } from '@/components/Answer'
@@ -77,7 +77,7 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onS
                 {m.tools.length > 0 && <Tools tools={m.tools} korean={korean} />}
                 {m.text ? (
                   <AnswerVersions
-                    m={m} korean={korean} remote={remote} onPeek={(p, l) => onPeek(p, l, m.runId)} onDecide={onDecide}
+                    m={m} korean={korean} remote={remote} onPeek={onPeek} onDecide={onDecide}
                   />
                 ) : (
                   m.pending && <Blink />
@@ -119,8 +119,11 @@ function Tools({ tools, korean }: { tools: string[]; korean: boolean }) {
 }
 
 function AnswerVersions(
-  { m, korean, ...props }: { m: Msg; korean: boolean } & Omit<AnswerProps, 'text'>,
+  { m, korean, onPeek, ...rest }: { m: Msg; korean: boolean; onPeek: Props['onPeek'] } & Omit<AnswerProps, 'text' | 'onPeek'>,
 ) {
+  // Stable per run, so `memo(Answer)` skips this answer while a later one streams.
+  const peek = useCallback((path: string, line: number) => onPeek(path, line, m.runId), [onPeek, m.runId])
+  const props = { ...rest, onPeek: peek }
   const [simple, setSimple] = useState(false)
   const available = m.simpleText !== undefined || m.simplePending || Boolean(m.simpleError)
   // Only the answer, and only once it is finished. The plain explanation is
