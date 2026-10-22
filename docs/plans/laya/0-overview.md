@@ -83,10 +83,10 @@ after its stage 6 result, each once it has at least 100 production states.
 - Reliability PR 10 and the review-routing stages keep using whichever
   provider each kind is set to.
 
-## Reconsideration (draft, 2026-10-22)
+## Reconsideration (2026-10-22)
 
-The owner paused paid work after the stage 6 gates. This section is a draft
-for the owner's decision; nothing in it is approved.
+The owner paused paid work after the stage 6 gates, then approved the
+recommendation at the end of this section (2026-10-22, after #217).
 
 What the gates showed. On production states Laya is about 16 points under
 Jev for every kind read so far:
@@ -138,9 +138,10 @@ Options:
 3. End Laya. Jev stays the decider and TypeSafe stays required. The `laya/`
    code and records stay as they are.
 
-Recommendation, for the owner to accept or change:
+Recommendation, approved by the owner on 2026-10-22:
 - Let states accumulate (free).
-- Take option 2 when the coverage gate fills.
+- Take option 2 when the coverage gate fills. Its gate labels need their
+  own approval then.
 - Then choose between 1 and 3 on its result.
 - No more augmentation from generated states alone.
 
