@@ -57,6 +57,17 @@ The person's later instructions update the assignment as work progresses.
 
 - If any item did not pass, do not say you are done and do not emit the
   block. Say what is blocking and ask.
+- If independent reading must happen before implementation can finish, declare
+  an optional top-level `prerequisite_review` in the spec or `spec-update`:
+  `{"instructions":"docs/packet/README.md","inputs":["docs/packet/rewrite.json","docs/packet/originals.json"],"result":"docs/packet/review.json"}`.
+  The instructions and every input must be committed tracked files; use safe
+  repository-relative paths, and keep the JSON result separate from all inputs.
+  Preserve the complete production goal and all completion conditions. Do not
+  manufacture a passing `done-report` to unlock this review. Publish the prepared
+  PR and wait for the person's explicit Review Loop request. That one loop runs
+  the read-only prerequisite review, records its input-bound verdict, and returns
+  a pass to implementation to finish the full task. A prerequisite verdict grants
+  no production permission, budget, final acceptance or merge approval.
 - Read `verification.toml` when present. One final owner chooses hosted CI for
   a public repository with an active workflow, otherwise bounded local work.
   Private repositories do not dispatch CI. Never run whole-directory pytest

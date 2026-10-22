@@ -72,6 +72,17 @@ Requirements, revision, history and task identity survive. Busy or wrong-branch
 checkouts are refused before metadata changes; review still checks the real PR
 head and runs the repository gate.
 
+A local task may declare `prerequisite_review` when an independent reading must
+precede the remaining implementation. Its committed instruction, explicit inputs
+and JSON result path define that reading; they do not replace any completion item.
+The person's one Review Loop request runs the prerequisite before final acceptance
+evidence collection. The read-only cell returns its verdict in the conversation;
+the server records its actual identity and committed-input hashes. A pass returns
+the exact verdict to implementation, which commits it and finishes the full spec.
+Normal acceptance review and owned final verification still follow. A failure,
+stale input or incomplete continuation stops without merge approval. Details and
+regression evidence are in [prerequisite review handoff](research/prerequisite-review-handoff.md).
+
 Observed causes, regression scope and real host-event evidence are recorded in
 [native host boundary and PR recovery](research/native-host-boundary.md).
 
