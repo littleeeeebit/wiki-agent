@@ -38,7 +38,9 @@ export function Stream({ messages, korean, remote, onPeek, onDecide, onMark, onS
   }, [grown])
 
   return (
-    <div className="flex-1 overflow-y-auto">
+    // `contain: size`: the composer below changes size and text as one types,
+    // and without it the whole conversation was laid out again on every key.
+    <div className="flex-1 overflow-y-auto [contain:size]">
       <div className="mx-auto max-w-3xl px-6 py-6">
         {intro}
         {messages.length === 0 && empty}
