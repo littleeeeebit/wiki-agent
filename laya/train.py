@@ -209,15 +209,17 @@ def chance(got: dict, want) -> float:
 
 
 def score(kind: str, checkpoint, sure: dict | None = None,
-          truth: dict | None = None, split: str = "validation") -> tuple[set[tuple[str, str]], dict]:
+          truth: dict | None = None, split: str = "validation",
+          max_len: int | None = None) -> tuple[set[tuple[str, str]], dict]:
     """`(wrong, predicted)`: the `split` `(state_hash, question)` the checkpoint gets
     wrong, and its answer to every `split` question that fits `MAX_LEN`. `checkpoint`
     is a fine-tune's folder, or a published name (`base`, `typed`) for zero-shot. `sure`,
     when given, receives each answer's probability (`answer_confidence`, max(p) after the
     checkpoint's temperatures, what ECE reads; a choice's `confidence` is entropy);
-    `truth`, the probability it gave the expected answer (`chance`), what log loss reads."""
+    `truth`, the probability it gave the expected answer (`chance`), what log loss reads.
+    `max_len` replaces the kind's `MAX_LEN` (the gate's longer production views)."""
 
-    max_len = MAX_LEN[kind]
+    max_len = max_len or MAX_LEN[kind]
     agent = loaded(checkpoint)
     wrong, predicted = set(), {}
     for row in read(DATA / kind / f"{split}.jsonl"):

@@ -2,15 +2,19 @@
 reserved gate states, read here for the first time.
 
     laya/.venv/Scripts/python laya/jev_gate.py coverage --support <checkpoint dir> --joint <checkpoint dir>
+    laya/.venv/Scripts/python laya/jev_gate.py useful --candidates
+    laya/.venv/Scripts/python laya/jev_gate.py useful --checkpoint <checkpoint dir>
 
-The labels are guided labelling's on the gate states (`coverage/gate.jsonl`, from
+The labels are guided labelling's on the gate states (`<kind>/gate.jsonl`, from
 `gate.candidates.jsonl`), which never see either decider's answer. Jev's side is the answer
 production recorded in the local Langfuse for the same state and question (`jev_answers`),
 not a paid run (owner, 2026-10-19). Laya's coverage answer is support's, and where support
-left a question undecided, joint's over its part picks (`joint.evaluate`).
+left a question undecided, joint's over its part picks (`joint.evaluate`). A passage kind
+(`useful`, `redirect`) is labelled and answered on one row per question, the reserved
+state with only that question's passage (`candidates`, `kinds.view`), as it was trained.
 
 One test state is one reserved logical unit (`units`): of a unit's labelled hashes, the
-first is evaluated. An answer is right when its verdict matches the label; no answer
+first is evaluated, all its questions. An answer is right when its verdict matches the label; no answer
 counts as wrong. The gate passes when the lower bound of the paired 95% interval of Laya's
 accuracy minus Jev's, resampling units, is at least -`MARGIN`, and Laya's ECE is no worse
 than Jev's by more than `ECE_MARGIN`. Under `MIN_STATES` units, or units both answered,
@@ -29,12 +33,18 @@ import joint
 import pool
 import stage1
 import support
+import train
+from kinds import PASSAGE, view
 from label import DATA
 from store import read
 
 POLICY = stage1.ROOT / "eval" / "jev" / "policy.json"
 MARGIN, ECE_MARGIN, MIN_STATES = 0.05, 0.05, 100
 RESAMPLES, SEED, BINS = 10_000, 20261019, 10
+# Production's passage views run longer than the generated ones the passage kinds trained on
+# (2026-10-22, gate views: median 880 tokens against train's 520; 36% of redirect's past its
+# 1,024), so the gate asks them at 2,048 (0.2% past it), set from lengths before any answer.
+PASSAGE_LEN = 2048
 
 
 def right(verdict, expected) -> bool:
@@ -67,13 +77,16 @@ def units() -> dict[str, tuple[int, int]]:
 
 
 def one_per_unit(rows: list[dict], place: dict) -> list[dict]:
-    """The first labelled row of each logical unit, in the reservation's order: a unit is
-    evaluated, counted and resampled once (PR #181 review: 114 hashes were 94 units)."""
+    """The rows of the first labelled hash of each logical unit, in the reservation's order: a
+    unit is evaluated, counted and resampled once (PR #181 review: 114 hashes were 94 units).
+    A passage kind holds one row per question, so a hash may have several."""
 
-    out = {}
+    first = {}
     for row in sorted(rows, key=lambda r: place[r["provenance"]["state_hash"]]):
-        out.setdefault(place[row["provenance"]["state_hash"]][0], row)
-    return list(out.values())
+        first.setdefault(place[row["provenance"]["state_hash"]][0], row["provenance"]["state_hash"])
+    chosen = set(first.values())
+    return sorted((r for r in rows if r["provenance"]["state_hash"] in chosen),
+                  key=lambda r: place[r["provenance"]["state_hash"]])
 
 
 def paired(records: list[dict], resamples: int = RESAMPLES, seed: int = SEED) -> tuple[float, float, float]:
@@ -120,7 +133,7 @@ def verdict(records: list[dict]) -> dict:
 
 
 # Jev's documented weak spots (https://docs.typesafe.ai/model-jaggedness/jev-1.13), which Laya's
-# data must cover (owner, 2026-10-19), as rough tags on a coverage question; reported, not gated.
+# data must cover (owner, 2026-10-19), as rough tags on a gate question; reported, not gated.
 WEAK = {"numbers": re.compile(r"\d"),
         "dates": re.compile(r"\b(19|20)\d\d\b|\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\b|"
                             r"\b(yesterday|today|tomorrow|ago|before|after|since|until|deadline)\b", re.I),
@@ -129,11 +142,15 @@ WEAK = {"numbers": re.compile(r"\d"),
 
 
 def weak(row: dict, name: str, large: int) -> list[str]:
-    """The weak-spot tags of `row`'s question `name`: the requirement's wording, injected
-    instructions in its passages, and a state longer than `large` characters."""
+    """The weak-spot tags of `row`'s question `name`: the requirement's wording (a passage
+    kind's: the query's), injected instructions in its passages, and a state longer than
+    `large` characters."""
 
-    rid = name.split("_", 1)[1]
-    text = next(r["text"] for r in row["state"]["requirements"] if r["id"] == rid)
+    if name.startswith("coverage_"):
+        rid = name.split("_", 1)[1]
+        text = next(r["text"] for r in row["state"]["requirements"] if r["id"] == rid)
+    else:
+        text = row["state"]["query"]
     passages = " ".join(p.get("text", "") for p in row["state"]["passages"])
     tags = [t for t in ("numbers", "dates", "literal") if WEAK[t].search(text)]
     tags += ["injected"] * bool(WEAK["injected"].search(passages))
@@ -196,6 +213,46 @@ def coverage(support_dir: str, joint_dir: str) -> dict:
     return {(r["state_hash"], r["question"]): (r["verdict"], r["score"]) for r in records}
 
 
+def passage(kind: str, checkpoint: str, wholes: dict) -> dict:
+    """Laya's `(verdict, probability of yes)` for each labelled gate question of a passage
+    kind, keyed by the reserved state's hash (`wholes`: a view's hash to it). A question past
+    `PASSAGE_LEN` has no answer."""
+
+    truth = {}
+    _, predicted = train.score(kind, checkpoint, truth=truth, split="gate", max_len=PASSAGE_LEN)
+    expected = {(r["provenance"]["state_hash"], n): e for r in read(DATA / kind / "gate.jsonl")
+                for n, e in r["expected"].items()}
+    return {(wholes[h], n): (said, truth[(h, n)] if expected[(h, n)] else 1 - truth[(h, n)])
+            for (h, n), said in predicted.items()}
+
+
+def candidates(kind: str) -> list[dict]:
+    """A passage kind's gate candidates: for each reserved state, in the reservation's order,
+    one row per `kind` question holding the state with only that question's passage, its
+    hash, and `whole`, the reserved state's hash. A view another state already gave is
+    left out, so each view is labelled once."""
+
+    pooled = {r["state_hash"]: r for r in read(gate.POOL)}
+    tests = json.loads(gate.TESTS.read_text(encoding="utf-8"))["tests"]
+    missing = {r["state_hash"] for unit in tests for r in unit} - set(pooled)
+    if missing:
+        raise SystemExit(f"{len(missing)} gate states are not in {gate.POOL.name}")
+    out, seen = [], set()
+    for unit in tests:
+        for r in unit:
+            row = pooled[r["state_hash"]]
+            for name, q in row["questions"].items():
+                if q["kind"] != kind:
+                    continue
+                state = view(name, kind, row["state"])
+                h = pool.digest(state)
+                if h not in seen:
+                    seen.add(h)
+                    out.append({"id": f"{row['state_hash'][:16]}-{name}", "state": state, "state_hash": h,
+                                "questions": {name: q}, "whole": row["state_hash"]})
+    return out
+
+
 def records(rows: list[dict], laya: dict, jev: dict, place: dict) -> list[dict]:
     out = []
     for row in rows:
@@ -211,17 +268,34 @@ def records(rows: list[dict], laya: dict, jev: dict, place: dict) -> list[dict]:
 
 def main() -> None:
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("kind", choices=["coverage"])
-    p.add_argument("--support", required=True, help="support checkpoint folder")
-    p.add_argument("--joint", required=True, help="joint checkpoint folder")
+    p.add_argument("kind", choices=["coverage", "useful", "redirect"])
+    p.add_argument("--support", help="coverage: support checkpoint folder")
+    p.add_argument("--joint", help="coverage: joint checkpoint folder")
+    p.add_argument("--checkpoint", help="a passage kind's checkpoint folder")
+    p.add_argument("--candidates", action="store_true",
+                   help="a passage kind: write its gate candidates from the reserved states, then stop")
     a = p.parse_args()
+    if a.candidates:
+        path = DATA / a.kind / "gate.candidates.jsonl"
+        if a.kind not in PASSAGE or path.exists():
+            p.error(f"--candidates is for a passage kind whose {path.name} is not written yet")
+        rows = candidates(a.kind)
+        path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+        print(f"{len(rows)} candidates, {sum(len(r['questions']) for r in rows)} questions ->", path)
+        return
+    if not (a.checkpoint if a.kind in PASSAGE else a.support and a.joint):
+        p.error("coverage takes --support and --joint; a passage kind takes --checkpoint")
     place = units()
-    labelled = read(DATA / a.kind / "gate.jsonl")
+    asked = read(DATA / a.kind / "gate.candidates.jsonl")
+    wholes = {r["state_hash"]: r.get("whole", r["state_hash"]) for r in asked}
+    labelled = [{**r, "provenance": {**r["provenance"], "state_hash": wholes[r["provenance"]["state_hash"]]}}
+                for r in read(DATA / a.kind / "gate.jsonl")]
     rows = one_per_unit(labelled, place)
-    asked = sum(len(r["questions"]) for r in read(DATA / a.kind / "gate.candidates.jsonl"))
-    got = records(rows, coverage(a.support, a.joint), jev_answers(rows), place)
-    out = {"kind": a.kind, "support": a.support, "joint": a.joint, "candidate_questions": asked,
-           "labelled_states": len(labelled),
+    laya = passage(a.kind, a.checkpoint, wholes) if a.kind in PASSAGE else coverage(a.support, a.joint)
+    got = records(rows, laya, jev_answers(rows), place)
+    out = {"kind": a.kind, "support": a.support, "joint": a.joint, "checkpoint": a.checkpoint,
+           "candidate_questions": sum(len(r["questions"]) for r in asked),
+           "labelled_states": len({r["provenance"]["state_hash"] for r in labelled}),
            "labels": "guided labelling (haiku, codex:gpt-6.1-sol), agreed only", "jev": "recorded in Langfuse",
            **verdict(got), "jev_policy": under_policy(got, json.loads(POLICY.read_text("utf-8"))["rules"][a.kind]),
            "weak_spots": by_weakness(got, rows), "records": got}

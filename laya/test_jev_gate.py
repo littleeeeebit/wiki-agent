@@ -100,3 +100,43 @@ def test_the_jev_gate_scores_both_deciders_on_the_labelled_gate_states(tmp_path,
     monkeypatch.setattr(train, "tokens", lambda agent, st, q: 10)
     summary, recs = joint.evaluate("ckpt", agent, split="gate", chosen=chosen)
     assert recs[0]["verdict"] is True and summary["joint_asked"] == 1
+
+
+def test_a_passage_kind_is_gated_on_one_view_per_question_of_the_reserved_state(tmp_path, monkeypatch):
+    import jev_gate
+    q = {"type": "noul", "instructions": "Useful?"}
+    two = {"query": "Was it set in 2026?", "passages": [{"id": "p0", "text": "a"}, {"id": "p1", "text": "b"}]}
+    write(gate.POOL, [{"state": two, "state_hash": "w0", "questions": {"useful_p0": {"kind": "useful", "question": q},
+                                                                        "useful_p1": {"kind": "useful", "question": q},
+                                                                        "coverage_r0": {"kind": "coverage", "question": q}}},
+                      {"state": {**two, "passages": two["passages"][:1]}, "state_hash": "w1",
+                       "questions": {"useful_p0": {"kind": "useful", "question": q}}}])
+    gate.TESTS.write_text(json.dumps({"tests": [[{"state_hash": "w0"}, {"state_hash": "w1"}]]}), encoding="utf-8")
+    # One row per question with only its passage; w1's one view is w0's, so it is labelled once.
+    got = jev_gate.candidates("useful")
+    assert [(r["whole"], list(r["questions"]), [p["id"] for p in r["state"]["passages"]]) for r in got] == \
+        [("w0", ["useful_p0"], ["p0"]), ("w0", ["useful_p1"], ["p1"])]
+    assert got[0]["state_hash"] == pool.digest(got[0]["state"])
+    # A unit is the first labelled hash's rows, every question of it.
+    place = jev_gate.units()
+    rows = [{"expected": {n: True}, "provenance": {"state_hash": h}} for h, n in
+            (("w1", "useful_p0"), ("w0", "useful_p1"), ("w0", "useful_p0"))]
+    assert [list(r["expected"]) for r in jev_gate.one_per_unit(rows, place)] == [["useful_p1"], ["useful_p0"]]
+    # Laya's answers come back keyed by the reserved state, its probability of yes from `chance`.
+    write(tmp_path / "data" / "useful" / "gate.jsonl",
+          [{"state": r["state"], "questions": {n: q for n in r["questions"]}, "expected": {n: n == "useful_p0"
+                                                                                          for n in r["questions"]},
+            "provenance": {"state_hash": r["state_hash"]}} for r in got])
+    monkeypatch.setattr(jev_gate, "DATA", tmp_path / "data")
+
+    def score(kind, checkpoint, truth, split, max_len):
+        assert max_len == jev_gate.PASSAGE_LEN   # the gate's views are longer than training's
+        truth.update({(got[0]["state_hash"], "useful_p0"): 0.8, (got[1]["state_hash"], "useful_p1"): 0.9})
+        return set(), {(got[0]["state_hash"], "useful_p0"): True, (got[1]["state_hash"], "useful_p1"): False}
+
+    monkeypatch.setattr(train, "score", score)
+    wholes = {r["state_hash"]: r["whole"] for r in got}
+    assert jev_gate.passage("useful", "ckpt", wholes) == {("w0", "useful_p0"): (True, 0.8),
+                                                         ("w0", "useful_p1"): (False, pytest.approx(0.1))}
+    # The weak-spot wording of a passage question is the query's.
+    assert jev_gate.weak(got[0], "useful_p0", 10**6) == ["numbers", "dates"]

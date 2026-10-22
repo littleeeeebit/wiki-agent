@@ -92,9 +92,17 @@ and writes `raw/eval/laya/gate-<kind>-<timestamp>.json`. The file holds
 per-question answers, the paired interval, ECE, the diagnostics and the
 verdict (`pass`, `fail`, `inconclusive`). `coverage` is Laya's support
 checkpoint, then joint over support's part picks where support left a
-question undecided. Tests in `laya/test_jev_gate.py`: no answer counts as wrong,
-the paired bootstrap on known cases, ECE bins, both 100-state rules, the
-policy reading and the weak-spot tags.
+question undecided. `useful` and `redirect` take one checkpoint
+(`--checkpoint`); `--candidates` first writes their gate candidates, one
+row per question holding the reserved state with only that question's
+passage, as they were trained, and a unit is still read from its first
+labelled state. Production's passage views are longer than the generated
+ones they trained on (2026-10-22: median 880 tokens against train's 520;
+36% of `redirect`'s past its 1,024), so the gate asks them at 2,048 tokens,
+set from lengths before any answer was read. Tests in
+`laya/test_jev_gate.py`: no answer counts as wrong, the paired bootstrap on
+known cases, ECE bins, both 100-state rules, the policy reading, the
+weak-spot tags and the passage kinds' views.
 
 ## Rollout
 
