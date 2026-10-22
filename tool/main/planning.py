@@ -405,9 +405,13 @@ def head_of(path: Path) -> str:
     return specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
 
 
-def clean(path: Path) -> bool:
-    done = specs.sh(["git", "status", "--porcelain"], path)
-    return not done.returncode and not done.stdout.strip()
+def clean(path: Path, root: str) -> bool:
+    """Nothing uncommitted but untracked files outside the plan folder — the
+    decision records a session's start hook writes — which no plan commit takes."""
+
+    done = specs.sh(["git", "-c", "core.quotepath=off", "status", "--porcelain", "--untracked-files=all"], path)
+    return not done.returncode and not [line for line in done.stdout.splitlines()
+                                        if not line.startswith("?? ") or line[3:].strip('"').startswith(f"{root}/")]
 
 
 def leftover(path: Path, root: str, manifest: list[dict]) -> list[Path] | None:
@@ -927,7 +931,7 @@ def publish(worker: Worker, spec: dict, path: Path) -> None:
     head = head_of(path)
     if publication.get("head"):
         # Recorded, then stopped before the pull request: push only that very commit.
-        if head != publication["head"] or not clean(path):
+        if head != publication["head"] or not clean(path, root):
             return worker.stop("worktree_moved", f"작업트리가 기록한 커밋 {publication['head'][:7]} 에서 움직였다")
     else:
         folder = path / root
@@ -937,12 +941,12 @@ def publish(worker: Worker, spec: dict, path: Path) -> None:
         if head != p["base_head"]:
             # Committed by an attempt a restart cut before it was recorded — or someone else's commit.
             listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", p["base_head"], head], path)
-            if listed.returncode or set(listed.stdout.split()) != set(paths) or not ours or not clean(path):
+            if listed.returncode or set(listed.stdout.split()) != set(paths) or not ours or not clean(path, root):
                 return worker.stop("worktree_moved", f"작업트리의 HEAD 가 {p['base_head'][:7]} 에서 움직였다")
         else:
             # An earlier attempt may have written some of the files before it was cut; they are written again.
             partial = leftover(path, root, p["artifact_manifest"])
-            if not clean(path) and partial is None:
+            if not clean(path, root) and partial is None:
                 return worker.stop("worktree_moved", "작업트리에 커밋 안 된 변경이 있다")
             if (folder.exists() or linked(folder)) and partial is None:
                 return worker.stop("root_exists", f"`{root}` 가 이미 있다 — 새 폴더만 쓴다")
@@ -961,7 +965,7 @@ def publish(worker: Worker, spec: dict, path: Path) -> None:
                 return worker.stop("publish_failed", str(exc))
             head = head_of(path)
             listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", p["base_head"], head], path)
-            if not clean(path) or set(listed.stdout.split()) != set(paths):
+            if not clean(path, root) or set(listed.stdout.split()) != set(paths):
                 return worker.stop("publish_failed", "커밋이 계획 폴더 밖을 건드렸거나 작업트리가 깨끗하지 않다")
         publication = {"head": head, "pr": None}
         planned(worker.repo, worker.sid, publication=publication)
