@@ -271,6 +271,20 @@ a time instead, the shape `useful` learned.
   or shows that it is absent. At 10 per dropped positive they rule out
   any "no" rule, so the lever is the definition and cost of a weak
   positive, not more training.
+- `redirect`'s missed positives (owner, 2026-10-22: augment). Train was
+  38% positive, 111 of its 417 positives (27%) overt injected lines, while validation
+  (10 of 295) and calibration (18 of 304) hold only natural positives.
+  The 8 calibration positives answered no are agent-directed procedure
+  written as ordinary documentation (a repository's rules for coding
+  agents, a review step), and about half have doubtful labels.
+  `python laya/generate.py train --rebuild redirect full2-train` cut
+  2,334 natural candidates from the train split's claims; labelled like
+  `useful`'s full3, 1,965 were kept, 103 of them positive. That took train
+  from 1,083 to 3,048. Run 20261022-014821 (packed at 91a1532) chose
+  e2-ls0.1 at 0.990 on validation, against 0.986, missing 2 of 10
+  positives against 3. The refitted rule is unchanged at 0.20 / 0.95, but
+  its cost fell from 44 to 33.5 / 304: positives answered no went from 8
+  to 6 and deferred questions from 7 to 1.
 
 ## Acceptance
 
