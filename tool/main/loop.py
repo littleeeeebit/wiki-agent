@@ -1396,8 +1396,8 @@ def step(loop: Loop) -> bool:
         observation = {"status": "not_asked", "reason": "active_inspection"} if contract["flows"] else review_contract.observe_shadow(repo, path, spec, paths, contract, loop.halt)
         if loop.halt.is_set():
             return False
-        if observation["status"] == "stale":
-            return review_contract.read_again(loop, observation)
+        if (again := review_contract.read_again(loop, observation)) is not None:
+            return again
         contract = review_contract.store(repo, path, spec, review_contract.compose(contract, observation))
         if contract is None:
             return True

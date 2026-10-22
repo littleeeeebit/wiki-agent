@@ -742,16 +742,21 @@ def observe_shadow(repo: Path, path: Path, spec: dict, paths: list[str] | None, 
     return observation
 
 
-def read_again(lp, observation: dict) -> bool:
-    """`True`: the round reads moved input once more. The same input stale twice
-    never settles by itself, so it stops with a reason — ai-coding-wiki #158 spun
-    in `리뷰 대기` with none."""
+def read_again(lp, observation: dict) -> bool | None:
+    """`None` past a fresh observation; `True` reads moved input once more. The
+    same input stale twice on the same observed identity never settles by
+    itself, so it stops with a reason — ai-coding-wiki #158 spun in `리뷰 대기`
+    with none. A base that really moved each time differs there and reads again."""
     from . import loop
 
-    if getattr(lp, "stale", None) == observation["input_identity"]:
+    if observation["status"] != "stale":
+        lp.stale = None
+        return None
+    seen = json.dumps([observation["input_identity"], observation.get("observed_identity")], sort_keys=True)
+    if getattr(lp, "stale", None) == seen:
         return loop.stop(lp, lp.repo, lp.sid, loop.Why.PREPARATION,
                          f"같은 입력의 shadow 관측이 두 번 연속 낡았다 — {observation.get('reason', '')}")
-    lp.stale = observation["input_identity"]
+    lp.stale = seen
     return True
 
 
