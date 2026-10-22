@@ -551,7 +551,9 @@ def shadow_context(repo: Path, path: Path, spec: dict, paths: list[str] | None,
                  "status": "unavailable" if any(r.get("baseline") == "retrieval_unavailable"
                                                 for r in dossier.get("limits") or []) else "ungraded",
                  "reason": dossier.get("reason"), "rejected": rejected}}}
-    state = verification.sanitize(state, settings)
+    # Hashes, kept as read: `observe_shadow` compares them with Git again, and a
+    # short `.env` value (`FLOOR=3`) redacted inside one never matched (ai-coding-wiki #158).
+    state = {**verification.sanitize(state, settings), "manifest": state["manifest"], "base_identity": state["base_identity"]}
     if len(json.dumps(state, ensure_ascii=False)) > CONTEXT_CHARS or len(grounds) > 32 or len(catalog) > 16:
         raise ValueError("context_too_large")
     return state, grounds
@@ -738,6 +740,24 @@ def observe_shadow(repo: Path, path: Path, spec: dict, paths: list[str] | None, 
         rows = [observation if r["attempt_id"] == attempt else r for r in now["review_shadow_attempts"]]
         specs.update(spec["repo"], spec["id"], review_shadow_attempts=rows)
     return observation
+
+
+def read_again(lp, observation: dict) -> bool | None:
+    """`None` past a fresh observation; `True` reads moved input once more. The
+    same input stale twice on the same observed identity never settles by
+    itself, so it stops with a reason — ai-coding-wiki #158 spun in `리뷰 대기`
+    with none. A base that really moved each time differs there and reads again."""
+    from . import loop
+
+    if observation["status"] != "stale":
+        lp.stale = None
+        return None
+    seen = json.dumps([observation["input_identity"], observation.get("observed_identity")], sort_keys=True)
+    if getattr(lp, "stale", None) == seen:
+        return loop.stop(lp, lp.repo, lp.sid, loop.Why.PREPARATION,
+                         f"같은 입력의 shadow 관측이 두 번 연속 낡았다 — {observation.get('reason', '')}")
+    lp.stale = seen
+    return True
 
 
 def merge_problem(repo: Path, path: Path, spec: dict, head: str, base_oid: str) -> str:

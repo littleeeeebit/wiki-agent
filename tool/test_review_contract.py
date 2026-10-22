@@ -443,6 +443,64 @@ def test_shadow_rechecks_moved_base_tip_even_when_merge_base_is_unchanged(world)
     assert not Reviewer.made and not Worker.made
 
 
+def test_a_short_dotenv_value_never_stales_the_hashes_it_appears_in(world):
+    spec = pr_spec(world, "short-env", 1, "code.py")
+    baseline = selected(world, spec)
+    # ai-coding-wiki #158: `.env` held `FLOOR=3`, and a merge base with a 3 in it never matched again.
+    (Path(spec["worktree"]) / ".env").write_text(f"FLOOR={baseline['base_oid'][0]}\n", encoding="utf-8")
+
+    with patch.object(decision, "config", return_value=decision.Config("active", "test", "default", key="test")), \
+         patch.object(knowledge, "prepare", return_value={"evidence": [], "limits": []}), \
+         patch.object(contract.decisions, "normalized", side_effect=lambda s, _, **kw: (s, "test")), \
+         patch.object(decision, "evaluate", side_effect=lambda cfg, state, qs, *rest: shadow_answers(qs)):
+        record = contract.observe_shadow(world.repo, Path(spec["worktree"]), spec, ["code.py"], baseline, threading.Event())
+    assert record["status"] != "stale", record.get("observed_identity")
+    assert record["base_identity"]["merge_base"] == baseline["base_oid"]
+
+
+def test_the_same_input_stale_twice_stops_with_a_reason_instead_of_spinning(world):
+    spec = pr_spec(world, "stale-twice", 1, "code.py")
+    calls = []
+
+    def stale(repo, path, spec, paths, contract, halt):
+        calls.append(contract["digest"])
+        return {"status": "stale", "reason": "input_changed", "input_identity": contract["digest"]}
+
+    with patch.object(contract, "observe_shadow", side_effect=stale):
+        done = looped(spec["id"])
+    assert done["state"] == "멈춤" and done["stopped"]["reason"] == loop.Why.PREPARATION.value
+    assert "두 번 연속" in done["stopped"]["detail"]
+    assert len(calls) == 2 and not Reviewer.made
+
+
+def test_a_base_that_moves_on_each_observation_is_read_again_not_stopped(world):
+    spec = pr_spec(world, "moving-twice", 1, "code.py")
+    other = world.hub.elsewhere()
+    git(other, "checkout", "-B", "main", "origin/main")
+    records, original = [], contract.observe_shadow
+
+    def reply(cfg, state, qs, *rest):
+        if len(records) < 2:   # main moves under the first two observations, then holds
+            commit(other, f"independent-{len(records)}.txt")
+            git(other, "push", "origin", "main")
+        return shadow_answers(qs)
+
+    def observe(*args, **kwargs):
+        records.append(original(*args, **kwargs))
+        return records[-1]
+
+    with patch.object(decision, "config", return_value=decision.Config("active", "test", "default", key="test")), \
+         patch.object(knowledge, "prepare", return_value={"evidence": [], "limits": []}), \
+         patch.object(contract.decisions, "normalized", side_effect=lambda s, _, **kw: (s, "test")), \
+         patch.object(decision, "evaluate", side_effect=reply), \
+         patch.object(contract, "observe_shadow", side_effect=observe):
+        done = looped(spec["id"])
+    assert [r["status"] for r in records[:2]] == ["stale", "stale"]
+    assert records[0]["input_identity"] == records[1]["input_identity"]
+    assert len(records) == 3 and records[2]["status"] != "stale"
+    assert done["state"] == "머지 가능" and Reviewer.made
+
+
 @pytest.mark.parametrize("outcome", ["deadline", "cancel"])
 def test_manifest_index_query_uses_remaining_budget_and_stops_after_read(cloud_world, outcome):
     world = cloud_world
