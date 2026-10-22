@@ -102,7 +102,8 @@ and policy cost. The gates suggest those states stand in for production
 poorly. Neither length nor the decision threshold fully explains the gap:
 - Short views still miss 42 of `useful`'s 80 positives there; Jev misses 3.
 - No cutoff closes the gap. In hindsight, `redirect`'s best cutoff over its
-  recorded scores (0.892) would remove about 70% of its deficit. A gate
+  recorded scores reaches 0.892 accuracy, which would remove about 70% of
+  its deficit. A gate
   must never choose that cutoff, but threshold choice is a real part of
   `redirect`'s gap.
 
