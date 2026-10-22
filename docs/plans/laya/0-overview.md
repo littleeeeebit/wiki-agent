@@ -83,6 +83,67 @@ after its stage 6 result, each once it has at least 100 production states.
 - Reliability PR 10 and the review-routing stages keep using whichever
   provider each kind is set to.
 
+## Reconsideration (draft, 2026-10-22)
+
+The owner paused paid work after the stage 6 gates. This section is a draft
+for the owner's decision; nothing in it is approved.
+
+What the gates showed. On production states Laya is about 16 points under
+Jev for every kind read so far:
+
+| Kind | Gate Laya / Jev | Generated validation |
+| --- | --- | --- |
+| `coverage` | 0.800 / 0.961 (94 units, inconclusive) | support and joint, several rounds |
+| `useful` | 0.783 / 0.945 (fail) | 0.817 |
+| `redirect` | 0.773 / 0.941 (fail) | 0.990 |
+
+Rounds of augmentation on generated states improved generated validation
+and policy cost. The gates suggest those states stand in for production
+poorly. Neither length nor the decision threshold fully explains the gap:
+- Short views still miss 42 of `useful`'s 80 positives there; Jev misses 3.
+- No cutoff closes the gap. In hindsight, `redirect`'s best cutoff over its
+  recorded scores reaches 0.892 accuracy, which would remove about 70% of
+  its deficit. A gate
+  must never choose that cutoff, but threshold choice is a real part of
+  `redirect`'s gap.
+
+The plan's assumption that generated states can train a replacement does
+not hold as executed. Recorded spend on generated data includes the
+retrieval full run ($34.55), `useful`'s first data ($12.07) and the coverage
+shape batch ($15.06), besides smaller rounds.
+
+What production gives. The 2026-10-13 pool held 329 states, with two thirds
+of its units reserved for the gate. Since then, 55 new states (36 units) have
+arrived, about 4 units a day on days the app ran. Of these, 27 states carry
+`useful` (239 questions) and 28 carry `coverage` (17 units). Jev's answer to
+every one of them is already recorded in the local Langfuse.
+
+Options:
+
+1. Train on production states. Reserve a fresh gate from new states first.
+   Train on the rest, labelled by guided labelling (about $0.0003 a
+   question). Jev's recorded answers can be a second labeller at no cost.
+   This removes the generated-to-production gap, but needs volume. `useful`
+   asks about 9 questions per state, so 1,000 train questions is about 110
+   states. With a gate of at least 100 units beside them, that is at least
+   two months of today's use. That figure is optimistic: it assumes every
+   state is its own unit and every question keeps its label, while only 27
+   of the 55 new states carry `useful` and labelling drops about a quarter.
+   `coverage`, at about 3 questions per state, needs longer.
+2. Read the existing `shape3` checkpoints on a fresh coverage gate. `shape3`
+   is production-shaped generation, never read on a gate. This waits for
+   100 new coverage units (17 now). It costs only the gate labels (under
+   $0.2) and answers one question cheaply: does production-shaped
+   generation help at all?
+3. End Laya. Jev stays the decider and TypeSafe stays required. The `laya/`
+   code and records stay as they are.
+
+Recommendation, for the owner to accept or change:
+- Let states accumulate (free).
+- Take option 2 when the coverage gate fills.
+- Then choose between 1 and 3 on its result.
+- No more augmentation from generated states alone.
+
 ## Budget
 
 Per kind; fourteen kinds multiply it. Token figures assume about 2k input
