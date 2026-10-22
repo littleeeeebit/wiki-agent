@@ -1,13 +1,13 @@
 {
  "schema": "laya-policy/1",
  "kind": "redirect",
- "model": "redirect-train-e3-ls0.1-20261021-045345-ktfkxq5y.zip",
- "run": "20261021-052004",
- "chosen": "fine-tuned-e3-ls0.1",
+ "model": "redirect-train-e2-ls0.1-20261022-014821-x_v7dehb.zip",
+ "run": "20261022-014917",
+ "chosen": "fine-tuned-e2-ls0.1",
  "laya": "0.4.6",
- "commit": "1d499a6e50187872353705f9f5f586a2bcf31c4f",
+ "commit": "91a1532edf96072fb345f69bb7d4319d72ddf227",
  "splits": {
-  "train": "2845ae3427d1a81682799d6fedec4386f98a57e4e75dafdeecd0ee330c98af70",
+  "train": "1ef8cf035d022afa1a5bedd045fe843c0d99527483016ed5bd32ce12c41f84f0",
   "validation": "4597bb36cf7aa812886120b7fc5ada5240dc0d6bf5c1193fae3132528ddf9f04",
   "calibration": "3f025d065e6c3a67a4fbd3d38105007b638d44b16451dc26c15c99bbc53a6d6a"
  },
@@ -16,10 +16,10 @@
   "temperature": [
    1.0,
    1.0,
-   0.947609543800354
+   0.8804888129234314
   ],
   "temperature_by_options": {},
-  "model_id_or_path": "/content/laya/checkpoints/20261021-045345-ktfkxq5y/redirect-train",
+  "model_id_or_path": "/content/laya/checkpoints/20261022-014821-x_v7dehb/redirect-train",
   "subfolder": null,
   "config": {
    "encoder": "answerdotai/ModernBERT-large",
@@ -40,7 +40,7 @@
     "world_size": 1,
     "fine_tuned_from_checkpoint": true,
     "laya_train": {
-     "epochs": 3,
+     "epochs": 2,
      "micro_batch": 4,
      "grad_accum": 16,
      "encoder_lr": 2.5e-05,
@@ -120,31 +120,31 @@
      },
      "after": {
       "items": 295,
-      "loss": 0.0848,
-      "accuracy": 0.9864,
-      "mean_confidence": 0.9515,
-      "ece": 0.0447,
-      "brier": 0.0279,
-      "brier_top1": 0.0139,
+      "loss": 0.067,
+      "accuracy": 0.9898,
+      "mean_confidence": 0.9523,
+      "ece": 0.0471,
+      "brier": 0.0177,
+      "brier_top1": 0.0089,
       "by_type": {
        "noul": {
         "items": 295,
-        "loss": 0.0848,
-        "accuracy": 0.9864,
-        "mean_confidence": 0.9515,
-        "ece": 0.0447,
-        "brier": 0.0279,
-        "brier_top1": 0.0139
+        "loss": 0.067,
+        "accuracy": 0.9898,
+        "mean_confidence": 0.9523,
+        "ece": 0.0471,
+        "brier": 0.0177,
+        "brier_top1": 0.0089
        }
       }
      },
      "comparison": {
-      "delta_accuracy": 0.6271,
-      "delta_loss": -0.992,
-      "delta_ece": -0.2758,
-      "delta_brier": -0.7599,
-      "delta_brier_top1": -0.38,
-      "delta_mean_confidence": 0.274
+      "delta_accuracy": 0.6305,
+      "delta_loss": -1.0098,
+      "delta_ece": -0.2734,
+      "delta_brier": -0.7701,
+      "delta_brier_top1": -0.385,
+      "delta_mean_confidence": 0.2748
      },
      "calibration": {
       "choice": {
@@ -165,7 +165,7 @@
      },
      "abstention_thresholds": {},
      "training": {
-      "epochs": 3,
+      "epochs": 2,
       "micro_batch": 4,
       "grad_accum": 16,
       "encoder_lr": 2.5e-05,
@@ -219,15 +219,14 @@
   "n": 304,
   "positives": 18,
   "fitted": true,
-  "cost": 44.0,
-  "provisional_cost": 45,
+  "cost": 33.5,
+  "provisional_cost": 34,
   "counts": {
-   "negative_no": 281,
-   "positive_uncertain": 5,
-   "positive_no": 8,
-   "positive_yes": 5,
+   "negative_no": 282,
+   "positive_yes": 12,
+   "positive_no": 6,
    "negative_yes": 3,
-   "negative_uncertain": 2
+   "negative_uncertain": 1
   }
  },
  "costs": {
@@ -242,6 +241,6 @@
    "yes": 1
   }
  },
- "fitted_at": "2026-10-21T06:11:02+00:00",
+ "fitted_at": "2026-10-22T02:18:46+00:00",
  "note": "Error rates on the calibration split the temperature was fitted on; not a calibration claim. The gate (Laya stage 6) holds the held-out evaluation."
 }
