@@ -272,7 +272,7 @@ a time instead, the shape `useful` learned.
   any "no" rule, so the lever is the definition and cost of a weak
   positive, not more training.
 - `redirect`'s missed positives (owner, 2026-10-22: augment). Train was
-  38% positive, a third of them overt injected lines, while validation
+  38% positive, 111 of its 417 positives (27%) overt injected lines, while validation
   (10 of 295) and calibration (18 of 304) hold only natural positives.
   The 8 calibration positives answered no are agent-directed procedure
   written as ordinary documentation (a repository's rules for coding
