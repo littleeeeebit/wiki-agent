@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import Markdown, { defaultUrlTransform } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Candidates } from '@/components/Candidates'
@@ -48,8 +49,11 @@ export type AnswerProps = {
  *
  *  Inline code shaped like a path or a SHA becomes clickable — "all the way
  *  to the original". A path opens that line in the side drawer; a SHA goes to
- *  GitHub. */
-export function Answer({ text, korean, remote, onPeek, onDecide }: AnswerProps) {
+ *  GitHub.
+ *
+ *  Memoized: a running turn re-renders the whole pane on every event, and
+ *  parsing every earlier answer and step again held the page ~0.4 s an event. */
+export const Answer = memo(function Answer({ text, korean, remote, onPeek, onDecide }: AnswerProps) {
   return (
     <div className="prose-answer">
       <Markdown
@@ -116,4 +120,4 @@ export function Answer({ text, korean, remote, onPeek, onDecide }: AnswerProps) 
       </Markdown>
     </div>
   )
-}
+})

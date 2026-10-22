@@ -117,7 +117,10 @@ export function Agent({
       {busy && compaction?.kind === 'compaction' && compaction.phase === 'started' &&
         <p role="status" className="shrink-0 border-b border-border px-5 py-2 text-[12.5px] text-primary">문맥 압축 중 · 대화 기록을 요약하고 있다</p>}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      {/* Sized by the column, never by its content: without `contain: size`
+          every keystroke in the box below laid the whole conversation out
+          again — 60,000 nodes, a quarter second a key. */}
+      <div className="min-h-0 flex-1 overflow-y-auto [contain:size]">
         <div className="space-y-5 px-4 py-4">
           {!row && (
             <p className="text-[13.5px] text-faint">
