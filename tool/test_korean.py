@@ -509,23 +509,25 @@ def isolated(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("kind", list(FAULTS))
 def test_a_translator_fault_ends_explicit_with_no_english_in_evidence_and_question(isolated, kind):
-    sent = threading.Event()
+    sent, release = threading.Event(), threading.Event()
 
     def urlopen(request, timeout):
         sent.set()
+        if kind == "slow":
+            release.wait(10)   # pending until the assertions are done, so the deadline always cuts it
         return transport(kind)(request, timeout)
 
     isolated.setattr(translate.urllib.request, "urlopen", urlopen)
     if kind == "limit":
         isolated.setenv("TRANSLATE_MONTHLY_USD", "0")
-    # Only the slow transport tests the deadline; response faults must reach their assertions under CI load.
-    seconds = 0.4 if kind == "slow" else 5.0
+    # The slow deadline leaves the translator's setup room under CI load: at 0.4s, setup alone could
+    # spend it and no request was made. Response faults must reach their assertions too.
+    seconds = 2.0 if kind == "slow" else 5.0
     # Evidence normalization, as `judge` asks for a passage.
     out = knowledge.english([SOURCE], seconds)[0]
     assert out["status"] not in evidence.USABLE and out["text"] is None, out
     if FAULTS[kind]:
         assert out["reason"] == FAULTS[kind]
-    # Under CI load the slow kind's deadline can pass before its worker reaches the transport.
     assert (not sent.is_set()) if kind == "limit" else sent.wait(5)
     # The question, through `prepare`'s normalize state: no English, so no Jev, and the fallback says why.
     from test_evidence import jev
@@ -536,6 +538,7 @@ def test_a_translator_fault_ends_explicit_with_no_english_in_evidence_and_questi
     d = knowledge.prepare(SOURCE.replace("쓴다.", "쓰나?"), None, cfg=ACTIVE, cache=None)
     assert d["status"] == "unavailable" and d["reason"] == "normalization_failed" and d["question_en"] is None
     assert d["normalization"]["query"] not in evidence.USABLE and seen == []
+    release.set()
 
 
 def test_the_working_transport_does_translate(isolated):
