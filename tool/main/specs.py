@@ -66,8 +66,10 @@ STATE = re.compile(r"정리됨|작업 중|PR #\d+|리뷰 대기|리뷰 R\d+|고�
 # its name. A block cut off before its closing fence is not one.
 BLOCK = re.compile(r"^```(candidates|choices|spec|spec-update|done-report|test-cleanup)[ \t]*\r?\n(.*?)^```[ \t]*$\n?", re.M | re.S)
 
-REPORT_AGAIN = ("The specification is now revision {rev}, and your last answer had no `done-report`, so nothing "
-                "can be checked or reviewed. Check every completion condition of revision {rev} against the current "
+REPORT_AGAIN = ("The specification is now revision {rev}, and your last answer had no `done-report`. "
+                "Do not claim completion while an independent prerequisite review or another dependency is pending. "
+                "A manually published PR may enter the app's explicitly requested Review Loop before task completion. "
+                "Check every completion condition of revision {rev} against the current "
                 "code, finish and push what is missing, then end with the `test-cleanup` block if tests changed "
                 "and the `done-report` block for revision {rev}.")
 
@@ -833,7 +835,8 @@ def revise(repo: Path, spec: dict, change: dict) -> None:
     gate = gate_of(repo)
     if not gate:
         raise ValueError("저장소의 gate_cmd 를 먼저 연결해라")
-    made = fields(repo, {**spec, **{k: change[k] for k in ("goal", "out", "done", "review") if k in change}}, gate)
+    made = fields(repo, {**spec, **{k: change[k] for k in (
+        "goal", "out", "done", "review", "prerequisite_review") if k in change}}, gate)
     spec.setdefault("revisions", []).append({"rev": spec["rev"], "ts": time.time(), "reason": reason.strip(),
                                             **{k: spec[k] for k in ("goal", "out", "done")}})
     for round_ in spec.get("rounds") or []:
@@ -1029,7 +1032,8 @@ def brief(spec: dict) -> str:
     """The spec's fields as the agents read them: the implementer and the reviewer."""
 
     shown = {**{k: spec.get(k) for k in ("id", "rev", "goal", "out", "done", "grounds", "decisions")},
-             **profile_of(spec), **({"review": spec["review"]} if spec.get("review") else {})}
+             **profile_of(spec), **({"review": spec["review"]} if spec.get("review") else {}),
+             **({"prerequisite_review": spec["prerequisite_review"]} if spec.get("prerequisite_review") else {})}
     return "```json\n" + json.dumps(shown, ensure_ascii=False, indent=2) + "\n```\n"
 
 
@@ -1484,6 +1488,11 @@ def _check(path: Path, run, final: str):
         except ValueError as exc:
             return failed(run, spec, f"명세 변경을 반영하지 못했다 — {exc}")
         note(run, f"명세 판 {spec['rev']} 반영 · 이전 리뷰 승인은 다시 확인한다")
+        if spec["state"] == "작업 중" and spec.get("prerequisite_review") and not any(
+                b["name"] == "done-report" for b in blocks(final)[1]):
+            update(spec["repo"], spec["id"], report_asked=False)
+            note(run, "독립 선행 리뷰가 먼저다 — 완료로 표시하지 않고 사람의 리뷰 루프 시작을 기다린다")
+            return None
         # A turn that asks the person waits for the answer: nothing is sent past the question (#193 round 6).
         if spec["state"] == "작업 중" and not asks(final) and not any(b["name"] == "done-report" for b in blocks(final)[1]):
             # Nothing else moves a revised task out of `작업 중`: ask once for the report the gate needs.

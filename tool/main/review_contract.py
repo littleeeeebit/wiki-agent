@@ -64,6 +64,10 @@ def profile_fields(repo: Path, block: dict) -> dict:
     result = {"review_profile": profile, "review_profile_version": specs.PROFILE_VERSION, "artifact_root": root}
     if block.get("review") is not None:
         result["review"] = declared(block["review"])
+    if "prerequisite_review" in block:
+        from . import prerequisite_review
+
+        result["prerequisite_review"] = prerequisite_review.declared(block["prerequisite_review"])
     return result
 
 
@@ -166,9 +170,12 @@ def preservation_command(spec: dict) -> str:
 
 
 def signature(spec: dict) -> str:
-    return verification.sha({k: spec.get(k) for k in ("rev", "goal", "done", "out", "grounds", "review",
-                                                     "review_profile", "review_profile_version", "artifact_root",
-                                                     "refactor", "start_head", "implementation_environment")})
+    fields = {k: spec.get(k) for k in ("rev", "goal", "done", "out", "grounds", "review",
+                                      "review_profile", "review_profile_version", "artifact_root",
+                                      "refactor", "start_head", "implementation_environment")}
+    if spec.get("prerequisite_review"):
+        fields["prerequisite_review"] = spec["prerequisite_review"]
+    return verification.sha(fields)
 
 
 def include(items: dict, cid: str, scope: str, ground: dict) -> None:

@@ -1358,6 +1358,19 @@ def step(loop: Loop) -> bool:
     if not ship(loop, spec, repo, path, head, base):
         return False
     spec = specs.load(loop.repo, loop.sid)
+    if spec.get("prerequisite_review"):
+        from . import prerequisite_review
+
+        try:
+            head, base = pr_head(repo, pr)
+            if (spec.get("gate") or {}).get("head") != head:
+                return True
+            pending = prerequisite_review.advance(loop, spec, repo, path, head, base)
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+            return stop(loop, loop.repo, loop.sid, Why.PREPARATION, str(exc))
+        if pending is not None:
+            return pending
+        spec = specs.load(loop.repo, loop.sid)
     seconds = min(runtime.LOCAL_SECONDS, max(0, spec["local_verification"]["deadline_at"] - time.time())) if verification.cloud(spec) else runtime.LOCAL_SECONDS
     inspection_budget = Budget(seconds=seconds, calls=None, candidates=0, cancel=loop.halt)
     with runtime.verification_scope(loop.halt, budget=inspection_budget):

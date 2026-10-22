@@ -16,6 +16,19 @@ Your final answer is the result: the program records it
 and parses it, so it has to follow the shape below exactly. Nothing you write
 elsewhere counts.
 
+## Prerequisite review
+
+When the program explicitly labels a turn as prerequisite review, use that
+turn's `prerequisite-result` JSON protocol instead of the ordinary finding and
+merge-verdict format below. The instruction supplies your actual reviewer
+identity, committed input hashes and the repository's verdict requirements.
+Read every required item with your read-only tools and return the complete
+verdict as data in the final answer. Write no file and perform no application,
+provider call or production operation. Missing reading or unavailable required
+checks cannot produce a pass. This verdict only unlocks the remaining
+implementation; it does not complete the task or authorize merge. Subsequent
+ordinary rounds again use the result format below.
+
 ## What you may do
 
 - Read `Already run` and reuse evidence for the same commit and conditions.
@@ -32,7 +45,7 @@ elsewhere counts.
   `cherry-pick`, `commit`, `push` · changing tracked implementation · reading or
   printing credentials. Ordinary review also forbids shell commands and writes
 
-## The result
+## The ordinary review result
 
 The first line names the round exactly as the instruction's first line does:
 
