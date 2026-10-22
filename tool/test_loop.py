@@ -1579,7 +1579,7 @@ sys.stdin.read()
     monkeypatch.setattr(work, "ChatSession", chat_session.ChatSession)
     monkeypatch.setattr(chat_session, "cli_command", lambda name: [name])
     monkeypatch.setattr(chat_session.subprocess, "Popen", spawn)
-    monkeypatch.setattr(chat_session, "TURN_TIMEOUT", 2)
+    monkeypatch.setattr(chat_session, "TURN_TIMEOUT", 20)   # at 2s, a turn's git calls outlasted it on loaded CI
     complete = looped(spec["id"], seconds=30 * (corrections + 1))
     assert complete["state"] == "머지 가능" and len(complete["rounds"]) == corrections + 1
     assert len({r["head"] for r in complete["rounds"]}) == corrections + 1

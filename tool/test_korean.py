@@ -509,10 +509,10 @@ def isolated(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("kind", list(FAULTS))
 def test_a_translator_fault_ends_explicit_with_no_english_in_evidence_and_question(isolated, kind):
-    sent = []
+    sent = threading.Event()
 
     def urlopen(request, timeout):
-        sent.append(True)
+        sent.set()
         return transport(kind)(request, timeout)
 
     isolated.setattr(translate.urllib.request, "urlopen", urlopen)
@@ -525,7 +525,8 @@ def test_a_translator_fault_ends_explicit_with_no_english_in_evidence_and_questi
     assert out["status"] not in evidence.USABLE and out["text"] is None, out
     if FAULTS[kind]:
         assert out["reason"] == FAULTS[kind]
-    assert (not sent) if kind == "limit" else sent
+    # Under CI load the slow kind's deadline can pass before its worker reaches the transport.
+    assert (not sent.is_set()) if kind == "limit" else sent.wait(5)
     # The question, through `prepare`'s normalize state: no English, so no Jev, and the fallback says why.
     from test_evidence import jev
 
