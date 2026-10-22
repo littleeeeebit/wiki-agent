@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from main import loop, prerequisite_review, specs
+from main import loop, prerequisite_review, specs, verification
 from test_loop import (  # noqa: F401 -- isolated real-Git world
     Reviewer, Worker, allow, client, git, no_machine_settings, pr_spec, template, waited, world,
 )
@@ -160,6 +160,39 @@ def test_snapshot_rejects_untracked_sources_and_changes_when_reviewed_input_chan
     (path / "untracked.md").write_text("Do not trust unpublished input.\n", encoding="utf-8")
     with pytest.raises(ValueError):
         prerequisite_review.snapshot(path, spec)
+
+
+def test_a_hidden_uncommitted_input_is_not_committed(world):
+    spec, path = prepared(world)
+    git(path, "update-index", "--skip-worktree", "data.json")
+    (path / "data.json").write_text('{"value":"never committed"}\n', encoding="utf-8")
+    assert git(path, "status", "--porcelain") == ""
+    with pytest.raises(ValueError):
+        prerequisite_review.snapshot(path, spec)
+
+
+@pytest.mark.parametrize("hidden", [False, True], ids=["committed-change", "skip-worktree"])
+def test_a_completed_receipt_still_requires_the_retained_verdict(world, hidden):
+    spec, path = prepared(world)
+    result = {"reviewer_session": "reviewer", "verdict": "pass"}
+    spec["prerequisite_review_result"] = {
+        "input_signature": verification.sha(prerequisite_review.snapshot(path, spec)),
+        "result": result, "completed": True,
+    }
+    (path / "review.json").write_text(json.dumps(result) + "\n", encoding="utf-8")
+    git(path, "add", "review.json")
+    git(path, "commit", "-qm", "preserve verdict")
+    assert prerequisite_review.advance(None, spec, path, path, "", "") is None
+    if hidden:
+        (path / "review.json").write_text(json.dumps({**result, "verdict": "fail"}) + "\n", encoding="utf-8")
+        git(path, "commit", "-qam", "verdict overwritten")
+        git(path, "update-index", "--skip-worktree", "review.json")
+        (path / "review.json").write_text(json.dumps(result) + "\n", encoding="utf-8")
+    else:
+        (path / "review.json").write_text(json.dumps({**result, "verdict": "fail"}) + "\n", encoding="utf-8")
+        git(path, "commit", "-qam", "verdict overwritten after completion")
+    with pytest.raises(ValueError):
+        prerequisite_review.advance(None, spec, path, path, "", "")
 
 
 @pytest.mark.parametrize("defect", ["wrong-identity", "duplicate-block", "duplicate-key", "moved-input"])

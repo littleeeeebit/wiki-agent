@@ -36,9 +36,11 @@ def _committed(path: Path, name: str) -> bytes:
     source = path / name
     if source.resolve() != source.absolute() or not source.resolve().is_relative_to(path.resolve()):
         raise ValueError("선행 리뷰 파일에 심볼릭 링크나 저장소 밖 경로가 있다")
-    tracked = specs.sh(["git", "--literal-pathspecs", "ls-files", "--error-unmatch", "--", name], path)
-    dirty = specs.sh(["git", "--literal-pathspecs", "diff", "--name-only", "HEAD", "--", name], path)
-    if tracked.returncode or dirty.returncode or dirty.stdout.strip():
+    # The file's own blob against HEAD's, not `git diff`: an index flag such as
+    # skip-worktree hides an uncommitted file from diff and status alike.
+    committed = specs.sh(["git", "rev-parse", "--verify", "--quiet", f"HEAD:{name}"], path)
+    on_disk = specs.sh(["git", "hash-object", "--", name], path)
+    if committed.returncode or on_disk.returncode or committed.stdout.strip() != on_disk.stdout.strip():
         raise ValueError("선행 리뷰 파일을 먼저 커밋해야 한다")
     return source.read_bytes()
 
@@ -58,6 +60,12 @@ def _unique(pairs):
             raise ValueError("선행 리뷰 JSON 에 중복 키가 있다")
         result[key] = value
     return result
+
+
+def _preserved(path: Path, request: dict, receipt: dict) -> None:
+    """The committed result is the retained verdict, at this head and every later one."""
+    if json.loads(_committed(path, request["result"]), object_pairs_hook=_unique) != receipt["result"]:
+        raise ValueError("독립 선행 리뷰 결과 파일이 없거나 보존된 판정과 다르다")
 
 
 def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> bool | None:
@@ -121,6 +129,7 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
         return loop.stop(spot, spot.repo, spot.sid, loop.Why.PREPARATION,
                          "독립 선행 리뷰가 통과하지 않았다 — 보존된 결과를 확인하세요")
     if receipt.get("completed"):
+        _preserved(path, request, receipt)
         return None
     spec = loop.change(spot, "고치는 중 R0")
     if spec is None:
@@ -152,8 +161,7 @@ def advance(spot, spec: dict, repo: Path, path: Path, head: str, base: str) -> b
                    for item, required in zip(report, fresh["done"]))):
         return loop.stop(spot, spot.repo, spot.sid, loop.Why.PREPARATION,
                          "선행 리뷰 뒤 전체 명세의 완료가 아직이다 — 통과 보고로 대체하지 않는다")
-    if json.loads(_committed(path, request["result"]), object_pairs_hook=_unique) != receipt["result"]:
-        raise ValueError("독립 선행 리뷰 결과 파일이 없거나 보존된 판정과 다르다")
+    _preserved(path, request, receipt)
     specs.update(spot.repo, spot.sid, report=report,
                  prerequisite_review_result={**receipt, "completed": True})
     return True

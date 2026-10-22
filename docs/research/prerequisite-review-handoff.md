@@ -51,7 +51,10 @@ A pass returns the exact JSON and provenance to the implementation session. It
 must commit the designated verdict unchanged and finish every original acceptance
 item, honoring existing approvals, conditions and budgets. An absent, partial or
 failing full completion report stops; resume reuses the input-bound independent
-verdict. The declared output must be committed and match that verdict. After
+verdict. The declared output must be committed and match that verdict, and it
+is compared again at every later round, so a later commit cannot rewrite it.
+"Committed" compares the file's own blob with `HEAD`'s, never `git diff`, which
+an index flag such as skip-worktree hides. After
 implementation completion, ordinary review, evidence floors, publication checks
 and the one owned final-verification gate still apply. No prerequisite result
 sets the task to complete or mergeable.
