@@ -35,8 +35,9 @@ def changes(path: Path) -> set[str]:
 
 
 def maintained(name: str) -> bool:
-    """A file merge preparation may change: documents, `.omm` and the wiki indexes."""
-    return name.endswith(".md") or name.startswith(".omm/") or name in (".wiki/corpus.json", ".wiki/graph.json")
+    """A file merge preparation may change: documents (`GUIDE.MD` too, as Windows collects it),
+    `.omm` and the wiki indexes."""
+    return name.lower().endswith(".md") or name.startswith(".omm/") or name in (".wiki/corpus.json", ".wiki/graph.json")
 
 
 def same(path: Path, name: str) -> bool:
@@ -169,7 +170,12 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
     if (specs.dirty(path) or resumable and receipt.get("state") == "interrupted") and not retry:
         raise ValueError("커밋하지 않은 변경이 있다 — 보존한 뒤 머지를 다시 요청하세요")
     flagged = hidden(path, (receipt.get("outputs") or {}).get("files", {}) if retry else {})
-    branch = git(path, "branch", "--show-current")
+    if flagged:
+        # Proven nobody's work, so the flags come off before any writer runs: status, `tighten`,
+        # an interruption's saved outputs and `add` then all see what preparation writes there.
+        for flag in ("--no-skip-worktree", "--no-assume-unchanged"):   # one per call: together, only the last applies
+            git(path, "--literal-pathspecs", "update-index", flag, "--", *flagged)
+    branch =git(path, "branch", "--show-current")
     if branch and branch != specs.branch_of(spec):
         raise ValueError("작업 폴더가 PR 브랜치에 있지 않다")
     if resumable and receipt.get("state") in ("committed", "complete") and receipt.get("head") == local:
@@ -207,12 +213,6 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
             raise ValueError("서버 종료로 머지 준비가 중단됐다")
         if git(path, "rev-parse", "HEAD") != head:
             raise ValueError("위키 수정 중 커밋이 바뀌었다 — 새 리뷰가 필요하다")
-        if flagged:
-            # Owned before anything was written (`hidden`): the flags come off so status, and
-            # `add`, see what preparation wrote there — a ratchet `tighten` could not see included.
-            for flag in ("--no-skip-worktree", "--no-assume-unchanged"):   # one per call: together, only the last applies
-                git(path, "--literal-pathspecs", "update-index", flag, "--", *flagged)
-            generated += [name for name in flagged if name == debt.RATCHET and not same(path, name)]
         changed = changes(path)
         unexpected = [name for name in changed if name not in generated and not maintained(name)]
         if unexpected:

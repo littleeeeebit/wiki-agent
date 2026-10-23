@@ -687,13 +687,36 @@ def test_preparation_commits_what_it_wrote_under_hiding_index_flags(world, flags
 
 def test_an_edit_a_hiding_index_flag_covers_stops_preparation_before_anything_is_written(world):
     path, ready = flagged_spec(world, "hidden-edit", ("skip-worktree",))
+    commit(path, "docs/NOTES.MD", "# Notes\n")   # a document as Windows collects it
+    git(path, "push", "origin", ready["id"])
+    ready = looped(ready["id"])
+    git(path, "update-index", "--skip-worktree", "docs/NOTES.MD")
     personal = '{"personal": "keep"}'
     (path / ".wiki/graph.json").write_text(personal, encoding="utf-8")
-    with patch.object(maintenance.architecture, "scan"), pytest.raises(ValueError, match="숨긴 변경.*graph.json"):
+    (path / "docs/NOTES.MD").write_text("# Mine\n", encoding="utf-8")
+    with patch.object(maintenance.architecture, "scan"), \
+         pytest.raises(ValueError, match="숨긴 변경.*graph.json, docs/NOTES.MD"):
         maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
     assert (path / ".wiki/graph.json").read_text(encoding="utf-8") == personal
     assert git(path, "show", "HEAD:.wiki/corpus.json") == '{"docs": []}'
     assert (path / ".wiki/corpus.json").read_text(encoding="utf-8") == '{"docs": []}', "nothing written"
+
+
+def test_hidden_outputs_written_before_an_interruption_are_retried(world):
+    path, ready = flagged_spec(world, "hidden-interrupted", ("skip-worktree",))
+    head = specs.approved(ready)["head"]
+
+    def interrupted(*_a, **_k):
+        (path / ".omm/description.md").write_text("After scan.\n", encoding="utf-8")
+        raise ValueError("scan interrupted")
+    with patch.object(maintenance.architecture, "scan", interrupted), pytest.raises(ValueError, match="interrupted"):
+        maintenance.prepare(world.repo, path, ready, head, "main")
+    saved = specs.load("proj", ready["id"])
+    assert {".wiki/ratchet.json", ".omm/description.md"} <= set(saved["maintenance"]["outputs"]["files"])
+    with patch.object(maintenance.architecture, "scan"):
+        prepared = maintenance.prepare(world.repo, path, saved, head, "main")
+    assert "After scan." in git(path, "show", f"{prepared}:.omm/description.md")
+    assert "gone.py" not in git(path, "show", f"{prepared}:.wiki/ratchet.json")
 
 
 def test_stopping_a_lint_repair_does_not_stop_the_server(world):
