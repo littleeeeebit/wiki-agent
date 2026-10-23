@@ -892,6 +892,59 @@ def test_indexes_the_start_hook_rebuilt_are_not_uncommitted_work_while_they_matc
     assert specs.dirty(repo), "a staged copy is somebody's"
 
 
+def test_a_code_only_commit_after_the_hook_rebuilt_the_indexes_gets_them_recorded_again(repo, monkeypatch):
+    """A review repair that commits only code moves HEAD past the receipt, and no newer document makes the hook
+    rebuild, so the next round began with the same repair turn. The hook writes them again at the new HEAD; an
+    edit is left alone, and adopting the PR held by another checkout does not stop on them either."""
+
+    import importlib
+    import importlib.util
+
+    from common import indexes
+    worktrees = importlib.import_module("workspace.worktrees")
+    loaded = importlib.util.spec_from_file_location("start_hook", Path(__file__).parent / "sync.py")
+    hook = importlib.util.module_from_spec(loaded)
+    loaded.loader.exec_module(hook)
+    monkeypatch.setattr(hook, "due", lambda *_: False)
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--project", str(repo), "--quiet"])
+
+    (repo / "docs").mkdir()
+    (repo / "docs/guide.md").write_text("# Guide\n", encoding="utf-8")
+    for name in indexes.INDEXES:
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text('{"docs": []}', encoding="utf-8")
+    _git(repo, "add", "-f", *indexes.INDEXES, "docs/guide.md")
+    _git(repo, "commit", "-qm", "document and old indexes")
+    hook.main()
+    assert not specs.dirty(repo)
+    (repo / "code.py").write_text("fixed = True\n", encoding="utf-8")
+    _git(repo, "add", "code.py")
+    _git(repo, "commit", "-qm", "code-only review repair")
+    assert specs.dirty(repo) and indexes.carried(repo)
+    hook.main()
+    assert not specs.dirty(repo), "recorded at the repair's HEAD"
+    head = specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    branch = specs.sh(["git", "branch", "--show-current"], repo).stdout.strip()
+    held = repo.parent / "held"
+    _git(repo, "switch", "-q", "--detach")
+    _git(repo, "worktree", "add", "-q", str(held), branch)
+    (held / ".wiki/corpus.json").unlink()
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--project", str(held), "--quiet"])
+    hook.main()   # a checkout of its own: its own rebuild and receipt
+    assert specs.sh(["git", "status", "--porcelain"], held).stdout.strip()
+    with patch.object(worktrees, "_git", side_effect=lambda r, *a: specs.sh(["git", *a], r) if a[0] != "fetch"
+                      else subprocess.CompletedProcess(a, 0, "", "")), \
+         patch.object(worktrees, "worktree_home", lambda r: repo.parent / "trees"):
+        assert worktrees.adopt(repo, branch, head) == repo.parent / "trees" / worktrees.folder_for(branch)
+    edited = '{"docs": [{"path": "docs/guide.md", "edited": "by hand"}]}'
+    (repo / ".wiki/corpus.json").write_text(edited, encoding="utf-8")
+    _git(repo, "commit", "-qm", "another", "--allow-empty")
+    assert not indexes.carried(repo)
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--project", str(repo), "--quiet"])
+    hook.main()
+    assert (repo / ".wiki/corpus.json").read_text(encoding="utf-8") == edited and specs.dirty(repo)
+
+
 def test_the_pr_body_gives_harvest_its_what_and_why():
     spec = {"id": "fix-login", "repo": "proj", "goal": "로그인 뒤 원래 페이지로 돌아간다",
             "decisions": [{"what": "서버에서 돌린다", "why": "화면은 기록을 모른다", "rejected": "history"}],

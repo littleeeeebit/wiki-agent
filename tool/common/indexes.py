@@ -82,6 +82,21 @@ def rebuilt(repo: Path, name: str) -> bool:
     return bool(digest) and digest == _hash(Path(repo) / name) and found.get("head") == head(repo)
 
 
+def carried(repo: Path) -> bool:
+    """The hook's last output, untouched and still modified, under a receipt
+    from an earlier commit. A code-only commit moves HEAD without a newer
+    document, so nothing else would make the hook write — and record — again.
+    An edit no longer matches its hash and is left alone."""
+    found = _receipt(_git_dir(repo))
+    files = {name: digest for name, digest in found.get("files", {}).items() if name in INDEXES}
+    now = head(repo)
+    if not files or not now or found.get("head") == now:
+        return False
+    if any(digest != _hash(Path(repo) / name) for name, digest in files.items()):
+        return False
+    return subprocess.run(["git", "diff", "--quiet", "HEAD", "--", *files], cwd=repo).returncode == 1
+
+
 def hook_row(repo: Path, line: str) -> bool:
     """A `git status --porcelain` row (v1, or v2 with `-z`) that is only the
     hook's rebuilt index, modified in the worktree and not staged."""

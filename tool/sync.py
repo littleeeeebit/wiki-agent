@@ -155,6 +155,8 @@ def main() -> int:
     lines: list[str] = []
 
     stale, why = stale_docs(repo, args.roots)
+    if not stale and indexes.carried(repo):
+        stale, why = True, "커밋이 바뀌어 고치지 않은 목록을 이 커밋에서 다시 만든다"
     if stale:
         head = indexes.head(repo)   # before writing: a commit made meanwhile gets no receipt
         docs = corpus.collect(repo, args.roots)
