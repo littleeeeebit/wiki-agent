@@ -317,6 +317,13 @@ def test_a_question_waits_for_its_answers_and_only_the_current_ones(checkout):
             {"id": "q1", "choice": "Narrow"}]}).status_code == 409, "다른 판의 질문에 한 답"
         assert web.post(f"/api/plans/{sid}/answers", json={"revision": 1, "answers": []}).status_code == 400
         assert specs.load("proj", sid)["planning"]["phase"] == "clarify", "답이 오기 전에는 아무것도 보내지 않는다"
+        # The question shows in the checkout's chat; a reply typed there must not start a writing turn.
+        path, head = Path(spec["worktree"]), git(spec["worktree"], "rev-parse", "HEAD")
+        last = work._runs.get(str(path))
+        said = web.post("/api/work/say", json={"path": str(path), "text": "Narrow"})
+        assert said.status_code == 409 and "계획 카드" in said.json()["detail"], said.text
+        assert str(path) not in work._busy and work._runs.get(str(path)) is last and len(Host.made) == 1
+        assert git(path, "rev-parse", "HEAD") == head
         assert web.post(f"/api/plans/{sid}/answers", json={"revision": 1, "answers": [
             {"id": "q1", "choice": "Narrow"}]}).status_code == 200
         settled(sid, "handoff")
@@ -490,6 +497,25 @@ def test_a_commit_cut_before_it_was_recorded_is_resumed(checkout):
     assert remote.creates() == 1 and git(path, "rev-list", "--count", f"{spec['planning']['base_head']}..HEAD") == "1"
 
 
+def test_a_decision_record_written_during_the_run_neither_stops_nor_joins_the_publication(checkout):
+    record = checkout / ".wiki" / "decisions" / "2026-10-22-246-fix-x.md"
+
+    def hooked(text, halt):   # a session's start hook harvests a merged PR while the plan runs
+        record.parent.mkdir(parents=True, exist_ok=True)
+        record.write_text("# fix x\n", encoding="utf-8")
+        return stage(2)(text, halt)
+
+    remote = GitHub()
+    Host.replies = [sources, outline, stage(1), hooked]
+    with patch.object(planning, "ChatSession", Host), patch.object(specs, "sh", remote):
+        sid = client().post("/api/plans", json=request()).json()["id"]
+        spec = settled(sid, "handoff", "stopped")
+    assert spec["planning"]["phase"] == "handoff", spec["planning"].get("stopped")
+    root = spec["artifact_root"]
+    assert planned_folder(spec) == {f"{root}/0-overview.md", f"{root}/1-entry.md", f"{root}/2-publish.md"}
+    assert remote.creates() == 1 and git(checkout, "status", "--porcelain", "--", ".wiki").startswith("??")
+
+
 @pytest.mark.parametrize("left", ["nothing", "a killed swap", "a person's document", "a person's other file"])
 def test_a_write_cut_halfway_is_finished_on_resume_only_if_every_file_is_ours(checkout, left):
     web = client()
@@ -518,6 +544,9 @@ def test_a_write_cut_halfway_is_finished_on_resume_only_if_every_file_is_ours(ch
         (folder / "1-entry.md").write_text("# Mine\n\nA person's notes.\n", encoding="utf-8")
     elif left == "a person's other file":
         (folder / "notes.md").write_text("mine\n", encoding="utf-8")
+    # A session's start hook harvested a record meanwhile: outside the folder, it decides nothing.
+    (path / ".wiki" / "decisions").mkdir(parents=True, exist_ok=True)
+    (path / ".wiki" / "decisions" / "2026-10-22-246-fix-x.md").write_text("# fix x\n", encoding="utf-8")
     with patch.object(specs, "sh", remote):
         assert web.post(f"/api/plans/{sid}/resume").status_code == 200
         spec = settled(sid, "handoff", "stopped")

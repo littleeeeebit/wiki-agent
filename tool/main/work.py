@@ -927,9 +927,15 @@ def begin(path: Path, chat: ChatSession, text: str, release, run: Run | None = N
     first, so a stop could reach it before the thread starts. `decide`: the
     turn's thread decides what is sent, and records it (`run_turn`)."""
 
-    run = run or Run(chat)
-    from . import refactor_continuation
+    from . import refactor_continuation, specs
 
+    # A plan waiting for its answers has let go of the hold, not of the checkout: a
+    # turn here would commit under the planner, which then stops at publish.
+    phase = ((specs.owner(path) or {}).get("planning") or {}).get("phase")
+    if phase not in (None, "handoff", "stopped"):
+        raise HTTPException(409, "계획이 이 작업트리를 쓰고 있다 — 질문은 계획 카드에서 답하고, "
+                                 "PR 을 올리거나 멈춘 뒤 지시하라")
+    run = run or Run(chat)
     refactor_continuation.take(path)
     try:
         run.diff_base = diff_git(path, "rev-parse", "HEAD").strip()
