@@ -483,9 +483,9 @@ class ChatSession:
                     # A provider that died between turns: its job still
                     # holds what it started. Gone with it, not overwritten.
                     self.close()
-                # With a session to reconnect to, start again carrying its id.
-                # Without one, this is a new conversation.
-                self._resume = self.session_id
+                # With a session to reconnect to, start again carrying its id. Without
+                # one, or isolated (never persisted), this is a new conversation.
+                self._resume = None if self.isolated else self.session_id
                 self._events = queue.Queue()
                 self._boot_at = time.monotonic()
                 self.connection_ms = None
@@ -856,7 +856,7 @@ class ChatSession:
         `halt` is this turn's stop. `stop()` can only kill a process that
         exists; one asked for while the process is still starting is caught
         here, once it has started and before anything is sent to it. A turn the
-        provider refuses as full waits and goes again until `halt` or `end` (`chat_busy`).
+        provider refuses as full waits, then goes again or continues, until `halt` or `end` (`chat_busy`).
         """
 
         def mark(event: Event) -> Event:
@@ -864,9 +864,9 @@ class ChatSession:
             return event
         ended = self._ended = threading.Event()   # this say's own: the next one cannot clear it
         over = lambda: ended.is_set() or _ending or bool(halt and halt.is_set())  # noqa: E731 -- `end`, `end_all` or `halt`
-        yield from chat_busy.patiently(lambda: self._say(text, halt), over, mark)
+        yield from chat_busy.patiently(lambda again: self._say(text, halt, again and not self.isolated), over, mark)
 
-    def _say(self, text: str, halt: threading.Event | None = None):
+    def _say(self, text: str, halt: threading.Event | None = None, again: bool = False):
         if not self._turn.acquire(blocking=False):
             yield Event("error", "앞 턴이 아직 안 끝났다.")
             return
@@ -880,6 +880,12 @@ class ChatSession:
                 self.close()
                 yield Event("error", "멈췄다.")
                 return
+            if again and self._lost:   # a fresh thread holds neither the task nor its steering: never guessed back
+                yield Event("context", f"Codex 이어가기 실패 — 새 대화로 시작했다 ({self._lost})")
+                self._lost = None
+                yield Event("error", "용량 초과로 끊긴 턴의 대화를 이어갈 수 없어 멈췄다 — 이미 한 변경을 확인하고 다시 보내라.")
+                return
+            text = chat_busy.CONTINUE if again else text
             assert self._proc and self._proc.stdin
             # An abandoned turn is closed in `finally`. A queue that already
             # holds a start event is not drained.
@@ -1061,7 +1067,8 @@ class ChatSession:
                     self._closing()   # Codex holds no queue: a late steer is refused by the CLI
                     turn = params.get("turn") or {}
                     if turn.get("status") == "failed":
-                        yield Event("error", str((turn.get("error") or {}).get("message") or "Codex 요청 실패"))
+                        yield Event("error", str((turn.get("error") or {}).get("message") or "Codex 요청 실패"),
+                                    {"tokens": used} if any(used.values()) else {})
                         return
                     yield Event("done", final, {
                         "ms": round((time.monotonic() - started) * 1000),

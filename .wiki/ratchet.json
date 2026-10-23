@@ -8,8 +8,8 @@
     },
     "tool/agent/chat_session.py": {
       "dup": 0,
-      "lines": 1352,
-      "reason": "Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`). Then a caller grading what the host read passes `results`, and both providers keep every tool result there whole: a tool event shows only 4000 characters, and Codex `exec` sends no result event (v5 calibration, PR #109)."
+      "lines": 1359,
+      "reason": "A turn cut off at capacity after it worked is continued (PR #221): an isolated session never resumes the id it did not persist, a continuation goes only to a Codex thread `thread/resume` reached and a fresh one stops the turn with the loss on record, and a failed Codex turn carries the usage it spent so the retries' total is charged. Before that: Providers lead their own process group on POSIX (audit R2), so Ctrl+C reaches none of them: every session with a running provider registers itself, and a server going down ends them all, a one-off explanation that no registry holds included, and refuses new ones until it starts again (`end_all`, `reopen`, `end`). Then a caller grading what the host read passes `results`, and both providers keep every tool result there whole: a tool event shows only 4000 characters, and Codex `exec` sends no result event (v5 calibration, PR #109)."
     },
     "tool/apply.py": {
       "dup": 6,
