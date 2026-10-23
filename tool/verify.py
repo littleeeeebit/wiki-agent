@@ -134,7 +134,10 @@ def locked(path):
 
 def identity(repo, base):
     head = run(["git", "rev-parse", "HEAD"], repo)
-    if run(["git", "status", "--porcelain"], repo):
+    # Untracked decision records the start hook harvests wait for a person's
+    # batch commit (`specs.status`); every other change still blocks.
+    rows = run(["git", "-c", "core.quotepath=off", "status", "--porcelain", "--untracked-files=all"], repo)
+    if any(not (r.startswith("?? ") and r[3:].strip('"').startswith(".wiki/decisions/")) for r in rows.splitlines()):
         raise RuntimeError("커밋하지 않은 변경이 있어 최종 검증 결과를 사용할 수 없습니다")
     run(["git", "fetch", "--quiet", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], repo)
     return head, run(["git", "merge-base", "HEAD", f"origin/{base}"], repo)
