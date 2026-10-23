@@ -356,6 +356,42 @@ def test_a_continued_turn_reports_what_its_cut_off_attempts_spent_too(monkeypatc
     chat, _ = _busy_session([[("tool", "edit"), ("error", "Selected model is at capacity.")],
                              [("done", "ok", {"tokens": {"in": 10, "out": 5}})]], monkeypatch)
     assert list(chat.say("x", threading.Event()))[-1].meta["tokens"]["in"] is None
+    # So does a cost it did not report; a count only it reported is kept.
+    chat, _ = _busy_session([[("tool", "edit"), ("done", "Selected model is at capacity.",
+                                                   {"error": True, "tokens": {"in": 1, "out": 1, "cache_write": 700}})],
+                             [("done", "ok", {"tokens": {"in": 10, "out": 5}, "cost_usd": 0.01})]], monkeypatch)
+    done = list(chat.say("x", threading.Event()))[-1]
+    assert done.meta["cost_usd"] is None and done.meta["tokens"] == {"in": 11, "out": 6, "cache_write": 700}
+
+
+def test_an_explanation_started_over_after_capacity_is_shown_from_its_start(tmp_path, monkeypatch):
+    """Isolated, it starts over: the screen drops the cut-off attempt's text (`simple_start`)."""
+
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from agent.chat_events import Event
+    from main import query, work
+    chat, _ = _busy_session([[("delta", "Old partial. "), ("error", "Selected model is at capacity.")],
+                             [("delta", "Fresh."), ("done", "Fresh.")]], monkeypatch)
+    chat.isolated = True
+
+    class Answer:
+        def say(self, text, halt=None):
+            yield Event("done", "Original answer")
+    monkeypatch.setattr(query, "session", lambda *a: Answer())
+    monkeypatch.setattr(query, "explain", lambda *a: chat.say("payload", a[-1]))
+    for name in ("unseen", "hits_for"):
+        monkeypatch.setattr(query, name, lambda *a: [])
+    monkeypatch.setattr(query, "remember", Mock())
+    monkeypatch.setattr(work, "notice", Mock())
+    events = []
+    run = SimpleNamespace(repo=tmp_path, cfg=SimpleNamespace(mode="off"), id="fixture", cancel=threading.Event(),
+                          sealed=True, redact=lambda value: value, put=events.append, step=Mock(), seal=lambda: True,
+                          called=Mock(), finish=Mock())
+    query.ask("wiki", SimpleNamespace(propose=False), "Question", {"model": "", "effort": ""}, run, Mock())
+    simple = [(e["kind"], e["text"]) for e in events if e["kind"].startswith("simple_")]
+    assert simple == [("simple_start", ""), ("simple_delta", "Old partial. "), ("simple_start", ""),
+                      ("simple_delta", "Fresh."), ("simple_done", "Fresh.")]
 
 
 def _two_turns(first, second):
@@ -426,7 +462,7 @@ sys.stdin.read()
 
 @pytest.mark.parametrize("lost", [False, True])
 def test_a_continuation_goes_only_to_the_thread_that_was_resumed(tree, monkeypatch, lost):
-    """A Codex thread `thread/resume` cannot find holds none of the task: the fresh one gets the request."""
+    """A fresh Codex thread holds neither the task nor what was steered into it: the turn stops instead."""
 
     first = CODEX_START + """
 say({"method": "item/started", "params": {"item": {"type": "commandExecution", "command": "work"}}})
@@ -461,8 +497,11 @@ sys.stdin.read()
             events = list(chat.say("Original task", threading.Event()))
     finally:
         chat.close()
-    assert len(processes) == 2 and events[-1].kind == "done"
-    assert events[-1].text == (chat_busy.RESTART + "Original task" if lost else chat_busy.CONTINUE)
+    assert len(processes) == 2
+    if lost:
+        assert [e.kind for e in events][-2:] == ["context", "error"] and "멈췄다" in events[-1].text
+    else:
+        assert events[-1].kind == "done" and events[-1].text == chat_busy.CONTINUE
 
 
 @pytest.mark.parametrize("ending", ["end", "end_all"])

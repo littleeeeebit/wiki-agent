@@ -910,6 +910,9 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                         simple_meta = ev.meta
                     elif ev.kind == "error":
                         raise ValueError(ev.text)
+                    elif ev.kind == "tool":   # a capacity wait: the next attempt starts over (`chat_busy`)
+                        simple = ""
+                        put({"kind": "simple_start", "text": ""})
                     if ev.kind in ("delta", "done"):
                         put({"kind": "simple_" + ev.kind, "text": ev.text, **ev.meta})
                 if not simple_finished:

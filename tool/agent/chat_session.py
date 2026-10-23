@@ -880,8 +880,12 @@ class ChatSession:
                 self.close()
                 yield Event("error", "멈췄다.")
                 return
-            # Continued only where `ensure` resumed: a thread it could not holds none of the task.
-            text = (chat_busy.CONTINUE if self._lost is None else chat_busy.RESTART + text) if again else text
+            if again and self._lost:   # a fresh thread holds neither the task nor its steering: never guessed back
+                yield Event("context", f"Codex 이어가기 실패 — 새 대화로 시작했다 ({self._lost})")
+                self._lost = None
+                yield Event("error", "용량 초과로 끊긴 턴의 대화를 이어갈 수 없어 멈췄다 — 이미 한 변경을 확인하고 다시 보내라.")
+                return
+            text = chat_busy.CONTINUE if again else text
             assert self._proc and self._proc.stdin
             # An abandoned turn is closed in `finally`. A queue that already
             # holds a start event is not drained.
