@@ -878,11 +878,11 @@ def test_indexes_the_start_hook_rebuilt_are_not_uncommitted_work_while_they_matc
     (repo / ".wiki/corpus.json").write_text('{"docs": ["edited while the graph was built"]}', encoding="utf-8")
     indexes.record(repo, {".wiki/corpus.json": '{"docs": ["hook output"]}'}, at)
     assert specs.dirty(repo)
-    # A receipt from another commit certifies nothing, even for the same bytes.
+    # A receipt from before a document commit certifies nothing, even for the same bytes.
     hook('{"docs": ["old"]}')
     _git(repo, "checkout", "--", *indexes.INDEXES)
-    (repo / "next.txt").write_text("x", encoding="utf-8")
-    _git(repo, "add", "next.txt")
+    (repo / "next.md").write_text("# Next\n", encoding="utf-8")
+    _git(repo, "add", "next.md")
     _git(repo, "commit", "-qm", "next")
     (repo / ".wiki/corpus.json").write_text('{"docs": ["old"]}', encoding="utf-8")
     assert specs.dirty(repo), "restored by hand on a later commit"
@@ -892,10 +892,11 @@ def test_indexes_the_start_hook_rebuilt_are_not_uncommitted_work_while_they_matc
     assert specs.dirty(repo), "a staged copy is somebody's"
 
 
-def test_a_code_only_commit_after_the_hook_rebuilt_the_indexes_gets_them_recorded_again(repo, monkeypatch):
+def test_a_code_only_commit_after_the_hook_rebuilt_the_indexes_leaves_them_the_hooks(repo, monkeypatch):
     """A review repair that commits only code moves HEAD past the receipt, and no newer document makes the hook
-    rebuild, so the next round began with the same repair turn. The hook writes them again at the new HEAD; an
-    edit is left alone, and adopting the PR held by another checkout does not stop on them either."""
+    rebuild, so the next round began with the same repair turn. No document changed, so the output is still the
+    hook's; adopting the PR held by another checkout does not stop on it either. Nothing is rewritten: an
+    unrecorded edit and a restore chosen after a document commit stay somebody's."""
 
     import importlib
     import importlib.util
@@ -920,10 +921,8 @@ def test_a_code_only_commit_after_the_hook_rebuilt_the_indexes_gets_them_recorde
     (repo / "code.py").write_text("fixed = True\n", encoding="utf-8")
     _git(repo, "add", "code.py")
     _git(repo, "commit", "-qm", "code-only review repair")
-    assert specs.dirty(repo) and indexes.carried(repo)
-    hook.main()
-    assert not specs.dirty(repo), "recorded at the repair's HEAD"
-    head = specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    assert not specs.dirty(repo), "still the hook's at the repair's HEAD"
+    head =specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
     branch = specs.sh(["git", "branch", "--show-current"], repo).stdout.strip()
     held = repo.parent / "held"
     _git(repo, "switch", "-q", "--detach")
@@ -936,13 +935,21 @@ def test_a_code_only_commit_after_the_hook_rebuilt_the_indexes_gets_them_recorde
                       else subprocess.CompletedProcess(a, 0, "", "")), \
          patch.object(worktrees, "worktree_home", lambda r: repo.parent / "trees"):
         assert worktrees.adopt(repo, branch, head) == repo.parent / "trees" / worktrees.folder_for(branch)
-    edited = '{"docs": [{"path": "docs/guide.md", "edited": "by hand"}]}'
-    (repo / ".wiki/corpus.json").write_text(edited, encoding="utf-8")
-    _git(repo, "commit", "-qm", "another", "--allow-empty")
-    assert not indexes.carried(repo)
     monkeypatch.setattr(sys, "argv", ["sync.py", "--project", str(repo), "--quiet"])
+    old = {name: (repo / name).read_bytes() for name in indexes.INDEXES}
+    personal = '{"personal": "keep this graph edit"}'
+    (repo / ".wiki/graph.json").write_text(personal, encoding="utf-8")
+    _git(repo, "commit", "-qm", "another repair", "--allow-empty")
     hook.main()
-    assert (repo / ".wiki/corpus.json").read_text(encoding="utf-8") == edited and specs.dirty(repo)
+    assert (repo / ".wiki/graph.json").read_text(encoding="utf-8") == personal and specs.dirty(repo)
+    _git(repo, "checkout", "--", *indexes.INDEXES)
+    (repo / "docs/guide.md").write_text("# Guide, revised\n", encoding="utf-8")
+    _git(repo, "commit", "-qam", "a document")
+    for name, body in old.items():
+        (repo / name).write_bytes(body)
+    hook.main()
+    assert all((repo / name).read_bytes() == body for name, body in old.items()), "a chosen restore stays"
+    assert specs.dirty(repo), "and is somebody's after a document commit"
 
 
 def test_the_pr_body_gives_harvest_its_what_and_why():

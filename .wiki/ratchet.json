@@ -183,8 +183,8 @@
     },
     "tool/sync.py": {
       "dup": 8,
-      "lines": 222,
-      "reason": "The hook also rebuilds when a code-only commit moved HEAD past the receipt of its unchanged output (`indexes.carried`), so a review repair does not strand them (two lines). Before that: The hook records a receipt of the exact index bytes it wrote and the HEAD it read first (`common.indexes`), so a checkout's clean check can tell them from a person's edit (four lines). Before that: baseline at adoption"
+      "lines": 220,
+      "reason": "The hook records a receipt of the exact index bytes it wrote and the HEAD it read first (`common.indexes`), so a checkout's clean check can tell them from a person's edit (four lines). Before that: baseline at adoption"
     },
     "tool/test_agent.py": {
       "dup": 46,

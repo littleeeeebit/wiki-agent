@@ -7,8 +7,9 @@ every review in ai-coding-wiki began with a repair turn that only committed
 them. The receipt, in the checkout's own Git directory, holds the HEAD it was
 written at and the hash of the exact bytes the hook wrote — never a file read
 back later, which another writer may have changed meanwhile. A modification
-matching it at that HEAD is the hook's, not anybody's work; an edit after the
-hook, another writer or another commit no longer matches.
+matching it at that HEAD, or at a later one no document changed in, is the
+hook's, not anybody's work; an edit after the hook, another writer or a
+document commit no longer matches. Nothing here writes an index.
 """
 
 from __future__ import annotations
@@ -75,26 +76,24 @@ def record(repo: Path, written: dict[str, str], at: str) -> None:
         pass   # no receipt: the rebuilt files count as changes, as before
 
 
+def _same_sources(repo: Path, at: str, now: str) -> bool:
+    """No commit between `at` and `now` touched a document — what both indexes
+    are built from — or an index. A code-only review repair moves HEAD and
+    nothing the hook read, so its output stays its own; a document commit
+    between makes an old output a restore somebody chose."""
+    return subprocess.run(["git", "diff", "--quiet", at, now, "--", "*.md", *INDEXES],
+                          cwd=repo, capture_output=True).returncode == 0
+
+
 def rebuilt(repo: Path, name: str) -> bool:
-    """`name` is an index the hook wrote at this HEAD and nobody changed since."""
+    """`name` is an index the hook wrote, nobody changed since, at this HEAD or
+    at one whose documents are this HEAD's."""
     found = _receipt(_git_dir(repo)) if name in INDEXES else {}
     digest = found.get("files", {}).get(name)
-    return bool(digest) and digest == _hash(Path(repo) / name) and found.get("head") == head(repo)
-
-
-def carried(repo: Path) -> bool:
-    """The hook's last output, untouched and still modified, under a receipt
-    from an earlier commit. A code-only commit moves HEAD without a newer
-    document, so nothing else would make the hook write — and record — again.
-    An edit no longer matches its hash and is left alone."""
-    found = _receipt(_git_dir(repo))
-    files = {name: digest for name, digest in found.get("files", {}).items() if name in INDEXES}
-    now = head(repo)
-    if not files or not now or found.get("head") == now:
+    if not digest or digest != _hash(Path(repo) / name):
         return False
-    if any(digest != _hash(Path(repo) / name) for name, digest in files.items()):
-        return False
-    return subprocess.run(["git", "diff", "--quiet", "HEAD", "--", *files], cwd=repo).returncode == 1
+    at, now = found.get("head") or "", head(repo)
+    return bool(at and now) and (at == now or _same_sources(repo, at, now))
 
 
 def hook_row(repo: Path, line: str) -> bool:
