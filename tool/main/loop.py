@@ -1068,6 +1068,7 @@ def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str
         try:
             specs.sh(["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"], path, 120)
             local = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
+            specs.settled(path)   # rebuilt indexes would refuse the fast-forward
             if local != head and not specs.sh(["git", "merge-base", "--is-ancestor", local, head], path).returncode:
                 specs.sh(["git", "merge", "--ff-only", head], path, 60)
                 local = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
@@ -1221,7 +1222,7 @@ def sync_review(spec: dict, path: Path, head: str) -> None:
     fetched = specs.sh(["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"], path, 120)
     if fetched.returncode:
         raise ValueError("PR 커밋을 가져오지 못했다")
-    if specs.dirty(path):
+    if specs.settled(path).stdout.strip():
         raise ValueError("로컬 리뷰 폴더에 커밋 안 된 변경이 있다")
     local = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     if local == head:

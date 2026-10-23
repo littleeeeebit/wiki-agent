@@ -142,6 +142,22 @@ def test_the_gate_is_guessed_from_the_first_file_that_says(tmp_path, files, gate
     assert slots["review_dir"] == "artifacts/review" and slots["scratch_dirs"] == "artifacts/"
 
 
+def test_a_python_gate_runs_in_the_conda_environment_the_readme_activates(tmp_path, monkeypatch):
+    """ai-companion-voice-agent's bare `python -m pytest` ran in the server's Python, without pytest-asyncio."""
+
+    conda = tmp_path / "anaconda3" / "Scripts" / "conda.exe"
+    conda.parent.mkdir(parents=True)
+    conda.write_text("", encoding="utf-8")
+    monkeypatch.setenv("CONDA_EXE", str(conda))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    (repo / "README.md").write_text("```\nconda activate voice-agent\npython -m pytest\n```\n", encoding="utf-8")
+    assert connect.guess(repo)["gate_cmd"] == "python -m pytest", "an environment this machine lacks is not named"
+    (tmp_path / "anaconda3" / "envs" / "voice-agent").mkdir(parents=True)
+    assert connect.guess(repo)["gate_cmd"] == f'"{conda}" run --no-capture-output -n voice-agent python -m pytest'
+
+
 def test_the_adapter_is_written_once_and_its_hash_kept(tmp_path):
     repo = _repo(tmp_path)
     (repo / "go.mod").write_text("module x\n", encoding="utf-8")

@@ -666,6 +666,19 @@ def harvested(name: str) -> bool:
     return name.startswith(HARVESTED)
 
 
+def settled(path: Path) -> subprocess.CompletedProcess:
+    """`status` after the start hook's rebuilt `INDEXES` go back to HEAD. The
+    hook rebuilds them at every session start after a document commit, so a
+    review began with a repair turn that only committed them; merge
+    preparation commits them (`maintenance.indexes`). Staged copies stay."""
+    seen = status(path)
+    rebuilt = [line[3:].strip('"') for line in seen.stdout.splitlines()
+               if line[:3] == " M " and line[3:].strip('"') in INDEXES]
+    if rebuilt and not sh(["git", "checkout", "--", *rebuilt], path).returncode:
+        return status(path)
+    return seen
+
+
 def dirty(path: Path) -> bool:
     return bool(status(path).stdout.strip())
 
@@ -1101,7 +1114,7 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
     started = time.monotonic()
     deadline = started + (GATE_SECONDS if timeout is None else timeout)
     cmd = " && ".join(cmds)
-    before = status(path)
+    before = settled(path)
     head = sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     if before.stdout.strip():
         reason = "커밋 안 된 변경" if not before.returncode else before.stdout.strip()[3:]
@@ -1130,6 +1143,7 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
 SHARED = ("conftest.py", "requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini",
           "package.json", "package-lock.json", ".wiki/adapter.toml")
 HARVESTED = ".wiki/decisions/"   # where the start hook writes records: never the task's work
+INDEXES = (".wiki/corpus.json", ".wiki/graph.json")   # what it rebuilds when documents moved (`settled`)
 LOCKS =("requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini", "package-lock.json",
          "web/package-lock.json", "uv.lock", "poetry.lock")
 
@@ -1159,7 +1173,7 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
     chosen = chosen or for_round(repo, path, spec, base)
     last = (spec.get("validation") or {}).get("round") or {}
     current = sh(["git", "rev-parse", "HEAD"], path)
-    clean = status(path)
+    clean = settled(path)
     if reused := verify.cached_round(spec, chosen, current, clean):
         return reused, last
     with gating(spec.get("repo"), spec.get("id"), "round"):

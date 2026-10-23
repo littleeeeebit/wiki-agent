@@ -358,12 +358,29 @@ def move(confirmed: str, data: dict | None = None) -> dict:
 
 # -- Connecting ----------------------------------------------------------------------
 
+def conda_python(path: Path) -> str:
+    """`python` in the conda environment the README activates, when this machine
+    has it. A bare `python` is the server's own, without the project's packages:
+    ai-companion-voice-agent's final gate ended 4 on 88 collection errors."""
+
+    try:
+        named = re.search(r"conda activate ([\w.-]+)", (path / "README.md").read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError):
+        return ""
+    found = [os.environ.get("CONDA_EXE") or "", *(str(Path.home() / root / "Scripts" / "conda.exe")
+                                                   for root in ("anaconda3", "miniconda3"))]
+    conda = next((exe for exe in found if exe and Path(exe).is_file()), "")
+    if not named or not conda or not (Path(conda).parents[1] / "envs" / named[1]).is_dir():
+        return ""
+    return f'"{conda}" run --no-capture-output -n {named[1]} python'
+
+
 def guess(path: Path) -> dict[str, str]:
     """The slots, as far as the repository's files say. The first match wins."""
 
     gate = ""
     if any((path / name).is_file() for name in ("pyproject.toml", "setup.cfg", "pytest.ini")):
-        gate = "python -m pytest"
+        gate = f"{conda_python(path) or 'python'} -m pytest"
     else:
         try:
             scripts = json.loads((path / "package.json").read_text(encoding="utf-8")).get("scripts") or {}
