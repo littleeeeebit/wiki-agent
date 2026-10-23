@@ -4,15 +4,19 @@
 session's start whenever documents are newer than the listing. Where a
 repository commits them, every document push left the checkout modified, and
 every review in ai-coding-wiki began with a repair turn that only committed
-them. The receipt, in the checkout's own Git directory, holds each file's
-hash as the hook wrote it: a modification still matching it is the hook's, not
-anybody's work. An edit after the hook, or another writer, no longer matches.
+them. The receipt, in the checkout's own Git directory, holds the HEAD it was
+written at and the hash of the exact bytes the hook wrote — never a file read
+back later, which another writer may have changed meanwhile. A modification
+matching it at that HEAD is the hook's, not anybody's work; an edit after the
+hook, another writer or another commit no longer matches.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
+import subprocess
 from pathlib import Path
 
 INDEXES = (".wiki/corpus.json", ".wiki/graph.json")
@@ -41,28 +45,47 @@ def _hash(path: Path) -> str | None:
         return None
 
 
-def record(repo: Path) -> None:
-    """After the hook wrote the indexes: their hashes as written."""
-    where = _git_dir(repo)
-    if where is None:
-        return
-    hashes = {name: digest for name in INDEXES if (digest := _hash(Path(repo) / name))}
+def head(repo: Path) -> str:
+    done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True)
+    return done.stdout.strip() if not done.returncode else ""
+
+
+def _receipt(where: Path | None) -> dict:
     try:
-        (where / RECEIPT).write_text(json.dumps(hashes), encoding="utf-8")
+        found = json.loads((where / RECEIPT).read_text(encoding="utf-8")) if where else {}
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) and isinstance(found.get("files"), dict) else {}
+
+
+def record(repo: Path, written: dict[str, str], at: str) -> None:
+    """After the hook wrote `written` (name -> the text it passed to
+    `write_text`) at HEAD `at`, read before writing: the hashes of those bytes,
+    with the platform's line ends as text mode wrote them."""
+    where = _git_dir(repo)
+    if where is None or not at:
+        return
+    kept = _receipt(where)
+    files = dict(kept["files"]) if kept.get("head") == at else {}
+    files.update({name: hashlib.sha256(text.replace("\n", os.linesep).encode("utf-8")).hexdigest()
+                  for name, text in written.items() if name in INDEXES})
+    try:
+        (where / RECEIPT).write_text(json.dumps({"head": at, "files": files}), encoding="utf-8")
     except OSError:
         pass   # no receipt: the rebuilt files count as changes, as before
 
 
 def rebuilt(repo: Path, name: str) -> bool:
-    """`name` is an index the hook wrote and nobody changed since."""
-    where = _git_dir(repo) if name in INDEXES else None
-    try:
-        hashes = json.loads((where / RECEIPT).read_text(encoding="utf-8")) if where else {}
-    except (OSError, ValueError):
-        return False
-    return isinstance(hashes, dict) and bool(hashes.get(name)) and hashes.get(name) == _hash(Path(repo) / name)
+    """`name` is an index the hook wrote at this HEAD and nobody changed since."""
+    found = _receipt(_git_dir(repo)) if name in INDEXES else {}
+    digest = found.get("files", {}).get(name)
+    return bool(digest) and digest == _hash(Path(repo) / name) and found.get("head") == head(repo)
 
 
 def hook_row(repo: Path, line: str) -> bool:
-    """A `git status --porcelain` row that is only the hook's rebuilt index, unstaged."""
-    return line[:3] == " M " and rebuilt(repo, line[3:].strip('"'))
+    """A `git status --porcelain` row (v1, or v2 with `-z`) that is only the
+    hook's rebuilt index, modified in the worktree and not staged."""
+    if line[:3] == " M ":
+        return rebuilt(repo, line[3:].strip('"'))
+    fields = line.split(" ", 8)
+    return line.startswith("1 .M ") and len(fields) == 9 and rebuilt(repo, fields[8])

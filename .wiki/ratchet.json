@@ -138,8 +138,8 @@
     },
     "tool/main/verification.py": {
       "dup": 12,
-      "lines": 989,
-      "reason": "Stage 4 extends the existing verifier with selected-flow/spec binding, owner outcomes, approved native contracts, native receipt validation and setup cancellation outcomes."
+      "lines": 990,
+      "reason": "`checkout_proven` leaves out the start hook's receipt-matching rebuilt indexes, as `specs.status` does (one line). Before that: Stage 4 extends the existing verifier with selected-flow/spec binding, owner outcomes, approved native contracts, native receipt validation and setup cancellation outcomes."
     },
     "tool/main/work.py": {
       "dup": 0,
@@ -183,8 +183,8 @@
     },
     "tool/sync.py": {
       "dup": 8,
-      "lines": 218,
-      "reason": "The hook records a receipt of the indexes it rebuilt (`common.indexes`), so a checkout's clean check can tell them from a person's edit (two lines). Before that: baseline at adoption"
+      "lines": 220,
+      "reason": "The hook records a receipt of the exact index bytes it wrote and the HEAD it read first (`common.indexes`), so a checkout's clean check can tell them from a person's edit (four lines). Before that: baseline at adoption"
     },
     "tool/test_agent.py": {
       "dup": 46,

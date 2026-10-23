@@ -156,17 +156,19 @@ def main() -> int:
 
     stale, why = stale_docs(repo, args.roots)
     if stale:
+        head = indexes.head(repo)   # before writing: a commit made meanwhile gets no receipt
         docs = corpus.collect(repo, args.roots)
-        (repo / ".wiki" / "corpus.json").write_text(
-            json.dumps({"docs": docs}, ensure_ascii=False), encoding="utf-8"
-        )
+        listing = json.dumps({"docs": docs}, ensure_ascii=False)
+        (repo / ".wiki" / "corpus.json").write_text(listing, encoding="utf-8")
         lines.append(f"목록을 다시 만들었다 — {why} (문서 {len(docs)}개)")
 
         # The knowledge graph sits on top of the listing, so it is rebuilt
         # only when the listing moved. Rebuilding every time reads every
         # document, and a hook that expensive is a hook the person turns off.
         graph = repo_graph.write(repo)
-        indexes.record(repo)   # what it wrote is the hook's, not a change anybody made (`common.indexes`)
+        # What it wrote is the hook's, not a change anybody made (`common.indexes`).
+        indexes.record(repo, {".wiki/corpus.json": listing,
+                              **({".wiki/graph.json": repo_graph.text(graph)} if graph else {})}, head)
         if graph:
             counts = graph["counts"]
             lines.append(

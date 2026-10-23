@@ -843,21 +843,51 @@ def test_indexes_the_start_hook_rebuilt_are_not_uncommitted_work_while_they_matc
         (repo / name).write_text('{"docs": []}', encoding="utf-8")
     _git(repo, "add", "-f", *indexes.INDEXES)
     _git(repo, "commit", "-qm", "indexes")
+    import verify
+    from main import verification
+
+    def hook(text: str) -> None:   # as `tool/sync.py`: HEAD first, then the files, then what it wrote
+        at = indexes.head(repo)
+        for name in indexes.INDEXES:
+            (repo / name).write_text(text, encoding="utf-8")
+        indexes.record(repo, {name: text for name in indexes.INDEXES}, at)
+
     for name in indexes.INDEXES:
         (repo / name).write_text('{"docs": ["rebuilt"]}', encoding="utf-8")
     assert specs.dirty(repo), "without a receipt nobody can say whose they are"
-    indexes.record(repo)   # as `tool/sync.py` does after writing them
+    hook('{\n "docs": ["rebuilt"]\n}\n')
     assert specs.judge(repo, [PASS], threading.Event())["ok"]
-    assert (repo / ".wiki/corpus.json").read_text(encoding="utf-8") == '{"docs": ["rebuilt"]}', "nothing is put back"
     head = specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    real_run = verify.run
+    offline = patch.object(verify, "run", side_effect=lambda a, r: "" if a[1] in ("fetch", "merge-base") else real_run(a, r))
+    with offline:
+        assert verify.identity(repo, "main")[0] == head and verification.checkout_proven(repo, head) == "", \
+            "the final gate and the live checks agree"
+    assert (repo / ".wiki/corpus.json").read_text(encoding="utf-8") == '{\n "docs": ["rebuilt"]\n}\n', "nothing put back"
     branch = specs.sh(["git", "branch", "--show-current"], repo).stdout.strip()
     with patch.object(worktrees, "_git", side_effect=lambda r, *a: specs.sh(["git", *a], r) if a[0] != "fetch"
                       else subprocess.CompletedProcess(a, 0, "", "")):
         assert worktrees.adopt(repo, branch, head) == repo.resolve(), "nor does adopting the PR's checkout stop"
     (repo / ".wiki/corpus.json").write_text('{"docs": ["edited by hand"]}', encoding="utf-8")
     assert specs.judge(repo, [PASS], threading.Event())["reason"] == "커밋 안 된 변경", "an edit after the hook counts"
+    with offline, pytest.raises(RuntimeError, match="커밋하지 않은 변경"):
+        verify.identity(repo, "main")
+    assert verification.checkout_proven(repo, head)
+    # The receipt is the bytes the hook wrote, never the file read back: an edit made meanwhile is not certified.
+    at = indexes.head(repo)
+    (repo / ".wiki/corpus.json").write_text('{"docs": ["edited while the graph was built"]}', encoding="utf-8")
+    indexes.record(repo, {".wiki/corpus.json": '{"docs": ["hook output"]}'}, at)
+    assert specs.dirty(repo)
+    # A receipt from another commit certifies nothing, even for the same bytes.
+    hook('{"docs": ["old"]}')
+    _git(repo, "checkout", "--", *indexes.INDEXES)
+    (repo / "next.txt").write_text("x", encoding="utf-8")
+    _git(repo, "add", "next.txt")
+    _git(repo, "commit", "-qm", "next")
+    (repo / ".wiki/corpus.json").write_text('{"docs": ["old"]}', encoding="utf-8")
+    assert specs.dirty(repo), "restored by hand on a later commit"
     _git(repo, "checkout", "--", ".wiki/corpus.json")
-    (repo / ".wiki/graph.json").write_text('{"docs": ["rebuilt"]}', encoding="utf-8")
+    hook('{"docs": ["rebuilt"]}')
     _git(repo, "add", "-f", ".wiki/graph.json")
     assert specs.dirty(repo), "a staged copy is somebody's"
 
