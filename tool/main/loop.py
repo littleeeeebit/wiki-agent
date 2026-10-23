@@ -1117,6 +1117,9 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     if release is None:
         return None
     try:
+        from . import maintenance
+
+        maintenance.set_aside(path, spec)
         record = {"head": head, "base_oid": specs.current_merge_base(path, base, head), "command": cmd,
                   "environment_digest": specs.digest(repo, path, cmd), "ok": False, "code": None,
                   "reason": "끝나지 않았다", "finished_at": None}

@@ -738,6 +738,57 @@ def test_a_failure_while_clearing_hiding_flags_is_retried(world):
     assert "docs/feature.md" in git(path, "show", f"{prepared}:.wiki/corpus.json")
 
 
+def interrupted_with_staged_outputs(world, name: str):
+    """ai-companion's shape: preparation stopped with its outputs staged and the indexes, under
+    skip-worktree, still hiding theirs (the flags stayed on before #225)."""
+    path, ready = flagged_spec(world, name, ("skip-worktree",))
+    real = maintenance.git
+
+    def commit_fails(where, *args):
+        if args[:1] == ("commit",):
+            raise ValueError("commit interrupted")
+        return real(where, *args)
+
+    def scan(*_a, **_k):
+        (path / ".omm/description.md").write_text("After scan.\n", encoding="utf-8")
+        (path / ".omm/new.md").write_text("New.\n", encoding="utf-8")
+    with patch.object(maintenance, "git", commit_fails), patch.object(maintenance.architecture, "scan", scan), \
+         pytest.raises(ValueError, match="commit interrupted"):
+        maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
+    git(path, "update-index", "--skip-worktree", ".wiki/corpus.json", ".wiki/graph.json")
+    receipt = specs.load("proj", name)["maintenance"]
+    specs.update("proj", name, maintenance={**receipt, "outputs": maintenance.outputs(path)})
+    assert git(path, "diff", "--cached", "--name-only")
+    return path, specs.load("proj", name)
+
+
+def test_a_stale_final_proof_regates_around_an_interrupted_preparation(world):
+    """The click after it found the final proof stale (the gate command had changed) and kicked the
+    gate, which counted those outputs as uncommitted work and stopped twice. The gate puts back HEAD
+    under outputs still exactly what was saved; the next click prepares afresh."""
+    path, ready = interrupted_with_staged_outputs(world, "stale-after-interruption")
+    head = specs.approved(ready)["head"]
+    specs.validate("proj", ready["id"], final={**ready["validation"]["final"], "environment_digest": "older gate"})
+    with pytest.raises(loop.HTTPException, match="최종 게이트를 다시"):
+        loop.merge_spec(world.repo, specs.load("proj", ready["id"]), loop.Merge(head=head))
+    waited(lambda: ("proj", ready["id"]) not in loop._loops)
+    regated = specs.load("proj", ready["id"])
+    assert regated["state"] == "머지 가능" and not regated.get("maintenance"), regated.get("stopped")
+    assert not git(path, "status", "--porcelain") and not (path / ".omm/new.md").exists()
+    assert all(line[:2] == "H " for line in git(path, "ls-files", "-v", ".wiki").splitlines())
+    with patch.object(maintenance.architecture, "scan"):
+        prepared = maintenance.prepare(world.repo, path, regated, head, "main")
+    assert "docs/feature.md" in git(path, "show", f"{prepared}:.wiki/corpus.json")
+
+
+def test_an_edit_beside_an_interrupted_preparation_still_stops_the_gate(world):
+    path, ready = interrupted_with_staged_outputs(world, "edit-after-interruption")
+    (path / ".omm/new.md").write_text("Somebody's edit.\n", encoding="utf-8")
+    assert not maintenance.set_aside(path, ready)
+    assert (path / ".omm/new.md").read_text(encoding="utf-8") == "Somebody's edit.\n"
+    assert specs.load("proj", ready["id"])["maintenance"]["state"] == "interrupted"
+
+
 def test_stopping_a_lint_repair_does_not_stop_the_server(world):
     spec = pr_spec(world, "cancel-maintenance", 12)
     path = Path(spec["worktree"])
