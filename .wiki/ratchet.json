@@ -128,8 +128,8 @@
     },
     "tool/main/refactor.py": {
       "dup": 0,
-      "lines": 811,
-      "reason": "A read-only turn's snapshot stops on a failed status read instead of comparing two failures as unchanged (#220, four lines). Before that: `targeted` lets a cleanup or restructure scan match files under a package directory, which a full-refactor spec for ai-companion-voice-agent named and the server refused (#194, four lines). Before that: Settled refactoring conversations retain cancellation and file discovery; resumed candidate runs checkpoint cumulative usage so earlier calls and tokens are not counted twice."
+      "lines": 818,
+      "reason": "`purpose` shows the `refactor-scope` JSON `turn` reads (`SCOPE`): asked only for a reason and choices, ai-coding-wiki's full-refactor audit answered in YAML and stopped on `json.loads` (seven lines). Before that: A read-only turn's snapshot stops on a failed status read instead of comparing two failures as unchanged (#220, four lines). Before that: `targeted` lets a cleanup or restructure scan match files under a package directory, which a full-refactor spec for ai-companion-voice-agent named and the server refused (#194, four lines). Before that: Settled refactoring conversations retain cancellation and file discovery; resumed candidate runs checkpoint cumulative usage so earlier calls and tokens are not counted twice."
     },
     "tool/main/specs.py": {
       "dup": 0,

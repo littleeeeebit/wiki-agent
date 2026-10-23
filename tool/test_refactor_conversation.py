@@ -101,6 +101,14 @@ def test_audit_can_discover_files_but_goal_expansion_stops_for_choices(selected)
     assert api.post(f"/api/refactors/{rid}/resume").status_code == 409
 
 
+def test_the_scope_block_a_turn_is_asked_for_is_one_it_can_read():
+    """ai-coding-wiki's audit, asked only for "a reason and choices", answered in YAML and stopped on
+    "Expecting value: line 1 column 1"; the prompt now shows the JSON `turn` reads."""
+    asked = refactor.purpose({"goal": "g", "done": [], "out": []})
+    assert json.dumps(refactor.SCOPE) in asked
+    specs._shape("choices", refactor.fenced("refactor-scope", f"```refactor-scope\n{json.dumps(refactor.SCOPE)}\n```"))
+
+
 def test_only_refactoring_plans_can_omit_limits_and_unknown_usage_is_informational(selected):
     roles = planning.Roles(**{k: {"model": "opus", "effort": "high"} for k in ("planner", "reviser", "reviewer")})
     normal = planning.Plan(request_id="normal-plan-request", goal="Plan", roles=roles)
