@@ -47,7 +47,8 @@ def _hash(path: Path) -> str | None:
 
 
 def head(repo: Path) -> str:
-    done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True)
+    done = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True,
+                          encoding="utf-8", errors="replace")
     return done.stdout.strip() if not done.returncode else ""
 
 
