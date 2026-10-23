@@ -733,12 +733,12 @@ def _execute(repo: Path, spec: dict, path: Path, head: str, base_oid: str, halt:
 
 def checkout_proven(path: Path, head: str) -> str:
     """Execution artifacts are outside source; never accept a locally altered implementation."""
-    status = specs.sh(["git", "status", "--porcelain=v2", "--branch", "-z"], path)
+    status = specs.sh(["git", "status", "--porcelain=v2", "--branch", "--untracked-files=all", "-z"], path)
     rows = status.stdout.split("\0")
     current = next((r.removeprefix("# branch.oid ") for r in rows if r.startswith("# branch.oid ")), "")
     if status.returncode or not current or current != head:
         return "리뷰 실행이 검증 대상 커밋을 바꿨다 — 사용자 확인 필요"
-    if any(r and not r.startswith("# ") for r in rows):
+    if any(r and not r.startswith("# ") and not (r.startswith("? ") and specs.harvested(r[2:])) for r in rows):
         return "리뷰 실행 뒤 소스 폴더에 변경이 있다 — 검증 파일은 지정된 아티팩트 폴더에 저장해야 한다"
     return ""
 

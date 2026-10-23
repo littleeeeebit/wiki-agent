@@ -103,8 +103,8 @@
     },
     "tool/main/decisions.py": {
       "dup": 0,
-      "lines": 829,
-      "reason": "v7 W and F (5-english-baseline.md): the work-start prompt says when a specification already carries what the work needs, and the review-fix prompt names a convention finding and a disputed one's remedy; calibrated on the revealed fixtures."
+      "lines": 831,
+      "reason": "`extra_check` compares status reads only when both succeeded, so two failed reads never pass as an unchanged tree (#220, two lines). Before that: v7 W and F (5-english-baseline.md): the work-start prompt says when a specification already carries what the work needs, and the review-fix prompt names a convention finding and a disputed one's remedy; calibrated on the revealed fixtures."
     },
     "tool/main/knowledge.py": {
       "dup": 0,
@@ -128,13 +128,13 @@
     },
     "tool/main/refactor.py": {
       "dup": 0,
-      "lines": 807,
-      "reason": "`targeted` lets a cleanup or restructure scan match files under a package directory, which a full-refactor spec for ai-companion-voice-agent named and the server refused (#194, four lines). Before that: Settled refactoring conversations retain cancellation and file discovery; resumed candidate runs checkpoint cumulative usage so earlier calls and tokens are not counted twice."
+      "lines": 811,
+      "reason": "A read-only turn's snapshot stops on a failed status read instead of comparing two failures as unchanged (#220, four lines). Before that: `targeted` lets a cleanup or restructure scan match files under a package directory, which a full-refactor spec for ai-companion-voice-agent named and the server refused (#194, four lines). Before that: Settled refactoring conversations retain cancellation and file discovery; resumed candidate runs checkpoint cumulative usage so earlier calls and tokens are not counted twice."
     },
     "tool/main/specs.py": {
       "dup": 0,
-      "lines": 1569,
-      "reason": "`swap` is the spec writer's Windows retry, shared so `connect.keep` uses it too: a survey record read while it was kept refused the replace and ended the survey `실패` with no reason (CI flake, six lines). Before that: A turn that asks the person gets neither #194's automatic done-report request nor its second-miss fault (#193 round 6, one line). Before that: `asks` names a well-formed `choices` question in an answer; `_check` hands a question to `loop.asked` while the turn still holds the worktree, and a person's turn that answered a loop's `Why.ASKED` stop to `loop.answered` (rfg_rag #76 R7, #193 round 1, twenty lines). Before that: A turn that revises the spec without a done-report gets one automatic request for it and a second miss is a fault, since rfg_rag #76 sat in `작업 중` with nothing running; and `gating` holds each running gate in memory for the task row, so a dead server never leaves one shown, and skips a bare check spec with no task, which `rounded` still accepts (#194, forty-one lines). Before that: `brief` splits the spec block out of `system` so the reviewer's handoff and post-compaction restatement read the same spec as the implementer (four lines, #175). Before that: #172 points every Windows gate's TMPDIR, TEMP and TMP at its own folder, since the Codex sandbox's same-named account leaves pytest links this account cannot read; merged without raising this ceiling, so main failed debt.py check."
+      "lines": 1586,
+      "reason": "`harvested` names the exemption once, for `status`, merge preparation's `changes` and live verification's `checkout_proven` (#220 round 1, four lines). Before that: `status` and `dirty` are the one clean-checkout read for every gate, switch and merge check, leaving out the untracked decision records the session start hook harvests; they stopped a plan's review gate twice (thirteen lines, the call sites shrank). Before that: `swap` is the spec writer's Windows retry, shared so `connect.keep` uses it too: a survey record read while it was kept refused the replace and ended the survey `실패` with no reason (CI flake, six lines). Before that: A turn that asks the person gets neither #194's automatic done-report request nor its second-miss fault (#193 round 6, one line). Before that: `asks` names a well-formed `choices` question in an answer; `_check` hands a question to `loop.asked` while the turn still holds the worktree, and a person's turn that answered a loop's `Why.ASKED` stop to `loop.answered` (rfg_rag #76 R7, #193 round 1, twenty lines). Before that: A turn that revises the spec without a done-report gets one automatic request for it and a second miss is a fault, since rfg_rag #76 sat in `작업 중` with nothing running; and `gating` holds each running gate in memory for the task row, so a dead server never leaves one shown, and skips a bare check spec with no task, which `rounded` still accepts (#194, forty-one lines). Before that: `brief` splits the spec block out of `system` so the reviewer's handoff and post-compaction restatement read the same spec as the implementer (four lines, #175). Before that: #172 points every Windows gate's TMPDIR, TEMP and TMP at its own folder, since the Codex sandbox's same-named account leaves pytest links this account cannot read; merged without raising this ceiling, so main failed debt.py check."
     },
     "tool/main/verification.py": {
       "dup": 12,

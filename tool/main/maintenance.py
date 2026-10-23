@@ -27,7 +27,9 @@ def git(path: Path, *args: str) -> str:
 def changes(path: Path) -> set[str]:
     names = set(git(path, "diff", "--name-only", "HEAD", "-z").split("\0"))
     names.update(git(path, "diff", "--cached", "--name-only", "-z").split("\0"))
-    names.update(git(path, "ls-files", "--others", "--exclude-standard", "-z").split("\0"))
+    # Untracked decision records wait for a person's batch commit; a tracked or staged one still counts.
+    names.update(n for n in git(path, "ls-files", "--others", "--exclude-standard", "-z").split("\0")
+                 if not specs.harvested(n))
     return names - {""}
 
 
@@ -61,7 +63,7 @@ def findings(repo: Path, path: Path) -> list[tuple[str, str]]:
 
 
 def indexes(path: Path) -> list[str]:
-    published = set(git(path, "ls-files", "--cached", "--others", "--exclude-standard", "-z").split("\0"))
+    published = set(git(path, "ls-files", "--cached", "-z").split("\0")) | changes(path)
     docs = [doc for doc in corpus.collect(path, corpus.DEFAULT_ROOTS) if doc["path"] in published]
     if not docs and not (path / ".wiki/corpus.json").exists():
         return []
@@ -135,7 +137,7 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
     if local != head and not (resumable and receipt.get("head") == local):
         raise ValueError("작업 폴더가 리뷰한 커밋에 있지 않다")
     retry = resumable and receipt.get("state") == "interrupted" and receipt.get("outputs") == outputs(path)
-    if (git(path, "status", "--porcelain") or resumable and receipt.get("state") == "interrupted") and not retry:
+    if (specs.dirty(path) or resumable and receipt.get("state") == "interrupted") and not retry:
         raise ValueError("커밋하지 않은 변경이 있다 — 보존한 뒤 머지를 다시 요청하세요")
     branch = git(path, "branch", "--show-current")
     if branch and branch != specs.branch_of(spec):

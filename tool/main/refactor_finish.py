@@ -48,7 +48,7 @@ def unchanged(w, run: dict, index: int, sid: str) -> dict:
     step, path = run["steps"][index], refactor.place(w, sid)
     if refactor.git(path, "branch", "--show-current") != sid \
             or refactor.git(path, "rev-parse", "HEAD") != step["verified_head"] \
-            or refactor.git(path, "status", "--porcelain"):
+            or specs.dirty(path):
         raise refactor.Stop("cleanup_changed", "변경 없는 단계의 작업 폴더가 바뀌었다 — 소유권을 유지한다")
     work.forget(path)
     notes = []
@@ -234,10 +234,10 @@ def candidate(w, run: dict, step: dict, path: Path) -> dict:
     head = refactor.git(path, "rev-parse", "HEAD")
     branch = refactor.git(path, "branch", "--show-current")
     if step.get("verified_head"):
-        if head != step["verified_head"] or branch != step["before_branch"] or refactor.git(path, "status", "--porcelain"):
+        if head != step["verified_head"] or branch != step["before_branch"] or specs.dirty(path):
             raise refactor.Stop("cleanup_changed", "검증한 정리 커밋이 바뀌었다 — 다시 확인해야 한다")
         return {"commit": head, "unchanged": step["unchanged"]}
-    if refactor.git(path, "status", "--porcelain") or step.get("before_head") not in (None, head):
+    if specs.dirty(path) or step.get("before_head") not in (None, head):
         raise refactor.Stop("dirty", "중단된 정리 변경을 먼저 확인해라 — 자동으로 덮어쓰지 않는다")
     record(w, step, before_head=head, before_branch=branch)
     if step["kind"] == "test_cleanup":
@@ -267,7 +267,7 @@ def candidate(w, run: dict, step: dict, path: Path) -> dict:
             raise refactor.Stop("ratchet", "기준선 외의 변경은 채택하지 않는다")
     if refactor.git(path, "rev-parse", "HEAD") != head or refactor.git(path, "branch", "--show-current") != branch:
         raise refactor.Stop("cleanup_changed", "검사 중 커밋이나 브랜치가 바뀌었다")
-    changed = specs.sh(["git", "status", "--porcelain"], path).stdout.strip()
+    changed = specs.status(path).stdout.strip()
     if step["kind"] == "ratchet":
         changed = evidence["action"] != "unchanged"
     if changed:
