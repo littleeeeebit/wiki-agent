@@ -23,6 +23,7 @@ import corpus  # noqa: E402
 import harvest  # noqa: E402
 import repo_graph  # noqa: E402
 import repo_lint  # noqa: E402
+from common import indexes  # noqa: E402
 
 STAMP = ".sync"
 DEFAULT_EVERY = 6 * 3600  # How many seconds between looking for new decisions
@@ -165,6 +166,7 @@ def main() -> int:
         # only when the listing moved. Rebuilding every time reads every
         # document, and a hook that expensive is a hook the person turns off.
         graph = repo_graph.write(repo)
+        indexes.record(repo)   # what it wrote is the hook's, not a change anybody made (`common.indexes`)
         if graph:
             counts = graph["counts"]
             lines.append(

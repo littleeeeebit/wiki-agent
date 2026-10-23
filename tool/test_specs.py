@@ -829,26 +829,37 @@ def test_the_deferred_gate_leaves_committed_harvested_records_out_of_its_whitesp
     assert not failed["ok"] and "code.py" in failed["tail"], "the task's own whitespace still fails"
 
 
-def test_indexes_the_start_hook_rebuilt_go_back_to_head_instead_of_failing_the_gate(repo):
+def test_indexes_the_start_hook_rebuilt_are_not_uncommitted_work_while_they_match_its_receipt(repo):
     """Every review in ai-coding-wiki began with a repair turn that only committed `corpus.json` and
     `graph.json`, which the start hook had rebuilt after the implementer pushed new documents."""
 
-    for name in specs.INDEXES:
+    import importlib
+
+    from common import indexes
+    worktrees = importlib.import_module("workspace.worktrees")   # the package re-exports a function of that name
+
+    for name in indexes.INDEXES:
         (repo / name).parent.mkdir(parents=True, exist_ok=True)
         (repo / name).write_text('{"docs": []}', encoding="utf-8")
-    _git(repo, "add", "-f", *specs.INDEXES)
+    _git(repo, "add", "-f", *indexes.INDEXES)
     _git(repo, "commit", "-qm", "indexes")
-    for name in specs.INDEXES:
+    for name in indexes.INDEXES:
         (repo / name).write_text('{"docs": ["rebuilt"]}', encoding="utf-8")
+    assert specs.dirty(repo), "without a receipt nobody can say whose they are"
+    indexes.record(repo)   # as `tool/sync.py` does after writing them
     assert specs.judge(repo, [PASS], threading.Event())["ok"]
-    assert all((repo / name).read_text(encoding="utf-8") == '{"docs": []}' for name in specs.INDEXES)
-    (repo / ".wiki/graph.json").write_text("staged", encoding="utf-8")
+    assert (repo / ".wiki/corpus.json").read_text(encoding="utf-8") == '{"docs": ["rebuilt"]}', "nothing is put back"
+    head = specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    branch = specs.sh(["git", "branch", "--show-current"], repo).stdout.strip()
+    with patch.object(worktrees, "_git", side_effect=lambda r, *a: specs.sh(["git", *a], r) if a[0] != "fetch"
+                      else subprocess.CompletedProcess(a, 0, "", "")):
+        assert worktrees.adopt(repo, branch, head) == repo.resolve(), "nor does adopting the PR's checkout stop"
+    (repo / ".wiki/corpus.json").write_text('{"docs": ["edited by hand"]}', encoding="utf-8")
+    assert specs.judge(repo, [PASS], threading.Event())["reason"] == "커밋 안 된 변경", "an edit after the hook counts"
+    _git(repo, "checkout", "--", ".wiki/corpus.json")
+    (repo / ".wiki/graph.json").write_text('{"docs": ["rebuilt"]}', encoding="utf-8")
     _git(repo, "add", "-f", ".wiki/graph.json")
-    assert specs.judge(repo, [PASS], threading.Event())["reason"] == "커밋 안 된 변경", "a staged copy is somebody's"
-    _git(repo, "reset", "-q", "--hard")
-    (repo / ".wiki/corpus.json").write_text("rebuilt", encoding="utf-8")
-    (repo / "left.txt").write_text("x", encoding="utf-8")
-    assert specs.judge(repo, [PASS], threading.Event())["reason"] == "커밋 안 된 변경", "other work still fails"
+    assert specs.dirty(repo), "a staged copy is somebody's"
 
 
 def test_the_pr_body_gives_harvest_its_what_and_why():

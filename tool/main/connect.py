@@ -367,8 +367,8 @@ def conda_python(path: Path) -> str:
         named = re.search(r"conda activate ([\w.-]+)", (path / "README.md").read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError):
         return ""
-    found = [os.environ.get("CONDA_EXE") or "", *(str(Path.home() / root / "Scripts" / "conda.exe")
-                                                   for root in ("anaconda3", "miniconda3"))]
+    found = [os.environ.get("CONDA_EXE") or "", *(str(Path.home() / root / where) for root in ("anaconda3", "miniconda3")
+                                                   for where in ("Scripts/conda.exe", "bin/conda"))]
     conda = next((exe for exe in found if exe and Path(exe).is_file()), "")
     if not named or not conda or not (Path(conda).parents[1] / "envs" / named[1]).is_dir():
         return ""

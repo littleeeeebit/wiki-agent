@@ -33,7 +33,7 @@ from pydantic import BaseModel
 import verify
 import debt
 import translate
-from common import errorlog, process, python_environment, swap, worktree_home
+from common import errorlog, indexes, process, python_environment, swap, worktree_home
 from session_state import active_page, decisions, plans, steps_block
 from wiki import adapter_path, slots_for
 from workspace import TASK, create, folder_for
@@ -652,31 +652,20 @@ def status(path: Path, *flags: str) -> subprocess.CompletedProcess:
     batch commit, and no gate, commit or switch of ours takes them. A failed
     status reads as dirty, so every check on it fails closed. Untracked files
     are listed one by one: a folder Git folds into one line could hide
-    anything beside the records."""
+    anything beside the records. Nor the indexes the hook rebuilt, while they
+    still match its receipt (`common.indexes`)."""
 
     done = sh(["git", "-c", "core.quotepath=off", "status", "--porcelain", "--untracked-files=all", *flags], path)
     if done.returncode:
         return subprocess.CompletedProcess(done.args, done.returncode, f"!! git status 실패 — {said(done)}\n", done.stderr)
-    kept = [line for line in done.stdout.splitlines() if not (line.startswith("?? ") and harvested(line[3:].strip('"')))]
+    kept = [line for line in done.stdout.splitlines()
+            if not (line.startswith("?? ") and harvested(line[3:].strip('"')) or indexes.hook_row(path, line))]
     return subprocess.CompletedProcess(done.args, 0, "".join(f"{line}\n" for line in kept), done.stderr)
 
 
 def harvested(name: str) -> bool:
     """An untracked file of this name is a record the start hook left (`status`)."""
     return name.startswith(HARVESTED)
-
-
-def settled(path: Path) -> subprocess.CompletedProcess:
-    """`status` after the start hook's rebuilt `INDEXES` go back to HEAD. The
-    hook rebuilds them at every session start after a document commit, so a
-    review began with a repair turn that only committed them; merge
-    preparation commits them (`maintenance.indexes`). Staged copies stay."""
-    seen = status(path)
-    rebuilt = [line[3:].strip('"') for line in seen.stdout.splitlines()
-               if line[:3] == " M " and line[3:].strip('"') in INDEXES]
-    if rebuilt and not sh(["git", "checkout", "--", *rebuilt], path).returncode:
-        return status(path)
-    return seen
 
 
 def dirty(path: Path) -> bool:
@@ -1114,7 +1103,7 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
     started = time.monotonic()
     deadline = started + (GATE_SECONDS if timeout is None else timeout)
     cmd = " && ".join(cmds)
-    before = settled(path)
+    before = status(path)
     head = sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     if before.stdout.strip():
         reason = "커밋 안 된 변경" if not before.returncode else before.stdout.strip()[3:]
@@ -1143,7 +1132,6 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
 SHARED = ("conftest.py", "requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini",
           "package.json", "package-lock.json", ".wiki/adapter.toml")
 HARVESTED = ".wiki/decisions/"   # where the start hook writes records: never the task's work
-INDEXES = (".wiki/corpus.json", ".wiki/graph.json")   # what it rebuilds when documents moved (`settled`)
 LOCKS =("requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini", "package-lock.json",
          "web/package-lock.json", "uv.lock", "poetry.lock")
 
@@ -1173,7 +1161,7 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
     chosen = chosen or for_round(repo, path, spec, base)
     last = (spec.get("validation") or {}).get("round") or {}
     current = sh(["git", "rev-parse", "HEAD"], path)
-    clean = settled(path)
+    clean = status(path)
     if reused := verify.cached_round(spec, chosen, current, clean):
         return reused, last
     with gating(spec.get("repo"), spec.get("id"), "round"):
