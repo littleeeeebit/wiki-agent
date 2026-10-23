@@ -657,9 +657,13 @@ def status(path: Path, *flags: str) -> subprocess.CompletedProcess:
     done = sh(["git", "-c", "core.quotepath=off", "status", "--porcelain", "--untracked-files=all", *flags], path)
     if done.returncode:
         return subprocess.CompletedProcess(done.args, done.returncode, f"!! git status 실패 — {said(done)}\n", done.stderr)
-    kept = [line for line in done.stdout.splitlines()
-            if not (line.startswith("?? ") and line[3:].strip('"').startswith(".wiki/decisions/"))]
+    kept = [line for line in done.stdout.splitlines() if not (line.startswith("?? ") and harvested(line[3:].strip('"')))]
     return subprocess.CompletedProcess(done.args, 0, "".join(f"{line}\n" for line in kept), done.stderr)
+
+
+def harvested(name: str) -> bool:
+    """An untracked file of this name is a record the start hook left (`status`)."""
+    return name.startswith(".wiki/decisions/")
 
 
 def dirty(path: Path) -> bool:

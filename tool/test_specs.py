@@ -780,6 +780,35 @@ def test_a_harvested_decision_record_is_not_uncommitted_work_but_anything_else_i
     assert specs.dirty(plain), "a status Git cannot give is never clean"
 
 
+def test_every_other_reader_of_the_checkout_leaves_the_harvested_record_out_too(repo):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+
+    from main import maintenance, refactor, verification
+
+    (repo / ".git/info/exclude").write_text(".wiki/*\n!.wiki/decisions/\n", encoding="utf-8")
+    record = ".wiki/decisions/2026-10-22-246-fix-x.md"
+    (repo / ".wiki/decisions").mkdir(parents=True, exist_ok=True)
+    (repo / record).write_text("# fix x\n", encoding="utf-8")
+    head = specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    # Merge preparation and refactor finishing never take a person's record into their own commit.
+    assert maintenance.changes(repo) == set() and verification.checkout_proven(repo, head) == ""
+    specs.sh(["git", "add", "-f", "--", record], repo)
+    assert maintenance.changes(repo) == {record} and specs.dirty(repo), "a staged record is a change"
+    specs.sh(["git", "reset", "-q", "--", record], repo)
+    (repo / "left.txt").write_text("x", encoding="utf-8")
+    assert verification.checkout_proven(repo, head), "anything else still is"
+
+    # A read-only turn whose status Git cannot read stops; two failed reads are not "unchanged".
+    real = specs.sh
+    broken = lambda args, cwd, timeout=60: subprocess.CompletedProcess(args, 128, "", "fatal: index file corrupt") \
+        if "status" in args else real(args, cwd, timeout)  # noqa: E731
+    with patch.object(specs, "sh", broken), pytest.raises(refactor.Stop) as stopped:
+        refactor.turn(SimpleNamespace(repo=repo, budget=Mock(), halt=threading.Event()),
+                      {"role": {"model": "", "effort": ""}}, "Audit", write=False)
+    assert stopped.value.reason == "git" and "index file corrupt" in stopped.value.detail
+
+
 def test_the_pr_body_gives_harvest_its_what_and_why():
     spec = {"id": "fix-login", "repo": "proj", "goal": "로그인 뒤 원래 페이지로 돌아간다",
             "decisions": [{"what": "서버에서 돌린다", "why": "화면은 기록을 모른다", "rejected": "history"}],

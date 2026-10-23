@@ -255,7 +255,12 @@ def turn(w: Worker, run: dict, text: str, system: str = TESTS_PROMPT, write: boo
     except Cancelled as exc:
         raise Stop("cancelled", str(exc)) from exc
     role = run["role"]
-    state = lambda: (git(where, "rev-parse", "HEAD"), specs.status(where).stdout)  # noqa: E731
+    def state() -> tuple[str, str]:
+        seen = specs.status(where)
+        if seen.returncode:   # two failed reads must never compare equal
+            raise Stop("git", seen.stdout.strip()[3:])
+        return git(where, "rev-parse", "HEAD"), seen.stdout
+
     before = None if write else state()
     if w.halt.is_set():
         raise Stop("cancelled")

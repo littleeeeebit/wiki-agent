@@ -27,7 +27,9 @@ def git(path: Path, *args: str) -> str:
 def changes(path: Path) -> set[str]:
     names = set(git(path, "diff", "--name-only", "HEAD", "-z").split("\0"))
     names.update(git(path, "diff", "--cached", "--name-only", "-z").split("\0"))
-    names.update(git(path, "ls-files", "--others", "--exclude-standard", "-z").split("\0"))
+    # Untracked decision records wait for a person's batch commit; a tracked or staged one still counts.
+    names.update(n for n in git(path, "ls-files", "--others", "--exclude-standard", "-z").split("\0")
+                 if not specs.harvested(n))
     return names - {""}
 
 
