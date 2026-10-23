@@ -78,10 +78,12 @@ def record(repo: Path, written: dict[str, str], at: str) -> None:
 
 def _same_sources(repo: Path, at: str, now: str) -> bool:
     """No commit between `at` and `now` touched a document — what both indexes
-    are built from — or an index. A code-only review repair moves HEAD and
-    nothing the hook read, so its output stays its own; a document commit
-    between makes an old output a restore somebody chose."""
-    return subprocess.run(["git", "diff", "--quiet", at, now, "--", "*.md", *INDEXES],
+    are built from — an ignore rule, which picks the graph's decisions, or an
+    index. A code-only review repair moves HEAD and nothing the hook read, so
+    its output stays its own; a document commit between makes an old output a
+    restore somebody chose. `icase`: Windows collects `GUIDE.MD` as a document."""
+    return subprocess.run(["git", "diff", "--quiet", at, now, "--",
+                           ":(icase)*.md", ":(icase)*.gitignore", *INDEXES],
                           cwd=repo, capture_output=True).returncode == 0
 
 
