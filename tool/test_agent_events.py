@@ -327,6 +327,21 @@ def test_a_turn_refused_at_capacity_is_sent_again_until_it_is_taken(monkeypatch)
     assert query.resumable(rows, codex=False) == "saved-thread"
 
 
+def test_a_turn_cut_off_at_capacity_after_it_worked_is_continued_never_redone(monkeypatch):
+    """ai-coding-wiki's Codex coding turn stopped twice in one task, thousands of steps in;
+    the person had to type "이어서 해라." each time."""
+
+    full = [("error", "Selected model is at capacity. Please try a different model.")]
+    chat, sent = _busy_session([[("tool", "edit"), *full], full, [("tool", "test"), ("done", "committed")]],
+                               monkeypatch)
+    events = list(chat.say("refactor", threading.Event()))
+    # The request once; then the continuation, sent again while it is refused before it works.
+    assert sent == ["refactor", chat_busy.CONTINUE, chat_busy.CONTINUE]
+    assert [e.kind for e in events] == ["tool", "tool", "tool", "tool", "done"] and events[-1].text == "committed"
+    assert "이어서 하라고" in events[1].text and "이어서 하라고" in events[2].text
+    assert not any(e.kind == "error" for e in events), "the refusal itself never ends the turn"
+
+
 def _two_turns(first, second):
     """`say` against a stand-in CLI whose first process is `first`, then `second`."""
 
@@ -424,8 +439,6 @@ def test_a_capacity_wait_ends_on_halt_and_other_errors_pass_through(monkeypatch)
     full = [("error", "Selected model is at capacity.")]
     chat, sent = _busy_session([full], monkeypatch)
     assert [(e.kind, e.text) for e in chat.say("x", halt)][-1] == ("error", "멈췄다.") and len(sent) == 1
-    # Work already done, or another error, is never sent twice.
-    chat, sent = _busy_session([[("tool", "edit"), *full], [("error", "프로세스가 닫혔다.")]], monkeypatch)
-    assert [e.kind for e in chat.say("x", threading.Event())] == ["tool", "error"] and len(sent) == 1
+    # Another error is never sent twice.
     chat, sent = _busy_session([[("error", "프로세스가 닫혔다.")]], monkeypatch)
     assert [e.text for e in chat.say("x", threading.Event())] == ["프로세스가 닫혔다."] and len(sent) == 1
