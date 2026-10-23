@@ -483,9 +483,9 @@ class ChatSession:
                     # A provider that died between turns: its job still
                     # holds what it started. Gone with it, not overwritten.
                     self.close()
-                # With a session to reconnect to, start again carrying its id.
-                # Without one, this is a new conversation.
-                self._resume = self.session_id
+                # With a session to reconnect to, start again carrying its id. Without
+                # one, or isolated (never persisted), this is a new conversation.
+                self._resume = None if self.isolated else self.session_id
                 self._events = queue.Queue()
                 self._boot_at = time.monotonic()
                 self.connection_ms = None
@@ -864,9 +864,9 @@ class ChatSession:
             return event
         ended = self._ended = threading.Event()   # this say's own: the next one cannot clear it
         over = lambda: ended.is_set() or _ending or bool(halt and halt.is_set())  # noqa: E731 -- `end`, `end_all` or `halt`
-        yield from chat_busy.patiently(lambda again: self._say(chat_busy.CONTINUE if again else text, halt), over, mark)
+        yield from chat_busy.patiently(lambda again: self._say(text, halt, again and not self.isolated), over, mark)
 
-    def _say(self, text: str, halt: threading.Event | None = None):
+    def _say(self, text: str, halt: threading.Event | None = None, again: bool = False):
         if not self._turn.acquire(blocking=False):
             yield Event("error", "앞 턴이 아직 안 끝났다.")
             return
@@ -880,6 +880,8 @@ class ChatSession:
                 self.close()
                 yield Event("error", "멈췄다.")
                 return
+            # Continued only where `ensure` resumed: a thread it could not holds none of the task.
+            text = (chat_busy.CONTINUE if self._lost is None else chat_busy.RESTART + text) if again else text
             assert self._proc and self._proc.stdin
             # An abandoned turn is closed in `finally`. A queue that already
             # holds a start event is not drained.
@@ -1061,7 +1063,8 @@ class ChatSession:
                     self._closing()   # Codex holds no queue: a late steer is refused by the CLI
                     turn = params.get("turn") or {}
                     if turn.get("status") == "failed":
-                        yield Event("error", str((turn.get("error") or {}).get("message") or "Codex 요청 실패"))
+                        yield Event("error", str((turn.get("error") or {}).get("message") or "Codex 요청 실패"),
+                                    {"tokens": used} if any(used.values()) else {})
                         return
                     yield Event("done", final, {
                         "ms": round((time.monotonic() - started) * 1000),

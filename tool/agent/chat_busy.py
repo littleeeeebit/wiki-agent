@@ -12,6 +12,7 @@ from __future__ import annotations
 import itertools
 import re
 import time
+from collections import Counter
 
 from .chat_events import Event
 
@@ -23,12 +24,30 @@ WAITS = (30, 60, 120, 240, 480, 600)   # seconds; the last repeats
 # session keeps what it did, so it goes on rather than starting over.
 CONTINUE = ("The provider stopped your previous turn at capacity before it finished. Continue the same task "
             "from where you stopped; do not redo steps that already completed.")
+# What goes before the request when the cut-off conversation could not be resumed.
+RESTART = ("An earlier attempt at the task below was stopped at capacity after it began working, and its "
+           "conversation could not be resumed. Its changes may already be in the working tree: check what is "
+           "there before redoing anything.\n\n")
 
 
 def refused(event: Event) -> bool:
     """Codex says it with an `error`; Claude with a `done` whose result is an error."""
     failed = event.kind == "error" or (event.kind == "done" and event.meta.get("error"))
     return bool(failed) and bool(BUSY.search(event.text))
+
+
+def charged(meta: dict, carried: Counter | None, cost: float) -> dict:
+    """A taken turn's usage plus that of the refused attempts before it. One
+    that worked and left no usage makes the whole unknown — never zero, since
+    planning and refactoring charge their allowance from it."""
+    tokens = dict(meta.get("tokens") or {})
+    if carried is None:
+        return {**meta, "tokens": {**tokens, "in": None, "out": None}}
+    if not carried:
+        return meta
+    tokens.update({key: tokens[key] + n for key, n in carried.items() if type(tokens.get(key)) is int})
+    priced = isinstance(meta.get("cost_usd"), (int, float)) and cost
+    return {**meta, "tokens": tokens, **({"cost_usd": meta["cost_usd"] + cost} if priced else {})}
 
 
 def patiently(once, over, mark):
@@ -41,7 +60,7 @@ def patiently(once, over, mark):
     in one task, thousands of steps in (2026-10-23). Any other error passes
     through as it came. `mark` stamps each event with the session."""
 
-    again = False
+    again, carried, cost = False, Counter(), 0.0   # `carried` is None once a refused attempt's spend is unknown
     for attempt in itertools.count():
         turn, worked, busy = once(again), False, None
         try:
@@ -51,11 +70,19 @@ def patiently(once, over, mark):
                     busy = event
                     break
                 worked = worked or event.kind in ("delta", "tool", "approval")
+                if event.kind == "done":
+                    event.meta = charged(event.meta, carried, cost)
                 yield event
         finally:
             turn.close()
         if busy is None:
             return
+        tokens = busy.meta.get("tokens") or {}
+        if carried is not None and type(tokens.get("in")) is int and type(tokens.get("out")) is int:
+            carried.update({key: n for key, n in tokens.items() if type(n) is int})
+            cost += busy.meta.get("cost_usd") or 0
+        elif worked:
+            carried = None
         again = again or worked
         delay = WAITS[min(attempt, len(WAITS) - 1)]
         what = "이어서 하라고" if again else "같은 요청을"

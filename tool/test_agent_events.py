@@ -300,11 +300,11 @@ def _busy_session(answers, monkeypatch):
     from agent.chat_events import Event
 
     chat = ChatSession.__new__(ChatSession)
-    chat.id, chat.parent_id, sent = "s", None, []
+    chat.id, chat.parent_id, chat.isolated, sent = "s", None, False, []
 
-    def turn(text, halt=None):
-        sent.append(text)
-        yield from (Event(kind, said) for kind, said in answers[len(sent) - 1])
+    def turn(text, halt=None, again=False):
+        sent.append(chat_busy.CONTINUE if again else text)   # as `_say` with its thread resumed
+        yield from (Event(*answer) for answer in answers[len(sent) - 1])
 
     monkeypatch.setattr(chat, "_say", turn)
     monkeypatch.setattr(chat_busy, "WAITS", (0,))
@@ -340,6 +340,22 @@ def test_a_turn_cut_off_at_capacity_after_it_worked_is_continued_never_redone(mo
     assert [e.kind for e in events] == ["tool", "tool", "tool", "tool", "done"] and events[-1].text == "committed"
     assert "이어서 하라고" in events[1].text and "이어서 하라고" in events[2].text
     assert not any(e.kind == "error" for e in events), "the refusal itself never ends the turn"
+
+
+def test_a_continued_turn_reports_what_its_cut_off_attempts_spent_too(monkeypatch):
+    """Planning and refactoring charge their allowance from the last `done`: the
+    continuation's usage alone would let a phase run past its ceiling."""
+
+    full = ("done", "Selected model is at capacity.",
+            {"error": True, "tokens": {"in": 1000, "out": 500}, "cost_usd": 0.30})
+    chat, _ = _busy_session([[("delta", "research"), full],
+                             [("done", "planned", {"tokens": {"in": 10, "out": 5}, "cost_usd": 0.01})]], monkeypatch)
+    done = list(chat.say("plan", threading.Event()))[-1]
+    assert done.meta["tokens"] == {"in": 1010, "out": 505} and done.meta["cost_usd"] == pytest.approx(0.31)
+    # A cut-off attempt that worked and left no usage makes the whole unknown, never the last part's.
+    chat, _ = _busy_session([[("tool", "edit"), ("error", "Selected model is at capacity.")],
+                             [("done", "ok", {"tokens": {"in": 10, "out": 5}})]], monkeypatch)
+    assert list(chat.say("x", threading.Event()))[-1].meta["tokens"]["in"] is None
 
 
 def _two_turns(first, second):
@@ -381,6 +397,74 @@ def test_a_raw_capacity_refusal_from_either_cli_is_sent_again(tree, codex, monke
     assert events[-1].kind == "done" and events[-1].text == "ran" and not events[-1].meta.get("error")
 
 
+def test_an_isolated_turn_cut_off_after_it_worked_starts_over_with_its_request(monkeypatch):
+    """`--no-session-persistence` keeps nothing to `--resume` or continue."""
+
+    first = """import json, sys
+say = lambda m: print(json.dumps(m), flush=True)
+sys.stdin.readline()
+say({"type": "system", "subtype": "init", "session_id": "ephemeral-1"})
+say({"type": "stream_event", "event": {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Part"}}})
+say({"type": "result", "is_error": True, "result": "Selected model is at capacity.", "session_id": "ephemeral-1"})
+sys.stdin.read()
+"""
+    second = """import json, sys
+heard = sys.stdin.readline()
+print(json.dumps({"type": "result", "is_error": False, "session_id": "ephemeral-2",
+                  "result": "original" if "contains the facts" in heard else "other"}), flush=True)
+sys.stdin.read()
+"""
+    spawn, processes = _two_turns(first, second)
+    commands = []
+    monkeypatch.setattr(chat_session.subprocess, "Popen", lambda command, **kw: commands.append(command) or spawn(command, **kw))
+    monkeypatch.setattr(chat_session, "cli_command", lambda name: [name])
+    monkeypatch.setattr(chat_busy, "WAITS", (0,))
+    events = list(chat_session.explain("The answer contains the facts.", halt=threading.Event()))
+    assert len(commands) == 2 and "--resume" not in commands[1]
+    assert events[-1].kind == "done" and events[-1].text == "original"
+
+
+@pytest.mark.parametrize("lost", [False, True])
+def test_a_continuation_goes_only_to_the_thread_that_was_resumed(tree, monkeypatch, lost):
+    """A Codex thread `thread/resume` cannot find holds none of the task: the fresh one gets the request."""
+
+    first = CODEX_START + """
+say({"method": "item/started", "params": {"item": {"type": "commandExecution", "command": "work"}}})
+say({"method": "turn/completed", "params": {"turn": {"status": "failed", "error": {"message": "Selected model is at capacity."}}}})
+sys.stdin.read()
+"""
+    second = """import json, sys
+read = lambda: json.loads(sys.stdin.readline())
+say = lambda m: print(json.dumps(m), flush=True)
+m = read(); say({"id": m["id"], "result": {}})
+read()
+m = read()
+if LOST:
+    say({"id": m["id"], "error": {"code": -32600, "message": "no rollout found for thread id th-1"}})
+    m = read()
+    say({"id": m["id"], "result": {"thread": {"id": "fresh-thread"}}})
+else:
+    say({"id": m["id"], "result": {"thread": {"id": "th-1"}}})
+m = read()
+say({"id": m["id"], "result": {"turn": {}}})
+say({"method": "item/completed", "params": {"item": {"type": "agentMessage", "phase": "final_answer",
+                                                     "text": m["params"]["input"][0]["text"]}}})
+say({"method": "turn/completed", "params": {"turn": {"status": "completed"}}})
+sys.stdin.read()
+""".replace("LOST", repr(lost))
+    monkeypatch.setattr(chat_busy, "WAITS", (0,))
+    spawn, processes = _two_turns(first, second)
+    chat = ChatSession(tree, tools="Bash", model="codex:m")
+    try:
+        with patch.object(chat_session.subprocess, "Popen", spawn), \
+             patch.object(chat_session, "cli_command", lambda name: [name]):
+            events = list(chat.say("Original task", threading.Event()))
+    finally:
+        chat.close()
+    assert len(processes) == 2 and events[-1].kind == "done"
+    assert events[-1].text == (chat_busy.RESTART + "Original task" if lost else chat_busy.CONTINUE)
+
+
 @pytest.mark.parametrize("ending", ["end", "end_all"])
 def test_a_capacity_wait_ends_at_once_when_the_session_or_server_ends(monkeypatch, ending):
     """No halt — a one-off turn's case — and a wait far longer than the test."""
@@ -417,7 +501,7 @@ def test_cancelling_the_run_ends_its_plain_explanation_waiting_on_capacity(monke
     from agent.chat_events import Event
     sent: list = []
 
-    def full(self, text, halt=None):
+    def full(self, text, halt=None, again=False):
         sent.append(text)
         yield Event("error", "Selected model is at capacity.")
 
