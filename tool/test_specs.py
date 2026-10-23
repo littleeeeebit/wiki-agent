@@ -717,7 +717,8 @@ def test_round_checks_follow_changed_paths_and_defer_uncertain_scope_to_the_fina
 
     edit = lambda name: lambda: (repo / name).write_text("y\n", encoding="utf-8")  # noqa: E731
     deferred = ("deferred", ["git diff --check " + subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", "origin/main"], capture_output=True, text=True).stdout.strip() + " HEAD"])
+        ["git", "-C", str(repo), "rev-parse", "origin/main"], capture_output=True, text=True).stdout.strip()
+        + ' HEAD -- . ":(exclude).wiki/decisions/"'])
     assert after(edit("src/a/x.py")) == ("mapped", ["check a"])
     assert after(edit("src/shared.py")) == ("mapped", ["check b", "check c"]), "every consumer of a shared file"
     assert after(lambda: _git(repo, "mv", "src/a/x.py", "src/b/y.py")) == ("mapped", ["check a", "check b"]), \
@@ -808,6 +809,24 @@ def test_every_other_reader_of_the_checkout_leaves_the_harvested_record_out_too(
         refactor.turn(SimpleNamespace(repo=repo, budget=Mock(), halt=threading.Event()),
                       {"role": {"model": "", "effort": ""}}, "Audit", write=False)
     assert stopped.value.reason == "git" and "index file corrupt" in stopped.value.detail
+
+
+def test_the_deferred_gate_leaves_committed_harvested_records_out_of_its_whitespace_check(repo):
+    """ai-companion-voice-agent's plan #248 stopped twice on `git diff --check`: the records it
+    committed were CRLF, as most there are from when that repository ran autocrlf."""
+
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    (repo / ".wiki/decisions").mkdir(parents=True, exist_ok=True)
+    (repo / ".wiki/decisions/2026-10-22-238-fix-x.md").write_bytes(b"---\r\nscope: project\r\n---\r\n\r\n# fix x\r\n")
+    _git(repo, "add", "-f", ".wiki/decisions")
+    _git(repo, "commit", "-qm", "records")
+    gate = specs.selected(repo, repo, "main", PASS)
+    assert gate["selection"] == "deferred" and specs.judge(repo, gate["commands"], threading.Event())["ok"]
+    (repo / "code.py").write_text("x = 1 \n", encoding="utf-8")
+    _git(repo, "add", "code.py")
+    _git(repo, "commit", "-qm", "code")
+    failed = specs.judge(repo, specs.selected(repo, repo, "main", PASS)["commands"], threading.Event())
+    assert not failed["ok"] and "code.py" in failed["tail"], "the task's own whitespace still fails"
 
 
 def test_the_pr_body_gives_harvest_its_what_and_why():
