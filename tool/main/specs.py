@@ -663,7 +663,7 @@ def status(path: Path, *flags: str) -> subprocess.CompletedProcess:
 
 def harvested(name: str) -> bool:
     """An untracked file of this name is a record the start hook left (`status`)."""
-    return name.startswith(".wiki/decisions/")
+    return name.startswith(HARVESTED)
 
 
 def dirty(path: Path) -> bool:
@@ -1129,7 +1129,8 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
 # These can reach every consumer; broad execution belongs to the final owner.
 SHARED = ("conftest.py", "requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini",
           "package.json", "package-lock.json", ".wiki/adapter.toml")
-LOCKS = ("requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini", "package-lock.json",
+HARVESTED = ".wiki/decisions/"   # where the start hook writes records: never the task's work
+LOCKS =("requirements*.txt", "pyproject.toml", "setup.cfg", "pytest.ini", "tox.ini", "package-lock.json",
          "web/package-lock.json", "uv.lock", "poetry.lock")
 
 
@@ -1229,8 +1230,10 @@ def selected(repo: Path, path: Path, base: str, gate_cmd: str) -> dict:
     oid = merge_base(path, base)
     if cfg := verify.policy(path, project=repo):
         return {"base_oid": oid, "commands": [cfg["round"]], "selection": "mapped"}
-    # Unmapped/shared changes wait for the one final owner, never a surprise local suite.
-    full = {"base_oid": oid, "commands": ["git diff --check" + (f" {oid} HEAD" if oid else "")], "selection": "deferred"}
+    # Unmapped/shared changes wait for the one final owner, never a surprise local suite. Harvested records are
+    # left out: CRLF where a repository once ran autocrlf, they failed ai-companion-voice-agent #248's gate twice.
+    full = {"base_oid": oid, "commands": ["git diff --check" + (f" {oid} HEAD" if oid else "")
+                                          + f' -- . ":(exclude){HARVESTED}"'], "selection": "deferred"}
     listed = sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", oid, "HEAD"], path) \
         if oid else None
     checks = registered(repo).values()
