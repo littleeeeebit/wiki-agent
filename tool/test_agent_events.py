@@ -329,7 +329,7 @@ def test_a_turn_refused_at_capacity_is_sent_again_until_it_is_taken(monkeypatch)
 
 def test_a_turn_cut_off_at_capacity_after_it_worked_is_continued_never_redone(monkeypatch):
     """ai-coding-wiki's Codex coding turn stopped twice in one task, thousands of steps in;
-    the person had to type "이어서 해라." each time."""
+    the person had to type `이어서 해라.` each time."""
 
     full = [("error", "Selected model is at capacity. Please try a different model.")]
     chat, sent = _busy_session([[("tool", "edit"), *full], full, [("tool", "test"), ("done", "committed")]],
@@ -362,6 +362,11 @@ def test_a_continued_turn_reports_what_its_cut_off_attempts_spent_too(monkeypatc
                              [("done", "ok", {"tokens": {"in": 10, "out": 5}, "cost_usd": 0.01})]], monkeypatch)
     done = list(chat.say("x", threading.Event()))[-1]
     assert done.meta["cost_usd"] is None and done.meta["tokens"] == {"in": 11, "out": 6, "cache_write": 700}
+    # A count it reported as unknown stays unknown, whatever the taken turn reports.
+    chat, _ = _busy_session([[("tool", "edit"), ("done", "Selected model is at capacity.",
+                                                   {"error": True, "tokens": {"in": 1, "out": 1, "cache_write": None}})],
+                             [("done", "ok", {"tokens": {"in": 10, "out": 5, "cache_write": 700}})]], monkeypatch)
+    assert list(chat.say("x", threading.Event()))[-1].meta["tokens"] == {"in": 11, "out": 6, "cache_write": None}
 
 
 def test_an_explanation_started_over_after_capacity_is_shown_from_its_start(tmp_path, monkeypatch):

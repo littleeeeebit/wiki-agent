@@ -12,7 +12,6 @@ from __future__ import annotations
 import itertools
 import re
 import time
-from collections import Counter
 
 from .chat_events import Event
 
@@ -31,20 +30,20 @@ def refused(event: Event) -> bool:
     return bool(failed) and bool(BUSY.search(event.text))
 
 
-def charged(meta: dict, carried: Counter | None, cost: float | None) -> dict:
+def charged(meta: dict, carried: dict | None, cost: float | None) -> dict:
     """A taken turn's usage plus that of the refused attempts before it. One
     that worked and left no count (`None`) makes that total unknown — never
     zero, since planning and refactoring charge their allowance from it. A
     count only a refused attempt reported is kept; `in` and `out` the taken
     turn did not report stay unknown."""
     out = dict(meta)
-    if carried != Counter():
+    if carried != {}:
         tokens = dict(meta.get("tokens") or {})
         if carried is None:
             tokens.update({"in": None, "out": None})
-        else:
-            tokens.update({key: tokens[key] + n if type(tokens.get(key)) is int else n for key, n in carried.items()
-                           if type(tokens.get(key)) is int or key not in tokens and key not in ("in", "out")})
+        for key, n in (carried or {}).items():
+            if key not in ("in", "out") or type(tokens.get(key)) is int:
+                tokens[key] = None if n is None or tokens.get(key, 0) is None else tokens.get(key, 0) + n
         out["tokens"] = tokens
     if isinstance(meta.get("cost_usd"), (int, float)):
         out["cost_usd"] = None if cost is None else meta["cost_usd"] + cost
@@ -61,7 +60,7 @@ def patiently(once, over, mark):
     in one task, thousands of steps in (2026-10-23). Any other error passes
     through as it came. `mark` stamps each event with the session."""
 
-    again, carried, cost = False, Counter(), 0.0   # each None once a refused attempt's spend is unknown
+    again, carried, cost = False, {}, 0.0   # each None once a refused attempt's spend is unknown
     for attempt in itertools.count():
         turn, worked, busy = once(again), False, None
         try:
@@ -80,7 +79,9 @@ def patiently(once, over, mark):
             return
         tokens, price = busy.meta.get("tokens") or {}, busy.meta.get("cost_usd")
         if carried is not None and type(tokens.get("in")) is int and type(tokens.get("out")) is int:
-            carried.update({key: n for key, n in tokens.items() if type(n) is int})
+            for key, n in tokens.items():   # a count reported as unknown stays unknown
+                if n is None or type(n) is int:
+                    carried[key] = None if n is None or carried.get(key, 0) is None else carried.get(key, 0) + n
         elif worked:
             carried = None
         if cost is not None and isinstance(price, (int, float)):
