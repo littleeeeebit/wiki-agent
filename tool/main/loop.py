@@ -1071,7 +1071,7 @@ def shipped(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: str
             if local != head and not specs.sh(["git", "merge-base", "--is-ancestor", local, head], path).returncode:
                 specs.sh(["git", "merge", "--ff-only", head], path, 60)
                 local = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
-            clean = not specs.sh(["git", "status", "--porcelain"], path).stdout.strip()
+            clean = not specs.dirty(path)
             chosen = specs.for_round(repo, path, spec, base)
             if local == head and clean and reusable(spec, head, chosen):
                 return True
@@ -1221,8 +1221,7 @@ def sync_review(spec: dict, path: Path, head: str) -> None:
     fetched = specs.sh(["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"], path, 120)
     if fetched.returncode:
         raise ValueError("PR 커밋을 가져오지 못했다")
-    dirty = specs.sh(["git", "status", "--porcelain"], path)
-    if dirty.returncode or dirty.stdout.strip():
+    if specs.dirty(path):
         raise ValueError("로컬 리뷰 폴더에 커밋 안 된 변경이 있다")
     local = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     if local == head:
@@ -1836,8 +1835,7 @@ def forward(repo: Path, base: str, *, task_branch: str = "", handover: int | Non
         return "원본이 뒤처짐 — 다른 작업이 저장소를 쓰고 있다"
     try:
         on = specs.sh(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
-        dirty = specs.sh(["git", "status", "--porcelain"], repo)
-        if on not in {base, base_branch(repo, base), task_branch} or dirty.returncode or dirty.stdout.strip():
+        if on not in {base, base_branch(repo, base), task_branch} or specs.dirty(repo):
             return f"원본이 뒤처짐 — 원본이 `{base}` 에 깨끗이 서 있지 않다"
         fetched = specs.sh(["git", "fetch", "origin", f"+refs/heads/{base}:refs/remotes/origin/{base}"], repo, 120)
         if fetched.returncode:
@@ -2253,8 +2251,7 @@ def _merge_spec(repo: Path, spec: dict, body: Merge, *, prepare: bool = True) ->
             except (RuntimeError, ValueError, OSError, subprocess.SubprocessError) as exc:
                 raise HTTPException(409, f"최종 검증 결과 확인 실패 — {exc}") from exc
         local = specs.sh(["git", "rev-parse", "HEAD"], path)
-        dirty = specs.sh(["git", "status", "--porcelain"], path)
-        if local.returncode or local.stdout.strip() != allowed["head"] or dirty.returncode or dirty.stdout.strip():
+        if local.returncode or local.stdout.strip() != allowed["head"] or specs.dirty(path):
             raise HTTPException(409, "머지 직전 작업 폴더가 바뀌었다")
         # A work agent may open its PR as a draft, which GitHub refuses to
         # merge. The person's merge click is the request to take it out of draft.

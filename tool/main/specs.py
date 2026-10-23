@@ -646,6 +646,26 @@ def sh(args: list[str], cwd: Path, timeout: float = 60) -> subprocess.CompletedP
                           errors="replace", timeout=timeout, stdin=subprocess.DEVNULL)
 
 
+def status(path: Path, *flags: str) -> subprocess.CompletedProcess:
+    """`git status --porcelain` without the untracked decision records a
+    session's start hook harvests (`tool/sync.py`): they wait for a person's
+    batch commit, and no gate, commit or switch of ours takes them. A failed
+    status reads as dirty, so every check on it fails closed. Untracked files
+    are listed one by one: a folder Git folds into one line could hide
+    anything beside the records."""
+
+    done = sh(["git", "-c", "core.quotepath=off", "status", "--porcelain", "--untracked-files=all", *flags], path)
+    if done.returncode:
+        return subprocess.CompletedProcess(done.args, done.returncode, f"!! git status 실패 — {said(done)}\n", done.stderr)
+    kept = [line for line in done.stdout.splitlines()
+            if not (line.startswith("?? ") and line[3:].strip('"').startswith(".wiki/decisions/"))]
+    return subprocess.CompletedProcess(done.args, 0, "".join(f"{line}\n" for line in kept), done.stderr)
+
+
+def dirty(path: Path) -> bool:
+    return bool(status(path).stdout.strip())
+
+
 def said(done: subprocess.CompletedProcess) -> str:
     """The first line of what a failed command said."""
 
@@ -1005,8 +1025,7 @@ def activate(sid: str) -> dict:
         spec = load(repo.name, sid)
         if not spec or spec.get("workspace_mode") != "branch" or spec.get("worktree") != str(repo):
             raise HTTPException(404, "이 저장소의 작업 브랜치가 아니다")
-        clean = sh(["git", "status", "--porcelain"], repo)
-        if clean.returncode or clean.stdout.strip():
+        if dirty(repo):
             raise HTTPException(409, "현재 변경을 커밋하거나 보관한 뒤 작업 브랜치를 열어라")
         switched = sh(["git", "switch", branch_of(spec)], repo)
         if switched.returncode:
@@ -1078,11 +1097,11 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
     started = time.monotonic()
     deadline = started + (GATE_SECONDS if timeout is None else timeout)
     cmd = " && ".join(cmds)
-    status = sh(["git", "status", "--porcelain"], path)
+    before = status(path)
     head = sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
-    if status.returncode or status.stdout.strip():
-        reason = "커밋 안 된 변경" if not status.returncode else f"git status 실패 — {said(status)}"
-        return {"ok": False, "reason": reason, "cmd": cmd, "commands": cmds, "code": None, "tail": status.stdout.strip(),
+    if before.stdout.strip():
+        reason = "커밋 안 된 변경" if not before.returncode else before.stdout.strip()[3:]
+        return {"ok": False, "reason": reason, "cmd": cmd, "commands": cmds, "code": None, "tail": before.stdout.strip(),
                 "head": head, "ts": time.time()}
     code, out, cut = None, "", ""
     for one in cmds:
@@ -1090,9 +1109,8 @@ def judge(path: Path, cmds: list[str], halt: threading.Event, noted=lambda text:
         code, out, cut = gate(one, path, halt, env=env, timeout=deadline - time.monotonic())
         if code != 0:
             break
-    after = sh(["git", "status", "--porcelain"], path)
     moved = "게이트가 HEAD 를 바꿨다" if sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head else \
-        "게이트가 작업트리를 바꿨다" if after.returncode or after.stdout.strip() else ""
+        "게이트가 작업트리를 바꿨다" if dirty(path) else ""
     ok = code == 0 and not moved
     reason = "" if ok else cut or (f"게이트가 {code} 로 끝났다" if code != 0 else moved)
     return {"ok": ok, "reason": reason, "cmd": cmd, "commands": cmds, "code": code,
@@ -1136,7 +1154,7 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
     chosen = chosen or for_round(repo, path, spec, base)
     last = (spec.get("validation") or {}).get("round") or {}
     current = sh(["git", "rev-parse", "HEAD"], path)
-    clean = sh(["git", "status", "--porcelain"], path)
+    clean = status(path)
     if reused := verify.cached_round(spec, chosen, current, clean):
         return reused, last
     with gating(spec.get("repo"), spec.get("id"), "round"):

@@ -226,7 +226,7 @@ def switched(w: Worker, sid: str, start: str) -> Path:
             raise Stop("worktree", f"`{path}` 이 이 저장소의 `{sid}` 작업 트리가 아니다 — 확인하고 치운 뒤 [재개] 하라")
         return path
     if git(w.repo, "branch", "--show-current") != sid:
-        if git(w.repo, "status", "--porcelain"):
+        if specs.dirty(w.repo):
             raise Stop("dirty", "저장소에 커밋 안 된 변경이 있다")
         exists = not specs.sh(["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{sid}"], w.repo).returncode
         git(w.repo, "switch", *((sid,) if exists else ("-c", sid, start)))
@@ -255,7 +255,7 @@ def turn(w: Worker, run: dict, text: str, system: str = TESTS_PROMPT, write: boo
     except Cancelled as exc:
         raise Stop("cancelled", str(exc)) from exc
     role = run["role"]
-    state = lambda: (git(where, "rev-parse", "HEAD"), git(where, "status", "--porcelain"))  # noqa: E731
+    state = lambda: (git(where, "rev-parse", "HEAD"), specs.status(where).stdout)  # noqa: E731
     before = None if write else state()
     if w.halt.is_set():
         raise Stop("cancelled")
@@ -651,8 +651,7 @@ def characterized(w: Worker, run: dict, sid: str) -> None:
         # test-file path (`Tests/` too, as Swift lays them out), never one of
         # the files being refactored.
         code = sorted(rel for rel in tests if rel in files or not debt.TEST.search(rel.lower()))
-        changed = {line[3:].strip('"') for line in specs.sh(["git", "status", "--porcelain", "-uall"], where)
-                   .stdout.splitlines()}
+        changed = {line[3:].strip('"') for line in specs.status(where, "-uall").stdout.splitlines()}
         if code or not changed or not changed <= set(tests):
             raise Stop("tests_touched_code", f"테스트 밖을 바꿨다: {sorted({*code, *(changed - set(tests))})}")
         done = tested(w, argv, where)

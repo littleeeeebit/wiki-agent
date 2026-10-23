@@ -135,7 +135,7 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
     if local != head and not (resumable and receipt.get("head") == local):
         raise ValueError("작업 폴더가 리뷰한 커밋에 있지 않다")
     retry = resumable and receipt.get("state") == "interrupted" and receipt.get("outputs") == outputs(path)
-    if (git(path, "status", "--porcelain") or resumable and receipt.get("state") == "interrupted") and not retry:
+    if (specs.dirty(path) or resumable and receipt.get("state") == "interrupted") and not retry:
         raise ValueError("커밋하지 않은 변경이 있다 — 보존한 뒤 머지를 다시 요청하세요")
     branch = git(path, "branch", "--show-current")
     if branch and branch != specs.branch_of(spec):

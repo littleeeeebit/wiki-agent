@@ -733,13 +733,13 @@ def extra_check(repo: Path, path: Path, run, spec: dict) -> tuple[bool, str]:
     name, cmd = pick.candidate["args"]["name"], pick.candidate["args"]["cmd"]
     note(run, f"Jev · 추가 확인 `{name}` ({said(pick)}) · {cmd}")
     gated = (spec.get("gate") or {}).get("head")
-    before = git(path, "status", "--porcelain")
+    before = specs.status(path).stdout
     code, out, cut = specs.gate(cmd, path, run.halt)
     tail = "\n".join(out.splitlines()[-specs.TAIL:])
     # What goes up is what the gate passed: a check that committed, or changed the
     # tree it ran in, holds the pull request whatever it exited with.
     moved = "" if git(path, "rev-parse", "HEAD") == gated else "HEAD 가 바뀌었다"
-    moved = moved or ("" if git(path, "status", "--porcelain") == before else "작업트리가 바뀌었다")
+    moved = moved or ("" if specs.status(path).stdout == before else "작업트리가 바뀌었다")
     ok = code == 0 and not moved
     pick.done("executed" if ok else "failed", check=name, code=code, cut=cut, moved=moved, tail=tail[-2000:])
     specs.update(spec["repo"], spec["id"],

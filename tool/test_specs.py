@@ -766,6 +766,20 @@ def test_a_gate_that_changes_what_it_checked_fails_whatever_it_exits_with(repo, 
     assert specs.judge(repo, [PASS, FAIL, PASS], threading.Event())["commands"] == [PASS, FAIL, PASS]
 
 
+def test_a_harvested_decision_record_is_not_uncommitted_work_but_anything_else_is(repo):
+    # The start hook (`tool/sync.py`) left a record that waits for a person's batch commit.
+    (repo / ".git/info/exclude").write_text(".wiki/*\n!.wiki/decisions/\n", encoding="utf-8")
+    (repo / ".wiki/decisions").mkdir(parents=True, exist_ok=True)
+    (repo / ".wiki/decisions/2026-10-22-246-fix-x.md").write_text("# fix x\n", encoding="utf-8")
+    assert specs.sh(["git", "status", "--porcelain"], repo).stdout == "?? .wiki/\n", "Git folds the folder"
+    assert not specs.dirty(repo) and specs.judge(repo, [PASS], threading.Event())["ok"]
+    (repo / "left.txt").write_text("x", encoding="utf-8")
+    assert specs.dirty(repo) and specs.judge(repo, [PASS], threading.Event())["reason"] == "커밋 안 된 변경"
+    plain = repo.parent / "plain"
+    plain.mkdir()
+    assert specs.dirty(plain), "a status Git cannot give is never clean"
+
+
 def test_the_pr_body_gives_harvest_its_what_and_why():
     spec = {"id": "fix-login", "repo": "proj", "goal": "로그인 뒤 원래 페이지로 돌아간다",
             "decisions": [{"what": "서버에서 돌린다", "why": "화면은 기록을 모른다", "rejected": "history"}],

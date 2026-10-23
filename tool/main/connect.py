@@ -483,9 +483,9 @@ def handover(repo: Path, n: int) -> dict:
     address = git(repo, "config", "--get", f"remote.{remote}.url").stdout.strip() if remote else ""
     if upstream.removeprefix(remote + "/") != base or not same_repository(address, url):
         return wait(f"`{base}` 의 upstream 이 PR 이 머지된 저장소가 아니다")
-    dirty = git(repo, "status", "--porcelain", "--untracked-files=all")
+    dirty = specs.status(repo, "--untracked-files=all")
     others = [line for line in dirty.stdout.splitlines() if line[3:].strip('"') not in {ADAPTER, *GENERATED}]
-    if dirty.returncode or others:
+    if others:
         return wait("adapter 말고도 커밋 안 된 변경이 있다")
     # 2. A copy an earlier handover left is not walked over.
     box = Path(git(repo, "rev-parse", "--absolute-git-dir").stdout.strip()) / "wiki-connect"
