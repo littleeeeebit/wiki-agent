@@ -86,25 +86,28 @@ def outputs(path: Path) -> dict:
 
 
 def set_aside(path: Path, spec: dict) -> bool:
-    """Put back HEAD under an interrupted preparation's outputs, still exactly what it saved, before
-    a gate checks HEAD. A click whose final proof went stale (ai-companion: the gate command changed)
-    kicks the gate, which counted the outputs as somebody's uncommitted work and stopped twice.
-    A gate means a fresh preparation follows anyway; anything else in the tree keeps the stop."""
+    """Stash an interrupted preparation's outputs, still exactly what it saved, before a gate checks
+    HEAD. A click whose final proof went stale (ai-companion: the gate command changed) kicks the
+    gate, which counted the outputs as somebody's uncommitted work and stopped twice. The snapshot
+    fingerprints the whole tree, so only paths preparation may write qualify, and they go to a stash,
+    never away: a person's document edit made while preparation ran is kept there too. Anything
+    else in the tree keeps the stop; a fresh preparation follows the gate."""
     receipt = spec.get("maintenance") or {}
     saved = receipt.get("outputs")
-    if receipt.get("state") != "interrupted" or git(path, "rev-parse", "HEAD") != receipt.get("head") \
-            or saved != outputs(path):
+    if receipt.get("state") != "interrupted" or git(path, "rev-parse", "HEAD") != receipt.get("head")             or saved != outputs(path) or not all(maintained(name) or name == debt.RATCHET for name in saved["files"]):
         return False
-    flagged = hidden(path, saved.get("files", {}))
-    for flag in ("--no-skip-worktree", "--no-assume-unchanged"):   # together, only the last applies
-        if flagged:
-            git(path, "--literal-pathspecs", "update-index", flag, "--", *flagged)
-    names = changes(path)
-    new = names & set(git(path, "ls-files", "--others", "--exclude-standard", "-z").split("\0"))
-    if names - new:
-        git(path, "--literal-pathspecs", "restore", "--source=HEAD", "--staged", "--worktree", "--", *sorted(names - new))
-    for name in new:
-        (path / name).unlink()
+    flagged = hidden(path, saved["files"])
+    try:
+        for flag in ("--no-skip-worktree", "--no-assume-unchanged"):   # together, only the last applies
+            if flagged:
+                git(path, "--literal-pathspecs", "update-index", flag, "--", *flagged)
+        if names := sorted(changes(path)):
+            git(path, "--literal-pathspecs", "stash", "push", "--include-untracked",
+                "-m", "wiki-agent: interrupted merge preparation outputs", "--", *names)
+    except Exception:
+        # What is left is still a part of what was proven; its new fingerprint lets either retry go on.
+        specs.update(spec["repo"], spec["id"], maintenance={**receipt, "outputs": outputs(path)})
+        raise
     specs.update(spec["repo"], spec["id"], maintenance=None)
     return True
 

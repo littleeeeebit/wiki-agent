@@ -775,6 +775,7 @@ def test_a_stale_final_proof_regates_around_an_interrupted_preparation(world):
     regated = specs.load("proj", ready["id"])
     assert regated["state"] == "머지 가능" and not regated.get("maintenance"), regated.get("stopped")
     assert not git(path, "status", "--porcelain") and not (path / ".omm/new.md").exists()
+    assert "interrupted merge preparation" in git(path, "stash", "list")
     assert all(line[:2] == "H " for line in git(path, "ls-files", "-v", ".wiki").splitlines())
     with patch.object(maintenance.architecture, "scan"):
         prepared = maintenance.prepare(world.repo, path, regated, head, "main")
@@ -787,6 +788,46 @@ def test_an_edit_beside_an_interrupted_preparation_still_stops_the_gate(world):
     assert not maintenance.set_aside(path, ready)
     assert (path / ".omm/new.md").read_text(encoding="utf-8") == "Somebody's edit.\n"
     assert specs.load("proj", ready["id"])["maintenance"]["state"] == "interrupted"
+
+
+def test_an_external_regate_sets_aside_an_interrupted_preparation_before_syncing(world):
+    path, ready = interrupted_with_staged_outputs(world, "external-interruption")
+    ready = specs.update("proj", ready["id"], implementation_environment="external")
+    specs.validate("proj", ready["id"], final={**ready["validation"]["final"], "environment_digest": "older gate"})
+    with pytest.raises(loop.HTTPException, match="최종 게이트를 다시"):
+        loop.merge_spec(world.repo, specs.load("proj", ready["id"]), loop.Merge(head=specs.approved(ready)["head"]))
+    waited(lambda: ("proj", ready["id"]) not in loop._loops)
+    regated = specs.load("proj", ready["id"])
+    assert regated["state"] == "머지 가능" and not regated.get("maintenance"), regated.get("stopped")
+
+
+def test_code_edited_while_preparation_ran_is_never_set_aside(world):
+    """The interruption fingerprints the whole tree, so a matching tree proves no ownership by itself."""
+    path, ready = flagged_spec(world, "edit-during-preparation", ("skip-worktree",))
+    before = (path / "gate.py").read_text(encoding="utf-8")
+
+    def person_edits(*_a, **_k):
+        (path / "gate.py").write_text(before + "# A person's fix.\n", encoding="utf-8")
+        (path / "personal.txt").write_text("Notes.\n", encoding="utf-8")
+    with patch.object(maintenance.architecture, "scan", person_edits), pytest.raises(ValueError, match="코드까지"):
+        maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
+    assert not maintenance.set_aside(path, specs.load("proj", ready["id"]))
+    assert "A person's fix." in (path / "gate.py").read_text(encoding="utf-8") and (path / "personal.txt").exists()
+
+
+def test_a_failure_while_setting_aside_is_retried(world):
+    path, ready = interrupted_with_staged_outputs(world, "stash-fails")
+    real = maintenance.git
+
+    def stash_fails(where, *args):
+        if "stash" in args:
+            raise ValueError("stash failed")
+        return real(where, *args)
+    with patch.object(maintenance, "git", stash_fails), pytest.raises(ValueError, match="stash failed"):
+        maintenance.set_aside(path, ready)
+    retried = specs.load("proj", ready["id"])
+    assert retried["maintenance"]["outputs"] == maintenance.outputs(path)
+    assert maintenance.set_aside(path, retried) and not git(path, "status", "--porcelain")
 
 
 def test_stopping_a_lint_repair_does_not_stop_the_server(world):
