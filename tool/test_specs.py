@@ -951,11 +951,13 @@ def test_a_code_only_commit_after_the_hook_rebuilt_the_indexes_leaves_them_the_h
     assert all((repo / name).read_bytes() == body for name, body in old.items()), "a chosen restore stays"
     assert specs.dirty(repo), "and is somebody's after a document commit"
     # Everything else the indexes are built from: a document Windows collects in capitals, an ignore rule,
-    # a submodule that may hold documents. Code alone is not.
-    for changed in ("docs/NOTES.MD", "docs/.gitignore", "docs/vendor", "code.py"):
+    # a tree with a symbolic link or submodule, which can bring documents in through any path. Code alone is not.
+    for changed in ("docs/NOTES.MD", "docs/.gitignore", "code.py", "docs/link", "docs/vendor", "more.py"):
         at = indexes.head(repo)
-        if changed == "docs/vendor":
-            _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{at},{changed}")
+        if changed in ("docs/link", "docs/vendor"):
+            _git(repo, "update-index", "--add", "--cacheinfo",
+                 f"120000,{specs.sh(['git', 'hash-object', '-w', 'code.py'], repo).stdout.strip()},{changed}"
+                 if changed == "docs/link" else f"160000,{at},{changed}")
         else:
             (repo / changed).write_text("y\n", encoding="utf-8")
             _git(repo, "add", "-f", changed)

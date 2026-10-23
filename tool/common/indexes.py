@@ -78,22 +78,25 @@ def record(repo: Path, written: dict[str, str], at: str) -> None:
 
 def _same_sources(repo: Path, at: str, now: str) -> bool:
     """No commit between `at` and `now` touched a document — what both indexes
-    are built from — an ignore rule, which picks the graph's decisions, an
-    index, or a submodule or symbolic link, either of which can carry documents
-    the collectors walk into. A code-only review repair moves HEAD and nothing
-    the hook read, so its output stays its own; a document commit between makes
-    an old output a restore somebody chose. Case is ignored: Windows collects
-    `GUIDE.MD` as a document."""
-    done = subprocess.run(["git", "diff", "--raw", "-z", "--no-renames", at, now],
-                          cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
-    if done.returncode:
+    are built from — an ignore rule, which picks the graph's decisions, or an
+    index. A code-only review repair moves HEAD and nothing the hook read, so
+    its output stays its own; a document commit between makes an old output a
+    restore somebody chose. Case is ignored: Windows collects `GUIDE.MD` as a
+    document. A tree with a submodule or a symbolic link is never compared:
+    either can carry documents in from a path no diff here names."""
+    if _links(repo, at) or _links(repo, now):
         return False
-    fields = done.stdout.split("\0")
-    for meta, path in zip(fields[0::2], fields[1::2]):   # ":<old mode> <new mode> <old> <new> <status>", path
-        if {"160000", "120000"} & set(meta[1:].split(" ")[:2]) or path in INDEXES \
-                or path.lower().endswith((".md", ".gitignore")):
-            return False
-    return True
+    done = subprocess.run(["git", "diff", "--name-only", "-z", "--no-renames", at, now],
+                          cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return not done.returncode and not any(
+        path in INDEXES or path.lower().endswith((".md", ".gitignore")) for path in done.stdout.split("\0"))
+
+
+def _links(repo: Path, commit: str) -> bool:
+    """`commit`'s tree holds a submodule or a symbolic link, or cannot be read."""
+    done = subprocess.run(["git", "ls-tree", "-r", "-z", commit],
+                          cwd=repo, capture_output=True, text=True, encoding="utf-8", errors="replace")
+    return bool(done.returncode) or any(entry.startswith(("120000 ", "160000 ")) for entry in done.stdout.split("\0"))
 
 
 def rebuilt(repo: Path, name: str) -> bool:
