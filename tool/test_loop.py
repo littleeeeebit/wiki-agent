@@ -651,21 +651,49 @@ def test_completed_preparation_is_reused_and_ignored_documents_stay_private(worl
     assert "docs/private.md" not in git(path, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
 
 
-def test_preparation_commits_indexes_a_skip_worktree_flag_had_hidden(world):
-    """ai-companion's merge stopped at `add -f` — "matched paths that exist outside of your sparse-checkout
-    definition" — because its tracked indexes carried a skip-worktree flag."""
-
-    spec = pr_spec(world, "hidden-indexes", 12, file="docs/feature.md")
+def flagged_spec(world, name: str, flags: tuple[str, ...]):
+    spec = pr_spec(world, name, 12, file="docs/feature.md")
     path = Path(spec["worktree"])
-    commit(path, ".wiki/corpus.json", '{"docs": []}')
-    commit(path, ".wiki/graph.json", "{}\n")
+    (path / ".omm").mkdir()
+    for file, text in ((".wiki/corpus.json", '{"docs": []}'), (".wiki/graph.json", "{}\n"),
+                       (".omm/description.md", "Before scan.\n"),
+                       (".wiki/ratchet.json", json.dumps({"version": 1, "new_file_max_lines": 800,
+                        "test_file_max_lines": 1500, "files": {"gone.py": {"lines": 900, "dup": 0, "reason": "x"}}}))):
+        commit(path, file, text)
     git(path, "push", "origin", spec["id"])
-    git(path, "update-index", "--skip-worktree", ".wiki/corpus.json", ".wiki/graph.json")
-    ready = looped(spec["id"])
-    with patch.object(maintenance.architecture, "scan"):
+    for flag in flags:
+        git(path, "update-index", f"--{flag}", ".wiki/corpus.json", ".wiki/graph.json", ".omm/description.md",
+            ".wiki/ratchet.json")
+    return path, looped(spec["id"])
+
+
+@pytest.mark.parametrize("flags", [("skip-worktree",), ("assume-unchanged",), ("skip-worktree", "assume-unchanged")])
+def test_preparation_commits_what_it_wrote_under_hiding_index_flags(world, flags):
+    """ai-companion's merge stopped at `add -f` — "matched paths that exist outside of your sparse-checkout
+    definition" — because its tracked indexes carried a skip-worktree flag. Under assume-unchanged `add` passes
+    silently without them. Every output preparation writes there is committed, the flags off."""
+
+    path, ready = flagged_spec(world, "hidden-indexes", flags)
+
+    def scan(*_a, **_k):
+        (path / ".omm/description.md").write_text("After scan.\n", encoding="utf-8")
+    with patch.object(maintenance.architecture, "scan", scan):
         prepared = maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
     assert "docs/feature.md" in git(path, "show", f"{prepared}:.wiki/corpus.json")
-    assert not [line for line in git(path, "ls-files", "-v", ".wiki").splitlines() if line.startswith("S ")]
+    assert "After scan." in git(path, "show", f"{prepared}:.omm/description.md")
+    assert "gone.py" not in git(path, "show", f"{prepared}:.wiki/ratchet.json")
+    assert all(line[:2] == "H " for line in git(path, "ls-files", "-v", ".wiki", ".omm").splitlines())
+
+
+def test_an_edit_a_hiding_index_flag_covers_stops_preparation_before_anything_is_written(world):
+    path, ready = flagged_spec(world, "hidden-edit", ("skip-worktree",))
+    personal = '{"personal": "keep"}'
+    (path / ".wiki/graph.json").write_text(personal, encoding="utf-8")
+    with patch.object(maintenance.architecture, "scan"), pytest.raises(ValueError, match="숨긴 변경.*graph.json"):
+        maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
+    assert (path / ".wiki/graph.json").read_text(encoding="utf-8") == personal
+    assert git(path, "show", "HEAD:.wiki/corpus.json") == '{"docs": []}'
+    assert (path / ".wiki/corpus.json").read_text(encoding="utf-8") == '{"docs": []}', "nothing written"
 
 
 def test_stopping_a_lint_repair_does_not_stop_the_server(world):

@@ -10,6 +10,7 @@ from pathlib import Path
 import corpus
 import debt
 from common import errorlog
+from common import indexes as receipts
 import lint
 import repo_graph
 import repo_lint
@@ -38,6 +39,35 @@ def maintained(name: str) -> bool:
     return name.endswith(".md") or name.startswith(".omm/") or name in (".wiki/corpus.json", ".wiki/graph.json")
 
 
+def same(path: Path, name: str) -> bool:
+    """`name`'s bytes on disk are HEAD's blob, whatever an index flag says."""
+    on_disk = specs.sh(["git", "hash-object", "--", name], path)
+    committed = specs.sh(["git", "rev-parse", "--verify", "--quiet", f"HEAD:{name}"], path)
+    return not on_disk.returncode and not committed.returncode and on_disk.stdout.strip() == committed.stdout.strip()
+
+
+def hidden(path: Path, saved: dict) -> list[str]:
+    """Files preparation may write that carry skip-worktree or assume-unchanged, each proven
+    nobody's work: HEAD's bytes, the start hook's receipt, or this preparation's own saved
+    output (`saved`, from an interrupted run being retried). Those flags hide an edit from
+    status — ai-companion's indexes carried one, and `add` then refused them as outside the
+    sparse checkout — so an edit they hide stops preparation before anything is written."""
+    rows = git(path, "--literal-pathspecs", "ls-files", "-v", "-z").split("\0")
+    names = [row[2:] for row in rows if row[1:2] == " " and (row[0] == "S" or row[0].islower())
+             and (maintained(row[2:]) or row[2:] == debt.RATCHET)]
+    unknown = [name for name in names if not same(path, name)
+               and not (name in receipts.INDEXES and receipts.rebuilt(path, name))
+               and not (saved.get(name) and saved[name] == outputs_hash(path / name))]
+    if unknown:
+        raise ValueError("색인 플래그(skip-worktree·assume-unchanged)로 숨긴 변경이 있다 — 보존한 뒤 머지를 다시 요청하세요: "
+                         + ", ".join(sorted(unknown)))
+    return names
+
+
+def outputs_hash(file: Path) -> str | None:
+    return hashlib.sha256(file.read_bytes()).hexdigest() if file.is_file() else None
+
+
 def documents_only(path: Path, old: str, new: str) -> bool:
     """`new` descends from `old` and changes nothing but what preparation may."""
     if specs.sh(["git", "merge-base", "--is-ancestor", old, new], path).returncode:
@@ -49,8 +79,7 @@ def documents_only(path: Path, old: str, new: str) -> bool:
 
 def outputs(path: Path) -> dict:
     names = changes(path) | {name for name in (".wiki/corpus.json", ".wiki/graph.json") if (path / name).exists()}
-    return {"files": {name: hashlib.sha256((path / name).read_bytes()).hexdigest()
-                      if (path / name).is_file() else None for name in sorted(names)},
+    return {"files": {name: outputs_hash(path / name) for name in sorted(names)},
             "working": hashlib.sha256(git(path, "diff", "HEAD", "--binary").encode("utf-8")).hexdigest(),
             "staged": hashlib.sha256(git(path, "diff", "--cached", "--binary").encode("utf-8")).hexdigest()}
 
@@ -139,6 +168,7 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
     retry = resumable and receipt.get("state") == "interrupted" and receipt.get("outputs") == outputs(path)
     if (specs.dirty(path) or resumable and receipt.get("state") == "interrupted") and not retry:
         raise ValueError("커밋하지 않은 변경이 있다 — 보존한 뒤 머지를 다시 요청하세요")
+    flagged = hidden(path, (receipt.get("outputs") or {}).get("files", {}) if retry else {})
     branch = git(path, "branch", "--show-current")
     if branch and branch != specs.branch_of(spec):
         raise ValueError("작업 폴더가 PR 브랜치에 있지 않다")
@@ -177,6 +207,12 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
             raise ValueError("서버 종료로 머지 준비가 중단됐다")
         if git(path, "rev-parse", "HEAD") != head:
             raise ValueError("위키 수정 중 커밋이 바뀌었다 — 새 리뷰가 필요하다")
+        if flagged:
+            # Owned before anything was written (`hidden`): the flags come off so status, and
+            # `add`, see what preparation wrote there — a ratchet `tighten` could not see included.
+            for flag in ("--no-skip-worktree", "--no-assume-unchanged"):   # one per call: together, only the last applies
+                git(path, "--literal-pathspecs", "update-index", flag, "--", *flagged)
+            generated += [name for name in flagged if name == debt.RATCHET and not same(path, name)]
         changed = changes(path)
         unexpected = [name for name in changed if name not in generated and not maintained(name)]
         if unexpected:
@@ -184,12 +220,6 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
         if changed:
             git(path, "--literal-pathspecs", "add", "--", *sorted(changed))
         if generated:
-            # A skip-worktree flag on a generated file (ai-companion's indexes carried one) makes
-            # `add` refuse it as outside the sparse checkout; this commit is where it belongs.
-            hidden = [line[2:] for line in git(path, "--literal-pathspecs", "ls-files", "-v", "-z", "--",
-                                               *generated).split("\0") if line[:2] == "S "]
-            if hidden:
-                git(path, "--literal-pathspecs", "update-index", "--no-skip-worktree", "--", *hidden)
             git(path, "--literal-pathspecs", "add", "-f", "--", *generated)
         if git(path, "diff", "--cached", "--name-only"):
             specs.merge_progress(spec["repo"], spec["id"], "위키·색인·구조 문서 커밋 중")
