@@ -829,6 +829,142 @@ def test_the_deferred_gate_leaves_committed_harvested_records_out_of_its_whitesp
     assert not failed["ok"] and "code.py" in failed["tail"], "the task's own whitespace still fails"
 
 
+def test_indexes_the_start_hook_rebuilt_are_not_uncommitted_work_while_they_match_its_receipt(repo):
+    """Every review in ai-coding-wiki began with a repair turn that only committed `corpus.json` and
+    `graph.json`, which the start hook had rebuilt after the implementer pushed new documents."""
+
+    import importlib
+
+    from common import indexes
+    worktrees = importlib.import_module("workspace.worktrees")   # the package re-exports a function of that name
+
+    for name in indexes.INDEXES:
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text('{"docs": []}', encoding="utf-8")
+    _git(repo, "add", "-f", *indexes.INDEXES)
+    _git(repo, "commit", "-qm", "indexes")
+    import verify
+    from main import verification
+
+    def hook(text: str) -> None:   # as `tool/sync.py`: HEAD first, then the files, then what it wrote
+        at = indexes.head(repo)
+        for name in indexes.INDEXES:
+            (repo / name).write_text(text, encoding="utf-8")
+        indexes.record(repo, {name: text for name in indexes.INDEXES}, at)
+
+    for name in indexes.INDEXES:
+        (repo / name).write_text('{"docs": ["rebuilt"]}', encoding="utf-8")
+    assert specs.dirty(repo), "without a receipt nobody can say whose they are"
+    hook('{\n "docs": ["rebuilt"]\n}\n')
+    assert specs.judge(repo, [PASS], threading.Event())["ok"]
+    head = specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    real_run = verify.run
+    offline = patch.object(verify, "run", side_effect=lambda a, r: "" if a[1] in ("fetch", "merge-base") else real_run(a, r))
+    with offline:
+        assert verify.identity(repo, "main")[0] == head and verification.checkout_proven(repo, head) == "", \
+            "the final gate and the live checks agree"
+    assert (repo / ".wiki/corpus.json").read_text(encoding="utf-8") == '{\n "docs": ["rebuilt"]\n}\n', "nothing put back"
+    branch = specs.sh(["git", "branch", "--show-current"], repo).stdout.strip()
+    with patch.object(worktrees, "_git", side_effect=lambda r, *a: specs.sh(["git", *a], r) if a[0] != "fetch"
+                      else subprocess.CompletedProcess(a, 0, "", "")):
+        assert worktrees.adopt(repo, branch, head) == repo.resolve(), "nor does adopting the PR's checkout stop"
+    (repo / ".wiki/corpus.json").write_text('{"docs": ["edited by hand"]}', encoding="utf-8")
+    assert specs.judge(repo, [PASS], threading.Event())["reason"] == "커밋 안 된 변경", "an edit after the hook counts"
+    with offline, pytest.raises(RuntimeError, match="커밋하지 않은 변경"):
+        verify.identity(repo, "main")
+    assert verification.checkout_proven(repo, head)
+    # The receipt is the bytes the hook wrote, never the file read back: an edit made meanwhile is not certified.
+    at = indexes.head(repo)
+    (repo / ".wiki/corpus.json").write_text('{"docs": ["edited while the graph was built"]}', encoding="utf-8")
+    indexes.record(repo, {".wiki/corpus.json": '{"docs": ["hook output"]}'}, at)
+    assert specs.dirty(repo)
+    # A receipt from before a document commit certifies nothing, even for the same bytes.
+    hook('{"docs": ["old"]}')
+    _git(repo, "checkout", "--", *indexes.INDEXES)
+    (repo / "next.md").write_text("# Next\n", encoding="utf-8")
+    _git(repo, "add", "next.md")
+    _git(repo, "commit", "-qm", "next")
+    (repo / ".wiki/corpus.json").write_text('{"docs": ["old"]}', encoding="utf-8")
+    assert specs.dirty(repo), "restored by hand on a later commit"
+    _git(repo, "checkout", "--", ".wiki/corpus.json")
+    hook('{"docs": ["rebuilt"]}')
+    _git(repo, "add", "-f", ".wiki/graph.json")
+    assert specs.dirty(repo), "a staged copy is somebody's"
+
+
+def test_a_code_only_commit_after_the_hook_rebuilt_the_indexes_leaves_them_the_hooks(repo, monkeypatch):
+    """A review repair that commits only code moves HEAD past the receipt, and no newer document makes the hook
+    rebuild, so the next round began with the same repair turn. No document changed, so the output is still the
+    hook's; adopting the PR held by another checkout does not stop on it either. Nothing is rewritten: an
+    unrecorded edit and a restore chosen after a document commit stay somebody's."""
+
+    import importlib
+    import importlib.util
+
+    from common import indexes
+    worktrees = importlib.import_module("workspace.worktrees")
+    loaded = importlib.util.spec_from_file_location("start_hook", Path(__file__).parent / "sync.py")
+    hook = importlib.util.module_from_spec(loaded)
+    loaded.loader.exec_module(hook)
+    monkeypatch.setattr(hook, "due", lambda *_: False)
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--project", str(repo), "--quiet"])
+
+    (repo / "docs").mkdir()
+    (repo / "docs/guide.md").write_text("# Guide\n", encoding="utf-8")
+    for name in indexes.INDEXES:
+        (repo / name).parent.mkdir(parents=True, exist_ok=True)
+        (repo / name).write_text('{"docs": []}', encoding="utf-8")
+    _git(repo, "add", "-f", *indexes.INDEXES, "docs/guide.md")
+    _git(repo, "commit", "-qm", "document and old indexes")
+    hook.main()
+    assert not specs.dirty(repo)
+    (repo / "code.py").write_text("fixed = True\n", encoding="utf-8")
+    _git(repo, "add", "code.py")
+    _git(repo, "commit", "-qm", "code-only review repair")
+    assert not specs.dirty(repo), "still the hook's at the repair's HEAD"
+    head =specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
+    branch = specs.sh(["git", "branch", "--show-current"], repo).stdout.strip()
+    held = repo.parent / "held"
+    _git(repo, "switch", "-q", "--detach")
+    _git(repo, "worktree", "add", "-q", str(held), branch)
+    (held / ".wiki/corpus.json").unlink()
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--project", str(held), "--quiet"])
+    hook.main()   # a checkout of its own: its own rebuild and receipt
+    assert specs.sh(["git", "status", "--porcelain"], held).stdout.strip()
+    with patch.object(worktrees, "_git", side_effect=lambda r, *a: specs.sh(["git", *a], r) if a[0] != "fetch"
+                      else subprocess.CompletedProcess(a, 0, "", "")), \
+         patch.object(worktrees, "worktree_home", lambda r: repo.parent / "trees"):
+        assert worktrees.adopt(repo, branch, head) == repo.parent / "trees" / worktrees.folder_for(branch)
+    monkeypatch.setattr(sys, "argv", ["sync.py", "--project", str(repo), "--quiet"])
+    old = {name: (repo / name).read_bytes() for name in indexes.INDEXES}
+    personal = '{"personal": "keep this graph edit"}'
+    (repo / ".wiki/graph.json").write_text(personal, encoding="utf-8")
+    _git(repo, "commit", "-qm", "another repair", "--allow-empty")
+    hook.main()
+    assert (repo / ".wiki/graph.json").read_text(encoding="utf-8") == personal and specs.dirty(repo)
+    _git(repo, "checkout", "--", *indexes.INDEXES)
+    (repo / "docs/guide.md").write_text("# Guide, revised\n", encoding="utf-8")
+    _git(repo, "commit", "-qam", "a document")
+    for name, body in old.items():
+        (repo / name).write_bytes(body)
+    hook.main()
+    assert all((repo / name).read_bytes() == body for name, body in old.items()), "a chosen restore stays"
+    assert specs.dirty(repo), "and is somebody's after a document commit"
+    # Everything else the indexes are built from: a document Windows collects in capitals, an ignore rule,
+    # a tree with a symbolic link or submodule, which can bring documents in through any path. Code alone is not.
+    for changed in ("docs/NOTES.MD", "docs/.gitignore", "code.py", "docs/link", "docs/vendor", "more.py"):
+        at = indexes.head(repo)
+        if changed in ("docs/link", "docs/vendor"):
+            _git(repo, "update-index", "--add", "--cacheinfo",
+                 f"120000,{specs.sh(['git', 'hash-object', '-w', 'code.py'], repo).stdout.strip()},{changed}"
+                 if changed == "docs/link" else f"160000,{at},{changed}")
+        else:
+            (repo / changed).write_text("y\n", encoding="utf-8")
+            _git(repo, "add", "-f", changed)
+        _git(repo, "commit", "-qm", changed)
+        assert indexes._same_sources(repo, at, indexes.head(repo)) == (changed == "code.py"), changed
+
+
 def test_the_pr_body_gives_harvest_its_what_and_why():
     spec = {"id": "fix-login", "repo": "proj", "goal": "로그인 뒤 원래 페이지로 돌아간다",
             "decisions": [{"what": "서버에서 돌린다", "why": "화면은 기록을 모른다", "rejected": "history"}],

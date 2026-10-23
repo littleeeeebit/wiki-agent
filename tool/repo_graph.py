@@ -195,13 +195,16 @@ def picture(repo: Path) -> dict:
     return {"nodes": list(nodes.values()), "edges": edges, "orphans": orphans}
 
 
+def text(data: dict) -> str:
+    """What `write` puts in `graph.json`; the start hook's receipt hashes it (`common.indexes`)."""
+    return json.dumps(data, ensure_ascii=False, indent=1) + "\n"
+
+
 def write(repo: Path) -> dict | None:
     data = build(repo)
     if data is None:
         return None
-    (repo / ".wiki" / "graph.json").write_text(
-        json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8"
-    )
+    (repo / ".wiki" / "graph.json").write_text(text(data), encoding="utf-8")
     return data
 
 

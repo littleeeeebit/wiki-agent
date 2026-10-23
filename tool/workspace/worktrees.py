@@ -11,7 +11,7 @@ import re
 import subprocess
 from pathlib import Path
 
-from common import worktree_home
+from common import indexes, worktree_home
 
 from .sessions import checkout
 
@@ -115,7 +115,7 @@ def adopt(repo: Path, branch: str, oid: str, detached: bool = False) -> Path:
         raise RuntimeError(f"로컬 `{branch}` 가 PR 머리와 다르다 — 로컬 {local[:12]}, PR {oid[:12]}")
     if not detached and _git(repo, "branch", "--show-current").stdout.strip() == branch:
         clean = _git(repo, "status", "--porcelain")
-        if clean.returncode or clean.stdout.strip():
+        if clean.returncode or any(not indexes.hook_row(repo, line) for line in clean.stdout.splitlines()):
             raise RuntimeError("PR 브랜치에 커밋하지 않은 변경이 있다. 변경을 보존한 채 리뷰를 기다린다")
         if _git(repo, "rev-parse", "HEAD").stdout.strip() != oid:
             raise RuntimeError("체크아웃의 커밋이 PR 머리와 다르다")
@@ -127,7 +127,8 @@ def adopt(repo: Path, branch: str, oid: str, detached: bool = False) -> Path:
         # `worktree add` refuses. Clean and at the head, it lets go on that commit; its files stay.
         # Untracked and submodule changes count whatever the person's `status` settings hide.
         clean = _git(held, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none")
-        if clean.returncode or clean.stdout.strip() or _git(held, "rev-parse", "HEAD").stdout.strip() != oid:
+        rows = [line for line in clean.stdout.splitlines() if not indexes.hook_row(held, line)]
+        if clean.returncode or rows or _git(held, "rev-parse", "HEAD").stdout.strip() != oid:
             raise RuntimeError(f"`{branch}` 가 다른 작업트리 {held} 에 열려 있고, 커밋하지 않은 변경이 있거나 PR 머리와 다르다")
         freed = _git(held, "switch", "--detach")
         if freed.returncode:
