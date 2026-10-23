@@ -793,6 +793,7 @@ def test_every_other_reader_of_the_checkout_leaves_the_harvested_record_out_too(
     head = specs.sh(["git", "rev-parse", "HEAD"], repo).stdout.strip()
     # Merge preparation and refactor finishing never take a person's record into their own commit.
     assert maintenance.changes(repo) == set() and verification.checkout_proven(repo, head) == ""
+    assert maintenance.indexes(repo) == [], "nor index what it leaves out"
     specs.sh(["git", "add", "-f", "--", record], repo)
     assert maintenance.changes(repo) == {record} and specs.dirty(repo), "a staged record is a change"
     specs.sh(["git", "reset", "-q", "--", record], repo)

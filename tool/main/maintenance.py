@@ -63,7 +63,7 @@ def findings(repo: Path, path: Path) -> list[tuple[str, str]]:
 
 
 def indexes(path: Path) -> list[str]:
-    published = set(git(path, "ls-files", "--cached", "--others", "--exclude-standard", "-z").split("\0"))
+    published = set(git(path, "ls-files", "--cached", "-z").split("\0")) | changes(path)
     docs = [doc for doc in corpus.collect(path, corpus.DEFAULT_ROOTS) if doc["path"] in published]
     if not docs and not (path / ".wiki/corpus.json").exists():
         return []
