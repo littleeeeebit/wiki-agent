@@ -612,3 +612,27 @@ def test_only_requests_and_new_commits_can_cancel_a_final_run(event, action, lab
     group = eval(expression.strip().replace("&&", " and ").replace("||", " or "),
                  {"__builtins__": {}, "github": context, "format": lambda text, value: text.format(value)})
     assert (group == "task") == shares_final
+
+
+def test_identity_ignores_only_the_untracked_decision_records_the_hook_harvests(tmp_path):
+    def git(*args, cwd=tmp_path / "work"):
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+    git("init", "-q", "--bare", "-b", "main", str(tmp_path / "origin.git"), cwd=tmp_path)
+    git("clone", "-q", str(tmp_path / "origin.git"), "work", cwd=tmp_path)
+    work = tmp_path / "work"
+    (work / "a.txt").write_text("a", encoding="utf-8")
+    git("add", "a.txt")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a")
+    git("push", "-q", "origin", "HEAD:main")
+    (work / ".wiki" / "decisions").mkdir(parents=True)
+    (work / ".wiki" / "decisions" / "2026-10-22-1-fix-x.md").write_text("record", encoding="utf-8")
+    head, base = ci.identity(work, "main")
+    assert head == base
+    (work / ".wiki" / "other.md").write_text("x", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="커밋하지 않은 변경"):
+        ci.identity(work, "main")
+    (work / ".wiki" / "other.md").unlink()
+    (work / "a.txt").write_text("changed", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="커밋하지 않은 변경"):
+        ci.identity(work, "main")
