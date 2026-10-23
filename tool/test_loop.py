@@ -719,6 +719,25 @@ def test_hidden_outputs_written_before_an_interruption_are_retried(world):
     assert "gone.py" not in git(path, "show", f"{prepared}:.wiki/ratchet.json")
 
 
+def test_a_failure_while_clearing_hiding_flags_is_retried(world):
+    path, ready = flagged_spec(world, "flag-clearing-fails", ("skip-worktree", "assume-unchanged"))
+    head = specs.approved(ready)["head"]
+    real = maintenance.git
+
+    def second_fails(where, *args):
+        if "--no-assume-unchanged" in args:
+            raise ValueError("update-index failed")
+        return real(where, *args)
+    with patch.object(maintenance, "git", second_fails), patch.object(maintenance.architecture, "scan"), \
+         pytest.raises(ValueError, match="update-index failed"):
+        maintenance.prepare(world.repo, path, ready, head, "main")
+    saved = specs.load("proj", ready["id"])
+    assert saved["maintenance"]["state"] == "interrupted" and saved["maintenance"]["outputs"] == maintenance.outputs(path)
+    with patch.object(maintenance.architecture, "scan"):
+        prepared = maintenance.prepare(world.repo, path, saved, head, "main")
+    assert "docs/feature.md" in git(path, "show", f"{prepared}:.wiki/corpus.json")
+
+
 def test_stopping_a_lint_repair_does_not_stop_the_server(world):
     spec = pr_spec(world, "cancel-maintenance", 12)
     path = Path(spec["worktree"])

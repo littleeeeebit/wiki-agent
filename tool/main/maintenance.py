@@ -170,12 +170,7 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
     if (specs.dirty(path) or resumable and receipt.get("state") == "interrupted") and not retry:
         raise ValueError("커밋하지 않은 변경이 있다 — 보존한 뒤 머지를 다시 요청하세요")
     flagged = hidden(path, (receipt.get("outputs") or {}).get("files", {}) if retry else {})
-    if flagged:
-        # Proven nobody's work, so the flags come off before any writer runs: status, `tighten`,
-        # an interruption's saved outputs and `add` then all see what preparation writes there.
-        for flag in ("--no-skip-worktree", "--no-assume-unchanged"):   # one per call: together, only the last applies
-            git(path, "--literal-pathspecs", "update-index", flag, "--", *flagged)
-    branch =git(path, "branch", "--show-current")
+    branch = git(path, "branch", "--show-current")
     if branch and branch != specs.branch_of(spec):
         raise ValueError("작업 폴더가 PR 브랜치에 있지 않다")
     if resumable and receipt.get("state") in ("committed", "complete") and receipt.get("head") == local:
@@ -187,6 +182,12 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
     receipt = {**identity, "source_head": head, "head": head, "state": "preparing"}
     specs.update(spec["repo"], spec["id"], maintenance=receipt)
     try:
+        if flagged:
+            # Proven nobody's work, so the flags come off before any writer runs: status, `tighten`,
+            # an interruption's saved outputs and `add` then all see what preparation writes there.
+            # Inside the receipt's `try`, so a failure from here on saves outputs as they now look.
+            for flag in ("--no-skip-worktree", "--no-assume-unchanged"):   # together, only the last applies
+                git(path, "--literal-pathspecs", "update-index", flag, "--", *flagged)
         specs.merge_progress(spec["repo"], spec["id"], "위키 색인·부채 기준선 새로 고치는 중")
         ratcheted = debt.tighten(path)   # only lowers: what this PR shrank stays shrunk
         generated = indexes(path) + ratcheted
