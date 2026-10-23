@@ -184,6 +184,12 @@ def prepare(repo: Path, path: Path, spec: dict, head: str, base: str) -> str:
         if changed:
             git(path, "--literal-pathspecs", "add", "--", *sorted(changed))
         if generated:
+            # A skip-worktree flag on a generated file (ai-companion's indexes carried one) makes
+            # `add` refuse it as outside the sparse checkout; this commit is where it belongs.
+            hidden = [line[2:] for line in git(path, "--literal-pathspecs", "ls-files", "-v", "-z", "--",
+                                               *generated).split("\0") if line[:2] == "S "]
+            if hidden:
+                git(path, "--literal-pathspecs", "update-index", "--no-skip-worktree", "--", *hidden)
             git(path, "--literal-pathspecs", "add", "-f", "--", *generated)
         if git(path, "diff", "--cached", "--name-only"):
             specs.merge_progress(spec["repo"], spec["id"], "위키·색인·구조 문서 커밋 중")

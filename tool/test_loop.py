@@ -651,6 +651,23 @@ def test_completed_preparation_is_reused_and_ignored_documents_stay_private(worl
     assert "docs/private.md" not in git(path, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
 
 
+def test_preparation_commits_indexes_a_skip_worktree_flag_had_hidden(world):
+    """ai-companion's merge stopped at `add -f` — "matched paths that exist outside of your sparse-checkout
+    definition" — because its tracked indexes carried a skip-worktree flag."""
+
+    spec = pr_spec(world, "hidden-indexes", 12, file="docs/feature.md")
+    path = Path(spec["worktree"])
+    commit(path, ".wiki/corpus.json", '{"docs": []}')
+    commit(path, ".wiki/graph.json", "{}\n")
+    git(path, "push", "origin", spec["id"])
+    git(path, "update-index", "--skip-worktree", ".wiki/corpus.json", ".wiki/graph.json")
+    ready = looped(spec["id"])
+    with patch.object(maintenance.architecture, "scan"):
+        prepared = maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
+    assert "docs/feature.md" in git(path, "show", f"{prepared}:.wiki/corpus.json")
+    assert not [line for line in git(path, "ls-files", "-v", ".wiki").splitlines() if line.startswith("S ")]
+
+
 def test_stopping_a_lint_repair_does_not_stop_the_server(world):
     spec = pr_spec(world, "cancel-maintenance", 12)
     path = Path(spec["worktree"])
