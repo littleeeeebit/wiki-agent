@@ -1117,6 +1117,9 @@ def finalized(loop: Loop, spec: dict, repo: Path, path: Path, head: str, base: s
     if release is None:
         return None
     try:
+        from . import maintenance
+
+        maintenance.set_aside(path, spec)
         record = {"head": head, "base_oid": specs.current_merge_base(path, base, head), "command": cmd,
                   "environment_digest": specs.digest(repo, path, cmd), "ok": False, "code": None,
                   "reason": "끝나지 않았다", "finished_at": None}
@@ -1221,6 +1224,9 @@ def sync_review(spec: dict, path: Path, head: str) -> None:
     fetched = specs.sh(["git", "fetch", "origin", f"+refs/heads/{branch}:refs/remotes/origin/{branch}"], path, 120)
     if fetched.returncode:
         raise ValueError("PR 커밋을 가져오지 못했다")
+    from . import maintenance
+
+    maintenance.set_aside(path, spec)
     if specs.dirty(path):
         raise ValueError("로컬 리뷰 폴더에 커밋 안 된 변경이 있다")
     local = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()

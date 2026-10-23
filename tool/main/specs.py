@@ -1158,6 +1158,9 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
     """The round checks `selected` picks, run by `judge`: the verdict, kept as
     the spec's `gate` for the screens, and `validation.round`."""
 
+    from . import maintenance   # here: it imports this module
+
+    maintenance.set_aside(path, spec)
     chosen = chosen or for_round(repo, path, spec, base)
     last = (spec.get("validation") or {}).get("round") or {}
     current = sh(["git", "rev-parse", "HEAD"], path)
