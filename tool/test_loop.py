@@ -651,6 +651,93 @@ def test_completed_preparation_is_reused_and_ignored_documents_stay_private(worl
     assert "docs/private.md" not in git(path, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
 
 
+def flagged_spec(world, name: str, flags: tuple[str, ...]):
+    spec = pr_spec(world, name, 12, file="docs/feature.md")
+    path = Path(spec["worktree"])
+    (path / ".omm").mkdir()
+    for file, text in ((".wiki/corpus.json", '{"docs": []}'), (".wiki/graph.json", "{}\n"),
+                       (".omm/description.md", "Before scan.\n"),
+                       (".wiki/ratchet.json", json.dumps({"version": 1, "new_file_max_lines": 800,
+                        "test_file_max_lines": 1500, "files": {"gone.py": {"lines": 900, "dup": 0, "reason": "x"}}}))):
+        commit(path, file, text)
+    git(path, "push", "origin", spec["id"])
+    for flag in flags:
+        git(path, "update-index", f"--{flag}", ".wiki/corpus.json", ".wiki/graph.json", ".omm/description.md",
+            ".wiki/ratchet.json")
+    return path, looped(spec["id"])
+
+
+@pytest.mark.parametrize("flags", [("skip-worktree",), ("assume-unchanged",), ("skip-worktree", "assume-unchanged")])
+def test_preparation_commits_what_it_wrote_under_hiding_index_flags(world, flags):
+    """ai-companion's merge stopped at `add -f` — "matched paths that exist outside of your sparse-checkout
+    definition" — because its tracked indexes carried a skip-worktree flag. Under assume-unchanged `add` passes
+    silently without them. Every output preparation writes there is committed, the flags off."""
+
+    path, ready = flagged_spec(world, "hidden-indexes", flags)
+
+    def scan(*_a, **_k):
+        (path / ".omm/description.md").write_text("After scan.\n", encoding="utf-8")
+    with patch.object(maintenance.architecture, "scan", scan):
+        prepared = maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
+    assert "docs/feature.md" in git(path, "show", f"{prepared}:.wiki/corpus.json")
+    assert "After scan." in git(path, "show", f"{prepared}:.omm/description.md")
+    assert "gone.py" not in git(path, "show", f"{prepared}:.wiki/ratchet.json")
+    assert all(line[:2] == "H " for line in git(path, "ls-files", "-v", ".wiki", ".omm").splitlines())
+
+
+def test_an_edit_a_hiding_index_flag_covers_stops_preparation_before_anything_is_written(world):
+    path, ready = flagged_spec(world, "hidden-edit", ("skip-worktree",))
+    commit(path, "docs/NOTES.MD", "# Notes\n")   # a document as Windows collects it
+    git(path, "push", "origin", ready["id"])
+    ready = looped(ready["id"])
+    git(path, "update-index", "--skip-worktree", "docs/NOTES.MD")
+    personal = '{"personal": "keep"}'
+    (path / ".wiki/graph.json").write_text(personal, encoding="utf-8")
+    (path / "docs/NOTES.MD").write_text("# Mine\n", encoding="utf-8")
+    with patch.object(maintenance.architecture, "scan"), \
+         pytest.raises(ValueError, match="숨긴 변경.*graph.json, docs/NOTES.MD"):
+        maintenance.prepare(world.repo, path, ready, specs.approved(ready)["head"], "main")
+    assert (path / ".wiki/graph.json").read_text(encoding="utf-8") == personal
+    assert git(path, "show", "HEAD:.wiki/corpus.json") == '{"docs": []}'
+    assert (path / ".wiki/corpus.json").read_text(encoding="utf-8") == '{"docs": []}', "nothing written"
+
+
+def test_hidden_outputs_written_before_an_interruption_are_retried(world):
+    path, ready = flagged_spec(world, "hidden-interrupted", ("skip-worktree",))
+    head = specs.approved(ready)["head"]
+
+    def interrupted(*_a, **_k):
+        (path / ".omm/description.md").write_text("After scan.\n", encoding="utf-8")
+        raise ValueError("scan interrupted")
+    with patch.object(maintenance.architecture, "scan", interrupted), pytest.raises(ValueError, match="interrupted"):
+        maintenance.prepare(world.repo, path, ready, head, "main")
+    saved = specs.load("proj", ready["id"])
+    assert {".wiki/ratchet.json", ".omm/description.md"} <= set(saved["maintenance"]["outputs"]["files"])
+    with patch.object(maintenance.architecture, "scan"):
+        prepared = maintenance.prepare(world.repo, path, saved, head, "main")
+    assert "After scan." in git(path, "show", f"{prepared}:.omm/description.md")
+    assert "gone.py" not in git(path, "show", f"{prepared}:.wiki/ratchet.json")
+
+
+def test_a_failure_while_clearing_hiding_flags_is_retried(world):
+    path, ready = flagged_spec(world, "flag-clearing-fails", ("skip-worktree", "assume-unchanged"))
+    head = specs.approved(ready)["head"]
+    real = maintenance.git
+
+    def second_fails(where, *args):
+        if "--no-assume-unchanged" in args:
+            raise ValueError("update-index failed")
+        return real(where, *args)
+    with patch.object(maintenance, "git", second_fails), patch.object(maintenance.architecture, "scan"), \
+         pytest.raises(ValueError, match="update-index failed"):
+        maintenance.prepare(world.repo, path, ready, head, "main")
+    saved = specs.load("proj", ready["id"])
+    assert saved["maintenance"]["state"] == "interrupted" and saved["maintenance"]["outputs"] == maintenance.outputs(path)
+    with patch.object(maintenance.architecture, "scan"):
+        prepared = maintenance.prepare(world.repo, path, saved, head, "main")
+    assert "docs/feature.md" in git(path, "show", f"{prepared}:.wiki/corpus.json")
+
+
 def test_stopping_a_lint_repair_does_not_stop_the_server(world):
     spec = pr_spec(world, "cancel-maintenance", 12)
     path = Path(spec["worktree"])
