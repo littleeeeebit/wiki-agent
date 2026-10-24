@@ -272,3 +272,9 @@ def test_failures_are_named_or_unparsed():
         assert refactor_survey.failures({"code": 1, "tail": f"FAILED {name} - AssertionError: x\n"}) == [name]
     closing = "FAILED t.py::test_x - boom\nFAILED (failures=1)\n"   # unittest's closing count is no test
     assert refactor_survey.failures({"code": 1, "tail": closing}) == ["t.py::test_x"]
+    mixed = ("FAILED tests/test_old.py::test_old - assert result.ok\nFAILED docs/case2.txt::case2.txt\n"
+             "    ERROR checks/bootstrap.py - ImportError: no a.b\nFAILED t.py::Names::test-with-hyphen\n")
+    assert refactor_survey.failures({"code": 1, "tail": mixed}) == [   # a doctest, an indented line, a hyphen
+        "checks/bootstrap.py", "docs/case2.txt::case2.txt", "t.py::Names::test-with-hyphen", "tests/test_old.py::test_old"]
+    assert refactor_survey.failures({"code": 1, "tail": "--- FAIL: TestX\n    --- FAIL: TestX/sub (0.00s)\n"}) == \
+        ["TestX", "TestX/sub"]

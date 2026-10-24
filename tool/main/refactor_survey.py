@@ -33,7 +33,9 @@ LOOKING = re.compile(r"^\s*(survey|investigate|audit|explore|map|analy[sz]e|docu
 # `FAILED`/`ERROR` lines are read whole by `_node`.
 FAILED = re.compile(r"^\s*FAIL\s+(\S+)|^--- FAIL: (\S+)|^test (\S+) \.\.\. FAILED", re.M)
 # A pytest node id: its path and its parameter id may hold spaces, ` - ` and brackets; its names may not.
-NODE = re.compile(r"\S.*?\.py(?:::[\w.]+)*(?:\[.*\])?")
+# Any collected file (`docs/case1.txt::case1.txt` for a doctest), whose path holds neither `::` nor the
+# `: ` of a message (`ImportError: no a.b`); a name holds neither space, `:` nor `[`.
+NODE = re.compile(r"[^\s:](?:(?!::|: ).)*?\.\w+(?:::[^\s:\[]+)*(?:\[.*\])?")
 
 
 def _sections(text: str) -> tuple[str, dict[str, str]]:
@@ -341,24 +343,25 @@ def failures(verdict: dict) -> list[str] | None:
     if verdict.get("code") == 0:
         return []
     tail = verdict.get("tail") or ""
-    found = {next(g for g in m.groups() if g) for m in FAILED.finditer(tail)}
+    # Each line stripped, as `unexplained` reads it: an indented `--- FAIL:` (a go subtest) is named too.
+    found = {next(g for g in m.groups() if g) for line in tail.splitlines() if (m := FAILED.match(line.strip()))}
     for line in tail.splitlines():
         if (ids := _node(line)) is not None:
-            if len(ids) != 1:
-                return None   # no whole node id, or one that could end in two places: two failures could read as one
+            if len(ids) > 1:
+                return None   # a node id that could end in two places: two failures could read as one
             found |= ids
     return sorted(found) or None
 
 
 def _node(line: str) -> set[str] | None:
-    """The node ids a pytest `FAILED`/`ERROR` line could name — the line's text before a ` - ` or its
-    end that reads as a whole node id — or None for another line: unittest's closing `FAILED (failures=1)`,
-    a wrapper's `ERROR` log line without a `.py` node."""
-    kind, _, body = line.rstrip().partition(" ")
-    if kind not in ("FAILED", "ERROR") or not body or body.startswith("(") or ".py" not in body:
+    """The node ids a `FAILED`/`ERROR` line could name, indented or not: its text before a ` - ` or its
+    end that reads as a whole node id. None for any other line — unittest's closing `FAILED (failures=1)`,
+    a wrapper's `ERROR conda.cli...` log — which `unexplained` then compares as text."""
+    kind, _, body = line.strip().partition(" ")
+    if kind not in ("FAILED", "ERROR") or not body or body.startswith("("):
         return None
     ends = [i for i in range(len(body)) if body.startswith(" - ", i)] + [len(body)]
-    return {body[:i] for i in ends if NODE.fullmatch(body[:i])}
+    return {body[:i] for i in ends if NODE.fullmatch(body[:i])} or None
 
 
 # -- The phases --------------------------------------------------------------------
