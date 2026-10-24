@@ -279,6 +279,12 @@ def test_a_spec_names_the_files_it_creates_and_every_refused_spec_is_named(surve
     lines = str(refused.value).splitlines()
     assert any("src/no.py" in x for x in lines) and any("'unknown'" in x and "'a'" not in x for x in lines)
     assert any("겹친다" in x for x in lines), lines
+    looped = {"coverage": {"scope": "s"}, "specs": [spec("a", files=["src/no.py"], depends=["b"]), spec("b", depends=["a"])]}
+    with pytest.raises(ValueError, match=r"(?s)src/no\.py.*돌아온다"):   # the cycle shows beside the field fault
+        refactor_survey.survey_shape(looped, "preserve", MAP, surveyed)
+    listed = {"coverage": {"scope": "s"}, "specs": [{**spec("a"), "key": ["a"]}, spec("b")]}
+    with pytest.raises(ValueError, match="key"):   # a key that is not text is a refusal, not a TypeError
+        refactor_survey.survey_shape(listed, "preserve", MAP, surveyed)
 
 
 def test_a_map_path_glob_becomes_the_files_it_matches(surveyed):

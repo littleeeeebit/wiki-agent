@@ -366,14 +366,18 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
             shaped.append(spec_shape(s, mode, map_, root))
         except ValueError as exc:
             refused.append(str(exc))
-    keys = [s.get("key") for s in raw if isinstance(s, dict)]   # a refused spec's key is still its key
-    if duplicated := sorted({k for k in keys if keys.count(k) > 1}, key=str):
+    # A refused spec's key and dependencies still make the graph, so a cycle shows on the first refusal;
+    # a key or dependency that is not text is already among the refusals and stays out of it.
+    graph = [(s["key"], [d for d in s.get("depends") or [] if isinstance(d, str)]) for s in raw
+             if isinstance(s, dict) and isinstance(s.get("key"), str) and isinstance(s.get("depends") or [], list)]
+    keys = [k for k, _ in graph]
+    if duplicated := sorted({k for k in keys if keys.count(k) > 1}):
         refused.append(f"명세 `key` 가 겹친다: {duplicated}")
-    for s in shaped:
-        if unknown := set(s["depends"]) - set(keys) - known:
-            refused.append(f"`specs[{s['key']}].depends` 에 없는 명세: {sorted(unknown)}")
+    for key, depends in graph:
+        if unknown := set(depends) - set(keys) - known:
+            refused.append(f"`specs[{key}].depends` 에 없는 명세: {sorted(unknown)}")
     try:
-        acyclic({s["key"]: s["depends"] for s in shaped})
+        acyclic(dict(graph))
     except ValueError as exc:
         refused.append(str(exc))
     if refused:
