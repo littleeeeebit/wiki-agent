@@ -716,7 +716,7 @@ def test_round_checks_follow_changed_paths_and_defer_uncertain_scope_to_the_fina
         return got["selection"], got["commands"]
 
     edit = lambda name: lambda: (repo / name).write_text("y\n", encoding="utf-8")  # noqa: E731
-    deferred = ("deferred", ["git diff --check " + subprocess.run(
+    deferred = ("deferred", ['git -c "core.whitespace=cr-at-eol" diff --check ' + subprocess.run(
         ["git", "-C", str(repo), "rev-parse", "origin/main"], capture_output=True, text=True).stdout.strip()
         + ' HEAD -- . ":(exclude).wiki/decisions/"'])
     assert after(edit("src/a/x.py")) == ("mapped", ["check a"])
@@ -827,6 +827,23 @@ def test_the_deferred_gate_leaves_committed_harvested_records_out_of_its_whitesp
     _git(repo, "commit", "-qm", "code")
     failed = specs.judge(repo, specs.selected(repo, repo, "main", PASS)["commands"], threading.Event())
     assert not failed["ok"] and "code.py" in failed["tail"], "the task's own whitespace still fails"
+
+
+def test_the_deferred_gate_reads_a_cr_before_the_line_end_as_a_line_end(repo):
+    """ai-companion-voice-agent #248's merge preparation rewrote `graph.json` and `.omm`, which that repository
+    commits as CRLF, and its own commit failed `git diff --check` twice on every changed line's CR."""
+
+    _git(repo, "update-ref", "refs/remotes/origin/main", "HEAD")
+    (repo / "graph.json").write_bytes(b'{\r\n "a": 1\r\n}\r\n')
+    _git(repo, "add", "graph.json")
+    _git(repo, "commit", "-qm", "crlf index")
+    assert specs.judge(repo, specs.selected(repo, repo, "main", PASS)["commands"], threading.Event())["ok"]
+    _git(repo, "config", "core.whitespace", "tab-in-indent")
+    (repo / "code.py").write_bytes(b"if x:\r\n\ty = 1\r\n")
+    _git(repo, "add", "code.py")
+    _git(repo, "commit", "-qm", "code")
+    failed = specs.judge(repo, specs.selected(repo, repo, "main", PASS)["commands"], threading.Event())
+    assert not failed["ok"] and "code.py" in failed["tail"], "the repository's own rules still apply"
 
 
 def test_indexes_the_start_hook_rebuilt_are_not_uncommitted_work_while_they_match_its_receipt(repo):
