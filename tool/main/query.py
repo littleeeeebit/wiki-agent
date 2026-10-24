@@ -754,8 +754,9 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
             sent = specs.materials(run.repo) + (f"\n\n{text}" if text else "")
             flags = {"said": "(후보 요청)" + (f" {text}" if text else ""), "propose": True}
         if cid == "refactor":
-            sent = f"Selected refactoring mode: {cfg.get('refactor_mode', 'cleanup')}. Reconsider any draft " \
-                   "specification if this mode differs from the earlier discussion.\n\n" + sent
+            from . import refactor_run
+
+            sent = refactor_run.context(run.repo, cfg) + "\n\n" + sent
             flags["said"] = text
         results = unseen(cid)
         if results:

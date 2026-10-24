@@ -18,7 +18,6 @@ from pathlib import Path
 
 from common import worktree_home
 
-from . import specs, work
 from .query import ROOT
 
 MODES = ("preserve", "simplify", "rework")
@@ -396,7 +395,7 @@ def baselined(w, run: dict) -> dict:
         path = checkout(w, run)
         if not clean():
             raise refactor.Stop("worktree", f"기준 게이트가 바꾼 `{path}` 를 기준 커밋으로 되돌리지 못했다 — 치운 뒤 [재개] 하라")
-    return w.note(phase="map")
+    return w.note(phase="recheck" if run.get("recheck") else "map")
 
 
 def asked(w, run: dict, phase: str, text: str, system: str, tag: str):
@@ -484,24 +483,14 @@ def carded(w, run: dict) -> list[str]:
     """The survey's specs as ordinary unstarted cards, written once: a resume
     finds them by id. A completed survey retires older surveys' unstarted cards."""
 
-    repo, gate = w.repo, specs.gate_of(w.repo)
+    repo = w.repo
     sid = {s["key"]: f"{s['key']}-{w.rid}" for s in run["survey"]["specs"]}
     source = {"focus": "refactor", "turn": time.time(), "session": "", "plan": None,
               "refactor_mode": run["mode"], "refactor_generation": run.get("generation", 0)}
     for s in run["survey"]["specs"]:
-        block = {"goal": f"{s['title']}. {s['change']}",
-                 "out": [*s["keep"], "Changes owned by the other refactoring modes"],
-                 "done": [f"{v['method']}: {v['criterion']}" for v in s["verify"]],
-                 "grounds": {"files": sorted({e["path"] for e in s["evidence"]})}}
-        made = {**specs.fields(repo, block, gate),
-                "refactor": {"mode": run["mode"], "survey": w.rid, "base": run["base"], "pipeline": s["pipeline"],
-                             "files": s["files"], "evidence": sorted({e["path"] for e in s["evidence"]}),
-                             "depends": [sid[d] for d in s["depends"]], "detail": s}}
         with specs._files:
             if specs.load(repo.name, sid[s["key"]]) is None:
-                specs.save({"id": sid[s["key"]], "repo": repo.name, "rev": 1, **made, "source": source,
-                            "state": "정리됨", "stopped": None, "worktree": None, "pr": None, "report": None,
-                            "gate": None, "fault": None, "history": [{"ts": time.time(), "state": "정리됨"}]})
+                fresh(repo, sid[s["key"]], made(repo, w.rid, run["base"], s, [sid[d] for d in s["depends"]]), source)
     for spec in specs.listing(repo.name):
         held = spec.get("refactor") or {}
         if held.get("survey") and held["survey"] != w.rid and spec["state"] == "정리됨":
@@ -511,7 +500,107 @@ def carded(w, run: dict) -> list[str]:
     return list(sid.values())
 
 
-PHASES = {"baseline": baselined, "map": mapped, "pipelines": explained, "integrate": integrated}
+def made(repo: Path, survey: str, base: str, s: dict, depends: list[str]) -> dict:
+    """A survey spec's card fields: the ordinary ones, and the `refactor` block a run reads."""
 
-# Last: `refactor` builds its phase table from `PHASES` at import, whichever of the two is imported first.
-from . import refactor  # noqa: E402
+    block = {"goal": f"{s['title']}. {s['change']}", "out": [*s["keep"], "Changes owned by the other refactoring modes"],
+             "done": [f"{v['method']}: {v['criterion']}" for v in s["verify"]],
+             "grounds": {"files": sorted({e["path"] for e in s["evidence"]})},
+             # `preserve` is reviewed against its frozen characterization tests.
+             **({"review": {"criteria": ["refactor"], "evidence": ["differential"]}} if s["mode"] == "preserve" else {})}
+    return {**specs.fields(repo, block, specs.gate_of(repo)),
+            "refactor": {"mode": s["mode"], "survey": survey, "base": base, "pipeline": s["pipeline"],
+                         "files": s["files"], "evidence": sorted({e["path"] for e in s["evidence"]}),
+                         "depends": depends, "detail": s}}
+
+
+def fresh(repo: Path, sid: str, fields: dict, source: dict) -> None:
+    specs.save({"id": sid, "repo": repo.name, "rev": 1, **fields, "source": source, "state": "정리됨",
+                "stopped": None, "worktree": None, "pr": None, "report": None, "gate": None, "fault": None,
+                "history": [{"ts": time.time(), "state": "정리됨"}]})
+
+
+def refined(repo: Path, block, source: dict) -> str:
+    """A refactoring conversation's `spec` block: `id` refines that card in
+    place, a new revision; `split_from` adds only the part split off it. No
+    card comes from a conversation alone: each belongs to a survey."""
+
+    if not isinstance(block, dict) or not isinstance(target := block.get("id") or block.get("split_from"), str):
+        raise ValueError("조사에서 나온 명세를 `id` 로 다듬거나 `split_from` 으로 나눈다 — 조사 없이 새 명세를 만들지 않는다")
+    with specs._files:
+        spec = specs.load(repo.name, target)
+        if spec is None or not (spec.get("refactor") or {}).get("survey"):
+            raise ValueError(f"`{target}` 은 조사에서 나온 명세가 아니다")
+        if block.get("id") and spec["state"] != "정리됨":
+            raise ValueError("시작한 명세는 대화에서 바꾸지 않는다")
+        r = spec["refactor"]
+        if r["mode"] != source.get("refactor_mode") \
+                or spec["source"].get("refactor_generation", 0) != source.get("refactor_generation", 0):
+            raise ValueError("명세 모드가 상단에서 고른 모드와 다르다 — 지금 모드로 다시 조사해라")
+        given = {k: v for k, v in block.items() if k not in ("id", "split_from")}
+        if block.get("id"):
+            given["key"] = r["detail"]["key"]   # refining keeps the card's key
+        detail = spec_shape(given, r["mode"], refactor.load(repo.name, r["survey"])["map"], repo)
+        for dep in detail["depends"]:
+            if not ((specs.load(repo.name, dep) or {}).get("refactor") or {}).get("survey") or dep == block.get("id"):
+                raise ValueError(f"`depends` 의 `{dep}` 은 다른 조사 명세의 id 여야 한다")
+        fields = made(repo, r["survey"], r["base"], detail, detail["depends"])
+        if block.get("id"):
+            specs.save({**spec, **fields, "rev": spec["rev"] + 1})
+            return target
+        sid = f"{detail['key']}-{r['survey']}"
+        if specs.load(repo.name, sid) is not None:
+            raise ValueError(f"`{sid}` 가 이미 있다 — 나눈 명세는 다른 key 를 쓴다")
+        fresh(repo, sid, fields, {**source, "plan": None})
+        return sid
+
+
+RECHECK_PROMPT = (
+    "Recheck one refactoring spec against the current code. " + COMMON + " It was written on an older commit and "
+    "the files listed changed since. Read its pipeline again here. If the problem still holds, return the spec "
+    "rewritten for this code with the same key; if it no longer holds, or now belongs to another mode, return no "
+    "spec and say why in `nothing`. End with one fenced block tagged `refactor-survey` holding JSON shaped like:\n"
+    + json.dumps({"coverage": {"scope": "<what you reread>", "unchecked": ["..."], "excluded": []},
+                  "specs": [SPEC_SCHEMA], "nothing": "<only with no spec: why>"}))
+
+
+def rechecked(w, run: dict) -> dict:
+    """One stale card read again on the current commit: rewritten in place, or set aside."""
+
+    spec = specs.load(w.repo.name, run["recheck"])
+    if spec is None or spec["state"] != "정리됨":
+        raise refactor.Stop("spec_gone", f"`{run['recheck']}` 명세가 없거나 이미 시작했다")
+    old, path = spec["refactor"], checkout(w, run)
+    parent = refactor.load(w.repo.name, old["survey"]) or {}
+    changed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", old["base"],
+                        run["base"]], w.repo).stdout.splitlines()
+    text = (f"The repository map:\n{json.dumps(parent['map'], ensure_ascii=False)}\n\nThe pipeline report from the "
+            f"older survey:\n{json.dumps((parent.get('pipelines') or {}).get(old['pipeline']), ensure_ascii=False)}"
+            f"\n\nThe spec:\n{json.dumps(old['detail'], ensure_ascii=False)}\n\nFiles changed since its base "
+            f"{old['base']}: {', '.join(changed[:300]) or 'none'}")
+    try:
+        survey = survey_shape(asked(w, run, "recheck", text, RECHECK_PROMPT, "refactor-survey"), run["mode"],
+                              parent["map"], path)
+        if len(survey["specs"]) > 1 or survey["specs"] and survey["specs"][0]["key"] != old["detail"]["key"]:
+            raise ValueError(f"key `{old['detail']['key']}` 의 명세 하나만 돌려줘야 한다")
+    except ValueError as exc:
+        raise refactor.Stop("format", f"다시 확인한 refactor-survey 가 맞지 않다 — {exc}") from exc
+    with specs._files:
+        spec = specs.load(w.repo.name, run["recheck"])
+        if spec is None or spec["state"] != "정리됨":
+            raise refactor.Stop("spec_gone", f"`{run['recheck']}` 명세가 없거나 이미 시작했다")
+        if survey["specs"]:
+            specs.save({**spec, **made(w.repo, w.rid, run["base"], survey["specs"][0], old["depends"]),
+                        "rev": spec["rev"] + 1})
+        else:
+            specs.aside(w.repo.name, spec["id"])
+    removed(w.repo, w.rid)
+    return w.note(map=parent["map"], pipelines={k: v for k, v in (parent.get("pipelines") or {}).items()
+                                                if k == old["pipeline"]},
+                  survey=survey, phase="done", state="done", specs=[spec["id"]] if survey["specs"] else [])
+
+
+PHASES = {"baseline": baselined, "map": mapped, "pipelines": explained, "integrate": integrated, "recheck": rechecked}
+
+# Last: `refactor` builds its phase table from `PHASES` at import, and `specs` leads back to `refactor`.
+from . import refactor, specs, work  # noqa: E402
