@@ -30,8 +30,9 @@ LOOKING = re.compile(r"^\s*(survey|investigate|audit|explore|map|analy[sz]e|docu
                      r"|조사|구조도|파악", re.I)
 # Failure identifiers in the tail of common runners' output: pytest, vitest/jest, go test, cargo test.
 # A pytest parameter id may hold spaces: `name[case one]` is read to its closing bracket before ` - `.
-FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+?\[.*?\](?= - |\s*$)|\S+)|^\s*FAIL\s+(\S+)|^--- FAIL: (\S+)"
-                    r"|^test (\S+) \.\.\. FAILED", re.M)
+# pytest's ERROR names a `.py` node; a wrapper's log line (`ERROR conda.cli.main_run:...`) is not one.
+FAILED = re.compile(r"^FAILED (\S+?\[.*?\](?= - |\s*$)|\S+)|^ERROR (\S+?\.py\b\S*?\[.*?\](?= - |\s*$)|\S+\.py\b\S*)"
+                    r"|^\s*FAIL\s+(\S+)|^--- FAIL: (\S+)|^test (\S+) \.\.\. FAILED", re.M)
 
 
 def _sections(text: str) -> tuple[str, dict[str, str]]:
