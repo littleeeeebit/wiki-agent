@@ -23,7 +23,7 @@ import refactor_profile
 from main import query, refactor, refactor_run, refactor_survey, specs, work
 from test_main import client, no_machine_settings, parse, until  # noqa: F401 — the fixture is autouse
 from test_main import settled as settled_task
-from test_refactor_survey import Host, _git, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
+from test_refactor_survey import ROLES, Host, _git, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
 from test_specs import Remote, Worker, _adapter, fresh_workers, report, repo, started  # noqa: F401
 
 PY = Path(sys.executable).as_posix()
@@ -78,6 +78,9 @@ def test_a_card_runs_as_a_task_and_its_pr_carries_the_measured_check(running):
     assert _git(Path(card["worktree"]), "branch", "--show-current") == card["id"], "measuring switched back"
     assert "## 리팩터링 검증" in remote.body and "측정 wall time" in remote.body and "새 실패 0건" in remote.body
     assert "`rework`" in Worker.made[0].system and "orders-fast" in Worker.made[0].system
+    assert Worker.made[0].model == ROLES["worker"]["model"], "the work cell runs on the role fixed at the survey"
+    work.session(Path(card["worktree"]), "opus", "low")   # the screen's toolbar, or a loop's turn
+    assert specs.load("proj", card["id"])["cell"] == {**ROLES["worker"], "fast": False}, "no turn moves it"
 
 
 def test_a_start_waits_for_its_prerequisite_its_mode_and_unchanged_files(running):
@@ -117,6 +120,50 @@ def test_a_restart_keeps_the_mode_and_generation_its_cards_were_made_in(running,
         {"refactor_mode": "simplify", "refactor_generation": 2}
     with pytest.raises(HTTPException, match="모드가 바뀌었다"):
         refactor_run.startable(running[0], specs.load("proj", run["specs"][0]), "")
+
+
+class Talk:
+    """The refactoring conversation's session: only its model is looked at."""
+
+    def __init__(self, repo, model=None, effort=None, **_):
+        self.model, self.effort, self.is_codex, self.session_id, self.alive = model, effort, False, None, True
+
+    def reconfigure(self, model, effort, fast=None):
+        self.model, self.effort = model, effort
+
+    def close(self):
+        pass
+
+
+def test_the_conversation_refines_cards_on_the_survey_model_until_the_mode_changes(surveyed, monkeypatch):
+    monkeypatch.setattr(query, "ChatSession", Talk)
+    query.config("refactor", "proj").update(model="haiku", effort="low")   # the chat toolbar's pick
+    query.session("refactor")   # a conversation already open on it
+    surveyed_in("preserve", spec("orders-split"))
+    assert query.session("refactor").model == ROLES["survey"]["model"], "refined on the survey model"
+    api, toolbar = client(), {"repo": "proj", "model": "haiku", "effort": "low"}
+    refused = api.post("/api/config/refactor", json=toolbar)
+    assert refused.status_code == 409 and "고정" in refused.json()["detail"]
+    monkeypatch.setattr(query, "_config", {})   # what a restart leaves
+    assert {k: query.config("refactor", "proj")[k] for k in ("model", "refactor_pinned")} == \
+        {"model": ROLES["survey"]["model"], "refactor_pinned": True}
+    assert api.post("/api/config/refactor", json={**toolbar, "refactor_mode": "simplify"}).status_code == 200
+    assert query.session("refactor").model == "haiku" and "refactor_pinned" not in query.config("refactor", "proj")
+
+
+def test_a_card_from_before_roles_neither_starts_nor_is_rechecked_or_refined(surveyed):
+    run = surveyed_in("preserve", spec("orders-split"))
+    sid = run["specs"][0]
+    card = specs.load("proj", sid)
+    specs.save({**card, "refactor": {k: v for k, v in card["refactor"].items() if k != "roles"}})
+    with pytest.raises(HTTPException, match="고정하기 전"):
+        refactor_run.startable(surveyed, specs.load("proj", sid), "")
+    refused = client().post(f"/api/refactors/specs/{sid}/recheck", json={"request_id": "recheck-old-0001", "mode": "preserve"})
+    assert refused.status_code == 409 and "고정하기 전" in refused.json()["detail"]
+    source = {"focus": "refactor", "turn": 2, "session": "talk", "refactor_mode": "preserve",
+              "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
+    narrowed = {**spec("ignored", title="Narrow it"), "id": sid}
+    assert "고정하기 전" in specs.answered(surveyed, [{"name": "spec", "value": narrowed}], source)[0]["error"]
 
 
 def characterize(test: str, also: str = ""):
@@ -401,6 +448,37 @@ def test_the_conversation_refines_the_same_card_and_splits_off_only_the_new_part
     assert specs.load("proj", sid)["rev"] == 2
 
 
+def test_a_card_is_refined_only_on_its_own_survey_model(surveyed):
+    run = surveyed_in("preserve", spec("orders-split"))
+    sid = run["specs"][0]
+    api = client()
+    later = {**ROLES, "survey": {"model": "haiku", "effort": "low"}}
+    second = settled(api, start(api, "survey-later-0001", roles=later).json()["id"])
+    assert second["state"] == "stopped" and specs.load("proj", sid)["state"] == "정리됨", "the first card is still there"
+    assert query.config("refactor", "proj")["model"] == "haiku", "the conversation now runs on the later survey"
+    source = {"focus": "refactor", "turn": 3, "session": "talk", "refactor_mode": "preserve",
+              "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
+    for block in ({**spec("x"), "id": sid}, {**spec("orders-check"), "split_from": sid}):
+        assert "claude-test" in specs.answered(surveyed, [{"name": "spec", "value": block}], source)[0]["error"]
+    assert specs.load("proj", sid)["rev"] == 1
+
+
+def test_saving_the_pinned_settings_again_keeps_an_empty_effort(surveyed):
+    from main import channels
+    run = surveyed_in("preserve", spec("orders-split"))
+    sid, codex = run["specs"][0], {"model": "codex:test-model", "effort": ""}
+    card = specs.load("proj", sid)
+    specs.save({**card, "refactor": {**card["refactor"], "roles": {**ROLES, "survey": codex}}})
+    query.config("refactor", "proj").update(codex)   # what a Codex survey with no effort picked pins
+    models = [{"id": "codex:test-model", "default_effort": "high", "efforts": [{"id": e} for e in ("", "high")]}]
+    with patch.object(channels, "codex_models", return_value=models):
+        saved = client().post("/api/config/refactor", json={"repo": "proj", **codex, "refactor_mode": "preserve"})
+    assert saved.status_code == 200 and saved.json()["effort"] == "", "the default effort does not replace the pin's"
+    source = {"focus": "refactor", "turn": 3, "session": "talk", "refactor_mode": "preserve",
+              "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
+    assert specs.answered(surveyed, [{"name": "spec", "value": {**spec("x"), "id": sid}}], source)[0].get("id") == sid
+
+
 def test_recheck_rewrites_a_stale_card_or_sets_it_aside(surveyed):
     run = surveyed_in("preserve", spec("orders-split"))
     sid = run["specs"][0]
@@ -408,12 +486,14 @@ def test_recheck_rewrites_a_stale_card_or_sets_it_aside(surveyed):
     _git(surveyed, "commit", "-qam", "the target moved")
     head, api = _git(surveyed, "rev-parse", "HEAD"), client()
     Host.answers = {"survey": {**ONE, "specs": [spec("orders-split", title="Split place again")]}}
-    body = {"request_id": "recheck-req-0001", "mode": "preserve", "role": {"model": "claude-test", "effort": ""}}
+    body = {"request_id": "recheck-req-0001", "mode": "preserve"}
     again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck", json=body).json()["id"])
     assert again["state"] == "done" and again["recheck"] == sid
+    assert again["roles"] == ROLES and Host.made[-1].rest["model"] == ROLES["survey"]["model"], "the card's roles"
     assert Host.made[-1].rest["system"] == refactor_survey.RECHECK_PROMPT
     card = specs.load("proj", sid)
     assert card["rev"] == 2 and card["refactor"]["base"] == head and card["refactor"]["survey"] == again["id"]
+    assert card["refactor"]["roles"] == ROLES and card["reviewer"] == ROLES["reviewer"]
     assert refactor_run.startable(surveyed, card, "") == []
     assert specs.load("proj", sid)["state"] == "정리됨", "a recheck retires no card of its own survey"
     Host.answers = {"survey": {**ONE, "specs": [], "nothing": "The split already happened"}}
@@ -429,7 +509,7 @@ def test_a_recheck_keeps_a_card_that_depends_on_another_spec_of_its_survey(surve
     (surveyed / "src/orders.py").write_text("def place(order):\n    return [order]\n", encoding="utf-8")
     _git(surveyed, "commit", "-qam", "the target moved")
     Host.answers = {"survey": {**ONE, "specs": [spec("orders-split", depends=["shared-check"])]}}
-    body = {"request_id": "recheck-req-0003", "mode": "preserve", "role": {"model": "claude-test", "effort": ""}}
+    body = {"request_id": "recheck-req-0003", "mode": "preserve"}
     api = client()
     again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck", json=body).json()["id"])
     assert again["state"] == "done", again["stopped"]

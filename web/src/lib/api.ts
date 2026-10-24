@@ -23,7 +23,7 @@ export type Channel = {
   model_name: string
   effort: string
   refactor_mode?: RefactorMode
-  refactor_generation?: number
+  refactor_generation?: number; refactor_pinned?: boolean   // a survey fixed the conversation's model for this mode
 }
 
 /** The refactoring purpose modes; `LegacyMode` only on records of the earlier workflow. */
@@ -51,7 +51,7 @@ export type SurveySpec = {
 /** A run record under `raw/refactor/runs/`: a survey, or a run of the earlier workflow (`kind` absent). */
 export type Survey = {
   id: string; kind?: 'survey'; mode: RefactorMode | LegacyMode; state: string; phase: string; created: number
-  generation?: number; recheck?: string | null; role?: { model: string; effort: string }
+  generation?: number; recheck?: string | null; role?: { model: string; effort: string }; roles?: RefactorRoles | null
   stopped: { reason: string; detail: string } | null
   spent: { seconds: number; calls: number; tokens: number; unknown?: boolean }
   base?: string; branch?: string
@@ -578,7 +578,7 @@ export type Spec = {
   planning?: Planning | null
   /** A survey spec's block (`survey` set), or a card of the earlier workflow (`run`, a legacy `mode`). */
   refactor?: { mode?: RefactorMode | LegacyMode; files?: string[]; run?: string; survey?: string; base?: string
-    pipeline?: string; evidence?: string[]; depends?: string[]; detail?: SurveySpec; role?: { model: string; effort: string } | null }
+    pipeline?: string; evidence?: string[]; depends?: string[]; detail?: SurveySpec; roles?: RefactorRoles }
   /** What `refactor_run` checked before the pull request (`docs/plans/refactor/7-purpose-modes.md`, Execution). */
   refactor_check?: { changed?: string[]; final?: 'ci' | 'local'; ok?: boolean; unparsed?: boolean
     baseline?: { cmd: string; code: number | null; failures: string[] }; new?: string[]; pre_existing?: string[]
@@ -598,6 +598,7 @@ export const checkoutSpec = (id: string) => post(`/api/specs/${id}/checkout`).th
 // -- The Plan action -----------------------------------------------------------
 
 export type PlanRole = { model: string; effort: string }
+export type RefactorRoles = { survey: PlanRole; worker: PlanRole; reviewer: PlanRole }   // fixed at `[리팩터링 시작]`
 export type PlanLimits = { seconds: number; calls: number; tokens: number }
 export type PlanPhase = 'collect' | 'clarify' | 'research' | 'outline' | 'stages' | 'validate' | 'publish'
   | 'handoff' | 'stopped'

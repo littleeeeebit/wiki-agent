@@ -499,6 +499,10 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
 
     from . import specs  # `specs` imports this module
 
+    spec = specs.owner(path)
+    # A refactoring card's work cell was fixed at its survey's start: no screen, loop or repair turn moves it.
+    if ((spec or {}).get("refactor") or {}).get("roles"):
+        model, effort, fast = spec["cell"]["model"], spec["cell"]["effort"], spec["cell"].get("fast", False)
     key = str(path)
     bypass = settings()["bypass"]
     # Every row, not the screen's last 200: a long conversation keeps its handoff.
@@ -530,7 +534,6 @@ def session(path: Path, model: str, effort: str, fast: bool = False) -> ChatSess
         if getattr(chat, "fast", False) != fast:
             chat.fast = fast
             chat.close()
-        spec = specs.owner(path)
         choice = {"model": model, "effort": effort, "fast": fast}
         if spec and spec.get("cell") != choice:
             specs.update(spec["repo"], spec["id"], cell=choice)

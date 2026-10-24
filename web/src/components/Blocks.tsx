@@ -1,13 +1,12 @@
 import { useState } from 'react'
 import { Questions } from '@/components/Questions'
 import { PlanStatus } from '@/components/Plan'
-import { locks, RefactorCheck, REFACTOR_MODE, SurveyDetail, surveyStarted } from '@/components/Refactor'
+import { locks, RefactorCheck, REFACTOR_MODE, rolesText, SurveyDetail, surveyStarted } from '@/components/Refactor'
 import type { RefactorMode } from '@/components/Refactor'
 import { Btn } from '@/components/Modal'
-import { Toolbar } from '@/components/Toolbar'
 import type { Choice } from '@/components/Toolbar'
 import * as api from '@/lib/api'
-import type { Block, ChoiceQuestion, Options, Spec } from '@/lib/api'
+import type { Block, ChoiceQuestion, Spec } from '@/lib/api'
 import { useOverlay } from '@/lib/overlay'
 
 export type BlockProps = {
@@ -18,11 +17,10 @@ export type BlockProps = {
   onSay: (text: string) => void
   /** Read the spec list again: a card changed. */
   onSpecs: () => void
-  /** `choice` is the model a survey spec's Start dialog picked; otherwise the empty agent pane's. */
+  /** `choice` is a survey spec's fixed work model; otherwise the empty agent pane's. */
   onStart: (id: string, choice?: Choice) => Promise<void>
   refactorMode?: RefactorMode
   refactorGeneration?: number
-  options?: Options | null
 }
 
 /** The named blocks at the end of a `next` answer, drawn as what they ask for. */
@@ -188,12 +186,12 @@ function SpecDetails({ spec, korean }: { spec: Spec; korean: boolean }) {
   </div>
 }
 
-export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, korean = false, refactorMode, refactorGeneration, options = null }:
+export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, korean = false, refactorMode, refactorGeneration }:
   { spec: Spec; specs?: Spec[]; onRenamed: (id: string) => void; korean?: boolean; refactorMode?: RefactorMode; refactorGeneration?: number
-    options?: Options | null } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart'>) {
-  // A survey spec is refined in the conversation, never typed over, and starts on the model picked here.
+  } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart'>) {
+  // A survey spec is refined in the conversation, never typed over, and runs on the roles its survey fixed.
   const surveyed = !!spec.refactor?.survey
-  const [choice, setChoice] = useState<Choice>(spec.refactor?.role ?? { model: '', effort: '' })
+  const roles = spec.refactor?.roles
   const locked = locks(spec, specs, refactorMode, refactorGeneration)
   const [goal, setGoal] = useState(spec.goal)
   const [out, setOut] = useState(spec.out.join('\n'))
@@ -287,19 +285,18 @@ export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, 
           })}>
           {working === 'save' ? '…' : '저장'}
         </Btn>}
-        {surveyed && spec.state === '정리됨' && <span aria-label="실행 모델" className="contents">
-          <Toolbar value={choice} options={options} busy={busy || !!working} onChange={setChoice} />
-        </span>}
+        {roles && <span aria-label="고정 모델" title="리팩터링을 시작할 때 고른 모델 — 이 명세의 모든 세션이 쓴다"
+          className="basis-full text-[12.5px] text-muted-foreground">{rolesText(roles)}</span>}
         {spec.state === '정리됨' && <Btn tone="primary" disabled={edited || busy || !!working || !!locked.length}
           title={edited ? '고친 것을 먼저 저장한다' : surveyed
             ? '작업트리에서 이 명세 하나를 실행한다 — 리뷰·검증 뒤 PR 까지, 머지는 직접' : '저장소에 작업 브랜치를 만들고 첫 턴을 보낸다'}
-          onClick={() => act('start', () => surveyed ? onStart(spec.id, choice) : onStart(spec.id))}>
+          onClick={() => act('start', () => roles ? onStart(spec.id, roles.worker) : onStart(spec.id))}>
           {working === 'start' ? '시작하는 중…' : '시작 ▸'}
         </Btn>}
-        {surveyed && spec.state === '정리됨' && <Btn disabled={busy || !!working}
+        {surveyed && spec.state === '정리됨' && <Btn disabled={busy || !!working || !roles}
           title="이 명세의 파이프라인을 지금 코드에서 다시 읽는다 — 같은 명세가 고쳐지거나, 더는 맞지 않으면 치워진다"
           onClick={() => act('recheck', () => api.post(`/api/refactors/specs/${spec.id}/recheck`,
-            { request_id: crypto.randomUUID(), mode: spec.refactor!.mode, role: spec.refactor!.role ?? choice }, 'POST', spec.repo)
+            { request_id: crypto.randomUUID(), mode: spec.refactor!.mode }, 'POST', spec.repo)
             .then((r) => api.json(r, '다시 확인')).then(surveyStarted))}>
           {working === 'recheck' ? '…' : '다시 확인'}
         </Btn>}

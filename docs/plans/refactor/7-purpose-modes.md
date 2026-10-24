@@ -1,8 +1,9 @@
 # Stage 7 — purpose modes, a read-only survey, and specs that run as tasks
 
 The refactoring focus stops being a cumulative risk ladder that drives its own
-candidate pipeline. A person picks a repository, a model and one of three
-purpose modes, presses Start, and gets a read-only survey: the repository's
+candidate pipeline. A person picks a repository, a model for each of the
+survey, the implementation and the review, and one of three purpose modes,
+presses Start, and gets a read-only survey: the repository's
 pipelines explained one by one with their debt and evidence, then executable
 specs at the bottom. A spec the person starts is an ordinary task: one
 worktree, one Agent conversation, the gate, one pull request, the review loop.
@@ -50,11 +51,12 @@ Chosen by the owner on 2026-10-24 from offered options.
 | `.omm` | Read in every mode when present and cross-checked against code: its node list and the files changed since its last commit go to the map turn; divergences are recorded; `.omm` is never written by a survey |
 | Hotspot list | Removed from the screen; the scan goes to the map turn as reference measurements only; the ratchet stays in the final gate |
 | Model | Only the model chosen in the focus runs the survey; each turn records the model the host reports and the survey stops on a mismatch; an unreported model is shown as unconfirmed |
+| Roles | Start names three models — survey, implementation, review — none preset and none empty; they are fixed for every card that survey makes: its rechecks run on the survey model, its work cell (first turn, repairs, conflict fixes) on the implementation model whatever the screen sends, its review cell on the review model. The conversation that refines or splits the cards runs on the survey model too: the start writes it beside the mode on disk (kept over a restart), the focus refuses another model and its toolbar locks until the mode changes (review round 1). A stopped survey from before roles does not resume, and a card from before roles neither starts, rechecks nor is refined. Model names are stored stripped as checked, a `codex:` one with a model id after it. User's choice after a survey started on the chat toolbar's model, a model they had not meant |
 | Language | The model writes English; the screen reads it through the translation overlay; pull requests go up in Korean as today |
 | Mode change | A new survey every time, nothing reused; unstarted specs of another mode or generation stay unstartable as today; the mode and generation are kept per repository on disk, so a restart changes neither; a stopped survey that has made no card yet stays resumable in its mode and resumes into the current generation (user's choice after a mode clicked away and back hid a 23-pipeline survey) |
 | One survey per repository | A second start while one runs is refused; the request key deduplicates; a completed survey drops the unstarted specs of older surveys; started specs stay |
 | Repository switch | A survey keeps running on its own repository; the screen shows the selected repository's latest survey only |
-| Spec execution | The ordinary task flow; one spec, one pull request; the execution model is chosen in the Start dialog, defaulting to the survey's model |
+| Spec execution | The ordinary task flow; one spec, one pull request; the execution model is the implementation role fixed at the survey's start |
 | Concurrency | The ordinary task rules (`checkout_idle`); a second click on a started spec starts nothing |
 | Dependencies | A spec whose prerequisite has not merged cannot start, and says which |
 | Stale specs | At Start, the survey's base commit is compared with the current base branch: a change to the spec's target, created or evidence files refuses Start and offers a re-survey of that pipeline; other changes are listed on the task and Start proceeds |
@@ -75,7 +77,8 @@ Chosen by the owner on 2026-10-24 from offered options.
 
 `POST /api/refactors` with a new mode creates a run record under
 `raw/refactor/runs/<repo>/` with `kind: "survey"`, the requested repository,
-model, effort and mode. It reuses the run worker, cancellation, restart
+`roles` (survey, worker, reviewer: model and effort each), `role` (the survey
+one, which the turns run on) and mode. It reuses the run worker, cancellation, restart
 recovery and resume of `tool/main/refactor.py`; the phases are new.
 
 1. `baseline` — the base branch's commit is recorded as `base`. The gate runs
@@ -155,8 +158,10 @@ survey. Both pass the same validation as the survey's own specs.
 ## Screen
 
 The 리팩터링 focus shows three mode cards: name, purpose, representative
-changes and what each mode does not do. 리팩터링 시작 sends the repository,
-the focus's model and effort, and the mode. The selected mode's latest survey
+changes and what each mode does not do. Above 리팩터링 시작 sit three
+model pickers — 조사, 구현, 리뷰 — empty until picked; the button stays
+disabled until all three name a model. It sends the repository, the three
+roles and the mode; the chat toolbar's model is not used. The selected mode's latest survey
 follows. It shows its phase (pipelines counted), Stop and Resume, the base
 commit and its gate with the failures already there, the reported models, and
 `.omm` use. Then come its coverage, unchecked and excluded paths, and one
@@ -166,8 +171,10 @@ overlay. A running recheck shows the same way.
 The survey cards of the selected mode sit below the conversation. An
 unstarted card has no free-text edit (`PUT /api/specs/{id}` refuses it). It
 shows the spec's own fields and why it cannot start yet: another mode, an
-unmerged prerequisite, an unmeasured hypothesis. Its Start picker defaults to
-the survey's model (`refactor.role`). 다시 확인 starts the recheck. A started
+unmerged prerequisite, an unmeasured hypothesis. It shows its fixed roles
+(`refactor.roles`) in place of a picker; the card's `cell` and `reviewer`
+carry them, the task pane's model picker is locked on its worktree and the
+review pane says 리팩터링에서 지정. 다시 확인 starts the recheck. A started
 card shows the 리팩터링 검증 table. Unstarted cards stay out of the task rail.
 Runs of the earlier workflow are listed read-only.
 

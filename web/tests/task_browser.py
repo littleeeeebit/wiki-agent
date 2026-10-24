@@ -281,8 +281,8 @@ def main():
             # it is what any card's start sends; reopening a task keeps the task's own model.
             started = []
             draft = {**spec, "id": "draft-task", "state": "정리됨", "worktree": None, "report": []}
-            # A survey spec starts on the model its own Start picker holds, the survey's by default.
-            cards = [draft, {**draft, "id": "draft-refactor", "refactor": {"mode": "preserve", "survey": "abcd1234", "role": {"model": "sonnet", "effort": ""}}},
+            survey_roles ={"survey": {"model": "opus", "effort": ""}, "worker": {"model": "sonnet", "effort": ""}, "reviewer": {"model": "opus", "effort": ""}}
+            cards = [draft, {**draft, "id": "draft-refactor", "refactor": {"mode": "preserve", "survey": "abcd1234", "roles": survey_roles}},   # starts on its fixed worker
                      {**spec, "id": "existing-task", "state": "PR #9", "pr": {"number": 9}, "worktree": None,
                       "branch": "existing-task", "cell": {"model": "sonnet", "effort": "", "fast": False}}]
             rows = [{"path": "fixture-task", "name": "fixture-task", "branch": "fixture", "dirty": False,

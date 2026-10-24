@@ -32,7 +32,7 @@ export function Review(props: Props) {
   const missing = model.startsWith('codex:') && options && !options.codex_error && !options.models.some((m) => m.id === model)
   return <section aria-label="리뷰 세션" className="flex h-full min-h-0 flex-col">
     <header className="flex min-h-11 flex-wrap items-center justify-end gap-1.5 border-b border-border px-5 py-1">
-      <span className="mr-auto font-heading text-[11px] font-semibold text-faint">리뷰 모델{named && ' · 계획에서 지정'}</span>
+      <span className="mr-auto font-heading text-[11px] font-semibold text-faint">리뷰 모델{named && (spec?.refactor?.roles ? ' · 리팩터링에서 지정' : ' · 계획에서 지정')}</span>
       <Toolbar options={reviewOptions} value={{ model, effort }} busy={saving || !settings || !!named}
         onChange={async (choice) => {
           if (!settings) return

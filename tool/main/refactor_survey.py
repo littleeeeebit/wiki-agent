@@ -18,7 +18,7 @@ from pathlib import Path
 
 from common import worktree_home
 
-from .query import ROOT
+from .query import ROOT, config
 
 MODES = ("preserve", "simplify", "rework")
 KINDS = ("duplication", "coupling", "mixed_responsibility", "defensive", "test_contract", "performance",
@@ -638,12 +638,14 @@ def made(repo: Path, survey: str, base: str, s: dict, depends: list[str]) -> dic
              "grounds": {"files": sorted({e["path"] for e in s["evidence"]})},
              # `preserve` is reviewed against its frozen characterization tests.
              **({"review": {"criteria": ["refactor"], "evidence": ["differential"]}} if s["mode"] == "preserve" else {})}
+    # The roles fixed at the survey's start: the card's work cell and review cell run on them, never on
+    # whatever the screen has chosen then.
+    roles = refactor.load(repo.name, survey)["roles"]
     return {**specs.fields(repo, block, specs.gate_of(repo)),
+            "cell": {**roles["worker"], "fast": False}, "reviewer": roles["reviewer"],
             "refactor": {"mode": s["mode"], "survey": survey, "base": base, "pipeline": s["pipeline"],
                          "files": s["files"], "evidence": sorted({e["path"] for e in s["evidence"]}),
-                         "depends": depends, "detail": s,
-                         # Start offers the survey's model first.
-                         "role": (refactor.load(repo.name, survey) or {}).get("role")}}
+                         "depends": depends, "detail": s, "roles": roles}}
 
 
 def fresh(repo: Path, sid: str, fields: dict, source: dict) -> None:
@@ -666,9 +668,16 @@ def refined(repo: Path, block, source: dict) -> str:
         if block.get("id") and spec["state"] != "정리됨":
             raise ValueError("시작한 명세는 대화에서 바꾸지 않는다")
         r = spec["refactor"]
+        if not r.get("roles"):
+            raise ValueError(f"`{target}` 은 조사·구현·리뷰 모델을 고정하기 전의 명세다 — 모델을 골라 새로 조사해라")
         if r["mode"] != source.get("refactor_mode") \
                 or spec["source"].get("refactor_generation", 0) != source.get("refactor_generation", 0):
             raise ValueError("명세 모드가 상단에서 고른 모드와 다르다 — 지금 모드로 다시 조사해라")
+        # The block was written by the conversation's model: only a card of the survey pinned on it may take it.
+        talk, role = config("refactor", repo.name), r["roles"]["survey"]
+        if (talk.get("model"), talk.get("effort") or "") != (role["model"], role["effort"]):
+            raise ValueError(f"`{target}` 은 조사 모델 `{role['model']}` 의 명세다 — 지금 대화는 `{talk.get('model')}` "
+                             "로 고정됐다. 그 조사의 카드는 대화에서 다듬지 않는다")
         given = {k: v for k, v in block.items() if k not in ("id", "split_from")}
         if block.get("id"):
             given["key"] = r["detail"]["key"]   # refining keeps the card's key

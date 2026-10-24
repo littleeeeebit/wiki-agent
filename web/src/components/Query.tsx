@@ -412,7 +412,8 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         <div id="query-options" data-open={mobileOptions} className="query-options flex shrink-0 items-center gap-1.5">
           <Picker label="문서 범위" hideLabel width="w-32" items={SCOPES} value={scope} disabled={busy}
             onPick={(v) => setScope(v ?? 'all')} />
-          {here && <Toolbar value={here} options={options} busy={busy} onChange={apply} />}
+          {here && <span className="contents" title={here.refactor_pinned ? '이 모드의 조사를 시작할 때 고른 조사 모델 — 모드를 바꾸면 풀린다' : undefined}>
+            <Toolbar value={here} options={options} busy={busy || !!here.refactor_pinned} onChange={apply} /></span>}
           <Btn onClick={() => setPlanning(true)}
             title="계획 세우기 — 계획자가 조사해 새 계획 폴더를 쓰고 PR 을 올린 뒤, 수정자와 리뷰어에게 넘긴다">
             계획
@@ -445,14 +446,15 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
           <Stream
             intro={active === 'refactor' && here && <RefactorSurvey key={here.repo} repo={here.repo}
               mode={here.refactor_mode ?? 'preserve'} generation={here.refactor_generation ?? 0}
-              role={{ model: here.model, effort: here.effort }} korean={on} busy={busy} onSpecs={onSpecs}
+              options={options} korean={on} busy={busy} onSpecs={onSpecs}
+              onPinned={() => void api.getChannels().then(onChannels).catch(() => {})}
               onMode={(mode: RefactorMode) => void apply({ model: here.model, effort: here.effort, refactor_mode: mode })} />}
             after={active === 'refactor' && here && <div aria-label="리팩터링 명세" className="space-y-3">
               {specs.filter((s) => s.repo === here.repo && s.refactor?.survey && s.refactor.mode === (here.refactor_mode ?? 'preserve')
                 && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === s.id)))
                 .map((s) => <Blocks key={s.id} blocks={[{ name: 'spec', id: s.id }]}
                   specs={specs} korean={on} busy={busy} refactorMode={here.refactor_mode ?? 'preserve'}
-                  refactorGeneration={here.refactor_generation} options={options}
+                  refactorGeneration={here.refactor_generation}
                   onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />)}
             </div>}
             messages={active === 'next' && selectedSpec && !selectedSpec.refactor?.mode && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === selectedSpec.id))
@@ -469,7 +471,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
               <Blocks blocks={(m.blocks ?? []).filter((b) => active !== 'refactor' || b.name !== 'spec'
                 || !('id' in b) || latestSpec.get(b.id) === m)} specs={specs} korean={on} busy={busy}
                 refactorMode={active === 'refactor' ? here?.refactor_mode ?? 'preserve' : undefined}
-                refactorGeneration={here?.refactor_generation} options={options}
+                refactorGeneration={here?.refactor_generation}
                 onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />
             ) : undefined}
             empty={active === 'next' ? (

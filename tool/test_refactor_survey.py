@@ -110,8 +110,12 @@ def surveyed(repo, tmp_path, monkeypatch):
     return repo
 
 
-def start(api, key: str = "survey-req-0001", mode: str = "preserve", model: str = "claude-test"):
-    return api.post("/api/refactors", json={"request_id": key, "mode": mode, "role": {"model": model, "effort": ""}})
+ROLES = {"survey": {"model": "claude-test", "effort": ""}, "worker": {"model": "claude-work", "effort": "high"},
+         "reviewer": {"model": "codex:gpt-review", "effort": "high"}}
+
+
+def start(api, key: str = "survey-req-0001", mode: str = "preserve", roles: dict | None = None):
+    return api.post("/api/refactors", json={"request_id": key, "mode": mode, "roles": roles or ROLES})
 
 
 def settled(api, rid: str) -> dict:
@@ -143,10 +147,73 @@ def test_a_survey_reads_only_its_base_and_ends_in_unstarted_cards(surveyed):
     shared, orders = cards
     assert orders["refactor"]["depends"] == [shared["id"]] and orders["refactor"]["base"] == head
     assert orders["source"]["refactor_mode"] == "preserve" and orders["refactor"]["mode"] == "preserve"
-    assert orders["refactor"]["role"] == {"model": "claude-test", "effort": ""}, "Start offers the survey's model"
+    assert run["role"] == ROLES["survey"] and orders["refactor"]["roles"] == ROLES, "fixed for every card"
+    assert orders["cell"] == {**ROLES["worker"], "fast": False} and orders["reviewer"] == ROLES["reviewer"]
     edit = {"rev": 1, "goal": "Other", "out": [], "done": [], "slug": orders["id"]}
     assert api.put(f"/api/specs/{orders['id']}", json=edit).status_code == 409, "refined in the conversation only"
     assert start(api).json()["id"] == run["id"], "the request key starts nothing twice"
+
+
+@pytest.mark.parametrize("roles, why", [
+    ({k: v for k, v in ROLES.items() if k != "reviewer"}, None),
+    ({**ROLES, "worker": {"model": "", "effort": ""}}, "구현 모델을 골라라"),
+    ({**ROLES, "reviewer": {"model": "Opus 5", "effort": ""}}, "리뷰 모델 이름"),
+    ({**ROLES, "survey": {"model": "opus", "effort": "very high"}}, "조사 추론 강도"),
+    ({**ROLES, "worker": {"model": "codex:", "effort": ""}}, "구현 모델 이름"),
+    ({**ROLES, "worker": {"model": "codex: ", "effort": ""}}, "구현 모델 이름"),
+])
+def test_a_survey_starts_only_with_every_role_named(surveyed, roles, why):
+    api = client()
+    refused = start(api, roles=roles)
+    assert refused.status_code in (400, 422) and (why is None or why in refused.json()["detail"])
+    assert not api.get("/api/refactors").json()["runs"], "nothing started on a default model"
+
+
+def test_a_padded_role_is_stored_as_it_was_checked(surveyed):
+    api = client()
+    padded = {**ROLES, "reviewer": {"model": " codex:gpt-review ", "effort": " high "}}
+    run = settled(api, start(api, roles=padded).json()["id"])
+    assert run["roles"] == ROLES, "a padded `codex:` name would run on Claude"
+
+
+def test_a_survey_from_before_roles_does_not_resume(surveyed):
+    api = client()
+    run = settled(api, start(api).json()["id"])
+    refactor.update("proj", run["id"], state="stopped", roles=None)
+    refused = api.post(f"/api/refactors/{run['id']}/resume")
+    assert refused.status_code == 409 and "새로 시작" in refused.json()["detail"]
+
+
+def test_a_resumed_survey_pins_the_conversation_again_after_the_mode_came_back(surveyed):
+    api = client()
+    Host.answers = {"billing": "{not json"}
+    run = settled(api, start(api).json()["id"])
+    assert run["state"] == "stopped" and not run["specs"]
+    for mode in ("simplify", "preserve"):   # away and back: the pin goes with the first switch
+        assert api.post("/api/config/refactor", json={"repo": "proj", "model": "haiku", "effort": "low",
+                                                      "refactor_mode": mode}).status_code == 200
+    assert "refactor_pinned" not in query.config("refactor", "proj")
+    Host.answers = {}
+    api.post(f"/api/refactors/{run['id']}/resume")
+    assert {k: query.config("refactor", "proj").get(k) for k in ("model", "refactor_pinned")} == \
+        {"model": ROLES["survey"]["model"], "refactor_pinned": True}, "its cards are refined on the survey model"
+    assert settled(api, run["id"])["state"] == "done"
+
+
+def test_a_start_that_fails_leaves_the_record_stopped_and_holds_the_project_until_then(surveyed, monkeypatch):
+    from main import work
+    seen = []
+
+    def launch(repo, run):
+        seen.append(work.busy())
+        raise RuntimeError("no worker")
+    monkeypatch.setattr(refactor, "launch", launch)
+    with pytest.raises(RuntimeError):
+        start(client())
+    run = refactor.listing("proj")[0]
+    assert seen == [True], "a project switch is refused from the record to its worker"
+    assert run["state"] == "stopped" and run["stopped"]["reason"] == "start", "never running with no worker"
+    assert not work.busy()
 
 
 def test_one_live_survey_per_repository_and_a_new_one_retires_old_cards(surveyed, monkeypatch):

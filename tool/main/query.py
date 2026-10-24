@@ -130,15 +130,20 @@ def config(cid: str, name: str | None = None) -> dict:
             # A survey's cards are startable only under the mode and generation they were made in; a restart keeps both.
             saved = refactor_mode(name)
             _config[key].update(refactor_mode=saved["mode"], refactor_generation=saved["generation"])
+            if saved.get("survey"):   # the conversation that refines its cards runs on the survey model
+                _config[key].update(model=saved["survey"]["model"], effort=saved["survey"]["effort"],
+                                    refactor_pinned=True)
     return _config[key]
 
 
-def refactor_mode(name: str, mode: str = "", generation: int = 0) -> dict:
-    """The refactoring mode and generation `name` keeps on disk; given, they are written first."""
+def refactor_mode(name: str, mode: str = "", generation: int = 0, survey: dict | None = None) -> dict:
+    """The refactoring mode and generation `name` keeps on disk, and the survey model a survey of that
+    generation fixed; given, they are written first, and a new mode clears the survey model."""
     file = LOGS / "refactor-mode" / f"{name}.json"
     if mode:
         file.parent.mkdir(parents=True, exist_ok=True)
-        file.write_text(json.dumps({"mode": mode, "generation": generation}), encoding="utf-8")
+        file.write_text(json.dumps({"mode": mode, "generation": generation, **({"survey": survey} if survey else {})}),
+                        encoding="utf-8")
     try:
         return json.loads(file.read_text(encoding="utf-8"))
     except (OSError, ValueError):
@@ -627,14 +632,20 @@ def configure(cid: str, body: Config) -> dict:
             claimed.set(body.repo)
         else:
             cfg = config(cid)
+            # A survey fixed the conversation's model for its mode; only another mode lets it go.
+            held = cfg.get("refactor_pinned") and body.refactor_mode in (None, cfg.get("refactor_mode"))
+            if held and (body.model, body.effort) != (cfg["model"], cfg["effort"]):
+                raise HTTPException(409, f"리팩터링 대화는 조사 모델 `{cfg['model']}` 로 고정됐다 — 모드를 바꾸거나 새로 조사해라")
         moved = not switched and body.model.startswith("codex:") != cfg["model"].startswith("codex:")
-        if not switched:
+        if not switched and not held:   # a pinned one keeps its survey's effort, an empty one too
             cfg.update(model=body.model, effort=body.effort or selected.get("default_effort", ""))
         if cid == "refactor" and body.refactor_mode is not None:
             if cfg.get("refactor_mode", "preserve") != body.refactor_mode:
                 cfg["refactor_generation"] = cfg.get("refactor_generation", 0) + 1
+                cfg.pop("refactor_pinned", None)
             cfg["refactor_mode"] = body.refactor_mode
-            refactor_mode(cfg["repo"], body.refactor_mode, cfg["refactor_generation"])
+            refactor_mode(cfg["repo"], body.refactor_mode, cfg["refactor_generation"],
+                          refactor_mode(cfg["repo"]).get("survey") if cfg.get("refactor_pinned") else None)
         key = session_key(cid)
         if moved:
             remember(cid, "context", "CLI 변경")
