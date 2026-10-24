@@ -74,7 +74,7 @@ PIPELINE_SCHEMA = {
     "checked": ["<what you read>"], "unchecked": ["<what you could not read or run, and why>"],
     "proposals": [{"title": "...", "problem": "...", "change": "...", "files": ["..."]}]}
 SPEC_SCHEMA = {
-    "key": "<kebab-case id, unique in this survey>", "title": "<the one improvement>",
+    "key": "<kebab-case id of at most 40 characters, unique in this survey>", "title": "<the one improvement>",
     "pipeline": "<one pipeline id, or shared:<path> for a shared boundary change>",
     "files": ["<repository-relative files in the base commit the change touches>"],
     "creates": ["<repository-relative files the change creates, in folders that exist; omit when none>"],
