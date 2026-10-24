@@ -238,8 +238,8 @@
     },
     "tool/test_planning.py": {
       "dup": 33,
-      "lines": 772,
-      "reason": "A chat turn refused while a plan waits for its answers, and decision records outside the plan folder during publication and its recovery (#219). Before that: baseline at adoption"
+      "lines": 789,
+      "reason": "The stored-plan test of the earlier refactoring workflow moved here when test_refactor_conversation.py was deleted (refactor stage 7, PR 3). Before that: a chat turn refused while a plan waits for its answers, and decision records outside the plan folder during publication and its recovery (#219). Before that: baseline at adoption"
     },
     "tool/test_runtime.py": {
       "dup": 7,
@@ -283,8 +283,8 @@
     },
     "web/src/components/Blocks.tsx": {
       "dup": 6,
-      "lines": 282,
-      "reason": "Existing spec cards show refactoring execution in place and prevent stale mode generations from starting."
+      "lines": 315,
+      "reason": "Survey spec cards (refactor stage 7): no free-text edit, a Start model picker defaulting to the survey's model, lock reasons, [다시 확인], the verification table, and a read-only card for the earlier workflow."
     },
     "web/src/components/Projects.tsx": {
       "dup": 9,
@@ -298,8 +298,8 @@
     },
     "web/src/lib/api.ts": {
       "dup": 0,
-      "lines": 960,
-      "reason": "Shared API types carry refactoring mode, generation and run metadata and allow unlimited refactoring plan limits."
+      "lines": 997,
+      "reason": "The refactoring survey record, its pipelines and specs, and a survey card's verification are typed here (refactor stage 7). Before that: refactoring mode, generation and run metadata and unlimited refactoring plan limits."
     },
     "web/tests/mobile_browser.py": {
       "dup": 12,

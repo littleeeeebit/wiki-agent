@@ -470,7 +470,7 @@ def tiered(text: str) -> dict:
     tier, files = re.findall(r"^Tier:[ \t]*(.*?)[ \t]*$", text, re.M), re.findall(r"^Files:(.*)$", text, re.M)
     names = [f.strip().strip("`") for f in (files or [""])[0].split(",") if f.strip()]
     if tier[:1] not in (["L0"], ["L1"], ["L2"], ["L3"]) or len(tier) != 1 or len(files) != 1 or not names:
-        raise ValueError("리펙터링 단계는 `Tier: L0–L3` 줄과 비지 않은 `Files:` 줄을 하나씩 적어야 한다")
+        raise ValueError("리팩터링 단계는 `Tier: L0–L3` 줄과 비지 않은 `Files:` 줄을 하나씩 적어야 한다")
     try:
         if len(set(names)) != len(names) or not all(improvement.relative(n) for n in names):
             raise improvement.Refused("a file is named twice")
@@ -516,7 +516,7 @@ def problems(repo: str, sid: str, spec: dict, path: Path) -> list[tuple[str, str
             except ValueError as exc:
                 out.append((rel, str(exc)))
         if stage is None and p["input"].get("refactor") and listed(text) != names - {Path(rel).name}:
-            out.append((rel, "리펙터링 계획의 `## Stages` 절은 단계 파일 이름을 빠짐없이, 그것만 적는다"))
+            out.append((rel, "리팩터링 계획의 `## Stages` 절은 단계 파일 이름을 빠짐없이, 그것만 적는다"))
         for rid in entry["requirement_ids"]:
             if rid not in requirements:
                 out.append((rel, f"없는 요구사항 `{rid}` 을 적었다"))

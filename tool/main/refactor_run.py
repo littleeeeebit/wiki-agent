@@ -26,7 +26,7 @@ from fastapi import HTTPException
 import debt
 import refactor_profile
 
-from . import refactor, refactor_finish, refactor_survey, review_contract, specs
+from . import refactor, refactor_survey, review_contract, specs
 from .query import ROOT, config
 
 RUN = (ROOT / "tool/prompts/refactor-run.md").read_text(encoding="utf-8").strip()
@@ -172,6 +172,35 @@ def characterized(repo: Path, path: Path, run, spec: dict, final: str):
 
 # -- Before the pull request ---------------------------------------------------------
 
+def equivalent(name: str, old: bytes, new: bytes) -> bool:
+    """The same test file in another form: a Python file's AST, a JSON file's
+    values, or the same bytes. No serializer may erase an expected observation."""
+    if old == new:
+        return True
+    try:
+        if name.endswith(".py"):
+            return ast.dump(ast.parse(old, type_comments=True), include_attributes=False) == \
+                ast.dump(ast.parse(new, type_comments=True), include_attributes=False)
+        if name.endswith(".json"):
+            def pairs(items):
+                if len(dict(items)) != len(items):
+                    raise ValueError("Duplicate JSON keys")
+                return dict(sorted(items))
+
+            def number(token):
+                if token in ("NaN", "Infinity", "-Infinity"):
+                    raise ValueError("Nonfinite JSON number")
+                return ("number", token)
+
+            def canonical(b):
+                return repr(json.loads(b, object_pairs_hook=pairs, parse_int=number, parse_float=number,
+                                       parse_constant=number))
+            return canonical(old) == canonical(new)
+    except (SyntaxError, ValueError, UnicodeError):
+        pass
+    return False
+
+
 def added_only(before: bytes, after: bytes) -> bool:
     """Every old line is still there, in order: the file only gained lines."""
     rest = iter(after.splitlines())
@@ -287,7 +316,7 @@ def contract(path: Path, spec: dict) -> str:
             continue
         new = (path / name).read_bytes()
         if not name.endswith(".py"):
-            if allowed or not (refactor_finish.equivalent(name, old.stdout, new) or added_only(old.stdout, new)):
+            if allowed or not (equivalent(name, old.stdout, new) or added_only(old.stdout, new)):
                 broken.append(f"`{name}` 의 기존 테스트 변경")
             continue
         try:

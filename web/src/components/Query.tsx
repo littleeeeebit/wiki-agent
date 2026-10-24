@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Eraser } from 'lucide-react'
 import { Blocks } from '@/components/Blocks'
+import type { BlockProps } from '@/components/Blocks'
 import { Composer } from '@/components/Composer'
 import { Btn, ClearAsk } from '@/components/Modal'
 import { Peek } from '@/components/Peek'
 import { PlanStart } from '@/components/Plan'
-import { RefactorCandidates, RefactorHistory, REFACTOR_MODE } from '@/components/Refactor'
+import { RefactorSurvey } from '@/components/Refactor'
 import type { RefactorMode } from '@/components/Refactor'
 import { Stream } from '@/components/Stream'
 import { Picker, Toolbar } from '@/components/Toolbar'
@@ -91,7 +92,7 @@ type Props = {
   specs: Spec[]
   selectedSpec: Spec | null
   onSpecs: () => void
-  onStart: (id: string) => Promise<void>
+  onStart: BlockProps['onStart']
   /** A plan the Plan action started: select its worktree. */
   onPlanned: (spec: Spec) => void
   /** Show a finished run's graph paths on the map. */
@@ -314,7 +315,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
           setMessages([])
           setNote('Claude/Codex 를 바꿔 새 대화를 시작했다. 지난 기록은 그대로 남아 있다.')
         } else {
-          setNote(cfg.refactor_mode ? '모드를 바꿨다. 대화는 이어지고, 시작 전 명세는 새 모드로 다시 검토한다.'
+          setNote(cfg.refactor_mode ? '모드를 바꿨다. 대화는 이어지고, 이전 모드의 시작 전 명세는 이 모드로 다시 조사해야 시작할 수 있다.'
             : '다음 질문부터 적용된다. 지금까지 한 대화는 이어진다.')
         }
       } catch (err) {
@@ -422,17 +423,6 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         </div>
       </header>
 
-      {active === 'refactor' && here && <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-5 py-2 text-[12.5px]">
-        <label className="flex min-w-0 items-center gap-2">모드
-          <select aria-label="리펙터링 모드" disabled={busy} value={here.refactor_mode ?? 'cleanup'}
-            onChange={(e) => void apply({ model: here.model, effort: here.effort, refactor_mode: e.target.value as RefactorMode })}
-            className="min-h-9 min-w-0 rounded-md border border-border bg-card px-2">
-            {Object.entries(REFACTOR_MODE).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-          </select>
-        </label>
-        <span className="text-muted-foreground">목적과 완료 조건으로 범위를 정한다</span>
-      </div>}
-
       {fault && (
         <div role="alert" className="border-b border-destructive/30 bg-destructive/10 px-5 py-2 text-[12.5px] text-destructive">
           {fault}
@@ -452,16 +442,18 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
       <div className="flex min-h-0 flex-1">
         <div className="flex min-w-0 flex-1 flex-col">
           <Stream
-            intro={active === 'refactor' && here && <RefactorCandidates key={here.repo} repo={here.repo}
-              mode={here.refactor_mode ?? 'cleanup'} busy={busy} onSay={(text) => void send(text)} />}
-            after={active === 'refactor' && here && <>
-              {specs.filter((s) => s.source.focus === 'refactor' && s.refactor?.mode && !messages.some((m) => m.blocks?.some((b) =>
-                b.name === 'spec' && 'id' in b && b.id === s.id))).map((s) => <Blocks key={s.id} blocks={[{ name: 'spec', id: s.id }]}
-                  specs={specs} korean={on} busy={busy} refactorMode={here.refactor_mode ?? 'cleanup'}
-                  refactorGeneration={here.refactor_generation}
+            intro={active === 'refactor' && here && <RefactorSurvey key={here.repo} repo={here.repo}
+              mode={here.refactor_mode ?? 'preserve'} generation={here.refactor_generation ?? 0}
+              role={{ model: here.model, effort: here.effort }} korean={on} busy={busy} onSpecs={onSpecs}
+              onMode={(mode: RefactorMode) => void apply({ model: here.model, effort: here.effort, refactor_mode: mode })} />}
+            after={active === 'refactor' && here && <div aria-label="리팩터링 명세" className="space-y-3">
+              {specs.filter((s) => s.repo === here.repo && s.refactor?.survey && s.refactor.mode === (here.refactor_mode ?? 'preserve')
+                && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === s.id)))
+                .map((s) => <Blocks key={s.id} blocks={[{ name: 'spec', id: s.id }]}
+                  specs={specs} korean={on} busy={busy} refactorMode={here.refactor_mode ?? 'preserve'}
+                  refactorGeneration={here.refactor_generation} options={options}
                   onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />)}
-              <RefactorHistory key={here.repo} repo={here.repo} specs={specs} korean={on} onSay={(text) => void send(text)} onChanged={onSpecs} />
-            </>}
+            </div>}
             messages={active === 'next' && selectedSpec && !selectedSpec.refactor?.mode && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === selectedSpec.id))
               ? [...messages, { role: 'assistant', text: '', tools: [], blocks: [{ name: 'spec', id: selectedSpec.id }] }]
               : messages}
@@ -475,8 +467,8 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
             blocks={active === 'next' || active === 'refactor' ? (m) => (
               <Blocks blocks={(m.blocks ?? []).filter((b) => active !== 'refactor' || b.name !== 'spec'
                 || !('id' in b) || latestSpec.get(b.id) === m)} specs={specs} korean={on} busy={busy}
-                refactorMode={active === 'refactor' ? here?.refactor_mode ?? 'cleanup' : undefined}
-                refactorGeneration={here?.refactor_generation}
+                refactorMode={active === 'refactor' ? here?.refactor_mode ?? 'preserve' : undefined}
+                refactorGeneration={here?.refactor_generation} options={options}
                 onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />
             ) : undefined}
             empty={active === 'next' ? (
@@ -484,7 +476,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
                 <p>계획의 남은 행, 열린 PR, 최근 결정, 경고를 모아 다음 작업 후보를 낸다. 직접 물어도 된다.</p>
                 <Btn tone="primary" disabled={busy} onClick={() => void send('', true)}>후보 내기</Btn>
               </div>
-            ) : active === 'refactor' ? <p className="text-[13.5px] text-faint">선택한 문제의 목적·범위·완료 조건을 대화로 정한다.</p> : undefined}
+            ) : active === 'refactor' ? <p className="text-[13.5px] text-faint">조사 결과를 묻거나, 명세를 같은 명세로 다듬거나 나누도록 대화로 요청한다.</p> : undefined}
           />
           <Composer busy={busy} onSend={send} seed={typed} />
         </div>
