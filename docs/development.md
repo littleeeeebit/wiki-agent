@@ -409,19 +409,20 @@ that run details recover from a failed read with 다시 읽기.
 keeps its progress after a switch to another focus and back; the record's
 question row carries the run id, so only a recorded answer of that run replaces it.
 
-Refactoring is a conversation focus immediately after Next Task. Its header
-selects quick cleanup, module restructure or full refactoring. Entry scans the
-selected repository and presents problem cards with measurement disclosures;
-conversation settles the purpose and completion conditions before Start. A
-mode change preserves the discussion but invalidates a draft from another
-mode. The spec card dispatches the existing test/candidate/PR pipeline, and an
-updating execution card exposes Stop, Resume, review and approval. Prior runs
-remain in the conversation. File-count and time/call/token limits are removed
-throughout this pipeline, including its full-mode planner. Usage is displayed
-only in details and missing tokens are explicitly unknown. Ordinary planners
-and improvement experiments retain their budgets. Tests are
-`tool/test_refactor_conversation.py`, `tool/test_refactor.py`,
-`tool/test_refactor_profile.py` and `web/tests/refactor_browser.py`.
+Refactoring is a conversation focus immediately after Next Task
+(`docs/plans/refactor/7-purpose-modes.md`). Three mode cards pick one purpose:
+`preserve`, `simplify` or `rework`. 리팩터링 시작 runs a read-only survey of the
+selected repository on the focus's model. The survey shows its progress (with
+Stop and Resume), the base commit's gate, its coverage and each pipeline
+explained through the overlay. Its specs are ordinary cards below the
+conversation. A survey card is refined only in the conversation, in place.
+It lists why it cannot start and offers 다시 확인. Its Start picks the
+execution model, defaulting to the survey's. Started, it is an ordinary task
+with the 리팩터링 검증 table. A mode change keeps the conversation but locks the
+unstarted cards of another mode. Runs of the earlier cleanup/restructure/full
+workflow are listed read-only. Tests are `tool/test_refactor_survey.py`,
+`tool/test_refactor_run.py`, `tool/test_refactor_profile.py` and
+`web/tests/refactor_browser.py`.
 
 The right-side specification summary is hidden; requirements and planning
 controls remain in Next Task. Its selected task card also appears when the

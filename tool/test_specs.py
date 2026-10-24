@@ -807,7 +807,7 @@ def test_every_other_reader_of_the_checkout_leaves_the_harvested_record_out_too(
         if "status" in args else real(args, cwd, timeout)  # noqa: E731
     with patch.object(specs, "sh", broken), pytest.raises(refactor.Stop) as stopped:
         refactor.turn(SimpleNamespace(repo=repo, budget=Mock(), halt=threading.Event()),
-                      {"role": {"model": "", "effort": ""}}, "Audit", write=False)
+                      {"role": {"model": "", "effort": ""}}, "Audit", "", repo)
     assert stopped.value.reason == "git" and "index file corrupt" in stopped.value.detail
 
 

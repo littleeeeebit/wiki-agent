@@ -119,48 +119,31 @@ their live runs through `GET /api/suite`. It shows active cells and the latest
 does not dispatch work; server-owned completion callbacks advance tasks even
 when transcript or feed publication fails.
 
-The 리펙터링 tab drives `tool/main/refactor.py` through the routes in
-`tool/main/refactor_api.py`. A run first freezes behaviour
-in a characterization-test PR, then stacks one step PR per hotspot. Each step
-is chosen by the improvement runner's refactor profile
-(`tool/refactor_profile.py`). Its specs are ordinary tasks, and the request
-authorizes Review Loop for L0–L1 PRs. Runs live in `raw/refactor/runs/`, and
-a restart stops a running one instead of replaying it. An L2–L3 step holds its
-repository through `refactor.block` on its spec: `specs.checkout_idle` then
-refuses every new task until the person approves the step or it stops. A full
-refactor first audits the repository and hands the audit to the planner as a
-refactor plan. Its stages become steps only after that plan's PR merges. On
-the hub, each step runs in a linked worktree of its own, so the server's
-checkout never switches. A merged hub step takes effect after an app restart.
+The 리팩터링 focus drives `tool/main/refactor.py` through the routes in
+`tool/main/refactor_api.py` (`docs/plans/refactor/7-purpose-modes.md`). A
+survey (`tool/main/refactor_survey.py`) reads a detached linked worktree of
+the base commit with read-only turns. It records the gate there, a pipeline
+map, each pipeline's report and the specs, then writes those specs as
+ordinary unstarted cards. Survey records live in `raw/refactor/runs/`; a
+restart stops a running one instead of replaying it. Starting a card is the
+ordinary `specs.start`, held to its mode by `tool/main/refactor_run.py`.
+`preserve` freezes characterization tests first. Every mode keeps its test
+contract, and the final command is compared with the survey's baseline before
+the pull request opens. On the hub, a card runs in a linked worktree of its
+own, so the server's checkout never switches. A merged hub change takes effect
+after an app restart. Runs of the earlier cleanup/restructure/full workflow
+are read only; a restart sets their unstarted cards aside.
 Plans
 and status are in
 [the refactor plan](plans/refactor/0-overview.md).
 
-New runs finish with test-only cleanup and ratchet steps through
-`main/refactor_finish.py`. Default cleanup keeps Python syntax trees and
-decoded JSON fixture values identical; other artifacts stay byte-identical.
-Structural test changes require a repository-owned `test_quality_cmd` with
-unchanged test results and per-mutant verdicts, plus frozen
-`test_quality_files` controls. The steps keep size/verification receipts,
-publish real changes for ordinary review, and record no-change audits without
-empty PRs. The final step adopts a missing baseline or only tightens an existing
-one, after cleanup and before merge. It also adopts byte/line budgets for test
-fixtures and snapshots, which the source-only scanner did not cover. Merge
-preparation only lowers adopted budgets. Old runs retain their original contract.
-Research and the quality-command contract are in
-[verified test cleanup](research/refactoring-test-cleanup.md).
-
-An ordinary Agent turn on a stopped refactor task transfers execution to that
-task. `main/refactor_continuation.py` preserves the task identity across
-restarts; the refactoring card follows its live execution, specification and
-PR instead of showing the old timeout as its current state. The automatic
-steps remain historical and cannot be resumed, approved or cancelled through
-the old controller. The task's own Agent and Review controls own continuation;
-no candidate selection or review result is inferred from its code changes.
-Older stopped runs are recognized only from later instructions in their exact
-task record, then checkpointed on startup. A deleted or replaced task leaves
-the automatic controller blocked. Suite resolves shared checkouts by their
-current branch owner, so a merged task cannot label another task's live run.
+A survey card's test contract (`refactor_run.contract`) keeps every existing
+test file's Python syntax tree or decoded JSON values identical (`equivalent`)
+or only adds lines. Exceptions are the removals and contract updates the spec
+declares. Research is in
+[verified test cleanup](research/refactoring-test-cleanup.md). Suite resolves
+shared checkouts by their current branch owner, so a merged task cannot label
+another task's live run.
 
 Claude background execution stays within the work turn until task lifecycle
 events settle and the provider's follow-up result arrives. `_drain` forwards
