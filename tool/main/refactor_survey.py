@@ -18,7 +18,7 @@ from pathlib import Path
 
 from common import worktree_home
 
-from .query import ROOT
+from .query import ROOT, config
 
 MODES = ("preserve", "simplify", "rework")
 KINDS = ("duplication", "coupling", "mixed_responsibility", "defensive", "test_contract", "performance",
@@ -673,6 +673,11 @@ def refined(repo: Path, block, source: dict) -> str:
         if r["mode"] != source.get("refactor_mode") \
                 or spec["source"].get("refactor_generation", 0) != source.get("refactor_generation", 0):
             raise ValueError("명세 모드가 상단에서 고른 모드와 다르다 — 지금 모드로 다시 조사해라")
+        # The block was written by the conversation's model: only a card of the survey pinned on it may take it.
+        talk, role = config("refactor", repo.name), r["roles"]["survey"]
+        if (talk.get("model"), talk.get("effort") or "") != (role["model"], role["effort"]):
+            raise ValueError(f"`{target}` 은 조사 모델 `{role['model']}` 의 명세다 — 지금 대화는 `{talk.get('model')}` "
+                             "로 고정됐다. 그 조사의 카드는 대화에서 다듬지 않는다")
         given = {k: v for k, v in block.items() if k not in ("id", "split_from")}
         if block.get("id"):
             given["key"] = r["detail"]["key"]   # refining keeps the card's key

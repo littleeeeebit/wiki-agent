@@ -448,6 +448,21 @@ def test_the_conversation_refines_the_same_card_and_splits_off_only_the_new_part
     assert specs.load("proj", sid)["rev"] == 2
 
 
+def test_a_card_is_refined_only_on_its_own_survey_model(surveyed):
+    run = surveyed_in("preserve", spec("orders-split"))
+    sid = run["specs"][0]
+    api = client()
+    later = {**ROLES, "survey": {"model": "haiku", "effort": "low"}}
+    second = settled(api, start(api, "survey-later-0001", roles=later).json()["id"])
+    assert second["state"] == "stopped" and specs.load("proj", sid)["state"] == "정리됨", "the first card is still there"
+    assert query.config("refactor", "proj")["model"] == "haiku", "the conversation now runs on the later survey"
+    source = {"focus": "refactor", "turn": 3, "session": "talk", "refactor_mode": "preserve",
+              "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
+    for block in ({**spec("x"), "id": sid}, {**spec("orders-check"), "split_from": sid}):
+        assert "claude-test" in specs.answered(surveyed, [{"name": "spec", "value": block}], source)[0]["error"]
+    assert specs.load("proj", sid)["rev"] == 1
+
+
 def test_recheck_rewrites_a_stale_card_or_sets_it_aside(surveyed):
     run = surveyed_in("preserve", spec("orders-split"))
     sid = run["specs"][0]
