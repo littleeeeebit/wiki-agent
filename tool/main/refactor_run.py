@@ -202,12 +202,13 @@ def _binds(body: list) -> Counter:
             if not isinstance(node, ast.Lambda):
                 found[node.name] += 1
                 found.update(n for g in ast.walk(node) if isinstance(g, ast.Global) for n in g.names)
-            # Decorators, bases and defaults run in this scope; the body is the nested scope's.
-            args = getattr(node, "args", None)
-            for child in [*getattr(node, "decorator_list", []), *getattr(node, "bases", []),
-                          *getattr(node, "keywords", []), *(args.defaults if args else []),
-                          *(d for d in (args.kw_defaults if args else []) if d)]:
-                visit(child, inside)
+            # The header — decorators, bases, defaults, annotations — runs in this scope; only the body is
+            # the nested scope's (an argument's own name is a string, not a binding here).
+            for field, value in ast.iter_fields(node):
+                if field != "body":
+                    for child in value if isinstance(value, list) else [value]:
+                        if isinstance(child, ast.AST):
+                            visit(child, inside)
             return
         if isinstance(node, ast.NamedExpr):
             found[node.target.id] += 1

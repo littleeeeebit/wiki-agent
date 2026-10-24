@@ -196,6 +196,8 @@ def contracted(repo: Path, new: str | None, *declared: str, old: str = OLD_TESTS
     (OLD_TESTS + "\nCASES = [(test_guard := n) for n in range(3)]\n", (), "기존 테스트 변경"),
     (OLD_TESTS + "\nmatch 1:\n    case test_guard:\n        pass\n", (), "기존 테스트 변경"),
     (OLD_TESTS + "\nfrom os.path import *\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\n\ndef helper(arg: (test_guard := lambda: None)):\n    pass\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\n\ndef helper() -> (test_guard := lambda: None):\n    pass\n", (), "기존 테스트 변경"),
     (OLD_TESTS + "\nCASES = [test_guard for test_guard in range(3)]\n", (), ""),   # the comprehension's own
     (OLD_TESTS + "\n\ndef test_new(test_guard=None):\n    test_other = 1\n", (), ""),    # the function's own
     ("def test_guard():\n    assert True\n", ("tests/test_guard.py::test_other",), ""),
@@ -214,12 +216,20 @@ def test_a_type_comment_is_part_of_the_test_contract(surveyed):
     assert "기존 테스트 변경" in contracted(surveyed, OLD_TESTS + "\nvalue = []\n", old=typed)
 
 
-def test_a_pytest_count_line_is_explained_by_no_more_failures_than_the_baseline():
-    base = "FAILED t.py::a - x\n==== 1 failed, 1 passed, 1 warning in 0.96s ====\n"
-    more = "FAILED t.py::a - x\n==== 1 failed, 2 passed, 2 warnings in 1.20s ====\n"
-    assert refactor_survey.unexplained(more, base, ()) == []
-    worse = "FAILED t.py::a - x\n==== 1 failed, 2 passed, 1 error in 1.20s ====\n"
-    assert refactor_survey.unexplained(worse, base, ()) == ["==== 1 failed, 2 passed, 1 error in 1.20s ===="]
+@pytest.mark.parametrize("quiet", [True, False])
+def test_a_pytest_count_line_is_explained_by_no_more_failures_than_the_baseline(tmp_path, quiet):
+    warn = "import warnings\n\n\ndef test_w{n}():\n    warnings.warn('w')\n"
+    (tmp_path / "test_x.py").write_text("def test_old():\n    assert False\n\n\n" + warn.format(n=1), encoding="utf-8")
+
+    def tail():   # a real pytest run's closing lines
+        argv = [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-p", "no:xdist", *(["-q"] if quiet else [])]
+        return subprocess.run(argv, cwd=tmp_path, capture_output=True, text=True).stdout
+
+    base = tail()
+    (tmp_path / "test_x.py").write_text((tmp_path / "test_x.py").read_text() + "\n\n" + warn.format(n=2))
+    assert refactor_survey.unexplained(tail(), base, (tmp_path,)) == [], "one more warning is no failure"
+    for grown in ("91 failed, 1 passed in 1.08s", "==== 1 failed, 2 passed, 1 error in 1.20s ===="):
+        assert refactor_survey.unexplained(grown, base.replace("1 failed", "90 failed"), ()) == [grown]
 
 
 def test_every_round_holds_a_survey_spec_to_its_test_contract(surveyed):

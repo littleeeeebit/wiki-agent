@@ -362,16 +362,23 @@ def unexplained(tail: str, baseline: str, trees: tuple) -> list[str]:
             line = line.replace(str(tree), "<tree>").replace(Path(tree).as_posix(), "<tree>")
         return re.sub(r"\d+", "#", line.strip())
     printed = {plain(line) for line in baseline.splitlines()}
-    # pytest's closing count line: passed, skipped and warning counts move with any added test, so it
-    # stands explained when it counts no more failures and errors than the baseline's did.
+    # pytest's closing count line is judged by its counts alone, before any digit-blind match: passed,
+    # skipped and warning counts move with any added test, failed and error counts may not grow.
     summaries = [_counted(line) for line in baseline.splitlines() if SUMMARY.match(line.strip())]
-    return [line.strip() for line in tail.splitlines()
-            if SIGNAL.search(line) and not FAILED.search(line) and plain(line) not in printed
-            and not (summaries and SUMMARY.match(line.strip())
-                     and all(n <= summaries[-1].get(k, 0) for k, n in _counted(line).items()))]
+    odd = []
+    for line in (line.strip() for line in tail.splitlines()):
+        if SUMMARY.match(line):
+            if (counts := _counted(line)) and (not summaries or any(n > summaries[-1].get(k, 0)
+                                                                    for k, n in counts.items())):
+                odd.append(line)
+        elif SIGNAL.search(line) and not FAILED.search(line) and plain(line) not in printed:
+            odd.append(line)
+    return odd
 
 
-SUMMARY = re.compile(r"^=+ .*\b(passed|failed|errors?|skipped|warnings?|xfailed|xpassed|deselected)\b.* in [\d.]+s\b.*=+$")
+# With `-q` the count line has no `=` rule around it.
+SUMMARY = re.compile(r"^=*\s*\d+ (passed|failed|errors?|skipped|warnings?|xfailed|xpassed|deselected|rerun)\b"
+                     r".* in [\d.]+s\b.*$")
 
 
 def _counted(line: str) -> dict:
