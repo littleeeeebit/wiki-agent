@@ -21,7 +21,8 @@ from fastapi import HTTPException
 
 import refactor_profile
 from main import query, refactor, refactor_run, refactor_survey, specs, work
-from test_main import client, no_machine_settings, until  # noqa: F401 — the fixture is autouse
+from test_main import client, no_machine_settings, parse, until  # noqa: F401 — the fixture is autouse
+from test_main import settled as settled_task
 from test_refactor_survey import Host, _git, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
 from test_specs import Remote, Worker, _adapter, fresh_workers, report, repo, started  # noqa: F401
 
@@ -325,6 +326,32 @@ def test_a_card_saved_with_a_dotted_path_still_sees_its_file_change(surveyed):
     _git(surveyed, "commit", "-qam", "the target moved")
     with pytest.raises(HTTPException, match="다시 확인"):
         refactor_run.startable(surveyed, card, "")
+
+
+def test_a_clone_without_origin_head_asks_github_and_a_rerun_keeps_no_old_verdict(running):
+    repo, remote = running
+    (repo / "gate.py").write_text("import pathlib, sys\nsys.exit(pathlib.Path('stop.txt').exists())\n", encoding="utf-8")
+    _git(repo, "add", "gate.py")
+    _git(repo, "commit", "-qm", "a gate that names no failure")
+    _git(repo, "push", "-q", "origin", "main")
+    _git(repo, "remote", "set-head", "origin", "-d")   # what `gh repo create --push` leaves
+    _adapter(repo, f"{PY} gate.py")
+    run = surveyed_in("simplify", spec("orders-names"))
+
+    def unstop(path, halt):
+        _git(path, "rm", "-q", "stop.txt")
+        _git(path, "commit", "-qm", "unstop")
+        return report(True, True)
+    Worker.replies = [edited("stop.txt", "x\n"), unstop]
+    path = started(client(), run["specs"][0])
+    card = specs.load("proj", run["specs"][0])
+    assert "가리지 못해" in card["fault"] and card["refactor_check"]["unparsed"], "the command ran and failed"
+    parse(client().post("/api/work/say", json={"path": path, "text": "again"}).text)
+    settled_task(path)
+    card = specs.load("proj", run["specs"][0])
+    assert card["state"] == "PR #7", card["fault"]
+    assert card["refactor_check"]["ok"] and "unparsed" not in card["refactor_check"], "no verdict of the first run"
+    assert ["gh", "repo", "view"] in [c[:3] for c in remote.calls]
 
 
 def test_a_hub_card_runs_in_a_linked_worktree(running, monkeypatch):
