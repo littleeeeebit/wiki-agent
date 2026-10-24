@@ -40,7 +40,7 @@ export type SurveyPipeline = {
 }
 /** A survey spec as the survey wrote it (`refactor_survey.spec_shape`). */
 export type SurveySpec = {
-  key: string; title: string; pipeline: string; files: string[]; boundary: string; problem: string; change: string
+  key: string; title: string; pipeline: string; files: string[]; creates?: string[]; boundary: string; problem: string; change: string
   impact: string; rollback: string; evidence: SurveyEvidence[]; keep: string[]; depends: string[]; risk: SurveyLevel
   verify: { method: string; criterion: string }[]; together?: string
   tests: { add: string[]; remove: { test: string; reason: string }[]; contract: { test: string; old: string; new: string; why: string }[] }

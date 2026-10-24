@@ -290,6 +290,7 @@ export function SurveyDetail({ spec, korean }: { spec: api.Spec; korean: boolean
     {row('경계', t(d.boundary))}
     {row('근거', <span className="font-mono text-[11.5px]">{d.evidence.map(where).join(', ')}</span>)}
     {row('대상 파일', <span className="font-mono text-[11.5px]">{d.files.join(', ')}</span>)}
+    {!!d.creates?.length && row('만들 파일', <span className="font-mono text-[11.5px]">{d.creates.join(', ')}</span>)}
     {row('위험', `${LEVEL[d.risk.level] ?? d.risk.level} — ${t(d.risk.why)}`)}
     {row('영향', t(d.impact))}
     {row('되돌리기', t(d.rollback))}
