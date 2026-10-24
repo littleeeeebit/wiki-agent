@@ -251,8 +251,8 @@ def checkout_idle(repo: Path, run: str = "") -> None:
             raise HTTPException(409, "이 저장소의 위키 조사를 마친 뒤 브랜치를 바꿔라")
 
 
-def fork(repo: Path, sid: str) -> tuple[Path, str, str]:
-    """New tasks fork the selected non-task branch, not a previous task's commits."""
+def fork(repo: Path, sid: str, ready=lambda source: None) -> tuple[Path, str, str]:
+    """New tasks fork the selected non-task branch, not a previous task's commits; `ready` may refuse that ref."""
     parent = owner(repo)
     branch = sh(["git", "branch", "--show-current"], repo).stdout.strip()
     base = (parent.get("return_branch") or (parent.get("pr") or {}).get("base")) \
@@ -273,6 +273,7 @@ def fork(repo: Path, sid: str) -> tuple[Path, str, str]:
                 raise RuntimeError(f"`{base}` 의 미게시 변경·분기를 해결한 뒤 새 작업을 시작해라")
             if not ancestry.returncode:
                 source = upstream.stdout.strip()  # A fast-forward, without moving a sibling's checked-out ref.
+    ready(source)
     path = create(repo, sid, base=source)
     return path, sh(["git", "rev-parse", "HEAD"], path).stdout.strip(), base or branch
 
@@ -550,18 +551,10 @@ def card(repo: Path, block, gate: str, source: dict, accepted: dict | None = Non
     The same slug from the same conversation replaces its card while that has
     not started. Otherwise the name gets `-2`, `-3`."""
 
-    made = fields(repo, block, gate, accepted)
     if source.get("focus") == "refactor":
-        from . import refactor_api
-
-        try:
-            request = refactor_api.Start(request_id="draft-refactor", **(block.get("refactor") or {}))
-            if request.mode != source.get("refactor_mode", "cleanup"):
-                raise ValueError("명세 모드가 상단에서 고른 모드와 다르다. 현재 모드로 다시 정해라")
-            refactor_api.checked(repo, request)
-        except (HTTPException, ValueError) as exc:
-            raise ValueError(getattr(exc, "detail", str(exc))) from exc
-        made["refactor"] = {"mode": request.mode, "files": request.files}
+        from . import refactor_survey
+        return refactor_survey.refined(repo, block, source)
+    made = fields(repo, block, gate, accepted)
     base = slugged(block.get("slug"))
     if not base:
         raise ValueError("`slug` 가 비었거나 쓸 수 있는 글자가 없다")
@@ -980,13 +973,11 @@ def start(sid: str, body: Start) -> dict:
     In that order, a worktree that could not be made leaves the spec exactly
     as it was; the other way round, a failure had to be rolled back."""
 
+    from . import refactor_api, refactor_run   # both import this module
     repo = current_repo()
     spec = load(repo.name, sid)
-    if spec and (spec.get("refactor") or {}).get("mode"):
-        from . import refactor_api
-
-        run = refactor_api.from_spec(repo, sid, body.model_dump())
-        return {"refactor": run["id"]}
+    if spec and (spec.get("refactor") or {}).get("mode") and not refactor_run.surveyed(spec):
+        return {"refactor": refactor_api.from_spec(repo, sid, body.model_dump())["id"]}
     with _lock:
         repo = current_repo()
         checkout_idle(repo)
@@ -999,15 +990,16 @@ def start(sid: str, body: Start) -> dict:
             if spec["state"] != "정리됨":
                 raise HTTPException(409, f"이미 시작했다 — {spec['state']}")
             try:
-                path, before, previous = fork(repo, sid)
+                path, before, previous, extra = refactor_run.forked(repo, spec) if refactor_run.surveyed(spec) \
+                    else (*fork(repo, sid), {"workspace_mode": "branch"})
             except ValueError as exc:
                 raise HTTPException(400, str(exc)) from exc
             except RuntimeError as exc:
                 raise HTTPException(409, str(exc)) from exc
             # The model is kept for the turns the loop sends this worktree.
-            save(moved(spec, "작업 중", worktree=str(path), workspace_mode="branch", branch=sid,
-                        start_head=before, return_branch=previous,
-                        cell={"model": body.model, "effort": body.effort, "fast": body.fast}))
+            save(moved(spec, "작업 중", worktree=str(path), branch=sid, start_head=before, return_branch=previous,
+                        cell={"model": body.model, "effort": body.effort, "fast": body.fast}, **extra))
+        release = release if "workspace_mode" in extra else refactor_run.held(path, release)
         # Closing a session takes _lock; keep the same lock order as spec editing.
         work.forget(path)
         # Made: from here it is a turn, and a switch no longer waits for it.
@@ -1049,8 +1041,9 @@ def system(path: Path) -> str:
     owns that worktree. Read whenever a session is made, so one made again
     after a restart still has it."""
 
+    from . import refactor_run
     spec = owner(path)
-    return "" if spec is None else SPEC_PROMPT.rstrip() + "\n\n" + brief(spec)
+    return "" if spec is None else SPEC_PROMPT.rstrip() + "\n\n" + brief(spec) + refactor_run.prompt(spec)
 
 
 def brief(spec: dict) -> str:
@@ -1158,13 +1151,15 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
     """The round checks `selected` picks, run by `judge`: the verdict, kept as
     the spec's `gate` for the screens, and `validation.round`."""
 
-    from . import maintenance   # here: it imports this module
+    from . import maintenance, refactor_run   # here: they import this module
 
     maintenance.set_aside(path, spec)
     chosen = chosen or for_round(repo, path, spec, base)
     last = (spec.get("validation") or {}).get("round") or {}
     current = sh(["git", "rev-parse", "HEAD"], path)
     clean = status(path)
+    if refused := refactor_run.refused(path, spec, chosen, current.stdout.strip()):   # review repairs included
+        return refused
     if reused := verify.cached_round(spec, chosen, current, clean):
         return reused, last
     with gating(spec.get("repo"), spec.get("id"), "round"):
@@ -1332,7 +1327,8 @@ def body_of(spec: dict) -> str:
         lines += ["- [ ] 전체 게이트 — 리뷰가 허용한 커밋에서 머지 전에 돈다"]
     lines += [f"- [x] Jev 가 고른 추가 확인 — `{c['cmd']}` · 통과" for c in spec.get("checks") or []
               if c["ok"] and c.get("head") == spec["gate"].get("head")]
-    lines += ["", *sweep.section(spec.get("test_cleanup"))]
+    from . import refactor_run
+    lines += ["", *sweep.section(spec.get("test_cleanup")), *refactor_run.section(spec)]
     grounds = spec["grounds"]
     cited = ", ".join(f"`{g}`" for g in grounds["pages"] + grounds["files"]) or "없음"
     lines += ["## 명세", "", f"`raw/specs/{spec['repo']}/{spec['id']}.json` · 근거: {cited}", ""]
@@ -1564,6 +1560,9 @@ def _check(path: Path, run, final: str):
         if spec["state"] == "멈춤" and (spec.get("stopped") or {}).get("reason") == loop.Why.ASKED.value:
             return lambda: loop.answered(repo, spec["id"], run, str(path))   # the person answered it
         return None
+    from . import refactor_run
+    if (first := refactor_run.characterized(repo, path, run, spec, final)) is not refactor_run.DONE:
+        return first
     report = next((b for b in blocks(final)[1] if b["name"] == "done-report"), None)
     if report is None:
         if spec.get("report_asked") and not asks(final):
@@ -1585,6 +1584,8 @@ def _check(path: Path, run, final: str):
             return failed(run, spec, "테스트 정리 보고(`test-cleanup`)가 없거나 형식이 틀렸다 — 정리 후 다시 완료 보고해야 한다")
         note(run, "테스트 정리 단계를 요청한다")
         return lambda: again(path, run.chat, sweep.PROMPT, spec)
+    if refactor_run.surveyed(spec):   # proven against the survey's baseline instead
+        return refactor_run.published(repo, path, run, spec)
     # The checks this change maps to, not the whole gate: that runs once the
     # review allows the exact head (`loop.finalized`).
     verdict, record = rounded(repo, path, spec, local_base(spec, path), run.halt, lambda text: note(run, text))

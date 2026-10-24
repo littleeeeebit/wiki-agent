@@ -18,7 +18,6 @@ from pathlib import Path
 
 from common import worktree_home
 
-from . import specs, work
 from .query import ROOT
 
 MODES = ("preserve", "simplify", "rework")
@@ -301,7 +300,27 @@ def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
     return shaped
 
 
-def survey_shape(value, mode: str, map_: dict, root: Path) -> dict:
+def acyclic(graph: dict[str, list[str]]) -> None:
+    """Refuse a dependency cycle among `graph`'s nodes; edges leaving it are not followed."""
+
+    state: dict[str, str] = {}
+
+    def visit(key: str) -> None:   # depth-first: a grey node reached again is a cycle
+        if state.get(key) == "grey":
+            raise ValueError(f"명세 의존이 돌아온다: `{key}`")
+        if state.get(key) != "black":
+            state[key] = "grey"
+            for d in graph[key]:
+                if d in graph:
+                    visit(d)
+            state[key] = "black"
+
+    for key in graph:
+        visit(key)
+
+
+def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = frozenset()) -> dict:
+    """An integration (or recheck) block; `known` are keys outside it a spec may still depend on."""
     if not isinstance(value, dict) or not isinstance(value.get("coverage"), dict):
         raise ValueError("refactor-survey 는 coverage 가 있는 JSON 객체여야 한다")
     shaped = [spec_shape(s, mode, map_, root) for s in _list(value.get("specs") or [], "specs")]
@@ -309,22 +328,9 @@ def survey_shape(value, mode: str, map_: dict, root: Path) -> dict:
     if len(set(keys)) != len(keys):
         raise ValueError("명세 `key` 가 겹친다")
     for s in shaped:
-        if unknown := set(s["depends"]) - set(keys):
+        if unknown := set(s["depends"]) - set(keys) - known:
             raise ValueError(f"`specs[{s['key']}].depends` 에 없는 명세: {sorted(unknown)}")
-    order, state = [], {}
-
-    def visit(key: str) -> None:   # depth-first: a grey node reached again is a cycle
-        if state.get(key) == "grey":
-            raise ValueError(f"명세 의존이 돌아온다: `{key}`")
-        if state.get(key) != "black":
-            state[key] = "grey"
-            for d in next(s for s in shaped if s["key"] == key)["depends"]:
-                visit(d)
-            state[key] = "black"
-            order.append(key)
-
-    for key in keys:
-        visit(key)
+    acyclic({s["key"]: s["depends"] for s in shaped})
     coverage = value["coverage"]
     result = {"coverage": {"scope": _text(coverage.get("scope"), "coverage.scope"),
                            "unchecked": _texts(coverage.get("unchecked") or [], "coverage.unchecked"),
@@ -343,6 +349,41 @@ def failures(verdict: dict) -> list[str] | None:
     if any("[" in name and not name.endswith("]") for name in found):
         return None   # a parameter id cut short could be any of its cases
     return found or None
+
+
+SIGNAL = re.compile(r"\b(error|errors|fatal|fail|failed|failure|failures|exception|traceback|panic)\b", re.I)
+
+
+def unexplained(tail: str, baseline: str, trees: tuple) -> list[str]:
+    """The failure-looking lines of a failing run that no failure name covers and the
+    baseline run did not print, compared with digits and both worktree paths blanked."""
+    def plain(line: str) -> str:
+        for tree in trees:
+            line = line.replace(str(tree), "<tree>").replace(Path(tree).as_posix(), "<tree>")
+        return re.sub(r"\d+", "#", line.strip())
+    printed = {plain(line) for line in baseline.splitlines()}
+    # pytest's closing count line is judged by its counts alone, before any digit-blind match: passed,
+    # skipped and warning counts move with any added test, failed and error counts may not grow.
+    summaries = [_counted(line) for line in baseline.splitlines() if SUMMARY.match(line.strip())]
+    odd = []
+    for line in (line.strip() for line in tail.splitlines()):
+        if SUMMARY.match(line):
+            if (counts := _counted(line)) and (not summaries or any(n > summaries[-1].get(k, 0)
+                                                                    for k, n in counts.items())):
+                odd.append(line)
+        elif SIGNAL.search(line) and not FAILED.search(line) and plain(line) not in printed:
+            odd.append(line)
+    return odd
+
+
+# With `-q` the count line has no `=` rule around it.
+SUMMARY = re.compile(r"^=*\s*\d+ (passed|failed|errors?|skipped|warnings?|xfailed|xpassed|deselected|rerun)\b"
+                     r".* in [\d.]+s\b.*$")
+
+
+def _counted(line: str) -> dict:
+    """The failed and error counts of a pytest summary line."""
+    return {kind.rstrip("s"): int(n) for n, kind in re.findall(r"(\d+) (failed|errors?)\b", line)}
 
 
 # -- The phases --------------------------------------------------------------------
@@ -396,7 +437,7 @@ def baselined(w, run: dict) -> dict:
         path = checkout(w, run)
         if not clean():
             raise refactor.Stop("worktree", f"기준 게이트가 바꾼 `{path}` 를 기준 커밋으로 되돌리지 못했다 — 치운 뒤 [재개] 하라")
-    return w.note(phase="map")
+    return w.note(phase="recheck" if run.get("recheck") else "map")
 
 
 def asked(w, run: dict, phase: str, text: str, system: str, tag: str):
@@ -484,24 +525,14 @@ def carded(w, run: dict) -> list[str]:
     """The survey's specs as ordinary unstarted cards, written once: a resume
     finds them by id. A completed survey retires older surveys' unstarted cards."""
 
-    repo, gate = w.repo, specs.gate_of(w.repo)
+    repo = w.repo
     sid = {s["key"]: f"{s['key']}-{w.rid}" for s in run["survey"]["specs"]}
     source = {"focus": "refactor", "turn": time.time(), "session": "", "plan": None,
               "refactor_mode": run["mode"], "refactor_generation": run.get("generation", 0)}
     for s in run["survey"]["specs"]:
-        block = {"goal": f"{s['title']}. {s['change']}",
-                 "out": [*s["keep"], "Changes owned by the other refactoring modes"],
-                 "done": [f"{v['method']}: {v['criterion']}" for v in s["verify"]],
-                 "grounds": {"files": sorted({e["path"] for e in s["evidence"]})}}
-        made = {**specs.fields(repo, block, gate),
-                "refactor": {"mode": run["mode"], "survey": w.rid, "base": run["base"], "pipeline": s["pipeline"],
-                             "files": s["files"], "evidence": sorted({e["path"] for e in s["evidence"]}),
-                             "depends": [sid[d] for d in s["depends"]], "detail": s}}
         with specs._files:
             if specs.load(repo.name, sid[s["key"]]) is None:
-                specs.save({"id": sid[s["key"]], "repo": repo.name, "rev": 1, **made, "source": source,
-                            "state": "정리됨", "stopped": None, "worktree": None, "pr": None, "report": None,
-                            "gate": None, "fault": None, "history": [{"ts": time.time(), "state": "정리됨"}]})
+                fresh(repo, sid[s["key"]], made(repo, w.rid, run["base"], s, [sid[d] for d in s["depends"]]), source)
     for spec in specs.listing(repo.name):
         held = spec.get("refactor") or {}
         if held.get("survey") and held["survey"] != w.rid and spec["state"] == "정리됨":
@@ -511,7 +542,113 @@ def carded(w, run: dict) -> list[str]:
     return list(sid.values())
 
 
-PHASES = {"baseline": baselined, "map": mapped, "pipelines": explained, "integrate": integrated}
+def made(repo: Path, survey: str, base: str, s: dict, depends: list[str]) -> dict:
+    """A survey spec's card fields: the ordinary ones, and the `refactor` block a run reads."""
 
-# Last: `refactor` builds its phase table from `PHASES` at import, whichever of the two is imported first.
-from . import refactor  # noqa: E402
+    block = {"goal": f"{s['title']}. {s['change']}", "out": [*s["keep"], "Changes owned by the other refactoring modes"],
+             "done": [f"{v['method']}: {v['criterion']}" for v in s["verify"]],
+             "grounds": {"files": sorted({e["path"] for e in s["evidence"]})},
+             # `preserve` is reviewed against its frozen characterization tests.
+             **({"review": {"criteria": ["refactor"], "evidence": ["differential"]}} if s["mode"] == "preserve" else {})}
+    return {**specs.fields(repo, block, specs.gate_of(repo)),
+            "refactor": {"mode": s["mode"], "survey": survey, "base": base, "pipeline": s["pipeline"],
+                         "files": s["files"], "evidence": sorted({e["path"] for e in s["evidence"]}),
+                         "depends": depends, "detail": s}}
+
+
+def fresh(repo: Path, sid: str, fields: dict, source: dict) -> None:
+    specs.save({"id": sid, "repo": repo.name, "rev": 1, **fields, "source": source, "state": "정리됨",
+                "stopped": None, "worktree": None, "pr": None, "report": None, "gate": None, "fault": None,
+                "history": [{"ts": time.time(), "state": "정리됨"}]})
+
+
+def refined(repo: Path, block, source: dict) -> str:
+    """A refactoring conversation's `spec` block: `id` refines that card in
+    place, a new revision; `split_from` adds only the part split off it. No
+    card comes from a conversation alone: each belongs to a survey."""
+
+    if not isinstance(block, dict) or not isinstance(target := block.get("id") or block.get("split_from"), str):
+        raise ValueError("조사에서 나온 명세를 `id` 로 다듬거나 `split_from` 으로 나눈다 — 조사 없이 새 명세를 만들지 않는다")
+    with specs._files:
+        spec = specs.load(repo.name, target)
+        if spec is None or not (spec.get("refactor") or {}).get("survey"):
+            raise ValueError(f"`{target}` 은 조사에서 나온 명세가 아니다")
+        if block.get("id") and spec["state"] != "정리됨":
+            raise ValueError("시작한 명세는 대화에서 바꾸지 않는다")
+        r = spec["refactor"]
+        if r["mode"] != source.get("refactor_mode") \
+                or spec["source"].get("refactor_generation", 0) != source.get("refactor_generation", 0):
+            raise ValueError("명세 모드가 상단에서 고른 모드와 다르다 — 지금 모드로 다시 조사해라")
+        given = {k: v for k, v in block.items() if k not in ("id", "split_from")}
+        if block.get("id"):
+            given["key"] = r["detail"]["key"]   # refining keeps the card's key
+        detail = spec_shape(given, r["mode"], refactor.load(repo.name, r["survey"])["map"], repo)
+        for dep in detail["depends"]:
+            if not ((specs.load(repo.name, dep) or {}).get("refactor") or {}).get("survey") or dep == block.get("id"):
+                raise ValueError(f"`depends` 의 `{dep}` 은 다른 조사 명세의 id 여야 한다")
+        fields = made(repo, r["survey"], r["base"], detail, detail["depends"])
+        sid = target if block.get("id") else f"{detail['key']}-{r['survey']}"
+        # Every survey card, whatever survey it came from: a recheck gives a card a new survey id, not new edges.
+        graph = {s["id"]: s["refactor"]["depends"] for s in specs.listing(repo.name)
+                 if (s.get("refactor") or {}).get("survey")}
+        acyclic({**graph, sid: detail["depends"]})   # a refinement may not close a loop the survey refused
+        if block.get("id"):
+            specs.save({**spec, **fields, "rev": spec["rev"] + 1})
+            return target
+        if specs.load(repo.name, sid) is not None:
+            raise ValueError(f"`{sid}` 가 이미 있다 — 나눈 명세는 다른 key 를 쓴다")
+        fresh(repo, sid, fields, {**source, "plan": None})
+        return sid
+
+
+RECHECK_PROMPT = (
+    "Recheck one refactoring spec against the current code. " + COMMON + " It was written on an older commit and "
+    "the files listed changed since. Read its pipeline again here. If the problem still holds, return the spec "
+    "rewritten for this code with the same key; if it no longer holds, or now belongs to another mode, return no "
+    "spec and say why in `nothing`. End with one fenced block tagged `refactor-survey` holding JSON shaped like:\n"
+    + json.dumps({"coverage": {"scope": "<what you reread>", "unchecked": ["..."], "excluded": []},
+                  "specs": [SPEC_SCHEMA], "nothing": "<only with no spec: why>"}))
+
+
+def rechecked(w, run: dict) -> dict:
+    """One stale card read again on the current commit: rewritten in place, or set aside."""
+
+    spec = specs.load(w.repo.name, run["recheck"])
+    if spec is None or spec["state"] != "정리됨":
+        raise refactor.Stop("spec_gone", f"`{run['recheck']}` 명세가 없거나 이미 시작했다")
+    old, path = spec["refactor"], checkout(w, run)
+    parent = refactor.load(w.repo.name, old["survey"]) or {}
+    changed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", old["base"],
+                        run["base"]], w.repo).stdout.splitlines()
+    text = (f"The repository map:\n{json.dumps(parent['map'], ensure_ascii=False)}\n\nThe pipeline report from the "
+            f"older survey:\n{json.dumps((parent.get('pipelines') or {}).get(old['pipeline']), ensure_ascii=False)}"
+            f"\n\nThe spec:\n{json.dumps(old['detail'], ensure_ascii=False)}\n\nFiles changed since its base "
+            f"{old['base']}: {', '.join(changed[:300]) or 'none'}")
+    try:
+        # The card's prerequisites are other specs of its survey, not in this one-spec answer.
+        others = frozenset([*old["detail"]["depends"], *(s["key"] for s in (parent.get("survey") or {}).get("specs") or [])])
+        survey = survey_shape(asked(w, run, "recheck", text, RECHECK_PROMPT, "refactor-survey"), run["mode"],
+                              parent["map"], path, others)
+        if len(survey["specs"]) > 1 or survey["specs"] and survey["specs"][0]["key"] != old["detail"]["key"]:
+            raise ValueError(f"key `{old['detail']['key']}` 의 명세 하나만 돌려줘야 한다")
+    except ValueError as exc:
+        raise refactor.Stop("format", f"다시 확인한 refactor-survey 가 맞지 않다 — {exc}") from exc
+    with specs._files:
+        spec = specs.load(w.repo.name, run["recheck"])
+        if spec is None or spec["state"] != "정리됨":
+            raise refactor.Stop("spec_gone", f"`{run['recheck']}` 명세가 없거나 이미 시작했다")
+        if survey["specs"]:
+            specs.save({**spec, **made(w.repo, w.rid, run["base"], survey["specs"][0], old["depends"]),
+                        "rev": spec["rev"] + 1})
+        else:
+            specs.aside(w.repo.name, spec["id"])
+    removed(w.repo, w.rid)
+    return w.note(map=parent["map"], pipelines={k: v for k, v in (parent.get("pipelines") or {}).items()
+                                                if k == old["pipeline"]},
+                  survey=survey, phase="done", state="done", specs=[spec["id"]] if survey["specs"] else [])
+
+
+PHASES = {"baseline": baselined, "map": mapped, "pipelines": explained, "integrate": integrated, "recheck": rechecked}
+
+# Last: `refactor` builds its phase table from `PHASES` at import, and `specs` leads back to `refactor`.
+from . import refactor, specs, work  # noqa: E402
