@@ -118,6 +118,10 @@ PIPELINE_PROMPT = (
     "JSON shaped like:\n" + json.dumps(PIPELINE_SCHEMA))
 INTEGRATE_PROMPT = (
     "Turn a repository survey into executable refactoring specs for the selected mode. " + COMMON +
+    " The pipeline reports are your evidence: weigh every debt they name for the selected mode, and turn each "
+    "one worth doing into a spec, largest payoff first; leave one out only for a reason you state in "
+    "`coverage.unchecked`. Missing test coverage is not such a reason: in `preserve` the spec names the "
+    "characterization tests to add in `tests.add`, and they are written and frozen before any code moves."
     " A spec covers one improvement inside one pipeline; never bundle unrelated features. Never write a spec "
     "that only surveys, maps or documents structure. When a shared module change serves several pipelines, make "
     "it its own spec (`pipeline`: `shared:<path>`) that the pipeline specs depend on, unless splitting it would "
