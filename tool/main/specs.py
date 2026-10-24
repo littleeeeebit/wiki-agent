@@ -1238,9 +1238,11 @@ def selected(repo: Path, path: Path, base: str, gate_cmd: str) -> dict:
     # Unmapped/shared changes wait for the one final owner, never a surprise local suite. Harvested records are
     # left out: CRLF where a repository once ran autocrlf, they failed ai-companion-voice-agent #248's gate twice.
     # A CR before the line end is a line end: #248's merge preparation rewrote the indexes and `.omm` that repository
-    # commits as CRLF, and its own commit failed twice. The repository's own whitespace rules stay.
-    own = sh(["git", "config", "--get", "core.whitespace"], path).stdout.strip()
-    check = f'git -c "core.whitespace={",".join(filter(None, [own, "cr-at-eol"]))}" diff --check'
+    # commits as CRLF, and its own commit failed twice. The repository's own whitespace rules stay; a failed read
+    # (not an unset key, exit 1) leaves Git to read them itself rather than override them with less.
+    own = sh(["git", "config", "--get", "core.whitespace"], path)
+    check = "git diff --check" if own.returncode not in (0, 1) else \
+        f'git -c "core.whitespace={",".join(filter(None, [own.stdout.strip(), "cr-at-eol"]))}" diff --check'
     full = {"base_oid": oid, "commands": [check + (f" {oid} HEAD" if oid else "") + f' -- . ":(exclude){HARVESTED}"'],
             "selection": "deferred"}
     listed = sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", oid, "HEAD"], path) \

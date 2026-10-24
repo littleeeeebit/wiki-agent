@@ -844,6 +844,15 @@ def test_the_deferred_gate_reads_a_cr_before_the_line_end_as_a_line_end(repo):
     _git(repo, "commit", "-qm", "code")
     failed = specs.judge(repo, specs.selected(repo, repo, "main", PASS)["commands"], threading.Event())
     assert not failed["ok"] and "code.py" in failed["tail"], "the repository's own rules still apply"
+    real = specs.sh
+
+    def unreadable(args, cwd, timeout=60):
+        if args[:3] == ["git", "config", "--get"]:
+            return subprocess.CompletedProcess(args, 128, "", "fatal: unable to read config")
+        return real(args, cwd, timeout)
+    with patch.object(specs, "sh", unreadable):
+        chosen = specs.selected(repo, repo, "main", PASS)
+    assert not specs.judge(repo, chosen["commands"], threading.Event())["ok"], "a failed read never weakens the rules"
 
 
 def test_indexes_the_start_hook_rebuilt_are_not_uncommitted_work_while_they_match_its_receipt(repo):
