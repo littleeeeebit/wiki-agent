@@ -285,6 +285,10 @@ def test_failures_are_named_or_unparsed():
         "checks/bootstrap.py", "docs/case2.txt::case2.txt", "t.py::Names::test-with-hyphen", "tests/test_old.py::test_old"]
     assert refactor_survey.failures({"code": 1, "tail": "--- FAIL: TestX\n    --- FAIL: TestX/sub (0.00s)\n"}) == \
         ["TestX", "TestX/sub"]
+    conda = "ERROR tests/test_b.py - ImportError\nERROR conda.cli.main_run:execute(127): `conda run` failed.\n"
+    assert refactor_survey.failures({"code": 1, "tail": conda}) == ["tests/test_b.py"], "a wrapper's log is no test"
+    errored = {"code": 1, "tail": "ERROR tests/test_b.py::test_c[case one] - boom\n"}
+    assert refactor_survey.failures(errored) == ["tests/test_b.py::test_c[case one]"]
 
 
 def test_a_cancelled_survey_stops_and_resumes_from_its_phase(surveyed, monkeypatch):
