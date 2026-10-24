@@ -140,7 +140,7 @@ def surveyed(repo: Path, body: Start, recheck: str | None = None) -> dict:
 
 @router.post("/api/refactors/specs/{sid}/recheck")
 def recheck(sid: str, body: Start) -> dict:
-    """[다시 확인]: one pipeline turn on the current commit for a card whose files changed."""
+    """`[다시 확인]`: one pipeline turn on the current commit for a card whose files changed."""
 
     repo = current_repo()
     checked(repo, body)
