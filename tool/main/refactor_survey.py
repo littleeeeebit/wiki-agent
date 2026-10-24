@@ -381,8 +381,21 @@ def unexplained(tail: str, baseline: str, trees: tuple) -> list[str]:
             line = line.replace(str(tree), "<tree>").replace(Path(tree).as_posix(), "<tree>")
         return re.sub(r"\d+", "#", line.strip())
     printed = {plain(line) for line in baseline.splitlines()}
+    # pytest's closing count line: passed, skipped and warning counts move with any added test, so it
+    # stands explained when it counts no more failures and errors than the baseline's did.
+    summaries = [_counted(line) for line in baseline.splitlines() if SUMMARY.match(line.strip())]
     return [line.strip() for line in tail.splitlines()
-            if SIGNAL.search(line) and not FAILED.search(line) and plain(line) not in printed]
+            if SIGNAL.search(line) and not FAILED.search(line) and plain(line) not in printed
+            and not (summaries and SUMMARY.match(line.strip())
+                     and all(n <= summaries[-1].get(k, 0) for k, n in _counted(line).items()))]
+
+
+SUMMARY = re.compile(r"^=+ .*\b(passed|failed|errors?|skipped|warnings?|xfailed|xpassed|deselected)\b.* in [\d.]+s\b.*=+$")
+
+
+def _counted(line: str) -> dict:
+    """The failed and error counts of a pytest summary line."""
+    return {kind.rstrip("s"): int(n) for n, kind in re.findall(r"(\d+) (failed|errors?)\b", line)}
 
 
 # -- The phases --------------------------------------------------------------------
