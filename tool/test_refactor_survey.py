@@ -67,6 +67,7 @@ class Host:
     answers: dict = {}
     model = "claude-test-1"
     afterword = ""
+    repair = None
 
     def __init__(self, path, **rest):
         self.path, self.rest, self.id, self.parent_id = Path(path), rest, uuid.uuid4().hex, None
@@ -75,7 +76,10 @@ class Host:
 
     def say(self, text, halt=None):
         self.text, system = text, self.rest["system"]
-        if system == refactor_survey.MAP_PROMPT:
+        if "block was refused" in text:   # the same block again unless `repair` fixes it
+            tag = text.split("Your `", 1)[1].split("`", 1)[0]
+            value = Host.repair or text.split(f"```{tag}\n", 1)[1].split("```", 1)[0]
+        elif system == refactor_survey.MAP_PROMPT:
             tag, value = "refactor-map", MAP
         elif system == refactor_survey.PIPELINE_PROMPT:
             pid = text.rsplit("Explain pipeline `", 1)[1].split("`", 1)[0]
@@ -101,7 +105,7 @@ def surveyed(repo, tmp_path, monkeypatch):
     _git(repo, "commit", "-qm", "src")
     monkeypatch.setattr(refactor, "RUNS", tmp_path / "runs")
     monkeypatch.setattr(refactor, "ChatSession", Host)
-    Host.made, Host.answers, Host.model, Host.afterword = [], {}, "claude-test-1", ""
+    Host.made, Host.answers, Host.model, Host.afterword, Host.repair = [], {}, "claude-test-1", "", None
     query.config("refactor", "proj")["refactor_mode"] = "preserve"
     return repo
 
@@ -172,6 +176,16 @@ def test_a_malformed_pipeline_stops_and_resume_skips_what_finished(surveyed):
     assert run["state"] == "done"
     assert [m["phase"] for m in run["models"]][-2:] == ["pipeline:billing", "integrate"]
     assert len(Host.made) == 2, "orders was not asked again"
+
+
+def test_a_refused_block_goes_back_once_with_its_reason(surveyed):
+    api = client()
+    Host.answers, Host.repair = {"billing": "{not json"}, json.dumps(report("billing"))
+    run = settled(api, start(api).json()["id"])
+    assert run["state"] == "done", run["stopped"]
+    assert [m["phase"] for m in run["models"]][2:4] == ["pipeline:billing", "pipeline:billing:repair"]
+    asked = next(h.text for h in Host.made if "block was refused" in h.text)
+    assert "Expecting property name" in asked and "{not json" in asked, "the reason and the refused block go back"
 
 
 def test_a_block_before_a_hooks_afterword_still_counts(surveyed):
