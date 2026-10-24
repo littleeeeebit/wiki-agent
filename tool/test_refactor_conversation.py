@@ -10,58 +10,13 @@ import pytest
 
 from agent.chat_session import Event
 from fastapi import HTTPException
-from main import channels, planning, query, refactor, specs
+from main import planning, refactor, refactor_api, specs
 from test_main import client, no_machine_settings  # noqa: F401
 from test_refactor import Host, _git, selected  # noqa: F401
-from test_specs import repo, spec_block  # noqa: F401
+from test_specs import repo  # noqa: F401
 
 if os.name == "nt":
     import _winapi
-
-
-def draft(repo, mode="cleanup", **extra):
-    block = spec_block(slug="clean-orders", goal="Remove duplicate order handling", out=["Change public behavior"],
-                       done=["Existing order behavior is preserved", "Duplicate handling is removed"],
-                       refactor={"mode": mode, "files": ["big.py"]}, **extra)
-    return specs.answered(repo, [{"name": "spec", "value": block}],
-                          {"focus": "refactor", "turn": 1, "session": "discussion", "refactor_mode": mode,
-                           "refactor_generation": query.config("refactor").get("refactor_generation", 0)})
-
-
-def test_mode_changes_keep_the_conversation_and_block_stale_drafts(selected):
-    api = client()
-    assert [c.id for c in channels.CHANNELS][:2] == ["next", "refactor"]
-    sid = draft(selected)[0]["id"]
-    query.remember("refactor", "user", "Remove duplicate order handling", repo=selected)
-    settings = {"repo": "proj", "model": "opus", "effort": "high", "refactor_mode": "restructure"}
-    assert api.post("/api/config/refactor", json=settings).json()["kept"]
-    assert query.recall("refactor")[0]["text"] == "Remove duplicate order handling"
-    with patch.object(refactor, "launch") as launch:
-        assert api.post(f"/api/specs/{sid}/start", json={}).status_code == 409
-        assert not launch.called
-    revised = draft(selected, "restructure")[0]["id"]
-    assert revised == sid and specs.load("proj", sid)["rev"] == 2
-    for mode in ("cleanup", "restructure"):
-        api.post("/api/config/refactor", json={**settings, "refactor_mode": mode})
-    with patch.object(refactor, "launch") as launch:
-        assert api.post(f"/api/specs/{sid}/start", json={}).status_code == 409
-        assert not launch.called
-    draft(selected, "restructure")
-    with patch.object(refactor, "launch") as launch:
-        response = api.post(f"/api/specs/{sid}/start", json={"model": "opus", "effort": "high"})
-        rid = response.json()["refactor"]
-        run = refactor.load("proj", rid)
-        assert run["mode"] == "restructure" and run["spec"] == sid
-        assert run["goal"] == specs.load("proj", sid)["goal"]
-        assert run["done"] == specs.load("proj", sid)["done"][1:]
-        assert run["out"] == ["Change public behavior"]
-        assert "limits" not in run and "top" not in run
-        assert api.post(f"/api/specs/{sid}/start", json={}).json()["refactor"] == rid
-        assert launch.call_count == 1
-    assert api.get(f"/api/refactors/{rid}").json()["id"] == rid
-    assert api.put(f"/api/specs/{sid}", json={"rev": 2, "goal": "Change behavior"}).status_code == 409
-    assert api.post(f"/api/specs/{sid}/delete").status_code == 409
-    assert api.post(f"/api/specs/{sid}/drop").status_code == 409
 
 
 def test_audit_can_discover_files_but_goal_expansion_stops_for_choices(selected):
@@ -160,24 +115,23 @@ def test_resumed_runner_usage_is_recorded_once(selected, tmp_path):
 
 
 def test_a_package_directory_is_a_discovery_target(selected):
-    # A full-mode spec naming the package directory, as a module described by
+    # A legacy request naming the package directory, as a module described by
     # purpose usually is, was refused as "not a file in this repository".
     (selected / "pkg").mkdir()
     (selected / "pkg/orders.py").write_text("x = 1\n", encoding="utf-8")
-    source = {"focus": "refactor", "turn": 1, "session": "discussion", "refactor_mode": "full"}
 
-    def card(files):
-        block = spec_block(slug="whole-repo", goal="Pay down debt", done=["Behavior is preserved"],
-                           refactor={"mode": "full", "files": files})
-        return specs.answered(selected, [{"name": "spec", "value": block}], source)[0]
+    def checked(files):
+        refactor_api.checked(selected, refactor_api.Start(request_id="legacy-full-0001", mode="cleanup", files=files))
 
-    assert specs.load("proj", card(["pkg", "big.py"])["id"])["refactor"]["files"] == ["pkg", "big.py"]
-    assert "디렉터리가 아니다" in card(["missing"])["error"]
+    checked(["pkg", "big.py"])
+    with pytest.raises(HTTPException, match="디렉터리가 아니다"):
+        checked(["missing"])
     # A link named like a package but landing in Git metadata is refused where it lands.
     if os.name == "nt":
         _winapi.CreateJunction(str(selected / ".git"), str(selected / "meta"))
     else:
         (selected / "meta").symlink_to(selected / ".git", target_is_directory=True)
-    assert "디렉터리가 아니다" in card(["meta"])["error"]
+    with pytest.raises(HTTPException, match="디렉터리가 아니다"):
+        checked(["meta"])
     paths = ["pkg/orders.py", "pkgx.py", "big.py"]
     assert [p for p in paths if refactor.targeted(p, ["pkg/"])] == ["pkg/orders.py"]

@@ -106,9 +106,10 @@ def start(body: Start) -> dict:
     return begun(current_repo(), body)
 
 
-def surveyed(repo: Path, body: Start) -> dict:
+def surveyed(repo: Path, body: Start, recheck: str | None = None) -> dict:
     """A survey in the focus's current mode; one live survey per repository.
-    Starting one retires every stopped older survey, so only the newest resumes."""
+    Starting one retires every stopped older survey, so only the newest resumes.
+    A `recheck` reads one stale card's pipeline again and leaves the rest alone."""
 
     from .query import config
 
@@ -121,7 +122,7 @@ def surveyed(repo: Path, body: Start) -> dict:
             return old
         if live := next((r for r in found if r.get("kind") == "survey" and r["state"] == "running"), None):
             raise HTTPException(409, f"이 저장소의 조사 `{live['id']}` 가 돌고 있다 — 끝나거나 멈춘 뒤 시작해라")
-        for r in found:
+        for r in found if recheck is None else ():
             if r.get("kind") == "survey" and r["state"] == "stopped":
                 refactor_survey.removed(repo, r["id"])
                 refactor.update(repo.name, r["id"], state="superseded")
@@ -131,10 +132,27 @@ def surveyed(repo: Path, body: Start) -> dict:
                "generation": cfg.get("refactor_generation", 0), "files": [],
                "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "baseline", "state": "running",
                "stopped": None, "hotspots": [], "steps": [], "tests": None, "models": [], "specs": [],
-               "created": now, "updated": now}
+               "recheck": recheck, "created": now, "updated": now}
         improvement.atomic(refactor.file_of(repo.name, rid), run)
     refactor.launch(repo, run)
     return refactor.load(repo.name, rid)
+
+
+@router.post("/api/refactors/specs/{sid}/recheck")
+def recheck(sid: str, body: Start) -> dict:
+    """[다시 확인]: one pipeline turn on the current commit for a card whose files changed."""
+
+    repo = current_repo()
+    checked(repo, body)
+    from .query import config
+
+    spec = specs.load(repo.name, sid)
+    if spec is None or not (spec.get("refactor") or {}).get("survey") or spec["state"] != "정리됨":
+        raise HTTPException(404, "다시 확인할 시작 전 조사 명세가 없다")
+    if spec["refactor"]["mode"] != body.mode or \
+            spec["source"].get("refactor_generation", 0) != config("refactor", repo.name).get("refactor_generation", 0):
+        raise HTTPException(409, "명세 모드가 상단에서 고른 모드와 다르다 — 지금 모드로 다시 조사해라")
+    return surveyed(repo, body, sid)
 
 
 def begun(repo: Path, body: Start, sid: str | None = None) -> dict:
@@ -173,7 +191,7 @@ def from_spec(repo: Path, sid: str, role: dict) -> dict:
             raise HTTPException(404, "그런 명세가 없다")
         request = spec.get("refactor") or {}
         if request.get("survey"):
-            raise HTTPException(409, "조사에서 나온 명세의 실행은 아직 연결되지 않았다")
+            raise HTTPException(409, "조사에서 나온 명세는 작업 [시작] 으로 실행한다")
         if request.get("run"):
             return mine(repo, request["run"])
         if spec["state"] != "정리됨":

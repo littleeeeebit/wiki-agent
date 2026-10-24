@@ -128,19 +128,35 @@ In `_check`, before the existing report, cleanup and gate steps:
 - The final command replaces the round checks and its failures are compared
   with the survey baseline. Only pre-existing, parsed failures let the pull
   request open; a pass is kept as the head's final result.
-- A performance spec is measured before the first turn and after the gate, in
-  the same worktree with the same command and repeat count.
+- A performance spec is measured once the gate passes: the task's start commit
+  and its final commit, back to back in the same worktree, with the same
+  command and repeat count; the median of each is reported.
 
 The pull request body gains a `리팩터링 검증` section: mode, survey base,
 changed files since base, characterization, test contract, baseline
 comparison and measurements.
+
+The frozen file records where the tests were fixed as `head`; a legacy file's
+`baseline` is a debt count, so review preservation reads `head` and falls back
+to `start_head`.
+
+A stale card is rechecked with `POST /api/refactors/specs/{sid}/recheck`: a
+survey record with `recheck: <sid>` runs the baseline and one read-only turn
+over that card's pipeline on the current commit. A spec with the same key
+rewrites the card in place (a new revision, the recheck's base and survey); no
+spec sets the card aside with the turn's reason. It retires no other card.
+
+The conversation turn reads the latest survey of the selected mode and its
+cards first (`refactor_run.context`). A `spec` block with `id` refines that
+card in place; one with `split_from` adds the split-off part to the same
+survey. Both pass the same validation as the survey's own specs.
 
 ## Pull requests
 
 | # | Scope |
 | --- | --- |
 | 1 | Survey: modes, record and phases, prompts, validation, baseline gate, `.omm` input, model check, spec cards, one live survey per repository |
-| 2 | Execution: Start checks, linked hub worktree, run prompt, characterization freeze, test contract, baseline comparison, measurement, PR section, conversation refinement in place |
+| 2 | Execution: Start checks, linked hub worktree, run prompt, characterization freeze, test contract, baseline comparison, measurement, PR section, conversation refinement in place, recheck |
 | 3 | Screen: mode cards, Start, progress, report, specs at the bottom; legacy runs read-only and their pipeline removed; legacy cards dropped; label |
 
 ## Tests

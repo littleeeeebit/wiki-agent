@@ -144,6 +144,11 @@ def preservation(spec: dict) -> tuple[Path | None, str]:
     """The refactoring owner's existing frozen check, not a second evaluator."""
     if not spec.get("refactor"):
         return None, ""
+    if spec["refactor"].get("survey"):   # a purpose-mode spec: only `preserve` freezes its characterization
+        if spec["refactor"]["mode"] != "preserve":
+            return None, ""
+        file = Path((spec.get("refactor_frozen") or {}).get("file") or refactor_profile.STORE / "none")
+        return file, "" if file.is_file() else "동작 보존 검사의 고정 명세가 없다"
     from . import refactor
 
     run = refactor.load(spec["repo"], spec["refactor"].get("run", ""))
@@ -252,8 +257,9 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
     if frozen is not None and not problem:
         try:
             frozen_digest = verification.sha(frozen.read_bytes())
-            tests = json.loads(frozen.read_text(encoding="utf-8"))["tests"]
-            baseline = spec["start_head"]
+            fixed = json.loads(frozen.read_text(encoding="utf-8"))
+            # A survey spec freezes its tests after its own characterization commit, past `start_head`.
+            tests, baseline = fixed["tests"], fixed.get("head", spec["start_head"])
             if not isinstance(baseline, str) or len(baseline) != 40 or set(baseline) - set("0123456789abcdef"):
                 raise ValueError("Invalid refactoring baseline")
             preservation_inputs = {"baseline": baseline, "tests": tests}
@@ -314,7 +320,8 @@ def select(repo: Path, path: Path, spec: dict, profile: str, paths: list[str] | 
     if frozen is not None or "refactor" in criteria or "differential" in evidence or problem and spec.get("refactor"):
         if spec.get("refactor"):
             include(items, "criteria:refactor", "enforced", {"origin": "refactor", "rule_id": "F06",
-                    "run": spec["refactor"].get("run"), "step": spec.get("id"), "baseline": spec.get("start_head"),
+                    "run": spec["refactor"].get("run"), "step": spec.get("id"),
+                    "baseline": (preservation_inputs or {}).get("baseline", spec.get("start_head")),
                     "frozen_digest": frozen_digest, "protected_paths": (preservation_inputs or {}).get("tests", [])})
     for flow in flows:
         cid = "flow:" + flow["id"]
