@@ -29,10 +29,11 @@ ID = re.compile(r"[a-z0-9][a-z0-9-]{0,39}")
 # A spec is a change to make. One that only looks, maps or writes the structure down is the survey's own work.
 LOOKING = re.compile(r"^\s*(survey|investigate|audit|explore|map|analy[sz]e|document|diagram|study|inspect)\b"
                      r"|조사|구조도|파악", re.I)
-# Failure identifiers in the tail of common runners' output: pytest, vitest/jest, go test, cargo test.
-# A pytest parameter id may hold spaces: `name[case one]` is read to its closing bracket before ` - `.
-FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+?\[.*?\](?= - |\s*$)|\S+)|^\s*FAIL\s+(\S+)|^--- FAIL: (\S+)"
-                    r"|^test (\S+) \.\.\. FAILED", re.M)
+# Failure identifiers in the tail of other runners' output: vitest/jest, go test, cargo test. pytest's
+# `FAILED`/`ERROR` lines are read whole by `_node`.
+FAILED = re.compile(r"^\s*FAIL\s+(\S+)|^--- FAIL: (\S+)|^test (\S+) \.\.\. FAILED", re.M)
+# A pytest node id: its path and its parameter id may hold spaces, ` - ` and brackets; its names may not.
+NODE = re.compile(r"\S.*?\.py(?:::[\w.]+)*(?:\[.*\])?")
 
 
 def _sections(text: str) -> tuple[str, dict[str, str]]:
@@ -340,16 +341,24 @@ def failures(verdict: dict) -> list[str] | None:
     if verdict.get("code") == 0:
         return []
     tail = verdict.get("tail") or ""
-    found = sorted({next(g for g in m.groups() if g) for m in FAILED.finditer(tail)})
-    if any("[" in name and not name.endswith("]") for name in found):
-        return None   # a parameter id cut short could be any of its cases
+    found = {next(g for g in m.groups() if g) for m in FAILED.finditer(tail)}
     for line in tail.splitlines():
-        if line.startswith(("FAILED ", "ERROR ")) and "[" in line.partition(" - ")[0]:
-            rest = line[line.index("["):].rstrip()
-            ends = rest.count("] - ") + rest.endswith("]")
-            if ends > 1:
-                return None   # the parameter id may end at more than one `]`: two cases could read as one
-    return found or None
+        if (ids := _node(line)) is not None:
+            if len(ids) != 1:
+                return None   # no whole node id, or one that could end in two places: two failures could read as one
+            found |= ids
+    return sorted(found) or None
+
+
+def _node(line: str) -> set[str] | None:
+    """The node ids a pytest `FAILED`/`ERROR` line could name — the line's text before a ` - ` or its
+    end that reads as a whole node id — or None for another line: unittest's closing `FAILED (failures=1)`,
+    a wrapper's `ERROR` log line without a `.py` node."""
+    kind, _, body = line.rstrip().partition(" ")
+    if kind not in ("FAILED", "ERROR") or not body or body.startswith("(") or ".py" not in body:
+        return None
+    ends = [i for i in range(len(body)) if body.startswith(" - ", i)] + [len(body)]
+    return {body[:i] for i in ends if NODE.fullmatch(body[:i])}
 
 
 # -- The phases --------------------------------------------------------------------

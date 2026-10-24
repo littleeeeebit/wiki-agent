@@ -268,3 +268,7 @@ def test_failures_are_named_or_unparsed():
         assert refactor_survey.failures({"code": 1, "tail": doubtful + "\n"}) is None, doubtful
     plain = "FAILED t.py::test_x - assert [1] - [2] == [3]\nFAILED t.py::test_case[x - y] - boom\n"
     assert refactor_survey.failures({"code": 1, "tail": plain}) == ["t.py::test_case[x - y]", "t.py::test_x"]
+    for name in ("tests/unit cases/test_cases.py::test_one", "tests/a - b/test_x.py::TestX::test_y"):   # a path's spaces
+        assert refactor_survey.failures({"code": 1, "tail": f"FAILED {name} - AssertionError: x\n"}) == [name]
+    closing = "FAILED t.py::test_x - boom\nFAILED (failures=1)\n"   # unittest's closing count is no test
+    assert refactor_survey.failures({"code": 1, "tail": closing}) == ["t.py::test_x"]
