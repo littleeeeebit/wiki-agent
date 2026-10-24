@@ -3,7 +3,7 @@
 
 A run is a record under `raw/refactor/runs/<repo>/`; `refactor_survey` owns
 its phases. A worker drives one run on its own thread through read-only
-turns; a restart stops a running run and [재개] continues from its phase.
+turns; a restart stops a running run and `[재개]` continues from its phase.
 Runs of the earlier cleanup/restructure/full workflow stay readable here but
 never run again: their records keep their meaning, their pipeline is gone.
 """
@@ -248,7 +248,7 @@ def close_all() -> None:
 
 
 def recover() -> None:
-    """At start: a run left running is stopped, for [재개]. What the earlier
+    """At start: a run left running is stopped, for `[재개]`. What the earlier
     workflow left waiting is let go, since nothing runs it again: its unstarted
     cards are set aside (`raw/specs/<repo>/dropped/`) and its steps' holds on
     the repository are released. Its started tasks and records stay as they are."""

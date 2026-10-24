@@ -67,7 +67,7 @@ def checked(repo: Path, body: Start) -> None:
 
 @router.post("/api/refactors")
 def start(body: Start) -> dict:
-    """[리팩터링 시작]: a read-only survey; no code changes, commits or pull requests."""
+    """`[리팩터링 시작]`: a read-only survey; no code changes, commits or pull requests."""
 
     repo = current_repo()
     checked(repo, body)
@@ -135,7 +135,7 @@ def cancel(rid: str) -> dict:
 
 @router.post("/api/refactors/{rid}/resume")
 def resume(rid: str) -> dict:
-    """[재개] a stopped survey from its phase; what finished is not asked again.
+    """`[재개]` a stopped survey from its phase; what finished is not asked again.
     One that has made no card yet takes the current generation when its mode is
     still chosen: a mode switched away and back retires cards, and it has none."""
 
