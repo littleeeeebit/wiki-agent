@@ -770,3 +770,20 @@ def test_a_pr_that_is_already_open_is_used_not_made_again(checkout):
         with pytest.raises(RuntimeError, match="PR #7 로 `dev`"):
             specs.pull_request(checkout, "b", "main", "t", "body")
     assert remote.creates() == 1, "never a second PR from a branch already open into another base"
+
+
+def test_only_refactoring_plans_can_omit_limits_and_unknown_usage_is_informational(checkout):
+    # A stored plan of the earlier refactoring workflow keeps running without ceilings.
+    roles = planning.Roles(**{k: {"model": "opus", "effort": "high"} for k in ("planner", "reviser", "reviewer")})
+    normal = planning.Plan(request_id="normal-plan-request", goal="Plan", roles=roles)
+    with pytest.raises(HTTPException):
+        planning.checked(normal)
+    planning.checked(normal.model_copy(update={"refactor": True}))
+    worker = planning.Worker("proj", "plan", {"input": {"refactor": True}, "limits": None,
+        "spent": {"seconds": 100000, "calls": 1000, "tokens": 100000000, "unknown": True}})
+    worker.unknown = True
+    worker.budget.call()
+    worker.halt.set()
+    from common.budget import Cancelled
+    with pytest.raises(Cancelled):
+        worker.budget.call()

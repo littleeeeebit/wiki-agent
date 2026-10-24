@@ -90,7 +90,7 @@ their existing budgets. The hub still supports cleanup and restructure only.
 | 4 | [Module restructure](4-restructure.md) | Module audit, short plan, task blocking | Done — `refactor.block` on the step's spec, approve route |
 | 5 | [Full refactor](5-full.md) | Whole-repo audit feeding the planner's series | Done — `planning.tiered`, phase `plan` waits for the merge |
 | 6 | [Hub scope](6-hub.md) | Hub runs in linked worktrees; applying it to the hub's own code is a later run | Done — `refactor.switched` gives each hub step its own worktree |
-| 7 | [Purpose modes](7-purpose-modes.md) | `preserve`/`simplify`/`rework`, a read-only pipeline survey, specs that run as ordinary tasks | In progress |
+| 7 | [Purpose modes](7-purpose-modes.md) | `preserve`/`simplify`/`rework`, a read-only pipeline survey, specs that run as ordinary tasks | In progress — survey, execution and screen implemented across three stacked PRs; live verification and review remain |
 
 Each stage is a PR stacked on the previous stage's branch and merged in order
 by a person. Review rounds: 1 alone; 2 and 3 together, because the profile has

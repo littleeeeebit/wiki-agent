@@ -1,4 +1,4 @@
-"""Exercise the refactoring conversation against synthetic API responses."""
+"""Exercise the refactoring focus — mode cards, a survey, its cards, legacy runs — against synthetic API responses."""
 
 import json
 from pathlib import Path
@@ -8,7 +8,6 @@ import threading
 import time
 
 from fastapi import FastAPI, Request
-from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from playwright.sync_api import expect, sync_playwright
 import uvicorn
@@ -17,19 +16,54 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).parent))
 from mobile_browser import fixture  # noqa: E402
 
+LEVEL = {"level": "medium", "why": "Three handlers"}
+BASELINE = {"cmd": "pytest", "ok": False, "code": 1, "reason": "", "failures": ["tests/test_flaky.py::test_clock"],
+            "parsed": True}
+MAP = {"pipelines": [{"id": "orders", "name": "Orders", "entry": "src/orders.py", "paths": ["src/orders.py"],
+                      "role": "Takes orders from the API"},
+                     {"id": "billing", "name": "Billing", "entry": "src/billing.py", "paths": ["src/billing.py"],
+                      "role": "Charges accepted orders"}],
+       "shared": [], "excluded": [], "omm": {"used": False, "diverged": []}, "unchecked": []}
+PIPELINE = {"id": "orders", "what": "Validates and stores an order", "inputs": "HTTP body", "outputs": "Order row",
+            "owns": "Order validation", "change": "Validate once at the boundary", "links": [], "misplaced": [],
+            "debts": [{"kind": "defensive", "summary": "Order validation repeated in three handlers",
+                       "evidence": [{"path": "src/orders.py", "symbol": "create"}], "scope": "3 call sites",
+                       "size": LEVEL, "difficulty": LEVEL, "risk": LEVEL, "if_left": "Rules drift apart"}],
+            "checked": ["src/orders.py"], "unchecked": []}
+
+
+def survey(body, generation):
+    return {"id": "cafe0001", "kind": "survey", "repo": "fixture", "mode": body["mode"], "role": body["role"],
+            "generation": generation, "request_id": body["request_id"], "phase": "baseline", "state": "running",
+            "stopped": None, "models": [], "specs": [], "recheck": None, "created": time.time(),
+            "spent": {"seconds": 3, "calls": 1, "tokens": 10}}
+
+
+def card(key, rid, depends):
+    detail = {"key": key, "title": key, "pipeline": "orders", "files": ["src/orders.py"], "boundary": "Order intake",
+              "problem": "Validation repeated", "change": "Order validation runs once at the boundary",
+              "impact": "None", "rollback": "Revert", "evidence": [{"path": "src/orders.py", "symbol": "create"}],
+              "keep": ["Responses"], "depends": depends, "risk": LEVEL,
+              "verify": [{"method": "pytest", "criterion": "passes"}], "tests": {"add": [], "remove": [], "contract": []}}
+    return {"id": f"{key}-{rid}", "repo": "fixture", "rev": 1, "goal": f"{key}. {detail['change']}", "out": ["Responses"],
+            "done": ["pytest", "pytest: passes"], "grounds": {"pages": [], "files": ["src/orders.py"], "rules": []},
+            "decisions": [], "state": "정리됨", "history": [{"ts": 1}], "missing": [], "pr": None, "worktree": None,
+            "gate": None, "fault": None, "report": None, "review_profile": "code",
+            "source": {"focus": "refactor", "plan": None, "turn": 1, "refactor_mode": "simplify", "refactor_generation": 1},
+            "refactor": {"mode": "simplify", "survey": rid, "base": "a" * 40, "pipeline": "orders",
+                         "files": ["src/orders.py"], "evidence": ["src/orders.py"], "depends": depends, "detail": detail,
+                         "role": {"model": "opus", "effort": "high"}}}
+
 
 def main():
     sys.stdout.reconfigure(encoding="utf-8")
     sys.stderr.reconfigure(encoding="utf-8")
     fake = FastAPI()
-    mode, scan_calls, starts = "cleanup", [], []
-    generation = 0
-    records, specs = [], []
-    run = {"id": "synthetic-run", "mode": "restructure", "state": "running", "phase": "audit",
-           "goal": "Remove duplicate order handling", "done": ["No duplicated order handling"], "out": [],
-           "spec": "clean-orders", "spent": {"seconds": 7, "calls": 1, "tokens": 12, "unknown": True},
-           "steps": [], "tests": None, "stopped": None, "created": time.time()}
-    actions, errors, requests = [], [], []
+    mode, generation = "preserve", 0
+    legacy = {"id": "aaaabbbb", "mode": "cleanup", "state": "stopped", "phase": "steps", "goal": "Old cleanup",
+              "stopped": {"reason": "restart", "detail": ""}, "spent": {"seconds": 1, "calls": 1, "tokens": 1},
+              "steps": [{"n": 1, "state": "done", "spec": "old-step", "pr": 12}], "created": time.time() - 99}
+    runs, specs, surveys, starts, rechecks, actions, errors = [legacy], [], [], [], [], [], []
 
     @fake.api_route("/api/{path:path}", methods=["GET", "POST", "PUT"])
     async def api(path: str, request: Request):
@@ -38,46 +72,33 @@ def main():
             return {"local": True}
         if path == "channels":
             rows = fixture(path, request.method)
-            rows.insert(1, {**rows[0], "id": "refactor", "label": "리펙터링", "refactor_mode": mode, "refactor_generation": generation})
+            rows.insert(1, {**rows[0], "id": "refactor", "label": "리팩터링", "model": "opus", "effort": "high",
+                            "refactor_mode": mode, "refactor_generation": generation})
             return rows
         if path == "config/refactor":
             mode = (await request.json())["refactor_mode"]
             generation += 1
             return {"kept": True}
-        if path == "refactors/scan":
-            scan_calls.append(request.headers.get("x-project"))
-            return {"repo": "fixture", "scope": "project", "rows": [{"path": "src/orders.py", "lines": 900,
-                     "cap": 800, "dup": 12, "block": 90, "churn": 4, "debt": 122}]}
+        if path == "refactors" and request.method == "POST":
+            surveys.append(await request.json())
+            runs.insert(0, survey(surveys[-1], generation))
+            return runs[0]
         if path == "refactors":
-            return {"repo": "fixture", "runs": [run] if starts else []}
+            return {"repo": "fixture", "scope": "project", "runs": runs}
+        if path.startswith("refactors/specs/"):
+            rechecks.append((path.split("/")[2], await request.json()))
+            return {"id": "recheck1"}
+        if path.startswith("refactors/") and path.count("/") == 2:
+            actions.append(path.rsplit("/", 1)[1])
+            runs[0]["state"] = "stopped" if actions[-1] == "cancel" else "running"
+            return runs[0]
         if path == "specs":
             return {"project": "fixture", "gate": "git --version", "specs": specs}
         if path == "log/refactor":
-            return [] if request.query_params.get("legacy") == "true" else records
-        if path == "say/refactor":
-            requests.append((await request.json())["text"])
-            spec = {"id": "clean-orders", "repo": "fixture", "rev": len(records) + 1,
-                "goal": run["goal"], "out": [], "done": ["git --version", *run["done"]],
-                "grounds": {"pages": [], "files": [], "rules": []}, "decisions": [], "state": "정리됨",
-                "source": {"focus": "refactor", "plan": None, "turn": 1, "refactor_generation": generation}, "history": [{"ts": 1}],
-                "missing": [], "pr": None, "worktree": None, "gate": None, "fault": None, "report": None,
-                "refactor": {"mode": mode, "files": ["src/orders.py"]}, "review_profile": "code"}
-            specs[:] = [spec]
-            blocks = [{"name": "spec", "id": "clean-orders"}]
-            records.append({"role": "assistant", "text": "Purpose and completion conditions settled.", "blocks": blocks})
-            events = [{"kind": "done", "text": records[-1]["text"]}, {"kind": "blocks", "blocks": blocks}]
-            return StreamingResponse(iter(["data: " + json.dumps(e) + "\n\n" for e in events]), media_type="text/event-stream")
-        if path == "specs/clean-orders/start":
-            starts.append(await request.json())
-            specs[0]["refactor"]["run"] = run["id"]
-            return {"refactor": run["id"]}
-        if path == "refactors/synthetic-run":
-            return run
-        if path.startswith("refactors/synthetic-run/"):
-            action = path.rsplit("/", 1)[1]
-            actions.append(action)
-            run["state"] = "stopped" if action == "cancel" else "running"
-            return run
+            return []
+        if path.startswith("specs/") and path.endswith("/start"):
+            starts.append((path.split("/")[1], await request.json()))
+            return {"path": "fixture-task", "turn": "t"}
         if path == "errors":
             errors.append(await request.json())
             return {"ok": True}
@@ -101,91 +122,72 @@ def main():
             page.on("pageerror", lambda error: errors.append(str(error)))
             page.goto(base)
             nav = page.get_by_role("navigation", name="초점", exact=True)
-            expect(nav.get_by_role("button")).to_have_text(["다음 작업", "리펙터링", "위키", "회고"])
-            expect(page.get_by_role("tab", name="리펙터링", exact=True)).to_have_count(0)
-            nav.get_by_role("button", name="리펙터링", exact=True).click()
-            candidate = page.get_by_role("button", name="중복된 처리 정리", exact=False)
-            expect(candidate).to_be_visible()
-            assert scan_calls == ["fixture"] and not starts
-            assert not page.get_by_text("대상 파일 수", exact=True).count()
-            for label in ("초 한도", "호출 한도", "토큰 한도"):
-                assert not page.get_by_text(label, exact=True).count()
-            candidate.click()
-            start = page.get_by_role("button", name="시작 ▸", exact=True).first
-            expect(start).to_be_enabled()
-            picker = page.get_by_role("combobox", name="리펙터링 모드", exact=True)
-            picker.select_option("restructure")
-            expect(start).to_be_disabled()
-            expect(page.get_by_text("Purpose and completion conditions settled.", exact=True)).to_be_visible()
-            page.get_by_role("button", name="모듈 책임과 경계 재구성", exact=False).click()
-            expect(start).to_be_enabled()
-            start.click()
-            status = page.get_by_label("리펙터링 실행", exact=True).first
-            expect(status).to_be_visible()
-            expect(page.get_by_label("리펙터링 실행", exact=True)).to_have_count(1)
-            expect(status.get_by_text("확인된 토큰", exact=False)).not_to_be_visible()
-            status.get_by_text("단계·사용량 상세", exact=True).click()
-            expect(status.get_by_text("확인된 토큰", exact=False)).to_be_visible()
-            status.get_by_role("button", name="멈추기", exact=True).click()
-            expect(status.get_by_role("button", name="재개", exact=True)).to_be_visible()
-            status.get_by_role("button", name="재개", exact=True).click()
-            expect(status.get_by_role("button", name="멈추기", exact=True)).to_be_visible()
-            assert len(starts) == 1 and actions == ["cancel", "resume"]
+            expect(nav.get_by_role("button")).to_have_text(["다음 작업", "리팩터링", "위키", "회고"])
+            nav.get_by_role("button", name="리팩터링", exact=True).click()
+            modes = page.get_by_role("radiogroup", name="리팩터링 모드", exact=True)
+            expect(modes.get_by_role("radio")).to_have_count(3)
+            expect(modes.get_by_role("radio", name="동작 보존 구조 정리", exact=False)).to_have_attribute("aria-checked", "true")
+            expect(page.get_by_text("이 모드로 한 조사가 아직 없다.", exact=True)).to_be_visible()
+            modes.get_by_role("radio", name="불필요한 복잡성·계약 정리", exact=False).click()
+            expect(modes.get_by_role("radio", name="불필요한 복잡성·계약 정리", exact=False)).to_have_attribute("aria-checked", "true")
+            assert mode == "simplify" and generation == 1
+
+            page.get_by_role("button", name="리팩터링 시작", exact=True).click()
+            report = page.get_by_label("리팩터링 조사", exact=True)
+            expect(report.get_by_role("status")).to_have_text("진행 중 · 기준 커밋 게이트")
+            assert [(s["mode"], s["role"]) for s in surveys] == [("simplify", {"model": "opus", "effort": "high"})], surveys
+            expect(page.get_by_role("button", name="리팩터링 시작", exact=True)).to_be_disabled()
+            run = runs[0]
+            run.update(phase="pipelines", base="a" * 40, baseline=BASELINE, map=MAP, pipelines={"orders": PIPELINE},
+                       models=[{"phase": "map", "requested": "opus", "reported": "claude-opus-5-5"}])
+            expect(report.get_by_role("status")).to_have_text("진행 중 · 파이프라인 설명 1/2")
+            expect(report.get_by_text("이미 실패 1건", exact=False)).to_be_visible()
+            report.get_by_text("Orders", exact=True).click()
+            expect(report.get_by_text("Order validation repeated in three handlers", exact=False)).to_be_visible()
+            expect(report.get_by_text("크기 보통", exact=False)).to_be_visible()
+            report.get_by_role("button", name="멈추기", exact=True).click()
+            report.get_by_role("button", name="재개", exact=True).click()
+            expect(report.get_by_role("button", name="멈추기", exact=True)).to_be_visible()
+            assert actions == ["cancel", "resume"], actions
+
+            # Done: the cards it wrote sit below the conversation, the dependent one locked.
+            specs[:] = [card("shared-check", run["id"], []), card("orders-split", run["id"], [f"shared-check-{run['id']}"])]
+            run.update(state="done", phase="done", pipelines={"orders": PIPELINE, "billing": {**PIPELINE, "id": "billing"}},
+                       survey={"coverage": {"scope": "Both pipelines and their tests", "unchecked": [], "excluded": []}},
+                       specs=[s["id"] for s in specs])
+            expect(report.get_by_role("status")).to_have_text("완료")
+            cards = page.get_by_label("리팩터링 명세", exact=True)
+            expect(cards.get_by_role("button", name="시작 ▸", exact=True)).to_have_count(2)
+            first, second = cards.get_by_role("button", name="시작 ▸", exact=True).all()
+            expect(first).to_be_enabled()
+            expect(second).to_be_disabled()
+            expect(cards.get_by_label("시작할 수 없는 이유", exact=True)).to_contain_text(f"선행 명세 shared-check-{run['id']}")
+            expect(cards.get_by_role("button", name="원문 수정", exact=True)).to_have_count(0)
+            expect(cards.get_by_text("Order validation runs once at the boundary", exact=False).first).to_be_visible()
+            cards.get_by_role("button", name="다시 확인", exact=True).last.click()
+            first.click()
+            for _ in range(50):
+                if starts and rechecks:
+                    break
+                page.wait_for_timeout(100)
+            assert [(sid, body["model"]) for sid, body in starts] == [(f"shared-check-{run['id']}", "opus")], starts
+            assert [(sid, body["mode"]) for sid, body in rechecks] == [(f"orders-split-{run['id']}", "simplify")], rechecks
+
+            history = page.get_by_text("이전 방식의 실행 1개 · 읽기 전용", exact=True)
+            history.click()
+            old = page.get_by_label("이전 방식의 실행", exact=True)
+            expect(old).to_contain_text("이전 · 빠른 정리")
+            expect(old.get_by_role("button")).to_have_count(0)
             measurements = []
             for width in (1440, 400):
                 page.set_viewport_size({"width": width, "height": 900})
                 if width == 400:
                     page.get_by_role("navigation", name="화면", exact=True).get_by_role("button", name="대화", exact=True).click()
-                measurements.append(page.evaluate("""() => ({width: innerWidth, document: document.documentElement.scrollWidth,
-                    mode: document.querySelector('[aria-label="리펙터링 모드"]').getBoundingClientRect().toJSON(),
-                    controls: [...document.querySelectorAll('[aria-label="리펙터링 실행"] button')].map(e => {
-                        const r = e.getBoundingClientRect(); return {text: e.textContent, width: r.width, height: r.height};
-                    })})"""))
+                measurements.append(page.evaluate("() => ({width: innerWidth, document: document.documentElement.scrollWidth})"))
                 assert measurements[-1]["document"] <= width, measurements[-1]
-                expect(picker).to_be_visible()
-            page.reload()
-            page.get_by_role("navigation", name="화면", exact=True).get_by_role("button", name="대화", exact=True).click()
-            page.get_by_role("navigation", name="초점", exact=True).get_by_role("button", name="리펙터링", exact=True).click()
-            expect(page.get_by_label("리펙터링 실행", exact=True).first).to_be_visible()
             output = ROOT / "artifacts"
             output.mkdir(exist_ok=True)
-            page.screenshot(path=str(output / "refactor-conversation.png"), full_page=True)
-            run.update(phase="test_cleanup", steps=[{"n": 1, "tier": "L1", "files": ["tests/test_orders.py"],
-                "goal": "Clean up tests without weakening assertions", "state": "done", "spec": None, "kind": "test_cleanup",
-                "before": {"bytes": 1000, "lines": 100}, "after": {"bytes": 500, "lines": 50},
-                "deferred": ["Structural changes need mutation evidence"]}])
-            expect(status.get_by_role("status")).to_have_text("실행 중 · 테스트 정리·검증")
-            status.get_by_text("단계·사용량 상세", exact=True).click()
-            expect(status.get_by_text("테스트 100 → 50줄", exact=False)).to_be_visible()
-            expect(status.get_by_text("Structural changes need mutation evidence", exact=True)).to_be_visible()
-            run.update(phase="ratchet", steps=[{**run["steps"][0], "kind": "ratchet", "action": "adopted", "checked": True}])
-            expect(status.get_by_role("status")).to_have_text("실행 중 · 부채 기준선 생성·강화")
-            expect(status.get_by_text("PR 머지 전에는 기본 브랜치에 미적용", exact=False)).to_be_visible()
-            run.update(state="continued", continuation={"spec": "refactor-tests", "state": "PR #26",
-                "running": True, "fault": None, "pr": {"number": 26, "url": "https://example.test/pr/26"}})
-            expect(status.get_by_role("status")).to_have_text("에이전트 작업으로 전환 · 에이전트 실행 중")
-            expect(status.get_by_role("link", name="PR #26", exact=True)).to_have_attribute("href", "https://example.test/pr/26")
-            for label in ("재개", "멈추기", "저장소 놓기", "승인"):
-                expect(status.get_by_role("button", name=label, exact=True)).to_have_count(0)
-            run["continuation"].update(running=False, state="머지됨")
-            expect(status.get_by_role("status")).to_have_text("에이전트 작업으로 전환 · 머지됨")
-            assert actions == ["cancel", "resume"], "polling never dispatches the old automatic controller"
-            run.pop("continuation")
-            run.update(state="stopped", stopped={"reason": "scope", "detail": "Public migration is required"},
-                scope_change={"reason": "Two independent contracts must change", "questions": [
-                    {"header": "API", "question": "Change the public API?", "options": [
-                        {"label": "Yes", "note": "Approve API migration"}, {"label": "No", "note": "Keep the API"}]},
-                    {"header": "Storage", "question": "Change the storage schema?", "options": [
-                        {"label": "Yes", "note": "Approve storage migration"}, {"label": "No", "note": "Keep storage"}]}]})
-            for index in range(2):
-                status.locator('fieldset').nth(index).get_by_role('radio', name='Yes', exact=True).check()
-            status.get_by_role('button', name='답하고 이어 가기', exact=True).click()
-            expect(start).to_be_enabled()
-            answer = requests[-1]
-            for context in ("Change the public API?", "Change the storage schema?", "Approve API migration",
-                            "Approve storage migration", "Two independent contracts must change", "Public migration is required",
-                            "1. [API] Change the public API?\nAnswer: Yes", "2. [Storage] Change the storage schema?\nAnswer: Yes"):
-                assert context in answer, (context, answer)
+            page.screenshot(path=str(output / "refactor-survey.png"), full_page=True)
             assert not errors, errors
             print(json.dumps({"measurements": measurements, "starts": len(starts), "actions": actions}, ensure_ascii=False))
             browser.close()

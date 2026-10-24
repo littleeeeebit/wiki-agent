@@ -21,9 +21,9 @@ from fastapi import HTTPException
 
 import refactor_profile
 from main import query, refactor, refactor_run, refactor_survey, specs, work
-from test_main import client, no_machine_settings, until  # noqa: F401 — the fixture is autouse
-from test_refactor import _git
-from test_refactor_survey import Host, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
+from test_main import client, no_machine_settings, parse, until  # noqa: F401 — the fixture is autouse
+from test_main import settled as settled_task
+from test_refactor_survey import Host, _git, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
 from test_specs import Remote, Worker, _adapter, fresh_workers, report, repo, started  # noqa: F401
 
 PY = Path(sys.executable).as_posix()
@@ -104,6 +104,19 @@ def test_a_start_waits_for_its_prerequisite_its_mode_and_unchanged_files(running
     with pytest.raises(HTTPException, match="모드가 바뀌었다"):
         refactor_run.startable(repo, orders, "")
     assert specs.load("proj", shared["id"])["state"] == "정리됨" and not Worker.made, "nothing ran"
+
+
+def test_a_restart_keeps_the_mode_and_generation_its_cards_were_made_in(running, monkeypatch):
+    run = surveyed_in("simplify", spec("orders-names"))
+    settings = {"repo": "proj", "model": "opus", "effort": "high"}
+    client().post("/api/config/refactor", json={**settings, "refactor_mode": "rework"})
+    client().post("/api/config/refactor", json={**settings, "refactor_mode": "simplify"})
+    assert query.config("refactor", "proj")["refactor_generation"] == 2
+    monkeypatch.setattr(query, "_config", {})   # what a restart leaves
+    assert {k: query.config("refactor", "proj")[k] for k in ("refactor_mode", "refactor_generation")} == \
+        {"refactor_mode": "simplify", "refactor_generation": 2}
+    with pytest.raises(HTTPException, match="모드가 바뀌었다"):
+        refactor_run.startable(running[0], specs.load("proj", run["specs"][0]), "")
 
 
 def characterize(test: str, also: str = ""):
@@ -317,6 +330,32 @@ def test_a_card_saved_with_a_dotted_path_still_sees_its_file_change(surveyed):
         refactor_run.startable(surveyed, card, "")
 
 
+def test_a_clone_without_origin_head_asks_github_and_a_rerun_keeps_no_old_verdict(running):
+    repo, remote = running
+    (repo / "gate.py").write_text("import pathlib, sys\nsys.exit(pathlib.Path('stop.txt').exists())\n", encoding="utf-8")
+    _git(repo, "add", "gate.py")
+    _git(repo, "commit", "-qm", "a gate that names no failure")
+    _git(repo, "push", "-q", "origin", "main")
+    _git(repo, "remote", "set-head", "origin", "-d")   # what `gh repo create --push` leaves
+    _adapter(repo, f"{PY} gate.py")
+    run = surveyed_in("simplify", spec("orders-names"))
+
+    def unstop(path, halt):
+        _git(path, "rm", "-q", "stop.txt")
+        _git(path, "commit", "-qm", "unstop")
+        return report(True, True)
+    Worker.replies = [edited("stop.txt", "x\n"), unstop]
+    path = started(client(), run["specs"][0])
+    card = specs.load("proj", run["specs"][0])
+    assert "가리지 못해" in card["fault"] and card["refactor_check"]["unparsed"], "the command ran and failed"
+    parse(client().post("/api/work/say", json={"path": path, "text": "again"}).text)
+    settled_task(path)
+    card = specs.load("proj", run["specs"][0])
+    assert card["state"] == "PR #7", card["fault"]
+    assert card["refactor_check"]["ok"] and "unparsed" not in card["refactor_check"], "no verdict of the first run"
+    assert ["gh", "repo", "view"] in [c[:3] for c in remote.calls]
+
+
 def test_a_hub_card_runs_in_a_linked_worktree(running, monkeypatch):
     repo, _ = running
     run = surveyed_in("simplify", spec("orders-names"))
@@ -384,3 +423,20 @@ def test_a_recheck_keeps_a_card_that_depends_on_another_spec_of_its_survey(surve
     again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck", json=body).json()["id"])
     assert again["state"] == "done", again["stopped"]
     assert specs.load("proj", sid)["refactor"]["depends"] == [run["specs"][0]]
+
+
+@pytest.mark.parametrize("name, old, new, same", [
+    ("tests/data.json", b'{"x": true}', b'{"x": 1}', False),
+    ("tests/data.json", b'{"x": 1, "x": 2}', b'{"x": 2}', False),
+    ("tests/data.json", b'{"x": 1.0000000000000000001}', b'{"x": 1.0}', False),
+    ("tests/data.json", b'{"x": -0}', b'{"x": 0}', False),
+    ("tests/data.json", b'{"x": 1}', b'{"x": ["number", "1"]}', False),
+    ("tests/data.json", b'{"x": NaN}', b'{"x": null}', False),
+    ("tests/data.json", b'{"x": 1, "y": [2]}', b'{"y": [2], "x": 1}', True),
+    ("tests/ui.snap", b"expect text", b"expect", False),
+    ("test_a.py", b"assert x == 1\n", b"assert True\n", False),
+    ("test_a.py", b"assert x == 1\n", b"# kept\nassert (x == 1)\n", True),
+    ("test_a.py", b"x = []  # type: list[int]\n", b"x = []\n", False),
+])
+def test_an_equivalent_test_file_keeps_every_observation(name, old, new, same):
+    assert refactor_run.equivalent(name, old, new) is same

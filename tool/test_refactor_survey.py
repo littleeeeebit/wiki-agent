@@ -19,7 +19,6 @@ import pytest
 from agent.chat_session import Event
 from main import query, refactor, refactor_survey, specs
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
-from test_refactor import _git
 from test_specs import repo  # noqa: F401 — `repo` is a fixture
 
 FILES = {"src/orders.py": "def place(order):\n    return order\n",
@@ -33,6 +32,11 @@ MAP = {"pipelines": [{"id": "orders", "name": "Orders", "entry": "src/orders.py"
        "excluded": [{"path": "dist", "reason": "build output"}], "omm": {"used": False, "diverged": []},
        "unchecked": []}
 LEVEL = {"level": "medium", "why": "two callers"}
+
+
+def _git(path: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True, text=True,
+                          encoding="utf-8").stdout.strip()
 
 
 def report(pid: str) -> dict:
@@ -62,6 +66,8 @@ class Host:
     made: list = []
     answers: dict = {}
     model = "claude-test-1"
+    afterword = ""
+    repair = None
 
     def __init__(self, path, **rest):
         self.path, self.rest, self.id, self.parent_id = Path(path), rest, uuid.uuid4().hex, None
@@ -70,7 +76,10 @@ class Host:
 
     def say(self, text, halt=None):
         self.text, system = text, self.rest["system"]
-        if system == refactor_survey.MAP_PROMPT:
+        if "block was refused" in text:   # the same block again unless `repair` fixes it
+            tag = text.split("Your `", 1)[1].split("`", 1)[0]
+            value = Host.repair or text.split(f"```{tag}\n", 1)[1].split("```", 1)[0]
+        elif system == refactor_survey.MAP_PROMPT:
             tag, value = "refactor-map", MAP
         elif system == refactor_survey.PIPELINE_PROMPT:
             pid = text.rsplit("Explain pipeline `", 1)[1].split("`", 1)[0]
@@ -78,7 +87,11 @@ class Host:
         else:
             tag, value = "refactor-survey", Host.answers.get("survey", SURVEY)
         block = value if isinstance(value, str) else json.dumps(value)
-        yield Event("done", f"Read.\n\n```{tag}\n{block}\n```", {"tokens": {"in": 3, "out": 2}}, self.id)
+        answer = f"Read.\n\n```{tag}\n{block}\n```"
+        if Host.afterword:   # a hook had the model go on after its report
+            yield Event("progress", answer)
+            answer = Host.afterword
+        yield Event("done", answer, {"tokens": {"in": 3, "out": 2}}, self.id)
 
     stop = close = lambda *_: None
 
@@ -92,8 +105,8 @@ def surveyed(repo, tmp_path, monkeypatch):
     _git(repo, "commit", "-qm", "src")
     monkeypatch.setattr(refactor, "RUNS", tmp_path / "runs")
     monkeypatch.setattr(refactor, "ChatSession", Host)
-    Host.made, Host.answers, Host.model = [], {}, "claude-test-1"
-    query.config("refactor", "proj")["refactor_mode"] = "preserve"
+    Host.made, Host.answers, Host.model, Host.afterword, Host.repair = [], {}, "claude-test-1", "", None
+    query.config("refactor", "proj").update(refactor_mode="preserve", refactor_generation=0)
     return repo
 
 
@@ -130,6 +143,9 @@ def test_a_survey_reads_only_its_base_and_ends_in_unstarted_cards(surveyed):
     shared, orders = cards
     assert orders["refactor"]["depends"] == [shared["id"]] and orders["refactor"]["base"] == head
     assert orders["source"]["refactor_mode"] == "preserve" and orders["refactor"]["mode"] == "preserve"
+    assert orders["refactor"]["role"] == {"model": "claude-test", "effort": ""}, "Start offers the survey's model"
+    edit = {"rev": 1, "goal": "Other", "out": [], "done": [], "slug": orders["id"]}
+    assert api.put(f"/api/specs/{orders['id']}", json=edit).status_code == 409, "refined in the conversation only"
     assert start(api).json()["id"] == run["id"], "the request key starts nothing twice"
 
 
@@ -155,11 +171,31 @@ def test_a_malformed_pipeline_stops_and_resume_skips_what_finished(surveyed):
     assert run["state"] == "stopped" and run["stopped"]["reason"] == "format" and list(run["pipelines"]) == ["orders"]
     assert refactor_survey.place(surveyed, run["id"]).exists(), "kept for the resume"
     Host.answers, Host.made = {}, []
+    query.config("refactor", "proj")["refactor_generation"] = 2   # the mode switched away and back
     api.post(f"/api/refactors/{run['id']}/resume")
     run = settled(api, run["id"])
     assert run["state"] == "done"
     assert [m["phase"] for m in run["models"]][-2:] == ["pipeline:billing", "integrate"]
     assert len(Host.made) == 2, "orders was not asked again"
+    assert run["generation"] == 2 and all(specs.load("proj", sid)["source"]["refactor_generation"] == 2
+                                          for sid in run["specs"]), "a survey with no cards yet resumes into this generation"
+
+
+def test_a_refused_block_goes_back_once_with_its_reason(surveyed):
+    api = client()
+    Host.answers, Host.repair = {"billing": "{not json"}, json.dumps(report("billing"))
+    run = settled(api, start(api).json()["id"])
+    assert run["state"] == "done", run["stopped"]
+    assert [m["phase"] for m in run["models"]][2:4] == ["pipeline:billing", "pipeline:billing:repair"]
+    asked = next(h.text for h in Host.made if "block was refused" in h.text)
+    assert "Expecting property name" in asked and "{not json" in asked, "the reason and the refused block go back"
+
+
+def test_a_block_before_a_hooks_afterword_still_counts(surveyed):
+    api = client()
+    Host.afterword = "That sentence describes the pipeline; it is not a promise."
+    run = settled(api, start(api).json()["id"])
+    assert run["state"] == "done", run["stopped"]
 
 
 def test_another_model_answering_stops_the_survey(surveyed):
@@ -223,6 +259,43 @@ def test_a_survey_tree_that_cannot_be_rebuilt_stops_the_survey(surveyed, monkeyp
     assert not seen, "no turn reads what the gate wrote"
 
 
+def test_a_spec_names_the_files_it_creates_and_every_refused_spec_is_named(surveyed):
+    made = refactor_survey.spec_shape(spec("x", creates=["src/intake.py"]), "preserve", MAP, surveyed)
+    assert made["creates"] == ["src/intake.py"] and made["files"] == ["src/orders.py"]
+    for bad, why in ((["src/orders.py"], "이미 있다"), (["src/new/intake.py"], "폴더가"), (["../out.py"], "저장소 안")):
+        with pytest.raises(ValueError, match=why):
+            refactor_survey.spec_shape(spec("x", creates=bad), "preserve", MAP, surveyed)
+    both = {"coverage": {"scope": "s"}, "specs": [spec("a", files=["src/a.py"]), spec("b", files=["src/b.py"]),
+                                                  spec("c" * 41)]}
+    with pytest.raises(ValueError, match=r"(?s)specs\[a\].*specs\[b\].*`c{41}`"):
+        refactor_survey.survey_shape(both, "preserve", MAP, surveyed)
+    assert refactor_survey.spec_shape(spec("x", creates=["./src/intake.py"]), "preserve", MAP, surveyed)["creates"] \
+        == ["src/intake.py"], "kept as Git writes it"
+    # Review round 1: a dependency refusal came only after the field refusal had been repaired.
+    mixed = {"coverage": {"scope": "s"}, "specs": [spec("a", files=["src/no.py"]), spec("b", depends=["unknown", "a"]),
+                                                   spec("b")]}
+    with pytest.raises(ValueError) as refused:
+        refactor_survey.survey_shape(mixed, "preserve", MAP, surveyed)
+    lines = str(refused.value).splitlines()
+    assert any("src/no.py" in x for x in lines) and any("'unknown'" in x and "'a'" not in x for x in lines)
+    assert any("겹친다" in x for x in lines), lines
+    looped = {"coverage": {"scope": "s"}, "specs": [spec("a", files=["src/no.py"], depends=["b"]), spec("b", depends=["a"])]}
+    with pytest.raises(ValueError, match=r"(?s)src/no\.py.*돌아온다"):   # the cycle shows beside the field fault
+        refactor_survey.survey_shape(looped, "preserve", MAP, surveyed)
+    listed = {"coverage": {"scope": "s"}, "specs": [{**spec("a"), "key": ["a"]}, spec("b")]}
+    with pytest.raises(ValueError, match="key"):   # a key that is not text is a refusal, not a TypeError
+        refactor_survey.survey_shape(listed, "preserve", MAP, surveyed)
+
+
+def test_a_map_path_glob_becomes_the_files_it_matches(surveyed):
+    owned = {**MAP["pipelines"][0], "paths": ["src/orders.py", "src/*.py"]}
+    shaped = refactor_survey.mapped_shape({**MAP, "pipelines": [owned, MAP["pipelines"][1]]}, surveyed)
+    assert shaped["pipelines"][0]["paths"] == ["src/orders.py", "src/billing.py", "src/shared.py"]
+    with pytest.raises(ValueError, match="맞는 파일이"):
+        refactor_survey.mapped_shape({**MAP, "pipelines": [{**owned, "paths": ["src/*.rs"]}, MAP["pipelines"][1]]},
+                                     surveyed)
+
+
 def test_dependency_cycles_and_unknown_dependencies_are_refused(surveyed):
     loop = {"coverage": {"scope": "s"}, "specs": [spec("a", depends=["b"]), spec("b", depends=["a"])]}
     with pytest.raises(ValueError, match="돌아온다"):
@@ -263,3 +336,43 @@ def test_failures_are_named_or_unparsed():
     assert refactor_survey.failures({"code": 1, "tail": spaced}) == \
         ["t.py::test_case[a] b]", "t.py::test_case[case one]", "t.py::test_case[case two]"]
     assert refactor_survey.failures({"code": 1, "tail": "FAILED t.py::test_case[case\n"}) is None
+    conda = "ERROR tests/test_b.py - ImportError\nERROR conda.cli.main_run:execute(127): `conda run` failed.\n"
+    assert refactor_survey.failures({"code": 1, "tail": conda}) == ["tests/test_b.py"], "a wrapper's log is no test"
+    errored = {"code": 1, "tail": "ERROR tests/test_b.py::test_c[case one] - boom\n"}
+    assert refactor_survey.failures(errored) == ["tests/test_b.py::test_c[case one]"]
+
+
+def test_a_cancelled_survey_stops_and_resumes_from_its_phase(surveyed, monkeypatch):
+    api = client()
+    gate, original = threading.Event(), refactor_survey.baselined
+    monkeypatch.setitem(refactor.PHASES, "baseline", lambda w, run: (gate.wait(5), original(w, run))[1])
+    rid = start(api).json()["id"]
+    api.post(f"/api/refactors/{rid}/cancel")
+    gate.set()
+    run = settled(api, rid)
+    assert run["state"] == "stopped" and run["stopped"]["reason"] == "cancelled" and not Host.made
+    api.post(f"/api/refactors/{rid}/resume")
+    assert settled(api, rid)["state"] == "done"
+
+
+def test_the_earlier_workflow_is_read_only_and_a_restart_lets_go_of_it(surveyed):
+    from test_specs import made, spec_block
+
+    api = client()
+    legacy = {"id": "aaaabbbb", "repo": "proj", "mode": "cleanup", "scope": "project", "request_id": "legacy-req-01",
+              "role": {"model": "", "effort": ""}, "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "steps",
+              "state": "running", "stopped": None, "steps": [], "tests": None, "created": 1.0, "updated": 1.0}
+    refactor.file_of("proj", "aaaabbbb").parent.mkdir(parents=True, exist_ok=True)
+    refactor.file_of("proj", "aaaabbbb").write_text(json.dumps(legacy), encoding="utf-8")
+    unstarted, held, plain = (made(surveyed, spec_block(slug=s))[0]["id"] for s in ("old-cleanup", "old-step", "plain"))
+    specs.update("proj", unstarted, refactor={"mode": "cleanup", "files": ["a.txt"]})
+    specs.update("proj", held, refactor={"run": "aaaabbbb", "block": True})
+    refactor.recover()
+    assert refactor.load("proj", "aaaabbbb")["stopped"]["reason"] == "restart"
+    assert specs.load("proj", unstarted) is None, "an unstarted card of the earlier workflow is set aside"
+    assert specs.load("proj", held)["refactor"] == {"run": "aaaabbbb", "block": False} and specs.load("proj", plain)
+    assert api.post("/api/refactors/aaaabbbb/resume").status_code == 409
+    assert api.post(f"/api/specs/{held}/start", json={}).status_code == 409
+    assert start(api, mode="cleanup").status_code == 400
+    listed = api.get("/api/refactors").json()["runs"]
+    assert [r["mode"] for r in listed] == ["cleanup"], "its record is still read as it was"

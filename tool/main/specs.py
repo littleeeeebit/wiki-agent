@@ -231,14 +231,9 @@ def owner(path: Path) -> dict | None:
         and branch_of(spec) == branch else None
 
 
-def checkout_idle(repo: Path, run: str = "") -> None:
-    """No branch switch while a loop or a planner still owns this checkout,
-    and no new task while an L2–L3 refactor step holds the repository (`run`
-    names the refactor run that is asking, which its own hold lets through)."""
+def checkout_idle(repo: Path) -> None:
+    """No branch switch while a loop or a planner still owns this checkout."""
     for spec in listing(repo.name):
-        held = spec.get("refactor") or {}
-        if held.get("block") and held.get("run") != run and spec["state"] != "머지됨":
-            raise HTTPException(409, f"리펙터링 단계 `{spec['id']}` 가 이 저장소를 잡고 있다 — 끝나거나 취소되면 풀린다")
         if spec.get("workspace_mode") != "branch" or spec.get("worktree") != str(repo):
             continue
         if spec["state"] == "머지됨" and not spec.get("cleanup_complete"):
@@ -819,6 +814,8 @@ def edit(sid: str, body: Edit) -> dict:
             raise HTTPException(409, "작업 중에는 에이전트에 변경 지시를 보내라. 턴 종료 때 명세에 반영한다")
         if spec["state"] in ("머지됨", "머지 대기") or re.fullmatch(r"리뷰 대기|리뷰 R\d+|고치는 중 R\d+", spec["state"]):
             raise HTTPException(409, "리뷰·머지를 멈춘 뒤 명세를 고쳐라")
+        if spec["state"] == "정리됨" and (spec.get("refactor") or {}).get("survey"):
+            raise HTTPException(409, "조사에서 나온 명세는 리팩터링 대화에서 같은 명세로 다듬는다")
         if spec["state"] != "정리됨":
             if body.slug and body.slug != sid:
                 raise HTTPException(409, "시작한 작업의 브랜치 이름은 그대로 둔다")
@@ -884,9 +881,6 @@ def dismissed(repo: str, branch: str) -> bool:
 def editable_task(spec: dict | None) -> dict:
     if spec is None:
         raise HTTPException(404, "그런 명세가 없다")
-    request = spec.get("refactor") or {}
-    if request.get("mode") and request.get("run"):
-        raise HTTPException(409, "시작한 리펙터링은 실행 카드에서 관리해라. 목적·모드 변경은 새 명세로 정해라")
     return spec
 
 
@@ -973,11 +967,7 @@ def start(sid: str, body: Start) -> dict:
     In that order, a worktree that could not be made leaves the spec exactly
     as it was; the other way round, a failure had to be rolled back."""
 
-    from . import refactor_api, refactor_run   # both import this module
-    repo = current_repo()
-    spec = load(repo.name, sid)
-    if spec and (spec.get("refactor") or {}).get("mode") and not refactor_run.surveyed(spec):
-        return {"refactor": refactor_api.from_spec(repo, sid, body.model_dump())["id"]}
+    from . import refactor_run   # it imports this module
     with _lock:
         repo = current_repo()
         checkout_idle(repo)
@@ -989,6 +979,8 @@ def start(sid: str, body: Start) -> dict:
                 raise HTTPException(404, "그런 명세가 없다")
             if spec["state"] != "정리됨":
                 raise HTTPException(409, f"이미 시작했다 — {spec['state']}")
+            if spec.get("refactor") and not refactor_run.surveyed(spec):
+                raise HTTPException(409, "이전 정리·재구성·전면 리팩터링 명세는 읽기만 한다 — 새 모드로 조사해라")
             try:
                 path, before, previous, extra = refactor_run.forked(repo, spec) if refactor_run.surveyed(spec) \
                     else (*fork(repo, sid), {"workspace_mode": "branch"})

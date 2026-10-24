@@ -42,7 +42,7 @@ Chosen by the owner on 2026-10-24 from offered options.
 | Question | Decision |
 | --- | --- |
 | Survey form | A persisted survey record that reuses the read-only refactoring turn; not a chat turn, not the planner |
-| Survey output | Structured JSON blocks the server validates; a malformed answer stops the survey with what was wrong |
+| Survey output | Structured JSON blocks the server validates; a refused block goes back to the same model once with the reason (user's choice after a live 23-pipeline survey lost its integration turn to one 49-character key); a second refusal, or no block, stops the survey with what was wrong. An integration block names every refused spec at once, with the duplicate keys, unknown dependencies and cycles beside them, so one repair can fix them all (review round 1); a refused spec's text key and dependencies still make the graph, and a key that is not text is one more refusal (review round 2). A spec lists base-commit files it touches in `files` and files it creates in `creates` (absent at base, in a folder that exists): the live repair turn fixed the one new module named and stopped on the next |
 | Large repositories | A map turn, one read-only turn per pipeline, then one integration turn; finished pipeline turns are kept and skipped on retry |
 | Pipeline count | No ceiling; the map turn groups small helpers and says why |
 | Survey tools | Read, Glob and Grep only; the server runs the gate once on the base commit for the baseline |
@@ -51,20 +51,21 @@ Chosen by the owner on 2026-10-24 from offered options.
 | Hotspot list | Removed from the screen; the scan goes to the map turn as reference measurements only; the ratchet stays in the final gate |
 | Model | Only the model chosen in the focus runs the survey; each turn records the model the host reports and the survey stops on a mismatch; an unreported model is shown as unconfirmed |
 | Language | The model writes English; the screen reads it through the translation overlay; pull requests go up in Korean as today |
-| Mode change | A new survey every time, nothing reused; unstarted specs of another mode or generation stay unstartable as today |
+| Mode change | A new survey every time, nothing reused; unstarted specs of another mode or generation stay unstartable as today; the mode and generation are kept per repository on disk, so a restart changes neither; a stopped survey that has made no card yet stays resumable in its mode and resumes into the current generation (user's choice after a mode clicked away and back hid a 23-pipeline survey) |
 | One survey per repository | A second start while one runs is refused; the request key deduplicates; a completed survey drops the unstarted specs of older surveys; started specs stay |
 | Repository switch | A survey keeps running on its own repository; the screen shows the selected repository's latest survey only |
 | Spec execution | The ordinary task flow; one spec, one pull request; the execution model is chosen in the Start dialog, defaulting to the survey's model |
 | Concurrency | The ordinary task rules (`checkout_idle`); a second click on a started spec starts nothing |
 | Dependencies | A spec whose prerequisite has not merged cannot start, and says which |
-| Stale specs | At Start, the survey's base commit is compared with the current base branch: a change to the spec's target or evidence files refuses Start and offers a re-survey of that pipeline; other changes are listed on the task and Start proceeds |
+| Stale specs | At Start, the survey's base commit is compared with the current base branch: a change to the spec's target, created or evidence files refuses Start and offers a re-survey of that pipeline; other changes are listed on the task and Start proceeds |
 | `preserve` characterization | Same pull request: the first turn writes or names tests only; the server checks that only test files changed and that they pass on the unchanged code, commits the freeze, and only then asks for the refactoring |
 | Test contract | Each spec declares which tests it adds, which it may merge or delete (with reasons) and, in `simplify`, which contracts it updates; before the gate the server holds every other existing test file to the existing AST-equivalence check, additions allowed. A Python test file is compared as syntax, type comments included: every old statement stays unchanged and in order and every name it bound is bound as often, so a skip mark, a `pytestmark`, a shadowing redefinition, assignment, import or `del` is a change (review round 2); the count follows the body's scope through every `if`/`try`/`for`/`with`/`match`, with `except` and `match` targets, walruses, `import *` and nested `global`s, and through a definition's whole header — decorators, bases, defaults, annotations — but not a comprehension's or nested function's own names (review rounds 3–4); dynamic rebinding (`globals()`, `setattr`) stays outside a syntactic check. A declared `path` frees the file; a declared `path::name` frees only that test, which must exist at the start, and deleting the file needs the file declared. The contract holds on every head a round checks, review and conflict repairs included (review round 1) |
 | Performance | A `rework` performance spec carries metric, representative task, measurement command and repeat count; the server measures before and after in the task's worktree, also where hosted CI owns the full suite; without a command it is a hypothesis and cannot start |
 | Completion report | At the done report a survey spec runs the final command (`specs.local_required`) once instead of the narrow round checks and compares it with the survey's baseline by exit code and failure identifiers; when every failure was already in the baseline, both sides parsed and the exit code is the baseline's, the pull request opens with that stated; any unparsed or new failure, another exit code, or a verdict that never judged the head (no exit code, or 0 with a failed verdict: the tree, head or base moved) opens nothing (review round 1). A failing command that left the tree or head changed opens nothing whatever its exit code, and a name extracted is not a run explained: a failure-looking line (error, fatal, traceback…) no failure name covers and the baseline's tail did not print, digits and worktree paths blanked, opens nothing (review round 2). pytest's closing count line, with or without its `=` rule (`-q`), is judged by its counts alone, before any digit-blind match: it stands explained when it counts no more failures and errors than the baseline's, whatever its passed, skipped and warning counts (review rounds 3–4). A parameter id is read whole, spaces included; one cut short reads as unparsed. A pass stands as the final result for that head (`specs.proven`), so the pre-merge gate reruns only when review changes the head. The pre-merge gate itself is unchanged |
 | Conversation | Answers questions with the latest survey as context and refines specs in place: the same spec id with a new revision; a split keeps the original id for one purpose and adds only the split-off part as a new spec of the same survey; no spec exists without a survey; a refinement passes the dependency-cycle check against every survey card of the repository — a recheck gives a card a new survey id, not new edges (review round 2) |
-| Legacy runs | Shown read-only with their original mode names; no resume or approve; release of a held repository stays |
+| Legacy runs | Shown read-only with their original mode names; no resume or approve; a restart releases a held repository |
 | Legacy unstarted cards | Dropped (moved to `dropped/`) at server start |
+| Legacy execution code | Deleted in pull request 3 (`refactor_finish.py`, `refactor_continuation.py` and the old phases); `refactor_profile.py` stays for the improvement runner |
 | Hub | All three modes may survey; a hub spec runs only in its own linked worktree; merge and restart stay the person's |
 | Label | 리펙터링 becomes 리팩터링 on screen and in messages; identifiers stay `refactor` |
 | Delivery | This document, then three stacked pull requests merged in order |
@@ -123,7 +124,7 @@ In `_check`, before the existing report, cleanup and gate steps:
   command reads, and sends the refactoring turn. The final gate then reruns
   those tests through `review_contract.preservation_command`.
 - The test contract check compares every test file between `start_head` and
-  HEAD with `refactor_finish.equivalent`, allowing pure additions and the
+  HEAD with `refactor_run.equivalent` (moved from the deleted `refactor_finish`), allowing pure additions and the
   spec's declared merges, deletions and contract updates.
 - The final command replaces the round checks and its failures are compared
   with the survey baseline. Only pre-existing, parsed failures let the pull
@@ -150,6 +151,25 @@ The conversation turn reads the latest survey of the selected mode and its
 cards first (`refactor_run.context`). A `spec` block with `id` refines that
 card in place; one with `split_from` adds the split-off part to the same
 survey. Both pass the same validation as the survey's own specs.
+
+## Screen
+
+The 리팩터링 focus shows three mode cards: name, purpose, representative
+changes and what each mode does not do. 리팩터링 시작 sends the repository,
+the focus's model and effort, and the mode. The selected mode's latest survey
+follows. It shows its phase (pipelines counted), Stop and Resume, the base
+commit and its gate with the failures already there, the reported models, and
+`.omm` use. Then come its coverage, unchecked and excluded paths, and one
+collapsible report per pipeline. The model's English reads through the
+overlay. A running recheck shows the same way.
+
+The survey cards of the selected mode sit below the conversation. An
+unstarted card has no free-text edit (`PUT /api/specs/{id}` refuses it). It
+shows the spec's own fields and why it cannot start yet: another mode, an
+unmerged prerequisite, an unmeasured hypothesis. Its Start picker defaults to
+the survey's model (`refactor.role`). 다시 확인 starts the recheck. A started
+card shows the 리팩터링 검증 table. Unstarted cards stay out of the task rail.
+Runs of the earlier workflow are listed read-only.
 
 ## Pull requests
 

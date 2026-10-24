@@ -30,8 +30,9 @@ LOOKING = re.compile(r"^\s*(survey|investigate|audit|explore|map|analy[sz]e|docu
                      r"|조사|구조도|파악", re.I)
 # Failure identifiers in the tail of common runners' output: pytest, vitest/jest, go test, cargo test.
 # A pytest parameter id may hold spaces: `name[case one]` is read to its closing bracket before ` - `.
-FAILED = re.compile(r"^(?:FAILED|ERROR) (\S+?\[.*?\](?= - |\s*$)|\S+)|^\s*FAIL\s+(\S+)|^--- FAIL: (\S+)"
-                    r"|^test (\S+) \.\.\. FAILED", re.M)
+# pytest's ERROR names a `.py` node; a wrapper's log line (`ERROR conda.cli.main_run:...`) is not one.
+FAILED = re.compile(r"^FAILED (\S+?\[.*?\](?= - |\s*$)|\S+)|^ERROR (\S+?\.py\b\S*?\[.*?\](?= - |\s*$)|\S+\.py\b\S*)"
+                    r"|^\s*FAIL\s+(\S+)|^--- FAIL: (\S+)|^test (\S+) \.\.\. FAILED", re.M)
 
 
 def _sections(text: str) -> tuple[str, dict[str, str]]:
@@ -71,9 +72,10 @@ PIPELINE_SCHEMA = {
     "checked": ["<what you read>"], "unchecked": ["<what you could not read or run, and why>"],
     "proposals": [{"title": "...", "problem": "...", "change": "...", "files": ["..."]}]}
 SPEC_SCHEMA = {
-    "key": "<kebab-case id, unique in this survey>", "title": "<the one improvement>",
+    "key": "<kebab-case id of at most 40 characters, unique in this survey>", "title": "<the one improvement>",
     "pipeline": "<one pipeline id, or shared:<path> for a shared boundary change>",
-    "files": ["<repository-relative files the change touches>"],
+    "files": ["<repository-relative files in the base commit the change touches>"],
+    "creates": ["<repository-relative files the change creates, in folders that exist; omit when none>"],
     "boundary": "<the responsibility boundary this spec works inside>",
     "problem": "<the confirmed problem>", "evidence": [{"path": "...", "symbol": "..."}],
     "change": "<exactly what changes>", "keep": ["<behaviour and scope that stay unchanged>"],
@@ -116,6 +118,10 @@ PIPELINE_PROMPT = (
     "JSON shaped like:\n" + json.dumps(PIPELINE_SCHEMA))
 INTEGRATE_PROMPT = (
     "Turn a repository survey into executable refactoring specs for the selected mode. " + COMMON +
+    " The pipeline reports are your evidence: weigh every debt they name for the selected mode, and turn each "
+    "one worth doing into a spec, largest payoff first; leave one out only for a reason you state in "
+    "`coverage.unchecked`. Missing test coverage is not such a reason: in `preserve` the spec names the "
+    "characterization tests to add in `tests.add`, and they are written and frozen before any code moves."
     " A spec covers one improvement inside one pipeline; never bundle unrelated features. Never write a spec "
     "that only surveys, maps or documents structure. When a shared module change serves several pipelines, make "
     "it its own spec (`pipeline`: `shared:<path>`) that the pipeline specs depend on, unless splitting it would "
@@ -158,6 +164,31 @@ def _at(root: Path, value, what: str) -> str:
     return target.relative_to(top).as_posix()
 
 
+def _new(root: Path, value, what: str) -> str:
+    """A repository-relative path a spec creates: absent from the base commit, in a folder that is there."""
+    rel = _text(value, what).replace("\\", "/").strip("/")
+    target, top = (root / rel).resolve(), root.resolve()
+    if top not in target.parents or target.relative_to(top).parts[0].casefold() == ".git":
+        raise ValueError(f"`{what}`: `{rel}` 은 저장소 안의 경로가 아니다")
+    if target.exists():
+        raise ValueError(f"`{what}`: `{rel}` 은 기준 커밋에 이미 있다 — `files` 에 둔다")
+    if not target.parent.is_dir():
+        raise ValueError(f"`{what}`: `{rel}` 의 폴더가 기준 커밋에 없다")
+    return target.relative_to(top).as_posix()
+
+
+def _owned(root: Path, value, what: str) -> list[str]:
+    """A pipeline's path, or the base commit's files a glob in it matches: a map writes a family that way."""
+    rel = _text(value, what).replace("\\", "/").strip("/")
+    if not any(c in rel for c in "*?["):
+        return [_at(root, rel, what)]
+    found = [_at(root, p.relative_to(root).as_posix(), what) for p in sorted(root.glob(rel))
+             if p.relative_to(root).parts[0].casefold() != ".git"]
+    if not found:
+        raise ValueError(f"`{what}`: `{rel}` 에 맞는 파일이 기준 커밋에 없다")
+    return found
+
+
 def _evidence(root: Path, value, what: str, least: int = 1) -> list[dict]:
     rows = _list(value, what)
     if len(rows) < least:
@@ -183,7 +214,8 @@ def mapped_shape(value, root: Path) -> dict:
         if p["id"] in seen:
             raise ValueError(f"파이프라인 `{p['id']}` 이 두 번 나왔다")
         seen.add(p["id"])
-        paths = [_at(root, x, f"{what}.paths[{k}]") for k, x in enumerate(_list(p.get("paths"), f"{what}.paths"))]
+        paths = list(dict.fromkeys(rel for k, x in enumerate(_list(p.get("paths"), f"{what}.paths"))
+                                   for rel in _owned(root, x, f"{what}.paths[{k}]")))
         if not paths:
             raise ValueError(f"`{what}.paths` 가 비었다")
         pipelines.append({"id": p["id"], "name": _text(p.get("name"), f"{what}.name"),
@@ -244,7 +276,7 @@ def pipeline_shape(value, pid: str, ids: set[str], root: Path) -> dict:
 
 def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
     if not isinstance(s, dict) or not isinstance(s.get("key"), str) or not ID.fullmatch(s["key"]):
-        raise ValueError("명세의 `key` 는 소문자·숫자·- 40자까지다")
+        raise ValueError(f"명세의 `key` `{s.get('key') if isinstance(s, dict) else s}` — 소문자·숫자·- 40자까지다")
     what = f"specs[{s['key']}]"
     title = _text(s.get("title"), f"{what}.title")
     if LOOKING.search(title):
@@ -259,6 +291,8 @@ def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
     shaped = {
         "key": s["key"], "mode": mode, "title": title, "pipeline": pipeline,
         "files": [_at(root, f, f"{what}.files[{i}]") for i, f in enumerate(_list(s.get("files"), f"{what}.files"))],
+        "creates": [_new(root, f, f"{what}.creates[{i}]")
+                    for i, f in enumerate(_list(s.get("creates") or [], f"{what}.creates"))],
         **{k: _text(s.get(k), f"{what}.{k}") for k in ("boundary", "problem", "change", "impact", "rollback")},
         "evidence": _evidence(root, s.get("evidence"), f"{what}.evidence"),
         "keep": _texts(s.get("keep"), f"{what}.keep"),
@@ -323,14 +357,29 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
     """An integration (or recheck) block; `known` are keys outside it a spec may still depend on."""
     if not isinstance(value, dict) or not isinstance(value.get("coverage"), dict):
         raise ValueError("refactor-survey 는 coverage 가 있는 JSON 객체여야 한다")
-    shaped = [spec_shape(s, mode, map_, root) for s in _list(value.get("specs") or [], "specs")]
-    keys = [s["key"] for s in shaped]
-    if len(set(keys)) != len(keys):
-        raise ValueError("명세 `key` 가 겹친다")
-    for s in shaped:
-        if unknown := set(s["depends"]) - set(keys) - known:
-            raise ValueError(f"`specs[{s['key']}].depends` 에 없는 명세: {sorted(unknown)}")
-    acyclic({s["key"]: s["depends"] for s in shaped})
+    # Every refusal at once, the specs' own and their keys' and dependencies': one repair fixes them all.
+    raw, shaped, refused = _list(value.get("specs") or [], "specs"), [], []
+    for s in raw:
+        try:
+            shaped.append(spec_shape(s, mode, map_, root))
+        except ValueError as exc:
+            refused.append(str(exc))
+    # A refused spec's key and dependencies still make the graph, so a cycle shows on the first refusal;
+    # a key or dependency that is not text is already among the refusals and stays out of it.
+    graph = [(s["key"], [d for d in s.get("depends") or [] if isinstance(d, str)]) for s in raw
+             if isinstance(s, dict) and isinstance(s.get("key"), str) and isinstance(s.get("depends") or [], list)]
+    keys = [k for k, _ in graph]
+    if duplicated := sorted({k for k in keys if keys.count(k) > 1}):
+        refused.append(f"명세 `key` 가 겹친다: {duplicated}")
+    for key, depends in graph:
+        if unknown := set(depends) - set(keys) - known:
+            refused.append(f"`specs[{key}].depends` 에 없는 명세: {sorted(unknown)}")
+    try:
+        acyclic(dict(graph))
+    except ValueError as exc:
+        refused.append(str(exc))
+    if refused:
+        raise ValueError("\n".join(refused))
     coverage = value["coverage"]
     result = {"coverage": {"scope": _text(coverage.get("scope"), "coverage.scope"),
                            "unchecked": _texts(coverage.get("unchecked") or [], "coverage.unchecked"),
@@ -440,11 +489,29 @@ def baselined(w, run: dict) -> dict:
     return w.note(phase="recheck" if run.get("recheck") else "map")
 
 
-def asked(w, run: dict, phase: str, text: str, system: str, tag: str):
-    """One read-only turn in the survey's worktree on the chosen model; its block."""
+REPAIR = ("Your `{tag}` block was refused: {reason}\n\nThe refused block:\n```{tag}\n{block}```\n\n"
+          "Return the whole `{tag}` block again with that fixed. Change only what the refusal names; read the "
+          "repository only where the fix needs it.")
+
+
+def asked(w, run: dict, phase: str, text: str, system: str, tag: str, shape):
+    """One read-only turn in the survey's worktree on the chosen model; its block, shaped. A refused block
+    goes back to the same model once with the reason — a long turn is not lost to one bad field; a second
+    refusal raises its `ValueError`."""
+
+    answer = refactor.block(tag, said(w, run, phase, text, system))
+    try:
+        return shape(json.loads(answer))
+    except ValueError as exc:
+        again = REPAIR.format(tag=tag, reason=exc, block=answer)
+    return shape(json.loads(refactor.block(tag, said(w, run, f"{phase}:repair", again, system))))
+
+
+def said(w, run: dict, phase: str, text: str, system: str) -> str:
+    """One read-only turn on the chosen model, refused when another model answered; all it said."""
 
     path = checkout(w, run)
-    final = refactor.turn(w, run, f"{rules(run['mode'])}\n\n{text}", system, write=False, where=path)
+    final = refactor.turn(w, run, f"{rules(run['mode'])}\n\n{text}", system, path)
     # The session `turn` ran is still registered for its path; Claude names the model it attached at init.
     seen = str(getattr(work._runs[str(path)].chat, "model_name", "") or "")
     want, got = (run["role"].get("model") or "").removeprefix("codex:").lower(), seen.lower()
@@ -453,7 +520,7 @@ def asked(w, run: dict, phase: str, text: str, system: str, tag: str):
                                              "reported": seen}])
     if want and got and want not in got and got.split("[")[0] not in want:
         raise refactor.Stop("model", f"`{run['role']['model']}` 을 골랐는데 `{seen}` 이 답했다 — 다른 모델로 대신하지 않는다")
-    return refactor.fenced(tag, final)
+    return final
 
 
 def omm(w, run: dict, path: Path) -> str:
@@ -483,7 +550,7 @@ def mapped(w, run: dict) -> dict:
             f"Gate on the base commit: `{gate['cmd']}` exited {gate['code']}"
             + (f"; failing: {', '.join(gate['failures'])}" if gate["failures"] else "") + ".")
     try:
-        shaped = mapped_shape(asked(w, run, "map", text, MAP_PROMPT, "refactor-map"), path)
+        shaped = asked(w, run, "map", text, MAP_PROMPT, "refactor-map", lambda v: mapped_shape(v, path))
     except ValueError as exc:
         raise refactor.Stop("format", f"refactor-map 이 맞지 않다 — {exc}") from exc
     return w.note(map=shaped, pipelines={}, phase="pipelines")
@@ -498,8 +565,8 @@ def explained(w, run: dict) -> dict:
         text = (f"The repository map:\n{json.dumps(run['map'], ensure_ascii=False)}\n\n"
                 f"Explain pipeline `{p['id']}` ({p['name']}).")
         try:
-            done[p["id"]] = pipeline_shape(asked(w, run, f"pipeline:{p['id']}", text, PIPELINE_PROMPT,
-                                                 "refactor-pipeline"), p["id"], ids, path)
+            done[p["id"]] = asked(w, run, f"pipeline:{p['id']}", text, PIPELINE_PROMPT, "refactor-pipeline",
+                                  lambda v, pid=p["id"]: pipeline_shape(v, pid, ids, path))
         except ValueError as exc:
             raise refactor.Stop("format", f"`{p['id']}` 의 refactor-pipeline 이 맞지 않다 — {exc}") from exc
         run = w.note(pipelines=done)
@@ -511,8 +578,8 @@ def integrated(w, run: dict) -> dict:
     text = (f"The repository map:\n{json.dumps(run['map'], ensure_ascii=False)}\n\nPipeline reports:\n"
             + json.dumps(list(run["pipelines"].values()), ensure_ascii=False))
     try:
-        survey = survey_shape(asked(w, run, "integrate", text, INTEGRATE_PROMPT, "refactor-survey"),
-                              run["mode"], run["map"], path)
+        survey = asked(w, run, "integrate", text, INTEGRATE_PROMPT, "refactor-survey",
+                       lambda v: survey_shape(v, run["mode"], run["map"], path))
     except ValueError as exc:
         raise refactor.Stop("format", f"refactor-survey 가 맞지 않다 — {exc}") from exc
     run = w.note(survey=survey)
@@ -553,7 +620,9 @@ def made(repo: Path, survey: str, base: str, s: dict, depends: list[str]) -> dic
     return {**specs.fields(repo, block, specs.gate_of(repo)),
             "refactor": {"mode": s["mode"], "survey": survey, "base": base, "pipeline": s["pipeline"],
                          "files": s["files"], "evidence": sorted({e["path"] for e in s["evidence"]}),
-                         "depends": depends, "detail": s}}
+                         "depends": depends, "detail": s,
+                         # Start offers the survey's model first.
+                         "role": (refactor.load(repo.name, survey) or {}).get("role")}}
 
 
 def fresh(repo: Path, sid: str, fields: dict, source: dict) -> None:
@@ -624,13 +693,17 @@ def rechecked(w, run: dict) -> dict:
             f"older survey:\n{json.dumps((parent.get('pipelines') or {}).get(old['pipeline']), ensure_ascii=False)}"
             f"\n\nThe spec:\n{json.dumps(old['detail'], ensure_ascii=False)}\n\nFiles changed since its base "
             f"{old['base']}: {', '.join(changed[:300]) or 'none'}")
-    try:
-        # The card's prerequisites are other specs of its survey, not in this one-spec answer.
-        others = frozenset([*old["detail"]["depends"], *(s["key"] for s in (parent.get("survey") or {}).get("specs") or [])])
-        survey = survey_shape(asked(w, run, "recheck", text, RECHECK_PROMPT, "refactor-survey"), run["mode"],
-                              parent["map"], path, others)
+    # The card's prerequisites are other specs of its survey, not in this one-spec answer.
+    others = frozenset([*old["detail"]["depends"], *(s["key"] for s in (parent.get("survey") or {}).get("specs") or [])])
+
+    def shape(value):
+        survey = survey_shape(value, run["mode"], parent["map"], path, others)
         if len(survey["specs"]) > 1 or survey["specs"] and survey["specs"][0]["key"] != old["detail"]["key"]:
             raise ValueError(f"key `{old['detail']['key']}` 의 명세 하나만 돌려줘야 한다")
+        return survey
+
+    try:
+        survey = asked(w, run, "recheck", text, RECHECK_PROMPT, "refactor-survey", shape)
     except ValueError as exc:
         raise refactor.Stop("format", f"다시 확인한 refactor-survey 가 맞지 않다 — {exc}") from exc
     with specs._files:

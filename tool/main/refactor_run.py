@@ -26,7 +26,7 @@ from fastapi import HTTPException
 import debt
 import refactor_profile
 
-from . import refactor, refactor_finish, refactor_survey, review_contract, specs
+from . import refactor, refactor_survey, review_contract, specs
 from .query import ROOT, config
 
 RUN = (ROOT / "tool/prompts/refactor-run.md").read_text(encoding="utf-8").strip()
@@ -100,7 +100,7 @@ def startable(repo: Path, spec: dict, source: str) -> list[str]:
     if listed.returncode:
         raise HTTPException(409, f"조사 기준 커밋과 비교하지 못했다 — {specs.said(listed)}")
     changed = listed.stdout.splitlines()
-    if hit := under(changed, [*r["files"], *r["evidence"]]):
+    if hit := under(changed, [*r["files"], *r["detail"].get("creates", []), *r["evidence"]]):
         raise HTTPException(409, f"조사 뒤 대상·근거 파일이 바뀌었다: {', '.join(hit[:10])} — [다시 확인] 으로 "
                                  "이 명세를 지금 코드에서 다시 조사해라")
     return changed
@@ -171,6 +171,35 @@ def characterized(repo: Path, path: Path, run, spec: dict, final: str):
 
 
 # -- Before the pull request ---------------------------------------------------------
+
+def equivalent(name: str, old: bytes, new: bytes) -> bool:
+    """The same test file in another form: a Python file's AST, a JSON file's
+    values, or the same bytes. No serializer may erase an expected observation."""
+    if old == new:
+        return True
+    try:
+        if name.endswith(".py"):
+            return ast.dump(ast.parse(old, type_comments=True), include_attributes=False) == \
+                ast.dump(ast.parse(new, type_comments=True), include_attributes=False)
+        if name.endswith(".json"):
+            def pairs(items):
+                if len(dict(items)) != len(items):
+                    raise ValueError("Duplicate JSON keys")
+                return dict(sorted(items))
+
+            def number(token):
+                if token in ("NaN", "Infinity", "-Infinity"):
+                    raise ValueError("Nonfinite JSON number")
+                return ("number", token)
+
+            def canonical(b):
+                return repr(json.loads(b, object_pairs_hook=pairs, parse_int=number, parse_float=number,
+                                       parse_constant=number))
+            return canonical(old) == canonical(new)
+    except (SyntaxError, ValueError, UnicodeError):
+        pass
+    return False
+
 
 def added_only(before: bytes, after: bytes) -> bool:
     """Every old line is still there, in order: the file only gained lines."""
@@ -287,7 +316,7 @@ def contract(path: Path, spec: dict) -> str:
             continue
         new = (path / name).read_bytes()
         if not name.endswith(".py"):
-            if allowed or not (refactor_finish.equivalent(name, old.stdout, new) or added_only(old.stdout, new)):
+            if allowed or not (equivalent(name, old.stdout, new) or added_only(old.stdout, new)):
                 broken.append(f"`{name}` 의 기존 테스트 변경")
             continue
         try:
@@ -320,14 +349,18 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
 
     if problem := contract(path, spec):
         return problem
-    base = specs.local_base(spec, path)
+    # A clone without `origin/HEAD` (one `gh repo create --push` made) asks GitHub, as the pull request will.
+    if not (base := specs.local_base(spec, path) or specs.base_of(spec, path).stdout.strip()):
+        return "기본 브랜치를 모른다 — 최종 명령을 돌리지 않았다"
     local_only = bool(review_contract.preservation_command(spec))
+    # Only the start's record carries over; a verdict of an earlier final command is not this one's.
+    started = {"changed": (spec.get("refactor_check") or {}).get("changed", [])}
     cfg = specs.verify.policy(path, project=repo)
     if cfg and not local_only and specs.verify.backend(path, cfg) == "ci":
         # Hosted CI owns the full suite there; a local full run before the pull request would be a second one.
         verdict, record = specs.rounded(repo, path, spec, base, run.halt, lambda text: specs.note(run, text))
         specs.update(spec["repo"], spec["id"], gate=verdict,
-                     refactor_check={**(spec.get("refactor_check") or {}), "final": "ci"})
+                     refactor_check={**started, "final": "ci"})
         specs.validate(spec["repo"], spec["id"], round=record)
         if not verdict["ok"]:
             return f"판정 실패 — {verdict['reason']}"
@@ -361,9 +394,12 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
                                                  "ts": time.time(), "selection": "final"})
     if run.halt.is_set():
         return "사람이 멈춤 — 최종 명령을 끊었다"
-    if not ok and not seen.get("code"):
-        # No exit code, or 0 with a failed verdict: the command never judged this head (it changed the tree,
-        # or the head or base moved). A baseline comparison would read that as having no new failure.
+    if not ok and seen.get("code") is None:
+        # Nothing ran — no baseline comparison can say anything about it.
+        return f"최종 명령을 돌리지 못했다 — {reason or seen.get('reason') or '검증 커밋·base가 다르다'}"
+    if not ok and seen["code"] == 0:
+        # 0 with a failed verdict: the command never judged this head (it changed the tree, or the head or
+        # base moved). A baseline comparison would read that as having no new failure.
         return f"최종 검증이 무효다 — {reason or seen.get('reason') or '검증 커밋·base가 다르다'}"
     after = specs.status(path)
     if not ok and (after.returncode or after.stdout.strip()
@@ -372,7 +408,7 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
         return "최종 검증이 무효다 — 최종 명령이 작업트리나 HEAD 를 바꿨다"
     baseline = refactor.load(spec["repo"], spec["refactor"]["survey"])["baseline"]
     now = [] if ok else refactor_survey.failures({"code": seen.get("code", 1), "tail": tail})
-    check = {**(spec.get("refactor_check") or {}), "final": "local", "head": head, "ok": ok,
+    check = {**started, "final": "local", "head": head, "ok": ok,
              "baseline": {"cmd": baseline["cmd"], "code": baseline["code"], "failures": baseline["failures"]}}
     if now is None or not ok and not baseline["parsed"]:
         specs.update(spec["repo"], spec["id"], refactor_check={**check, "unparsed": True})

@@ -153,8 +153,8 @@ CHANNELS: list[Channel] = [
     ),
     Channel(
         id="refactor",
-        label="리펙터링",
-        blurb="모드를 고르고, 대화로 범위를 정해 리펙터링 명세를 만든다",
+        label="리팩터링",
+        blurb="목적 모드를 골라 저장소를 조사하고, 파이프라인별 설명과 실행할 명세를 만든다",
         preamble=(WIKI / "tool/prompts/next-task.md").read_text(encoding="utf-8").strip() + "\n\n"
                  + (WIKI / "tool/prompts/refactor-task.md").read_text(encoding="utf-8").strip(),
     ),
