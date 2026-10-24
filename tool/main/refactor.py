@@ -140,7 +140,9 @@ def git(repo: Path, *args: str) -> str:
 def turn(w: Worker, run: dict, text: str, system: str, where: Path) -> str:
     """One read-only native turn in the worktree `where`, shown in the agent
     pane like any work turn; usage is recorded without a ceiling. It gets read
-    tools only — no shell — and must leave HEAD and the tree as it found them."""
+    tools only — no shell — and must leave HEAD and the tree as it found them.
+    Every message of the turn comes back, not the last alone: a hook that has
+    the model go on after its report leaves the report's block in an earlier one."""
 
     try:
         w.budget.call()
@@ -164,7 +166,7 @@ def turn(w: Worker, run: dict, text: str, system: str, where: Path) -> str:
         active.halt.set()
     with _lock:
         work._runs[str(where)] = active
-    final, failed, tokens = "", "", {}
+    final, failed, tokens, said = "", "", {}, []
     try:
         work.remember(where, "user", text)
         work.feed.put({"kind": "started", "path": str(where), "turn": active.turn})
@@ -173,6 +175,8 @@ def turn(w: Worker, run: dict, text: str, system: str, where: Path) -> str:
                 active.halt.set()
                 chat.stop(active.halt)
             active.put({"kind": ev.kind, "text": ev.text, "meta": ev.meta, "session_id": chat.id, "parent_id": None})
+            if ev.kind == "progress":
+                said.append(ev.text)
             if ev.kind == "done":
                 final, tokens = ev.text, ev.meta.get("tokens") or {}
             if ev.kind == "error" or ev.meta.get("error"):
@@ -192,7 +196,7 @@ def turn(w: Worker, run: dict, text: str, system: str, where: Path) -> str:
         raise Stop("cancelled" if w.halt.is_set() else "host", failed or "턴이 끊겼다")
     if state() != before:
         raise Stop("read_only_wrote", "읽기 전용 턴이 저장소를 바꿨다 — 그 상태 위에서는 이어가지 않는다")
-    return final
+    return "\n\n".join([*said, final])
 
 
 PHASES = dict(refactor_survey.PHASES)
