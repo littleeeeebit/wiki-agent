@@ -281,7 +281,8 @@ def main():
             # it is what any card's start sends; reopening a task keeps the task's own model.
             started = []
             draft = {**spec, "id": "draft-task", "state": "정리됨", "worktree": None, "report": []}
-            cards = [draft, {**draft, "id": "draft-refactor", "refactor": {"mode": "cleanup", "files": []}},
+            # A survey spec starts on the model its own Start picker holds, the survey's by default.
+            cards = [draft, {**draft, "id": "draft-refactor", "refactor": {"mode": "preserve", "survey": "abcd1234", "role": {"model": "sonnet", "effort": ""}}},
                      {**spec, "id": "existing-task", "state": "PR #9", "pr": {"number": 9}, "worktree": None,
                       "branch": "existing-task", "cell": {"model": "sonnet", "effort": "", "fast": False}}]
             rows = [{"path": "fixture-task", "name": "fixture-task", "branch": "fixture", "dirty": False,
@@ -293,8 +294,7 @@ def main():
                  "blocks": [{"name": "spec", "id": card["id"]} for card in cards]}]))
             page.route("**/api/specs/*/start", lambda route: (
                 started.append((route.request.url.split("/")[-2], route.request.post_data_json)),
-                route.fulfill(json={"refactor": "run"} if "refactor" in route.request.url
-                              else {"path": "fixture-task", "turn": "t"})))
+                route.fulfill(json={"path": "fixture-task", "turn": "t"})))
             def checkout(route):
                 # Reopening checks the PR's branch out: from here the task has a worktree row.
                 started.append((route.request.url.split("/")[-2], None))
@@ -351,8 +351,8 @@ def main():
             press(last)
             press(page.get_by_role("button", name="브랜치 열기", exact=True))
             assert [(sid, body and body["model"]) for sid, body in started] == [
-                ("draft-task", ""), ("draft-refactor", "codex:fixture-fast"), ("draft-task", "codex:fixture-fast"),
-                ("draft-refactor", "opus"), ("draft-refactor", "codex:fixture-standard"), ("existing-task", None)], started
+                ("draft-task", ""), ("draft-refactor", "sonnet"), ("draft-task", "codex:fixture-fast"),
+                ("draft-refactor", "sonnet"), ("draft-refactor", "sonnet"), ("existing-task", None)], started
             expect(agent.get_by_label("선택한 작업 모델", exact=True)).to_have_text("sonnet")
             page.unroute("**/api/specs/*/start")
             page.unroute("**/api/specs/*/checkout")

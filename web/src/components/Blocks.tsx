@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { Questions } from '@/components/Questions'
 import { PlanStatus } from '@/components/Plan'
-import { RefactorStatus, REFACTOR_MODE } from '@/components/Refactor'
+import { locks, RefactorCheck, REFACTOR_MODE, SurveyDetail, surveyStarted } from '@/components/Refactor'
 import type { RefactorMode } from '@/components/Refactor'
 import { Btn } from '@/components/Modal'
+import { Toolbar } from '@/components/Toolbar'
+import type { Choice } from '@/components/Toolbar'
 import * as api from '@/lib/api'
-import type { Block, ChoiceQuestion, Spec } from '@/lib/api'
+import type { Block, ChoiceQuestion, Options, Spec } from '@/lib/api'
 import { useOverlay } from '@/lib/overlay'
 
 export type BlockProps = {
@@ -16,9 +18,11 @@ export type BlockProps = {
   onSay: (text: string) => void
   /** Read the spec list again: a card changed. */
   onSpecs: () => void
-  onStart: (id: string) => Promise<void>
+  /** `choice` is the model a survey spec's Start dialog picked; otherwise the empty agent pane's. */
+  onStart: (id: string, choice?: Choice) => Promise<void>
   refactorMode?: RefactorMode
   refactorGeneration?: number
+  options?: Options | null
 }
 
 /** The named blocks at the end of a `next` answer, drawn as what they ask for. */
@@ -95,18 +99,30 @@ function SpecCard({ id, specs, ...props }: { id: string } & BlockProps) {
   const [current, setCurrent] = useState(id)
   const spec = specs.find((s) => s.id === current)
   if (!spec) return <p className="text-[12.5px] text-faint">명세 `{current}` 는 이제 없다 — 버렸거나 이름을 바꿨다.</p>
-  if (spec.refactor?.mode && spec.refactor.run) return <RefactorStatus repo={spec.repo} id={spec.refactor.run}
-    specs={specs} korean={props.korean} onSay={props.onSay} onChanged={props.onSpecs} />
+  if (spec.refactor && !spec.refactor.survey) return <Legacy spec={spec} {...props} />
   if (spec.state !== '정리됨') return <Started spec={spec} {...props} />
   // A new version of the spec starts what is typed over.
-  return <SpecForm key={`${spec.id}:${spec.rev}`} spec={spec} onRenamed={setCurrent} {...props} />
+  return <SpecForm key={`${spec.id}:${spec.rev}`} spec={spec} specs={specs} onRenamed={setCurrent} {...props} />
+}
+
+/** A card of the earlier refactoring workflow: it no longer starts; it can be dropped. */
+function Legacy({ spec, korean, onSpecs }: { spec: Spec } & Pick<BlockProps, 'korean' | 'onSpecs'>) {
+  const [fault, setFault] = useState('')
+  return <div className={box}>
+    <Head spec={spec} />
+    <SpecDetails spec={spec} korean={korean} />
+    <p className="mt-2 text-[12.5px] text-muted-foreground">이전 방식의 리팩터링 명세다. 시작할 수 없다 — 목적 모드를 골라 다시 조사한다.</p>
+    {spec.state === '정리됨' && <Btn tone="ghost" className="mt-2" onClick={() => api.dropSpec(spec.id)
+      .then(onSpecs, (err) => setFault(String(err instanceof Error ? err.message : err)))}>버리기</Btn>}
+    {fault && <p role="alert" className="mt-1.5 text-[12.5px] text-destructive">{fault}</p>}
+  </div>
 }
 
 function Head({ spec }: { spec: Spec }) {
   return (
     <div className="mb-2 flex items-center gap-2 font-heading text-[11px] text-faint">
       <span>명세</span>
-      {spec.refactor?.mode && <span>{REFACTOR_MODE[spec.refactor.mode]}</span>}
+      {spec.refactor?.mode && <span>{REFACTOR_MODE[spec.refactor.mode] ?? spec.refactor.mode}</span>}
       <span className="font-mono">{spec.id}</span>
       {spec.rev > 1 && <span>판 {spec.rev}</span>}
       <span className="ml-auto font-mono text-[10.5px] font-normal text-muted-foreground">{spec.state}</span>
@@ -121,6 +137,7 @@ function Started({ spec, korean, busy, onSpecs, onStart }: { spec: Spec } & Pick
     <div className={box}>
       <Head spec={spec} />
       <SpecDetails spec={spec} korean={korean} />
+      {spec.refactor?.survey && <RefactorCheck spec={spec} />}
       {spec.planning && <PlanStatus spec={spec} korean={korean} onChanged={onSpecs} />}
       {!busy && !/^(머지됨|머지 대기|리뷰 대기|리뷰 R\d+|고치는 중 R\d+)$/.test(spec.state) &&
         <Btn onClick={() => setEditing((open) => !open)}>{editing ? '편집 닫기' : '명세 수정'}</Btn>}
@@ -171,8 +188,13 @@ function SpecDetails({ spec, korean }: { spec: Spec; korean: boolean }) {
   </div>
 }
 
-export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed, korean = false, refactorMode, refactorGeneration }:
-  { spec: Spec; onRenamed: (id: string) => void; korean?: boolean; refactorMode?: RefactorMode; refactorGeneration?: number } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart'>) {
+export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, korean = false, refactorMode, refactorGeneration, options = null }:
+  { spec: Spec; specs?: Spec[]; onRenamed: (id: string) => void; korean?: boolean; refactorMode?: RefactorMode; refactorGeneration?: number
+    options?: Options | null } & Pick<BlockProps, 'busy' | 'onSpecs' | 'onStart'>) {
+  // A survey spec is refined in the conversation, never typed over, and starts on the model picked here.
+  const surveyed = !!spec.refactor?.survey
+  const [choice, setChoice] = useState<Choice>(spec.refactor?.role ?? { model: '', effort: '' })
+  const locked = locks(spec, specs, refactorMode, refactorGeneration)
   const [goal, setGoal] = useState(spec.goal)
   const [out, setOut] = useState(spec.out.join('\n'))
   const [done, setDone] = useState(spec.done.slice(1).join('\n'))
@@ -183,8 +205,6 @@ export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed, korean = fal
 
   const edited = goal !== spec.goal || out !== spec.out.join('\n') || done !== spec.done.slice(1).join('\n')
     || slug !== spec.id
-  const modeChanged = spec.refactor?.mode && refactorMode && (spec.refactor.mode !== refactorMode
-    || (spec.source.refactor_generation ?? 0) !== (refactorGeneration ?? 0))
 
   async function act(what: string, fn: () => Promise<unknown>) {
     setFault('')
@@ -204,7 +224,8 @@ export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed, korean = fal
     <div className={box}>
       <Head spec={spec} />
       <SpecDetails spec={spec} korean={korean} />
-      <Btn className="mt-2" onClick={() => setEditing((open) => !open)}>{editing ? '원문 편집 닫기' : '원문 수정'}</Btn>
+      {surveyed && <SurveyDetail spec={spec} korean={korean} />}
+      {!surveyed && <Btn className="mt-2" onClick={() => setEditing((open) => !open)}>{editing ? '원문 편집 닫기' : '원문 수정'}</Btn>}
       {editing && <div className="mt-2 space-y-2 text-[12.5px]">
         <label className="block">
           <span className="text-faint">이름</span>
@@ -259,23 +280,35 @@ export function SpecForm({ spec, busy, onSpecs, onStart, onRenamed, korean = fal
         )}
       </div>}
       <div className="mt-3 flex flex-wrap items-center gap-1.5">
-        <Btn disabled={!edited || !!working}
+        {!surveyed && <Btn disabled={!edited || !!working}
           onClick={() => act('save', async () => {
             const saved = await api.saveSpec(spec.id, { rev: spec.rev, goal, out: lines(out), done: lines(done), slug })
             onRenamed(saved.id)
           })}>
           {working === 'save' ? '…' : '저장'}
-        </Btn>
-        {spec.state === '정리됨' && <Btn tone="primary" disabled={edited || busy || !!working || !!modeChanged}
-          title={edited ? '고친 것을 먼저 저장한다' : '저장소에 작업 브랜치를 만들고 첫 턴을 보낸다'}
-          onClick={() => act('start', () => onStart(spec.id))}>
+        </Btn>}
+        {surveyed && spec.state === '정리됨' && <span aria-label="실행 모델" className="contents">
+          <Toolbar value={choice} options={options} busy={busy || !!working} onChange={setChoice} />
+        </span>}
+        {spec.state === '정리됨' && <Btn tone="primary" disabled={edited || busy || !!working || !!locked.length}
+          title={edited ? '고친 것을 먼저 저장한다' : surveyed
+            ? '작업트리에서 이 명세 하나를 실행한다 — 리뷰·검증 뒤 PR 까지, 머지는 직접' : '저장소에 작업 브랜치를 만들고 첫 턴을 보낸다'}
+          onClick={() => act('start', () => surveyed ? onStart(spec.id, choice) : onStart(spec.id))}>
           {working === 'start' ? '시작하는 중…' : '시작 ▸'}
+        </Btn>}
+        {surveyed && spec.state === '정리됨' && <Btn disabled={busy || !!working}
+          title="이 명세의 파이프라인을 지금 코드에서 다시 읽는다 — 같은 명세가 고쳐지거나, 더는 맞지 않으면 치워진다"
+          onClick={() => act('recheck', () => api.post(`/api/refactors/specs/${spec.id}/recheck`,
+            { request_id: crypto.randomUUID(), mode: spec.refactor!.mode, role: spec.refactor!.role ?? choice }, 'POST', spec.repo)
+            .then((r) => api.json(r, '다시 확인')).then(surveyStarted))}>
+          {working === 'recheck' ? '…' : '다시 확인'}
         </Btn>}
         {spec.state === '정리됨' && <Btn tone="ghost" disabled={!!working} className="ml-auto" onClick={() => act('drop', () => api.dropSpec(spec.id))}>
           버리기
         </Btn>}
       </div>
-      {modeChanged && <p role="status" className="mt-2 text-wait">모드가 바뀌었다. 대화에서 범위·명세를 다시 정한 뒤 시작한다.</p>}
+      {!!locked.length && <ul role="status" aria-label="시작할 수 없는 이유" className="mt-2 text-[12.5px] text-wait">
+        {locked.map((why) => <li key={why}>· {why}</li>)}</ul>}
       {fault && <p role="alert" className="mt-1.5 text-[12.5px] text-destructive">{fault}</p>}
     </div>
   )

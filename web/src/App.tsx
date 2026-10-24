@@ -469,18 +469,16 @@ export default function App() {
   }, [readSpecs, refresh, work])
 
   // `[시작]`: create or reopen a task branch in the same repository directory.
-  const start = useCallback(async (id: string) => {
+  const start = useCallback(async (id: string, choice?: Choice) => {
     const target = specs.find((spec) => spec.id === id)
     // Reopening runs no turn, so it takes no model: the task keeps its own.
     if (target && target.state !== '정리됨') return opened((await api.checkoutSpec(id)).path)
-    // A spec carries no model of its own; the started task keeps the empty pane's pick.
-    const picked = choices[blank] ?? NO_CHOICE
-    const { path, refactor } = await api.startSpec(id, picked)
+    // A survey spec's Start picked its model; any other started task keeps the empty pane's pick.
+    const picked = choice ?? choices[blank] ?? NO_CHOICE
+    const { path } = await api.startSpec(id, picked)
     setChoices((all) => ({ ...all, [choiceOf({ repo: target?.repo ?? repo, id })]: picked }))
-    // A refactoring card's controller runs in its conversation, not in a worktree.
-    if (refactor) readSpecs()
-    else opened(path)
-  }, [blank, choices, opened, repo, readSpecs, specs])
+    opened(path)
+  }, [blank, choices, opened, repo, specs])
 
   // `[계획]`: the server made the plan's branch and runs its planner there;
   // selecting it attaches to the planner's turn like any other.

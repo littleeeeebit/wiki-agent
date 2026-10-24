@@ -8,7 +8,6 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import decision
@@ -78,9 +77,8 @@ def test_refactor_round_and_final_gate_rerun_frozen_checks_and_protect_tests(req
     world = request.getfixturevalue(verification_world)
     commit(world.repo, "test_behavior.py", "print('preserved')\n")
     git(world.repo, "push", "origin", "main")
-    origin = refactor.spec_for(SimpleNamespace(repo=world.repo, hub=False), {"id": "r1", "role": {}},
-                              "refactor-origin", "Preserve behavior", "main", git(world.repo, "rev-parse", "HEAD"),
-                              world.repo)
+    # A step task of the earlier workflow, as its controller wrote it, still in review.
+    origin = {"start_head": git(world.repo, "rev-parse", "HEAD"), "refactor": {"run": "r1"}}
     spec = pr_spec(world, "refactor-step", 1, "a.py", **{k: origin[k] for k in ("start_head", "refactor")},
                    **({"review": {"flows": ["health"]}} if verification_world == "cloud_world" else {}))
     assert "start" not in spec

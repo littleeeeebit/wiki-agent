@@ -19,7 +19,6 @@ import pytest
 from agent.chat_session import Event
 from main import query, refactor, refactor_survey, specs
 from test_main import client, no_machine_settings  # noqa: F401 — the fixture is autouse
-from test_refactor import _git
 from test_specs import repo  # noqa: F401 — `repo` is a fixture
 
 FILES = {"src/orders.py": "def place(order):\n    return order\n",
@@ -33,6 +32,11 @@ MAP = {"pipelines": [{"id": "orders", "name": "Orders", "entry": "src/orders.py"
        "excluded": [{"path": "dist", "reason": "build output"}], "omm": {"used": False, "diverged": []},
        "unchecked": []}
 LEVEL = {"level": "medium", "why": "two callers"}
+
+
+def _git(path: Path, *args: str) -> str:
+    return subprocess.run(["git", "-C", str(path), *args], check=True, capture_output=True, text=True,
+                          encoding="utf-8").stdout.strip()
 
 
 def report(pid: str) -> dict:
@@ -130,6 +134,9 @@ def test_a_survey_reads_only_its_base_and_ends_in_unstarted_cards(surveyed):
     shared, orders = cards
     assert orders["refactor"]["depends"] == [shared["id"]] and orders["refactor"]["base"] == head
     assert orders["source"]["refactor_mode"] == "preserve" and orders["refactor"]["mode"] == "preserve"
+    assert orders["refactor"]["role"] == {"model": "claude-test", "effort": ""}, "Start offers the survey's model"
+    edit = {"rev": 1, "goal": "Other", "out": [], "done": [], "slug": orders["id"]}
+    assert api.put(f"/api/specs/{orders['id']}", json=edit).status_code == 409, "refined in the conversation only"
     assert start(api).json()["id"] == run["id"], "the request key starts nothing twice"
 
 
@@ -263,3 +270,39 @@ def test_failures_are_named_or_unparsed():
     assert refactor_survey.failures({"code": 1, "tail": spaced}) == \
         ["t.py::test_case[a] b]", "t.py::test_case[case one]", "t.py::test_case[case two]"]
     assert refactor_survey.failures({"code": 1, "tail": "FAILED t.py::test_case[case\n"}) is None
+
+
+def test_a_cancelled_survey_stops_and_resumes_from_its_phase(surveyed, monkeypatch):
+    api = client()
+    gate, original = threading.Event(), refactor_survey.baselined
+    monkeypatch.setitem(refactor.PHASES, "baseline", lambda w, run: (gate.wait(5), original(w, run))[1])
+    rid = start(api).json()["id"]
+    api.post(f"/api/refactors/{rid}/cancel")
+    gate.set()
+    run = settled(api, rid)
+    assert run["state"] == "stopped" and run["stopped"]["reason"] == "cancelled" and not Host.made
+    api.post(f"/api/refactors/{rid}/resume")
+    assert settled(api, rid)["state"] == "done"
+
+
+def test_the_earlier_workflow_is_read_only_and_a_restart_lets_go_of_it(surveyed):
+    from test_specs import made, spec_block
+
+    api = client()
+    legacy = {"id": "aaaabbbb", "repo": "proj", "mode": "cleanup", "scope": "project", "request_id": "legacy-req-01",
+              "role": {"model": "", "effort": ""}, "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "steps",
+              "state": "running", "stopped": None, "steps": [], "tests": None, "created": 1.0, "updated": 1.0}
+    refactor.file_of("proj", "aaaabbbb").parent.mkdir(parents=True, exist_ok=True)
+    refactor.file_of("proj", "aaaabbbb").write_text(json.dumps(legacy), encoding="utf-8")
+    unstarted, held, plain = (made(surveyed, spec_block(slug=s))[0]["id"] for s in ("old-cleanup", "old-step", "plain"))
+    specs.update("proj", unstarted, refactor={"mode": "cleanup", "files": ["a.txt"]})
+    specs.update("proj", held, refactor={"run": "aaaabbbb", "block": True})
+    refactor.recover()
+    assert refactor.load("proj", "aaaabbbb")["stopped"]["reason"] == "restart"
+    assert specs.load("proj", unstarted) is None, "an unstarted card of the earlier workflow is set aside"
+    assert specs.load("proj", held)["refactor"] == {"run": "aaaabbbb", "block": False} and specs.load("proj", plain)
+    assert api.post("/api/refactors/aaaabbbb/resume").status_code == 409
+    assert api.post(f"/api/specs/{held}/start", json={}).status_code == 409
+    assert start(api, mode="cleanup").status_code == 400
+    listed = api.get("/api/refactors").json()["runs"]
+    assert [r["mode"] for r in listed] == ["cleanup"], "its record is still read as it was"

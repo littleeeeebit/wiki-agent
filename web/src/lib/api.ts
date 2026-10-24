@@ -22,8 +22,48 @@ export type Channel = {
   model: string
   model_name: string
   effort: string
-  refactor_mode?: 'cleanup' | 'restructure' | 'full'
+  refactor_mode?: RefactorMode
   refactor_generation?: number
+}
+
+/** The refactoring purpose modes; `LegacyMode` only on records of the earlier workflow. */
+export type RefactorMode = 'preserve' | 'simplify' | 'rework'
+export type LegacyMode = 'cleanup' | 'restructure' | 'full'
+export type SurveyEvidence = { path: string; symbol: string }
+export type SurveyLevel = { level: 'high' | 'medium' | 'low'; why: string }
+export type SurveyPipeline = {
+  id: string; what: string; inputs: string; outputs: string; owns: string; change: string; low_debt_reason?: string
+  links: { pipeline: string; how: string }[]; misplaced: { what: string; evidence: SurveyEvidence[] }[]
+  debts: { kind: string; summary: string; evidence: SurveyEvidence[]; scope: string; size: SurveyLevel
+    difficulty: SurveyLevel; risk: SurveyLevel; if_left: string }[]
+  checked: string[]; unchecked: string[]
+}
+/** A survey spec as the survey wrote it (`refactor_survey.spec_shape`). */
+export type SurveySpec = {
+  key: string; title: string; pipeline: string; files: string[]; boundary: string; problem: string; change: string
+  impact: string; rollback: string; evidence: SurveyEvidence[]; keep: string[]; depends: string[]; risk: SurveyLevel
+  verify: { method: string; criterion: string }[]; together?: string
+  tests: { add: string[]; remove: { test: string; reason: string }[]; contract: { test: string; old: string; new: string; why: string }[] }
+  measure?: { metric: string; task: string; argv: string[]; repeat: number }
+  hypothesis?: { claim: string; check: string }
+  contract_change?: { impact: string; compatibility: string; migration: string; rollback: string }
+}
+/** A run record under `raw/refactor/runs/`: a survey, or a run of the earlier workflow (`kind` absent). */
+export type Survey = {
+  id: string; kind?: 'survey'; mode: RefactorMode | LegacyMode; state: string; phase: string; created: number
+  generation?: number; recheck?: string | null; role?: { model: string; effort: string }
+  stopped: { reason: string; detail: string } | null
+  spent: { seconds: number; calls: number; tokens: number; unknown?: boolean }
+  base?: string; branch?: string
+  baseline?: { cmd: string; ok: boolean; code: number | null; reason: string; failures: string[]; parsed: boolean }
+  models?: { phase: string; requested: string; reported: string }[]
+  map?: { pipelines: { id: string; name: string; entry: string; paths: string[]; role: string }[]
+    shared: { path: string; used_by: string[] }[]; excluded: { path: string; reason: string }[]
+    omm: { used: boolean; diverged: string[] }; unchecked: string[] }
+  pipelines?: Record<string, SurveyPipeline>
+  survey?: { coverage: { scope: string; unchecked: string[]; excluded: { path: string; reason: string }[] }; nothing?: string }
+  specs?: string[]
+  goal?: string; steps?: { n: number; state: string; spec: string | null; pr?: number }[]
 }
 
 /** A repository and how far the wiki is attached to it (`tool/main/connect.py`). */
@@ -213,7 +253,7 @@ export const reset = (id: string, keep: Keep) =>
 
 /** Every channel shares the project; conversations are kept per project and
  *  per channel. */
-export const setConfig = (id: string, cfg: { repo: string; model: string; effort: string; refactor_mode?: 'cleanup' | 'restructure' | 'full' }) =>
+export const setConfig = (id: string, cfg: { repo: string; model: string; effort: string; refactor_mode?: RefactorMode }) =>
   post(`/api/config/${id}`, cfg).then((r) => json<{ kept: boolean; switched: boolean; repo: string }>(r, '설정'))
 
 /** Name one category at the moment it went wrong, in the census's format. */
@@ -536,7 +576,14 @@ export type Spec = {
   local_verification?: LocalVerification
   /** A plan the Plan action drafts: its phase, budget and hand-off (reliability PR 7). */
   planning?: Planning | null
-  refactor?: { mode?: 'cleanup' | 'restructure' | 'full'; files?: string[]; run?: string }
+  /** A survey spec's block (`survey` set), or a card of the earlier workflow (`run`, a legacy `mode`). */
+  refactor?: { mode?: RefactorMode | LegacyMode; files?: string[]; run?: string; survey?: string; base?: string
+    pipeline?: string; evidence?: string[]; depends?: string[]; detail?: SurveySpec; role?: { model: string; effort: string } | null }
+  /** What `refactor_run` checked before the pull request (`docs/plans/refactor/7-purpose-modes.md`, Execution). */
+  refactor_check?: { changed?: string[]; final?: 'ci' | 'local'; ok?: boolean; unparsed?: boolean
+    baseline?: { cmd: string; code: number | null; failures: string[] }; new?: string[]; pre_existing?: string[]
+    measured?: { metric: string; task: string; argv: string[]; repeat: number; before: { median_ms: number }; after: { median_ms: number } } }
+  refactor_frozen?: { tests: string[]; head: string }
 }
 
 export const getSpecs = () =>
@@ -544,7 +591,7 @@ export const getSpecs = () =>
 export const saveSpec = (id: string, body: { rev: number; goal: string; out: string[]; done: string[]; slug: string; reason?: string }) =>
   post(`/api/specs/${id}`, body, 'PUT').then((r) => json<Spec>(r, '명세 저장'))
 export const startSpec = (id: string, choice: { model: string; effort: string; fast?: boolean }) =>
-  post(`/api/specs/${id}/start`, choice).then((r) => json<{ path: string; turn: string; refactor?: string }>(r, '시작'))
+  post(`/api/specs/${id}/start`, choice).then((r) => json<{ path: string; turn: string }>(r, '시작'))
 export const dropSpec = (id: string) => post(`/api/specs/${id}/drop`).then((r) => json(r, '버리기'))
 export const checkoutSpec = (id: string) => post(`/api/specs/${id}/checkout`).then((r) => json<{ path: string }>(r, '브랜치 열기'))
 

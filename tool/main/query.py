@@ -127,7 +127,7 @@ def config(cid: str, name: str | None = None) -> dict:
                 raise HTTPException(503, "기본 Codex 모델을 확인할 수 없습니다. 설치 명령을 다시 실행하세요.") from exc
         _config[key] = {"repo": name, "model": model, "effort": effort}
         if cid == "refactor":
-            _config[key]["refactor_mode"] = "cleanup"
+            _config[key]["refactor_mode"] = "preserve"
             _config[key]["refactor_generation"] = 0
     return _config[key]
 
@@ -390,7 +390,7 @@ class Config(BaseModel):
     repo: str
     model: str = ""
     effort: str = ""
-    refactor_mode: Literal["preserve", "simplify", "rework", "cleanup", "restructure", "full"] | None = None
+    refactor_mode: Literal["preserve", "simplify", "rework"] | None = None
 
 
 @router.get("/api/options")
@@ -618,7 +618,7 @@ def configure(cid: str, body: Config) -> dict:
         if not switched:
             cfg.update(model=body.model, effort=body.effort or selected.get("default_effort", ""))
         if cid == "refactor" and body.refactor_mode is not None:
-            if cfg.get("refactor_mode", "cleanup") != body.refactor_mode:
+            if cfg.get("refactor_mode", "preserve") != body.refactor_mode:
                 cfg["refactor_generation"] = cfg.get("refactor_generation", 0) + 1
             cfg["refactor_mode"] = body.refactor_mode
         key = session_key(cid)
@@ -827,7 +827,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                     accepted = {e: cited[c] for e, c in out["evidence_ids"].items() if c in cited}
                     source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
                     if cid == "refactor":
-                        source["refactor_mode"] = cfg.get("refactor_mode", "cleanup")
+                        source["refactor_mode"] = cfg.get("refactor_mode", "preserve")
                         source["refactor_generation"] = cfg.get("refactor_generation", 0)
                     shown = specs.answered(run.repo, found, source, accepted)
                 put({"kind": "done", "text": reply[0], **metadata, "verification": verification})
@@ -867,7 +867,7 @@ def ask(cid: str, body: Say, text: str, cfg: dict, run: Run, release) -> None:
                     found = asked_first(cid, found, cfg["model"] or "")
                     source = {"focus": cid, "turn": time.time(), "session": metadata.get("session_id", "")}
                     if cid == "refactor":
-                        source["refactor_mode"] = cfg.get("refactor_mode", "cleanup")
+                        source["refactor_mode"] = cfg.get("refactor_mode", "preserve")
                         source["refactor_generation"] = cfg.get("refactor_generation", 0)
                     shown = specs.answered(run.repo, found, source)
                     ev.text = reply[0]

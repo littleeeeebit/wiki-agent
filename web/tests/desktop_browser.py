@@ -26,7 +26,7 @@ def main():
     async def api(path: str, request: Request):
         data = {"local": True} if path == "mobile/status" else fixture(path, request.method)
         if path == "channels":
-            data.insert(1, {**data[0], "id": "refactor", "label": "리펙터링"})
+            data.insert(1, {**data[0], "id": "refactor", "label": "리팩터링"})
         if path.startswith("providers/") and path != "providers/usage":
             data["usage"] = {"input_tokens": 123456, "output_tokens": 7890, "scope": "thread"}
         return data

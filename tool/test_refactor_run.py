@@ -22,8 +22,7 @@ from fastapi import HTTPException
 import refactor_profile
 from main import query, refactor, refactor_run, refactor_survey, specs, work
 from test_main import client, no_machine_settings, until  # noqa: F401 — the fixture is autouse
-from test_refactor import _git
-from test_refactor_survey import Host, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
+from test_refactor_survey import Host, _git, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
 from test_specs import Remote, Worker, _adapter, fresh_workers, report, repo, started  # noqa: F401
 
 PY = Path(sys.executable).as_posix()
@@ -384,3 +383,20 @@ def test_a_recheck_keeps_a_card_that_depends_on_another_spec_of_its_survey(surve
     again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck", json=body).json()["id"])
     assert again["state"] == "done", again["stopped"]
     assert specs.load("proj", sid)["refactor"]["depends"] == [run["specs"][0]]
+
+
+@pytest.mark.parametrize("name, old, new, same", [
+    ("tests/data.json", b'{"x": true}', b'{"x": 1}', False),
+    ("tests/data.json", b'{"x": 1, "x": 2}', b'{"x": 2}', False),
+    ("tests/data.json", b'{"x": 1.0000000000000000001}', b'{"x": 1.0}', False),
+    ("tests/data.json", b'{"x": -0}', b'{"x": 0}', False),
+    ("tests/data.json", b'{"x": 1}', b'{"x": ["number", "1"]}', False),
+    ("tests/data.json", b'{"x": NaN}', b'{"x": null}', False),
+    ("tests/data.json", b'{"x": 1, "y": [2]}', b'{"y": [2], "x": 1}', True),
+    ("tests/ui.snap", b"expect text", b"expect", False),
+    ("test_a.py", b"assert x == 1\n", b"assert True\n", False),
+    ("test_a.py", b"assert x == 1\n", b"# kept\nassert (x == 1)\n", True),
+    ("test_a.py", b"x = []  # type: list[int]\n", b"x = []\n", False),
+])
+def test_an_equivalent_test_file_keeps_every_observation(name, old, new, same):
+    assert refactor_run.equivalent(name, old, new) is same

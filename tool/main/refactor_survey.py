@@ -444,7 +444,7 @@ def asked(w, run: dict, phase: str, text: str, system: str, tag: str):
     """One read-only turn in the survey's worktree on the chosen model; its block."""
 
     path = checkout(w, run)
-    final = refactor.turn(w, run, f"{rules(run['mode'])}\n\n{text}", system, write=False, where=path)
+    final = refactor.turn(w, run, f"{rules(run['mode'])}\n\n{text}", system, path)
     # The session `turn` ran is still registered for its path; Claude names the model it attached at init.
     seen = str(getattr(work._runs[str(path)].chat, "model_name", "") or "")
     want, got = (run["role"].get("model") or "").removeprefix("codex:").lower(), seen.lower()
@@ -553,7 +553,9 @@ def made(repo: Path, survey: str, base: str, s: dict, depends: list[str]) -> dic
     return {**specs.fields(repo, block, specs.gate_of(repo)),
             "refactor": {"mode": s["mode"], "survey": survey, "base": base, "pipeline": s["pipeline"],
                          "files": s["files"], "evidence": sorted({e["path"] for e in s["evidence"]}),
-                         "depends": depends, "detail": s}}
+                         "depends": depends, "detail": s,
+                         # Start offers the survey's model first.
+                         "role": (refactor.load(repo.name, survey) or {}).get("role")}}
 
 
 def fresh(repo: Path, sid: str, fields: dict, source: dict) -> None:

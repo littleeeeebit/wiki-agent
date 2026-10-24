@@ -63,8 +63,9 @@ Chosen by the owner on 2026-10-24 from offered options.
 | Performance | A `rework` performance spec carries metric, representative task, measurement command and repeat count; the server measures before and after in the task's worktree, also where hosted CI owns the full suite; without a command it is a hypothesis and cannot start |
 | Completion report | At the done report a survey spec runs the final command (`specs.local_required`) once instead of the narrow round checks and compares it with the survey's baseline by exit code and failure identifiers; when every failure was already in the baseline, both sides parsed and the exit code is the baseline's, the pull request opens with that stated; any unparsed or new failure, another exit code, or a verdict that never judged the head (no exit code, or 0 with a failed verdict: the tree, head or base moved) opens nothing (review round 1). A failing command that left the tree or head changed opens nothing whatever its exit code, and a name extracted is not a run explained: a failure-looking line (error, fatal, traceback…) no failure name covers and the baseline's tail did not print, digits and worktree paths blanked, opens nothing (review round 2). pytest's closing count line, with or without its `=` rule (`-q`), is judged by its counts alone, before any digit-blind match: it stands explained when it counts no more failures and errors than the baseline's, whatever its passed, skipped and warning counts (review rounds 3–4). A parameter id is read whole, spaces included; one cut short reads as unparsed. A pass stands as the final result for that head (`specs.proven`), so the pre-merge gate reruns only when review changes the head. The pre-merge gate itself is unchanged |
 | Conversation | Answers questions with the latest survey as context and refines specs in place: the same spec id with a new revision; a split keeps the original id for one purpose and adds only the split-off part as a new spec of the same survey; no spec exists without a survey; a refinement passes the dependency-cycle check against every survey card of the repository — a recheck gives a card a new survey id, not new edges (review round 2) |
-| Legacy runs | Shown read-only with their original mode names; no resume or approve; release of a held repository stays |
+| Legacy runs | Shown read-only with their original mode names; no resume or approve; a restart releases a held repository |
 | Legacy unstarted cards | Dropped (moved to `dropped/`) at server start |
+| Legacy execution code | Deleted in pull request 3 (`refactor_finish.py`, `refactor_continuation.py` and the old phases); `refactor_profile.py` stays for the improvement runner |
 | Hub | All three modes may survey; a hub spec runs only in its own linked worktree; merge and restart stay the person's |
 | Label | 리펙터링 becomes 리팩터링 on screen and in messages; identifiers stay `refactor` |
 | Delivery | This document, then three stacked pull requests merged in order |
@@ -123,7 +124,7 @@ In `_check`, before the existing report, cleanup and gate steps:
   command reads, and sends the refactoring turn. The final gate then reruns
   those tests through `review_contract.preservation_command`.
 - The test contract check compares every test file between `start_head` and
-  HEAD with `refactor_finish.equivalent`, allowing pure additions and the
+  HEAD with `refactor_run.equivalent` (moved from the deleted `refactor_finish`), allowing pure additions and the
   spec's declared merges, deletions and contract updates.
 - The final command replaces the round checks and its failures are compared
   with the survey baseline. Only pre-existing, parsed failures let the pull
@@ -150,6 +151,25 @@ The conversation turn reads the latest survey of the selected mode and its
 cards first (`refactor_run.context`). A `spec` block with `id` refines that
 card in place; one with `split_from` adds the split-off part to the same
 survey. Both pass the same validation as the survey's own specs.
+
+## Screen
+
+The 리팩터링 focus shows three mode cards: name, purpose, representative
+changes and what each mode does not do. 리팩터링 시작 sends the repository,
+the focus's model and effort, and the mode. The selected mode's latest survey
+follows. It shows its phase (pipelines counted), Stop and Resume, the base
+commit and its gate with the failures already there, the reported models, and
+`.omm` use. Then come its coverage, unchecked and excluded paths, and one
+collapsible report per pipeline. The model's English reads through the
+overlay. A running recheck shows the same way.
+
+The survey cards of the selected mode sit below the conversation. An
+unstarted card has no free-text edit (`PUT /api/specs/{id}` refuses it). It
+shows the spec's own fields and why it cannot start yet: another mode, an
+unmerged prerequisite, an unmeasured hypothesis. Its Start picker defaults to
+the survey's model (`refactor.role`). 다시 확인 starts the recheck. A started
+card shows the 리팩터링 검증 table. Unstarted cards stay out of the task rail.
+Runs of the earlier workflow are listed read-only.
 
 ## Pull requests
 
