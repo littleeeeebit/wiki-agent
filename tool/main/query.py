@@ -127,9 +127,22 @@ def config(cid: str, name: str | None = None) -> dict:
                 raise HTTPException(503, "기본 Codex 모델을 확인할 수 없습니다. 설치 명령을 다시 실행하세요.") from exc
         _config[key] = {"repo": name, "model": model, "effort": effort}
         if cid == "refactor":
-            _config[key]["refactor_mode"] = "preserve"
-            _config[key]["refactor_generation"] = 0
+            # A survey's cards are startable only under the mode and generation they were made in; a restart keeps both.
+            saved = refactor_mode(name)
+            _config[key].update(refactor_mode=saved["mode"], refactor_generation=saved["generation"])
     return _config[key]
+
+
+def refactor_mode(name: str, mode: str = "", generation: int = 0) -> dict:
+    """The refactoring mode and generation `name` keeps on disk; given, they are written first."""
+    file = LOGS / "refactor-mode" / f"{name}.json"
+    if mode:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text(json.dumps({"mode": mode, "generation": generation}), encoding="utf-8")
+    try:
+        return json.loads(file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {"mode": "preserve", "generation": 0}
 
 
 def session(cid: str) -> ChatSession:
@@ -621,6 +634,7 @@ def configure(cid: str, body: Config) -> dict:
             if cfg.get("refactor_mode", "preserve") != body.refactor_mode:
                 cfg["refactor_generation"] = cfg.get("refactor_generation", 0) + 1
             cfg["refactor_mode"] = body.refactor_mode
+            refactor_mode(cfg["repo"], body.refactor_mode, cfg["refactor_generation"])
         key = session_key(cid)
         if moved:
             remember(cid, "context", "CLI 변경")

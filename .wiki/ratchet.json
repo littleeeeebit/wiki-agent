@@ -123,8 +123,8 @@
     },
     "tool/main/query.py": {
       "dup": 0,
-      "lines": 1035,
-      "reason": "The refactoring focus reuses conversation block parsing and preserves logs while mode generations invalidate unsettled specifications."
+      "lines": 1041,
+      "reason": "The refactoring focus keeps its mode and generation on disk, since a restart that reset them made every survey card of a later generation unstartable; the config that owns them lives here."
     },
     "tool/main/refactor.py": {
       "dup": 0,

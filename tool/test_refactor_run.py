@@ -106,6 +106,19 @@ def test_a_start_waits_for_its_prerequisite_its_mode_and_unchanged_files(running
     assert specs.load("proj", shared["id"])["state"] == "정리됨" and not Worker.made, "nothing ran"
 
 
+def test_a_restart_keeps_the_mode_and_generation_its_cards_were_made_in(running, monkeypatch):
+    run = surveyed_in("simplify", spec("orders-names"))
+    settings = {"repo": "proj", "model": "opus", "effort": "high"}
+    client().post("/api/config/refactor", json={**settings, "refactor_mode": "rework"})
+    client().post("/api/config/refactor", json={**settings, "refactor_mode": "simplify"})
+    assert query.config("refactor", "proj")["refactor_generation"] == 2
+    monkeypatch.setattr(query, "_config", {})   # what a restart leaves
+    assert {k: query.config("refactor", "proj")[k] for k in ("refactor_mode", "refactor_generation")} == \
+        {"refactor_mode": "simplify", "refactor_generation": 2}
+    with pytest.raises(HTTPException, match="모드가 바뀌었다"):
+        refactor_run.startable(running[0], specs.load("proj", run["specs"][0]), "")
+
+
 def characterize(test: str, also: str = ""):
     def turn(path, halt):
         (path / "tests").mkdir(exist_ok=True)
