@@ -59,10 +59,10 @@ Chosen by the owner on 2026-10-24 from offered options.
 | Dependencies | A spec whose prerequisite has not merged cannot start, and says which |
 | Stale specs | At Start, the survey's base commit is compared with the current base branch: a change to the spec's target or evidence files refuses Start and offers a re-survey of that pipeline; other changes are listed on the task and Start proceeds |
 | `preserve` characterization | Same pull request: the first turn writes or names tests only; the server checks that only test files changed and that they pass on the unchanged code, commits the freeze, and only then asks for the refactoring |
-| Test contract | Each spec declares which tests it adds, which it may merge or delete (with reasons) and, in `simplify`, which contracts it updates; before the gate the server holds every other existing test file to the existing AST-equivalence check, additions allowed |
-| Performance | A `rework` performance spec carries metric, representative task, measurement command and repeat count; the server measures before and after in the task's worktree; without a command it is a hypothesis and cannot start |
-| Completion report | At the done report a survey spec runs the final command (`specs.local_required`) once instead of the narrow round checks and compares it with the survey's baseline by exit code and failure identifiers; when every failure was already in the baseline and both sides parsed, the pull request opens with that stated; any unparsed or new failure opens nothing. A pass stands as the final result for that head (`specs.proven`), so the pre-merge gate reruns only when review changes the head. The pre-merge gate itself is unchanged |
-| Conversation | Answers questions with the latest survey as context and refines specs in place: the same spec id with a new revision; a split keeps the original id for one purpose and adds only the split-off part as a new spec of the same survey; no spec exists without a survey |
+| Test contract | Each spec declares which tests it adds, which it may merge or delete (with reasons) and, in `simplify`, which contracts it updates; before the gate the server holds every other existing test file to the existing AST-equivalence check, additions allowed. A Python test file is compared as syntax, type comments included: every old statement stays unchanged and in order and every name it bound is bound as often, so a skip mark, a `pytestmark`, a shadowing redefinition, assignment, import or `del` is a change (review round 2); the count follows the body's scope through every `if`/`try`/`for`/`with`/`match`, with `except` and `match` targets, walruses, `import *` and nested `global`s, and through a definition's whole header — decorators, bases, defaults, annotations — but not a comprehension's or nested function's own names (review rounds 3–4); dynamic rebinding (`globals()`, `setattr`) stays outside a syntactic check. A declared `path` frees the file; a declared `path::name` frees only that test, which must exist at the start, and deleting the file needs the file declared. The contract holds on every head a round checks, review and conflict repairs included (review round 1) |
+| Performance | A `rework` performance spec carries metric, representative task, measurement command and repeat count; the server measures before and after in the task's worktree, also where hosted CI owns the full suite; without a command it is a hypothesis and cannot start |
+| Completion report | At the done report a survey spec runs the final command (`specs.local_required`) once instead of the narrow round checks and compares it with the survey's baseline by exit code and failure identifiers; when every failure was already in the baseline, both sides parsed and the exit code is the baseline's, the pull request opens with that stated; any unparsed or new failure, another exit code, or a verdict that never judged the head (no exit code, or 0 with a failed verdict: the tree, head or base moved) opens nothing (review round 1). A failing command that left the tree or head changed opens nothing whatever its exit code, and a name extracted is not a run explained: a failure-looking line (error, fatal, traceback…) no failure name covers and the baseline's tail did not print, digits and worktree paths blanked, opens nothing (review round 2). pytest's closing count line — exactly its comma-separated count list, time and `=` rule (none with `-q`), any other sentence with counts staying an ordinary line (review round 5) — is judged by its counts alone, before any digit-blind match: it stands explained when it counts no more failures and errors than the baseline's, whatever its passed, skipped and warning counts (review rounds 3–4). A pytest `FAILED`/`ERROR` line is read as a whole node id — spaces in its path or parameter id included — when exactly one of its prefixes before a ` - ` or its end reads as one; none, or several (a `] - ` inside a parameter id, or a parameterized test's message ending in `]`), reads as unparsed, so the pull request does not open (review rounds 5–6). Any collected file is a node (`docs/case1.txt::case1.txt`), an indented line is read as it stands stripped, and a `FAILED`/`ERROR` line that names no node is compared with the baseline as text, digits kept (review round 7). A pass stands as the final result for that head (`specs.proven`), so the pre-merge gate reruns only when review changes the head. The pre-merge gate itself is unchanged |
+| Conversation | Answers questions with the latest survey as context and refines specs in place: the same spec id with a new revision; a split keeps the original id for one purpose and adds only the split-off part as a new spec of the same survey; no spec exists without a survey; a refinement passes the dependency-cycle check against every survey card of the repository — a recheck gives a card a new survey id, not new edges (review round 2) |
 | Legacy runs | Shown read-only with their original mode names; no resume or approve; release of a held repository stays |
 | Legacy unstarted cards | Dropped (moved to `dropped/`) at server start |
 | Hub | All three modes may survey; a hub spec runs only in its own linked worktree; merge and restart stay the person's |
@@ -128,19 +128,35 @@ In `_check`, before the existing report, cleanup and gate steps:
 - The final command replaces the round checks and its failures are compared
   with the survey baseline. Only pre-existing, parsed failures let the pull
   request open; a pass is kept as the head's final result.
-- A performance spec is measured before the first turn and after the gate, in
-  the same worktree with the same command and repeat count.
+- A performance spec is measured once the gate passes: the task's start commit
+  and its final commit, back to back in the same worktree, with the same
+  command and repeat count; the median of each is reported.
 
 The pull request body gains a `리팩터링 검증` section: mode, survey base,
 changed files since base, characterization, test contract, baseline
 comparison and measurements.
+
+The frozen file records where the tests were fixed as `head`; a legacy file's
+`baseline` is a debt count, so review preservation reads `head` and falls back
+to `start_head`.
+
+A stale card is rechecked with `POST /api/refactors/specs/{sid}/recheck`: a
+survey record with `recheck: <sid>` runs the baseline and one read-only turn
+over that card's pipeline on the current commit. A spec with the same key
+rewrites the card in place (a new revision, the recheck's base and survey); no
+spec sets the card aside with the turn's reason. It retires no other card.
+
+The conversation turn reads the latest survey of the selected mode and its
+cards first (`refactor_run.context`). A `spec` block with `id` refines that
+card in place; one with `split_from` adds the split-off part to the same
+survey. Both pass the same validation as the survey's own specs.
 
 ## Pull requests
 
 | # | Scope |
 | --- | --- |
 | 1 | Survey: modes, record and phases, prompts, validation, baseline gate, `.omm` input, model check, spec cards, one live survey per repository |
-| 2 | Execution: Start checks, linked hub worktree, run prompt, characterization freeze, test contract, baseline comparison, measurement, PR section, conversation refinement in place |
+| 2 | Execution: Start checks, linked hub worktree, run prompt, characterization freeze, test contract, baseline comparison, measurement, PR section, conversation refinement in place, recheck |
 | 3 | Screen: mode cards, Start, progress, report, specs at the bottom; legacy runs read-only and their pipeline removed; legacy cards dropped; label |
 
 ## Tests
