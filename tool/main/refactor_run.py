@@ -18,6 +18,7 @@ import posixpath
 import statistics
 import subprocess
 import time
+from collections import Counter
 from pathlib import Path
 
 from fastapi import HTTPException
@@ -193,19 +194,42 @@ def _head(cls: ast.ClassDef) -> str:
     return ast.dump(bare)
 
 
+def _binds(body: list) -> Counter:
+    """How often a body binds or deletes each name at its own level — a def, an
+    assignment, an import, a `del`, a function's `global` — not inside nested scopes."""
+
+    found, todo = Counter(), list(body)
+    while todo:
+        node = todo.pop()
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            found[node.name] += 1
+            found.update(n for g in ast.walk(node) if isinstance(g, ast.Global) for n in g.names)
+            continue
+        if isinstance(node, ast.Lambda):
+            continue
+        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+            found[node.id] += 1
+        elif isinstance(node, ast.alias):
+            found[(node.asname or node.name).split(".")[0]] += 1
+        todo.extend(ast.iter_child_nodes(node))
+    return found
+
+
 def _kept(old: list, new: list, allowed: set, at: tuple = ()) -> bool:
-    """Every old statement of a body is still there, unchanged and in order, its
-    name bound once — a later definition would shadow it — except the
-    definitions `allowed` names. A class keeps its header and recurses."""
+    """Every old statement of a body is still there, unchanged and in order, and
+    every name it bound is bound as often — a later `def`, assignment or `del`
+    would replace a test — except the definitions `allowed` names. A class
+    keeps its header and recurses."""
 
     if not set(_marks(new)) <= set(_marks(old)):
         return False
-    names, rest = [_named(s) for s in new], iter(new)
+    before, after = _binds(old), _binds(new)
+    if any(after[name] != count for name, count in before.items() if (*at, name) not in allowed):
+        return False
+    rest = iter(new)
     for s in old:
         if (name := _named(s)) and (*at, name) in allowed:
             continue
-        if name and names.count(name) != 1:
-            return False
         for t in rest:
             if isinstance(s, ast.ClassDef) and isinstance(t, ast.ClassDef) and s.name == t.name:
                 if _head(s) != _head(t) or not _kept(s.body, t.body, allowed, (*at, s.name)):
@@ -254,7 +278,7 @@ def contract(path: Path, spec: dict) -> str:
                 broken.append(f"`{name}` 의 기존 테스트 변경")
             continue
         try:
-            before, after = ast.parse(old.stdout).body, ast.parse(new).body
+            before, after = ast.parse(old.stdout, type_comments=True).body, ast.parse(new, type_comments=True).body
         except (SyntaxError, ValueError):
             broken.append(f"`{name}` 을 읽지 못했다")
             continue
@@ -328,6 +352,11 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
         # No exit code, or 0 with a failed verdict: the command never judged this head (it changed the tree,
         # or the head or base moved). A baseline comparison would read that as having no new failure.
         return f"최종 검증이 무효다 — {reason or seen.get('reason') or '검증 커밋·base가 다르다'}"
+    after = specs.status(path)
+    if not ok and (after.returncode or after.stdout.strip()
+                   or specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() != head):
+        # Whatever its exit code, a command that changed the tree or the head judged something else.
+        return "최종 검증이 무효다 — 최종 명령이 작업트리나 HEAD 를 바꿨다"
     baseline = refactor.load(spec["repo"], spec["refactor"]["survey"])["baseline"]
     now = [] if ok else refactor_survey.failures({"code": seen.get("code", 1), "tail": tail})
     check = {**(spec.get("refactor_check") or {}), "final": "local", "head": head, "ok": ok,
@@ -343,6 +372,11 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
     if not ok and seen["code"] != baseline["code"]:
         # Named old failures excuse only the same failing run: another exit code means something else failed too.
         return f"최종 명령이 {seen['code']} 로 끝났다 — 기준 게이트는 {baseline['code']} 였다"
+    trees = (path, refactor_survey.place(repo, spec["refactor"]["survey"]))
+    if not ok and (odd := refactor_survey.unexplained(tail, baseline.get("tail") or "", trees)):
+        # A name extracted is not a run explained: a wrapper's own error beside an old failing test is new.
+        specs.update(spec["repo"], spec["id"], refactor_check={**check, "unexplained": odd[:10]})
+        return "최종 명령의 실패 줄이 기준 게이트 출력에 없다: " + " · ".join(odd[:5])
     return measuring(path, spec, head, run.halt)
 
 

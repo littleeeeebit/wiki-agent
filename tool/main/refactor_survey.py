@@ -370,6 +370,21 @@ def _node(line: str) -> set[str] | None:
     return {body[:i] for i in ends if NODE.fullmatch(body[:i])} or None
 
 
+SIGNAL = re.compile(r"\b(error|errors|fatal|fail|failed|failure|failures|exception|traceback|panic)\b", re.I)
+
+
+def unexplained(tail: str, baseline: str, trees: tuple) -> list[str]:
+    """The failure-looking lines of a failing run that no failure name covers and the
+    baseline run did not print, compared with digits and both worktree paths blanked."""
+    def plain(line: str) -> str:
+        for tree in trees:
+            line = line.replace(str(tree), "<tree>").replace(Path(tree).as_posix(), "<tree>")
+        return re.sub(r"\d+", "#", line.strip())
+    printed = {plain(line) for line in baseline.splitlines()}
+    return [line.strip() for line in tail.splitlines()
+            if SIGNAL.search(line) and not FAILED.search(line) and plain(line) not in printed]
+
+
 # -- The phases --------------------------------------------------------------------
 
 def place(repo: Path, rid: str) -> Path:
@@ -572,8 +587,9 @@ def refined(repo: Path, block, source: dict) -> str:
                 raise ValueError(f"`depends` 의 `{dep}` 은 다른 조사 명세의 id 여야 한다")
         fields = made(repo, r["survey"], r["base"], detail, detail["depends"])
         sid = target if block.get("id") else f"{detail['key']}-{r['survey']}"
+        # Every survey card, whatever survey it came from: a recheck gives a card a new survey id, not new edges.
         graph = {s["id"]: s["refactor"]["depends"] for s in specs.listing(repo.name)
-                 if (s.get("refactor") or {}).get("survey") == r["survey"]}
+                 if (s.get("refactor") or {}).get("survey")}
         acyclic({**graph, sid: detail["depends"]})   # a refinement may not close a loop the survey refused
         if block.get("id"):
             specs.save({**spec, **fields, "rev": spec["rev"] + 1})

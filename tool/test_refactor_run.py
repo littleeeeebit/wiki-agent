@@ -165,10 +165,10 @@ def test_an_existing_test_changes_only_within_the_contract(running):
 OLD_TESTS = "def test_guard():\n    assert True\n\n\ndef test_other():\n    assert True\n"
 
 
-def contracted(repo: Path, new: str | None, *declared: str) -> str:
+def contracted(repo: Path, new: str | None, *declared: str, old: str = OLD_TESTS) -> str:
     """`contract` on one existing test file changed to `new` (None deletes it), with `declared` removals."""
     (repo / "tests").mkdir(exist_ok=True)
-    (repo / "tests/test_guard.py").write_text(OLD_TESTS, encoding="utf-8")
+    (repo / "tests/test_guard.py").write_text(old, encoding="utf-8")
     _git(repo, "add", "tests")
     _git(repo, "commit", "-qm", "guard tests")
     start = _git(repo, "rev-parse", "HEAD")
@@ -187,6 +187,10 @@ def contracted(repo: Path, new: str | None, *declared: str) -> str:
     ("import pytest\n\n\n@pytest.mark.skip(reason='off')\n" + OLD_TESTS, (), "기존 테스트 변경"),
     (OLD_TESTS + "\npytestmark = __import__('pytest').mark.skip\n", (), "기존 테스트 변경"),
     (OLD_TESTS + "\n\ndef test_guard():\n    pass\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\ntest_guard = lambda: None\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\ndel test_other\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\nfrom os import sep as test_guard\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\n\ndef helper():\n    global test_guard\n    test_guard = None\n", (), "기존 테스트 변경"),
     ("def test_guard():\n    assert True\n", ("tests/test_guard.py::test_other",), ""),
     ("def test_guard():\n    pass\n", ("tests/test_guard.py::test_other",), "기존 테스트 변경"),
     (None, ("tests/test_guard.py::test_other",), "파일 단위"),
@@ -196,6 +200,11 @@ def contracted(repo: Path, new: str | None, *declared: str) -> str:
 def test_a_test_contract_frees_only_what_it_names(surveyed, new, declared, why):
     found = contracted(surveyed, new, *declared)
     assert (why in found) if why else found == "", found
+
+
+def test_a_type_comment_is_part_of_the_test_contract(surveyed):
+    typed = OLD_TESTS + "\nvalue = []  # type: list[int]\n"
+    assert "기존 테스트 변경" in contracted(surveyed, OLD_TESTS + "\nvalue = []\n", old=typed)
 
 
 def test_every_round_holds_a_survey_spec_to_its_test_contract(surveyed):
@@ -209,12 +218,17 @@ def test_every_round_holds_a_survey_spec_to_its_test_contract(surveyed):
 
 GATE = ("import pathlib, sys\nrows = pathlib.Path('failing.txt').read_text().split()\n"
         "[print('FAILED ' + r) for r in rows if '::' in r]\n"
-        "[print('FATAL an unnamed error') for r in rows if r == 'FATAL']\n"
+        "[print('FATAL an unnamed error') for r in rows if r in ('FATAL', 'QUIET')]\n"
+        "[pathlib.Path('src/orders.py').write_text('VALUE = 999\\n') for r in rows if r == 'WRITE']\n"
         "sys.exit(2 if 'FATAL' in rows else 1 if rows else 0)\n")
 
 
-@pytest.mark.parametrize("extra, opens", [("", True), ("t.py::b\n", False), ("FATAL\n", False)])
-def test_only_a_failure_the_baseline_did_not_have_stops_the_pr(running, extra, opens):
+@pytest.mark.parametrize("extra, why", [
+    ("", ""), ("t.py::b\n", "새 실패"), ("FATAL\n", "2 로 끝났다"),
+    ("QUIET\n", "기준 게이트 출력에 없다"),   # an unnamed error under the baseline's own exit code
+    ("WRITE\n", "작업트리나 HEAD"),           # the old failure, but the command rewrote the code it judged
+])
+def test_only_a_failure_the_baseline_did_not_have_stops_the_pr(running, extra, why):
     repo, remote = running
     (repo / "gate.py").write_text(GATE, encoding="utf-8")
     (repo / "failing.txt").write_text("t.py::a\n", encoding="utf-8")
@@ -228,15 +242,14 @@ def test_only_a_failure_the_baseline_did_not_have_stops_the_pr(running, extra, o
                       edited("src/orders.py", "def place(order):\n    return order  # named\n")]
     started(client(), run["specs"][0])
     card = specs.load("proj", run["specs"][0])
-    assert card["refactor_check"]["pre_existing"] == ["t.py::a"]
-    if opens:
+    if not why:
         assert card["state"] == "PR #7" and "시작 전부터 있던 실패 1건" in remote.body
-    elif extra.startswith("FATAL"):
-        assert card["refactor_check"]["new"] == [] and "2 로 끝났다" in card["fault"], "an old name excuses no other exit"
-        assert not remote.created()
-    else:
-        assert card["refactor_check"]["new"] == ["t.py::b"] and "새 실패" in card["fault"]
-        assert not remote.created()
+        return
+    assert why in (card["fault"] or ""), card["fault"]
+    assert not remote.created()
+    if extra != "WRITE\n":
+        check = card["refactor_check"]
+        assert check["pre_existing"] == ["t.py::a"] and check["new"] == (["t.py::b"] if "::" in extra else [])
 
 
 def test_a_final_command_that_never_judged_the_head_opens_nothing(running):
@@ -306,6 +319,10 @@ def test_the_conversation_refines_the_same_card_and_splits_off_only_the_new_part
                        ({**spec("x"), "id": sid}, "모드"), ({**spec("x", depends=[shown[1]["id"]]), "id": sid}, "돌아온다")):
         given = {**source, "refactor_mode": "simplify"} if why == "모드" else source
         assert why in specs.answered(surveyed, [{"name": "spec", "value": block}], given)[0]["error"]
+    other = specs.load("proj", shown[1]["id"])
+    specs.save({**other, "refactor": {**other["refactor"], "survey": "recheck-two"}})   # what a recheck gives it
+    looped = {**spec("x", depends=[other["id"]]), "id": sid}
+    assert "돌아온다" in specs.answered(surveyed, [{"name": "spec", "value": looped}], source)[0]["error"]
     assert specs.load("proj", sid)["rev"] == 2
 
 
