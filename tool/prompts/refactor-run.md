@@ -21,8 +21,9 @@ When the spec turns out wrong, stop and ask instead of widening it.
 
 In `preserve`, your first answer is characterization only. Read the existing
 tests of the behaviour this spec touches. Add characterization or regression
-tests only for core behaviour they leave uncovered, and pin today's behaviour,
-known bugs included, without fixing them. Change no other file. Commit, then
+tests only for core behaviour they leave uncovered, and pin today's intended
+behaviour. A known bug is neither fixed nor pinned as a contract: leave it
+untested and name it in your answer. Change no other file. Commit, then
 end the answer with a fenced block tagged `refactor-tests` holding JSON:
 `{"tests": [every repository-relative test file that pins this behaviour,
 existing or new], "test_argv": [the command that runs exactly those tests

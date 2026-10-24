@@ -303,7 +303,27 @@ def spec_shape(s, mode: str, map_: dict, root: Path) -> dict:
     return shaped
 
 
-def survey_shape(value, mode: str, map_: dict, root: Path) -> dict:
+def acyclic(graph: dict[str, list[str]]) -> None:
+    """Refuse a dependency cycle among `graph`'s nodes; edges leaving it are not followed."""
+
+    state: dict[str, str] = {}
+
+    def visit(key: str) -> None:   # depth-first: a grey node reached again is a cycle
+        if state.get(key) == "grey":
+            raise ValueError(f"명세 의존이 돌아온다: `{key}`")
+        if state.get(key) != "black":
+            state[key] = "grey"
+            for d in graph[key]:
+                if d in graph:
+                    visit(d)
+            state[key] = "black"
+
+    for key in graph:
+        visit(key)
+
+
+def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = frozenset()) -> dict:
+    """An integration (or recheck) block; `known` are keys outside it a spec may still depend on."""
     if not isinstance(value, dict) or not isinstance(value.get("coverage"), dict):
         raise ValueError("refactor-survey 는 coverage 가 있는 JSON 객체여야 한다")
     shaped = [spec_shape(s, mode, map_, root) for s in _list(value.get("specs") or [], "specs")]
@@ -311,22 +331,9 @@ def survey_shape(value, mode: str, map_: dict, root: Path) -> dict:
     if len(set(keys)) != len(keys):
         raise ValueError("명세 `key` 가 겹친다")
     for s in shaped:
-        if unknown := set(s["depends"]) - set(keys):
+        if unknown := set(s["depends"]) - set(keys) - known:
             raise ValueError(f"`specs[{s['key']}].depends` 에 없는 명세: {sorted(unknown)}")
-    order, state = [], {}
-
-    def visit(key: str) -> None:   # depth-first: a grey node reached again is a cycle
-        if state.get(key) == "grey":
-            raise ValueError(f"명세 의존이 돌아온다: `{key}`")
-        if state.get(key) != "black":
-            state[key] = "grey"
-            for d in next(s for s in shaped if s["key"] == key)["depends"]:
-                visit(d)
-            state[key] = "black"
-            order.append(key)
-
-    for key in keys:
-        visit(key)
+    acyclic({s["key"]: s["depends"] for s in shaped})
     coverage = value["coverage"]
     result = {"coverage": {"scope": _text(coverage.get("scope"), "coverage.scope"),
                            "unchecked": _texts(coverage.get("unchecked") or [], "coverage.unchecked"),
@@ -564,10 +571,13 @@ def refined(repo: Path, block, source: dict) -> str:
             if not ((specs.load(repo.name, dep) or {}).get("refactor") or {}).get("survey") or dep == block.get("id"):
                 raise ValueError(f"`depends` 의 `{dep}` 은 다른 조사 명세의 id 여야 한다")
         fields = made(repo, r["survey"], r["base"], detail, detail["depends"])
+        sid = target if block.get("id") else f"{detail['key']}-{r['survey']}"
+        graph = {s["id"]: s["refactor"]["depends"] for s in specs.listing(repo.name)
+                 if (s.get("refactor") or {}).get("survey") == r["survey"]}
+        acyclic({**graph, sid: detail["depends"]})   # a refinement may not close a loop the survey refused
         if block.get("id"):
             specs.save({**spec, **fields, "rev": spec["rev"] + 1})
             return target
-        sid = f"{detail['key']}-{r['survey']}"
         if specs.load(repo.name, sid) is not None:
             raise ValueError(f"`{sid}` 가 이미 있다 — 나눈 명세는 다른 key 를 쓴다")
         fresh(repo, sid, fields, {**source, "plan": None})
@@ -598,8 +608,10 @@ def rechecked(w, run: dict) -> dict:
             f"\n\nThe spec:\n{json.dumps(old['detail'], ensure_ascii=False)}\n\nFiles changed since its base "
             f"{old['base']}: {', '.join(changed[:300]) or 'none'}")
     try:
+        # The card's prerequisites are other specs of its survey, not in this one-spec answer.
+        others = frozenset([*old["detail"]["depends"], *(s["key"] for s in (parent.get("survey") or {}).get("specs") or [])])
         survey = survey_shape(asked(w, run, "recheck", text, RECHECK_PROMPT, "refactor-survey"), run["mode"],
-                              parent["map"], path)
+                              parent["map"], path, others)
         if len(survey["specs"]) > 1 or survey["specs"] and survey["specs"][0]["key"] != old["detail"]["key"]:
             raise ValueError(f"key `{old['detail']['key']}` 의 명세 하나만 돌려줘야 한다")
     except ValueError as exc:

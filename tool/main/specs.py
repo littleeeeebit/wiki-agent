@@ -1151,13 +1151,15 @@ def rounded(repo: Path, path: Path, spec: dict, base: str, halt: threading.Event
     """The round checks `selected` picks, run by `judge`: the verdict, kept as
     the spec's `gate` for the screens, and `validation.round`."""
 
-    from . import maintenance   # here: it imports this module
+    from . import maintenance, refactor_run   # here: they import this module
 
     maintenance.set_aside(path, spec)
     chosen = chosen or for_round(repo, path, spec, base)
     last = (spec.get("validation") or {}).get("round") or {}
     current = sh(["git", "rev-parse", "HEAD"], path)
     clean = status(path)
+    if refused := refactor_run.refused(path, spec, chosen, current.stdout.strip()):   # review repairs included
+        return refused
     if reused := verify.cached_round(spec, chosen, current, clean):
         return reused, last
     with gating(spec.get("repo"), spec.get("id"), "round"):

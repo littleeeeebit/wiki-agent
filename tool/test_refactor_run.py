@@ -162,11 +162,58 @@ def test_an_existing_test_changes_only_within_the_contract(running):
     assert not remote.created()
 
 
+OLD_TESTS = "def test_guard():\n    assert True\n\n\ndef test_other():\n    assert True\n"
+
+
+def contracted(repo: Path, new: str | None, *declared: str) -> str:
+    """`contract` on one existing test file changed to `new` (None deletes it), with `declared` removals."""
+    (repo / "tests").mkdir(exist_ok=True)
+    (repo / "tests/test_guard.py").write_text(OLD_TESTS, encoding="utf-8")
+    _git(repo, "add", "tests")
+    _git(repo, "commit", "-qm", "guard tests")
+    start = _git(repo, "rev-parse", "HEAD")
+    if new is None:
+        _git(repo, "rm", "-q", "tests/test_guard.py")
+    else:
+        (repo / "tests/test_guard.py").write_text(new, encoding="utf-8")
+    _git(repo, "commit", "-qam", "edit")
+    card = {"start_head": start, "refactor": {"detail": {"tests": {
+        "remove": [{"test": d, "reason": "exact duplicate"} for d in declared]}}}}
+    return refactor_run.contract(repo, card)
+
+
+@pytest.mark.parametrize("new, declared, why", [
+    (OLD_TESTS + "\n\ndef test_new():\n    assert True\n", (), ""),
+    ("import pytest\n\n\n@pytest.mark.skip(reason='off')\n" + OLD_TESTS, (), "기존 테스트 변경"),
+    (OLD_TESTS + "\npytestmark = __import__('pytest').mark.skip\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\n\ndef test_guard():\n    pass\n", (), "기존 테스트 변경"),
+    ("def test_guard():\n    assert True\n", ("tests/test_guard.py::test_other",), ""),
+    ("def test_guard():\n    pass\n", ("tests/test_guard.py::test_other",), "기존 테스트 변경"),
+    (None, ("tests/test_guard.py::test_other",), "파일 단위"),
+    (None, ("tests/test_guard.py",), ""),
+    (OLD_TESTS + "\n\ndef test_new():\n    assert True\n", ("tests/test_guard.py::test_gone",), "시작 커밋에 없다"),
+])
+def test_a_test_contract_frees_only_what_it_names(surveyed, new, declared, why):
+    found = contracted(surveyed, new, *declared)
+    assert (why in found) if why else found == "", found
+
+
+def test_every_round_holds_a_survey_spec_to_its_test_contract(surveyed):
+    contracted(surveyed, "def test_guard():\n    pass\n")
+    start = _git(surveyed, "rev-parse", "HEAD~1")
+    card = {"id": "x", "repo": "proj", "done": ["the gate passes"], "start_head": start,
+            "refactor": {"survey": "abcd1234", "mode": "simplify", "detail": {"tests": {}}}}
+    verdict, record = specs.rounded(surveyed, surveyed, card, "main", __import__("threading").Event())
+    assert not verdict["ok"] and "테스트 계약 밖의 변경" in verdict["reason"] and not record["ok"]
+
+
 GATE = ("import pathlib, sys\nrows = pathlib.Path('failing.txt').read_text().split()\n"
-        "[print('FAILED ' + r) for r in rows]\nsys.exit(1 if rows else 0)\n")
+        "[print('FAILED ' + r) for r in rows if '::' in r]\n"
+        "[print('FATAL an unnamed error') for r in rows if r == 'FATAL']\n"
+        "sys.exit(2 if 'FATAL' in rows else 1 if rows else 0)\n")
 
 
-@pytest.mark.parametrize("extra, opens", [("", True), ("t.py::b\n", False)])
+@pytest.mark.parametrize("extra, opens", [("", True), ("t.py::b\n", False), ("FATAL\n", False)])
 def test_only_a_failure_the_baseline_did_not_have_stops_the_pr(running, extra, opens):
     repo, remote = running
     (repo / "gate.py").write_text(GATE, encoding="utf-8")
@@ -184,9 +231,52 @@ def test_only_a_failure_the_baseline_did_not_have_stops_the_pr(running, extra, o
     assert card["refactor_check"]["pre_existing"] == ["t.py::a"]
     if opens:
         assert card["state"] == "PR #7" and "시작 전부터 있던 실패 1건" in remote.body
+    elif extra.startswith("FATAL"):
+        assert card["refactor_check"]["new"] == [] and "2 로 끝났다" in card["fault"], "an old name excuses no other exit"
+        assert not remote.created()
     else:
         assert card["refactor_check"]["new"] == ["t.py::b"] and "새 실패" in card["fault"]
         assert not remote.created()
+
+
+def test_a_final_command_that_never_judged_the_head_opens_nothing(running):
+    repo, remote = running
+    (repo / "gate.py").write_text("import pathlib\npathlib.Path('src/orders.py').write_text('x = 1\\n')\n",
+                                  encoding="utf-8")
+    _git(repo, "add", "gate.py")
+    _git(repo, "commit", "-qm", "a gate that writes into the tree")
+    _git(repo, "push", "-q", "origin", "main")
+    _adapter(repo, f"{PY} gate.py")
+    run = surveyed_in("simplify", spec("orders-names"))
+    Worker.replies = [edited("src/billing.py", "def charge(order):\n    return order  # named\n")]
+    started(client(), run["specs"][0])
+    card = specs.load("proj", run["specs"][0])
+    assert "최종 검증이 무효다" in card["fault"] and not remote.created()
+
+
+def test_a_ci_repository_still_measures_a_rework_spec(running, monkeypatch):
+    repo, remote = running
+    measure = {"metric": "wall time", "task": "one call", "argv": [PY, "-c", "print('ok')"], "repeat": 1}
+    run = surveyed_in("rework", spec("orders-fast", measure=measure))
+    passing = f'{PY} -c "print(1)"'
+    monkeypatch.setattr(specs.verify, "policy", lambda path, project=None: {"local": passing, "round": passing})
+    monkeypatch.setattr(specs.verify, "backend", lambda path, cfg: "ci")
+    Worker.replies = [edited("src/orders.py", "def place(order):\n    return order  # faster\n")]
+    started(client(), run["specs"][0])
+    until(lambda: specs.load("proj", run["specs"][0])["state"] != "작업 중" or specs.load("proj", run["specs"][0])["fault"])
+    card = specs.load("proj", run["specs"][0])
+    check = card["refactor_check"]
+    assert check.get("final") == "ci" and len(check["measured"]["after"]["ms"]) == 1, (card["state"], card["fault"], check)
+
+
+def test_a_card_saved_with_a_dotted_path_still_sees_its_file_change(surveyed):
+    run = surveyed_in("preserve", spec("orders-split"))
+    card = specs.load("proj", run["specs"][0])
+    card = {**card, "refactor": {**card["refactor"], "files": ["./src/orders.py"], "evidence": ["src/../src/orders.py"]}}
+    (surveyed / "src/orders.py").write_text("def place(order):\n    return [order]\n", encoding="utf-8")
+    _git(surveyed, "commit", "-qam", "the target moved")
+    with pytest.raises(HTTPException, match="다시 확인"):
+        refactor_run.startable(surveyed, card, "")
 
 
 def test_a_hub_card_runs_in_a_linked_worktree(running, monkeypatch):
@@ -213,7 +303,7 @@ def test_the_conversation_refines_the_same_card_and_splits_off_only_the_new_part
     assert card["refactor"]["detail"]["title"] == "Split the intake out of place"
     assert specs.load("proj", shown[1]["id"])["refactor"]["depends"] == [sid]
     for block, why in (({**spec("free")}, "조사 없이"), ({**spec("x", files=["src/missing.py"]), "id": sid}, "없다"),
-                       ({**spec("x"), "id": sid}, "모드")):
+                       ({**spec("x"), "id": sid}, "모드"), ({**spec("x", depends=[shown[1]["id"]]), "id": sid}, "돌아온다")):
         given = {**source, "refactor_mode": "simplify"} if why == "모드" else source
         assert why in specs.answered(surveyed, [{"name": "spec", "value": block}], given)[0]["error"]
     assert specs.load("proj", sid)["rev"] == 2
@@ -238,3 +328,17 @@ def test_recheck_rewrites_a_stale_card_or_sets_it_aside(surveyed):
     gone = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck",
                                  json={**body, "request_id": "recheck-req-0002"}).json()["id"])
     assert gone["state"] == "done" and gone["specs"] == [] and specs.load("proj", sid) is None
+
+
+def test_a_recheck_keeps_a_card_that_depends_on_another_spec_of_its_survey(surveyed):
+    run = surveyed_in("preserve", spec("shared-check", "shared:src/shared.py", files=["src/shared.py"]),
+                      spec("orders-split", depends=["shared-check"]))
+    sid = run["specs"][1]
+    (surveyed / "src/orders.py").write_text("def place(order):\n    return [order]\n", encoding="utf-8")
+    _git(surveyed, "commit", "-qam", "the target moved")
+    Host.answers = {"survey": {**ONE, "specs": [spec("orders-split", depends=["shared-check"])]}}
+    body = {"request_id": "recheck-req-0003", "mode": "preserve", "role": {"model": "claude-test", "effort": ""}}
+    api = client()
+    again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck", json=body).json()["id"])
+    assert again["state"] == "done", again["stopped"]
+    assert specs.load("proj", sid)["refactor"]["depends"] == [run["specs"][0]]
