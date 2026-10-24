@@ -463,13 +463,20 @@ def approved(w: Worker, sid: str) -> bool:
     return given is not None and given == mark(w.repo, spec)
 
 
+# The shape `turn` reads (`specs._shape("choices")`). Asked only for "a reason and choices", ai-coding-wiki's
+# audit answered in YAML and the run stopped on `json.loads`.
+SCOPE = {"question": "<why the goal or mode must change, and what to decide>",
+         "options": [{"label": "<choice>", "note": "<what it means>"}]}
+
+
 def purpose(run: dict) -> str:
     """The settled request every audit and candidate must honor."""
     return "\n\n".join([f"Agreed goal: {run.get('goal', '')}",
         "Completion conditions:\n" + "\n".join(f"- {s}" for s in run.get("done", [])),
         "Out of scope:\n" + "\n".join(f"- {s}" for s in run.get("out", [])),
         "Discover and adjust files needed for this purpose. Do not expand the goal or the permitted mode. "
-        "If the goal or mode must change, return a refactor-scope block with a reason and choices, then stop."])
+        "If the goal or mode must change, do not edit: return a fenced refactor-scope block holding JSON, like "
+        f"{json.dumps(SCOPE)}, or {{\"questions\": [such questions]}}, then stop. The reason goes in the question."])
 
 
 # -- The phases ----------------------------------------------------------------
