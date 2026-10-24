@@ -18,7 +18,7 @@ from pydantic import BaseModel
 import debt
 import improvement
 
-from . import refactor, refactor_continuation, specs
+from . import refactor, refactor_continuation, refactor_survey, specs
 from .query import _lock, current_repo
 
 router = APIRouter()
@@ -77,10 +77,12 @@ def status(rid: str) -> dict:
 def checked(repo: Path, body: Start) -> None:
     if not refactor.REQUEST.fullmatch(body.request_id):
         raise HTTPException(400, "요청 키는 영문·숫자·- 8–64자다")
-    if body.mode not in refactor.MODES:
-        raise HTTPException(400, f"모드는 {', '.join(refactor.MODES)} 중 하나다")
+    if body.mode not in (*refactor.MODES, *refactor_survey.MODES):
+        raise HTTPException(400, f"모드는 {', '.join(refactor_survey.MODES)} 중 하나다")
     if not specs.gate_of(repo):
         raise HTTPException(409, "연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
+    if body.mode in refactor_survey.MODES:
+        return
     scope = refactor.scope_of(repo)
     if scope == "hub" and body.mode == "full":   # the planner forks the checkout the server runs from
         raise HTTPException(409, "wiki-agent 자신은 전면 리펙터링을 열지 않는다 — 정리나 모듈 재구성으로 하라")
@@ -104,8 +106,41 @@ def start(body: Start) -> dict:
     return begun(current_repo(), body)
 
 
+def surveyed(repo: Path, body: Start) -> dict:
+    """A survey in the focus's current mode; one live survey per repository.
+    Starting one retires every stopped older survey, so only the newest resumes."""
+
+    from .query import config
+
+    cfg = config("refactor", repo.name)
+    if body.mode != cfg.get("refactor_mode"):
+        raise HTTPException(409, "상단에서 고른 모드와 요청 모드가 다르다 — 화면을 새로 고쳐라")
+    with refactor._files:
+        found = refactor.listing(repo.name)
+        if old := next((r for r in found if r["request_id"] == body.request_id), None):
+            return old
+        if live := next((r for r in found if r.get("kind") == "survey" and r["state"] == "running"), None):
+            raise HTTPException(409, f"이 저장소의 조사 `{live['id']}` 가 돌고 있다 — 끝나거나 멈춘 뒤 시작해라")
+        for r in found:
+            if r.get("kind") == "survey" and r["state"] == "stopped":
+                refactor_survey.removed(repo, r["id"])
+                refactor.update(repo.name, r["id"], state="superseded")
+        rid, now = secrets.token_hex(4), time.time()
+        run = {"id": rid, "kind": "survey", "repo": repo.name, "mode": body.mode, "scope": refactor.scope_of(repo),
+               "request_id": body.request_id, "role": body.role.model_dump(),
+               "generation": cfg.get("refactor_generation", 0), "files": [],
+               "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "baseline", "state": "running",
+               "stopped": None, "hotspots": [], "steps": [], "tests": None, "models": [], "specs": [],
+               "created": now, "updated": now}
+        improvement.atomic(refactor.file_of(repo.name, rid), run)
+    refactor.launch(repo, run)
+    return refactor.load(repo.name, rid)
+
+
 def begun(repo: Path, body: Start, sid: str | None = None) -> dict:
     checked(repo, body)
+    if body.mode in refactor_survey.MODES:
+        return surveyed(repo, body)
     scope = refactor.scope_of(repo)
     with refactor._files:   # one transaction: two equal requests never both find nothing
         old = next((r for r in refactor.listing(repo.name) if r["request_id"] == body.request_id), None)
@@ -137,6 +172,8 @@ def from_spec(repo: Path, sid: str, role: dict) -> dict:
         if spec is None:
             raise HTTPException(404, "그런 명세가 없다")
         request = spec.get("refactor") or {}
+        if request.get("survey"):
+            raise HTTPException(409, "조사에서 나온 명세의 실행은 아직 연결되지 않았다")
         if request.get("run"):
             return mine(repo, request["run"])
         if spec["state"] != "정리됨":

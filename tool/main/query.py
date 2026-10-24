@@ -390,7 +390,7 @@ class Config(BaseModel):
     repo: str
     model: str = ""
     effort: str = ""
-    refactor_mode: Literal["cleanup", "restructure", "full"] | None = None
+    refactor_mode: Literal["preserve", "simplify", "rework", "cleanup", "restructure", "full"] | None = None
 
 
 @router.get("/api/options")
