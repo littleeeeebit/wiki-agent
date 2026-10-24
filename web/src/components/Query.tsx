@@ -445,14 +445,14 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
           <Stream
             intro={active === 'refactor' && here && <RefactorSurvey key={here.repo} repo={here.repo}
               mode={here.refactor_mode ?? 'preserve'} generation={here.refactor_generation ?? 0}
-              role={{ model: here.model, effort: here.effort }} korean={on} busy={busy} onSpecs={onSpecs}
+              options={options} korean={on} busy={busy} onSpecs={onSpecs}
               onMode={(mode: RefactorMode) => void apply({ model: here.model, effort: here.effort, refactor_mode: mode })} />}
             after={active === 'refactor' && here && <div aria-label="리팩터링 명세" className="space-y-3">
               {specs.filter((s) => s.repo === here.repo && s.refactor?.survey && s.refactor.mode === (here.refactor_mode ?? 'preserve')
                 && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === s.id)))
                 .map((s) => <Blocks key={s.id} blocks={[{ name: 'spec', id: s.id }]}
                   specs={specs} korean={on} busy={busy} refactorMode={here.refactor_mode ?? 'preserve'}
-                  refactorGeneration={here.refactor_generation} options={options}
+                  refactorGeneration={here.refactor_generation}
                   onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />)}
             </div>}
             messages={active === 'next' && selectedSpec && !selectedSpec.refactor?.mode && !messages.some((m) => m.blocks?.some((b) => b.name === 'spec' && 'id' in b && b.id === selectedSpec.id))
@@ -469,7 +469,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
               <Blocks blocks={(m.blocks ?? []).filter((b) => active !== 'refactor' || b.name !== 'spec'
                 || !('id' in b) || latestSpec.get(b.id) === m)} specs={specs} korean={on} busy={busy}
                 refactorMode={active === 'refactor' ? here?.refactor_mode ?? 'preserve' : undefined}
-                refactorGeneration={here?.refactor_generation} options={options}
+                refactorGeneration={here?.refactor_generation}
                 onSay={(text) => void send(text)} onSpecs={onSpecs} onStart={start} />
             ) : undefined}
             empty={active === 'next' ? (

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Btn } from '@/components/Modal'
+import { Toolbar } from '@/components/Toolbar'
 import * as api from '@/lib/api'
 import { useOverlay } from '@/lib/overlay'
 import { cn } from '@/lib/utils'
@@ -36,15 +37,28 @@ const KIND: Record<string, string> = { duplication: '중복', coupling: '결합'
   defensive: '과잉 방어', test_contract: '테스트 계약', performance: '성능', naming: '이름', dead_code: '안 쓰는 코드' }
 const LEVEL: Record<string, string> = { high: '높음', medium: '보통', low: '낮음' }
 const box = 'not-prose rounded-md border border-border bg-card p-3 text-[12.5px]'
+// Chosen at `[리팩터링 시작]`, then fixed for every card of that survey.
+const ROLES: { key: keyof api.RefactorRoles; label: string; note: string }[] = [
+  { key: 'survey', label: '조사', note: '지도·파이프라인·명세 정리, 명세의 [다시 확인]. 읽기 전용' },
+  { key: 'worker', label: '구현', note: '명세 작업 셀 — 첫 턴, 리뷰 뒤 수정, 충돌 수정' },
+  { key: 'reviewer', label: '리뷰', note: '명세 PR 의 리뷰 셀. 따로 연 읽기 전용 세션' },
+]
+const NO_ROLE = { model: '', effort: '' }
+const role = (r: api.PlanRole) => `${r.model}${r.effort ? ` · ${r.effort}` : ''}`
+/** `조사 a / 구현 b / 리뷰 c`, as a survey and each of its cards show them. */
+export const rolesText = (roles: api.RefactorRoles) => ROLES.map((r) => `${r.label} ${role(roles[r.key])}`).join(' / ')
 const where = (e: api.SurveyEvidence) => `${e.path} · ${e.symbol}`
 
 /** The refactoring focus: a purpose mode, `[리팩터링 시작]` and the selected
  *  mode's latest survey of this repository. A survey only reads; its specs are
  *  ordinary cards below the conversation, each started on its own. */
-export function RefactorSurvey({ repo, mode, generation, role, korean, busy, onMode, onSpecs }: {
-  repo: string; mode: RefactorMode; generation: number; role: { model: string; effort: string }; korean: boolean
+export function RefactorSurvey({ repo, mode, generation, options, korean, busy, onMode, onSpecs }: {
+  repo: string; mode: RefactorMode; generation: number; options: api.Options | null; korean: boolean
   busy: boolean; onMode: (mode: RefactorMode) => void; onSpecs: () => void
 }) {
+  // Nothing preset: every role is picked here, never taken from the chat's toolbar or a CLI default.
+  const [roles, setRoles] = useState<api.RefactorRoles>({ survey: NO_ROLE, worker: NO_ROLE, reviewer: NO_ROLE })
+  const unpicked = ROLES.filter((r) => !roles[r.key].model).map((r) => r.label)
   const [runs, setRuns] = useState<api.Survey[] | null>(null)
   const [scope, setScope] = useState('')
   const [fault, setFault] = useState('')
@@ -102,14 +116,27 @@ export function RefactorSurvey({ repo, mode, generation, role, korean, busy, onM
       </button>)}
     </div>
     <div className={box}>
+      <div aria-label="리팩터링 모델" className="mb-3 space-y-2">
+        {ROLES.map((r) => <div key={r.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
+          <div className="w-44 shrink-0">
+            <div className="font-heading text-[11px] font-semibold">{r.label} 모델</div>
+            <div className="text-[10.5px] text-faint">{r.note}</div>
+          </div>
+          <Toolbar value={roles[r.key]} options={options} busy={busy || working}
+            onChange={(next) => setRoles((prev) => ({ ...prev, [r.key]: { model: next.model, effort: next.effort } }))} />
+        </div>)}
+        <p className="text-[11.5px] text-muted-foreground">이 조사에서 나온 모든 명세가 이 모델로 조사·구현·리뷰된다. 시작한 뒤에는 바뀌지 않는다.</p>
+      </div>
       <div className="flex flex-wrap items-center gap-2">
-        <Btn tone="primary" disabled={busy || working || !runs || !!live}
-          title={live ? `조사 ${live.id} 가 끝나거나 멈춘 뒤 시작한다` : '코드를 읽기만 한다 — 바꾸기·커밋·푸시·PR 없음'}
-          onClick={() => void act('/api/refactors', { request_id: crypto.randomUUID(), mode, role })}>
+        <Btn tone="primary" disabled={busy || working || !runs || !!live || !!unpicked.length}
+          title={live ? `조사 ${live.id} 가 끝나거나 멈춘 뒤 시작한다` : unpicked.length ? `${unpicked.join('·')} 모델을 먼저 고른다`
+            : '코드를 읽기만 한다 — 바꾸기·커밋·푸시·PR 없음'}
+          onClick={() => void act('/api/refactors', { request_id: crypto.randomUUID(), mode, roles })}>
           리팩터링 시작
         </Btn>
         <span className="min-w-0 text-muted-foreground">
-          <span className="font-mono">{repo}</span> · {role.model || '기본 모델'}{role.effort && ` · ${role.effort}`} · {REFACTOR_MODE[mode]}
+          <span className="font-mono">{repo}</span> · {REFACTOR_MODE[mode]} · {unpicked.length
+            ? <span className="text-wait">{unpicked.join('·')} 모델을 고르지 않았다</span> : rolesText(roles)}
         </span>
       </div>
       <p className="mt-2 text-muted-foreground">
@@ -171,6 +198,7 @@ function Report({ run, korean, working, onAct }: {
         {!!gate.failures.length && ` · 이미 실패 ${gate.failures.length}건`}{!gate.ok && !gate.parsed && ' · 실패 이름을 읽지 못함'}
         {!!gate.failures.length && <ul className="font-mono text-[11.5px]">{gate.failures.slice(0, 20).map((f) => <li key={f}>{f}</li>)}</ul>}
       </dd></>}
+      {run.roles && <><dt className="text-faint">고정 모델</dt><dd>{rolesText(run.roles)}</dd></>}
       {!!run.models?.length && <><dt className="text-faint">모델</dt><dd>{run.role?.model || '기본'} · 답한 모델 {
         [...new Set(run.models.map((m) => m.reported).filter(Boolean))].join(', ') || '확인 안 됨'}
         {!!unconfirmed.length && ` · ${unconfirmed.length}턴 미확인`}</dd></>}

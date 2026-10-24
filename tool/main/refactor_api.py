@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 import improvement
 
-from . import refactor, refactor_survey, specs
+from . import channels, planning, refactor, refactor_survey, specs
 from .query import _lock, current_repo
 
 router = APIRouter()
@@ -28,10 +28,18 @@ class Role(BaseModel):
     effort: str = ""
 
 
+class Roles(BaseModel):
+    """Fixed at `[리팩터링 시작]` for every card the survey makes: its rechecks, its work cell, its review cell."""
+
+    survey: Role
+    worker: Role
+    reviewer: Role
+
+
 class Start(BaseModel):
     request_id: str
     mode: str
-    role: Role = Role()
+    roles: Roles | None = None
 
 
 def mine(repo: Path, rid: str) -> dict:
@@ -65,16 +73,32 @@ def checked(repo: Path, body: Start) -> None:
         raise HTTPException(409, "연결 먼저 — 이 저장소의 `.wiki/adapter.toml` 에 `gate_cmd` 가 없다")
 
 
+def named(roles: Roles | None) -> Roles:
+    """Every role names its model: an empty one would follow whatever the CLI or settings default to then."""
+
+    if roles is None:
+        raise HTTPException(400, "조사·구현·리뷰 모델을 모두 골라라")
+    for label, role in (("조사", roles.survey), ("구현", roles.worker), ("리뷰", roles.reviewer)):
+        model, effort = role.model.strip(), role.effort.strip()
+        if not model:
+            raise HTTPException(400, f"{label} 모델을 골라라 — 기본 모델로는 시작하지 않는다")
+        if not model.startswith("codex:") and not channels.CLAUDE_MODEL.fullmatch(model):
+            raise HTTPException(400, f"{label} 모델 이름을 받지 않는다")
+        if effort and not planning.EFFORT.fullmatch(effort):
+            raise HTTPException(400, f"{label} 추론 강도를 받지 않는다")
+    return roles
+
+
 @router.post("/api/refactors")
 def start(body: Start) -> dict:
     """`[리팩터링 시작]`: a read-only survey; no code changes, commits or pull requests."""
 
     repo = current_repo()
     checked(repo, body)
-    return surveyed(repo, body)
+    return surveyed(repo, body, named(body.roles))
 
 
-def surveyed(repo: Path, body: Start, recheck: str | None = None) -> dict:
+def surveyed(repo: Path, body: Start, roles: Roles, recheck: str | None = None) -> dict:
     """A survey in the focus's current mode; one live survey per repository.
     Starting one retires every stopped older survey, so only the newest resumes.
     A `recheck` reads one stale card's pipeline again and leaves the rest alone."""
@@ -96,7 +120,7 @@ def surveyed(repo: Path, body: Start, recheck: str | None = None) -> dict:
                 refactor.update(repo.name, r["id"], state="superseded")
         rid, now = secrets.token_hex(4), time.time()
         run = {"id": rid, "kind": "survey", "repo": repo.name, "mode": body.mode, "scope": refactor.scope_of(repo),
-               "request_id": body.request_id, "role": body.role.model_dump(),
+               "request_id": body.request_id, "role": roles.survey.model_dump(), "roles": roles.model_dump(),
                "generation": cfg.get("refactor_generation", 0),
                "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "baseline", "state": "running",
                "stopped": None, "models": [], "specs": [], "recheck": recheck, "created": now, "updated": now}
@@ -119,7 +143,8 @@ def recheck(sid: str, body: Start) -> dict:
     if spec["refactor"]["mode"] != body.mode or \
             spec["source"].get("refactor_generation", 0) != config("refactor", repo.name).get("refactor_generation", 0):
         raise HTTPException(409, "명세 모드가 상단에서 고른 모드와 다르다 — 지금 모드로 다시 조사해라")
-    return surveyed(repo, body, sid)
+    # The card keeps the roles its survey started with, whatever the request carries.
+    return surveyed(repo, body, Roles.model_validate(spec["refactor"]["roles"]), sid)
 
 
 @router.post("/api/refactors/{rid}/cancel")
@@ -145,6 +170,8 @@ def resume(rid: str) -> dict:
     run = mine(repo, rid)
     if run["state"] != "stopped":
         raise HTTPException(409, "멈춘 조사만 잇는다")
+    if not run.get("roles"):
+        raise HTTPException(409, "조사·구현·리뷰 모델을 고정하기 전의 조사다 — 모델을 골라 새로 시작해라")
     cfg = config("refactor", repo.name)
     if not run.get("recheck") and run["mode"] == cfg.get("refactor_mode") \
             and not any((s.get("refactor") or {}).get("survey") == rid for s in specs.listing(repo.name)):

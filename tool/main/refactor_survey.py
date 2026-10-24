@@ -638,12 +638,14 @@ def made(repo: Path, survey: str, base: str, s: dict, depends: list[str]) -> dic
              "grounds": {"files": sorted({e["path"] for e in s["evidence"]})},
              # `preserve` is reviewed against its frozen characterization tests.
              **({"review": {"criteria": ["refactor"], "evidence": ["differential"]}} if s["mode"] == "preserve" else {})}
+    # The roles fixed at the survey's start: the card's work cell and review cell run on them, never on
+    # whatever the screen has chosen then.
+    roles = refactor.load(repo.name, survey)["roles"]
     return {**specs.fields(repo, block, specs.gate_of(repo)),
+            "cell": {**roles["worker"], "fast": False}, "reviewer": roles["reviewer"],
             "refactor": {"mode": s["mode"], "survey": survey, "base": base, "pipeline": s["pipeline"],
                          "files": s["files"], "evidence": sorted({e["path"] for e in s["evidence"]}),
-                         "depends": depends, "detail": s,
-                         # Start offers the survey's model first.
-                         "role": (refactor.load(repo.name, survey) or {}).get("role")}}
+                         "depends": depends, "detail": s, "roles": roles}}
 
 
 def fresh(repo: Path, sid: str, fields: dict, source: dict) -> None:

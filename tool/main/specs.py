@@ -988,16 +988,20 @@ def start(sid: str, body: Start) -> dict:
                 raise HTTPException(400, str(exc)) from exc
             except RuntimeError as exc:
                 raise HTTPException(409, str(exc)) from exc
-            # The model is kept for the turns the loop sends this worktree.
+            # The model is kept for the turns the loop sends this worktree; a refactoring card's was fixed
+            # at its survey's start and is not the screen's to change.
+            cell = spec["cell"] if (spec.get("refactor") or {}).get("roles") \
+                else {"model": body.model, "effort": body.effort, "fast": body.fast}
             save(moved(spec, "작업 중", worktree=str(path), branch=sid, start_head=before, return_branch=previous,
-                        cell={"model": body.model, "effort": body.effort, "fast": body.fast}, **extra))
+                        cell=cell, **extra))
         release = release if "workspace_mode" in extra else refactor_run.held(path, release)
         # Closing a session takes _lock; keep the same lock order as spec editing.
         work.forget(path)
         # Made: from here it is a turn, and a switch no longer waits for it.
         release.held.kind = "turn"
         # The server's own turn: Jev may gather evidence first, or ask the person instead.
-        run = work.begin(path, work.session(path, body.model, body.effort, body.fast), "Start.", release, decide=True)
+        run = work.begin(path, work.session(path, cell["model"], cell["effort"], cell.get("fast", False)), "Start.",
+                         release, decide=True)
     except BaseException:
         release()
         raise

@@ -17,6 +17,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from mobile_browser import fixture  # noqa: E402
 
 LEVEL = {"level": "medium", "why": "Three handlers"}
+ROLES = {"survey": {"model": "opus", "effort": ""}, "worker": {"model": "sonnet", "effort": ""},
+         "reviewer": {"model": "codex:gpt-review", "effort": ""}}
 BASELINE = {"cmd": "pytest", "ok": False, "code": 1, "reason": "", "failures": ["tests/test_flaky.py::test_clock"],
             "parsed": True}
 MAP = {"pipelines": [{"id": "orders", "name": "Orders", "entry": "src/orders.py", "paths": ["src/orders.py"],
@@ -33,7 +35,8 @@ PIPELINE = {"id": "orders", "what": "Validates and stores an order", "inputs": "
 
 
 def survey(body, generation):
-    return {"id": "cafe0001", "kind": "survey", "repo": "fixture", "mode": body["mode"], "role": body["role"],
+    return {"id": "cafe0001", "kind": "survey", "repo": "fixture", "mode": body["mode"], "role": body["roles"]["survey"],
+            "roles": body["roles"],
             "generation": generation, "request_id": body["request_id"], "phase": "baseline", "state": "running",
             "stopped": None, "models": [], "specs": [], "recheck": None, "created": time.time(),
             "spent": {"seconds": 3, "calls": 1, "tokens": 10}}
@@ -52,7 +55,7 @@ def card(key, rid, depends):
             "source": {"focus": "refactor", "plan": None, "turn": 1, "refactor_mode": "simplify", "refactor_generation": 1},
             "refactor": {"mode": "simplify", "survey": rid, "base": "a" * 40, "pipeline": "orders",
                          "files": ["src/orders.py"], "evidence": ["src/orders.py"], "depends": depends, "detail": detail,
-                         "role": {"model": "opus", "effort": "high"}}}
+                         "roles": ROLES}, "cell": {**ROLES["worker"], "fast": False}, "reviewer": ROLES["reviewer"]}
 
 
 def main():
@@ -102,6 +105,10 @@ def main():
         if path == "errors":
             errors.append(await request.json())
             return {"ok": True}
+        if path == "options":
+            options = fixture(path, request.method)
+            options["models"].extend({"id": m, "label": m, "note": ""} for m in ("opus", "sonnet", "codex:gpt-review"))
+            return options
         return fixture(path, request.method)
 
     fake.mount("/", StaticFiles(directory=ROOT / "web/dist", html=True))
@@ -132,10 +139,19 @@ def main():
             expect(modes.get_by_role("radio", name="불필요한 복잡성·계약 정리", exact=False)).to_have_attribute("aria-checked", "true")
             assert mode == "simplify" and generation == 1
 
-            page.get_by_role("button", name="리팩터링 시작", exact=True).click()
+            # Every role is picked here: the chat's model (`opus · high` on this channel) is no default.
+            launch = page.get_by_role("button", name="리팩터링 시작", exact=True)
+            expect(launch).to_be_disabled()
+            expect(page.get_by_text("조사·구현·리뷰 모델을 고르지 않았다", exact=True)).to_be_visible()
+            pickers = page.get_by_label("리팩터링 모델", exact=True).get_by_role("combobox")
+            for i, role in enumerate(("survey", "worker", "reviewer")):
+                pickers.nth(2 * i).click()   # each role's model, then its effort
+                page.get_by_role("option", name=ROLES[role]["model"], exact=True).click()
+            expect(page.get_by_text("조사 opus / 구현 sonnet / 리뷰 codex:gpt-review", exact=False).first).to_be_visible()
+            launch.click()
             report = page.get_by_label("리팩터링 조사", exact=True)
             expect(report.get_by_role("status")).to_have_text("진행 중 · 기준 커밋 게이트")
-            assert [(s["mode"], s["role"]) for s in surveys] == [("simplify", {"model": "opus", "effort": "high"})], surveys
+            assert [(s["mode"], s["roles"]) for s in surveys] == [("simplify", ROLES)], surveys
             expect(page.get_by_role("button", name="리팩터링 시작", exact=True)).to_be_disabled()
             run = runs[0]
             run.update(phase="pipelines", base="a" * 40, baseline=BASELINE, map=MAP, pipelines={"orders": PIPELINE},
@@ -170,7 +186,9 @@ def main():
                 if starts and rechecks:
                     break
                 page.wait_for_timeout(100)
-            assert [(sid, body["model"]) for sid, body in starts] == [(f"shared-check-{run['id']}", "opus")], starts
+            expect(cards.get_by_label("고정 모델", exact=True)).to_have_count(2)
+            expect(cards.get_by_label("고정 모델", exact=True).first).to_have_text("조사 opus / 구현 sonnet / 리뷰 codex:gpt-review")
+            assert [(sid, body["model"]) for sid, body in starts] == [(f"shared-check-{run['id']}", "sonnet")], starts
             assert [(sid, body["mode"]) for sid, body in rechecks] == [(f"orders-split-{run['id']}", "simplify")], rechecks
 
             history = page.get_by_text("이전 방식의 실행 1개 · 읽기 전용", exact=True)

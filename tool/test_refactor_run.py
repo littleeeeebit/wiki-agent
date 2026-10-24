@@ -23,7 +23,7 @@ import refactor_profile
 from main import query, refactor, refactor_run, refactor_survey, specs, work
 from test_main import client, no_machine_settings, parse, until  # noqa: F401 — the fixture is autouse
 from test_main import settled as settled_task
-from test_refactor_survey import Host, _git, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
+from test_refactor_survey import ROLES, Host, _git, settled, spec, start, surveyed  # noqa: F401 — `surveyed` is a fixture
 from test_specs import Remote, Worker, _adapter, fresh_workers, report, repo, started  # noqa: F401
 
 PY = Path(sys.executable).as_posix()
@@ -78,6 +78,9 @@ def test_a_card_runs_as_a_task_and_its_pr_carries_the_measured_check(running):
     assert _git(Path(card["worktree"]), "branch", "--show-current") == card["id"], "measuring switched back"
     assert "## 리팩터링 검증" in remote.body and "측정 wall time" in remote.body and "새 실패 0건" in remote.body
     assert "`rework`" in Worker.made[0].system and "orders-fast" in Worker.made[0].system
+    assert Worker.made[0].model == ROLES["worker"]["model"], "the work cell runs on the role fixed at the survey"
+    work.session(Path(card["worktree"]), "opus", "low")   # the screen's toolbar, or a loop's turn
+    assert specs.load("proj", card["id"])["cell"] == {**ROLES["worker"], "fast": False}, "no turn moves it"
 
 
 def test_a_start_waits_for_its_prerequisite_its_mode_and_unchanged_files(running):
@@ -408,12 +411,14 @@ def test_recheck_rewrites_a_stale_card_or_sets_it_aside(surveyed):
     _git(surveyed, "commit", "-qam", "the target moved")
     head, api = _git(surveyed, "rev-parse", "HEAD"), client()
     Host.answers = {"survey": {**ONE, "specs": [spec("orders-split", title="Split place again")]}}
-    body = {"request_id": "recheck-req-0001", "mode": "preserve", "role": {"model": "claude-test", "effort": ""}}
+    body = {"request_id": "recheck-req-0001", "mode": "preserve"}
     again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck", json=body).json()["id"])
     assert again["state"] == "done" and again["recheck"] == sid
+    assert again["roles"] == ROLES and Host.made[-1].rest["model"] == ROLES["survey"]["model"], "the card's roles"
     assert Host.made[-1].rest["system"] == refactor_survey.RECHECK_PROMPT
     card = specs.load("proj", sid)
     assert card["rev"] == 2 and card["refactor"]["base"] == head and card["refactor"]["survey"] == again["id"]
+    assert card["refactor"]["roles"] == ROLES and card["reviewer"] == ROLES["reviewer"]
     assert refactor_run.startable(surveyed, card, "") == []
     assert specs.load("proj", sid)["state"] == "정리됨", "a recheck retires no card of its own survey"
     Host.answers = {"survey": {**ONE, "specs": [], "nothing": "The split already happened"}}
@@ -429,7 +434,7 @@ def test_a_recheck_keeps_a_card_that_depends_on_another_spec_of_its_survey(surve
     (surveyed / "src/orders.py").write_text("def place(order):\n    return [order]\n", encoding="utf-8")
     _git(surveyed, "commit", "-qam", "the target moved")
     Host.answers = {"survey": {**ONE, "specs": [spec("orders-split", depends=["shared-check"])]}}
-    body = {"request_id": "recheck-req-0003", "mode": "preserve", "role": {"model": "claude-test", "effort": ""}}
+    body = {"request_id": "recheck-req-0003", "mode": "preserve"}
     api = client()
     again = settled(api, api.post(f"/api/refactors/specs/{sid}/recheck", json=body).json()["id"])
     assert again["state"] == "done", again["stopped"]

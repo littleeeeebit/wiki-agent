@@ -20,6 +20,8 @@ type Props = {
   turns: Turn[]
   options: Options | null
   choice: Choice
+  /** A refactoring card's model, fixed at its survey's start: shown, not changed here. */
+  pinned?: boolean
   optionsOpen: boolean
   on: boolean
   progressOn?: boolean
@@ -45,7 +47,7 @@ type Props = {
  *  ran and what it asks to write stay as they are, because a person approves
  *  those and a reworded command is not the command. */
 export function Agent({
-  row, turns, options, choice, optionsOpen, on, progressOn = on, onChoice, onSend, onAnswer, onStop, onSteer, queued, onQueue, onUnqueue, refused,
+  row, turns, options, choice, pinned = false, optionsOpen, on, progressOn = on, onChoice, onSend, onAnswer, onStop, onSteer, queued, onQueue, onUnqueue, refused,
   onDismiss, rules, onClearRules, onReset, onPeek,
 }: Props) {
   const end = useRef<HTMLDivElement>(null)
@@ -82,7 +84,9 @@ export function Agent({
             </Btn>
           )}
           <div id="agent-model-options" className="agent-options flex items-center gap-1.5" data-open={optionsOpen}>
-            <Toolbar value={choice} options={options} busy={busy} onChange={onChoice} showFast />
+            <span className="contents" title={pinned ? '리팩터링을 시작할 때 고정한 구현 모델' : undefined}>
+              <Toolbar value={choice} options={options} busy={busy || pinned} onChange={onChoice} showFast />
+            </span>
             {row && (
               <Btn tone="ghost" className="px-1.5" onClick={() => setAsking(true)}
                 disabled={busy} aria-label="문맥 비우기"
