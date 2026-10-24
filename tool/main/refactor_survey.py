@@ -390,7 +390,7 @@ def unexplained(tail: str, baseline: str, trees: tuple) -> list[str]:
             if (counts := _counted(line)) and (not summaries or any(n > summaries[-1].get(k, 0)
                                                                     for k, n in counts.items())):
                 odd.append(line)
-        elif SIGNAL.search(line) and not FAILED.search(line) and plain(line) not in printed:
+        elif SIGNAL.search(line) and not FAILED.search(line) and _node(line) is None and plain(line) not in printed:
             odd.append(line)
     return odd
 
