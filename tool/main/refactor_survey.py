@@ -339,9 +339,16 @@ def failures(verdict: dict) -> list[str] | None:
     """The failing tests a gate's tail names, or None when it failed without naming any."""
     if verdict.get("code") == 0:
         return []
-    found = sorted({next(g for g in m.groups() if g) for m in FAILED.finditer(verdict.get("tail") or "")})
+    tail = verdict.get("tail") or ""
+    found = sorted({next(g for g in m.groups() if g) for m in FAILED.finditer(tail)})
     if any("[" in name and not name.endswith("]") for name in found):
         return None   # a parameter id cut short could be any of its cases
+    for line in tail.splitlines():
+        if line.startswith(("FAILED ", "ERROR ")) and "[" in line.partition(" - ")[0]:
+            rest = line[line.index("["):].rstrip()
+            ends = rest.count("] - ") + rest.endswith("]")
+            if ends > 1:
+                return None   # the parameter id may end at more than one `]`: two cases could read as one
     return found or None
 
 

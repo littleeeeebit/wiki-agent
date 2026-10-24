@@ -263,3 +263,8 @@ def test_failures_are_named_or_unparsed():
     assert refactor_survey.failures({"code": 1, "tail": spaced}) == \
         ["t.py::test_case[a] b]", "t.py::test_case[case one]", "t.py::test_case[case two]"]
     assert refactor_survey.failures({"code": 1, "tail": "FAILED t.py::test_case[case\n"}) is None
+    for doubtful in ("FAILED t.py::test_case[case] - one] - AssertionError", "FAILED t.py::test_case[case] - one]",
+                     "FAILED t.py::test_case[p] - assert [1] == [2]"):   # the id may end at either `]`
+        assert refactor_survey.failures({"code": 1, "tail": doubtful + "\n"}) is None, doubtful
+    plain = "FAILED t.py::test_x - assert [1] - [2] == [3]\nFAILED t.py::test_case[x - y] - boom\n"
+    assert refactor_survey.failures({"code": 1, "tail": plain}) == ["t.py::test_case[x - y]", "t.py::test_x"]
