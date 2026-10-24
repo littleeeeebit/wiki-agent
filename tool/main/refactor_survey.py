@@ -475,8 +475,26 @@ def baselined(w, run: dict) -> dict:
     return w.note(phase="recheck" if run.get("recheck") else "map")
 
 
-def asked(w, run: dict, phase: str, text: str, system: str, tag: str):
-    """One read-only turn in the survey's worktree on the chosen model; its block."""
+REPAIR = ("Your `{tag}` block was refused: {reason}\n\nThe refused block:\n```{tag}\n{block}```\n\n"
+          "Return the whole `{tag}` block again with that fixed. Change only what the refusal names; read the "
+          "repository only where the fix needs it.")
+
+
+def asked(w, run: dict, phase: str, text: str, system: str, tag: str, shape):
+    """One read-only turn in the survey's worktree on the chosen model; its block, shaped. A refused block
+    goes back to the same model once with the reason — a long turn is not lost to one bad field; a second
+    refusal raises its `ValueError`."""
+
+    answer = refactor.block(tag, said(w, run, phase, text, system))
+    try:
+        return shape(json.loads(answer))
+    except ValueError as exc:
+        again = REPAIR.format(tag=tag, reason=exc, block=answer)
+    return shape(json.loads(refactor.block(tag, said(w, run, f"{phase}:repair", again, system))))
+
+
+def said(w, run: dict, phase: str, text: str, system: str) -> str:
+    """One read-only turn on the chosen model, refused when another model answered; all it said."""
 
     path = checkout(w, run)
     final = refactor.turn(w, run, f"{rules(run['mode'])}\n\n{text}", system, path)
@@ -488,7 +506,7 @@ def asked(w, run: dict, phase: str, text: str, system: str, tag: str):
                                              "reported": seen}])
     if want and got and want not in got and got.split("[")[0] not in want:
         raise refactor.Stop("model", f"`{run['role']['model']}` 을 골랐는데 `{seen}` 이 답했다 — 다른 모델로 대신하지 않는다")
-    return refactor.fenced(tag, final)
+    return final
 
 
 def omm(w, run: dict, path: Path) -> str:
@@ -518,7 +536,7 @@ def mapped(w, run: dict) -> dict:
             f"Gate on the base commit: `{gate['cmd']}` exited {gate['code']}"
             + (f"; failing: {', '.join(gate['failures'])}" if gate["failures"] else "") + ".")
     try:
-        shaped = mapped_shape(asked(w, run, "map", text, MAP_PROMPT, "refactor-map"), path)
+        shaped = asked(w, run, "map", text, MAP_PROMPT, "refactor-map", lambda v: mapped_shape(v, path))
     except ValueError as exc:
         raise refactor.Stop("format", f"refactor-map 이 맞지 않다 — {exc}") from exc
     return w.note(map=shaped, pipelines={}, phase="pipelines")
@@ -533,8 +551,8 @@ def explained(w, run: dict) -> dict:
         text = (f"The repository map:\n{json.dumps(run['map'], ensure_ascii=False)}\n\n"
                 f"Explain pipeline `{p['id']}` ({p['name']}).")
         try:
-            done[p["id"]] = pipeline_shape(asked(w, run, f"pipeline:{p['id']}", text, PIPELINE_PROMPT,
-                                                 "refactor-pipeline"), p["id"], ids, path)
+            done[p["id"]] = asked(w, run, f"pipeline:{p['id']}", text, PIPELINE_PROMPT, "refactor-pipeline",
+                                  lambda v, pid=p["id"]: pipeline_shape(v, pid, ids, path))
         except ValueError as exc:
             raise refactor.Stop("format", f"`{p['id']}` 의 refactor-pipeline 이 맞지 않다 — {exc}") from exc
         run = w.note(pipelines=done)
@@ -546,8 +564,8 @@ def integrated(w, run: dict) -> dict:
     text = (f"The repository map:\n{json.dumps(run['map'], ensure_ascii=False)}\n\nPipeline reports:\n"
             + json.dumps(list(run["pipelines"].values()), ensure_ascii=False))
     try:
-        survey = survey_shape(asked(w, run, "integrate", text, INTEGRATE_PROMPT, "refactor-survey"),
-                              run["mode"], run["map"], path)
+        survey = asked(w, run, "integrate", text, INTEGRATE_PROMPT, "refactor-survey",
+                       lambda v: survey_shape(v, run["mode"], run["map"], path))
     except ValueError as exc:
         raise refactor.Stop("format", f"refactor-survey 가 맞지 않다 — {exc}") from exc
     run = w.note(survey=survey)
@@ -661,13 +679,17 @@ def rechecked(w, run: dict) -> dict:
             f"older survey:\n{json.dumps((parent.get('pipelines') or {}).get(old['pipeline']), ensure_ascii=False)}"
             f"\n\nThe spec:\n{json.dumps(old['detail'], ensure_ascii=False)}\n\nFiles changed since its base "
             f"{old['base']}: {', '.join(changed[:300]) or 'none'}")
-    try:
-        # The card's prerequisites are other specs of its survey, not in this one-spec answer.
-        others = frozenset([*old["detail"]["depends"], *(s["key"] for s in (parent.get("survey") or {}).get("specs") or [])])
-        survey = survey_shape(asked(w, run, "recheck", text, RECHECK_PROMPT, "refactor-survey"), run["mode"],
-                              parent["map"], path, others)
+    # The card's prerequisites are other specs of its survey, not in this one-spec answer.
+    others = frozenset([*old["detail"]["depends"], *(s["key"] for s in (parent.get("survey") or {}).get("specs") or [])])
+
+    def shape(value):
+        survey = survey_shape(value, run["mode"], parent["map"], path, others)
         if len(survey["specs"]) > 1 or survey["specs"] and survey["specs"][0]["key"] != old["detail"]["key"]:
             raise ValueError(f"key `{old['detail']['key']}` 의 명세 하나만 돌려줘야 한다")
+        return survey
+
+    try:
+        survey = asked(w, run, "recheck", text, RECHECK_PROMPT, "refactor-survey", shape)
     except ValueError as exc:
         raise refactor.Stop("format", f"다시 확인한 refactor-survey 가 맞지 않다 — {exc}") from exc
     with specs._files:

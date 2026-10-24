@@ -42,7 +42,7 @@ Chosen by the owner on 2026-10-24 from offered options.
 | Question | Decision |
 | --- | --- |
 | Survey form | A persisted survey record that reuses the read-only refactoring turn; not a chat turn, not the planner |
-| Survey output | Structured JSON blocks the server validates; a malformed answer stops the survey with what was wrong |
+| Survey output | Structured JSON blocks the server validates; a refused block goes back to the same model once with the reason (user's choice after a live 23-pipeline survey lost its integration turn to one 49-character key); a second refusal, or no block, stops the survey with what was wrong |
 | Large repositories | A map turn, one read-only turn per pipeline, then one integration turn; finished pipeline turns are kept and skipped on retry |
 | Pipeline count | No ceiling; the map turn groups small helpers and says why |
 | Survey tools | Read, Glob and Grep only; the server runs the gate once on the base commit for the baseline |

@@ -43,13 +43,21 @@ class Stop(Exception):
         self.reason, self.detail = reason, detail
 
 
+def block(tag: str, text: str) -> str:
+    """The text of the last block tagged `tag`."""
+
+    found = re.findall(rf"^```{tag}[ \t]*\r?\n(.*?)^```", text, re.M | re.S)
+    if not found:
+        raise Stop("format", f"`{tag}` 블록이 없다")
+    return found[-1]
+
+
 def fenced(tag: str, text: str):
     """The JSON in the last block tagged `tag`."""
 
-    found = re.findall(rf"^```{tag}[ \t]*\r?\n(.*?)^```", text, re.M | re.S)
     try:
-        return json.loads(found[-1])
-    except (IndexError, ValueError) as exc:
+        return json.loads(block(tag, text))
+    except ValueError as exc:
         raise Stop("format", f"`{tag}` 블록을 읽지 못했다 — {exc}") from exc
 
 
