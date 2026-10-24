@@ -135,11 +135,19 @@ def cancel(rid: str) -> dict:
 
 @router.post("/api/refactors/{rid}/resume")
 def resume(rid: str) -> dict:
-    """[재개] a stopped survey from its phase; what finished is not asked again."""
+    """[재개] a stopped survey from its phase; what finished is not asked again.
+    One that has made no card yet takes the current generation when its mode is
+    still chosen: a mode switched away and back retires cards, and it has none."""
+
+    from .query import config
 
     repo = current_repo()
     run = mine(repo, rid)
     if run["state"] != "stopped":
         raise HTTPException(409, "멈춘 조사만 잇는다")
+    cfg = config("refactor", repo.name)
+    if not run.get("recheck") and run["mode"] == cfg.get("refactor_mode") \
+            and not any((s.get("refactor") or {}).get("survey") == rid for s in specs.listing(repo.name)):
+        run = refactor.update(repo.name, rid, generation=cfg.get("refactor_generation", 0))
     refactor.launch(repo, run)
     return refactor.load(repo.name, rid)

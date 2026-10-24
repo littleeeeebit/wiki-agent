@@ -106,7 +106,7 @@ def surveyed(repo, tmp_path, monkeypatch):
     monkeypatch.setattr(refactor, "RUNS", tmp_path / "runs")
     monkeypatch.setattr(refactor, "ChatSession", Host)
     Host.made, Host.answers, Host.model, Host.afterword, Host.repair = [], {}, "claude-test-1", "", None
-    query.config("refactor", "proj")["refactor_mode"] = "preserve"
+    query.config("refactor", "proj").update(refactor_mode="preserve", refactor_generation=0)
     return repo
 
 
@@ -171,11 +171,14 @@ def test_a_malformed_pipeline_stops_and_resume_skips_what_finished(surveyed):
     assert run["state"] == "stopped" and run["stopped"]["reason"] == "format" and list(run["pipelines"]) == ["orders"]
     assert refactor_survey.place(surveyed, run["id"]).exists(), "kept for the resume"
     Host.answers, Host.made = {}, []
+    query.config("refactor", "proj")["refactor_generation"] = 2   # the mode switched away and back
     api.post(f"/api/refactors/{run['id']}/resume")
     run = settled(api, run["id"])
     assert run["state"] == "done"
     assert [m["phase"] for m in run["models"]][-2:] == ["pipeline:billing", "integrate"]
     assert len(Host.made) == 2, "orders was not asked again"
+    assert run["generation"] == 2 and all(specs.load("proj", sid)["source"]["refactor_generation"] == 2
+                                          for sid in run["specs"]), "a survey with no cards yet resumes into this generation"
 
 
 def test_a_refused_block_goes_back_once_with_its_reason(surveyed):

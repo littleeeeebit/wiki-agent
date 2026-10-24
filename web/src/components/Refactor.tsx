@@ -73,7 +73,9 @@ export function RefactorSurvey({ repo, mode, generation, role, korean, busy, onM
     return () => { stale = true; window.clearTimeout(timer); window.removeEventListener('refactor-survey', again) }
   }, [repo, revision])
   const surveys = (runs ?? []).filter((r) => r.kind === 'survey')
-  const latest = surveys.find((r) => !r.recheck && r.mode === mode && (r.generation ?? 0) === generation)
+  // A stopped survey with no cards yet resumes into the current generation.
+  const latest = surveys.find((r) => !r.recheck && r.mode === mode
+    && ((r.generation ?? 0) === generation || (r.state === 'stopped' && !r.specs?.length)))
   const rechecks = surveys.filter((r) => r.recheck && r.mode === mode && r.state !== 'done' && r.state !== 'superseded')
   const live = surveys.find((r) => r.state === 'running')
   const legacy = (runs ?? []).filter((r) => r.kind !== 'survey')

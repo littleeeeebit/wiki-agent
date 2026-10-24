@@ -51,7 +51,7 @@ Chosen by the owner on 2026-10-24 from offered options.
 | Hotspot list | Removed from the screen; the scan goes to the map turn as reference measurements only; the ratchet stays in the final gate |
 | Model | Only the model chosen in the focus runs the survey; each turn records the model the host reports and the survey stops on a mismatch; an unreported model is shown as unconfirmed |
 | Language | The model writes English; the screen reads it through the translation overlay; pull requests go up in Korean as today |
-| Mode change | A new survey every time, nothing reused; unstarted specs of another mode or generation stay unstartable as today; the mode and generation are kept per repository on disk, so a restart changes neither |
+| Mode change | A new survey every time, nothing reused; unstarted specs of another mode or generation stay unstartable as today; the mode and generation are kept per repository on disk, so a restart changes neither; a stopped survey that has made no card yet stays resumable in its mode and resumes into the current generation (user's choice after a mode clicked away and back hid a 23-pipeline survey) |
 | One survey per repository | A second start while one runs is refused; the request key deduplicates; a completed survey drops the unstarted specs of older surveys; started specs stay |
 | Repository switch | A survey keeps running on its own repository; the screen shows the selected repository's latest survey only |
 | Spec execution | The ordinary task flow; one spec, one pull request; the execution model is chosen in the Start dialog, defaulting to the survey's model |
