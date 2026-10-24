@@ -293,7 +293,7 @@ export function SpecForm({ spec, specs = [], busy, onSpecs, onStart, onRenamed, 
           onClick={() => act('start', () => roles ? onStart(spec.id, roles.worker) : onStart(spec.id))}>
           {working === 'start' ? '시작하는 중…' : '시작 ▸'}
         </Btn>}
-        {surveyed && spec.state === '정리됨' && <Btn disabled={busy || !!working}
+        {surveyed && spec.state === '정리됨' && <Btn disabled={busy || !!working || !roles}
           title="이 명세의 파이프라인을 지금 코드에서 다시 읽는다 — 같은 명세가 고쳐지거나, 더는 맞지 않으면 치워진다"
           onClick={() => act('recheck', () => api.post(`/api/refactors/specs/${spec.id}/recheck`,
             { request_id: crypto.randomUUID(), mode: spec.refactor!.mode }, 'POST', spec.repo)

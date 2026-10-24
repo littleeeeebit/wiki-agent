@@ -23,7 +23,7 @@ export type Channel = {
   model_name: string
   effort: string
   refactor_mode?: RefactorMode
-  refactor_generation?: number
+  refactor_generation?: number; refactor_pinned?: boolean   // a survey fixed the conversation's model for this mode
 }
 
 /** The refactoring purpose modes; `LegacyMode` only on records of the earlier workflow. */

@@ -412,7 +412,8 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
         <div id="query-options" data-open={mobileOptions} className="query-options flex shrink-0 items-center gap-1.5">
           <Picker label="문서 범위" hideLabel width="w-32" items={SCOPES} value={scope} disabled={busy}
             onPick={(v) => setScope(v ?? 'all')} />
-          {here && <Toolbar value={here} options={options} busy={busy} onChange={apply} />}
+          {here && <span className="contents" title={here.refactor_pinned ? '이 모드의 조사를 시작할 때 고른 조사 모델 — 모드를 바꾸면 풀린다' : undefined}>
+            <Toolbar value={here} options={options} busy={busy || !!here.refactor_pinned} onChange={apply} /></span>}
           <Btn onClick={() => setPlanning(true)}
             title="계획 세우기 — 계획자가 조사해 새 계획 폴더를 쓰고 PR 을 올린 뒤, 수정자와 리뷰어에게 넘긴다">
             계획

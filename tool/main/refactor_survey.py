@@ -668,6 +668,8 @@ def refined(repo: Path, block, source: dict) -> str:
         if block.get("id") and spec["state"] != "정리됨":
             raise ValueError("시작한 명세는 대화에서 바꾸지 않는다")
         r = spec["refactor"]
+        if not r.get("roles"):
+            raise ValueError(f"`{target}` 은 조사·구현·리뷰 모델을 고정하기 전의 명세다 — 모델을 골라 새로 조사해라")
         if r["mode"] != source.get("refactor_mode") \
                 or spec["source"].get("refactor_generation", 0) != source.get("refactor_generation", 0):
             raise ValueError("명세 모드가 상단에서 고른 모드와 다르다 — 지금 모드로 다시 조사해라")

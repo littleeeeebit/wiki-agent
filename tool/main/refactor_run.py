@@ -87,6 +87,8 @@ def startable(repo: Path, spec: dict, source: str) -> list[str]:
     if r["mode"] != cfg.get("refactor_mode") \
             or spec["source"].get("refactor_generation", 0) != cfg.get("refactor_generation", 0):
         raise HTTPException(409, "모드가 바뀌었다. 지금 모드로 다시 조사해라")
+    if not r.get("roles"):
+        raise HTTPException(409, "조사·구현·리뷰 모델을 고정하기 전의 명세다 — 모델을 골라 새로 조사해라")
     survey = refactor.load(repo.name, r["survey"])
     if survey is None or survey["state"] != "done":
         raise HTTPException(409, "이 명세를 낸 조사가 끝나지 않았거나 없어졌다")

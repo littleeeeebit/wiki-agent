@@ -76,7 +76,7 @@ def main():
         if path == "channels":
             rows = fixture(path, request.method)
             rows.insert(1, {**rows[0], "id": "refactor", "label": "리팩터링", "model": "opus", "effort": "high",
-                            "refactor_mode": mode, "refactor_generation": generation})
+                            "refactor_mode": mode, "refactor_generation": generation, "refactor_pinned": bool(surveys)})
             return rows
         if path == "config/refactor":
             mode = (await request.json())["refactor_mode"]
@@ -152,6 +152,10 @@ def main():
             report = page.get_by_label("리팩터링 조사", exact=True)
             expect(report.get_by_role("status")).to_have_text("진행 중 · 기준 커밋 게이트")
             assert [(s["mode"], s["roles"]) for s in surveys] == [("simplify", ROLES)], surveys
+            # The conversation that refines its cards keeps the survey model: its toolbar is locked.
+            page.reload()
+            nav.get_by_role("button", name="리팩터링", exact=True).click()
+            expect(page.locator("#query-options").get_by_role("combobox").nth(1)).to_be_disabled()
             expect(page.get_by_role("button", name="리팩터링 시작", exact=True)).to_be_disabled()
             run = runs[0]
             run.update(phase="pipelines", base="a" * 40, baseline=BASELINE, map=MAP, pipelines={"orders": PIPELINE},

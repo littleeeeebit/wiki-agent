@@ -285,6 +285,7 @@ export function locks(spec: api.Spec, specs: api.Spec[], mode?: RefactorMode, ge
   const out: string[] = []
   if (mode && (r.mode !== mode || (spec.source.refactor_generation ?? 0) !== (generation ?? 0)))
     out.push('모드가 바뀌었다 — 지금 모드로 다시 조사한다')
+  if (!r.roles) out.push('조사·구현·리뷰 모델을 고정하기 전의 명세다 — 모델을 골라 새로 조사한다')
   for (const dep of r.depends ?? []) {
     const state = specs.find((s) => s.id === dep)?.state
     if (state !== '머지됨') out.push(`선행 명세 ${dep} 가 머지된 뒤 시작한다${state ? ` (지금 ${state})` : ' (없어짐)'}`)

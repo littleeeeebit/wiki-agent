@@ -159,12 +159,21 @@ def test_a_survey_reads_only_its_base_and_ends_in_unstarted_cards(surveyed):
     ({**ROLES, "worker": {"model": "", "effort": ""}}, "구현 모델을 골라라"),
     ({**ROLES, "reviewer": {"model": "Opus 5", "effort": ""}}, "리뷰 모델 이름"),
     ({**ROLES, "survey": {"model": "opus", "effort": "very high"}}, "조사 추론 강도"),
+    ({**ROLES, "worker": {"model": "codex:", "effort": ""}}, "구현 모델 이름"),
+    ({**ROLES, "worker": {"model": "codex: ", "effort": ""}}, "구현 모델 이름"),
 ])
 def test_a_survey_starts_only_with_every_role_named(surveyed, roles, why):
     api = client()
     refused = start(api, roles=roles)
     assert refused.status_code in (400, 422) and (why is None or why in refused.json()["detail"])
     assert not api.get("/api/refactors").json()["runs"], "nothing started on a default model"
+
+
+def test_a_padded_role_is_stored_as_it_was_checked(surveyed):
+    api = client()
+    padded = {**ROLES, "reviewer": {"model": " codex:gpt-review ", "effort": " high "}}
+    run = settled(api, start(api, roles=padded).json()["id"])
+    assert run["roles"] == ROLES, "a padded `codex:` name would run on Claude"
 
 
 def test_a_survey_from_before_roles_does_not_resume(surveyed):

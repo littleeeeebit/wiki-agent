@@ -122,6 +122,50 @@ def test_a_restart_keeps_the_mode_and_generation_its_cards_were_made_in(running,
         refactor_run.startable(running[0], specs.load("proj", run["specs"][0]), "")
 
 
+class Talk:
+    """The refactoring conversation's session: only its model is looked at."""
+
+    def __init__(self, repo, model=None, effort=None, **_):
+        self.model, self.effort, self.is_codex, self.session_id, self.alive = model, effort, False, None, True
+
+    def reconfigure(self, model, effort, fast=None):
+        self.model, self.effort = model, effort
+
+    def close(self):
+        pass
+
+
+def test_the_conversation_refines_cards_on_the_survey_model_until_the_mode_changes(surveyed, monkeypatch):
+    monkeypatch.setattr(query, "ChatSession", Talk)
+    query.config("refactor", "proj").update(model="haiku", effort="low")   # the chat toolbar's pick
+    query.session("refactor")   # a conversation already open on it
+    surveyed_in("preserve", spec("orders-split"))
+    assert query.session("refactor").model == ROLES["survey"]["model"], "refined on the survey model"
+    api, toolbar = client(), {"repo": "proj", "model": "haiku", "effort": "low"}
+    refused = api.post("/api/config/refactor", json=toolbar)
+    assert refused.status_code == 409 and "고정" in refused.json()["detail"]
+    monkeypatch.setattr(query, "_config", {})   # what a restart leaves
+    assert {k: query.config("refactor", "proj")[k] for k in ("model", "refactor_pinned")} == \
+        {"model": ROLES["survey"]["model"], "refactor_pinned": True}
+    assert api.post("/api/config/refactor", json={**toolbar, "refactor_mode": "simplify"}).status_code == 200
+    assert query.session("refactor").model == "haiku" and "refactor_pinned" not in query.config("refactor", "proj")
+
+
+def test_a_card_from_before_roles_neither_starts_nor_is_rechecked_or_refined(surveyed):
+    run = surveyed_in("preserve", spec("orders-split"))
+    sid = run["specs"][0]
+    card = specs.load("proj", sid)
+    specs.save({**card, "refactor": {k: v for k, v in card["refactor"].items() if k != "roles"}})
+    with pytest.raises(HTTPException, match="고정하기 전"):
+        refactor_run.startable(surveyed, specs.load("proj", sid), "")
+    refused = client().post(f"/api/refactors/specs/{sid}/recheck", json={"request_id": "recheck-old-0001", "mode": "preserve"})
+    assert refused.status_code == 409 and "고정하기 전" in refused.json()["detail"]
+    source = {"focus": "refactor", "turn": 2, "session": "talk", "refactor_mode": "preserve",
+              "refactor_generation": query.config("refactor", "proj").get("refactor_generation", 0)}
+    narrowed = {**spec("ignored", title="Narrow it"), "id": sid}
+    assert "고정하기 전" in specs.answered(surveyed, [{"name": "spec", "value": narrowed}], source)[0]["error"]
+
+
 def characterize(test: str, also: str = ""):
     def turn(path, halt):
         (path / "tests").mkdir(exist_ok=True)
