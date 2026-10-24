@@ -52,9 +52,9 @@ const where = (e: api.SurveyEvidence) => `${e.path} · ${e.symbol}`
 /** The refactoring focus: a purpose mode, `[리팩터링 시작]` and the selected
  *  mode's latest survey of this repository. A survey only reads; its specs are
  *  ordinary cards below the conversation, each started on its own. */
-export function RefactorSurvey({ repo, mode, generation, options, korean, busy, onMode, onSpecs }: {
+export function RefactorSurvey({ repo, mode, generation, options, korean, busy, onMode, onSpecs, onPinned }: {
   repo: string; mode: RefactorMode; generation: number; options: api.Options | null; korean: boolean
-  busy: boolean; onMode: (mode: RefactorMode) => void; onSpecs: () => void
+  busy: boolean; onMode: (mode: RefactorMode) => void; onSpecs: () => void; onPinned: () => void
 }) {
   // Nothing preset: every role is picked here, never taken from the chat's toolbar or a CLI default.
   const [roles, setRoles] = useState<api.RefactorRoles>({ survey: NO_ROLE, worker: NO_ROLE, reviewer: NO_ROLE })
@@ -98,6 +98,7 @@ export function RefactorSurvey({ repo, mode, generation, options, korean, busy, 
     try {
       await api.post(path, body, 'POST', repo).then((r) => api.json(r, '리팩터링 조사'))
       setFault('')
+      onPinned()   // a start or resume fixed the conversation's model: its toolbar locks now
     } catch (err) { setFault(String(err instanceof Error ? err.message : err)) }
     finally { setWorking(false); setRevision((n) => n + 1) }
   }

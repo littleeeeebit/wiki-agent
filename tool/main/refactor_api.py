@@ -18,8 +18,8 @@ from pydantic import BaseModel
 
 import improvement
 
-from . import channels, planning, refactor, refactor_survey, specs
-from .query import _lock, current_repo
+from . import channels, planning, refactor, refactor_survey, specs, work
+from .query import _lock, current_repo, hold
 
 router = APIRouter()
 
@@ -94,23 +94,41 @@ def named(roles: Roles | None) -> Roles:
     return roles
 
 
-def pinned(name: str, role: dict) -> None:
-    """A survey's start: the refactoring conversation, which refines its cards, runs on the survey model
-    until the mode changes. Another CLI is a new conversation, as a toolbar change makes one."""
+def pinned(repo: Path, role: dict) -> None:
+    """A survey's start or resume: the refactoring conversation, which refines its cards, runs on the
+    survey model until the mode changes. Another CLI is a new conversation, as a toolbar change makes one."""
 
     from . import query
 
     with _lock:
-        cfg = query.config("refactor", name)
+        if "refactor" in query._busy:
+            raise HTTPException(409, "리팩터링 대화의 답변이 끝난 뒤 시작해라 — 대화가 조사 모델로 바뀐다")
+        cfg = query.config("refactor", repo.name)
         query.refactor_mode(cfg["repo"], cfg["refactor_mode"], cfg["refactor_generation"], role)
         moved = role["model"].startswith("codex:") != cfg["model"].startswith("codex:")
         cfg.update(model=role["model"], effort=role["effort"], refactor_pinned=True)
         if moved:
-            query.remember("refactor", "context", "CLI 변경")
-        key = query.session_key("refactor")
+            query.remember("refactor", "context", "CLI 변경", repo=repo)
+        key = (str(repo), "refactor")   # this survey's repository, not whatever is selected by now
         chat = query._sessions.pop(key, None) if moved else query._sessions.get(key)
     if chat is not None:
         chat.close() if moved else chat.reconfigure(role["model"], role["effort"])
+    work.feed.put({"kind": "sync"})   # the screen locks its toolbar now, not on its next reload
+
+
+def started(repo: Path, run: dict, pin: bool) -> None:
+    """Pin the conversation (`pin`: a survey of the chosen mode, never a recheck) and give the record its
+    worker. A start that fails leaves the record stopped, never running with no worker to stop it."""
+
+    try:
+        if pin:
+            pinned(repo, run["role"])
+        refactor.launch(repo, run)
+    except BaseException as exc:
+        if (repo.name, run["id"]) not in refactor._workers:
+            refactor.update(repo.name, run["id"], state="stopped",
+                            stopped={"reason": "start", "detail": str(getattr(exc, "detail", exc)), "ts": time.time()})
+        raise
 
 
 def fixed(spec: dict) -> Roles:
@@ -142,26 +160,29 @@ def surveyed(repo: Path, body: Start, roles: Roles, recheck: str | None = None) 
         raise HTTPException(409, "상단에서 고른 모드와 요청 모드가 다르다 — 화면을 새로 고쳐라")
     if recheck is None and "refactor" in _busy:
         raise HTTPException(409, "리팩터링 대화의 답변이 끝난 뒤 시작해라 — 대화가 조사 모델로 바뀐다")
-    with refactor._files:
-        found = refactor.listing(repo.name)
-        if old := next((r for r in found if r["request_id"] == body.request_id), None):
-            return old
-        if live := next((r for r in found if r.get("kind") == "survey" and r["state"] == "running"), None):
-            raise HTTPException(409, f"이 저장소의 조사 `{live['id']}` 가 돌고 있다 — 끝나거나 멈춘 뒤 시작해라")
-        for r in found if recheck is None else ():
-            if r.get("kind") == "survey" and r["state"] == "stopped":
-                refactor_survey.removed(repo, r["id"])
-                refactor.update(repo.name, r["id"], state="superseded")
-        rid, now = secrets.token_hex(4), time.time()
-        run = {"id": rid, "kind": "survey", "repo": repo.name, "mode": body.mode, "scope": refactor.scope_of(repo),
-               "request_id": body.request_id, "role": roles.survey.model_dump(), "roles": roles.model_dump(),
-               "generation": cfg.get("refactor_generation", 0),
-               "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "baseline", "state": "running",
-               "stopped": None, "models": [], "specs": [], "recheck": recheck, "created": now, "updated": now}
-        improvement.atomic(refactor.file_of(repo.name, rid), run)
-    if recheck is None:
-        pinned(repo.name, run["role"])
-    refactor.launch(repo, run)
+    # A short request from the record to its worker: the project stays put, so the record never outlives its start.
+    release = hold(work._busy, _lock, f"{repo}#refactor", "이 저장소의 조사를 시작하는 중이다")
+    try:
+        with refactor._files:
+            found = refactor.listing(repo.name)
+            if old := next((r for r in found if r["request_id"] == body.request_id), None):
+                return old
+            if live := next((r for r in found if r.get("kind") == "survey" and r["state"] == "running"), None):
+                raise HTTPException(409, f"이 저장소의 조사 `{live['id']}` 가 돌고 있다 — 끝나거나 멈춘 뒤 시작해라")
+            for r in found if recheck is None else ():
+                if r.get("kind") == "survey" and r["state"] == "stopped":
+                    refactor_survey.removed(repo, r["id"])
+                    refactor.update(repo.name, r["id"], state="superseded")
+            rid, now = secrets.token_hex(4), time.time()
+            run = {"id": rid, "kind": "survey", "repo": repo.name, "mode": body.mode, "scope": refactor.scope_of(repo),
+                   "request_id": body.request_id, "role": roles.survey.model_dump(), "roles": roles.model_dump(),
+                   "generation": cfg.get("refactor_generation", 0),
+                   "spent": {"seconds": 0, "calls": 0, "tokens": 0}, "phase": "baseline", "state": "running",
+                   "stopped": None, "models": [], "specs": [], "recheck": recheck, "created": now, "updated": now}
+            improvement.atomic(refactor.file_of(repo.name, rid), run)
+        started(repo, run, recheck is None)
+    finally:
+        release()
     return refactor.load(repo.name, rid)
 
 
@@ -208,9 +229,15 @@ def resume(rid: str) -> dict:
         raise HTTPException(409, "멈춘 조사만 잇는다")
     if not run.get("roles"):
         raise HTTPException(409, "조사·구현·리뷰 모델을 고정하기 전의 조사다 — 모델을 골라 새로 시작해라")
-    cfg = config("refactor", repo.name)
-    if not run.get("recheck") and run["mode"] == cfg.get("refactor_mode") \
-            and not any((s.get("refactor") or {}).get("survey") == rid for s in specs.listing(repo.name)):
-        run = refactor.update(repo.name, rid, generation=cfg.get("refactor_generation", 0))
-    refactor.launch(repo, run)
+    release = hold(work._busy, _lock, f"{repo}#refactor", "이 저장소의 조사를 시작하는 중이다")
+    try:
+        cfg = config("refactor", repo.name)
+        if not run.get("recheck") and run["mode"] == cfg.get("refactor_mode") \
+                and not any((s.get("refactor") or {}).get("survey") == rid for s in specs.listing(repo.name)):
+            run = refactor.update(repo.name, rid, generation=cfg.get("refactor_generation", 0))
+        # Its cards will be refined under the current generation: the conversation takes its survey model again.
+        started(repo, run, not run.get("recheck") and run.get("generation") == cfg.get("refactor_generation", 0)
+                and run["mode"] == cfg.get("refactor_mode"))
+    finally:
+        release()
     return refactor.load(repo.name, rid)

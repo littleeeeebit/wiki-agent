@@ -184,6 +184,38 @@ def test_a_survey_from_before_roles_does_not_resume(surveyed):
     assert refused.status_code == 409 and "새로 시작" in refused.json()["detail"]
 
 
+def test_a_resumed_survey_pins_the_conversation_again_after_the_mode_came_back(surveyed):
+    api = client()
+    Host.answers = {"billing": "{not json"}
+    run = settled(api, start(api).json()["id"])
+    assert run["state"] == "stopped" and not run["specs"]
+    for mode in ("simplify", "preserve"):   # away and back: the pin goes with the first switch
+        assert api.post("/api/config/refactor", json={"repo": "proj", "model": "haiku", "effort": "low",
+                                                      "refactor_mode": mode}).status_code == 200
+    assert "refactor_pinned" not in query.config("refactor", "proj")
+    Host.answers = {}
+    api.post(f"/api/refactors/{run['id']}/resume")
+    assert {k: query.config("refactor", "proj").get(k) for k in ("model", "refactor_pinned")} == \
+        {"model": ROLES["survey"]["model"], "refactor_pinned": True}, "its cards are refined on the survey model"
+    assert settled(api, run["id"])["state"] == "done"
+
+
+def test_a_start_that_fails_leaves_the_record_stopped_and_holds_the_project_until_then(surveyed, monkeypatch):
+    from main import work
+    seen = []
+
+    def launch(repo, run):
+        seen.append(work.busy())
+        raise RuntimeError("no worker")
+    monkeypatch.setattr(refactor, "launch", launch)
+    with pytest.raises(RuntimeError):
+        start(client())
+    run = refactor.listing("proj")[0]
+    assert seen == [True], "a project switch is refused from the record to its worker"
+    assert run["state"] == "stopped" and run["stopped"]["reason"] == "start", "never running with no worker"
+    assert not work.busy()
+
+
 def test_one_live_survey_per_repository_and_a_new_one_retires_old_cards(surveyed, monkeypatch):
     api = client()
     first = settled(api, start(api).json()["id"])

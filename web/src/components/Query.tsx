@@ -447,6 +447,7 @@ export function Query({ channels, options, on, seed, onChannels, onBusy, specs, 
             intro={active === 'refactor' && here && <RefactorSurvey key={here.repo} repo={here.repo}
               mode={here.refactor_mode ?? 'preserve'} generation={here.refactor_generation ?? 0}
               options={options} korean={on} busy={busy} onSpecs={onSpecs}
+              onPinned={() => void api.getChannels().then(onChannels).catch(() => {})}
               onMode={(mode: RefactorMode) => void apply({ model: here.model, effort: here.effort, refactor_mode: mode })} />}
             after={active === 'refactor' && here && <div aria-label="리팩터링 명세" className="space-y-3">
               {specs.filter((s) => s.repo === here.repo && s.refactor?.survey && s.refactor.mode === (here.refactor_mode ?? 'preserve')
