@@ -8,6 +8,7 @@ with its block and reports a model; Git and the gate run.
 # ruff: noqa: F811 — a borrowed fixture is named again by each test that takes it
 
 import json
+import subprocess
 import threading
 import time
 import uuid
@@ -206,6 +207,20 @@ def test_a_gate_that_writes_into_the_survey_tree_leaves_the_base_to_read(surveye
     run = settled(api, start(api).json()["id"])
     assert run["state"] == "done", run["stopped"]
     assert seen == [FILES["src/orders.py"]], "the map turn reads the base commit, not what the gate wrote"
+
+
+def test_a_survey_tree_that_cannot_be_rebuilt_stops_the_survey(surveyed, monkeypatch):
+    api, seen, sh = client(), [], specs.sh
+    def dirty(path, cmds, halt, *rest, **kw):
+        (path / "src/orders.py").write_text("VALUE = 999\n", encoding="utf-8")
+        return {"ok": False, "code": 1, "reason": "", "tail": "", "head": ""}
+    monkeypatch.setattr(specs, "judge", dirty)
+    monkeypatch.setattr(specs, "sh", lambda argv, *rest, **kw: subprocess.CompletedProcess(
+        argv, 1, "", "Permission denied") if argv[:3] == ["git", "worktree", "remove"] else sh(argv, *rest, **kw))
+    monkeypatch.setitem(refactor.PHASES, "map", lambda w, run: seen.append(run))
+    run = settled(api, start(api).json()["id"])
+    assert run["state"] == "stopped" and "되돌리지 못했다" in run["stopped"]["detail"], run
+    assert not seen, "no turn reads what the gate wrote"
 
 
 def test_dependency_cycles_and_unknown_dependencies_are_refused(surveyed):

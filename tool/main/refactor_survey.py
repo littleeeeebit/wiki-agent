@@ -380,10 +380,18 @@ def baselined(w, run: dict) -> dict:
         run = w.note(baseline={"cmd": cmd, "ok": verdict["ok"], "code": verdict["code"], "reason": verdict["reason"],
                                "tail": verdict["tail"], "failures": found or [], "parsed": found is not None,
                                "head": verdict["head"]})
+
+    def clean() -> bool:
         seen = specs.status(path)
-        if seen.returncode or seen.stdout.strip() or refactor.git(path, "rev-parse", "HEAD") != run["base"]:
-            removed(w.repo, w.rid)   # the gate wrote into its tree: the survey reads the base commit as it was
-            checkout(w, run)
+        return not seen.returncode and not seen.stdout.strip() \
+            and specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip() == run["base"]
+
+    # Checked on every pass, a resume too: the survey reads the base commit as it was, never what the gate wrote.
+    if not clean():
+        removed(w.repo, w.rid)
+        path = checkout(w, run)
+        if not clean():
+            raise refactor.Stop("worktree", f"기준 게이트가 바꾼 `{path}` 를 기준 커밋으로 되돌리지 못했다 — 치운 뒤 [재개] 하라")
     return w.note(phase="map")
 
 
