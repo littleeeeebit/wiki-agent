@@ -191,6 +191,13 @@ def contracted(repo: Path, new: str | None, *declared: str, old: str = OLD_TESTS
     (OLD_TESTS + "\ndel test_other\n", (), "기존 테스트 변경"),
     (OLD_TESTS + "\nfrom os import sep as test_guard\n", (), "기존 테스트 변경"),
     (OLD_TESTS + "\n\ndef helper():\n    global test_guard\n    test_guard = None\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\ntry:\n    raise RuntimeError()\nexcept RuntimeError as test_guard:\n    pass\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\nif True:\n    pytestmark = __import__('pytest').mark.skip\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\nCASES = [(test_guard := n) for n in range(3)]\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\nmatch 1:\n    case test_guard:\n        pass\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\nfrom os.path import *\n", (), "기존 테스트 변경"),
+    (OLD_TESTS + "\nCASES = [test_guard for test_guard in range(3)]\n", (), ""),   # the comprehension's own
+    (OLD_TESTS + "\n\ndef test_new(test_guard=None):\n    test_other = 1\n", (), ""),    # the function's own
     ("def test_guard():\n    assert True\n", ("tests/test_guard.py::test_other",), ""),
     ("def test_guard():\n    pass\n", ("tests/test_guard.py::test_other",), "기존 테스트 변경"),
     (None, ("tests/test_guard.py::test_other",), "파일 단위"),
@@ -205,6 +212,14 @@ def test_a_test_contract_frees_only_what_it_names(surveyed, new, declared, why):
 def test_a_type_comment_is_part_of_the_test_contract(surveyed):
     typed = OLD_TESTS + "\nvalue = []  # type: list[int]\n"
     assert "기존 테스트 변경" in contracted(surveyed, OLD_TESTS + "\nvalue = []\n", old=typed)
+
+
+def test_a_pytest_count_line_is_explained_by_no_more_failures_than_the_baseline():
+    base = "FAILED t.py::a - x\n==== 1 failed, 1 passed, 1 warning in 0.96s ====\n"
+    more = "FAILED t.py::a - x\n==== 1 failed, 2 passed, 2 warnings in 1.20s ====\n"
+    assert refactor_survey.unexplained(more, base, ()) == []
+    worse = "FAILED t.py::a - x\n==== 1 failed, 2 passed, 1 error in 1.20s ====\n"
+    assert refactor_survey.unexplained(worse, base, ()) == ["==== 1 failed, 2 passed, 1 error in 1.20s ===="]
 
 
 def test_every_round_holds_a_survey_spec_to_its_test_contract(surveyed):

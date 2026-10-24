@@ -182,12 +182,6 @@ def _named(stmt) -> str | None:
     return stmt.name if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else None
 
 
-def _marks(body: list) -> list[str]:
-    """The `pytestmark` assignments of a body: one added skips every test beside it."""
-    return [ast.dump(s) for s in body if isinstance(s, (ast.Assign, ast.AnnAssign, ast.AugAssign))
-            and "pytestmark" in {t.id for t in ast.walk(s) if isinstance(t, ast.Name) and isinstance(t.ctx, ast.Store)}]
-
-
 def _head(cls: ast.ClassDef) -> str:
     bare = copy.copy(cls)
     bare.body = []
@@ -195,23 +189,42 @@ def _head(cls: ast.ClassDef) -> str:
 
 
 def _binds(body: list) -> Counter:
-    """How often a body binds or deletes each name at its own level — a def, an
-    assignment, an import, a `del`, a function's `global` — not inside nested scopes."""
+    """How often a body binds or deletes each name in its own scope, through every
+    `if`/`try`/`for`/`with`/`match` in it: definitions, assignments, imports
+    (`*` included), `del`, loop, `with`, `except` and `match` targets, a walrus
+    even inside a comprehension, and a nested function's `global`. A
+    comprehension's loop variables and a nested scope's locals are not the body's."""
 
-    found, todo = Counter(), list(body)
-    while todo:
-        node = todo.pop()
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            found[node.name] += 1
-            found.update(n for g in ast.walk(node) if isinstance(g, ast.Global) for n in g.names)
-            continue
-        if isinstance(node, ast.Lambda):
-            continue
-        if isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load):
+    found = Counter()
+
+    def visit(node, inside: bool = False) -> None:   # inside: within a comprehension's own scope
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.Lambda)):
+            if not isinstance(node, ast.Lambda):
+                found[node.name] += 1
+                found.update(n for g in ast.walk(node) if isinstance(g, ast.Global) for n in g.names)
+            # Decorators, bases and defaults run in this scope; the body is the nested scope's.
+            args = getattr(node, "args", None)
+            for child in [*getattr(node, "decorator_list", []), *getattr(node, "bases", []),
+                          *getattr(node, "keywords", []), *(args.defaults if args else []),
+                          *(d for d in (args.kw_defaults if args else []) if d)]:
+                visit(child, inside)
+            return
+        if isinstance(node, ast.NamedExpr):
+            found[node.target.id] += 1
+        elif isinstance(node, ast.Name) and not isinstance(node.ctx, ast.Load) and not inside:
             found[node.id] += 1
         elif isinstance(node, ast.alias):
             found[(node.asname or node.name).split(".")[0]] += 1
-        todo.extend(ast.iter_child_nodes(node))
+        elif isinstance(node, (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)) and node.name:
+            found[node.name] += 1
+        elif isinstance(node, ast.MatchMapping) and node.rest:
+            found[node.rest] += 1
+        inside = inside or isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp))
+        for child in ast.iter_child_nodes(node):
+            visit(child, inside)
+
+    for stmt in body:
+        visit(stmt)
     return found
 
 
@@ -221,10 +234,9 @@ def _kept(old: list, new: list, allowed: set, at: tuple = ()) -> bool:
     would replace a test — except the definitions `allowed` names. A class
     keeps its header and recurses."""
 
-    if not set(_marks(new)) <= set(_marks(old)):
-        return False
     before, after = _binds(old), _binds(new)
-    if any(after[name] != count for name, count in before.items() if (*at, name) not in allowed):
+    # A new `pytestmark` skips every test beside it, a new `import *` may replace any of them.
+    if any(after[name] != before[name] for name in {*before, "pytestmark", "*"} if (*at, name) not in allowed):
         return False
     rest = iter(new)
     for s in old:
