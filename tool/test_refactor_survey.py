@@ -230,6 +230,15 @@ def test_a_survey_tree_that_cannot_be_rebuilt_stops_the_survey(surveyed, monkeyp
     assert not seen, "no turn reads what the gate wrote"
 
 
+def test_a_map_path_glob_becomes_the_files_it_matches(surveyed):
+    owned = {**MAP["pipelines"][0], "paths": ["src/orders.py", "src/*.py"]}
+    shaped = refactor_survey.mapped_shape({**MAP, "pipelines": [owned, MAP["pipelines"][1]]}, surveyed)
+    assert shaped["pipelines"][0]["paths"] == ["src/orders.py", "src/billing.py", "src/shared.py"]
+    with pytest.raises(ValueError, match="맞는 파일이"):
+        refactor_survey.mapped_shape({**MAP, "pipelines": [{**owned, "paths": ["src/*.rs"]}, MAP["pipelines"][1]]},
+                                     surveyed)
+
+
 def test_dependency_cycles_and_unknown_dependencies_are_refused(surveyed):
     loop = {"coverage": {"scope": "s"}, "specs": [spec("a", depends=["b"]), spec("b", depends=["a"])]}
     with pytest.raises(ValueError, match="돌아온다"):
