@@ -174,7 +174,7 @@ def _new(root: Path, value, what: str) -> str:
         raise ValueError(f"`{what}`: `{rel}` 은 기준 커밋에 이미 있다 — `files` 에 둔다")
     if not target.parent.is_dir():
         raise ValueError(f"`{what}`: `{rel}` 의 폴더가 기준 커밋에 없다")
-    return rel
+    return target.relative_to(top).as_posix()
 
 
 def _owned(root: Path, value, what: str) -> list[str]:
@@ -357,21 +357,25 @@ def survey_shape(value, mode: str, map_: dict, root: Path, known: frozenset = fr
     """An integration (or recheck) block; `known` are keys outside it a spec may still depend on."""
     if not isinstance(value, dict) or not isinstance(value.get("coverage"), dict):
         raise ValueError("refactor-survey 는 coverage 가 있는 JSON 객체여야 한다")
-    shaped, refused = [], []
-    for s in _list(value.get("specs") or [], "specs"):   # every refused spec at once: one repair fixes them all
+    # Every refusal at once, the specs' own and their keys' and dependencies': one repair fixes them all.
+    raw, shaped, refused = _list(value.get("specs") or [], "specs"), [], []
+    for s in raw:
         try:
             shaped.append(spec_shape(s, mode, map_, root))
         except ValueError as exc:
             refused.append(str(exc))
-    if refused:
-        raise ValueError("\n".join(refused))
-    keys = [s["key"] for s in shaped]
-    if len(set(keys)) != len(keys):
-        raise ValueError("명세 `key` 가 겹친다")
+    keys = [s.get("key") for s in raw if isinstance(s, dict)]   # a refused spec's key is still its key
+    if duplicated := sorted({k for k in keys if keys.count(k) > 1}, key=str):
+        refused.append(f"명세 `key` 가 겹친다: {duplicated}")
     for s in shaped:
         if unknown := set(s["depends"]) - set(keys) - known:
-            raise ValueError(f"`specs[{s['key']}].depends` 에 없는 명세: {sorted(unknown)}")
-    acyclic({s["key"]: s["depends"] for s in shaped})
+            refused.append(f"`specs[{s['key']}].depends` 에 없는 명세: {sorted(unknown)}")
+    try:
+        acyclic({s["key"]: s["depends"] for s in shaped})
+    except ValueError as exc:
+        refused.append(str(exc))
+    if refused:
+        raise ValueError("\n".join(refused))
     coverage = value["coverage"]
     result = {"coverage": {"scope": _text(coverage.get("scope"), "coverage.scope"),
                            "unchecked": _texts(coverage.get("unchecked") or [], "coverage.unchecked"),

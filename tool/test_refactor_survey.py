@@ -269,6 +269,16 @@ def test_a_spec_names_the_files_it_creates_and_every_refused_spec_is_named(surve
                                                   spec("c" * 41)]}
     with pytest.raises(ValueError, match=r"(?s)specs\[a\].*specs\[b\].*`c{41}`"):
         refactor_survey.survey_shape(both, "preserve", MAP, surveyed)
+    assert refactor_survey.spec_shape(spec("x", creates=["./src/intake.py"]), "preserve", MAP, surveyed)["creates"] \
+        == ["src/intake.py"], "kept as Git writes it"
+    # Review round 1: a dependency refusal came only after the field refusal had been repaired.
+    mixed = {"coverage": {"scope": "s"}, "specs": [spec("a", files=["src/no.py"]), spec("b", depends=["unknown", "a"]),
+                                                   spec("b")]}
+    with pytest.raises(ValueError) as refused:
+        refactor_survey.survey_shape(mixed, "preserve", MAP, surveyed)
+    lines = str(refused.value).splitlines()
+    assert any("src/no.py" in x for x in lines) and any("'unknown'" in x and "'a'" not in x for x in lines)
+    assert any("겹친다" in x for x in lines), lines
 
 
 def test_a_map_path_glob_becomes_the_files_it_matches(surveyed):
