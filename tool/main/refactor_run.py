@@ -11,7 +11,10 @@ refinements land on the same card through `refined`.
 
 from __future__ import annotations
 
+import ast
+import copy
 import json
+import posixpath
 import statistics
 import subprocess
 import time
@@ -70,6 +73,8 @@ def context(repo: Path, cfg: dict) -> str:
 
 
 def under(changed: list[str], paths: list[str]) -> list[str]:
+    """The changed files at or below `paths`, read as Git writes them (a card saved before that rule may hold `./a`)."""
+    paths = [posixpath.normpath(p.replace("\\", "/")) for p in paths]
     return [c for c in changed if any(c == p or c.startswith(p.rstrip("/") + "/") for p in paths)]
 
 
@@ -172,26 +177,104 @@ def added_only(before: bytes, after: bytes) -> bool:
     return all(any(line == other for other in rest) for line in before.splitlines())
 
 
+def _named(stmt) -> str | None:
+    return stmt.name if isinstance(stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) else None
+
+
+def _marks(body: list) -> list[str]:
+    """The `pytestmark` assignments of a body: one added skips every test beside it."""
+    return [ast.dump(s) for s in body if isinstance(s, (ast.Assign, ast.AnnAssign, ast.AugAssign))
+            and "pytestmark" in {t.id for t in ast.walk(s) if isinstance(t, ast.Name) and isinstance(t.ctx, ast.Store)}]
+
+
+def _head(cls: ast.ClassDef) -> str:
+    bare = copy.copy(cls)
+    bare.body = []
+    return ast.dump(bare)
+
+
+def _kept(old: list, new: list, allowed: set, at: tuple = ()) -> bool:
+    """Every old statement of a body is still there, unchanged and in order, its
+    name bound once — a later definition would shadow it — except the
+    definitions `allowed` names. A class keeps its header and recurses."""
+
+    if not set(_marks(new)) <= set(_marks(old)):
+        return False
+    names, rest = [_named(s) for s in new], iter(new)
+    for s in old:
+        if (name := _named(s)) and (*at, name) in allowed:
+            continue
+        if name and names.count(name) != 1:
+            return False
+        for t in rest:
+            if isinstance(s, ast.ClassDef) and isinstance(t, ast.ClassDef) and s.name == t.name:
+                if _head(s) != _head(t) or not _kept(s.body, t.body, allowed, (*at, s.name)):
+                    return False
+                break
+            if ast.dump(s) == ast.dump(t):
+                break
+        else:
+            return False
+    return True
+
+
+def _defines(body: list, parts: tuple) -> bool:
+    found = next((s for s in body if _named(s) == parts[0]), None)
+    return found is not None and (len(parts) == 1 or isinstance(found, ast.ClassDef) and _defines(found.body, parts[1:]))
+
+
 def contract(path: Path, spec: dict) -> str:
-    """Why the existing tests changed outside the spec's test contract, or empty."""
+    """Why the existing tests changed outside the spec's test contract, or empty.
+    A declared `path` frees the whole file; a declared `path::name` (or
+    `path::Class::name`) frees only that test, and it must exist at the start.
+    Python is compared as syntax, so a skip mark or a shadowing redefinition is a change."""
 
     tests = spec["refactor"]["detail"].get("tests") or {}
-    declared = {t["test"].split("::")[0] for t in [*tests.get("remove", []), *tests.get("contract", [])]}
+    declared = [t["test"] for t in [*tests.get("remove", []), *tests.get("contract", [])]]
+    whole, named = {d for d in declared if "::" not in d}, {}
+    for d in declared:
+        if "::" in d:
+            file, *parts = d.split("::")
+            named.setdefault(file, set()).add(tuple(parts))
     start, broken = spec["start_head"], []
     listed = specs.sh(["git", "-c", "core.quotepath=off", "diff", "--name-only", "--no-renames", start, "HEAD"], path)
     for name in listed.stdout.splitlines():
-        if not debt.TEST.search(name.lower()) or name in declared:
+        if not debt.TEST.search(name.lower()) or name in whole:
             continue
         old = subprocess.run(["git", "show", f"{start}:{name}"], cwd=path, capture_output=True)
         if old.returncode:
             continue   # a new test file
+        allowed = named.get(name, set())
         if not (path / name).is_file():
-            broken.append(f"`{name}` 삭제")
-        elif not (refactor_finish.equivalent(name, old.stdout, new := (path / name).read_bytes())
-                  or added_only(old.stdout, new)):
+            broken.append(f"`{name}` 삭제" + (" — 파일 삭제는 파일 단위로 선언한다" if allowed else ""))
+            continue
+        new = (path / name).read_bytes()
+        if not name.endswith(".py"):
+            if allowed or not (refactor_finish.equivalent(name, old.stdout, new) or added_only(old.stdout, new)):
+                broken.append(f"`{name}` 의 기존 테스트 변경")
+            continue
+        try:
+            before, after = ast.parse(old.stdout).body, ast.parse(new).body
+        except (SyntaxError, ValueError):
+            broken.append(f"`{name}` 을 읽지 못했다")
+            continue
+        if missing := sorted("::".join(p) for p in allowed if not _defines(before, p)):
+            broken.append(f"`{name}` 에 선언한 테스트가 시작 커밋에 없다: {', '.join(missing)}")
+        elif not _kept(before, after, allowed):
             broken.append(f"`{name}` 의 기존 테스트 변경")
     return "" if not broken else ("테스트 계약 밖의 변경 — " + ", ".join(broken[:10])
                                   + " (명세의 tests.remove·tests.contract 에 없다)")
+
+
+def refused(path: Path, spec: dict, chosen: dict, head: str) -> tuple[dict, dict] | None:
+    """`specs.rounded`'s failed verdict and round record for a survey spec
+    outside its test contract: the contract holds on every head a round checks."""
+
+    if not surveyed(spec) or not (broken := contract(path, spec)):
+        return None
+    verdict = {"ok": False, "reason": broken, "cmd": "테스트 계약", "commands": chosen["commands"], "code": None,
+               "tail": broken, "head": head, "ts": time.time(), "selection": chosen["selection"]}
+    return verdict, {"head": head, **chosen, "ok": False, "finished_at": verdict["ts"]}
 
 
 def verified(repo: Path, path: Path, run, spec: dict) -> str:
@@ -209,7 +292,9 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
         specs.update(spec["repo"], spec["id"], gate=verdict,
                      refactor_check={**(spec.get("refactor_check") or {}), "final": "ci"})
         specs.validate(spec["repo"], spec["id"], round=record)
-        return "" if verdict["ok"] else f"판정 실패 — {verdict['reason']}"
+        if not verdict["ok"]:
+            return f"판정 실패 — {verdict['reason']}"
+        return measuring(path, spec, verdict["head"], run.halt)   # whoever owns the suite, the spec's measurement is ours
     head = specs.sh(["git", "rev-parse", "HEAD"], path).stdout.strip()
     cmd, local = specs.required(repo, spec), specs.local_required(repo, spec)
     record = {"head": head, "base_oid": specs.current_merge_base(path, base, head), "command": cmd,
@@ -239,6 +324,10 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
                                                  "ts": time.time(), "selection": "final"})
     if run.halt.is_set():
         return "사람이 멈춤 — 최종 명령을 끊었다"
+    if not ok and not seen.get("code"):
+        # No exit code, or 0 with a failed verdict: the command never judged this head (it changed the tree,
+        # or the head or base moved). A baseline comparison would read that as having no new failure.
+        return f"최종 검증이 무효다 — {reason or seen.get('reason') or '검증 커밋·base가 다르다'}"
     baseline = refactor.load(spec["repo"], spec["refactor"]["survey"])["baseline"]
     now = [] if ok else refactor_survey.failures({"code": seen.get("code", 1), "tail": tail})
     check = {**(spec.get("refactor_check") or {}), "final": "local", "head": head, "ok": ok,
@@ -247,16 +336,27 @@ def verified(repo: Path, path: Path, run, spec: dict) -> str:
         specs.update(spec["repo"], spec["id"], refactor_check={**check, "unparsed": True})
         return "최종 명령이 실패했고, 실패한 검사를 이름으로 가리지 못해 시작 전부터 있던 실패인지 알 수 없다"
     new, old = sorted(set(now) - set(baseline["failures"])), sorted(set(now) & set(baseline["failures"]))
-    check.update(new=new, pre_existing=old)
+    check.update(new=new, pre_existing=old, code=seen.get("code", 0))
     specs.update(spec["repo"], spec["id"], refactor_check=check)
     if new:
         return f"새 실패: {', '.join(new[:10])}"
-    if measure := spec["refactor"]["detail"].get("measure"):
-        try:
-            check["measured"] = measured(path, spec, measure, head, run.halt)
-        except ValueError as exc:
-            return f"측정하지 못했다 — {exc}"
-        specs.update(spec["repo"], spec["id"], refactor_check=check)
+    if not ok and seen["code"] != baseline["code"]:
+        # Named old failures excuse only the same failing run: another exit code means something else failed too.
+        return f"최종 명령이 {seen['code']} 로 끝났다 — 기준 게이트는 {baseline['code']} 였다"
+    return measuring(path, spec, head, run.halt)
+
+
+def measuring(path: Path, spec: dict, head: str, halt) -> str:
+    """A `rework` spec's measurement, kept on the card: why it could not run, or empty."""
+
+    if not (measure := spec["refactor"]["detail"].get("measure")):
+        return ""
+    try:
+        found = measured(path, spec, measure, head, halt)
+    except ValueError as exc:
+        return f"측정하지 못했다 — {exc}"
+    current = specs.load(spec["repo"], spec["id"]) or spec
+    specs.update(spec["repo"], spec["id"], refactor_check={**(current.get("refactor_check") or {}), "measured": found})
     return ""
 
 
